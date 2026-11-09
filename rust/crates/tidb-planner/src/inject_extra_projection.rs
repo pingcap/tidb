@@ -26,20 +26,17 @@
 //! * `TurnNominalSortIntoProj`: an `only_column` nominal sort disappears
 //!   (its child already answers the order property); a non-column one
 //!   becomes two pass-through projections;
-//! * a per-child cast projection below an MPP union — dead here: the narrow
-//!   tier's unions always carry `mpp: false`, and Go's own early return
-//!   keeps the union untouched in that case.
+//! * a per-child cast projection below an MPP union (`injectProjBelowUnion`).
 //!
 //! `refine4NeighbourProj` (`pkg/planner/core/resolve_indices.go:56`) is
 //! ported beside them: neighbouring projections must not keep redundant
 //! pass-through columns, and the union-find over each column's output
 //! positions is what keeps the referenced `Index` fields consistent.
 //!
-//! # Narrowing
+//! # The TiFlash table plan
 //!
 //! Go's `projInjector.inject` recurses into a TiFlash `PhysicalTableReader`'s
-//! table plan. The narrow tier is TiKV-only — its reader nodes carry no
-//! TiFlash store type — so that arm has no counterpart here.
+//! table plan too, where the MPP aggregates and unions live.
 //!
 //! The Rust `NominalSort` narrows `ByItems` to column `SortItem`s
 //! (`physical/mod.rs`), so Go's scalar-expression loop inside
@@ -102,27 +99,77 @@ fn inject(ctx: &InjectContext<'_>, plan: PhysicalPlan) -> PhysicalPlan {
             .map(|child| inject(ctx, child))
             .collect(),
     );
+
+    if let PhysicalPlan::TableReader(reader) = &mut plan {
+        if reader.store_type == tidb_kv::store_type::StoreType::TiFlash {
+            if let Some(table_plan) = reader.table_plan.take() {
+                reader.table_plan = Some(Box::new(inject(ctx, *table_plan)));
+            }
+        }
+    }
+
     match plan {
         PhysicalPlan::HashAgg(agg) => inject_proj_below_agg(ctx, agg),
         PhysicalPlan::StreamAgg(agg) => inject_proj_below_stream_agg(ctx, agg),
         PhysicalPlan::Sort(sort) => inject_proj_below_sort(ctx, PhysicalPlan::Sort(sort)),
         PhysicalPlan::TopN(topn) => inject_proj_below_sort(ctx, PhysicalPlan::TopN(topn)),
         PhysicalPlan::NominalSort(nominal) => turn_nominal_sort_into_proj(ctx, nominal),
-        PhysicalPlan::UnionAll(union_all) => inject_proj_below_union(union_all),
+        PhysicalPlan::UnionAll(union_all) => inject_proj_below_union(ctx, union_all),
         other => other,
     }
 }
 
-/// Go `injectProjBelowUnion` (`rule_inject_extra_projection.go:84`): only an
-/// MPP union casts its children's outputs; the narrow tier's unions always
-/// carry `mpp: false`, so Go's early return answers the union unchanged.
-fn inject_proj_below_union(union_all: tidb_planner_core_operator_physicalop::PhysicalUnionAll) -> PhysicalPlan {
+/// Go `injectProjBelowUnion` (`rule_inject_extra_projection.go:84`): an MPP
+/// union casts each child's columns whose type (or nullability) differs
+/// from the union's, through a projection over that child.
+fn inject_proj_below_union(
+    ctx: &InjectContext<'_>,
+    mut union_all: tidb_planner_core_operator_physicalop::PhysicalUnionAll,
+) -> PhysicalPlan {
     if !union_all.mpp {
         return PhysicalPlan::UnionAll(union_all);
     }
-    // Unreachable on this tier: nothing constructs an MPP union here. Kept
-    // as Go's guard so a future mpp=true constructor cannot silently skip
-    // the cast injection.
+    let union_schema = union_all.base.base.schema().cloned().expect("a union has a schema");
+    let children = union_all.base.take_children();
+    let children = children
+        .into_iter()
+        .map(|ch| {
+            let ch_schema = ch.schema().cloned().expect("a union child has a schema");
+            let mut exprs = Vec::with_capacity(ch_schema.columns.len());
+            let mut need_change = false;
+            for (i, dst_col) in union_schema.columns.iter().enumerate() {
+                let dst_type = dst_col.ret_type.as_ref().expect("a union column has a type");
+                let mut src_col = ch_schema.columns[i].clone();
+                src_col.index = i as i64;
+                let src_type = src_col.ret_type.as_ref().expect("a union child column has a type");
+                let not_null = |ft: &tidb_datatype::FieldType| ft.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL);
+                if !src_type.equal(dst_type) || not_null(dst_type) != not_null(src_type) {
+                    // Go's `BuildCastFunction4Union` cannot fail.
+                    exprs.push(
+                        tidb_expr::wrap_cast::build_cast_function_4_union(Expression::Column(src_col), dst_type.clone())
+                            .expect("BuildCastFunction4Union builds the cast"),
+                    );
+                    need_change = true;
+                } else {
+                    exprs.push(Expression::Column(src_col));
+                }
+            }
+            if !need_change {
+                return ch;
+            }
+            let mut base = BasePhysicalPlan::new(ctx.plan_ids, tidb_planner_core_operator_logicalop::LogicalProjection::TYPE, 0);
+            base.base.set_stats(ch.stats_info().cloned());
+            base.base.set_schema(Some(union_schema.clone()));
+            base.set_children(vec![ch]);
+            PhysicalPlan::Projection(PhysicalProjection {
+                base,
+                exprs,
+                calculate_no_delay: false,
+                avoid_column_evaluator: false,
+            })
+        })
+        .collect();
+    union_all.base.set_children(children);
     PhysicalPlan::UnionAll(union_all)
 }
 

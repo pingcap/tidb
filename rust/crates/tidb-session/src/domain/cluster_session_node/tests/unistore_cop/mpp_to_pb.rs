@@ -149,3 +149,131 @@ fn mpp_fragment_to_pb_is_gos_to_the_byte() {
         }
     }
 }
+
+/// Go `projInjector.inject` recursing into a TiFlash reader's table plan:
+/// an MPP aggregate's `SUM` argument gets `WrapCastForAggArgs`' cast and the
+/// projection `InjectProjBelowAgg` puts below the aggregate to compute it
+/// (Go's EXPLAIN, captured with a testkit probe over a HYPO TiFlash replica),
+/// and the cast projection below an MPP union's child.
+#[test]
+fn mpp_aggregation_injects_gos_projection_below_the_aggregate() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(432)).expect("session opens");
+    for sql in ["CREATE TABLE test.t (a int)", "ALTER TABLE test.t SET HYPO TIFLASH REPLICA 1"] {
+        session.node_conn().execute_write(sql).expect(sql);
+    }
+    rows(&mut session, "use test");
+    let cases: [(&str, &[&str]); 5] = [
+        (
+            "explain select sum(a) from t",
+            &[
+                "HashAgg_22|1.00|root||funcs:sum(Column#6)->Column#4",
+                "└─TableReader_24|1.00|root||MppVersion: 3, data:ExchangeSender_23",
+                "  └─ExchangeSender_23|1.00|mpp[tiflash]||ExchangeType: PassThrough",
+                "    └─HashAgg_9|1.00|mpp[tiflash]||funcs:sum(Column#9)->Column#6",
+                "      └─Projection_38|10000.00|mpp[tiflash]||cast(test.t.a, decimal(10,0) BINARY)->Column#9",
+                "        └─TableFullScan_21|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+            ],
+        ),
+        (
+            "explain select a, sum(a) from t group by a",
+            &[
+                "TableReader_45|8000.00|root||MppVersion: 3, data:ExchangeSender_44",
+                "└─ExchangeSender_44|8000.00|mpp[tiflash]||ExchangeType: PassThrough",
+                "  └─Projection_5|8000.00|mpp[tiflash]||test.t.a, Column#4",
+                "    └─Projection_39|8000.00|mpp[tiflash]||Column#4, test.t.a",
+                "      └─HashAgg_37|8000.00|mpp[tiflash]||group by:Column#14, funcs:sum(Column#13)->Column#4, funcs:firstrow(Column#14)->test.t.a",
+                "        └─Projection_46|10000.00|mpp[tiflash]||cast(test.t.a, decimal(10,0) BINARY)->Column#13, test.t.a->Column#14",
+                "          └─ExchangeReceiver_23|10000.00|mpp[tiflash]||",
+                "            └─ExchangeSender_22|10000.00|mpp[tiflash]||ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+                "              └─TableFullScan_21|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+            ],
+        ),
+        (
+            "explain select /*+ read_from_storage(tiflash[t]) */ sum(a) from t",
+            &[
+                "HashAgg_17|1.00|root||funcs:sum(Column#5)->Column#4",
+                "└─TableReader_19|1.00|root||MppVersion: 3, data:ExchangeSender_18",
+                "  └─ExchangeSender_18|1.00|mpp[tiflash]||ExchangeType: PassThrough",
+                "    └─HashAgg_9|1.00|mpp[tiflash]||funcs:sum(Column#7)->Column#5",
+                "      └─Projection_28|10000.00|mpp[tiflash]||cast(test.t.a, decimal(10,0) BINARY)->Column#7",
+                "        └─TableFullScan_16|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+            ],
+        ),
+        (
+            "explain select /*+ read_from_storage(tiflash[t]) */ a, sum(a) from t group by a",
+            &[
+                "TableReader_40|8000.00|root||MppVersion: 3, data:ExchangeSender_39",
+                "└─ExchangeSender_39|8000.00|mpp[tiflash]||ExchangeType: PassThrough",
+                "  └─Projection_5|8000.00|mpp[tiflash]||test.t.a, Column#4",
+                "    └─Projection_34|8000.00|mpp[tiflash]||Column#4, test.t.a",
+                "      └─HashAgg_32|8000.00|mpp[tiflash]||group by:Column#12, funcs:sum(Column#11)->Column#4, funcs:firstrow(Column#12)->test.t.a",
+                "        └─Projection_41|10000.00|mpp[tiflash]||cast(test.t.a, decimal(10,0) BINARY)->Column#11, test.t.a->Column#12",
+                "          └─ExchangeReceiver_18|10000.00|mpp[tiflash]||",
+                "            └─ExchangeSender_17|10000.00|mpp[tiflash]||ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+                "              └─TableFullScan_16|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+            ],
+        ),
+        (
+            "explain select /*+ read_from_storage(tiflash[t]) */ a, count(*) from t group by a",
+            &[
+                "TableReader_40|8000.00|root||MppVersion: 3, data:ExchangeSender_39",
+                "└─ExchangeSender_39|8000.00|mpp[tiflash]||ExchangeType: PassThrough",
+                "  └─Projection_5|8000.00|mpp[tiflash]||test.t.a, Column#4",
+                "    └─Projection_35|8000.00|mpp[tiflash]||Column#4, test.t.a",
+                "      └─HashAgg_36|8000.00|mpp[tiflash]||group by:test.t.a, funcs:sum(Column#9)->Column#4, funcs:firstrow(test.t.a)->test.t.a",
+                "        └─ExchangeReceiver_38|8000.00|mpp[tiflash]||",
+                "          └─ExchangeSender_37|8000.00|mpp[tiflash]||ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+                "            └─HashAgg_33|8000.00|mpp[tiflash]||group by:test.t.a, funcs:count(1)->Column#9",
+                "              └─TableFullScan_22|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+            ],
+        ),
+    ];
+    // The MPP exploration numbers its plans and columns differently from
+    // Go's (`docs/mpp-execplan.md`); the shape and the operator info are
+    // compared with those numbers blanked.
+    let blank = |line: &str| {
+        let mut out = String::with_capacity(line.len());
+        let mut chars = line.chars().peekable();
+        while let Some(c) = chars.next() {
+            out.push(c);
+            if (c == '_' || c == '#') && chars.peek().is_some_and(char::is_ascii_digit) {
+                out.push('N');
+                while chars.peek().is_some_and(char::is_ascii_digit) {
+                    chars.next();
+                }
+            }
+        }
+        out
+    };
+    for (sql, want) in cases {
+        let got: Vec<String> =
+            displayed(rows(&mut session, sql)).into_iter().map(|row| blank(&row.join("|"))).collect();
+        let want: Vec<String> = want.iter().map(|line| blank(line)).collect();
+        assert_eq!(got, want, "{sql}");
+    }
+
+    // Go `injectProjBelowUnion`: an MPP union's child whose column differs
+    // from the union's only in nullability gets a cast projection.
+    for sql in ["CREATE TABLE test.s (b bigint not null)", "ALTER TABLE test.s SET HYPO TIFLASH REPLICA 1"] {
+        session.node_conn().execute_write(sql).expect(sql);
+    }
+    rows(&mut session, "set @@tidb_enforce_mpp = 1");
+    let sql = "explain select a from t union all select b from s";
+    // Go's testkit prints `bigint(20)`; a tidb-server, whose
+    // `deprecate-integer-display-length` defaults on, prints `bigint`.
+    let got: Vec<String> = displayed(rows(&mut session, sql)).into_iter().map(|row| blank(&row.join("|"))).collect();
+    let want: Vec<String> = [
+        "TableReader_33|20000.00|root||MppVersion: 3, data:ExchangeSender_32",
+        "└─ExchangeSender_32|20000.00|mpp[tiflash]||ExchangeType: PassThrough",
+        "  └─Union_9|20000.00|mpp[tiflash]||",
+        "    ├─Projection_30|10000.00|mpp[tiflash]||cast(test.t.a, bigint BINARY)->Column#7",
+        "    │ └─TableFullScan_17|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+        "    └─Projection_34|10000.00|mpp[tiflash]||cast(test.s.b, bigint BINARY)->Column#7",
+        "      └─TableFullScan_27|10000.00|mpp[tiflash]|table:s|keep order:false, stats:pseudo",
+    ]
+    .iter()
+    .map(|line| blank(line))
+    .collect();
+    assert_eq!(got, want, "{sql}");
+}

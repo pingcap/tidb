@@ -94,13 +94,14 @@ the unistore stack.
   estimate is 125.00 (the limit's expected count over the selection) where
   this port's is 10000.00, and Go's plan ids run two higher
   (`TableFullScan_14` against `_12`).
-- 2026-11-10, two more planner divergences on MPP aggregation (to fix before
-  Milestone 5, whose rows depend on them): `select a, count(*) from t group
-  by a` plans Go's shape but every plan id runs one below Go's
-  (`TableFullScan_21` against `_22`); and `... sum(a) ... group by a` lacks
-  Go's `cast(test.t.a, decimal(10,0) BINARY)` argument (`WrapCastForAggArgs`)
-  and the projection Go injects below the MPP HashAgg to compute it
-  (`Projection_41`).
+- 2026-11-10: `inject_extra_projection` skipped a TiFlash reader's table
+  plan and the MPP union arm (written when the planner built no MPP plans),
+  so an MPP aggregate's `SUM` lacked `WrapCastForAggArgs`' cast and Go's
+  projection below it, and an MPP union's child lacked its cast projection.
+  Both are Go's now (`mpp_aggregation_injects_gos_projection_below_the_aggregate`).
+  Still open: the MPP exploration numbers plans and columns differently from
+  Go (`select a, count(*) from t group by a`: `TableFullScan_21` against
+  Go's `_22`), so those tests compare MPP plans with numbers blanked.
 
 ## Decision Log
 
