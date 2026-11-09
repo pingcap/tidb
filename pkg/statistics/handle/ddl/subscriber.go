@@ -302,8 +302,7 @@ func (subscriber) insertStats4PhysicalID(
 	info *model.TableInfo,
 	id int64,
 ) error {
-	_, err := storage.InsertTableStats2KV(ctx, sctx, info, id)
-	return errors.Trace(err)
+	return errors.Trace(storage.InsertTableStats2KV(ctx, sctx, info, id))
 }
 
 func (subscriber) delayedDeleteStats4PhysicalID(
@@ -321,8 +320,7 @@ func (subscriber) insertStats4Col(
 	physicalID int64,
 	colInfos []*model.ColumnInfo,
 ) error {
-	_, err := storage.InsertColStats2KV(ctx, sctx, physicalID, colInfos)
-	return errors.Trace(err)
+	return errors.Trace(storage.InsertColStats2KV(ctx, sctx, physicalID, colInfos))
 }
 
 func getPhysicalIDs(

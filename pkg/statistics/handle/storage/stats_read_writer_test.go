@@ -270,8 +270,7 @@ func TestInsertColStats2KVDoesNotDeadlockWithAnalyzeSave(t *testing.T) {
 	colStatsErr := make(chan error, 1)
 	go func() {
 		colStatsErr <- util.CallWithSCtx(dom.StatsHandle().SPool(), func(sctx sessionctx.Context) error {
-			_, err := storage.InsertColStats2KV(util.StatsCtx, sctx, tableID, []*model.ColumnInfo{col})
-			return err
+			return storage.InsertColStats2KV(util.StatsCtx, sctx, tableID, []*model.ColumnInfo{col})
 		}, util.FlagWrapTxn)
 	}()
 

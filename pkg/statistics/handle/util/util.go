@@ -41,19 +41,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// StatsMetaHistorySourceAnalyze indicates stats history meta source from analyze
-	StatsMetaHistorySourceAnalyze = "analyze"
-	// StatsMetaHistorySourceLoadStats indicates stats history meta source from load stats
-	StatsMetaHistorySourceLoadStats = "load stats"
-	// StatsMetaHistorySourceFlushStats indicates stats history meta source from flush stats
-	StatsMetaHistorySourceFlushStats = "flush stats"
-	// StatsMetaHistorySourceSchemaChange indicates stats history meta source from schema change
-	StatsMetaHistorySourceSchemaChange = "schema change"
-	// StatsMetaHistorySourceExtendedStats indicates stats history meta source from extended stats
-	StatsMetaHistorySourceExtendedStats = "extended stats"
-)
-
 var (
 	// UseCurrentSessionOpt to make sure the sql is executed in current session.
 	UseCurrentSessionOpt = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
