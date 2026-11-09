@@ -477,6 +477,9 @@ pub struct CopReadTaskRuntime {
     next_paging_task_index: Arc<AtomicU32>,
     cache: Option<CoprCache>,
     ema: Arc<ReadBytesEma>,
+    /// Go `copIterator.storeBatchedNum` and `storeBatchedFallbackNum`,
+    /// which every worker of the iterator adds to.
+    store_batch: Arc<tidb_txnkv::StoreBatchCounts>,
 }
 
 impl std::fmt::Debug for CopReadTaskRuntime {
@@ -515,8 +518,14 @@ impl CopReadTaskRuntime {
         generation: ReadEngineGeneration,
         seed_read_bytes: u64,
     ) -> Result<Self, CopReadTaskError> {
+        // Go `CopClient.Send`: `if !checkStoreBatchCopr(req) {
+        // req.StoreBatchSize = 0 }`, before the tasks are built.
+        let mut metadata = metadata.clone();
+        if !check_store_batch_copr(&metadata) {
+            metadata.store_batch_size = 0;
+        }
         Self::prepare_inner(
-            metadata,
+            &metadata,
             topology,
             cache,
             generation,
@@ -535,12 +544,7 @@ impl CopReadTaskRuntime {
     ) -> Result<Self, CopReadTaskError> {
         validate_request(metadata)?;
         validate_topology(topology)?;
-        // Go `CopClient.Send`: `if !checkStoreBatchCopr(req) {
-        // req.StoreBatchSize = 0 }`, before the tasks are built.
         let mut metadata = metadata.clone();
-        if !check_store_batch_copr(&metadata) {
-            metadata.store_batch_size = 0;
-        }
         let envelopes =
             build_region_tasks(&metadata, topology).ok_or(CopReadTaskError::InvalidTopology)?;
 
@@ -587,6 +591,7 @@ impl CopReadTaskRuntime {
             tasks,
             in_flight: BTreeMap::new(),
             deferred: BTreeMap::new(),
+            store_batch: Arc::default(),
             prepared: Vec::new(),
             completed_attempts: BTreeSet::new(),
             next_attempt_id: 1,
@@ -698,6 +703,7 @@ impl CopReadTaskRuntime {
                         next_paging_task_index: Arc::clone(&self.next_paging_task_index),
                         cache: self.cache.clone(),
                         ema: Arc::clone(&self.ema),
+                        store_batch: Arc::clone(&self.store_batch),
                     },
                 )
             })
@@ -831,7 +837,7 @@ impl CopReadTaskRuntime {
                 .and_then(|details| details.scan_detail_v2.as_ref())
                 .map_or(0, |scan| scan.processed_versions);
             let total = counter
-                .fetch_add(processed, std::sync::atomic::Ordering::Relaxed)
+                .fetch_add(processed, Ordering::Relaxed)
                 .saturating_add(processed);
             if self.metadata.max_keys_read > 0 && total > self.metadata.max_keys_read {
                 return Err(CopReadTaskError::MaxKeysRead);
@@ -1140,7 +1146,9 @@ impl CopReadTaskRuntime {
             .map(|task| (task.task_id, task.clone()))
             .collect();
         self.tasks[logical_task_index].task.batch_task_list.clear();
+        let batched = pending.len();
         let mut remains = Vec::new();
+        let mut answered = Vec::new();
         for batch in &response.batch_responses {
             let task = pending.remove(&batch.task_id).ok_or_else(|| {
                 CopReadTaskError::OtherError(format!("task id {} not found", batch.task_id))
@@ -1175,22 +1183,49 @@ impl CopReadTaskRuntime {
                     .and_then(|details| details.scan_detail_v2.as_ref())
                     .map_or(0, |scan| scan.processed_versions);
                 let total = counter
-                    .fetch_add(processed, std::sync::atomic::Ordering::Relaxed)
+                    .fetch_add(processed, Ordering::Relaxed)
                     .saturating_add(processed);
                 if self.metadata.max_keys_read > 0 && total > self.metadata.max_keys_read {
                     return Err(CopReadTaskError::MaxKeysRead);
                 }
             }
             let runtime = CopReadTaskResponse::success(child).collect_cop_runtime_stats(callee_address);
-            self.tasks[logical_task_index]
-                .paging
-                .accept_batched_child(batch.data.clone(), batch.exec_details_v2.clone(), Some(runtime))?;
+            answered.push((batch.data.clone(), batch.exec_details_v2.clone(), runtime));
         }
         remains.extend(pending.into_values().map(|task| BatchedRemain {
             task,
             cause: BatchedRemainCause::Unanswered,
         }));
+        // Go `handleBatchCopResponse`'s deferred count: every batched task
+        // its store answered, and each one that falls back once -- counted
+        // before the worker sends the answers on (`batchRespList`, after the
+        // parent's own response).
+        self.store_batch
+            .batched
+            .fetch_add((batched - remains.len()) as u64, Ordering::Relaxed);
+        self.store_batch
+            .fallback
+            .fetch_add(remains.len() as u64, Ordering::Relaxed);
+        // Go's worker sends `result.resp`, then `result.batchRespList`; a
+        // parent answered with an error has no `resp`, so its children go
+        // out alone (`handleBatchRemainsOnErr`).
+        let parent_answered = response.region_error.is_none()
+            && response.locked.is_none()
+            && response.other_error.is_empty();
+        for (data, exec_details_v2, runtime) in answered {
+            let paging = &mut self.tasks[logical_task_index].paging;
+            if parent_answered {
+                paging.stage_batched_child(data, exec_details_v2, Some(runtime));
+            } else {
+                paging.accept_batched_child(data, exec_details_v2, Some(runtime))?;
+            }
+        }
         Ok(remains)
+    }
+
+    /// Go `copIterator`'s store-batch counts.
+    pub fn store_batch_counts(&self) -> Arc<tidb_txnkv::StoreBatchCounts> {
+        Arc::clone(&self.store_batch)
     }
 
     /// Go `buildCopTasks(bo, task.ranges, ...)` for a batched child whose
@@ -1315,7 +1350,7 @@ impl CopReadTaskRuntime {
             self.metadata.max_keys_read,
         ) {
             (Some(counter), max) if max > 0 => {
-                let scanned = counter.load(std::sync::atomic::Ordering::Relaxed);
+                let scanned = counter.load(Ordering::Relaxed);
                 if scanned >= max {
                     return Err(CopReadTaskError::MaxKeysRead);
                 }
@@ -1382,7 +1417,8 @@ fn allocate_paging_task_index(counter: &AtomicU32, paging_active: bool) -> u32 {
 }
 
 /// Go `checkStoreBatchCopr`: whether a request may batch tasks by store.
-fn check_store_batch_copr(metadata: &KvRequestMetadata) -> bool {
+/// Go `checkStoreBatchCopr`, over the request as its caller sent it.
+pub(super) fn check_store_batch_copr(metadata: &KvRequestMetadata) -> bool {
     // Non-DAG requests have no row-count hints, so batching them needs the
     // caller's explicit acceptance of merged responses.
     if (metadata.request_type != RequestType::Dag && !metadata.allow_batch_task_data_merge)

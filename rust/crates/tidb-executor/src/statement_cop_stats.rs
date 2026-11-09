@@ -329,6 +329,11 @@ impl CopResponseSink for RuntimeStatsCollSink {
             stats.dist_sql_concurrency = i64::try_from(info.concurrency).unwrap_or(i64::MAX);
             stats.extra_concurrency = i64::try_from(info.extra_concurrency).unwrap_or(i64::MAX);
             stats.build_task_duration = info.build_task_elapsed;
+            // Go `selectResult.Close`: `if batched != 0 || fallback != 0`.
+            if info.store_batched_num != 0 || info.store_batched_fallback_num != 0 {
+                stats.store_batched_num = info.store_batched_num;
+                stats.store_batched_fallback_num = info.store_batched_fallback_num;
+            }
         }
         stats.fetch_rsp_duration = close.fetch_duration;
         self.coll.register_stats(root_plan_id as i64, Box::new(stats));
@@ -464,6 +469,7 @@ mod runtime_stats_coll_sink_tests {
                     concurrency: 1,
                     extra_concurrency: 0,
                     build_task_elapsed: Duration::from_nanos(3_540),
+                    ..tidb_txnkv::CopInfo::default()
                 }),
                 ..tidb_distsql::select_response::SelectResultClose::default()
             },

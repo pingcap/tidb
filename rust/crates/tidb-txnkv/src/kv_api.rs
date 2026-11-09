@@ -483,6 +483,13 @@ pub trait Response {
     fn cop_info(&self) -> Option<crate::CopInfo> {
         None
     }
+
+    /// Go `copIterator`'s store-batch counts, which its workers add to while
+    /// it runs; `None` for owners that are not a coprocessor iterator.
+    #[must_use]
+    fn store_batch_counts(&self) -> Option<Arc<crate::StoreBatchCounts>> {
+        None
+    }
 }
 
 impl<R: Response + ?Sized> Response for Box<R> {
@@ -507,6 +514,10 @@ impl<R: Response + ?Sized> Response for Box<R> {
 
     fn cop_info(&self) -> Option<crate::CopInfo> {
         (**self).cop_info()
+    }
+
+    fn store_batch_counts(&self) -> Option<Arc<crate::StoreBatchCounts>> {
+        (**self).store_batch_counts()
     }
 }
 

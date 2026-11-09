@@ -9770,7 +9770,8 @@ fn a_global_index_lookups_task_spans_partitions_like_go() {
 /// Go's global index lookup reads its index remotely under the logical
 /// table and cuts a task at each response chunk (`extractTaskHandles` over
 /// `ReuseIntermChk`): at `tidb_index_lookup_size = 2`, 99 handles over two
-/// hash partitions make Go's 4 tasks, each spanning partitions.
+/// hash partitions make Go's 4 tasks, each spanning partitions and read by
+/// one table reader (`SetPartitionsAndHandles`).
 #[test]
 fn a_global_index_lookup_cuts_its_tasks_at_response_chunks_like_go() {
     let mut session = Session::new();
@@ -9788,9 +9789,35 @@ fn a_global_index_lookup_cuts_its_tasks_at_response_chunks_like_go() {
         .unwrap_or_else(|| panic!("{rows:?}"));
     assert_eq!(lookup[2], "99", "{rows:?}");
     assert!(lookup[5].contains("table_task: {") && lookup[5].contains("num: 4,"), "{rows:?}");
+    // Each task's one request over both partitions is two region tasks, which
+    // Go's store batching sends as one RPC (the lookup's table reader neither
+    // keeps order nor pages).
+    let probe = rows
+        .iter()
+        .find(|row| row[0].contains("TableRowIDScan_"))
+        .unwrap_or_else(|| panic!("{rows:?}"));
+    assert!(probe[5].contains("cop_task: {num: 8,") && probe[5].contains("store_batch_num: 4}"), "{rows:?}");
+    assert!(probe[5].contains("rpc_info:{Cop:{num_rpc:4,"), "{rows:?}");
     let mut answer = row_text(session.run(sql));
     answer.sort_by_key(|row| row[0].parse::<i64>().unwrap());
     assert_eq!(answer, (2..=100).map(|x| vec![x.to_string(), x.to_string(), (x % 5).to_string()]).collect::<Vec<_>>());
+}
+
+/// A global index task's one request spans its partitions, and the store
+/// batches their region tasks: Go's worker sends the parent's answer, then
+/// its batched children's (`result.resp`, then `result.batchRespList`), so
+/// the rows come back in partition order (`globalindex/insert`'s recording).
+#[test]
+fn a_global_index_tasks_batched_rows_follow_their_parent_like_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT, b INT, INDEX idx(a) GLOBAL) PARTITION BY HASH(b) PARTITIONS 5")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1, 1), (1, 2), (2, 2)").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT * FROM t USE INDEX (idx)")),
+        [["1", "1"], ["1", "2"], ["2", "2"]]
+    );
 }
 
 /// Go's `AddSelectionConditionForGlobalIndex` runs `PartitionPruning`, whose

@@ -726,6 +726,7 @@ fn build_resp_with(
         allow_unordered: request.allow_unordered_response,
         desc: request.desc,
         field_types: field_types.clone(),
+        paging: request.statement.paging,
         paging_min_size: request.paging_min_size,
         time_zone: request.statement.time_zone.clone(),
         resource_group_name: request.statement.resource_group_name.clone(),
@@ -811,6 +812,8 @@ struct RemoteScanPlan {
     /// separately carries the direction for rows inside each region.
     desc: bool,
     field_types: Vec<FieldType>,
+    /// Go `RequestBuilder.SetPaging`.
+    paging: bool,
     /// Optional Go IndexLookUp first-window paging floor for index scans.
     paging_min_size: Option<u64>,
     time_zone: tidb_datatype::SessionTimeZone,
@@ -944,6 +947,7 @@ fn open_scan(
     // processed keys still reach `tidb_keys_examined`.
     context.request.max_keys_read = plan.keys_read.max();
     context.execution.max_keys_read_counter = Some(plan.keys_read.counter());
+    context.request.paging.enabled = plan.paging;
     if let Some(min_size) = plan.paging_min_size {
         // Go's buildIndexSelectResultForRange raises both paging bounds to
         // the worker's first handle batch. Keep the normal session defaults

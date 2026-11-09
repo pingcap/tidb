@@ -557,6 +557,11 @@ pub struct PushdownStatementContext {
     /// Whether the request waits for its stream's first read before it is
     /// sent (a partitioned index lookup's later partitions).
     pub deferred_open: bool,
+    /// Go `RequestBuilder.SetPaging`: whether the reader pages its responses
+    /// (`tidb_enable_paging`); an index lookup task's `TableReaderExecutor`
+    /// never does (`IndexLookUpExecutor.buildTableReader` leaves `paging`
+    /// unset).
+    pub paging: bool,
     /// Go `IndexLookUpExecutor.needPartitionHandle(getHandleFromIndex)`: a
     /// global index's request reads each entry's `ExtraPhysTblID`, and its
     /// handles are `kv.PartitionHandle`s.
@@ -627,6 +632,7 @@ impl Default for PushdownStatementContext {
             lookup_table_topn: None,
             tiflash_fine_grained_shuffle_batch_size: tidb_vardef::defaults::DEF_TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE as u64,
             deferred_open: false,
+            paging: true,
             need_partition_handle: false,
         }
     }
@@ -656,8 +662,9 @@ impl PushdownStatementContext {
     pub fn for_lookup_batch(&self, count: usize) -> Self {
         let mut statement = self.clone();
         // Go `buildTableReaderBase` sets no memory tracker on a lookup
-        // task's request.
+        // task's request, and its reader no paging.
         statement.select_mem_tracker = None;
+        statement.paging = false;
         if let Some(avg) = self.lookup_avg_row_bytes {
             statement.estimated_net_bytes = avg * count as f64;
         }

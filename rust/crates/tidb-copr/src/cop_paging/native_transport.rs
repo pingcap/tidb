@@ -301,6 +301,12 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
         // Each task source answers its own tasks in order; the worker pool
         // above it keeps or relaxes the order across tasks.
         let mut coordinator_metadata = metadata.clone();
+        // Go `CopClient.Send`: `if !checkStoreBatchCopr(req) {
+        // req.StoreBatchSize = 0 }`, over the request's own order, before
+        // the tasks are built.
+        if !super::cop_read_task_runtime::check_store_batch_copr(metadata) {
+            coordinator_metadata.store_batch_size = 0;
+        }
         coordinator_metadata.keep_order = true;
         CopPagingState::validate_read_request(&coordinator_metadata)
             .map_err(|e| format!("{e:?}"))?;
@@ -1046,7 +1052,12 @@ impl<S: NativeCopStore + ?Sized> tidb_txnkv::Response for NativeCopResponse<S> {
             concurrency,
             extra_concurrency: extra,
             build_task_elapsed: self.build_task_elapsed,
+            ..tidb_txnkv::CopInfo::default()
         })
+    }
+
+    fn store_batch_counts(&self) -> Option<Arc<tidb_txnkv::StoreBatchCounts>> {
+        Some(self.runtime.store_batch_counts())
     }
 }
 

@@ -185,6 +185,9 @@ pub struct CopIterator<R: tidb_txnkv::Response> {
     lite: Option<Arc<AtomicBool>>,
     limiter_wait: tidb_txnkv::LimiterWaitStats,
     info: Option<tidb_txnkv::CopInfo>,
+    /// Go `copIterator.storeBatchedNum` / `storeBatchedFallbackNum`, read at
+    /// close (`GetStoreBatchInfo`).
+    store_batch: Option<Arc<tidb_txnkv::StoreBatchCounts>>,
     /// Go `copIterator.actionOnExceed`.
     action_on_exceed: Option<Arc<RateLimitAction>>,
 }
@@ -200,6 +203,7 @@ impl<R: tidb_txnkv::Response> CopIterator<R> {
         R: CopWorkerSource,
     {
         let info = source.cop_info();
+        let store_batch = source.store_batch_counts();
         // Go `copClient.Send`: `sendRate` holds `concurrency +
         // smallTaskConcurrency` tokens, twice that under keep-order, and the
         // `rateLimitAction` starts with as many.
@@ -240,6 +244,7 @@ impl<R: tidb_txnkv::Response> CopIterator<R> {
             lite,
             limiter_wait: tidb_txnkv::LimiterWaitStats::default(),
             info,
+            store_batch,
             action_on_exceed,
         }
     }
@@ -307,7 +312,13 @@ impl<R: CopTaskSource> tidb_txnkv::Response for CopIterator<R> {
     }
 
     fn cop_info(&self) -> Option<tidb_txnkv::CopInfo> {
-        self.info
+        self.info.map(|mut info| {
+            if let Some(counts) = &self.store_batch {
+                info.store_batched_num = counts.batched.load(Ordering::Relaxed);
+                info.store_batched_fallback_num = counts.fallback.load(Ordering::Relaxed);
+            }
+            info
+        })
     }
 
     fn limiter_wait_stats(&self) -> tidb_txnkv::LimiterWaitStats {

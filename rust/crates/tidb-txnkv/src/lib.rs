@@ -120,7 +120,7 @@ pub use kv_request::{
     KvRequestMetadata, TransportBinding, TransportRequest, TransportRequestError,
 };
 pub use kv_response::{
-    CopInfo, LimiterWaitStats, QueryResponseError, QueryResultSubset, RequestStatsSample,
+    CopInfo, LimiterWaitStats, StoreBatchCounts, QueryResponseError, QueryResultSubset, RequestStatsSample,
     ResponseRuntimeStats,
 };
 pub use mem_storage::{MemIterator, MemStorage, MemStorageError};

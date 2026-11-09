@@ -1598,6 +1598,24 @@ impl KvTableReader for TableCommon {
         let kv_ranges_mem_usage = handle_kv_ranges_mem_usage(
             groups.iter().map(|(_, _, _, (key_ranges, _))| key_ranges.as_slice()),
         );
+        // Go `buildTableReaderFromHandles` over a global index's
+        // `kv.PartitionHandle`s: one `TableReaderExecutor` of the logical
+        // table, `SetPartitionsAndHandles` putting every partition's ranges
+        // (`PartitionHandlesToKVRanges`) in its one request. Its unordered
+        // table worker forwards the rows as returned, so no partition's rows
+        // need telling apart.
+        let groups = if groups.len() > 1 && statement.lookup_without_identity {
+            let mut merged = (self.table_id(), Vec::new(), Vec::new(), (Vec::new(), Vec::new()));
+            for (_, handles, positions, (key_ranges, range_hints)) in groups {
+                merged.1.extend(handles);
+                merged.2.extend(positions);
+                merged.3 .0.extend(key_ranges);
+                merged.3 .1.extend(range_hints);
+            }
+            vec![merged]
+        } else {
+            groups
+        };
         let statement = statement.for_lookup_batch(handles.len());
         let mut parts = Vec::with_capacity(groups.len());
         for (id, handles, positions, (key_ranges, range_hints)) in groups {

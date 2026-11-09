@@ -144,4 +144,21 @@ pub struct CopInfo {
     pub extra_concurrency: usize,
     /// Go `copIterator.buildTaskElapsed`.
     pub build_task_elapsed: std::time::Duration,
+    /// Go `GetStoreBatchInfo`: `copIterator.storeBatchedNum`, the batched
+    /// tasks their store answered.
+    pub store_batched_num: u64,
+    /// Go `copIterator.storeBatchedFallbackNum`: the batched tasks that fell
+    /// back to their own requests.
+    pub store_batched_fallback_num: u64,
+}
+
+/// Go `copIterator.storeBatchedNum` and `storeBatchedFallbackNum`: the
+/// iterator's counts, which each of its workers adds to and its result reads
+/// at close (`GetStoreBatchInfo`).
+#[derive(Debug, Default)]
+pub struct StoreBatchCounts {
+    /// Go `storeBatchedNum`.
+    pub batched: std::sync::atomic::AtomicU64,
+    /// Go `storeBatchedFallbackNum`.
+    pub fallback: std::sync::atomic::AtomicU64,
 }

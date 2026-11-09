@@ -4570,19 +4570,13 @@ impl Executor for IndexRangeSourceExec {
                 .as_ref()
                 .is_none_or(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::fully_pushable);
         // Go's unordered table worker forwards its rows unmatched: only a
-        // keep-order read (`rowIdx`), an output handle, a global index's
-        // task (whose handles span partitions) or the dirty merge needs each
-        // row's handle back. A local index's task reads one partition.
-        let global_index = self
-            .table
-            .indexes()
-            .iter()
-            .any(|index| index.read().id == self.index_id && index.read().global);
+        // keep-order read (`rowIdx`), an output handle or the dirty merge
+        // needs each row's handle back. A global index's task reads its
+        // partitions in one request.
         self.statement.lookup_without_identity = !self.covering
             && self.can_reorder_handles
             && self.extra_handle_slot.is_none()
             && self.physical_table_id_slot.is_none()
-            && !global_index
             && !self.dirty_merge;
         self.covering_row = None;
         self.native_covering = self.covering

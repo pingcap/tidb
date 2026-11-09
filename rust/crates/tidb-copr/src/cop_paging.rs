@@ -211,6 +211,13 @@ pub struct CopPagingState {
     responses: ResponseChannel<prost::bytes::Bytes>,
     response_capacity: usize,
     queued_responses: usize,
+    /// Go `copTaskResult.batchRespList`: the batched children's answers,
+    /// which go out after this task's own response.
+    batched_children: Vec<(
+        prost::bytes::Bytes,
+        Option<tidb_proto::kvrpcpb::ExecDetailsV2>,
+        Option<tidb_txnkv::ResponseRuntimeStats>,
+    )>,
     /// Go `copIterator.memTracker` (the request's `MemTracker`).
     mem_tracker: Option<Arc<tidb_memory::Tracker>>,
     /// The `MemSize` charged for each queued response, in queue order.
@@ -315,6 +322,7 @@ impl CopPagingState {
                 .max(1)
                 .saturating_add(task.batch_task_list.len()),
             queued_responses: 0,
+            batched_children: Vec::new(),
             mem_tracker,
             charged: std::collections::VecDeque::new(),
         }
@@ -392,6 +400,10 @@ impl CopPagingState {
             None => self.responses.push_result(response.data.clone())?,
         }
         self.queued_responses += 1;
+        // Go's worker sends `result.resp`, then `result.batchRespList`.
+        for (data, exec_details_v2, runtime) in std::mem::take(&mut self.batched_children) {
+            self.accept_batched_child(data, exec_details_v2, runtime)?;
+        }
         let Some(page_range) = response.range.as_ref() else {
             self.ranges.reset(Vec::new());
             self.paging_size = 0;
@@ -427,8 +439,18 @@ impl CopPagingState {
     }
 
     /// Go `handleBatchCopResponse`: one batched child's data, served through
-    /// this task's channel. The child's ranges are its own, so nothing here
-    /// advances this task's continuation.
+    /// this task's channel after the task's own response. The child's ranges
+    /// are its own, so nothing here advances this task's continuation.
+    pub(super) fn stage_batched_child(
+        &mut self,
+        data: prost::bytes::Bytes,
+        exec_details_v2: Option<tidb_proto::kvrpcpb::ExecDetailsV2>,
+        runtime: Option<tidb_txnkv::ResponseRuntimeStats>,
+    ) {
+        self.batched_children.push((data, exec_details_v2, runtime));
+    }
+
+    /// Queues one batched child's data on this task's channel now.
     pub(super) fn accept_batched_child(
         &mut self,
         data: prost::bytes::Bytes,

@@ -741,6 +741,7 @@ impl tidb_txnkv::Response for TiDbMemCopResponse {
             concurrency: self.concurrency,
             extra_concurrency: 0,
             build_task_elapsed: Duration::ZERO,
+            ..tidb_txnkv::CopInfo::default()
         })
     }
 }
