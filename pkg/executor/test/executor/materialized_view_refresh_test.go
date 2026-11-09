@@ -4988,6 +4988,57 @@ func TestCompareMaterializedViewSummaryAndOutput(t *testing.T) {
 		))
 }
 
+func TestCompareMaterializedViewStaleReadOnlyTransaction(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_compare_stale (a int not null, b int not null)")
+	tk.MustExec("insert into t_compare_stale values (1, 10)")
+	tk.MustExec("create materialized view log on t_compare_stale (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_compare_stale (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_stale group by a")
+
+	compareTS := nextCompareTimestamp(t, tk)
+	compareSQL := fmt.Sprintf("compare materialized view test.mv_compare_stale as of timestamp '%s'", compareTS)
+	outputSQL := compareSQL + " output into table test.mv_compare_stale_output"
+	observer := testkit.NewTestKit(t, store)
+	observer.MustExec("insert into test.t_compare_stale values (2, 20)")
+	tk.MustExec(outputSQL)
+	observer.MustQuery("select count(*) from test.mv_compare_stale_output").Check(testkit.Rows("0"))
+	tk.MustExec("drop table mv_compare_stale_output")
+
+	for _, tc := range []struct {
+		name       string
+		statements []string
+	}{
+		{"StartTransaction", []string{fmt.Sprintf("start transaction read only as of timestamp '%s'", compareTS)}},
+		{"SetTransaction", []string{fmt.Sprintf("set transaction read only as of timestamp '%s'", compareTS), "begin"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			for _, stmt := range tc.statements {
+				tk.MustExec(stmt)
+			}
+			defer tk.MustExec("rollback")
+			vars := tk.Session().GetSessionVars()
+			startTS := vars.TxnCtx.StartTS
+			require.NotZero(t, startTS)
+			tk.MustQuery("select a, b from t_compare_stale order by a").Check(testkit.Rows("1 10"))
+			require.Len(t, tk.MustQuery(compareSQL).Rows(), 1)
+
+			tk.MustGetErrMsg(outputSQL, "only support read-only statement during read-only staleness transactions")
+			require.True(t, vars.InTxn())
+			require.True(t, vars.TxnCtx.IsStaleness)
+			require.Equal(t, startTS, vars.TxnCtx.StartTS)
+			tk.MustQuery("select a, b from t_compare_stale order by a").Check(testkit.Rows("1 10"))
+			observer.MustQuery("select count(*) from information_schema.tables where table_schema = 'test' and table_name = 'mv_compare_stale_output'").Check(testkit.Rows("0"))
+
+			tk.MustExec("rollback")
+			tk.MustQuery("select a, b from t_compare_stale order by a").Check(testkit.Rows("1 10", "2 20"))
+		})
+	}
+}
+
 func TestCompareMaterializedViewUsesSnapshotMetadataAfterOutOfPlaceCutover(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
