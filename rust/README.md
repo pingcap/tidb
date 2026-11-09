@@ -27,7 +27,7 @@ locally convenient rule to make a golden pass.
 | `difftests` | Differential infrastructure: lexer/parser rings, Go helpers (`gorun`, `goeval`, `godump`), checked corpora, result and transaction fixtures |
 | `scripts` | Real-TiKV runners, benchmarks and generators (`scripts/README.md`) |
 | `docs/parity/current-audit/structural-findings.{md,json}` | The unresolved structural mismatches with Go; a fixed finding is removed |
-| `docs/dxf-framework-execplan.md` | The active ExecPlan |
+| `docs/mpp-execplan.md` | The active ExecPlan |
 
 ## Validation
 
