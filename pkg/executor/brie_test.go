@@ -28,6 +28,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -272,6 +273,30 @@ func TestFetchShowBRIE(t *testing.T) {
 	require.Equal(t, info2Res, fetchShowBRIEResult(t, e, brieColTypes))
 }
 
+func TestBRIEBuilderRejectsMalformedStorageQuery(t *testing.T) {
+	sctx := mock.NewContext()
+	for _, operation := range []string{"BACKUP TABLE a TO", "RESTORE TABLE a FROM"} {
+		for _, scheme := range []string{"s3", "gs", "gcs"} {
+			for _, query := range []string{"access-key=FAKE_QUERY_AK;FAKE_QUERY_SK", "access-key=FAKE_QUERY_AK&secret-access-key=FAKE_QUERY_SK%zz"} {
+				t.Run(operation+"/"+scheme+"/"+query, func(t *testing.T) {
+					stmt, err := parser.New().ParseOneStmt(operation+" '"+scheme+"://bucket/prefix?"+query+"'", "", "")
+					require.NoError(t, err)
+					brie := stmt.(*ast.BRIEStmt)
+					original := brie.Storage
+					builder := NewMockExecutorBuilderForTest(sctx, infoschema.MockInfoSchema(nil), nil)
+
+					require.Nil(t, builder.buildBRIE(brie, expression.NewSchema()))
+
+					require.ErrorContains(t, builder.err, "invalid destination URL")
+					require.ErrorContains(t, builder.err, "parse storage URL query failed: invalid format")
+					require.NotContains(t, fmt.Sprintf("%+v", builder.err), "FAKE_QUERY")
+					require.Equal(t, original, brie.Storage)
+				})
+			}
+		}
+	}
+}
+
 func TestBRIEBuilderOptions(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().User = &auth.UserIdentity{Username: "test"}
@@ -354,4 +379,14 @@ func TestBRIEBuilderOptions(t *testing.T) {
 	require.True(t, e.restoreCfg.WaitTiflashReady)
 	require.True(t, e.restoreCfg.WithSysTable)
 	require.True(t, e.restoreCfg.LoadStats)
+
+	// A storage query that cannot be fully decoded must not silently lose options.
+	for _, query := range []string{`{"tenant":"a;private-context"}`, `{"tenant":"private-context%zz"}`} {
+		stmt, err = p.ParseOneStmt("BACKUP TABLE `a` TO 's3://bucket/prefix?sse=aws:kms&sse-kms-context="+query+"'", "", "")
+		require.NoError(t, err)
+		builder.err = nil
+		require.Nil(t, builder.buildBRIE(stmt.(*ast.BRIEStmt), schema))
+		require.ErrorContains(t, builder.err, "parse storage URL query failed")
+		require.NotContains(t, builder.err.Error(), "private-context")
+	}
 }
