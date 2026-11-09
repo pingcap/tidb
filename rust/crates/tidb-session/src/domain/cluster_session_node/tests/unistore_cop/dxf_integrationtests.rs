@@ -1224,3 +1224,263 @@ fn test_scope_basic() {
     *tidb_dxf_scheduler::SYNC_REFRESH.write().unwrap() = None;
     rows(&mut tk, "set global tidb_service_scope=''");
 }
+
+/// Go `TestFrameworkWithQuery`.
+#[test]
+fn test_framework_with_query() {
+    let (stack, task_mgr) = store_and_task_manager();
+    let c = testutil::new_test_dxf_context(task_mgr, 2, 16, true);
+
+    let _registered =
+        register_example_task(&c.mock_ctrl, testutil::get_mock_basic_scheduler_ext(&c.mock_ctrl), &c.test_context, None);
+    std::thread::scope(|wg| {
+        wg.spawn(|| submit_task_and_check_success_for_basic(&c.ctx, "key1", &c.test_context));
+
+        let mut tk = stack.factory.open_session(session_context(4006)).unwrap();
+        rows(&mut tk, "use test");
+        rows(&mut tk, "drop table if exists t");
+        rows(&mut tk, "create table t(a int not null, b int not null)");
+        use crate::domain::resultset_source::ResultSetSource;
+        let mut rs = tk.node_conn().execute("select ifnull(a,b) from t").unwrap();
+        let fields = rs.source().fields().unwrap();
+        assert!(!fields.is_empty());
+        assert_eq!(fields[0].name.to_lowercase(), "ifnull(a,b)");
+        rs.source().close().unwrap();
+    });
+}
+
+/// Go `TestGC`.
+#[test]
+fn test_gc() {
+    let (ch_tx, ch_rx) = crossbeam_channel::bounded::<()>(0);
+    fail::cfg("subtaskHistoryKeepSeconds", "return(1)").unwrap();
+    *tidb_dxf_scheduler::HISTORY_SUBTASK_TABLE_GC_INTERVAL.write().unwrap() = Some(Arc::new(move |interval: &mut Duration| {
+        *interval = Duration::from_secs(1);
+        let _ = ch_rx.recv();
+    }));
+    let (_stack, task_mgr) = store_and_task_manager();
+    let c = testutil::new_test_dxf_context(task_mgr, 3, 16, true);
+
+    let _registered =
+        register_example_task(&c.mock_ctrl, testutil::get_mock_basic_scheduler_ext(&c.mock_ctrl), &c.test_context, None);
+
+    submit_task_and_check_success_for_basic(&c.ctx, "😊", &c.test_context);
+
+    let mgr = tidb_dxf_storage::get_task_manager().unwrap();
+    eventually(Duration::from_secs(10), Duration::from_millis(500), || {
+        testutil::get_subtasks_from_history(&mgr).is_ok_and(|cnt| cnt == 4)
+    });
+
+    ch_tx.send(()).unwrap();
+
+    eventually(Duration::from_secs(10), Duration::from_millis(500), || {
+        testutil::get_subtasks_from_history(&mgr).is_ok_and(|cnt| cnt == 0)
+    });
+    *tidb_dxf_scheduler::HISTORY_SUBTASK_TABLE_GC_INTERVAL.write().unwrap() = None;
+    fail::remove("subtaskHistoryKeepSeconds");
+}
+
+/// Go `TestFrameworkCleaner`.
+#[test]
+fn test_framework_cleaner() {
+    let bak = std::mem::replace(&mut *tidb_dxf_scheduler::DEFAULT_CLEAN_UP_INTERVAL.write().unwrap(), Duration::from_millis(500));
+    let (_stack, task_mgr) = store_and_task_manager();
+    let c = testutil::new_test_dxf_context(task_mgr, 3, 16, true);
+    let _registered =
+        register_example_task(&c.mock_ctrl, testutil::get_mock_basic_scheduler_ext(&c.mock_ctrl), &c.test_context, None);
+    let (ch_tx, ch) = crossbeam_channel::bounded::<()>(1);
+    *tidb_dxf_scheduler::WAIT_CLEAN_UP_FINISHED.write().unwrap() = Some(Arc::new(move || {
+        let _ = ch_tx.send(());
+    }));
+
+    // normal
+    submit_task_and_check_success_for_basic(&c.ctx, "key1", &c.test_context);
+    ch.recv().unwrap();
+    let mgr = tidb_dxf_storage::get_task_manager().unwrap();
+    mgr.get_task_by_key_with_history("key1").unwrap();
+    assert!(testutil::get_subtasks_from_history(&mgr).unwrap() > 0);
+
+    // transfer err
+    fail::cfg("mockTransferErr", "1*return").unwrap();
+    submit_task_and_check_success_for_basic(&c.ctx, "key2", &c.test_context);
+    ch.recv().unwrap();
+    let mgr = tidb_dxf_storage::get_task_manager().unwrap();
+    mgr.get_task_by_key_with_history("key1").unwrap();
+    assert!(testutil::get_subtasks_from_history(&mgr).unwrap() > 0);
+
+    fail::remove("mockTransferErr");
+    *tidb_dxf_scheduler::WAIT_CLEAN_UP_FINISHED.write().unwrap() = None;
+    *tidb_dxf_scheduler::DEFAULT_CLEAN_UP_INTERVAL.write().unwrap() = bak;
+}
+
+/// Go `TestMaxRuntimeSlots`.
+#[test]
+fn test_max_runtime_slots() {
+    // limit-runtime-slots-in-target-steps
+    {
+        let (_stack, task_mgr) = store_and_task_manager();
+        let c = testutil::new_test_dxf_context(task_mgr, 1, 16, true);
+
+        let _registered =
+            register_example_task(&c.mock_ctrl, testutil::get_mock_basic_scheduler_ext(&c.mock_ctrl), &c.test_context, None);
+
+        let call_count = Arc::new(AtomicI32::new(0));
+        {
+            let call_count = Arc::clone(&call_count);
+            *tidb_dxf_taskexecutor::BEFORE_SET_FRAMEWORK_INFO.write().unwrap() = Some(Arc::new(move |rc: &StepResource| {
+                let val = call_count.fetch_add(1, Ordering::SeqCst) + 1;
+                if val == 1 {
+                    assert_eq!(rc.cpu.capacity(), 12);
+                } else {
+                    assert_eq!(rc.cpu.capacity(), 16);
+                }
+            }));
+        }
+        *tidb_dxf_storage::BEFORE_SUBMIT_TASK.write().unwrap() = Some(Arc::new(|_, params: &mut ExtraParams| {
+            params.max_runtime_slots = 12;
+            params.target_steps = vec![STEP_ONE];
+        }));
+        let scope = tidb_dxf_handle::get_target_scope();
+        assert_eq!(c.task_mgr.get_cpu_count_of_node().unwrap(), 16);
+        let task = testutil::submit_and_wait_task(&c.ctx, "key1", &scope, 16);
+        assert_eq!(task.state, TASK_STATE_SUCCEED);
+        assert_eq!(call_count.load(Ordering::SeqCst), 2);
+        *tidb_dxf_taskexecutor::BEFORE_SET_FRAMEWORK_INFO.write().unwrap() = None;
+        *tidb_dxf_storage::BEFORE_SUBMIT_TASK.write().unwrap() = None;
+    }
+
+    // prepare-mode-required-propagates-onprepare-updates
+    {
+        let (_stack, task_mgr) = store_and_task_manager();
+        let c = testutil::new_test_dxf_context(task_mgr, 1, 16, true);
+        const PREPARE_META: &[u8] = br#"{"prepare":"done"}"#;
+        const PREPARE_SLOTS: isize = 7;
+        const PREPARE_NODE_CAP: isize = 1;
+        const INITIAL_TASK_META: &[u8] = br#"{"prepare":"init"}"#;
+        let on_prepare_called = Arc::new(AtomicI32::new(0));
+        let step_one_task_seen = Arc::new(AtomicI32::new(0));
+
+        let step_transition = |step: Step| {
+            if step == STEP_PREPARED {
+                STEP_ONE
+            } else if step == STEP_ONE {
+                STEP_DONE
+            } else {
+                panic!("unexpected step: {}", step.0)
+            }
+        };
+        let scheduler_ext = tidb_dxf_mock::MockSchedulerExtension::new(&c.mock_ctrl);
+        scheduler_ext.ret_times("OnTick", Times::Any, ());
+        scheduler_ext.ret_times("GetEligibleInstances", Times::Any, Ok::<Vec<String>, tidb_dxf_scheduler::Error>(Vec::new()));
+        scheduler_ext.ret_times("IsRetryableErr", Times::Any, false);
+        scheduler_ext.expect("GetNextStep", Times::Any, move |input| {
+            step_transition(input.downcast_ref::<TaskBase>().expect("the task").step)
+        });
+        {
+            let on_prepare_called = Arc::clone(&on_prepare_called);
+            scheduler_ext.expect("OnPrepare", Times::N(1), move |input| {
+                on_prepare_called.fetch_add(1, Ordering::SeqCst);
+                let mut task = input.downcast_ref::<std::sync::Mutex<Task>>().expect("the task").lock().unwrap();
+                task.meta = PREPARE_META.to_vec();
+                task.base.required_slots = PREPARE_SLOTS;
+                task.base.max_node_count = PREPARE_NODE_CAP;
+                Ok::<(), tidb_dxf_scheduler::Error>(())
+            });
+        }
+        scheduler_ext.expect("OnNextSubtasksBatch", Times::N(1), |input| {
+            let (task, _, next_step) =
+                input.downcast_ref::<(std::sync::Mutex<Task>, Vec<String>, Step)>().expect("(task, exec IDs, step)");
+            let task = task.lock().unwrap();
+            assert_eq!(*next_step, STEP_ONE);
+            assert_eq!(task.base.step, STEP_PREPARED);
+            assert_eq!(task.meta, PREPARE_META);
+            assert_eq!(task.base.required_slots, PREPARE_SLOTS);
+            assert_eq!(task.base.max_node_count, PREPARE_NODE_CAP);
+            Ok::<Vec<Vec<u8>>, tidb_dxf_scheduler::Error>(vec![b"step-one-subtask".to_vec()])
+        });
+        scheduler_ext.ret_times("OnDone", Times::N(1), Ok::<(), tidb_dxf_scheduler::Error>(()));
+
+        let ctrl = Arc::clone(&c.mock_ctrl);
+        let seen = Arc::clone(&step_one_task_seen);
+        let executor_ext = testutil::get_common_task_executor_ext(&c.mock_ctrl, move |task| {
+            if task.base.step == STEP_ONE {
+                seen.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(task.meta, PREPARE_META);
+                assert_eq!(task.base.required_slots, PREPARE_SLOTS);
+                assert_eq!(task.base.max_node_count, PREPARE_NODE_CAP);
+            }
+            let step_executor = testutil::get_common_step_executor(&ctrl, task.base.step, |_, subtask| {
+                assert_eq!(subtask.base.step, STEP_ONE);
+                Ok(())
+            });
+            Ok(step_executor as Arc<dyn StepExecutor>)
+        });
+        let _registered = testutil::register_example_task(scheduler_ext, executor_ext, testutil::get_common_cleaner(&c.mock_ctrl));
+
+        *tidb_dxf_storage::BEFORE_SUBMIT_TASK.write().unwrap() = Some(Arc::new(|_, params: &mut ExtraParams| {
+            params.prepare_mode = PREPARE_MODE_REQUIRED;
+        }));
+        let scope = tidb_dxf_handle::get_target_scope();
+        let task =
+            tidb_dxf_handle::submit_task("prepare-mode-required", &TASK_TYPE_EXAMPLE, "", 1, &scope, 0, INITIAL_TASK_META).unwrap();
+        let done_task = testutil::wait_task_done(&c.ctx, &task.base.key);
+        assert_eq!(done_task.state, TASK_STATE_SUCCEED);
+        assert_eq!(on_prepare_called.load(Ordering::SeqCst), 1);
+        assert_eq!(step_one_task_seen.load(Ordering::SeqCst), 1);
+        *tidb_dxf_storage::BEFORE_SUBMIT_TASK.write().unwrap() = None;
+    }
+
+    // prepare-mode-disabled-keeps-backward-compatible-path
+    {
+        let (_stack, task_mgr) = store_and_task_manager();
+        let c = testutil::new_test_dxf_context(task_mgr, 1, 16, true);
+        const INITIAL_TASK_META: &[u8] = br#"{"prepare":"old-disabled"}"#;
+
+        let step_transition = |step: Step| {
+            if step == STEP_INIT {
+                STEP_ONE
+            } else if step == STEP_ONE {
+                STEP_DONE
+            } else {
+                panic!("unexpected step: {}", step.0)
+            }
+        };
+        let scheduler_ext = tidb_dxf_mock::MockSchedulerExtension::new(&c.mock_ctrl);
+        scheduler_ext.ret_times("OnTick", Times::Any, ());
+        scheduler_ext.ret_times("GetEligibleInstances", Times::Any, Ok::<Vec<String>, tidb_dxf_scheduler::Error>(Vec::new()));
+        scheduler_ext.ret_times("IsRetryableErr", Times::Any, false);
+        scheduler_ext.expect("GetNextStep", Times::Any, move |input| {
+            step_transition(input.downcast_ref::<TaskBase>().expect("the task").step)
+        });
+        // OnPrepare: Times(0), so a call is unexpected.
+        scheduler_ext.expect("OnNextSubtasksBatch", Times::N(1), |input| {
+            let (task, _, next_step) =
+                input.downcast_ref::<(std::sync::Mutex<Task>, Vec<String>, Step)>().expect("(task, exec IDs, step)");
+            let task = task.lock().unwrap();
+            assert_eq!(*next_step, STEP_ONE);
+            assert_eq!(task.base.step, STEP_INIT);
+            assert_eq!(task.meta, INITIAL_TASK_META);
+            Ok::<Vec<Vec<u8>>, tidb_dxf_scheduler::Error>(vec![b"step-one-subtask".to_vec()])
+        });
+        scheduler_ext.ret_times("OnDone", Times::N(1), Ok::<(), tidb_dxf_scheduler::Error>(()));
+
+        let ctrl = Arc::clone(&c.mock_ctrl);
+        let executor_ext = testutil::get_common_task_executor_ext(&c.mock_ctrl, move |task| {
+            if task.base.step == STEP_ONE {
+                assert_eq!(task.meta, INITIAL_TASK_META);
+            }
+            let step_executor = testutil::get_common_step_executor(&ctrl, task.base.step, |_, subtask| {
+                assert_eq!(subtask.base.step, STEP_ONE);
+                Ok(())
+            });
+            Ok(step_executor as Arc<dyn StepExecutor>)
+        });
+        let _registered = testutil::register_example_task(scheduler_ext, executor_ext, testutil::get_common_cleaner(&c.mock_ctrl));
+
+        let scope = tidb_dxf_handle::get_target_scope();
+        let task =
+            tidb_dxf_handle::submit_task("prepare-mode-disabled", &TASK_TYPE_EXAMPLE, "", 1, &scope, 0, INITIAL_TASK_META).unwrap();
+        let done_task = testutil::wait_task_done(&c.ctx, &task.base.key);
+        assert_eq!(done_task.state, TASK_STATE_SUCCEED);
+    }
+}

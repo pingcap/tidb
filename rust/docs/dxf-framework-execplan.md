@@ -134,9 +134,8 @@ tidb-server shows the same rows.
   race the executor manager's pick-up of the task against the scheduler's
   next tick; the port's hook first waits for the executor to have started
   (Go's intent), as a slow debug build under load loses that race. Left:
-  `resource_control_test.go`, `framework_test.go`'s
-  `WithQuery`/`GC`/`Cleaner`/`MaxRuntimeSlots`, and the scheduler's and
-  executor's own testkit tests. `SET GLOBAL tidb_service_scope` writes the
+  `resource_control_test.go` and the scheduler's and executor's own testkit
+  tests. `SET GLOBAL tidb_service_scope` writes the
   node's role (Go `executor/set.go`'s `InitMetaSession`), with Go's
   `TestScopeBasic`, `TestSetScope` and the role checks of
   `TestSetTiDBServiceScopeCaseInsensitive`; a test store that sets the
