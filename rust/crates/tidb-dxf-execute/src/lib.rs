@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use tidb_dxf::{Step, StepResource, Subtask, Task};
 use tidb_dxf_metering::Recorder;
 use tidb_objstore_recording::Requests;
-use tidb_sqlexec::ExecutionContext;
+use tidb_gocontext::Context;
 
 /// A step executor's error.
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -36,7 +36,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Go `StepExecutor`: the executor of a task step's subtasks. The
 /// framework calls `init`; then for every subtask `run_subtask` (stopping at
-/// the first failure); then `cleanup`.
+/// the first failure); then `cleanup`. As in Go, the framework calls
+/// `task_meta_modified`, `resource_modified` and the summary methods from
+/// other threads while `run_subtask` runs, so every method takes `&self`.
 pub trait StepExecutor: StepExecFrameworkInfo + Send + Sync {
     /// Go `Init`: prepares the environment. A retryable error (the task
     /// executor's `IsRetryableError`) is retried; any other fails a subtask,
@@ -44,14 +46,14 @@ pub trait StepExecutor: StepExecFrameworkInfo + Send + Sync {
     ///
     /// # Errors
     /// The environment could not be prepared.
-    fn init(&mut self, ctx: &dyn ExecutionContext) -> Result<()>;
+    fn init(&self, ctx: &Context) -> Result<()>;
 
     /// Go `RunSubtask`: runs one subtask, whose meta it may update in place
     /// (stored on success).
     ///
     /// # Errors
     /// The subtask failed.
-    fn run_subtask(&mut self, ctx: &dyn ExecutionContext, subtask: &mut Subtask) -> Result<()>;
+    fn run_subtask(&self, ctx: &Context, subtask: &mut Subtask) -> Result<()>;
 
     /// Go `RealtimeSummary`: the running subtask's summary.
     fn realtime_summary(&self) -> Option<Arc<SubtaskSummary>>;
@@ -63,14 +65,14 @@ pub trait StepExecutor: StepExecFrameworkInfo + Send + Sync {
     ///
     /// # Errors
     /// Cleaning up failed.
-    fn cleanup(&mut self, ctx: &dyn ExecutionContext) -> Result<()>;
+    fn cleanup(&self, ctx: &Context) -> Result<()>;
 
     /// Go `TaskMetaModified`: the task's meta changed; on an error the
     /// framework may recreate the executor.
     ///
     /// # Errors
     /// The new meta could not be applied.
-    fn task_meta_modified(&mut self, ctx: &dyn ExecutionContext, new_meta: &[u8]) -> Result<()>;
+    fn task_meta_modified(&self, ctx: &Context, new_meta: &[u8]) -> Result<()>;
 
     /// Go `ResourceModified`: the allowed resource changed while a subtask
     /// runs; the executor conforms before returning (a reduction must not
@@ -78,7 +80,7 @@ pub trait StepExecutor: StepExecFrameworkInfo + Send + Sync {
     ///
     /// # Errors
     /// The new resource could not be applied.
-    fn resource_modified(&mut self, ctx: &dyn ExecutionContext, new_resource: &StepResource) -> Result<()>;
+    fn resource_modified(&self, ctx: &Context, new_resource: &StepResource) -> Result<()>;
 }
 
 /// Go `UpdateSubtaskSummaryInterval`: how often the subtask summary is
@@ -321,10 +323,10 @@ impl Collector for TestCollector {
 
 /// Go's `func(context.Context, int64, any) error` checkpoint updater: the
 /// subtask id and its checkpoint, as JSON.
-pub type UpdateCheckpointFunc = Arc<dyn Fn(&dyn ExecutionContext, i64, &serde_json::Value) -> Result<()> + Send + Sync>;
+pub type UpdateCheckpointFunc = Arc<dyn Fn(&Context, i64, &serde_json::Value) -> Result<()> + Send + Sync>;
 
 /// Go's `func(context.Context, int64) (string, error)` checkpoint reader.
-pub type GetCheckpointFunc = Arc<dyn Fn(&dyn ExecutionContext, i64) -> Result<String> + Send + Sync>;
+pub type GetCheckpointFunc = Arc<dyn Fn(&Context, i64) -> Result<String> + Send + Sync>;
 
 /// Go `frameworkInfo`: what the framework gives a step executor before its
 /// `Init`.

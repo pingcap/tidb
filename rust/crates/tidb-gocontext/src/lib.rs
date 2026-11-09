@@ -15,7 +15,8 @@
 //! Go's standard `context` package, as `pkg/ttl` and `pkg/dxf` use it: a cancellation
 //! tree whose `Done()` is a channel a `select` can wait on (here a
 //! `crossbeam_channel::Receiver` that disconnects when the context ends),
-//! `Err()`, `WithCancel` and `WithTimeout`. Context values have no
+//! `Err()`, `WithCancel`, `WithCancelCause` (with `Cause`) and
+//! `WithTimeout`. Context values have no
 //! counterpart: callers pass what Go keeps there (`pkg/ttl`'s phase tracer)
 //! explicitly instead.
 
@@ -44,12 +45,16 @@ impl std::fmt::Display for CtxError {
 
 impl std::error::Error for CtxError {}
 
+/// The cause of a context's cancellation (Go's `context.Cause`).
+pub type Cause = Arc<dyn std::error::Error + Send + Sync>;
+
 struct Inner {
     /// Dropped on cancel, which disconnects every `done` receiver.
     done_tx: Mutex<Option<Sender<()>>>,
     done_rx: Receiver<()>,
-    /// The first cancellation's reason; also guards `children` registration.
-    err: Mutex<Option<CtxError>>,
+    /// The first cancellation's reason and cause; also guards `children`
+    /// registration.
+    err: Mutex<Option<(CtxError, Cause)>>,
     children: Mutex<Vec<Weak<Inner>>>,
 }
 
@@ -64,19 +69,22 @@ impl Inner {
         })
     }
 
-    fn cancel(&self, reason: CtxError) {
+    /// Go `cancelCtx.cancel`: a `None` cause is the reason itself; the
+    /// descendants get the same reason and cause.
+    fn cancel(&self, reason: CtxError, cause: Option<Cause>) {
+        let cause = cause.unwrap_or_else(|| Arc::new(reason));
         {
             let mut err = self.err.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if err.is_some() {
                 return;
             }
-            *err = Some(reason);
+            *err = Some((reason, Arc::clone(&cause)));
             self.done_tx.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
         }
         let children =
             std::mem::take(&mut *self.children.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
         for child in children.iter().filter_map(Weak::upgrade) {
-            child.cancel(reason);
+            child.cancel(reason, Some(Arc::clone(&cause)));
         }
     }
 }
@@ -102,7 +110,21 @@ pub struct CancelFunc {
 impl CancelFunc {
     /// Cancels the context and its descendants (Go's `cancel()`).
     pub fn cancel(&self) {
-        self.inner.cancel(CtxError::Canceled);
+        self.inner.cancel(CtxError::Canceled, None);
+    }
+}
+
+/// Go `context.CancelCauseFunc`.
+#[derive(Clone)]
+pub struct CancelCauseFunc {
+    inner: Arc<Inner>,
+}
+
+impl CancelCauseFunc {
+    /// Cancels the context and its descendants with `cause` (Go's
+    /// `cancel(cause)`; a `None` cause is `context.Canceled`).
+    pub fn cancel(&self, cause: Option<Cause>) {
+        self.inner.cancel(CtxError::Canceled, cause);
     }
 }
 
@@ -116,8 +138,8 @@ impl Context {
         let inner = Inner::new();
         if let Some(parent) = &parent.inner {
             let err = parent.err.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            match *err {
-                Some(reason) => inner.cancel(reason),
+            match &*err {
+                Some((reason, cause)) => inner.cancel(*reason, Some(Arc::clone(cause))),
                 None => parent
                     .children
                     .lock()
@@ -139,9 +161,20 @@ impl Context {
         (ctx, CancelFunc { inner })
     }
 
+    /// Go `context.WithCancelCause(parent)`.
+    pub fn with_cancel_cause(parent: &Context) -> (Self, CancelCauseFunc) {
+        let (ctx, inner) = Self::child(parent);
+        (ctx, CancelCauseFunc { inner })
+    }
+
     /// Go `context.WithTimeout(parent, timeout)`.
     pub fn with_timeout(parent: &Context, timeout: Duration) -> (Self, CancelFunc) {
         let (ctx, inner) = Self::child(parent);
+        if timeout.is_zero() {
+            // Go `WithDeadline`: the deadline has already passed.
+            inner.cancel(CtxError::DeadlineExceeded, None);
+            return (ctx, CancelFunc { inner });
+        }
         let timer = Arc::downgrade(&inner);
         let done = inner.done_rx.clone();
         std::thread::Builder::new()
@@ -149,7 +182,7 @@ impl Context {
             .spawn(move || {
                 if let Err(crossbeam_channel::RecvTimeoutError::Timeout) = done.recv_timeout(timeout) {
                     if let Some(inner) = timer.upgrade() {
-                        inner.cancel(CtxError::DeadlineExceeded);
+                        inner.cancel(CtxError::DeadlineExceeded, None);
                     }
                 }
             })
@@ -168,9 +201,17 @@ impl Context {
 
     /// Go `ctx.Err()`.
     pub fn err(&self) -> Option<CtxError> {
-        self.inner
-            .as_ref()
-            .and_then(|inner| *inner.err.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+        self.inner.as_ref().and_then(|inner| {
+            inner.err.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map(|(reason, _)| *reason)
+        })
+    }
+
+    /// Go `context.Cause(ctx)`: why the context ended, `None` while it has
+    /// not.
+    pub fn cause(&self) -> Option<Cause> {
+        self.inner.as_ref().and_then(|inner| {
+            inner.err.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map(|(_, cause)| Arc::clone(cause))
+        })
     }
 
     /// Go's `select { case <-ctx.Done(): ... case <-time.After(d): }`:
@@ -215,5 +256,184 @@ mod tests {
         cancel.cancel();
         assert_eq!(ctx.err(), Some(CtxError::Canceled));
         assert!(!Context::background().sleep(Duration::from_millis(1)));
+    }
+
+    /// Go `TestCause`, the rows of the constructors this port has.
+    #[test]
+    fn test_cause() {
+        #[derive(Debug)]
+        struct Named(&'static str);
+        impl std::fmt::Display for Named {
+            fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str(self.0)
+            }
+        }
+        impl std::error::Error for Named {}
+
+        let forever = Duration::from_secs(1_000_000);
+        let parent_cause: Cause = Arc::new(Named("parentCause"));
+        let child_cause: Cause = Arc::new(Named("childCause"));
+        let canceled = || -> Option<Cause> { Some(Arc::new(CtxError::Canceled)) };
+        let cases: Vec<(&str, Box<dyn Fn() -> Context>, Option<CtxError>, Option<Cause>)> = vec![
+            ("Background", Box::new(Context::background), None, None),
+            (
+                "WithCancel",
+                Box::new(|| {
+                    let (ctx, cancel) = Context::with_cancel(&Context::background());
+                    cancel.cancel();
+                    ctx
+                }),
+                Some(CtxError::Canceled),
+                canceled(),
+            ),
+            (
+                "WithCancelCause",
+                Box::new({
+                    let parent_cause = Arc::clone(&parent_cause);
+                    move || {
+                        let (ctx, cancel) = Context::with_cancel_cause(&Context::background());
+                        cancel.cancel(Some(Arc::clone(&parent_cause)));
+                        ctx
+                    }
+                }),
+                Some(CtxError::Canceled),
+                Some(Arc::clone(&parent_cause)),
+            ),
+            (
+                "WithCancelCause nil",
+                Box::new(|| {
+                    let (ctx, cancel) = Context::with_cancel_cause(&Context::background());
+                    cancel.cancel(None);
+                    ctx
+                }),
+                Some(CtxError::Canceled),
+                canceled(),
+            ),
+            (
+                "WithCancelCause: parent cause before child",
+                Box::new({
+                    let (parent_cause, child_cause) = (Arc::clone(&parent_cause), Arc::clone(&child_cause));
+                    move || {
+                        let (ctx, cancel_parent) = Context::with_cancel_cause(&Context::background());
+                        let (ctx, cancel_child) = Context::with_cancel_cause(&ctx);
+                        cancel_parent.cancel(Some(Arc::clone(&parent_cause)));
+                        cancel_child.cancel(Some(Arc::clone(&child_cause)));
+                        ctx
+                    }
+                }),
+                Some(CtxError::Canceled),
+                Some(Arc::clone(&parent_cause)),
+            ),
+            (
+                "WithCancelCause: parent cause after child",
+                Box::new({
+                    let (parent_cause, child_cause) = (Arc::clone(&parent_cause), Arc::clone(&child_cause));
+                    move || {
+                        let (ctx, cancel_parent) = Context::with_cancel_cause(&Context::background());
+                        let (ctx, cancel_child) = Context::with_cancel_cause(&ctx);
+                        cancel_child.cancel(Some(Arc::clone(&child_cause)));
+                        cancel_parent.cancel(Some(Arc::clone(&parent_cause)));
+                        ctx
+                    }
+                }),
+                Some(CtxError::Canceled),
+                Some(Arc::clone(&child_cause)),
+            ),
+            (
+                "WithCancelCause: parent cause before nil",
+                Box::new({
+                    let parent_cause = Arc::clone(&parent_cause);
+                    move || {
+                        let (ctx, cancel_parent) = Context::with_cancel_cause(&Context::background());
+                        let (ctx, cancel_child) = Context::with_cancel(&ctx);
+                        cancel_parent.cancel(Some(Arc::clone(&parent_cause)));
+                        cancel_child.cancel();
+                        ctx
+                    }
+                }),
+                Some(CtxError::Canceled),
+                Some(Arc::clone(&parent_cause)),
+            ),
+            (
+                "WithCancelCause: parent cause after nil",
+                Box::new({
+                    let parent_cause = Arc::clone(&parent_cause);
+                    move || {
+                        let (ctx, cancel_parent) = Context::with_cancel_cause(&Context::background());
+                        let (ctx, cancel_child) = Context::with_cancel(&ctx);
+                        cancel_child.cancel();
+                        cancel_parent.cancel(Some(Arc::clone(&parent_cause)));
+                        ctx
+                    }
+                }),
+                Some(CtxError::Canceled),
+                canceled(),
+            ),
+            (
+                "WithCancelCause: child cause after nil",
+                Box::new({
+                    let child_cause = Arc::clone(&child_cause);
+                    move || {
+                        let (ctx, cancel_parent) = Context::with_cancel(&Context::background());
+                        let (ctx, cancel_child) = Context::with_cancel_cause(&ctx);
+                        cancel_parent.cancel();
+                        cancel_child.cancel(Some(Arc::clone(&child_cause)));
+                        ctx
+                    }
+                }),
+                Some(CtxError::Canceled),
+                canceled(),
+            ),
+            (
+                "WithCancelCause: child cause before nil",
+                Box::new({
+                    let child_cause = Arc::clone(&child_cause);
+                    move || {
+                        let (ctx, cancel_parent) = Context::with_cancel(&Context::background());
+                        let (ctx, cancel_child) = Context::with_cancel_cause(&ctx);
+                        cancel_child.cancel(Some(Arc::clone(&child_cause)));
+                        cancel_parent.cancel();
+                        ctx
+                    }
+                }),
+                Some(CtxError::Canceled),
+                Some(Arc::clone(&child_cause)),
+            ),
+            (
+                "WithTimeout",
+                Box::new(|| {
+                    let (ctx, cancel) = Context::with_timeout(&Context::background(), Duration::ZERO);
+                    cancel.cancel();
+                    ctx
+                }),
+                Some(CtxError::DeadlineExceeded),
+                Some(Arc::new(CtxError::DeadlineExceeded)),
+            ),
+            (
+                "WithTimeout canceled",
+                Box::new(move || {
+                    let (ctx, cancel) = Context::with_timeout(&Context::background(), forever);
+                    cancel.cancel();
+                    ctx
+                }),
+                Some(CtxError::Canceled),
+                canceled(),
+            ),
+        ];
+        // Go compares the causes by identity; the reasons are values here.
+        let same = |got: &Option<Cause>, want: &Option<Cause>| match (got, want) {
+            (None, None) => true,
+            (Some(got), Some(want)) => match (got.downcast_ref::<CtxError>(), want.downcast_ref::<CtxError>()) {
+                (Some(got), Some(want)) => got == want,
+                (None, None) => Arc::ptr_eq(got, want),
+                _ => false,
+            },
+            _ => false,
+        };
+        for (name, ctx, err, cause) in cases {
+            let ctx = ctx();
+            assert_eq!(ctx.err(), err, "{name}");
+            assert!(same(&ctx.cause(), &cause), "{name}: Cause(ctx) = {:?}", ctx.cause().map(|cause| cause.to_string()));
+        }
     }
 }

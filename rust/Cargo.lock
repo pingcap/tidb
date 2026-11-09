@@ -4682,8 +4682,8 @@ dependencies = [
  "serde_json",
  "tidb-dxf",
  "tidb-dxf-metering",
+ "tidb-gocontext",
  "tidb-objstore-recording",
- "tidb-sqlexec",
 ]
 
 [[package]]
