@@ -71,10 +71,16 @@ impl MppVersion {
     }
 }
 
-/// Physical location of an MPP task.
-pub trait MppTaskLocation {
-    /// TiFlash address.
+/// Go `kv.MPPTaskMeta`: the physical location of an MPP task.
+pub trait MppTaskLocation: std::fmt::Debug + Send + Sync {
+    /// Go `GetAddress`: the TiFlash address.
     fn address(&self) -> &str;
+}
+
+impl<T: MppTaskLocation + ?Sized> MppTaskLocation for Arc<T> {
+    fn address(&self) -> &str {
+        (**self).address()
+    }
 }
 
 /// Query-wide MPP identity.
@@ -94,7 +100,8 @@ impl MppTaskLocation for MppTaskMeta {
     }
 }
 
-/// Minimum execution unit of an MPP computation.
+/// Go `kv.MPPTask`: the minimum execution unit of an MPP computation.
+#[derive(Debug)]
 pub struct MppTask<L> {
     /// TiFlash location.
     pub location: L,
@@ -271,6 +278,12 @@ pub struct MppStoreTask {
     pub address: String,
     /// The regions, clipped to the request's ranges.
     pub regions: Vec<tidb_proto::coprocessor::RegionInfo>,
+}
+
+impl MppTaskLocation for MppStoreTask {
+    fn address(&self) -> &str {
+        &self.address
+    }
 }
 
 /// Go `tikvrpc.MPPStreamResponse` as the gather reads it: a raw response

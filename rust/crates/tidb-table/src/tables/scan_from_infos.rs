@@ -78,6 +78,8 @@ pub fn build_table_scan_from_infos(
         table_id: Some(table_info.id),
         columns: tidb_util::misc::columns_to_proto(column_infos, table_info.pk_is_handle, false, is_tiflash_store),
         primary_column_ids: pk_col_ids,
+        // gogoproto's non-nullable `next_read_engine` is always sent.
+        next_read_engine: Some(tipb::EngineType::Local as i32),
         ..tipb::TableScan::default()
     };
     if table_info.is_common_handle {
@@ -106,6 +108,37 @@ pub fn build_partition_table_scan_from_infos(
         ts_exec.primary_prefix_column_ids = primary_prefix_column_ids(table_info);
     }
     ts_exec
+}
+
+/// Go `SetPBColumnsDefaultValue`: each scanned column's origin default,
+/// encoded in the statement's time zone, which a row written before the
+/// column existed reads as.
+///
+/// # Errors
+/// An origin default cannot be materialised or encoded.
+pub fn set_pb_columns_default_value(
+    zone: &tidb_datatype::SessionTimeZone,
+    pb_columns: &mut [tipb::ColumnInfo],
+    columns: &[GoShared<ColumnInfo>],
+    table_name: &str,
+) -> Result<(), String> {
+    for (i, c) in columns.iter().enumerate() {
+        let c = c.read();
+        // For virtual columns, we set their default values to NULL so that TiKV will return NULL properly,
+        // They real values will be computed later.
+        if c.is_generated() && !c.generated_stored {
+            pb_columns[i].default_val = Some(vec![tidb_codec::NIL_FLAG]);
+        }
+        if c.get_origin_default_value().is_nil() {
+            continue;
+        }
+
+        let d = crate::origin_default::origin_default(&c, table_name).map_err(|err| err.to_string())?;
+        pb_columns[i].default_val = Some(
+            tidb_codec::encode_value_in_timezone(zone, std::slice::from_ref(&d)).map_err(|err| err.to_string())?,
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -935,9 +935,21 @@ fn child_req_prop_setter_panics_on_an_out_of_range_index_like_go() {
 
 #[test]
 fn to_pb_refuses_exactly_as_the_go_base_body_does() {
-    let tree = scan(4, &[1]);
-    let err = tree.to_pb(StoreType::TiKv).expect_err("base body errors");
-    assert_eq!(err.message(), "plan TableFullScan_4 fails converts to PB");
+    // Go's `PhysicalTableDual` has no `ToPB` of its own.
+    let tree = PhysicalPlan::TableDual(PhysicalTableDual {
+        base: BasePhysicalPlan::with_id(4, "TableDual", 0),
+        ..PhysicalTableDual::default()
+    });
+    let eval_ctx = tidb_exprctx::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
+    let ctx = tidb_planner_core_operator_physicalop::to_pb::BuildPbContext {
+        expr_ctx: &eval_ctx,
+        tiflash_fast_scan: false,
+        tiflash_fine_grained_shuffle_batch_size: 0,
+        group_concat_max_len: 0,
+        in_explain_stmt: false,
+    };
+    let err = tree.to_pb(&ctx, StoreType::TiKv).expect_err("base body errors");
+    assert_eq!(err.message(), "plan TableDual_4 fails converts to PB");
 }
 
 #[test]

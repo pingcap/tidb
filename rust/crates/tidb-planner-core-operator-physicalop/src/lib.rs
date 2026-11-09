@@ -40,6 +40,7 @@
 //!   [`tidb_planner_core_base`].
 
 pub mod task;
+pub mod to_pb;
 pub mod enforce;
 pub mod final_mode_agg;
 pub mod fk_plan;
@@ -2150,8 +2151,7 @@ pub enum ExchangeType {
 /// Go `physicalop.PhysicalExchangeSender`
 /// (`pkg/planner/core/operator/physicalop/physical_exchange_sender.go`):
 /// the last operator of an MPP fragment, shipping its child's rows to the
-/// consumer tier. Go's `TargetTasks`/`Tasks` are dispatch-time state and
-/// stay unset in the planned tree.
+/// consumer tier.
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalExchangeSender {
     /// The shared physical base.
@@ -2164,6 +2164,9 @@ pub struct PhysicalExchangeSender {
     /// Go `CompressionMode`, which `EnforceExchangerImpl` chooses from the
     /// session (`ChooseMppExchangeCompressionMode`).
     pub compression_mode: tidb_vardef::modes::ExchangeCompressionMode,
+    /// Go `TargetTasks`: the tasks this sender sends to, filled by fragment
+    /// generation.
+    pub target_tasks: Vec<MppTask>,
 }
 
 impl PhysicalExchangeSender {
@@ -2199,26 +2202,20 @@ impl PhysicalExchangeSender {
     }
 }
 
-/// Runtime task metadata attached to a Go `PhysicalExchangeReceiver` after
-/// MPP fragment scheduling. The planner keeps the identity fields available
-/// without coupling the physical plan to the executor's transport type.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct MppTaskMeta {
-    /// TiFlash task identifier, when scheduling has assigned one.
-    pub id: i64,
-    /// TiFlash address, when scheduling has assigned one.
-    pub address: String,
-}
+/// Go `*kv.MPPTask` as the fragments hold it: a task whose `Meta` is any
+/// `kv.MPPTaskMeta` (a store's task, or the coordinator's address).
+pub type MppTask = std::sync::Arc<tidb_txnkv::MppTask<std::sync::Arc<dyn tidb_txnkv::MppTaskLocation>>>;
 
 /// Go `physicalop.PhysicalExchangeReceiver` (`physical_exchange_receiver.go`):
 /// the passive side of an MPP exchange. Its sender is the sole physical child;
-/// runtime task metadata is filled by the fragment scheduler.
+/// fragment generation fills its tasks.
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalExchangeReceiver {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
-    /// Go `Tasks`, represented by planner-owned metadata until scheduling.
-    pub tasks: Vec<MppTaskMeta>,
+    /// Go `Tasks`: the tasks of the fragment whose sender feeds this
+    /// receiver.
+    pub tasks: Vec<MppTask>,
 }
 
 impl PhysicalExchangeReceiver {
@@ -4546,14 +4543,7 @@ impl PhysicalPlan {
     // core's `attach2Task` (`task_attach`), beside the task representation it
     // composes onto.
 
-    /// Go `ToPB(ctx, storeType)` (`<3rd>`). Go's base body is exactly this
-    /// error, so the refusal is ported, not invented.
-    pub fn to_pb(&self, _store_type: StoreType) -> Result<(), PlanError> {
-        Err(PlanError::internal(format!(
-            "plan {} fails converts to PB",
-            self.explain_id(false)
-        )))
-    }
+    // Go `ToPB(ctx, storeType)` (`<3rd>`) lives in `to_pb.rs`.
 
     /// Go `GetChildReqProps(idx)` (`<4th>`).
     #[must_use]
@@ -5035,10 +5025,13 @@ impl PhysicalPlan {
                 exchange_type: op.exchange_type,
                 hash_cols: op.hash_cols.clone(),
                 compression_mode: op.compression_mode,
+                // Go's `Clone` leaves `TargetTasks` (and the receiver's
+                // `Tasks`) to fragment generation.
+                target_tasks: Vec::new(),
             }),
             Self::ExchangeReceiver(op) => Self::ExchangeReceiver(PhysicalExchangeReceiver {
                 base: base_of(&op.base),
-                tasks: op.tasks.clone(),
+                tasks: Vec::new(),
             }),
             Self::IndexScan(op) => Self::IndexScan(PhysicalIndexScan {
                 group_by_col_idxs: op.group_by_col_idxs.clone(),

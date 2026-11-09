@@ -6544,7 +6544,9 @@ dependencies = [
 name = "tidb-planner-core-operator-physicalop"
 version = "0.0.0"
 dependencies = [
+ "prost 0.14.4",
  "tidb-ast",
+ "tidb-codec",
  "tidb-context",
  "tidb-datatype",
  "tidb-expr",
@@ -6564,9 +6566,11 @@ dependencies = [
  "tidb-planner-property",
  "tidb-planner-tablesampler",
  "tidb-planner-util",
+ "tidb-proto",
  "tidb-ranger",
  "tidb-sessionctx",
  "tidb-size",
+ "tidb-table",
  "tidb-txnkv",
  "tidb-vardef",
 ]

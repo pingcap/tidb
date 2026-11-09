@@ -36,3 +36,7 @@ tidb-model = { path = "../tidb-model" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-vardef = { path = "../tidb-vardef" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
+tidb-table = { path = "../tidb-table" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-proto = { path = "../tidb-proto" }
+prost.workspace = true

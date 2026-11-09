@@ -262,6 +262,9 @@ pub fn column_to_proto(c: &tidb_model::ColumnInfo, for_index: bool, is_tiflash_s
         decimal: Some(c.field_type.decimal() as i32),
         flag: Some(c.field_type.flags() as i32),
         elems: c.field_type.elems_snapshot().into_iter().map(|elem| elem.to_string()).collect(),
+        // gogoproto's non-nullable fields are always sent, zero included.
+        pk_handle: Some(false),
+        array: Some(false),
         ..tidb_proto::tipb::ColumnInfo::default()
     };
     if is_tiflash_store && c.is_virtual_generated() {
@@ -307,6 +310,8 @@ mod column_to_proto_tests {
             column_len: Some(column_len),
             decimal: Some(0),
             flag: Some(flag),
+            pk_handle: Some(false),
+            array: Some(false),
             ..tipb::ColumnInfo::default()
         }
     }
@@ -410,10 +415,11 @@ mod column_to_proto_tests {
             column_len: Some(-1),
             decimal: Some(-1),
             flag: Some(0),
+            pk_handle: Some(false),
+            array: Some(false),
             ..tipb::ColumnInfo::default()
         };
         assert_eq!(column_to_proto(&column, false, false), expect);
-        let expect = tipb::ColumnInfo { pk_handle: Some(false), ..expect };
         assert_eq!(columns_to_proto(&[GoShared::new(column), GoShared::new(column2)], false, false, false)[0], expect);
     }
 }

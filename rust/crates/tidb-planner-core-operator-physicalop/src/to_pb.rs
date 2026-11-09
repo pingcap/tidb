@@ -1,0 +1,445 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Go's `ToPB(ctx *base.BuildPBContext, storeType kv.StoreType)` of the
+//! physical operators (`physical_selection.go`, `physical_projection.go`,
+//! `physical_limit.go`, `physical_topn.go`, `physical_table_scan.go`,
+//! `physical_exchange_sender.go`, `physical_exchange_receiver.go`), over
+//! `expression`'s `ExpressionsToPBList`, `ProjectionExpressionsToPBList`,
+//! `SortByItemToPB` and `ToPBFieldTypeWithCheck`. An operator Go gives no
+//! `ToPB` keeps the base body's refusal.
+//!
+//! Go's `PbConverter` asks the `kv.Client` whether each expression type is
+//! supported; this port's expression lowering decides from its pushdown
+//! catalog instead (register row X01), so the context carries no client.
+
+use tidb_expr::column::Column;
+use tidb_expr::expression::Expression;
+use tidb_expr::pushdown_catalog::{self, ColumnDescriptor};
+use tidb_expr::schema::Schema;
+use tidb_kv::store_type::StoreType;
+use tidb_planner_core_base::PlanError;
+use tidb_proto::tipb;
+
+use crate::{
+    PhysicalExchangeReceiver, PhysicalExchangeSender, PhysicalLimit, PhysicalPlan, PhysicalProjection,
+    PhysicalSelection, PhysicalTableScan, PhysicalTopN,
+};
+
+/// Go `planctx.BuildPBContext` (`base.BuildPBContext`): what building a
+/// `tipb.Executor` from a plan reads.
+pub struct BuildPbContext<'a> {
+    /// Go `ExprCtx`, whose evaluation context renders expressions and
+    /// carries the statement's time zone.
+    pub expr_ctx: &'a dyn tidb_exprctx::Columns,
+    /// Go `TiFlashFastScan`.
+    pub tiflash_fast_scan: bool,
+    /// Go `TiFlashFineGrainedShuffleBatchSize`.
+    pub tiflash_fine_grained_shuffle_batch_size: u64,
+    /// Go `GroupConcatMaxLen`.
+    pub group_concat_max_len: u64,
+    /// Go `InExplainStmt`.
+    pub in_explain_stmt: bool,
+}
+
+/// The descriptor of one column of an executor's input row, from the
+/// column's own type (Go `columnToPBExpr` writes `ToPBFieldType(col.RetType)`).
+fn column_descriptor(schema: &Schema, offset: u32) -> Option<ColumnDescriptor> {
+    let field_type = schema.columns.get(offset as usize)?.ret_type.as_ref()?;
+    Some(ColumnDescriptor {
+        tp: i32::from(field_type.code().mysql_type()),
+        flag: field_type.flags(),
+        flen: field_type.flen() as i32,
+        decimal: field_type.decimal() as i32,
+        charset: field_type.charset_name().to_owned(),
+        collation: field_type.collation_name().to_owned(),
+        elems: field_type.elems_snapshot().into_iter().map(|elem| elem.to_string()).collect(),
+        array: field_type.is_array(),
+    })
+}
+
+/// Go `PbConverter.ExprToPB` over the operator's input row `input`.
+fn expr_to_pb(ctx: &BuildPbContext<'_>, expr: &Expression, input: &Schema) -> Option<tipb::Expr> {
+    pushdown_catalog::expression_to_pb_in(expr, &|offset| column_descriptor(input, offset), &ctx.expr_ctx.time_zone())
+}
+
+/// Go `plannererrors.ErrInternal.GenWithStack("expression %v cannot be
+/// pushed down", expr.StringWithCtx(ctx, errors.RedactLogDisable))`.
+fn cannot_be_pushed_down(ctx: &BuildPbContext<'_>, expr: &Expression) -> PlanError {
+    let text = tidb_expr::explain::physical_expression_text_with_columns(
+        ctx.expr_ctx,
+        expr,
+        &[],
+        tidb_expr::explain::ExpressionTextStyle::StringWithCtx,
+    )
+    .unwrap_or_default();
+    PlanError::internal(format!("expression {text} cannot be pushed down"))
+}
+
+/// Go `expression.ExpressionsToPBList`.
+///
+/// # Errors
+/// An expression has no PB form.
+pub fn expressions_to_pb_list(
+    ctx: &BuildPbContext<'_>,
+    exprs: &[Expression],
+    input: &Schema,
+) -> Result<Vec<tipb::Expr>, PlanError> {
+    exprs.iter().map(|expr| expr_to_pb(ctx, expr, input).ok_or_else(|| cannot_be_pushed_down(ctx, expr))).collect()
+}
+
+/// Go `expression.ProjectionExpressionsToPBList`: a top-level column is
+/// converted without the type check (`columnToPBExpr(column, false)`), since
+/// it implies no calculation.
+///
+/// # Errors
+/// An expression has no PB form.
+pub fn projection_expressions_to_pb_list(
+    ctx: &BuildPbContext<'_>,
+    exprs: &[Expression],
+    input: &Schema,
+) -> Result<Vec<tipb::Expr>, PlanError> {
+    exprs
+        .iter()
+        .map(|expr| {
+            let v = match expr {
+                Expression::Column(column) => column_to_pb_expr(column),
+                _ => expr_to_pb(ctx, expr, input),
+            };
+            v.ok_or_else(|| cannot_be_pushed_down(ctx, expr))
+        })
+        .collect()
+}
+
+/// Go `PbConverter.columnToPBExpr(column, false)`: a `ColumnRef` to the
+/// column's resolved index, typed by `ToPBFieldType(column.RetType)`.
+fn column_to_pb_expr(column: &Column) -> Option<tipb::Expr> {
+    let field_type = column.ret_type.as_ref()?;
+    let mut val = Vec::new();
+    tidb_codec::encode_int(&mut val, column.index);
+    Some(tipb::Expr {
+        tp: Some(tipb::ExprType::ColumnRef as i32),
+        val: Some(val),
+        field_type: Some(pushdown_catalog::to_pb_field_type(field_type)?),
+        ..tipb::Expr::default()
+    })
+}
+
+/// Go `expression.SortByItemToPB`.
+fn sort_by_item_to_pb(ctx: &BuildPbContext<'_>, expr: &Expression, desc: bool, input: &Schema) -> Option<tipb::ByItem> {
+    let e = expr_to_pb(ctx, expr, input)?;
+    Some(tipb::ByItem { expr: Some(e), desc: Some(desc), ..tipb::ByItem::default() })
+}
+
+/// Go `expression.ToPBFieldTypeWithCheck`.
+///
+/// # Errors
+/// A TiFlash type whose decimal is invalid.
+pub fn to_pb_field_type_with_check(
+    ft: &tidb_datatype::FieldType,
+    store_type: StoreType,
+) -> Result<tipb::FieldType, PlanError> {
+    if store_type == StoreType::TiFlash && !ft.is_decimal_valid() {
+        return Err(PlanError::internal(format!(
+            "{} can not be pushed to TiFlash because it contains invalid decimal('{}','{}').",
+            ft,
+            ft.flen(),
+            ft.decimal()
+        )));
+    }
+    pushdown_catalog::to_pb_field_type(ft)
+        .ok_or_else(|| PlanError::internal(format!("{ft} has no PB field type")))
+}
+
+/// Go's zero `tipb.Executor`: gogoproto always sends its non-nullable
+/// fine-grained shuffle fields, zero included.
+fn go_executor() -> tipb::Executor {
+    tipb::Executor {
+        fine_grained_shuffle_stream_count: Some(0),
+        fine_grained_shuffle_batch_size: Some(0),
+        ..tipb::Executor::default()
+    }
+}
+
+fn child_schema(plan: &PhysicalPlan) -> Result<&Schema, PlanError> {
+    plan.children()
+        .first()
+        .and_then(PhysicalPlan::schema)
+        .ok_or_else(|| PlanError::internal(format!("plan {} has no child schema", plan.explain_id(false))))
+}
+
+fn executor_id(plan: &PhysicalPlan) -> String {
+    plan.explain_id(false)
+}
+
+fn child_to_pb(plan: &PhysicalPlan, ctx: &BuildPbContext<'_>, store_type: StoreType) -> Result<Box<tipb::Executor>, PlanError> {
+    let child = plan
+        .children()
+        .first()
+        .ok_or_else(|| PlanError::internal(format!("plan {} has no child", plan.explain_id(false))))?;
+    Ok(Box::new(child.to_pb(ctx, store_type)?))
+}
+
+impl PhysicalPlan {
+    /// Go `ToPB(ctx, storeType)`: the operator's `tipb.Executor`, its
+    /// children included where Go's tree form (TiFlash) carries them.
+    ///
+    /// # Errors
+    /// The operator, or an expression it carries, has no PB form.
+    pub fn to_pb(&self, ctx: &BuildPbContext<'_>, store_type: StoreType) -> Result<tipb::Executor, PlanError> {
+        match self {
+            Self::Selection(p) => p.to_pb(self, ctx, store_type),
+            Self::Projection(p) => p.to_pb(self, ctx, store_type),
+            Self::Limit(p) => p.to_pb(self, ctx, store_type),
+            Self::TopN(p) => p.to_pb(self, ctx, store_type),
+            Self::TableScan(p) => p.to_pb(self, ctx, store_type),
+            Self::ExchangeSender(p) => p.to_pb(self, ctx, store_type),
+            Self::ExchangeReceiver(p) => p.to_pb(self, ctx),
+            // Go's base body is exactly this error.
+            _ => Err(PlanError::internal(format!("plan {} fails converts to PB", self.explain_id(false)))),
+        }
+    }
+}
+
+impl PhysicalSelection {
+    /// Go `PhysicalSelection.ToPB`.
+    fn to_pb(&self, plan: &PhysicalPlan, ctx: &BuildPbContext<'_>, store_type: StoreType) -> Result<tipb::Executor, PlanError> {
+        let conditions = expressions_to_pb_list(ctx, &self.conditions, child_schema(plan)?)?;
+        let mut sel_exec = tipb::Selection { conditions, ..tipb::Selection::default() };
+        let mut executor_id = String::new();
+        if store_type == StoreType::TiFlash {
+            sel_exec.child = Some(child_to_pb(plan, ctx, store_type)?);
+            executor_id = self::executor_id(plan);
+        }
+        Ok(tipb::Executor {
+            tp: Some(tipb::ExecType::TypeSelection as i32),
+            selection: Some(Box::new(sel_exec)),
+            executor_id: Some(executor_id),
+            ..go_executor()
+        })
+    }
+}
+
+impl PhysicalProjection {
+    /// Go `PhysicalProjection.ToPB`.
+    fn to_pb(&self, plan: &PhysicalPlan, ctx: &BuildPbContext<'_>, store_type: StoreType) -> Result<tipb::Executor, PlanError> {
+        let exprs = projection_expressions_to_pb_list(ctx, &self.exprs, child_schema(plan)?)?;
+        let mut proj_exec = tipb::Projection { exprs, ..tipb::Projection::default() };
+        if !(store_type == StoreType::TiFlash || store_type == StoreType::TiKv) {
+            return Err(PlanError::internal(format!(
+                "the projection can only be pushed down to TiFlash or TiKV now, not {}",
+                store_type.name()
+            )));
+        }
+        proj_exec.child = Some(child_to_pb(plan, ctx, store_type)?);
+        Ok(tipb::Executor {
+            tp: Some(tipb::ExecType::TypeProjection as i32),
+            projection: Some(Box::new(proj_exec)),
+            executor_id: Some(executor_id(plan)),
+            ..go_executor()
+        })
+    }
+}
+
+/// Go's `PrefixCol` (an `*expression.Column` of the child's schema), which
+/// this port keeps by its unique id.
+fn prefix_column(plan: &PhysicalPlan, prefix_col: Option<i64>) -> Result<Option<Expression>, PlanError> {
+    let Some(unique_id) = prefix_col else {
+        return Ok(None);
+    };
+    let column = child_schema(plan)?
+        .columns
+        .iter()
+        .find(|column| column.unique_id == unique_id)
+        .ok_or_else(|| PlanError::internal(format!("plan {} has no prefix column {unique_id}", plan.explain_id(false))))?;
+    Ok(Some(Expression::Column(column.clone())))
+}
+
+impl PhysicalLimit {
+    /// Go `PhysicalLimit.ToPB`.
+    fn to_pb(&self, plan: &PhysicalPlan, ctx: &BuildPbContext<'_>, store_type: StoreType) -> Result<tipb::Executor, PlanError> {
+        let input = child_schema(plan)?;
+        let mut limit_exec = tipb::Limit { limit: Some(self.count), ..tipb::Limit::default() };
+        for item in &self.partition_by {
+            limit_exec.partition_by.extend(sort_by_item_to_pb(ctx, &Expression::Column(item.col.clone()), item.desc, input));
+        }
+        // init partial order params
+        if let Some(prefix_col) = prefix_column(plan, self.prefix_col)? {
+            limit_exec.truncate_key_expr = expressions_to_pb_list(ctx, std::slice::from_ref(&prefix_col), input)?;
+        }
+        let mut executor_id = String::new();
+        if store_type == StoreType::TiFlash {
+            limit_exec.child = Some(child_to_pb(plan, ctx, store_type)?);
+            executor_id = self::executor_id(plan);
+        }
+        Ok(tipb::Executor {
+            tp: Some(tipb::ExecType::TypeLimit as i32),
+            limit: Some(Box::new(limit_exec)),
+            executor_id: Some(executor_id),
+            ..go_executor()
+        })
+    }
+}
+
+impl PhysicalTopN {
+    /// Go `PhysicalTopN.ToPB`.
+    fn to_pb(&self, plan: &PhysicalPlan, ctx: &BuildPbContext<'_>, store_type: StoreType) -> Result<tipb::Executor, PlanError> {
+        let input = child_schema(plan)?;
+        let mut top_n_exec = tipb::TopN { limit: Some(self.count), ..tipb::TopN::default() };
+        for item in &self.by_items {
+            top_n_exec.order_by.extend(sort_by_item_to_pb(ctx, &item.expr, item.desc, input));
+        }
+        for item in &self.partition_by {
+            top_n_exec.partition_by.extend(sort_by_item_to_pb(ctx, &Expression::Column(item.col.clone()), item.desc, input));
+        }
+        let mut executor_id = String::new();
+        if store_type == StoreType::TiFlash {
+            top_n_exec.child = Some(child_to_pb(plan, ctx, store_type)?);
+            executor_id = self::executor_id(plan);
+        }
+        Ok(tipb::Executor {
+            tp: Some(tipb::ExecType::TypeTopN as i32),
+            top_n: Some(Box::new(top_n_exec)),
+            executor_id: Some(executor_id),
+            ..go_executor()
+        })
+    }
+}
+
+impl PhysicalTableScan {
+    /// Go `PhysicalTableScan.ToPB`.
+    fn to_pb(&self, plan: &PhysicalPlan, ctx: &BuildPbContext<'_>, store_type: StoreType) -> Result<tipb::Executor, PlanError> {
+        let table = self
+            .table
+            .as_ref()
+            .ok_or_else(|| PlanError::internal(format!("plan {} has no table", plan.explain_id(false))))?
+            .read();
+        if store_type == StoreType::TiFlash && table.get_partition_info().is_some() && self.dynamic_partition_access.is_some() {
+            // Go `partitionTableScanToPBForFlash`: Milestone 2 ports it with
+            // the fragments' partition pruning.
+            return Err(PlanError::internal(format!(
+                "plan {} is a TiFlash partition table scan, which is not ported yet",
+                plan.explain_id(false)
+            )));
+        }
+        let mut ts_exec = tidb_table::tables::scan_from_infos::build_table_scan_from_infos(
+            &table,
+            &self.columns,
+            self.store_type == StoreType::TiFlash,
+        );
+        ts_exec.desc = Some(self.desc);
+        ts_exec.keep_order = Some(self.keep_order);
+        ts_exec.is_fast_scan = Some(ctx.tiflash_fast_scan);
+        // Go `int32(p.maxWaitTimeMs)`, zero without runtime filters.
+        ts_exec.max_wait_time_ms = Some(0);
+        // Go `p.isPartition` (`ds.PartitionDefIdx != nil`): the scan reads
+        // one partition, whose physical id differs from the table's.
+        if self.table_id != table.id {
+            ts_exec.table_id = Some(self.table_id);
+        }
+        let mut executor_id = String::new();
+        if store_type == StoreType::TiFlash {
+            executor_id = self::executor_id(plan);
+        }
+        tidb_table::tables::scan_from_infos::set_pb_columns_default_value(
+            &ctx.expr_ctx.time_zone(),
+            &mut ts_exec.columns,
+            &self.columns,
+            table.name.original(),
+        )
+        .map_err(PlanError::internal)?;
+        Ok(tipb::Executor {
+            tp: Some(tipb::ExecType::TypeTableScan as i32),
+            tbl_scan: Some(ts_exec),
+            executor_id: Some(executor_id),
+            ..go_executor()
+        })
+    }
+}
+
+/// Go `kv.MPPTask.ToPB().Marshal()` of each task.
+fn encoded_tasks(tasks: &[crate::MppTask]) -> Vec<Vec<u8>> {
+    use prost::Message;
+    tasks.iter().map(|task| task.to_meta().encode_to_vec()).collect()
+}
+
+impl PhysicalExchangeSender {
+    /// Go `PhysicalExchangeSender.ToPB`.
+    fn to_pb(&self, plan: &PhysicalPlan, ctx: &BuildPbContext<'_>, store_type: StoreType) -> Result<tipb::Executor, PlanError> {
+        let child = child_to_pb(plan, ctx, StoreType::TiFlash)?;
+        let encoded_task = encoded_tasks(&self.target_tasks);
+
+        let input = child_schema(plan)?;
+        let mut hash_cols = Vec::with_capacity(self.hash_cols.len());
+        let mut hash_col_types = Vec::with_capacity(self.hash_cols.len());
+        for col in &self.hash_cols {
+            hash_cols.push(Expression::Column(col.col.clone()));
+            let ret_type = col.col.ret_type.as_ref().ok_or_else(|| PlanError::internal("a hash column has no type"))?;
+            let mut tp = to_pb_field_type_with_check(ret_type, store_type)?;
+            tp.collate = Some(col.collate_id);
+            hash_col_types.push(tp);
+        }
+        let schema = plan.schema().ok_or_else(|| PlanError::internal("an exchange sender has no schema"))?;
+        let mut all_field_types = Vec::with_capacity(schema.columns.len());
+        for column in &schema.columns {
+            let ret_type = column.ret_type.as_ref().ok_or_else(|| PlanError::internal("a sender column has no type"))?;
+            all_field_types.push(to_pb_field_type_with_check(ret_type, store_type)?);
+        }
+        let hash_col_pb = expressions_to_pb_list(ctx, &hash_cols, input)?;
+        let ec_exec = tipb::ExchangeSender {
+            tp: Some(match self.exchange_type {
+                crate::ExchangeType::PassThrough => tipb::ExchangeType::PassThrough,
+                crate::ExchangeType::Broadcast => tipb::ExchangeType::Broadcast,
+                crate::ExchangeType::Hash => tipb::ExchangeType::Hash,
+            } as i32),
+            encoded_task_meta: encoded_task,
+            partition_keys: hash_col_pb,
+            child: Some(child),
+            types: hash_col_types,
+            all_field_types,
+            compression: Some(self.compression_mode.to_tipb_compression_mode()),
+            ..tipb::ExchangeSender::default()
+        };
+        Ok(tipb::Executor {
+            tp: Some(tipb::ExecType::TypeExchangeSender as i32),
+            exchange_sender: Some(Box::new(ec_exec)),
+            executor_id: Some(executor_id(plan)),
+            fine_grained_shuffle_stream_count: Some(self.base.tiflash_fine_grained_shuffle_stream_count),
+            fine_grained_shuffle_batch_size: Some(ctx.tiflash_fine_grained_shuffle_batch_size),
+            ..go_executor()
+        })
+    }
+}
+
+impl PhysicalExchangeReceiver {
+    /// Go `PhysicalExchangeReceiver.ToPB`.
+    fn to_pb(&self, plan: &PhysicalPlan, ctx: &BuildPbContext<'_>) -> Result<tipb::Executor, PlanError> {
+        let encoded_task = encoded_tasks(&self.tasks);
+        let schema = plan.schema().ok_or_else(|| PlanError::internal("an exchange receiver has no schema"))?;
+        let mut field_types = Vec::with_capacity(schema.columns.len());
+        for column in &schema.columns {
+            let ret_type = column.ret_type.as_ref().ok_or_else(|| PlanError::internal("a receiver column has no type"))?;
+            field_types.push(to_pb_field_type_with_check(ret_type, StoreType::TiFlash)?);
+        }
+        let ec_exec = tipb::ExchangeReceiver { encoded_task_meta: encoded_task, field_types, ..tipb::ExchangeReceiver::default() };
+        Ok(tipb::Executor {
+            tp: Some(tipb::ExecType::TypeExchangeReceiver as i32),
+            exchange_receiver: Some(ec_exec),
+            executor_id: Some(executor_id(plan)),
+            fine_grained_shuffle_stream_count: Some(self.base.tiflash_fine_grained_shuffle_stream_count),
+            fine_grained_shuffle_batch_size: Some(ctx.tiflash_fine_grained_shuffle_batch_size),
+            ..go_executor()
+        })
+    }
+}

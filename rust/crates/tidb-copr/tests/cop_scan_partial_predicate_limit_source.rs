@@ -639,7 +639,8 @@ fn count_star_lowers_to_count_with_one_constant_child() {
                 functions: vec![PushdownAggregateFunction {
                     kind: PushdownAggregateKind::Count,
                     input: None,
-                    output_type: count_type,
+                    output_type: count_type.clone(),
+                    ret_type: count_type,
                 }],
             }),
             keep_order: false,

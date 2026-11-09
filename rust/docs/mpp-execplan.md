@@ -37,7 +37,17 @@ the unistore stack.
   aggregation, hash join, exchange sender and receiver, expand, window, CTE
   sink and source, local index lookup). The base refusal already exists
   (`PhysicalPlan::to_pb`). Unit tests copy Go's `ToPB` expectations where Go
-  pins them.
+  pins them. Done so far (2026-11-10): Go `util.ColumnToProto` /
+  `ColumnsToProto` (`tidb-util` `misc.rs`) and `tables.BuildTableScanFromInfos`
+  / `BuildPartitionTableScanFromInfos` with the primary-key lookups
+  (`tidb-table` `tables/scan_from_infos.rs`), on Go's vectors; the physical
+  table scan carries Go's `Table` and `Columns`. `PhysicalPlan::to_pb`
+  (`physicalop` `to_pb.rs`, Go's `BuildPBContext`) for Selection,
+  Projection, Limit, TopN, TableScan (not the TiFlash partition scan yet),
+  ExchangeSender and ExchangeReceiver; a planned MPP fragment's `ToPB` is
+  Go's to the byte (`unistore_cop/mpp_to_pb.rs`, Go testkit probe vectors).
+  Left: aggregation, hash join, sort, expand, window, CTE, index scan, local
+  index lookup, the TiFlash partition scan.
 - [ ] Milestone 2: Go `fragment.go` (`Fragment`, `GenerateRootMPPTasks`,
   `mppTaskGenerator`: fragments, union-all untwisting, CTE task counts,
   `constructMPPTasksImpl` over `MPPClient.ConstructMPPTasks`, partition
@@ -65,6 +75,23 @@ the unistore stack.
   than from `ToPB` on the pushed plan (register row E15). Milestone 1 is the
   shared root of M01 and E15; this plan uses it for MPP only, and E15 moves
   the TiKV readers onto it.
+
+- `PhysicalTableScan` had no `Table` / `Columns` (Go's `*model.TableInfo`
+  and `[]*model.ColumnInfo`); readers looked the table up again by name. The
+  scans built from a `DataSource` now copy both, as Go's
+  `getOriginalPhysicalTableScan` does.
+
+- Go's gogoproto non-nullable fields are always encoded, zero included
+  (`tipb.Executor`'s fine-grained shuffle fields, `ColumnInfo.pk_handle` /
+  `array`, `TableScan.next_read_engine`); prost's `Option` omits `None`, so
+  the lowering sets them. A byte comparison against a Go probe is what
+  catches these.
+- 2026-11-10, a planner divergence found on the way (not this plan's):
+  `explain select /*+ read_from_storage(tiflash[t]) */ * from t where a + 1 >
+  20 limit 100` on a pseudo-stats table plans Go's shape but Go's scan
+  estimate is 125.00 (the limit's expected count over the selection) where
+  this port's is 10000.00, and Go's plan ids run two higher
+  (`TableFullScan_14` against `_12`).
 
 ## Decision Log
 
