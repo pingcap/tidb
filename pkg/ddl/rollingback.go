@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
-	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -650,22 +649,6 @@ func rollingbackTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64, er
 func deleteAffinityGroupsOfCancelledJob(jobCtx *jobContext, job *model.Job) {
 	var err error
 	switch job.Type {
-	case model.ActionCreateTable:
-		var args *model.CreateTableArgs
-		if args, err = model.GetCreateTableArgs(job); err == nil {
-			err = deleteAffinityGroupsOfTablesNotCreated(jobCtx, job, []*model.TableInfo{args.TableInfo})
-		}
-	case model.ActionCreateTables:
-		var args *model.BatchCreateTableArgs
-		if args, err = model.GetBatchCreateTableArgs(job); err == nil {
-			tables := make([]*model.TableInfo, 0, len(args.Tables))
-			for _, tblArgs := range args.Tables {
-				tables = append(tables, tblArgs.TableInfo)
-			}
-			err = deleteAffinityGroupsOfTablesNotCreated(jobCtx, job, tables)
-		}
-	case model.ActionAlterTableAffinity:
-		err = deleteAlterTableAffinityNewGroups(jobCtx, job)
 	case model.ActionTruncateTable:
 		err = deleteTruncateTableReplacementAffinityGroups(jobCtx, job)
 	default:
@@ -685,61 +668,6 @@ func getTableOfCancelledJob(jobCtx *jobContext, job *model.Job) (*model.TableInf
 		return nil, nil
 	}
 	return tblInfo, errors.Trace(err)
-}
-
-// deleteAffinityGroupsOfTablesNotCreated deletes the groups of the tables that
-// a cancelled CREATE TABLE job leaves out of the metadata.
-func deleteAffinityGroupsOfTablesNotCreated(jobCtx *jobContext, job *model.Job, tables []*model.TableInfo) error {
-	codec := jobCtx.store.GetCodec()
-	ids := make([]string, 0, len(tables))
-	for _, tblInfo := range tables {
-		if tblInfo == nil || tblInfo.Affinity == nil {
-			continue
-		}
-		// CREATE TABLE with foreign keys persists the table before its last step,
-		// so a cancelled job can keep the table and its groups.
-		exists, err := jobCtx.metaMut.CheckTableExists(job.SchemaID, tblInfo.ID)
-		if err != nil && !meta.ErrDBNotExists.Equal(err) {
-			return errors.Trace(err)
-		}
-		if exists {
-			continue
-		}
-		groups, err := buildAffinityGroupDefinitions(codec, tblInfo, nil)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		ids = append(ids, collectAffinityGroupIDs(groups)...)
-	}
-	if len(ids) == 0 {
-		return nil
-	}
-	ctx := jobCtx.stepCtx
-	if ctx == nil {
-		ctx = jobCtx.ctx
-	}
-	logutil.DDLLogger().Info("deleting affinity groups of tables the cancelled job did not create",
-		zap.Int64("jobID", job.ID), zap.Strings("groupIDs", ids))
-	return affinity.DeleteGroupsWithRetry(ctx, ids)
-}
-
-// deleteAlterTableAffinityNewGroups deletes the groups of the new level of a
-// cancelled ALTER TABLE ... AFFINITY job. Groups of an unchanged level are the
-// table's current groups and stay.
-func deleteAlterTableAffinityNewGroups(jobCtx *jobContext, job *model.Job) error {
-	args, err := model.GetAlterTableAffinityArgs(job)
-	if err != nil || args.Affinity == nil {
-		return errors.Trace(err)
-	}
-	tblInfo, err := getTableOfCancelledJob(jobCtx, job)
-	if err != nil || tblInfo == nil {
-		return errors.Trace(err)
-	}
-	if tblInfo.Affinity != nil && tblInfo.Affinity.Level == args.Affinity.Level {
-		return nil
-	}
-	newTblInfo := &model.TableInfo{ID: tblInfo.ID, Name: tblInfo.Name, Affinity: args.Affinity, Partition: tblInfo.Partition}
-	return deleteTableAffinityGroupsInPD(jobCtx, newTblInfo, nil)
 }
 
 // deleteTruncateTableReplacementAffinityGroups deletes the groups of the
