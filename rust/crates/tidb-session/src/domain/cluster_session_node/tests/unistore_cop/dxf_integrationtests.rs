@@ -1484,3 +1484,288 @@ fn test_max_runtime_slots() {
         assert_eq!(done_task.state, TASK_STATE_SUCCEED);
     }
 }
+
+type SubtaskChannels = std::collections::HashMap<i64, std::collections::HashMap<i64, crossbeam_channel::Sender<()>>>;
+
+/// Go `resourceCtrlCaseContext`.
+struct ResourceCtrlCaseContext {
+    c: Arc<testutil::TestDxfContext>,
+    task_wg: std::sync::Mutex<Vec<std::thread::JoinHandle<()>>>,
+    /// task-id -> subtask-id -> channel
+    channel_map: Arc<std::sync::RwLock<SubtaskChannels>>,
+    total_subtask_count: Arc<AtomicI32>,
+    _registered: testutil::RegisteredTaskType,
+    _stack: UnistoreClusterStack,
+}
+
+/// Go `newResourceCtrlCaseContext` and its `init`.
+fn new_resource_ctrl_case_context(
+    node_cnt: usize,
+    subtask_cnt_map: std::collections::HashMap<i64, std::collections::HashMap<Step, usize>>,
+) -> ResourceCtrlCaseContext {
+    let (stack, task_mgr) = store_and_task_manager();
+    let c = testutil::new_test_dxf_context(task_mgr, node_cnt, 16, true);
+    let channel_map: Arc<std::sync::RwLock<SubtaskChannels>> = Arc::default();
+    let total_subtask_count = Arc::new(AtomicI32::new(0));
+
+    let step_transition = |step: Step| {
+        if step == STEP_INIT {
+            STEP_ONE
+        } else if step == STEP_ONE {
+            STEP_TWO
+        } else {
+            STEP_DONE
+        }
+    };
+    let scheduler_ext = tidb_dxf_mock::MockSchedulerExtension::new(&c.mock_ctrl);
+    scheduler_ext.ret_times("OnTick", Times::Any, ());
+    scheduler_ext.ret_times("GetEligibleInstances", Times::Any, Ok::<Vec<String>, tidb_dxf_scheduler::Error>(Vec::new()));
+    scheduler_ext.ret_times("IsRetryableErr", Times::Any, false);
+    scheduler_ext.expect("GetNextStep", Times::Any, move |input| {
+        step_transition(input.downcast_ref::<TaskBase>().expect("the task").step)
+    });
+    scheduler_ext.expect("OnNextSubtasksBatch", Times::Any, move |input| {
+        let (task, _, next_step) =
+            input.downcast_ref::<(std::sync::Mutex<Task>, Vec<String>, Step)>().expect("(task, exec IDs, step)");
+        let task_id = task.lock().unwrap().base.id;
+        let cnt = subtask_cnt_map.get(&task_id).and_then(|steps| steps.get(next_step)).copied().unwrap_or(0);
+        Ok::<Vec<Vec<u8>>, tidb_dxf_scheduler::Error>((0..cnt).map(|i| format!("subtask-{i}").into_bytes()).collect())
+    });
+    scheduler_ext.ret_times("OnDone", Times::Any, Ok::<(), tidb_dxf_scheduler::Error>(()));
+
+    let run_subtask_fn: RunSubtaskFn = {
+        let (channel_map, total_subtask_count) = (Arc::clone(&channel_map), Arc::clone(&total_subtask_count));
+        Arc::new(move |ctx, subtask| {
+            // Go `enterSubtask`.
+            let (tx, ch) = crossbeam_channel::bounded::<()>(0);
+            channel_map.write().unwrap().entry(subtask.base.task_id).or_default().insert(subtask.base.id, tx);
+            total_subtask_count.fetch_add(1, Ordering::SeqCst);
+            let result = crossbeam_channel::select! {
+                recv(ctx.done()) -> _ => Err(Arc::new(ctx.err().expect("the context ended")) as tidb_dxf_taskexecutor::Error),
+                recv(ch) -> _ => Ok(()),
+            };
+            // Go `leaveSubtask`.
+            if let Some(m) = channel_map.write().unwrap().get_mut(&subtask.base.task_id) {
+                m.remove(&subtask.base.id);
+            }
+            total_subtask_count.fetch_sub(1, Ordering::SeqCst);
+            result
+        })
+    };
+    let registered = register_example_task(&c.mock_ctrl, scheduler_ext, &c.test_context, Some(run_subtask_fn));
+    ResourceCtrlCaseContext {
+        c,
+        task_wg: std::sync::Mutex::default(),
+        channel_map,
+        total_subtask_count,
+        _registered: registered,
+        _stack: stack,
+    }
+}
+
+impl ResourceCtrlCaseContext {
+    /// Go `runTaskAsync`: tasks are created in order, so they have increasing
+    /// IDs starting from 1.
+    fn run_task_async(&self, prefix: &str, slots_arr: &[isize]) {
+        let scope = tidb_dxf_handle::get_target_scope();
+        for (i, &slots) in slots_arr.iter().enumerate() {
+            let task_key = format!("{prefix}-{i}");
+            tidb_dxf_handle::submit_task(&task_key, &TASK_TYPE_EXAMPLE, "", slots, &scope, 0, &[]).unwrap();
+            let c = Arc::clone(&self.c);
+            self.task_wg.lock().unwrap().push(std::thread::spawn(move || {
+                let task = testutil::wait_task_done_or_paused(&c.ctx, &task_key);
+                assert_eq!(task.state, TASK_STATE_SUCCEED);
+            }));
+        }
+    }
+
+    /// Go `waitTotalSubtaskCount`.
+    fn wait_total_subtask_count(&self, target: i32) {
+        eventually(Duration::from_secs(10), Duration::from_millis(200), || {
+            self.total_subtask_count.load(Ordering::SeqCst) == target
+        });
+    }
+
+    /// Go `waitSubtaskCntByTask`.
+    fn wait_subtask_cnt_by_task(&self, task_id: i64, subtask_cnt: usize) {
+        eventually(Duration::from_secs(10), Duration::from_millis(200), || {
+            self.channel_map.read().unwrap().get(&task_id).map_or(0, std::collections::HashMap::len) == subtask_cnt
+        });
+    }
+
+    /// Go `continueAllSubtasks`.
+    fn continue_all_subtasks(&self) {
+        let channels: Vec<_> = self.channel_map.read().unwrap().values().flat_map(|m| m.values().cloned()).collect();
+        for ch in channels {
+            let _ = ch.send(());
+        }
+    }
+
+    /// Go `continueSubtasksByTask`.
+    fn continue_subtasks_by_task(&self, task_id: i64) {
+        let channels: Vec<_> =
+            self.channel_map.read().unwrap().get(&task_id).map(|m| m.values().cloned().collect()).unwrap_or_default();
+        for ch in channels {
+            let _ = ch.send(());
+        }
+    }
+
+    /// Go `getAllSubtasks`: the running subtasks' IDs by task.
+    fn get_all_subtasks(&self) -> std::collections::HashMap<i64, std::collections::HashSet<i64>> {
+        self.channel_map.read().unwrap().iter().map(|(task_id, m)| (*task_id, m.keys().copied().collect())).collect()
+    }
+
+    /// Go `waitNewSubtasksNotIn`.
+    fn wait_new_subtasks_not_in(&self, task_id: i64, old: Option<&std::collections::HashSet<i64>>, count: usize) {
+        eventually(Duration::from_secs(10), Duration::from_millis(200), || {
+            let new_subtasks: Vec<i64> =
+                self.channel_map.read().unwrap().get(&task_id).map(|m| m.keys().copied().collect()).unwrap_or_default();
+            new_subtasks.iter().filter(|id| old.is_none_or(|old| !old.contains(id))).count() == count
+        });
+    }
+
+    /// Go `waitTasks`.
+    fn wait_tasks(&self) {
+        for handle in std::mem::take(&mut *self.task_wg.lock().unwrap()) {
+            handle.join().unwrap();
+        }
+    }
+}
+
+fn steps(entries: &[(i64, &[(Step, usize)])]) -> std::collections::HashMap<i64, std::collections::HashMap<Step, usize>> {
+    entries.iter().map(|(task_id, steps)| (*task_id, steps.iter().copied().collect())).collect()
+}
+
+/// Go `TestResourceControl`.
+#[test]
+fn test_resource_control() {
+    // fully-utilized: we have 4 16c nodes, and we have 4 tasks of required
+    // slots 4, each task have 4 subtasks, so the resource can run all
+    // subtasks concurrently.
+    {
+        let c = new_resource_ctrl_case_context(
+            4,
+            steps(&[(1, &[(STEP_ONE, 4)]), (2, &[(STEP_ONE, 4)]), (3, &[(STEP_ONE, 4)]), (4, &[(STEP_ONE, 4)])]),
+        );
+        c.run_task_async("a", &[4, 4, 4, 4]);
+        c.wait_total_subtask_count(16);
+        c.continue_all_subtasks();
+        c.wait_tasks();
+    }
+
+    // fully-utilized-after-scale-out: we have 2 16c nodes, and we have 4
+    // tasks of required slots 4, each task have 4 subtasks, so only 8 subtask
+    // can be run at first, and all task can be run at the same time; after
+    // scale out 2 nodes, all subtasks can be run
+    {
+        let c = new_resource_ctrl_case_context(
+            2,
+            steps(&[(1, &[(STEP_ONE, 4)]), (2, &[(STEP_ONE, 4)]), (3, &[(STEP_ONE, 4)]), (4, &[(STEP_ONE, 4)])]),
+        );
+        c.run_task_async("a", &[4, 4, 4, 4]);
+        c.wait_total_subtask_count(8);
+        for task_id in 1..=4 {
+            c.wait_subtask_cnt_by_task(task_id, 2);
+        }
+        c.c.scale_out(2);
+        c.wait_total_subtask_count(16);
+        c.continue_all_subtasks();
+        c.wait_tasks();
+    }
+
+    // scale-in: we have 4 16c nodes, and we have 4 tasks of required slots 4,
+    // each task have 4 subtasks, so the resource can run all subtasks
+    // concurrently.
+    {
+        let c = new_resource_ctrl_case_context(
+            4,
+            steps(&[(1, &[(STEP_ONE, 4)]), (2, &[(STEP_ONE, 4)]), (3, &[(STEP_ONE, 4)]), (4, &[(STEP_ONE, 4)])]),
+        );
+        c.run_task_async("a", &[4, 4, 4, 4]);
+        c.wait_total_subtask_count(16);
+        // after scale in 1 node, each task can only run 3 subtasks concurrently
+        c.c.scale_in(1);
+        c.wait_total_subtask_count(12);
+        for task_id in 1..=4 {
+            c.wait_subtask_cnt_by_task(task_id, 3);
+        }
+        let all_subtasks = c.get_all_subtasks();
+        c.continue_all_subtasks();
+        // wait all subtasks done, else we don't know whether they are done or
+        // cancelled, so hard to do wait
+        for task_id in 1..=4 {
+            c.wait_new_subtasks_not_in(task_id, all_subtasks.get(&task_id), 1);
+        }
+        // now there are 4 subtasks left, 1 node should be enough to run them
+        c.c.scale_in(2);
+        c.wait_total_subtask_count(4);
+        for task_id in 1..=4 {
+            c.wait_new_subtasks_not_in(task_id, all_subtasks.get(&task_id), 1);
+        }
+        c.continue_all_subtasks();
+        c.wait_tasks();
+    }
+
+    // high-rank-task-executor-release-resource: on the first step of task 1,
+    // it will occupy all resource, and task 2 will be blocked, but on step 2
+    // of task 1, it only has 1 subtask, so task 2 can run.
+    {
+        let c = new_resource_ctrl_case_context(4, steps(&[(1, &[(STEP_ONE, 4), (STEP_TWO, 1)]), (2, &[(STEP_ONE, 3)])]));
+        c.run_task_async("a", &[8, 16]);
+        c.wait_total_subtask_count(4);
+        c.wait_subtask_cnt_by_task(1, 4);
+        let all_subtasks = c.get_all_subtasks();
+        c.continue_all_subtasks();
+        c.wait_new_subtasks_not_in(1, all_subtasks.get(&1), 1);
+        c.wait_new_subtasks_not_in(2, all_subtasks.get(&2), 3);
+        c.continue_all_subtasks();
+        c.wait_tasks();
+    }
+
+    // high-rank-task-preempt-resource: on the first step of task 1, it has
+    // only 1 subtask, so task 2 can run, on the second step of task 1, it
+    // will occupy all resource, and task 2 will be preempt.
+    {
+        let c = new_resource_ctrl_case_context(4, steps(&[(1, &[(STEP_ONE, 1), (STEP_TWO, 4)]), (2, &[(STEP_ONE, 3)])]));
+        c.run_task_async("a", &[8, 16]);
+        c.wait_total_subtask_count(4);
+        c.wait_subtask_cnt_by_task(1, 1);
+        c.wait_subtask_cnt_by_task(2, 3);
+        let all_subtasks = c.get_all_subtasks();
+        // task 1 enter step 2
+        c.continue_subtasks_by_task(1);
+        c.wait_new_subtasks_not_in(1, all_subtasks.get(&1), 4);
+        c.wait_subtask_cnt_by_task(2, 0);
+        let all_subtasks = c.get_all_subtasks();
+        // task 1 finish, task 2 can run again
+        c.continue_all_subtasks();
+        c.wait_subtask_cnt_by_task(1, 0);
+        c.wait_new_subtasks_not_in(2, all_subtasks.get(&2), 3);
+        c.continue_all_subtasks();
+        c.wait_tasks();
+    }
+
+    // low-rank-task-can-run-when-middle-rank-task-waiting-resource: task 2
+    // will be blocked by task 1, but task 3 can run with remaining resource,
+    // if task 1 is finished, task 2 can run, and might preempt resource of
+    // task 3.
+    {
+        let c = new_resource_ctrl_case_context(
+            4,
+            steps(&[(1, &[(STEP_ONE, 4)]), (2, &[(STEP_ONE, 2)]), (3, &[(STEP_ONE, 4)])]),
+        );
+        c.run_task_async("a", &[8, 16, 8]);
+        c.wait_total_subtask_count(8);
+        c.wait_subtask_cnt_by_task(1, 4);
+        c.wait_subtask_cnt_by_task(3, 4);
+        // finish task 1, task 2 can run
+        c.continue_subtasks_by_task(1);
+        c.wait_subtask_cnt_by_task(2, 2);
+        c.wait_subtask_cnt_by_task(3, 2);
+        // finish task 2, task 3 can run all subtasks
+        c.continue_subtasks_by_task(2);
+        c.wait_subtask_cnt_by_task(3, 4);
+        c.continue_all_subtasks();
+        c.wait_tasks();
+    }
+}
