@@ -235,15 +235,16 @@ fn set_operations() {
     };
 
     // Captured: UNION dedups (TiDB returned 4,1,2,3 in hash order, so the
-    // comparison sorts); UNION ALL concatenates in term order.
+    // comparison sorts); UNION ALL keeps duplicates. Go's union workers race,
+    // so its UNION ALL order varies too (u2 first in 3 of 30 live runs).
     assert_eq!(
         sorted("SELECT a FROM u1 UNION SELECT a FROM u2", &catalog),
         vec![1, 2, 3, 4]
     );
     assert_eq!(
-        listed("SELECT a FROM u1 UNION ALL SELECT a FROM u2", &catalog),
-        vec![1, 2, 2, 3, 2, 3, 4],
-        "captured: UNION ALL keeps duplicates and term order"
+        sorted("SELECT a FROM u1 UNION ALL SELECT a FROM u2", &catalog),
+        vec![1, 2, 2, 2, 3, 3, 4],
+        "captured: UNION ALL keeps duplicates"
     );
     // Captured: EXCEPT -> [1], INTERSECT -> [2, 3] (hash order).
     assert_eq!(

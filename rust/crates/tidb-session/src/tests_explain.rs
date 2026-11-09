@@ -9499,6 +9499,37 @@ fn a_parallel_projection_swaps_in_its_last_output_like_go() {
     assert_eq!(memory(&mut fresh(), union, "Projection_13"), "3.92 KB");
 }
 
+/// Go's `UnionExec` pulls each child in a `resultPuller` worker of its own
+/// (`UnionConcurrency()` workers), filling the worker's `NewFirstChunk`
+/// result chunk that `Next` swaps into the parent's: the parallel Projection
+/// under the union fills that chunk, not the parent's. A Go testkit probe
+/// after the same `INSERT ... SELECT` at the default concurrency: the first
+/// child's `Projection_10` 29.6 KB in every run (the second child's racy).
+#[test]
+fn a_union_pulls_each_child_into_its_workers_chunk_like_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c VARCHAR(20), d DOUBLE, KEY(b))")
+        .unwrap();
+    let values = (1..=200)
+        .map(|i| format!("({i},{},'s{}',{i}.5)", i % 7, i % 13))
+        .collect::<Vec<_>>()
+        .join(",");
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    session.run("CREATE TABLE u (a INT, b INT, KEY(a))").unwrap();
+    session.run("INSERT INTO u SELECT a, b FROM t WHERE a <= 50").unwrap();
+    let union = "SELECT * FROM t UNION ALL SELECT a, b, 'x', 1.0 FROM u";
+    let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {union}")));
+    let projection = rows
+        .iter()
+        .find(|row| row[0].trim_start_matches(|c: char| !c.is_ascii_alphabetic()) == "Projection_10")
+        .unwrap_or_else(|| panic!("{rows:?}"));
+    assert_eq!(projection[7], "29.6 KB", "{rows:?}");
+    let answer = row_text(session.run(union));
+    assert_eq!(answer.len(), 250);
+    assert_eq!(answer.iter().filter(|row| row[2] == "x").count(), 50);
+}
+
 /// Go's `rowTableBuilder.preAllocForSegments` (the v2 hash join) charges each row's raw data,
 /// two `uint64` slots (its hash value and start offset) and an `int` for a
 /// valid key, and no more: a join whose rows carry a used flag in the null

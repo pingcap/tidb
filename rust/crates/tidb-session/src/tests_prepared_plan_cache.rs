@@ -215,20 +215,23 @@ fn prepared_set_operation_reuses_the_general_physical_plan_cache() {
         .unwrap();
     session.run("SET @a = 1").unwrap();
 
-    assert_eq!(
-        row_text(session.run("EXECUTE union_stmt USING @a")),
-        [["2"], ["3"], ["9"]]
-    );
+    // Go's union workers race, so the terms' rows interleave in any order.
+    let sorted = |session: &mut Session| {
+        let mut rows = row_text(session.run("EXECUTE union_stmt USING @a"));
+        rows.sort();
+        rows
+    };
+    assert_eq!(sorted(&mut session), [["2"], ["3"], ["9"]]);
     assert_eq!(cache_flag(&mut session), "0");
     assert_eq!(
-        row_text(session.run("EXECUTE union_stmt USING @a")),
+        sorted(&mut session),
         [["2"], ["3"], ["9"]]
     );
     assert_eq!(cache_flag(&mut session), "1");
 
     session.run("SET @a = 2").unwrap();
     assert_eq!(
-        row_text(session.run("EXECUTE union_stmt USING @a")),
+        sorted(&mut session),
         [["3"], ["9"]]
     );
     assert_eq!(cache_flag(&mut session), "1");

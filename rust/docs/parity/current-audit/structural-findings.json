@@ -1,9 +1,9 @@
 {
-  "date": "2026-11-08",
+  "date": "2026-11-09",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 30,
-    "open": 7,
+    "unresolved": 29,
+    "open": 6,
     "partial": 23
   },
   "findings": [
@@ -116,13 +116,6 @@
       "go_owner": "`pkg/session/session.go` (`ExecutePreparedStmt`, `ExecuteStmt`), `pkg/executor/compiler.go` (`Compile`)"
     },
     {
-      "id": "E23",
-      "status": "open",
-      "group": "DML and executor handoff",
-      "finding": "`UNION ALL` is this port's own `UnionAllExec` (`union_all.rs`), which reads its children one after another into the parent's chunk, where Go's `UnionExec` (`pkg/executor/unionexec`) runs `resultPuller` workers over its children, each filling its own `NewFirstChunk` result chunk that `Next` swaps into the parent's, so a child's chunks (and a Projection beneath it) see Go's per-worker chunk, not the parent's (`SELECT * FROM t UNION ALL SELECT a, b, 'x', 1.0 FROM u` after an `INSERT ... SELECT`: Go's `Projection_10` 29.6 KB, this port's 30.1 KB)",
-      "go_owner": "`pkg/executor/unionexec` (`union.go`: `UnionExec`, `resultPuller`)"
-    },
-    {
       "id": "O09",
       "status": "partial",
       "group": "Domain and process services",
@@ -222,7 +215,7 @@
       "go_owner": "`cmd/tidb-server/main.go` (`overrideConfig`), `pkg/util/misc.go` (`GetLocalIP`)"
     }
   ],
-  "unresolved": 30,
-  "open": 7,
+  "unresolved": 29,
+  "open": 6,
   "partial": 23
 }

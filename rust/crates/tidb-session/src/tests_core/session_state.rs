@@ -886,10 +886,11 @@ fn set_var_hint_overlays_one_statement() {
     );
 
     // A set operation's hints are its FIRST term's, and they reach the
-    // statement-level `sql_select_limit` cap.
+    // statement-level `sql_select_limit` cap. Which term's row the cap keeps
+    // is Go's union worker race.
     assert_eq!(
-        row_text(session.run("SELECT /*+ SET_VAR(sql_select_limit=1) */ 1 UNION ALL SELECT 2")),
-        [["1"]]
+        row_text(session.run("SELECT /*+ SET_VAR(sql_select_limit=1) */ 1 UNION ALL SELECT 2")).len(),
+        1
     );
 }
 

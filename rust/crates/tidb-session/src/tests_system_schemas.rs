@@ -1118,7 +1118,9 @@ fn tidb_index_usage_records_a_partition_local_index_read() {
     assert!(range_plan.iter().any(|row| row
         .get(3)
         .is_some_and(|objects| objects.contains("index:idx_id"))));
-    let range_result = row_text(session.run(range_sql));
+    // Go's PartitionUnion workers race, so the partitions' rows interleave.
+    let mut range_result = row_text(session.run(range_sql));
+    range_result.sort_by_key(|row| row[0].parse::<i64>().unwrap());
     assert_eq!(
         range_result,
         (30..100).map(|id| vec![id.to_string()]).collect::<Vec<_>>()
@@ -1186,10 +1188,10 @@ fn tidb_index_usage_records_a_partition_local_index_read() {
             .run(&format!("PREPARE {statement} FROM '{sql}'"))
             .unwrap();
         for _ in 0..2 {
-            assert_eq!(
-                row_text(session.run(&format!("EXECUTE {statement}"))),
-                expected
-            );
+            // A PartitionUnion's workers race, as Go's do.
+            let mut rows = row_text(session.run(&format!("EXECUTE {statement}")));
+            rows.sort_by_key(|row| row[0].parse::<i64>().unwrap());
+            assert_eq!(rows, expected);
         }
         session
             .run(&format!("DEALLOCATE PREPARE {statement}"))

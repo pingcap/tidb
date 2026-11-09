@@ -21,12 +21,11 @@ fn union_as_derived_and_branch_limits() {
         "i:1;i:2;i:3;i:11;i:12;i:13"
     );
 
-    // Each parenthesized branch keeps its own ORDER BY + LIMIT.
-    assert_eq!(
-        rows(
-            &mut session,
-            "(select a from t order by a limit 1) union all (select a from t order by a desc limit 1)"
-        ),
-        "i:1;i:3"
+    // Each parenthesized branch keeps its own ORDER BY + LIMIT; the
+    // branches' rows arrive in Go's union worker race order.
+    let branches = rows(
+        &mut session,
+        "(select a from t order by a limit 1) union all (select a from t order by a desc limit 1)",
     );
+    assert!(branches == "i:1;i:3" || branches == "i:3;i:1", "{branches}");
 }

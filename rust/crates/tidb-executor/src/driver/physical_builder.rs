@@ -8353,9 +8353,11 @@ fn build_with_state(
                 .iter()
                 .map(|child| build_with_state(child, catalog, ctx, state))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(Box::new(crate::union_all::UnionAllExec::new(
+            Ok(Box::new(crate::union_all::UnionExec::new(
                 meta(ctx, plan, plan_schema(plan)?),
                 children,
+                // Go `UnionConcurrency()` is the executor concurrency.
+                ctx.executor_concurrency(),
             )) as Box<dyn Executor>)
         }
         PhysicalPlan::MaxOneRow(_) => {

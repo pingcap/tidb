@@ -1219,15 +1219,9 @@ pub struct StmtContextData {
     optimizer_cost_env: Option<Arc<dyn std::any::Any + Send + Sync>>,
     /// The cost environment's session values the statement context reads.
     cost_session: CostSessionValues,
-    /// Go `SessionVars.ExecutorConcurrency`, shared by executor families that
-    /// do not have a more specific concurrency variable, including Sort.
-    executor_concurrency: usize,
-    /// Go `SessionVars.HashAggPartialConcurrency()` and
-    /// `HashAggFinalConcurrency()`, resolved from their deprecated per-
-    /// operator variables or `tidb_executor_concurrency` at the statement
-    /// boundary.
-    hashagg_partial_concurrency: usize,
-    hashagg_final_concurrency: usize,
+    /// Go `SessionVars.ExecutorConcurrency` and the hash aggregation
+    /// concurrencies resolved from it.
+    concurrency: ExecutorConcurrency,
     /// Go `SessionVars.TiDBOptJoinReorderThroughProj`
     /// (`@@tidb_opt_join_reorder_through_proj`, default `OFF`): whether
     /// `extractJoinGroup` may look THROUGH a `Projection` sitting on a join
@@ -2124,7 +2118,7 @@ context_configuration! {
         values: CostSessionValues,
         union_concurrency: f64,
     ) -> Self {
-        self.executor_concurrency = union_concurrency.max(1.0) as usize;
+        self.concurrency.executor = union_concurrency.max(1.0) as usize;
         self.optimizer_cost_env = Some(env);
         self.cost_session = values;
         self
@@ -2154,8 +2148,8 @@ context_configuration! {
     /// environment.
     #[must_use]
     pub fn with_hashagg_concurrency_values(mut self, partial: usize, final_: usize) -> Self {
-        self.hashagg_partial_concurrency = partial;
-        self.hashagg_final_concurrency = final_;
+        self.concurrency.hashagg_partial = partial;
+        self.concurrency.hashagg_final = final_;
         self
     }
 
@@ -2857,6 +2851,24 @@ context_configuration! {
     }
 }
 
+/// Go `SessionVars.ExecutorConcurrency`, shared by executor families that do
+/// not have a more specific concurrency variable (Union, Sort), and
+/// `HashAggPartialConcurrency()` / `HashAggFinalConcurrency()`, resolved from
+/// their deprecated per-operator variables or it at the statement boundary.
+#[derive(Clone, Copy)]
+struct ExecutorConcurrency {
+    executor: usize,
+    hashagg_partial: usize,
+    hashagg_final: usize,
+}
+
+impl Default for ExecutorConcurrency {
+    fn default() -> Self {
+        let concurrency = tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize;
+        Self { executor: concurrency, hashagg_partial: concurrency, hashagg_final: concurrency }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ExecutorChunkSizes {
     init: usize,
@@ -3108,9 +3120,7 @@ impl StmtContext {
             hypo_tiflash_replicas: None,
             optimizer_cost_env: None,
             cost_session: CostSessionValues::default(),
-            executor_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize,
-            hashagg_partial_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize,
-            hashagg_final_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize,
+            concurrency: ExecutorConcurrency::default(),
             // Go `vardef.DefTiDBOptJoinReorderThroughProj`.
             join_reorder_through_proj: false,
             // Go `vardef.DefTiDBOptJoinReorderThroughSel`.
@@ -4580,7 +4590,7 @@ impl StmtContext {
     /// Resolved `tidb_executor_concurrency` for this statement.
     #[must_use]
     pub fn executor_concurrency(&self) -> usize {
-        self.executor_concurrency
+        self.concurrency.executor
     }
 
     /// Go `SessionVars.IndexLookupConcurrency()`: the deprecated per-operator
@@ -4591,7 +4601,7 @@ impl StmtContext {
         if resolved > 0.0 {
             resolved as usize
         } else {
-            self.executor_concurrency
+            self.concurrency.executor
         }
     }
 
@@ -4603,7 +4613,7 @@ impl StmtContext {
         if resolved > 0.0 {
             resolved as usize
         } else {
-            self.executor_concurrency
+            self.concurrency.executor
         }
     }
 
@@ -4630,7 +4640,7 @@ impl StmtContext {
         if resolved > 0.0 {
             resolved as usize
         } else {
-            self.executor_concurrency
+            self.concurrency.executor
         }
     }
 
@@ -4639,8 +4649,8 @@ impl StmtContext {
     #[must_use]
     pub fn hashagg_concurrency(&self) -> (usize, usize) {
         (
-            self.hashagg_partial_concurrency,
-            self.hashagg_final_concurrency,
+            self.concurrency.hashagg_partial,
+            self.concurrency.hashagg_final,
         )
     }
 
