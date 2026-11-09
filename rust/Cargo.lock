@@ -4758,6 +4758,7 @@ dependencies = [
  "tidb-log",
  "tidb-logutil",
  "tidb-util-disttask",
+ "tidb-vardef",
 ]
 
 [[package]]

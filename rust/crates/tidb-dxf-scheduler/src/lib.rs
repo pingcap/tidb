@@ -16,6 +16,7 @@
 //! scheduler per task through its states, reserves the cluster's slots for
 //! it, places its subtasks on the managed nodes and balances them.
 
+mod autoscaler;
 mod interface;
 #[cfg(test)]
 mod mock;
@@ -24,6 +25,7 @@ mod scheduler;
 mod slots;
 mod state_transform;
 
+pub use autoscaler::{calc_dist_sql_concurrency, get_exec_cpu_node, ResourceCalc};
 pub use interface::TaskManager;
 pub use nodes::NodeManager;
 pub use scheduler::{

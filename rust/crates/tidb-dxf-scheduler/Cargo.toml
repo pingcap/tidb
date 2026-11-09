@@ -22,6 +22,7 @@ tidb-intest = { path = "../tidb-intest" }
 tidb-log = { path = "../tidb-log" }
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-util-disttask = { path = "../tidb-util-disttask" }
+tidb-vardef = { path = "../tidb-vardef" }
 
 [dev-dependencies]
 chrono.workspace = true
