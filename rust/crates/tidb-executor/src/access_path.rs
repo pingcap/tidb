@@ -4470,13 +4470,16 @@ impl Executor for IndexRangeSourceExec {
                 let partition = partition.read();
                 partition.adding_definitions.is_empty() && partition.dropping_definitions.is_empty()
             });
-            base_statement.need_partition_handle = !self.covering
-                && self.can_reorder_handles
-                && no_partition_ddl
-                && self.global_index_batch();
+            base_statement.need_partition_handle =
+                !self.covering && no_partition_ddl && self.global_index_batch();
             let physical_ids = self.record_physical_ids.clone();
             let template = partitioned_walk.then(|| self.table.clone());
             let store = &mut self.store;
+            // The request names each entry's partition after its handle
+            // (`ExtraPhysTblID` last), not at the source's `_tidb_tid` slot.
+            let request_handle_slot = self.extra_handle_slot.map(|slot| {
+                slot - usize::from(self.physical_table_id_slot.is_some_and(|physical| physical < slot))
+            });
             let mut open = |table: &mut TableCommon, statement: &PushdownStatementContext| {
                 table
                     .pushdown_index_handle_cursor(
@@ -4484,7 +4487,7 @@ impl Executor for IndexRangeSourceExec {
                     self.index_id,
                     &self.ranges,
                     &self.keep,
-                    self.extra_handle_slot,
+                    request_handle_slot,
                     &lowered,
                     self.top_n.as_ref(),
                     self.decode_context.zone(),

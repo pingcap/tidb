@@ -9866,6 +9866,41 @@ fn a_narrowed_global_index_lookup_filters_its_entries_in_the_store_like_go() {
     }
 }
 
+/// A keep-order global index lookup reads its index in order under the
+/// logical table too: its tasks are cut at the response chunks and its
+/// index side counts each `idxResult.Next` (Go: 1 task and 3 loops, 4 tasks
+/// and 5 loops at `tidb_index_lookup_size = 2`), and the rows come back in
+/// index order.
+#[test]
+fn a_keep_order_global_index_lookup_reads_its_index_remotely_like_go() {
+    for (lookup_size, tasks, loops) in [(None, "num: 1,", "loops:3,"), (Some(2), "num: 4,", "loops:5,")] {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a INT, b INT, c INT, PRIMARY KEY (a) NONCLUSTERED, UNIQUE KEY ub (b) GLOBAL) PARTITION BY HASH(a) PARTITIONS 2")
+            .unwrap();
+        let values = (1..=100).map(|x| format!("({x}, {x}, {})", x % 5)).collect::<Vec<_>>().join(", ");
+        session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+        if let Some(size) = lookup_size {
+            session.run(&format!("SET tidb_index_lookup_size = {size}")).unwrap();
+        }
+        let sql = "SELECT * FROM t USE INDEX(ub) WHERE b > 1 ORDER BY b";
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let row = |name: &str| {
+            rows.iter()
+                .find(|row| row[0].contains(name))
+                .unwrap_or_else(|| panic!("{name}: {rows:?}"))
+                .clone()
+        };
+        assert!(row("IndexLookUp_16")[5].contains(tasks), "{lookup_size:?}: {rows:?}");
+        let scan = row("IndexRangeScan_13(Build)");
+        assert!(scan[5].contains(loops) && scan[5].contains("proc_keys: 99,"), "{lookup_size:?}: {rows:?}");
+        assert_eq!(
+            row_text(session.run(sql)),
+            (2..=100).map(|x| vec![x.to_string(), x.to_string(), (x % 5).to_string()]).collect::<Vec<_>>()
+        );
+    }
+}
+
 /// Go's `AddSelectionConditionForGlobalIndex` runs `PartitionPruning`, whose
 /// HASH and plain RANGE pruners `PlanID.Add(1)` before parsing the partition
 /// expression: every global index scan over such a table spends a plan id
