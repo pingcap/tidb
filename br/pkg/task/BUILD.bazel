@@ -122,6 +122,7 @@ go_test(
         "common_test.go",
         "config_test.go",
         "encryption_test.go",
+        "restore_masking_policy_test.go",
         "restore_name_route_test.go",
         "restore_snapshot_mode_test.go",
         "restore_test.go",

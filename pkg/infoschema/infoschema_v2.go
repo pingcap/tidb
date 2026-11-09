@@ -854,7 +854,7 @@ type infoschemaV2 struct {
 // NewInfoSchemaV2 create infoschemaV2.
 func NewInfoSchemaV2(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data) infoschemaV2 {
 	return infoschemaV2{
-		infoSchema: newInfoSchema(),
+		infoSchema: newInfoSchema(factory),
 		Data:       infoData,
 		r:          r,
 		factory:    factory,
@@ -1663,6 +1663,11 @@ func (b *Builder) applyTableUpdateV2(m meta.Reader, diff *model.SchemaDiff) ([]i
 		var err error
 		tblIDs, err = applyCreateTable(b, m, oldDBInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
 		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if needRefreshMaskingPoliciesForTableDiff(diff.Type) {
+		if err := refreshMaskingPoliciesForTableIDs(b, oldTableID, newTableID); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}

@@ -132,6 +132,7 @@ go_test(
         "domainctx_test.go",
         "extract_test.go",
         "main_test.go",
+        "masking_policy_persist_test.go",
         "plan_replayer_handle_test.go",
         "plan_replayer_test.go",
         "ru_stats_test.go",

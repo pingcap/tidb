@@ -1606,6 +1606,16 @@ error = '''
 Invalid AFFINITY %s
 '''
 
+["ddl:8268"]
+error = '''
+Masking policy '%-.192s' already exists
+'''
+
+["ddl:8269"]
+error = '''
+Unknown masking policy '%-.192s'
+'''
+
 ["ddl:8272"]
 error = '''
 Cannot drop, change or modify column '%s': it is referenced in partial index '%s'
@@ -2281,6 +2291,21 @@ error = '''
 Unknown resource group '%-.192s'
 '''
 
+["meta:8268"]
+error = '''
+Masking policy '%-.192s' already exists
+'''
+
+["meta:8269"]
+error = '''
+Unknown masking policy '%-.192s'
+'''
+
+["meta:8275"]
+error = '''
+Masking policy expression must only reference column '%s'
+'''
+
 ["planner:1044"]
 error = '''
 Access denied for user '%-.48s'@'%-.255s' to database '%-.192s'
@@ -2744,6 +2769,11 @@ Delete can not find column %s for table %s
 ["planner:8242"]
 error = '''
 '%s' is unsupported on cache tables.
+'''
+
+["planner:8277"]
+error = '''
+Access denied to masked column '%-.192s'. Obtain the required privileges and retry.
 '''
 
 ["privilege:1045"]

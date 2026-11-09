@@ -5583,6 +5583,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		handles:            handles,
 		idxVals:            plan.IndexValues,
 		partitionNames:     plan.PartitionNames,
+		MaskingExprs:       plan.MaskingExprs,
 	}
 
 	e.snapshot, err = b.getSnapshot()

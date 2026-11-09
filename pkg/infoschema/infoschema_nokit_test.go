@@ -15,8 +15,10 @@
 package infoschema
 
 import (
+	"errors"
 	"testing"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
@@ -30,7 +32,7 @@ func (is *infoschemaV2) HasCache(tableID int64, schemaVersion int64) bool {
 }
 
 func TestInfoSchemaAddDel(t *testing.T) {
-	is := newInfoSchema()
+	is := newInfoSchema(nil)
 	is.addSchema(&schemaTables{
 		dbInfo: &model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")},
 	})
@@ -39,4 +41,124 @@ func TestInfoSchemaAddDel(t *testing.T) {
 	is.delSchema(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")})
 	require.Empty(t, is.schemaMap)
 	require.Empty(t, is.schemaID2Name)
+}
+
+func TestLoadMaskingPoliciesRetryOnGenericError(t *testing.T) {
+	is := newInfoSchema(nil)
+	calls := 0
+	is.factory = func() (pools.Resource, error) {
+		calls++
+		return nil, errors.New("temporary load failure")
+	}
+
+	is.loadMaskingPoliciesIfNeeded()
+	require.False(t, is.maskingPoliciesLoaded)
+	require.Equal(t, 1, calls)
+
+	is.loadMaskingPoliciesIfNeeded()
+	require.False(t, is.maskingPoliciesLoaded)
+	require.Equal(t, 2, calls)
+}
+
+func TestLoadMaskingPoliciesNoRetryWhenTableNotReady(t *testing.T) {
+	is := newInfoSchema(nil)
+	calls := 0
+	is.factory = func() (pools.Resource, error) {
+		calls++
+		return nil, errors.New("Table 'mysql.tidb_masking_policy' doesn't exist")
+	}
+
+	is.loadMaskingPoliciesIfNeeded()
+	require.True(t, is.maskingPoliciesLoaded)
+	require.Equal(t, 1, calls)
+
+	is.loadMaskingPoliciesIfNeeded()
+	require.Equal(t, 1, calls)
+}
+
+func TestInitWithOldInfoSchemaCopiesMaskingLoadedState(t *testing.T) {
+	oldIS := newInfoSchema(nil)
+	oldIS.maskingPoliciesLoaded = true
+	oldIS.maskingPolicyTableColumnMap[42] = map[int64]*model.MaskingPolicyInfo{
+		7: {
+			ID:       1,
+			Name:     pmodel.NewCIStr("p"),
+			TableID:  42,
+			ColumnID: 7,
+		},
+	}
+
+	builder := NewBuilder(nil, nil, NewData(), false)
+	require.NoError(t, builder.InitWithOldInfoSchema(oldIS))
+
+	newIS := builder.infoSchema
+	// The loaded state should be copied from the old InfoSchema
+	require.True(t, newIS.maskingPoliciesLoaded)
+	// The policy map should be copied
+	policy, ok := newIS.maskingPolicyTableColumnMap[42][7]
+	require.True(t, ok)
+	require.Equal(t, int64(1), policy.ID)
+}
+
+func TestInitWithOldInfoSchemaDoesNotInheritMaskingLoadChannel(t *testing.T) {
+	oldIS := newInfoSchema(nil)
+	oldIS.maskingPoliciesLoaded = false
+	oldIS.maskingPoliciesLoadCh = make(chan struct{})
+	oldIS.maskingPolicyTableColumnMap[42] = map[int64]*model.MaskingPolicyInfo{
+		7: {
+			ID:       1,
+			Name:     pmodel.NewCIStr("p"),
+			TableID:  42,
+			ColumnID: 7,
+		},
+	}
+
+	builder := NewBuilder(nil, nil, NewData(), false)
+	require.NoError(t, builder.InitWithOldInfoSchema(oldIS))
+
+	newIS := builder.infoSchema
+	require.Nil(t, newIS.maskingPoliciesLoadCh)
+	require.False(t, newIS.maskingPoliciesLoaded)
+	policy, ok := newIS.maskingPolicyTableColumnMap[42][7]
+	require.True(t, ok)
+	require.Equal(t, int64(1), policy.ID)
+}
+
+func TestMaskingPolicyByNameAmbiguous(t *testing.T) {
+	is := newInfoSchema(nil)
+	is.maskingPoliciesLoaded = true
+	is.maskingPolicyTableColumnMap[101] = map[int64]*model.MaskingPolicyInfo{
+		11: {
+			ID:       1,
+			Name:     pmodel.NewCIStr("dup"),
+			TableID:  101,
+			ColumnID: 11,
+		},
+	}
+	is.maskingPolicyTableColumnMap[202] = map[int64]*model.MaskingPolicyInfo{
+		22: {
+			ID:       2,
+			Name:     pmodel.NewCIStr("dup"),
+			TableID:  202,
+			ColumnID: 22,
+		},
+	}
+
+	policy, ok := is.MaskingPolicyByName(pmodel.NewCIStr("dup"))
+	require.False(t, ok)
+	require.Nil(t, policy)
+}
+
+func TestNormalizeMaskingPolicyTableIDs(t *testing.T) {
+	ids, hasFilter := normalizeMaskingPolicyTableIDs(nil)
+	require.False(t, hasFilter)
+	require.Nil(t, ids)
+
+	ids, hasFilter = normalizeMaskingPolicyTableIDs([]int64{0, -1, 42, 42, 7})
+	require.True(t, hasFilter)
+	require.Equal(t, []int64{7, 42}, ids)
+
+	ids, hasFilter = normalizeMaskingPolicyTableIDs([]int64{0, -1})
+	require.True(t, hasFilter)
+	require.Empty(t, ids)
 }

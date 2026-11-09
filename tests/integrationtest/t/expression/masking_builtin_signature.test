@@ -1,0 +1,104 @@
+# Test for actual builtin function signatures (Issue-5 validation)
+# This test validates that the documented signatures match the implementation
+
+# Setup
+--echo ## disable_query_log
+DROP TABLE IF EXISTS issue5_test_masking;
+CREATE TABLE issue5_test_masking (
+  id INT PRIMARY KEY,
+  str_col VARCHAR(100),
+  date_col DATE,
+  datetime_col DATETIME,
+  num_col DECIMAL(10,2)
+);
+INSERT INTO issue5_test_masking VALUES
+  (1, 'sensitive_data_12345', '1990-05-15', '1990-05-15 14:30:00', 75000.00),
+  (2, 'another_secret_98765', '1985-03-20', '1985-03-20 09:15:00', 85000.00);
+--echo ## enable_query_log
+
+# Test MASK_PARTIAL with actual signature: MASK_PARTIAL(col, preserve_left, preserve_right, mask_char)
+--echo ## Verify signature: col (string), preserve_left (int), preserve_right (int), mask_char (single char)
+
+# Test case 1: Keep first 9 and last 5 characters
+SELECT id, MASK_PARTIAL(str_col, 9, 5, '*') AS masked
+FROM issue5_test_masking
+WHERE id = 1;
+
+# Test case 2: Mask from beginning (preserve_left = 0)
+SELECT id, MASK_PARTIAL(str_col, 0, 12, 'X') AS masked
+FROM issue5_test_masking
+WHERE id = 1;
+
+# Test case 3: Mask to end (preserve_right = 0)
+SELECT id, MASK_PARTIAL(str_col, 5, 0, '#') AS masked
+FROM issue5_test_masking
+WHERE id = 1;
+
+# Test case 4: UTF-8 characters
+SELECT MASK_PARTIAL('中文测试数据', 2, 2, '*') AS masked;
+
+# Test MASK_FULL with signature: MASK_FULL(col)
+--echo ## Verify signature: col (string/date/datetime/numeric)
+
+# Test case 1: Mask string completely
+SELECT id, MASK_FULL(str_col) AS masked
+FROM issue5_test_masking
+WHERE id = 1;
+
+# Test case 2: Mask another string
+SELECT id, MASK_FULL(str_col) AS masked
+FROM issue5_test_masking
+WHERE id = 2;
+
+# Test case 3: Mask date column
+SELECT id, MASK_FULL(date_col) AS masked
+FROM issue5_test_masking
+WHERE id = 1;
+
+# Test case 4: Mask datetime column
+SELECT id, MASK_FULL(datetime_col) AS masked
+FROM issue5_test_masking
+WHERE id = 2;
+
+# MASK_FULL rejects the removed mask_char argument.
+--error 1582
+SELECT MASK_FULL('secret', '*');
+
+# Test MASK_DATE with actual signature: MASK_DATE(col, date_literal)
+--echo ## Verify signature: col (date/datetime), date_literal (YYYY-MM-DD format)
+
+# Test case 1: Replace date with literal
+SELECT id, MASK_DATE(date_col, '2000-01-01') AS masked
+FROM issue5_test_masking
+WHERE id = 1;
+
+# Test case 2: Replace datetime with literal (preserves type)
+SELECT id, MASK_DATE(datetime_col, '1980-12-31') AS masked
+FROM issue5_test_masking
+WHERE id = 2;
+
+# Test case 3: Use standard masking date
+SELECT id, MASK_DATE(date_col, '1970-01-01') AS masked
+FROM issue5_test_masking
+WHERE id = 1;
+
+# Test MASK_NULL with actual signature: MASK_NULL(col)
+--echo ## Verify signature: col (any type)
+
+# Test case 1: Mask string to NULL
+SELECT id, MASK_NULL(str_col) IS NULL AS is_null
+FROM issue5_test_masking
+WHERE id = 1;
+
+# Test case 2: Mask date to NULL
+SELECT id, MASK_NULL(date_col) IS NULL AS is_null
+FROM issue5_test_masking
+WHERE id = 2;
+
+# Test case 3: Mask numeric to NULL
+SELECT id, MASK_NULL(num_col) IS NULL AS is_null
+FROM issue5_test_masking
+WHERE id = 2;
+
+# Cleanup
+DROP TABLE IF EXISTS issue5_test_masking;

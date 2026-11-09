@@ -23,6 +23,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -71,6 +72,19 @@ type infoSchema struct {
 	// referredForeignKeyMap records all table's ReferredFKInfo.
 	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
 	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
+	// maskingPolicyTableColumnMap stores masking policy metadata by table and column IDs.
+	// Note: Policy name is only unique per table, not globally. We use [TableID][ColumnID] as key
+	// to avoid name collision when different tables have policies with the same name.
+	maskingPolicyTableColumnMap map[int64]map[int64]*model.MaskingPolicyInfo
+	// maskingPoliciesLoaded indicates whether masking policies have been loaded.
+	maskingPoliciesLoaded bool
+	// maskingPoliciesLoadCh is non-nil when a masking-policy load is in progress.
+	// Waiters block on this channel to avoid serving partially initialized policy maps.
+	maskingPoliciesLoadCh chan struct{}
+	// maskingPolicyMutex protects maskingPolicyMap and maskingPolicyTableColumnMap.
+	maskingPolicyMutex sync.RWMutex
+	// factory is used to execute SQL for delayed loading of masking policies.
+	factory func() (pools.Resource, error)
 }
 
 type infoSchemaMisc struct {
@@ -100,7 +114,7 @@ type SchemaAndTableName struct {
 
 // MockInfoSchema only serves for test.
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
-	result := newInfoSchema()
+	result := newInfoSchema(nil)
 	dbInfo := &model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")}
 	dbInfo.Deprecated.Tables = tbList
 	tableNames := &schemaTables{
@@ -166,7 +180,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 
 // MockInfoSchemaWithSchemaVer only serves for test.
 func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
-	result := newInfoSchema()
+	result := newInfoSchema(nil)
 	dbInfo := &model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")}
 	dbInfo.Deprecated.Tables = tbList
 	tableNames := &schemaTables{
@@ -196,17 +210,19 @@ func (is *infoSchema) base() *infoSchema {
 	return is
 }
 
-func newInfoSchema() *infoSchema {
+func newInfoSchema(factory func() (pools.Resource, error)) *infoSchema {
 	return &infoSchema{
 		infoSchemaMisc: infoSchemaMisc{
 			policyMap:        map[string]*model.PolicyInfo{},
 			resourceGroupMap: map[string]*model.ResourceGroupInfo{},
 			ruleBundleMap:    map[int64]*placement.Bundle{},
 		},
-		schemaMap:             map[string]*schemaTables{},
-		schemaID2Name:         map[int64]string{},
-		sortedTablesBuckets:   make([]sortedTables, bucketCount),
-		referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+		schemaMap:                   map[string]*schemaTables{},
+		schemaID2Name:               map[int64]string{},
+		sortedTablesBuckets:         make([]sortedTables, bucketCount),
+		referredForeignKeyMap:       make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+		maskingPolicyTableColumnMap: make(map[int64]map[int64]*model.MaskingPolicyInfo),
+		factory:                     factory,
 	}
 }
 
@@ -832,6 +848,9 @@ func (ts *SessionExtendedInfoSchema) TableByName(ctx stdctx.Context, schema, tab
 		}
 	}
 
+	if ts.InfoSchema == nil {
+		return nil, fmt.Errorf("InfoSchema is nil when looking up table %s.%s", schema.O, table.O)
+	}
 	return ts.InfoSchema.TableByName(ctx, schema, table)
 }
 

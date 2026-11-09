@@ -33,6 +33,7 @@ go_library(
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",
+        "//pkg/parser/mysql",
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/util",
         "//pkg/tablecodec",
@@ -74,7 +75,7 @@ go_test(
     embed = [":backup"],
     flaky = True,
     race = "on",
-    shard_count = 21,
+    shard_count = 22,
     deps = [
         "//br/pkg/checkpoint",
         "//br/pkg/conn",
