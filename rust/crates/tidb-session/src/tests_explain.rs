@@ -9820,6 +9820,52 @@ fn a_global_index_tasks_batched_rows_follow_their_parent_like_go() {
     );
 }
 
+/// A global index read narrowed to some partitions keeps Go's
+/// `in(_tidb_tid, ...)` Selection in its index request
+/// (`AddSelectionConditionForGlobalIndex`), so the store filters the entries
+/// and the lookup cuts its tasks at the filtered response chunks; the index
+/// side counts each `idxResult.Next` its `extractTaskHandles` calls made,
+/// the empty one ending the stream inside a task included. Oracle: a Go
+/// tidb-server, fresh connection per statement.
+#[test]
+fn a_narrowed_global_index_lookup_filters_its_entries_in_the_store_like_go() {
+    for (lookup_size, tasks, memory, ru, scan_loops) in
+        [(None, "num: 1,", "10.2 KB", "RU:0.95,", "loops:3,"), (Some(2), "num: 2,", "11.5 KB", "RU:1.42,", "loops:5,")]
+    {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a INT, b INT, c INT, PRIMARY KEY (a) NONCLUSTERED, UNIQUE KEY ub (b) GLOBAL) PARTITION BY HASH(a) PARTITIONS 2")
+            .unwrap();
+        let values = (1..=100).map(|x| format!("({x}, {x}, {})", x % 5)).collect::<Vec<_>>().join(", ");
+        session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+        if let Some(size) = lookup_size {
+            session.run(&format!("SET tidb_index_lookup_size = {size}")).unwrap();
+        }
+        let sql = "SELECT * FROM t PARTITION (p1) USE INDEX(ub) WHERE b > 1";
+        let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+        let row = |name: &str| {
+            rows.iter()
+                .find(|row| row[0].contains(name))
+                .unwrap_or_else(|| panic!("{name}: {rows:?}"))
+                .clone()
+        };
+        let lookup = row("IndexLookUp_9");
+        assert_eq!((lookup[2].as_str(), lookup[7].as_str()), ("49", memory), "{lookup_size:?}: {rows:?}");
+        assert!(lookup[5].contains(ru) && lookup[5].contains(tasks), "{lookup_size:?}: {rows:?}");
+        let selection = row("Selection_8(Build)");
+        assert_eq!(selection[2], "49", "{lookup_size:?}: {rows:?}");
+        assert!(selection[5].contains("loops:3,") && selection[5].contains("proc_keys: 99,"), "{lookup_size:?}: {rows:?}");
+        assert_eq!(row_text(session.run(sql)).len(), 49);
+        // The unnarrowed read's index side, from the same table.
+        let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM t USE INDEX(ub) WHERE b > 1"));
+        let scan = rows
+            .iter()
+            .find(|row| row[0].contains("IndexRangeScan_5(Build)"))
+            .unwrap_or_else(|| panic!("{rows:?}"));
+        assert!(scan[5].contains(scan_loops), "{lookup_size:?}: {rows:?}");
+    }
+}
+
 /// Go's `AddSelectionConditionForGlobalIndex` runs `PartitionPruning`, whose
 /// HASH and plain RANGE pruners `PlanID.Add(1)` before parsing the partition
 /// expression: every global index scan over such a table spends a plan id

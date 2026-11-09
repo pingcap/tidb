@@ -1918,6 +1918,9 @@ pub struct IndexRangeSourceExec {
     /// Each batch handle's partition ordinal for a global index, whose task
     /// spans partitions (Go's `kv.PartitionHandle`s).
     batch_partitions: Vec<usize>,
+    /// The rows of each response chunk the current handle batch read (Go
+    /// `extractTaskHandles`' `idxResult.Next` calls).
+    batch_chunk_rows: Vec<usize>,
     /// The first handle of the NEXT partition, pulled while filling the
     /// current partition's batch and held for the next one -- the storage
     /// cursor cannot be peeked without consuming.
@@ -2369,6 +2372,7 @@ impl IndexRangeSourceExec {
             batch_at: 0,
             batch_partition: 0,
             batch_partitions: Vec::new(),
+            batch_chunk_rows: Vec::new(),
             pending_handle: None,
             lookup_pushdown: false,
             batch_size: INIT_HANDLE_BATCH,
@@ -2816,12 +2820,13 @@ impl IndexRangeSourceExec {
             // One task reads one partition's result (Go `extractTaskHandles`
             // per `SelectResult`); a drained partition hands over to the next.
             while let Some(remote) = self.remote_index.as_mut() {
-                if let Some(handles) = remote
+                let batch = remote
                     .next_partition_handle_batch(want, self.meta.max_chunk_size())
                     .map_err(|error| {
                         ExecError::unsupported(format!("index row failed to decode: {error:?}"))
-                    })?
-                {
+                    })?;
+                self.batch_chunk_rows.extend(remote.take_batch_chunk_rows());
+                if let Some(handles) = batch {
                     pulled = true;
                     let extracted = handles.len() as u64;
                     // A global index's task spans the partitions its
@@ -3293,6 +3298,7 @@ impl IndexRangeSourceExec {
                 }
                 handles.extend(self.batch.drain(self.batch_at..));
                 self.batch_at = self.batch.len();
+                let task_chunk_rows = std::mem::take(&mut self.batch_chunk_rows);
                 if partitioned && !handles.is_empty() {
                     if self.batch_partitions.len() >= handles.len() {
                         let start = self.batch_partitions.len() - handles.len();
@@ -3357,7 +3363,15 @@ impl IndexRangeSourceExec {
                         std::time::Duration::ZERO,
                     );
                     if let Some(basic) = &stats.index_scan_basic {
-                        basic.record_next(collected, i64::try_from(handle_count).unwrap_or(i64::MAX));
+                        // Go records each `idxResult.Next` the task's
+                        // `extractTaskHandles` made; a local walk is one.
+                        if task_chunk_rows.is_empty() {
+                            basic.record_next(collected, i64::try_from(handle_count).unwrap_or(i64::MAX));
+                        }
+                        for (position, rows) in task_chunk_rows.iter().enumerate() {
+                            let elapsed = if position == 0 { collected } else { std::time::Duration::ZERO };
+                            basic.record_next(elapsed, i64::try_from(*rows).unwrap_or(i64::MAX));
+                        }
                         if ended_inside {
                             basic.record_next(std::time::Duration::ZERO, 0);
                         }
@@ -4448,18 +4462,17 @@ impl Executor for IndexRangeSourceExec {
             let mut base_statement = index_statement.as_ref().unwrap_or(&self.statement).clone();
             // Go's global index lookup reads `kv.PartitionHandle`s under the
             // logical table, in one request (`needPartitionHandle`).
-            // A read narrowed to some partitions, or over a table adding or
-            // dropping some, filters its entries with Go's `_tidb_tid`
-            // Selection (`AddSelectionConditionForGlobalIndex`), which is
-            // still this port's native walk.
-            let reads_every_partition = self.table.read_partitions().is_none()
-                && self.table.meta().read().get_partition_info().is_some_and(|partition| {
-                    let partition = partition.read();
-                    partition.adding_definitions.is_empty() && partition.dropping_definitions.is_empty()
-                });
+            // A table adding or dropping partitions filters a full read's
+            // entries with Go's `_tidb_tid` Selection too
+            // (`AddSelectionConditionForGlobalIndex`), which this port's plan
+            // does not carry: such a read is still the native walk.
+            let no_partition_ddl = self.table.meta().read().get_partition_info().is_some_and(|partition| {
+                let partition = partition.read();
+                partition.adding_definitions.is_empty() && partition.dropping_definitions.is_empty()
+            });
             base_statement.need_partition_handle = !self.covering
                 && self.can_reorder_handles
-                && reads_every_partition
+                && no_partition_ddl
                 && self.global_index_batch();
             let physical_ids = self.record_physical_ids.clone();
             let template = partitioned_walk.then(|| self.table.clone());

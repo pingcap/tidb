@@ -2708,7 +2708,7 @@ impl KvTableReader for TableCommon {
         };
         let layout = source_layout(&complete_columns);
         let null_layout = source_layout(&null_columns);
-        let Some(predicates) = predicates
+        let Some(mut predicates) = predicates
             .iter()
             .map(|predicate| {
                 let mut predicate = predicate.clone();
@@ -2789,6 +2789,30 @@ impl KvTableReader for TableCommon {
             });
             columns.len() - 1
         });
+        // Go `AddSelectionConditionForGlobalIndex`: a read narrowed to some
+        // partitions appends `in(_tidb_tid, ids...)` to the index side's
+        // conditions, which the store evaluates over each entry's partition.
+        if let (Some(column), Some(ids)) = (physical_id_column, self.read_partitions()) {
+            let long_long = FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+            let constant = |id: i64| {
+                Expression::Constant(tidb_expr::constant::Constant::new(Datum::Int(id), long_long.clone()))
+            };
+            let mut physical_id = tidb_expr::column::Column::default();
+            physical_id.ret_type = Some(long_long.clone());
+            physical_id.id = tidb_model::column::EXTRA_PHYS_TBL_ID;
+            physical_id.index = column as i64;
+            let mut args = vec![Expression::Column(physical_id)];
+            if ids.is_empty() {
+                args.push(constant(-1));
+            } else {
+                args.extend(ids.iter().copied().map(constant));
+            }
+            predicates.push(Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
+                tidb_ast::CiString::new("in"),
+                long_long,
+                args,
+            )));
+        }
         let handle_indices = if self.common_handle_offsets().is_empty() {
             vec![table_offsets
                 .iter()
@@ -3024,6 +3048,7 @@ impl KvTableReader for TableCommon {
             pending_chunk: None,
             pending_chunk_row: 0,
             physical_id_index,
+            batch_chunk_rows: Vec::new(),
         }))
     }
 
@@ -4443,6 +4468,9 @@ pub struct RemoteIndexHandleCursor {
     /// Where a global index's `ExtraPhysTblID` sits in the response (Go
     /// `needPartitionHandle`): each handle's partition.
     physical_id_index: Option<usize>,
+    /// The rows of each response chunk the last handle batch read: one Go
+    /// `idxResult.Next` each (`extractTaskHandles`).
+    batch_chunk_rows: Vec<usize>,
 }
 
 impl RemoteIndexHandleCursor {
@@ -4731,9 +4759,12 @@ impl RemoteIndexHandleCursor {
                     .map_err(KvTableError::from)?
                 else {
                     self.note_rows();
+                    // The empty read that ends the stream is a `Next` too.
+                    self.batch_chunk_rows.push(0);
                     break;
                 };
                 self.note_rows();
+                self.batch_chunk_rows.push(chunk.num_rows());
                 self.pending_chunk = Some(chunk);
                 self.pending_chunk_row = 0;
             }
@@ -4760,6 +4791,12 @@ impl RemoteIndexHandleCursor {
             self.pending_chunk_row = 0;
         }
         Ok((!handles.is_empty()).then_some(handles))
+    }
+
+    /// The rows of each response chunk the handle batches read since the
+    /// last call (Go `extractTaskHandles`' `idxResult.Next` calls).
+    pub fn take_batch_chunk_rows(&mut self) -> Vec<usize> {
+        std::mem::take(&mut self.batch_chunk_rows)
     }
 
     /// Returns the next row handle in the remote index order.
@@ -7872,6 +7909,7 @@ mod remote_cursor_tests {
             pending_chunk: None,
             pending_chunk_row: 0,
             physical_id_index: None,
+            batch_chunk_rows: Vec::new(),
         };
         assert_eq!(
             cursor.next_projected_row().unwrap(),
@@ -8094,6 +8132,7 @@ mod remote_cursor_tests {
             pending_chunk: None,
             pending_chunk_row: 0,
             physical_id_index: None,
+            batch_chunk_rows: Vec::new(),
         };
 
         assert_eq!(cursor.next_handle().unwrap(), Some(TableHandle::Int(7)));
@@ -8132,6 +8171,7 @@ mod remote_cursor_tests {
                 pending_chunk: None,
                 pending_chunk_row: 0,
                 physical_id_index: None,
+                batch_chunk_rows: Vec::new(),
             }
         };
 
@@ -8171,6 +8211,7 @@ mod remote_cursor_tests {
             pending_chunk: None,
             pending_chunk_row: 0,
             physical_id_index: None,
+            batch_chunk_rows: Vec::new(),
         };
 
         // Go's readFromChunk keeps a whole typed response chunk when it is
@@ -8213,6 +8254,7 @@ mod remote_cursor_tests {
             pending_chunk: None,
             pending_chunk_row: 0,
             physical_id_index: None,
+            batch_chunk_rows: Vec::new(),
         };
 
         assert_eq!(
@@ -8262,6 +8304,7 @@ mod remote_cursor_tests {
             pending_chunk: None,
             pending_chunk_row: 0,
             physical_id_index: None,
+            batch_chunk_rows: Vec::new(),
         };
         let identity = RemoteCommonHandle {
             parts: vec![
@@ -8320,6 +8363,7 @@ mod remote_cursor_tests {
             pending_chunk: None,
             pending_chunk_row: 0,
             physical_id_index: None,
+            batch_chunk_rows: Vec::new(),
         };
         let expected = |text: &str, value| {
             Encoder::new(false)
