@@ -2014,20 +2014,16 @@ func (m *Mutator) SetRUStats(stats *RUStats) error {
 func GetSchemaDiffCommitTS(m Reader, store kv.Storage, version int64, startTS uint64) (uint64, error) {
 	tikvStore, ok := store.(helper.Storage)
 	if !ok {
-		return 0, errors.New("cannot get MVCC information from store")
+		return 0, errors.New("cannot get store from domain")
 	}
 	resp, err := helper.NewHelper(tikvStore).GetMvccByEncodedKeyWithTS(m.EncodeSchemaDiffKey(version), startTS)
 	if err != nil {
 		return 0, err
 	}
-	if resp != nil && resp.Info != nil {
-		for _, write := range resp.Info.Writes {
-			if write.Type == kvrpcpb.Op_Put && write.CommitTs <= startTS {
-				return write.CommitTs, nil
-			}
-		}
+	if resp == nil || resp.Info == nil || len(resp.Info.Writes) == 0 {
+		return 0, errors.New("There is no Write MVCC info for the schema version")
 	}
-	return 0, errors.Errorf("no committed schema diff found for schema version %d", version)
+	return resp.Info.Writes[0].CommitTs, nil
 }
 
 // GetOldestSchemaVersion gets the oldest schema version at the GC safe point.
