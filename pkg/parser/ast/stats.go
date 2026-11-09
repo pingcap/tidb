@@ -98,8 +98,7 @@ func (hot HistogramOperationType) String() string {
 // The DEFAULT keyword is deliberately the only way to express a reset; no
 // literal "magic" value is reserved for it, because that cannot work uniformly
 // (0 TOPN is already a valid pinned value that disables TopN collection, and
-// the BUCKETS/TOPN defaults are system variables that a literal would pin
-// rather than follow).
+// a literal would pin a fixed BUCKETS/TOPN value rather than follow the default).
 type AnalyzeOpt struct {
 	Type  AnalyzeOptionType
 	Value ValueExpr

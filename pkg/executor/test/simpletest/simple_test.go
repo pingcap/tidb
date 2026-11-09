@@ -505,6 +505,46 @@ func TestUser(t *testing.T) {
 	tk.MustQuery("select user from mysql.user where user='engineering' and host = 'us'").Check(testkit.Rows())
 }
 
+func TestAlterUserPreservesRequire(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`CREATE USER 'require_user'@'%' REQUIRE SUBJECT '/C=US/O=Example/CN=TiDB' SAN 'DNS:foo'`)
+	priv := `{"ssl_type":3,"x509_subject":"/C=US/O=Example/CN=TiDB","san":"DNS:foo"}`
+	tk.MustQuery(`SELECT Priv FROM mysql.global_priv WHERE User='require_user' AND Host='%'`).Check(testkit.Rows(priv))
+
+	// ALTER USER without a REQUIRE clause must not wipe the TLS requirements.
+	tk.MustExec(`ALTER USER 'require_user'@'%' ACCOUNT LOCK`)
+	tk.MustQuery(`SELECT Priv FROM mysql.global_priv WHERE User='require_user' AND Host='%'`).Check(testkit.Rows(priv))
+	tk.MustQuery(`SELECT Account_locked FROM mysql.user WHERE User='require_user' AND Host='%'`).Check(testkit.Rows("Y"))
+	tk.MustQuery(`SHOW CREATE USER 'require_user'@'%'`).Check(testkit.Rows(
+		`CREATE USER 'require_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE SUBJECT '/C=US/O=Example/CN=TiDB' SAN 'DNS:foo' PASSWORD EXPIRE DEFAULT ACCOUNT LOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`))
+
+	// A few more attribute-only ALTERs must also preserve the requirements.
+	tk.MustExec(`ALTER USER 'require_user'@'%' ACCOUNT UNLOCK`)
+	tk.MustQuery(`SELECT Priv FROM mysql.global_priv WHERE User='require_user' AND Host='%'`).Check(testkit.Rows(priv))
+	tk.MustExec(`ALTER USER 'require_user'@'%' PASSWORD EXPIRE`)
+	tk.MustQuery(`SELECT Priv FROM mysql.global_priv WHERE User='require_user' AND Host='%'`).Check(testkit.Rows(priv))
+	tk.MustExec(`ALTER USER 'require_user'@'%' COMMENT ''`)
+	tk.MustQuery(`SELECT Priv FROM mysql.global_priv WHERE User='require_user' AND Host='%'`).Check(testkit.Rows(priv))
+
+	// An explicit REQUIRE clause is still honored.
+	tk.MustExec(`ALTER USER 'require_user'@'%' REQUIRE SSL`)
+	tk.MustQuery(`SELECT Priv FROM mysql.global_priv WHERE User='require_user' AND Host='%'`).Check(testkit.Rows(`{"ssl_type":1}`))
+	// REQUIRE NONE explicitly clears the requirements.
+	tk.MustExec(`ALTER USER 'require_user'@'%' REQUIRE NONE`)
+	tk.MustQuery(`SELECT Priv FROM mysql.global_priv WHERE User='require_user' AND Host='%'`).Check(testkit.Rows(`{}`))
+
+	// A token-issuer-only REQUIRE is stored in mysql.user, not global_priv, so it
+	// must not write an (empty) global_priv row.
+	tk.MustExec(`CREATE USER 'token_only'@'%' IDENTIFIED WITH 'tidb_auth_token' REQUIRE token_issuer 'issuer-abc'`)
+	tk.MustQuery(`SELECT count(*) FROM mysql.global_priv WHERE User='token_only' AND Host='%'`).Check(testkit.Rows("0"))
+	tk.MustExec(`ALTER USER 'token_only'@'%' ACCOUNT LOCK`)
+	tk.MustQuery(`SELECT count(*) FROM mysql.global_priv WHERE User='token_only' AND Host='%'`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SHOW CREATE USER 'token_only'@'%'`).Check(testkit.Rows(
+		`CREATE USER 'token_only'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE token_issuer issuer-abc PASSWORD EXPIRE DEFAULT ACCOUNT LOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`))
+}
+
 func TestSetPwd(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -874,8 +914,9 @@ func TestSelectWhereInvalidDSTTime(t *testing.T) {
 }
 
 func TestFlushStatsDelta(t *testing.T) {
+	// Share the expensive bootstrap; each serial subtest still has its own session.
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	t.Run("full scope", func(t *testing.T) {
-		store, dom := testkit.CreateMockStoreAndDomain(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -903,7 +944,6 @@ func TestFlushStatsDelta(t *testing.T) {
 	})
 
 	t.Run("scoped behavior", func(t *testing.T) {
-		store, dom := testkit.CreateMockStoreAndDomain(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t1, t2, tp")
@@ -957,7 +997,6 @@ func TestFlushStatsDelta(t *testing.T) {
 	})
 
 	t.Run("privilege checks", func(t *testing.T) {
-		store, _ := testkit.CreateMockStoreAndDomain(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t_flush_priv")
@@ -1001,7 +1040,6 @@ func TestFlushStatsDelta(t *testing.T) {
 	})
 
 	t.Run("requires default db for bare table", func(t *testing.T) {
-		store, _ := testkit.CreateMockStoreAndDomain(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustGetDBError("flush stats_delta t1", plannererrors.ErrNoDB)
 	})

@@ -132,6 +132,7 @@ import (
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	gouberatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -2785,7 +2786,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	sc := vars.StmtCtx
 
 	dctx := sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
-		return &distsqlctx.DistSQLContext{
+		ret := &distsqlctx.DistSQLContext{
 			WarnHandler:     sc.WarnHandler,
 			InRestrictedSQL: sc.InRestrictedSQL,
 			Client:          s.GetClient(),
@@ -2829,6 +2830,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			LoadBasedReplicaReadThreshold: vars.LoadBasedReplicaReadThreshold,
 			RunawayChecker:                sc.RunawayChecker,
 			TiKVClientReadTimeout:         vars.GetTiKVClientReadTimeout(),
+			MaxKeysRead:                   vars.GetMaxKeysRead(),
 
 			ReplicaClosestReadThreshold: vars.ReplicaClosestReadThreshold,
 			ConnectionID:                vars.ConnectionID,
@@ -2836,6 +2838,10 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 
 			ExecDetails: &sc.SyncExecDetails,
 		}
+		if ret.MaxKeysRead > 0 {
+			ret.MaxKeysReadCounter = new(gouberatomic.Uint64)
+		}
+		return ret
 	})
 
 	// Check if the runaway checker is updated. This is to avoid that evaluating a non-correlated subquery
@@ -3879,6 +3885,12 @@ func GetOrCreateDomainWithFilter(store kv.Storage, filter issyncer.Filter) (*dom
 	return domap.GetOrCreateWithFilter(store, filter)
 }
 
+// GetOrCreateBRDomain gets or creates the domain used by standalone BR.
+// WithDisableRPC is set before Init so the published server info is not an RPC target.
+func GetOrCreateBRDomain(store kv.Storage, filter issyncer.Filter) (*domain.Domain, error) {
+	return domap.GetOrCreateBRDomain(store, filter)
+}
+
 func getStartMode(ver int64) ddl.StartMode {
 	if ver == notBootstrapped {
 		return ddl.Bootstrap
@@ -4309,7 +4321,7 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 			isCrucial = false
 		}
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
-		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateTableStmt,
+		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.AlterDatabaseStmt, *ast.CreateDatabaseStmt, *ast.CreateTableStmt,
 		*ast.DropDatabaseStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt,
 		*ast.RenameUserStmt:
 		isCrucial = true
@@ -4656,7 +4668,14 @@ func (s *session) SetMemoryFootprintChangeHook() {
 			tracker.AttachTo(s.sessionVars.MemTracker)
 			s.sessionVars.MemDBFootprint = tracker
 		}
-		s.sessionVars.MemDBFootprint.ReplaceBytesUsed(int64(mem))
+		if s.txn.inStmtBufCleanup {
+			// ART can report previously unaccounted node allocations during cleanup.
+			// Keep the footprint accurate without interrupting this cleanup; later
+			// statements must still use the live hook and normal memory enforcement.
+			s.sessionVars.MemDBFootprint.ReplaceBytesUsedForCleanup(int64(mem))
+		} else {
+			s.sessionVars.MemDBFootprint.ReplaceBytesUsed(int64(mem))
+		}
 	}
 	s.txn.SetMemoryFootprintChangeHook(hook)
 }

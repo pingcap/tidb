@@ -1618,6 +1618,12 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBEnableConnectionEventLog, Value: BoolToOnOff(DefTiDBEnableConnectionEventLog), Type: TypeBool, SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+		EnableConnectionEventLog.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		return BoolToOnOff(EnableConnectionEventLog.Load()), nil
+	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerContinuousCapture, Value: BoolToOnOff(false), Type: TypeBool,
@@ -1734,6 +1740,18 @@ var defaultSysVars = []*SysVar{
 		SetSession: func(s *SessionVars, val string) error {
 			timeoutMS := tidbOptPositiveInt32(val, 0)
 			s.MaxExecutionTime = uint64(timeoutMS)
+			return nil
+		}},
+	{
+		Scope:                   ScopeGlobal | ScopeSession,
+		Name:                    TiDBMaxKeysRead,
+		Value:                   "0",
+		Type:                    TypeUnsigned,
+		MinValue:                0,
+		MaxValue:                math.MaxUint64,
+		IsHintUpdatableVerified: true,
+		SetSession: func(s *SessionVars, val string) error {
+			s.MaxKeysRead = TidbOptUint64(val, 0)
 			return nil
 		}},
 	{
@@ -2042,6 +2060,10 @@ var defaultSysVars = []*SysVar{
 			s.SetAllowPreferRangeScan(TiDBOptOn(val))
 			return nil
 		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptAlwaysKeepJoinKey, Value: BoolToOnOff(DefOptAlwaysKeepJoinKey), Type: TypeBool, IsHintUpdatableVerified: true, SetSession: func(s *SessionVars, val string) error {
+		s.AlwaysKeepJoinKey = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptLimitPushDownThreshold, Value: strconv.Itoa(DefOptLimitPushDownThreshold), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.LimitPushDownThreshold = TidbOptInt64(val, DefOptLimitPushDownThreshold)
 		return nil
@@ -3772,6 +3794,11 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 		if intest.InTest {
 			varVal = Off
 		}
+	case TiDBRedactLog:
+		if intest.InTest {
+			// Tests assert SQL and values in errors; redaction tests enable it explicitly.
+			varVal = Off
+		}
 	// For the following sysvars, we change the default
 	// FOR NEW INSTALLS ONLY. In most cases you don't want to do this.
 	// It is better to change the value in the Sysvar struct, so that
@@ -4101,6 +4128,8 @@ const (
 	TxnIsolationOneShot = "tx_isolation_one_shot"
 	// MaxExecutionTime is the name of the 'max_execution_time' system variable.
 	MaxExecutionTime = "max_execution_time"
+	// TiDBMaxKeysRead is the maximum number of storage engine keys a SELECT may examine (0 = unlimited).
+	TiDBMaxKeysRead = "tidb_max_keys_read"
 	// TiKVClientReadTimeout is the name of the 'tikv_client_read_timeout' system variable.
 	TiKVClientReadTimeout = "tikv_client_read_timeout"
 	// TiDBLoadBindingTimeout is the name of the 'tidb_load_binding_timeout' system variable.

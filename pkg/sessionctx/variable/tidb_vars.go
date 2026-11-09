@@ -327,6 +327,11 @@ const (
 	// TiDBOptPreferRangeScan is used to enable/disable the optimizer to always prefer range scan over table scan, ignoring their costs.
 	TiDBOptPreferRangeScan = "tidb_opt_prefer_range_scan"
 
+	// TiDBOptAlwaysKeepJoinKey indicates the optimizer to always keep join keys during optimization.
+	// Join keys are crucial for join optimization like Join Order and Join Algorithm selection, removing
+	// join keys might lead to suboptimal plans in some cases.
+	TiDBOptAlwaysKeepJoinKey = "tidb_opt_always_keep_join_key"
+
 	// TiDBOptEnableCorrelationAdjustment is used to indicates if enable correlation adjustment.
 	TiDBOptEnableCorrelationAdjustment = "tidb_opt_enable_correlation_adjustment"
 
@@ -1308,6 +1313,9 @@ const (
 	// TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio variable is used to set ratio of errors to trip the circuit breaker for get region calls to PD
 	// https://github.com/tikv/rfcs/blob/master/text/0115-circuit-breaker.md
 	TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio = "tidb_cb_pd_metadata_error_rate_threshold_ratio"
+
+	// TiDBEnableConnectionEventLog controls whether to log connection events.
+	TiDBEnableConnectionEventLog = "tidb_enable_connection_event_log"
 )
 
 // TiDB intentional limits
@@ -1391,6 +1399,7 @@ const (
 	DefOptForceInlineCTE                    = false
 	DefOptInSubqToJoinAndAgg                = true
 	DefOptPreferRangeScan                   = true
+	DefOptAlwaysKeepJoinKey                 = false
 	DefBatchInsert                          = false
 	DefBatchDelete                          = false
 	DefBatchCommit                          = false
@@ -1486,7 +1495,7 @@ const (
 	DefTiDBEnableCollectExecutionInfo       = true
 	DefTiDBAllowAutoRandExplicitInsert      = false
 	DefTiDBEnableClusteredIndex             = ClusteredIndexDefModeOn
-	DefTiDBRedactLog                        = Off
+	DefTiDBRedactLog                        = On
 	DefTiDBRestrictedReadOnly               = false
 	DefTiDBSuperReadOnly                    = false
 	DefTiDBShardAllocateStep                = math.MaxInt64
@@ -1704,7 +1713,8 @@ const (
 	DefTiDBCircuitBreakerPDMetaErrorRateRatio         = 0.0
 	// DefConnectAttrsSize is the default max aggregate byte size of connection attributes per connection.
 	// This corresponds to performance_schema_session_connect_attrs_size. In TiDB, -1 means no limit up to 64KB.
-	DefConnectAttrsSize int64 = 4096
+	DefConnectAttrsSize             int64 = 4096
+	DefTiDBEnableConnectionEventLog       = false
 )
 
 // Process global variables.
@@ -1843,6 +1853,8 @@ var (
 	ConnectAttrsLongestSeen = atomic.NewInt64(0)
 	// ConnectAttrsLost counts the number of connections whose attributes were truncated.
 	ConnectAttrsLost = atomic.NewInt64(0)
+
+	EnableConnectionEventLog = atomic.NewBool(DefTiDBEnableConnectionEventLog)
 )
 
 var (

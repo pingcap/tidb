@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"maps"
 	"math"
 	"reflect"
 	"slices"
@@ -241,6 +242,9 @@ type PlanBuilder struct {
 	windowSpecs  map[string]*ast.WindowSpec
 	inUpdateStmt bool
 	inDeleteStmt bool
+	// inSelect is true while building a SELECT, including subqueries and view
+	// bodies. It distinguishes a SELECT source from an UPDATE/DELETE target.
+	inSelect bool
 	// inStraightJoin represents whether the current "SELECT" statement has
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool
@@ -1222,6 +1226,9 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 		unSupportedReason = "stale read is not supported"
 	} else if sessionVars.SnapshotTS != 0 {
 		unSupportedReason = "historical read is not supported"
+	} else if sessionVars.MaxKeysRead > 0 {
+		// https://github.com/tikv/tikv/pull/19518#discussion_r3263461617
+		unSupportedReason = "tidb_max_keys_read is set"
 	}
 
 	if unSupportedReason != "" {
@@ -2673,11 +2680,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		return err
 	}
 
-<<<<<<< HEAD
-	astOpts, err := handleAnalyzeOptionsV2(as.AnalyzeOpts)
-=======
-	astOpts, astResets, err := handleAnalyzeOptions(as.AnalyzeOpts)
->>>>>>> e73d535e340 (parser, planner, executor: support ANALYZE ... WITH DEFAULT <option> (#69956))
+	astOpts, astResets, err := handleAnalyzeOptionsV2(as.AnalyzeOpts)
 	if err != nil {
 		return err
 	}
@@ -2793,12 +2796,8 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 	isAnalyzeTable bool,
 	physicalIDs []int64,
 	astOpts map[ast.AnalyzeOptionType]uint64,
-<<<<<<< HEAD
-	astColChoice pmodel.ColumnChoice,
-=======
 	astResets map[ast.AnalyzeOptionType]struct{},
-	astColChoice ast.ColumnChoice,
->>>>>>> e73d535e340 (parser, planner, executor: support ANALYZE ... WITH DEFAULT <option> (#69956))
+	astColChoice pmodel.ColumnChoice,
 	astColList []*model.ColumnInfo,
 	predicateCols, mustAnalyzedCols *calcOnceMap,
 	mustAllColumns bool,
@@ -2814,16 +2813,10 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 	// Because the plan is generated for each partition individually, each partition uses its own statistics;
 	// In dynamic mode, there is no partitioning, and a global plan is generated for the whole table, so a global statistic is needed;
 	dynamicPrune := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
-<<<<<<< HEAD
-	if !isAnalyzeTable && dynamicPrune && (len(astOpts) > 0 || astColChoice != pmodel.DefaultChoice) {
-		astOpts = make(map[ast.AnalyzeOptionType]uint64, 0)
-		astColChoice = pmodel.DefaultChoice
-=======
-	if !isAnalyzeTable && dynamicPrune && (len(astOpts) > 0 || len(astResets) > 0 || astColChoice != ast.DefaultChoice) {
+	if !isAnalyzeTable && dynamicPrune && (len(astOpts) > 0 || len(astResets) > 0 || astColChoice != pmodel.DefaultChoice) {
 		astOpts = map[ast.AnalyzeOptionType]uint64{}
 		astResets = map[ast.AnalyzeOptionType]struct{}{}
-		astColChoice = ast.DefaultChoice
->>>>>>> e73d535e340 (parser, planner, executor: support ANALYZE ... WITH DEFAULT <option> (#69956))
+		astColChoice = pmodel.DefaultChoice
 		astColList = make([]*model.ColumnInfo, 0)
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Ignore columns and options when analyze partition in dynamic mode"))
 	}
@@ -2901,13 +2894,8 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 			savedOpts := overrideAnalyzeOptions(parSavedOpts, tblSavedOpts)
 			savedColChoice, savedColList := pickColumnList(parSavedColChoice, parSavedColList, tblSavedColChoice, tblSavedColList)
 			// then merge statement level options
-<<<<<<< HEAD
-			mergedOpts := mergeAnalyzeOptions(astOpts, savedOpts)
-			filledMergedOpts := fillAnalyzeOptionsV2(mergedOpts)
-=======
 			mergedOpts := mergeAnalyzeOptions(astOpts, stmtResets, savedOpts)
-			filledMergedOpts := fillAnalyzeOptions(mergedOpts)
->>>>>>> e73d535e340 (parser, planner, executor: support ANALYZE ... WITH DEFAULT <option> (#69956))
+			filledMergedOpts := fillAnalyzeOptionsV2(mergedOpts)
 			finalColChoice, mergedColList := pickColumnList(astColChoice, astColList, savedColChoice, savedColList)
 			finalColsInfo, finalColList, err := b.getFullAnalyzeColumnsInfo(tbl, finalColChoice, mergedColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
 			if err != nil {
@@ -3270,7 +3258,6 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptSampleRate:    math.Float64bits(0),
 }
 
-<<<<<<< HEAD
 // TopN reduced from 500 to 100 due to concerns over large number of TopN values collected for customers with many tables.
 // 100 is more inline with other databases. 100-256 is also common for NumBuckets with other databases.
 var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]uint64{
@@ -3287,12 +3274,7 @@ func GetAnalyzeOptionDefaultV2ForTest() map[ast.AnalyzeOptionType]uint64 {
 	return analyzeOptionDefaultV2
 }
 
-// This function very similar to handleAnalyzeOptions, but it's used for analyze version 2.
-// Remove this function after we remove the support of analyze version 1.
-func handleAnalyzeOptionsV2(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
-	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
-=======
-// handleAnalyzeOptions validates the analyze options explicitly specified in the
+// handleAnalyzeOptionsV2 validates the analyze options explicitly specified in the
 // statement. It returns the options given an explicit value, keyed by option
 // type, and separately the set of options given as DEFAULT, which clears the
 // value persisted in mysql.analyze_options for the analyzed target so that it
@@ -3302,10 +3284,12 @@ func handleAnalyzeOptionsV2(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]ui
 // so its persisted value still applies.
 //
 // See ast.AnalyzeOpt for why DEFAULT is the only way to express such a reset.
-func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, map[ast.AnalyzeOptionType]struct{}, error) {
-	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionLimit))
-	resetOpts := make(map[ast.AnalyzeOptionType]struct{}, len(analyzeOptionLimit))
->>>>>>> e73d535e340 (parser, planner, executor: support ANALYZE ... WITH DEFAULT <option> (#69956))
+//
+// This function very similar to handleAnalyzeOptions, but it's used for analyze version 2.
+// Remove this function after we remove the support of analyze version 1.
+func handleAnalyzeOptionsV2(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, map[ast.AnalyzeOptionType]struct{}, error) {
+	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
+	resetOpts := make(map[ast.AnalyzeOptionType]struct{}, len(analyzeOptionDefault))
 	sampleNum, sampleRate := uint64(0), 0.0
 	for _, opt := range opts {
 		// Options are processed in statement order, so for repeated mentions of
@@ -3376,17 +3360,25 @@ func fillAnalyzeOptionsV2(optMap map[ast.AnalyzeOptionType]uint64) map[ast.Analy
 
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeOptionType]uint64, error) {
 	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
+	defaultOpts := analyzeOptionDefaultV2
 	if statsVer == statistics.Version1 {
-		for key, val := range analyzeOptionDefault {
-			optMap[key] = val
-		}
-	} else {
-		for key, val := range analyzeOptionDefaultV2 {
-			optMap[key] = val
-		}
+		defaultOpts = analyzeOptionDefault
 	}
+	maps.Copy(optMap, defaultOpts)
 	sampleNum, sampleRate := uint64(0), 0.0
 	for _, opt := range opts {
+		// DEFAULT uses the default of this stats version for the run. The persisted
+		// value is reset through handleAnalyzeOptionsV2; version 1 persists nothing.
+		if opt.Value == nil {
+			optMap[opt.Type] = defaultOpts[opt.Type]
+			switch opt.Type {
+			case ast.AnalyzeOptNumSamples:
+				sampleNum = 0
+			case ast.AnalyzeOptSampleRate:
+				sampleRate = 0
+			}
+			continue
+		}
 		datumValue := opt.Value.(*driver.ValueExpr).Datum
 		switch opt.Type {
 		case ast.AnalyzeOptNumTopN:
@@ -3442,24 +3434,10 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (base.Plan, error) 
 	// Require INSERT and SELECT privilege for tables.
 	b.requireInsertAndSelectPriv(as.TableNames)
 
-<<<<<<< HEAD
 	opts, err := handleAnalyzeOptions(as.AnalyzeOpts, statsVersion)
 	if err != nil {
 		return nil, err
 	}
-=======
-	stmtOpts, stmtResets, err := handleAnalyzeOptions(as.AnalyzeOpts)
-	if err != nil {
-		return nil, err
-	}
-	// These options are the fallback used when tidb_persist_analyze_options is
-	// off, so there is no saved value for an option given as DEFAULT to reset and
-	// it just means "use the system default for this run": merging against no
-	// saved options drops it and fillAnalyzeOptions supplies the default. When
-	// persistence is on, the per-table options built by
-	// buildAnalyzeFullSamplingTask take precedence over these in the executor.
-	filledOpts := fillAnalyzeOptions(mergeAnalyzeOptions(stmtOpts, stmtResets, nil))
->>>>>>> e73d535e340 (parser, planner, executor: support ANALYZE ... WITH DEFAULT <option> (#69956))
 
 	if as.IndexFlag {
 		if len(as.IndexNames) == 0 {

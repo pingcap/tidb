@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"strings"
 
@@ -59,6 +60,15 @@ func hasModifyFlag(col *model.ColumnInfo) bool {
 
 func isNullToNotNullChange(oldCol, newCol *model.ColumnInfo) bool {
 	return !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(newCol.GetFlag())
+}
+
+// clearModifyColumnTempFlags removes in-progress modify-column markers from col.
+func clearModifyColumnTempFlags(col *model.ColumnInfo) {
+	if !hasModifyFlag(col) {
+		return
+	}
+	col.DelFlag(mysql.PreventNullInsertFlag)
+	col.ChangingFieldType = nil
 }
 
 func isIntegerChange(from, to *model.ColumnInfo) bool {
@@ -382,12 +392,7 @@ func rollbackModifyColumnJob(
 	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
 	newCol, oldCol *model.ColumnInfo) (ver int64, err error) {
 	if oldCol.ID == newCol.ID {
-		// Clean the flag info in oldCol.
-		if hasModifyFlag(tblInfo.Columns[oldCol.Offset]) {
-			tblInfo.Columns[oldCol.Offset].DelFlag(mysql.PreventNullInsertFlag)
-			tblInfo.Columns[oldCol.Offset].DelFlag(mysql.NotNullFlag)
-			tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
-		}
+		clearModifyColumnTempFlags(tblInfo.Columns[oldCol.Offset])
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -404,12 +409,7 @@ func rollbackModifyColumnJob(
 func rollbackModifyColumnJobWithReorg(
 	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
 	oldCol *model.ColumnInfo, args *model.ModifyColumnArgs) (ver int64, err error) {
-	// Clean the flag info in oldCol.
-	if hasModifyFlag(tblInfo.Columns[oldCol.Offset]) {
-		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.PreventNullInsertFlag)
-		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.NotNullFlag)
-		tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
-	}
+	clearModifyColumnTempFlags(tblInfo.Columns[oldCol.Offset])
 
 	var changingIdxIDs []int64
 	if args.ChangingColumn != nil {
@@ -434,12 +434,7 @@ func rollbackModifyColumnJobWithReorg(
 func rollbackModifyColumnJobWithIndexReorg(
 	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
 	oldCol *model.ColumnInfo, args *model.ModifyColumnArgs) (ver int64, err error) {
-	// Clean the flag info in oldCol.
-	if hasModifyFlag(tblInfo.Columns[oldCol.Offset]) {
-		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.PreventNullInsertFlag)
-		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.NotNullFlag)
-		tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
-	}
+	clearModifyColumnTempFlags(tblInfo.Columns[oldCol.Offset])
 
 	allIdxs := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 	changingIdxInfos := make([]*model.IndexInfo, 0, len(allIdxs)/2)
@@ -1175,7 +1170,9 @@ func (w *worker) doModifyColumnIndexReorg(
 
 	switch job.SchemaState {
 	case model.StateNone:
-		oldCol.AddFlag(mysql.PreventNullInsertFlag)
+		if isNullToNotNullChange(oldCol, args.Column) {
+			oldCol.AddFlag(mysql.PreventNullInsertFlag)
+		}
 		oldCol.ChangingFieldType = &args.Column.FieldType
 		// none -> delete only
 		updateObjectState(nil, changingIdxInfos, model.StateDeleteOnly)
@@ -1376,6 +1373,9 @@ func doReorgWorkForModifyColumn(
 		if kv.IsTxnRetryableError(err) || dbterror.ErrNotOwner.Equal(err) {
 			return false, ver, errors.Trace(err)
 		}
+		if isRetryableModifyColumnReorgJobError(err, job.ErrorCount) {
+			return false, ver, errors.Trace(err)
+		}
 		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 			logutil.DDLLogger().Warn("run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 				zap.String("job", job.String()), zap.Error(err1))
@@ -1385,6 +1385,25 @@ func doReorgWorkForModifyColumn(
 		return false, ver, errors.Trace(err)
 	}
 	return true, ver, nil
+}
+
+// isRetryableModifyColumnReorgJobError applies the retry limit and rejects
+// deterministic conversion errors before matching transient error messages.
+func isRetryableModifyColumnReorgJobError(err error, jobErrCnt int64) bool {
+	if jobErrCnt+1 >= variable.GetDDLErrorCountLimit() {
+		return false
+	}
+	// Cast errors can contain arbitrary values or column names. Classify their
+	// structured types before matching transient error messages in that text.
+	var typedErr *errors.Error
+	if goerrors.As(err, &typedErr) && (dbterror.ClassTypes.EqualClass(typedErr) ||
+		dbterror.ClassJSON.EqualClass(typedErr) || table.ErrTruncatedWrongValueForField.Equal(typedErr) ||
+		table.ErrColumnCantNull.Equal(typedErr)) {
+		return false
+	}
+	// Modify column reorg can return deterministic data conversion errors. Retrying unknown errors may
+	// cause long retry loops and block the job from rolling back.
+	return isRetryableError(err, false)
 }
 
 func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, oldColName pmodel.CIStr) error {

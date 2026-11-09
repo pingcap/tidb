@@ -12,6 +12,8 @@ import (
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/operation"
+	"github.com/pingcap/tidb/br/pkg/repo"
+	"github.com/pingcap/tidb/br/pkg/restore/nameroute"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
@@ -352,12 +354,19 @@ func expectedDefaultBackupConfig() BackupConfig {
 		IgnoreStats:      true,
 		UseBackupMetaV2:  true,
 		UseCheckpoint:    true,
+		Layout:           repo.LayoutLegacy,
 		TableConcurrency: 64,
 	}
 }
 
 func expectedDefaultRestoreConfig() RestoreConfig {
 	defaultConfig := expectedDefaultConfig()
+	// ParseFromFlags validates and caches the (empty) name router, and the flag
+	// parser materializes Rename as an empty slice, so mirror both here.
+	emptyRouter, err := nameroute.Parse([]string{})
+	if err != nil {
+		panic(err)
+	}
 	return RestoreConfig{
 		Config: defaultConfig,
 		RestoreCommonConfig: RestoreCommonConfig{
@@ -368,8 +377,10 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 			MergeSmallRegionKeyCount:  kvconfig.ConfigTerm[uint64]{Value: 0xea600},
 			WithSysTable:              true,
 			ResetSysUsers:             []string{"cloud_admin", "root"},
+			SysCheckCollation:         true,
 		},
 		NoSchema:                 false,
+		Rename:                   []string{},
 		LoadStats:                true,
 		FastLoadSysTables:        true,
 		PDConcurrency:            0x1,
@@ -378,8 +389,11 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 		DdlBatchSize:             0x80,
 		RegionScanConcurrency:    256,
 		WithPlacementPolicy:      "STRICT",
+		Layout:                   repo.LayoutLegacy,
 		UseCheckpoint:            true,
 		AllowPITRFromIncremental: true,
+		nameRouter:               emptyRouter,
+		nameRouterRules:          []string{},
 	}
 }
 

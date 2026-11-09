@@ -581,12 +581,8 @@ type V2AnalyzeOptions struct {
 	PhyTableID  int64
 	RawOpts     map[ast.AnalyzeOptionType]uint64
 	FilledOpts  map[ast.AnalyzeOptionType]uint64
-<<<<<<< HEAD
-	ColChoice   pmodel.ColumnChoice
-=======
 	ResetOpts   map[ast.AnalyzeOptionType]struct{}
-	ColChoice   ast.ColumnChoice
->>>>>>> e73d535e340 (parser, planner, executor: support ANALYZE ... WITH DEFAULT <option> (#69956))
+	ColChoice   pmodel.ColumnChoice
 	ColumnList  []*model.ColumnInfo
 	IsPartition bool
 }

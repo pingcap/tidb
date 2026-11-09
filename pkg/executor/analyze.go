@@ -228,9 +228,9 @@ func canBroadcastAnalyzeStatsDeltaForTest(ctx context.Context) (bool, error) {
 	}
 	rpcAddrs := make([]string, 0, len(servers))
 	for _, server := range servers {
-		// Keep the same skip behavior as buildTiDBMemCopTasks for placeholder
-		// nodes that should not receive TiDB-type coprocessor requests.
-		if server.IP == "<nil>" {
+		// Skip processes that register server info but cannot receive TiDB RPC,
+		// such as standalone BR.
+		if server.DisableRPC {
 			continue
 		}
 		// In-process test domains can register server info without starting a
@@ -568,10 +568,6 @@ func getTableIDFromTask(task *analyzeTask) statistics.AnalyzeTableID {
 	panic("unreachable")
 }
 
-<<<<<<< HEAD
-func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
-	if !variable.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
-=======
 // writeSavedAnalyzeOption appends one analyze option to the VALUES list of the
 // REPLACE INTO mysql.analyze_options statement. An option that is not set is
 // written as the DEFAULT keyword rather than a hardcoded value, so the column
@@ -594,9 +590,8 @@ func writeSavedAnalyzeOption(sql *strings.Builder, rawOpts map[ast.AnalyzeOption
 	sqlescape.MustFormatSQL(sql, "%?", val)
 }
 
-func (e *AnalyzeExec) saveAnalyzeOptions() error {
-	if !vardef.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
->>>>>>> e73d535e340 (parser, planner, executor: support ANALYZE ... WITH DEFAULT <option> (#69956))
+func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
+	if !variable.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
 		return nil
 	}
 	// only to save table options if dynamic prune mode

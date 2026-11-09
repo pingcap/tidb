@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	tikv "github.com/pingcap/tidb/pkg/kv"
@@ -261,6 +262,22 @@ func TestGlobalVarAccessor(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+
+	originalRedactLog := errors.RedactLogEnabled.Load()
+	t.Cleanup(func() { errors.RedactLogEnabled.Store(originalRedactLog) })
+	originalGlobalRedactLog := tk.MustQuery("select @@global.tidb_redact_log").Rows()[0][0].(string)
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_redact_log = " + originalGlobalRedactLog)
+	})
+
+	// Persisted redaction settings must override the compiled default in new sessions.
+	for _, value := range []string{variable.Off, variable.Marker} {
+		tk.MustExec("set global tidb_redact_log = " + value)
+		tk.MustQuery("select variable_value from mysql.global_variables where variable_name = 'tidb_redact_log'").Check(testkit.Rows(value))
+		newSession := testkit.NewTestKit(t, store)
+		newSession.MustQuery("select @@global.tidb_redact_log, @@session.tidb_redact_log").Check(testkit.Rows(value + " " + value))
+		newSession.Session().Close()
+	}
 
 	se := tk.Session().(variable.GlobalVarAccessor)
 	// Get globalSysVar twice and get the same value
