@@ -121,9 +121,11 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 
 	// step 3: add metadata lock and check each table's schema version
 	schemaNotMatch := false
+	clear(stmt.SnapshotTableVersions)
 	for i := range stmt.dbName {
 		tbl, ok := is.TableByID(ctx, stmt.tbls[i].Meta().ID)
-		if !ok {
+		db, dbExists := is.SchemaByName(stmt.dbName[i])
+		if !ok || !dbExists || tbl.Meta().DBID != db.ID || tbl.Meta().Name.L != stmt.tbls[i].Meta().Name.L {
 			tblByName, err := is.TableByName(context.Background(), stmt.dbName[i], stmt.tbls[i].Meta().Name)
 			if err != nil {
 				return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
@@ -132,6 +134,10 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 			delete(stmt.RelateVersion, stmt.tbls[i].Meta().ID)
 			tbl = tblByName
 		}
+		if stmt.SnapshotTableVersions == nil {
+			stmt.SnapshotTableVersions = make(map[int64]uint64, len(stmt.dbName))
+		}
+		stmt.SnapshotTableVersions[tbl.Meta().ID] = tbl.Meta().Revision
 		// newTbl is the 'should be used' table info for this execution.
 		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(ctx, sctx.GetPlanCtx(), stmt.dbName[i], tbl, is)
 		if err != nil {
@@ -141,7 +147,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 			schemaNotMatch = true
 			continue
 		}
-		if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision {
+		if stmt.tbls[i].Meta().ID != newTbl.Meta().ID || stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision {
 			schemaNotMatch = true
 		}
 		// Update the cache key related fields.

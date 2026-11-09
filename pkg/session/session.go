@@ -3470,7 +3470,8 @@ func (s *session) rebuildFromPrepareCache(
 		SchemaVersion:       cached.Stmt.SchemaVersion,
 
 		// Mutable containers – clone so each stmt has independent state:
-		RelateVersion: maps.Clone(cached.Stmt.RelateVersion),
+		RelateVersion:         maps.Clone(cached.Stmt.RelateVersion),
+		SnapshotTableVersions: maps.Clone(cached.Stmt.SnapshotTableVersions),
 		// PointGet is zeroed (per-execution executor state must not leak).
 		// NormalizedPlan / PlanDigest are left as zero values; they will be
 		// populated on the first plan-cache miss during Execute.

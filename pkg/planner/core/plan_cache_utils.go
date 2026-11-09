@@ -339,8 +339,6 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 }
 
 // NewPlanCacheKey creates the plan cache key for this statement.
-// Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
-// differentiate the cache key. In other cases, it will be 0.
 // All information that might affect the plan should be considered in this function.
 func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
 	return newPlanCacheKeyWithMatchedBinding(sctx, stmt, nil, false)
@@ -360,14 +358,18 @@ func newPlanCacheKeyWithMatchedBinding(
 		binding = matchedBinding.BindSQL
 	}
 
-	// In rc or for update read, we need the latest schema version to decide whether we need to
-	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
-	var latestSchemaVersion int64
+	// RC and locking reads also depend on the latest table metadata when checking indexes.
+	var latestTableVersions map[int64]uint64
+	checkLatestTables := false
 	if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || stmt.ForUpdateRead {
-		// In Rc or ForUpdateRead, we should check if the information schema has been changed since
-		// last time. If it changed, we should rebuild the plan. Here, we use a different and more
-		// up-to-date schema version which can lead plan cache miss and thus, the plan will be rebuilt.
-		latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
+		checkLatestTables = true
+		latestIS := domain.GetDomain(sctx).InfoSchema()
+		latestTableVersions = make(map[int64]uint64, len(stmt.RelateVersion))
+		for id := range stmt.RelateVersion {
+			if tbl, ok := latestIS.TableByID(context.Background(), id); ok {
+				latestTableVersions[id] = tbl.Meta().Revision
+			}
+		}
 	}
 
 	// rebuild key to exclude kv.TiFlash when stmt is not read only
@@ -416,10 +418,10 @@ func newPlanCacheKeyWithMatchedBinding(
 	// to update hashLen accordingly
 	// basic informations
 	hashLen := len(userName) + len(hostName) + len(stmtDB) + len(stmt.StmtText)
-	// schemaVersion + relateVersion + pruneMode
-	hashLen += 8 + len(stmt.RelateVersion)*16 + len(pruneMode)
-	// latestSchemaVersion + sqlMode + enableNoBackslashEscapesInLike + timeZoneOffset + isolationReadEngines + selectLimit
-	hashLen += 8 + 8 + 1 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
+	// Table version maps include their lengths to distinguish missing tables.
+	hashLen += 8*3 + (len(stmt.RelateVersion)+len(stmt.SnapshotTableVersions)+len(latestTableVersions))*16 + 1 + len(pruneMode)
+	// sqlMode + enableNoBackslashEscapesInLike + timeZoneOffset + isolationReadEngines + selectLimit
+	hashLen += 8 + 1 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
 	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks
 	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 + 8 + 2
 	if len(stmt.limits) > 0 {
@@ -443,14 +445,15 @@ func newPlanCacheKeyWithMatchedBinding(
 	hash = append(hash, hostName...)
 	hash = append(hash, stmtDB...)
 	hash = append(hash, stmt.StmtText...)
-	hash = codec.EncodeInt(hash, stmt.SchemaVersion)
+	hash = codec.EncodeUint(hash, uint64(len(stmt.RelateVersion)))
 	hash = hashInt64Uint64Map(hash, stmt.RelateVersion)
+	// The snapshot affects which indexes MDL can expose from newer table metadata.
+	hash = codec.EncodeUint(hash, uint64(len(stmt.SnapshotTableVersions)))
+	hash = hashInt64Uint64Map(hash, stmt.SnapshotTableVersions)
+	hash = append(hash, bool2Byte(checkLatestTables))
+	hash = codec.EncodeUint(hash, uint64(len(latestTableVersions)))
+	hash = hashInt64Uint64Map(hash, latestTableVersions)
 	hash = append(hash, pruneMode...)
-	// Only be set in rc or for update read and leave it default otherwise.
-	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
-	// If it changed, we should rebuild the plan. lastUpdatedSchemaVersion help us to decide whether we should rebuild
-	// the plan in rc or for update read.
-	hash = codec.EncodeInt(hash, latestSchemaVersion)
 	hash = codec.EncodeInt(hash, int64(vars.SQLMode))
 	hash = append(hash, bool2Byte(vars.EnableNoBackslashEscapesInLike))
 	hash = codec.EncodeInt(hash, int64(timezoneOffset))
@@ -797,6 +800,8 @@ type PlanCacheStmt struct {
 
 	// RelateVersion stores the true cache plan table schema version, since each table schema can be updated separately in transaction.
 	RelateVersion map[int64]uint64
+	// SnapshotTableVersions records the transaction snapshot before MDL updates table metadata.
+	SnapshotTableVersions map[int64]uint64
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
