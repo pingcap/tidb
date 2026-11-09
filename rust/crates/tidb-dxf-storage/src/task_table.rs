@@ -593,6 +593,16 @@ impl TaskManager {
         if subtasks.is_empty() {
             return Ok(());
         }
+        #[cfg(feature = "failpoints")]
+        fail::fail_point!("waitBeforeInsertSubtasks", |_| {
+            let _ = TEST_CHANNEL.1.recv();
+            let _ = TEST_CHANNEL.1.recv();
+            Self::insert_subtasks_unchecked(se, subtasks)
+        });
+        Self::insert_subtasks_unchecked(se, subtasks)
+    }
+
+    fn insert_subtasks_unchecked(se: &dyn SessionContext, subtasks: &[Subtask]) -> Result<()> {
         let mut args = Vec::with_capacity(subtasks.len() * 8);
         for subtask in subtasks {
             args.extend([
@@ -815,6 +825,11 @@ impl TaskManager {
         })
     }
 }
+
+/// Go `TestChannel`: the unbuffered channel the `waitBeforeInsertSubtasks`
+/// failpoint waits on twice. Only used for test.
+pub static TEST_CHANNEL: std::sync::LazyLock<(crossbeam_channel::Sender<()>, crossbeam_channel::Receiver<()>)> =
+    std::sync::LazyLock::new(|| crossbeam_channel::bounded(0));
 
 /// Go's package variable `maxSubtaskBatchSize`, which tests lower.
 static MAX_SUBTASK_BATCH_SIZE_VAR: std::sync::atomic::AtomicUsize =

@@ -4693,6 +4693,8 @@ name = "tidb-dxf-storage"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "crossbeam-channel",
+ "fail",
  "serde",
  "serde_json",
  "tidb-config",
@@ -7184,6 +7186,7 @@ dependencies = [
  "tidb-domainutil",
  "tidb-driver-error",
  "tidb-dxf",
+ "tidb-dxf-execute",
  "tidb-dxf-storage",
  "tidb-dxf-testutil",
  "tidb-errno",

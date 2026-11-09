@@ -203,6 +203,8 @@ tidb-resolve = { path = "../tidb-resolve" }
 
 [dev-dependencies]
 tidb-dxf = { path = "../tidb-dxf" }
+tidb-dxf-execute = { path = "../tidb-dxf-execute" }
+tidb-dxf-storage = { path = "../tidb-dxf-storage", features = ["failpoints"] }
 tidb-dxf-testutil = { path = "../tidb-dxf-testutil" }
 tidb-sqlexec-mock = { path = "../tidb-sqlexec-mock" }
 tidb-topsql-collector = { path = "../tidb-topsql-collector" }

@@ -29,7 +29,8 @@ fn last_insert_id(rows: &[Vec<Datum>]) -> i64 {
     }
 }
 
-/// Go `CreateSubTask`: a pending subtask in the subtask table.
+/// Go `CreateSubTask`: a pending subtask in the subtask table (`None`
+/// meta is Go's nil, written as NULL).
 ///
 /// # Panics
 /// The insert failed (Go's `require.NoError`).
@@ -39,7 +40,7 @@ pub fn create_sub_task(
     task_id: i64,
     step: Step,
     exec_id: &str,
-    meta: &[u8],
+    meta: Option<&[u8]>,
     tp: &TaskType,
     concurrency: isize,
 ) -> i64 {
@@ -56,7 +57,7 @@ pub fn insert_subtask(
     task_id: i64,
     step: Step,
     exec_id: &str,
-    meta: &[u8],
+    meta: Option<&[u8]>,
     state: &SubtaskState,
     tp: &TaskType,
     concurrency: isize,
@@ -75,7 +76,7 @@ pub fn insert_subtask(
                 SqlArg::Signed(step.0),
                 SqlArg::Signed(task_id),
                 SqlArg::String(exec_id.as_bytes()),
-                SqlArg::Bytes(Some(meta)),
+                SqlArg::Bytes(meta),
                 SqlArg::String(state.as_bytes()),
                 SqlArg::Signed(type_2_int(tp) as i64),
                 SqlArg::Signed(concurrency as i64),
@@ -98,7 +99,7 @@ pub fn create_sub_task_with_summary(
     task_id: i64,
     step: Step,
     exec_id: &str,
-    meta: &[u8],
+    meta: Option<&[u8]>,
     summary: &SubtaskSummary,
     state: &SubtaskState,
     tp: &TaskType,
@@ -118,7 +119,7 @@ pub fn insert_subtask_with_summary(
     task_id: i64,
     step: Step,
     exec_id: &str,
-    meta: &[u8],
+    meta: Option<&[u8]>,
     summary: &SubtaskSummary,
     state: &SubtaskState,
     tp: &TaskType,
@@ -139,7 +140,7 @@ pub fn insert_subtask_with_summary(
                 SqlArg::Signed(step.0),
                 SqlArg::Signed(task_id),
                 SqlArg::String(exec_id.as_bytes()),
-                SqlArg::Bytes(Some(meta)),
+                SqlArg::Bytes(meta),
                 SqlArg::String(state.as_bytes()),
                 SqlArg::Signed(type_2_int(tp) as i64),
                 SqlArg::Signed(concurrency as i64),
