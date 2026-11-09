@@ -1005,6 +1005,15 @@ func (h *tableByNameHelper) onItem(item *tableItem) bool {
 	return true
 }
 
+func (is *infoschemaV2) searchTableItemByName(schema, name ast.CIStr) (*tableItem, bool) {
+	h := tableByNameHelper{
+		end:           tableItem{dbName: schema, tableName: name, schemaVersion: math.MaxInt64},
+		schemaVersion: is.schemaMetaVersion,
+	}
+	is.byName.Load().DescendLessOrEqual(&h.end, h.onItem)
+	return h.res, h.found
+}
+
 // TableByName implements the InfoSchema interface.
 // When schema cache miss, it will fetch the TableInfo from TikV and refill cache.
 func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl ast.CIStr) (t table.Table, err error) {
@@ -1020,15 +1029,10 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl ast.CIStr) 
 
 	is.keepAlive()
 	start := time.Now()
-	var h tableByNameHelper
-	h.end = tableItem{dbName: schema, tableName: tbl, schemaVersion: math.MaxInt64}
-	h.schemaVersion = is.infoSchema.schemaMetaVersion
-	is.byName.Load().DescendLessOrEqual(&h.end, h.onItem)
-
-	if !h.found {
+	itm, ok := is.searchTableItemByName(schema, tbl)
+	if !ok {
 		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
-	itm := h.res
 
 	// Get from the cache with old key
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
@@ -1061,7 +1065,7 @@ func (is *infoschemaV2) tableInfosByNames(ctx context.Context, schema ast.CIStr,
 	is.keepAlive()
 	db, ok := is.SchemaByName(schema)
 	if !ok {
-		return nil, nil
+		return nil, ctx.Err()
 	}
 	cached := make([]*model.TableInfo, 0, len(names))
 	missing := make([]int64, 0, len(names))
@@ -1069,15 +1073,10 @@ func (is *infoschemaV2) tableInfosByNames(ctx context.Context, schema ast.CIStr,
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		h := tableByNameHelper{
-			end:           tableItem{dbName: schema, tableName: name, schemaVersion: math.MaxInt64},
-			schemaVersion: is.schemaMetaVersion,
-		}
-		is.byName.Load().DescendLessOrEqual(&h.end, h.onItem)
-		if !h.found {
+		item, ok := is.searchTableItemByName(schema, name)
+		if !ok {
 			continue
 		}
-		item := h.res
 		if tbl, found := is.tableCache.Get(tableCacheKey{item.tableID, item.schemaVersion}); found && tbl != nil {
 			cached = append(cached, tbl.Meta())
 		} else {

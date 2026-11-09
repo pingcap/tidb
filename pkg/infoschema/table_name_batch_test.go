@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -132,6 +133,18 @@ func TestTableInfosByNames(t *testing.T) {
 	_, err = TableInfosByNames(canceled, &is, db.Name, names)
 	require.ErrorIs(t, err, context.Canceled)
 	require.Empty(t, store.batchSizes)
+	for _, input := range []struct {
+		schema ast.CIStr
+		names  []ast.CIStr
+	}{
+		{db.Name, nil},
+		{db.Name, names[:1]},
+		{db.Name, []ast.CIStr{ast.NewCIStr("missing")}},
+		{ast.NewCIStr("missing_schema"), names},
+	} {
+		_, err = TableInfosByNames(canceled, &is, input.schema, input.names)
+		require.ErrorIs(t, err, context.Canceled)
+	}
 	store.batchErr = errors.New("batch read failed")
 	_, err = TableInfosByNames(ctx, &is, db.Name, names[1:2])
 	require.ErrorContains(t, err, "batch read failed")
@@ -178,6 +191,112 @@ func TestTableInfosByNames(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, got)
 	require.Empty(t, store.batchSizes)
+}
+
+func TestTableInfosByNamesMetadata(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(conf *config.Config) { conf.TreatOldVersionUTF8AsUTF8MB4 = true })
+	r := internal.CreateAutoIDRequirement(t)
+	t.Cleanup(func() { require.NoError(t, r.Store().Close()) })
+	store := &tableMetadataStore{Storage: r.Store()}
+	is := NewInfoSchemaV2(internal.CreateAutoIDRequirementWithStore(t, store), nil, NewData())
+	is.schemaMetaVersion = 1
+	db := &model.DBInfo{ID: 1, Name: ast.NewCIStr("batch_meta"), State: model.StatePublic}
+	is.Data.addDB(1, db)
+	var infos []*model.TableInfo
+	var names []ast.CIStr
+	for _, kind := range []string{"legacy_utf8", "generated", "partitioned", "check_constraint"} {
+		for _, cache := range []string{"warm", "cold"} {
+			col := &model.ColumnInfo{
+				ID: 1, Name: ast.NewCIStr("a"), State: model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeVarchar),
+			}
+			col.SetCharset("UTF8")
+			col.SetCollate("UTF8_BIN")
+			col.SetFlen(32)
+			info := &model.TableInfo{
+				ID: int64(1000 + len(infos)), Name: ast.NewCIStr(kind + "_" + cache), DBID: db.ID,
+				State: model.StatePublic, Version: model.TableInfoVersion2,
+				Charset: "UTF8", Collate: "UTF8_BIN", Columns: []*model.ColumnInfo{col},
+			}
+			switch kind {
+			case "legacy_utf8":
+				info.Version = model.TableInfoVersion1
+				col.Version = model.ColumnInfoVersion1
+			case "generated":
+				generated := col.Clone()
+				generated.ID, generated.Name, generated.Offset = 2, ast.NewCIStr("b"), 1
+				generated.GeneratedExprString = "concat(`a`, 'suffix')"
+				generated.Dependences = map[string]struct{}{"a": {}}
+				info.Columns = append(info.Columns, generated)
+			case "partitioned":
+				info.Partition = &model.PartitionInfo{
+					Type: ast.PartitionTypeKey, Columns: []ast.CIStr{col.Name}, Enable: true, Num: 2,
+					Definitions: []model.PartitionDefinition{
+						{ID: info.ID + 1000, Name: ast.NewCIStr("p0")},
+						{ID: info.ID + 2000, Name: ast.NewCIStr("p1")},
+					},
+				}
+			case "check_constraint":
+				info.Constraints = []*model.ConstraintInfo{{
+					ID: 1, Name: ast.NewCIStr("chk_a"), Table: info.Name,
+					ConstraintCols: []ast.CIStr{col.Name}, Enforced: true,
+					ExprString: "length(`a`) > 0", State: model.StatePublic,
+				}}
+			}
+			infos = append(infos, info)
+			names = append(names, info.Name)
+			item := &tableItem{dbName: db.Name, dbID: db.ID, tableName: info.Name, tableID: info.ID, schemaVersion: 1}
+			btreeSet(&is.byName, item)
+			btreeSet(&is.byID, item)
+		}
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		if err := m.CreateDatabase(db); err != nil {
+			return err
+		}
+		for _, info := range infos {
+			if err := m.CreateTableOrView(db.ID, info); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	is.ts = ver.Ver
+	expected := make(map[int64]*model.TableInfo, len(infos))
+	for i, info := range infos {
+		tbl, err := is.TableByName(WithRefillOption(ctx, false), db.Name, info.Name)
+		require.NoError(t, err)
+		expected[info.ID] = tbl.Meta()
+		if i%2 == 0 {
+			is.tableCache.Set(tableCacheKey{info.ID, 1}, tbl)
+		}
+	}
+	for range 2 {
+		store.batchSizes = nil
+		got, err := TableInfosByNames(ctx, &is, db.Name, names)
+		require.NoError(t, err)
+		require.Len(t, got, len(infos))
+		require.Equal(t, []int{4}, store.batchSizes)
+		actual := make(map[int64]*model.TableInfo, len(got))
+		for _, info := range got {
+			actual[info.ID] = info
+			if info.Version < model.TableInfoVersion2 {
+				require.Equal(t, "utf8mb4", info.Charset)
+				require.Equal(t, "utf8mb4_bin", info.Collate)
+				require.Equal(t, "utf8mb4", info.Columns[0].GetCharset())
+				require.Equal(t, "utf8mb4_bin", info.Columns[0].GetCollate())
+			}
+		}
+		require.Equal(t, expected, actual)
+		for i, info := range infos {
+			require.Equal(t, i%2 == 0, is.TableIsCached(info.ID))
+		}
+	}
 }
 
 func TestTableInfosByNamesSessionOverrides(t *testing.T) {

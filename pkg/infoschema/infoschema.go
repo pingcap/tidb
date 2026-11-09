@@ -271,8 +271,8 @@ func (is *infoSchema) TableByName(ctx stdctx.Context, schema, table ast.CIStr) (
 // TableInfosByNames returns existing table metadata without refilling the shared
 // cache. Result order is unspecified; session table overrides take precedence.
 func TableInfosByNames(ctx stdctx.Context, is InfoSchema, schema ast.CIStr, names []ast.CIStr) ([]*model.TableInfo, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	if len(names) == 0 {
+		return nil, ctx.Err()
 	}
 	switch v := is.(type) {
 	case *infoschemaV2:
@@ -286,17 +286,9 @@ func TableInfosByNames(ctx stdctx.Context, is InfoSchema, schema ast.CIStr, name
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			if v.LocalTemporaryTables != nil {
-				if tbl, ok := v.LocalTemporaryTables.TableByName(ctx, schema, name); ok {
-					tables = append(tables, tbl.Meta())
-					continue
-				}
-			}
-			if v.MdlTables != nil {
-				if tbl, ok := v.MdlTables.TableByName(ctx, schema, name); ok {
-					tables = append(tables, tbl.Meta())
-					continue
-				}
+			if tbl, ok := v.sessionTableByName(ctx, schema, name); ok {
+				tables = append(tables, tbl.Meta())
+				continue
 			}
 			remaining = append(remaining, name)
 		}
@@ -1318,19 +1310,26 @@ type SessionExtendedInfoSchema struct {
 
 // TableByName implements InfoSchema.TableByName
 func (ts *SessionExtendedInfoSchema) TableByName(ctx stdctx.Context, schema, table ast.CIStr) (table.Table, error) {
+	if tbl, ok := ts.sessionTableByName(ctx, schema, table); ok {
+		return tbl, nil
+	}
+	return ts.InfoSchema.TableByName(ctx, schema, table)
+}
+
+func (ts *SessionExtendedInfoSchema) sessionTableByName(ctx stdctx.Context, schema, table ast.CIStr) (table.Table, bool) {
 	if ts.LocalTemporaryTables != nil {
 		if tbl, ok := ts.LocalTemporaryTables.TableByName(ctx, schema, table); ok {
-			return tbl, nil
+			return tbl, true
 		}
 	}
 
 	if ts.MdlTables != nil {
 		if tbl, ok := ts.MdlTables.TableByName(ctx, schema, table); ok {
-			return tbl, nil
+			return tbl, true
 		}
 	}
 
-	return ts.InfoSchema.TableByName(ctx, schema, table)
+	return nil, false
 }
 
 // TableInfoByName implements InfoSchema.TableInfoByName
