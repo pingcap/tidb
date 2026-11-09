@@ -4653,6 +4653,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-dxf-execute"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tidb-dxf",
+ "tidb-dxf-metering",
+ "tidb-objstore-recording",
+ "tidb-sqlexec",
+]
+
+[[package]]
 name = "tidb-dxf-metering"
 version = "0.0.0"
 dependencies = [

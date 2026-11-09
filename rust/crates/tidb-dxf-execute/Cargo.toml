@@ -1,0 +1,20 @@
+[package]
+name = "tidb-dxf-execute"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/dxf/framework/taskexecutor/execute: the step executor interface and subtask summaries."
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tidb-dxf = { path = "../tidb-dxf" }
+tidb-dxf-metering = { path = "../tidb-dxf-metering" }
+tidb-objstore-recording = { path = "../tidb-objstore-recording" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
