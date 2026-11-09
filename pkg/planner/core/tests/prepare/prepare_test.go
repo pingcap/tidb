@@ -1389,6 +1389,34 @@ func TestCachedTable(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
+func TestPlanCacheWithUnrelatedSchemaChange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ddl := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	ddl.MustExec("use test")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (1, 10), (2, 20)")
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("prepare stmt from 'select * from t where a < ?'")
+	tk.MustExec("set @a = 2")
+
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1 10"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1 10"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	ddl.MustExec("create table unrelated (a int)")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1 10"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	ddl.MustExec("alter table t add index idx_a (a)")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1 10"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1 10"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
 func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("MDL is always enabled and read only in nextgen")
