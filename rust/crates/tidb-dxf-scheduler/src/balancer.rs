@@ -116,7 +116,7 @@ impl Balancer {
         #[allow(unused_mut)]
         let mut adjusted_nodes =
             filter_nodes_with_enough_slots(&curr_used_slots, self.param.slot_mgr.get_capacity(), &eligible_nodes, task.base.required_slots);
-        #[cfg(feature = "failpoints")]
+        #[cfg(any(test, feature = "failpoints"))]
         (|| {
             fail::fail_point!("mockNoEnoughSlots", |_| adjusted_nodes = Vec::new());
         })();

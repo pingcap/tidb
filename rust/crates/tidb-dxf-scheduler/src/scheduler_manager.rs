@@ -573,7 +573,7 @@ impl Manager {
             self.logger.warn("task cleanup failed", &[str_field("error", err.to_string())]);
         }
 
-        #[cfg(feature = "failpoints")]
+        #[cfg(any(test, feature = "failpoints"))]
         fail::fail_point!("mockTransferErr", |_| Err(tidb_dxf_storage::StorageError::Other("transfer err".to_owned())));
 
         self.task_mgr.transfer_tasks2_history(&cleaned_tasks)?;

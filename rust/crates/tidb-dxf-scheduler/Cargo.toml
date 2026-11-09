@@ -39,6 +39,7 @@ tidb-util-disttask = { path = "../tidb-util-disttask" }
 tidb-vardef = { path = "../tidb-vardef" }
 
 [dev-dependencies]
+fail = { version = "0.4", features = ["failpoints"] }
 chrono.workspace = true
 tidb-domain-sqlsvrapi = { path = "../tidb-domain-sqlsvrapi" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }

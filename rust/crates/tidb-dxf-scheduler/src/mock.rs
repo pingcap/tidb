@@ -32,24 +32,28 @@ use crate::TaskManager;
 /// Go `mock.MockTaskManager`.
 #[derive(Default)]
 pub(crate) struct MockTaskManager {
-    expected: Mutex<HashMap<&'static str, VecDeque<Box<dyn Any + Send>>>>,
+    expected: Mutex<HashMap<String, VecDeque<Box<dyn Any + Send>>>>,
+    /// Go's `WithNewSession` answered with `fn(session)`, any times.
+    session: Mutex<Option<std::sync::Arc<dyn SessionContext>>>,
     /// The calls that carry an error or a task, as "Method(args)", for
     /// gomock's argument matchers.
     calls: Mutex<Vec<String>>,
     /// The subtasks `UpdateSubtasksExecIDs` was given: Go's tests read the
     /// balanced exec IDs back through the shared subtask pointers.
     updated_exec_ids: Mutex<Vec<SubtaskBase>>,
+    /// Go's `GetUsedSlotsOnNodes(...).Return(nil, nil).AnyTimes()`.
+    pub(crate) used_slots_any_times: Mutex<bool>,
 }
 
 /// A queued answer computed from the call's task (gomock `DoAndReturn`).
 pub(crate) type TaskAnswer<T> = Box<dyn FnOnce(&Task) -> T + Send>;
 
 impl MockTaskManager {
-    pub(crate) fn expect<T: Send + 'static>(&self, method: &'static str, answer: T) {
-        self.expected.lock().unwrap().entry(method).or_default().push_back(Box::new(answer));
+    pub(crate) fn expect<T: Send + 'static>(&self, method: impl Into<String>, answer: T) {
+        self.expected.lock().unwrap().entry(method.into()).or_default().push_back(Box::new(answer));
     }
 
-    fn answer<T: 'static>(&self, method: &'static str) -> T {
+    fn answer<T: 'static>(&self, method: &str) -> T {
         let answer = self
             .expected
             .lock()
@@ -57,7 +61,25 @@ impl MockTaskManager {
             .get_mut(method)
             .and_then(VecDeque::pop_front)
             .unwrap_or_else(|| panic!("unexpected call of {method}"));
-        *answer.downcast::<T>().unwrap_or_else(|_| panic!("{method} answered with the wrong type"))
+        match answer.downcast::<Box<dyn FnOnce() -> T + Send>>() {
+            Ok(answer) => answer(),
+            Err(answer) => *answer.downcast::<T>().unwrap_or_else(|_| panic!("{method} answered with the wrong type")),
+        }
+    }
+
+    /// The answer queued for the task (`Method:id`), else for the method.
+    fn answer_for<T: 'static>(&self, method: &str, task_id: i64) -> T {
+        let keyed = format!("{method}:{task_id}");
+        let has_keyed = self.expected.lock().unwrap().get(&keyed).is_some_and(|answers| !answers.is_empty());
+        if has_keyed {
+            return self.answer(&keyed);
+        }
+        self.answer(method)
+    }
+
+    /// Go's `WithNewSession(...).DoAndReturn(fn(session)).AnyTimes()`.
+    pub(crate) fn set_session(&self, session: std::sync::Arc<dyn SessionContext>) {
+        *self.session.lock().unwrap() = Some(session);
     }
 
     fn record(&self, call: String) {
@@ -121,8 +143,12 @@ fn err_text(err: Option<&(dyn Error + 'static)>) -> String {
 }
 
 impl SessionExecutor for MockTaskManager {
-    fn with_new_session(&self, _: &mut dyn FnMut(&dyn SessionContext) -> Result<()>) -> Result<()> {
-        self.answer("WithNewSession")
+    fn with_new_session(&self, f: &mut dyn FnMut(&dyn SessionContext) -> Result<()>) -> Result<()> {
+        let session = self.session.lock().unwrap().clone();
+        match session {
+            Some(session) => f(session.as_ref()),
+            None => self.answer("WithNewSession"),
+        }
     }
     fn with_new_txn(&self, _: &mut dyn FnMut(&dyn SessionContext) -> Result<()>) -> Result<()> {
         self.answer("WithNewTxn")
@@ -155,11 +181,11 @@ impl TaskManager for MockTaskManager {
             Err(answer) => *answer.downcast::<Result<Vec<Task>>>().expect("GetCleanupTasks answered with the wrong type"),
         }
     }
-    fn get_task_by_id(&self, _: i64) -> Result<Task> {
-        self.answer("GetTaskByID")
+    fn get_task_by_id(&self, task_id: i64) -> Result<Task> {
+        self.answer_for("GetTaskByID", task_id)
     }
-    fn get_task_base_by_id(&self, _: i64) -> Result<TaskBase> {
-        self.answer("GetTaskBaseByID")
+    fn get_task_base_by_id(&self, task_id: i64) -> Result<TaskBase> {
+        self.answer_for("GetTaskBaseByID", task_id)
     }
     fn gc_subtasks(&self) -> Result<()> {
         self.answer("GCSubtasks")
@@ -223,6 +249,9 @@ impl TaskManager for MockTaskManager {
         self.answer_with_task("SwitchTaskStepAfterPrepare", task)
     }
     fn get_used_slots_on_nodes(&self) -> Result<HashMap<String, isize>> {
+        if *self.used_slots_any_times.lock().unwrap() {
+            return Ok(HashMap::new());
+        }
         self.answer("GetUsedSlotsOnNodes")
     }
     fn get_active_subtasks(&self, _: i64) -> Result<Vec<SubtaskBase>> {
@@ -301,6 +330,9 @@ pub(crate) struct MockExtension {
     eligible_instances: Mutex<Option<Vec<String>>>,
     /// The errors `IsRetryableErr` was asked about.
     retryable_asked: Mutex<Vec<String>>,
+    /// Go `GetTestSchedulerExt`'s `AnyTimes` answers, for methods with no
+    /// queued answer.
+    test_defaults: bool,
 }
 
 /// A queued answer computed from the call's mutable task (gomock
@@ -308,6 +340,16 @@ pub(crate) struct MockExtension {
 pub(crate) type TaskMutAnswer<T> = Box<dyn FnOnce(&mut Task) -> T + Send>;
 
 impl MockExtension {
+    /// Go `GetTestSchedulerExt`: no ticks' work, all instances eligible,
+    /// retryable errors, and the task done after its init step.
+    pub(crate) fn test_scheduler_ext() -> Self {
+        Self { test_defaults: true, ..Self::default() }
+    }
+
+    pub(crate) fn has_answer(&self, method: &'static str) -> bool {
+        self.expected.lock().unwrap().get(method).is_some_and(|answers| !answers.is_empty())
+    }
+
     pub(crate) fn expect<T: Send + 'static>(&self, method: &'static str, answer: T) {
         self.expected.lock().unwrap().entry(method).or_default().push_back(Box::new(answer));
     }
@@ -354,6 +396,9 @@ impl MockExtension {
 
 impl crate::Extension for MockExtension {
     fn on_tick(&self, _: &tidb_gocontext::Context, _: &Task) {
+        if self.test_defaults && !self.has_answer("OnTick") {
+            return;
+        }
         self.answer::<()>("OnTick");
     }
     fn on_next_subtasks_batch(
@@ -364,24 +409,39 @@ impl crate::Extension for MockExtension {
         _: &[String],
         _: Step,
     ) -> std::result::Result<Vec<Vec<u8>>, crate::Error> {
+        if self.test_defaults && !self.has_answer("OnNextSubtasksBatch") {
+            return Ok(Vec::new());
+        }
         self.answer("OnNextSubtasksBatch")
     }
     fn on_done(&self, _: &tidb_gocontext::Context, _: &dyn tidb_dxf_storage::TaskHandle, _: &mut Task) -> std::result::Result<(), crate::Error> {
+        if self.test_defaults && !self.has_answer("OnDone") {
+            return Ok(());
+        }
         self.answer("OnDone")
     }
     fn get_eligible_instances(&self, _: &tidb_gocontext::Context, _: &Task) -> std::result::Result<Vec<String>, crate::Error> {
         if let Some(instances) = self.eligible_instances.lock().unwrap().clone() {
             return Ok(instances);
         }
+        if self.test_defaults && !self.has_answer("GetEligibleInstances") {
+            return Ok(Vec::new());
+        }
         self.answer("GetEligibleInstances")
     }
     fn is_retryable_err(&self, err: &(dyn Error + 'static)) -> bool {
         self.retryable_asked.lock().unwrap().push(err.to_string());
+        if self.test_defaults && !self.has_answer("IsRetryableErr") {
+            return true;
+        }
         self.answer("IsRetryableErr")
     }
     fn get_next_step(&self, task: &TaskBase) -> Step {
         if let Some(f) = self.next_step.lock().unwrap().as_ref() {
             return f(task);
+        }
+        if self.test_defaults && !self.has_answer("GetNextStep") {
+            return tidb_dxf::STEP_DONE;
         }
         self.answer("GetNextStep")
     }
@@ -393,9 +453,11 @@ impl crate::Extension for MockExtension {
     }
 }
 
-/// Go `utilmock.NewContext()` with a store of the keyspace.
+/// Go `utilmock.NewContext()` with a store of the keyspace, and Go's
+/// `sessionWithSQLServer` when it has a server.
 pub(crate) struct MockSession {
-    keyspace: String,
+    pub(crate) keyspace: String,
+    pub(crate) server: Option<std::sync::Arc<dyn tidb_domain_sqlsvrapi::Server<dyn SessionContext>>>,
 }
 
 impl tidb_syssession::SessionContext for MockSession {
@@ -447,7 +509,7 @@ impl SessionContext for MockSession {
         self.keyspace.clone()
     }
     fn sql_server(&self) -> std::sync::Arc<dyn tidb_domain_sqlsvrapi::Server<dyn SessionContext>> {
-        unreachable!("the tests reach no server")
+        std::sync::Arc::clone(self.server.as_ref().expect("the session has a server"))
     }
 }
 
@@ -455,7 +517,7 @@ impl SessionContext for MockSession {
 pub(crate) fn new_session_pool_for_store(keyspace: &str) -> std::sync::Arc<dyn tidb_syssession::Pool<dyn SessionContext>> {
     let keyspace = keyspace.to_owned();
     std::sync::Arc::new(tidb_syssession::AdvancedSessionPool::<dyn SessionContext>::new(1, move || {
-        Ok(std::sync::Arc::new(MockSession { keyspace: keyspace.clone() }) as std::sync::Arc<dyn SessionContext>)
+        Ok(std::sync::Arc::new(MockSession { keyspace: keyspace.clone(), server: None }) as std::sync::Arc<dyn SessionContext>)
     }))
 }
 
@@ -479,11 +541,13 @@ impl tidb_domain_sqlsvrapi::Runtime<dyn SessionContext> for MockRuntime {
 pub(crate) struct MockScheduler {
     pub(crate) task: Mutex<Task>,
     pub(crate) ext: MockExtension,
+    /// Go's `ScheduleTask().Do(fn)`.
+    pub(crate) on_schedule_task: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl MockScheduler {
     pub(crate) fn new(task: Task) -> Self {
-        Self { task: Mutex::new(task), ext: MockExtension::default() }
+        Self { task: Mutex::new(task), ext: MockExtension::default(), on_schedule_task: Mutex::new(None) }
     }
 }
 
@@ -527,11 +591,65 @@ impl crate::Scheduler for MockScheduler {
     }
     fn schedule_task(&self) {
         self.ext.answer::<()>("ScheduleTask");
+        if let Some(f) = self.on_schedule_task.lock().unwrap().take() {
+            f();
+        }
     }
     fn close(&self) {
         self.ext.answer::<()>("Close");
     }
     fn get_task(&self) -> std::sync::Arc<Task> {
         std::sync::Arc::new(self.task.lock().unwrap().clone())
+    }
+}
+
+/// Go `sqlsvrapimock.MockKSRuntimeHandle` over a store of the keyspace.
+pub(crate) struct MockRuntimeHandle {
+    pub(crate) keyspace: String,
+    pub(crate) released: std::sync::atomic::AtomicUsize,
+}
+
+impl tidb_domain_sqlsvrapi::Runtime<dyn SessionContext> for MockRuntimeHandle {
+    fn store_keyspace(&self) -> String {
+        self.keyspace.clone()
+    }
+    fn sys_session_pool(&self) -> std::sync::Arc<dyn tidb_syssession::Pool<dyn SessionContext>> {
+        unreachable!("Go's handle answers a nil pool")
+    }
+}
+
+impl tidb_domain_sqlsvrapi::KsRuntimeHandle<dyn SessionContext> for MockRuntimeHandle {
+    fn release(&self) {
+        self.released.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    fn as_runtime(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn tidb_domain_sqlsvrapi::Runtime<dyn SessionContext>> {
+        self
+    }
+}
+
+/// Go `sqlsvrapimock.MockServer`.
+#[derive(Default)]
+pub(crate) struct MockServer {
+    pub(crate) runtime: Option<std::sync::Arc<dyn tidb_domain_sqlsvrapi::Runtime<dyn SessionContext>>>,
+    pub(crate) acquire: Mutex<VecDeque<std::result::Result<std::sync::Arc<MockRuntimeHandle>, String>>>,
+    pub(crate) acquired: Mutex<Vec<(String, String)>>,
+}
+
+impl tidb_domain_sqlsvrapi::Server<dyn SessionContext> for MockServer {
+    fn get_runtime(&self) -> std::sync::Arc<dyn tidb_domain_sqlsvrapi::Runtime<dyn SessionContext>> {
+        std::sync::Arc::clone(self.runtime.as_ref().expect("the test expects GetRuntime"))
+    }
+    fn acquire_ks_runtime(
+        &self,
+        target_ks: &str,
+        holder_id: &str,
+    ) -> std::result::Result<std::sync::Arc<dyn tidb_domain_sqlsvrapi::KsRuntimeHandle<dyn SessionContext>>, String> {
+        self.acquired.lock().unwrap().push((target_ks.to_owned(), holder_id.to_owned()));
+        self.acquire
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("the test expects AcquireKSRuntime")
+            .map(|handle| handle as std::sync::Arc<dyn tidb_domain_sqlsvrapi::KsRuntimeHandle<dyn SessionContext>>)
     }
 }

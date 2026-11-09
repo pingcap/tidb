@@ -65,7 +65,7 @@ tidb-server shows the same rows.
   transaction through the session), `SendRowAndSizeMeterData`, and the
   status port's `GetBusyNodes` / `GetScheduleStatus` (O15). `TestHandle`
   needs the scheduler (milestone 4).
-- [ ] Milestone 3: `dxfutil` and `scheduler` (manager, nodes, slots,
+- [x] Milestone 3: `dxfutil` and `scheduler` (manager, nodes, slots,
   balancer, state transitions; autoscaler where it applies to a classic
   kernel).
   - [x] Go `pkg/domain/sqlsvrapi` (`rust/crates/tidb-domain-sqlsvrapi`),
@@ -80,9 +80,12 @@ tidb-server shows the same rows.
     and client_golang's `DeletePartialMatch` (`tidb_metrics`). Go's slot,
     node, state-transform, autoscaler, `scheduler_nokit_test.go` and
     `balancer_test.go` tests pass over gomock-style mocks (`src/mock.rs`).
-  - [ ] `scheduler_manager_nokit_test.go`; the testkit tests
-    (`scheduler_test.go`, `scheduler_manager_test.go`) need the executor and
-    the domain composition (milestones 4 and 5).
+  - [x] `scheduler_manager_nokit_test.go`, all six tests. Go's
+    `exitScheduler` failpoint is a `fail` point and its `beforeRefreshTask`
+    call hook is `scheduler::BEFORE_REFRESH_TASK`; both build under `test`
+    or the `failpoints` feature. The testkit tests (`scheduler_test.go`,
+    `scheduler_manager_test.go`) need the executor and the domain
+    composition (milestones 4 and 5).
 - [ ] Milestone 4: `taskexecutor` (manager, slots, executor; `execute` is done).
 - [ ] Milestone 5: composition in the domain (Go `InitDistTaskLoop`, `distTaskFrameworkLoop`) and the `example` task type end to end.
 - [ ] Milestone 6: `metering` and `dxfmetric` where a classic kernel uses them.

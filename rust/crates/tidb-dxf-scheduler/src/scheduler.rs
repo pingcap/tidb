@@ -262,6 +262,10 @@ impl BaseScheduler {
                 recv(ticker) -> _ => {}
             }
 
+            #[cfg(any(test, feature = "failpoints"))]
+            if let Some(hook) = BEFORE_REFRESH_TASK.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone() {
+                hook(&self.get_task());
+            }
             if let Err(err) = self.refresh_task_if_needed() {
                 if err.is(&StorageError::TaskNotFound) {
                     // this can happen when task is reverted/succeed, but before
@@ -273,6 +277,8 @@ impl BaseScheduler {
                 continue;
             }
             let task = self.get_task_clone();
+            #[cfg(any(test, feature = "failpoints"))]
+            fail::fail_point!("exitScheduler", |_| ());
 
             let state = &task.base.state;
             let result = if *state == TASK_STATE_CANCELLING {
@@ -808,6 +814,61 @@ impl BaseScheduler {
     #[must_use]
     pub fn get_logger(&self) -> &tidb_logutil::Logger {
         &self.logger
+    }
+}
+
+/// Go's `beforeRefreshTask` call-failpoint, which receives the task.
+#[cfg(any(test, feature = "failpoints"))]
+pub static BEFORE_REFRESH_TASK: RwLock<Option<Arc<dyn Fn(&Task) + Send + Sync>>> = RwLock::new(None);
+
+/// Go's embedded `Extension`: the base scheduler answers for the task type.
+impl Extension for BaseScheduler {
+    fn on_tick(&self, ctx: &Context, task: &Task) {
+        self.ext().on_tick(ctx, task);
+    }
+    fn on_next_subtasks_batch(
+        &self,
+        ctx: &Context,
+        h: &dyn TaskHandle,
+        task: &mut Task,
+        exec_ids: &[String],
+        next_step: Step,
+    ) -> std::result::Result<Vec<Vec<u8>>, Error> {
+        self.ext().on_next_subtasks_batch(ctx, h, task, exec_ids, next_step)
+    }
+    fn on_done(&self, ctx: &Context, h: &dyn TaskHandle, task: &mut Task) -> std::result::Result<(), Error> {
+        self.ext().on_done(ctx, h, task)
+    }
+    fn get_eligible_instances(&self, ctx: &Context, task: &Task) -> std::result::Result<Vec<String>, Error> {
+        self.ext().get_eligible_instances(ctx, task)
+    }
+    fn is_retryable_err(&self, err: &(dyn std::error::Error + 'static)) -> bool {
+        self.ext().is_retryable_err(err)
+    }
+    fn get_next_step(&self, task: &tidb_dxf::TaskBase) -> Step {
+        self.ext().get_next_step(task)
+    }
+    fn on_prepare(&self, ctx: &Context, h: &dyn TaskHandle, task: &mut Task) -> std::result::Result<(), Error> {
+        self.ext().on_prepare(ctx, h, task)
+    }
+    fn modify_meta(&self, old_meta: &[u8], modifies: &[Modification]) -> std::result::Result<Vec<u8>, Error> {
+        self.ext().modify_meta(old_meta, modifies)
+    }
+}
+
+/// Go's `BaseScheduler` is a `Scheduler`.
+impl Scheduler for BaseScheduler {
+    fn init(&self) -> std::result::Result<(), Error> {
+        BaseScheduler::init(self)
+    }
+    fn schedule_task(&self) {
+        BaseScheduler::schedule_task(self);
+    }
+    fn close(&self) {
+        BaseScheduler::close(self);
+    }
+    fn get_task(&self) -> Arc<Task> {
+        BaseScheduler::get_task(self)
     }
 }
 
