@@ -1497,6 +1497,15 @@ fn physical_operator_own_info(
             ) {
                 parts.push(stats);
             }
+            // Go: a TiFlash scan of a partitioned table under MPP or a batch
+            // request with dynamic pruning is a `PartitionTableScan`.
+            if scan.store_type == tidb_kv::store_type::StoreType::TiFlash
+                && scan.table.as_ref().is_some_and(|table| table.read().get_partition_info().is_some())
+                && scan.is_mpp_or_batch_cop
+                && !statement_context.static_partition_prune()
+            {
+                parts.push("PartitionTableScan:true".to_owned());
+            }
             parts.join(", ")
         }
         PhysicalPlan::TableDual(dual) => dual.explain_info(),

@@ -415,7 +415,11 @@ impl MppTask {
         );
         sender_base.base.set_stats(plan.stats_info().cloned());
         sender_base.base.set_schema(plan.schema().cloned());
-        sender_base.set_children(vec![*plan]);
+        let mut plan = *plan;
+        // Go `PhysicalTableReader.Init`: an MPP reader's scans read through
+        // MPP (`setMppOrBatchCopForTableScan`).
+        crate::set_mpp_or_batch_cop_for_table_scan(&mut plan);
+        sender_base.set_children(vec![plan]);
         let sender = PhysicalPlan::ExchangeSender(crate::PhysicalExchangeSender {
             base: sender_base,
             exchange_type: crate::ExchangeType::PassThrough,
@@ -1139,6 +1143,14 @@ impl CopTask {
         } else {
             crate::physical_table_reader::ReadReqType::Cop
         };
+        let mut table_plan = table_plan;
+        // Go `PhysicalTableReader.Init`: `setMppOrBatchCopForTableScan`.
+        if matches!(
+            read_req_type,
+            crate::physical_table_reader::ReadReqType::BatchCop | crate::physical_table_reader::ReadReqType::Mpp
+        ) {
+            crate::set_mpp_or_batch_cop_for_table_scan(&mut table_plan);
+        }
         let mut base = crate::BasePhysicalPlan::new(
             allocator,
             "TableReader",

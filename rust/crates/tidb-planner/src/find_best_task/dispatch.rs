@@ -3810,6 +3810,7 @@ fn find_best_task_4_logical_data_source_paths(
                 let scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
                     table: ds.table_info.clone(),
                     columns: ds.columns.clone(),
+                    is_mpp_or_batch_cop: false,
                     base,
                     plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
                     filter_condition: table_filters.clone(),
@@ -4003,6 +4004,7 @@ fn find_best_task_4_logical_data_source_paths(
                 let scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
                     table: ds.table_info.clone(),
                     columns: ds.columns.clone(),
+                    is_mpp_or_batch_cop: false,
                     by_items: Vec::new(),
                     group_by_col_idxs: Vec::new(),
                     base,
@@ -4807,6 +4809,7 @@ fn find_best_task_4_logical_data_source_paths(
                         let table_scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
                             table: ds.table_info.clone(),
                             columns: ds.columns.clone(),
+                            is_mpp_or_batch_cop: false,
                             by_items: Vec::new(),
                             group_by_col_idxs: Vec::new(),
                             base: table_base,

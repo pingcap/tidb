@@ -51,6 +51,9 @@ pub struct BuildPbContext<'a> {
     pub group_concat_max_len: u64,
     /// Go `InExplainStmt`.
     pub in_explain_stmt: bool,
+    /// Go `p.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune()`,
+    /// which Go's `ToPB` reads off the plan's session.
+    pub use_dynamic_partition_prune: bool,
 }
 
 /// The descriptor of one column of an executor's input row, from the
@@ -341,13 +344,12 @@ impl PhysicalTableScan {
             .as_ref()
             .ok_or_else(|| PlanError::internal(format!("plan {} has no table", plan.explain_id(false))))?
             .read();
-        if store_type == StoreType::TiFlash && table.get_partition_info().is_some() && self.dynamic_partition_access.is_some() {
-            // Go `partitionTableScanToPBForFlash`: Milestone 2 ports it with
-            // the fragments' partition pruning.
-            return Err(PlanError::internal(format!(
-                "plan {} is a TiFlash partition table scan, which is not ported yet",
-                plan.explain_id(false)
-            )));
+        if store_type == StoreType::TiFlash
+            && table.get_partition_info().is_some()
+            && self.is_mpp_or_batch_cop
+            && ctx.use_dynamic_partition_prune
+        {
+            return self.partition_table_scan_to_pb_for_flash(plan, ctx, &table);
         }
         let mut ts_exec = tidb_table::tables::scan_from_infos::build_table_scan_from_infos(
             &table,
@@ -386,6 +388,37 @@ impl PhysicalTableScan {
 
 fn schema_of(child: &PhysicalPlan) -> Result<&Schema, PlanError> {
     child.schema().ok_or_else(|| PlanError::internal(format!("plan {} has no schema", child.explain_id(false))))
+}
+
+impl PhysicalTableScan {
+    /// Go `partitionTableScanToPBForFlash`.
+    fn partition_table_scan_to_pb_for_flash(
+        &self,
+        plan: &PhysicalPlan,
+        ctx: &BuildPbContext<'_>,
+        table: &tidb_model::TableInfo,
+    ) -> Result<tipb::Executor, PlanError> {
+        let mut pts_exec =
+            tidb_table::tables::scan_from_infos::build_partition_table_scan_from_infos(table, &self.columns, ctx.tiflash_fast_scan);
+        // Go `int32(p.maxWaitTimeMs)`, zero without runtime filters.
+        pts_exec.max_wait_time_ms = Some(0);
+        pts_exec.desc = Some(self.desc);
+
+        let executor_id = executor_id(plan);
+        tidb_table::tables::scan_from_infos::set_pb_columns_default_value(
+            &ctx.expr_ctx.time_zone(),
+            &mut pts_exec.columns,
+            &self.columns,
+            table.name.original(),
+        )
+        .map_err(PlanError::internal)?;
+        Ok(tipb::Executor {
+            tp: Some(tipb::ExecType::TypePartitionTableScan as i32),
+            partition_table_scan: Some(pts_exec),
+            executor_id: Some(executor_id),
+            ..go_executor()
+        })
+    }
 }
 
 /// Go `kv.MPPTask.ToPB().Marshal()` of each task.

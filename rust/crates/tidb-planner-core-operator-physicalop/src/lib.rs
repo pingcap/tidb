@@ -1177,6 +1177,9 @@ pub struct PhysicalTableScan {
     pub table: Option<tidb_model::GoShared<tidb_model::TableInfo>>,
     /// Go `Columns`: the scanned columns' `*model.ColumnInfo`s.
     pub columns: Vec<tidb_model::GoShared<tidb_model::ColumnInfo>>,
+    /// Go `IsMPPOrBatchCop`: the scan's reader reads through MPP or a batch
+    /// request (used for TiFlash `PartitionTableScan`).
+    pub is_mpp_or_batch_cop: bool,
     /// Go `Table.ID`.
     pub table_id: i64,
     /// Go `TableAsName`: the query-visible alias, when one was written.
@@ -2607,6 +2610,19 @@ pub struct PhysicalLocalIndexLookUp {
     pub base: BasePhysicalPlan,
     /// Go `IndexHandleOffsets`, positions in the index subtree output schema.
     pub index_handle_offsets: Vec<u32>,
+}
+
+/// Go `setMppOrBatchCopForTableScan`: every table scan below `cur_plan`
+/// reads through MPP or a batch request.
+pub fn set_mpp_or_batch_cop_for_table_scan(cur_plan: &mut PhysicalPlan) {
+    if let PhysicalPlan::TableScan(ts) = cur_plan {
+        ts.is_mpp_or_batch_cop = true;
+    }
+    let mut children = cur_plan.base_mut().take_children();
+    for child in &mut children {
+        set_mpp_or_batch_cop_for_table_scan(child);
+    }
+    cur_plan.base_mut().set_children(children);
 }
 
 /// Go `FlattenListPushDownPlan`: flatten a unary pushed-down plan leaf first.
@@ -4895,6 +4911,7 @@ impl PhysicalPlan {
             Self::TableScan(op) => Self::TableScan(PhysicalTableScan {
                 table: op.table.clone(),
                 columns: op.columns.clone(),
+                is_mpp_or_batch_cop: op.is_mpp_or_batch_cop,
                 group_by_col_idxs: op.group_by_col_idxs.clone(),
                 by_items: op.by_items.clone(),
                 base: base_of(&op.base),

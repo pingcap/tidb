@@ -485,6 +485,7 @@ pub(super) fn build_converged_union_index_merge_task(
                 tidb_planner_core_operator_physicalop::PhysicalTableScan {
                     table: ds.table_info.clone(),
                     columns: ds.columns.clone(),
+                    is_mpp_or_batch_cop: false,
                     by_items: Vec::new(),
                     group_by_col_idxs: groups.clone(),
                     base,
@@ -627,6 +628,7 @@ pub(super) fn build_converged_union_index_merge_task(
             tidb_planner_core_operator_physicalop::PhysicalTableScan {
                 table: ds.table_info.clone(),
                 columns: ds.columns.clone(),
+                is_mpp_or_batch_cop: false,
                 by_items: Vec::new(),
                 group_by_col_idxs: Vec::new(),
                 base,

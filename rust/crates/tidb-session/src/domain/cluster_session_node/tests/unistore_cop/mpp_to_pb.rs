@@ -75,9 +75,12 @@ fn executor_children(executor: &mut tipb::Executor) -> Vec<&mut tipb::Executor> 
 /// Each scan's table id below `executor`, mapped from Go's catalog to this
 /// node's.
 fn set_table_ids(executor: &mut tipb::Executor, table_ids: &[(i64, i64)]) {
+    let ours = |go_id: Option<i64>| table_ids.iter().find(|(go, _)| Some(*go) == go_id).map(|(_, ours)| *ours);
     if let Some(scan) = executor.tbl_scan.as_mut() {
-        let go_id = scan.table_id.unwrap();
-        scan.table_id = table_ids.iter().find(|(go, _)| *go == go_id).map(|(_, ours)| *ours);
+        scan.table_id = ours(scan.table_id);
+    }
+    if let Some(scan) = executor.partition_table_scan.as_mut() {
+        scan.table_id = ours(scan.table_id);
     }
     for child in executor_children(executor) {
         set_table_ids(child, table_ids);
@@ -86,8 +89,9 @@ fn set_table_ids(executor: &mut tipb::Executor, table_ids: &[(i64, i64)]) {
 
 /// Go `PhysicalExchangeSender.ToPB` (with `PhysicalSelection.ToPB` and
 /// `PhysicalTableScan.ToPB` below it) of a pushed TiFlash filter, a bare
-/// TiFlash read, a two-phase aggregation, a broadcast join and two window
-/// functions over a partial sort (each of their fragments' senders).
+/// TiFlash read, a two-phase aggregation, a broadcast join, two window
+/// functions over a partial sort and a partitioned table's dynamic-pruning
+/// scan (each of their fragments' senders).
 #[test]
 fn mpp_fragment_to_pb_is_gos_to_the_byte() {
     let (stack, _users) = cop_backed_stack();
@@ -97,6 +101,8 @@ fn mpp_fragment_to_pb_is_gos_to_the_byte() {
         "ALTER TABLE test.t SET HYPO TIFLASH REPLICA 1",
         "CREATE TABLE test.s (b int, c int)",
         "ALTER TABLE test.s SET HYPO TIFLASH REPLICA 1",
+        "CREATE TABLE test.p (a int, b int) PARTITION BY HASH(a) PARTITIONS 2",
+        "ALTER TABLE test.p SET HYPO TIFLASH REPLICA 1",
     ] {
         session.node_conn().execute_write(sql).expect(sql);
     }
@@ -109,10 +115,11 @@ fn mpp_fragment_to_pb_is_gos_to_the_byte() {
             .parse()
             .unwrap()
     };
-    // Go's probe catalog: t is 117, s is 119.
-    let table_ids = [(117, table_id(&mut session, "t")), (119, table_id(&mut session, "s"))];
+    // Go's probe catalog: t is 117, s is 119, p is 121.
+    let table_ids =
+        [(117, table_id(&mut session, "t")), (119, table_id(&mut session, "s")), (121, table_id(&mut session, "p"))];
 
-    let cases: [(&str, &[&str]); 6] = [
+    let cases: [(&str, &[&str]); 7] = [
         (
             "explain select /*+ read_from_storage(tiflash[t]) */ * from t where a + 1 > 20",
             &["0809521145786368616e676553656e6465725f313262f202080022cc02080222b3020ae90108904e1a8c0108904e1a3008c9011208800000000000000020002a1d08031000180b200028c1ffffffffffffffff01320662696e617279400038001a3008011208800000000000000120002a1e08081081011801200028c1ffffffffffffffff01320662696e6172794000380020cb012a1e08081080011814200028c1ffffffffffffffff01320662696e617279400038001a3008011208800000000000001420002a1e08081081011802200028c1ffffffffffffffff01320662696e6172794000380020782a1f0808108081201801200028c1ffffffffffffffff01320662696e617279400038001a45080012290875121b0801100318c1ffffffffffffffff01200b28003000a80100b001001800280040004800600052105461626c6546756c6c5363616e5f3130880100900100520c53656c656374696f6e5f3131880100900100321d08031000180b200028c1ffffffffffffffff01320662696e6172794000380088010090018040"],
@@ -149,6 +156,10 @@ fn mpp_fragment_to_pb_is_gos_to_the_byte() {
                 "0809521145786368616e676553656e6465725f313362f70108021a3008c9011208800000000000000020002a1d08031000180b200028c1ffffffffffffffff01320662696e617279400038002262080012460877121b0801100318c1ffffffffffffffff01200b28003000a80100b00100121b0802100318c1ffffffffffffffff01200b28003000a80100b001001800280040004800600052105461626c6546756c6c5363616e5f31328801009001002a1d08031000180b200028c1ffffffffffffffff01320662696e6172794000321d08031000180b200028c1ffffffffffffffff01320662696e6172794000321d08031000180b200028c1ffffffffffffffff01320662696e6172794000380188010890018040",
             ],
         ),
+        (
+            "explain select /*+ read_from_storage(tiflash[p]) */ a, b from p where b > 3",
+            &["0809521145786368616e676553656e6465725f313262cd020800228802080222ef010a8c0108904e1a3008c9011208800000000000000120002a1d08031000180b200028c1ffffffffffffffff01320662696e617279400038001a3008011208800000000000000320002a1e08081081011801200028c1ffffffffffffffff01320662696e6172794000380020782a1f0808108081201801200028c1ffffffffffffffff01320662696e617279400038001a5e080c52105461626c6546756c6c5363616e5f313072420879121b0801100318c1ffffffffffffffff01200b28003000a80100b00100121b0802100318c1ffffffffffffffff01200b28003000a80100b00100180038005000880100900100520c53656c656374696f6e5f3131880100900100321d08031000180b200028c1ffffffffffffffff01320662696e6172794000321d08031000180b200028c1ffffffffffffffff01320662696e6172794000380088010090018040"],
+        ),
     ];
     for (sql, go_hexes) in cases {
         rows(&mut session, sql);
@@ -162,6 +173,7 @@ fn mpp_fragment_to_pb_is_gos_to_the_byte() {
             tiflash_fine_grained_shuffle_batch_size: 8192,
             group_concat_max_len: 1024,
             in_explain_stmt: true,
+            use_dynamic_partition_prune: true,
         };
         let mut senders = Vec::new();
         collect_senders(table_plan, &mut senders);
@@ -312,4 +324,35 @@ fn mpp_aggregation_injects_gos_projection_below_the_aggregate() {
     .map(|line| blank(line))
     .collect();
     assert_eq!(got, want, "{sql}");
+}
+
+/// Go `PhysicalTableScan.ExplainInfo`'s `PartitionTableScan:true`: a TiFlash
+/// scan of a partitioned table read through MPP under dynamic pruning.
+#[test]
+fn mpp_partition_table_scan_explains_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(433)).expect("session opens");
+    for sql in [
+        "CREATE TABLE test.p (a int, b int) PARTITION BY HASH(a) PARTITIONS 2",
+        "ALTER TABLE test.p SET HYPO TIFLASH REPLICA 1",
+    ] {
+        session.node_conn().execute_write(sql).expect(sql);
+    }
+    rows(&mut session, "use test");
+    let got: Vec<String> = displayed(rows(
+        &mut session,
+        "explain select /*+ read_from_storage(tiflash[p]) */ a, b from p where b > 3",
+    ))
+    .into_iter()
+    .map(|row| row.join("|"))
+    .collect();
+    assert_eq!(
+        got,
+        [
+            "TableReader_13|3333.33|root|partition:all|MppVersion: 3, data:ExchangeSender_12",
+            "└─ExchangeSender_12|3333.33|mpp[tiflash]||ExchangeType: PassThrough",
+            "  └─Selection_11|3333.33|mpp[tiflash]||gt(test.p.b, 3)",
+            "    └─TableFullScan_10|10000.00|mpp[tiflash]|table:p|keep order:false, stats:pseudo, PartitionTableScan:true",
+        ]
+    );
 }

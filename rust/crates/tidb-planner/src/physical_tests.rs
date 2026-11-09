@@ -947,6 +947,7 @@ fn to_pb_refuses_exactly_as_the_go_base_body_does() {
         tiflash_fine_grained_shuffle_batch_size: 0,
         group_concat_max_len: 0,
         in_explain_stmt: false,
+        use_dynamic_partition_prune: true,
     };
     let err = tree.to_pb(&ctx, StoreType::TiKv).expect_err("base body errors");
     assert_eq!(err.message(), "plan TableDual_4 fails converts to PB");
