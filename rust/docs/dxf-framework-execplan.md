@@ -73,7 +73,16 @@ tidb-server shows the same rows.
     (`tidb_domain_core::domain::sqlsvr`, with Go `crossks`'s classic
     refusals), and `dxfutil` (`rust/crates/tidb-dxf-dxfutil`) with Go's
     `TestAcquireTaskRuntime` and `TestCheckTaskRuntime`.
-  - [ ] `scheduler`.
+  - [x] `scheduler` (`rust/crates/tidb-dxf-scheduler`): the TaskManager
+    interface, slots, nodes, state transforms, autoscaler calculations,
+    Extension/Param/factories/cleaners, BaseScheduler, the Manager and the
+    balancer; Go `pkg/ingestor/errdef` (`rust/crates/tidb-ingestor-errdef`)
+    and client_golang's `DeletePartialMatch` (`tidb_metrics`). Go's slot,
+    node, state-transform, autoscaler, `scheduler_nokit_test.go` and
+    `balancer_test.go` tests pass over gomock-style mocks (`src/mock.rs`).
+  - [ ] `scheduler_manager_nokit_test.go`; the testkit tests
+    (`scheduler_test.go`, `scheduler_manager_test.go`) need the executor and
+    the domain composition (milestones 4 and 5).
 - [ ] Milestone 4: `taskexecutor` (manager, slots, executor; `execute` is done).
 - [ ] Milestone 5: composition in the domain (Go `InitDistTaskLoop`, `distTaskFrameworkLoop`) and the `example` task type end to end.
 - [ ] Milestone 6: `metering` and `dxfmetric` where a classic kernel uses them.
@@ -116,6 +125,11 @@ tidb-server shows the same rows.
 
 - 2026-11-09: `scheduler` comes before `taskexecutor`: Go's taskexecutor
   imports the scheduler package (its SQL retry settings), not the other way.
+- 2026-11-09: Go code that mutates through shared pointers must keep that
+  aliasing: the balancer rewrites the subtasks' own exec IDs, which its
+  deferred `updateUsedNodes` then counts (Go's balancer case 4 caught a
+  clone-based port). Go tests whose gomock `DoAndReturn` mutates the
+  scheduler's own task answer the refresh's `GetTaskByID` instead.
 - Go's `sqlsvrapi` pool hands out `pools.Resource`; the Rust traits are
   generic over the session view their user declares. A runtime answers its
   store's keyspace itself, since the narrowed Rust `kv.Storage` has none;
