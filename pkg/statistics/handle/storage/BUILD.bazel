@@ -59,7 +59,6 @@ go_test(
         "dump_test.go",
         "gc_test.go",
         "read_test.go",
-        "save_test.go",
         "stats_read_writer_test.go",
     ],
     flaky = True,

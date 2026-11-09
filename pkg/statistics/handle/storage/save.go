@@ -424,8 +424,9 @@ func SaveMetaToStorage(
 
 // InsertColStats2KV insert a record to stats_histograms with distinct_count 1
 // and insert a bucket to stats_buckets with default value. This operation also
-// updates version. It locks mysql.stats_meta before those histogram rows so it
-// cannot deadlock with SaveAnalyzeResultToStorage.
+// updates version. It locks mysql.stats_meta before those histogram rows, matching
+// the lock order of SaveAnalyzeResultToStorage. On clusters bootstrapped before
+// v8.5.7, locking only table_id can still deadlock with that analyze save.
 func InsertColStats2KV(
 	ctx context.Context,
 	sctx sessionctx.Context,
