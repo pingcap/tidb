@@ -221,6 +221,12 @@ func TestRangeIntersection(t *testing.T) {
 			}
 		}
 
+		tk.MustExec("create table bit72780 (a int, b bit(16), key ab(a,b))")
+		tk.MustExec("insert into bit72780 values (1,255),(1,256),(1,511),(1,512),(2,255),(2,256),(2,511),(2,512),(1,null)")
+		bitQuery := "select a,b+0 from bit72780 %s where a in (1,2) and ((a=1 and b=255) or (a=2 and b<512)) order by a,b"
+		tk.MustQuery(fmt.Sprintf(bitQuery, "force index(ab)")).Check(testkit.Rows("1 255", "2 255", "2 256", "2 511"))
+		tk.MustQuery(fmt.Sprintf(bitQuery, "force index(ab)")).Check(tk.MustQuery(fmt.Sprintf(bitQuery, "ignore index(ab)")).Rows())
+
 		tk.MustExec("deallocate prepare stmt")
 	})
 

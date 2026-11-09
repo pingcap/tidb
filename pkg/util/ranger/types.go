@@ -385,15 +385,23 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 	return fmt.Sprintf("%v", d.GetValue())
 }
 
-// indexOrderDatum preserves the numeric index ordering of ENUM and SET values.
-func indexOrderDatum(d types.Datum) types.Datum {
+// indexOrderDatum preserves the numeric index ordering of ENUM, SET and BIT values.
+func indexOrderDatum(d types.Datum) (types.Datum, error) {
 	switch d.Kind() {
 	case types.KindMysqlEnum:
-		return types.NewUintDatum(d.GetMysqlEnum().Value)
+		return types.NewUintDatum(d.GetMysqlEnum().Value), nil
 	case types.KindMysqlSet:
-		return types.NewUintDatum(d.GetMysqlSet().Value)
+		return types.NewUintDatum(d.GetMysqlSet().Value), nil
+	case types.KindMysqlBit, types.KindBinaryLiteral:
+		// Match codec.EncodeKey: an unrepresentable literal must fail even if
+		// the statement context would otherwise truncate it to a warning.
+		value, err := d.GetBinaryLiteral().ToInt(types.StrictContext)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		return types.NewUintDatum(value), nil
 	default:
-		return d
+		return d, nil
 	}
 }
 
@@ -407,9 +415,16 @@ func compareLexicographically(tc types.Context, bound1, bound2 []types.Datum, co
 	n1 := len(bound1)
 	n2 := len(bound2)
 	for i := range min(n1, n2) {
-		// ENUM and SET keys store their ordinal/bitmask, whereas Datum.Compare
-		// compares their names. Range bounds must follow index storage order.
-		left, right := indexOrderDatum(bound1[i]), indexOrderDatum(bound2[i])
+		// Datum.Compare uses names for ENUM/SET and bytes for BIT literals.
+		// Range bounds must instead follow their numeric index storage order.
+		left, err := indexOrderDatum(bound1[i])
+		if err != nil {
+			return 0, err
+		}
+		right, err := indexOrderDatum(bound2[i])
+		if err != nil {
+			return 0, err
+		}
 		cmp, err := left.Compare(tc, &right, collators[i])
 		if err != nil {
 			return 0, err

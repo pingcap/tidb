@@ -646,6 +646,77 @@ func TestIntersectSortedRanges(t *testing.T) {
 		}
 	})
 
+	t.Run("bit index order", func(t *testing.T) {
+		for _, mysqlBit := range []bool{false, true} {
+			for _, width := range []int{-1, 2, 8} {
+				bit := func(value uint64) types.Datum {
+					var d types.Datum
+					literal := types.NewBinaryLiteralFromUint(value, width)
+					if mysqlBit {
+						d.SetMysqlBit(literal)
+					} else {
+						d.SetBinaryLiteral(literal)
+					}
+					return d
+				}
+				bound := func(d types.Datum) []types.Datum { return []types.Datum{types.NewIntDatum(1), d} }
+				wide := ranger.Ranges{{LowVal: bound(types.MinNotNullDatum()), HighVal: bound(bit(512)), HighExclude: true, Collators: collate.GetBinaryCollatorSlice(2)}}
+				points := ranger.Ranges{}
+				for _, value := range []uint64{255, 256, 511, 512} {
+					points = append(points, &ranger.Range{LowVal: bound(bit(value)), HighVal: bound(bit(value)), Collators: collate.GetBinaryCollatorSlice(2)})
+				}
+				for _, reverse := range []bool{false, true} {
+					left, right := wide, points
+					if reverse {
+						left, right = right, left
+					}
+					got, fallback, err := ranger.IntersectSortedRanges(rctx, left, right, 0, false)
+					require.NoError(t, err)
+					require.False(t, fallback)
+					require.Equal(t, fmt.Sprint(points[:3]), fmt.Sprint(got))
+				}
+			}
+		}
+	})
+
+	t.Run("bit conversion errors", func(t *testing.T) {
+		// Use a context that ignores truncation: index comparisons must still
+		// reject an overflowing literal, just like codec.EncodeKey.
+		permissive := *rctx
+		permissive.TypeCtx = types.DefaultStmtNoWarningContext
+		for _, mysqlBit := range []bool{false, true} {
+			for _, overflow := range []bool{false, true} {
+				literal := types.BinaryLiteral{0, 0, 0, 0, 0, 0, 0, 0, 255}
+				if overflow {
+					literal[0] = 1
+				}
+				var datum types.Datum
+				if mysqlBit {
+					datum.SetMysqlBit(literal)
+				} else {
+					datum.SetBinaryLiteral(literal)
+				}
+				point := &ranger.Range{LowVal: []types.Datum{datum}, HighVal: []types.Datum{datum}, Collators: collate.GetBinaryCollatorSlice(1)}
+				wide := &ranger.Range{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.NewUintDatum(512)}, HighExclude: true, Collators: collate.GetBinaryCollatorSlice(1)}
+				for _, reverse := range []bool{false, true} {
+					left, right := ranger.Ranges{wide}, ranger.Ranges{point}
+					if reverse {
+						left, right = right, left
+					}
+					got, fallback, err := ranger.IntersectSortedRanges(&permissive, left, right, 0, false)
+					require.False(t, fallback)
+					if overflow {
+						require.Error(t, err)
+						require.Nil(t, got)
+					} else {
+						require.NoError(t, err)
+						require.Equal(t, fmt.Sprint(ranger.Ranges{point}), fmt.Sprint(got))
+					}
+				}
+			}
+		}
+	})
+
 	// Exercise open/closed endpoints, nullable suffixes and unequal widths.
 	for _, open := range []bool{false, true} {
 		left := ranger.Ranges{}
