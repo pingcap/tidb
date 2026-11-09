@@ -17,6 +17,7 @@ package statistics
 import (
 	"time"
 
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -44,7 +45,7 @@ func (d *DatumMapCache) Get(key hack.MutableString) (val types.Datum, ok bool) {
 // Put puts the datum into the cache.
 func (d *DatumMapCache) Put(val TopNMeta, encodedVal hack.MutableString,
 	tp byte, isIndex bool, loc *time.Location) (dat types.Datum, err error) {
-	dat, err = topNMetaToDatum(val, tp, isIndex, loc)
+	dat, err = v1TopNMetaToDatum(val, tp, isIndex, loc)
 	if err != nil {
 		return dat, err
 	}
@@ -52,7 +53,9 @@ func (d *DatumMapCache) Put(val TopNMeta, encodedVal hack.MutableString,
 	return dat, nil
 }
 
-func topNMetaToDatum(val TopNMeta,
+// v1TopNMetaToDatum decodes a TopN value for the analyze version 1 merge
+// path (MergePartTopN2GlobalTopN and MergePartitionHist2GlobalHist).
+func v1TopNMetaToDatum(val TopNMeta,
 	tp byte, isIndex bool, loc *time.Location) (dat types.Datum, err error) {
 	if isIndex {
 		dat.SetBytes(val.Encoded)
@@ -71,4 +74,21 @@ func topNMetaToDatum(val TopNMeta,
 		}
 	}
 	return dat, err
+}
+
+func topNMetaToDatum(val TopNMeta,
+	ft *types.FieldType, isIndex bool, loc *time.Location) (dat types.Datum, err error) {
+	if isIndex {
+		dat.SetBytes(val.Encoded)
+		return dat, nil
+	}
+	if _, dat, err = codec.DecodeOne(val.Encoded); err != nil {
+		return dat, err
+	}
+	// The key encodes a value in its flattened form: ENUM, SET and BIT
+	// as their numeric value, times as a packed integer, TypeFloat as a
+	// float64. Unflatten restores the kind the column's own values
+	// carry, which matters because Datum.Compare dispatches on kind and
+	// because a histogram's chunk column is typed.
+	return tablecodec.Unflatten(dat, ft, loc)
 }
