@@ -10,6 +10,10 @@ description = "Go pkg/dxf/framework/scheduler: the owner's schedulers of DXF tas
 [lints]
 workspace = true
 
+[features]
+# Test-only fault injection: Go's `failpoint.Inject`s.
+failpoints = ["dep:fail", "fail/failpoints"]
+
 [dependencies]
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-cpu = { path = "../tidb-cpu" }
@@ -26,6 +30,8 @@ tidb-ingestor-errdef = { path = "../tidb-ingestor-errdef" }
 tidb-metrics = { path = "../tidb-metrics" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 crossbeam-channel = "0.5"
+fail = { version = "0.4", optional = true }
+prometheus = { version = "0.14", default-features = false }
 tidb-intest = { path = "../tidb-intest" }
 tidb-log = { path = "../tidb-log" }
 tidb-logutil = { path = "../tidb-logutil" }

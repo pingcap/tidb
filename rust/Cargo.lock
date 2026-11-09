@@ -4748,6 +4748,7 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "crossbeam-channel",
+ "fail",
  "prometheus 0.14.0",
  "serde_json",
  "tidb-backoff",

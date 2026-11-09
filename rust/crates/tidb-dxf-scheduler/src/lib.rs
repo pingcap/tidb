@@ -17,11 +17,13 @@
 //! it, places its subtasks on the managed nodes and balances them.
 
 mod autoscaler;
+mod balancer;
 mod interface;
 #[cfg(test)]
 mod mock;
 mod nodes;
 mod scheduler;
+mod scheduler_manager;
 mod slots;
 mod state_transform;
 
@@ -31,6 +33,7 @@ pub use interface::{
     BatchCleaner, Cleaner, CleanerFactoryFn, Error, Extension, Param, SchedulerFactoryFn, TaskManager,
 };
 pub use nodes::NodeManager;
+pub use scheduler_manager::{Manager, CHECK_TASK_RUNNING_INTERVAL, DEFAULT_CLEAN_UP_INTERVAL};
 pub use scheduler::{
     get_live_exec_ids, is_cancelled_err, BaseScheduler, Scheduler, ServerInfoSource, CHECK_TASK_FINISHED_INTERVAL, RETRY_SQL_INTERVAL, RETRY_SQL_MAX_INTERVAL,
     RETRY_SQL_TIMES,
