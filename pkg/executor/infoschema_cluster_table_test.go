@@ -400,6 +400,12 @@ func TestTikvRegionStatus(t *testing.T) {
 		"test test_t2 0 <nil> <nil> 1 p0",
 		"test test_t2 0 <nil> <nil> 1 p1",
 	))
+	partitionTableID := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA = 'test' and TABLE_NAME = 'test_t2'").Rows()[0][0]
+	// The logical prefix has no global-index mapping. An extracted TABLE_ID predicate must not return its NULL row.
+	tk.MustQuery(fmt.Sprintf("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where TABLE_ID = %v order by IS_INDEX, PARTITION_NAME", partitionTableID)).Check(testkit.Rows(
+		"test test_t2 0 <nil> 1 p0",
+		"test test_t2 0 <nil> 1 p1",
+	))
 
 	tk.MustExec("alter table test_t2 add index p_a (a)")
 	tk.MustQuery("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by IS_INDEX, PARTITION_NAME").Check(testkit.Rows(
@@ -408,6 +414,17 @@ func TestTikvRegionStatus(t *testing.T) {
 		"test test_t2 1 p_a 1 p0",
 		"test test_t2 1 p_a 1 p1",
 	))
+	tk.MustQuery(fmt.Sprintf("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where TABLE_ID = %v order by IS_INDEX, PARTITION_NAME", partitionTableID)).Check(testkit.Rows(
+		"test test_t2 0 <nil> 1 p0",
+		"test test_t2 0 <nil> 1 p1",
+		"test test_t2 1 p_a 1 p0",
+		"test test_t2 1 p_a 1 p1",
+	))
+	// Two distinct IDs exercise IN extraction rather than a single-value IN folded into equality.
+	nameFilteredRegions := tk.MustQuery("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME in ('test_t1', 'test_t2') order by TABLE_NAME, IS_INDEX, INDEX_NAME, PARTITION_NAME").Rows()
+	inPlan := tk.MustQuery(fmt.Sprintf("explain select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where TABLE_ID in (%v, %v) order by TABLE_NAME, IS_INDEX, INDEX_NAME, PARTITION_NAME", tableID, partitionTableID)).String()
+	require.True(t, strings.Contains(inPlan, fmt.Sprintf("table_id in {%v,%v}", tableID, partitionTableID)) || strings.Contains(inPlan, fmt.Sprintf("table_id in {%v,%v}", partitionTableID, tableID)), inPlan)
+	tk.MustQuery(fmt.Sprintf("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where TABLE_ID in (%v, %v) order by TABLE_NAME, IS_INDEX, INDEX_NAME, PARTITION_NAME", tableID, partitionTableID)).Check(nameFilteredRegions)
 
 	tk.MustExec("alter table test_t2 add unique p_b (b) global")
 	tk.MustQuery("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by IS_INDEX, IS_PARTITION desc, PARTITION_NAME").Check(testkit.Rows(
