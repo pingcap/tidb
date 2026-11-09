@@ -4569,7 +4569,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	// The temporary upgrade domain can enable persisted MDL during the legacy
 	// migration. Reload it after that domain closes and before the final domain
 	// starts; the later sysvar-cache loop cannot safely repair this with queued jobs.
-	if err = InitMDLVariable(store); err != nil {
+	if _, err = initMDLVariable(store, mdlInitEnableOnNull); err != nil {
 		return nil, err
 	}
 	skipInitGlobalVarFromSystemDB := false
@@ -4843,13 +4843,13 @@ func initMDLForBootstrap(store kv.Storage, startMode ddl.StartMode) (legacyMDLMi
 	)
 	switch startMode {
 	case ddl.Bootstrap:
-		err = InitMDLVariableForBootstrap(store)
+		_, err = initMDLVariable(store, mdlInitForceEnable)
 	case ddl.Upgrade:
-		isNull, err = InitMDLVariableForUpgrade(store)
+		isNull, err = initMDLVariable(store, mdlInitKeepDisabledOnNull)
 	case ddl.Normal:
 		// Another TiDB can complete the upgrade before this instance acquires
 		// the upgrade lock. See https://github.com/pingcap/tidb/issues/64539.
-		err = InitMDLVariable(store)
+		_, err = initMDLVariable(store, mdlInitEnableOnNull)
 	default:
 		err = errors.Errorf("unknown start mode %q when initializing metadata lock", startMode)
 	}

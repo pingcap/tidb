@@ -114,24 +114,6 @@ const (
 	mdlInitKeepDisabledOnNull
 )
 
-// InitMDLVariable loads the persisted MDL value and enables a missing value.
-func InitMDLVariable(store kv.Storage) error {
-	_, err := initMDLVariable(store, mdlInitEnableOnNull)
-	return err
-}
-
-// InitMDLVariableForBootstrap persists and enables MDL for a new cluster.
-func InitMDLVariableForBootstrap(store kv.Storage) error {
-	_, err := initMDLVariable(store, mdlInitForceEnable)
-	return err
-}
-
-// InitMDLVariableForUpgrade loads MDL without changing a missing value. The
-// returned boolean identifies clusters that need the legacy MDL migration.
-func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
-	return initMDLVariable(store, mdlInitKeepDisabledOnNull)
-}
-
 // InitMDLVariableForBR loads MDL without changing persisted metadata. BR runs
 // against an already bootstrapped cluster and must not enable MDL on its behalf.
 func InitMDLVariableForBR(store kv.Storage) error {

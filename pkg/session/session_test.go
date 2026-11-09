@@ -64,16 +64,13 @@ func TestMDLInitializationPolicies(t *testing.T) {
 	original := vardef.IsMDLEnabled()
 	t.Cleanup(func() { vardef.SetEnableMDL(original) })
 	for _, initializer := range []struct {
-		name string
-		init func(kv.Storage) error
+		name   string
+		policy mdlInitPolicy
 	}{
-		{"normal", InitMDLVariable},
-		{"bootstrap", InitMDLVariableForBootstrap},
-		{"upgrade", func(store kv.Storage) error {
-			_, err := InitMDLVariableForUpgrade(store)
-			return err
-		}},
-		{"BR", InitMDLVariableForBR},
+		{"normal", mdlInitEnableOnNull},
+		{"bootstrap", mdlInitForceEnable},
+		{"upgrade", mdlInitKeepDisabledOnNull},
+		{"BR", mdlInitKeepDisabledOnNull},
 	} {
 		for _, state := range []string{"missing", "enabled", "disabled"} {
 			t.Run(initializer.name+"/"+state, func(t *testing.T) {
@@ -89,7 +86,8 @@ func TestMDLInitializationPolicies(t *testing.T) {
 				expectedEnabled := state == "enabled" || initializer.name == "bootstrap" ||
 					(state == "missing" && initializer.name == "normal")
 				vardef.SetEnableMDL(!expectedEnabled)
-				require.NoError(t, initializer.init(store))
+				_, err = initMDLVariable(store, initializer.policy)
+				require.NoError(t, err)
 				// Next-gen always reports MDL enabled, independently of persisted metadata.
 				require.Equal(t, expectedEnabled || kerneltype.IsNextGen(), vardef.IsMDLEnabled())
 				txn, err := store.Begin()
