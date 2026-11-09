@@ -1915,6 +1915,9 @@ pub struct IndexRangeSourceExec {
     batch_at: usize,
     /// The pruned-partition ordinal `batch` was read from.
     batch_partition: usize,
+    /// Each batch handle's partition ordinal for a global index, whose task
+    /// spans partitions (Go's `kv.PartitionHandle`s).
+    batch_partitions: Vec<usize>,
     /// The first handle of the NEXT partition, pulled while filling the
     /// current partition's batch and held for the next one -- the storage
     /// cursor cannot be peeked without consuming.
@@ -2149,6 +2152,19 @@ impl IndexRangeSourceExec {
         }
     }
 
+    /// Whether this lookup's tasks span partitions: a global index's clean,
+    /// unpushed read.
+    fn global_index_batch(&self) -> bool {
+        !self.dirty_merge
+            && !self.lookup_pushdown
+            && self.table.partition().is_some()
+            && self
+                .table
+                .indexes()
+                .iter()
+                .any(|index| index.read().id == self.index_id && index.read().global)
+    }
+
     /// Moves to the next partition's index stream once one is drained, as Go
     /// closes a partition's `SelectResult` before building the next; the
     /// drained stream's counts are kept.
@@ -2339,6 +2355,7 @@ impl IndexRangeSourceExec {
             batch: Vec::new(),
             batch_at: 0,
             batch_partition: 0,
+            batch_partitions: Vec::new(),
             pending_handle: None,
             lookup_pushdown: false,
             batch_size: INIT_HANDLE_BATCH,
@@ -2485,7 +2502,16 @@ impl IndexRangeSourceExec {
         };
         memory.tracker.reset();
         memory.tracker.attach_to(&memory.stmt);
-        for physical_id in &self.record_physical_ids {
+        // A global index lives under the logical table, so Go builds its
+        // ranges once; a local index's per partition.
+        let global = self
+            .table
+            .indexes()
+            .iter()
+            .any(|index| index.read().id == self.index_id && index.read().global);
+        let logical = [self.table.table_id()];
+        let range_tables: &[i64] = if global { &logical } else { &self.record_physical_ids };
+        for physical_id in range_tables {
             tidb_distsql::index_ranges_to_kv_ranges_with_mem_tracker(
                 Some(self.decode_context.zone()),
                 *physical_id,
@@ -2662,6 +2688,7 @@ impl IndexRangeSourceExec {
 
     fn fill_handle_batch(&mut self) -> Result<bool, ExecError> {
         self.batch.clear();
+        self.batch_partitions.clear();
         self.batch_at = 0;
         let mut pulled = false;
         if !self.lookup_pushdown && self.index_fetch_chunk.is_none() {
@@ -2807,9 +2834,12 @@ impl IndexRangeSourceExec {
                     break;
                 };
                 pulled = true;
+                // A global index's handles carry their partitions (Go's
+                // `kv.PartitionHandle`), so its task spans them.
+                let spans_partitions = self.global_index_batch();
                 if self.batch.is_empty() {
                     self.batch_partition = partition;
-                } else if partition != self.batch_partition {
+                } else if partition != self.batch_partition && !spans_partitions {
                     // The first handle of the NEXT partition. It belongs to
                     // the next task -- Go never lets one task span two
                     // partitions -- and the storage cursor cannot be peeked
@@ -2818,6 +2848,9 @@ impl IndexRangeSourceExec {
                     break;
                 }
                 self.batch.push(handle);
+                if spans_partitions {
+                    self.batch_partitions.push(partition);
+                }
                 // Extracted into a batch: Go's `w.scannedKeys++`. The stashed
                 // boundary handle above is deliberately NOT counted until
                 // the fill that actually takes it -- Go never reads ahead
@@ -2863,8 +2896,22 @@ impl IndexRangeSourceExec {
         if self.can_reorder_handles {
             // Go `buildTableReaderFromHandles(..., canReorderHandles=true)`:
             // `slices.SortFunc(handles, ...i.Compare(j))` -- per TASK, which
-            // the boundary above has made per PARTITION.
-            self.batch.sort();
+            // the boundary above has made per PARTITION; a global index's
+            // `PartitionHandle.Compare` orders by partition, then handle.
+            if self.batch_partitions.len() == self.batch.len() && !self.batch_partitions.is_empty() {
+                let physical_ids = &self.record_physical_ids;
+                let mut pairs: Vec<(usize, TableHandle)> =
+                    self.batch_partitions.drain(..).zip(self.batch.drain(..)).collect();
+                pairs.sort_by(|(left_partition, left), (right_partition, right)| {
+                    physical_ids
+                        .get(*left_partition)
+                        .cmp(&physical_ids.get(*right_partition))
+                        .then_with(|| left.cmp(right))
+                });
+                (self.batch_partitions, self.batch) = pairs.into_iter().unzip();
+            } else {
+                self.batch.sort();
+            }
         }
         if pushdown {
             // Go `extractLookUpPushDownRowsOrHandles`: `scannedKeys <=
@@ -3225,11 +3272,21 @@ impl IndexRangeSourceExec {
                 handles.extend(self.batch.drain(self.batch_at..));
                 self.batch_at = self.batch.len();
                 if partitioned && !handles.is_empty() {
-                    let id = self
-                        .record_physical_ids
-                        .get(self.batch_partition)
-                        .ok_or_else(|| ExecError::internal("index lookup lost its partition ordinal"))?;
-                    physical_ids.resize(handles.len(), *id);
+                    if self.batch_partitions.len() >= handles.len() {
+                        let start = self.batch_partitions.len() - handles.len();
+                        for partition in self.batch_partitions.drain(start..) {
+                            let id = self.record_physical_ids.get(partition).ok_or_else(|| {
+                                ExecError::internal("index lookup lost its partition ordinal")
+                            })?;
+                            physical_ids.push(*id);
+                        }
+                    } else {
+                        let id = self
+                            .record_physical_ids
+                            .get(self.batch_partition)
+                            .ok_or_else(|| ExecError::internal("index lookup lost its partition ordinal"))?;
+                        physical_ids.resize(handles.len(), *id);
+                    }
                 }
                 if handles.is_empty() {
                     // Go `extractTaskHandles` records the empty chunk that
