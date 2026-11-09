@@ -654,6 +654,186 @@ func TestAddRecordWithCtx(t *testing.T) {
 	require.Nil(t, txn.Commit(context.Background()))
 }
 
+func TestDuplicateKeyErrorEscapesBinaryValues(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	// Whether a conflict is found in the transaction or against a committed row, the binary and bit values in
+	// the error message should be escaped in the same way.
+	cases := []struct {
+		name       string
+		ddl        string
+		row        string // a row to insert
+		other      string // a row which doesn't conflict with `row`
+		update     string // makes `other` conflict with `row`
+		samePrefix string // a row which differs from `row` but conflicts with it as only the index prefix is compared
+		want       string
+	}{
+		{
+			name:   "binary",
+			ddl:    "create table t (firm bigint not null, cu binary(16) not null, product varchar(255) not null, unique key k (firm, cu, product))",
+			row:    "(1, x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d6', 'p')",
+			other:  "(1, x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d7', 'p')",
+			update: "update t set cu = x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d6' where cu = x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d7'",
+			want:   `[kv:1062]Duplicate entry '1-\xA1\xB2\xC3\xD4\x00\xF6\xA7\xB8\xC9\xD0\xE1\xF2\xA3\xB4\xC5\x' for key 't.k'`,
+		},
+		{
+			name:   "varbinary",
+			ddl:    "create table t (firm bigint not null, cu varbinary(16) not null, product varchar(255) not null, unique key k (firm, cu, product))",
+			row:    "(1, x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d6', 'p')",
+			other:  "(1, x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d7', 'p')",
+			update: "update t set cu = x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d6' where cu = x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d7'",
+			want:   `[kv:1062]Duplicate entry '1-\xA1\xB2\xC3\xD4\x00\xF6\xA7\xB8\xC9\xD0\xE1\xF2\xA3\xB4\xC5\x' for key 't.k'`,
+		},
+		{
+			name:   "bit",
+			ddl:    "create table t (firm bigint not null, cu bit(16) not null, product varchar(255) not null, unique key k (firm, cu, product))",
+			row:    "(1, b'1010000100000000', 'p')",
+			other:  "(1, b'1010000100000001', 'p')",
+			update: "update t set cu = b'1010000100000000' where cu = b'1010000100000001'",
+			want:   `[kv:1062]Duplicate entry '1-\xA1\x00-p' for key 't.k'`,
+		},
+		{
+			name:       "binary prefix index",
+			ddl:        "create table t (firm bigint not null, cu binary(16) not null, product varchar(255) not null, unique key k (firm, cu(4), product))",
+			row:        "(1, x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d6', 'p')",
+			other:      "(1, x'b1b2c3d400f6a7b8c9d0e1f2a3b4c5d6', 'p')",
+			update:     "update t set cu = x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d6' where cu = x'b1b2c3d400f6a7b8c9d0e1f2a3b4c5d6'",
+			samePrefix: "(1, x'a1b2c3d4ffffffffffffffffffffffff', 'p')",
+			want:       `[kv:1062]Duplicate entry '1-\xA1\xB2\xC3\xD4-p' for key 't.k'`,
+		},
+		{
+			name:   "clustered primary key",
+			ddl:    "create table t (firm bigint not null, cu binary(16) not null, v int, primary key (firm, cu) clustered)",
+			row:    "(1, x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d6', 1)",
+			other:  "(1, x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d7', 1)",
+			update: "update t set cu = x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d6' where cu = x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d7'",
+			want:   `[kv:1062]Duplicate entry '1-\xA1\xB2\xC3\xD4\x00\xF6\xA7\xB8\xC9\xD0\xE1\xF2\xA3\xB4\xC5\x' for key 't.PRIMARY'`,
+		},
+		{
+			name:   "nonclustered primary key",
+			ddl:    "create table t (cu binary(16) not null, v int, primary key (cu) nonclustered)",
+			row:    "(x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d6', 1)",
+			other:  "(x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d7', 1)",
+			update: "update t set cu = x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d6' where cu = x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d7'",
+			want:   `[kv:1062]Duplicate entry '\xA1\xB2\xC3\xD4\x00\xF6\xA7\xB8\xC9\xD0\xE1\xF2\xA3\xB4\xC5\xD6' for key 't.PRIMARY'`,
+		},
+		{
+			name:   "varchar",
+			ddl:    "create table t (firm bigint not null, cu varchar(16) not null, product varchar(255) not null, unique key k (firm, cu, product))",
+			row:    "(1, 'abc', 'p')",
+			other:  "(1, 'abd', 'p')",
+			update: "update t set cu = 'abc' where cu = 'abd'",
+			want:   `[kv:1062]Duplicate entry '1-abc-p' for key 't.k'`,
+		},
+		{
+			name:       "varchar prefix index",
+			ddl:        "create table t (firm bigint not null, cu varchar(16) not null, product varchar(255) not null, unique key k (firm, cu(2), product))",
+			row:        "(1, 'abc', 'p')",
+			other:      "(1, 'xbd', 'p')",
+			update:     "update t set cu = 'abc' where cu = 'xbd'",
+			samePrefix: "(1, 'abz', 'p')",
+			want:       `[kv:1062]Duplicate entry '1-ab-p' for key 't.k'`,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			// A failed assertion must not leave a transaction which blocks the next case from dropping the table.
+			defer tk.MustExec("rollback")
+			tk.MustExec("drop table if exists t")
+			tk.MustExec(c.ddl)
+			insert := "insert into t values " + c.row
+
+			// The conflict is between the rows written by the transaction itself.
+			for _, mode := range []string{"optimistic", "pessimistic"} {
+				tk.MustExec("begin " + mode)
+				tk.MustExec(insert)
+				tk.MustGetErrMsg(insert, c.want)
+				if c.samePrefix != "" {
+					tk.MustGetErrMsg("insert into t values "+c.samePrefix, c.want)
+				}
+				tk.MustExec("rollback")
+
+				tk.MustExec("begin " + mode)
+				tk.MustGetErrMsg("insert into t values "+c.row+", "+c.row, c.want)
+				if c.samePrefix != "" {
+					tk.MustGetErrMsg("insert into t values "+c.row+", "+c.samePrefix, c.want)
+				}
+				tk.MustExec("rollback")
+			}
+
+			// The conflict is with a committed row.
+			tk.MustExec(insert)
+			tk.MustExec("begin pessimistic")
+			tk.MustGetErrMsg(insert, c.want)
+			if c.samePrefix != "" {
+				tk.MustGetErrMsg("insert into t values "+c.samePrefix, c.want)
+			}
+			tk.MustExec("rollback")
+			if c.samePrefix != "" {
+				tk.MustGetErrMsg("insert into t values "+c.samePrefix, c.want)
+				// The rejected rows have not left any index entry behind.
+				tk.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
+				tk.MustExec("admin check table t")
+			}
+
+			tk.MustExec("insert into t values " + c.other)
+			for _, mode := range []string{"optimistic", "pessimistic"} {
+				tk.MustExec("begin " + mode)
+				tk.MustGetErrMsg(c.update, c.want)
+				tk.MustExec("rollback")
+			}
+		})
+	}
+}
+
+func TestGenIndexKeyStrsEscapesByIndexColumnType(t *testing.T) {
+	// While a column is being modified, an index column may use the changing type of the column instead of its
+	// own type, see model.GetIdxChangingFieldType. It is the type the value is stored in, which is also what the
+	// duplicate-key error generated when committing decodes the value with.
+	for _, c := range []struct {
+		name          string
+		colTp         string
+		changingTp    string // empty if the column has no changing type
+		useChangingTp bool   // whether the index column uses the changing type
+		escaped       bool
+	}{
+		{"varchar", "varchar(16)", "", false, false},
+		{"varbinary", "varbinary(16)", "", false, true},
+		{"unused changing type of a varchar", "varchar(16)", "varbinary(16)", false, false},
+		{"unused changing type of a varbinary", "varbinary(16)", "varchar(16)", false, true},
+		{"varchar to varbinary", "varchar(16)", "varbinary(16)", true, true},
+		{"varbinary to varchar", "varbinary(16)", "varchar(16)", true, false},
+		{"varchar to bit", "varchar(16)", "bit(8)", true, true},
+		{"missing changing type", "varbinary(16)", "", true, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			tblInfo := buildTableInfo(t, "create table t (a "+c.colTp+", unique key k (a))")
+			if c.changingTp != "" {
+				changingTp := buildTableInfo(t, "create table t (a "+c.changingTp+")").Columns[0].FieldType
+				tblInfo.Columns[0].ChangingFieldType = &changingTp
+			}
+			idxInfo := tblInfo.Indices[0]
+			idxInfo.Columns[0].UseChangingType = c.useChangingTp
+
+			want := "\xA1\x00x"
+			if c.escaped {
+				want = `\xA1\x00x`
+			}
+			got, err := tables.GenIndexKeyStrsForTest(tblInfo, idxInfo, types.MakeDatums([]byte{0xA1, 0x00, 'x'}))
+			require.NoError(t, err)
+			require.Equal(t, []string{want}, got)
+		})
+	}
+
+	// The column types are unknown without the index, nothing is escaped then.
+	tblInfo := buildTableInfo(t, "create table t (a varbinary(16))")
+	got, err := tables.GenIndexKeyStrsForTest(tblInfo, nil, types.MakeDatums([]byte{0xA1, 0x00, 'x'}))
+	require.NoError(t, err)
+	require.Equal(t, []string{"\xA1\x00x"}, got)
+}
+
 func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

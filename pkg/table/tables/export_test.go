@@ -15,3 +15,5 @@
 package tables
 
 var SetAssertionForTest = setAssertion
+
+var GenIndexKeyStrsForTest = genIndexKeyStrs
