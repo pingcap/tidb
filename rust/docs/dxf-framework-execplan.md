@@ -32,36 +32,29 @@ tidb-server shows the same rows.
 
 ## Progress
 
-- [ ] Milestone 1: `dxfutil` and `storage` (Go `TaskManager`) over a session pool.
+- [x] Milestone 1: `storage` (Go `TaskManager`) over the domain's DXF session pool.
   - [x] 2026-11-09: crate `rust/crates/tidb-dxf-storage` with Go's column
     lists, sentinel errors, the session-context trait, `WithNewSession`,
     `WithNewTxn`, `ExecuteSQLWithNewSession` and `converter.go`.
-  - [x] `nodes.go` (`nodes.rs`).
-  - [x] `task_table.go` group 1 (`task_table.rs`): `CreateTask`,
-    `CreateTaskWithSession`, the top-task, exec-info, cleanup and state
-    queries, lookups by id and key (with history); `proto`'s task cleanup
-    batch size.
-  - [ ] `task_table.go` group 2: the subtask queries and updates (Go lines
-    618-890), then the step switches and subtask inserts (889-1060), then the
-    rest (1061-1265).
-  - [ ] `task_state.go`, `subtask_state.go`, `history.go`; the Go tests; the
-    cluster node's session-context implementation.
-  - [x] Go `pkg/objstore/recording` (`rust/crates/tidb-objstore-recording`,
-    with `TestRequestsRecording`) and `dxfmetric`
-    (`rust/crates/tidb-dxf-dxfmetric`: metrics and the collector; Go
-    `UsedSlotsGauge` is `tidb-metrics`'s).
-  - [x] `metering` (`rust/crates/tidb-dxf-metering`: the classic kernel's
-    recorder and data with Go's three tests; the next-gen `Meter` and its
-    `metering_sdk` writer belong to row O15).
-  - [x] `taskexecutor/execute` (`rust/crates/tidb-dxf-execute`: the step
-    executor trait, Go's JSON form of subtask summaries,
-    `TestSubtaskSummaryGetSpeed`; Go's reflection-set framework info is an
-    embedded `FrameworkInfoSlot`).
-  - [ ] The rest of `storage`: `task_table.go` from line 618, `task_state.go`,
-    `subtask_state.go`, `history.go`, Go's tests, and the cluster node's
-    session-context implementation.
+  - [x] `nodes.go`, `task_table.go` (all of it, with `TestSerializeErr` and
+    `TestSplitSubtasks`), `task_state.go`, `subtask_state.go`, `history.go`
+    (`TestClassifyTaskError`, `TestIsCancelledErr`).
+  - [x] Go `pkg/objstore/recording`, `dxfmetric`, `metering` (classic
+    kernel; next-gen `Meter` is O15's) and `taskexecutor/execute`.
+  - [x] The domain's `dxfSessionPool` (capacity 100, the system-session
+    factory) and the cluster node's storage session context
+    (`rust/crates/tidb-session/src/domain/cluster_session_node/dxf_sessions.rs`).
+  - [x] Go `testutil`'s `table_util.go` and `task_util.go`
+    (`rust/crates/tidb-dxf-testutil`).
+  - [x] Go's store tests (`table_test.go`, `task_state_test.go`): 29 run on
+    a unistore node in
+    `rust/crates/tidb-session/src/domain/cluster_session_node/tests/unistore_cop/dxf_storage.rs`.
+    Not transcreated: `TestWithNewTxnRollbackOnCanceledCtx` and the
+    cancelled-context half of `TestCancelAndExecIdChanged` (see Surprises).
+  - [ ] `dxfutil` moves to milestone 3: it needs Go's `sqlsvrapi.Runtime`
+    (on a classic kernel, the node's own runtime; other keyspaces are O15).
 - [ ] Milestone 2: `handle` and `planner`.
-- [ ] Milestone 3: `taskexecutor/execute`, `taskexecutor` (manager, slots, executor).
+- [ ] Milestone 3: `dxfutil` (with Go `sqlsvrapi.Runtime` for the node itself), `taskexecutor` (manager, slots, executor; `execute` is done).
 - [ ] Milestone 4: `scheduler` (manager, nodes, slots, balancer, state transitions; autoscaler where it applies to a classic kernel).
 - [ ] Milestone 5: composition in the domain (Go `InitDistTaskLoop`, `distTaskFrameworkLoop`) and the `example` task type end to end.
 - [ ] Milestone 6: `metering` and `dxfmetric` where a classic kernel uses them.
@@ -77,6 +70,19 @@ tidb-server shows the same rows.
   this plan's.
 - The system tables already exist in the Rust bootstrap
   (`rust/crates/tidb-metadef/src/bootstrap_tables.rs`).
+- 2026-11-09: every Go `TaskManager` method takes a `ctx`, which carries
+  cancellation and the internal source type. The Rust internal-SQL path
+  reads only a request source from its context and has no cancellation, so
+  the storage methods take no context (only `WithNewTxn` tags its statements
+  `DistTask`, as Go does). Go's cancelled-context tests wait on that SQL-layer
+  capability; the scheduler and executor ports must decide how to stop
+  in-flight SQL when they get there.
+- A SQL error must keep its terror identity: Go stores the task error's RFC
+  code (`taskErrorCode`) and matches `[kv:1062]` text (`isDataError`).
+  `StorageError::Terror` carries it, and `serializeErr` writes it like Go
+  (bytes pinned by an overlay test in Go's own package).
+- Go's zero `time.Time` is 0001-01-01, not the Unix epoch; NULL times read
+  back as `tidb_dxf::go_zero_time()`.
 
 ## Decision Log
 
@@ -99,6 +105,13 @@ tidb-server shows the same rows.
   Go's names and structure (repository rule: `AGENTS.md`, "Go TiDB is the
   source of truth"). A package's Go tests are transcreated with it; a
   failing transcreated test is the work list.
+- 2026-11-09: the domain opens `dxfSessionPool` over the same session
+  factory as its advanced pool; a domain system session hands itself over
+  as storage's session context (`DomainSysSession::into_dxf_session`)
+  rather than making storage's trait a supertrait, whose `commit_txn` and
+  `affected_rows` would collide with the domain's.
+- Go's `failpoint.Inject` / `InjectCall` sites the storage tests drive are
+  `fail::fail_point!`s behind the crate's `failpoints` feature.
 - The storage layer runs Go's SQL text on a pooled internal session, as Go's
   `TaskManager` does through `dxfSessionPool`; no raw record writes (the
   very mismatch Y01 records elsewhere).
