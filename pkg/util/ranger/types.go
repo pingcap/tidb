@@ -385,6 +385,18 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 	return fmt.Sprintf("%v", d.GetValue())
 }
 
+// indexOrderDatum preserves the numeric index ordering of ENUM and SET values.
+func indexOrderDatum(d types.Datum) types.Datum {
+	switch d.Kind() {
+	case types.KindMysqlEnum:
+		return types.NewUintDatum(d.GetMysqlEnum().Value)
+	case types.KindMysqlSet:
+		return types.NewUintDatum(d.GetMysqlSet().Value)
+	default:
+		return d
+	}
+}
+
 // compareLexicographically compares two bounds from two ranges and returns 0, 1, -1
 // for equal, greater than or less than respectively. It gets the two bounds,
 // collations and if each bound is open (open1, open2) or closed. In addition,
@@ -395,7 +407,10 @@ func compareLexicographically(tc types.Context, bound1, bound2 []types.Datum, co
 	n1 := len(bound1)
 	n2 := len(bound2)
 	for i := range min(n1, n2) {
-		cmp, err := bound1[i].Compare(tc, &bound2[i], collators[i])
+		// ENUM and SET keys store their ordinal/bitmask, whereas Datum.Compare
+		// compares their names. Range bounds must follow index storage order.
+		left, right := indexOrderDatum(bound1[i]), indexOrderDatum(bound2[i])
+		cmp, err := left.Compare(tc, &right, collators[i])
 		if err != nil {
 			return 0, err
 		}

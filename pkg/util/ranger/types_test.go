@@ -614,15 +614,43 @@ func TestIntersectionOverlap(t *testing.T) {
 	domain.GetDomain(ctx).StatsHandle().Close()
 }
 
+// TestIntersectSortedRanges checks the sweep against pairwise intersection and index-order edge cases.
 func TestIntersectSortedRanges(t *testing.T) {
 	ctx := coretestsdk.MockContext()
 	defer domain.GetDomain(ctx).StatsHandle().Close()
 	rctx := ctx.GetRangerCtx()
+	t.Run("enum and set index order", func(t *testing.T) {
+		for _, values := range [][]types.Datum{
+			types.MakeDatums(types.Enum{Name: "a", Value: 1}, types.Enum{Name: "z", Value: 2}, types.Enum{Name: "b", Value: 3}),
+			types.MakeDatums(types.Set{Name: "a", Value: 1}, types.Set{Name: "z", Value: 2}, types.Set{Name: "a,z", Value: 3}),
+		} {
+			bound := func(v types.Datum) []types.Datum { return []types.Datum{types.NewIntDatum(0), v} }
+			wide := &ranger.Range{LowVal: bound(values[0]), HighVal: bound(values[2]), Collators: collate.GetBinaryCollatorSlice(2)}
+			points := ranger.Ranges{}
+			for _, v := range values {
+				points = append(points, &ranger.Range{LowVal: bound(v), HighVal: bound(v), Collators: collate.GetBinaryCollatorSlice(2)})
+			}
+			for _, reverse := range []bool{false, true} {
+				for _, right := range []ranger.Ranges{points[1:2], points} {
+					left := ranger.Ranges{wide}
+					want := fmt.Sprint(right)
+					if reverse {
+						left, right = right, left
+					}
+					got, fallback, err := ranger.IntersectSortedRanges(rctx, left, right, 0, false)
+					require.NoError(t, err)
+					require.False(t, fallback)
+					require.Equal(t, want, fmt.Sprint(got))
+				}
+			}
+		}
+	})
+
 	// Exercise open/closed endpoints, nullable suffixes and unequal widths.
 	for _, open := range []bool{false, true} {
 		left := ranger.Ranges{}
 		right := ranger.Ranges{}
-		for i := int64(0); i < 32; i++ {
+		for i := range int64(32) {
 			left = append(left, &ranger.Range{LowVal: types.MakeDatums(i * 3), HighVal: types.MakeDatums(i*3 + 1), LowExclude: open, Collators: collate.GetBinaryCollatorSlice(1)})
 			right = append(right, &ranger.Range{LowVal: types.MakeDatums(i*3, nil), HighVal: types.MakeDatums(i*3+2, 2), HighExclude: open, Collators: collate.GetBinaryCollatorSlice(2)})
 		}
@@ -681,9 +709,9 @@ func TestIntersectSortedRanges(t *testing.T) {
 		require.Error(t, err)
 		require.False(t, fallback)
 	}
-
 }
 
+// BenchmarkIntersectSortedRanges measures scaling for matching and disjoint inputs.
 func BenchmarkIntersectSortedRanges(b *testing.B) {
 	ctx := coretestsdk.MockContext()
 	defer domain.GetDomain(ctx).StatsHandle().Close()
@@ -691,7 +719,7 @@ func BenchmarkIntersectSortedRanges(b *testing.B) {
 		for _, disjoint := range []bool{false, true} {
 			b.Run(fmt.Sprintf("n=%d/disjoint=%t", size, disjoint), func(b *testing.B) {
 				left, right := ranger.Ranges{}, ranger.Ranges{}
-				for i := 0; i < size; i++ {
+				for i := range size {
 					left = append(left, &ranger.Range{LowVal: types.MakeDatums(i * 4), HighVal: types.MakeDatums(i*4 + 1), Collators: collate.GetBinaryCollatorSlice(1)})
 					x := i * 4
 					if disjoint {
@@ -701,10 +729,13 @@ func BenchmarkIntersectSortedRanges(b *testing.B) {
 				}
 				b.ReportAllocs()
 				b.ResetTimer()
-				for i := 0; i < b.N; i++ {
+				for range b.N {
 					_, fallback, err := ranger.IntersectSortedRanges(ctx.GetRangerCtx(), left, right, 0, true)
-					if err != nil || fallback {
+					if err != nil {
 						b.Fatal(err)
+					}
+					if fallback {
+						b.Fatal("unexpected range fallback")
 					}
 				}
 			})

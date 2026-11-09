@@ -175,6 +175,7 @@ func TestRangeIntersection(t *testing.T) {
 			ranges    string
 		}{
 			{"a in (1,0,5,2) and ((a=0 and (b<10 or b is null)) or (a=0 and b=10 and (c<20 or c is null)))", "range:[0 NULL,0 10), [0 10 NULL,0 10 20)"},
+			{"a in (1,0,5,2) and (a=0 or (a=0 and b=1701659790724 and (c<209597 or c is null)))", "range:[0,0]"},
 			{"a in (-1,0,1) and ((a>0 and b=9) or (a=0 and b>9))", "range:(0 9,0 +inf], [1 9,1 +inf]"},
 		}
 		for _, tt := range cases {
@@ -207,6 +208,19 @@ func TestRangeIntersection(t *testing.T) {
 		tk.MustQuery("execute stmt using @a,@b").Check(testkit.Rows("2", "4"))
 		tk.MustExec("set @a=1,@b=2")
 		tk.MustQuery("execute stmt using @a,@b").Check(testkit.Rows())
+		for _, typ := range []string{"enum('a','z','b')", "set('a','z','b')"} {
+			tk.MustExec("drop table if exists enum72780")
+			tk.MustExec("create table enum72780 (a int, b " + typ + ", c int, key abc(a,b,c))")
+			tk.MustExec("insert into enum72780 values (0,'a',1),(0,'z',1),(0,'b',1),(1,'a',1),(1,'z',1),(1,'b',1),(0,null,1)")
+			for _, predicate := range []string{
+				"a in (0,1) and b in ('a','z','b') and ((a=0 and b='z' and c>0) or (a=1 and b='a' and c>0))",
+				"a in (0,1) and ((a=0 and b in ('a','z','b') and c>0) or (a=1 and b='z' and c>0))",
+			} {
+				q := "select a,b,c from enum72780 %s where " + predicate + " order by a,b,c limit 50"
+				tk.MustQuery(fmt.Sprintf(q, "force index(abc)")).Check(tk.MustQuery(fmt.Sprintf(q, "ignore index(abc)")).Rows())
+			}
+		}
+
 		tk.MustExec("deallocate prepare stmt")
 	})
 
