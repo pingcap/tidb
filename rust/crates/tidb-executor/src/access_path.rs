@@ -5544,8 +5544,8 @@ pub(crate) struct LookupForkTemplate {
     emit_commit_ts: bool,
     emit_physical_table_id: bool,
     /// Go `buildIndexLookUpReaderForIndexJoin`'s batch sizes, when the inner
-    /// reader is a double read.
-    inner_lookup: Option<(usize, usize)>,
+    /// reader is a double read, and its readers' runtime stats.
+    inner_lookup: Option<(usize, usize, Option<InnerLookupStatsConfig>)>,
 }
 
 impl LookupForkTemplate {
@@ -5606,8 +5606,11 @@ impl LookupForkTemplate {
             probe_bound_values: Vec::new(),
             inner_lookup: None,
         };
-        if let Some((initial_batch, max_batch)) = self.inner_lookup {
-            task.set_inner_lookup(initial_batch, max_batch);
+        if let Some((initial_batch, max_batch, stats)) = &self.inner_lookup {
+            task.set_inner_lookup(*initial_batch, *max_batch);
+            if let Some(stats) = stats {
+                task.set_inner_lookup_stats(stats.clone());
+            }
         }
         // Go's `BuildExecutorForIndexJoin`: every task's reader is built and
         // opened afresh. A common-handle prefix task prepares its cursor
@@ -5646,6 +5649,39 @@ struct InnerIndexLookUp {
     index_worker: Option<Arc<tidb_memory::Tracker>>,
     /// The next task the index worker already cut.
     pending: Option<Vec<TableHandle>>,
+    /// Go `IndexLookUpExecutor.initRuntimeStats` of every task's reader.
+    stats_config: Option<InnerLookupStatsConfig>,
+    /// The current task's reader's stats (Go `e.stats`), registered when it
+    /// closes.
+    stats: Option<crate::index_lookup_stats::IndexLookUpStatsHandle>,
+}
+
+/// What each inner task's `IndexLookUpExecutor` records its runtime stats
+/// under: its plan, its index and table plan roots and the statement's
+/// collection.
+#[derive(Clone)]
+pub(crate) struct InnerLookupStatsConfig {
+    pub(crate) plan_id: i64,
+    pub(crate) index_root_plan_id: i64,
+    pub(crate) table_root_plan_id: i64,
+    pub(crate) concurrency: usize,
+    pub(crate) source: Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>,
+}
+
+impl InnerLookupStatsConfig {
+    /// Go `initRuntimeStats` of a fresh reader.
+    fn start(&self) -> crate::index_lookup_stats::IndexLookUpStatsHandle {
+        crate::index_lookup_stats::IndexLookUpStatsHandle {
+            stats: Arc::new(crate::index_lookup_stats::IndexLookUpRunTimeStats::new(self.concurrency)),
+            index_scan_basic: (self.index_root_plan_id != self.plan_id)
+                .then(|| self.source.basic_runtime_stats(self.index_root_plan_id))
+                .flatten(),
+            source: Arc::clone(&self.source),
+            table_root_plan_id: self.table_root_plan_id,
+            plan_id: self.plan_id,
+            index_end_recorded: false,
+        }
+    }
 }
 
 /// The inner side of an index join: the rows of one table whose join-key
@@ -5886,7 +5922,9 @@ impl IndexJoinLookupExec {
             self.consume_kv_ranges_for_index_join(mem_tracker)?;
         }
         // Go `IndexLookUpExecutor.open` of the task's fresh reader.
+        self.register_inner_lookup_stats();
         if let Some(inner) = self.inner_lookup.as_mut() {
+            inner.stats = inner.stats_config.as_ref().map(InnerLookupStatsConfig::start);
             let stmt = Arc::clone(self.decode_context.expression().statement_memory().stmt_tracker());
             let tracker = tidb_memory::Tracker::new(self.meta.id(), -1);
             tracker.attach_to(&stmt);
@@ -5917,7 +5955,23 @@ impl IndexJoinLookupExec {
             memory: None,
             index_worker: None,
             pending: None,
+            stats_config: None,
+            stats: None,
         });
+    }
+
+    /// Go `IndexLookUpExecutor.initRuntimeStats` for each task's reader.
+    pub(crate) fn set_inner_lookup_stats(&mut self, config: InnerLookupStatsConfig) {
+        if let Some(inner) = self.inner_lookup.as_mut() {
+            inner.stats_config = Some(config);
+        }
+    }
+
+    /// Go `IndexLookUpExecutor.Close`: `RegisterStats(e.ID(), e.stats)`.
+    fn register_inner_lookup_stats(&mut self) {
+        if let Some(mut stats) = self.inner_lookup.as_mut().and_then(|inner| inner.stats.take()) {
+            stats.register_and_reset();
+        }
     }
 
     /// Go `indexWorker.extractTaskHandles` over the remote index stream: one
@@ -5928,10 +5982,24 @@ impl IndexJoinLookupExec {
         let (Some(inner), Some(remote)) = (self.inner_lookup.as_mut(), self.remote_handles.as_mut()) else {
             return Ok(Vec::new());
         };
+        let started = std::time::Instant::now();
         let handles = remote
             .next_handle_batch(inner.batch, max_chunk_size)
             .map_err(ExecError::from)?
             .unwrap_or_default();
+        // Go `indexWorker.fetchHandles`: the task's fetch time, and each
+        // `idxResult.Next` on the index plan's basic stats.
+        let chunk_rows = remote.take_batch_chunk_rows();
+        if let Some(stats) = inner.stats.as_ref() {
+            let elapsed = started.elapsed();
+            stats.stats.record_index_task(elapsed, elapsed, std::time::Duration::ZERO);
+            if let Some(basic) = &stats.index_scan_basic {
+                for (position, rows) in chunk_rows.iter().enumerate() {
+                    let elapsed = if position == 0 { elapsed } else { std::time::Duration::ZERO };
+                    basic.record_next(elapsed, i64::try_from(*rows).unwrap_or(i64::MAX));
+                }
+            }
+        }
         if handles.len() >= inner.batch {
             inner.batch = inner.batch.saturating_mul(2).min(inner.max_batch);
         }
@@ -6129,7 +6197,7 @@ impl IndexJoinLookupExec {
             inner_lookup: self
                 .inner_lookup
                 .as_ref()
-                .map(|inner| (inner.initial_batch, inner.max_batch)),
+                .map(|inner| (inner.initial_batch, inner.max_batch, inner.stats_config.clone())),
         })
     }
 
@@ -7132,6 +7200,7 @@ impl IndexJoinLookupExec {
                     if handles.is_empty() {
                         return Ok(None);
                     }
+                    let table_task_started = std::time::Instant::now();
                     (self.lookup_handles, self.lookup_rows) = self
                         .window_rows(
                             &handles,
@@ -7140,6 +7209,12 @@ impl IndexJoinLookupExec {
                         )?
                         .into_iter()
                         .unzip();
+                    // Go's table worker records each task it executes.
+                    if let Some(stats) = self.inner_lookup.as_ref().and_then(|inner| inner.stats.as_ref()) {
+                        stats
+                            .table_task_recorder()
+                            .record_table_task(table_task_started, self.lookup_rows.len());
+                    }
 
                     // A window every row of which is gone -- the index named
                     // handles whose records no longer exist, and a range scan
@@ -7359,6 +7434,7 @@ impl Executor for IndexJoinLookupExec {
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
+        self.register_inner_lookup_stats();
         self.cursor = None;
         self.record_cursor = None;
         self.remote_cursor = None;

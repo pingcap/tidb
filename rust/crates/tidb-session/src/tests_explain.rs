@@ -9950,6 +9950,37 @@ fn a_reader_pushes_its_computing_projection_into_the_request_like_go() {
     session.run("ROLLBACK").unwrap();
 }
 
+/// Each index join task's inner `IndexLookUpExecutor` registers its runtime
+/// stats when it closes (Go `RegisterStats(e.ID(), e.stats)`), so over 7
+/// inner tasks the reader shows Go's `table_task: {.., num: 2, concurrency:
+/// 5}`, and each task's table reader adds to `TableRowIDScan`'s loops (Go:
+/// 4). The reader's memory is whichever task's tracker closed last, in Go
+/// too (226 Bytes or 2.94 KB), so it is not pinned. Oracle: a Go
+/// tidb-server.
+#[test]
+fn an_index_joins_inner_lookups_register_their_stats_per_task_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE jo (a INT, b INT)").unwrap();
+    session.run("CREATE TABLE ji (a INT, b INT, KEY ka(a))").unwrap();
+    let values = (1..=200).map(|x| format!("({x}, {x})")).collect::<Vec<_>>().join(", ");
+    session.run(&format!("INSERT INTO jo VALUES {values}")).unwrap();
+    session.run("INSERT INTO ji SELECT a, b FROM jo WHERE a <= 50").unwrap();
+    session.run("SET tidb_index_join_batch_size = 10").unwrap();
+    let sql = "SELECT /*+ inl_join(ji) */ * FROM jo JOIN ji ON jo.a = ji.a";
+    let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
+    let row = |name: &str| {
+        rows.iter()
+            .find(|row| row[0].contains(name))
+            .unwrap_or_else(|| panic!("{name}: {rows:?}"))
+            .clone()
+    };
+    assert!(row("IndexJoin_12")[5].contains("task:7,"), "{rows:?}");
+    let lookup = row("IndexLookUp_29(Probe)");
+    assert!(lookup[5].contains("index_task: {") && lookup[5].contains("num: 2, concurrency: 5}"), "{rows:?}");
+    assert!(row("TableRowIDScan_27(Probe)")[5].contains("loops:4,"), "{rows:?}");
+    assert_eq!(row_text(session.run(sql)).len(), 50);
+}
+
 /// Go's `AddSelectionConditionForGlobalIndex` runs `PartitionPruning`, whose
 /// HASH and plain RANGE pruners `PlanID.Add(1)` before parsing the partition
 /// expression: every global index scan over such a table spends a plan id

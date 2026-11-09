@@ -3992,6 +3992,18 @@ fn build_index_inner_reader(
             ),
             ctx.index_lookup_size(),
         );
+        // Go `IndexLookUpExecutor.initRuntimeStats` of each task's reader.
+        if let (Some(table_plan), Some(runtime_source)) =
+            (table_lookup_plan, ctx.executor_runtime_stats_source())
+        {
+            source.set_inner_lookup_stats(crate::access_path::InnerLookupStatsConfig {
+                plan_id: i64::from(plan.id()),
+                index_root_plan_id: i64::from(network_plan.id()),
+                table_root_plan_id: i64::from(table_plan.id()),
+                concurrency: ctx.index_lookup_concurrency(),
+                source: std::sync::Arc::clone(runtime_source),
+            });
+        }
     }
     if let Some(shared) = shared {
         source.set_shared_probes(std::sync::Arc::clone(shared));
