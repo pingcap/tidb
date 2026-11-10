@@ -19,7 +19,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
@@ -340,22 +339,66 @@ func MergeSchema(lSchema, rSchema *Schema) *Schema {
 // column. Below it, the linear scan avoids building and probing a set.
 const usedListSetThreshold = 32
 
+// uniqueIDSet is a set of column UniqueIDs. Plan column IDs are allocated
+// sequentially, so the IDs of a schema's columns are usually dense: then it is a
+// bitset over [minID, minID+span], one bit per ID. When they are spread out
+// (the span is more than 64 IDs per column), the bitset would waste memory, so it
+// falls back to a hash set. Either way building it is O(len(cols)) and a lookup
+// is O(1); intset.FastIntSet scans its blocks on every insert and lookup, which
+// is quadratic when the IDs are sparse.
+type uniqueIDSet struct {
+	minID int64
+	span  uint64
+	bits  []uint64
+	ids   map[int64]struct{}
+}
+
+func (s *uniqueIDSet) init(cols []*Column) {
+	minID, maxID := cols[0].UniqueID, cols[0].UniqueID
+	for _, col := range cols[1:] {
+		minID = min(minID, col.UniqueID)
+		maxID = max(maxID, col.UniqueID)
+	}
+	// Computed in uint64 so that it cannot overflow.
+	span := uint64(maxID) - uint64(minID)
+	if span/64 < uint64(len(cols)) {
+		s.minID, s.span = minID, span
+		s.bits = make([]uint64, span/64+1)
+		for _, col := range cols {
+			off := uint64(col.UniqueID) - uint64(minID)
+			s.bits[off/64] |= 1 << (off % 64)
+		}
+		return
+	}
+	s.ids = make(map[int64]struct{}, len(cols))
+	for _, col := range cols {
+		s.ids[col.UniqueID] = struct{}{}
+	}
+}
+
+func (s *uniqueIDSet) has(id int64) bool {
+	if s.bits != nil {
+		off := uint64(id) - uint64(s.minID)
+		return off <= s.span && s.bits[off/64]&(1<<(off%64)) != 0
+	}
+	_, ok := s.ids[id]
+	return ok
+}
+
 // GetUsedList shows whether each column in schema is contained in usedCols.
 func GetUsedList(ctx EvalContext, usedCols []*Column, schema *Schema) []bool {
 	used := make([]bool, schema.Len())
 	// Membership is decided by UniqueID only, so a set of UniqueIDs gives the same
 	// answer as Schema.Contains, without scanning usedCols for every schema column.
-	var usedIDs intset.FastIntSet
+	var usedIDs uniqueIDSet
 	useSet := len(usedCols) >= usedListSetThreshold
 	if useSet {
-		for _, col := range usedCols {
-			usedIDs.Insert(int(col.UniqueID))
-		}
+		usedIDs.init(usedCols)
 	}
 	for i, col := range schema.Columns {
 		if !used[i] {
 			if useSet {
-				used[i] = usedIDs.Has(int(col.UniqueID))
+				used[i] = usedIDs.has(col.UniqueID)
 			} else {
 				used[i] = containsUniqueID(usedCols, col.UniqueID)
 			}
