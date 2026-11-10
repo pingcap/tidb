@@ -133,19 +133,11 @@ func TestBackoffCtxAware(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-<<<<<<< HEAD
-	start = time.Now()
-	err = bo.Backoff(ctx)
-	require.Error(t, err)
-	require.ErrorIs(t, err, context.Canceled)
-	require.Less(t, time.Since(start), 150*time.Millisecond, "Backoff should return quickly on canceled ctx")
-=======
 		start := time.Now()
 		err := bo.Backoff(ctx)
 		require.ErrorIs(t, err, context.Canceled)
 		require.Zero(t, time.Since(start), "Backoff should return without advancing time for canceled ctx")
 	})
->>>>>>> 20c48b0d2f9 (test: stabilize flaky TestBackoffCtxAware (#71638))
 
 	// With a valid ctx that gets canceled during sleep, Backoff should return early.
 	synctest.Test(t, func(t *testing.T) {
@@ -157,13 +149,6 @@ func TestBackoffCtxAware(t *testing.T) {
 			backoffErr <- bo.Backoff(ctx)
 		}()
 
-<<<<<<< HEAD
-	start = time.Now()
-	err = bo.Backoff(ctx)
-	require.ErrorIs(t, err, context.Canceled)
-	require.Less(t, time.Since(start), backoffMin, "Backoff should return early when ctx is canceled during sleep")
-	_ = err
-=======
 		// Wait until Backoff is blocked in its timer/context select without advancing time.
 		synctest.Wait()
 		select {
@@ -177,5 +162,4 @@ func TestBackoffCtxAware(t *testing.T) {
 		require.ErrorIs(t, err, context.Canceled)
 		require.Zero(t, time.Since(start), "Backoff should return before the timer expires")
 	})
->>>>>>> 20c48b0d2f9 (test: stabilize flaky TestBackoffCtxAware (#71638))
 }
