@@ -17,11 +17,58 @@ package common
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPrepareStmtDedupCacheReadStaleness(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_cache_prepare_stmt = 1")
+	tk.MustExec("create table dedup_stale (id int primary key, v int)")
+	tk.MustExec("insert into dedup_stale values (1, 1)")
+	// Wait for the table and row to become visible to a one-second stale read.
+	tk.MustExec("set tidb_read_staleness = -1")
+	require.Eventually(t, func() bool {
+		rs, err := tk.Exec("select v from dedup_stale where id = 1")
+		if err != nil {
+			return false
+		}
+		defer rs.Close()
+		chk := rs.NewChunk(nil)
+		return rs.Next(context.Background(), chk) == nil && chk.NumRows() == 1
+	}, 10*time.Second, 10*time.Millisecond)
+
+	sql := "select v from dedup_stale where id = 1"
+	oldID, _, _, err := tk.Session().PrepareStmt(sql)
+	require.NoError(t, err)
+	oldStmt, err := tk.Session().GetSessionVars().GetPreparedStmtByID(oldID)
+	require.NoError(t, err)
+	require.NotNil(t, oldStmt.(*plannercore.PlanCacheStmt).SnapshotTSEvaluator)
+
+	tk.MustExec("set tidb_read_staleness = 0")
+	tk.MustExec("update dedup_stale set v = 2 where id = 1")
+	newID, _, _, err := tk.Session().PrepareStmt(sql)
+	require.NoError(t, err)
+	require.NotEqual(t, oldID, newID)
+	newStmt, err := tk.Session().GetSessionVars().GetPreparedStmtByID(newID)
+	require.NoError(t, err)
+	// Rebuilding a new statement must not mutate the old prepared statement.
+	require.NotNil(t, oldStmt.(*plannercore.PlanCacheStmt).SnapshotTSEvaluator)
+	rs, err := tk.Session().ExecutePreparedStmt(context.Background(), newID, nil)
+	require.NoError(t, err)
+	defer rs.Close()
+	chk := rs.NewChunk(nil)
+	require.NoError(t, rs.Next(context.Background(), chk))
+	require.Equal(t, 1, chk.NumRows())
+	require.Equal(t, int64(2), chk.GetRow(0).GetInt64(0))
+	require.Nil(t, newStmt.(*plannercore.PlanCacheStmt).SnapshotTSEvaluator)
+}
 
 // TestPrepareStmtDedupCacheBasic verifies that preparing the same SQL twice in
 // the same session reuses the cached PlanCacheStmt: both stmtIDs are distinct,
