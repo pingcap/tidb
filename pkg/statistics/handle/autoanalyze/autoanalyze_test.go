@@ -23,9 +23,11 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	dxftestutil "github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -553,6 +555,14 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 	c.AppendString(1, "127.0.0.1:4000") // valid instance
 	// Create a row from the chunk
 	rows := []chunk.Row{c.GetRow(0), c.GetRow(1), c.GetRow(2)}
+	if kerneltype.IsNextGen() {
+		// A live DXF service node is not a server of the keyspace. Its job must stay.
+		_, taskMgr, ctx := dxftestutil.InitTableTest(t)
+		require.NoError(t, taskMgr.InitMeta(ctx, "10.0.0.2:4000", ""))
+		c.AppendInt64(0, int64(4))
+		c.AppendString(1, "10.0.0.2:4000")
+		rows = append(rows, c.GetRow(3))
+	}
 	// Set up the mock function to return the row
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
