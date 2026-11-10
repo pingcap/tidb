@@ -841,7 +841,9 @@ func TestAnalyzeBucketAndTopNDefaultsFromGlobalVars(t *testing.T) {
 	require.Empty(t, optMap)
 	require.Empty(t, resetOpts)
 
-	filledMap := fillAnalyzeOptions(AnalyzeOptionDefault(), mergeAnalyzeOptions(optMap, resetOpts, nil))
+	optDefaults, err := keyspaceAnalyzeOptionDefaults(mock.NewContext())
+	require.NoError(t, err)
+	filledMap := fillAnalyzeOptions(optDefaults, mergeAnalyzeOptions(optMap, resetOpts, nil))
 	require.Equal(t, uint64(512), filledMap[ast.AnalyzeOptNumBuckets])
 	require.Equal(t, uint64(150), filledMap[ast.AnalyzeOptNumTopN])
 
@@ -856,7 +858,7 @@ func TestAnalyzeBucketAndTopNDefaultsFromGlobalVars(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	filledMap = fillAnalyzeOptions(AnalyzeOptionDefault(), mergeAnalyzeOptions(optMap, resetOpts, nil))
+	filledMap = fillAnalyzeOptions(optDefaults, mergeAnalyzeOptions(optMap, resetOpts, nil))
 	require.Equal(t, uint64(1024), filledMap[ast.AnalyzeOptNumBuckets])
 	require.Equal(t, uint64(150), filledMap[ast.AnalyzeOptNumTopN])
 }
