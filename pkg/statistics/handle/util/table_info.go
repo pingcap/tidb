@@ -16,6 +16,7 @@ package util
 
 import (
 	"context"
+	"sync"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -67,12 +68,15 @@ func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
 
 // SnapshotTableInfoGetter gets the table of a physical ID in one InfoSchema snapshot.
 // On InfoSchema V1, each partition lookup scans all tables, so it builds a partition map
-// when it is created. It is safe for concurrent use. Create one for each snapshot instead of
-// sharing a cache, because callers on different schema versions would rebuild a shared map.
+// on the first call of ParentTableID. It is safe for concurrent use. Create one for each
+// snapshot instead of sharing a cache, because callers on different schema versions would
+// rebuild a shared map.
 type SnapshotTableInfoGetter struct {
-	is      infoschema.InfoSchema
-	pid2tid map[int64]int64
-	isV2    bool
+	is infoschema.InfoSchema
+	// pid2tid is nil until pid2tidOnce builds it. After that, it is read-only.
+	pid2tid     map[int64]int64
+	pid2tidOnce sync.Once
+	isV2        bool
 }
 
 // NewSnapshotTableInfoGetter creates a SnapshotTableInfoGetter for the InfoSchema snapshot.
@@ -84,11 +88,7 @@ func NewSnapshotTableInfoGetter(is infoschema.InfoSchema) *SnapshotTableInfoGett
 		raw = ext.InfoSchema
 	}
 	isV2, _ := infoschema.IsV2(raw)
-	g := &SnapshotTableInfoGetter{is: is, isV2: isV2}
-	if !isV2 {
-		g.pid2tid = buildPartitionID2TableID(is)
-	}
-	return g
+	return &SnapshotTableInfoGetter{is: is, isV2: isV2}
 }
 
 // ParentTableID returns the parent table ID if the physicalID is a partition.
@@ -96,6 +96,9 @@ func (g *SnapshotTableInfoGetter) ParentTableID(physicalID int64) (tableID int64
 	if g.isV2 {
 		return g.is.TableIDByPartitionID(physicalID)
 	}
+	// Do not build the map in the constructor. TableInfoByID and TableItemByID call this only
+	// when the ID is not a table ID, so a caller that gives them only table IDs skips the scan.
+	g.pid2tidOnce.Do(func() { g.pid2tid = buildPartitionID2TableID(g.is) })
 	tableID, isPartition = g.pid2tid[physicalID]
 	return tableID, isPartition
 }
