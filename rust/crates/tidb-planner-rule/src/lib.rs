@@ -1632,6 +1632,44 @@ use tidb_charset::Collation;
         );
     }
 
+    /// Go `pruneUseBinarySearch` builds `gt(bound, constant)` over the bound
+    /// `dataForRangeColumnsPruning` parsed -- a utf8mb4_bin literal -- so a
+    /// constant of another connection collation still derives a collation
+    /// (`planner/core/partition_pruner`: `set names utf8mb4 collate
+    /// utf8mb4_unicode_ci` over a utf8mb4_general_ci column).
+    #[test]
+    fn a_range_columns_bound_is_a_utf8mb4_bin_literal_like_go() {
+        use tidb_charset::Collation;
+        use tidb_datatype::{FieldType, FieldTypeCode, StringDatum};
+        use tidb_table::partition_routing::RangeColumnBound::{MaxValue, Value};
+
+        let string = |text: &str, collation| {
+            Datum::String(StringDatum::new(text.as_bytes().to_vec(), collation))
+        };
+        let column_type =
+            FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Utf8Mb4GeneralCi);
+        let mut column = part_column(FieldTypeCode::Varchar);
+        column.ret_type = Some(column_type.clone());
+        let less_than = vec![
+            vec![Value(string("b", Collation::Utf8Mb4GeneralCi))],
+            vec![Value(string("d", Collation::Utf8Mb4GeneralCi))],
+            vec![MaxValue],
+        ];
+        let pruner = SingleRangeColumnsPruner {
+            less_than: &less_than,
+            bound_type: &column_type,
+            column: &column,
+            builder: &tidb_expr::expr_util::RealFunctionBuilder::new(&tidb_exprctx::NoColumns),
+            ctx: &tidb_exprctx::NoColumns,
+        };
+        let constant = tidb_expr::constant::Constant::new(
+            string("C", Collation::Utf8Mb4UnicodeCi),
+            FieldType::new(FieldTypeCode::VarString).with_collation(Collation::Utf8Mb4UnicodeCi),
+        );
+        assert_eq!(pruner.prune_use_binary_search("eq", &constant), (1, 2));
+        assert_eq!(pruner.prune_use_binary_search("lt", &constant), (0, 2));
+    }
+
     #[test]
     fn range_columns_pruning_uses_the_ranger_interval_collator() {
         use tidb_table::partition_routing::RangeColumnBound::{MaxValue, Value};
@@ -2270,21 +2308,25 @@ where
             else {
                 return true;
             };
-            let bound = tidb_expr::expression::Expression::Constant(
-                tidb_expr::constant::Constant::new(bound.clone(), self.bound_type.clone()),
-            );
+            let bound = tidb_expr::expression::Expression::Constant(range_columns_bound_constant(
+                bound,
+                self.bound_type,
+            ));
             // Go `NewFunctionBase` (no constant folding), then
             // `expr.SetCharsetAndCollation(partition column's)`: the
-            // comparison runs under the column's collation.
-            let mut function = tidb_expr::new_function_base(
+            // comparison runs under the column's collation. A build error
+            // is saved and aborts the pruning.
+            let built = tidb_expr::new_function_base(
                 &tidb_exprctx::NoColumns,
                 op,
                 tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
                 vec![bound, tidb_expr::expression::Expression::Constant(constant.clone())],
-            )
-            .unwrap()
-            .into_scalar_function()
-            .unwrap();
+            );
+            let Ok(Some(mut function)) = built
+            .map(tidb_expr::expression::Expression::into_scalar_function) else {
+                failed = true;
+                return true;
+            };
             if let Some(column_type) = self.column.ret_type.as_ref() {
                 function
                     .collation
@@ -2742,6 +2784,25 @@ pub fn scalar_range_pruned_ids(
             .iter()
             .flat_map(|range| ids[range.start..range.end].iter().copied())
             .collect(),
+    )
+}
+
+/// Go `dataForRangeColumnsPruning`: a bound is the literal `BuildSimpleExpr`
+/// reads under `NewPartitionExprBuildCtx`, so a string bound carries that
+/// context's utf8mb4_bin and not its column's collation.
+fn range_columns_bound_constant(
+    bound: &Datum,
+    column_type: &tidb_datatype::FieldType,
+) -> tidb_expr::constant::Constant {
+    let Datum::String(text) = bound else {
+        return tidb_expr::constant::Constant::new(bound.clone(), column_type.clone());
+    };
+    let mut literal_type = column_type.clone();
+    literal_type.set_charset_name("utf8mb4");
+    literal_type.set_collation_name("utf8mb4_bin");
+    tidb_expr::constant::Constant::new(
+        Datum::new_collation_string_datum(text.bytes().to_vec(), tidb_charset::Collation::Utf8Mb4Bin),
+        literal_type,
     )
 }
 
