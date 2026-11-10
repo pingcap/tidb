@@ -291,7 +291,7 @@ r = \min\left(1,\ \max\left(0.05,\ \frac{T}{M}\right)\right)
 - Between $T$ and $20T$ rows, the NDV sample holds $T$ rows, so processing values costs about as much as a full-input `ANALYZE` of $T$ rows. TiKV still scans every row.
 - Above $20T$ rows, the rate stays at 0.05. Below that rate, scanning every row dominates the duration, so a lower rate saves little more time, while the error for nearly unique columns keeps growing as $\sqrt{1/r}$.
 
-TiDB takes $M$ from the table statistics or, as it already does to choose `SAMPLERATE`, from the approximate count in PD when the statistics count is far smaller, for example right after a physical import. The rate changes continuously with the row count, so the rule adds no jumps to a table's NDV as the table grows. The initial $T$, 500,000,000 rows, keeps tables up to that size on full input and halves the values processed at 1,000,000,000 rows, about where a full-input `ANALYZE` of one table or partition becomes slow in practice. Partitions choose their rates independently, because the global merge accepts any mix of rates, as described in [Partitioned Tables](#partitioned-tables).
+TiDB takes $M$ from the table statistics or, as it already does to choose `SAMPLERATE`, from the approximate count in PD when the statistics count is far smaller, for example right after a physical import. The rate changes continuously with the row count, so the rule adds no jumps to a table's NDV as the table grows. The initial $T$, 100,000,000 rows, keeps tables up to that size on full input and processes one tenth of the values at 1,000,000,000 rows, about where a full-input `ANALYZE` of one table or partition becomes slow in practice. Partitions choose their rates independently, because the global merge accepts any mix of rates, as described in [Partitioned Tables](#partitioned-tables).
 
 An `ANALYZE` with no given or saved `NDVRATE`, manual or automatic, applies this rule and does not save the rate it chooses, so a table always follows its size and the current $T$.
 
@@ -317,7 +317,7 @@ Sampled NDV changes both the TiKV response and the sketches TiDB saves. `ANALYZE
 
 - Old TiDB never requests sampling, so new TiKV returns legacy results.
 - Old TiDB cannot read sampled sketches, so set `tidb_analyze_sampled_ndv_threshold` only after the whole cluster is upgraded.
-- The threshold starts at 500,000,000 in new clusters but at 0 in upgraded clusters, so an upgrade never turns sampling on. Even if TiDB is upgraded before TiKV, it therefore gets no mix of sampled and legacy responses.
+- The threshold starts at 100,000,000 in new clusters but at 0 in upgraded clusters, so an upgrade never turns sampling on. Even if TiDB is upgraded before TiKV, it therefore gets no mix of sampled and legacy responses.
 
 #### Response Format
 
@@ -442,7 +442,7 @@ Compare TiKV CPU, `ANALYZE` duration, NDV error, and query plans with full input
 ## Unresolved Questions
 
 - Should the threshold also account for the number or width of analyzed columns? Counting rows alone samples narrow tables, whose `ANALYZE` time is mostly scanning.
-- Is the default threshold right? With $T$ at 500,000,000, a nearly unique column that the schema does not keep unique comes out at about $\sqrt{T/M}$ of its NDV: 0.71 at 1,000,000,000 rows and 0.22 from 10,000,000,000 rows.
+- Is the default threshold right? With $T$ at 100,000,000, a nearly unique column that the schema does not keep unique comes out at about $\sqrt{T/M}$ of its NDV: 0.32 at 1,000,000,000 rows and 0.22 from 2,000,000,000 rows.
 - What NDV accuracy and query-plan regression limits should gate wider adoption?
 
 ## Future Possibility

@@ -57,6 +57,11 @@ func (l *LocalStorage) Base() string {
 	return l.base
 }
 
+// Features implements FeatureProvider.
+func (*LocalStorage) Features() storeapi.Features {
+	return storeapi.FeatureSupportsStartAfter
+}
+
 // DeleteFile deletes the file.
 func (l *LocalStorage) DeleteFile(_ context.Context, name string) error {
 	failpoint.Inject("local_delete_file_err", func(v failpoint.Value) {

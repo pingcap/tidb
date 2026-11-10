@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/client"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler"
@@ -220,8 +221,9 @@ func (svr *Server) KvGet(ctx context.Context, req *kvrpcpb.GetRequest) (*kvrpcpb
 		}, nil
 	}
 	return &kvrpcpb.GetResponse{
-		Value:    pair.Value,
-		CommitTs: pair.CommitTs,
+		Value:         pair.Value,
+		CommitTs:      pair.CommitTs,
+		ExecDetailsV2: mockPointReadExecDetails([]*kvrpcpb.KvPair{pair}),
 	}, nil
 }
 
@@ -483,7 +485,8 @@ func (svr *Server) KvBufferBatchGet(ctx context.Context, req *kvrpcpb.BufferBatc
 	}
 	pairs := svr.mvccStore.ReadBufferFromLock(req.GetVersion(), req.Keys...)
 	return &kvrpcpb.BufferBatchGetResponse{
-		Pairs: pairs,
+		Pairs:         pairs,
+		ExecDetailsV2: mockPointReadExecDetails(pairs),
 	}, nil
 }
 
@@ -533,7 +536,8 @@ func (svr *Server) KvBatchGet(ctx context.Context, req *kvrpcpb.BatchGetRequest)
 	reqCtx.returnCommitTS = req.NeedCommitTs
 	pairs := svr.mvccStore.BatchGet(reqCtx, req.Keys, req.GetVersion())
 	return &kvrpcpb.BatchGetResponse{
-		Pairs: pairs,
+		Pairs:         pairs,
+		ExecDetailsV2: mockPointReadExecDetails(pairs),
 	}, nil
 }
 
@@ -1282,4 +1286,25 @@ func extractRegionError(err error) *errorpb.Error {
 		return pbError.RequestErr
 	}
 	return nil
+}
+
+// mockPointReadExecDetails models NextGen scan work using successful returned
+// key-value pairs. Like the mock coprocessor, it does not count hidden MVCC
+// versions. A miss carries an empty detail so response coverage remains known.
+func mockPointReadExecDetails(pairs []*kvrpcpb.KvPair) *kvrpcpb.ExecDetailsV2 {
+	if !kerneltype.IsNextGen() {
+		return nil
+	}
+	detail := &kvrpcpb.ScanDetailV2{}
+	for _, pair := range pairs {
+		if pair == nil || pair.Error != nil || len(pair.Value) == 0 {
+			continue
+		}
+		detail.TotalVersions++
+		detail.ProcessedVersions++
+		size := uint64(len(pair.Key) + len(pair.Value))
+		detail.ProcessedVersionsSize += size
+		detail.TotalVersionsSize += size
+	}
+	return &kvrpcpb.ExecDetailsV2{ScanDetailV2: detail}
 }

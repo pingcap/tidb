@@ -1318,7 +1318,7 @@ func delayForAsyncCommit() {
 		// - schema state -> StateWriteReorganization with version V+1
 		// - T commit finish, with TS
 		// - 'wait schema synced' finish
-		// - schema state -> Done with version V+2, commit-ts of this
+		// - schema state -> StatePublic and job state -> JobStateDone with version V+2; commit-ts of this
 		//   transaction must > TS, so it's safe for T to commit.
 		return
 	}

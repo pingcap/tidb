@@ -497,6 +497,66 @@ func TestRefreshMaterializedViewStatements(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, ast.CancelMaterializedViewJobTypeRefresh, cancelStmt.Tp)
 	require.Equal(t, int64(42), cancelStmt.JobID)
+
+	viewName := &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("mv")}
+	restoreCases := []struct {
+		name        string
+		stmt        ast.StmtNode
+		expectedSQL string
+		expectErr   string
+	}{
+		{
+			name: "implement timestamp bounds",
+			stmt: &ast.RefreshMaterializedViewImplementStmt{
+				RefreshStmt: &ast.RefreshMaterializedViewStmt{
+					ViewName: viewName,
+					Type:     ast.RefreshMaterializedViewTypeFast,
+				},
+				LastSuccessfulRefreshReadTSO: 4242,
+				TargetRefreshReadTSO:         5252,
+				MLogRetainedLowerTSO:         3131,
+			},
+			expectedSQL: "IMPLEMENT FOR REFRESH MATERIALIZED VIEW `test`.`mv` FAST USING TIMESTAMP 4242 UP TO TIMESTAMP 5252 MLOG RETAINED LOWER TIMESTAMP 3131",
+		},
+		{
+			name: "fast ignores out of place complete type",
+			stmt: &ast.RefreshMaterializedViewStmt{
+				ViewName:     viewName,
+				Type:         ast.RefreshMaterializedViewTypeFast,
+				CompleteType: ast.RefreshMaterializedViewCompleteTypeOutOfPlace,
+			},
+			expectedSQL: "REFRESH MATERIALIZED VIEW `test`.`mv` FAST",
+		},
+		{
+			name: "fast ignores delta apply complete type",
+			stmt: &ast.RefreshMaterializedViewStmt{
+				ViewName:     viewName,
+				Type:         ast.RefreshMaterializedViewTypeFast,
+				CompleteType: ast.RefreshMaterializedViewCompleteTypeDeltaApply,
+			},
+			expectedSQL: "REFRESH MATERIALIZED VIEW `test`.`mv` FAST",
+		},
+		{
+			name: "complete type unspecified",
+			stmt: &ast.RefreshMaterializedViewStmt{
+				ViewName: viewName,
+				Type:     ast.RefreshMaterializedViewTypeComplete,
+			},
+			expectErr: "COMPLETE refresh mode must be specified explicitly",
+		},
+	}
+	for _, tc := range restoreCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var sb strings.Builder
+			err := tc.stmt.Restore(NewRestoreCtx(DefaultRestoreFlags, &sb))
+			if tc.expectErr != "" {
+				require.ErrorContains(t, err, tc.expectErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedSQL, sb.String())
+		})
+	}
 }
 
 func TestMaterializedViewDuplicateOptionsErrMsg(t *testing.T) {
@@ -536,6 +596,7 @@ func TestMaterializedViewDuplicateOptionsErrMsg(t *testing.T) {
 func TestMaterializedViewCreateOptionOrder(t *testing.T) {
 	p := parser.New()
 	invalidCases := []string{
+		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST START WITH now() AS SELECT 1",
 		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST SHARD_ROW_ID_BITS = 4 AS SELECT 1",
 		"CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES = 'x' REFRESH FAST AS SELECT 1",
 		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST REFRESH FAST AS SELECT 1",
@@ -654,6 +715,18 @@ func TestRecommendIndex(t *testing.T) {
 			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1"},
 		{"recommend index run for 'select * from t where a=1' with A = 1, B = 2", true,
 			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1, B = 2"},
+		{"recommend index return result for 'select * from t where a=1'", true,
+			"RECOMMEND INDEX RETURN RESULT FOR 'select * from t where a=1'"},
+		{"recommend index return result for 'select * from t where a=1' with A = 1, B = 2", true,
+			"RECOMMEND INDEX RETURN RESULT FOR 'select * from t where a=1' WITH A = 1, B = 2"},
+		{"recommend index return result for ''", true, "RECOMMEND INDEX RETURN RESULT FOR ''"},
+		{"recommend index return result", false, ""},
+		{"recommend index return result with A = 1", false, ""},
+		{"recommend index return for 'select * from t'", false, ""},
+		{"recommend index return results for 'select * from t'", false, ""},
+		{"recommend index `return` `result` for 'select * from t'", false, ""},
+		{"recommend index return result for select * from t", false, ""},
+		{"select return, result from result", true, "SELECT `return`,`result` FROM `result`"},
 		{"recommend index show option", true, "RECOMMEND INDEX SHOW OPTION"},
 		{"recommend index apply 1", true, "RECOMMEND INDEX APPLY 1"},
 		{"recommend index ignore 1", true, "RECOMMEND INDEX IGNORE 1"},
@@ -662,6 +735,16 @@ func TestRecommendIndex(t *testing.T) {
 		{"recommend index set A = 1, B = 2, C = 3", true, "RECOMMEND INDEX SET A = 1, B = 2, C = 3"},
 	}
 	RunTest(t, table, false, false)
+
+	p := parser.New()
+	for _, sql := range []string{
+		`recommend index run for 'select * from t where a=1'`,
+		`recommend index return result for 'select * from t where a=1'`,
+	} {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		require.True(t, ast.IsReadOnly(stmt, true), sql)
+	}
 }
 
 func TestAdminStmt(t *testing.T) {
@@ -1510,6 +1593,36 @@ func TestDBAStmt(t *testing.T) {
 		// for show create view
 		{"show create view test.t", true, "SHOW CREATE VIEW `test`.`t`"},
 		{"show create view t", true, "SHOW CREATE VIEW `t`"},
+		// for show create materialized view
+		{"show create materialized view test.t", true, "SHOW CREATE MATERIALIZED VIEW `test`.`t`"},
+		{"show create materialized view t", true, "SHOW CREATE MATERIALIZED VIEW `t`"},
+		// for show create materialized view log
+		{"show create materialized view log on test.t", true, "SHOW CREATE MATERIALIZED VIEW LOG ON `test`.`t`"},
+		{"show create materialized view log on t", true, "SHOW CREATE MATERIALIZED VIEW LOG ON `t`"},
+		// for show materialized views
+		{"show materialized views", true, "SHOW MATERIALIZED VIEWS"},
+		{"show materialized views from test", true, "SHOW MATERIALIZED VIEWS IN `test`"},
+		{"show materialized views from 'test'", false, ""},
+		{"show materialized views in test like 'mv%'", true, "SHOW MATERIALIZED VIEWS IN `test` LIKE _UTF8MB4'mv%'"},
+		{"show materialized views where mview_id = 1", true, "SHOW MATERIALIZED VIEWS WHERE `mview_id`=1"},
+		// for show materialized view
+		{"show materialized view mv remain_logs", true, "SHOW MATERIALIZED VIEW `mv` REMAIN_LOGS"},
+		{"show materialized view test.mv remain_logs", true, "SHOW MATERIALIZED VIEW `test`.`mv` REMAIN_LOGS"},
+		{"show materialized view mv", false, ""},
+		{"show materialized view mv like 'mv%'", false, ""},
+		{"show materialized view mv where mview_id = 1", false, ""},
+		// for show materialized view logs
+		{"show materialized view logs", true, "SHOW MATERIALIZED VIEW LOGS"},
+		{"show materialized view logs from test", true, "SHOW MATERIALIZED VIEW LOGS IN `test`"},
+		{"show materialized view logs from 'test'", false, ""},
+		{"show materialized view logs in test like '$mlog$%'", true, "SHOW MATERIALIZED VIEW LOGS IN `test` LIKE _UTF8MB4'$mlog$%'"},
+		{"show materialized view logs where mlog_id = 1", true, "SHOW MATERIALIZED VIEW LOGS WHERE `mlog_id`=1"},
+		// for show materialized view log
+		{"show materialized view log on t wait_purge", true, "SHOW MATERIALIZED VIEW LOG ON `t` WAIT_PURGE"},
+		{"show materialized view log on test.t wait_purge", true, "SHOW MATERIALIZED VIEW LOG ON `test`.`t` WAIT_PURGE"},
+		{"show materialized view log on t", false, ""},
+		{"show materialized view log on t like '$mlog$%'", false, ""},
+		{"show materialized view log on t where mlog_id = 1", false, ""},
 		// for show create database
 		{"show create database d1", true, "SHOW CREATE DATABASE `d1`"},
 		{"show create database if not exists d1", true, "SHOW CREATE DATABASE IF NOT EXISTS `d1`"},
@@ -7857,6 +7970,11 @@ func TestCTEMerge(t *testing.T) {
 
 func TestAsOfClause(t *testing.T) {
 	table := []testCase{
+		{"COMPARE MATERIALIZED VIEW mv AS OF TIMESTAMP '2026-01-01 00:00:00'", true, "COMPARE MATERIALIZED VIEW `mv` AS OF TIMESTAMP _UTF8MB4'2026-01-01 00:00:00'"},
+		{"COMPARE MATERIALIZED VIEW test.mv AS OF TIMESTAMP '2026-01-01 00:00:00' OUTPUT INTO TABLE test.diff", true, "COMPARE MATERIALIZED VIEW `test`.`mv` AS OF TIMESTAMP _UTF8MB4'2026-01-01 00:00:00' OUTPUT INTO TABLE `test`.`diff`"},
+		{"COMPARE MATERIALIZED VIEW mv", false, ""},
+		{"COMPARE MATERIALIZED VIEW mv OUTPUT INTO TABLE diff", false, ""},
+
 		{"SELECT * FROM `t` AS /* comment */ a;", true, "SELECT * FROM `t` AS `a`"},
 		{"SELECT * FROM `t` AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW());", true, "SELECT * FROM `t` AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())"},
 		{"select * from `t` as of timestamp '2021-04-15 00:00:00'", true, "SELECT * FROM `t` AS OF TIMESTAMP _UTF8MB4'2021-04-15 00:00:00'"},

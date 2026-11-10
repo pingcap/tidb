@@ -15,10 +15,13 @@
 package mviewdeltamergeagg
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -34,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"golang.org/x/sync/errgroup"
 )
@@ -179,6 +183,9 @@ type ResultWriter interface {
 type Exec struct {
 	exec.BaseExecutor
 
+	// MLogEmpty is set only when planning proved that the mlog input is empty.
+	MLogEmpty bool
+
 	AggMappings      []Mapping
 	DeltaAggColCount int
 	// MinMaxRecompute stores MIN/MAX recompute metadata.
@@ -198,6 +205,7 @@ type Exec struct {
 	keyTypes             []*types.FieldType
 	prepared             bool
 	executed             bool
+	runtimeStats         *mergeRuntimeStats
 }
 
 type mergeWorkerData struct {
@@ -220,6 +228,13 @@ type mergeWorkerData struct {
 	minMaxResultEncodedKeys           [][]byte
 	// For building update operations.
 	updateRows []int
+}
+
+type mergeRuntimeStats struct {
+	readerTime      time.Duration
+	writerTime      time.Duration
+	mergeWorkerTime []time.Duration
+	writerDetail    mergeWriterStats
 }
 
 type mergeWriterStats struct {
@@ -254,10 +269,123 @@ func (s mergeWriterStats) stmtMessage() string {
 	)
 }
 
+func newMergeRuntimeStats(workerCnt int) *mergeRuntimeStats {
+	if workerCnt < 0 {
+		workerCnt = 0
+	}
+	return &mergeRuntimeStats{mergeWorkerTime: make([]time.Duration, workerCnt)}
+}
+
+func (s *mergeRuntimeStats) reset(workerCnt int) {
+	if workerCnt < 0 {
+		workerCnt = 0
+	}
+	s.readerTime = 0
+	s.writerTime = 0
+	s.writerDetail = mergeWriterStats{}
+	if cap(s.mergeWorkerTime) < workerCnt {
+		s.mergeWorkerTime = make([]time.Duration, workerCnt)
+		return
+	}
+	s.mergeWorkerTime = s.mergeWorkerTime[:workerCnt]
+	clear(s.mergeWorkerTime)
+}
+
+func (s *mergeRuntimeStats) String() string {
+	if s == nil {
+		return ""
+	}
+	var buf bytes.Buffer
+	buf.WriteString("mview_delta_merge_agg:{merge_worker:{total:")
+	buf.WriteString(strconv.Itoa(len(s.mergeWorkerTime)))
+	active := 0
+	var minDur, maxDur, sumDur time.Duration
+	for _, d := range s.mergeWorkerTime {
+		if d <= 0 {
+			continue
+		}
+		if active == 0 || d < minDur {
+			minDur = d
+		}
+		if active == 0 || d > maxDur {
+			maxDur = d
+		}
+		sumDur += d
+		active++
+	}
+	buf.WriteString(", active:")
+	buf.WriteString(strconv.Itoa(active))
+	if active > 0 {
+		buf.WriteString(", min:")
+		buf.WriteString(execdetails.FormatDuration(minDur))
+		buf.WriteString(", max:")
+		buf.WriteString(execdetails.FormatDuration(maxDur))
+		buf.WriteString(", avg:")
+		buf.WriteString(execdetails.FormatDuration(sumDur / time.Duration(active)))
+	}
+	buf.WriteString("}, reader:")
+	buf.WriteString(execdetails.FormatDuration(s.readerTime))
+	buf.WriteString(", writer:{time:")
+	buf.WriteString(execdetails.FormatDuration(s.writerTime))
+	buf.WriteString(", chunks:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.chunks, 10))
+	buf.WriteString(", row_ops:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.rowOps, 10))
+	buf.WriteString(", rows:{insert:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.insertRows, 10))
+	buf.WriteString(", update:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.updateRows, 10))
+	buf.WriteString(", delete:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.deleteRows, 10))
+	buf.WriteString(", noop:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.noopRows, 10))
+	buf.WriteString("}}}")
+	return buf.String()
+}
+
+func (s *mergeRuntimeStats) Clone() execdetails.RuntimeStats {
+	if s == nil {
+		return &mergeRuntimeStats{}
+	}
+	newStats := &mergeRuntimeStats{
+		readerTime:      s.readerTime,
+		writerTime:      s.writerTime,
+		mergeWorkerTime: make([]time.Duration, len(s.mergeWorkerTime)),
+		writerDetail:    s.writerDetail,
+	}
+	copy(newStats.mergeWorkerTime, s.mergeWorkerTime)
+	return newStats
+}
+
+func (s *mergeRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*mergeRuntimeStats)
+	if !ok || tmp == nil {
+		return
+	}
+	s.readerTime += tmp.readerTime
+	s.writerTime += tmp.writerTime
+	s.writerDetail.merge(tmp.writerDetail)
+	if len(s.mergeWorkerTime) < len(tmp.mergeWorkerTime) {
+		ext := make([]time.Duration, len(tmp.mergeWorkerTime))
+		copy(ext, s.mergeWorkerTime)
+		s.mergeWorkerTime = ext
+	}
+	for idx, d := range tmp.mergeWorkerTime {
+		s.mergeWorkerTime[idx] += d
+	}
+}
+
+func (*mergeRuntimeStats) Tp() int { return execdetails.TpMViewDeltaMergeAggRuntimeStats }
+
 // Open implements the Executor interface.
 func (e *Exec) Open(ctx context.Context) error {
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
+	}
+	if e.MLogEmpty {
+		e.prepared = true
+		e.executed = false
+		return nil
 	}
 	if e.WorkerCnt <= 0 {
 		e.WorkerCnt = e.Ctx().GetSessionVars().ExecutorConcurrency
@@ -295,14 +423,26 @@ func (e *Exec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.executed = true
-	writerStats, err := e.runMergePipeline(ctx)
-	if err != nil {
-		return err
+	if e.BaseExecutor.RuntimeStats() != nil {
+		if e.runtimeStats == nil {
+			e.runtimeStats = newMergeRuntimeStats(e.WorkerCnt)
+		} else {
+			e.runtimeStats.reset(e.WorkerCnt)
+		}
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.runtimeStats)
+	}
+	pipelineStats := &mergeRuntimeStats{}
+	if !e.MLogEmpty {
+		var err error
+		pipelineStats, err = e.runMergePipeline(ctx)
+		if err != nil {
+			return err
+		}
 	}
 	stmtCtx := e.Ctx().GetSessionVars().StmtCtx
 	if stmtCtx != nil {
-		stmtCtx.SetAffectedRows(writerStats.affectedRows())
-		stmtCtx.SetMessage(writerStats.stmtMessage())
+		stmtCtx.SetAffectedRows(pipelineStats.writerDetail.affectedRows())
+		stmtCtx.SetMessage(pipelineStats.writerDetail.stmtMessage())
 	}
 	return nil
 }
@@ -312,19 +452,23 @@ func (e *Exec) Close() error {
 	e.compiledMergers = nil
 	e.compiledOutputColCnt = 0
 	e.aggOutputColIDs = nil
+	e.runtimeStats = nil
 	e.prepared = false
 	e.executed = false
 	return e.BaseExecutor.Close()
 }
 
-func (e *Exec) runMergePipeline(ctx context.Context) (mergeWriterStats, error) {
+func (e *Exec) runMergePipeline(ctx context.Context) (*mergeRuntimeStats, error) {
 	workerCnt := e.WorkerCnt
 	if workerCnt <= 0 {
 		workerCnt = 1
 	}
-	var writerStats mergeWriterStats
+	stats := e.runtimeStats
+	if stats == nil {
+		stats = newMergeRuntimeStats(workerCnt)
+	}
 	if tableWriter, ok := e.Writer.(*tableResultWriter); ok {
-		tableWriter.setWriterStats(&writerStats)
+		tableWriter.setRuntimeStats(&stats.writerDetail)
 	}
 
 	inputBufSize := max(workerCnt*2, 2)
@@ -339,7 +483,7 @@ func (e *Exec) runMergePipeline(ctx context.Context) (mergeWriterStats, error) {
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		return e.runReader(gctx, inputCh, freeInputCh)
+		return e.runReader(gctx, inputCh, freeInputCh, stats)
 	})
 
 	workerWG := sync.WaitGroup{}
@@ -348,7 +492,7 @@ func (e *Exec) runMergePipeline(ctx context.Context) (mergeWriterStats, error) {
 		workerIdx := i
 		g.Go(func() error {
 			defer workerWG.Done()
-			return e.runWorker(gctx, inputCh, resultCh, workerIdx)
+			return e.runWorker(gctx, inputCh, resultCh, workerIdx, stats)
 		})
 	}
 
@@ -358,19 +502,25 @@ func (e *Exec) runMergePipeline(ctx context.Context) (mergeWriterStats, error) {
 	}()
 
 	g.Go(func() error {
-		return e.runWriter(gctx, resultCh, freeInputCh)
+		return e.runWriter(gctx, resultCh, freeInputCh, stats)
 	})
 
-	err := g.Wait()
-	return writerStats, err
+	return stats, g.Wait()
 }
 
 func (e *Exec) runReader(
 	ctx context.Context,
 	inputCh chan<- *chunk.Chunk,
 	freeInputCh <-chan *chunk.Chunk,
+	stats *mergeRuntimeStats,
 ) error {
 	defer close(inputCh)
+	var total time.Duration
+	defer func() {
+		if stats != nil {
+			stats.readerTime = total
+		}
+	}()
 	child := e.Children(0)
 
 	for {
@@ -382,9 +532,11 @@ func (e *Exec) runReader(
 		}
 
 		chk.Reset()
+		start := time.Now()
 		if err := exec.Next(ctx, child, chk); err != nil {
 			return err
 		}
+		total += time.Since(start)
 		if chk.NumRows() == 0 {
 			return nil
 		}
@@ -402,8 +554,15 @@ func (e *Exec) runWorker(
 	inputCh <-chan *chunk.Chunk,
 	resultCh chan<- *ChunkResult,
 	workerIdx int,
+	stats *mergeRuntimeStats,
 ) error {
 	var workerData mergeWorkerData
+	var total time.Duration
+	defer func() {
+		if stats != nil && workerIdx >= 0 && workerIdx < len(stats.mergeWorkerTime) {
+			stats.mergeWorkerTime[workerIdx] = total
+		}
+	}()
 	for {
 		var (
 			chk *chunk.Chunk
@@ -418,10 +577,12 @@ func (e *Exec) runWorker(
 			}
 		}
 
+		start := time.Now()
 		result, err := e.mergeOneChunk(ctx, chk, &workerData, workerIdx)
 		if err != nil {
 			return err
 		}
+		total += time.Since(start)
 
 		select {
 		case <-ctx.Done():
@@ -435,7 +596,14 @@ func (e *Exec) runWriter(
 	ctx context.Context,
 	resultCh <-chan *ChunkResult,
 	freeInputCh chan<- *chunk.Chunk,
+	stats *mergeRuntimeStats,
 ) error {
+	var total time.Duration
+	defer func() {
+		if stats != nil {
+			stats.writerTime = total
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -444,9 +612,11 @@ func (e *Exec) runWriter(
 			if !ok {
 				return nil
 			}
+			start := time.Now()
 			if err := e.Writer.WriteChunk(ctx, result); err != nil {
 				return err
 			}
+			total += time.Since(start)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -1275,20 +1445,29 @@ func encodeChunkKeyRows(
 		physicalRowNulls = physicalRowNulls[:rowCnt]
 	}
 
+	serializedKeys := make([][]byte, len(usedRows))
+	serializedLens := make([]int, len(usedRows))
+	var serializedKeysBuffer []byte
 	for keyPos, keyColIdx := range keyColIdxes {
 		col := chk.Column(keyColIdx)
+		for _, physicalRow := range usedRows {
+			physicalRowNulls[physicalRow] = col.IsNull(physicalRow)
+		}
+		clear(serializedLens)
+		var err error
+		// SerializeKeys replaces its output slices during preallocation. Keep
+		// the accumulated key and its per-column NULL markers in a separate buffer.
+		serializedKeysBuffer, err = codec.SerializeKeys(typeCtx, chk, []*types.FieldType{keyTypes[keyPos]}, []int{keyColIdx}, usedRows, nil, physicalRowNulls, []codec.SerializeMode{codec.KeepVarColumnLength}, serializedKeys, serializedLens, serializedKeysBuffer)
+		if err != nil {
+			return nil, physicalRowNulls, err
+		}
 		for logicalPos, physicalRow := range usedRows {
-			isNull := col.IsNull(physicalRow)
-			physicalRowNulls[physicalRow] = isNull
-			if isNull {
+			if physicalRowNulls[physicalRow] {
 				keyBuf[logicalPos] = append(keyBuf[logicalPos], 0)
 			} else {
 				keyBuf[logicalPos] = append(keyBuf[logicalPos], 1)
 			}
-		}
-		serializedLens := make([]int, len(usedRows))
-		if _, err := codec.SerializeKeys(typeCtx, chk, []*types.FieldType{keyTypes[keyPos]}, []int{keyColIdx}, usedRows, nil, physicalRowNulls, []codec.SerializeMode{codec.KeepVarColumnLength}, keyBuf, serializedLens, nil); err != nil {
-			return nil, physicalRowNulls, err
+			keyBuf[logicalPos] = append(keyBuf[logicalPos], serializedKeys[logicalPos]...)
 		}
 	}
 	return keyBuf, physicalRowNulls, nil

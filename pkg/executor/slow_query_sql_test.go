@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -143,6 +142,81 @@ func TestSlowQueryNonPrepared(t *testing.T) {
 		`0 0 select * from t where a<1;`,
 		`0 1 select * from t where a<2;`,
 		`0 0 select * from t where a<3;`))
+}
+
+func TestSlowQueryInMemoryOriginalQuery(t *testing.T) {
+	executor.StartSlowQueryCache()
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	newCfg.Log.SlowQueryFile = f.Name()
+	config.StoreGlobalConfig(&newCfg)
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(originCfg)
+		require.NoError(t, os.Remove(f.Name()))
+	})
+	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+	tk.MustExec("set tidb_slow_log_threshold=0")
+	tk.MustExec("set @@global.tidb_redact_log=on")
+	t.Cleanup(func() {
+		tk.MustExec("set tidb_slow_log_threshold=300")
+		tk.MustExec("set @@global.tidb_redact_log=off")
+	})
+
+	tk.MustQuery("select count(*) from information_schema.columns where table_name in ('slow_query', 'cluster_slow_query') and binary column_name = 'In_memory_original_query'").
+		Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from information_schema.columns where table_name in ('slow_query', 'cluster_slow_query') and lower(column_name) = 'unredacted_query'").
+		Check(testkit.Rows("0"))
+
+	tk.MustExec("prepare no_cache from 'select 246813579 + 1'")
+	tk.MustQuery("execute no_cache").Check(testkit.Rows("246813580"))
+	tk.MustExec("deallocate prepare no_cache")
+	stmtID, _, _, err := tk.Session().PrepareStmt("select 246813579 - 1")
+	require.NoError(t, err)
+	rs, err := tk.Session().ExecutePreparedStmt(context.Background(), stmtID, nil)
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, "binary prepared SELECT").Check(testkit.Rows("246813578"))
+	require.NoError(t, tk.Session().DropPreparedStmt(stmtID))
+
+	tk.MustExec("select 123456789")
+	// Avoid ORDER BY time DESC LIMIT. That limit is pushed into the slow-log
+	// reader and would hide the target row once newer statements are logged.
+	tk.EventuallyMustQueryAndCheck(
+		"select query, in_memory_original_query from information_schema.slow_query "+
+			"where in_memory_original_query = 'select 123456789'",
+		nil,
+		testkit.Rows("select ?; select 123456789"),
+		3*time.Second,
+		50*time.Millisecond,
+	)
+	// The direct SELECT above also drains any earlier writes through the FIFO
+	// cache channel, so these misses cannot be caused by pending async writes.
+	tk.MustQuery("select prepared, query, in_memory_original_query from information_schema.slow_query where prepared = 1 order by query").
+		Check(testkit.Rows("1 select ? + ?; ", "1 select ? - ?; "))
+	// A slow-log line that was never cached stays empty in in_memory_original_query.
+	extra, err := os.OpenFile(f.Name(), os.O_APPEND|os.O_WRONLY, 0o644)
+	require.NoError(t, err)
+	_, err = extra.WriteString("\n# Time: 2020-01-01T00:00:00.000000+08:00\nselect disk_only_999;\n")
+	require.NoError(t, err)
+	require.NoError(t, extra.Close())
+	tk.MustQuery("select query, in_memory_original_query from information_schema.slow_query where query = 'select disk_only_999;'").
+		Check(testkit.Rows("select disk_only_999; "))
+
+	// Turning tidb_redact_log off stops new inserts. A query cached while it was
+	// on is still readable; the lookup does not consult the variable.
+	tk.MustExec("set @@global.tidb_redact_log=off")
+	tk.MustQuery("select query, in_memory_original_query from information_schema.slow_query " +
+		"where in_memory_original_query = 'select 123456789'").
+		Check(testkit.Rows("select ?; select 123456789"))
+	// Redact off keeps the plaintext in query and leaves in_memory_original_query empty.
+	tk.MustExec("select 987654321")
+	tk.MustQuery("select query, in_memory_original_query from information_schema.slow_query where query = 'select 987654321;'").
+		Check(testkit.Rows("select 987654321; "))
 }
 
 func TestSlowQueryMisc(t *testing.T) {
@@ -592,14 +666,40 @@ func TestWarningsInSlowQuery(t *testing.T) {
 	}
 }
 
-// checkStorageEngines polls slow_query because the prior MustExec's slow-log
-// write isn't always immediately visible to the read here under CI load
-// (issue #66727).
-func checkStorageEngines(t *testing.T, tk *testkit.TestKit, where, expected string) {
+// checkStorageEngines polls slow_query because the prior statement's slow-log
+// write isn't always immediately visible under CI load (issue #66727).
+// executedSQL is the text passed to MustExec/MustQuery. The slow log stores
+// that text with a trailing semicolon.
+//
+// Match it by equality. A LIKE pattern can also match this checker, because
+// tidb_slow_log_threshold is 0. ORDER BY time DESC LIMIT is pushed into the
+// slow-log reader before WHERE, so a newer line hides the target row.
+func checkStorageEngines(t *testing.T, tk *testkit.TestKit, executedSQL, expected string) {
 	t.Helper()
+	loggedSQL := executedSQL
+	if !strings.HasSuffix(loggedSQL, ";") {
+		loggedSQL += ";"
+	}
 	tk.EventuallyMustQueryAndCheck(
-		"select storage_from_kv, storage_from_mpp from information_schema.slow_query where "+where,
+		"select storage_from_kv, storage_from_mpp from information_schema.slow_query where query = '"+loggedSQL+"'",
 		nil, testkit.Rows(expected), 2*time.Second, 50*time.Millisecond)
+}
+
+// execForStorageLog runs a statement whose storage_from_kv / storage_from_mpp
+// flags are checked afterwards. Those flags are recorded when the executor is
+// built. A TiFlash read can still return tikv:9012 when the mock region has no
+// TiFlash peer; the slow log has already captured the flag.
+func execForStorageLog(t *testing.T, tk *testkit.TestKit, sql string) {
+	t.Helper()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	rs, err := tk.ExecWithContext(ctx, sql)
+	if err != nil {
+		require.Containsf(t, err.Error(), "TiFlash server timeout", "sql: %s err: %v", sql, err)
+		return
+	}
+	if rs != nil {
+		require.NoError(t, rs.Close())
+	}
 }
 
 func TestStorageEnginesInSlowQuery(t *testing.T) {
@@ -623,7 +723,10 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
 	})
 	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
-	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithMockTiFlash(2))
+	// Keep the cluster so TiFlash peers can be added to regions created by later
+	// table splits. WithMockTiFlash only peers the bootstrap region.
+	var cluster *unistore.Cluster
+	store, dom := testkit.CreateMockStoreAndDomain(t, withMockTiFlashCluster(2, &cluster))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 	tk.MustExec("set tidb_slow_log_threshold=0;")
@@ -633,21 +736,25 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 	tk.MustExec("use test")
 
 	// Query that doesn't read from any storage engines
-	tk.MustExec("select 1")
-	checkStorageEngines(t, tk, "query = 'select 1;'", "0 0")
+	query := "select 1"
+	tk.MustExec(query)
+	checkStorageEngines(t, tk, query, "0 0")
 
 	// Query that only reads from TiKV
 	tk.MustExec("create table t_tikv (a int)")
-	tk.MustExec("select /*+ read_from_storage(tikv[t_tikv]) */ a from t_tikv")
-	checkStorageEngines(t, tk, "query like 'select%t_tikv;'", "1 0")
+	query = "select /*+ read_from_storage(tikv[t_tikv]) */ a from t_tikv"
+	tk.MustExec(query)
+	checkStorageEngines(t, tk, query, "1 0")
 
 	// Query that only reads from TiFlash
 	tk.MustExec("create table t_tiflash (a int)")
 	tk.MustExec("alter table t_tiflash set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t_tiflash")
 	require.NoError(t, dom.DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true))
-	tk.MustExec("select /*+ read_from_storage(tiflash[t_tiflash]) */ a from t_tiflash;")
-	checkStorageEngines(t, tk, "query like 'select%t_tiflash;'", "0 1")
+	addTiFlashPeersToAllRegions(t, cluster, store)
+	query = "select /*+ read_from_storage(tiflash[t_tiflash]) */ a from t_tiflash;"
+	execForStorageLog(t, tk, query)
+	checkStorageEngines(t, tk, query, "0 1")
 
 	// Table has an available TiFlash replica, but the chosen plan reads from TiKV only.
 	// Having TiFlash available must not set Storage_from_mpp. (issue #70296)
@@ -655,51 +762,60 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 	tk.MustExec("alter table t_kv_with_tiflash set tiflash replica 1")
 	tbKV := external.GetTableByName(t, tk, "test", "t_kv_with_tiflash")
 	require.NoError(t, dom.DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tbKV.Meta().ID, true))
-	query := "select /*+ read_from_storage(tikv[t_kv_with_tiflash]) */ a from t_kv_with_tiflash"
+	query = "select /*+ read_from_storage(tikv[t_kv_with_tiflash]) */ a from t_kv_with_tiflash"
 	require.False(t, tk.HasTiFlashPlan(query))
 	tk.MustExec(query)
-	checkStorageEngines(t, tk, "query like 'select%t_kv_with_tiflash;'", "1 0")
+	checkStorageEngines(t, tk, query, "1 0")
 
-	// Query that reads from both TiKV and TiFlash
-	tk.MustExec("select /*+ read_from_storage(tikv[t_tikv]) */ t_tikv.a, /*+ read_from_storage(tiflash[t_tiflash]) */ t_tiflash.a from t_tikv, t_tiflash")
-	checkStorageEngines(t, tk, "query like 'select%t_tikv, t_tiflash;'", "1 1")
+	// Query that reads from both TiKV and TiFlash.
+	// Later DDL may split t_tiflash onto a region that again has only the TiKV peer.
+	addTiFlashPeersToAllRegions(t, cluster, store)
+	query = "select /*+ read_from_storage(tikv[t_tikv]) */ t_tikv.a, /*+ read_from_storage(tiflash[t_tiflash]) */ t_tiflash.a from t_tikv, t_tiflash"
+	execForStorageLog(t, tk, query)
+	checkStorageEngines(t, tk, query, "1 1")
 
 	// Point get queries should register as reading from TiKV
 	tk.MustExec("create table t_pointget (a int primary key)")
 	query = "select a from t_pointget where a = 1"
 	tk.MustHavePlan(query, "Point_Get")
 	tk.MustExec(query)
-	checkStorageEngines(t, tk, "query like 'select%t_pointget%;'", "1 0")
+	checkStorageEngines(t, tk, query, "1 0")
 
 	// Index readers should register as reading from TiKV
 	tk.MustExec("create table t_index_reader (a int, key (a))")
 	query = "select a from t_index_reader where a = 1"
 	tk.MustHavePlan(query, "IndexReader")
 	tk.MustQuery(query)
-	checkStorageEngines(t, tk, "query like 'select%t_index_reader%;'", "1 0")
+	checkStorageEngines(t, tk, query, "1 0")
 
 	// Index lookups should register as reading from TiKV
 	tk.MustExec("create table t_index_lookup (a int, b int, index (a))")
-	tk.MustIndexLookup("select a, b from t_index_lookup where a = 1")
-	checkStorageEngines(t, tk, "query like 'select%t_index_lookup%;'", "1 0")
+	query = "select a, b from t_index_lookup where a = 1"
+	tk.MustIndexLookup(query)
+	checkStorageEngines(t, tk, query, "1 0")
 
 	// Index merge readers should register as reading from TiKV
 	tk.MustExec("create table t_index_merge(a int, b int, primary key (a), unique key (b))")
 	query = "select /*+ use_index_merge(t_index_merge, a, b) */ * from t_index_merge where a = 1 or b = 1"
 	tk.MustHavePlan(query, "IndexMerge")
 	tk.MustExec(query)
-	checkStorageEngines(t, tk, "query like 'select%t_index_merge%;'", "1 0")
+	checkStorageEngines(t, tk, query, "1 0")
 
 	// TABLESAMPLE queries should register as reading from TiKV
 	query = "select * from t_tikv tablesample regions();"
 	tk.MustHavePlan(query, "TableSample")
 	tk.MustExec(query)
-	checkStorageEngines(t, tk, "query like 'select%tablesample%;'", "1 0")
+	checkStorageEngines(t, tk, query, "1 0")
 }
 
 func TestReadPoolTaskDetailsInDiagnostics(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
+	previousCollectExecutionInfo := originCfg.Instance.EnableCollectExecutionInfo.Load()
 	newCfg := *originCfg
+	newCfg.Instance.EnableCollectExecutionInfo.Store(true)
+	t.Cleanup(func() {
+		originCfg.Instance.EnableCollectExecutionInfo.Store(previousCollectExecutionInfo)
+	})
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	require.NoError(t, err)
 	newCfg.Log.SlowQueryFile = f.Name()

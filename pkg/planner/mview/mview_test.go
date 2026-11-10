@@ -1,0 +1,1685 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package mview_test
+
+import (
+	"context"
+	"fmt"
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/opcode"
+	"github.com/pingcap/tidb/pkg/planner/core"
+	corebase "github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/mview"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	_ "github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/stretchr/testify/require"
+)
+
+const (
+	deltaTableAlias     = "delta"
+	mvTableAlias        = "mv"
+	diffRecomputedAlias = "__mvd_recomputed"
+	diffCurrentAlias    = "__mvd_current"
+
+	deltaCntStarName = "__mview_delta_cnt_star"
+)
+
+func mviewTestContext() *mock.Context {
+	ctx := coretestsdk.MockContext()
+	ctx.GetSessionVars().EnableMView = true
+	return ctx
+}
+
+func optimizeForTest(sctx sessionctx.Context, is infoschema.InfoSchema) func(ctx context.Context, sel *ast.SelectStmt) (corebase.PhysicalPlan, types.NameSlice, error) {
+	return func(ctx context.Context, sel *ast.SelectStmt) (corebase.PhysicalPlan, types.NameSlice, error) {
+		nodeW := resolve.NewNodeW(sel)
+		err := core.Preprocess(ctx, sctx, nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+		if err != nil {
+			return nil, nil, err
+		}
+		builder, _ := core.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+		p, err := builder.Build(ctx, nodeW)
+		if err != nil {
+			return nil, nil, err
+		}
+		names := p.OutputNames()
+		logic, ok := p.(corebase.LogicalPlan)
+		if !ok {
+			return nil, nil, fmt.Errorf("expected logical plan from select, got %T", p)
+		}
+		pp, _, err := core.DoOptimize(ctx, sctx.GetPlanCtx(), builder.GetOptFlag(), logic)
+		if err != nil {
+			return nil, nil, err
+		}
+		return pp, names, nil
+	}
+}
+
+func TestBuildCountSum(t *testing.T) {
+	sctx := mviewTestContext()
+
+	baseID := int64(1)
+	mlogID := int64(2)
+	mvID := int64(3)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkCol(3, "cnt_b", 2, mysql.TypeLonglong),
+			mkCol(4, "s", 3, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, COUNT(1), CoUnT(b), sUm(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mview.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mview.BuildOptions{FromTS: 10},
+		nil,
+	)
+	require.NoError(t, err)
+	plan, outputNames, err := optimizeForTest(sctx, is)(context.Background(), res.MergeSourceSelect)
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	require.Equal(t, len(mv.Columns), res.MVColumnCount)
+	require.Equal(t, 1, res.CountStarMVOffset)
+
+	var hasCountStar, hasCountExpr, hasSum bool
+	for _, ai := range res.AggInfos {
+		switch ai.Kind {
+		case mview.AggCountStar:
+			hasCountStar = true
+			requireDependencies(t, ai, []int{0})
+		case mview.AggSum:
+			hasSum = true
+			require.Equal(t, "b", ai.ArgColName)
+			requireDependencies(t, ai, []int{2, 5})
+		case mview.AggCount:
+			hasCountExpr = true
+			require.Equal(t, "b", ai.ArgColName)
+			requireDependencies(t, ai, []int{1})
+		}
+	}
+	require.True(t, hasCountStar)
+	require.True(t, hasCountExpr)
+	require.True(t, hasSum)
+
+	item, ok := is.TableItemByID(mv.ID)
+	require.True(t, ok)
+	require.NotEmpty(t, item.DBName.O)
+	mvDBName := item.DBName.O
+	requireMergePlanOutputNames(t, plan, outputNames, []fieldNameInfo{
+		{Pos: 0, Tbl: deltaTableAlias, Col: deltaCntStarName},
+		{Pos: 1, Tbl: deltaTableAlias, Col: "__mview_delta_cnt_2"},
+		{Pos: 2, Tbl: deltaTableAlias, Col: "__mview_delta_sum_3"},
+		{Pos: 3, Tbl: deltaTableAlias, Col: "x", OrigTbl: mlog.Name.O, OrigCol: "a"},
+		{Pos: 4, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
+		{Pos: 5, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt_b", OrigTbl: mv.Name.O, OrigCol: "cnt_b"},
+		{Pos: 6, DB: mvDBName, Tbl: mvTableAlias, Col: "s", OrigTbl: mv.Name.O, OrigCol: "s"},
+		{Pos: 7, DB: mvDBName, Tbl: mvTableAlias, Col: "__mview_mv_rowid", OrigCol: "_tidb_rowid"},
+	})
+}
+
+func TestBuildCountExprSumExpr(t *testing.T) {
+	sctx := mviewTestContext()
+
+	baseID := int64(11)
+	mlogID := int64(22)
+	mvID := int64(33)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_expr_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt_star", 1, mysql.TypeLonglong),
+			mkCol(3, "cnt_b", 2, mysql.TypeLonglong),
+			mkCol(4, "s_expr", 3, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), count(a+b), sum((a+b)) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mview.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mview.BuildOptions{FromTS: 10},
+		nil,
+	)
+	require.NoError(t, err)
+	plan, outputNames, err := optimizeForTest(sctx, is)(context.Background(), res.MergeSourceSelect)
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	require.Equal(t, 1, res.CountStarMVOffset)
+
+	var hasCountStar, hasCount, hasSum bool
+	for _, ai := range res.AggInfos {
+		switch ai.Kind {
+		case mview.AggCountStar:
+			hasCountStar = true
+			requireDependencies(t, ai, []int{0})
+		case mview.AggCount:
+			hasCount = true
+			require.Empty(t, ai.ArgColName)
+			requireDependencies(t, ai, []int{1})
+		case mview.AggSum:
+			hasSum = true
+			require.Empty(t, ai.ArgColName)
+			requireDependencies(t, ai, []int{2, 5})
+		}
+	}
+	require.True(t, hasCountStar)
+	require.True(t, hasCount)
+	require.True(t, hasSum)
+
+	item, ok := is.TableItemByID(mv.ID)
+	require.True(t, ok)
+	mvDBName := item.DBName.O
+	requireMergePlanOutputNames(t, plan, outputNames, []fieldNameInfo{
+		{Pos: 0, Tbl: deltaTableAlias, Col: deltaCntStarName},
+		{Pos: 1, Tbl: deltaTableAlias, Col: "__mview_delta_cnt_2"},
+		{Pos: 2, Tbl: deltaTableAlias, Col: "__mview_delta_sum_3"},
+		{Pos: 3, Tbl: deltaTableAlias, Col: "x", OrigTbl: mlog.Name.O, OrigCol: "a"},
+		{Pos: 4, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt_star", OrigTbl: mv.Name.O, OrigCol: "cnt_star"},
+		{Pos: 5, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt_b", OrigTbl: mv.Name.O, OrigCol: "cnt_b"},
+		{Pos: 6, DB: mvDBName, Tbl: mvTableAlias, Col: "s_expr", OrigTbl: mv.Name.O, OrigCol: "s_expr"},
+		{Pos: 7, DB: mvDBName, Tbl: mvTableAlias, Col: "__mview_mv_rowid", OrigCol: "_tidb_rowid"},
+	})
+}
+
+func TestBuildMLogDeltaSelectTiFlashHint(t *testing.T) {
+	sctx := mviewTestContext()
+
+	baseID := int64(1011)
+	mlogID := int64(2022)
+	mvID := int64(3033)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
+		},
+	}
+
+	testCases := []struct {
+		name           string
+		tiFlashReplica *model.TiFlashReplicaInfo
+	}{
+		{
+			name:           "available replica keeps hint",
+			tiFlashReplica: &model.TiFlashReplicaInfo{Count: 1, Available: true},
+		},
+		{
+			name:           "missing replica still keeps hint",
+			tiFlashReplica: nil,
+		},
+		{
+			name:           "unavailable replica still keeps hint",
+			tiFlashReplica: &model.TiFlashReplicaInfo{Count: 1, Available: false},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mlogClone := *mlog
+			mlogClone.TiFlashReplica = tc.tiFlashReplica
+			is := infoschema.MockInfoSchema([]*model.TableInfo{base, &mlogClone, mv})
+			domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+			res, err := mview.Build(
+				sctx.GetPlanCtx(),
+				is,
+				mv,
+				mview.BuildOptions{FromTS: 10},
+				nil,
+			)
+			require.NoError(t, err)
+			require.NotNil(t, res.MergeSourceSelect)
+			require.NotNil(t, res.MergeSourceSelect.From)
+			require.NotNil(t, res.MergeSourceSelect.From.TableRefs)
+
+			deltaSrc, ok := res.MergeSourceSelect.From.TableRefs.Left.(*ast.TableSource)
+			require.True(t, ok)
+			deltaSel, ok := deltaSrc.Source.(*ast.SelectStmt)
+			require.True(t, ok)
+			require.Len(t, deltaSel.TableHints, 1)
+			tableHint := deltaSel.TableHints[0]
+			require.Equal(t, hint.HintReadFromStorage, tableHint.HintName.L)
+			require.Equal(t, hint.HintTiFlash, tableHint.HintData.(ast.CIStr).L)
+			require.Len(t, tableHint.Tables, 1)
+			require.Equal(t, mlogClone.Name.L, tableHint.Tables[0].TableName.L)
+			item, ok := is.TableItemByID(mlogClone.ID)
+			require.True(t, ok)
+			require.Equal(t, item.DBName.L, tableHint.Tables[0].DBName.L)
+		})
+	}
+}
+
+func TestBuildMLogDeltaSelectCommitTSWindow(t *testing.T) {
+	sctx := mviewTestContext()
+
+	baseID := int64(1111)
+	mlogID := int64(2222)
+	mvID := int64(3333)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mview.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mview.BuildOptions{FromTS: 10, ToTS: 25},
+		nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, res.MergeSourceSelect)
+	require.NotNil(t, res.MergeSourceSelect.From)
+	require.NotNil(t, res.MergeSourceSelect.From.TableRefs)
+
+	deltaSrc, ok := res.MergeSourceSelect.From.TableRefs.Left.(*ast.TableSource)
+	require.True(t, ok)
+	deltaSel, ok := deltaSrc.Source.(*ast.SelectStmt)
+	require.True(t, ok)
+	require.NotNil(t, deltaSel.Where)
+
+	predicates := collectAndPredicates(t, deltaSel.Where)
+	tsValueByOp := make(map[opcode.Op]any, 2)
+	for _, pred := range predicates {
+		left, ok := pred.L.(*ast.ColumnNameExpr)
+		if !ok {
+			continue
+		}
+		if left.Name.Name.L != model.ExtraCommitTSName.L {
+			continue
+		}
+		valueExpr, ok := pred.R.(ast.ValueExpr)
+		require.True(t, ok)
+		tsValueByOp[pred.Op] = valueExpr.GetValue()
+	}
+
+	require.EqualValues(t, 10, tsValueByOp[opcode.GT])
+	require.EqualValues(t, 25, tsValueByOp[opcode.LE])
+}
+
+func TestBuildMergeSourceSelectJoinOperatorByMVNullability(t *testing.T) {
+	sctx := mviewTestContext()
+
+	baseID := int64(4011)
+	mlogID := int64(4022)
+	mvID := int64(4033)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "y", 1, mysql.TypeLong),
+			mkCol(3, "cnt", 2, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, b, count(1) from t group by a, b",
+		},
+	}
+	mv.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mview.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mview.BuildOptions{FromTS: 10},
+		nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, res.MergeSourceSelect)
+	require.NotNil(t, res.MergeSourceSelect.From)
+	require.NotNil(t, res.MergeSourceSelect.From.TableRefs)
+	require.NotNil(t, res.MergeSourceSelect.From.TableRefs.On)
+
+	predicates := collectAndPredicates(t, res.MergeSourceSelect.From.TableRefs.On.Expr)
+	require.Len(t, predicates, 2)
+
+	opByMVCol := make(map[string]opcode.Op, len(predicates))
+	for _, pred := range predicates {
+		leftTable, leftCol := columnNameRef(t, pred.L)
+		rightTable, rightCol := columnNameRef(t, pred.R)
+		require.Equal(t, deltaTableAlias, leftTable)
+		require.Equal(t, mvTableAlias, rightTable)
+		require.Equal(t, leftCol, rightCol)
+		opByMVCol[rightCol] = pred.Op
+	}
+	require.Equal(t, opcode.EQ, opByMVCol["x"])
+	require.Equal(t, opcode.NullEQ, opByMVCol["y"])
+}
+
+func TestBuildMinMaxHasRemovedGate(t *testing.T) {
+	sctx := mviewTestContext()
+	sctx.GetSessionVars().EnableINLJoinInnerMultiPattern = true
+
+	baseID := int64(10)
+	mlogID := int64(20)
+	mvID := int64(30)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  ast.NewCIStr("idx_a"),
+				State: model.StatePublic,
+				Columns: []*model.IndexColumn{
+					{Name: ast.NewCIStr("a"), Offset: 0},
+				},
+			},
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	base.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+		},
+	}
+	mlog.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_minmax_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkCol(3, "mx", 2, mysql.TypeLong),
+			mkCol(4, "mn", 3, mysql.TypeLong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), max(b), min(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mview.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mview.BuildOptions{FromTS: 1},
+		nil,
+	)
+	require.NoError(t, err)
+	plan, outputNames, err := optimizeForTest(sctx, is)(context.Background(), res.MergeSourceSelect)
+	require.NoError(t, err)
+	require.Equal(t, 1, res.CountStarMVOffset)
+	require.NotNil(t, res.FullUpdateLookupTemplateSelect)
+	fullPlan, fullOutputNames, err := optimizeForTest(sctx, is)(context.Background(), res.FullUpdateLookupTemplateSelect)
+	require.NoError(t, err)
+	require.NotNil(t, fullPlan)
+	indexJoin := findIndexJoinPlan(fullPlan)
+	require.NotNilf(t, indexJoin, "lookup template best plan: %s", core.ToString(fullPlan))
+	require.Equal(t, res.FullUpdateLookupColumnCount, fullPlan.Schema().Len())
+	require.Equal(t, res.FullUpdateLookupColumnCount, len(fullOutputNames))
+	requireOutputColNames(t, fullOutputNames, []string{"x", "mx", "mn"})
+
+	var hasMax, hasMin bool
+	for _, ai := range res.AggInfos {
+		if ai.Kind == mview.AggMax {
+			hasMax = true
+			requireDependencies(t, ai, []int{1, 2, 3, 4})
+		}
+		if ai.Kind == mview.AggMin {
+			hasMin = true
+			requireDependencies(t, ai, []int{5, 6, 7, 8})
+		}
+		if ai.Kind == mview.AggCountStar {
+			requireDependencies(t, ai, []int{0})
+		}
+	}
+	require.True(t, hasMax)
+	require.True(t, hasMin)
+
+	item, ok := is.TableItemByID(mv.ID)
+	require.True(t, ok)
+	require.NotEmpty(t, item.DBName.O)
+	mvDBName := item.DBName.O
+	requireMergePlanOutputNames(t, plan, outputNames, []fieldNameInfo{
+		{Pos: 0, Tbl: deltaTableAlias, Col: deltaCntStarName},
+		{Pos: 1, Tbl: deltaTableAlias, Col: "__mview_max_in_added_2"},
+		{Pos: 2, Tbl: deltaTableAlias, Col: "__mview_max_cnt_in_added_2"},
+		{Pos: 3, Tbl: deltaTableAlias, Col: "__mview_max_in_removed_2"},
+		{Pos: 4, Tbl: deltaTableAlias, Col: "__mview_max_cnt_in_removed_2"},
+		{Pos: 5, Tbl: deltaTableAlias, Col: "__mview_min_in_added_3"},
+		{Pos: 6, Tbl: deltaTableAlias, Col: "__mview_min_cnt_in_added_3"},
+		{Pos: 7, Tbl: deltaTableAlias, Col: "__mview_min_in_removed_3"},
+		{Pos: 8, Tbl: deltaTableAlias, Col: "__mview_min_cnt_in_removed_3"},
+		{Pos: 9, Tbl: deltaTableAlias, Col: "x", OrigTbl: mlog.Name.O, OrigCol: "a"},
+		{Pos: 10, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
+		{Pos: 11, DB: mvDBName, Tbl: mvTableAlias, Col: "mx", OrigTbl: mv.Name.O, OrigCol: "mx"},
+		{Pos: 12, DB: mvDBName, Tbl: mvTableAlias, Col: "mn", OrigTbl: mv.Name.O, OrigCol: "mn"},
+		{Pos: 13, DB: mvDBName, Tbl: mvTableAlias, Col: "__mview_mv_rowid", OrigCol: "_tidb_rowid"},
+	})
+}
+
+func TestFullUpdateLookupIndexHintUsesAllSupportingIndexes(t *testing.T) {
+	sctx := mviewTestContext()
+
+	baseID := int64(101)
+	mlogID := int64(102)
+	mvID := int64(103)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  ast.NewCIStr("idx_a"),
+				State: model.StatePublic,
+				Columns: []*model.IndexColumn{
+					{Name: ast.NewCIStr("a"), Offset: 0},
+				},
+			},
+			{
+				ID:    2,
+				Name:  ast.NewCIStr("idx_a_b"),
+				State: model.StatePublic,
+				Columns: []*model.IndexColumn{
+					{Name: ast.NewCIStr("a"), Offset: 0},
+					{Name: ast.NewCIStr("b"), Offset: 1},
+				},
+			},
+			{
+				ID:    3,
+				Name:  ast.NewCIStr("idx_a_hidden"),
+				State: model.StatePublic,
+				Columns: []*model.IndexColumn{
+					{Name: ast.NewCIStr("a"), Offset: 0},
+				},
+				Invisible: true,
+			},
+			{
+				ID:    4,
+				Name:  ast.NewCIStr("idx_b"),
+				State: model.StatePublic,
+				Columns: []*model.IndexColumn{
+					{Name: ast.NewCIStr("b"), Offset: 1},
+				},
+			},
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_minmax_hint_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkCol(3, "mx", 2, mysql.TypeLong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), max(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mview.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mview.BuildOptions{FromTS: 1},
+		nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, res.FullUpdateLookupTemplateSelect)
+
+	indexNames := mview.FindVisibleIndexesWithPrefixCoveringColumns(base, res.GroupKeyBaseCols)
+	require.Equal(t, []ast.CIStr{ast.NewCIStr("idx_a"), ast.NewCIStr("idx_a_b")}, indexNames)
+	require.NoError(t, mview.SetFullUpdateLookupIndexHint(res.FullUpdateLookupTemplateSelect, indexNames))
+
+	innerSrc, ok := res.FullUpdateLookupTemplateSelect.From.TableRefs.Right.(*ast.TableSource)
+	require.True(t, ok)
+	innerSel, ok := innerSrc.Source.(*ast.SelectStmt)
+	require.True(t, ok)
+	baseSrc, ok := innerSel.From.TableRefs.Left.(*ast.TableSource)
+	require.True(t, ok)
+	baseTableName, ok := baseSrc.Source.(*ast.TableName)
+	require.True(t, ok)
+	require.Len(t, baseTableName.IndexHints, 1)
+	require.Equal(t, ast.HintUse, baseTableName.IndexHints[0].HintType)
+	require.Equal(t, ast.HintForScan, baseTableName.IndexHints[0].HintScope)
+	require.Equal(t, indexNames, baseTableName.IndexHints[0].IndexNames)
+}
+
+func TestBuildMinMaxNullableDependencyOrder(t *testing.T) {
+	sctx := mviewTestContext()
+
+	baseID := int64(110)
+	mlogID := int64(120)
+	mvID := int64(130)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_minmax_nullable_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkCol(3, "cnt_b", 2, mysql.TypeLonglong),
+			mkCol(4, "mx", 3, mysql.TypeLong),
+			mkCol(5, "mn", 4, mysql.TypeLong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), count(b), max(b), min(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mview.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mview.BuildOptions{FromTS: 1},
+		nil,
+	)
+	require.NoError(t, err)
+
+	for _, ai := range res.AggInfos {
+		switch ai.Kind {
+		case mview.AggCountStar:
+			requireDependencies(t, ai, []int{0})
+		case mview.AggCount:
+			require.Equal(t, "b", ai.ArgColName)
+			requireDependencies(t, ai, []int{1})
+		case mview.AggMax:
+			requireDependencies(t, ai, []int{2, 3, 4, 5, 12})
+		case mview.AggMin:
+			requireDependencies(t, ai, []int{6, 7, 8, 9, 12})
+		}
+	}
+}
+
+func TestBuildMinMaxNullableWithoutCountExpr(t *testing.T) {
+	sctx := mviewTestContext()
+
+	baseID := int64(210)
+	mlogID := int64(220)
+	mvID := int64(230)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_minmax_nullable_no_count_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkCol(3, "mx", 2, mysql.TypeLong),
+			mkCol(4, "mn", 3, mysql.TypeLong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), max(b), min(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mview.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mview.BuildOptions{FromTS: 1},
+		nil,
+	)
+	require.NoError(t, err)
+
+	for _, ai := range res.AggInfos {
+		switch ai.Kind {
+		case mview.AggCountStar:
+			requireDependencies(t, ai, []int{0})
+		case mview.AggMax:
+			requireDependencies(t, ai, []int{1, 2, 3, 4})
+		case mview.AggMin:
+			requireDependencies(t, ai, []int{5, 6, 7, 8})
+		}
+	}
+}
+
+func TestBuildSumNullableWithDuplicateCountExpr(t *testing.T) {
+	sctx := mviewTestContext()
+
+	baseID := int64(211)
+	mlogID := int64(221)
+	mvID := int64(231)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_sum_nullable_dup_count_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkCol(3, "cnt_b1", 2, mysql.TypeLonglong),
+			mkCol(4, "cnt_b2", 3, mysql.TypeLonglong),
+			mkCol(5, "s", 4, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), count(b), count(b), sum(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mview.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mview.BuildOptions{FromTS: 1},
+		nil,
+	)
+	require.NoError(t, err)
+
+	for _, ai := range res.AggInfos {
+		switch ai.Kind {
+		case mview.AggCountStar:
+			requireDependencies(t, ai, []int{0})
+		case mview.AggCount:
+			require.Equal(t, "b", ai.ArgColName)
+			if ai.MVOffset == 2 {
+				requireDependencies(t, ai, []int{1})
+			} else {
+				require.Equal(t, 3, ai.MVOffset)
+				requireDependencies(t, ai, []int{2})
+			}
+		case mview.AggSum:
+			requireDependencies(t, ai, []int{3, 6})
+		}
+	}
+}
+
+func TestBuildMinMaxNullableWithDuplicateCountExpr(t *testing.T) {
+	sctx := mviewTestContext()
+
+	baseID := int64(212)
+	mlogID := int64(222)
+	mvID := int64(232)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_minmax_nullable_dup_count_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkCol(3, "cnt_b1", 2, mysql.TypeLonglong),
+			mkCol(4, "cnt_b2", 3, mysql.TypeLonglong),
+			mkCol(5, "mx", 4, mysql.TypeLong),
+			mkCol(6, "mn", 5, mysql.TypeLong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), count(b), count(b), max(b), min(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mview.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mview.BuildOptions{FromTS: 1},
+		nil,
+	)
+	require.NoError(t, err)
+
+	for _, ai := range res.AggInfos {
+		switch ai.Kind {
+		case mview.AggCountStar:
+			requireDependencies(t, ai, []int{0})
+		case mview.AggCount:
+			require.Equal(t, "b", ai.ArgColName)
+			if ai.MVOffset == 2 {
+				requireDependencies(t, ai, []int{1})
+			} else {
+				require.Equal(t, 3, ai.MVOffset)
+				requireDependencies(t, ai, []int{2})
+			}
+		case mview.AggMax:
+			requireDependencies(t, ai, []int{3, 4, 5, 6, 13})
+		case mview.AggMin:
+			requireDependencies(t, ai, []int{7, 8, 9, 10, 13})
+		}
+	}
+}
+
+func TestBuildSumWithoutCountExpr(t *testing.T) {
+	sctx := mviewTestContext()
+
+	baseID := int64(101)
+	mlogID := int64(202)
+	mvID := int64(303)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_sum_only_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt_star", 1, mysql.TypeLonglong),
+			mkCol(3, "s", 2, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), sum(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	_, err := mview.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mview.BuildOptions{FromTS: 1},
+		nil,
+	)
+	require.ErrorContains(t, err, "requires matching COUNT(expr)")
+}
+
+func TestBuildMissingCountStar(t *testing.T) {
+	sctx := mviewTestContext()
+
+	baseID := int64(111)
+	mlogID := int64(222)
+	mvID := int64(333)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_no_cnt_star_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt_b", 1, mysql.TypeLonglong),
+			mkCol(3, "s", 2, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(b), sum(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	_, err := mview.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mview.BuildOptions{FromTS: 1},
+		nil,
+	)
+	require.ErrorContains(t, err, "must include COUNT(*)")
+}
+
+func TestBuildMissingOldNew(t *testing.T) {
+	sctx := mviewTestContext()
+
+	baseID := int64(1000)
+	mlogID := int64(2000)
+	mvID := int64(3000)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 1, mysql.TypeVarchar),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	_, err := mview.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mview.BuildOptions{FromTS: 1},
+		nil,
+	)
+	require.ErrorContains(t, err, model.MaterializedViewLogOldNewColumnName)
+}
+
+func TestBuildCompleteDiffSourceLayout(t *testing.T) {
+	sctx := mviewTestContext()
+
+	baseID := int64(11)
+	mvID := int64(12)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+	}
+	base.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
+
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_tbl_diff"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkCol(3, "s", 2, mysql.TypeLonglong),
+		},
+		PKIsHandle: true,
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), sum(b) from t group by a",
+		},
+	}
+	mv.Columns[0].FieldType.AddFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
+	mv.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mview.BuildCompleteDiffSource(sctx.GetPlanCtx(), is, mv)
+	require.NoError(t, err)
+	require.NotNil(t, res.DiffSourceSelect)
+	item, ok := is.TableItemByID(mv.ID)
+	require.True(t, ok)
+	require.Len(t, res.DiffSourceSelect.TableHints, 2)
+	storageHint := res.DiffSourceSelect.TableHints[0]
+	require.Equal(t, hint.HintReadFromStorage, storageHint.HintName.L)
+	require.Equal(t, hint.HintTiFlash, storageHint.HintData.(ast.CIStr).L)
+	require.Len(t, storageHint.Tables, 1)
+	require.Equal(t, diffCurrentAlias, storageHint.Tables[0].TableName.L)
+	require.Equal(t, item.DBName.L, storageHint.Tables[0].DBName.L)
+	probeHint := res.DiffSourceSelect.TableHints[1]
+	require.Equal(t, hint.HintHashJoinProbe, probeHint.HintName.L)
+	require.Len(t, probeHint.Tables, 1)
+	require.Equal(t, diffCurrentAlias, probeHint.Tables[0].TableName.L)
+	require.Equal(t, item.DBName.L, probeHint.Tables[0].DBName.L)
+	sctx.GetSessionVars().EnableFullOuterJoin = true
+	plan, _, err := optimizeForTest(sctx, is)(context.Background(), res.DiffSourceSelect)
+	require.NoError(t, err)
+	hashJoin := findHashJoinPlan(plan)
+	require.NotNil(t, hashJoin)
+	require.Equal(t, corebase.FullOuterJoin, hashJoin.JoinType)
+	require.False(t, hashJoin.RightIsBuildSide())
+	require.Equal(t, mvID, res.MVTableID)
+	require.Equal(t, len(mv.Columns), res.MVColumnCount)
+	require.Equal(t, 0, res.OpColOffset)
+	require.Equal(t, 0, res.MarkerMVOffset)
+	require.Equal(t, 1, res.CurrentHandleCols.NumCols())
+	require.Len(t, res.CurrentRowOffsets, len(mv.Columns))
+	require.Len(t, res.RecomputedRowOffsets, len(mv.Columns))
+	require.Equal(t, 1+2*len(mv.Columns), res.SourceColumnCount)
+	require.NoError(t, res.ValidateSourceLayout(res.SourceColumnCount))
+	require.Equal(t, res.CurrentRowOffsets[0], res.CurrentHandleCols.GetCol(0).Index)
+
+	join := res.DiffSourceSelect.From.TableRefs
+	require.NotNil(t, join)
+	require.Equal(t, ast.FullJoin, join.Tp)
+	require.NotNil(t, join.On)
+	joinPredicates := collectAndPredicates(t, join.On.Expr)
+	require.Len(t, joinPredicates, 1)
+	leftTable, leftCol := columnNameRef(t, joinPredicates[0].L)
+	rightTable, rightCol := columnNameRef(t, joinPredicates[0].R)
+	require.Equal(t, diffRecomputedAlias, leftTable)
+	require.Equal(t, diffCurrentAlias, rightTable)
+	require.Equal(t, leftCol, rightCol)
+	require.Equal(t, "a", rightCol)
+	require.Equal(t, opcode.EQ, joinPredicates[0].Op)
+	require.NotNil(t, res.DiffSourceSelect.Where)
+	payloadCmpOps := collectPayloadComparisonOps(t, res.DiffSourceSelect.Where)
+	require.Equal(t, map[string]opcode.Op{
+		"cnt": opcode.EQ,
+		"s":   opcode.NullEQ,
+	}, payloadCmpOps)
+}
+
+func TestBuildCompleteDiffSourceNullableGroupKeyUsesNullEQ(t *testing.T) {
+	sctx := mviewTestContext()
+
+	baseID := int64(21)
+	mvID := int64(22)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+	}
+
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_tbl_diff_nullable_gk"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
+		},
+	}
+	mv.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mview.BuildCompleteDiffSource(sctx.GetPlanCtx(), is, mv)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, 1, res.MarkerMVOffset)
+	require.Equal(t, 1, res.CurrentHandleCols.NumCols())
+	require.Equal(t, 1, res.CurrentHandleCols.GetCol(0).Index)
+	require.Equal(t, 1+1+2*len(mv.Columns), res.SourceColumnCount)
+	require.NotNil(t, res.DiffSourceSelect.From)
+	require.NotNil(t, res.DiffSourceSelect.From.TableRefs)
+	require.NotNil(t, res.DiffSourceSelect.From.TableRefs.On)
+	joinPredicates := collectAndPredicates(t, res.DiffSourceSelect.From.TableRefs.On.Expr)
+	require.Len(t, joinPredicates, 1)
+	leftTable, leftCol := columnNameRef(t, joinPredicates[0].L)
+	rightTable, rightCol := columnNameRef(t, joinPredicates[0].R)
+	require.Equal(t, diffRecomputedAlias, leftTable)
+	require.Equal(t, diffCurrentAlias, rightTable)
+	require.Equal(t, leftCol, rightCol)
+	require.Equal(t, "a", rightCol)
+	require.Equal(t, opcode.NullEQ, joinPredicates[0].Op)
+}
+
+func TestBuildCompleteDiffSourceCommonHandleReusesOldRowImage(t *testing.T) {
+	sctx := mviewTestContext()
+
+	baseID := int64(31)
+	mvID := int64(32)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+	}
+	base.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
+	base.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+
+	mv := &model.TableInfo{
+		ID:             mvID,
+		Name:           ast.NewCIStr("mv_tbl_diff_common_handle"),
+		State:          model.StatePublic,
+		IsCommonHandle: true,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, "cnt", 2, mysql.TypeLonglong),
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:      1,
+				Name:    ast.NewCIStr("PRIMARY"),
+				Primary: true,
+				Unique:  true,
+				State:   model.StatePublic,
+				Columns: []*model.IndexColumn{
+					{Name: ast.NewCIStr("b"), Offset: 1},
+					{Name: ast.NewCIStr("a"), Offset: 0},
+				},
+			},
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, b, count(1) from t group by a, b",
+		},
+	}
+	mv.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
+	mv.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+	mv.Columns[2].FieldType.AddFlag(mysql.NotNullFlag)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mview.BuildCompleteDiffSource(sctx.GetPlanCtx(), is, mv)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, 1+2*len(mv.Columns), res.SourceColumnCount)
+	require.Equal(t, 2, res.CurrentHandleCols.NumCols())
+	require.NoError(t, res.ValidateSourceLayout(res.SourceColumnCount))
+	require.Equal(t, res.CurrentRowOffsets[1], res.CurrentHandleCols.GetCol(0).Index)
+	require.Equal(t, res.CurrentRowOffsets[0], res.CurrentHandleCols.GetCol(1).Index)
+}
+
+func TestBuildCompleteDiffSourceExtraHandleKeepsRowIDProjection(t *testing.T) {
+	sctx := mviewTestContext()
+
+	baseID := int64(41)
+	mvID := int64(42)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+	}
+	base.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
+
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_tbl_diff_rowid_handle"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
+		},
+	}
+	mv.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
+	mv.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mview.BuildCompleteDiffSource(sctx.GetPlanCtx(), is, mv)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, 2+2*len(mv.Columns), res.SourceColumnCount)
+	require.Equal(t, 1, res.CurrentHandleCols.NumCols())
+	require.NoError(t, res.ValidateSourceLayout(res.SourceColumnCount))
+	require.Equal(t, int64(model.ExtraHandleID), res.CurrentHandleCols.GetCol(0).ID)
+	require.Equal(t, 1, res.CurrentHandleCols.GetCol(0).Index)
+	require.NotContains(t, res.CurrentRowOffsets, res.CurrentHandleCols.GetCol(0).Index)
+}
+
+func findIndexJoinPlan(plan corebase.PhysicalPlan) *physicalop.PhysicalIndexJoin {
+	if plan == nil {
+		return nil
+	}
+	switch x := plan.(type) {
+	case *physicalop.PhysicalIndexJoin:
+		return x
+	case *physicalop.PhysicalIndexHashJoin:
+		return &x.PhysicalIndexJoin
+	case *physicalop.PhysicalIndexMergeJoin:
+		return &x.PhysicalIndexJoin
+	}
+	for _, child := range plan.Children() {
+		if child == nil {
+			continue
+		}
+		if found := findIndexJoinPlan(child); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+func findHashJoinPlan(plan corebase.PhysicalPlan) *physicalop.PhysicalHashJoin {
+	if plan == nil {
+		return nil
+	}
+	if hashJoin, ok := plan.(*physicalop.PhysicalHashJoin); ok {
+		return hashJoin
+	}
+	for _, child := range plan.Children() {
+		if child == nil {
+			continue
+		}
+		if found := findHashJoinPlan(child); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+func mkCol(id int64, name string, offset int, tp byte) *model.ColumnInfo {
+	ft := types.NewFieldType(tp)
+	return &model.ColumnInfo{
+		ID:        id,
+		Name:      ast.NewCIStr(name),
+		Offset:    offset,
+		State:     model.StatePublic,
+		FieldType: *ft,
+	}
+}
+
+func requireDependencies(t *testing.T, ai mview.AggInfo, expected []int) {
+	t.Helper()
+	require.Equal(t, expected, ai.Dependencies)
+}
+
+type fieldNameInfo struct {
+	Pos int
+
+	Hidden bool
+	DB     string
+	Tbl    string
+	Col    string
+
+	OrigTbl string
+	OrigCol string
+}
+
+func nameSliceInfo(names types.NameSlice) []fieldNameInfo {
+	out := make([]fieldNameInfo, 0, len(names))
+	for i, n := range names {
+		if n == nil {
+			out = append(out, fieldNameInfo{Pos: i, Col: "<nil>"})
+			continue
+		}
+		out = append(out, fieldNameInfo{
+			Pos:     i,
+			Hidden:  n.Hidden,
+			DB:      n.DBName.O,
+			Tbl:     n.TblName.O,
+			Col:     n.ColName.O,
+			OrigTbl: n.OrigTblName.O,
+			OrigCol: n.OrigColName.O,
+		})
+	}
+	return out
+}
+
+func requireMergePlanOutputNames(t *testing.T, plan corebase.PhysicalPlan, outputNames types.NameSlice, expected []fieldNameInfo) {
+	t.Helper()
+
+	require.Len(t, outputNames, plan.Schema().Len())
+	require.Len(t, expected, len(outputNames))
+	require.Equal(t, expected, nameSliceInfo(outputNames))
+}
+
+func requireOutputColNames(t *testing.T, outputNames types.NameSlice, expected []string) {
+	t.Helper()
+	require.Len(t, outputNames, len(expected))
+	for i, colName := range expected {
+		require.Equal(t, colName, outputNames[i].ColName.O)
+	}
+}
+
+func collectAndPredicates(t *testing.T, expr ast.ExprNode) []*ast.BinaryOperationExpr {
+	t.Helper()
+
+	bin, ok := expr.(*ast.BinaryOperationExpr)
+	require.True(t, ok)
+	if bin.Op != opcode.LogicAnd {
+		return []*ast.BinaryOperationExpr{bin}
+	}
+	return append(collectAndPredicates(t, bin.L), collectAndPredicates(t, bin.R)...)
+}
+
+func columnNameRef(t *testing.T, expr ast.ExprNode) (string, string) {
+	t.Helper()
+
+	col, ok := expr.(*ast.ColumnNameExpr)
+	require.True(t, ok)
+	return col.Name.Table.O, col.Name.Name.O
+}
+
+func collectPayloadComparisonOps(t *testing.T, expr ast.ExprNode) map[string]opcode.Op {
+	t.Helper()
+
+	ops := make(map[string]opcode.Op)
+	var walk func(ast.ExprNode)
+	walk = func(node ast.ExprNode) {
+		if node == nil {
+			return
+		}
+		switch x := node.(type) {
+		case *ast.BinaryOperationExpr:
+			if x.Op == opcode.NullEQ || x.Op == opcode.EQ {
+				leftTable, leftCol := columnNameRef(t, x.L)
+				rightTable, rightCol := columnNameRef(t, x.R)
+				require.Equal(t, diffRecomputedAlias, leftTable)
+				require.Equal(t, diffCurrentAlias, rightTable)
+				require.Equal(t, leftCol, rightCol)
+				ops[rightCol] = x.Op
+			}
+			walk(x.L)
+			walk(x.R)
+		case *ast.UnaryOperationExpr:
+			walk(x.V)
+		case *ast.IsNullExpr:
+			walk(x.Expr)
+		case *ast.ParenthesesExpr:
+			walk(x.Expr)
+		}
+	}
+	walk(expr)
+	return ops
+}

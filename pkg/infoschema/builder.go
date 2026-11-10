@@ -73,7 +73,7 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 	case model.ActionCreateSchema:
 		return nil, applyCreateSchema(b, m, diff)
 	case model.ActionDropSchema:
-		return applyDropSchema(b, diff), nil
+		return applyDropSchema(b, diff)
 	case model.ActionRecoverSchema:
 		return applyRecoverSchema(b, m, diff)
 	case model.ActionModifySchemaCharsetAndCollate:
@@ -229,7 +229,7 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 				OldTableID:    oldTableID,
 				IsRefreshMeta: true,
 			}
-			return applyDropSchema(b, schemaDiff), nil
+			return applyDropSchema(b, schemaDiff)
 		}
 
 		// Schema exists in kv but not in infoschema, create it to infoschema

@@ -881,6 +881,9 @@ func TestMDLPreparePlanCacheInvalid(t *testing.T) {
 }
 
 func TestMDLPreparePlanCacheExecute(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("the test drives add-index backfill with the mock ingest backend, which nextgen does not support")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
@@ -936,6 +939,9 @@ func TestMDLPreparePlanCacheExecute(t *testing.T) {
 }
 
 func TestMDLPreparePlanCacheExecute2(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("the test drives add-index backfill with the mock ingest backend, which nextgen does not support")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
@@ -981,6 +987,9 @@ func TestMDLPreparePlanCacheExecute2(t *testing.T) {
 
 // TestMDLPreparePlanCacheExecuteInsert makes sure the insert statement handle the schema correctly in plan cache.
 func TestMDLPreparePlanCacheExecuteInsert(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("the test drives add-index backfill with the mock ingest backend, which nextgen does not support")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 

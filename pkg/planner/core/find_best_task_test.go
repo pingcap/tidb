@@ -15,17 +15,23 @@
 package core
 
 import (
+	"math"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
@@ -36,6 +42,70 @@ func TestFindBestTaskSuite(t *testing.T) {
 	t.Run("TestHintCannotFitProperty", testHintCannotFitProperty)
 	t.Run("RangeCountComparison", testRangeCountComparison)
 	t.Run("RangeCountSkyline", testRangeCountSkyline)
+	t.Run("MissingStatsIndexVsFullScan", testMissingStatsIndexVsFullScan)
+	t.Run("MergeJoinLazyFD", testMergeJoinLazyFD)
+}
+
+// fdCountingChild is a join child that counts how often its FDs are extracted.
+type fdCountingChild struct {
+	*logicalop.LogicalTableDual
+	extractFDCalls int
+}
+
+func (ds *fdCountingChild) ExtractFD() *funcdep.FDSet {
+	ds.extractFDCalls++
+	return &funcdep.FDSet{HashCodeToUniqueID: make(map[string]int)}
+}
+
+// testMergeJoinLazyFD checks that GetMergeJoin only extracts the join's FDs
+// (which, for a wide DataSource, walks every column and unique index) when a
+// merge join candidate needs the constant columns to match a required order.
+func testMergeJoinLazyFD(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer domain.GetDomain(ctx).StatsHandle().Close()
+	newCol := func() *expression.Column {
+		return &expression.Column{UniqueID: ctx.GetSessionVars().AllocPlanColumnID(), RetType: types.NewFieldType(mysql.TypeLonglong)}
+	}
+	newChild := func(col *expression.Column) *fdCountingChild {
+		dual := logicalop.LogicalTableDual{RowCount: 1}.Init(ctx.GetPlanCtx(), 0)
+		dual.SetSchema(expression.NewSchema(col))
+		return &fdCountingChild{LogicalTableDual: dual}
+	}
+	stats := &property.StatsInfo{RowCount: 100}
+	for _, tc := range []struct {
+		name           string
+		hasProperties  bool
+		sortByJoinKey  bool
+		wantMergeJoins int
+		wantExtractFD  int
+	}{
+		{"no merge join candidate", false, true, 0, 0},
+		{"candidate without required order", true, false, 1, 0},
+		{"candidate with required order", true, true, 1, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, b := newCol(), newCol()
+			left, right := newChild(a), newChild(b)
+			join := logicalop.LogicalJoin{JoinType: base.InnerJoin}.Init(ctx.GetPlanCtx(), 0)
+			join.SetChildren(left, right)
+			join.SetSchema(expression.MergeSchema(left.Schema(), right.Schema()))
+			eq, err := expression.NewFunction(ctx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), a, b)
+			require.NoError(t, err)
+			join.EqualConditions = []*expression.ScalarFunction{eq.(*expression.ScalarFunction)}
+			if tc.hasProperties {
+				join.LeftProperties = [][]*expression.Column{{a}}
+				join.RightProperties = [][]*expression.Column{{b}}
+			}
+			prop := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+			if tc.sortByJoinKey {
+				prop = property.NewPhysicalProperty(property.RootTaskType, []*expression.Column{a}, false, math.MaxFloat64, false)
+			}
+			joins := physicalop.GetMergeJoin(join, prop, join.Schema(), stats, stats, stats)
+			require.Len(t, joins, tc.wantMergeJoins)
+			require.Equal(t, tc.wantExtractFD, left.extractFDCalls)
+			require.Equal(t, tc.wantExtractFD, right.extractFDCalls)
+		})
+	}
 }
 
 func testRangeCountComparison(t *testing.T) {
@@ -100,25 +170,26 @@ func testRangeCountSkyline(t *testing.T) {
 			want      int
 		}{{0, 1}, {1001, 1}, {1000, 0}} {
 			ctx.GetSessionVars().RangeMaxCount = tc.threshold
-			result, _ := compareCandidates(ctx.GetPlanCtx(), stats, prop, lhs, rhs, true)
+			result, _ := compareCandidates(ctx.GetPlanCtx(), stats, prop, lhs, rhs)
 			require.Equal(t, tc.want, result, "pseudo=%v threshold=%d", pseudo, tc.threshold)
-			result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, rhs, lhs, true)
+			result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, rhs, lhs)
 			require.Equal(t, -tc.want, result, "reversed: pseudo=%v threshold=%d", pseudo, tc.threshold)
 		}
 	}
 
-	// A missing-statistics index must not retain its extra equality/IN preference above the threshold.
+	// Missing statistics and equality/IN counts cannot break the tie between
+	// incomparable access conditions, regardless of the range-count threshold.
 	stats := &statistics.Table{ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize()}
 	stats.ColAndIdxExistenceMap.InsertIndex(2, true)
 	lhs, rhs := newCandidate(1, 3, 1001, 10), newCandidate(2, 2, 1, 10)
 	for _, tc := range []struct {
 		threshold int64
 		want      int
-	}{{0, 1}, {1001, 1}, {1000, -1}} {
+	}{{0, 0}, {1001, 0}, {1000, 0}} {
 		ctx.GetSessionVars().RangeMaxCount = tc.threshold
-		result, _ := compareCandidates(ctx.GetPlanCtx(), stats, prop, lhs, rhs, true)
+		result, _ := compareCandidates(ctx.GetPlanCtx(), stats, prop, lhs, rhs)
 		require.Equal(t, tc.want, result)
-		result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, rhs, lhs, true)
+		result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, rhs, lhs)
 		require.Equal(t, -tc.want, result)
 	}
 }
@@ -259,4 +330,74 @@ func testHintCannotFitProperty(t *testing.T) {
 	mockPhysicalPlan, ok = task.Plan().(*mockPhysicalPlan4Test)
 	require.True(t, ok)
 	require.Equal(t, 1, mockPhysicalPlan.planType)
+}
+
+func testMissingStatsIndexVsFullScan(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer domain.GetDomain(ctx).StatsHandle().Close()
+	prop := property.NewPhysicalProperty(property.RootTaskType, nil, false, 0, false)
+	// The table has statistics, but index 1 does not.
+	stats := &statistics.Table{ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize()}
+	idx := &candidatePath{
+		path:              &util.AccessPath{Index: &model.IndexInfo{ID: 1}, Ranges: make(ranger.Ranges, 1), CountAfterAccess: 10},
+		accessCondsColMap: map[int64]int{1: -1, 2: -1},
+		eqOrInCount:       2,
+	}
+	tbl := &candidatePath{
+		path:              &util.AccessPath{IsIntHandlePath: true, Ranges: ranger.FullIntRange(false), IsSingleScan: true, CountAfterAccess: 1000},
+		accessCondsColMap: map[int64]int{},
+	}
+	// The missing-statistics index with 2 equal predicates wins over a full table scan,
+	// independent of tidb_opt_prefer_range_scan.
+	for _, preferRange := range []bool{false, true} {
+		ctx.GetSessionVars().SetAllowPreferRangeScan(preferRange)
+		result, missingStats := compareCandidates(ctx.GetPlanCtx(), stats, prop, idx, tbl)
+		require.Equal(t, 1, result, "preferRange=%v", preferRange)
+		require.True(t, missingStats)
+		result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, tbl, idx)
+		require.Equal(t, -1, result, "reversed: preferRange=%v", preferRange)
+	}
+
+	// A non-covering missing-statistics index estimated to read most of the table must not prune
+	// the full table scan, see https://github.com/pingcap/tidb/issues/72561.
+	broad := &candidatePath{
+		path:              &util.AccessPath{Index: &model.IndexInfo{ID: 1}, Ranges: make(ranger.Ranges, 900), CountAfterAccess: 900},
+		accessCondsColMap: map[int64]int{1: -1, 2: -1},
+		eqOrInCount:       2,
+	}
+	result, missingStats := compareCandidates(ctx.GetPlanCtx(), stats, prop, broad, tbl)
+	require.Equal(t, 0, result)
+	require.False(t, missingStats)
+	result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, tbl, broad)
+	require.Equal(t, 0, result)
+	// The threshold is the default selectivity (0.8) of the table.
+	broad.path.CountAfterAccess = 800
+	result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, broad, tbl)
+	require.Equal(t, 0, result)
+	broad.path.CountAfterAccess = 799
+	result, missingStats = compareCandidates(ctx.GetPlanCtx(), stats, prop, broad, tbl)
+	require.Equal(t, 1, result)
+	require.True(t, missingStats)
+	// A covering index has no table lookups, so it may still prune the full table scan.
+	broad.path.CountAfterAccess = 900
+	broad.path.IsSingleScan = true
+	result, missingStats = compareCandidates(ctx.GetPlanCtx(), stats, prop, broad, tbl)
+	require.Equal(t, 1, result)
+	require.True(t, missingStats)
+
+	// A non-covering index with more ranges than tidb_opt_range_max_count is a broad lookup, even
+	// if its estimate is small. Zero disables the range count check.
+	broad.path.IsSingleScan = false
+	broad.path.CountAfterAccess = 10
+	require.False(t, isBroadIndexLookup(broad, 1000, 1000))
+	require.True(t, isBroadIndexLookup(broad, 1000, 899))
+	require.False(t, isBroadIndexLookup(broad, 1000, 0))
+	require.True(t, canPseudoWinnerPrune(broad, tbl, 1000))
+	require.False(t, canPseudoWinnerPrune(broad, tbl, 899))
+	// Against another index, the winner may always prune.
+	require.True(t, canPseudoWinnerPrune(broad, idx, 899))
+	ctx.GetSessionVars().RangeMaxCount = 899
+	result, missingStats = compareCandidates(ctx.GetPlanCtx(), stats, prop, broad, tbl)
+	require.Equal(t, 0, result)
+	require.False(t, missingStats)
 }

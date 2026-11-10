@@ -579,28 +579,20 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing reorg metadata")
 	}
 	sessVars := sessCtx.GetSessionVars() //nolint:forbidigo
-	restore := restoreSessCtx(sessCtx)
-	originalMaintenance := sessVars.InMViewMaintenance
-	originalDB := sessVars.CurrentDB
-	if err := initSessCtx(sessCtx, job.ReorgMeta); err != nil {
-		restore(sessCtx)
-		return nil, errors.Trace(err)
-	}
 	target, err := MViewExecutionSessionVarsFromJob(job, sessVars)
 	if err != nil {
-		restore(sessCtx)
 		return nil, errors.Trace(err)
 	}
 	restoreExecution, err := ApplyMViewExecutionSessionVars(sessVars, target)
 	if err != nil {
-		restore(sessCtx)
 		return nil, errors.Trace(err)
 	}
-	if mviewTableInfo != nil && mviewTableInfo.MaterializedView != nil {
-		sessVars.DivPrecisionIncrement = mviewTableInfo.MaterializedView.DefinitionDivPrecisionIncrement
+	restore, err := InitMViewSession(sessVars, mviewTableInfo.MaterializedView,
+		currentDB, job.ReorgMeta.ResourceGroupName)
+	if err != nil {
+		restoreExecution()
+		return nil, errors.Trace(err)
 	}
-	sessVars.CurrentDB = currentDB
-	sessVars.InMViewMaintenance = true
 	failpoint.InjectCall("createMaterializedViewBuildMaintainMemQuotaApplied", sessVars.MemQuotaQuery)
 	failpoint.InjectCall(
 		"createMaterializedViewBuildTiFlashSessionVarsApplied",
@@ -622,10 +614,8 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 		sessVars.MViewMaintainImportDiskQuota,
 	)
 	return func() {
+		restore()
 		restoreExecution()
-		restore(sessCtx)
-		sessVars.InMViewMaintenance = originalMaintenance
-		sessVars.CurrentDB = originalDB
 	}, nil
 }
 
