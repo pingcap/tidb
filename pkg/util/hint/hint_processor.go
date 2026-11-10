@@ -318,7 +318,11 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 			}
 			for i, tbl := range tblHint.Tables {
 				if tbl.DBName.String() == "" {
+<<<<<<< HEAD
 					tblHint.Tables[i].DBName = model.NewCIStr(db)
+=======
+					tblHint.Tables[i].DBName = processor.resolveHintDBName(processor.GetHintOffset(tbl.QBName, offset), tbl.TableName, db)
+>>>>>>> ae5be6915c7 (planner: match unqualified hint table names in any database (#72838))
 				}
 			}
 			newHints = append(newHints, tblHint)

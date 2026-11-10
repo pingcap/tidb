@@ -836,7 +836,12 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			}
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
+<<<<<<< HEAD
 				dbName = pmodel.NewCIStr(currentDB)
+=======
+				dbName = hintProcessor.resolveHintDBName(hintProcessor.GetHintOffset(getHintTableQBName(hint), currentLevel),
+					hint.Tables[0].TableName, currentDB)
+>>>>>>> ae5be6915c7 (planner: match unqualified hint table names in any database (#72838))
 			}
 			noIndexLookUpPushDownTables = append(noIndexLookUpPushDownTables, HintedTable{
 				DBName:  dbName,
@@ -845,7 +850,12 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		case HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown:
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
+<<<<<<< HEAD
 				dbName = pmodel.NewCIStr(currentDB)
+=======
+				dbName = hintProcessor.resolveHintDBName(hintProcessor.GetHintOffset(getHintTableQBName(hint), currentLevel),
+					hint.Tables[0].TableName, currentDB)
+>>>>>>> ae5be6915c7 (planner: match unqualified hint table names in any database (#72838))
 			}
 			var hintType ast.IndexHintType
 			var pushDownLookUp bool
@@ -879,6 +889,28 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				},
 				PushDownLookUp: pushDownLookUp,
 			})
+<<<<<<< HEAD
+=======
+		case HintTiFlashLMFilter:
+			// TableOptimizerHint reuses Indexes to store the identifier list after the table name.
+			// For TIFLASH_LM_FILTER, these identifiers are column names instead of index names.
+			columns := hint.Indexes
+			if len(columns) == 0 {
+				warnHandler.SetHintWarning("The TIFLASH_LM_FILTER hint is not used correctly, please specify at least one column name.")
+				continue
+			}
+			dbName := hint.Tables[0].DBName
+			if dbName.L == "" {
+				dbName = hintProcessor.resolveHintDBName(hintProcessor.GetHintOffset(getHintTableQBName(hint), currentLevel),
+					hint.Tables[0].TableName, currentDB)
+			}
+			tiflashLMFilters = append(tiflashLMFilters, HintedColumn{
+				DBName:       dbName,
+				TblName:      hint.Tables[0].TableName,
+				SelectOffset: hintProcessor.GetHintOffset(getHintTableQBName(hint), currentLevel),
+				Columns:      columns,
+			})
+>>>>>>> ae5be6915c7 (planner: match unqualified hint table names in any database (#72838))
 		case HintReadFromStorage:
 			switch hint.HintData.(pmodel.CIStr).L {
 			case HintTiFlash:
@@ -889,7 +921,12 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		case HintIndexMerge:
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
+<<<<<<< HEAD
 				dbName = pmodel.NewCIStr(currentDB)
+=======
+				dbName = hintProcessor.resolveHintDBName(hintProcessor.GetHintOffset(getHintTableQBName(hint), currentLevel),
+					hint.Tables[0].TableName, currentDB)
+>>>>>>> ae5be6915c7 (planner: match unqualified hint table names in any database (#72838))
 			}
 			indexMergeHintList = append(indexMergeHintList, HintedIndex{
 				DBName:     dbName,
@@ -998,7 +1035,10 @@ func tableNames2HintTableInfo(currentDB, hintName string, hintTables []ast.HintT
 		return nil
 	}
 	hintTableInfos := make([]HintedTable, 0, len(hintTables))
+<<<<<<< HEAD
 	defaultDBName := pmodel.NewCIStr(currentDB)
+=======
+>>>>>>> ae5be6915c7 (planner: match unqualified hint table names in any database (#72838))
 	isInapplicable := false
 	for _, hintTable := range hintTables {
 		tableInfo := HintedTable{
@@ -1008,7 +1048,7 @@ func tableNames2HintTableInfo(currentDB, hintName string, hintTables []ast.HintT
 			SelectOffset: p.GetHintOffset(hintTable.QBName, currentOffset),
 		}
 		if tableInfo.DBName.L == "" {
-			tableInfo.DBName = defaultDBName
+			tableInfo.DBName = p.resolveHintDBName(tableInfo.SelectOffset, tableInfo.TblName, currentDB)
 		}
 		switch hintName {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ,
