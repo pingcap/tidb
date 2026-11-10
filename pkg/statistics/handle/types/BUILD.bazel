@@ -10,6 +10,7 @@ go_library(
         "//pkg/infoschema",
         "//pkg/meta/model",
         "//pkg/parser/ast",
+        "//pkg/session/syssession",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/statistics",

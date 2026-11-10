@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -517,4 +518,15 @@ type AnalyzeStatsHandle interface {
 	FinishAnalyzeJob(job *statistics.AnalyzeJob, failReason error, analyzeType statistics.JobType)
 
 	StatsGlobal
+}
+
+// ReadWriterHandle is the part of the stats handle that a StatsReadWriter works on.
+type ReadWriterHandle interface {
+	SPool() syssession.Pool
+	GPool() *gp.Pool
+	handleutil.TableInfoGetter
+	Lease() time.Duration
+	Get(tableID int64) (*statistics.Table, bool)
+	UpdateStatsCache(update CacheUpdate)
+	Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error
 }
