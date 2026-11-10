@@ -975,6 +975,50 @@ func TestBuildTiDBMemCopTasksSkipsNonServingNodes(t *testing.T) {
 	}
 }
 
+func TestHandleCopResponseRedaction(t *testing.T) {
+	previousMode := errors.RedactLogEnabled.Load()
+	t.Cleanup(func() { errors.RedactLogEnabled.Store(previousMode) })
+	for _, mode := range []string{"OFF", "ON", "MARKER"} {
+		for _, empty := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/empty=%t", mode, empty), func(t *testing.T) {
+				errors.RedactLogEnabled.Store(mode)
+				core, recorded := observer.New(zap.WarnLevel)
+				ctx := context.WithValue(context.Background(), logutil.CtxLogKey, zap.New(core))
+				bo := backoff.NewBackofferWithVars(ctx, 3000, nil)
+				worker := &copIteratorWorker{req: &kv.Request{StartTs: 42}}
+				ranges := NewKeyRanges(nil)
+				if !empty {
+					ranges = NewKeyRanges([]kv.KeyRange{{StartKey: []byte("start-secret"), EndKey: []byte("end-secret")}})
+				}
+				resp := &copResponse{pbResp: &coprocessor.Response{OtherError: "test error"}}
+				result, err := worker.handleCopResponse(bo, nil, resp, nil, nil, &copTask{ranges: ranges}, 0)
+				require.Nil(t, result)
+				require.EqualError(t, err, "other error: test error")
+				entries := recorded.FilterMessage("other error").All()
+				require.Len(t, entries, 1)
+				fields := entries[0].ContextMap()
+				require.Equal(t, uint64(42), fields["txnStartTS"])
+				require.Equal(t, int64(ranges.Len()), fields["rangeNums"])
+				if empty {
+					require.NotContains(t, fields, "firstRangeStartKey")
+					require.NotContains(t, fields, "lastRangeEndKey")
+					return
+				}
+				if mode == "OFF" {
+					require.Equal(t, "73746172742D736563726574", fields["firstRangeStartKey"])
+					require.Equal(t, "656E642D736563726574", fields["lastRangeEndKey"])
+				} else {
+					require.Equal(t, "?", fields["firstRangeStartKey"])
+					require.Equal(t, "?", fields["lastRangeEndKey"])
+					require.NotContains(t, fmt.Sprint(fields), "secret")
+				}
+				require.Equal(t, kv.Key("start-secret"), ranges.At(0).StartKey)
+				require.Equal(t, kv.Key("end-secret"), ranges.At(0).EndKey)
+			})
+		}
+	}
+}
+
 func TestHandleBatchCopResponseRedaction(t *testing.T) {
 	previousMode := errors.RedactLogEnabled.Load()
 	t.Cleanup(func() { errors.RedactLogEnabled.Store(previousMode) })

@@ -1656,8 +1656,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		// guard At(0)/At(Len-1) to avoid a nil dereference.
 		if task.ranges.Len() > 0 {
 			otherErrFields = append(otherErrFields,
-				zap.ByteString("firstRangeStartKey", task.ranges.At(0).StartKey),
-				zap.ByteString("lastRangeEndKey", task.ranges.At(task.ranges.Len()-1).EndKey),
+				zap.String("firstRangeStartKey", redact.Key(task.ranges.At(0).StartKey)),
+				zap.String("lastRangeEndKey", redact.Key(task.ranges.At(task.ranges.Len()-1).EndKey)),
 			)
 		}
 		logutil.Logger(bo.GetCtx()).Warn("other error", otherErrFields...)
