@@ -270,7 +270,7 @@ func TestBalanceOneTask(t *testing.T) {
 		t.Run(fmt.Sprintf("case %d", i), func(t *testing.T) {
 			mockTaskMgr := mock.NewMockTaskManager(ctrl)
 			mockTaskMgr.EXPECT().GetActiveSubtasks(gomock.Any(), gomock.Any()).Return(c.subtasks, nil)
-			mockTaskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil).AnyTimes()
+			mockTaskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{}, nil).AnyTimes()
 			if !assert.ObjectsAreEqual(c.subtasks, c.expectedSubtasks) {
 				mockTaskMgr.EXPECT().UpdateSubtasksExecIDs(gomock.Any(), gomock.Any()).Return(nil)
 			}
@@ -338,7 +338,7 @@ func TestBalanceOneTask(t *testing.T) {
 				{ID: 1, ExecID: "tidb1", State: proto.SubtaskStateRunning},
 				{ID: 2, ExecID: "tidb1", State: proto.SubtaskStatePending},
 			}, nil)
-		mockTaskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
+		mockTaskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{}, nil)
 		mockTaskMgr.EXPECT().UpdateSubtasksExecIDs(gomock.Any(), gomock.Any()).Return(errors.New("mock error2"))
 		mockScheduler.EXPECT().GetTask().Return(&proto.Task{TaskBase: proto.TaskBase{ID: 1, RequiredSlots: 16}}).Times(2)
 		mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
@@ -446,7 +446,7 @@ func TestBalanceMultipleTasks(t *testing.T) {
 	require.Equal(t, map[string]int{"tidb1": 0, "tidb2": 0, "tidb3": 0}, b.currUsedSlots)
 
 	// The next round reloads slots and balances all tasks.
-	mockTaskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
+	mockTaskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{}, nil)
 	for i, c := range taskCases {
 		taskID := int64(i + 1)
 		if !assert.ObjectsAreEqual(c.subtasks, c.expectedSubtasks) {

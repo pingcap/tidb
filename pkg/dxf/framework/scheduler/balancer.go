@@ -193,9 +193,6 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, task *proto.Task, elig
 		if b.actualUsedSlots, err = b.taskMgr.GetUsedSlotsOnNodes(ctx); err != nil {
 			return err
 		}
-		if b.actualUsedSlots == nil {
-			b.actualUsedSlots = make(map[string]int)
-		}
 	}
 	oldTaskNodes := getNodesOfSubtasks(subtasks)
 	adjustedNodes = orderAndFilterNodes(adjustedNodes, subtasks, task.MaxNodeCount, func(node string) bool {
