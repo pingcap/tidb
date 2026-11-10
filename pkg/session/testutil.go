@@ -100,21 +100,6 @@ func exec(se sessionapi.Session, sql string, args ...any) (sqlexec.RecordSet, er
 	return rs, nil
 }
 
-// AdvisoryLockInternalSession4Test returns the internal session that backs lockName.
-// The pointer is the one registered with the domain session manager while the lock is held.
-// It returns nil when se does not hold that lock. Exported only for test.
-func AdvisoryLockInternalSession4Test(se sessionapi.Session, lockName string) any {
-	s, ok := se.(*session)
-	if !ok || s == nil {
-		return nil
-	}
-	lock := s.advisoryLocks[lockName]
-	if lock == nil || lock.session == nil {
-		return nil
-	}
-	return lock.session
-}
-
 // RevertVersionAndVariables reverts the version and variables in mysql.tidb and
 // mysql.global_variables for testing upgrade/downgrade.
 func RevertVersionAndVariables(t *testing.T, se sessionapi.Session, ver int) {
