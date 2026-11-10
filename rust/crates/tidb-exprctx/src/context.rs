@@ -858,6 +858,13 @@ pub trait Columns {
         None
     }
 
+    /// Go `planctx.PlanContext.BuiltinFunctionUsageInc`: counts one use of
+    /// the builtin signature named `scalar_func_sig_name`. A context with no
+    /// session behind it counts nothing, as Go's `mock.Context`.
+    fn builtin_function_usage_inc(&self, scalar_func_sig_name: &str) {
+        let _ = scalar_func_sig_name;
+    }
+
     /// Go `BuildContext.IsReadonlyUserVar`: whether the statement only reads
     /// the user variable `name`.
     fn is_readonly_user_var(&self, name: &str) -> bool {

@@ -1747,6 +1747,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_rand_session(Arc::clone(self.rand_ref()))
                     .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)
                     .with_user_vars(self.user_vars().clone())
+                .with_builtin_function_usage_inc(self.builtin_function_usage_inc_fn())
                     .with_readonly_user_vars(Arc::clone(self.readonly_user_vars_ref()))
                     .with_previous_statement(self.session_vars().last_insert_id, self.session_vars().prev_row_count)
                     .with_last_found_rows(self.session_vars().last_found_rows)
@@ -1949,6 +1950,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_rand_session(Arc::clone(self.rand_ref()))
                 .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)
                 .with_user_vars(self.user_vars().clone())
+                .with_builtin_function_usage_inc(self.builtin_function_usage_inc_fn())
                     .with_readonly_user_vars(Arc::clone(self.readonly_user_vars_ref()))
                 .with_previous_statement(self.session_vars().last_insert_id, self.session_vars().prev_row_count)
                 .with_last_found_rows(self.session_vars().last_found_rows)
@@ -2472,6 +2474,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn readonly_user_vars_ref(&self) -> &Arc<std::collections::HashSet<String>>;
     /// Go `SessionVars` / `StmtCtx` state `rand`, read.
     fn rand_ref(&self) -> &Arc<MysqlRng>;
+    /// Go `session.BuiltinFunctionUsageInc`, as the statement's plan context
+    /// calls it.
+    fn builtin_function_usage_inc_fn(&self) -> Arc<dyn Fn(&str) + Send + Sync>;
     /// Go `SessionVars` / `StmtCtx` state `rand`, mutably.
     fn rand_mut(&mut self) -> &mut Arc<MysqlRng>;
     /// Go `SessionVars` / `StmtCtx` state `retry_auto_ids`, read.

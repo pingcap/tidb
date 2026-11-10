@@ -82,6 +82,10 @@ pub trait ColumnResolver {
         None
     }
 
+    /// Go `er.planCtx.builder.ctx.BuiltinFunctionUsageInc`. A rewrite with no
+    /// plan builder behind it (Go's nil `planCtx`) counts nothing.
+    fn builtin_function_usage_inc(&self, _scalar_func_sig_name: &str) {}
+
     /// The current typed value of a prepared marker. Its absolute order is
     /// retained in the compiled expression, independently of this snapshot.
     fn param_value(&self, _order: usize) -> Result<Datum, EvalError> {
@@ -293,6 +297,9 @@ pub trait ColumnResolver {
 impl<T: ColumnResolver + ?Sized> ColumnResolver for &T {
     fn user_vars(&self) -> Option<&tidb_variable::user_vars::UserVars> {
         (**self).user_vars()
+    }
+    fn builtin_function_usage_inc(&self, scalar_func_sig_name: &str) {
+        (**self).builtin_function_usage_inc(scalar_func_sig_name);
     }
     fn allow_build_cast_array(&self) -> bool {
         (**self).allow_build_cast_array()
@@ -591,9 +598,24 @@ fn new_function(
     class_function(class, name, args, resolver)
 }
 
-/// Go `er.newFunction` for a name `funcs` lists: `class` builds the node
-/// and `newFunctionImpl` folds it.
+/// Go `er.newFunction` for a name `funcs` lists: [`expression_new_function`],
+/// counted when it stays a scalar function.
 fn class_function(
+    class: &dyn crate::builtin::FunctionClass,
+    name: &str,
+    args: Vec<Expression>,
+    resolver: &impl ColumnResolver,
+) -> Result<Expression, EvalError> {
+    let call = expression_new_function(class, name, args, resolver)?;
+    if let Expression::ScalarFunction(function) = &call {
+        builtin_function_usage_inc(function, resolver);
+    }
+    Ok(call)
+}
+
+/// Go `expression.NewFunction(er.sctx, ...)` as the rewriter calls it
+/// directly: `class` builds the node and `newFunctionImpl` folds it.
+fn expression_new_function(
     class: &dyn crate::builtin::FunctionClass,
     name: &str,
     args: Vec<Expression>,
@@ -603,6 +625,12 @@ fn class_function(
         class_scalar_function(class, name, args, resolver).map(Expression::ScalarFunction)?;
     resolver.fold_constant(&mut call, resolver.fold_mode());
     Ok(call)
+}
+
+/// Go `newFunctionWithInit`'s
+/// `BuiltinFunctionUsageInc(scalarFunc.Function.PbCode().String())`.
+fn builtin_function_usage_inc(function: &ScalarFunction, resolver: &impl ColumnResolver) {
+    resolver.builtin_function_usage_inc(function.pb_code().as_str_name());
 }
 
 /// [`class_function`]'s node, for a caller that initializes it (Go
@@ -670,6 +698,7 @@ fn match_against_to_builtin(
     let class = crate::builtin::funcs(name).expect("builtin_fts.go registers MATCH AGAINST");
     let mut function = class_scalar_function(class, name, args, resolver)?;
     function.set_fts_mysql_match_against_modifier(modifier)?;
+    builtin_function_usage_inc(&function, resolver);
     Ok(Expression::ScalarFunction(function))
 }
 
@@ -792,95 +821,38 @@ fn wrap_between_arguments(
     }
 }
 
-fn row_len(expr: &Expr) -> usize {
-    match expr {
-        Expr::Row(items) => items.len(),
-        _ => 1,
-    }
-}
-
-/// Go `expressionRewriter.constructBinaryOpFunction`: scalar comparisons stay
-/// scalar; same-arity row comparisons are expanded into AND/OR trees.
-fn rewrite_comparison(
+/// Go `expressionRewriter.constructBinaryOpFunction`: a comparison of two
+/// single values is `op`'s function; rows of one arity compare element by
+/// element. Equality and NULL-safe equality are a CNF, inequality a DNF, and
+/// an ordering the lexicographic DNF whose prefix elements compare strictly.
+fn construct_binary_op_function(
+    l: &Expression,
+    r: &Expression,
     op: BinaryOp,
-    left: &Expr,
-    right: &Expr,
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
-    match (left, right) {
-        (Expr::Row(left), Expr::Row(right)) => rewrite_row_comparison(op, left, right, resolver),
-        // go's ctxStack holds BUILT expressions by the time
-        // `constructBinaryOpFunction` runs: one side a row, the other a
-        // folded multi-column scalar subquery's `row` function
-        // (`(a,b) = (SELECT a,b ...)` with an uncorrelated subquery) is a
-        // row comparison over the built sides (oracle g-subq: empty result).
-        (Expr::Row(_), _) | (_, Expr::Row(_)) => {
-            // Each side is built in source order and keeps the side it was
-            // written on; Go then compares `GetRowLen` of both and reports
-            // the LEFT side's width.
-            let build = |side: &Expr| -> Result<Vec<Expression>, EvalError> {
-                if let Expr::Row(items) = side {
-                    return items
-                        .iter()
-                        .map(|item| rewrite_expr_resolved(item, resolver))
-                        .collect();
-                }
-                Ok(match rewrite_expr_resolved(side, resolver)? {
-                    Expression::ScalarFunction(function)
-                        if function.func_name.lowercase() == "row" =>
-                    {
-                        function.get_args().to_vec()
-                    }
-                    built => vec![built],
-                })
-            };
-            let lhs = build(left)?;
-            let rhs = build(right)?;
-            if lhs.len() != rhs.len() {
-                return Err(EvalError::OperandColumns(lhs.len()));
-            }
-            row_comparison_of_built(op, &lhs, &rhs, resolver)
-        }
-        _ => binary_expression(
-            op,
-            rewrite_expr_resolved(left, resolver)?,
-            rewrite_expr_resolved(right, resolver)?,
-            resolver,
-        ),
+    let (l_len, r_len) = (crate::expr_util::get_row_len(l), crate::expr_util::get_row_len(r));
+    if l_len == 1 && r_len == 1 {
+        return binary_expression(op, l.clone(), r.clone(), resolver);
+    } else if r_len != l_len {
+        return Err(EvalError::OperandColumns(l_len));
     }
-}
-
-/// go `constructBinaryOpFunction`'s row arms over BUILT expressions:
-/// equality and NULL-safe equality are CNF, inequality is DNF, and ordering
-/// is lexicographic DNF whose prefix comparisons use the STRICT form.
-fn row_comparison_of_built(
-    op: BinaryOp,
-    left: &[Expression],
-    right: &[Expression],
-    resolver: &impl ColumnResolver,
-) -> Result<Expression, EvalError> {
     let pair = |op: BinaryOp, i: usize| -> Result<Expression, EvalError> {
-        binary_expression(op, left[i].clone(), right[i].clone(), resolver)
+        let arg = |row| crate::expr_util::get_func_arg(row, i).expect("a row has its length's arguments");
+        construct_binary_op_function(arg(l), arg(r), op, resolver)
     };
     if matches!(op, BinaryOp::Eq | BinaryOp::Ne | BinaryOp::NullEq) {
-        let join = if op == BinaryOp::Ne {
-            BinaryOp::LogicOr
-        } else {
-            BinaryOp::LogicAnd
-        };
-        let first = pair(op, 0)?;
-        return (1..left.len()).try_fold(first, |condition, i| {
-            binary_expression(join, condition, pair(op, i)?, resolver)
-        });
+        let funcs = (0..l_len).map(|i| pair(op, i)).collect::<Result<Vec<_>, _>>()?;
+        let join = if op == BinaryOp::Ne { "or" } else { "and" };
+        return Ok(compose_condition_with_binary_op(funcs, join, resolver));
     }
-    // Lexicographic DNF: positions before `i` are equal, position `i` decides.
-    let mut alternatives = Vec::with_capacity(left.len());
-    for i in 0..left.len() {
-        let mut conj = Vec::with_capacity(i + 1);
+    let mut result_dnf_list = Vec::with_capacity(l_len);
+    for i in 0..l_len {
+        let mut expr_list = Vec::with_capacity(i + 1);
         for j in 0..i {
-            conj.push(pair(BinaryOp::Eq, j)?);
+            expr_list.push(pair(BinaryOp::Eq, j)?);
         }
-        let decider = if i + 1 < left.len() {
+        let degenerated_op = if i + 1 < l_len {
             match op {
                 BinaryOp::Ge => BinaryOp::Gt,
                 BinaryOp::Le => BinaryOp::Lt,
@@ -889,80 +861,30 @@ fn row_comparison_of_built(
         } else {
             op
         };
-        conj.push(pair(decider, i)?);
-        let first = conj.remove(0);
-        alternatives.push(conj.into_iter().try_fold(first, |condition, term| {
-            binary_expression(BinaryOp::LogicAnd, condition, term, resolver)
-        })?);
+        expr_list.push(pair(degenerated_op, i)?);
+        result_dnf_list.push(compose_condition_with_binary_op(expr_list, "and", resolver));
     }
-    let first = alternatives.remove(0);
-    alternatives.into_iter().try_fold(first, |condition, term| {
-        binary_expression(BinaryOp::LogicOr, condition, term, resolver)
-    })
+    Ok(compose_condition_with_binary_op(result_dnf_list, "or", resolver))
 }
 
-fn compose_comparisons(
-    join: BinaryOp,
-    comparisons: impl IntoIterator<Item = Result<Expression, EvalError>>,
+/// Go `ComposeCNFCondition` / `ComposeDNFCondition` over the rewriter's
+/// expression context: `conditions` as a balanced tree of `func_name`, each
+/// node `expression.NewFunctionInternal`'s.
+fn compose_condition_with_binary_op(
+    mut conditions: Vec<Expression>,
+    func_name: &str,
     resolver: &impl ColumnResolver,
-) -> Result<Expression, EvalError> {
-    let mut comparisons = comparisons.into_iter();
-    let first = comparisons
-        .next()
-        .ok_or(EvalError::Unsupported("a row expression with no columns"))??;
-    comparisons.try_fold(first, |condition, comparison| {
-        binary_expression(join, condition, comparison?, resolver)
-    })
-}
-
-/// Go `constructBinaryOpFunction` for row comparisons. Equality and NULL-safe
-/// equality are CNF, inequality is DNF, and ordering is lexicographic DNF.
-fn rewrite_row_comparison(
-    op: BinaryOp,
-    left: &[Expr],
-    right: &[Expr],
-    resolver: &impl ColumnResolver,
-) -> Result<Expression, EvalError> {
-    if left.len() != right.len() {
-        return Err(EvalError::OperandColumns(left.len()));
+) -> Expression {
+    let length = conditions.len();
+    if length == 1 {
+        return conditions.pop().expect("one condition");
     }
-    if matches!(op, BinaryOp::Eq | BinaryOp::Ne | BinaryOp::NullEq) {
-        let join = if op == BinaryOp::Ne {
-            BinaryOp::LogicOr
-        } else {
-            BinaryOp::LogicAnd
-        };
-        return compose_comparisons(
-            join,
-            left.iter()
-                .zip(right)
-                .map(|(left, right)| rewrite_comparison(op, left, right, resolver)),
-            resolver,
-        );
-    }
-
-    let comparisons = (0..left.len()).map(|index| {
-        let mut prefix = (0..index)
-            .map(|prefix| rewrite_comparison(BinaryOp::Eq, &left[prefix], &right[prefix], resolver))
-            .collect::<Vec<_>>();
-        let current_op = if index + 1 < left.len() {
-            match op {
-                BinaryOp::Ge => BinaryOp::Gt,
-                BinaryOp::Le => BinaryOp::Lt,
-                _ => op,
-            }
-        } else {
-            op
-        };
-        prefix.push(rewrite_comparison(
-            current_op,
-            &left[index],
-            &right[index],
-            resolver,
-        ));
-        compose_comparisons(BinaryOp::LogicAnd, prefix, resolver)
-    });
-    compose_comparisons(BinaryOp::LogicOr, comparisons, resolver)
+    let right = conditions.split_off(length / 2);
+    let left = compose_condition_with_binary_op(conditions, func_name, resolver);
+    let right = compose_condition_with_binary_op(right, func_name, resolver);
+    let class = crate::builtin::funcs(func_name).expect("builtin_op.go registers AND and OR");
+    expression_new_function(class, func_name, vec![left, right], resolver)
+        .expect("AND and OR take any two single values")
 }
 
 /// Go `expression.CheckArgsNotMultiColumnRow` at a rewriter step: an
@@ -1184,19 +1106,6 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
     match expr {
         Expr::Paren(inner) => rewrite_expr_resolved(inner, resolver),
         Expr::Binary(op, lhs, rhs) => {
-            if matches!(
-                op,
-                BinaryOp::Eq
-                    | BinaryOp::Ne
-                    | BinaryOp::NullEq
-                    | BinaryOp::Lt
-                    | BinaryOp::Le
-                    | BinaryOp::Gt
-                    | BinaryOp::Ge
-            ) && (matches!(lhs.as_ref(), Expr::Row(_)) || matches!(rhs.as_ref(), Expr::Row(_)))
-            {
-                return rewrite_comparison(*op, lhs, rhs, resolver);
-            }
             let mode = if matches!(op, BinaryOp::LogicAnd | BinaryOp::LogicOr) {
                 ConstantFoldMode::Try
             } else {
@@ -1219,25 +1128,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                     | BinaryOp::Gt
                     | BinaryOp::Ge
             ) {
-                let (l_len, r_len) = (
-                    crate::expr_util::get_row_len(&left),
-                    crate::expr_util::get_row_len(&right),
-                );
-                if l_len != r_len {
-                    return Err(EvalError::OperandColumns(l_len));
-                }
-                if let (Expression::ScalarFunction(l_row), Expression::ScalarFunction(r_row)) =
-                    (&left, &right)
-                {
-                    if l_len != 1 {
-                        return row_comparison_of_built(
-                            *op,
-                            l_row.get_args(),
-                            r_row.get_args(),
-                            resolver,
-                        );
-                    }
-                }
+                return construct_binary_op_function(&left, &right, *op, resolver);
             } else {
                 ensure_single_column(&[&left, &right])?;
             }
@@ -1644,35 +1535,15 @@ fn rewrite_leaf_compound(
         // the remaining arguments; `NOT IN` wraps it in a unary NOT, which
         // keeps NULL as NULL exactly as MySQL requires.
         Expr::In { expr, list, not } => {
-            let expected_columns = row_len(expr);
-            if list
-                .iter()
-                .any(|candidate| row_len(candidate) != expected_columns)
-            {
-                return Err(EvalError::OperandColumns(expected_columns));
-            }
-            if let Expr::Row(left) = expr.as_ref() {
-                let mut comparisons = list.iter().map(|right| {
-                    let Expr::Row(right) = right else {
-                        return Err(EvalError::OperandColumns(left.len()));
-                    };
-                    rewrite_row_comparison(BinaryOp::Eq, left, right, resolver)
-                });
-                let first = comparisons.next().ok_or(EvalError::Unsupported(
-                    "an IN expression with no candidates",
-                ))??;
-                let call = comparisons.try_fold(first, |condition, comparison| {
-                    binary_expression(BinaryOp::LogicOr, condition, comparison?, resolver)
-                })?;
-                if *not {
-                    return new_function(unary_op_name(UnaryOp::Not), vec![call], resolver);
-                }
-                return Ok(call);
-            }
             let mut args = Vec::with_capacity(list.len() + 1);
             args.push(rewrite_expr_resolved(expr, resolver)?);
             for item in list {
                 args.push(rewrite_expr_resolved(item, resolver)?);
+            }
+            // Go `inToExpression`: every candidate has the tested value's width.
+            let l = crate::expr_util::get_row_len(&args[0]);
+            if args[1..].iter().any(|candidate| crate::expr_util::get_row_len(candidate) != l) {
+                return Err(EvalError::OperandColumns(l));
             }
             let ctx = resolver.comparison_context().unwrap_or(&crate::NoColumns);
             crate::builtin_compare::refine_integer_in_arguments(&mut args, ctx)?;
@@ -1699,18 +1570,20 @@ fn rewrite_leaf_compound(
                     })
                 })
             });
-            if !all_same_type || list.len() == 1 {
+            if !(all_same_type && l == 1 && list.len() > 1) {
                 // Go `deriveCollationForIn` + `castCollationForIn`: one
                 // collation over the whole IN, and each string member not
                 // already in it cast to it (EXPLICIT) before the equalities
                 // are built, so `a IN ('b' COLLATE utf8mb4_general_ci, 'A', 3)`
                 // compares `a` with 'A' under general_ci.
-                let derived = crate::collation_derive::check_and_derive_collation_from_exprs(
-                    "IN",
-                    EvalType::Int,
-                    &args,
-                )?;
-                if tidb_datatype::new_collation_enabled() {
+                // Neither handles a tuple: `(a, b) IN ((x, y), ...)` compares
+                // each element under its own pair's collation.
+                if l == 1 && tidb_datatype::new_collation_enabled() {
+                    let derived = crate::collation_derive::check_and_derive_collation_from_exprs(
+                        "IN",
+                        EvalType::Int,
+                        &args,
+                    )?;
                     for index in 1..args.len() {
                         let compares_as_string = crate::builtin_compare::get_accurate_cmp_type(
                             operand(&args[0]),
@@ -1733,16 +1606,9 @@ fn rewrite_leaf_compound(
                 let left = &args[0];
                 let mut equalities = Vec::with_capacity(list.len());
                 for right in &args[1..] {
-                    equalities.push(binary_expression(
-                        BinaryOp::Eq,
-                        left.clone(),
-                        right.clone(),
-                        resolver,
-                    )?);
+                    equalities.push(construct_binary_op_function(left, right, BinaryOp::Eq, resolver)?);
                 }
-                let call = crate::simple_expr::compose_dnf_condition(equalities).ok_or(
-                    EvalError::Unsupported("an IN expression with no candidates"),
-                )?;
+                let call = compose_condition_with_binary_op(equalities, "or", resolver);
                 return if *not {
                     new_function(unary_op_name(UnaryOp::Not), vec![call], resolver)
                 } else {
@@ -1752,8 +1618,7 @@ fn rewrite_leaf_compound(
             not_to_expression(*not, "in", args, resolver)
         }
         // Go `expressionRewriter.betweenToExpression`: `x BETWEEN l AND h`
-        // is `x >= l AND x <= h`, and the negated form is `x < l OR x > h` --
-        // built from the comparison operators, so it inherits their types.
+        // is `x >= l AND x <= h`, and the negated form is `NOT` over it.
         Expr::Between {
             expr,
             low,
@@ -1809,23 +1674,23 @@ fn rewrite_leaf_compound(
                 .unwrap_or(operand))
             };
             let (value, low, high) = (cast(value)?, cast(low)?, cast(high)?);
-            let (lower_op, upper_op, joiner) = if *not {
-                (BinaryOp::Lt, BinaryOp::Gt, "or")
-            } else {
-                (BinaryOp::Ge, BinaryOp::Le, "and")
+            // Go builds each bound with `expression.NewFunction`, which
+            // settles its collation and folds it on the spot; the joining AND
+            // then folds over two constants, so `'a' BETWEEN 'g' AND 'f'` is a
+            // constant false and the scan becomes a TableDual. Only the
+            // joining function is the rewriter's own `newFunction`.
+            let compare = |op: BinaryOp, left: Expression, right: Expression| {
+                let name = binary_op_name(op);
+                let class = crate::builtin::funcs(name).expect("builtin.go registers the operator");
+                expression_new_function(class, name, vec![left, right], resolver)
             };
-            let compare = binary_expression;
-            let mut lower = compare(lower_op, value.clone(), low, resolver)?;
-            let mut upper = compare(upper_op, value, high, resolver)?;
-            // Go builds each bound with `NewFunction`, which settles its
-            // collation and folds it on the spot; the joining AND then folds
-            // over two constants, so `'a' BETWEEN 'g' AND 'f'` is a constant
-            // false and the scan becomes a TableDual.
-            for bound in [&mut lower, &mut upper] {
-                resolver.fold_constant(bound, resolver.fold_mode());
+            let lower = compare(BinaryOp::Ge, value.clone(), low)?;
+            let upper = compare(BinaryOp::Le, value, high)?;
+            let function = new_function("and", vec![lower, upper], resolver)?;
+            if *not {
+                return new_function(unary_op_name(UnaryOp::Not), vec![function], resolver);
             }
-            let class = crate::builtin::funcs(joiner).expect("builtin_op.go registers AND and OR");
-            class_function(class, joiner, vec![lower, upper], resolver)
+            Ok(function)
         }
         // Go `patternLikeOrIlikeToExpression`: `like(expr, pattern, escape)`,
         // whose third argument is the escape byte as an integer.
@@ -2123,6 +1988,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 function
                     .set_grouping_metadata(grouping_mode, grouping_marks)
                     .map_err(|_| EvalError::Unsupported("invalid planner grouping metadata"))?;
+                builtin_function_usage_inc(&function, resolver);
                 return Ok(Expression::ScalarFunction(function));
             }
             // Go resolves every FuncCallExpr through its function class

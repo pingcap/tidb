@@ -48,6 +48,10 @@ impl ColumnResolver for TableResolver<'_> {
         self.constant_context.user_vars()
     }
 
+    fn builtin_function_usage_inc(&self, scalar_func_sig_name: &str) {
+        tidb_exprctx::Columns::builtin_function_usage_inc(&self.constant_context, scalar_func_sig_name);
+    }
+
     fn resolve_constant(&self, path: &[String]) -> Option<Expression> {
         let [name] = path else {
             return None;

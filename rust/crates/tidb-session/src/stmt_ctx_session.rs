@@ -206,6 +206,16 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &self.rand
     }
 
+    fn builtin_function_usage_inc_fn(&self) -> Arc<dyn Fn(&str) + Send + Sync> {
+        let usage = self.builtin_function_usage_cell();
+        Arc::new(move |scalar_func_sig_name| {
+            usage
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .inc(scalar_func_sig_name);
+        })
+    }
+
     fn rand_mut(&mut self) -> &mut Arc<MysqlRng> {
         &mut self.rand
     }

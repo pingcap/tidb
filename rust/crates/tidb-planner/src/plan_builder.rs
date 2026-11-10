@@ -1338,6 +1338,12 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         self.warning_context?.user_vars()
     }
 
+    fn builtin_function_usage_inc(&self, scalar_func_sig_name: &str) {
+        if let Some(context) = self.warning_context {
+            context.builtin_function_usage_inc(scalar_func_sig_name);
+        }
+    }
+
     fn roll_expand_grouping(
         &self,
         args: &[Expression],
@@ -2380,7 +2386,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                     return Ok(subquery);
                 }
                 self.expression_rewriter()
-                    .new_function(
+                    .new_function_internal(
                         "not",
                         tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Tiny),
                         vec![subquery],

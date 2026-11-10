@@ -180,6 +180,12 @@ impl ColumnResolver for ScopeResolver<'_> {
         self.scope.constant_context.as_ref()?.user_vars()
     }
 
+    fn builtin_function_usage_inc(&self, scalar_func_sig_name: &str) {
+        if let Some(context) = &self.scope.constant_context {
+            tidb_exprctx::Columns::builtin_function_usage_inc(context, scalar_func_sig_name);
+        }
+    }
+
     fn param_value(&self, order: usize) -> Result<Datum, tidb_exprctx::EvalError> {
         tidb_exprctx::Columns::param_value(
             self.scope

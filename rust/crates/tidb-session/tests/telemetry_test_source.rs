@@ -543,3 +543,69 @@ fn a_binary_protocol_execute_records_its_telemetry() {
     drop(outcome);
     assert_eq!(usage(&mut tk).index_merge_usage_counter.index_merge_used, before + 1);
 }
+
+/// Go `expressionRewriter.newFunctionWithInit`: each function the rewriter's
+/// own `newFunction` leaves a scalar function is counted under its
+/// signature's `PbCode().String()`. Rows captured from Go
+/// (`tk.Session().GetBuiltinFunctionUsage()` after each statement).
+#[test]
+fn the_planner_counts_each_builtin_function_it_builds_like_go() {
+    let mut tk = TestKit::new();
+    tk.must_exec("use test");
+    tk.must_exec("create table t (a int primary key, b int, c varchar(10), d decimal(10,2))");
+    tk.must_exec("insert into t values (1, 2, 'x', 1.5)");
+    let mut before = tk.session().get_builtin_function_usage().0;
+    let mut got = Vec::new();
+    for (sql, _) in USAGE_ROWS {
+        tk.must_exec(sql);
+        let after = tk.session().get_builtin_function_usage().0;
+        let mut parts = after
+            .iter()
+            .filter_map(|(name, count)| {
+                let delta = count - before.get(name).copied().unwrap_or(0);
+                (delta != 0).then(|| format!("{name}:{delta}"))
+            })
+            .collect::<Vec<_>>();
+        parts.sort();
+        got.push((*sql, parts.join(" ")));
+        before = after;
+    }
+    let want = USAGE_ROWS.iter().map(|(sql, usage)| (*sql, (*usage).to_owned())).collect::<Vec<_>>();
+    for (got, want) in got.iter().zip(&want) {
+        if got != want {
+            println!("USAGE {} => {} (Go {})", got.0, got.1, want.1);
+        }
+    }
+    assert_eq!(got, want);
+}
+
+const USAGE_ROWS: &[(&str, &str)] = &[
+    ("select a + b from t", "PlusInt:1"),
+    ("select 1 + 1 from t", ""),
+    ("select 1 + 1", ""),
+    ("select a from t where b between 1 and 3", "LogicalAnd:1"),
+    ("select a from t where b not between 1 and 3", "LogicalAnd:1 UnaryNotInt:1"),
+    ("select cast(b as char) from t", ""),
+    ("select a from t where b in (1, 2, 3)", "InInt:1"),
+    ("select case when b > 1 then c else 'n' end from t", "CaseWhenString:1 GTInt:1"),
+    ("select a from t where c like 'x%'", "LikeSig:1"),
+    ("select a from t where b = 2 and d > 1", "EQInt:1 GTDecimal:1"),
+    ("select concat(c, 'y'), -b, not b, b is null from t", "Concat:1 IntIsNull:1 UnaryMinusInt:1 UnaryNotInt:1"),
+    ("update t set b = b + 1 where a = 1", "PlusInt:1"),
+    ("insert into t values (2, 1 + 2, concat('a', 'b'), 2)", ""),
+    ("insert into t values (3, 1, 'z', 2) on duplicate key update b = values(b) + b", "PlusInt:1"),
+    ("select count(b + 1), sum(d * 2) from t group by a % 2", "ModIntSignedSigned:1 MultiplyDecimal:1 PlusInt:1"),
+    ("select a from t where a = 1", ""),
+    ("select now() > c, rand() < b from t", "GTTime:1 LTReal:1 Rand:1"),
+    ("select if(b, c, d), ifnull(c, 'q'), coalesce(c, 'q') from t", "CoalesceString:1 IfNullString:1 IfString:1"),
+    ("select * from t t1 join t t2 on t1.a = t2.b + 1", "EQInt:1 PlusInt:1"),
+    ("select (select max(b) from t) + a from t", "PlusInt:1"),
+    ("select a from t where b > any (select b from t)", ""),
+    ("select a from t where b in (select b from t)", "EQInt:1"),
+    ("select a from t order by b + 1", "PlusInt:1"),
+    ("select date_add(c, interval b day), extract(year from c) from t", "AddDateStringInt:1 ExtractDatetime:1"),
+    ("select b div 2, b / 2, b % 2, b & 1, b << 1 from t", "BitAndSig:1 DivideDecimal:1 IntDivideInt:1 LeftShift:1 ModIntSignedSigned:1"),
+    ("select row(a, b) = row(1, 2) from t", "EQInt:2 Unspecified:2"),
+    ("select a from t where (a, b) in ((1, 2), (3, 4))", "EQInt:4 Unspecified:3"),
+    ("delete from t where b + 1 > 100", "GTInt:1 PlusInt:1"),
+];

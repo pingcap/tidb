@@ -923,6 +923,9 @@ pub struct StmtContextData {
     /// context with no session behind it (a test, a DEFAULT expression
     /// folded at DDL time), where `RAND()` is unsupported rather than wrong.
     rand_session: Option<Arc<MysqlRng>>,
+    /// Go `session.BuiltinFunctionUsageInc`, lent by the session that owns
+    /// the counts. `None` is a context with no session behind it.
+    builtin_function_usage_inc: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     /// Go `SessionVars.userVars`: the session's user variables, keyed
     /// lowercased. The SESSION owns the map and lends it here, because `@x :=
     /// expr` writes it MID-STATEMENT, once per row, and a later select-list
@@ -2711,6 +2714,16 @@ context_configuration! {
         self
     }
 
+    /// Attaches Go `session.BuiltinFunctionUsageInc`.
+    #[must_use]
+    pub fn with_builtin_function_usage_inc(
+        mut self,
+        builtin_function_usage_inc: Arc<dyn Fn(&str) + Send + Sync>,
+    ) -> Self {
+        self.builtin_function_usage_inc = Some(builtin_function_usage_inc);
+        self
+    }
+
     /// Attaches the session's user-variable map, which `@x` reads and `@x :=
     /// expr` writes THROUGH -- see the field's own doc for why this is a
     /// shared handle rather than a copy.
@@ -3057,6 +3070,7 @@ impl StmtContext {
             locked_tables: session.locked_tables,
             new_collation_enabled: tidb_datatype::new_collation_enabled(),
             rand_session: None,
+            builtin_function_usage_inc: None,
             user_vars: None,
             prepared_params: None,
             readonly_user_vars: Arc::default(),
@@ -6930,6 +6944,12 @@ impl Columns for StmtContext {
 
     fn user_vars(&self) -> Option<&tidb_variable::user_vars::UserVars> {
         self.user_vars.as_ref()
+    }
+
+    fn builtin_function_usage_inc(&self, scalar_func_sig_name: &str) {
+        if let Some(inc) = &self.builtin_function_usage_inc {
+            inc(scalar_func_sig_name);
+        }
     }
 
     fn is_readonly_user_var(&self, name: &str) -> bool {

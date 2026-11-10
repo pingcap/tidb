@@ -49,6 +49,10 @@ impl ColumnResolver for FoldModeResolver<'_> {
         self.base.user_vars()
     }
 
+    fn builtin_function_usage_inc(&self, scalar_func_sig_name: &str) {
+        self.base.builtin_function_usage_inc(scalar_func_sig_name);
+    }
+
     fn roll_expand_grouping(
         &self,
         args: &[Expression],

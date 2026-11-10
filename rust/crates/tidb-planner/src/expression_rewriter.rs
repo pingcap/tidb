@@ -789,6 +789,24 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         ret_type: FieldType,
         args: Vec<Expression>,
     ) -> Result<Expression, RewriteError> {
+        let function = self.new_function_internal(name, ret_type, args)?;
+        // Go `newFunctionWithInit`: a function that stays one is counted.
+        if let Expression::ScalarFunction(scalar_func) = &function {
+            self.env
+                .ctx
+                .builtin_function_usage_inc(scalar_func.pb_code().as_str_name());
+        }
+        Ok(function)
+    }
+
+    /// Go `expression.NewFunctionInternal(er.sctx, ...)`: the function the
+    /// rewriter builds for its own plan, which no statement asked for.
+    pub(crate) fn new_function_internal(
+        &self,
+        name: &str,
+        ret_type: FieldType,
+        args: Vec<Expression>,
+    ) -> Result<Expression, RewriteError> {
         self.env
             .builder()
             .new_function(name, Some(ret_type), args)
@@ -1354,7 +1372,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         let mut agg = LogicalAggregation::new(base, vec![func_max_or_min], Vec::new());
         agg.prefer_agg_type = self.env.hints.prefer_agg_type;
         agg.prefer_agg_to_cop = self.env.hints.prefer_agg_to_cop;
-        let cond = self.new_function(
+        let cond = self.new_function_internal(
             cmp_func,
             tiny(),
             vec![lexpr.clone(), Expression::Column(col_max_or_min.clone())],
@@ -1411,8 +1429,8 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         all: bool,
         mark_no_decorrelate: bool,
     ) -> Result<LogicalPlan, RewriteError> {
-        let inner_is_null = self.new_function("isnull", tiny(), vec![rexpr.clone()])?;
-        let outer_is_null = self.new_function("isnull", tiny(), vec![lexpr.clone()])?;
+        let inner_is_null = self.new_function_internal("isnull", tiny(), vec![rexpr.clone()])?;
+        let outer_is_null = self.new_function_internal("isnull", tiny(), vec![lexpr.clone()])?;
 
         let func_sum = self.new_agg_func("sum", vec![inner_is_null], false)?;
         let col_sum = self.env.new_plan_column(func_sum.ret_type().clone());
@@ -1439,29 +1457,29 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         }
 
         let inner_has_null =
-            self.new_function("ne", tiny(), vec![Expression::Column(col_sum), zero()])?;
+            self.new_function_internal("ne", tiny(), vec![Expression::Column(col_sum), zero()])?;
         let cond = if all {
             // Go: `t.id < all(s)` is `t.id < min(s.id) and if(sum(s.id is null) != 0, null, true)`.
             let inner_null_checker =
-                self.new_function("if", tiny(), vec![inner_has_null, null(), one()])?;
+                self.new_function_internal("if", tiny(), vec![inner_has_null, null(), one()])?;
             let cond = compose_cnf_condition(vec![cond, inner_null_checker])
                 .expect("two conditions compose");
             let empty_checker =
-                self.new_function("eq", tiny(), vec![Expression::Column(col_count), zero()])?;
+                self.new_function_internal("eq", tiny(), vec![Expression::Column(col_count), zero()])?;
             let outer_null_checker =
-                self.new_function("if", tiny(), vec![outer_is_null, null(), zero()])?;
+                self.new_function_internal("if", tiny(), vec![outer_is_null, null(), zero()])?;
             compose_dnf_condition(vec![cond, empty_checker, outer_null_checker])
                 .expect("three conditions compose")
         } else {
             // Go: `t.id < any(s)` is `t.id < max(s.id) or if(sum(s.id is null) != 0, null, false)`.
             let inner_null_checker =
-                self.new_function("if", tiny(), vec![inner_has_null, null(), zero()])?;
+                self.new_function_internal("if", tiny(), vec![inner_has_null, null(), zero()])?;
             let cond = compose_dnf_condition(vec![cond, inner_null_checker])
                 .expect("two conditions compose");
             let empty_checker =
-                self.new_function("ne", tiny(), vec![Expression::Column(col_count), zero()])?;
+                self.new_function_internal("ne", tiny(), vec![Expression::Column(col_count), zero()])?;
             let outer_null_checker =
-                self.new_function("if", tiny(), vec![outer_is_null, null(), one()])?;
+                self.new_function_internal("if", tiny(), vec![outer_is_null, null(), one()])?;
             compose_cnf_condition(vec![cond, empty_checker, outer_null_checker])
                 .expect("three conditions compose")
         };
@@ -1529,8 +1547,8 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
     ) -> Result<LogicalPlan, RewriteError> {
         let (plan4_agg, max_col, count_col) = self.build_max_and_distinct_count_agg(rexpr, np)?;
         let gt_func =
-            self.new_function("gt", tiny(), vec![Expression::Column(count_col), one()])?;
-        let ne_cond = self.new_function(
+            self.new_function_internal("gt", tiny(), vec![Expression::Column(count_col), one()])?;
+        let ne_cond = self.new_function_internal(
             "ne",
             tiny(),
             vec![lexpr.clone(), Expression::Column(max_col)],
@@ -1567,8 +1585,8 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
     ) -> Result<LogicalPlan, RewriteError> {
         let (plan4_agg, max_col, count_col) = self.build_max_and_distinct_count_agg(rexpr, np)?;
         let le_func =
-            self.new_function("le", tiny(), vec![Expression::Column(count_col), one()])?;
-        let eq_cond = self.new_function(
+            self.new_function_internal("le", tiny(), vec![Expression::Column(count_col), one()])?;
+        let eq_cond = self.new_function_internal(
             "eq",
             tiny(),
             vec![lexpr.clone(), Expression::Column(max_col)],
