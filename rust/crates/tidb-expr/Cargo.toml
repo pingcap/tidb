@@ -26,6 +26,7 @@ tidb-errno = { path = "../tidb-errno" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-parser-types = { path = "../tidb-parser-types" }
 tidb-context = { path = "../tidb-context" }
+tidb-config-deploymode = { path = "../tidb-config-deploymode" }
 tidb-encrypt = { path = "../tidb-encrypt" }
 tidb-go-regexp = { path = "../tidb-go-regexp" }
 tidb-mathutil = { path = "../tidb-mathutil" }

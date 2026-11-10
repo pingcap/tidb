@@ -49,8 +49,11 @@ impl ColumnResolver for FoldModeResolver<'_> {
         self.base.user_vars()
     }
 
-    fn rewrite_grouping(&self, args: &[Expression]) -> Result<Expression, crate::EvalError> {
-        self.base.rewrite_grouping(args)
+    fn roll_expand_grouping(
+        &self,
+        args: &[Expression],
+    ) -> Result<super::RollExpandGrouping, crate::EvalError> {
+        self.base.roll_expand_grouping(args)
     }
 
     fn param_value(&self, order: usize) -> Result<tidb_datatype::Datum, crate::EvalError> {

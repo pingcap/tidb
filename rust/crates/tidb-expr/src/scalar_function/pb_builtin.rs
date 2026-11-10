@@ -76,6 +76,9 @@ enum Kernel {
     /// The builtin TiDB itself evaluates under this Go name: unistore runs a
     /// pushed builtin with the same Go implementation the TiDB tier does.
     Named(&'static str),
+    /// A signature only its function class builds -- Go `getSignatureByPB`
+    /// has no arm for it -- evaluated by the node's own Go implementation.
+    Function,
     /// Go `builtinBitNegSig` / `builtinUnaryMinus*Sig` over their one
     /// argument.
     Unary(tidb_ast::UnaryOp),
@@ -235,6 +238,9 @@ impl PbBuiltin {
             InDuration => Kernel::In(EvalType::Duration),
             InJson => Kernel::In(EvalType::Json),
             LikeSig => Kernel::Like,
+            IlikeSig => Kernel::Named("ilike"),
+            FtsMatchWord => Kernel::Named("fts_match_word"),
+            FtsMatchExpression => Kernel::Named("match_against"),
             LogicalAnd => Kernel::Logic(BinaryOp::LogicAnd),
             LogicalOr => Kernel::Logic(BinaryOp::LogicOr),
             LogicalXor => Kernel::Logic(BinaryOp::LogicXor),
@@ -619,6 +625,15 @@ impl PbBuiltin {
         Some(Self { signature, kernel })
     }
 
+    /// Go `builtinFunc.PbCode()` of the function a class's `getFunction`
+    /// returned: the signature the class set, decodable or not.
+    pub(crate) fn of_builtin_func(signature: ScalarFuncSig) -> Self {
+        Self::new(signature).unwrap_or(Self {
+            signature,
+            kernel: Kernel::Function,
+        })
+    }
+
     pub(super) fn numeric_domain(self) -> Option<EvalType> {
         match self.kernel {
             Kernel::Binary(_, domain) => Some(domain),
@@ -657,7 +672,7 @@ impl PbBuiltin {
             Ok(crate::arg_eval_type::eval_int(&value)?.map(|value| value != 0))
         };
         match self.kernel {
-            Kernel::Named(_) => function.eval_by_signature(ctx, row),
+            Kernel::Named(_) | Kernel::Function => function.eval_by_signature(ctx, row),
             Kernel::Case(domain) => {
                 let (pairs, remainder) = args.as_chunks::<2>();
                 for (index, pair) in pairs.iter().enumerate() {

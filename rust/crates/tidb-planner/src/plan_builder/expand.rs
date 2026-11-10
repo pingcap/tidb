@@ -428,14 +428,16 @@ fn expression_text(expr: &Expression) -> String {
 }
 
 impl BlockExpand {
-    /// Go expressionRewriter.groupingFunctionToExpression: user arguments
-    /// become metadata; only the generated grouping id is evaluated per row.
-    pub(super) fn rewrite_grouping(
+    /// What Go's `ast.Grouping` rewrite reads off `rollExpand`: the
+    /// arguments resolve to GROUP BY columns
+    /// (`ResolveGroupingFuncArgsInGroupBy`) whose marks
+    /// (`GenerateGroupingMarks`) become the function's metadata; only the
+    /// generated grouping id is evaluated per row.
+    pub(super) fn roll_expand_grouping(
         &self,
         args: &[Expression],
-    ) -> Result<Expression, tidb_exprctx::EvalError> {
-        use tidb_expr::scalar_function::ScalarFunction;
-use tidb_exprctx::EvalError;
+    ) -> Result<tidb_expr::rewriter::RollExpandGrouping, tidb_exprctx::EvalError> {
+        use tidb_exprctx::EvalError;
         if args.len() > 64 {
             return Err(EvalError::TooManyGroupingArguments);
         }
@@ -460,21 +462,13 @@ use tidb_exprctx::EvalError;
             .grouping_id_col
             .clone()
             .ok_or(EvalError::Unsupported("ROLLUP Expand has no grouping id"))?;
-        let mode = self
+        let grouping_mode = self
             .grouping_mode
             .ok_or(EvalError::Unsupported("ROLLUP Expand has no grouping mode"))?;
-        let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
-        ret_type.set_flag(ret_type.flags() | FieldTypeFlags::UNSIGNED);
-        ret_type.set_flen(20);
-        ret_type.set_decimal(0);
-        let mut function = ScalarFunction::new(
-            tidb_ast::CiString::new("grouping"),
-            ret_type,
-            vec![Expression::Column(gid)],
-        );
-        function
-            .set_grouping_metadata(mode, marks)
-            .map_err(|_| EvalError::Unsupported("invalid planner grouping metadata"))?;
-        Ok(Expression::ScalarFunction(function))
+        Ok(tidb_expr::rewriter::RollExpandGrouping {
+            gid,
+            grouping_mode,
+            grouping_marks: marks,
+        })
     }
 }

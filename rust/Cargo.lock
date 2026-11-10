@@ -5387,6 +5387,7 @@ dependencies = [
  "tidb-charset",
  "tidb-chunk",
  "tidb-codec",
+ "tidb-config-deploymode",
  "tidb-context",
  "tidb-datatype",
  "tidb-dbterror",

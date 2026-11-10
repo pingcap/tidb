@@ -232,3 +232,93 @@ fn pb_code_is_the_signature_of_the_built_function() {
         "MinusInt"
     );
 }
+
+/// Go `groupingImplFunctionClass.getFunction` sets `GroupingSig`, a
+/// signature `getSignatureByPB` has no arm for; `PbCode()` still reads it.
+#[test]
+fn a_signature_without_a_pb_decoder_keeps_its_pb_code() {
+    let mut column = Column::default();
+    column.ret_type = Some(FieldType::new(FieldTypeCode::LongLong));
+    let f = funcs("grouping")
+        .expect("grouping has a class")
+        .get_function(
+            &crate::builtin::ColumnsBuildContext(&MockContext),
+            vec![Expression::Column(column)],
+        )
+        .expect("builds");
+    let node = crate::new_function::scalar_function_of(
+        "grouping",
+        FieldType::new(FieldTypeCode::Unspecified),
+        f,
+    );
+    assert_eq!(
+        node.pb_signature().map(|signature| signature.as_str_name()),
+        Some("GroupingSig")
+    );
+}
+
+/// Go `SetFTSMysqlMatchAgainstModifier` asserts the node's function is
+/// `builtinFtsMysqlMatchAgainstSig` and refuses any other.
+#[test]
+fn the_match_against_modifier_is_set_on_its_own_signature_only() {
+    let string = || {
+        let mut column = Column::default();
+        column.ret_type = Some(FieldType::new(FieldTypeCode::Varchar));
+        Expression::Column(column)
+    };
+    let escape = Expression::Constant(Constant::new(
+        Datum::Int(92),
+        FieldType::new(FieldTypeCode::LongLong),
+    ));
+    let built = new_function(
+        &MockContext,
+        "like",
+        FieldType::new(FieldTypeCode::Unspecified),
+        vec![string(), string(), escape],
+    )
+    .expect("like builds");
+    let Expression::ScalarFunction(mut like) = built else {
+        panic!("{built:?}");
+    };
+    let error = like
+        .set_fts_mysql_match_against_modifier(tidb_ast::MatchModifier::default())
+        .expect_err("like is not the MATCH ... AGAINST signature");
+    assert!(
+        format!("{error:?}").contains("unexpected builtin signature for match_against"),
+        "{error:?}"
+    );
+}
+
+/// Go `patternLikeOrIlikeToExpression` types the escape with
+/// `types.DefaultTypeForValue(int(v.Escape), ...)`: a BIGINT as wide as the
+/// escape's printed digits (`mathutil.StrLenOfInt64Fast`).
+#[test]
+fn a_like_escape_is_as_wide_as_its_digits() {
+    struct NoneResolver;
+    impl crate::rewriter::ColumnResolver for NoneResolver {
+        fn resolve(&self, _: &[String]) -> Option<(usize, FieldType, i64)> {
+            None
+        }
+        fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+            tidb_datatype::SessionTimeZone::utc()
+        }
+    }
+    for (text, flen) in [("rand() like 'a'", 2), ("rand() like 'a' escape '|'", 3)] {
+        let stmt = tidb_parser::parse(&format!("select {text}")).expect("parse");
+        let tidb_ast::Stmt::Query(query) = stmt else {
+            panic!("{text}: not a query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+            panic!("{text}: not a select")
+        };
+        let tidb_ast::SelectField::Expr { expr, .. } = &select.fields[0] else {
+            panic!("{text}: no expression")
+        };
+        let built = crate::rewriter::rewrite_expr_resolved(expr, &NoneResolver).expect("rewrite");
+        let Expression::ScalarFunction(like) = &built else {
+            panic!("{text}: {built:?}");
+        };
+        let escape = type_of(&like.args[2]);
+        assert_eq!(type_text(&escape), format!("8,129,{flen},0,binary,binary"), "{text}");
+    }
+}

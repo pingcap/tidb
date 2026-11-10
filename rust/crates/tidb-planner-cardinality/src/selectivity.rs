@@ -333,6 +333,24 @@ pub fn selectivity(
         }
     }
 
+    // `FTSMysqlMatchAgainst` is opaque to the stats engine, so Go estimates
+    // it as the ILIKE expression it stands for; a failed substitution keeps
+    // the builtin itself.
+    let fts_substitutes: Vec<Option<Expression>> = remained
+        .iter()
+        .map(|expr| match expr {
+            Expression::ScalarFunction(function)
+                if function.func_name.lowercase() == "match_against" =>
+            {
+                tidb_expr::fts::build_fts_to_i_like_expression_from_builtin(
+                    &tidb_exprctx::NoColumns,
+                    function,
+                )
+                .ok()
+            }
+            _ => None,
+        })
+        .collect();
     let mut not_covered_constants: Vec<(usize, &Constant)> = Vec::new();
     let mut not_covered_dnf: Vec<(usize, &ScalarFunction)> = Vec::new();
     let mut not_covered_str_match: Vec<(usize, &Expression)> = Vec::new();
@@ -355,6 +373,20 @@ pub fn selectivity(
                     }
                     "like" | "ilike" | "regexp" | "regexp_like" => {
                         not_covered_str_match.push((offset, expr));
+                        continue;
+                    }
+                    "match_against" => {
+                        match &fts_substitutes[offset] {
+                            // `AGAINST(NULL)` and an empty search are constant
+                            // false to the stats engine.
+                            Some(Expression::Constant(constant)) => {
+                                not_covered_constants.push((offset, constant));
+                            }
+                            Some(substitute @ Expression::ScalarFunction(_)) => {
+                                not_covered_str_match.push((offset, substitute));
+                            }
+                            _ => not_covered_str_match.push((offset, expr)),
+                        }
                         continue;
                     }
                     "not" => {

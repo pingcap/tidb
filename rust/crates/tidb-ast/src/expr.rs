@@ -934,10 +934,11 @@ pub enum Expr {
 /// confirmed via `godump restore`: an explicit `IN NATURAL LANGUAGE MODE`
 /// (the implicit default) restores identically to no modifier at all, so
 /// [`MatchModifier::None`] covers both.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum MatchModifier {
     /// No modifier written, or `IN NATURAL LANGUAGE MODE` (the implicit
     /// default) — both restore with no suffix.
+    #[default]
     None,
     /// `IN BOOLEAN MODE`.
     BooleanMode,

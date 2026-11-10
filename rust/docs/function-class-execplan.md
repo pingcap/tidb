@@ -51,8 +51,13 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   `compose_dnf_condition` have no build context at their 75 call sites and
   still construct `and` / `or` nodes directly, and the catalog's resolve
   rows for the operator names stay for such nodes.
-- [ ] Milestone 3: `builtin_fts.go` (2), `builtin_like.go` (1),
-  `builtin_ilike.go` (1), `builtin_grouping.go` (1).
+- [x] (2026-11-10) Milestone 3: `builtin_fts.go` (2), `builtin_like.go`
+  (1), `builtin_ilike.go` (1), `builtin_grouping.go` (1). The rewriter's
+  `LIKE`, `MATCH ... AGAINST` and `GROUPING` arms build through the
+  classes, and `cardinality.Selectivity` estimates the native builtin as
+  the ILIKE it stands for. Left, and the planner's, not a class's: Go's
+  `FTSFunctionIsUsed` statement flag and the alternative-plan rounds (the
+  LIKE fallback here is a rewrite of the query's AST before its one build).
 - [ ] Milestone 4: `builtin_compare.go` (5), `builtin_control.go` (3).
 - [ ] Milestone 5: `builtin_math.go` (25).
 - [ ] Milestone 6: `builtin_miscellaneous.go` (29), `builtin_info.go` (26),
@@ -145,6 +150,42 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   EXPLAIN carries it too.
   Evidence: `op_classes_wrap_and_evaluate_like_go`.
 
+- Observation: a class sets signatures Go's decoder (`getSignatureByPB`)
+  has no arm for (`GroupingSig`, `UnaryNotJSON`), and a node built by a
+  class must still answer its `PbCode()`. `PbBuiltin::new` is the decoder
+  and answered `None` for them, so the node lost its signature.
+  Evidence: `set_fts_mysql_match_against_modifier` failed with "unexpected
+  builtin signature for match_against: None" until
+  `PbBuiltin::of_builtin_func` kept the class's code.
+- Observation: Go builds `MATCH ... AGAINST` whenever its four argument
+  checks pass and fails only when a row evaluates a non-NULL search string.
+  So `AGAINST(NULL)` is NULL, a read of no rows succeeds, and EXPLAIN prints
+  the function; the error is 1105, not 1235.
+  Evidence: `match_against_builds_and_fails_only_at_evaluation`.
+- Observation: `groupingImplFunctionClass` never sees the user's arguments.
+  The planner (`rewriteGrouping`) hands it the Expand operator's grouping-id
+  column and writes the arguments' positions into the signature's metadata.
+  Evidence: `grouping_reads_the_expand_operators_gid`.
+- Observation: `LIKE`'s escape is a third argument, an integer constant
+  typed by `types.DefaultTypeForValue`, and `NOT LIKE` is `not` over the
+  folded `like` (Go `notToExpression`), so the class wraps nothing for it.
+  Evidence: `like_and_ilike_cast_their_arguments_to_strings`.
+- Observation: once the class refused a search that is not a constant, a
+  prepared `AGAINST(?)` stopped falling back to ILIKE: the AST rewrite ran
+  on the statement before its parameters were bound and left the marker
+  alone. Go's `matchAgainstToLike` evaluates the parameter, bakes it into
+  the pattern and calls `SetSkipPlanCache`, so the statement warns "skip
+  prepared plan-cache: MATCH...AGAINST LIKE fallback bakes a mutable search
+  string into plan constants" and is planned on every execution.
+  Evidence: `a_prepared_like_fallback_bakes_its_parameter_and_skips_the_plan_cache`.
+- Observation: only a statement whose plan is a logical plan gets Go's
+  alternative rounds. A DELETE, UPDATE, INSERT ... SELECT or SET over a
+  `MATCH` keeps the native builtin and fails at its first row (1105), and
+  EXPLAIN of a query shows the ILIKE while EXPLAIN of a DELETE shows
+  `match_against` at 0.1 selectivity.
+  Evidence: `only_a_query_gets_the_like_fallback_round`,
+  `a_native_match_against_is_estimated_as_its_ilike`.
+
 ## Decision Log
 
 - Decision: port one whole Go file per milestone, never one function at a
@@ -196,6 +237,18 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   file's rows.
   Date/Author: 2026-11-10, agent.
 
+- Decision: the LIKE fallback stays one AST rewrite
+  (`tidb_executor::fts_like_rewrite::rewrite_stmt_fts`) with one gate -- the
+  statement is a query and `tidb_opt_enable_alternative_logical_plans` is on
+  -- called where a query, an EXPLAIN's target and a prepared statement's
+  bound text are planned. Go's two rounds (a native build, then a rebuild
+  under `AlternativeLogicalPlanFTSLikeFallback`) are the planner's port and
+  are recorded in the register, with what the single rewrite gets wrong: an
+  uncorrelated scalar or `EXISTS` subquery, which Go's first round evaluates
+  natively and fails, and a view's body.
+  Rationale: the rounds change every planning entry point; the class port
+  needs only that its refusals no longer hide the fallback.
+  Date/Author: 2026-11-10, agent.
 - Decision: `BuildContext` gains `append_warning` (Go
   `ctx.GetEvalCtx().AppendWarning`). The rewriter's adapter records it with
   the fold's warnings, which join the statement's list where planning ends.
@@ -208,6 +261,30 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   function has no context and 75 callers. Its arguments are conditions
   already, so the class would wrap nothing; threading a context through is
   its own change.
+  Date/Author: 2026-11-10, agent.
+
+- Decision: a class-built node always keeps its class's signature:
+  `ScalarFunction::from_builtin_func` installs
+  `PbBuiltin::of_builtin_func(pb_code)`, whose kernel is the decoder's when
+  Go's decoder has an arm for the code and `Kernel::Function` (the node's
+  own evaluation) when it has none. This replaces the earlier `None`.
+  Rationale: Go's `PbCode()` is whatever `setPbCode` stored; whether the
+  decoder can rebuild the signature is a separate question.
+  Date/Author: 2026-11-10, agent.
+- Decision: the full-text modifier is a field of the node
+  (`fts_mysql_match_against_modifier`), set by Go's
+  `SetFTSMysqlMatchAgainstModifier` equivalent and read by
+  `scalar_function_can_be_pushed` and the ILIKE fallback.
+  Rationale: Go keeps it in `builtinFtsMysqlMatchAgainstSig`; the Rust
+  signature object is the decoder's shared `PbBuiltin`, and the node is
+  where Rust keeps a signature's own state (as it does the grouping
+  metadata).
+  Date/Author: 2026-11-10, agent.
+- Decision: the planner answers `ColumnResolver::roll_expand_grouping` with
+  the Expand's grouping-id column, mode and marks, and the rewriter builds
+  `grouping` through the class.
+  Rationale: Go's `rewriteGrouping` lives in the rewriter and calls
+  `NewFunction`; the planner only owns the Expand.
   Date/Author: 2026-11-10, agent.
 
 ## Outcomes & Retrospective
@@ -227,6 +304,19 @@ from the class, and `-?` over a parameter holding `-9223372036854775808`
 answers the decimal Go answers. `infer_op_type`, `infer_unary_op_type`,
 `wrap_with_is_true_with_null`, `folded_value` and the operator rows of
 `result_type.rs` and `signature_args.rs` are gone.
+
+Milestone 3 (2026-11-10): `like`, `ilike`, `grouping`, `fts_match_word`
+and `match_against` are built by their classes; `builtin::funcs` lists 26
+names and the fixture holds 3,516 rows over 24 of them (the other two take
+arguments no column shape reaches and are pinned by
+`tests_core/builtin_fts_like_grouping.rs` against a Go testkit run).
+`MATCH ... AGAINST` builds, prints in EXPLAIN and fails at evaluation as
+Go's does; the invented "MATCH_AGAINST() is only supported in starter
+deployment mode" refusal is gone, `fts_match_word` asks the deployment mode
+as Go's class does, and `fts.rs`'s ILIKE fallback reads the `match_against`
+node and its modifier (`BuildFTSToILikeExpressionFromBuiltin`). The `like` /
+`ilike` rows of `result_type.rs` and `string_declared_args` and the legacy
+`grouping` stamp are gone.
 
 ## Context and Orientation
 
@@ -489,7 +579,9 @@ checked by the caller (`verify_args_by_count`, from the registry's arity).
 `new_base_builtin_func_with_field_type` are added by the first class that
 calls each. `ScalarFunction::from_builtin_func(func_name, ret_type, f)`
 makes the node: `f`'s arguments and collation, and `pb_builtin =
-PbBuiltin::new(f.pb_code)`, the same object the decoder installs.
+PbBuiltin::of_builtin_func(f.pb_code)`, the object the decoder installs for
+a code it knows and the class's code with the node's own evaluation
+otherwise.
 `pushdown_catalog::pb_code` returns that signature when the node has one.
 
 The work depends on `tidb-datatype` (field types, eval types), `tidb-charset`

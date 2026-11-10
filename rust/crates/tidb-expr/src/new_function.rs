@@ -378,13 +378,6 @@ pub fn new_function_impl(
         function.set_gl_signature(gl_signature);
     }
 
-    // Go's grouping signature marks its result as an unsigned BIGINT because
-    // the returned bits encode multiple grouping flags.
-    if func_name == "grouping" {
-        if let Some(ret_type) = function.ret_type.as_mut() {
-            ret_type.add_flags(FieldTypeFlags::UNSIGNED);
-        }
-    }
     function.collation.set_coercibility(derived.coer);
     function.collation.set_repertoire(derived.repe);
     function.collation.set_charset_and_collation(&derived.charset, &derived.collation);

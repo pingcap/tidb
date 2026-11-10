@@ -913,6 +913,12 @@ pub(crate) fn scalar_function_can_be_pushed(
     ) {
         (policy.charset, policy.collation) = function.collation.charset_and_collation();
     }
+    // Go `scalarExprSupportedByFlash`, `ast.FTSMysqlMatchAgainst`: the
+    // signature's modifier, which the pushdown protocol does not carry.
+    if let Some(modifier) = function.fts_mysql_match_against_modifier() {
+        policy.fts_boolean_mode = modifier.is_boolean_mode();
+        policy.fts_with_query_expansion = modifier.with_query_expansion();
+    }
     can_function_be_pushed(&policy, store, blacklist)
 }
 

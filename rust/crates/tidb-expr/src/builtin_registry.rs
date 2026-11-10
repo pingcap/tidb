@@ -496,17 +496,6 @@ pub(crate) fn get_function_refusal(name: &str) -> Option<crate::EvalError> {
         // `ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", ...)`.
         "default_func" => "DEFAULT",
         "uuid_short" => "UUID_SHORT",
-        // go declares both FTS functions in `funcs` but building outside a
-        // fulltext index answers `ErrNotSupportedYet` (1235) whose carried
-        // text is the whole deployment sentence
-        // (`pkg/expression/builtin_fts.go`; captured on the oracle:
-        // "This version of TiDB doesn't yet support 'FTS_MATCH_WORD() is
-        // only supported in starter deployment mode'").
-        "fts_match_word" => {
-            return Some(crate::EvalError::NotImplemented(
-                "FTS_MATCH_WORD() is only supported in starter deployment mode".into(),
-            ))
-        }
         // Go `tidbRowChecksumFunctionClass.getFunction` refuses every build
         // with `ErrNotSupportedYet.GenWithStack(...)`, which REPLACES the
         // 1235 message rather than formatting it: the checksum exists only
@@ -531,11 +520,6 @@ pub(crate) fn get_function_refusal(name: &str) -> Option<crate::EvalError> {
 pub(crate) fn unresolved_error(name: &str, current_database: Option<String>) -> crate::EvalError {
     if let Some(refusal) = get_function_refusal(name) {
         return refusal;
-    }
-    if name == "match_against" {
-        return crate::EvalError::NotImplemented(
-            "MATCH_AGAINST() is only supported in starter deployment mode".into(),
-        );
     }
     if is_registered_builtin(name) {
         return crate::EvalError::Unsupported("this builtin is not yet built for chunk evaluation");

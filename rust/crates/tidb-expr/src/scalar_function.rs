@@ -357,6 +357,10 @@ pub struct ScalarFunction {
     /// `newBaseBuiltinFuncWithTp` cast them (a compare-as-time call's
     /// `cmpAsDate` survives its arguments' cast to strings).
     gl_signature: Option<crate::builtin_ext::GlSignature>,
+    /// Go `builtinFtsMysqlMatchAgainstSig.modifier`, which the protobuf
+    /// signature has no field for: a copy read back from the wire searches
+    /// in natural-language mode.
+    fts_modifier: tidb_ast::MatchModifier,
 
     /// Go embedded collation state (via the `Function`'s `collationInfo`).
     pub collation: CollationInfo,
@@ -650,7 +654,7 @@ impl ScalarFunction {
             func_name,
             ret_type: Some(ret_type),
             args: f.args,
-            pb_builtin: PbBuiltin::new(f.pb_code),
+            pb_builtin: Some(PbBuiltin::of_builtin_func(f.pb_code)),
             collation: f.collation,
             ..Default::default()
         }
@@ -1812,6 +1816,30 @@ impl ScalarFunction {
         )
     }
 
+    /// Go `SetFTSMysqlMatchAgainstModifier`: the planner's call right after
+    /// it builds the internal `MATCH ... AGAINST` function.
+    pub fn set_fts_mysql_match_against_modifier(
+        &mut self,
+        modifier: tidb_ast::MatchModifier,
+    ) -> Result<(), EvalError> {
+        let signature = self.pb_signature();
+        if signature != Some(tidb_proto::tipb::ScalarFuncSig::FtsMatchExpression) {
+            return Err(EvalError::Raw(format!(
+                "unexpected builtin signature for match_against: {signature:?}"
+            )));
+        }
+        self.fts_modifier = modifier;
+        Ok(())
+    }
+
+    /// Go `builtinFtsMysqlMatchAgainstSig.modifier`, or `None` for a node of
+    /// another signature.
+    #[must_use]
+    pub fn fts_mysql_match_against_modifier(&self) -> Option<tidb_ast::MatchModifier> {
+        (self.pb_signature() == Some(tidb_proto::tipb::ScalarFuncSig::FtsMatchExpression))
+            .then_some(self.fts_modifier)
+    }
+
     /// Records the GREATEST/LEAST signature chosen at construction.
     pub(crate) fn set_gl_signature(&mut self, signature: Option<crate::builtin_ext::GlSignature>) {
         self.gl_signature = signature;
@@ -2235,6 +2263,24 @@ impl ScalarFunction {
                 output.extend_from_slice(part);
             }
             return Ok(Datum::new_string_datum(output));
+        }
+        // Go `builtinFtsMatchWordSig.evalReal` and
+        // `builtinFtsMysqlMatchAgainstSig.evalReal`: only a fulltext index
+        // computes a relevance score; a NULL search constant is NULL.
+        if name == "fts_match_word" {
+            return Err(EvalError::Raw(
+                "cannot use 'FTS_MATCH_WORD()' outside of fulltext index".to_owned(),
+            ));
+        }
+        if name == "match_against" {
+            if let Some(Expression::Constant(against)) = self.args.first() {
+                if against.value.is_null() {
+                    return Ok(Datum::Null);
+                }
+            }
+            return Err(EvalError::Raw(
+                "cannot use 'MATCH ... AGAINST' outside of fulltext index".to_owned(),
+            ));
         }
         // Go builtinLikeSig/builtinIlikeSig evaluate each argument in order
         // and stop at NULL. The escape is EvalInt followed by byte(escape),

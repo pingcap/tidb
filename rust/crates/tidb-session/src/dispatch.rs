@@ -1617,40 +1617,7 @@ impl Session {
         let Ok(catalog) = self.lock_catalog() else {
             return Ok(());
         };
-        let columns_are_strings = |select: &tidb_ast::SelectStmt, columns: &[Vec<String>]| {
-            tidb_executor::fts_columns_are_strings(select, columns, &catalog, &current_db, &ctx)
-        };
-        struct FtsRewriter<'a> {
-            columns_are_strings: &'a tidb_executor::fts_like_rewrite::ColumnsAreStrings<'a>,
-            error: Option<DriverError>,
-        }
-        impl tidb_ast::Visitor for FtsRewriter<'_> {
-            fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-                if self.error.is_some() {
-                    return false;
-                }
-                if let Some(select) = node.downcast_mut::<tidb_ast::SelectStmt>() {
-                    if let Err(error) = tidb_executor::fts_like_rewrite::rewrite_select_fts(
-                        select,
-                        self.columns_are_strings,
-                    ) {
-                        self.error = Some(error);
-                    }
-                }
-                false
-            }
-
-            fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
-                true
-            }
-        }
-        use tidb_ast::Visitable as _;
-        let mut rewriter = FtsRewriter {
-            columns_are_strings: &columns_are_strings,
-            error: None,
-        };
-        stmt.accept(&mut rewriter);
-        rewriter.error.map_or(Ok(()), Err)
+        tidb_executor::fts_like_rewrite::rewrite_stmt_fts(stmt, &catalog, &current_db, &ctx)
     }
 
     // Go keys memory arbitration by StatementContext.SQLDigest's normalized

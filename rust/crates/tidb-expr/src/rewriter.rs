@@ -23,6 +23,7 @@ use tidb_datatype::CollationCollator;
 use crate::column::Column;
 use crate::constant::Constant;
 use crate::constant_fold::ConstantFoldMode;
+use crate::grouping::GroupingMode;
 use tidb_exprctx::context::JsonError;
 use crate::expression::{Expression, ScalarFunction};
 use crate::scalar_function::{binary_op_name, unary_op_name};
@@ -51,12 +52,27 @@ use result_type::{
     returns_binary_string, set_binary_charset, check_func_cast_expr, validate_name_const_args,
 };
 
+/// What Go's `ast.Grouping` rewrite takes from `planCtx.rollExpand`: the
+/// Expand's grouping-id column (`GID`), its `GroupingMode`, and
+/// `GenerateGroupingMarks` over the GROUP BY columns the GROUPING arguments
+/// resolve to (`ResolveGroupingFuncArgsInGroupBy`).
+pub struct RollExpandGrouping {
+    /// Go `rollExpand.GID`.
+    pub gid: Column,
+    /// Go `rollExpand.GroupingMode`.
+    pub grouping_mode: GroupingMode,
+    /// Go `rollExpand.GenerateGroupingMarks(resolvedCols)`.
+    pub grouping_marks: Vec<std::collections::BTreeSet<u64>>,
+}
+
 /// Resolves a dotted column path to an output column, standing in for the
 /// schema/name resolution Go's `expression_rewriter` performs against the
 /// plan's schema (`resolveColumn`).
 pub trait ColumnResolver {
-    /// Builds GROUPING using the current query block's Expand metadata.
-    fn rewrite_grouping(&self, _args: &[Expression]) -> Result<Expression, EvalError> {
+    /// Go `planCtx.rollExpand` as the rewriter's `ast.Grouping` arm reads it
+    /// for the rewritten GROUPING arguments `args`. Outside a ROLLUP block it
+    /// is nil, which is `ErrInvalidGroupFuncUse`.
+    fn roll_expand_grouping(&self, _args: &[Expression]) -> Result<RollExpandGrouping, EvalError> {
         Err(EvalError::InvalidGroupFuncUse)
     }
 
@@ -287,8 +303,8 @@ impl<T: ColumnResolver + ?Sized> ColumnResolver for &T {
         (**self).allow_build_cast_array()
     }
 
-    fn rewrite_grouping(&self, args: &[Expression]) -> Result<Expression, EvalError> {
-        (**self).rewrite_grouping(args)
+    fn roll_expand_grouping(&self, args: &[Expression]) -> Result<RollExpandGrouping, EvalError> {
+        (**self).roll_expand_grouping(args)
     }
 
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
@@ -589,7 +605,7 @@ fn string_declared_args(
         ],
         "insert_func" => at(&[0, 3]),
         "lpad" | "rpad" => at(&[0, 2]),
-        "locate" | "position" | "substring_index" | "trim" | "like" | "ilike" => at(&[0, 1]),
+        "locate" | "position" | "substring_index" | "trim" => at(&[0, 1]),
         "make_set" | "elt" => (0..count).map(|index| index > 0).collect(),
         "regexp_instr" => at(&[0, 1, 5]),
         "regexp_substr" => at(&[0, 1, 4]),
@@ -928,16 +944,76 @@ fn scalar(name: &str, args: Vec<Expression>) -> Expression {
 fn class_function(
     class: &dyn crate::builtin::FunctionClass,
     name: &str,
-    mut args: Vec<Expression>,
+    args: Vec<Expression>,
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
+    class_scalar_function(class, name, args, resolver).map(Expression::ScalarFunction)
+}
+
+/// [`class_function`]'s node, for a caller that initializes it (Go
+/// `newFunctionWithInit`, `SetFTSMysqlMatchAgainstModifier`).
+fn class_scalar_function(
+    class: &dyn crate::builtin::FunctionClass,
+    name: &str,
+    mut args: Vec<Expression>,
+    resolver: &impl ColumnResolver,
+) -> Result<ScalarFunction, EvalError> {
     crate::new_function::type_infer_for_null(&mut args);
     let f = class.get_function(&crate::builtin::ResolverBuildContext(resolver), args)?;
-    Ok(Expression::ScalarFunction(crate::new_function::scalar_function_of(
+    Ok(crate::new_function::scalar_function_of(
         name,
         FieldType::new(FieldTypeCode::Unspecified),
         f,
-    )))
+    ))
+}
+
+/// Go `notToExpression`: `op` over `args` through `newFunction` -- which
+/// folds it -- and, for the negated form, `not` over that. So `a IS NOT NULL`
+/// over a NOT NULL column is `not(0)`, a folded constant that is itself NOT
+/// NULL.
+fn not_to_expression(
+    has_not: bool,
+    op: &str,
+    args: Vec<Expression>,
+    resolver: &impl ColumnResolver,
+) -> Result<Expression, EvalError> {
+    let class = crate::builtin::funcs(op).expect("the operator's function class is ported");
+    let mut call = class_function(class, op, args, resolver)?;
+    if !has_not {
+        return Ok(call);
+    }
+    resolver.fold_constant(&mut call, resolver.fold_mode());
+    let name = unary_op_name(UnaryOp::Not);
+    let class = crate::builtin::funcs(name).expect("builtin_op.go registers NOT");
+    class_function(class, name, vec![call], resolver)
+}
+
+/// Go `matchAgainstToBuiltin`: the native `match_against(against, cols...)`
+/// builtin, which only a fulltext index evaluates.
+fn match_against_to_builtin(
+    modifier: tidb_ast::MatchModifier,
+    against: Expression,
+    cols: Vec<Expression>,
+    resolver: &impl ColumnResolver,
+) -> Result<Expression, EvalError> {
+    // Go `ftsModifierAllowsNativePushdown`: the pushdown protocol does not
+    // carry the modifier, so TiFlash would run the search in natural-language
+    // mode. `matchHasLikeFallbackRescue` is false here: a MATCH the LIKE
+    // fallback serves was rewritten before planning.
+    if modifier.is_boolean_mode() || modifier.with_query_expansion() {
+        return Err(EvalError::NotImplemented(
+            "MATCH...AGAINST with this modifier on the native FTS path (modifier is not carried through pushdown to TiFlash)"
+                .into(),
+        ));
+    }
+    let mut args = Vec::with_capacity(1 + cols.len());
+    args.push(against);
+    args.extend(cols);
+    let name = "match_against";
+    let class = crate::builtin::funcs(name).expect("builtin_fts.go registers MATCH AGAINST");
+    let mut function = class_scalar_function(class, name, args, resolver)?;
+    function.set_fts_mysql_match_against_modifier(modifier)?;
+    Ok(Expression::ScalarFunction(function))
 }
 
 /// Whether the node is a cast scalar function that GO's BuildCastFunction
@@ -2595,8 +2671,8 @@ fn rewrite_leaf_compound(
             let class = crate::builtin::funcs(joiner).expect("builtin_op.go registers AND and OR");
             class_function(class, joiner, vec![lower, upper], resolver)
         }
-        // Go builds `like(expr, pattern, escape)`, whose third argument is
-        // the escape byte as an integer; `NOT LIKE` wraps it in a unary NOT.
+        // Go `patternLikeOrIlikeToExpression`: `like(expr, pattern, escape)`,
+        // whose third argument is the escape byte as an integer.
         Expr::Like {
             expr,
             pattern,
@@ -2604,36 +2680,19 @@ fn rewrite_leaf_compound(
             ilike,
             escape,
         } => {
-            let name = if *ilike { "ilike" } else { "like" };
-            let args = vec![
-                rewrite_expr_resolved(expr, resolver)?,
-                rewrite_expr_resolved(pattern, resolver)?,
-                // Go supplies the session-selected implicit escape when none
-                // was written. Explicit `ESCAPE` always wins.
-                constant(
-                    Datum::Int(i64::from(
-                        escape.unwrap_or_else(|| resolver.like_default_escape()),
-                    )),
-                    FieldTypeCode::LongLong,
-                ),
-            ];
-            // `likeFunctionClass`: ETString, ETString, ETInt.
-            let args = wrap_declared_string_args(name, args, &[0, 1], resolver)?;
-            let ret_type =
-                builtin_return_type(name, &args).expect("the like builtin has a fixed result type");
-            let call = Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new(name),
-                ret_type.clone(),
-                args,
+            let expr = rewrite_expr_resolved(expr, resolver)?;
+            let pattern = rewrite_expr_resolved(pattern, resolver)?;
+            ensure_single_column(&[&expr, &pattern])?;
+            // Go supplies the session-selected implicit escape when none
+            // was written. Explicit `ESCAPE` always wins.
+            let escape = i64::from(escape.unwrap_or_else(|| resolver.like_default_escape()));
+            // Go `types.DefaultTypeForValue(int(escape), ...)`.
+            let escape = Expression::Constant(Constant::new(
+                Datum::Int(escape),
+                int_literal_type(escape.to_string().len(), false),
             ));
-            if *not {
-                return Ok(Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new(unary_op_name(UnaryOp::Not)),
-                    ret_type,
-                    vec![call],
-                )));
-            }
-            Ok(call)
+            let name = if *ilike { "ilike" } else { "like" };
+            not_to_expression(*not, name, vec![expr, pattern, escape], resolver)
         }
         // Go builds `regexp(expr, pattern)`; `NOT REGEXP`/`NOT RLIKE` wraps
         // it in a unary NOT, the same shape `Expr::Like` above builds.
@@ -2768,19 +2827,7 @@ fn rewrite_leaf_compound(
                 IsTarget::True => "istrue",
                 IsTarget::False => "isfalse",
             };
-            let class = crate::builtin::funcs(name).expect("builtin_op.go registers the IS classes");
-            let mut call = class_function(class, name, vec![arg], resolver)?;
-            if *not {
-                // Go's `notToExpression` builds the operator through
-                // `newFunction` first, which folds it BEFORE the `not` is
-                // built over it -- so `a IS NOT NULL` over a NOT NULL column
-                // is `not(0)`, a folded constant that is itself NOT NULL.
-                resolver.fold_constant(&mut call, resolver.fold_mode());
-                let name = unary_op_name(UnaryOp::Not);
-                let class = crate::builtin::funcs(name).expect("builtin_op.go registers NOT");
-                return class_function(class, name, vec![call], resolver);
-            }
-            Ok(call)
+            not_to_expression(*not, name, vec![arg], resolver)
         }
         Expr::Unary(op, inner) => {
             let arg = rewrite_expr_resolved(inner, resolver)?;
@@ -3094,7 +3141,25 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                     .iter()
                     .map(|arg| rewrite_expr_resolved(arg, resolver))
                     .collect::<Result<Vec<_>, _>>()?;
-                return resolver.rewrite_grouping(&args);
+                // Go: the user arguments become the signature's metadata
+                // and the function reads only the Expand's grouping id.
+                let RollExpandGrouping {
+                    gid,
+                    grouping_mode,
+                    grouping_marks,
+                } = resolver.roll_expand_grouping(&args)?;
+                let class = crate::builtin::funcs("grouping")
+                    .expect("builtin_grouping.go registers GROUPING");
+                let mut function = class_scalar_function(
+                    class,
+                    "grouping",
+                    vec![Expression::Column(gid)],
+                    resolver,
+                )?;
+                function
+                    .set_grouping_metadata(grouping_mode, grouping_marks)
+                    .map_err(|_| EvalError::Unsupported("invalid planner grouping metadata"))?;
+                return Ok(Expression::ScalarFunction(function));
             }
             // Go resolves every FuncCallExpr through its function class
             // before a physical operator can suppress row evaluation (for
@@ -3554,20 +3619,19 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
         // aggregation did not map (nested in another aggregate's argument)
         // is `ErrInvalidGroupFuncUse` (1111), before its arguments are seen.
         Expr::Aggregate { .. } | Expr::GroupConcat { .. } => Err(EvalError::InvalidGroupFuncUse),
-        // Go `matchAgainstToBuiltin`: a modifier the native FTS builtin cannot
-        // carry through pushdown is refused outright; the default mode builds
-        // the native function, which only a fulltext index can evaluate.
-        Expr::MatchAgainst { modifier, .. } => {
-            if modifier.is_boolean_mode() || modifier.with_query_expansion() {
-                Err(EvalError::NotImplemented(
-                    "MATCH...AGAINST with this modifier on the native FTS path (modifier is not carried through pushdown to TiFlash)"
-                        .into(),
-                ))
-            } else {
-                Err(EvalError::Unsupported(
-                    "cannot use 'MATCH ... AGAINST' outside of fulltext index",
-                ))
-            }
+        // Go `matchAgainstToExpression`, whose stack holds the columns and
+        // then the search expression.
+        Expr::MatchAgainst {
+            columns,
+            against,
+            modifier,
+        } => {
+            let cols = columns
+                .iter()
+                .map(|path| rewrite_expr_resolved(&Expr::Column(path.clone()), resolver))
+                .collect::<Result<Vec<_>, _>>()?;
+            let against = rewrite_expr_resolved(against, resolver)?;
+            match_against_to_builtin(*modifier, against, cols, resolver)
         }
         // Go's preprocessor (`preprocess.go`, `*ast.FuncCallExpr` with a
         // schema) answers every qualified call with `ErrFunctionNotExists`,

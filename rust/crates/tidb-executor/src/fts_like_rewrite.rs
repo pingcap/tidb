@@ -36,39 +36,90 @@
 //! predicates.
 
 use tidb_ast::{BinaryOp, Expr, MatchModifier, UnaryOp};
+use tidb_datatype::Datum;
+use tidb_infoschema::SessionExtendedInfoSchema;
 
-use crate::DriverError;
+use crate::{DriverError, StmtContext};
 
-/// Answers whether every column a `MATCH` names resolves, in this SELECT's
-/// own scope, to a STRING column. Go checks `EvalType() != ETString` on the
-/// resolved expressions (`matchAgainstToLike`) and refuses with "Doesn't
-/// support match search on a non-string column without fulltext index"; the
-/// caller owns the catalog, so it owns the answer.
-pub type ColumnsAreStrings<'a> = dyn Fn(&tidb_ast::SelectStmt, &[Vec<String>]) -> bool + 'a;
+/// What the rewrite resolves a `MATCH`'s columns and search string against.
+struct Scope<'a> {
+    catalog: &'a SessionExtendedInfoSchema,
+    current_db: &'a str,
+    ctx: &'a StmtContext,
+}
 
-/// Rewrites every direct-boolean-context `MATCH ... AGAINST` under the
-/// boolean roots of `select`: `WHERE`, `HAVING`, and each join's `ON`.
+/// Go's `fts-like-fallback` round (`planner/optimize.go`), over the AST.
 ///
 /// Runs only under `tidb_opt_enable_alternative_logical_plans` (default OFF,
 /// Go `DefOptEnableAlternativeLogicalPlans = false`): without it Go builds
 /// only the native TiFlash builtin, which errors here exactly as it errors
 /// there with no FTS replica -- the corpus flips the variable both ways and
 /// expects both outcomes.
-pub fn rewrite_select_fts(
-    select: &mut tidb_ast::SelectStmt,
-    columns_are_strings: &ColumnsAreStrings<'_>,
+///
+/// Go's `optimize` runs its alternative rounds only for a statement whose
+/// plan is a logical plan -- a query, which is also what an `EXPLAIN` of one
+/// optimizes -- so a `MATCH` under DML, `SET` or `DO` keeps the native
+/// builtin there too.
+pub fn rewrite_stmt_fts(
+    stmt: &mut tidb_ast::Stmt,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &StmtContext,
 ) -> Result<(), DriverError> {
-    // The closure needs the SELECT it is resolving in, and the boolean roots
-    // need `&mut` -- so take the immutable facts out first.
+    if !ctx.enable_alternative_logical_plans() || !matches!(stmt, tidb_ast::Stmt::Query(_)) {
+        return Ok(());
+    }
+    struct FtsRewriter<'a> {
+        scope: Scope<'a>,
+        error: Option<DriverError>,
+    }
+    impl tidb_ast::Visitor for FtsRewriter<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if self.error.is_some() {
+                return false;
+            }
+            if let Some(select) = node.downcast_mut::<tidb_ast::SelectStmt>() {
+                if let Err(error) = rewrite_select_fts(select, &self.scope) {
+                    self.error = Some(error);
+                }
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    use tidb_ast::Visitable as _;
+    let mut rewriter = FtsRewriter {
+        scope: Scope {
+            catalog,
+            current_db,
+            ctx,
+        },
+        error: None,
+    };
+    stmt.accept(&mut rewriter);
+    rewriter.error.map_or(Ok(()), Err)
+}
+
+/// Rewrites every direct-boolean-context `MATCH ... AGAINST` under the
+/// boolean roots of `select`: `WHERE`, `HAVING`, and each join's `ON`.
+fn rewrite_select_fts(
+    select: &mut tidb_ast::SelectStmt,
+    scope: &Scope<'_>,
+) -> Result<(), DriverError> {
+    // The columns resolve in the SELECT they are written in, and the boolean
+    // roots need `&mut` -- so take the immutable facts out first.
     let probe = select.clone();
     if let Some(where_clause) = select.where_clause.as_mut() {
-        rewrite_boolean_root(where_clause, &probe, columns_are_strings)?;
+        rewrite_boolean_root(where_clause, &probe, scope)?;
     }
     if let Some(having) = select.having.as_mut() {
-        rewrite_boolean_root(having, &probe, columns_are_strings)?;
+        rewrite_boolean_root(having, &probe, scope)?;
     }
     if let Some(join) = select.from.as_mut() {
-        rewrite_join_fts(join, &probe, columns_are_strings)?;
+        rewrite_join_fts(join, &probe, scope)?;
     }
     Ok(())
 }
@@ -77,17 +128,17 @@ pub fn rewrite_select_fts(
 fn rewrite_join_fts(
     join: &mut tidb_ast::Join,
     probe: &tidb_ast::SelectStmt,
-    columns_are_strings: &ColumnsAreStrings<'_>,
+    scope: &Scope<'_>,
 ) -> Result<(), DriverError> {
     if let Some(on) = join.on.as_mut() {
-        rewrite_boolean_root(on, probe, columns_are_strings)?;
+        rewrite_boolean_root(on, probe, scope)?;
     }
     for node in [Some(&mut join.left), join.right.as_mut()]
         .into_iter()
         .flatten()
     {
         if let tidb_ast::JoinNode::Join(inner) = node {
-            rewrite_join_fts(inner, probe, columns_are_strings)?;
+            rewrite_join_fts(inner, probe, scope)?;
         }
     }
     Ok(())
@@ -99,38 +150,82 @@ fn rewrite_join_fts(
 fn rewrite_boolean_root(
     expr: &mut Expr,
     probe: &tidb_ast::SelectStmt,
-    columns_are_strings: &ColumnsAreStrings<'_>,
+    scope: &Scope<'_>,
 ) -> Result<(), DriverError> {
     match expr {
-        Expr::Paren(inner) => rewrite_boolean_root(inner, probe, columns_are_strings)?,
+        Expr::Paren(inner) => rewrite_boolean_root(inner, probe, scope)?,
         Expr::Unary(UnaryOp::Not | UnaryOp::NotKeyword, inner) => {
-            rewrite_boolean_root(inner, probe, columns_are_strings)?;
+            rewrite_boolean_root(inner, probe, scope)?;
         }
         Expr::Binary(BinaryOp::LogicAnd | BinaryOp::LogicOr, lhs, rhs) => {
-            rewrite_boolean_root(lhs, probe, columns_are_strings)?;
-            rewrite_boolean_root(rhs, probe, columns_are_strings)?;
+            rewrite_boolean_root(lhs, probe, scope)?;
+            rewrite_boolean_root(rhs, probe, scope)?;
         }
         Expr::MatchAgainst {
             columns,
             against,
             modifier,
         } => {
+            // Go's first round builds the native builtin, whose class refuses
+            // a search that is not a string constant before this round runs
+            // (`ftsMysqlMatchAgainstFunctionClass.getFunction`); such a
+            // `MATCH` stays for the class to answer.
+            let Some(search) = search_constant(against, scope.ctx) else {
+                return Ok(());
+            };
             // Go refuses a non-string matched column ("Doesn't support match
             // search on a non-string column without fulltext index") BEFORE
             // the NULL fast path, which is why `match(int_col) against(NULL)`
             // errors rather than answering NULL.
-            if !columns_are_strings(probe, columns) {
+            if !crate::fts_columns_are_strings(
+                probe,
+                columns,
+                scope.catalog,
+                scope.current_db,
+                scope.ctx,
+            ) {
                 return Err(not_supported_yet(
                     "Doesn't support match search on a non-string column without fulltext index",
                 ));
             }
-            if let Some(built) = build_fts_like(columns, against, *modifier)? {
+            if let Some(built) = build_fts_like(columns, search, *modifier)? {
                 *expr = built;
             }
         }
         _ => {}
     }
     Ok(())
+}
+
+/// The value of the AGAINST constant Go's `matchAgainstToLike` evaluates.
+enum Search {
+    Null,
+    Text(String),
+}
+
+/// The search string of an AGAINST that is a string constant, as a literal or
+/// as the execute-time value of a `?`.
+///
+/// The LIKE fallback bakes the search string into the plan, so a parameter's
+/// plan answers this execution only: Go `MaybeOverOptimized4PlanCache` finds
+/// the parameter and `matchAgainstToLike` calls `SetSkipPlanCache` before it
+/// reads the value, NULL included.
+fn search_constant(against: &Expr, ctx: &StmtContext) -> Option<Search> {
+    match against {
+        Expr::String(text) | Expr::RawString(text) => Some(Search::Text(text.clone())),
+        Expr::Null => Some(Search::Null),
+        Expr::ParamMarker {
+            value: Some(value), ..
+        } => {
+            let literal = crate::driver::datum_to_literal(value.downcast_ref::<Datum>()?).ok()?;
+            let search = search_constant(&literal, ctx)?;
+            ctx.set_skip_plan_cache(
+                "MATCH...AGAINST LIKE fallback bakes a mutable search string into plan constants",
+            );
+            Some(search)
+        }
+        _ => None,
+    }
 }
 
 /// Go `ErrNotSupportedYet.GenWithStackByArgs` (1235).
@@ -143,34 +238,24 @@ fn not_supported_yet(feature: &str) -> DriverError {
 
 /// Go `matchAgainstToLike` + `BuildFTSToILikeExpression`, over the AST.
 ///
-/// `Ok(None)` leaves the node unrewritten -- a mutable search string or one
-/// that is not a literal -- and the later evaluation refuses it, which is Go's
-/// own outcome with no FTS replica to fall back to. A search outside the
-/// strict subset, or `WITH QUERY EXPANSION`, is the rewrite's own refusal.
+/// `Ok(None)` leaves the node unrewritten, and the later evaluation refuses
+/// it, which is Go's own outcome with no FTS replica to fall back to. A
+/// search outside the strict subset, or `WITH QUERY EXPANSION`, is the
+/// rewrite's own refusal.
 fn build_fts_like(
     columns: &[Vec<String>],
-    against: &Expr,
+    search: Search,
     modifier: MatchModifier,
 ) -> Result<Option<Expr>, DriverError> {
     if columns.is_empty() {
         return Ok(None);
     }
-    // Go evaluates the AGAINST constant; a NULL search yields NULL, which is
-    // what keeps three-valued logic honest under NOT -- a literal 0 would
-    // make `NOT MATCH(...)` admit every row.
-    let search = match against {
-        Expr::String(text) | Expr::RawString(text) => text.clone(),
-        Expr::Null => return Ok(Some(Expr::Null)),
-        // A numeric constant is not a string search expression.
-        Expr::Int(_) | Expr::Decimal(_) | Expr::Float(_) | Expr::Bool(_) => {
-            return Err(not_supported_yet(
-                "MATCH...AGAINST with non-string search expression",
-            ));
-        }
-        // A `?` marker, user variable or expression: Go's
-        // `SetSkipPlanCache` case, and outside the literal subset this
-        // rewrite bakes into constants.
-        _ => return Ok(None),
+    // A NULL search yields NULL, which is what keeps three-valued logic
+    // honest under NOT -- a literal 0 would make `NOT MATCH(...)` admit every
+    // row.
+    let search = match search {
+        Search::Text(text) => text,
+        Search::Null => return Ok(Some(Expr::Null)),
     };
     if modifier.with_query_expansion() {
         return Err(not_supported_yet(

@@ -41,35 +41,15 @@
 //! - `buildFTSILikePredicate` (Go lines 401-438) ->
 //!   `build_fts_ilike_predicate`
 //!
-//! Of the six test functions in `pkg/expression/fts_to_like_test.go`, five are
-//! ported below: the four covering the tokenizer, plus
-//! `TestBuildFTSToILikeExpressionFromBuiltin` (Go test lines 240-311) minus
-//! its "nil scalar function" subtest, which is unrepresentable because the
-//! Rust entry point takes `&ScalarFunction`. Focused semantic tests for the
-//! two mode builders are added as NEW coverage, since Go exercises those only
-//! through the planner.
-//!
-//! STILL NOT PORTED:
-//! `TestScalarExprSupportedByFlashRejectsNonDefaultFTSModifier` (Go test lines
-//! 313-340). It asserts on `scalarExprSupportedByFlash`, a TiFlash-pushdown
-//! predicate that is a different surface from this file (see
-//! [`crate::infer_pushdown`] / [`crate::pushdown_catalog`]), and it needs the
-//! FTS modifier to be READABLE off a built node — which the modifier
-//! narrowing below explains is not possible here.
+//! All six test functions in `pkg/expression/fts_to_like_test.go` are ported
+//! below, minus the "nil scalar function" subtest of
+//! `TestBuildFTSToILikeExpressionFromBuiltin` (Go test lines 240-311), which
+//! is unrepresentable because the Rust entry point takes `&ScalarFunction`.
+//! Focused semantic tests for the two mode builders are added as NEW
+//! coverage, since Go exercises those only through the planner.
 //!
 //! # Boundaries and narrowings
 //!
-//! - **FTS modifier is a parameter, not node state.** Go stores the modifier
-//!   inside the `builtinFtsMysqlMatchAgainstSig` signature (written by
-//!   `SetFTSMysqlMatchAgainstModifier`), and
-//!   `BuildFTSToILikeExpressionFromBuiltin` recovers it by downcasting
-//!   `fts.Function`. This crate's [`ScalarFunction`] carries no per-signature
-//!   object, so [`build_fts_to_i_like_expression_from_builtin`] takes the
-//!   modifier as an explicit argument instead. Every Go caller reaches that
-//!   function through code that set the modifier itself, so no caller loses
-//!   information; what IS lost is Go's "unexpected builtin signature" error
-//!   and the ability of an unrelated pass to read the modifier back off a
-//!   node.
 //! - **Collation is not derived on the built nodes.** The `ILIKE`/`IFNULL`/
 //!   `NOT` nodes come from [`crate::new_function`], whose header names the
 //!   missing `deriveCollation` step as its largest gap. FTS fallback matching
@@ -338,7 +318,7 @@ fn build_fts_ilike_predicate(
     // so it may produce false positives but never false negatives.
     let pattern = format!("%{}%", escape_fts_like_pattern(term));
     let pattern_const = Expression::Constant(Constant::new(
-        Datum::Bytes(pattern.into_bytes()),
+        Datum::new_string_datum(pattern),
         FieldType::new(FieldTypeCode::Varchar),
     ));
     // Backslash (=92) is the ILIKE escape character.
@@ -531,20 +511,11 @@ pub fn build_fts_to_i_like_expression(
 }
 
 /// Go `BuildFTSToILikeExpressionFromBuiltin`
-/// (`pkg/expression/fts_to_like.go:362`): pulls the search string out of a
-/// `fts_match_word` node and delegates to [`build_fts_to_i_like_expression`].
-/// This is the entry point for selectivity estimation, where the FTS scalar
-/// function is otherwise opaque to the estimator.
-///
-/// NARROWING: Go recovers the modifier by downcasting `fts.Function` to
-/// `*builtinFtsMysqlMatchAgainstSig` and reading its `modifier` field, which
-/// `SetFTSMysqlMatchAgainstModifier` wrote. This crate's [`ScalarFunction`]
-/// carries no per-signature object (see [`crate::scalar_function`]'s BRIDGE
-/// DECISION), so there is nowhere for that field to live and the modifier is
-/// an explicit parameter instead. Every Go caller reaches this through code
-/// that set the modifier itself, so the value is always in hand. The
-/// consequence is that Go's "unexpected builtin signature" error has no
-/// counterpart here.
+/// (`pkg/expression/fts_to_like.go:362`): pulls the search string and the
+/// modifier out of a `match_against` node and delegates to
+/// [`build_fts_to_i_like_expression`]. This is the entry point for
+/// selectivity estimation, where the FTS scalar function is otherwise opaque
+/// to the estimator.
 ///
 /// Multi-column MATCH is refused: `GetSelectivityByFilter` only estimates
 /// single-column expressions, so a multi-column substitution would be
@@ -553,25 +524,26 @@ pub fn build_fts_to_i_like_expression(
 ///
 /// # Errors
 ///
-/// [`FtsBuildError::Build`] for a wrong function name or too few arguments,
-/// and [`FtsBuildError::NotSupportedYet`] for multi-column MATCH, a
+/// [`FtsBuildError::Build`] for a wrong function name, too few arguments or
+/// a node that is not the `MATCH ... AGAINST` signature, and [`FtsBuildError::NotSupportedYet`] for multi-column MATCH, a
 /// non-constant or non-string search argument, or anything
 /// [`build_fts_to_i_like_expression`] rejects.
 pub fn build_fts_to_i_like_expression_from_builtin(
     ctx: &impl Columns,
     fts: &ScalarFunction,
-    modifier: MatchModifier,
 ) -> Result<Expression, FtsBuildError> {
-    if fts.func_name.lowercase() != "fts_match_word" {
-        return Err(FtsBuildError::Build(EvalError::IncorrectArguments(
-            format!("expected fts_match_word, got {}", fts.func_name.lowercase()),
-        )));
+    if fts.func_name.lowercase() != "match_against" {
+        return Err(FtsBuildError::Build(EvalError::Raw(format!(
+            "expected match_against, got {}",
+            fts.func_name.lowercase()
+        ))));
     }
     let args = fts.get_args();
     if args.len() < 2 {
-        return Err(FtsBuildError::Build(EvalError::IncorrectArguments(
-            format!("fts_match_word expects at least 2 args, got {}", args.len()),
-        )));
+        return Err(FtsBuildError::Build(EvalError::Raw(format!(
+            "match_against expects at least 2 args, got {}",
+            args.len()
+        ))));
     }
     if args.len() > 2 {
         return Err(not_supported(
@@ -594,12 +566,18 @@ pub fn build_fts_to_i_like_expression_from_builtin(
             tiny_type(),
         )));
     }
-    let Datum::Bytes(search_text) = &against.value else {
+    let Datum::String(search_text) = &against.value else {
         return Err(not_supported(
             "MATCH...AGAINST with non-string search constant",
         ));
     };
-    let search_text = String::from_utf8_lossy(search_text).into_owned();
+    let Some(modifier) = fts.fts_mysql_match_against_modifier() else {
+        return Err(FtsBuildError::Build(EvalError::Raw(format!(
+            "unexpected builtin signature for match_against: {:?}",
+            fts.pb_signature()
+        ))));
+    };
+    let search_text = String::from_utf8_lossy(search_text.bytes()).into_owned();
     build_fts_to_i_like_expression(ctx, &args[1..], &search_text, modifier)
 }
 
@@ -835,24 +813,36 @@ mod tests {
 
     fn string_constant(text: &str) -> Expression {
         Expression::Constant(Constant::new(
-            Datum::Bytes(text.as_bytes().to_vec()),
+            Datum::new_string_datum(text),
             FieldType::new(FieldTypeCode::Varchar),
         ))
     }
 
-    /// Go's `newFTSMatchAgainstForTest` helper: an `fts_match_word` node whose
-    /// first argument is the search constant and whose rest are the matched
-    /// columns. Built directly rather than through `new_function` because
-    /// this crate cannot yet EVALUATE `fts_match_word`, and the builders under
-    /// test only ever read the node's name and arguments.
-    fn fts_match_against(search_text: &str, columns: usize) -> ScalarFunction {
+    /// Go's `newFTSMatchAgainstForTest` helper: a real `match_against` node
+    /// built through `new_function` with a string constant for AGAINST and
+    /// string columns for MATCH, then stamped with the modifier, which is the
+    /// planner's `matchAgainstToBuiltin` flow.
+    fn fts_match_against(
+        search_text: &str,
+        columns: usize,
+        modifier: MatchModifier,
+    ) -> ScalarFunction {
         let mut args = vec![string_constant(search_text)];
         args.extend((0..columns).map(|index| varchar_column(index as i64)));
-        ScalarFunction::new(
-            tidb_ast::CiString::new("fts_match_word"),
+        let built = crate::new_function::new_function(
+            &NoColumns,
+            "match_against",
             FieldType::new(FieldTypeCode::Double),
             args,
         )
+        .expect("match_against builds");
+        let Expression::ScalarFunction(mut function) = built else {
+            panic!("expected a scalar function, got {built:?}");
+        };
+        function
+            .set_fts_mysql_match_against_modifier(modifier)
+            .expect("the node is the MATCH ... AGAINST signature");
+        function
     }
 
     fn func_name_of(expr: &Expression) -> String {
@@ -868,8 +858,8 @@ mod tests {
     fn patterns_in(expr: &Expression, found: &mut Vec<String>) {
         match expr {
             Expression::Constant(constant) => {
-                if let Datum::Bytes(bytes) = &constant.value {
-                    found.push(String::from_utf8_lossy(bytes).into_owned());
+                if let Datum::String(text) = &constant.value {
+                    found.push(String::from_utf8_lossy(text.bytes()).into_owned());
                 }
             }
             Expression::ScalarFunction(func) => {
@@ -898,33 +888,35 @@ mod tests {
     fn build_fts_to_ilike_expression_from_builtin_go_cases() {
         // "wrong function name": a non-FTS node is refused, and the message
         // names the function Go expected.
-        let other = ScalarFunction::new(
-            tidb_ast::CiString::new("length"),
+        let other = crate::new_function::new_function(
+            &NoColumns,
+            "length",
             FieldType::new(FieldTypeCode::LongLong),
             vec![varchar_column(0)],
-        );
-        let error =
-            build_fts_to_i_like_expression_from_builtin(&NoColumns, &other, MatchModifier::None)
-                .expect_err("a non-FTS function is rejected");
+        )
+        .expect("length builds");
+        let Expression::ScalarFunction(other) = other else {
+            panic!("expected a scalar function, got {other:?}");
+        };
+        let error = build_fts_to_i_like_expression_from_builtin(&NoColumns, &other)
+            .expect_err("a non-FTS function is rejected");
         assert!(
-            error.to_string().contains("fts_match_word"),
+            error.to_string().contains("match_against"),
             "the error must name the expected function: {error}"
         );
 
         // "single-column natural-language succeeds": the result is a scalar
         // function and is NOT the untranslated opaque FTS builtin.
-        let single = fts_match_against("mysql", 1);
-        let built =
-            build_fts_to_i_like_expression_from_builtin(&NoColumns, &single, MatchModifier::None)
-                .expect("a single-column natural-language MATCH translates");
-        assert_ne!(func_name_of(&built), "fts_match_word");
+        let single = fts_match_against("mysql", 1, MatchModifier::None);
+        let built = build_fts_to_i_like_expression_from_builtin(&NoColumns, &single)
+            .expect("a single-column natural-language MATCH translates");
+        assert_ne!(func_name_of(&built), "match_against");
         assert_eq!(func_name_of(&built), "ifnull");
 
         // "multi-column rejected for selectivity substitution".
-        let multi = fts_match_against("mysql", 2);
-        let error =
-            build_fts_to_i_like_expression_from_builtin(&NoColumns, &multi, MatchModifier::None)
-                .expect_err("multi-column MATCH is refused");
+        let multi = fts_match_against("mysql", 2, MatchModifier::None);
+        let error = build_fts_to_i_like_expression_from_builtin(&NoColumns, &multi)
+            .expect_err("multi-column MATCH is refused");
         assert!(
             error.to_string().contains("multi-column"),
             "the error must say multi-column: {error}"
@@ -932,8 +924,9 @@ mod tests {
 
         // "NULL search constant returns Constant(NULL)" -- Constant(0) would
         // invert under a composing NOT.
-        let null_search = ScalarFunction::new(
-            tidb_ast::CiString::new("fts_match_word"),
+        let null_search = crate::new_function::new_function(
+            &NoColumns,
+            "match_against",
             FieldType::new(FieldTypeCode::Double),
             vec![
                 Expression::Constant(Constant::new(
@@ -942,13 +935,13 @@ mod tests {
                 )),
                 varchar_column(0),
             ],
-        );
-        let built = build_fts_to_i_like_expression_from_builtin(
-            &NoColumns,
-            &null_search,
-            MatchModifier::None,
         )
-        .expect("a NULL search constant short-circuits");
+        .expect("match_against builds over a NULL search constant");
+        let Expression::ScalarFunction(null_search) = null_search else {
+            panic!("expected a scalar function, got {null_search:?}");
+        };
+        let built = build_fts_to_i_like_expression_from_builtin(&NoColumns, &null_search)
+            .expect("a NULL search constant short-circuits");
         match built {
             Expression::Constant(constant) => assert!(constant.value.is_null()),
             other => panic!("expected Constant(NULL), got {other:?}"),
@@ -956,11 +949,54 @@ mod tests {
 
         // "search string outside strict subset rejected": a mid-word `-`
         // fails the validator and propagates.
-        let bad = fts_match_against("xx-yy", 1);
-        assert!(
-            build_fts_to_i_like_expression_from_builtin(&NoColumns, &bad, MatchModifier::None)
-                .is_err()
-        );
+        let bad = fts_match_against("xx-yy", 1, MatchModifier::None);
+        assert!(build_fts_to_i_like_expression_from_builtin(&NoColumns, &bad).is_err());
+    }
+
+    /// The modifier travels on the node: a boolean-mode `match_against`
+    /// translates through the boolean builder, where `+a -b` is a required
+    /// and an excluded term rather than two natural-language words.
+    #[test]
+    fn build_fts_to_ilike_expression_from_builtin_reads_the_nodes_modifier() {
+        let boolean = fts_match_against("+mysql -oracle", 1, MatchModifier::BooleanMode);
+        let built = build_fts_to_i_like_expression_from_builtin(&NoColumns, &boolean)
+            .expect("a boolean-mode MATCH translates");
+        assert_eq!(func_name_of(&built), "and");
+        assert_eq!(patterns_of(&built), ["%mysql%", "%oracle%"]);
+
+        let natural = fts_match_against("+mysql -oracle", 1, MatchModifier::None);
+        assert!(build_fts_to_i_like_expression_from_builtin(&NoColumns, &natural).is_err());
+    }
+
+    /// PORT of Go `TestScalarExprSupportedByFlashRejectsNonDefaultFTSModifier`
+    /// (`fts_to_like_test.go:313`): tipb does not serialize the FTS modifier
+    /// and TiFlash rebuilds the signature with the default one, so a
+    /// non-default modifier is not Flash-supported.
+    #[test]
+    fn scalar_expr_supported_by_flash_rejects_non_default_fts_modifier() {
+        use crate::infer_pushdown::scalar_function_can_be_pushed;
+        use tidb_kv::store_type::StoreType;
+
+        for (modifier, want) in [
+            (MatchModifier::None, true),
+            (MatchModifier::BooleanMode, false),
+            (MatchModifier::QueryExpansion, false),
+        ] {
+            let function = fts_match_against("mysql", 1, modifier);
+            let signature = function.pb_signature().expect("match_against has a signature");
+            let expr = Expression::ScalarFunction(function.clone());
+            assert_eq!(
+                scalar_function_can_be_pushed(
+                    &expr,
+                    &function,
+                    signature,
+                    StoreType::TiFlash,
+                    &std::collections::HashMap::new(),
+                ),
+                want,
+                "{modifier:?}"
+            );
+        }
     }
 
     /// NEW COVERAGE: the top-level rejections of

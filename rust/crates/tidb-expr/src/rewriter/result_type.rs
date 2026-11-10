@@ -2064,12 +2064,10 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
         // `regexpInStrFunctionClass` fixes the integer result width to
         // `mysql.MaxIntWidth`.
         "regexp_instr" => ft_with_flen(int(), 20),
-        // Go `likeFunctionClass`/`regexpLikeFunctionClass`: a one-digit
-        // boolean.
-        // `ast.Like` and `ast.Regexp` are in Go's `booleanFunctions` map, so
-        // these operator forms are boolean-flagged. (`ilike` is not a Go boolean
-        // function but is a pre-existing alias of `like`.)
-        "like" | "ilike" | "regexp" | "regexp_like" => {
+        // Go `regexpLikeFunctionClass`: a one-digit boolean. `ast.Regexp` is
+        // in Go's `booleanFunctions` map, so the operator form is
+        // boolean-flagged.
+        "regexp" | "regexp_like" => {
             let mut ft = int();
             ft.set_flen(1);
             ft.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);

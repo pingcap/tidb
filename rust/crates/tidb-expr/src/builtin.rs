@@ -145,12 +145,21 @@ pub(crate) fn funcs(name: &str) -> Option<&'static dyn FunctionClass> {
         ArithmeticMinusFunctionClass, ArithmeticModFunctionClass,
         ArithmeticMultiplyFunctionClass, ArithmeticPlusFunctionClass,
     };
+    use crate::builtin_fts::{FtsMatchWordFunctionClass, FtsMysqlMatchAgainstFunctionClass};
+    use crate::builtin_grouping::GroupingImplFunctionClass;
+    use crate::builtin_ilike::IlikeFunctionClass;
+    use crate::builtin_like::LikeFunctionClass;
     use crate::builtin_op::{
         BitNegFunctionClass, IsNullFunctionClass, LogicAndFunctionClass, LogicOrFunctionClass,
         LogicXorFunctionClass, UnaryMinusFunctionClass, UnaryNotFunctionClass, BIT_AND, BIT_OR,
         BIT_XOR, IS_FALSITY, IS_TRUTH_WITHOUT_NULL, IS_TRUTH_WITH_NULL, LEFT_SHIFT, RIGHT_SHIFT,
     };
     Some(match name {
+        "like" => &LikeFunctionClass,
+        "ilike" => &IlikeFunctionClass,
+        "grouping" => &GroupingImplFunctionClass,
+        "fts_match_word" => &FtsMatchWordFunctionClass,
+        "match_against" => &FtsMysqlMatchAgainstFunctionClass,
         "isnull" => &IsNullFunctionClass,
         "and" => &LogicAndFunctionClass,
         "or" => &LogicOrFunctionClass,

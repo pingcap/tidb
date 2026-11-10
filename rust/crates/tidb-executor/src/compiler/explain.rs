@@ -112,7 +112,11 @@ pub trait ExplainCompile: super::CompilerSession {
         if let Some(bound) = bound.as_ref() {
             self.apply_set_var_hints(bound)?;
         }
-        let target = bound.as_ref().unwrap_or(target);
+        // Go's EXPLAIN optimizes its target as the bare statement is
+        // optimized, alternative rounds included.
+        let mut target = bound.as_ref().unwrap_or(target).clone();
+        self.rewrite_fts_for_planning(&mut target)?;
+        let target = &target;
         // EXPLAIN follows the same resolved privilege boundary as execution;
         // ANALYZE can write, and plain EXPLAIN still exposes the target plan.
         self.require_explain_statement_privileges(target)?;

@@ -1342,9 +1342,12 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         self.warning_context?.user_vars()
     }
 
-    fn rewrite_grouping(&self, args: &[Expression]) -> Result<Expression, EvalError> {
+    fn roll_expand_grouping(
+        &self,
+        args: &[Expression],
+    ) -> Result<tidb_expr::rewriter::RollExpandGrouping, EvalError> {
         let expand = self.block_expand.ok_or(EvalError::InvalidGroupFuncUse)?;
-        expand.rewrite_grouping(args)
+        expand.roll_expand_grouping(args)
     }
 
     fn param_value(&self, order: usize) -> Result<tidb_datatype::Datum, EvalError> {

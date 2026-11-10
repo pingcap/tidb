@@ -1429,6 +1429,7 @@ pub struct StmtContextData {
     skip_cte_consumer_counts: bool,
     /// Go `SessionVars.EnableSemiJoinRewrite`.
     enable_semi_join_rewrite: bool,
+    enable_alternative_logical_plans: bool,
     /// Go `SessionVars.ExplainNonEvaledSubQuery`
     /// (`tidb_opt_enable_non_eval_scalar_subquery`).
     explain_non_evaled_sub_query: bool,
@@ -1804,6 +1805,13 @@ context_configuration! {
     #[must_use]
     pub fn with_enable_semi_join_rewrite(mut self, enable: bool) -> Self {
         self.enable_semi_join_rewrite = enable;
+        self
+    }
+
+    /// Sets `@@tidb_opt_enable_alternative_logical_plans` for this statement.
+    #[must_use]
+    pub fn with_enable_alternative_logical_plans(mut self, enable: bool) -> Self {
+        self.enable_alternative_logical_plans = enable;
         self
     }
 
@@ -3203,6 +3211,8 @@ impl StmtContext {
             enable_force_inline_cte: false,
             skip_cte_consumer_counts: false,
             enable_semi_join_rewrite: tidb_vardef::defaults::DEF_OPT_ENABLE_SEMI_JOIN_REWRITE,
+            enable_alternative_logical_plans:
+                tidb_vardef::defaults::DEF_OPT_ENABLE_ALTERNATIVE_LOGICAL_PLANS,
             explain_non_evaled_sub_query: tidb_vardef::defaults::DEF_TIDB_OPT_EXPLAIN_EVALED_SUBQUERY,
             allow_in_subq_to_join_and_agg: true,
             enable_no_decorrelate_in_select:
@@ -3964,6 +3974,12 @@ impl StmtContext {
     /// Returns `@@tidb_opt_enable_semi_join_rewrite`.
     pub fn enable_semi_join_rewrite(&self) -> bool {
         self.enable_semi_join_rewrite
+    }
+
+    /// Returns `@@tidb_opt_enable_alternative_logical_plans`
+    /// (Go `SessionVars.EnableAlternativeLogicalPlans`).
+    pub fn enable_alternative_logical_plans(&self) -> bool {
+        self.enable_alternative_logical_plans
     }
 
     /// Returns Go `SessionVars.ExplainNonEvaledSubQuery`.
