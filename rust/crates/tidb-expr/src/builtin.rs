@@ -168,6 +168,7 @@ pub(crate) fn funcs(name: &str) -> Option<&'static dyn FunctionClass> {
         LogicXorFunctionClass, UnaryMinusFunctionClass, UnaryNotFunctionClass, BIT_AND, BIT_OR,
         BIT_XOR, IS_FALSITY, IS_TRUTH_WITHOUT_NULL, IS_TRUTH_WITH_NULL, LEFT_SHIFT, RIGHT_SHIFT,
     };
+    use crate::builtin_encryption as enc;
     use crate::builtin_info as i;
     use crate::builtin_miscellaneous as misc;
     Some(match name {
@@ -227,6 +228,21 @@ pub(crate) fn funcs(name: &str) -> Option<&'static dyn FunctionClass> {
         "coercibility" => &i::CoercibilityFunctionClass,
         "collation" => &i::CollationFunctionClass,
         "tidb_decode_sql_digests" => &i::TidbDecodeSqlDigestsFunctionClass,
+        "aes_decrypt" => &enc::AesDecryptFunctionClass,
+        "aes_encrypt" => &enc::AesEncryptFunctionClass,
+        "decode" => &enc::DecodeFunctionClass { func_name: "decode" },
+        "encode" => &enc::EncodeFunctionClass { func_name: "encode" },
+        "password" => &enc::PasswordFunctionClass { func_name: "password" },
+        "random_bytes" => &enc::RandomBytesFunctionClass { func_name: "random_bytes" },
+        "md5" => &enc::Md5FunctionClass { func_name: "md5" },
+        "sha1" => &enc::Sha1FunctionClass { func_name: "sha1" },
+        "sha" => &enc::Sha1FunctionClass { func_name: "sha" },
+        "sha2" => &enc::Sha2FunctionClass { func_name: "sha2" },
+        "sm3" => &enc::Sm3FunctionClass { func_name: "sm3" },
+        "compress" => &enc::CompressFunctionClass { func_name: "compress" },
+        "uncompress" => &enc::UncompressFunctionClass { func_name: "uncompress" },
+        "uncompressed_length" => &enc::UncompressedLengthFunctionClass { func_name: "uncompressed_length" },
+        "validate_password_strength" => &enc::ValidatePasswordStrengthFunctionClass { func_name: "validate_password_strength" },
         "lt" => &CompareFunctionClass { func_name: "lt" },
         "le" => &CompareFunctionClass { func_name: "le" },
         "gt" => &CompareFunctionClass { func_name: "gt" },

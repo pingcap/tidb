@@ -362,7 +362,7 @@ fn go_table() -> Vec<Row> {
             expected: Some(collation(coercible, ascii, UTF8MB4, UTF8MB4_BIN)),
         },
         Row {
-            functions: &["space", "to_base64", "uuid", "hex", "md5", "sha1"],
+            functions: &["space", "to_base64", "uuid", "hex", "md5", "sha"],
             args: vec![new_col_int(numeric)],
             ret_type: EvalType::String,
             expected: Some(collation(coercible, ascii, UTF8MB4, UTF8MB4_BIN)),

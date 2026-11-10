@@ -82,7 +82,8 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   errors and stay on the legacy path; `tidb_decode_sql_digests`' PROCESS
   check and the sequence functions' column-path argument stay in the
   rewriter, which holds the session.
-- [ ] Milestone 6b: `builtin_encryption.go` (14).
+- [x] Milestone 6b: `builtin_encryption.go` (15 names). Go derives the ASCII
+  repertoire for `sha` and not for `sha1`.
 - [ ] Milestone 7: `builtin_json.go` (29), `builtin_regexp.go` (4),
   `builtin_convert_charset.go` (2), `builtin_other.go` (11).
 - [ ] Milestone 8: `builtin_string.go` (44).

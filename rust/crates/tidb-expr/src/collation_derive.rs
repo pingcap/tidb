@@ -752,7 +752,7 @@ pub(crate) fn derive_collation_with_arg_tps(
             collation: COLLATION_UTF8MB4.to_owned(),
         }),
         // Pure-ASCII producers: the connection charset with ASCII repertoire.
-        "format" | "space" | "to_base64" | "uuid" | "hex" | "md5" | "sha" | "sha1" | "sha2"
+        "format" | "space" | "to_base64" | "uuid" | "hex" | "md5" | "sha" | "sha2"
         | "sm3" => {
             let (chs, coll) = connection;
             Ok(ExprCollation {
