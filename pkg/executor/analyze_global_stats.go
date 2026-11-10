@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -82,8 +81,7 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle statstypes.AnalyzeStatsHandl
 }
 
 func (e *AnalyzeExec) newAnalyzeHandleGlobalStatsJob(key globalStatsKey) *statistics.AnalyzeJob {
-	dom := domain.GetDomain(e.Ctx())
-	is := dom.InfoSchema()
+	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
 	table, ok := is.TableByID(context.Background(), key.tableID)
 	if !ok {
 		return nil
