@@ -890,6 +890,11 @@ pub fn set_coercibility(expr: &mut Expression, coercibility: Coercibility) {
     collation_info_mut(expr).set_coercibility(coercibility);
 }
 
+/// Go `Expression.SetRepertoire`.
+pub fn set_repertoire(expr: &mut Expression, repertoire: Repertoire) {
+    collation_info_mut(expr).set_repertoire(repertoire);
+}
+
 /// Marks an expression as carrying an EXPLICIT `COLLATE` clause.
 ///
 /// Go's `expression_rewriter` `case *ast.SetCollationExpr` writes the

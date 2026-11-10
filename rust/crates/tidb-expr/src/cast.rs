@@ -741,7 +741,7 @@ fn eval_cast_value(
                 .with_collation_name(&target_collation);
             // A binary argument reaches this cast already decoded: Go's
             // `castAsStringFunctionClass` wraps it in `from_binary`
-            // (`crate::rewriter::wrap_cast_as_string_arg`).
+            // (`crate::builtin_cast`).
             eval_string_cast_with_type(v, source, &target, ctx)
         }
         CastType::Binary { len } => {

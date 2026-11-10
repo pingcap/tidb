@@ -674,18 +674,6 @@ pub(crate) fn wrap_from_binary(
     wrapped
 }
 
-/// Go `BuildCastFunctionWithCheck`'s string arm: a BIT source sizes the
-/// string target in BYTES, `(flen + 7) / 8`, before the cast class reads it.
-pub(crate) fn size_string_cast_for_bit_source(target: &mut FieldType, source: &Expression) {
-    if let Some(bits) = source
-        .static_type()
-        .filter(|source| source.code() == FieldTypeCode::Bit)
-        .map(FieldType::flen)
-    {
-        target.set_flen((bits + 7) / 8);
-    }
-}
-
 /// Marks a node built with a fixed result charset as already derived, with
 /// that charset and the given coercibility.
 fn pin_result_collation(
@@ -703,79 +691,6 @@ fn pin_result_collation(
         collation: ret_type.collation_name().to_owned(),
     };
     crate::collation_derive::apply_derived_collation(node, &ec);
-}
-
-/// Go `castAsStringFunctionClass.getFunction`'s argument handling for a
-/// cast to `target` (a string type): a BIT argument cast to a non-binary
-/// charset is first cast to a binary string, and a string argument then
-/// meets `HandleBinaryLiteral` with the cast's own charset as an EXPLICIT
-/// cast -- so a binary argument decodes through `from_binary`, which warns
-/// rather than errors on bytes the target charset cannot hold. ENUM and SET
-/// (and BIT into binary) take the early return untouched.
-pub(crate) fn wrap_cast_as_string_arg(
-    arg: Expression,
-    target: &FieldType,
-    fold: &dyn Fn(&mut Expression),
-) -> Result<Expression, EvalError> {
-    let Some((hybrid, bit)) = arg
-        .static_type()
-        .map(|arg_type| (arg_type.is_hybrid(), arg_type.code() == FieldTypeCode::Bit))
-    else {
-        return Ok(arg);
-    };
-    let mut arg = arg;
-    if hybrid {
-        if !bit || target.charset_name() == "binary" {
-            return Ok(arg);
-        }
-        let mut binary = FieldType::new(FieldTypeCode::String);
-        set_binary_charset(&mut binary);
-        binary.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
-        arg = crate::simple_expr::build_cast_function(arg, binary, false)?;
-        // A cast's result charset is its target's; keep the later
-        // tree-collation walk from re-deriving it.
-        pin_result_collation(
-            &mut arg,
-            crate::expr_collation::Coercibility::IMPLICIT,
-            crate::expr_collation::Repertoire::UNICODE,
-        );
-        fold(&mut arg);
-    }
-    let Some(arg_type) = arg.static_type().cloned() else {
-        return Ok(arg);
-    };
-    if arg_type.eval_type() != tidb_datatype::EvalType::String {
-        return Ok(arg);
-    }
-    let (arg_charset, result_charset) = (arg_type.charset_name(), target.charset_name());
-    // `HandleBinaryLiteral`'s `funcPropAuto` arm for `ast.Cast`.
-    if arg_charset != "binary" && result_charset == "binary" {
-        if crate::convert_charset::is_legacy_charset(arg_charset) {
-            return Ok(arg);
-        }
-        return Ok(build_to_binary(arg, fold));
-    }
-    if arg_charset == "binary"
-        && result_charset != "binary"
-        && arg_type.code() != FieldTypeCode::Null
-    {
-        let mut ret_type = arg_type.clone();
-        ret_type.set_charset_name(result_charset);
-        ret_type.set_collation_name(target.collation_name());
-        // Go keeps the argument's coercibility in `collationInfo` while
-        // `bf.tp = c.tp` makes the result the target charset.
-        let (coer, repe) = (
-            crate::collation_derive::coercibility_of(&arg),
-            crate::collation_derive::repertoire_of(&arg),
-        );
-        let mut wrapped =
-            Expression::ScalarFunction(ScalarFunction::build_from_binary_function(arg, ret_type, true));
-        pin_result_collation(&mut wrapped, coer, repe);
-        // Go `BuildFromBinaryFunction` folds the new node.
-        fold(&mut wrapped);
-        return Ok(wrapped);
-    }
-    Ok(arg)
 }
 
 /// Reapplies the result-charset rules whose Go function classes override the
@@ -2854,46 +2769,18 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 return rewrite_cast_array(cast, resolver);
             }
             check_func_cast_expr(cast)?;
-            let (name, ret_type) = resolved_cast_target(cast, resolver)?;
+            let (_, target_tp) = resolved_cast_target(cast, resolver)?;
             let arg = rewrite_expr_resolved(&cast.expr, resolver)?;
             // Go `Leave(*ast.FuncCastExpr)`.
             ensure_single_column(&[&arg])?;
-            // `CAST(x AS BINARY)` is Go's `funcPropAuto` binary-result arm:
-            // a gbk-charset argument transcodes on the way in, which is why
-            // `HEX(CAST(gbk_col AS BINARY))` reports the GBK bytes; a binary
-            // argument cast to a character set decodes through `from_binary`.
-            let mut ret_type = ret_type;
-            let args = if ret_type.eval_type() == tidb_datatype::EvalType::String {
-                size_string_cast_for_bit_source(&mut ret_type, &arg);
-                let arg = wrap_cast_as_string_arg(arg, &ret_type, &|expression| {
-                    resolver.fold_constant(expression, ConstantFoldMode::Normal)
-                })?;
-                if let Some(arg_type) = arg.static_type() {
-                    adjust_ret_ft_for_cast_string(&mut ret_type, arg_type);
-                }
-                vec![arg]
-            } else {
-                let mut arg = arg;
-                // Go `castAsRealFunctionClass`: a DECIMAL argument's result
-                // scale widens through `PropagateType(ETReal)`.
-                if ret_type.eval_type() == tidb_datatype::EvalType::Real
-                    && arg
-                        .static_type()
-                        .is_some_and(|field| field.eval_type() == tidb_datatype::EvalType::Decimal)
-                {
-                    crate::expression::propagate_type(&mut arg, tidb_datatype::EvalType::Real);
-                }
-                vec![arg]
-            };
-            let charset_name = ret_type.charset_name().to_owned();
-            let collation_name = ret_type.collation_name().to_owned();
-            // Go's rewriter overrides the coercibility of the CAST it builds:
-            // IMPLICIT for a string target (ASCII repertoire only for the
-            // ascii charset), NUMERIC/ASCII for any other. A CAST AS DATE in
-            // a UNION branch therefore yields to the string branch's
-            // collation instead of dragging the result to binary.
-            let (coer, repe) = if ret_type.eval_type() == tidb_datatype::EvalType::String {
-                let repe = if charset_name == "ascii" {
+            // The parser's `ExplicitCharSet`: a `CHARACTER SET` clause, which
+            // the `BINARY` suffix is not.
+            let explicit_charset = matches!(
+                &cast.cast_type,
+                tidb_ast::CastType::Char { charset: Some(charset), .. } if charset != "BINARY"
+            );
+            let (coer, repe) = if target_tp.eval_type() == tidb_datatype::EvalType::String {
+                let repe = if target_tp.charset_name() == "ascii" {
                     crate::expr_collation::Repertoire::ASCII
                 } else {
                     crate::expr_collation::Repertoire::UNICODE
@@ -2905,30 +2792,16 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                     crate::expr_collation::Repertoire::ASCII,
                 )
             };
-            let mut node = Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new(name),
-                ret_type,
-                args,
-            ));
-            // `cast_target` already computes the FULL correct target type
-            // per cast kind (including `set_binary_charset` for `AS
-            // BINARY`), mirroring the dedicated `types.SetBinChsClnFlag`
-            // override Go's cast builtins apply after their own generic
-            // collation derivation. `derive_tree_collation`'s later walk has
-            // no `cast_*` case of its own, so without marking this node
-            // derived here it would fall into the generic default arm and,
-            // for a string result, overwrite this target charset with the
-            // connection charset -- silently undoing `CAST(x AS BINARY)`.
-            crate::collation_derive::apply_derived_collation(
-                &mut node,
-                &crate::expr_collation::ExprCollation {
-                    coer,
-                    repe,
-                    charset: charset_name,
-                    collation: collation_name,
-                },
-            );
-            Ok(node)
+            let mut cast_function = crate::builtin_cast::build_cast_function_with_check(
+                &crate::builtin::ResolverBuildContext(resolver),
+                arg,
+                target_tp,
+                false,
+                explicit_charset,
+            )?;
+            crate::collation_derive::set_coercibility(&mut cast_function, coer);
+            crate::collation_derive::set_repertoire(&mut cast_function, repe);
+            Ok(cast_function)
         }
         // `CONVERT(expr USING charset)` -- Go `convertFunctionClass`. The
         // target charset is a build-time keyword, so it becomes a constant

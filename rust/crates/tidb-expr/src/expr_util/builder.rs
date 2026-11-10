@@ -289,62 +289,24 @@ impl<C: tidb_exprctx::context::Columns> FunctionBuilder for RealFunctionBuilder<
         is_explicit_charset: bool,
     ) -> Result<Expression, FunctionBuildError> {
         // Go routes `cast` to `BuildCastFunctionWithCheck`, a DEDICATED
-        // builder that `NewFunction` explicitly refuses. `dedicated_cast` is
+        // builder that `NewFunction` explicitly refuses. `builtin_cast` is
         // its port; the generic `cast` name has no executor arm, so a
         // placeholder left under it fails at run time.
         let Some(target) = ret_type else {
             return PreservingFunctionBuilder.new_function("cast", None, vec![arg]);
         };
-        let mut expression = dedicated_cast(arg, target)?;
-        let Expression::ScalarFunction(function) = &mut expression else {
-            unreachable!("the dedicated cast builder produces a function")
-        };
-        let target = function.ret_type.as_ref().expect("cast target");
-        let eval_type = target.eval_type();
-        // Go newBaseBuiltinCastFunc4String preserves an explicitly requested
-        // charset; ordinary casts derive signature collation from the context.
-        let collation = if is_explicit_charset && eval_type == tidb_datatype::EvalType::String {
-            crate::expr_collation::ExprCollation {
-                coer: crate::expr_collation::Coercibility::EXPLICIT,
-                repe: if target.charset_name() == "ascii" {
-                    crate::expr_collation::Repertoire::ASCII
-                } else {
-                    crate::expr_collation::Repertoire::UNICODE
-                },
-                charset: target.charset_name().to_owned(),
-                collation: target.collation_name().to_owned(),
-            }
-        } else {
-            crate::collation_derive::derive_collation_with_connection(
-                "cast",
-                &function.args,
-                eval_type,
-                self.ctx.connection_charset_info(),
-            )
-            .map_err(|error| FunctionBuildError {
-                func_name: "cast".to_owned(),
-                reason: format!("{error:?}"),
-                error: Some(error),
-            })?
-        };
-        function.collation.set_coercibility(collation.coer);
-        function.collation.set_repertoire(collation.repe);
-        function
-            .collation
-            .set_charset_and_collation(&collation.charset, &collation.collation);
-        function.collation.set_explicit_charset(
-            is_explicit_charset && eval_type == tidb_datatype::EvalType::String,
-        );
-        // BuildCastFunctionWithCheck leaves JSON unfolded because callers may
-        // still change its parse flag after construction.
-        if eval_type != tidb_datatype::EvalType::Json {
-            crate::constant_fold::fold_constant_in_mode(
-                &mut expression,
-                self.ctx,
-                crate::constant_fold::ConstantFoldMode::Normal,
-            );
-        }
-        Ok(expression)
+        crate::builtin_cast::build_cast_function_with_check(
+            &crate::builtin::ColumnsBuildContext(self.ctx),
+            arg,
+            target,
+            false,
+            is_explicit_charset,
+        )
+        .map_err(|error| FunctionBuildError {
+            func_name: "cast".to_owned(),
+            reason: format!("{error:?}"),
+            error: Some(error),
+        })
     }
 }
 

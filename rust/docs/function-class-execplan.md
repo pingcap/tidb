@@ -104,7 +104,15 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   and `timestamp` (its signature carries `isFloat`, and its evaluator lacks
   Go's `handleInvalidTimeError`) carry state in the signature and wait for
   Milestone 11.
-- [ ] Milestone 10: `builtin_cast.go` (9) and `BuildCastFunction`.
+- [x] (2026-11-10) Milestone 10: `builtin_cast.go` (8 classes) and
+  `BuildCastFunctionWithCheck` (`builtin_cast.rs`). The fixture
+  `cast_class_matrix.txt` is Go's answer for 21 targets, 3 modes (plain,
+  in a UNION, explicit charset) and 22 arguments (1,386 rows). The
+  rewriter's `CAST` and the plan builder's cast build through it.
+- [ ] Milestone 10b: the `wrap_with_cast_as_*` helpers and
+  `simple_expr::build_cast_function` take the build context (about 130
+  callers, which today build unfolded under the default connection charset
+  and are folded by their caller); `castAsArrayFunctionClass`.
 - [ ] Milestone 11: the legacy paths deleted; evaluation dispatches on the
   signature object alone; X01 leaves the register.
 
@@ -265,6 +273,15 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
 - Observation: Go's one `ast.Cast` name is `cast_<target>` here; a body
   that asks `FuncName.L == ast.Cast` (`builtinConvSig.evalString`) tests
   the prefix.
+- Observation: the matrix compares a cast argument's type only where the
+  probe's column has that shape. `fromUnixTimeFunctionClass` widens the
+  cast of a string with scale 0, which no probe column has; the replay
+  caught the class asking for the name `cast` (`decimal(65,6)` printed
+  `decimal(65,0)`).
+  Evidence: `from_unixtime_widens_the_cast_of_a_string_argument`.
+- Observation: `CAST(0xffff AS DECIMAL(1,0))` is 9 with warning 1690:
+  `CastDecimalAsDecimal` fits a binary literal to the target, and only
+  `CastRealAsReal` returns the argument as it is.
 - Observation: the matrix probe had no ENUM or SET argument and no NULL
   literal beside a NOT NULL column, so the control classes' enum/set and
   nullability arms were unpinned (two mutants survived). The probe gained
