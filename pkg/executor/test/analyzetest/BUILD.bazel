@@ -5,6 +5,7 @@ go_test(
     timeout = "moderate",
     srcs = [
         "analyze_bench_test.go",
+        "analyze_save_worker_test.go",
         "analyze_test.go",
         "main_test.go",
     ],

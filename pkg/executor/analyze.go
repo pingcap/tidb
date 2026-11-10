@@ -454,7 +454,18 @@ func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, results
 		close(resultsCh)
 		return nil
 	})
-	return checkwg.Wait()
+	err := checkwg.Wait()
+	if err != nil {
+		// The handler may stop before consuming a buffered result. Builders
+		// have exited and closed resultsCh, so ownership of these results
+		// must be released here before the statement returns.
+		statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
+		for result := range resultsCh {
+			finishJobWithLog(statsHandle, result.Job, err)
+			result.DestroyAndPutToPool()
+		}
+	}
+	return err
 }
 
 // filterAndCollectTasks filters the tasks that are not locked and collects the table IDs.
@@ -893,6 +904,7 @@ func analyzeWorkerExitErr(ctx context.Context, errExitCh <-chan struct{}) error 
 func (e *AnalyzeExec) trySendAnalyzeResult(ctx context.Context, statsHandle *handle.Handle, resultsCh chan<- *statistics.AnalyzeResults, result *statistics.AnalyzeResults) {
 	select {
 	case resultsCh <- result:
+		failpoint.InjectCall("analyzeAfterSendResult")
 		return
 	case <-ctx.Done():
 	case <-e.errExitCh:
