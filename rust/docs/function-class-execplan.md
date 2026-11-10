@@ -1,0 +1,446 @@
+# Build every scalar function through Go's function classes
+
+This ExecPlan is a living document. Keep Progress, Surprises & Discoveries,
+Decision Log and Outcomes & Retrospective current as work proceeds. It follows
+`PLANS.md` at the repository root.
+
+## Purpose / Big Picture
+
+In Go TiDB one object answers every question about a scalar function call.
+`pkg/expression/builtin.go` maps each function name to a function class
+(`funcs map[string]functionClass`), and the class's `getFunction(ctx, args)`
+returns a signature object (`builtinFunc`): the arguments wrapped in the
+casts the signature needs, the return field type, the collation, the
+protobuf signature code (`PbCode()`), and the evaluation methods. The
+planner, the push-down checks, the TiPB converter and the executor all read
+that one object.
+
+The Rust rewrite makes the same decisions in five places that must agree by
+hand: the return type per name (`rewriter/result_type.rs`), the argument
+casts per name (`rewriter/signature_args.rs`), the type rules of arithmetic,
+operators and comparison (`builtin_arithmetic.rs`, `builtin_op.rs`,
+`builtin_compare.rs`), the signature code, re-derived from the name and the
+argument types after the casts (`pushdown_catalog.rs`), and evaluation by
+name (`scalar_function.rs`). Register row X01 lists what this costs: return
+types that differ from Go's, 38 names whose arguments carry no casts, a
+signature code that has to be re-resolved for every question, and errors Go
+raises in `getFunction` that have no home here (`v div 2` over a vector says
+"cannot cast from vector to decimal" where Go's class never builds that
+cast).
+
+After this plan a Rust function class per Go class builds the same signature
+object, `new_function` is Go's `newFunctionImpl`, and the pieces above are
+gone. Observable: for every builtin and every combination of argument types,
+the Rust call has Go's signature code, Go's argument types after the casts,
+Go's return field type and Go's result over a fixed set of rows -- checked
+against fixtures Go itself wrote -- and the X01 row leaves the register.
+
+## Progress
+
+- [x] (2026-11-10) Milestone 0: the base (Go `builtin.go`:
+  `newBaseBuiltinFuncWithTp` and what it calls) and the seam in
+  `new_function_impl` and the rewriter's `binary_expression`. The other
+  three base constructors arrive with the first class that calls them.
+- [x] (2026-11-10) Milestone 1: `builtin_arithmetic.go` (6 classes). The six
+  names evaluate through the signature's kernel; `prepare_numeric_arguments`
+  and `wrap_arithmetic_operands` are deleted.
+- [ ] Milestone 2: `builtin_op.go` (13 classes).
+- [ ] Milestone 3: `builtin_fts.go` (2), `builtin_like.go` (1),
+  `builtin_ilike.go` (1), `builtin_grouping.go` (1).
+- [ ] Milestone 4: `builtin_compare.go` (5), `builtin_control.go` (3).
+- [ ] Milestone 5: `builtin_math.go` (25).
+- [ ] Milestone 6: `builtin_miscellaneous.go` (29), `builtin_info.go` (26),
+  `builtin_encryption.go` (14).
+- [ ] Milestone 7: `builtin_json.go` (29), `builtin_regexp.go` (4),
+  `builtin_convert_charset.go` (2), `builtin_other.go` (11).
+- [ ] Milestone 8: `builtin_string.go` (44).
+- [ ] Milestone 9: `builtin_time.go` (58).
+- [ ] Milestone 10: `builtin_cast.go` (9) and `BuildCastFunction`.
+- [ ] Milestone 11: the legacy paths deleted; evaluation dispatches on the
+  signature object alone; X01 leaves the register.
+
+## Surprises & Discoveries
+
+- Observation: the signature code alone does not say whether a function has
+  a TiPB form. Go `scalarFuncToPBExpr` also asks
+  `canFuncBePushed(.., kv.UnSpecified)`, so 69 builtins with a code are
+  refused for some or all argument types (`tan`, `left` over a binary string,
+  `regexp` over non-string arguments, every vector function).
+  Evidence: `rust/crates/tidb-expr/testdata/pb_converter_refused.txt`, written
+  by Go; `the_converter_refuses_the_signatures_no_store_lists`.
+
+- Observation: the whole-class fixture is `NewFunction`'s output, not
+  `getFunction`'s. `typeInferForNull` retypes a NULL constant to the other
+  argument's type before the class sees it, so `NULL DIV i` is
+  `IntDivideInt` over two bigints. A test that calls `get_function` directly
+  fails 62 of the 1,176 arithmetic rows, all with a NULL argument.
+  Evidence: `tests/function_class_source.rs` builds through `new_function`.
+- Observation: a class folds only the cast it built. Go
+  `BuildCastFunction` ends in `FoldConstant`; an argument the wrap returned
+  unchanged is never folded by the class.
+  Evidence: fixture slots marked `=` (the argument as given) against `c`
+  with a folded value (`intdiv xi` has `c..:uint:3138`, the hex literal 0x12
+  cast to the unsigned constant 18).
+
+- Observation: the kernel a signature names must read its operands in the
+  order the Go signature does, not the order the function name suggested.
+  Go `builtinArithmeticPlusRealSig` and `builtinArithmeticModRealSig`
+  evaluate both operands before the NULL check; every other arithmetic
+  signature returns on a NULL left. The by-name evaluator had this per
+  name; the kernel had it for MOD only.
+  Evidence: `json_cast_arithmetic_batches_preserve_go_operand_passes`
+  (`NULL + cast('notjson' as json)` is an invalid-JSON error, not NULL).
+- Observation: Go `WrapWithCastAsDecimal` evaluates a `ConstStrict` cast in
+  the build context, after `BuildCastFunction` folded it. A cast over a
+  constant tree that is not a `Constant` node is not folded
+  (`foldConstant` requires `*Constant` arguments) but is evaluated, so its
+  truncation warning is raised once at build and again at every
+  evaluation.
+  Evidence: `strict_scalar_decimal_precision_probes_preserve_runtime_evaluation`
+  (`cast_json('null') DIV c` warns 1292 at build in a non-strict mode).
+- Observation: `typeInferForNull` leaves a NULL parameter alone. It writes
+  the inferred type through `newarg.GetType(ctx)`, and `Constant.GetType`
+  answers for a parameter with a fresh type on every call, so the write is
+  lost: `? + 11` with a NULL parameter is `double`, the literal `NULL + 11`
+  is `bigint`.
+  Evidence: live Go PREPARE/EXECUTE, pinned in `driver/params.rs` and
+  `a_null_parameter_keeps_its_own_type_through_null_inference`.
+- Observation: a cast on the tree folds at plan time, so its warning is a
+  plan-time warning and must precede every execution warning (Go has one
+  buffer in order of occurrence). The fold's warnings travel in a
+  thread-local stash; an executor warning raised on a worker thread used to
+  overtake them. The stash now joins the statement's list where planning
+  ends (`prepare_execution_plan`).
+  Evidence: `select d DIV '' from du` warns 1292 then 1365 in Go, in both
+  evaluation modes (`arithmetic_overflow_names_its_operands_like_go`).
+- Observation: overflow and truncation texts come from one renderer, Go
+  `ScalarFunction.StringWithCtx` (`(plus(t5.col7, t5.col2) * 9223372036854775807)`),
+  and a string constant in a warning goes through `TruncatedStringify`.
+  The by-name texts they replace differed for nested functions.
+
+## Decision Log
+
+- Decision: port one whole Go file per milestone, never one function at a
+  time across files.
+  Rationale: a Go file's classes share helpers (`setFlenDecimal4RealOrDecimal`,
+  `resolveType4Extremum`), and the fixtures compare whole classes. A file is
+  the smallest unit whose legacy tables can be deleted when it lands.
+  Date/Author: 2026-11-10, agent with the user's approval ("go ahead").
+- Decision: the seam sits inside `new_function_impl`, after
+  `verify_args_by_count`: a name with a ported class goes through
+  `get_function`, every other name through the legacy body. No flag and no
+  second entry point.
+  Rationale: Go has one constructor. The seam shrinks to nothing as files
+  land, so the special case removes itself.
+  Date/Author: 2026-11-10, agent.
+- Decision: the arguments and the return type stay on the `ScalarFunction`
+  node (`args`, `ret_type`), and the signature object the node holds is the
+  decoder's `PbBuiltin { signature, kernel }`, set by `get_function` as well
+  as by the decoder.
+  Rationale: Go keeps `args` inside the `builtinFunc` and `RetType` on the
+  node; hundreds of Rust call sites read `function.args`. Moving the field
+  changes no behavior. The decoder (`distsql_builtin.rs`) already builds
+  `PbBuiltin` from a signature code, so both constructors end at one type.
+  Date/Author: 2026-11-10, agent.
+- Decision: land X01's admission work first.
+  Rationale: its Go fixtures (`pb_code_matrix.txt`,
+  `pb_code_vector_matrix.txt`, `pb_code_special.txt`,
+  `pb_converter_refused.txt`) are this plan's regression net.
+  Date/Author: 2026-11-10, agent.
+
+- Decision: a class reads its context through a small `BuildContext` trait
+  (connection charset, `NO_UNSIGNED_SUBTRACTION`, `div_precision_increment`,
+  `fold_constant`, `eval_constant`) with two adapters, one over `Columns` (`new_function`) and
+  one over the rewriter's `ColumnResolver`.
+  Rationale: the rewriter folds through its resolver, which is not a
+  `Columns`. One class body serves both callers, as Go's serves both through
+  `NewFunction`.
+  Date/Author: 2026-11-10, agent.
+- Decision: Milestones 0 and 1 land together, and the kernel is not an
+  `Option` beside the signature: the node's `pb_builtin` is
+  `PbBuiltin::new(pb_code)`, which is `None` only for a signature without a
+  code (vector arithmetic), and such a node evaluates by name.
+  Rationale: the decoder's kernels for the arithmetic signatures already
+  exist and are Go-tested; a base without a class has nothing to test it.
+  Date/Author: 2026-11-10, agent.
+- Decision: the fixture in the repository holds the rows of the ported
+  names only; the probe writes every builtin.
+  Rationale: a row of an unported name would fail. Each milestone adds its
+  file's rows.
+  Date/Author: 2026-11-10, agent.
+
+## Outcomes & Retrospective
+
+Milestones 0 and 1 (2026-11-10): the six arithmetic names are built by
+their Go classes from both `new_function` and the AST rewriter. All 1,176
+fixture rows (signature, return field type, coercibility, repertoire and
+every argument after its cast, constants included) equal Go's. Integer
+division carries real casts on the tree.
+
+## Context and Orientation
+
+All Rust paths are under `rust/crates/tidb-expr/src/` unless a crate is
+named; all Go paths under `pkg/expression/`. Go is the source of truth and is
+never edited. A throwaway Go probe lives outside `pkg/`
+(`zzprobe/<name>/probe_test.go`, never committed) and runs with
+`go test --tags=intest -v .`.
+
+Terms. A function class (Go `functionClass`) is the per-name object whose
+`getFunction` chooses a signature from the argument types. A signature (Go
+`builtinFunc`, for example `builtinArithmeticPlusIntSig`) is one typed
+implementation; its code is a `tipb.ScalarFuncSig`. An eval type (Go
+`types.EvalType`) is the coarse type a signature computes in: Int, Real,
+Decimal, String, Datetime, Timestamp, Duration, Json, VectorFloat32. A shape
+is this plan's notation for the argument types of a call, one letter per
+argument: `i` bigint, `u` bigint unsigned, `r` double, `d` decimal(20,4),
+`s` varchar utf8mb4_bin, `b` varbinary, `t` datetime, `D` date, `T`
+timestamp, `h` time, `j` json, `v` vector.
+
+How Go builds a call. `scalar_function.go` `newFunctionImpl(ctx, fold,
+funcName, retType, checkOrInit, args...)` handles `cast`, `getvar`,
+`sysdate`, `in` with a NULL list and a few others itself, looks the class up
+in `funcs`, replaces NULL-typed arguments' types (`typeInferForNull`), calls
+`fc.getFunction(ctx, args)`, takes the signature's return type unless the
+caller passed one and the signature's is unspecified, builds the
+`ScalarFunction`, and folds constants. Go's expression rewriter has no typing
+of its own: it calls `expression.NewFunction`.
+
+How a class builds a signature. It checks the argument count
+(`verifyArgs`), decides the eval types, and calls one of four base
+constructors in `builtin.go`. `newBaseBuiltinFuncWithTp(ctx, funcName, args,
+retType, argTps...)` derives the collation from the arguments as given
+(before any cast), wraps each argument in the cast to its eval type
+(`WrapWithCastAsInt` and its siblings; a string argument also goes through
+`HandleBinaryLiteral`), builds the return field type for the eval type
+(`newReturnFieldTypeForBaseBuiltinFunc`), stamps charset, collation,
+coercibility and repertoire, and adjusts the NOT NULL flag by name
+(`adjustNullFlagForReturnType`). `newBaseBuiltinFuncWithFieldTypes` is the
+same with field types for the arguments (decimal, datetime, timestamp and
+duration arguments are cast to the exact type; `if`, `ifnull` and `case` use
+it). `newBaseBuiltinFunc(ctx, funcName, args, tp)` casts nothing and takes
+the return type as given. `newBaseBuiltinFuncWithFieldType(tp, args)` skips
+collation derivation. The class then refines the return type (length,
+decimals, flags), constructs the signature struct and calls `setPbCode`.
+
+What Rust has. `new_function.rs` `new_function_impl` follows Go up to
+`verify_args_by_count` and `builtin_registry::get_function_refusal`, then
+runs a legacy body that stands for `getFunction`: the return type from
+`builtin_arithmetic::infer_arithmetic_type_with_context` (arithmetic),
+`builtin_op::infer_unary_op_type` (unary operators) or
+`rewriter::result_type::builtin_return_type` (everything else);
+`stamp_builtin_return_flags`; `builtin_compare::refine_comparison_dyn`;
+`collation_derive::derive_collation_with_connection`;
+`rewriter::signature_args::wrap_builtin_arguments`;
+`handle_binary_literal`; collation stamping; constant folding. `rewriter.rs`
+repeats much of it in `finish_function_call` and `binary_expression`. A name
+`builtin::funcs` lists leaves both before any of that: its class's
+`get_function` answers a `BaseBuiltinFunc`, and
+`new_function::scalar_function_of` makes the node. `pushdown_catalog.rs`
+`pb_code(expression)` re-derives the signature code from the name and the
+argument types through per-name resolve tables, with stand-ins where the
+tree lacks the casts Go's has. `scalar_function.rs` evaluates by name;
+`scalar_function/pb_builtin.rs` holds the decoder's `PbBuiltin { signature,
+kernel }`, where `Kernel` is an enum naming the evaluation routine, and a
+node carrying one evaluates through it. The pieces to reuse exist already:
+`wrap_cast.rs` (`wrap_with_cast_as_int` and its siblings),
+`collation_derive.rs`, `binary_literal.rs`,
+`builtin_arithmetic::new_return_field_type_for_base_builtin_func`,
+`builtin_registry.rs` (names, class names, arities).
+
+The regression net. `testdata/pb_code_matrix.txt` is Go's signature code for
+every builtin over every shape of up to three arguments;
+`pb_code_vector_matrix.txt` the same for shapes holding a vector;
+`pb_code_special.txt` the calls no column shape reaches;
+`pb_converter_refused.txt` the shapes `ExprToPB` refuses. They were written
+by `zzprobe/pbmatrix/probe_test.go` and are read by
+`tests/pb_code_matrix_source.rs`.
+
+## Plan of Work
+
+Milestone 0 adds the base and the seam, changing no behavior. Create
+`builtin.rs` as the port of Go `builtin.go`'s constructors:
+`BaseBuiltinFunc` (arguments, return field type, signature code, derived
+collation), `new_base_builtin_func`, `new_base_builtin_func_with_tp`,
+`new_base_builtin_func_with_field_types`,
+`new_base_builtin_func_with_field_type`,
+`new_return_field_type_for_base_builtin_func` (moved from
+`builtin_arithmetic.rs`, completed with Go's string, JSON and vector arms and
+the boolean-function flag) and `adjust_null_flag_for_return_type` (the three
+Go name sets; today `stamp_builtin_return_flags`). Add the `FunctionClass`
+trait with `get_function(ctx, args) -> Result<BuiltinFunc, EvalError>` and a
+lookup by name beside `builtin_registry::function_class`. In
+`new_function_impl`, after `get_function_refusal`, a name with a class takes
+the Go path: `get_function`, the return-type rule quoted above, node
+construction with the signature object installed, the `check_or_init`
+callback, folding. Make `pushdown_catalog::pb_code` and `describe_function`
+read the installed signature when the node has one. Make `rewriter.rs`
+`finish_function_call` and `binary_expression` call `new_function` for a name
+with a class, so the rewriter has no typing of its own for it. Extend the Go
+probe with the whole-class fixture described under Validation and add its
+Rust reader, restricted to the ported names (none yet).
+
+Milestones 1 to 10 each port one Go file. For each class in the file, read
+its `getFunction` and write the Rust class in the Rust file of the same name
+(`builtin_arithmetic.rs`, `builtin_op.rs`, ...), reusing the existing type
+helpers where they are already Go's and deleting them where the class
+replaces them. Register the class. Delete the file's names from
+`rewriter/result_type.rs`, `rewriter/signature_args.rs`, the legacy body's
+special cases and the catalog's resolve tables. Move the file's evaluation
+onto `Kernel` variants once the eval fixture proves the results equal; until
+then the node evaluates by name over the now-correct arguments. Add the
+file's names to the whole-class test.
+
+Milestone 1 is `builtin_arithmetic.go`: plus, minus, multiply, divide,
+integer divide and modulo. Integer divide becomes Go's: two integer
+arguments build `IntDivideInt` over `(ETInt, ETInt)`, anything else
+`IntDivideDecimal` over `(ETDecimal, ETDecimal)` with real casts on the
+tree, so `prepare_numeric_arguments` goes and a vector operand fails in the
+cast as Go's does. Milestone 2 is `builtin_op.go`: the logic operators,
+bit operators, unary minus and unary not (whose default arm raises Go's
+"%s is not supported for unary not operator" and replaces the check now in
+`wrap_builtin_arguments`), `is true` / `is false` / `is null`. Milestone 3
+ports the two full-text classes (removing the invented "MATCH_AGAINST() is
+only supported in starter deployment mode" from
+`builtin_registry::unresolved_error` and fixing the name check in `fts.rs`),
+`like`, `ilike` and `grouping`. Milestones 4 to 9 follow the Go files in the
+order of the Progress list, which puts the files behind X01's listed
+return-type mismatches first (`greatest` / `least` over two dates and `<=>`
+in compare; `any_value` and `name_const` in miscellaneous; the AES IV
+argument in encryption; `tidb_encode_record_key` and `tidb_mvcc_info` in
+info; `crc32` in math; `timestampdiff` in time). Milestone 10 ports the cast
+classes and `BuildCastFunction`, replacing `build_cast_function`'s own
+signature choice. Milestone 11 deletes what is then unreachable
+(`result_type.rs`, `signature_args.rs`, the legacy body, the rewriter's
+`finish_function_call` typing, the catalog's resolve tables and stand-ins,
+evaluation by name) and removes X01 from the register.
+
+## Concrete Steps
+
+Build settings are fixed for every command (mixing them duplicates every
+artifact):
+
+    export CARGO_CACHE_AUTO_CLEAN_FREQUENCY=never CARGO_PROFILE_DEV_DEBUG=0 \
+      CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0
+
+While iterating, from `rust/`:
+
+    cargo check -j12 -p tidb-expr --tests
+    cargo nextest run -j12 -p tidb-expr -E 'test(pb_code_matrix_source) | test(function_class_source)'
+
+Expect every test to pass; a failure prints one `WRONG <name> <Go>!=<Rust>
+<count> <shapes>` line per difference.
+
+Before each commit, from `rust/`:
+
+    timeout 1800 cargo nextest run -j12 --no-fail-fast -p tidb-expr \
+      -p tidb-unistore-cophandler -p tidb-executor-internal-exec \
+      -p tidb-expression-aggregation -p tidb-planner-core-operator-physicalop \
+      -p tidb-planner-core-operator-logicalop -p tidb-planner -p tidb-distsql
+    timeout 1800 cargo nextest run -j12 --no-fail-fast -p tidb-executor -p tidb-session
+
+Before each push: `cargo build -j12 --locked -p tidb-server` exits 0, and the
+integration replay passes:
+
+    cargo test -p tidb-server --lib integration_corpus_matches_recordings -- --ignored
+
+To regenerate a fixture, from `zzprobe/pbmatrix/`:
+
+    ZZOUT=<absolute path of the fixture> go test --tags=intest -run 'TestProbe$' -v .
+
+(`TestProbe` writes `pb_code_matrix.txt`, `TestProbeVector` the vector
+matrix, `TestProbeConverter` the refused list, `TestFunctionClass` the
+whole-class fixture for every builtin. The repository's
+`function_class_matrix.txt` is that output reduced to the rows of the ported
+names, every `A` line and the `T` lines those rows refer to.)
+
+## Validation and Acceptance
+
+Each milestone is accepted on four checks, all against Go's own output.
+
+The signature matrix: `pb_code_matrix_source` passes unchanged. It fails
+before a class lands only where the legacy path was already wrong; it must
+never regress.
+
+The whole-class fixture: `testdata/function_class_matrix.txt`, written by
+`TestFunctionClass` from `NewFunction(mock.NewContext(), name,
+TypeUnspecified, args...)`. A `T` line numbers a field type
+(`type,flag,flen,decimal,charset,collation`); an `A` line gives a shape
+letter's argument type; every other line is a name, a shape, the signature
+code, the return type, `coercibility,repertoire` and, per argument after the
+casts, `=` (the argument as given) or `c` (wrapped or replaced) with its type
+and, for a constant a cast folded to, `:kind:value`. Shapes cover the column
+letters, `I` (bigint NOT NULL) and the constants `N` NULL, `1`, `x` 0x12,
+`q` '1.5', `m` 1.5 and `e` 1.5e0, alone and beside each of `iurdst`. The
+Rust test (`tests/function_class_source.rs`) builds the same call through
+`new_function` and compares every field, for the names ported so far. This
+is the test that proves a class is Go's, and the one the 38 uncast names and
+the return-type mismatches fail today.
+
+The eval fixture: per ported file, a Go probe evaluates every signature over
+a fixed row of values per shape letter (including NULL, zero, a negative, a
+boundary value and a non-numeric string) and writes the result or the error
+text; the Rust test evaluates the same calls. It gates moving a file's
+evaluation onto the signature object.
+
+Mutants: for every class, a mutant that changes its signature choice, one of
+its casts or its return type must fail a test. Restore a mutated file with
+`cp` (never `mv`, which keeps the old mtime and leaves a stale binary).
+
+End to end, `SELECT v DIV 2 FROM t` over a vector column reports Go's error
+rather than "cannot cast from vector to decimal", and the session and
+executor suites and the integration replay pass.
+
+## Idempotence and Recovery
+
+Every milestone is one or more self-contained commits; the seam keeps
+unported names on the legacy path, so the tree is releasable after each.
+Fixtures are regenerated by rerunning the Go probe and are byte-stable. If a
+ported class breaks a downstream suite, check the failing expectation
+against Go (`./gorun`, or a testkit probe for exact text) before touching
+either side: the legacy path was wrong in places, and a test may have pinned
+its output. Reverting a milestone is reverting its commits; nothing outside
+`rust/` changes.
+
+## Interfaces and Dependencies
+
+In `rust/crates/tidb-expr/src/builtin.rs` (Go `builtin.go`):
+
+    pub(crate) trait BuildContext {
+        fn connection_charset_info(&self) -> (&str, &str);
+        fn no_unsigned_subtraction(&self) -> bool;
+        fn div_precision_increment(&self) -> i64;
+        fn fold_constant(&self, expression: &mut Expression);
+        fn eval_constant(&self, expression: &Expression) -> Result<Datum, EvalError>;
+    }
+    pub(crate) struct ColumnsBuildContext<'a>(pub(crate) &'a dyn Columns);
+    pub(crate) struct ResolverBuildContext<'a, R: ColumnResolver>(pub(crate) &'a R);
+
+    pub(crate) struct BaseBuiltinFunc {
+        pub(crate) args: Vec<Expression>,
+        pub(crate) tp: FieldType,
+        pub(crate) pb_code: tipb::ScalarFuncSig,
+        pub(crate) collation: CollationInfo,
+    }
+
+    pub(crate) fn new_base_builtin_func_with_tp(ctx: &dyn BuildContext,
+        func_name: &str, args: Vec<Expression>, ret_type: EvalType,
+        arg_tps: &[EvalType]) -> Result<BaseBuiltinFunc, EvalError>;
+
+    pub(crate) trait FunctionClass: Sync {
+        fn get_function(&self, ctx: &dyn BuildContext, args: Vec<Expression>)
+            -> Result<BaseBuiltinFunc, EvalError>;
+    }
+    pub(crate) fn funcs(name: &str) -> Option<&'static dyn FunctionClass>;
+
+`BuildContext` holds what the Go classes read from theirs and nothing else;
+widen it only when a class being ported reads more. The argument count is
+checked by the caller (`verify_args_by_count`, from the registry's arity).
+`new_base_builtin_func`, `new_base_builtin_func_with_field_types` and
+`new_base_builtin_func_with_field_type` are added by the first class that
+calls each. `ScalarFunction::from_builtin_func(func_name, ret_type, f)`
+makes the node: `f`'s arguments and collation, and `pb_builtin =
+PbBuiltin::new(f.pb_code)`, the same object the decoder installs.
+`pushdown_catalog::pb_code` returns that signature when the node has one.
+
+The work depends on `tidb-datatype` (field types, eval types), `tidb-charset`
+(collations), `tipb` (signature codes) and nothing new.
