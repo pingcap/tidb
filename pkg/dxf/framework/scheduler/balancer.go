@@ -111,14 +111,14 @@ func (b *balancer) balanceSubtasks(ctx context.Context, sch Scheduler, managedNo
 	return b.doBalanceSubtasks(ctx, task, eligibleNodes)
 }
 
-// orderAndFilterNodes sorts nodes in place and applies a positive maxNodeCnt limit.
+// orderAndFilterNodes sorts nodes in place and applies the task's MaxNodeCount limit.
 // When the limit applies, existing subtask count takes priority over avoiding
 // preemption; otherwise only the no-preemption preference applies. Ties retain
 // their original order. This orders relocation candidates, without forcing
 // subtasks already on eligible nodes to move to idle nodes.
-func orderAndFilterNodes(nodes []string, subtasks []*proto.SubtaskBase, maxNodeCnt int,
-	canRunWithoutPreempt func(node string) bool) []string {
-	limitNodeCnt := maxNodeCnt > 0 && len(nodes) > maxNodeCnt
+func (b *balancer) orderAndFilterNodes(task *proto.Task, nodes []string,
+	subtasks []*proto.SubtaskBase, taskNodes map[string]struct{}) []string {
+	limitNodeCnt := task.MaxNodeCount > 0 && len(nodes) > task.MaxNodeCount
 	nodeSubtaskCnt := make(map[string]int, len(nodes))
 	for _, st := range subtasks {
 		nodeSubtaskCnt[st.ExecID]++
@@ -127,10 +127,10 @@ func orderAndFilterNodes(nodes []string, subtasks []*proto.SubtaskBase, maxNodeC
 		if limitNodeCnt && nodeSubtaskCnt[nodes[i]] != nodeSubtaskCnt[nodes[j]] {
 			return nodeSubtaskCnt[nodes[i]] > nodeSubtaskCnt[nodes[j]]
 		}
-		return canRunWithoutPreempt(nodes[i]) && !canRunWithoutPreempt(nodes[j])
+		return b.canRunWithoutPreempt(task, taskNodes, nodes[i]) && !b.canRunWithoutPreempt(task, taskNodes, nodes[j])
 	})
 	if limitNodeCnt {
-		return nodes[:maxNodeCnt]
+		return nodes[:task.MaxNodeCount]
 	}
 	return nodes
 }
@@ -195,9 +195,7 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, task *proto.Task, elig
 		}
 	}
 	oldTaskNodes := getNodesOfSubtasks(subtasks)
-	adjustedNodes = orderAndFilterNodes(adjustedNodes, subtasks, task.MaxNodeCount, func(node string) bool {
-		return b.canRunWithoutPreempt(task, oldTaskNodes, node)
-	})
+	adjustedNodes = b.orderAndFilterNodes(task, adjustedNodes, subtasks, oldTaskNodes)
 	adjustedNodeMap := make(map[string]struct{}, len(adjustedNodes))
 	for _, n := range adjustedNodes {
 		adjustedNodeMap[n] = struct{}{}
