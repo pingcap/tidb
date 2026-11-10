@@ -2133,29 +2133,56 @@ func (w *worker) onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx *jobC
 		return ver, errors.Trace(err)
 	}
 	jobCtx.jobArgs = args
-	if args.OldMViewID != job.TableID || args.OldMViewID == args.ShadowTableID || args.BuildReadTSO == 0 {
+	if args.OldMViewID != job.TableID {
 		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: invalid table IDs or build read tso")
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: mismatched old materialized view id")
+	}
+	if args.OldMViewID == args.ShadowTableID {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: shadow table id equals old materialized view id")
+	}
+	if args.BuildReadTSO == 0 {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: invalid build read tso")
 	}
 	oldMViewTblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if oldMViewTblInfo.MaterializedView == nil || len(oldMViewTblInfo.MaterializedView.BaseTableIDs) != 1 {
+	if oldMViewTblInfo.MaterializedView == nil {
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrWrongObject.GenWithStackByArgs(job.SchemaName, job.TableName, "MATERIALIZED VIEW")
 	}
+	if len(oldMViewTblInfo.MaterializedView.BaseTableIDs) != 1 {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrWrongObject.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: materialized view must reference exactly one base table in Stage-1, got %d", len(oldMViewTblInfo.MaterializedView.BaseTableIDs))
+	}
 	if args.ExpectedOldMViewRevision != nil && oldMViewTblInfo.Revision != *args.ExpectedOldMViewRevision {
 		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: stale old materialized view revision detected before cutover")
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack(
+			"refresh materialized view complete OUT OF PLACE cutover: stale old materialized view revision detected before cutover, expected %d but got %d",
+			*args.ExpectedOldMViewRevision, oldMViewTblInfo.Revision,
+		)
 	}
 	shadowTblInfo, err := getTableInfoAndCancelNonExistJob(jobCtx.metaMut, job, args.ShadowTableID, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if shadowTblInfo.MaterializedView != nil || shadowTblInfo.MaterializedViewLog != nil || shadowTblInfo.View != nil || shadowTblInfo.Sequence != nil || shadowTblInfo.MaterializedViewShadow == nil || shadowTblInfo.MaterializedViewShadow.SourceMViewID != args.OldMViewID || shadowTblInfo.State != model.StatePublic {
+	if shadowTblInfo.MaterializedView != nil || shadowTblInfo.MaterializedViewLog != nil || shadowTblInfo.View != nil || shadowTblInfo.Sequence != nil {
 		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: invalid shadow table metadata")
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: shadow table is not a protected physical table")
+	}
+	if shadowTblInfo.MaterializedViewShadow == nil {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: shadow table is missing shadow metadata")
+	}
+	if shadowTblInfo.MaterializedViewShadow.SourceMViewID != args.OldMViewID {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: shadow table source materialized view id mismatch")
+	}
+	if shadowTblInfo.State != model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: shadow table is not in public, but %s", shadowTblInfo.State)
 	}
 	baseTblInfo, err := getTableInfoAndCancelNonExistJob(jobCtx.metaMut, job, oldMViewTblInfo.MaterializedView.BaseTableIDs[0], job.SchemaID)
 	if err != nil {

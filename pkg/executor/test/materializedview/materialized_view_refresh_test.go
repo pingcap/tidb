@@ -2881,6 +2881,7 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverFailure(t *testing.T) {
 
 		tk.MustExec("insert into t values (2, 3), (3, 4)")
 
+		oldMViewRevision := mvTable.Meta().Revision
 		const pauseCreateShadowFailpoint = "github.com/pingcap/tidb/pkg/executor/pauseRefreshMaterializedViewOutOfPlaceAfterCreateShadow"
 		require.NoError(t, failpoint.Enable(pauseCreateShadowFailpoint, "pause"))
 		enabled := true
@@ -2908,14 +2909,15 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverFailure(t *testing.T) {
 		require.NoError(t, failpoint.Disable(pauseCreateShadowFailpoint))
 		enabled = false
 
-		err = <-refreshDone
-		require.Error(t, err)
-		require.ErrorContains(t, err, "stale old materialized view revision detected before cutover")
+		refreshErr := <-refreshDone
+		require.ErrorContains(t, refreshErr, "stale old materialized view revision detected before cutover")
+		require.NotContains(t, refreshErr.Error(), "%!(EXTRA")
 
 		is = dom.InfoSchema()
 		mvTable, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv"))
 		require.NoError(t, err)
 		require.Equal(t, mviewID, mvTable.Meta().ID)
+		require.ErrorContains(t, refreshErr, fmt.Sprintf("expected %d but got %d", oldMViewRevision, mvTable.Meta().Revision))
 
 		tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
 			Check(testkit.Rows("1"))
