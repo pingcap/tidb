@@ -681,4 +681,137 @@ mod tests {
             "the planner admits for TiKV what ExprToPB refuses"
         );
     }
+
+    /// Go `scalarExprSupportedByTiKV`: `round` travels to TiKV only as the
+    /// one-argument `RoundInt`/`RoundReal`/`RoundDec` ("We don't push round
+    /// with frac"), though `ExprToPB` itself expresses `RoundWithFrac*`, for
+    /// TiFlash. The request builder asks TiKV's list, with a statement context
+    /// and without one.
+    #[test]
+    fn the_request_carries_only_what_tikv_evaluates() {
+        use tidb_datatype::{FieldType, FieldTypeCode};
+        let columns = vec![("a".to_owned(), FieldType::new(FieldTypeCode::LongLong))];
+        let context = crate::StmtContext::for_query();
+        let resolver = crate::driver::TableResolver {
+            database: Some("test"),
+            table_name: "t",
+            columns: &columns,
+            constant_context: context.clone(),
+            zone: context.session_zone(),
+            no_unsigned_subtraction: false,
+            div_precision_increment: 4,
+            clause_message: "expression",
+            subquery_constants: &[],
+        };
+        for (sql, travels) in [("ROUND(a) = 1", true), ("ROUND(a, 1) = 1", false)] {
+            let select = tidb_parser::parse(&format!("SELECT {sql}")).expect("parses");
+            let tidb_ast::Stmt::Query(query) = select else {
+                panic!("not a query");
+            };
+            let tidb_ast::QueryStmt::Select(select) = &*query else {
+                panic!("not a select");
+            };
+            let Some(tidb_ast::SelectField::Expr { expr, .. }) = select.fields.fields().first()
+            else {
+                panic!("no field");
+            };
+            let mut condition =
+                tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).expect("rewrites");
+            tidb_expr::scalar_function::into_coprocessor_form(&mut condition);
+            assert!(
+                tidb_expr::pushdown_catalog::from_expression(&condition).is_some(),
+                "ExprToPB expresses {sql}"
+            );
+            use tidb_executor_internal_exec::predicate_pushdown::describe_request_condition;
+            assert_eq!(
+                describe_request_condition(&condition, None).is_ok(),
+                travels,
+                "{sql} without a statement"
+            );
+            assert_eq!(
+                describe_request_condition(&condition, Some(&context)).is_ok(),
+                travels,
+                "{sql}"
+            );
+        }
+    }
+
+    /// Go `CheckAggCanPushCop`: after `CheckAggPushDown` admits each function
+    /// by name, `CanExprsPushDown` runs over the function's arguments and then
+    /// over the group-by items. `tan` is on no store's list, so it refuses in
+    /// either place.
+    #[test]
+    fn an_aggregate_is_pushed_only_with_its_arguments_and_group_by_items() {
+        use tidb_datatype::{FieldType, FieldTypeCode};
+        use tidb_distsql::remote_scan::{
+            PushdownAggregateFunction, PushdownAggregateKind, PushdownPartialAggregate,
+        };
+        let columns = vec![("a".to_owned(), FieldType::new(FieldTypeCode::LongLong))];
+        let context = crate::StmtContext::for_query();
+        let resolver = crate::driver::TableResolver {
+            database: Some("test"),
+            table_name: "t",
+            columns: &columns,
+            constant_context: context.clone(),
+            zone: context.session_zone(),
+            no_unsigned_subtraction: false,
+            div_precision_increment: 4,
+            clause_message: "expression",
+            subquery_constants: &[],
+        };
+        let rewrite = |sql: &str| {
+            let select = tidb_parser::parse(&format!("SELECT {sql}")).expect("parses");
+            let tidb_ast::Stmt::Query(query) = select else {
+                panic!("not a query");
+            };
+            let tidb_ast::QueryStmt::Select(select) = &*query else {
+                panic!("not a select");
+            };
+            let Some(tidb_ast::SelectField::Expr { expr, .. }) = select.fields.fields().first()
+            else {
+                panic!("no field");
+            };
+            let mut expression =
+                tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).expect("rewrites");
+            tidb_expr::scalar_function::into_coprocessor_form(&mut expression);
+            expression
+        };
+        let grouped = |argument: &str, group_by: &str| {
+            let argument = rewrite(argument);
+            let group_by = rewrite(group_by);
+            PushdownPartialAggregate::Grouped {
+                group_types: vec![FieldType::new(FieldTypeCode::LongLong)],
+                group_by: vec![group_by],
+                functions: vec![PushdownAggregateFunction {
+                    kind: PushdownAggregateKind::Max,
+                    output_type: FieldType::new(FieldTypeCode::LongLong),
+                    ret_type: FieldType::new(FieldTypeCode::LongLong),
+                    input: Some(argument),
+                }],
+                streamed: false,
+            }
+        };
+        for (argument, group_by, pushed) in [
+            ("a", "a", true),
+            ("a + 1", "a + 1", true),
+            ("TAN(a)", "a", false),
+            ("a", "TAN(a)", false),
+        ] {
+            assert_eq!(
+                crate::access_path::aggregate_admits(&grouped(argument, group_by), &context),
+                pushed,
+                "MAX({argument}) GROUP BY {group_by}"
+            );
+        }
+        let global = PushdownPartialAggregate::Global {
+            functions: vec![PushdownAggregateFunction {
+                kind: PushdownAggregateKind::Max,
+                output_type: FieldType::new(FieldTypeCode::Double),
+                ret_type: FieldType::new(FieldTypeCode::Double),
+                input: Some(rewrite("TAN(a)")),
+            }],
+            streamed: false,
+        };
+        assert!(!crate::access_path::aggregate_admits(&global, &context));
+    }
 }

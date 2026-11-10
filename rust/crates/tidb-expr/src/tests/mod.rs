@@ -40,6 +40,8 @@ mod etstring_argument;
 mod evaluator_binop;
 mod evaluator_go_tables_source;
 mod expression_null_const_source;
+mod expr_to_pb_push_down_source;
+mod pb_code_matrix_source;
 mod expression_with_null_source;
 mod filter_extract_dnf_source;
 mod find_in_set_lookup_source;

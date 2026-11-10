@@ -1,0 +1,248 @@
+abs	AbsReal=v
+acos	Acos=v
+addtime	AddStringAndString=iv,uv,rv,dv,sv,bv,jv,vi,vu,vr,vd,vs,vb,vD,vj,vv AddDatetimeAndString=tv,Tv AddDateAndString=Dv AddDurationAndString=hv AddTimeStringNull=vt,vT AddStringAndDuration=vh
+aes_decrypt	AesDecrypt=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv,iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+aes_encrypt	AesEncrypt=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv,iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+and	LogicalAnd=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+any_value	VectorFloat32AnyValue=v
+ascii	ASCII=v
+asin	Asin=v
+atan	Atan2Args=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv Atan1Arg=v
+atan2	Atan2Args=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+bin	Bin=v
+bin_to_uuid	Unspecified=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,v,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+bit_count	Unspecified=v
+bit_length	BitLength=v
+bitand	BitAndSig=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+bitneg	BitNegSig=v
+bitor	BitOrSig=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+bitxor	BitXorSig=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+case	Unspecified=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vv,ivv,rvv,svv,jvv,vvv CaseWhenInt=vi,vu,vii CaseWhenReal=vr,vir,vri,vrr CaseWhenDecimal=vd CaseWhenString=vs,vb,iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,siv,srv,ssv,sjv,svi,svr,svs,svj,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,vis,vij,viv,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjv,vvi,vvr,vvs,vvj CaseWhenTime=vt,vD,vT CaseWhenDuration=vh CaseWhenJson=vj,vjj
+ceil	CeilReal=v
+ceiling	CeilReal=v
+char_length	CharLengthUTF8=v
+character_length	CharLengthUTF8=v
+charset	Unspecified=v
+coalesce	CoalesceString=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj Unspecified=v,vv,vvv
+coercibility	Unspecified=v
+collation	Unspecified=v
+compress	Compress=v
+concat	Concat=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,v,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv,iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+concat_ws	ConcatWS=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv,iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+conv	Conv=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+convert_tz	ConvertTz=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+cos	Cos=v
+cot	Cot=v
+crc32	CRC32=v
+current_time	CurrentTime1Arg=v
+current_timestamp	NowWithArg=v
+curtime	CurrentTime1Arg=v
+date	Date=v
+date_format	DateFormatSig=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+datediff	DateDiff=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+day	DayOfMonth=v
+dayname	DayName=v
+dayofmonth	DayOfMonth=v
+dayofweek	DayOfWeek=v
+dayofyear	DayOfYear=v
+decode	Decode=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+degrees	Degrees=v
+div	DivideReal=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+elt	Elt=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv,iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+encode	Encode=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+eq	EQVectorFloat32=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+exp	Exp=v
+export_set	ExportSet3Arg=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+field	FieldReal=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv,iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+find_in_set	FindInSet=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+floor	FloorReal=v
+format	Format=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv FormatWithLocale=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+format_bytes	Unspecified=v
+format_nano_time	Unspecified=v
+from_base64	FromBase64=v
+from_days	FromDays=v
+from_unixtime	FromUnixTime2Arg=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv FromUnixTime1Arg=v
+ge	GEVectorFloat32=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+get_format	GetFormat=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+greatest	GreatestString=iv,uv,rv,dv,sv,bv,hv,jv,vi,vu,vr,vd,vs,vb,vh,vj,iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj GreatestCmpStringAsTime=tv,Tv,vt,vT GreatestCmpStringAsDate=Dv,vD Unspecified=vv,vvv
+gt	GTVectorFloat32=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+hour	Hour=v
+if	IfString=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,siv,srv,ssv,sjv,svi,svr,svs,svj,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,vis,vij,viv,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjv,vvi,vvr,vvs,vvj Unspecified=ivv,rvv,svv,jvv,vvv IfInt=vii IfReal=vir,vri,vrr IfJson=vjj
+ifnull	IfNullString=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj Unspecified=vv
+ilike	IlikeSig=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+in	InInt=iv,uv,iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv InReal=rv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv InDecimal=dv InString=sv,bv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv InTime=tv,Dv,Tv InDuration=hv InJson=jv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv Unspecified=vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+inet6_aton	Inet6Aton=v
+inet6_ntoa	Inet6Ntoa=v
+inet_aton	InetAton=v
+inet_ntoa	InetNtoa=v
+instr	Instr=iv,uv,rv,dv,bv,tv,Dv,Tv,hv,vi,vu,vr,vd,vb,vt,vD,vT,vh,vv InstrUTF8=sv,jv,vs,vj
+intdiv	IntDivideDecimal=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+interval	IntervalReal=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv,iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+is_free_lock	Unspecified=v
+is_ipv4	IsIPv4=v
+is_ipv4_compat	IsIPv4Compat=v
+is_ipv4_mapped	IsIPv4Mapped=v
+is_ipv6	IsIPv6=v
+is_used_lock	Unspecified=v
+is_uuid	IsUUID=v
+isfalse	Unspecified=v
+isnull	VectorFloat32IsNull=v
+istrue	Unspecified=v
+json_array	JsonArraySig=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,v,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv,iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+json_array_append	JsonArrayAppendSig=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+json_array_insert	JsonArrayInsertSig=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+json_contains	JsonContainsSig=ssv,sjv,jsv,jjv
+json_contains_path	JsonContainsPathSig=siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv
+json_depth	JsonDepthSig=v
+json_extract	JsonExtractSig=sv,jv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv
+json_insert	JsonInsertSig=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+json_keys	JsonKeys2ArgsSig=sv,jv
+json_length	JsonLengthSig=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,v,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+json_memberof	JsonMemberOfSig=vs,vj
+json_object	JsonObjectSig=iv,uv,rv,dv,sv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+json_pretty	JsonPrettySig=v
+json_remove	JsonRemoveSig=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv,iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+json_replace	JsonReplaceSig=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+json_search	JsonSearchSig=siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv
+json_set	JsonSetSig=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+json_storage_free	JsonStorageFreeSig=v
+json_storage_size	JsonStorageSizeSig=v
+json_valid	JsonValidOthersSig=v
+last_day	LastDay=v
+last_insert_id	LastInsertIDWithID=v
+lastval	Unspecified=v
+lcase	LowerUTF8=v
+le	LEVectorFloat32=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+least	LeastString=iv,uv,rv,dv,sv,bv,hv,jv,vi,vu,vr,vd,vs,vb,vh,vj,iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj LeastCmpStringAsTime=tv,Tv,vt,vT LeastCmpStringAsDate=Dv,vD Unspecified=vv,vvv
+left	LeftUTF8=iv,uv,rv,dv,sv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv Left=bv
+leftshift	LeftShift=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+length	Length=v
+like	LikeSig=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+ln	Log1Arg=v
+load_file	Unspecified=v
+localtime	NowWithArg=v
+localtimestamp	NowWithArg=v
+locate	Locate2Args=iv,uv,rv,dv,bv,tv,Dv,Tv,hv,vi,vu,vr,vd,vb,vt,vD,vT,vh,vv Locate2ArgsUTF8=sv,jv,vs,vj Locate3Args=iiv,irv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rvi,rvr,rvs,rvj,rvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vvi,vvr,vvs,vvj,vvv Locate3ArgsUTF8=isv,ijv,rsv,rjv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv
+log	Log2Args=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv Log1Arg=v
+log10	Log10=v
+log2	Log2=v
+lower	LowerUTF8=v
+lpad	LpadUTF8=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+lt	LTVectorFloat32=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+ltrim	LTrim=v
+make_set	MakeSet=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv,iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+makedate	MakeDate=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+maketime	MakeTime=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+md5	MD5=v
+microsecond	MicroSecond=v
+mid	Substring2ArgsUTF8=iv,uv,rv,dv,sv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv Substring2Args=bv Substring3ArgsUTF8=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+minus	Unspecified=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+minute	Minute=v
+mod	ModReal=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+month	Month=v
+monthname	MonthName=v
+mul	Unspecified=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+name_const	Unspecified=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+ne	NEVectorFloat32=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+nextval	Unspecified=v
+now	NowWithArg=v
+nulleq	NullEQVectorFloat32=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+oct	OctString=v
+octet_length	Length=v
+or	LogicalOr=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+ord	Ord=v
+password	Password=v
+period_add	Unspecified=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+period_diff	Unspecified=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+plus	Unspecified=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+position	Locate2Args=iv,uv,rv,dv,bv,tv,Dv,Tv,hv,vi,vu,vr,vd,vb,vt,vD,vT,vh,vv Locate2ArgsUTF8=sv,jv,vs,vj
+pow	Pow=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+power	Pow=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+quarter	Quarter=v
+quote	Quote=v
+radians	Radians=v
+rand	RandWithSeedFirstGen=v
+random_bytes	Unspecified=v
+regexp	RegexpLikeSig=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+regexp_instr	RegexpInStrSig=sv,jv,vs,vj,isv,ijv,rsv,rjv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv
+regexp_like	RegexpLikeSig=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv,iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+regexp_replace	RegexpReplaceSig=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+regexp_substr	RegexpSubstrSig=iv,uv,rv,dv,sv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vt,vD,vT,vh,vj,vv,iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+repeat	Repeat=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+replace	Replace=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+reverse	ReverseUTF8=v
+right	RightUTF8=iv,uv,rv,dv,sv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv Right=bv
+rightshift	RightShift=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+round	RoundWithFracInt=iv,uv RoundWithFracReal=rv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv RoundWithFracDec=dv RoundReal=v
+rpad	RpadUTF8=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+rtrim	RTrim=v
+sec_to_time	SecToTime=v
+second	Second=v
+setval	Unspecified=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+sha	SHA1=v
+sha1	SHA1=v
+sha2	SHA2=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+sign	Sign=v
+sin	Sin=v
+sm3	Unspecified=v
+space	Space=v
+sqrt	Sqrt=v
+str_to_date	StrToDateDatetime=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+strcmp	Strcmp=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+substr	Substring2ArgsUTF8=iv,uv,rv,dv,sv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv Substring2Args=bv Substring3ArgsUTF8=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+substring	Substring2ArgsUTF8=iv,uv,rv,dv,sv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv Substring2Args=bv Substring3ArgsUTF8=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+substring_index	SubstringIndex=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+subtime	SubStringAndString=iv,uv,rv,dv,sv,bv,jv,vi,vu,vr,vd,vs,vb,vD,vj,vv SubDatetimeAndString=tv,Tv SubDateAndString=Dv SubDurationAndString=hv SubTimeStringNull=vt,vT SubStringAndDuration=vh
+sysdate	SysDateWithFsp=v
+tan	Tan=v
+tidb_bounded_staleness	Unspecified=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+tidb_decode_binary_plan	Unspecified=v
+tidb_decode_key	Unspecified=v
+tidb_decode_plan	Unspecified=v
+tidb_decode_sql_digests	Unspecified=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,v,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+tidb_encode_record_key	Unspecified=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+tidb_encode_sql_digest	Unspecified=v
+tidb_mvcc_info	Unspecified=v
+tidb_parse_tso	Unspecified=v
+tidb_parse_tso_logical	Unspecified=v
+tidb_shard	TiDBShard=v
+time	Time=v
+time_format	TimeFormat=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+time_to_sec	TimeToSec=v
+timediff	StringStringTimeDiff=iv,uv,rv,dv,sv,bv,jv,vi,vu,vr,vd,vs,vb,vj,vv TimeStringTimeDiff=tv,Dv,Tv DurationStringTimeDiff=hv StringTimeTimeDiff=vt,vD,vT StringDurationTimeDiff=vh
+timestamp	Timestamp2Args=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv Timestamp1Arg=v
+timestampdiff	TimestampDiff=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+to_base64	ToBase64=v
+to_days	ToDays=v
+to_seconds	ToSeconds=v
+translate	Unspecified=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+trim	Trim2Args=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv Trim1Arg=v Trim3Args=iiv,irv,isv,ijv,ivi,ivr,ivs,ivj,ivv,riv,rrv,rsv,rjv,rvi,rvr,rvs,rvj,rvv,siv,srv,ssv,sjv,svi,svr,svs,svj,svv,jiv,jrv,jsv,jjv,jvi,jvr,jvs,jvj,jvv,vii,vir,vis,vij,viv,vri,vrr,vrs,vrj,vrv,vsi,vsr,vss,vsj,vsv,vji,vjr,vjs,vjj,vjv,vvi,vvr,vvs,vvj,vvv
+truncate	TruncateInt=iv TruncateUint=uv TruncateReal=rv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv TruncateDecimal=dv
+ucase	UpperUTF8=v
+unaryminus	UnaryMinusReal=v
+uncompress	Uncompress=v
+uncompressed_length	UncompressedLength=v
+unix_timestamp	UnixTimestampDec=v
+upper	UpperUTF8=v
+utc_time	UTCTimeWithArg=v
+utc_timestamp	UTCTimestampWithArg=v
+uuid_timestamp	UUIDTimestamp=v
+uuid_to_bin	Unspecified=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,v,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+uuid_version	UUIDVersion=v
+validate_password_strength	Unspecified=v
+vec_as_text	VecAsTextSig=v
+vec_cosine_distance	VecCosineDistanceSig=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+vec_dims	VecDimsSig=v
+vec_from_text	Unspecified=v
+vec_l1_distance	VecL1DistanceSig=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+vec_l2_distance	VecL2DistanceSig=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+vec_l2_norm	VecL2NormSig=v
+vec_negative_inner_product	VecNegativeInnerProductSig=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+vitess_hash	VitessHash=v
+week	WeekWithMode=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv WeekWithoutMode=v
+weekday	WeekDay=v
+weekofyear	WeekOfYear=v
+weight_string	Unspecified=v
+xor	LogicalXor=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv
+year	Year=v
+yearweek	YearWeekWithMode=iv,uv,rv,dv,sv,bv,tv,Dv,Tv,hv,jv,vi,vu,vr,vd,vs,vb,vt,vD,vT,vh,vj,vv YearWeekWithoutMode=v

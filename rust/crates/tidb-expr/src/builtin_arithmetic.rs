@@ -333,15 +333,15 @@ pub fn infer_arithmetic_type_with_context(
     let rhs_tp = numeric_context_result_type(rhs);
     let a = lhs.static_type();
     let b = rhs.static_type();
-    if a.is_some_and(|field_type| field_type.eval_type().is_vector_kind())
-        || b.is_some_and(|field_type| field_type.eval_type().is_vector_kind())
+    // Go's `arithmeticPlus/Minus/MultiplyFunctionClass.getFunction` select
+    // `ETVectorFloat32` for BOTH arguments and the result as soon as either
+    // operand is vector. The other classes have no vector signature: they
+    // type a vector operand as `numericContextResultType` does, `ETReal`.
+    if matches!(name, "plus" | "minus" | "mul")
+        && (a.is_some_and(|field_type| field_type.eval_type().is_vector_kind())
+            || b.is_some_and(|field_type| field_type.eval_type().is_vector_kind()))
     {
-        return match name {
-            // Go's function classes select `ETVectorFloat32` for BOTH
-            // arguments and the result as soon as either operand is vector.
-            "plus" | "minus" | "mul" => Some(new_return_field_type_for_base_builtin_func(EvalType::VectorFloat32)),
-            _ => None,
-        };
+        return Some(new_return_field_type_for_base_builtin_func(EvalType::VectorFloat32));
     }
     let real_or_decimal = |is_multiply: bool| -> FieldType {
         if lhs_tp == EvalType::Real || rhs_tp == EvalType::Real {
@@ -509,7 +509,13 @@ mod tests {
                 ("binary", "binary")
             );
         }
-        assert!(infer_arithmetic_type("div", &vector_expr(vec![1.0]), &int_expr(1)).is_none());
+        // Go `arithmeticDivideFunctionClass` / `arithmeticModFunctionClass`:
+        // `numericContextResultType` reads a vector as `ETReal`.
+        for name in ["div", "mod"] {
+            let result = infer_arithmetic_type(name, &vector_expr(vec![1.0]), &int_expr(1))
+                .expect("real signature");
+            assert_eq!(result.code(), FieldTypeCode::Double, "{name}");
+        }
     }
 
     // Go TestSetFlenDecimal4RealOrDecimal.

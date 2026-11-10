@@ -263,6 +263,18 @@ impl PbBuiltin {
                 keep_null: true,
                 falsity: false,
             },
+            UnaryNotReal => Kernel::Truth {
+                negate: true,
+                domain: EvalType::Real,
+                keep_null: true,
+                falsity: false,
+            },
+            UnaryNotDecimal => Kernel::Truth {
+                negate: true,
+                domain: EvalType::Decimal,
+                keep_null: true,
+                falsity: false,
+            },
             IntIsTrueWithNull => Kernel::Truth {
                 negate: false,
                 domain: EvalType::Int,
@@ -486,7 +498,7 @@ impl PbBuiltin {
             }),
             MicroSecond => Kernel::Values(|values, _| crate::time_fn::microsecond(values)),
             Month => Kernel::Values(|values, _| crate::time_fn::month(values)),
-            WeekWithoutMode => Kernel::Values(|values, ctx| {
+            WeekWithMode | WeekWithoutMode => Kernel::Values(|values, ctx| {
                 crate::time_fn::week(values, ctx.default_week_format(), ctx)
             }),
             TimestampDiff => {
@@ -900,7 +912,10 @@ impl PbBuiltin {
                 let mut values = Vec::with_capacity(args.len());
                 for arg in args {
                     let value = arg.eval(ctx, row)?;
-                    if value.is_null() && !matches!(kernel, Kernel::Json) {
+                    // The root tier's evaluators read a NULL argument
+                    // themselves: Go `builtinConcatWSSig` skips a NULL member
+                    // and `builtinWeekWithModeSig` reads a NULL mode as 0.
+                    if value.is_null() && !matches!(kernel, Kernel::Json | Kernel::Values(_)) {
                         return Ok(Datum::Null);
                     }
                     values.push(value);
@@ -1066,6 +1081,155 @@ fn cast_types(sig: ScalarFuncSig) -> Option<(EvalType, EvalType)> {
         CastTimeAsReal => (EvalType::Datetime, EvalType::Real),
         CastTimeAsString => (EvalType::Datetime, EvalType::String),
         CastTimeAsTime => (EvalType::Datetime, EvalType::Datetime),
+        CastVectorFloat32AsString => (EvalType::VectorFloat32, EvalType::String),
+        CastVectorFloat32AsVectorFloat32 => (EvalType::VectorFloat32, EvalType::VectorFloat32),
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::constant::Constant;
+    use crate::expression::Expression;
+    use tidb_datatype::FieldTypeCode;
+    use tidb_proto::tipb;
+
+    fn literal(domain: EvalType) -> tipb::Expr {
+        let (value, code) = match domain {
+            EvalType::Int => (Datum::Int(1), FieldTypeCode::LongLong),
+            EvalType::Real => (Datum::Real(1.0), FieldTypeCode::Double),
+            EvalType::Decimal => (
+                Datum::Decimal(tidb_datatype::Decimal::from_literal("1")),
+                FieldTypeCode::NewDecimal,
+            ),
+            EvalType::String => (Datum::new_string_datum("DAY"), FieldTypeCode::VarString),
+            EvalType::Datetime => (
+                Datum::Time(
+                    tidb_datatype::parse_datetime("2008-02-20", &chrono::Utc, true, false)
+                        .unwrap()
+                        .time,
+                ),
+                FieldTypeCode::Datetime,
+            ),
+            EvalType::Duration => (
+                Datum::Duration(
+                    tidb_datatype::MySqlDuration::from_nanoseconds(3_600_000_000_000, 0).unwrap(),
+                ),
+                FieldTypeCode::Duration,
+            ),
+            domain => panic!("no literal for {domain:?}"),
+        };
+        let constant = Expression::Constant(Constant::new(value, FieldType::new(code)));
+        crate::pushdown_catalog::expression_to_pb(&constant, &|_| None).unwrap()
+    }
+
+    fn eval(signature: ScalarFuncSig, children: Vec<tipb::Expr>) -> Datum {
+        let pb = tipb::Expr {
+            tp: Some(tipb::ExprType::ScalarFunc as i32),
+            sig: Some(signature as i32),
+            children,
+            field_type: Some(tipb::FieldType {
+                tp: Some(8),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(&[]);
+        crate::distsql_builtin::pb_to_expr(&pb, &[])
+            .unwrap_or_else(|error| panic!("{signature:?}: {error}"))
+            .eval(&crate::NoColumns, row.to_row())
+            .unwrap_or_else(|error| panic!("{signature:?}: {error:?}"))
+    }
+
+    /// The signatures evaluated by the root tier's evaluators see their NULL
+    /// arguments. Go answers NULL for a NULL argument of every one of them
+    /// but two: `builtinConcatWSSig` skips a NULL member after the separator
+    /// (`TestConcatWS`), and `builtinWeekWithModeSig` reads a NULL mode as 0
+    /// (`TestWeek`).
+    #[test]
+    fn a_null_argument_is_read_by_the_signature_as_go_does() {
+        let null = tipb::Expr {
+            tp: Some(tipb::ExprType::Null as i32),
+            ..Default::default()
+        };
+        let text = |value: &str| {
+            let constant = Expression::Constant(Constant::new(
+                Datum::new_string_datum(value),
+                FieldType::new(FieldTypeCode::VarString),
+            ));
+            crate::pushdown_catalog::expression_to_pb(&constant, &|_| None).unwrap()
+        };
+        let mut swept = std::collections::BTreeSet::new();
+        // `ceil` and `floor` resolve outside the catalog's rows.
+        let rounding = {
+            use ScalarFuncSig::*;
+            [
+                (CeilIntToInt, &[EvalType::Int]),
+                (CeilReal, &[EvalType::Real]),
+                (CeilDecToInt, &[EvalType::Decimal]),
+                (CeilDecToDec, &[EvalType::Decimal]),
+                (FloorIntToInt, &[EvalType::Int]),
+                (FloorReal, &[EvalType::Real]),
+                (FloorDecToInt, &[EvalType::Decimal]),
+                (FloorDecToDec, &[EvalType::Decimal]),
+            ]
+        };
+        let rows = crate::pushdown_catalog::CATALOG
+            .iter()
+            .map(|row| (row.sig, row.arg_types))
+            .chain(rounding.iter().map(|(sig, domains)| (*sig, &domains[..])));
+        for (sig, arg_types) in rows {
+            let Some(Kernel::Values(_)) = PbBuiltin::new(sig).map(|builtin| builtin.kernel) else {
+                continue;
+            };
+            swept.insert(sig);
+            for position in 0..arg_types.len() {
+                let children = arg_types
+                    .iter()
+                    .enumerate()
+                    .map(|(index, domain)| {
+                        if index == position {
+                            null.clone()
+                        } else {
+                            literal(*domain)
+                        }
+                    })
+                    .collect();
+                let expect = if (sig, position) == (ScalarFuncSig::WeekWithMode, 1) {
+                    Datum::Int(7)
+                } else {
+                    Datum::Null
+                };
+                assert_eq!(eval(sig, children), expect, "{sig:?} {position}");
+            }
+        }
+        assert!(swept.len() > 40, "{swept:?}");
+
+        use ScalarFuncSig::{Concat, ConcatWs};
+        let bytes = |value: Datum| value.sql_bytes().unwrap();
+        assert_eq!(
+            eval(Concat, vec![text("a"), null.clone(), text("b")]),
+            Datum::Null
+        );
+        assert_eq!(eval(ConcatWs, vec![null.clone(), null.clone()]), Datum::Null);
+        assert_eq!(
+            eval(ConcatWs, vec![null.clone(), text("a"), text("b")]),
+            Datum::Null
+        );
+        assert_eq!(
+            bytes(eval(
+                ConcatWs,
+                vec![text("|"), text("a"), null.clone(), text("b"), text("c")]
+            )),
+            b"a|b|c"
+        );
+        assert_eq!(
+            bytes(eval(
+                ConcatWs,
+                vec![text(","), text("a"), text(","), text("b"), text("c")]
+            )),
+            b"a,,,b,c"
+        );
+    }
 }

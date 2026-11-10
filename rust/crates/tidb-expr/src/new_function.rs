@@ -77,21 +77,16 @@
 //!     retain their existing metadata so constant-propagation rebuilds stay
 //!     structurally identical.
 //!
-//! - **Four special-cased names are refused, not built.** `newFunctionImpl`
+//! - **Three special-cased names are refused, not built.** `newFunctionImpl`
 //!   opens with a switch that hands four names to dedicated node builders
-//!   rather than the `funcs` map: `ast.Cast` -> `BuildCastFunction`,
+//!   rather than the `funcs` map. `ast.Cast` -> `BuildCastFunction` is
+//!   [`crate::simple_expr::build_cast_function`]. The other three --
 //!   `ast.GetVar` -> `BuildGetVarFunction`, `InternalFuncFromBinary` ->
 //!   `BuildFromBinaryFunction`, and `InternalFuncToBinary` ->
-//!   `BuildToBinaryFunction`. Those four builders live in
-//!   `pkg/expression/builtin_cast.go` / `builtin_convert_charset.go` and have
-//!   no Rust counterpart that produces a NODE (this crate's `cast.rs` and
-//!   `convert_charset.rs` are value-level). They are refused with a named
-//!   [`EvalError::Unsupported`] rather than built as plain nodes, because a
-//!   plain `cast` node would be silently WRONG: this crate's evaluator spells
-//!   casts `cast_<target>` (with the target folded into the name) and user
-//!   variables `getvar_<kind>`, so a node named `cast` would never evaluate.
-//!   None of these four names is in the `funcs` map, so without the refusal
-//!   they would surface as a misleading 1305 "function does not exist".
+//!   `BuildToBinaryFunction` -- are refused with a named
+//!   [`EvalError::Unsupported`]: none of them is in the `funcs` map, so
+//!   without the refusal they would surface as a misleading 1305 "function
+//!   does not exist".
 //!
 //! - **`ast.Sysdate` -> `ast.Now` IS honored**, through
 //!   [`crate::Columns::sysdate_is_now`].
@@ -216,12 +211,11 @@ fn default_scalar_function_check(function: ScalarFunction) -> Result<ScalarFunct
     Ok(function)
 }
 
-/// The four names `newFunctionImpl` routes to dedicated node builders
-/// (`scalar_function.go:207-215`), with the Go builder each one needs. See the
-/// module header for why these are refused rather than built.
+/// The names `newFunctionImpl` routes to dedicated node builders
+/// (`scalar_function.go:207-215`) that are not built here, with the Go
+/// builder each one needs. See the module header.
 fn dedicated_builder_refusal(func_name: &str) -> Option<EvalError> {
     let reason = match func_name {
-        "cast" => "NewFunction(cast) needs BuildCastFunction, which builds a cast_<target> node",
         "getvar" => {
             "NewFunction(getvar) needs BuildGetVarFunction, which builds a getvar_<kind> node"
         }
@@ -244,7 +238,7 @@ fn dedicated_builder_refusal(func_name: &str) -> Option<EvalError> {
 ///
 /// # Errors
 ///
-/// - [`EvalError::Unsupported`] for the four dedicated-builder names.
+/// - [`EvalError::Unsupported`] for the three refused dedicated-builder names.
 /// - [`EvalError::NoDatabaseSelected`] (Go `plannererrors.ErrNoDB`, 1046) for
 ///   an unregistered name with no current database.
 /// - [`EvalError::FunctionNotExists`] (1305) for an unregistered name.
@@ -260,6 +254,11 @@ pub fn new_function_impl(
 ) -> Result<Expression, EvalError> {
     if let Some(refusal) = dedicated_builder_refusal(func_name) {
         return Err(refusal);
+    }
+    // Go: `case ast.Cast: return BuildCastFunction(ctx, args[0], retType), nil`.
+    if func_name == "cast" {
+        let mut args = args;
+        return crate::simple_expr::build_cast_function(args.swap_remove(0), ret_type, false);
     }
     // Go: `case ast.Sysdate: if ctx.GetSysdateIsNow() { funcName = ast.Now }`.
     let func_name = if func_name == "sysdate" && ctx.sysdate_is_now() {
@@ -289,6 +288,9 @@ pub fn new_function_impl(
     }
 
     verify_args_by_count(func_name, func_args.len())?;
+    if let Some(refusal) = crate::builtin_registry::get_function_refusal(func_name) {
+        return Err(refusal);
+    }
 
     // Go: `if builtinRetTp.GetType() != TypeUnspecified || retType.GetType()
     // == TypeUnspecified { retType = builtinRetTp }`. See the module header's
@@ -347,27 +349,25 @@ pub fn new_function_impl(
     let ret_type = function.ret_type.as_ref().expect("constructed return type");
     let func_args = &function.args;
 
-    // Collation participates in Go's construction-time conversion only when
-    // the call produces a string or consumes one. Numeric-only rebuilds (for
-    // example constant propagation's `gt(INT, INT)`) deliberately keep the
-    // pre-existing result metadata; those nodes do not consult collation and
-    // their structural identity is observable by the rewrite passes.
-    let derive_collation = (ret_type.code() != FieldTypeCode::Unspecified
+    // Go `newBaseBuiltinFuncWithTp` derives every call's collation from the
+    // arguments as given, before their casts: `instr(json, int)` is a
+    // `utf8mb4_bin` search although neither argument is a string.
+    let derived = crate::collation_derive::derive_collation_with_connection(
+        func_name,
+        func_args,
+        ret_type.eval_type(),
+        ctx.connection_charset_info(),
+    )?;
+    // The derivation reaches the result type only when the call produces a
+    // string or consumes one. Numeric-only rebuilds (for example constant
+    // propagation's `gt(INT, INT)`) deliberately keep the pre-existing result
+    // metadata; their structural identity is observable by the rewrite passes.
+    let stamps_result_type = (ret_type.code() != FieldTypeCode::Unspecified
         && ret_type.eval_type() == EvalType::String)
         || func_args.iter().any(|arg| {
             arg.static_type()
                 .is_some_and(|field_type| field_type.eval_type() == EvalType::String)
         });
-    let derived = if derive_collation {
-        Some(crate::collation_derive::derive_collation_with_connection(
-            func_name,
-            func_args,
-            ret_type.eval_type(),
-            ctx.connection_charset_info(),
-        )?)
-    } else {
-        None
-    };
     // Go `newBaseBuiltinFuncWithTp`: after deriving the collation, every
     // argument is cast to its signature type (`argTps`). Go does this on
     // every construction, so a function rebuilt by a rewrite (a predicate
@@ -391,16 +391,14 @@ pub fn new_function_impl(
             function.ret_type.as_ref(),
         )?;
     }
-    if let Some(derived) = &derived {
-        function.args = crate::rewriter::handle_binary_literal(
-            func_name,
-            &derived.charset,
-            &derived.collation,
-            ret_type.eval_type(),
-            std::mem::take(&mut function.args),
-            |expression| fold_constant_in_mode(expression, ctx, ConstantFoldMode::Normal),
-        );
-    }
+    function.args = crate::rewriter::handle_binary_literal(
+        func_name,
+        &derived.charset,
+        &derived.collation,
+        ret_type.eval_type(),
+        std::mem::take(&mut function.args),
+        |expression| fold_constant_in_mode(expression, ctx, ConstantFoldMode::Normal),
+    );
     function.prepare_numeric_arguments(ctx);
     if gl_signature.is_some() {
         function.set_gl_signature(gl_signature);
@@ -413,18 +411,12 @@ pub fn new_function_impl(
             ret_type.add_flags(FieldTypeFlags::UNSIGNED);
         }
     }
-    if derived.is_none() {
-        // Go derives every call's collation; with no string argument and a
-        // non-string result `deriveCollation` answers `{CoercibilityNumeric,
-        // ASCII, binary, binary}`. Recorded without touching the result
-        // metadata this path keeps.
-        function.collation.set_coercibility(crate::expr_collation::Coercibility::NUMERIC);
-        function.collation.set_repertoire(crate::expr_collation::Repertoire::ASCII);
-        function.collation.set_charset_and_collation("binary", "binary");
-    }
+    function.collation.set_coercibility(derived.coer);
+    function.collation.set_repertoire(derived.repe);
+    function.collation.set_charset_and_collation(&derived.charset, &derived.collation);
     let mut expr = Expression::ScalarFunction(function);
-    if let Some(derived) = &derived {
-        crate::collation_derive::apply_derived_collation(&mut expr, derived);
+    if stamps_result_type {
+        crate::collation_derive::apply_derived_collation(&mut expr, &derived);
         crate::rewriter::restore_function_result_charset(&mut expr)?;
     }
     if let Some(callback) = check_or_init {
@@ -980,12 +972,12 @@ mod tests {
     }
 
     /// NEW COVERAGE for the module header's dedicated-builder narrowing: the
-    /// four special-cased names must be REFUSED by name, not misreported as
+    /// three refused names must be REFUSED by name, not misreported as
     /// nonexistent functions and not built as plain nodes that could never
     /// evaluate.
     #[test]
     fn dedicated_builder_names_are_refused_rather_than_built() {
-        for name in ["cast", "getvar", "from_binary", "to_binary"] {
+        for name in ["getvar", "from_binary", "to_binary"] {
             let result = new_function_base(
                 &WithDatabase,
                 name,
@@ -999,6 +991,27 @@ mod tests {
                 other => panic!("{name} must be refused, got {other:?}"),
             }
         }
+    }
+
+    /// Go `newFunctionImpl`: `case ast.Cast: return BuildCastFunction(ctx,
+    /// args[0], retType), nil`.
+    #[test]
+    fn cast_is_built_by_build_cast_function() {
+        let target = FieldType::new(FieldTypeCode::VarString);
+        let built = new_function_base(
+            &WithDatabase,
+            "cast",
+            target.clone(),
+            vec![not_null_double_column()],
+        )
+        .unwrap();
+        let Expression::ScalarFunction(function) = &built else {
+            panic!("a cast node, got {built:?}");
+        };
+        assert_eq!(function.func_name.lowercase(), "cast_char");
+        let direct =
+            crate::simple_expr::build_cast_function(not_null_double_column(), target, false).unwrap();
+        assert_eq!(format!("{built:?}"), format!("{direct:?}"));
     }
 
     /// NEW COVERAGE: Go rewrites `SYSDATE` to `NOW` at construction when the

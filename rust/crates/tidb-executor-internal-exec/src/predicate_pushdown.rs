@@ -439,6 +439,9 @@ fn all_describable(filters: &[Expression], ctx: &tidb_sessionctx::StmtContext) -
 /// Go `ExprToPB` reads the compiled function and its arguments. This immutable
 /// description adapter copies strict literals without rewriting or folding SQL.
 fn describe_compiled_condition(expression: &Expression) -> Option<ScanPredicate> {
+    if !tidb_expr::infer_pushdown::can_exprs_push_down_tikv(std::slice::from_ref(expression)) {
+        return None;
+    }
     describe_condition(expression, None).ok()
 }
 
@@ -448,12 +451,14 @@ pub fn describe_execution_condition(
     expression: &Expression,
     context: &dyn PbConverterContext,
 ) -> Result<ScanPredicate, ExecError> {
-    if !tidb_expr::pushdown_blacklist::compiled_blacklist_admits(
-        expression,
-        context,
+    // Go `PushDownExprs(.., kv.TiKV)`: the converter below admits what any
+    // store evaluates, so TiKV's own list and blacklist rows are asked here.
+    if !tidb_expr::infer_pushdown::can_exprs_push_down(
+        std::slice::from_ref(expression),
         tidb_kv::store_type::StoreType::TiKv,
+        context.expr_pushdown_blacklist(),
     ) {
-        return Err(ExecError::unsupported("cop predicate is disabled for TiKV"));
+        return Err(ExecError::unsupported("cop predicate is not evaluated by TiKV"));
     }
     describe_condition(expression, Some(context))
 }

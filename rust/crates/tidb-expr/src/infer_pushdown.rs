@@ -688,9 +688,21 @@ pub fn push_down_exprs_reporting(
     blacklist: &crate::infer_pushdown::ExprPushDownBlacklist,
     report: &dyn Fn(String),
 ) -> (Vec<Expression>, Vec<Expression>) {
-    filters.into_iter().partition(|condition| {
-        can_exprs_push_down_reporting(std::slice::from_ref(condition), store, blacklist, report)
-    })
+    push_down_exprs_with_extra_info(filters, store, blacklist, false, report)
+}
+
+/// Go `PushDownExprsWithExtraInfo`: `can_enum_push` lets an enum-typed
+/// expression itself reach TiFlash (`canExprPushDown`).
+pub fn push_down_exprs_with_extra_info(
+    exprs: Vec<Expression>,
+    store: crate::infer_pushdown::StoreType,
+    blacklist: &crate::infer_pushdown::ExprPushDownBlacklist,
+    can_enum_push: bool,
+    report: &dyn Fn(String),
+) -> (Vec<Expression>, Vec<Expression>) {
+    exprs
+        .into_iter()
+        .partition(|expr| can_expr_push_down_reported(expr, store, blacklist, can_enum_push, Some(report)))
 }
 
 fn can_expr_push_down_tikv(expr: &Expression) -> bool {
@@ -710,18 +722,32 @@ fn can_expr_push_down_tiflash(expr: &Expression) -> bool {
 }
 
 /// [`can_exprs_push_down`] that also reports, as Go's `canScalarFuncPushDown`
-/// does through its `PushDownContext`, the outermost scalar function that
-/// cannot be pushed: `report` receives Go's warning text. Go checks a
-/// function before its arguments and stops at the first refusal.
+/// does through its `PushDownContext`, the outermost scalar function of each
+/// expression that cannot be pushed: `report` receives Go's warning text. Go
+/// checks a function before its arguments and stops at its first refusal.
 pub fn can_exprs_push_down_reporting(
     exprs: &[Expression],
     store: crate::infer_pushdown::StoreType,
     blacklist: &crate::infer_pushdown::ExprPushDownBlacklist,
     report: &dyn Fn(String),
 ) -> bool {
+    can_exprs_push_down_with_extra_info(exprs, store, blacklist, false, report)
+}
+
+/// Go `CanExprsPushDownWithExtraInfo`. Like Go's, it checks every expression,
+/// so each one that cannot be pushed is reported.
+pub fn can_exprs_push_down_with_extra_info(
+    exprs: &[Expression],
+    store: crate::infer_pushdown::StoreType,
+    blacklist: &crate::infer_pushdown::ExprPushDownBlacklist,
+    can_enum_push: bool,
+    report: &dyn Fn(String),
+) -> bool {
     exprs
         .iter()
-        .all(|expr| can_expr_push_down_reported(expr, store, blacklist, Some(report)))
+        .filter(|expr| !can_expr_push_down_reported(expr, store, blacklist, can_enum_push, Some(report)))
+        .count()
+        == 0
 }
 
 fn can_expr_push_down(
@@ -729,17 +755,62 @@ fn can_expr_push_down(
     store: crate::infer_pushdown::StoreType,
     blacklist: &crate::infer_pushdown::ExprPushDownBlacklist,
 ) -> bool {
-    can_expr_push_down_reported(expr, store, blacklist, None)
+    can_expr_push_down_reported(expr, store, blacklist, false, None)
 }
 
+/// Go `canExprPushDown`.
 fn can_expr_push_down_reported(
     expr: &Expression,
     store: crate::infer_pushdown::StoreType,
     blacklist: &crate::infer_pushdown::ExprPushDownBlacklist,
+    can_enum_push: bool,
     report: Option<&dyn Fn(String)>,
 ) -> bool {
     use crate::infer_pushdown::{is_push_down_enabled, StoreType};
+    use tidb_datatype::FieldTypeCode;
 
+    if store == StoreType::TiFlash {
+        if let Some(field_type) = expr.static_type() {
+            let about = || {
+                crate::explain::physical_expression_text_with_columns(
+                    &crate::NoColumns,
+                    expr,
+                    &[],
+                    crate::explain::ExpressionTextStyle::StringWithCtx,
+                )
+                .unwrap_or_default()
+            };
+            match field_type.code() {
+                FieldTypeCode::Enum if can_enum_push => {}
+                FieldTypeCode::Enum
+                | FieldTypeCode::Bit
+                | FieldTypeCode::Set
+                | FieldTypeCode::Geometry
+                | FieldTypeCode::Unspecified => {
+                    if let Some(report) = report {
+                        report(format!(
+                            "Expression about '{}' can not be pushed to TiFlash because it contains unsupported calculation of type '{}'.",
+                            about(),
+                            tidb_datatype::type_str(field_type.code()),
+                        ));
+                    }
+                    return false;
+                }
+                FieldTypeCode::NewDecimal if !field_type.is_decimal_valid() => {
+                    if let Some(report) = report {
+                        report(format!(
+                            "Expression about '{}' can not be pushed to TiFlash because it contains invalid decimal('{}','{}').",
+                            about(),
+                            field_type.flen(),
+                            field_type.decimal(),
+                        ));
+                    }
+                    return false;
+                }
+                _ => {}
+            }
+        }
+    }
     // Go `canExprPushDown`'s type switch has no `ScalarSubQueryExpr` arm.
     if matches!(expr, Expression::ScalarSubQuery(_)) {
         return false;
@@ -752,7 +823,6 @@ fn can_expr_push_down_reported(
             Expression::Column(_) | Expression::CorrelatedColumn(_)
         ) {
             if let Some(field_type) = expr.static_type() {
-                use tidb_datatype::FieldTypeCode;
                 return match field_type.code() {
                     FieldTypeCode::Enum => {
                         is_push_down_enabled(blacklist, "enum", StoreType::Unspecified)
@@ -771,11 +841,7 @@ fn can_expr_push_down_reported(
     };
     // Go `canScalarFuncPushDown`: the function itself first, with the
     // refusal warning, then each argument.
-    let signature = match crate::pushdown_catalog::from_expression(expr) {
-        Some(crate::pushdown_catalog::PbScalar::Call { signature, .. }) => signature.sig,
-        Some(crate::pushdown_catalog::PbScalar::Cast { signature, .. }) => signature,
-        _ => tidb_proto::tipb::ScalarFuncSig::Unspecified,
-    };
+    let signature = crate::pushdown_catalog::pb_code(expr);
     if !scalar_function_can_be_pushed(expr, function, signature, store, blacklist) {
         if let Some(report) = report {
             let storage = match store {
@@ -795,22 +861,27 @@ fn can_expr_push_down_reported(
         }
         return false;
     }
+    let name = function.func_name.lowercase();
+    let can_enum_push = expr.static_type().is_some_and(|ret_type| {
+        // Dedicated Rust casts represent Go's single ast.Cast function family.
+        can_enum_pushdown_preliminarily(if name.starts_with("cast_") { "cast" } else { name }, ret_type)
+    });
     function
         .args
         .iter()
-        .all(|arg| can_expr_push_down_reported(arg, store, blacklist, report))
+        .all(|arg| can_expr_push_down_reported(arg, store, blacklist, can_enum_push, report))
 }
 
 /// Go `canFuncBePushed` and the PbCode check of `canScalarFuncPushDown`, for
 /// the function alone.
-fn scalar_function_can_be_pushed(
+pub(crate) fn scalar_function_can_be_pushed(
     expr: &Expression,
     function: &crate::scalar_function::ScalarFunction,
     signature: tidb_proto::tipb::ScalarFuncSig,
     store: crate::infer_pushdown::StoreType,
     blacklist: &crate::infer_pushdown::ExprPushDownBlacklist,
 ) -> bool {
-    use crate::infer_pushdown::{can_function_be_pushed, PushDownPolicy, StoreType};
+    use crate::infer_pushdown::{can_function_be_pushed, PushDownPolicy};
     use tidb_proto::tipb::ScalarFuncSig;
 
     let name = function.func_name.lowercase();
@@ -820,44 +891,10 @@ fn scalar_function_can_be_pushed(
     } else {
         name.as_ref()
     };
-    if store == StoreType::TiKv
-        && signature == ScalarFuncSig::Unspecified
-        && matches!(
-            policy_name,
-            "if" | "ifnull"
-                | "case"
-                | "unix_timestamp"
-                | "conv"
-                | "round"
-                | "rand"
-                | "regexp"
-                | "regexp_like"
-                | "regexp_substr"
-                | "regexp_instr"
-                | "regexp_replace"
-                // Go's `builtinPeriodAddSig`/`builtinPeriodDiffSig` never call
-                // `setPbCode`, so `canScalarFuncPushDown` refuses their
-                // unspecified signature although the name is listed.
-                | "period_add"
-                | "period_diff"
-        )
-    {
+    // Go `canScalarFuncPushDown`: `pbCode <= tipb.ScalarFuncSig_Unspecified`
+    // refuses on every store, whatever the name lists say.
+    if signature == ScalarFuncSig::Unspecified {
         return false;
-    }
-    // A cast between eval types with no `CastXAsY` signature (to or from a
-    // vector, say) has no pb code in Go and refuses itself and its parent.
-    if store == StoreType::TiKv && policy_name == "cast" {
-        if let (Some(from), Some(to)) = (
-            function.args.first().and_then(Expression::static_type),
-            expr.static_type(),
-        ) {
-            if !crate::pushdown_catalog::cast_pair_has_signature(
-                from.eval_type(),
-                to.eval_type(),
-            ) {
-                return false;
-            }
-        }
     }
     let mut policy = PushDownPolicy::new(policy_name, signature);
     if policy_name == "conv" {
@@ -1196,7 +1233,15 @@ mod push_down_admission_tests {
         let column = Expression::Column(Column::new(1, FieldType::new(FieldTypeCode::LongLong)));
         let reported = std::cell::RefCell::new(Vec::new());
         let report = |message: String| reported.borrow_mut().push(message);
-        let inner = func("json_overlaps", vec![column.clone(), column.clone()]);
+        // Go `jsonOverlapsFunctionClass` sets no signature code and returns
+        // an integer.
+        let Expression::ScalarFunction(mut inner) =
+            func("json_overlaps", vec![column.clone(), column.clone()])
+        else {
+            unreachable!("func builds a function")
+        };
+        inner.ret_type = Some(FieldType::new(FieldTypeCode::LongLong));
+        let inner = Expression::ScalarFunction(inner);
         let outer = func("json_overlaps", vec![inner.clone(), column.clone()]);
         assert!(!can_exprs_push_down_reporting(
             &[outer],
@@ -1331,12 +1376,16 @@ mod push_down_admission_tests {
             "eq",
             vec![col.clone(), one.clone()],
         )]));
-        assert!(can_exprs_push_down_tiflash(&[func(
+        let conditional = crate::new_function::new_function(
+            &crate::NoColumns,
             "if",
+            FieldType::new(FieldTypeCode::Unspecified),
             vec![col.clone(), one.clone(), one.clone()],
-        )]));
-        // TiFlash does not admit TiKV-only signatures such as RAND, and an
-        // unresolved function is rejected without a catalog signature.
+        )
+        .expect("if builds");
+        assert!(can_exprs_push_down_tiflash(&[conditional]));
+        // TiFlash does not admit TiKV-only signatures such as RAND, nor a
+        // function neither store lists.
         assert!(!can_exprs_push_down_tiflash(&[func(
             "rand",
             vec![col.clone()]

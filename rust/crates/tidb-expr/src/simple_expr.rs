@@ -793,16 +793,7 @@ pub fn try_push_cast_into_control_function_for_hybrid_type(
     // Go rebuilds the control function over the wrapped args and adopts the
     // rebuilt signature's ret type.
     let inferred = match name {
-        "case" => {
-            let branches: Vec<Expression> = args
-                .iter()
-                .skip(1)
-                .step_by(2)
-                .chain((args.len() % 2 == 1).then(|| args.last()).flatten())
-                .cloned()
-                .collect();
-            crate::rewriter::builtin_return_type("case", &branches)
-        }
+        "case" => crate::rewriter::builtin_return_type("case", &args),
         "elt" => {
             for arg in &mut args[1..] {
                 let Ok(wrapped) = crate::wrap_cast::wrap_with_cast_as_string(

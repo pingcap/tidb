@@ -2379,8 +2379,8 @@ context_configuration! {
         self
     }
 
-    /// Installs the two published blacklists. See
-    /// [`crate::pushdown_blacklist`].
+    /// Installs the two published blacklists: `mysql.expr_pushdown_blacklist`
+    /// (Go `IsPushDownEnabled`) and `mysql.opt_rule_blacklist`.
     #[must_use]
     pub fn with_pushdown_blacklists(
         mut self,

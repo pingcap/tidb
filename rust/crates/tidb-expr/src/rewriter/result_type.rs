@@ -878,7 +878,7 @@ fn maketime_return_type(args: &[Expression]) -> Option<FieldType> {
     duration_return_type(fsp, 10)
 }
 
-fn str_to_date_return_type(args: &[Expression]) -> Option<FieldType> {
+pub(crate) fn str_to_date_return_type(args: &[Expression]) -> Option<FieldType> {
     let [_, format] = args else {
         return None;
     };
@@ -2115,14 +2115,21 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
         // just the printed width. It lives in [`super::control_type`].
         //
         // `IF`'s first argument is the condition, so only its two result
-        // branches carry the type; `CASE WHEN`'s caller has already reduced
-        // its flattened `cond, result, ..., else` list to the THEN/ELSE
-        // branches (the `Expr::Case` arm of `rewrite_expr_resolved`), which
-        // is Go's own `thenArgs`.
+        // branches carry the type; `CASE WHEN`'s flattened
+        // `cond, result, ..., else` list carries it in every THEN and the
+        // trailing ELSE, Go's own `thenArgs`.
         "if" if args.len() == 3 => super::control_type::infer_type_4_control_funcs("if", &args[1..])?,
-        "case" | "ifnull" | "coalesce" => {
-            super::control_type::infer_type_4_control_funcs(name, args)?
+        "case" => {
+            let then_args: Vec<Expression> = args
+                .iter()
+                .skip(1)
+                .step_by(2)
+                .chain((args.len() % 2 == 1).then(|| args.last()).flatten())
+                .cloned()
+                .collect();
+            super::control_type::infer_type_4_control_funcs("case", &then_args)?
         }
+        "ifnull" | "coalesce" => super::control_type::infer_type_4_control_funcs(name, args)?,
         _ => return None,
     })
 }

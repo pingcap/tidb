@@ -2711,9 +2711,10 @@ mod tests {
         assert_eq!(second, vec![tidb_datatype::Datum::Int(64)]);
     }
 
-    /// Every signature the pushdown catalog admits decodes here: the
-    /// admission side and the execution side read the same inventory, as
-    /// Go's `scalarExprSupportedByTiKV` and `getSignatureByPB` do.
+    /// Every catalog signature TiKV admits decodes here: the admission side
+    /// and the execution side read the same inventory, as Go's
+    /// `scalarExprSupportedByTiKV` and `getSignatureByPB` do -- but for
+    /// `UnaryNotJSON`, which `getSignatureByPB` has no arm for.
     #[test]
     fn every_admitted_signature_decodes_like_go_pb_to_expr() {
         let column = |offset: i64| {
@@ -2730,7 +2731,11 @@ mod tests {
             }
         };
         let mut refused = Vec::new();
-        for row in tidb_expr::pushdown_catalog::CATALOG {
+        for row in tidb_expr::pushdown_catalog::CATALOG.iter().filter(|row| {
+            tidb_expr::infer_pushdown::scalar_expr_supported_by_tikv(
+                &tidb_expr::infer_pushdown::PushDownPolicy::new(row.name, row.sig),
+            )
+        }) {
             let arity = row.arg_types.len().max(3);
             let expr = tipb::Expr {
                 tp: Some(tipb::ExprType::ScalarFunc as i32),
@@ -2742,10 +2747,10 @@ mod tests {
                 }),
                 ..Default::default()
             };
-            if let Err(message) = convert_expr(&expr) {
-                refused.push((row.sig, message));
+            if convert_expr(&expr).is_err() {
+                refused.push(row.sig);
             }
         }
-        assert!(refused.is_empty(), "admitted but undecodable: {refused:?}");
+        assert_eq!(refused, [tipb::ScalarFuncSig::UnaryNotJson]);
     }
 }

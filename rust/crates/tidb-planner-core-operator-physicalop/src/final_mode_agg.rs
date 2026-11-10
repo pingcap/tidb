@@ -1387,12 +1387,11 @@ pub fn check_agg_can_push_cop(
             ret = false;
             break;
         }
-        // Go passes `aggFunc.Name == ast.AggFuncSum` as `canEnumPush`, a
-        // TiFlash-only enum carve-out (`canExprPushDown`).
-        if !tidb_expr::infer_pushdown::can_exprs_push_down_reporting(
+        if !tidb_expr::infer_pushdown::can_exprs_push_down_with_extra_info(
             &agg_func.base.args,
             store,
             blacklist,
+            agg_func.name() == "sum",
             report,
         ) {
             reason = format!("arguments of AggFunc `{}` contains unsupported exprs", agg_func.name());

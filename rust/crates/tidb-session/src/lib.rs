@@ -3682,6 +3682,8 @@ mod tests_topn;
 #[cfg(test)]
 mod tests_union_all_predicate_push_down;
 #[cfg(test)]
+mod tests_vector;
+#[cfg(test)]
 mod tests_union_scan;
 #[cfg(test)]
 mod tests_user_vars;

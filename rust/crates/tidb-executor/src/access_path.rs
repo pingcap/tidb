@@ -9885,22 +9885,18 @@ let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())
 /// `LocalIndexLookUp` gathers, then sorts by handle, per table lookup.
 const LOCAL_INDEX_LOOKUP_BATCH_SIZE: usize = 32;
 
-/// Go `CheckAggPushDown`'s last line: `ret = IsPushDownEnabled(aggFunc.Name,
-/// storeType)`, asked of every function in a pushed aggregate, plus the
-/// argument walk `CheckAggCanPushCop` performs beside it.
-///
-/// The store is `kv.TiKV`: this is the coprocessor stage, which is the only
-/// one this tier pushes an aggregate into.
+/// Go `CheckAggCanPushCop` for `kv.TiKV`, the coprocessor stage and the only
+/// one this tier pushes an aggregate into: `CheckAggPushDown`'s
+/// `IsPushDownEnabled(aggFunc.Name, storeType)` for every function, then
+/// `CanExprsPushDown` over its arguments and over the group-by items.
 pub(crate) fn aggregate_admits(
     aggregate: &tidb_distsql::remote_scan::PushdownPartialAggregate,
     ctx: &crate::StmtContext,
 ) -> bool {
-    use tidb_distsql::remote_scan::PushdownPartialAggregate as Agg;
     use tidb_distsql::remote_scan::PushdownAggregateKind;
+    use tidb_distsql::remote_scan::PushdownPartialAggregate as Agg;
+    use tidb_kv::store_type::StoreType;
     let blacklist = ctx.expr_pushdown_blacklist();
-    if blacklist.is_empty() {
-        return true;
-    }
     // Go's `aggFunc.Name`, already lower-case by `newBaseFuncDesc`.
     let name_of = |kind: PushdownAggregateKind| match kind {
         PushdownAggregateKind::Count => "count",
@@ -9914,18 +9910,24 @@ pub(crate) fn aggregate_admits(
         PushdownAggregateKind::BitOr => "bit_or",
         PushdownAggregateKind::BitXor => "bit_xor",
     };
-    let admits_name = |name: &str| tidb_expr::infer_pushdown::is_push_down_enabled(blacklist, name, tidb_kv::store_type::StoreType::TiKv);
-    let admits_arg = |input: Option<&tidb_expr::expression::Expression>| {
-        input.is_none_or(|expr| tidb_expr::pushdown_blacklist::admits(expr, blacklist, tidb_kv::store_type::StoreType::TiKv))
+    let admits = |expressions: &[tidb_expr::expression::Expression]| {
+        tidb_expr::infer_pushdown::can_exprs_push_down(expressions, StoreType::TiKv, blacklist)
     };
-    match aggregate {
-        Agg::Grouped { functions, .. } => functions.iter().all(|function| {
-            admits_name(name_of(function.kind)) && admits_arg(function.input.as_ref())
-        }),
-        Agg::Global { functions, .. } => functions.iter().all(|function| {
-            admits_name(name_of(function.kind)) && admits_arg(function.input.as_ref())
-        }),
-    }
+    let (functions, group_by) = match aggregate {
+        Agg::Grouped {
+            functions,
+            group_by,
+            ..
+        } => (functions, group_by.as_slice()),
+        Agg::Global { functions, .. } => (functions, &[][..]),
+    };
+    functions.iter().all(|function| {
+        tidb_expr::infer_pushdown::is_push_down_enabled(
+            blacklist,
+            name_of(function.kind),
+            StoreType::TiKv,
+        ) && admits(function.input.as_slice())
+    }) && admits(group_by)
 }
 
 impl tidb_executor_join::index_lookup::IndexJoinLookup for IndexJoinLookupExec {

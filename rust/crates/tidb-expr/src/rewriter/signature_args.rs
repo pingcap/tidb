@@ -343,10 +343,11 @@ fn argument_kinds(
             Some(EvalType::Decimal) => Decimal,
             Some(EvalType::Real) => Real,
             Some(EvalType::Json) => Document,
+            Some(EvalType::VectorFloat32) => Vector,
             _ => Int,
         }],
         // Go `isTrueOrFalseFunctionClass`: string, time and JSON arguments
-        // read as doubles.
+        // read as doubles, a vector as itself.
         "istrue" | "istrue_with_null" | "isfalse" | "isfalse_with_null" => {
             vec![match eval_type(first?) {
                 Some(
@@ -358,6 +359,7 @@ fn argument_kinds(
                 ) => Real,
                 Some(EvalType::Decimal) => Decimal,
                 Some(EvalType::Real) => Real,
+                Some(EvalType::VectorFloat32) => Vector,
                 _ => Int,
             }]
         }
@@ -577,6 +579,13 @@ pub(crate) fn wrap_builtin_arguments(
         // A malformed call (wrong argument count) is rejected by the class's
         // own check; leave its arguments as they are.
         return Ok(args);
+    }
+    // Go `unaryNotFunctionClass.getFunction`: the argument types it has a
+    // signature for are int, real, decimal and JSON.
+    if name == "not" && matches!(kinds.as_slice(), [ArgKind::Vector]) {
+        return Err(EvalError::Raw(
+            "VectorFloat32 is not supported for unary not operator".into(),
+        ));
     }
     args.into_iter()
         .zip(kinds)

@@ -1,0 +1,267 @@
+abs	AbsInt=i AbsUInt=u AbsReal=r,s,b,t,D,T,h,j AbsDecimal=d
+acos	*1=Acos
+addtime	AddStringAndString=ii,iu,ir,id,is,ib,iD,ij,ui,uu,ur,ud,us,ub,uD,uj,ri,ru,rr,rd,rs,rb,rD,rj,di,du,dr,dd,ds,db,dD,dj,si,su,sr,sd,ss,sb,sD,sj,bi,bu,br,bd,bs,bb,bD,bj,ji,ju,jr,jd,js,jb,jD,jj AddTimeStringNull=it,iT,ut,uT,rt,rT,dt,dT,st,sT,bt,bT,Dt,DT,jt,jT AddStringAndDuration=ih,uh,rh,dh,sh,bh,jh AddDatetimeAndString=ti,tu,tr,td,ts,tb,tD,tj,Ti,Tu,Tr,Td,Ts,Tb,TD,Tj AddTimeDateTimeNull=tt,tT,Tt,TT AddDatetimeAndDuration=th,Th AddDateAndString=Di,Du,Dr,Dd,Ds,Db,DD,Dj AddDateAndDuration=Dh AddDurationAndString=hi,hu,hr,hd,hs,hb,hD,hj AddTimeDurationNull=ht,hT AddDurationAndDuration=hh
+aes_decrypt	*2=AesDecrypt *3=AesDecrypt
+aes_encrypt	*2=AesEncrypt *3=AesEncrypt
+and	*2=LogicalAnd
+any_value	IntAnyValue=i,u RealAnyValue=r DecimalAnyValue=d StringAnyValue=s,b TimeAnyValue=t,D,T DurationAnyValue=h JSONAnyValue=j
+ascii	*1=ASCII
+asin	*1=Asin
+atan	*1=Atan1Arg *2=Atan2Args
+atan2	*2=Atan2Args
+bin	*1=Bin
+bin_to_uuid	*1=Unspecified *2=Unspecified
+bit_count	*1=Unspecified
+bit_length	*1=BitLength
+bitand	*2=BitAndSig
+bitneg	*1=BitNegSig
+bitor	*2=BitOrSig
+bitxor	*2=BitXorSig
+case	CaseWhenInt=ii,iu,ui,uu,ri,ru,di,du,si,su,bi,bu,ti,tu,Di,Du,Ti,Tu,hi,hu,ji,ju CaseWhenReal=ir,ur,rr,dr,sr,br,tr,Dr,Tr,hr,jr CaseWhenDecimal=id,ud,rd,dd,sd,bd,td,Dd,Td,hd,jd CaseWhenString=is,ib,us,ub,rs,rb,ds,db,ss,sb,bs,bb,ts,tb,Ds,Db,Ts,Tb,hs,hb,js,jb CaseWhenTime=it,iD,iT,ut,uD,uT,rt,rD,rT,dt,dD,dT,st,sD,sT,bt,bD,bT,tt,tD,tT,Dt,DD,DT,Tt,TD,TT,ht,hD,hT,jt,jD,jT CaseWhenDuration=ih,uh,rh,dh,sh,bh,th,Dh,Th,hh,jh CaseWhenJson=ij,uj,rj,dj,sj,bj,tj,Dj,Tj,hj,jj CaseWhenInt=iii,rii,dii,sii,bii,tii,hii CaseWhenReal=iir,iri,irr,ird,idr,rir,rri,rrr,rrd,rdr,dir,dri,drr,drd,ddr,sir,sri,srr,srd,sdr,bir,bri,brr,brd,bdr,tir,tri,trr,trd,tdr,hir,hri,hrr,hrd,hdr CaseWhenDecimal=iid,idi,idd,rid,rdi,rdd,did,ddi,ddd,sid,sdi,sdd,bid,bdi,bdd,tid,tdi,tdd,hid,hdi,hdd CaseWhenString=iis,iib,iit,iih,irs,irb,irt,irh,ids,idb,idt,idh,isi,isr,isd,iss,isb,ist,ish,ibi,ibr,ibd,ibs,ibb,ibt,ibh,iti,itr,itd,its,itb,ihi,ihr,ihd,ihs,ihb,ris,rib,rit,rih,rrs,rrb,rrt,rrh,rds,rdb,rdt,rdh,rsi,rsr,rsd,rss,rsb,rst,rsh,rbi,rbr,rbd,rbs,rbb,rbt,rbh,rti,rtr,rtd,rts,rtb,rhi,rhr,rhd,rhs,rhb,dis,dib,dit,dih,drs,drb,drt,drh,dds,ddb,ddt,ddh,dsi,dsr,dsd,dss,dsb,dst,dsh,dbi,dbr,dbd,dbs,dbb,dbt,dbh,dti,dtr,dtd,dts,dtb,dhi,dhr,dhd,dhs,dhb,sis,sib,sit,sih,srs,srb,srt,srh,sds,sdb,sdt,sdh,ssi,ssr,ssd,sss,ssb,sst,ssh,sbi,sbr,sbd,sbs,sbb,sbt,sbh,sti,str,std,sts,stb,shi,shr,shd,shs,shb,bis,bib,bit,bih,brs,brb,brt,brh,bds,bdb,bdt,bdh,bsi,bsr,bsd,bss,bsb,bst,bsh,bbi,bbr,bbd,bbs,bbb,bbt,bbh,bti,btr,btd,bts,btb,bhi,bhr,bhd,bhs,bhb,tis,tib,tit,tih,trs,trb,trt,trh,tds,tdb,tdt,tdh,tsi,tsr,tsd,tss,tsb,tst,tsh,tbi,tbr,tbd,tbs,tbb,tbt,tbh,tti,ttr,ttd,tts,ttb,thi,thr,thd,ths,thb,his,hib,hit,hih,hrs,hrb,hrt,hrh,hds,hdb,hdt,hdh,hsi,hsr,hsd,hss,hsb,hst,hsh,hbi,hbr,hbd,hbs,hbb,hbt,hbh,hti,htr,htd,hts,htb,hhi,hhr,hhd,hhs,hhb CaseWhenTime=itt,ith,iht,rtt,rth,rht,dtt,dth,dht,stt,sth,sht,btt,bth,bht,ttt,tth,tht,htt,hth,hht CaseWhenDuration=ihh,rhh,dhh,shh,bhh,thh,hhh
+ceil	CeilIntToInt=i,u CeilReal=r,s,b,t,D,T,h,j CeilDecToInt=d
+ceiling	CeilIntToInt=i,u CeilReal=r,s,b,t,D,T,h,j CeilDecToInt=d
+char_length	CharLengthUTF8=i,u,r,d,s,t,D,T,h,j CharLength=b
+character_length	CharLengthUTF8=i,u,r,d,s,t,D,T,h,j CharLength=b
+charset	*1=Unspecified
+coalesce	CoalesceInt=i,u CoalesceReal=r CoalesceDecimal=d CoalesceString=s,b CoalesceTime=t,D,T CoalesceDuration=h CoalesceJson=j CoalesceInt=ii,uu CoalesceDecimal=iu,id,ui,ud,di,du,dd CoalesceReal=ir,ur,ri,ru,rr,rd,dr CoalesceString=is,ib,it,iD,iT,ih,ij,us,ub,ut,uD,uT,uh,uj,rs,rb,rt,rD,rT,rh,rj,ds,db,dt,dD,dT,dh,dj,si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj,ti,tu,tr,td,ts,tb,tj,Di,Du,Dr,Dd,Ds,Db,Dj,Ti,Tu,Tr,Td,Ts,Tb,Tj,hi,hu,hr,hd,hs,hb,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh CoalesceTime=tt,tD,tT,th,Dt,DD,DT,Dh,Tt,TD,TT,Th,ht,hD,hT CoalesceDuration=hh CoalesceJson=jj CoalesceInt=iii CoalesceReal=iir,iri,irr,ird,idr,rii,rir,rid,rri,rrr,rrd,rdi,rdr,rdd,dir,dri,drr,drd,ddr CoalesceDecimal=iid,idi,idd,dii,did,ddi,ddd CoalesceString=iis,iib,iit,iih,irs,irb,irt,irh,ids,idb,idt,idh,isi,isr,isd,iss,isb,ist,ish,ibi,ibr,ibd,ibs,ibb,ibt,ibh,iti,itr,itd,its,itb,itt,ith,ihi,ihr,ihd,ihs,ihb,iht,ihh,ris,rib,rit,rih,rrs,rrb,rrt,rrh,rds,rdb,rdt,rdh,rsi,rsr,rsd,rss,rsb,rst,rsh,rbi,rbr,rbd,rbs,rbb,rbt,rbh,rti,rtr,rtd,rts,rtb,rtt,rth,rhi,rhr,rhd,rhs,rhb,rht,rhh,dis,dib,dit,dih,drs,drb,drt,drh,dds,ddb,ddt,ddh,dsi,dsr,dsd,dss,dsb,dst,dsh,dbi,dbr,dbd,dbs,dbb,dbt,dbh,dti,dtr,dtd,dts,dtb,dtt,dth,dhi,dhr,dhd,dhs,dhb,dht,dhh,sii,sir,sid,sis,sib,sit,sih,sri,srr,srd,srs,srb,srt,srh,sdi,sdr,sdd,sds,sdb,sdt,sdh,ssi,ssr,ssd,sss,ssb,sst,ssh,sbi,sbr,sbd,sbs,sbb,sbt,sbh,sti,str,std,sts,stb,stt,sth,shi,shr,shd,shs,shb,sht,shh,bii,bir,bid,bis,bib,bit,bih,bri,brr,brd,brs,brb,brt,brh,bdi,bdr,bdd,bds,bdb,bdt,bdh,bsi,bsr,bsd,bss,bsb,bst,bsh,bbi,bbr,bbd,bbs,bbb,bbt,bbh,bti,btr,btd,bts,btb,btt,bth,bhi,bhr,bhd,bhs,bhb,bht,bhh,tii,tir,tid,tis,tib,tit,tih,tri,trr,trd,trs,trb,trt,trh,tdi,tdr,tdd,tds,tdb,tdt,tdh,tsi,tsr,tsd,tss,tsb,tst,tsh,tbi,tbr,tbd,tbs,tbb,tbt,tbh,tti,ttr,ttd,tts,ttb,thi,thr,thd,ths,thb,hii,hir,hid,his,hib,hit,hih,hri,hrr,hrd,hrs,hrb,hrt,hrh,hdi,hdr,hdd,hds,hdb,hdt,hdh,hsi,hsr,hsd,hss,hsb,hst,hsh,hbi,hbr,hbd,hbs,hbb,hbt,hbh,hti,htr,htd,hts,htb,hhi,hhr,hhd,hhs,hhb CoalesceTime=ttt,tth,tht,thh,htt,hth,hht CoalesceDuration=hhh
+coercibility	*1=Unspecified
+collation	*1=Unspecified
+compress	*1=Compress
+concat	*1=Concat *2=Concat *3=Concat
+concat_ws	*2=ConcatWS *3=ConcatWS
+conv	*3=Conv
+convert_tz	*3=ConvertTz
+cos	*1=Cos
+cot	*1=Cot
+crc32	*1=CRC32
+current_time	*1=CurrentTime1Arg
+current_timestamp	*1=NowWithArg
+current_user	*0=Unspecified
+curtime	*1=CurrentTime1Arg
+date	*1=Date
+date_format	*2=DateFormatSig
+datediff	*2=DateDiff
+day	*1=DayOfMonth
+dayname	*1=DayName
+dayofmonth	*1=DayOfMonth
+dayofweek	*1=DayOfWeek
+dayofyear	*1=DayOfYear
+decode	*2=Decode
+degrees	*1=Degrees
+div	DivideDecimal=ii,iu,id,it,iD,iT,ih,ui,uu,ud,ut,uD,uT,uh,di,du,dd,dt,dD,dT,dh,ti,tu,td,tt,tD,tT,th,Di,Du,Dd,Dt,DD,DT,Dh,Ti,Tu,Td,Tt,TD,TT,Th,hi,hu,hd,ht,hD,hT,hh DivideReal=ir,is,ib,ij,ur,us,ub,uj,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,rj,dr,ds,db,dj,si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj,tr,ts,tb,tj,Dr,Ds,Db,Dj,Tr,Ts,Tb,Tj,hr,hs,hb,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj
+elt	*2=Elt *3=Elt
+encode	*2=Encode
+eq	EQInt=ii,iu,ui,uu EQReal=ir,is,ib,it,iD,iT,ih,ur,us,ub,ut,uD,uT,uh,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,dr,ds,db,dt,dD,dT,dh,si,su,sr,sd,bi,bu,br,bd,ti,tu,tr,td,Di,Du,Dr,Dd,Ti,Tu,Tr,Td,hi,hu,hr,hd EQDecimal=id,ud,di,du,dd EQJson=ij,uj,rj,dj,sj,bj,tj,Dj,Tj,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj EQString=ss,sb,sh,bs,bb,bh,hs,hb EQTime=st,sD,sT,bt,bD,bT,ts,tb,tt,tD,tT,th,Ds,Db,Dt,DD,DT,Dh,Ts,Tb,Tt,TD,TT,Th,ht,hD,hT EQDuration=hh
+exp	*1=Exp
+export_set	*3=ExportSet3Arg
+field	FieldInt=ii,iu,ui,uu FieldReal=ir,id,is,ib,it,iD,iT,ih,ij,ur,ud,us,ub,ut,uD,uT,uh,uj,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,rj,di,du,dr,dd,ds,db,dt,dD,dT,dh,dj,si,su,sr,sd,st,sD,sT,sh,sj,bi,bu,br,bd,bt,bD,bT,bh,bj,ti,tu,tr,td,ts,tb,tt,tD,tT,th,tj,Di,Du,Dr,Dd,Ds,Db,Dt,DD,DT,Dh,Dj,Ti,Tu,Tr,Td,Ts,Tb,Tt,TD,TT,Th,Tj,hi,hu,hr,hd,hs,hb,ht,hD,hT,hh,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj FieldString=ss,sb,bs,bb FieldInt=iii FieldReal=iir,iid,iis,iib,iit,iih,iri,irr,ird,irs,irb,irt,irh,idi,idr,idd,ids,idb,idt,idh,isi,isr,isd,iss,isb,ist,ish,ibi,ibr,ibd,ibs,ibb,ibt,ibh,iti,itr,itd,its,itb,itt,ith,ihi,ihr,ihd,ihs,ihb,iht,ihh,rii,rir,rid,ris,rib,rit,rih,rri,rrr,rrd,rrs,rrb,rrt,rrh,rdi,rdr,rdd,rds,rdb,rdt,rdh,rsi,rsr,rsd,rss,rsb,rst,rsh,rbi,rbr,rbd,rbs,rbb,rbt,rbh,rti,rtr,rtd,rts,rtb,rtt,rth,rhi,rhr,rhd,rhs,rhb,rht,rhh,dii,dir,did,dis,dib,dit,dih,dri,drr,drd,drs,drb,drt,drh,ddi,ddr,ddd,dds,ddb,ddt,ddh,dsi,dsr,dsd,dss,dsb,dst,dsh,dbi,dbr,dbd,dbs,dbb,dbt,dbh,dti,dtr,dtd,dts,dtb,dtt,dth,dhi,dhr,dhd,dhs,dhb,dht,dhh,sii,sir,sid,sis,sib,sit,sih,sri,srr,srd,srs,srb,srt,srh,sdi,sdr,sdd,sds,sdb,sdt,sdh,ssi,ssr,ssd,sst,ssh,sbi,sbr,sbd,sbt,sbh,sti,str,std,sts,stb,stt,sth,shi,shr,shd,shs,shb,sht,shh,bii,bir,bid,bis,bib,bit,bih,bri,brr,brd,brs,brb,brt,brh,bdi,bdr,bdd,bds,bdb,bdt,bdh,bsi,bsr,bsd,bst,bsh,bbi,bbr,bbd,bbt,bbh,bti,btr,btd,bts,btb,btt,bth,bhi,bhr,bhd,bhs,bhb,bht,bhh,tii,tir,tid,tis,tib,tit,tih,tri,trr,trd,trs,trb,trt,trh,tdi,tdr,tdd,tds,tdb,tdt,tdh,tsi,tsr,tsd,tss,tsb,tst,tsh,tbi,tbr,tbd,tbs,tbb,tbt,tbh,tti,ttr,ttd,tts,ttb,ttt,tth,thi,thr,thd,ths,thb,tht,thh,hii,hir,hid,his,hib,hit,hih,hri,hrr,hrd,hrs,hrb,hrt,hrh,hdi,hdr,hdd,hds,hdb,hdt,hdh,hsi,hsr,hsd,hss,hsb,hst,hsh,hbi,hbr,hbd,hbs,hbb,hbt,hbh,hti,htr,htd,hts,htb,htt,hth,hhi,hhr,hhd,hhs,hhb,hht,hhh FieldString=sss,ssb,sbs,sbb,bss,bsb,bbs,bbb
+find_in_set	*2=FindInSet
+floor	FloorIntToInt=i,u FloorReal=r,s,b,t,D,T,h,j FloorDecToInt=d
+format	*2=Format *3=FormatWithLocale
+format_bytes	*1=Unspecified
+format_nano_time	*1=Unspecified
+found_rows	*0=Unspecified
+from_base64	*1=FromBase64
+from_days	*1=FromDays
+from_unixtime	*1=FromUnixTime1Arg *2=FromUnixTime2Arg
+ge	GEInt=ii,iu,ui,uu GEReal=ir,is,ib,it,iD,iT,ih,ur,us,ub,ut,uD,uT,uh,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,dr,ds,db,dt,dD,dT,dh,si,su,sr,sd,bi,bu,br,bd,ti,tu,tr,td,Di,Du,Dr,Dd,Ti,Tu,Tr,Td,hi,hu,hr,hd GEDecimal=id,ud,di,du,dd GEJson=ij,uj,rj,dj,sj,bj,tj,Dj,Tj,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj GEString=ss,sb,sh,bs,bb,bh,hs,hb GETime=st,sD,sT,bt,bD,bT,ts,tb,tt,tD,tT,th,Ds,Db,Dt,DD,DT,Dh,Ts,Tb,Tt,TD,TT,Th,ht,hD,hT GEDuration=hh
+get_format	*2=GetFormat
+greatest	GreatestInt=ii,uu GreatestDecimal=iu,id,ui,ud,di,du,dd GreatestReal=ir,ur,ri,ru,rr,rd,dr GreatestString=is,ib,ih,ij,us,ub,uh,uj,rs,rb,rh,rj,ds,db,dh,dj,si,su,sr,sd,ss,sb,sh,sj,bi,bu,br,bd,bs,bb,bh,bj,hi,hu,hr,hd,hs,hb,hj,ji,ju,jr,jd,js,jb,jh,jj GreatestCmpStringAsTime=it,iT,ut,uT,rt,rT,dt,dT,st,sT,bt,bT,ti,tu,tr,td,ts,tb,tj,Ti,Tu,Tr,Td,Ts,Tb,Tj,jt,jT GreatestCmpStringAsDate=iD,uD,rD,dD,sD,bD,Di,Du,Dr,Dd,Ds,Db,Dj,jD GreatestTime=tt,tD,tT,th,Dt,DT,Dh,Tt,TD,TT,Th,ht,hD,hT GreatestDate=DD GreatestDuration=hh GreatestInt=iii GreatestReal=iir,iri,irr,ird,idr,rii,rir,rid,rri,rrr,rrd,rdi,rdr,rdd,dir,dri,drr,drd,ddr GreatestDecimal=iid,idi,idd,dii,did,ddi,ddd GreatestString=iis,iib,iih,irs,irb,irh,ids,idb,idh,isi,isr,isd,iss,isb,ish,ibi,ibr,ibd,ibs,ibb,ibh,ihi,ihr,ihd,ihs,ihb,ihh,ris,rib,rih,rrs,rrb,rrh,rds,rdb,rdh,rsi,rsr,rsd,rss,rsb,rsh,rbi,rbr,rbd,rbs,rbb,rbh,rhi,rhr,rhd,rhs,rhb,rhh,dis,dib,dih,drs,drb,drh,dds,ddb,ddh,dsi,dsr,dsd,dss,dsb,dsh,dbi,dbr,dbd,dbs,dbb,dbh,dhi,dhr,dhd,dhs,dhb,dhh,sii,sir,sid,sis,sib,sih,sri,srr,srd,srs,srb,srh,sdi,sdr,sdd,sds,sdb,sdh,ssi,ssr,ssd,sss,ssb,ssh,sbi,sbr,sbd,sbs,sbb,sbh,shi,shr,shd,shs,shb,shh,bii,bir,bid,bis,bib,bih,bri,brr,brd,brs,brb,brh,bdi,bdr,bdd,bds,bdb,bdh,bsi,bsr,bsd,bss,bsb,bsh,bbi,bbr,bbd,bbs,bbb,bbh,bhi,bhr,bhd,bhs,bhb,bhh,hii,hir,hid,his,hib,hih,hri,hrr,hrd,hrs,hrb,hrh,hdi,hdr,hdd,hds,hdb,hdh,hsi,hsr,hsd,hss,hsb,hsh,hbi,hbr,hbd,hbs,hbb,hbh,hhi,hhr,hhd,hhs,hhb GreatestCmpStringAsTime=iit,irt,idt,ist,ibt,iti,itr,itd,its,itb,itt,ith,iht,rit,rrt,rdt,rst,rbt,rti,rtr,rtd,rts,rtb,rtt,rth,rht,dit,drt,ddt,dst,dbt,dti,dtr,dtd,dts,dtb,dtt,dth,dht,sit,srt,sdt,sst,sbt,sti,str,std,sts,stb,stt,sth,sht,bit,brt,bdt,bst,bbt,bti,btr,btd,bts,btb,btt,bth,bht,tii,tir,tid,tis,tib,tit,tih,tri,trr,trd,trs,trb,trt,trh,tdi,tdr,tdd,tds,tdb,tdt,tdh,tsi,tsr,tsd,tss,tsb,tst,tsh,tbi,tbr,tbd,tbs,tbb,tbt,tbh,tti,ttr,ttd,tts,ttb,thi,thr,thd,ths,thb,hit,hrt,hdt,hst,hbt,hti,htr,htd,hts,htb GreatestTime=ttt,tth,tht,thh,htt,hth,hht GreatestDuration=hhh
+gt	GTInt=ii,iu,ui,uu GTReal=ir,is,ib,it,iD,iT,ih,ur,us,ub,ut,uD,uT,uh,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,dr,ds,db,dt,dD,dT,dh,si,su,sr,sd,bi,bu,br,bd,ti,tu,tr,td,Di,Du,Dr,Dd,Ti,Tu,Tr,Td,hi,hu,hr,hd GTDecimal=id,ud,di,du,dd GTJson=ij,uj,rj,dj,sj,bj,tj,Dj,Tj,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj GTString=ss,sb,sh,bs,bb,bh,hs,hb GTTime=st,sD,sT,bt,bD,bT,ts,tb,tt,tD,tT,th,Ds,Db,Dt,DD,DT,Dh,Ts,Tb,Tt,TD,TT,Th,ht,hD,hT GTDuration=hh
+hex	HexIntArg=i,u,r,d HexStrArg=s,b,t,D,T,h,j
+hour	*1=Hour
+if	IfInt=iii,rii,dii,sii,bii,tii,hii IfReal=iir,iri,irr,ird,idr,rir,rri,rrr,rrd,rdr,dir,dri,drr,drd,ddr,sir,sri,srr,srd,sdr,bir,bri,brr,brd,bdr,tir,tri,trr,trd,tdr,hir,hri,hrr,hrd,hdr IfDecimal=iid,idi,idd,rid,rdi,rdd,did,ddi,ddd,sid,sdi,sdd,bid,bdi,bdd,tid,tdi,tdd,hid,hdi,hdd IfString=iis,iib,iit,iih,irs,irb,irt,irh,ids,idb,idt,idh,isi,isr,isd,iss,isb,ist,ish,ibi,ibr,ibd,ibs,ibb,ibt,ibh,iti,itr,itd,its,itb,ihi,ihr,ihd,ihs,ihb,ris,rib,rit,rih,rrs,rrb,rrt,rrh,rds,rdb,rdt,rdh,rsi,rsr,rsd,rss,rsb,rst,rsh,rbi,rbr,rbd,rbs,rbb,rbt,rbh,rti,rtr,rtd,rts,rtb,rhi,rhr,rhd,rhs,rhb,dis,dib,dit,dih,drs,drb,drt,drh,dds,ddb,ddt,ddh,dsi,dsr,dsd,dss,dsb,dst,dsh,dbi,dbr,dbd,dbs,dbb,dbt,dbh,dti,dtr,dtd,dts,dtb,dhi,dhr,dhd,dhs,dhb,sis,sib,sit,sih,srs,srb,srt,srh,sds,sdb,sdt,sdh,ssi,ssr,ssd,sss,ssb,sst,ssh,sbi,sbr,sbd,sbs,sbb,sbt,sbh,sti,str,std,sts,stb,shi,shr,shd,shs,shb,bis,bib,bit,bih,brs,brb,brt,brh,bds,bdb,bdt,bdh,bsi,bsr,bsd,bss,bsb,bst,bsh,bbi,bbr,bbd,bbs,bbb,bbt,bbh,bti,btr,btd,bts,btb,bhi,bhr,bhd,bhs,bhb,tis,tib,tit,tih,trs,trb,trt,trh,tds,tdb,tdt,tdh,tsi,tsr,tsd,tss,tsb,tst,tsh,tbi,tbr,tbd,tbs,tbb,tbt,tbh,tti,ttr,ttd,tts,ttb,thi,thr,thd,ths,thb,his,hib,hit,hih,hrs,hrb,hrt,hrh,hds,hdb,hdt,hdh,hsi,hsr,hsd,hss,hsb,hst,hsh,hbi,hbr,hbd,hbs,hbb,hbt,hbh,hti,htr,htd,hts,htb,hhi,hhr,hhd,hhs,hhb IfTime=itt,ith,iht,rtt,rth,rht,dtt,dth,dht,stt,sth,sht,btt,bth,bht,ttt,tth,tht,htt,hth,hht IfDuration=ihh,rhh,dhh,shh,bhh,thh,hhh
+ifnull	IfNullInt=ii,uu IfNullDecimal=iu,id,ui,ud,di,du,dd IfNullReal=ir,ur,ri,ru,rr,rd,dr IfNullString=is,ib,it,iD,iT,ih,ij,us,ub,ut,uD,uT,uh,uj,rs,rb,rt,rD,rT,rh,rj,ds,db,dt,dD,dT,dh,dj,si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj,ti,tu,tr,td,ts,tb,tj,Di,Du,Dr,Dd,Ds,Db,Dj,Ti,Tu,Tr,Td,Ts,Tb,Tj,hi,hu,hr,hd,hs,hb,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh IfNullTime=tt,tD,tT,th,Dt,DD,DT,Dh,Tt,TD,TT,Th,ht,hD,hT IfNullDuration=hh IfNullJson=jj
+ilike	*3=IlikeSig
+in	InInt=ii,iu,ir,id,is,ib,it,iD,iT,ih,ij,ui,uu,ur,ud,us,ub,ut,uD,uT,uh,uj InReal=ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,rj InDecimal=di,du,dr,dd,ds,db,dt,dD,dT,dh,dj InString=si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj InTime=ti,tu,tr,td,ts,tb,tt,tD,tT,th,tj,Di,Du,Dr,Dd,Ds,Db,Dt,DD,DT,Dh,Dj,Ti,Tu,Tr,Td,Ts,Tb,Tt,TD,TT,Th,Tj InDuration=hi,hu,hr,hd,hs,hb,ht,hD,hT,hh,hj InJson=ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj InInt=iii,iir,iid,iis,iib,iit,iih,iri,irr,ird,irs,irb,irt,irh,idi,idr,idd,ids,idb,idt,idh,isi,isr,isd,iss,isb,ist,ish,ibi,ibr,ibd,ibs,ibb,ibt,ibh,iti,itr,itd,its,itb,itt,ith,ihi,ihr,ihd,ihs,ihb,iht,ihh InReal=rii,rir,rid,ris,rib,rit,rih,rri,rrr,rrd,rrs,rrb,rrt,rrh,rdi,rdr,rdd,rds,rdb,rdt,rdh,rsi,rsr,rsd,rss,rsb,rst,rsh,rbi,rbr,rbd,rbs,rbb,rbt,rbh,rti,rtr,rtd,rts,rtb,rtt,rth,rhi,rhr,rhd,rhs,rhb,rht,rhh InDecimal=dii,dir,did,dis,dib,dit,dih,dri,drr,drd,drs,drb,drt,drh,ddi,ddr,ddd,dds,ddb,ddt,ddh,dsi,dsr,dsd,dss,dsb,dst,dsh,dbi,dbr,dbd,dbs,dbb,dbt,dbh,dti,dtr,dtd,dts,dtb,dtt,dth,dhi,dhr,dhd,dhs,dhb,dht,dhh InString=sii,sir,sid,sis,sib,sit,sih,sri,srr,srd,srs,srb,srt,srh,sdi,sdr,sdd,sds,sdb,sdt,sdh,ssi,ssr,ssd,sss,ssb,sst,ssh,sbi,sbr,sbd,sbs,sbb,sbt,sbh,sti,str,std,sts,stb,stt,sth,shi,shr,shd,shs,shb,sht,shh,bii,bir,bid,bis,bib,bit,bih,bri,brr,brd,brs,brb,brt,brh,bdi,bdr,bdd,bds,bdb,bdt,bdh,bsi,bsr,bsd,bss,bsb,bst,bsh,bbi,bbr,bbd,bbs,bbb,bbt,bbh,bti,btr,btd,bts,btb,btt,bth,bhi,bhr,bhd,bhs,bhb,bht,bhh InTime=tii,tir,tid,tis,tib,tit,tih,tri,trr,trd,trs,trb,trt,trh,tdi,tdr,tdd,tds,tdb,tdt,tdh,tsi,tsr,tsd,tss,tsb,tst,tsh,tbi,tbr,tbd,tbs,tbb,tbt,tbh,tti,ttr,ttd,tts,ttb,ttt,tth,thi,thr,thd,ths,thb,tht,thh InDuration=hii,hir,hid,his,hib,hit,hih,hri,hrr,hrd,hrs,hrb,hrt,hrh,hdi,hdr,hdd,hds,hdb,hdt,hdh,hsi,hsr,hsd,hss,hsb,hst,hsh,hbi,hbr,hbd,hbs,hbb,hbt,hbh,hti,htr,htd,hts,htb,htt,hth,hhi,hhr,hhd,hhs,hhb,hht,hhh
+inet6_aton	*1=Inet6Aton
+inet6_ntoa	*1=Inet6Ntoa
+inet_aton	*1=InetAton
+inet_ntoa	*1=InetNtoa
+instr	Instr=ii,iu,ir,id,ib,it,iD,iT,ih,ui,uu,ur,ud,ub,ut,uD,uT,uh,ri,ru,rr,rd,rb,rt,rD,rT,rh,di,du,dr,dd,db,dt,dD,dT,dh,sb,bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj,ti,tu,tr,td,tb,tt,tD,tT,th,Di,Du,Dr,Dd,Db,Dt,DD,DT,Dh,Ti,Tu,Tr,Td,Tb,Tt,TD,TT,Th,hi,hu,hr,hd,hb,ht,hD,hT,hh,jb InstrUTF8=is,ij,us,uj,rs,rj,ds,dj,si,su,sr,sd,ss,st,sD,sT,sh,sj,ts,tj,Ds,Dj,Ts,Tj,hs,hj,ji,ju,jr,jd,js,jt,jD,jT,jh,jj
+intdiv	IntDivideInt=ii,iu,it,iD,iT,ih,ui,uu,ut,uD,uT,uh,ti,tu,tt,tD,tT,th,Di,Du,Dt,DD,DT,Dh,Ti,Tu,Tt,TD,TT,Th,hi,hu,ht,hD,hT,hh IntDivideDecimal=ir,id,is,ib,ij,ur,ud,us,ub,uj,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,rj,di,du,dr,dd,ds,db,dt,dD,dT,dh,dj,si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj,tr,td,ts,tb,tj,Dr,Dd,Ds,Db,Dj,Tr,Td,Ts,Tb,Tj,hr,hd,hs,hb,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj
+interval	IntervalInt=ii,iu,ui,uu IntervalReal=ir,id,is,ib,it,iD,iT,ih,ij,ur,ud,us,ub,ut,uD,uT,uh,uj,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,rj,di,du,dr,dd,ds,db,dt,dD,dT,dh,dj,si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj,ti,tu,tr,td,ts,tb,tt,tD,tT,th,tj,Di,Du,Dr,Dd,Ds,Db,Dt,DD,DT,Dh,Dj,Ti,Tu,Tr,Td,Ts,Tb,Tt,TD,TT,Th,Tj,hi,hu,hr,hd,hs,hb,ht,hD,hT,hh,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj IntervalInt=iii IntervalReal=iir,iid,iis,iib,iit,iih,iri,irr,ird,irs,irb,irt,irh,idi,idr,idd,ids,idb,idt,idh,isi,isr,isd,iss,isb,ist,ish,ibi,ibr,ibd,ibs,ibb,ibt,ibh,iti,itr,itd,its,itb,itt,ith,ihi,ihr,ihd,ihs,ihb,iht,ihh,rii,rir,rid,ris,rib,rit,rih,rri,rrr,rrd,rrs,rrb,rrt,rrh,rdi,rdr,rdd,rds,rdb,rdt,rdh,rsi,rsr,rsd,rss,rsb,rst,rsh,rbi,rbr,rbd,rbs,rbb,rbt,rbh,rti,rtr,rtd,rts,rtb,rtt,rth,rhi,rhr,rhd,rhs,rhb,rht,rhh,dii,dir,did,dis,dib,dit,dih,dri,drr,drd,drs,drb,drt,drh,ddi,ddr,ddd,dds,ddb,ddt,ddh,dsi,dsr,dsd,dss,dsb,dst,dsh,dbi,dbr,dbd,dbs,dbb,dbt,dbh,dti,dtr,dtd,dts,dtb,dtt,dth,dhi,dhr,dhd,dhs,dhb,dht,dhh,sii,sir,sid,sis,sib,sit,sih,sri,srr,srd,srs,srb,srt,srh,sdi,sdr,sdd,sds,sdb,sdt,sdh,ssi,ssr,ssd,sss,ssb,sst,ssh,sbi,sbr,sbd,sbs,sbb,sbt,sbh,sti,str,std,sts,stb,stt,sth,shi,shr,shd,shs,shb,sht,shh,bii,bir,bid,bis,bib,bit,bih,bri,brr,brd,brs,brb,brt,brh,bdi,bdr,bdd,bds,bdb,bdt,bdh,bsi,bsr,bsd,bss,bsb,bst,bsh,bbi,bbr,bbd,bbs,bbb,bbt,bbh,bti,btr,btd,bts,btb,btt,bth,bhi,bhr,bhd,bhs,bhb,bht,bhh,tii,tir,tid,tis,tib,tit,tih,tri,trr,trd,trs,trb,trt,trh,tdi,tdr,tdd,tds,tdb,tdt,tdh,tsi,tsr,tsd,tss,tsb,tst,tsh,tbi,tbr,tbd,tbs,tbb,tbt,tbh,tti,ttr,ttd,tts,ttb,ttt,tth,thi,thr,thd,ths,thb,tht,thh,hii,hir,hid,his,hib,hit,hih,hri,hrr,hrd,hrs,hrb,hrt,hrh,hdi,hdr,hdd,hds,hdb,hdt,hdh,hsi,hsr,hsd,hss,hsb,hst,hsh,hbi,hbr,hbd,hbs,hbb,hbt,hbh,hti,htr,htd,hts,htb,htt,hth,hhi,hhr,hhd,hhs,hhb,hht,hhh
+is_free_lock	*1=Unspecified
+is_ipv4	*1=IsIPv4
+is_ipv4_compat	*1=IsIPv4Compat
+is_ipv4_mapped	*1=IsIPv4Mapped
+is_ipv6	*1=IsIPv6
+is_used_lock	*1=Unspecified
+is_uuid	*1=IsUUID
+isfalse	IntIsFalse=i,u RealIsFalse=r,s,b,t,D,T,h,j DecimalIsFalse=d
+isnull	IntIsNull=i,u RealIsNull=r DecimalIsNull=d StringIsNull=s,b,j TimeIsNull=t,D,T DurationIsNull=h
+istrue	IntIsTrue=i,u RealIsTrue=r,s,b,t,D,T,h,j DecimalIsTrue=d
+json_array	*1=JsonArraySig *2=JsonArraySig *3=JsonArraySig
+json_array_append	*3=JsonArrayAppendSig
+json_array_insert	*3=JsonArrayInsertSig
+json_contains	JsonContainsSig=ss,sj,js,jj JsonContainsSig=ssi,ssr,ssd,sss,ssb,sst,ssh
+json_contains_path	JsonContainsPathSig=sii,sir,sid,sis,sib,sit,sih,sri,srr,srd,srs,srb,srt,srh,sdi,sdr,sdd,sds,sdb,sdt,sdh,ssi,ssr,ssd,sss,ssb,sst,ssh,sbi,sbr,sbd,sbs,sbb,sbt,sbh,sti,str,std,sts,stb,stt,sth,shi,shr,shd,shs,shb,sht,shh
+json_depth	*1=JsonDepthSig
+json_extract	JsonExtractSig=si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj JsonExtractSig=sii,sir,sid,sis,sib,sit,sih,sri,srr,srd,srs,srb,srt,srh,sdi,sdr,sdd,sds,sdb,sdt,sdh,ssi,ssr,ssd,sss,ssb,sst,ssh,sbi,sbr,sbd,sbs,sbb,sbt,sbh,sti,str,std,sts,stb,stt,sth,shi,shr,shd,shs,shb,sht,shh
+json_insert	*3=JsonInsertSig
+json_keys	JsonKeysSig=s,j JsonKeys2ArgsSig=si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj
+json_length	*1=JsonLengthSig *2=JsonLengthSig
+json_memberof	JsonMemberOfSig=is,ij,us,uj,rs,rj,ds,dj,ss,sj,bs,bj,ts,tj,Ds,Dj,Ts,Tj,hs,hj,js,jj
+json_merge	JsonMergeSig=ss,sj,js,jj JsonMergeSig=sss
+json_merge_patch	JsonMergePatchSig=ss,sj,js,jj JsonMergePatchSig=sss
+json_merge_preserve	JsonMergePreserveSig=ss,sj,js,jj JsonMergePreserveSig=sss
+json_object	JsonObjectSig=ii,iu,ir,id,is,ib,it,iD,iT,ih,ij,ui,uu,ur,ud,us,ub,ut,uD,uT,uh,uj,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,rj,di,du,dr,dd,ds,db,dt,dD,dT,dh,dj,si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,ti,tu,tr,td,ts,tb,tt,tD,tT,th,tj,Di,Du,Dr,Dd,Ds,Db,Dt,DD,DT,Dh,Dj,Ti,Tu,Tr,Td,Ts,Tb,Tt,TD,TT,Th,Tj,hi,hu,hr,hd,hs,hb,ht,hD,hT,hh,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj
+json_overlaps	Unspecified=ss,sj,js,jj
+json_pretty	*1=JsonPrettySig
+json_quote	JsonQuoteSig=s,b
+json_remove	*2=JsonRemoveSig *3=JsonRemoveSig
+json_replace	*3=JsonReplaceSig
+json_schema_valid	Unspecified=ss,sj,js,jj
+json_search	JsonSearchSig=sii,sir,sid,sis,sib,sit,sih,sri,srr,srd,srs,srb,srt,srh,sdi,sdr,sdd,sds,sdb,sdt,sdh,ssi,ssr,ssd,sss,ssb,sst,ssh,sbi,sbr,sbd,sbs,sbb,sbt,sbh,sti,str,std,sts,stb,stt,sth,shi,shr,shd,shs,shb,sht,shh
+json_set	*3=JsonSetSig
+json_storage_free	*1=JsonStorageFreeSig
+json_storage_size	*1=JsonStorageSizeSig
+json_type	JsonTypeSig=s,j
+json_unquote	JsonUnquoteSig=s,j
+json_valid	JsonValidOthersSig=i,u,r,d,t,D,T,h JsonValidStringSig=s,b JsonValidJsonSig=j
+last_day	*1=LastDay
+last_insert_id	*1=LastInsertIDWithID
+lastval	*1=Unspecified
+lcase	LowerUTF8=i,u,r,d,s,t,D,T,h,j Lower=b
+le	LEInt=ii,iu,ui,uu LEReal=ir,is,ib,it,iD,iT,ih,ur,us,ub,ut,uD,uT,uh,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,dr,ds,db,dt,dD,dT,dh,si,su,sr,sd,bi,bu,br,bd,ti,tu,tr,td,Di,Du,Dr,Dd,Ti,Tu,Tr,Td,hi,hu,hr,hd LEDecimal=id,ud,di,du,dd LEJson=ij,uj,rj,dj,sj,bj,tj,Dj,Tj,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj LEString=ss,sb,sh,bs,bb,bh,hs,hb LETime=st,sD,sT,bt,bD,bT,ts,tb,tt,tD,tT,th,Ds,Db,Dt,DD,DT,Dh,Ts,Tb,Tt,TD,TT,Th,ht,hD,hT LEDuration=hh
+least	LeastInt=ii,uu LeastDecimal=iu,id,ui,ud,di,du,dd LeastReal=ir,ur,ri,ru,rr,rd,dr LeastString=is,ib,ih,ij,us,ub,uh,uj,rs,rb,rh,rj,ds,db,dh,dj,si,su,sr,sd,ss,sb,sh,sj,bi,bu,br,bd,bs,bb,bh,bj,hi,hu,hr,hd,hs,hb,hj,ji,ju,jr,jd,js,jb,jh,jj LeastCmpStringAsTime=it,iT,ut,uT,rt,rT,dt,dT,st,sT,bt,bT,ti,tu,tr,td,ts,tb,tj,Ti,Tu,Tr,Td,Ts,Tb,Tj,jt,jT LeastCmpStringAsDate=iD,uD,rD,dD,sD,bD,Di,Du,Dr,Dd,Ds,Db,Dj,jD LeastTime=tt,tD,tT,th,Dt,DT,Dh,Tt,TD,TT,Th,ht,hD,hT LeastDate=DD LeastDuration=hh LeastInt=iii LeastReal=iir,iri,irr,ird,idr,rii,rir,rid,rri,rrr,rrd,rdi,rdr,rdd,dir,dri,drr,drd,ddr LeastDecimal=iid,idi,idd,dii,did,ddi,ddd LeastString=iis,iib,iih,irs,irb,irh,ids,idb,idh,isi,isr,isd,iss,isb,ish,ibi,ibr,ibd,ibs,ibb,ibh,ihi,ihr,ihd,ihs,ihb,ihh,ris,rib,rih,rrs,rrb,rrh,rds,rdb,rdh,rsi,rsr,rsd,rss,rsb,rsh,rbi,rbr,rbd,rbs,rbb,rbh,rhi,rhr,rhd,rhs,rhb,rhh,dis,dib,dih,drs,drb,drh,dds,ddb,ddh,dsi,dsr,dsd,dss,dsb,dsh,dbi,dbr,dbd,dbs,dbb,dbh,dhi,dhr,dhd,dhs,dhb,dhh,sii,sir,sid,sis,sib,sih,sri,srr,srd,srs,srb,srh,sdi,sdr,sdd,sds,sdb,sdh,ssi,ssr,ssd,sss,ssb,ssh,sbi,sbr,sbd,sbs,sbb,sbh,shi,shr,shd,shs,shb,shh,bii,bir,bid,bis,bib,bih,bri,brr,brd,brs,brb,brh,bdi,bdr,bdd,bds,bdb,bdh,bsi,bsr,bsd,bss,bsb,bsh,bbi,bbr,bbd,bbs,bbb,bbh,bhi,bhr,bhd,bhs,bhb,bhh,hii,hir,hid,his,hib,hih,hri,hrr,hrd,hrs,hrb,hrh,hdi,hdr,hdd,hds,hdb,hdh,hsi,hsr,hsd,hss,hsb,hsh,hbi,hbr,hbd,hbs,hbb,hbh,hhi,hhr,hhd,hhs,hhb LeastCmpStringAsTime=iit,irt,idt,ist,ibt,iti,itr,itd,its,itb,itt,ith,iht,rit,rrt,rdt,rst,rbt,rti,rtr,rtd,rts,rtb,rtt,rth,rht,dit,drt,ddt,dst,dbt,dti,dtr,dtd,dts,dtb,dtt,dth,dht,sit,srt,sdt,sst,sbt,sti,str,std,sts,stb,stt,sth,sht,bit,brt,bdt,bst,bbt,bti,btr,btd,bts,btb,btt,bth,bht,tii,tir,tid,tis,tib,tit,tih,tri,trr,trd,trs,trb,trt,trh,tdi,tdr,tdd,tds,tdb,tdt,tdh,tsi,tsr,tsd,tss,tsb,tst,tsh,tbi,tbr,tbd,tbs,tbb,tbt,tbh,tti,ttr,ttd,tts,ttb,thi,thr,thd,ths,thb,hit,hrt,hdt,hst,hbt,hti,htr,htd,hts,htb LeastTime=ttt,tth,tht,thh,htt,hth,hht LeastDuration=hhh
+left	LeftUTF8=ii,iu,ir,id,is,ib,it,iD,iT,ih,ij,ui,uu,ur,ud,us,ub,ut,uD,uT,uh,uj,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,rj,di,du,dr,dd,ds,db,dt,dD,dT,dh,dj,si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,ti,tu,tr,td,ts,tb,tt,tD,tT,th,tj,Di,Du,Dr,Dd,Ds,Db,Dt,DD,DT,Dh,Dj,Ti,Tu,Tr,Td,Ts,Tb,Tt,TD,TT,Th,Tj,hi,hu,hr,hd,hs,hb,ht,hD,hT,hh,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj Left=bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj
+leftshift	*2=LeftShift
+length	*1=Length
+like	*3=LikeSig
+ln	*1=Log1Arg
+load_file	*1=Unspecified
+localtime	*1=NowWithArg
+localtimestamp	*1=NowWithArg
+locate	Locate2Args=ii,iu,ir,id,ib,it,iD,iT,ih,ui,uu,ur,ud,ub,ut,uD,uT,uh,ri,ru,rr,rd,rb,rt,rD,rT,rh,di,du,dr,dd,db,dt,dD,dT,dh,sb,bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj,ti,tu,tr,td,tb,tt,tD,tT,th,Di,Du,Dr,Dd,Db,Dt,DD,DT,Dh,Ti,Tu,Tr,Td,Tb,Tt,TD,TT,Th,hi,hu,hr,hd,hb,ht,hD,hT,hh,jb Locate2ArgsUTF8=is,ij,us,uj,rs,rj,ds,dj,si,su,sr,sd,ss,st,sD,sT,sh,sj,ts,tj,Ds,Dj,Ts,Tj,hs,hj,ji,ju,jr,jd,js,jt,jD,jT,jh,jj Locate3Args=iii,iir,iid,iis,iib,iit,iih,iri,irr,ird,irs,irb,irt,irh,idi,idr,idd,ids,idb,idt,idh,ibi,ibr,ibd,ibs,ibb,ibt,ibh,iti,itr,itd,its,itb,itt,ith,ihi,ihr,ihd,ihs,ihb,iht,ihh,rii,rir,rid,ris,rib,rit,rih,rri,rrr,rrd,rrs,rrb,rrt,rrh,rdi,rdr,rdd,rds,rdb,rdt,rdh,rbi,rbr,rbd,rbs,rbb,rbt,rbh,rti,rtr,rtd,rts,rtb,rtt,rth,rhi,rhr,rhd,rhs,rhb,rht,rhh,dii,dir,did,dis,dib,dit,dih,dri,drr,drd,drs,drb,drt,drh,ddi,ddr,ddd,dds,ddb,ddt,ddh,dbi,dbr,dbd,dbs,dbb,dbt,dbh,dti,dtr,dtd,dts,dtb,dtt,dth,dhi,dhr,dhd,dhs,dhb,dht,dhh,sbi,sbr,sbd,sbs,sbb,sbt,sbh,bii,bir,bid,bis,bib,bit,bih,bri,brr,brd,brs,brb,brt,brh,bdi,bdr,bdd,bds,bdb,bdt,bdh,bsi,bsr,bsd,bss,bsb,bst,bsh,bbi,bbr,bbd,bbs,bbb,bbt,bbh,bti,btr,btd,bts,btb,btt,bth,bhi,bhr,bhd,bhs,bhb,bht,bhh,tii,tir,tid,tis,tib,tit,tih,tri,trr,trd,trs,trb,trt,trh,tdi,tdr,tdd,tds,tdb,tdt,tdh,tbi,tbr,tbd,tbs,tbb,tbt,tbh,tti,ttr,ttd,tts,ttb,ttt,tth,thi,thr,thd,ths,thb,tht,thh,hii,hir,hid,his,hib,hit,hih,hri,hrr,hrd,hrs,hrb,hrt,hrh,hdi,hdr,hdd,hds,hdb,hdt,hdh,hbi,hbr,hbd,hbs,hbb,hbt,hbh,hti,htr,htd,hts,htb,htt,hth,hhi,hhr,hhd,hhs,hhb,hht,hhh Locate3ArgsUTF8=isi,isr,isd,iss,isb,ist,ish,rsi,rsr,rsd,rss,rsb,rst,rsh,dsi,dsr,dsd,dss,dsb,dst,dsh,sii,sir,sid,sis,sib,sit,sih,sri,srr,srd,srs,srb,srt,srh,sdi,sdr,sdd,sds,sdb,sdt,sdh,ssi,ssr,ssd,sss,ssb,sst,ssh,sti,str,std,sts,stb,stt,sth,shi,shr,shd,shs,shb,sht,shh,tsi,tsr,tsd,tss,tsb,tst,tsh,hsi,hsr,hsd,hss,hsb,hst,hsh
+log	*1=Log1Arg *2=Log2Args
+log10	*1=Log10
+log2	*1=Log2
+lower	LowerUTF8=i,u,r,d,s,t,D,T,h,j Lower=b
+lpad	LpadUTF8=iii,iir,iid,iis,iit,iih,iri,irr,ird,irs,irt,irh,idi,idr,idd,ids,idt,idh,isi,isr,isd,iss,ist,ish,ibi,ibr,ibd,ibs,ibt,ibh,iti,itr,itd,its,itt,ith,ihi,ihr,ihd,ihs,iht,ihh,rii,rir,rid,ris,rit,rih,rri,rrr,rrd,rrs,rrt,rrh,rdi,rdr,rdd,rds,rdt,rdh,rsi,rsr,rsd,rss,rst,rsh,rbi,rbr,rbd,rbs,rbt,rbh,rti,rtr,rtd,rts,rtt,rth,rhi,rhr,rhd,rhs,rht,rhh,dii,dir,did,dis,dit,dih,dri,drr,drd,drs,drt,drh,ddi,ddr,ddd,dds,ddt,ddh,dsi,dsr,dsd,dss,dst,dsh,dbi,dbr,dbd,dbs,dbt,dbh,dti,dtr,dtd,dts,dtt,dth,dhi,dhr,dhd,dhs,dht,dhh,sii,sir,sid,sis,sit,sih,sri,srr,srd,srs,srt,srh,sdi,sdr,sdd,sds,sdt,sdh,ssi,ssr,ssd,sss,sst,ssh,sbi,sbr,sbd,sbs,sbt,sbh,sti,str,std,sts,stt,sth,shi,shr,shd,shs,sht,shh,tii,tir,tid,tis,tit,tih,tri,trr,trd,trs,trt,trh,tdi,tdr,tdd,tds,tdt,tdh,tsi,tsr,tsd,tss,tst,tsh,tbi,tbr,tbd,tbs,tbt,tbh,tti,ttr,ttd,tts,ttt,tth,thi,thr,thd,ths,tht,thh,hii,hir,hid,his,hit,hih,hri,hrr,hrd,hrs,hrt,hrh,hdi,hdr,hdd,hds,hdt,hdh,hsi,hsr,hsd,hss,hst,hsh,hbi,hbr,hbd,hbs,hbt,hbh,hti,htr,htd,hts,htt,hth,hhi,hhr,hhd,hhs,hht,hhh Lpad=iib,irb,idb,isb,ibb,itb,ihb,rib,rrb,rdb,rsb,rbb,rtb,rhb,dib,drb,ddb,dsb,dbb,dtb,dhb,sib,srb,sdb,ssb,sbb,stb,shb,bii,bir,bid,bis,bib,bit,bih,bri,brr,brd,brs,brb,brt,brh,bdi,bdr,bdd,bds,bdb,bdt,bdh,bsi,bsr,bsd,bss,bsb,bst,bsh,bbi,bbr,bbd,bbs,bbb,bbt,bbh,bti,btr,btd,bts,btb,btt,bth,bhi,bhr,bhd,bhs,bhb,bht,bhh,tib,trb,tdb,tsb,tbb,ttb,thb,hib,hrb,hdb,hsb,hbb,htb,hhb
+lt	LTInt=ii,iu,ui,uu LTReal=ir,is,ib,it,iD,iT,ih,ur,us,ub,ut,uD,uT,uh,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,dr,ds,db,dt,dD,dT,dh,si,su,sr,sd,bi,bu,br,bd,ti,tu,tr,td,Di,Du,Dr,Dd,Ti,Tu,Tr,Td,hi,hu,hr,hd LTDecimal=id,ud,di,du,dd LTJson=ij,uj,rj,dj,sj,bj,tj,Dj,Tj,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj LTString=ss,sb,sh,bs,bb,bh,hs,hb LTTime=st,sD,sT,bt,bD,bT,ts,tb,tt,tD,tT,th,Ds,Db,Dt,DD,DT,Dh,Ts,Tb,Tt,TD,TT,Th,ht,hD,hT LTDuration=hh
+ltrim	*1=LTrim
+make_set	*2=MakeSet *3=MakeSet
+makedate	*2=MakeDate
+maketime	*3=MakeTime
+md5	*1=MD5
+microsecond	*1=MicroSecond
+mid	Substring2ArgsUTF8=ii,iu,ir,id,is,ib,it,iD,iT,ih,ij,ui,uu,ur,ud,us,ub,ut,uD,uT,uh,uj,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,rj,di,du,dr,dd,ds,db,dt,dD,dT,dh,dj,si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,ti,tu,tr,td,ts,tb,tt,tD,tT,th,tj,Di,Du,Dr,Dd,Ds,Db,Dt,DD,DT,Dh,Dj,Ti,Tu,Tr,Td,Ts,Tb,Tt,TD,TT,Th,Tj,hi,hu,hr,hd,hs,hb,ht,hD,hT,hh,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj Substring2Args=bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj Substring3ArgsUTF8=iii,iir,iid,iis,iib,iit,iih,iri,irr,ird,irs,irb,irt,irh,idi,idr,idd,ids,idb,idt,idh,isi,isr,isd,iss,isb,ist,ish,ibi,ibr,ibd,ibs,ibb,ibt,ibh,iti,itr,itd,its,itb,itt,ith,ihi,ihr,ihd,ihs,ihb,iht,ihh,rii,rir,rid,ris,rib,rit,rih,rri,rrr,rrd,rrs,rrb,rrt,rrh,rdi,rdr,rdd,rds,rdb,rdt,rdh,rsi,rsr,rsd,rss,rsb,rst,rsh,rbi,rbr,rbd,rbs,rbb,rbt,rbh,rti,rtr,rtd,rts,rtb,rtt,rth,rhi,rhr,rhd,rhs,rhb,rht,rhh,dii,dir,did,dis,dib,dit,dih,dri,drr,drd,drs,drb,drt,drh,ddi,ddr,ddd,dds,ddb,ddt,ddh,dsi,dsr,dsd,dss,dsb,dst,dsh,dbi,dbr,dbd,dbs,dbb,dbt,dbh,dti,dtr,dtd,dts,dtb,dtt,dth,dhi,dhr,dhd,dhs,dhb,dht,dhh,sii,sir,sid,sis,sib,sit,sih,sri,srr,srd,srs,srb,srt,srh,sdi,sdr,sdd,sds,sdb,sdt,sdh,ssi,ssr,ssd,sss,ssb,sst,ssh,sbi,sbr,sbd,sbs,sbb,sbt,sbh,sti,str,std,sts,stb,stt,sth,shi,shr,shd,shs,shb,sht,shh,tii,tir,tid,tis,tib,tit,tih,tri,trr,trd,trs,trb,trt,trh,tdi,tdr,tdd,tds,tdb,tdt,tdh,tsi,tsr,tsd,tss,tsb,tst,tsh,tbi,tbr,tbd,tbs,tbb,tbt,tbh,tti,ttr,ttd,tts,ttb,ttt,tth,thi,thr,thd,ths,thb,tht,thh,hii,hir,hid,his,hib,hit,hih,hri,hrr,hrd,hrs,hrb,hrt,hrh,hdi,hdr,hdd,hds,hdb,hdt,hdh,hsi,hsr,hsd,hss,hsb,hst,hsh,hbi,hbr,hbd,hbs,hbb,hbt,hbh,hti,htr,htd,hts,htb,htt,hth,hhi,hhr,hhd,hhs,hhb,hht,hhh Substring3Args=bii,bir,bid,bis,bib,bit,bih,bri,brr,brd,brs,brb,brt,brh,bdi,bdr,bdd,bds,bdb,bdt,bdh,bsi,bsr,bsd,bss,bsb,bst,bsh,bbi,bbr,bbd,bbs,bbb,bbt,bbh,bti,btr,btd,bts,btb,btt,bth,bhi,bhr,bhd,bhs,bhb,bht,bhh
+minus	MinusInt=ii,iu,it,iD,iT,ih,ui,uu,ut,uD,uT,uh,ti,tu,tt,tD,tT,th,Di,Du,Dt,DD,DT,Dh,Ti,Tu,Tt,TD,TT,Th,hi,hu,ht,hD,hT,hh MinusReal=ir,is,ib,ij,ur,us,ub,uj,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,rj,dr,ds,db,dj,si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj,tr,ts,tb,tj,Dr,Ds,Db,Dj,Tr,Ts,Tb,Tj,hr,hs,hb,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj MinusDecimal=id,ud,di,du,dd,dt,dD,dT,dh,td,Dd,Td,hd
+minute	*1=Minute
+mod	ModIntSignedSigned=ii,it,iD,iT,ih,ti,tt,tD,tT,th,Di,Dt,DD,DT,Dh,Ti,Tt,TD,TT,Th,hi,ht,hD,hT,hh ModIntSignedUnsigned=iu,tu,Du,Tu,hu ModReal=ir,is,ib,ij,ur,us,ub,uj,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,rj,dr,ds,db,dj,si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj,tr,ts,tb,tj,Dr,Ds,Db,Dj,Tr,Ts,Tb,Tj,hr,hs,hb,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj ModDecimal=id,ud,di,du,dd,dt,dD,dT,dh,td,Dd,Td,hd ModIntUnsignedSigned=ui,ut,uD,uT,uh ModIntUnsignedUnsigned=uu
+month	*1=Month
+monthname	*1=MonthName
+mul	MultiplyInt=ii,it,iD,iT,ih,ti,tt,tD,tT,th,Di,Dt,DD,DT,Dh,Ti,Tt,TD,TT,Th,hi,ht,hD,hT,hh MultiplyIntUnsigned=iu,ui,uu,ut,uD,uT,uh,tu,Du,Tu,hu MultiplyReal=ir,is,ib,ij,ur,us,ub,uj,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,rj,dr,ds,db,dj,si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj,tr,ts,tb,tj,Dr,Ds,Db,Dj,Tr,Ts,Tb,Tj,hr,hs,hb,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj MultiplyDecimal=id,ud,di,du,dd,dt,dD,dT,dh,td,Dd,Td,hd
+name_const	*2=Unspecified
+ne	NEInt=ii,iu,ui,uu NEReal=ir,is,ib,it,iD,iT,ih,ur,us,ub,ut,uD,uT,uh,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,dr,ds,db,dt,dD,dT,dh,si,su,sr,sd,bi,bu,br,bd,ti,tu,tr,td,Di,Du,Dr,Dd,Ti,Tu,Tr,Td,hi,hu,hr,hd NEDecimal=id,ud,di,du,dd NEJson=ij,uj,rj,dj,sj,bj,tj,Dj,Tj,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj NEString=ss,sb,sh,bs,bb,bh,hs,hb NETime=st,sD,sT,bt,bD,bT,ts,tb,tt,tD,tT,th,Ds,Db,Dt,DD,DT,Dh,Ts,Tb,Tt,TD,TT,Th,ht,hD,hT NEDuration=hh
+nextval	*1=Unspecified
+not	UnaryNotInt=i,u,t,D,T,h UnaryNotReal=r,s,b UnaryNotDecimal=d UnaryNotJSON=j
+now	*1=NowWithArg
+nulleq	NullEQInt=ii,iu,ui,uu NullEQReal=ir,is,ib,it,iD,iT,ih,ur,us,ub,ut,uD,uT,uh,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,dr,ds,db,dt,dD,dT,dh,si,su,sr,sd,bi,bu,br,bd,ti,tu,tr,td,Di,Du,Dr,Dd,Ti,Tu,Tr,Td,hi,hu,hr,hd NullEQDecimal=id,ud,di,du,dd NullEQJson=ij,uj,rj,dj,sj,bj,tj,Dj,Tj,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj NullEQString=ss,sb,sh,bs,bb,bh,hs,hb NullEQTime=st,sD,sT,bt,bD,bT,ts,tb,tt,tD,tT,th,Ds,Db,Dt,DD,DT,Dh,Ts,Tb,Tt,TD,TT,Th,ht,hD,hT NullEQDuration=hh
+oct	OctInt=i,u OctString=r,d,s,b,t,D,T,h,j
+octet_length	*1=Length
+or	*2=LogicalOr
+ord	*1=Ord
+password	*1=Password
+period_add	*2=Unspecified
+period_diff	*2=Unspecified
+plus	PlusInt=ii,iu,it,iD,iT,ih,ui,uu,ut,uD,uT,uh,ti,tu,tt,tD,tT,th,Di,Du,Dt,DD,DT,Dh,Ti,Tu,Tt,TD,TT,Th,hi,hu,ht,hD,hT,hh PlusReal=ir,is,ib,ij,ur,us,ub,uj,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,rj,dr,ds,db,dj,si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj,tr,ts,tb,tj,Dr,Ds,Db,Dj,Tr,Ts,Tb,Tj,hr,hs,hb,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj PlusDecimal=id,ud,di,du,dd,dt,dD,dT,dh,td,Dd,Td,hd
+position	Locate2Args=ii,iu,ir,id,ib,it,iD,iT,ih,ui,uu,ur,ud,ub,ut,uD,uT,uh,ri,ru,rr,rd,rb,rt,rD,rT,rh,di,du,dr,dd,db,dt,dD,dT,dh,sb,bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj,ti,tu,tr,td,tb,tt,tD,tT,th,Di,Du,Dr,Dd,Db,Dt,DD,DT,Dh,Ti,Tu,Tr,Td,Tb,Tt,TD,TT,Th,hi,hu,hr,hd,hb,ht,hD,hT,hh,jb Locate2ArgsUTF8=is,ij,us,uj,rs,rj,ds,dj,si,su,sr,sd,ss,st,sD,sT,sh,sj,ts,tj,Ds,Dj,Ts,Tj,hs,hj,ji,ju,jr,jd,js,jt,jD,jT,jh,jj
+pow	*2=Pow
+power	*2=Pow
+quarter	*1=Quarter
+quote	*1=Quote
+radians	*1=Radians
+rand	*0=Rand *1=RandWithSeedFirstGen
+random_bytes	*1=Unspecified
+regexp	*2=RegexpLikeSig
+regexp_instr	RegexpInStrSig=is,ij,us,uj,rs,rj,ds,dj,si,su,sr,sd,ss,st,sD,sT,sh,sj,ts,tj,Ds,Dj,Ts,Tj,hs,hj,ji,ju,jr,jd,js,jt,jD,jT,jh,jj RegexpInStrSig=isi,isr,isd,iss,isb,ist,ish,rsi,rsr,rsd,rss,rsb,rst,rsh,dsi,dsr,dsd,dss,dsb,dst,dsh,sii,sir,sid,sis,sib,sit,sih,sri,srr,srd,srs,srb,srt,srh,sdi,sdr,sdd,sds,sdb,sdt,sdh,ssi,ssr,ssd,sss,ssb,sst,ssh,sti,str,std,sts,stb,stt,sth,shi,shr,shd,shs,shb,sht,shh,tsi,tsr,tsd,tss,tsb,tst,tsh,hsi,hsr,hsd,hss,hsb,hst,hsh
+regexp_like	*2=RegexpLikeSig *3=RegexpLikeSig
+regexp_replace	RegexpReplaceSig=iii,iir,iid,iis,iit,iih,iri,irr,ird,irs,irt,irh,idi,idr,idd,ids,idt,idh,isi,isr,isd,iss,ist,ish,iti,itr,itd,its,itt,ith,ihi,ihr,ihd,ihs,iht,ihh,rii,rir,rid,ris,rit,rih,rri,rrr,rrd,rrs,rrt,rrh,rdi,rdr,rdd,rds,rdt,rdh,rsi,rsr,rsd,rss,rst,rsh,rti,rtr,rtd,rts,rtt,rth,rhi,rhr,rhd,rhs,rht,rhh,dii,dir,did,dis,dit,dih,dri,drr,drd,drs,drt,drh,ddi,ddr,ddd,dds,ddt,ddh,dsi,dsr,dsd,dss,dst,dsh,dti,dtr,dtd,dts,dtt,dth,dhi,dhr,dhd,dhs,dht,dhh,sii,sir,sid,sis,sit,sih,sri,srr,srd,srs,srt,srh,sdi,sdr,sdd,sds,sdt,sdh,ssi,ssr,ssd,sss,sst,ssh,sti,str,std,sts,stt,sth,shi,shr,shd,shs,sht,shh,tii,tir,tid,tis,tit,tih,tri,trr,trd,trs,trt,trh,tdi,tdr,tdd,tds,tdt,tdh,tsi,tsr,tsd,tss,tst,tsh,tti,ttr,ttd,tts,ttt,tth,thi,thr,thd,ths,tht,thh,hii,hir,hid,his,hit,hih,hri,hrr,hrd,hrs,hrt,hrh,hdi,hdr,hdd,hds,hdt,hdh,hsi,hsr,hsd,hss,hst,hsh,hti,htr,htd,hts,htt,hth,hhi,hhr,hhd,hhs,hht,hhh
+regexp_substr	RegexpSubstrSig=ii,iu,ir,id,is,it,iD,iT,ih,ij,ui,uu,ur,ud,us,ut,uD,uT,uh,uj,ri,ru,rr,rd,rs,rt,rD,rT,rh,rj,di,du,dr,dd,ds,dt,dD,dT,dh,dj,si,su,sr,sd,ss,st,sD,sT,sh,sj,ti,tu,tr,td,ts,tt,tD,tT,th,tj,Di,Du,Dr,Dd,Ds,Dt,DD,DT,Dh,Dj,Ti,Tu,Tr,Td,Ts,Tt,TD,TT,Th,Tj,hi,hu,hr,hd,hs,ht,hD,hT,hh,hj,ji,ju,jr,jd,js,jt,jD,jT,jh,jj RegexpSubstrSig=iii,iir,iid,iis,iib,iit,iih,iri,irr,ird,irs,irb,irt,irh,idi,idr,idd,ids,idb,idt,idh,isi,isr,isd,iss,isb,ist,ish,iti,itr,itd,its,itb,itt,ith,ihi,ihr,ihd,ihs,ihb,iht,ihh,rii,rir,rid,ris,rib,rit,rih,rri,rrr,rrd,rrs,rrb,rrt,rrh,rdi,rdr,rdd,rds,rdb,rdt,rdh,rsi,rsr,rsd,rss,rsb,rst,rsh,rti,rtr,rtd,rts,rtb,rtt,rth,rhi,rhr,rhd,rhs,rhb,rht,rhh,dii,dir,did,dis,dib,dit,dih,dri,drr,drd,drs,drb,drt,drh,ddi,ddr,ddd,dds,ddb,ddt,ddh,dsi,dsr,dsd,dss,dsb,dst,dsh,dti,dtr,dtd,dts,dtb,dtt,dth,dhi,dhr,dhd,dhs,dhb,dht,dhh,sii,sir,sid,sis,sib,sit,sih,sri,srr,srd,srs,srb,srt,srh,sdi,sdr,sdd,sds,sdb,sdt,sdh,ssi,ssr,ssd,sss,ssb,sst,ssh,sti,str,std,sts,stb,stt,sth,shi,shr,shd,shs,shb,sht,shh,tii,tir,tid,tis,tib,tit,tih,tri,trr,trd,trs,trb,trt,trh,tdi,tdr,tdd,tds,tdb,tdt,tdh,tsi,tsr,tsd,tss,tsb,tst,tsh,tti,ttr,ttd,tts,ttb,ttt,tth,thi,thr,thd,ths,thb,tht,thh,hii,hir,hid,his,hib,hit,hih,hri,hrr,hrd,hrs,hrb,hrt,hrh,hdi,hdr,hdd,hds,hdb,hdt,hdh,hsi,hsr,hsd,hss,hsb,hst,hsh,hti,htr,htd,hts,htb,htt,hth,hhi,hhr,hhd,hhs,hhb,hht,hhh
+repeat	*2=Repeat
+replace	*3=Replace
+reverse	ReverseUTF8=i,u,r,d,s,t,D,T,h,j Reverse=b
+right	RightUTF8=ii,iu,ir,id,is,ib,it,iD,iT,ih,ij,ui,uu,ur,ud,us,ub,ut,uD,uT,uh,uj,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,rj,di,du,dr,dd,ds,db,dt,dD,dT,dh,dj,si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,ti,tu,tr,td,ts,tb,tt,tD,tT,th,tj,Di,Du,Dr,Dd,Ds,Db,Dt,DD,DT,Dh,Dj,Ti,Tu,Tr,Td,Ts,Tb,Tt,TD,TT,Th,Tj,hi,hu,hr,hd,hs,hb,ht,hD,hT,hh,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj Right=bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj
+rightshift	*2=RightShift
+round	RoundInt=i,u RoundReal=r,s,b,t,D,T,h,j RoundDec=d RoundWithFracInt=ii,iu,ir,id,is,ib,it,iD,iT,ih,ij,ui,uu,ur,ud,us,ub,ut,uD,uT,uh,uj RoundWithFracReal=ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,rj,si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj,ti,tu,tr,td,ts,tb,tt,tD,tT,th,tj,Di,Du,Dr,Dd,Ds,Db,Dt,DD,DT,Dh,Dj,Ti,Tu,Tr,Td,Ts,Tb,Tt,TD,TT,Th,Tj,hi,hu,hr,hd,hs,hb,ht,hD,hT,hh,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj RoundWithFracDec=di,du,dr,dd,ds,db,dt,dD,dT,dh,dj
+rpad	RpadUTF8=iii,iir,iid,iis,iit,iih,iri,irr,ird,irs,irt,irh,idi,idr,idd,ids,idt,idh,isi,isr,isd,iss,ist,ish,ibi,ibr,ibd,ibs,ibt,ibh,iti,itr,itd,its,itt,ith,ihi,ihr,ihd,ihs,iht,ihh,rii,rir,rid,ris,rit,rih,rri,rrr,rrd,rrs,rrt,rrh,rdi,rdr,rdd,rds,rdt,rdh,rsi,rsr,rsd,rss,rst,rsh,rbi,rbr,rbd,rbs,rbt,rbh,rti,rtr,rtd,rts,rtt,rth,rhi,rhr,rhd,rhs,rht,rhh,dii,dir,did,dis,dit,dih,dri,drr,drd,drs,drt,drh,ddi,ddr,ddd,dds,ddt,ddh,dsi,dsr,dsd,dss,dst,dsh,dbi,dbr,dbd,dbs,dbt,dbh,dti,dtr,dtd,dts,dtt,dth,dhi,dhr,dhd,dhs,dht,dhh,sii,sir,sid,sis,sit,sih,sri,srr,srd,srs,srt,srh,sdi,sdr,sdd,sds,sdt,sdh,ssi,ssr,ssd,sss,sst,ssh,sbi,sbr,sbd,sbs,sbt,sbh,sti,str,std,sts,stt,sth,shi,shr,shd,shs,sht,shh,tii,tir,tid,tis,tit,tih,tri,trr,trd,trs,trt,trh,tdi,tdr,tdd,tds,tdt,tdh,tsi,tsr,tsd,tss,tst,tsh,tbi,tbr,tbd,tbs,tbt,tbh,tti,ttr,ttd,tts,ttt,tth,thi,thr,thd,ths,tht,thh,hii,hir,hid,his,hit,hih,hri,hrr,hrd,hrs,hrt,hrh,hdi,hdr,hdd,hds,hdt,hdh,hsi,hsr,hsd,hss,hst,hsh,hbi,hbr,hbd,hbs,hbt,hbh,hti,htr,htd,hts,htt,hth,hhi,hhr,hhd,hhs,hht,hhh Rpad=iib,irb,idb,isb,ibb,itb,ihb,rib,rrb,rdb,rsb,rbb,rtb,rhb,dib,drb,ddb,dsb,dbb,dtb,dhb,sib,srb,sdb,ssb,sbb,stb,shb,bii,bir,bid,bis,bib,bit,bih,bri,brr,brd,brs,brb,brt,brh,bdi,bdr,bdd,bds,bdb,bdt,bdh,bsi,bsr,bsd,bss,bsb,bst,bsh,bbi,bbr,bbd,bbs,bbb,bbt,bbh,bti,btr,btd,bts,btb,btt,bth,bhi,bhr,bhd,bhs,bhb,bht,bhh,tib,trb,tdb,tsb,tbb,ttb,thb,hib,hrb,hdb,hsb,hbb,htb,hhb
+rtrim	*1=RTrim
+sec_to_time	*1=SecToTime
+second	*1=Second
+session_user	*0=Unspecified
+setval	*2=Unspecified
+sha	*1=SHA1
+sha1	*1=SHA1
+sha2	*2=SHA2
+sign	*1=Sign
+sin	*1=Sin
+sm3	*1=Unspecified
+space	*1=Space
+sqrt	*1=Sqrt
+str_to_date	*2=StrToDateDatetime
+strcmp	*2=Strcmp
+substr	Substring2ArgsUTF8=ii,iu,ir,id,is,ib,it,iD,iT,ih,ij,ui,uu,ur,ud,us,ub,ut,uD,uT,uh,uj,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,rj,di,du,dr,dd,ds,db,dt,dD,dT,dh,dj,si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,ti,tu,tr,td,ts,tb,tt,tD,tT,th,tj,Di,Du,Dr,Dd,Ds,Db,Dt,DD,DT,Dh,Dj,Ti,Tu,Tr,Td,Ts,Tb,Tt,TD,TT,Th,Tj,hi,hu,hr,hd,hs,hb,ht,hD,hT,hh,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj Substring2Args=bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj Substring3ArgsUTF8=iii,iir,iid,iis,iib,iit,iih,iri,irr,ird,irs,irb,irt,irh,idi,idr,idd,ids,idb,idt,idh,isi,isr,isd,iss,isb,ist,ish,ibi,ibr,ibd,ibs,ibb,ibt,ibh,iti,itr,itd,its,itb,itt,ith,ihi,ihr,ihd,ihs,ihb,iht,ihh,rii,rir,rid,ris,rib,rit,rih,rri,rrr,rrd,rrs,rrb,rrt,rrh,rdi,rdr,rdd,rds,rdb,rdt,rdh,rsi,rsr,rsd,rss,rsb,rst,rsh,rbi,rbr,rbd,rbs,rbb,rbt,rbh,rti,rtr,rtd,rts,rtb,rtt,rth,rhi,rhr,rhd,rhs,rhb,rht,rhh,dii,dir,did,dis,dib,dit,dih,dri,drr,drd,drs,drb,drt,drh,ddi,ddr,ddd,dds,ddb,ddt,ddh,dsi,dsr,dsd,dss,dsb,dst,dsh,dbi,dbr,dbd,dbs,dbb,dbt,dbh,dti,dtr,dtd,dts,dtb,dtt,dth,dhi,dhr,dhd,dhs,dhb,dht,dhh,sii,sir,sid,sis,sib,sit,sih,sri,srr,srd,srs,srb,srt,srh,sdi,sdr,sdd,sds,sdb,sdt,sdh,ssi,ssr,ssd,sss,ssb,sst,ssh,sbi,sbr,sbd,sbs,sbb,sbt,sbh,sti,str,std,sts,stb,stt,sth,shi,shr,shd,shs,shb,sht,shh,tii,tir,tid,tis,tib,tit,tih,tri,trr,trd,trs,trb,trt,trh,tdi,tdr,tdd,tds,tdb,tdt,tdh,tsi,tsr,tsd,tss,tsb,tst,tsh,tbi,tbr,tbd,tbs,tbb,tbt,tbh,tti,ttr,ttd,tts,ttb,ttt,tth,thi,thr,thd,ths,thb,tht,thh,hii,hir,hid,his,hib,hit,hih,hri,hrr,hrd,hrs,hrb,hrt,hrh,hdi,hdr,hdd,hds,hdb,hdt,hdh,hsi,hsr,hsd,hss,hsb,hst,hsh,hbi,hbr,hbd,hbs,hbb,hbt,hbh,hti,htr,htd,hts,htb,htt,hth,hhi,hhr,hhd,hhs,hhb,hht,hhh Substring3Args=bii,bir,bid,bis,bib,bit,bih,bri,brr,brd,brs,brb,brt,brh,bdi,bdr,bdd,bds,bdb,bdt,bdh,bsi,bsr,bsd,bss,bsb,bst,bsh,bbi,bbr,bbd,bbs,bbb,bbt,bbh,bti,btr,btd,bts,btb,btt,bth,bhi,bhr,bhd,bhs,bhb,bht,bhh
+substring	Substring2ArgsUTF8=ii,iu,ir,id,is,ib,it,iD,iT,ih,ij,ui,uu,ur,ud,us,ub,ut,uD,uT,uh,uj,ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,rj,di,du,dr,dd,ds,db,dt,dD,dT,dh,dj,si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,ti,tu,tr,td,ts,tb,tt,tD,tT,th,tj,Di,Du,Dr,Dd,Ds,Db,Dt,DD,DT,Dh,Dj,Ti,Tu,Tr,Td,Ts,Tb,Tt,TD,TT,Th,Tj,hi,hu,hr,hd,hs,hb,ht,hD,hT,hh,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj Substring2Args=bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj Substring3ArgsUTF8=iii,iir,iid,iis,iib,iit,iih,iri,irr,ird,irs,irb,irt,irh,idi,idr,idd,ids,idb,idt,idh,isi,isr,isd,iss,isb,ist,ish,ibi,ibr,ibd,ibs,ibb,ibt,ibh,iti,itr,itd,its,itb,itt,ith,ihi,ihr,ihd,ihs,ihb,iht,ihh,rii,rir,rid,ris,rib,rit,rih,rri,rrr,rrd,rrs,rrb,rrt,rrh,rdi,rdr,rdd,rds,rdb,rdt,rdh,rsi,rsr,rsd,rss,rsb,rst,rsh,rbi,rbr,rbd,rbs,rbb,rbt,rbh,rti,rtr,rtd,rts,rtb,rtt,rth,rhi,rhr,rhd,rhs,rhb,rht,rhh,dii,dir,did,dis,dib,dit,dih,dri,drr,drd,drs,drb,drt,drh,ddi,ddr,ddd,dds,ddb,ddt,ddh,dsi,dsr,dsd,dss,dsb,dst,dsh,dbi,dbr,dbd,dbs,dbb,dbt,dbh,dti,dtr,dtd,dts,dtb,dtt,dth,dhi,dhr,dhd,dhs,dhb,dht,dhh,sii,sir,sid,sis,sib,sit,sih,sri,srr,srd,srs,srb,srt,srh,sdi,sdr,sdd,sds,sdb,sdt,sdh,ssi,ssr,ssd,sss,ssb,sst,ssh,sbi,sbr,sbd,sbs,sbb,sbt,sbh,sti,str,std,sts,stb,stt,sth,shi,shr,shd,shs,shb,sht,shh,tii,tir,tid,tis,tib,tit,tih,tri,trr,trd,trs,trb,trt,trh,tdi,tdr,tdd,tds,tdb,tdt,tdh,tsi,tsr,tsd,tss,tsb,tst,tsh,tbi,tbr,tbd,tbs,tbb,tbt,tbh,tti,ttr,ttd,tts,ttb,ttt,tth,thi,thr,thd,ths,thb,tht,thh,hii,hir,hid,his,hib,hit,hih,hri,hrr,hrd,hrs,hrb,hrt,hrh,hdi,hdr,hdd,hds,hdb,hdt,hdh,hsi,hsr,hsd,hss,hsb,hst,hsh,hbi,hbr,hbd,hbs,hbb,hbt,hbh,hti,htr,htd,hts,htb,htt,hth,hhi,hhr,hhd,hhs,hhb,hht,hhh Substring3Args=bii,bir,bid,bis,bib,bit,bih,bri,brr,brd,brs,brb,brt,brh,bdi,bdr,bdd,bds,bdb,bdt,bdh,bsi,bsr,bsd,bss,bsb,bst,bsh,bbi,bbr,bbd,bbs,bbb,bbt,bbh,bti,btr,btd,bts,btb,btt,bth,bhi,bhr,bhd,bhs,bhb,bht,bhh
+substring_index	*3=SubstringIndex
+subtime	SubStringAndString=ii,iu,ir,id,is,ib,iD,ij,ui,uu,ur,ud,us,ub,uD,uj,ri,ru,rr,rd,rs,rb,rD,rj,di,du,dr,dd,ds,db,dD,dj,si,su,sr,sd,ss,sb,sD,sj,bi,bu,br,bd,bs,bb,bD,bj,ji,ju,jr,jd,js,jb,jD,jj SubTimeStringNull=it,iT,ut,uT,rt,rT,dt,dT,st,sT,bt,bT,Dt,DT,jt,jT SubStringAndDuration=ih,uh,rh,dh,sh,bh,jh SubDatetimeAndString=ti,tu,tr,td,ts,tb,tD,tj,Ti,Tu,Tr,Td,Ts,Tb,TD,Tj SubTimeDateTimeNull=tt,tT,Tt,TT SubDatetimeAndDuration=th,Th SubDateAndString=Di,Du,Dr,Dd,Ds,Db,DD,Dj SubDateAndDuration=Dh SubDurationAndString=hi,hu,hr,hd,hs,hb,hD,hj SubTimeDurationNull=ht,hT SubDurationAndDuration=hh
+sysdate	*0=SysDateWithoutFsp *1=SysDateWithFsp
+system_user	*0=Unspecified
+tan	*1=Tan
+tidb_bounded_staleness	*2=Unspecified
+tidb_decode_binary_plan	*1=Unspecified
+tidb_decode_key	*1=Unspecified
+tidb_decode_plan	*1=Unspecified
+tidb_decode_sql_digests	*1=Unspecified *2=Unspecified
+tidb_encode_record_key	*3=Unspecified
+tidb_encode_sql_digest	*1=Unspecified
+tidb_mvcc_info	*1=Unspecified
+tidb_parse_tso	*1=Unspecified
+tidb_parse_tso_logical	*1=Unspecified
+tidb_shard	*1=TiDBShard
+time	*1=Time
+time_format	*2=TimeFormat
+time_to_sec	*1=TimeToSec
+timediff	StringStringTimeDiff=ii,iu,ir,id,is,ib,ij,ui,uu,ur,ud,us,ub,uj,ri,ru,rr,rd,rs,rb,rj,di,du,dr,dd,ds,db,dj,si,su,sr,sd,ss,sb,sj,bi,bu,br,bd,bs,bb,bj,ji,ju,jr,jd,js,jb,jj StringTimeTimeDiff=it,iD,iT,ut,uD,uT,rt,rD,rT,dt,dD,dT,st,sD,sT,bt,bD,bT,jt,jD,jT StringDurationTimeDiff=ih,uh,rh,dh,sh,bh,jh TimeStringTimeDiff=ti,tu,tr,td,ts,tb,tj,Di,Du,Dr,Dd,Ds,Db,Dj,Ti,Tu,Tr,Td,Ts,Tb,Tj TimeTimeTimeDiff=tt,tD,tT,Dt,DD,DT,Tt,TD,TT NullTimeDiff=th,Dh,Th,ht,hD,hT DurationStringTimeDiff=hi,hu,hr,hd,hs,hb,hj DurationDurationTimeDiff=hh
+timestamp	*1=Timestamp1Arg *2=Timestamp2Args
+timestampdiff	*3=TimestampDiff
+to_base64	*1=ToBase64
+to_days	*1=ToDays
+to_seconds	*1=ToSeconds
+translate	*3=Unspecified
+trim	*1=Trim1Arg *2=Trim2Args *3=Trim3Args
+truncate	TruncateInt=ii,iu,ir,id,is,ib,it,iD,iT,ih,ij TruncateUint=ui,uu,ur,ud,us,ub,ut,uD,uT,uh,uj TruncateReal=ri,ru,rr,rd,rs,rb,rt,rD,rT,rh,rj,si,su,sr,sd,ss,sb,st,sD,sT,sh,sj,bi,bu,br,bd,bs,bb,bt,bD,bT,bh,bj,ti,tu,tr,td,ts,tb,tt,tD,tT,th,tj,Di,Du,Dr,Dd,Ds,Db,Dt,DD,DT,Dh,Dj,Ti,Tu,Tr,Td,Ts,Tb,Tt,TD,TT,Th,Tj,hi,hu,hr,hd,hs,hb,ht,hD,hT,hh,hj,ji,ju,jr,jd,js,jb,jt,jD,jT,jh,jj TruncateDecimal=di,du,dr,dd,ds,db,dt,dD,dT,dh,dj
+ucase	UpperUTF8=i,u,r,d,s,t,D,T,h,j Upper=b
+unaryminus	UnaryMinusInt=i,u UnaryMinusReal=r,s,b,j UnaryMinusDecimal=d,t,D,T,h
+uncompress	*1=Uncompress
+uncompressed_length	*1=UncompressedLength
+unhex	*1=UnHex
+unix_timestamp	UnixTimestampInt=i,u UnixTimestampDec=r,d,s,b,t,D,T,h,j
+upper	UpperUTF8=i,u,r,d,s,t,D,T,h,j Upper=b
+user	*0=Unspecified
+utc_time	*1=UTCTimeWithArg
+utc_timestamp	*1=UTCTimestampWithArg
+uuid	*0=UUID
+uuid_timestamp	*1=UUIDTimestamp
+uuid_to_bin	*1=Unspecified *2=Unspecified
+uuid_v4	*0=UUIDv4
+uuid_v7	*0=UUIDv7
+uuid_version	*1=UUIDVersion
+validate_password_strength	*1=Unspecified
+vec_as_text	*1=VecAsTextSig
+vec_cosine_distance	*2=VecCosineDistanceSig
+vec_dims	*1=VecDimsSig
+vec_from_text	*1=Unspecified
+vec_l1_distance	*2=VecL1DistanceSig
+vec_l2_distance	*2=VecL2DistanceSig
+vec_l2_norm	*1=VecL2NormSig
+vec_negative_inner_product	*2=VecNegativeInnerProductSig
+vitess_hash	*1=VitessHash
+week	*1=WeekWithoutMode *2=WeekWithMode
+weekday	*1=WeekDay
+weekofyear	*1=WeekOfYear
+weight_string	*1=Unspecified
+xor	*2=LogicalXor
+year	*1=Year
+yearweek	*1=YearWeekWithoutMode *2=YearWeekWithMode

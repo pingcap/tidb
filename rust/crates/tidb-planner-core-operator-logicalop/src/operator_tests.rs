@@ -1090,9 +1090,9 @@ fn data_source_correlated_cols_come_from_pushed_down_conds() {
 fn data_source_records_all_conds_and_returns_the_remainder() {
     let mut source = DataSource::new(BaseLogicalPlan::default(), 7, "t");
     let pushable = eq(col_expr(1), one());
-    // Go admits only the one-argument RoundInt/RoundReal/RoundDec PbCodes, so
-    // `round(col, 1)` is the non-pushable half of the split.
-    let kept = Expression::ScalarFunction(call("round", vec![col_expr(2), one()]));
+    // Go `PushDownExprs(.., kv.UnSpecified)` keeps what any store lists, and
+    // no store lists `tan`, so it is the non-pushable half of the split.
+    let kept = Expression::ScalarFunction(call("tan", vec![col_expr(2)]));
     let remaining = source.predicate_push_down_local(
         vec![pushable.clone(), kept.clone()],
         &Default::default(),

@@ -487,12 +487,15 @@ pub(crate) fn is_registered_builtin(name: &str) -> bool {
     function_class(name).is_some()
 }
 
-pub(crate) fn unresolved_error(name: &str, current_database: Option<String>) -> crate::EvalError {
-    // These names are in Go's registry so the parser can recognize them, but
-    // their function classes deliberately return ErrFunctionNotExists.
+/// The function classes whose Go `getFunction` refuses every call once the
+/// argument count is verified: the names are in Go's registry so the parser
+/// can recognize them, and building one is the error.
+pub(crate) fn get_function_refusal(name: &str) -> Option<crate::EvalError> {
     let unavailable = match name {
-        "default_func" => Some("DEFAULT"),
-        "uuid_short" => Some("UUID_SHORT"),
+        // Go `defaultFunctionClass` and `uuidShortFunctionClass`:
+        // `ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", ...)`.
+        "default_func" => "DEFAULT",
+        "uuid_short" => "UUID_SHORT",
         // go declares both FTS functions in `funcs` but building outside a
         // fulltext index answers `ErrNotSupportedYet` (1235) whose carried
         // text is the whole deployment sentence
@@ -500,14 +503,9 @@ pub(crate) fn unresolved_error(name: &str, current_database: Option<String>) -> 
         // "This version of TiDB doesn't yet support 'FTS_MATCH_WORD() is
         // only supported in starter deployment mode'").
         "fts_match_word" => {
-            return crate::EvalError::NotImplemented(
+            return Some(crate::EvalError::NotImplemented(
                 "FTS_MATCH_WORD() is only supported in starter deployment mode".into(),
-            )
-        }
-        "match_against" => {
-            return crate::EvalError::NotImplemented(
-                "MATCH_AGAINST() is only supported in starter deployment mode".into(),
-            )
+            ))
         }
         // Go `tidbRowChecksumFunctionClass.getFunction` refuses every build
         // with `ErrNotSupportedYet.GenWithStack(...)`, which REPLACES the
@@ -520,15 +518,24 @@ pub(crate) fn unresolved_error(name: &str, current_database: Option<String>) -> 
                 std::sync::LazyLock::new(|| {
                     tidb_dbterror::ErrClass(TerrorClass::Expression).new_std(1235)
                 });
-            return crate::EvalError::Conversion(ERR_NOT_SUPPORTED_YET.gen_with_stack(
+            return Some(crate::EvalError::Conversion(ERR_NOT_SUPPORTED_YET.gen_with_stack(
                 "FUNCTION tidb_row_checksum can only be used as a select field in a fast point \
                  plan",
-            ));
+            )));
         }
-        _ => None,
+        _ => return None,
     };
-    if let Some(display_name) = unavailable {
-        return crate::EvalError::FunctionNotExists(display_name.to_owned());
+    Some(crate::EvalError::FunctionNotExists(unavailable.to_owned()))
+}
+
+pub(crate) fn unresolved_error(name: &str, current_database: Option<String>) -> crate::EvalError {
+    if let Some(refusal) = get_function_refusal(name) {
+        return refusal;
+    }
+    if name == "match_against" {
+        return crate::EvalError::NotImplemented(
+            "MATCH_AGAINST() is only supported in starter deployment mode".into(),
+        );
     }
     if is_registered_builtin(name) {
         return crate::EvalError::Unsupported("this builtin is not yet built for chunk evaluation");

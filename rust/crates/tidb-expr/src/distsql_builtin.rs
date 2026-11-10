@@ -705,20 +705,108 @@ mod tests {
         );
     }
 
+    /// Every signature `scalarExprSupportedByTiKV` admits is one this decoder
+    /// (the coprocessor's side of Go `getSignatureByPB`) reads -- but for
+    /// `UnaryNotJSON`, which Go's `getSignatureByPB` has no arm for either:
+    /// unistore fails `sum(not(json_col))` where TiKV evaluates it.
     #[test]
     fn every_encoder_signature_has_a_typed_decoder() {
-        for signature in crate::pushdown_catalog::CATALOG
+        use crate::infer_pushdown::{scalar_expr_supported_by_tikv, PushDownPolicy};
+
+        let missing = crate::pushdown_catalog::CATALOG
             .iter()
+            .filter(|row| scalar_expr_supported_by_tikv(&PushDownPolicy::new(row.name, row.sig)))
             .map(|row| row.sig)
             .chain(crate::pushdown_catalog::implicit_cast_signatures())
-        {
-            assert!(supports_signature(signature), "missing {signature:?}");
-        }
+            .filter(|signature| !supports_signature(*signature))
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            missing,
+            std::collections::BTreeSet::from([tipb::ScalarFuncSig::UnaryNotJson])
+        );
     }
     /// Go `getSignatureByPB` decodes the three extract signatures, each
     /// reading its value in its own domain. The vectors are Go
     /// `TestExtractDatetimeNum`, `TestExtractDurationNum` and the DAY_HOUR
     /// row of `TestExtract`.
+    /// Go `getSignatureByPB` decodes `UnaryNotReal`, `UnaryNotDecimal` and
+    /// `WeekWithMode`; the vectors are `TestUnaryNot`'s and `TestWeek`'s.
+    #[test]
+    fn protobuf_unary_not_and_week_with_mode_decode_in_their_own_domain() {
+        use tipb::ScalarFuncSig::*;
+        let value = |expression: &Expression| {
+            crate::pushdown_catalog::expression_to_pb(expression, &|_| None).unwrap()
+        };
+        let real = |real: f64| {
+            value(&constant(
+                Datum::Real(real),
+                FieldType::new(FieldTypeCode::Double),
+            ))
+        };
+        let decimal = |text: &str| {
+            value(&constant(
+                Datum::Decimal(tidb_datatype::Decimal::from_literal(text)),
+                FieldType::new(FieldTypeCode::NewDecimal),
+            ))
+        };
+        let datetime = |text: &str| {
+            let time = tidb_datatype::parse_datetime(text, &chrono::Utc, true, false)
+                .unwrap()
+                .time;
+            value(&constant(
+                Datum::Time(time),
+                FieldType::new(FieldTypeCode::Datetime),
+            ))
+        };
+        let null = tipb::Expr {
+            tp: Some(tipb::ExprType::Null as i32),
+            ..Default::default()
+        };
+        let result = tipb::FieldType {
+            tp: Some(8),
+            ..Default::default()
+        };
+        let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(&[]);
+        for (signature, args, expect) in [
+            (UnaryNotReal, vec![real(0.3)], Datum::Int(0)),
+            (UnaryNotReal, vec![real(0.0)], Datum::Int(1)),
+            (UnaryNotReal, vec![null.clone()], Datum::Null),
+            (UnaryNotDecimal, vec![decimal("0.3")], Datum::Int(0)),
+            (UnaryNotDecimal, vec![decimal("0.0")], Datum::Int(1)),
+            (UnaryNotDecimal, vec![null.clone()], Datum::Null),
+            (
+                WeekWithMode,
+                vec![datetime("2008-02-20"), integer(0)],
+                Datum::Int(7),
+            ),
+            (
+                WeekWithMode,
+                vec![datetime("2008-02-20"), integer(1)],
+                Datum::Int(8),
+            ),
+            (
+                WeekWithMode,
+                vec![datetime("2008-12-31"), integer(1)],
+                Datum::Int(53),
+            ),
+            (
+                WeekWithMode,
+                vec![datetime("2023-01-01"), null.clone()],
+                Datum::Int(1),
+            ),
+        ] {
+            let pb = call(signature, args, result.clone());
+            assert_eq!(
+                pb_to_expr(&pb, &[])
+                    .unwrap()
+                    .eval(&crate::NoColumns, row.to_row())
+                    .unwrap(),
+                expect,
+                "{signature:?}"
+            );
+        }
+    }
+
     #[test]
     fn protobuf_extract_signatures_read_the_value_in_their_own_domain() {
         use tipb::ScalarFuncSig::*;

@@ -2666,18 +2666,30 @@ impl ScalarFunction {
         }
         if let Some(target) = name.strip_prefix("cast_") {
             if self.args.len() == 1 {
+                // Go `builtinCastVectorFloat32AsUnsupportedSig` and
+                // `builtinCastUnsupportedAsVectorFloat32Sig`: a vector casts
+                // to a string or a vector, and a string or a vector to a
+                // vector. Any other cast with a vector side fails before
+                // reading its argument, even when that row would have been
+                // NULL.
+                if let (Some(source), Some(ret_type)) = (self.args[0].static_type(), self.get_static_type()) {
+                    let (from, to) = (source.eval_type(), ret_type.eval_type());
+                    if (from == EvalType::VectorFloat32) != (to == EvalType::VectorFloat32)
+                        && from != EvalType::String
+                        && to != EvalType::String
+                    {
+                        return Err(EvalError::Vector(format!(
+                            "cannot cast from {} to {}",
+                            tidb_datatype::type_str(source.code()),
+                            tidb_datatype::type_str(ret_type.code()),
+                        )));
+                    }
+                }
                 if target == "json" {
                     let source = self.args[0]
                         .static_type()
                         .ok_or(EvalError::Unsupported("a JSON cast with no source type"))?
                         .eval_type();
-                    // Go's unsupported vector signature fails before reading
-                    // its argument, even when that row would have been NULL.
-                    if source == EvalType::VectorFloat32 {
-                        return Err(EvalError::Vector(
-                            "cannot cast from vector to json".to_owned(),
-                        ));
-                    }
                     let value = eval_numeric_row(&self.args[0], ctx, row, source)?;
                     return cast_json_argument_value(self, value);
                 }

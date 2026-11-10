@@ -1129,6 +1129,22 @@ pub(crate) fn wrap_arithmetic_operands(
                 }
             }
         }
+        // Go `arithmeticPlus/Minus/MultiplyFunctionClass.getFunction`'s
+        // vector arm: `newBaseBuiltinFuncWithTp(.., ETVectorFloat32,
+        // ETVectorFloat32, ETVectorFloat32)`.
+        tidb_datatype::EvalType::VectorFloat32 => {
+            for argument in args.iter_mut() {
+                *argument = crate::wrap_cast::wrap_with_cast_as_vector_float32(
+                    std::mem::replace(
+                        argument,
+                        Expression::Constant(Constant::new_null()),
+                    ),
+                )?;
+                if is_newly_built_cast(argument) {
+                    fold(argument);
+                }
+            }
+        }
         _ => {}
     }
     Ok(())
@@ -2869,20 +2885,7 @@ fn rewrite_leaf_compound(
             if let Some(else_clause) = else_clause {
                 args.push(rewrite_expr_resolved(else_clause, &child_resolver)?);
             }
-            // The result type comes from the branches, which are every other
-            // argument plus the trailing ELSE.
-            let branches: Vec<Expression> = args
-                .iter()
-                .skip(1)
-                .step_by(2)
-                .chain(if args.len() % 2 == 1 {
-                    args.last()
-                } else {
-                    None
-                })
-                .cloned()
-                .collect();
-            let ret_type = builtin_return_type("case", &branches).ok_or(EvalError::Unsupported(
+            let ret_type = builtin_return_type("case", &args).ok_or(EvalError::Unsupported(
                 "a CASE whose branches have different types",
             ))?;
             // Go's `caseWhenFunctionClass.getFunction` builds the signature
