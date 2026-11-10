@@ -18,6 +18,11 @@ import (
 	"bytes"
 	"fmt"
 	"runtime/pprof"
+<<<<<<< HEAD
+=======
+	"strconv"
+	"sync"
+>>>>>>> fb31b3dd105 (config: wait for the initial stats load before profiling goroutines in diagnostic mode (#72703))
 	"testing"
 	"time"
 
@@ -193,7 +198,10 @@ func startTiDBServer(t *testing.T) (*tidbserver.Server, *config.Config) {
 
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
-	t.Cleanup(dom.Close)
+	// The startup timeout path closes the Domain early; Domain.Close must not
+	// run twice.
+	closeDom := sync.OnceFunc(dom.Close)
+	t.Cleanup(closeDom)
 
 	cfg := config.NewConfig()
 	cfg.Host = "127.0.0.1"
@@ -209,7 +217,9 @@ func startTiDBServer(t *testing.T) (*tidbserver.Server, *config.Config) {
 
 	runErr := make(chan error, 1)
 	go func() {
-		runErr <- server.Run(nil)
+		// Pass the Domain as cmd/tidb-server does, so force-init-stats holds
+		// the listener until the diagnostic initial stats load has finished.
+		runErr <- server.Run(dom)
 	}()
 	select {
 	case <-tidbserver.RunInGoTestChan:
@@ -217,8 +227,32 @@ func startTiDBServer(t *testing.T) (*tidbserver.Server, *config.Config) {
 		server.Close()
 		require.NoError(t, err)
 	case <-time.After(10 * time.Second):
+		// Closing the server does not release Run from its InitStatsDone wait;
+		// closing the Domain does. Let Run finish before the globals are restored.
+		closeDom()
+		runReturned := false
+		select {
+		case <-tidbserver.RunInGoTestChan:
+		case <-runErr:
+			runReturned = true
+		case <-time.After(10 * time.Second):
+		}
 		server.Close()
+		if !runReturned {
+			select {
+			case <-runErr:
+			case <-time.After(10 * time.Second):
+			}
+		}
 		require.FailNow(t, "timed out waiting for TiDB server to start")
+	}
+	// The goroutine allowlist check is only meaningful once the asynchronous
+	// stats load and its SQL workers are gone.
+	select {
+	case <-dom.StatsHandle().InitStatsDone:
+	default:
+		server.Close()
+		require.FailNow(t, "initial stats load still running after the listener started")
 	}
 
 	t.Cleanup(func() {
