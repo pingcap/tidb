@@ -16,17 +16,24 @@ package driver
 
 import (
 	"context"
+	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"go.uber.org/goleak"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type mockTiKVClient struct {
@@ -108,4 +115,63 @@ func TestInjectTracingClient(t *testing.T) {
 		require.Same(t, expectedErr, err)
 		require.Nil(t, resp)
 	}
+}
+
+// failedStorePDServer completes discovery but rejects TSO requests so Open fails
+// after creating its RPC client, before a KVStore can take ownership of it.
+type failedStorePDServer struct {
+	pdpb.UnimplementedPDServer
+	endpoint string
+	tsoCalls atomic.Int64
+}
+
+// GetMembers supplies a reachable leader for the real PD client's discovery.
+func (s *failedStorePDServer) GetMembers(context.Context, *pdpb.GetMembersRequest) (*pdpb.GetMembersResponse, error) {
+	member := &pdpb.Member{MemberId: 1, ClientUrls: []string{s.endpoint}}
+	return &pdpb.GetMembersResponse{
+		Header:  &pdpb.ResponseHeader{ClusterId: 1463},
+		Members: []*pdpb.Member{member},
+		Leader:  member,
+	}, nil
+}
+
+// GetClusterInfo selects the PD TSO service for the real client.
+func (s *failedStorePDServer) GetClusterInfo(context.Context, *pdpb.GetClusterInfoRequest) (*pdpb.GetClusterInfoResponse, error) {
+	return &pdpb.GetClusterInfoResponse{
+		Header:       &pdpb.ResponseHeader{ClusterId: 1463},
+		ServiceModes: []pdpb.ServiceMode{pdpb.ServiceMode_PD_SVC_MODE},
+	}, nil
+}
+
+// Tso returns the leader error observed during physical-replication startup.
+func (s *failedStorePDServer) Tso(stream pdpb.PD_TsoServer) error {
+	if _, err := stream.Recv(); err != nil {
+		return err
+	}
+	s.tsoCalls.Add(1)
+	return status.Error(codes.Unknown,
+		"[PD:tso:ErrGenerateTimestamp]generate timestamp failed, requested pd is not leader of cluster")
+}
+
+func TestOpenStoreClosesRPCClientOnPDLeaderChange(t *testing.T) {
+	// Serve real PD discovery/TSO RPCs, fail Open repeatedly during oracle
+	// initialization, then verify that failed attempts leave no goroutines.
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	server := grpc.NewServer()
+	defer server.Stop()
+	pdServer := &failedStorePDServer{endpoint: "http://" + listener.Addr().String()}
+	pdpb.RegisterPDServer(server, pdServer)
+	go func() {
+		_ = server.Serve(listener)
+	}()
+
+	for range 3 {
+		store, err := (TiKVDriver{}).Open("tikv://" + listener.Addr().String())
+		require.Nil(t, store)
+		require.ErrorContains(t, err, "requested pd is not leader of cluster")
+	}
+	require.Positive(t, pdServer.tsoCalls.Load())
 }

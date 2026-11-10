@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	pderrors "github.com/tikv/pd/client/errs"
 	"go.uber.org/zap"
 )
 
@@ -93,17 +94,21 @@ func loadDriver(name string) (kv.Driver, bool) {
 	return d, ok
 }
 
-// isOpenRetryableError check if the new store operation should be retried under given error
+// isNewStoreRetryableError reports whether opening storage can be retried.
 // currently, it should be retried if:
 //
 //	Transaction conflict and is retryable (kv.IsTxnRetryableError)
 //	PD is not bootstrapped at the time of request
 //	Keyspace requested does not exist (request prior to PD keyspace pre-split)
+//	PD leader or primary changes while initializing storage
 func isNewStoreRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
-	return kv.IsTxnRetryableError(err) || IsNotBootstrappedError(err) || IsKeyspaceNotExistError(err)
+	return kv.IsTxnRetryableError(err) ||
+		IsNotBootstrappedError(err) ||
+		IsKeyspaceNotExistError(err) ||
+		pderrors.IsLeaderChange(err)
 }
 
 // IsNotBootstrappedError returns true if the error is pd not bootstrapped error.

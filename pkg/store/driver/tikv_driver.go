@@ -220,6 +220,8 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 	s, err = tikv.NewKVStore(uuid, pdClient, spkv, &injectTraceClient{Client: rpcClient},
 		tikv.WithPDHTTPClient("tikv-driver", etcdAddrs, pdhttp.WithTLSConfig(tlsConfig), pdhttp.WithMetrics(metrics.PDAPIRequestCounter, metrics.PDAPIExecutionHistogram)))
 	if err != nil {
+		// NewKVStore has not taken ownership of the RPC client on failure.
+		_ = rpcClient.Close()
 		return nil, errors.Trace(err)
 	}
 
