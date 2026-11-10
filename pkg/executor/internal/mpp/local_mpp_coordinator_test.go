@@ -17,12 +17,8 @@ package mpp
 import (
 	"testing"
 
-<<<<<<< HEAD
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-=======
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
->>>>>>> 3bd6b6d4d63 (executor: fix race between MPP task dispatch and cancellation (#70690))
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
