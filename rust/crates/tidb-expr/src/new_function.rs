@@ -298,10 +298,6 @@ pub fn new_function_impl(
     }
 
     verify_args_by_count(func_name, func_args.len())?;
-    if let Some(refusal) = crate::builtin_registry::get_function_refusal(func_name) {
-        return Err(refusal);
-    }
-
     // Go: `f, err := fc.getFunction(ctx, funcArgs)`, for the classes
     // `crate::builtin::funcs` lists.
     if let Some(class) = crate::builtin::funcs(func_name) {

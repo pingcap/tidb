@@ -487,40 +487,7 @@ pub(crate) fn is_registered_builtin(name: &str) -> bool {
     function_class(name).is_some()
 }
 
-/// The function classes whose Go `getFunction` refuses every call once the
-/// argument count is verified: the names are in Go's registry so the parser
-/// can recognize them, and building one is the error.
-pub(crate) fn get_function_refusal(name: &str) -> Option<crate::EvalError> {
-    let unavailable = match name {
-        // Go `defaultFunctionClass` and `uuidShortFunctionClass`:
-        // `ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", ...)`.
-        "default_func" => "DEFAULT",
-        "uuid_short" => "UUID_SHORT",
-        // Go `tidbRowChecksumFunctionClass.getFunction` refuses every build
-        // with `ErrNotSupportedYet.GenWithStack(...)`, which REPLACES the
-        // 1235 message rather than formatting it: the checksum exists only
-        // as the fast point plan's select field (`tryExtractRowChecksumColumn`).
-        "tidb_row_checksum" => {
-            use tidb_terror::{TerrorClass, TerrorError};
-            // Go `ErrNotSupportedYet`: `ClassExpression.NewStd(1235)`.
-            static ERR_NOT_SUPPORTED_YET: std::sync::LazyLock<TerrorError> =
-                std::sync::LazyLock::new(|| {
-                    tidb_dbterror::ErrClass(TerrorClass::Expression).new_std(1235)
-                });
-            return Some(crate::EvalError::Conversion(ERR_NOT_SUPPORTED_YET.gen_with_stack(
-                "FUNCTION tidb_row_checksum can only be used as a select field in a fast point \
-                 plan",
-            )));
-        }
-        _ => return None,
-    };
-    Some(crate::EvalError::FunctionNotExists(unavailable.to_owned()))
-}
-
 pub(crate) fn unresolved_error(name: &str, current_database: Option<String>) -> crate::EvalError {
-    if let Some(refusal) = get_function_refusal(name) {
-        return refusal;
-    }
     if is_registered_builtin(name) {
         return crate::EvalError::Unsupported("this builtin is not yet built for chunk evaluation");
     }
@@ -562,43 +529,14 @@ pub fn get_builtin_list() -> Vec<String> {
 mod tests {
     use super::{
         function_class, is_registered_builtin, register_extension_func, remove_extension_func,
-        unresolved_error, FunctionArity, FUNCTION_CLASSES,
+        FunctionArity, FUNCTION_CLASSES,
     };
-    use crate::EvalError;
 
     #[test]
     fn source_registry_distinguishes_unported_from_unknown() {
         assert!(is_registered_builtin("get_lock"));
         assert!(is_registered_builtin("last_insert_id"));
         assert!(!is_registered_builtin("no_such_fn"));
-    }
-
-    #[test]
-    fn registered_but_unavailable_functions_keep_source_names() {
-        assert_eq!(
-            unresolved_error("uuid_short", Some("test".to_owned())),
-            EvalError::FunctionNotExists("UUID_SHORT".to_owned())
-        );
-        assert_eq!(
-            unresolved_error("default_func", None),
-            EvalError::FunctionNotExists("DEFAULT".to_owned())
-        );
-    }
-
-    /// Go `tidbRowChecksumFunctionClass.getFunction`: 1235 whose message is
-    /// the whole `GenWithStack` text, not the catalog's "doesn't yet support".
-    #[test]
-    fn tidb_row_checksum_refuses_to_build_with_gos_1235() {
-        let EvalError::Conversion(error) = unresolved_error("tidb_row_checksum", None) else {
-            panic!("TIDB_ROW_CHECKSUM keeps its registered 1235 identity");
-        };
-        let error = error.to_sql_error();
-        assert_eq!(error.code, 1235);
-        assert_eq!(error.state, "42000");
-        assert_eq!(
-            error.message,
-            "FUNCTION tidb_row_checksum can only be used as a select field in a fast point plan"
-        );
     }
 
     /// The table is binary-searched, so an unsorted or duplicated entry would

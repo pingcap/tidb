@@ -351,3 +351,49 @@ fn from_unixtime_widens_the_cast_of_a_string_argument() {
     let cast = type_of(&function.args[0]);
     assert_eq!((cast.code(), cast.flen(), cast.decimal()), (FieldTypeCode::NewDecimal, 65, 6));
 }
+
+/// Go's `funcs` map gives every registered name a class.
+#[test]
+fn every_registered_name_has_a_function_class() {
+    let missing: Vec<String> = crate::builtin_registry::get_builtin_list()
+        .into_iter()
+        .filter(|name| crate::builtin::funcs(name).is_none())
+        .collect();
+    assert_eq!(missing, Vec::<String>::new());
+}
+
+/// Go `defaultFunctionClass` and `uuidShortFunctionClass` are registered so
+/// the parser recognizes the names, and refuse every build.
+#[test]
+fn registered_but_unavailable_functions_keep_source_names() {
+    let build = |name: &str, args: Vec<Expression>| {
+        new_function(&MockContext, name, FieldType::new(FieldTypeCode::Unspecified), args)
+            .expect_err("the class refuses the build")
+    };
+    let one = Expression::Constant(Constant::new(Datum::Int(1), FieldType::new(FieldTypeCode::LongLong)));
+    assert_eq!(
+        build("uuid_short", vec![]),
+        crate::EvalError::FunctionNotExists("UUID_SHORT".to_owned())
+    );
+    assert_eq!(
+        build("default_func", vec![one]),
+        crate::EvalError::FunctionNotExists("DEFAULT".to_owned())
+    );
+}
+
+/// Go `tidbRowChecksumFunctionClass.getFunction`: 1235 whose message is the
+/// whole `GenWithStack` text, not the catalog's "doesn't yet support".
+#[test]
+fn tidb_row_checksum_refuses_to_build_with_gos_1235() {
+    let built = new_function(&MockContext, "tidb_row_checksum", FieldType::new(FieldTypeCode::Unspecified), vec![]);
+    let Err(crate::EvalError::Conversion(error)) = built else {
+        panic!("TIDB_ROW_CHECKSUM keeps its registered 1235 identity");
+    };
+    let error = error.to_sql_error();
+    assert_eq!(error.code, 1235);
+    assert_eq!(error.state, "42000");
+    assert_eq!(
+        error.message,
+        "FUNCTION tidb_row_checksum can only be used as a select field in a fast point plan"
+    );
+}

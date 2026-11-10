@@ -267,6 +267,23 @@ function_class!(
     }
 );
 
+/// Go `defaultFunctionClass` (`"DEFAULT"`) and `uuidShortFunctionClass`
+/// (`"UUID_SHORT"`): the names are registered so the parser recognizes them,
+/// and building one is `ErrFunctionNotExists`.
+pub(crate) struct FunctionNotExistsClass {
+    pub(crate) name: &'static str,
+}
+
+impl FunctionClass for FunctionNotExistsClass {
+    fn get_function(
+        &self,
+        _: &dyn BuildContext,
+        _: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        Err(EvalError::FunctionNotExists(self.name.to_owned()))
+    }
+}
+
 function_class!(
     /// Go `uuidFunctionClass`.
     UuidFunctionClass, String, [], Uuid, |bf, ctx| {

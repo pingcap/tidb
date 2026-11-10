@@ -210,6 +210,50 @@ function_class!(
     TidbDecodeKeyFunctionClass, String, [String], Unspecified
 );
 
+/// Go `tidbRowChecksumFunctionClass`: every build is refused with
+/// `ErrNotSupportedYet.GenWithStack(...)`, which REPLACES the 1235 message
+/// rather than formatting it -- the checksum exists only as the fast point
+/// plan's select field (`tryExtractRowChecksumColumn`).
+pub(crate) struct TidbRowChecksumFunctionClass;
+
+impl FunctionClass for TidbRowChecksumFunctionClass {
+    fn get_function(
+        &self,
+        _: &dyn BuildContext,
+        _: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        use tidb_terror::{TerrorClass, TerrorError};
+        // Go `ErrNotSupportedYet`: `ClassExpression.NewStd(1235)`.
+        static ERR_NOT_SUPPORTED_YET: std::sync::LazyLock<TerrorError> =
+            std::sync::LazyLock::new(|| {
+                tidb_dbterror::ErrClass(TerrorClass::Expression).new_std(1235)
+            });
+        Err(EvalError::Conversion(ERR_NOT_SUPPORTED_YET.gen_with_stack(
+            "FUNCTION tidb_row_checksum can only be used as a select field in a fast point plan",
+        )))
+    }
+}
+
+/// Go `tidbEncodeRecordKeyClass` (`leading == 2`) and
+/// `tidbEncodeIndexKeyClass` (`leading == 3`): the database, table and index
+/// names are strings, and every key value keeps its own evaluation type.
+pub(crate) struct TidbEncodeKeyClass {
+    pub(crate) func_name: &'static str,
+    pub(crate) leading: usize,
+}
+
+impl FunctionClass for TidbEncodeKeyClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        let mut eval_tps = vec![EvalType::String; self.leading];
+        eval_tps.extend(args[self.leading..].iter().map(|arg| type_of(arg).eval_type()));
+        new_base_builtin_func_with_tp(ctx, self.func_name, args, EvalType::String, &eval_tps)
+    }
+}
+
 /// Go `tidbDecodeSQLDigestsFunctionClass`. The PROCESS privilege Go checks
 /// here is checked by the rewriter, which holds the session.
 pub(crate) struct TidbDecodeSqlDigestsFunctionClass;
