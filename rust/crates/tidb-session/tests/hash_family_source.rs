@@ -23,8 +23,9 @@ fn reference_digest_vectors() {
         "s:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     );
 
-    // The standard CRC-32 check value for "abc".
-    assert_eq!(try_sql(&mut session, "select crc32('abc')"), "i:891568578");
+    // The standard CRC-32 check value for "abc"; Go `crc32FunctionClass`
+    // adds the unsigned flag to the result.
+    assert_eq!(try_sql(&mut session, "select crc32('abc')"), "UInt(891568578)");
 
     // NULL in, NULL out.
     assert_eq!(try_sql(&mut session, "select md5(null)"), "Null");

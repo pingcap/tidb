@@ -4104,14 +4104,13 @@ mod tests {
             panic!("POWER was not rewritten as a scalar function");
         };
         assert_eq!(power_call.func_name.lowercase(), "power");
-        let Expression::ScalarFunction(cast) = &power_call.args[0] else {
-            panic!("POWER's integer expression was not cast to real");
-        };
-        assert_eq!(cast.func_name.lowercase(), "cast_double");
-        let Expression::Constant(exponent) = &power_call.args[1] else {
-            panic!("POWER's integer literal was not folded to a real constant");
-        };
-        assert_eq!(exponent.value, Datum::Real(2.0));
+        // The context-free resolver folds nothing, so both casts stay.
+        for arg in &power_call.args {
+            let Expression::ScalarFunction(cast) = arg else {
+                panic!("POWER's integer argument was not cast to real");
+            };
+            assert_eq!(cast.func_name.lowercase(), "cast_double");
+        }
         assert_eq!(eval_const(&power), Datum::Real(4.0));
     }
 

@@ -17,7 +17,7 @@
 
 use super::{cast_json_argument_value, eval_numeric_operand_row, eval_numeric_row, ScalarFunction};
 use tidb_exprctx::context::{Columns, EvalError};
-use crate::expression::ConstLevel;
+use crate::expression::{ConstLevel, Expression};
 use tidb_ast::BinaryOp;
 use tidb_chunk::row::Row;
 use tidb_datatype::{Datum, EvalType, FieldType};
@@ -50,6 +50,43 @@ fn floor_dec_to_int(values: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum,
 
 fn floor_dec_to_dec(values: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     crate::math_fn::ceil_floor_with_result_domain(values, false, Some(true), ctx)
+}
+
+/// Go `IsBinaryLiteral`.
+fn is_binary_literal(expr: &Expression) -> bool {
+    matches!(expr, Expression::Constant(constant) if matches!(constant.value, Datum::BinaryLiteral(_)))
+}
+
+/// Go `builtinConvSig.evalString`'s first switch: a binary literal, or a
+/// cast over a hybrid-typed or binary-literal argument, is read as its bits.
+fn conv_bit_literal(
+    arg: &Expression,
+    ctx: &dyn Columns,
+    row: Row<'_>,
+) -> Result<Option<Datum>, EvalError> {
+    match arg {
+        Expression::Constant(constant) => Ok(is_binary_literal(arg).then(|| constant.value.clone())),
+        // Go's one `ast.Cast` name is `cast_<target>` here.
+        Expression::ScalarFunction(cast) if cast.func_name.lowercase().starts_with("cast_") => {
+            let Some(arg0) = cast.args.first() else {
+                return Ok(None);
+            };
+            let hybrid = arg0.static_type().is_some_and(FieldType::is_hybrid);
+            if !hybrid && !is_binary_literal(arg0) {
+                return Ok(None);
+            }
+            // Go `Column.EvalString` of a hybrid column is `Datum.ToString`:
+            // a BIT value is its bytes.
+            Ok(Some(match eval_numeric_row(arg0, ctx, row, EvalType::String)? {
+                Datum::Bit(bits) => Datum::BinaryLiteral(bits),
+                text => match crate::arg_eval_type::eval_string(&text)? {
+                    Some(bytes) => Datum::BinaryLiteral(tidb_datatype::BinaryLiteral::from(bytes)),
+                    None => Datum::Null,
+                },
+            }))
+        }
+        _ => Ok(None),
+    }
 }
 
 fn md5_values(values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
@@ -867,7 +904,10 @@ impl PbBuiltin {
                 if to.is_null() {
                     return Ok(Datum::Null);
                 }
-                let text = typed_argument(0, EvalType::String)?;
+                let text = match conv_bit_literal(&args[0], ctx, row)? {
+                    Some(literal) => literal,
+                    None => typed_argument(0, EvalType::String)?,
+                };
                 crate::math_fn::conv(&[text, from, to])
             }
             Kernel::Like => function.eval_like(ctx, row, false),

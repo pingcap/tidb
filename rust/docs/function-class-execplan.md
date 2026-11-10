@@ -67,7 +67,12 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   `extremum_return_type` and `set_gl_signature`; `is_constant` asks
   `folds_to_constant` where Go asks for a `*Constant`; `interval`'s
   `hasNullable` reads the cast arguments.
-- [ ] Milestone 5: `builtin_math.go` (25).
+- [x] (2026-11-10) Milestone 5: `builtin_math.go` (25 classes, 29 names).
+  `builtinConvSig`'s bit reading of a hybrid or binary-literal argument
+  under the class's cast is in the `Conv` kernel; `rand` evaluates by its
+  signature. Left: the legacy `signature_args.rs` / `result_type.rs` rows
+  and `wrap_power_arguments` for these names, still reached through
+  `builtin_return_type`.
 - [ ] Milestone 6: `builtin_miscellaneous.go` (29), `builtin_info.go` (26),
   `builtin_encryption.go` (14).
 - [ ] Milestone 7: `builtin_json.go` (29), `builtin_regexp.go` (4),
@@ -217,6 +222,24 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   string `GREATEST` / `LEAST` buffer shaping skipped such nodes and charged
   640 bytes more than Go.
   Evidence: `a_string_extremum_projection_peaks_like_gos_ping_pong`.
+- Observation: Go's `newBaseBuiltinFuncWithTp` casts `args` in place, so a
+  class that reads `args[0].GetType()` after it (round, ceil, floor,
+  truncate, rand's `*Constant` test) sees the cast argument; abs reads it
+  before.
+- Observation: Go asks `arg.(*Constant)` of a tree `NewFunction` already
+  folded, and `foldConstant` leaves a subtree whose evaluation fails
+  unfolded. A resolver that defers folding (`NoResolver`, the planner
+  without a statement context) hands the class an unfolded cast, so the
+  question here is `folds_to_constant` plus a successful `eval_constant`
+  (`builtin_math.rs` `folded_constant`).
+  Evidence: matrix rows `rand(q)`, `round(dq)`, `truncate(dq)`.
+- Observation: tests pinned to the raw kernel value contradicted Go's
+  return type: `floor(<MEDIUMINT UNSIGNED>)` is signed
+  (`setFlag4FloorAndCeil` names Long, Longlong and NewDecimal only) and
+  `crc32` is unsigned.
+- Observation: Go's one `ast.Cast` name is `cast_<target>` here; a body
+  that asks `FuncName.L == ast.Cast` (`builtinConvSig.evalString`) tests
+  the prefix.
 - Observation: the matrix probe had no ENUM or SET argument and no NULL
   literal beside a NOT NULL column, so the control classes' enum/set and
   nullability arms were unpinned (two mutants survived). The probe gained

@@ -2222,3 +2222,48 @@ fn conv_reads_a_bit_argument_by_its_bits() {
         [["0"]]
     );
 }
+
+/// Go `convFunctionClass` casts its first argument to a string, and
+/// `builtinConvSig.evalString` reads a binary literal, or the argument under
+/// that cast when it is hybrid-typed or a binary literal, by its bits; an
+/// ENUM is a string already and is read as its text. Captured from Go.
+#[test]
+fn conv_reads_hybrid_and_binary_literal_arguments_through_the_class_cast() {
+    let mut session = Session::new();
+    session
+        .run("create table t(b bit(8), e enum('a','b'), s varchar(10), i int)")
+        .unwrap();
+    session.run("insert into t values (b'1010', 'b', '1010', 10)").unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "select conv(b, 2, 10), conv(b,10,2), conv(b'1010',2,10), conv(0x0a,10,2), \
+             conv(e,10,2), conv(s,2,10), conv(i,10,2), conv(b+0,10,2) from t"
+        )),
+        [["10", "1010", "10", "1010", "0", "10", "1010", "1010"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "select conv(b'1010'+0,10,2), conv(cast(b as char),2,10), conv(x'31303130',2,10) from t"
+        )),
+        [["1010", "0", "825241904"]]
+    );
+}
+
+/// Go `randFunctionClass` and `calculateDecimal4RoundAndTruncate` ask whether
+/// the cast argument is a `*Constant`, and that cast's 1292 is raised once.
+/// Captured from Go.
+#[test]
+fn a_constant_seed_or_scale_is_cast_once() {
+    let mut session = Session::new();
+    assert_eq!(row_text(session.run("select rand('1.5x') is not null")), [["1"]]);
+    assert_eq!(
+        row_text(session.run("show warnings")),
+        [["Warning", "1292", "Truncated incorrect INTEGER value: '1.5x'"]]
+    );
+    assert_eq!(row_text(session.run("select round(3.14, '2x')")), [["3.14"]]);
+    assert_eq!(
+        row_text(session.run("show warnings")),
+        [["Warning", "1292", "Truncated incorrect INTEGER value: '2x'"]]
+    );
+    assert_eq!(row_text(session.run("select rand(1) = rand(1)")), [["1"]]);
+}

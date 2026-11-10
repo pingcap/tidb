@@ -2727,7 +2727,13 @@ impl ScalarFunction {
                 .iter()
                 .map(|a| a.eval(ctx, row))
                 .collect::<Result<_, _>>()?;
-            let arg_is_constant = matches!(self.args.first(), Some(Expression::Constant(_)));
+            // The function class decided it: `builtinRandSig` owns the
+            // generator a constant argument seeded.
+            let arg_is_constant = match self.pb_builtin.map(PbBuiltin::signature) {
+                Some(tidb_proto::tipb::ScalarFuncSig::Rand) => true,
+                Some(_) => false,
+                None => matches!(self.args.first(), Some(Expression::Constant(_))),
+            };
             let function_key = Some(std::ptr::from_ref(self) as usize);
             return crate::math_fn::eval_rand_values(&vals, ctx, function_key, arg_is_constant);
         }

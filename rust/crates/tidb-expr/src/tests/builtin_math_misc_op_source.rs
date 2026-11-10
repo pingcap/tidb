@@ -504,9 +504,12 @@ fn vectorized_builtin_math_eval_one_vec() {
     assert_eq!(chunk_e("floor(-1.5e0)"), "FLOAT:-2");
     assert_eq!(chunk_e("ceil(-1.5e0)"), "FLOAT:-1");
     assert_eq!(chunk_e("floor(-2.55)"), "INT:-3");
+    // Go `setFlag4FloorAndCeil` carries the unsigned flag of a TypeLong,
+    // TypeLonglong or TypeNewDecimal argument only: a MEDIUMINT UNSIGNED
+    // column answers through the signed `builtinFloorIntToIntSig`.
     assert_eq!(
         unsigned_int_column_value("floor(c0)", Datum::UInt(3)),
-        "UINT:3"
+        "INT:3"
     );
     let decimal_col = {
         let mut ft = FieldType::new(C::NewDecimal);

@@ -193,6 +193,7 @@ fn get_function_matches_go_for_every_ported_class() {
         };
         let want_slots: Vec<String> = slots
             .split(';')
+            .filter(|slot| !slot.is_empty())
             .map(|slot| {
                 let (mark, rest) = slot.split_at(1);
                 let (number, value) = rest.split_once(':').map_or((rest, None), |(n, v)| (n, Some(v)));

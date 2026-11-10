@@ -333,3 +333,42 @@ fn rand_reads_its_seed_before_the_cast() {
         assert_eq!(crate::pushdown_catalog::pb_code(&function).as_str_name(), want, "{seed:?}");
     }
 }
+
+/// Go `calculateDecimal4RoundAndTruncate` takes the scale from a second
+/// argument that folded to a constant, a negative one counting as zero; any
+/// other second argument (Go's `rand` is unfoldable) keeps the first
+/// argument's scale. Go `floorFunctionClass.getFunction` gives a decimal
+/// result the cast argument's length.
+#[test]
+fn round_truncate_and_floor_size_their_decimal_result_as_go_does() {
+    let decimal_column = |flen: i64, decimal: i64| {
+        let mut tp = FieldType::new(FieldTypeCode::NewDecimal);
+        tp.set_flen(flen);
+        tp.set_decimal(decimal);
+        let mut column = Column::default();
+        column.ret_type = Some(tp);
+        column.id = 1;
+        column.unique_id = 1;
+        Expression::Column(column)
+    };
+    let build = |name: &str, args: Vec<Expression>| {
+        crate::new_function::new_function_base(&MockContext, name, FieldType::new(FieldTypeCode::Unspecified), args)
+            .unwrap_or_else(|error| panic!("{name} builds: {error:?}"))
+    };
+    let tp = |function: &Expression| function.static_type().expect("typed").clone();
+    let int = |value: i64| {
+        Expression::Constant(crate::constant::Constant::new(
+            Datum::Int(value),
+            FieldType::new(FieldTypeCode::LongLong),
+        ))
+    };
+    for name in ["round", "truncate"] {
+        let negative = build(name, vec![decimal_column(10, 4), int(-1)]);
+        assert_eq!(tp(&negative).decimal(), 0, "{name} negative scale");
+        let rand = build("rand", Vec::new());
+        let unfoldable = build(name, vec![decimal_column(10, 4), rand]);
+        assert_eq!(tp(&unfoldable).decimal(), 4, "{name} unfoldable scale");
+    }
+    let floor = build("floor", vec![decimal_column(40, 2)]);
+    assert_eq!((tp(&floor).flen(), tp(&floor).decimal()), (40, 0));
+}

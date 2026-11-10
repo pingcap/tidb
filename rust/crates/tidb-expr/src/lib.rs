@@ -338,6 +338,7 @@ mod builtin_fts;
 mod builtin_grouping;
 mod builtin_ilike;
 mod builtin_like;
+mod builtin_math;
 pub mod builtin_op;
 pub mod builtin_registry;
 pub mod cast;
