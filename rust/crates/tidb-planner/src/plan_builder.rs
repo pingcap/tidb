@@ -1384,6 +1384,23 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         self.warning_context
     }
 
+    /// A constant of this execution (a prepared parameter) is only
+    /// readable in the live statement context.
+    fn eval_constant(&self, expression: &Expression) -> Result<tidb_datatype::Datum, EvalError> {
+        match self.warning_context {
+            Some(context) => {
+                let bookmark = context.warning_count();
+                let value = tidb_expr::eval_expression_once(expression, context);
+                tidb_expr::constant_fold::move_live_warnings_to_stash(context, bookmark);
+                value
+            }
+            None => tidb_expr::eval_expression_once(
+                expression,
+                &tidb_expr::constant_fold::FoldWarningContext::new(self.time_zone()),
+            ),
+        }
+    }
+
     /// Evaluates materialized constants in the LIVE statement context when
     /// one is bound. The trait default's zone-only context is deliberately
     /// dry — its `HandleTruncate` warnings vanish — which silently dropped

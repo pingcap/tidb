@@ -254,13 +254,20 @@ fn setvar_stores_session_value_and_returns_it() {
     // DATETIME alone selects builtinSetTimeVarSig.
     let time = Time::from_date_checked(2025, 1, 2, 3, 4, 5, 0, TimeType::Timestamp, 0)
         .expect("a valid fixed timestamp");
-    let time_sig = ScalarFunction::new(
-        CiString::new("setvar"),
-        FieldType::new(C::VarString),
-        vec![
-            var_name("l"),
-            const_arg(Datum::Time(time), FieldType::new(C::Timestamp)),
-        ],
+    let f = crate::builtin::funcs("setvar")
+        .expect("setvar is registered")
+        .get_function(
+            &crate::builtin::ColumnsBuildContext(&store),
+            vec![
+                var_name("l"),
+                const_arg(Datum::Time(time), FieldType::new(C::Timestamp)),
+            ],
+        )
+        .unwrap();
+    let time_sig = crate::new_function::scalar_function_of(
+        "setvar",
+        FieldType::new(C::Unspecified),
+        f,
     );
     assert_eq!(
         time_sig.eval(&store, empty.get_row(0)).unwrap(),

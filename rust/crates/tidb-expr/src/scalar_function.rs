@@ -2310,25 +2310,7 @@ impl ScalarFunction {
                 }
             }
             if name == "setvar" && self.args.len() == 2 {
-                let mut value = self.args[1].eval(ctx, row)?;
-                if self.args[1].static_type().is_some_and(|field| {
-                    matches!(
-                        field.eval_type(),
-                        tidb_datatype::EvalType::Timestamp
-                            | tidb_datatype::EvalType::Duration
-                            | tidb_datatype::EvalType::Json
-                    )
-                }) {
-                    value = crate::cast::eval_cast(
-                        &tidb_ast::CastType::Char {
-                            len: None,
-                            charset: None,
-                        },
-                        value,
-                        None,
-                        ctx,
-                    )?;
-                }
+                let value = self.args[1].eval(ctx, row)?;
                 if !value.is_null() {
                     ctx.set_uservar(&var, value.clone());
                 }

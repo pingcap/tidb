@@ -16,10 +16,9 @@
 
 use crate::wrap_cast::{
     wrap_with_cast_as_decimal, wrap_with_cast_as_duration, wrap_with_cast_as_int,
-    wrap_with_cast_as_json, wrap_with_cast_as_real, wrap_with_cast_as_string,
+    wrap_with_cast_as_real, wrap_with_cast_as_string,
     wrap_with_cast_as_time,
 };
-use tidb_datatype::CollationCollator;
 use crate::column::Column;
 use crate::constant::Constant;
 use crate::constant_fold::ConstantFoldMode;
@@ -1021,51 +1020,6 @@ fn match_against_to_builtin(
     Ok(Expression::ScalarFunction(function))
 }
 
-/// Whether the node is a cast scalar function that GO's BuildCastFunction
-/// would have folded at construction: only a freshly-built cast needs the
-/// construction-time fold.
-/// `newBaseBuiltinFuncWithTp` for a builtin with an integer result whose
-/// `string_positions` are declared `ETString`: the collation is derived first,
-/// each string argument is `WrapWithCastAsString`-ed (folded at Go's
-/// `BuildCastFunction`), and `HandleBinaryLiteral` then sees the cast
-/// arguments.
-fn wrap_declared_string_args(
-    name: &str,
-    args: Vec<Expression>,
-    string_positions: &[usize],
-    resolver: &impl ColumnResolver,
-) -> Result<Vec<Expression>, EvalError> {
-    let connection = resolver.connection_charset_info();
-    let derived = crate::collation_derive::derive_collation_with_connection(
-        name,
-        &args,
-        tidb_datatype::EvalType::Int,
-        connection,
-    )?;
-    let args = args
-        .into_iter()
-        .enumerate()
-        .map(|(position, arg)| {
-            if !string_positions.contains(&position) {
-                return Ok(arg);
-            }
-            let mut wrapped = wrap_with_cast_as_string(arg, connection)?;
-            if is_newly_built_cast(&wrapped) {
-                resolver.fold_constant(&mut wrapped, ConstantFoldMode::Normal);
-            }
-            Ok(wrapped)
-        })
-        .collect::<Result<Vec<_>, EvalError>>()?;
-    Ok(handle_binary_literal(
-        name,
-        &derived.charset,
-        &derived.collation,
-        tidb_datatype::EvalType::Int,
-        args,
-        |expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
-    ))
-}
-
 /// Whether `expression` is a cast `BuildCastFunctionWithCheck` just built and
 /// closed with its `FoldConstant`. Go leaves a cast whose eval type is JSON
 /// unfolded ("we may reset the flag of the field type of CastAsJson later"),
@@ -1705,17 +1659,6 @@ fn derive_tree_collation_with_connection(
         &name, &func.args, ret_type, connection,
     )?;
     crate::collation_derive::apply_derived_collation(expr, &ec);
-    // Go `regexpSubstr/InStr/ReplaceFunctionClass.getFunction`: a call whose
-    // derived charset and collation are both `binary` is refused when it is
-    // built (`regexp_like` is not).
-    if matches!(
-        name.as_str(),
-        "regexp_substr" | "regexp_instr" | "regexp_replace"
-    ) && ec.charset == "binary"
-        && ec.collation == "binary"
-    {
-        return Err(crate::regexp::err_regexp(crate::regexp::BINARY_COLLATE_ERR));
-    }
     // Some getFunction implementations overwrite generic derivation with a
     // fixed result charset. Reapply those source-owned result rules last.
     restore_function_result_charset(expr)?;
@@ -2071,16 +2014,12 @@ fn rewrite_leaf_literal(
                 .cloned()
                 .ok_or(EvalError::Unsupported("user variable RHS has no type"))?;
             let args = vec![constant_string(&name), value];
-            let ret_type = builtin_return_type("setvar", &args)
-                .ok_or(EvalError::Unsupported("setvar has no result type"))?;
+            let function =
+                class_function(crate::builtin::funcs("setvar").expect("setvar"), "setvar", args, resolver)?;
             if let Some(vars) = resolver.user_vars() {
                 vars.set_user_var_type(&name, declared);
             }
-            Ok(Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("setvar"),
-                ret_type,
-                args,
-            )))
+            Ok(function)
         }
         // Go `expression_rewriter`'s `case *ast.SetCollationExpr`: the
         // collation is written onto the argument's own result type and its
@@ -2329,183 +2268,7 @@ fn rewrite_leaf_compound(
                     Ok(call)
                 };
             }
-            // Go `buildHashMapForConstArgs` keeps the first occurrence of each
-            // strict constant in the list (and one NULL), keyed the way its
-            // signature hashes: `InInt` by the evaluated int64 -- so -1 and
-            // 18446744073709551615 are one entry and the later is dropped --
-            // `InString` by the collation key of the IN's collation, every
-            // other signature by value. args[0] is the tested expression;
-            // only the LIST entries (args[1..]) take part. Prepared `?`
-            // markers and deferred subqueries evaluate per execution: never
-            // fold them, and never seed the seen set from them.
-            #[derive(PartialEq)]
-            enum InKey {
-                Int(i64),
-                Bytes(Vec<u8>),
-                Value(tidb_datatype::Datum),
-            }
-            let left_eval_type = args[0].static_type().map(FieldType::eval_type);
-            let string_collation = (left_eval_type == Some(EvalType::String))
-                .then(|| {
-                    crate::collation_derive::check_and_derive_collation_from_exprs(
-                        "IN",
-                        EvalType::Int,
-                        &args,
-                    )
-                    .ok()
-                    .and_then(|derived| tidb_charset::Collation::from_name(&derived.collation))
-                })
-                .flatten();
-            let key_of = |value: &tidb_datatype::Datum| -> InKey {
-                match (left_eval_type, value) {
-                    (_, Datum::Null) => InKey::Value(Datum::Null),
-                    (Some(EvalType::Int), Datum::Int(int)) => InKey::Int(*int),
-                    (Some(EvalType::Int), Datum::UInt(uint)) => InKey::Int(*uint as i64),
-                    (Some(EvalType::String), value) => {
-                        match (string_collation, value.as_raw_bytes()) {
-                            (Some(collation), Some(bytes)) => InKey::Bytes(collation.key(bytes)),
-                            _ => InKey::Value(value.clone()),
-                        }
-                    }
-                    (_, value) => InKey::Value(value.clone()),
-                }
-            };
-            let mut deduplicated = Vec::with_capacity(args.len());
-            let mut seen_keys: Vec<InKey> = Vec::new();
-            for (position, argument) in args.into_iter().enumerate() {
-                let strict_constant = match &argument {
-                    Expression::Constant(constant)
-                        if position > 0
-                            && constant.param_marker.is_none()
-                            && constant.deferred_expr.is_none() =>
-                    {
-                        Some(key_of(&constant.value))
-                    }
-                    _ => None,
-                };
-                if let Some(key) = strict_constant {
-                    if seen_keys.contains(&key) {
-                        continue;
-                    }
-                    seen_keys.push(key);
-                }
-                deduplicated.push(argument);
-            }
-            let mut args = deduplicated;
-            // Go `inFunctionClass.verifyArgs`: a negative integer constant can
-            // never equal a BIT value, so it leaves the list -- and a list it
-            // empties is the arity error (`id in (-1, -2)` is 1582).
-            if args[0]
-                .static_type()
-                .is_some_and(|field| field.code() == FieldTypeCode::Bit)
-            {
-                // Dropping a mutable member freezes this parameter's value.
-                let ctx = resolver.comparison_context().unwrap_or(&crate::NoColumns);
-                let over_optimized = crate::expr_util::maybe_over_optimized_4_plan_cache(
-                    ctx.use_plan_cache(),
-                    &args,
-                );
-                let mut position = 0;
-                args.retain(|argument| {
-                    position += 1;
-                    let negative = match argument {
-                        Expression::Constant(constant) if position > 1 => match constant.value {
-                            Datum::Int(value) if value < 0 => Some(value),
-                            _ => None,
-                        },
-                        _ => None,
-                    };
-                    if let (Some(value), true) = (negative, over_optimized) {
-                        ctx.set_skip_plan_cache(&format!("Bit Column in ({value})"));
-                    }
-                    negative.is_none()
-                });
-                if args.len() < 2 {
-                    return Err(EvalError::WrongParameterCount("in"));
-                }
-            }
-            // Go `inFunctionClass.getFunction` (`builtin_other.go:89`) coerces
-            // every argument to the FIRST argument's eval type through
-            // `newBaseBuiltinFuncWithTp` (`builtin.go:184`). The wrap replaces
-            // the argument inside the shared backing array, so the built
-            // `in()` node itself carries the coerced arguments, and each cast
-            // over a strict constant folds at Go's `BuildCastFunction`
-            // boundary -- which is why EXPLAIN renders a date column's string
-            // IN-list as bare `datetime(6)` constants rather than quoted
-            // strings (the q83 shape).
-            let in_eval_type = args
-                .first()
-                .and_then(|expression| expression.static_type())
-                .map(|field_type| field_type.eval_type());
-            let connection = resolver.connection_charset_info();
-            let mut coerced = Vec::with_capacity(args.len());
-            for (position, argument) in args.into_iter().enumerate() {
-                let mut coerced_argument = match in_eval_type {
-                    Some(EvalType::Int) => wrap_with_cast_as_int(argument, None)?,
-                    Some(EvalType::Real) => wrap_with_cast_as_real(argument)?,
-                    Some(EvalType::Decimal) => wrap_with_cast_as_decimal(argument)?,
-                    Some(EvalType::String) => wrap_with_cast_as_string(argument, connection)?,
-                    Some(EvalType::Datetime) => {
-                        wrap_with_cast_as_time(argument, FieldType::new(FieldTypeCode::Datetime))?
-                    }
-                    Some(EvalType::Timestamp) => {
-                        wrap_with_cast_as_time(argument, FieldType::new(FieldTypeCode::Timestamp))?
-                    }
-                    Some(EvalType::Duration) => wrap_with_cast_as_duration(argument)?,
-                    // Go `inFunctionClass` then `DisableParseJSONFlag4Expr`
-                    // on every list argument: a string stays a JSON string.
-                    Some(EvalType::Json) => {
-                        let mut wrapped = wrap_with_cast_as_json(argument)?;
-                        if position > 0 {
-                            crate::expr_util::predicates::disable_parse_json_flag_4_expr(
-                                &mut wrapped,
-                            );
-                        }
-                        wrapped
-                    }
-                    _ => argument,
-                };
-                // Go `BuildCastFunctionWithCheck` folds each newly-built cast
-                // except a JSON result. A fold over a non-cast node (the
-                // early-return arms) leaves it untouched, matching Go, whose
-                // `FoldConstant` only runs where a cast was actually built.
-                if matches!(
-                    &coerced_argument,
-                    Expression::ScalarFunction(function)
-                        if function.func_name.lowercase().starts_with("cast_")
-                            && function
-                                .ret_type
-                                .as_ref()
-                                .is_some_and(|tp| tp.eval_type() != EvalType::Json)
-                ) {
-                    crate::constant_fold::fold_constant_in_mode(
-                        &mut coerced_argument,
-                        ctx,
-                        ConstantFoldMode::Normal,
-                    );
-                }
-                coerced.push(coerced_argument);
-            }
-            let args = coerced;
-            // Go `newBaseBuiltinFuncWithTp(ctx, "in", args, types.ETInt, ...)`:
-            // a binary Longlong, one digit wide. `ast.In` is in Go's
-            // `booleanFunctions` map, so the result carries `IsBooleanFlag`; a
-            // `JSON_ARRAY(x IN (...))` element is JSON `true`/`false`, not
-            // `1`/`0`. The `NOT IN` wrapper reuses this type.
-            let ret_type = builtin_return_type("in", &args).expect("IN has a fixed result type");
-            let call = Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("in"),
-                ret_type.clone(),
-                args,
-            ));
-            if *not {
-                return Ok(Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new(unary_op_name(UnaryOp::Not)),
-                    ret_type,
-                    vec![call],
-                )));
-            }
-            Ok(call)
+            not_to_expression(*not, "in", args, resolver)
         }
         // Go `expressionRewriter.betweenToExpression`: `x BETWEEN l AND h`
         // is `x >= l AND x <= h`, and the negated form is `x < l OR x > h` --
@@ -2625,23 +2388,7 @@ fn rewrite_leaf_compound(
                 rewrite_expr_resolved(expr, resolver)?,
                 rewrite_expr_resolved(pattern, resolver)?,
             ];
-            // `regexpLikeFunctionClass`: both arguments are ETString.
-            let args = wrap_declared_string_args("regexp", args, &[0, 1], resolver)?;
-            let ret_type = builtin_return_type("regexp", &args)
-                .expect("the regexp builtin has a fixed result type");
-            let call = Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("regexp"),
-                ret_type.clone(),
-                args,
-            ));
-            if *not {
-                return Ok(Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new(unary_op_name(UnaryOp::Not)),
-                    ret_type,
-                    vec![call],
-                )));
-            }
-            Ok(call)
+            not_to_expression(*not, "regexp", args, resolver)
         }
         // Go `caseWhenFunctionClass`: the arguments are the flattened
         // `cond, result, cond, result, ..., else` list, and the simple form
@@ -3128,16 +2875,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                         }
                     }
                 }
-                let ret_type = builtin_return_type(&lowered, &rewritten).ok_or(
-                    EvalError::Unsupported("this builtin is not yet built for chunk evaluation"),
-                )?;
-                return signature_args::build_call(
-                    &lowered,
-                    ret_type,
-                    rewritten,
-                    resolver.connection_charset_info(),
-                    &|expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
-                );
+                return finish_function_call(&lowered, rewritten, resolver);
             }
             let rewritten: Vec<Expression> = args
                 .iter()
@@ -3291,51 +3029,12 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
         // argument of the one-argument `convert_using` signature and the
         // RESULT type carries the charset the value is retagged with.
         Expr::ConvertUsing { expr, charset } => {
-            let charset = charset.to_ascii_lowercase();
-            if !tidb_charset::is_supported_encoding(&charset) {
-                return Err(EvalError::Unsupported("unknown character set"));
-            }
-            let mut ret_type = FieldType::new(FieldTypeCode::VarString);
-            ret_type.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
-            // Go `convertFunctionClass.getFunction`: `bf.tp.SetFlen(mysql.MaxBlobWidth)`.
-            ret_type.set_flen(16_777_216);
-            result_type::get_ret_tp(&mut ret_type);
-            if charset == "binary" {
-                set_binary_charset(&mut ret_type);
-            } else {
-                let target = tidb_charset::Charset::from_name(&charset)
-                    .expect("a supported encoding is a registered charset");
-                ret_type.set_charset_name(target.name());
-                ret_type.set_collation_name(target.default_collation().name());
-            }
             let args = vec![
                 rewrite_expr_resolved(expr, resolver)?,
-                constant_string(&charset),
+                constant_string(charset),
             ];
-            let charset_name = ret_type.charset_name().to_owned();
-            let collation_name = ret_type.collation_name().to_owned();
-            let mut node = Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("convert_using"),
-                ret_type,
-                args,
-            ));
-            // Go's `convertFunctionClass.getFunction` STAMPS the target
-            // charset on the result type instead of aggregating it from the
-            // arguments -- `ast.Convert` is not one of `deriveCollation`'s
-            // aggregating arms. Marking the node derived here keeps
-            // `derive_tree_collation` from replacing `gbk` with the
-            // connection charset, which is what makes the following
-            // `HEX`/`LENGTH` wrap see a non-legacy charset at all.
-            crate::collation_derive::apply_derived_collation(
-                &mut node,
-                &crate::expr_collation::ExprCollation {
-                    coer: crate::expr_collation::Coercibility::IMPLICIT,
-                    repe: crate::expr_collation::Repertoire::UNICODE,
-                    charset: charset_name,
-                    collation: collation_name,
-                },
-            );
-            Ok(node)
+            let class = crate::builtin::funcs("convert").expect("convert is registered");
+            class_function(class, "convert_using", args, resolver)
         }
         // Go `weightStringFunctionClass`: the `AS CHAR(n)`/`AS BINARY(n)`
         // clause is not syntax sugar over a cast -- it becomes the second and
@@ -3481,6 +3180,10 @@ mod tests {
 
         fn fold_constant(&self, expression: &mut Expression, mode: ConstantFoldMode) {
             crate::fold_constant_in_mode(expression, self, mode);
+        }
+
+        fn eval_constant(&self, expression: &Expression) -> Result<Datum, EvalError> {
+            crate::eval_expression_once(expression, self)
         }
     }
 
@@ -3928,6 +3631,10 @@ mod tests {
 
             fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
                 tidb_datatype::SessionTimeZone::utc()
+            }
+
+            fn fold_constant(&self, expression: &mut Expression, mode: ConstantFoldMode) {
+                crate::fold_constant_in_mode(expression, &crate::NoColumns, mode);
             }
         }
 

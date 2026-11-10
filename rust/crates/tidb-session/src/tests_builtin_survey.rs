@@ -227,6 +227,41 @@ fn regexp_argument_failures_are_go_err_regexp() {
         error_text(&mut session, "SELECT regexp_instr(1)"),
         "Got error '[expression:1582]Incorrect parameter count in the call to native function 'regexp_instr'' from regexp"
     );
+    // So do their collation failures; LIKE and SUBSTR answer the bare 1267.
+    session
+        .run("CREATE TABLE tc (a VARCHAR(20), b VARCHAR(20), c VARBINARY(20))")
+        .expect("setup statement");
+    assert_eq!(
+        error_text(
+            &mut session,
+            "SELECT regexp_instr(a collate utf8mb4_bin, b collate utf8mb4_general_ci) FROM tc"
+        ),
+        "Got error '[expression:1267]Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'regexp_instr'' from regexp"
+    );
+    assert_eq!(
+        error_text(
+            &mut session,
+            "SELECT regexp_replace(a collate utf8mb4_bin, b collate utf8mb4_general_ci, 'x') FROM tc"
+        ),
+        "Got error '[expression:1270]Illegal mix of collations (utf8mb4_bin,EXPLICIT), (utf8mb4_general_ci,EXPLICIT), (utf8mb4_bin,COERCIBLE) for operation 'regexp_replace'' from regexp"
+    );
+    for name in ["regexp_substr", "regexp_like"] {
+        assert_eq!(
+            error_text(
+                &mut session,
+                &format!("SELECT {name}(a collate utf8mb4_bin, b collate utf8mb4_general_ci) FROM tc")
+            ),
+            format!("Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation '{name}'")
+        );
+    }
+    // Every class but LIKE refuses a binary derived collation.
+    for sql in ["SELECT regexp_instr(c, c) FROM tc", "SELECT regexp_instr(a, c) FROM tc"] {
+        assert_eq!(
+            error_text(&mut session, sql),
+            "Got error 'Not support binary collation so far' from regexp"
+        );
+    }
+    session.run("SELECT regexp_like(c, c) FROM tc").expect("regexp_like takes binary");
 }
 
 #[test]

@@ -116,6 +116,18 @@ pub(crate) fn err_regexp_wrapping_error(message: &str) -> EvalError {
 
 /// Go `binaryCollateErr`: the positional regexp builtins refuse a
 /// `binary` charset and collation at build time, in `getFunction`.
+/// Go `ErrRegexp.GenWithStackByArgs(err)` for an error value: the argument
+/// is the wrapped error's `Error()` text.
+pub(crate) fn err_regexp_wrapping(err: EvalError) -> EvalError {
+    use crate::eval_error_sql::EvalErrorSql;
+    let sql = err.to_sql_error();
+    let text = match sql.identity {
+        Some(identity) => format!("[{}]{}", identity.rfc_code(), sql.message),
+        None => sql.message,
+    };
+    err_regexp_wrapping_error(&text)
+}
+
 pub(crate) const BINARY_COLLATE_ERR: &str = "Not support binary collation so far";
 
 /// Go `getRegexpMatchType`'s collation-derived initial flag. Explicit match

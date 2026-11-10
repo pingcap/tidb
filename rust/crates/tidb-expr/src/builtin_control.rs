@@ -129,12 +129,12 @@ fn is_string(tp: FieldTypeCode) -> bool {
 }
 
 /// Go `types.IsBinaryStr`.
-fn is_binary_str(ft: &FieldType) -> bool {
+pub(crate) fn is_binary_str(ft: &FieldType) -> bool {
     ft.collation_name() == COLLATION_BIN && is_string(ft.code())
 }
 
 /// Go `types.IsNonBinaryStr`.
-fn is_non_binary_str(ft: &FieldType) -> bool {
+pub(crate) fn is_non_binary_str(ft: &FieldType) -> bool {
     ft.collation_name() != COLLATION_BIN && is_string(ft.code())
 }
 

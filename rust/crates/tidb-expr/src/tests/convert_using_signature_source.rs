@@ -114,7 +114,7 @@ fn convert_using_unknown_charset_fails_before_evaluation() {
     assert!(ast.contains("unknown character set"), "AST tier: {ast}");
     let rewritten = chunk_e("convert('haha' using cp866)");
     assert!(
-        rewritten.contains("unknown character set"),
+        rewritten.contains("Unknown character set: 'cp866'"),
         "rewritten tier: {rewritten}"
     );
 

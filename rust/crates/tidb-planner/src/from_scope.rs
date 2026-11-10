@@ -239,6 +239,23 @@ impl ColumnResolver for ScopeResolver<'_> {
             .and_then(tidb_exprctx::Columns::current_database)
     }
 
+    /// A constant of this execution (a prepared parameter) is only
+    /// readable in the statement context the scope was built with.
+    fn eval_constant(&self, expression: &Expression) -> Result<Datum, tidb_exprctx::EvalError> {
+        match &self.scope.constant_context {
+            Some(ctx) => {
+                let bookmark = tidb_exprctx::Columns::warning_count(ctx);
+                let value = tidb_expr::eval_expression_once(expression, ctx);
+                tidb_expr::constant_fold::move_live_warnings_to_stash(ctx, bookmark);
+                value
+            }
+            None => tidb_expr::eval_expression_once(
+                expression,
+                &tidb_expr::constant_fold::FoldWarningContext::new(self.time_zone()),
+            ),
+        }
+    }
+
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
         // Join-rebuild scopes lose their statement context; Go's planner
         // always has one. Construct a minimal context from the scope's own

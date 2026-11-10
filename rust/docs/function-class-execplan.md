@@ -84,10 +84,21 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   rewriter, which holds the session.
 - [x] Milestone 6b: `builtin_encryption.go` (15 names). Go derives the ASCII
   repertoire for `sha` and not for `sha1`.
-- [ ] Milestone 7: `builtin_json.go` (29), `builtin_regexp.go` (4),
-  `builtin_convert_charset.go` (2), `builtin_other.go` (11).
-- [ ] Milestone 8: `builtin_string.go` (44).
-- [ ] Milestone 9: `builtin_time.go` (58).
+- [x] (2026-11-10) Milestone 7: `builtin_json.go` (29), `builtin_regexp.go`
+  (4 classes, 5 names) and `builtin_other.go`'s `in`, `row`, `bit_count`,
+  `setvar` and `getparam`. `IN`'s constant list is deduplicated by the class
+  after its casts (`buildHashMapForConstArgs`), and a prepared parameter in
+  it is read through the resolver's `eval_constant`, which the planner's
+  resolvers now answer from the live statement context. `getvar`, `values`,
+  `to_binary` and `from_binary` carry a type their class is constructed with
+  and keep their Go-named builders until Milestone 11.
+- [x] (2026-11-10) Milestone 8: `builtin_string.go` (50 names). `CONVERT(x
+  USING cs)` and `CHAR(... USING cs)` build through their classes.
+  `weight_string` carries its padding in the signature and waits for
+  Milestone 11; `insert_func` and `convert` have no matrix rows.
+- [ ] Milestone 9: `builtin_time.go` (58). The three literal classes
+  (`dateliteral`, `timeliteral`, `timestampliteral`) carry the parsed value
+  in the signature and wait for Milestone 11.
 - [ ] Milestone 10: `builtin_cast.go` (9) and `BuildCastFunction`.
 - [ ] Milestone 11: the legacy paths deleted; evaluation dispatches on the
   signature object alone; X01 leaves the register.
