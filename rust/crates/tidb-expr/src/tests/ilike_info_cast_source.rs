@@ -338,9 +338,8 @@ fn test_current_resource_group() {
     );
 }
 
-/// The row/AST evaluator must expose the same session-bound value as the
-/// rewritten ScalarFunction path above.  This catches the prior split where
-/// `CURRENT_RESOURCE_GROUP()` was implemented only in `scalar_function.rs`.
+/// `eval_in` (Go `EvalSimpleAst`) exposes the same session-bound value as the
+/// rewritten ScalarFunction path above.
 #[test]
 fn test_current_resource_group_ast_path() {
     let expression = tidb_ast::Expr::Func {

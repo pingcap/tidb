@@ -198,9 +198,7 @@ pub(crate) fn eval_binary_in(
 /// The collation an evaluation with no expression-level derivation behind it
 /// runs under: `utf8mb4_bin`, this tier's connection collation.
 ///
-/// This is the AST evaluator's answer (`tidb_expr::eval_in` walks a parsed
-/// `Expr` with no built expression tree, so it has no derived collation to
-/// consult) and the answer for a hand-assembled function node. Every path that
+/// This is the answer for a hand-assembled function node. Every path that
 /// goes through the rewriter -- which is every table-backed query -- carries a
 /// real derived collation instead; see [`crate::collation_derive`].
 pub(crate) const DERIVATION_FREE_COLLATION: tidb_charset::Collation =

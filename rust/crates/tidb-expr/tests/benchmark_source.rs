@@ -46,17 +46,13 @@ fn eval_built(sql_expr: &str, ctx: &impl Columns) -> Result<Datum, EvalError> {
 
 #[derive(Default)]
 struct CountingContext {
-    column_reads: Cell<usize>,
     last_insert_writes: Cell<usize>,
     division_is_error: bool,
 }
 
 impl Columns for CountingContext {
-    fn get(&self, path: &[String]) -> Option<Datum> {
-        (path.last().is_some_and(|name| name == "c")).then(|| {
-            self.column_reads.set(self.column_reads.get() + 1);
-            Datum::Int(7)
-        })
+    fn get(&self, _path: &[String]) -> Option<Datum> {
+        None
     }
 
     fn division_by_zero_level(&self) -> ErrorLevel {
@@ -77,34 +73,20 @@ impl Columns for CountingContext {
 fn benchmark_repeats_the_expression_and_returns_zero() {
     let ctx = CountingContext::default();
     assert_eq!(
-        tidb_expr::eval_in(&parse_expr("benchmark(3, c)"), &ctx),
-        Ok(Datum::Int(0))
-    );
-    assert_eq!(ctx.column_reads.get(), 3);
-
-    ctx.column_reads.set(0);
-    assert_eq!(
-        tidb_expr::eval_in(&parse_expr("benchmark('2', c)"), &ctx),
-        Ok(Datum::Int(0))
-    );
-    assert_eq!(ctx.column_reads.get(), 2);
-
-    ctx.column_reads.set(0);
-    assert_eq!(
-        tidb_expr::eval_in(&parse_expr("benchmark(c, null)"), &ctx),
-        Ok(Datum::Int(0))
-    );
-    assert_eq!(
-        ctx.column_reads.get(),
-        1,
-        "the loop count is evaluated once"
-    );
-
-    assert_eq!(
         eval_built("benchmark(3, last_insert_id(7))", &ctx),
         Ok(Datum::Int(0))
     );
     assert_eq!(ctx.last_insert_writes.get(), 3);
+
+    assert_eq!(
+        eval_built("benchmark(last_insert_id(2), null)", &ctx),
+        Ok(Datum::Int(0))
+    );
+    assert_eq!(
+        ctx.last_insert_writes.get(),
+        4,
+        "the loop count is evaluated once"
+    );
 }
 
 #[test]

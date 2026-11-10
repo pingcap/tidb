@@ -2697,18 +2697,9 @@ impl ScalarFunction {
         }
         // Go `randFunctionClass`: a constant `RAND(N)` owns one
         // statement-scoped generator per AST occurrence, a nonconstant
-        // argument starts a fresh generator every row. The AST evaluator
-        // (`crate::func::eval_func`) gets that per-call identity from the
-        // `Expr` node's own address (`expr as *const Expr as usize`, stable
-        // for the query's lifetime because the tree is evaluated by
-        // reference, never rebuilt per row); this node is evaluated the same
-        // way, so its own address serves identically. A literal argument is
-        // classified by matching `Expression::Constant` directly -- unlike
-        // the AST classifier this does not recurse through a folded
-        // arithmetic tree of literals (e.g. `RAND(1+2)`), because constant
-        // folding is not yet wired for scalar functions here (`const_level`
-        // above is conservatively `ConstNone`); every case this port targets
-        // passes RAND a bare literal.
+        // argument starts a fresh generator every row. This node's own
+        // address is the occurrence's identity. A literal argument is
+        // classified by matching `Expression::Constant` directly.
         if name == "rand" {
             let vals: Vec<Datum> = self
                 .args
@@ -3101,10 +3092,6 @@ impl ScalarFunction {
         // an implicit `CAST(... AS JSON)`, so a genuine BINARY-charset
         // argument must render as a JSON `Opaque` value rather than an
         // ordinary JSON string -- see `builtin_ext::json::dispatch_typed`.
-        // Only this chunk path has each argument's static `FieldType`
-        // (`Expression::static_type`); the row/AST evaluator
-        // (`crate::func::eval_func`) still falls through to the untyped
-        // `dispatch` below and stays the documented partial boundary.
         let arg_types: Vec<Option<FieldType>> =
             self.args.iter().map(|a| a.static_type().cloned()).collect();
         if upper == "HEX" {
@@ -3132,9 +3119,6 @@ impl ScalarFunction {
                 other => other,
             };
         }
-        let vals = crate::arg_eval_type::wrap_datetime_args(&upper, vals, &arg_types, ctx)?;
-        let vals = crate::arg_eval_type::wrap_int_args(&upper, vals, &arg_types, ctx)?;
-        let vals = crate::arg_eval_type::wrap_string_args(&upper, vals, &arg_types, ctx)?;
         if matches!(
             upper.as_str(),
             "REGEXP_SUBSTR" | "REGEXP_INSTR" | "REGEXP_REPLACE"
@@ -3180,9 +3164,7 @@ impl ScalarFunction {
         // `ADDTIME`/`SUBTIME` are the other family Go types from the
         // ARGUMENTS' `FieldType`s rather than from their values: twelve
         // signatures over the `(tp1, tp2)` cross product, whose arms differ
-        // in the result fsp and in whether the answer is NULL at all. Only
-        // this tier has those types; `time_fn::dispatch` below still serves
-        // the AST tier on Go's `default` branch.
+        // in the result fsp and in whether the answer is NULL at all.
         // REPEAT and PASSWORD have the same row/vec split as ADDTIME below.
         // Only `vecEvalString` nulls a REPEAT result past the MaxBlobWidth
         // flen (`SELECT REPEAT(a, 16777217) FROM t` is NULL while the folded
@@ -5702,8 +5684,7 @@ use tidb_charset::Collation;
         // A minimal session whose `rand_seeded_next` records the key it was
         // called with and returns a fixed value, so this asserts the SAME
         // key reaches it across repeated evaluations of one `ScalarFunction`
-        // node -- exactly the identity the AST evaluator gets from the
-        // `Expr` node's own address.
+        // node.
         struct RandColumns {
             keys: Cell<Vec<usize>>,
         }

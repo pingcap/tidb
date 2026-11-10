@@ -32,7 +32,6 @@ use std::cmp::Ordering;
 
 use tidb_ast::BinaryOp;
 
-use crate::coerce::bool_int;
 use crate::ops::eval_binary;
 use crate::{Datum, EvalError};
 
@@ -87,90 +86,6 @@ pub fn compare_datums_with_collation(
     }
 }
 
-/// `l = r` for two same-arity row values — three-valued, SQL `AND`-
-/// composed equality across ALL positions (confirmed via `gorun`: a
-/// definite mismatch at ANY position decides the result `FALSE`
-/// outright, even when a LATER position is `NULL` — `ROW(1,2) <>
-/// ROW(2,NULL)` is `TRUE`, not `NULL`; only when NO position is a
-/// definite mismatch AND at least one is `NULL` does the whole
-/// comparison become `NULL`). Every position is checked — NOT stopped
-/// at the first `NULL` — matching real SQL `AND`'s own semantics
-/// (`FALSE AND NULL` is `FALSE`, not `NULL`, regardless of which
-/// operand is evaluated first).
-fn row_eq(l: &[Datum], r: &[Datum]) -> Result<Datum, EvalError> {
-    let mut any_null = false;
-    for (lv, rv) in l.iter().zip(r) {
-        match eval_binary(BinaryOp::Eq, lv.clone(), rv.clone())? {
-            Datum::Int(0) => return Ok(Datum::Int(0)),
-            Datum::Null => any_null = true,
-            Datum::Int(1) => {}
-            _ => unreachable!("eval_binary(Eq, ...) only ever returns Int(0/1) or Null"),
-        }
-    }
-    Ok(if any_null { Datum::Null } else { Datum::Int(1) })
-}
-
-/// `l <op> r` for two same-arity row values, `op` one of
-/// `Eq`/`Ne`/`NullEq`/`Lt`/`Gt`/`Le`/`Ge` — see [`row_eq`]'s own doc for
-/// equality; the four ordering operators are LEXICOGRAPHIC (confirmed
-/// via `gorun`: the FIRST position where the two rows differ decides
-/// the whole comparison, regardless of what follows — `ROW(2,1) <
-/// ROW(1,NULL)` is `FALSE`, not `NULL`, since position 0 alone (`2 <
-/// 1` is false) already decides it without ever looking at position 1's
-/// own `NULL`). Real TiDB rejects a mismatched row arity outright
-/// (confirmed via `gorun`: `ROW(1,2) = ROW(1,2,3)` is a genuine `ERR`)
-/// — modelled here as `Unsupported` too, matching this crate's own
-/// convention for other rare-but-real SQL error conditions (e.g.
-/// `crate::eval_in`'s own scalar-subquery-with-multiple-columns case).
-pub(crate) fn row_compare(op: BinaryOp, l: &[Datum], r: &[Datum]) -> Result<Datum, EvalError> {
-    if l.len() != r.len() {
-        return Err(EvalError::Unsupported("row value arity mismatch"));
-    }
-    match op {
-        BinaryOp::Eq => row_eq(l, r),
-        BinaryOp::Ne => Ok(match row_eq(l, r)? {
-            Datum::Int(v) => Datum::Int(1 - v),
-            Datum::Null => Datum::Null,
-            _ => unreachable!("row_eq only ever returns Int or Null"),
-        }),
-        // Go `constructBinaryOpFunction` rewrites row `<=>` into one scalar
-        // `<=>` per position and ComposeCNFCondition over those results.
-        BinaryOp::NullEq => {
-            for (lv, rv) in l.iter().zip(r) {
-                match eval_binary(BinaryOp::NullEq, lv.clone(), rv.clone())? {
-                    Datum::Int(0) => return Ok(Datum::Int(0)),
-                    Datum::Int(1) => {}
-                    _ => unreachable!("scalar NullEq only ever returns Int(0/1)"),
-                }
-            }
-            Ok(Datum::Int(1))
-        }
-        BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le | BinaryOp::Ge => {
-            for (lv, rv) in l.iter().zip(r) {
-                match eval_binary(BinaryOp::Eq, lv.clone(), rv.clone())? {
-                    Datum::Null => return Ok(Datum::Null),
-                    Datum::Int(1) => continue, // equal here — the deciding position is later
-                    Datum::Int(0) => {
-                        let is_lt = match eval_binary(BinaryOp::Lt, lv.clone(), rv.clone())? {
-                            Datum::Int(v) => v == 1,
-                            Datum::Null => return Ok(Datum::Null),
-                            _ => unreachable!(),
-                        };
-                        return Ok(bool_int(match op {
-                            BinaryOp::Lt | BinaryOp::Le => is_lt,
-                            BinaryOp::Gt | BinaryOp::Ge => !is_lt,
-                            _ => unreachable!(),
-                        }));
-                    }
-                    _ => unreachable!("eval_binary(Eq, ...) only ever returns Int(0/1) or Null"),
-                }
-            }
-            // Every position was equal — decides `<=`/`>=` (true) vs `<`/`>` (false).
-            Ok(bool_int(matches!(op, BinaryOp::Le | BinaryOp::Ge)))
-        }
-        _ => Err(EvalError::Unsupported("row value comparison operator")),
-    }
-}
 
 #[cfg(test)]
 mod tests {

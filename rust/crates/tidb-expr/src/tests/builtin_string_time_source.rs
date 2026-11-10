@@ -1882,19 +1882,25 @@ fn test_clock_parts_and_invalid_time_warning() {
         assert_eq!(e(&format!("second({text})")), format!("INT:{second}"));
         assert_eq!(e(&format!("microsecond({text})")), format!("INT:{micros}"));
         // TIME keeps the duration PART only, so a datetime-prefixed input
-        // loses its date side in both tiers.
+        // loses its date side.
         let dur_part = input.rsplit(' ').next().expect("nonempty");
-        assert_eq!(e(&format!("time({text})")), format!("STR:{dur_part}"));
         assert_eq!(chunk_e(&format!("time({text})")), format!("DUR:{dur_part}"));
     }
     for func in ["hour", "minute", "second", "microsecond", "time"] {
         assert_eq!(e(&format!("{func}(NULL)")), "NULL");
     }
-    // The single errTbl entry: hour-family members surface no error datum and
-    // TIME additionally bumps the statement warning count by exactly one.
+    // The single errTbl entry: outside strict mode the argument's duration
+    // cast truncates with warning 1292 and the hour family reads what is
+    // left (real TiDB: `10|10|10|120000`); TIME additionally bumps the
+    // statement warning count by exactly one.
     let broken = "'2011-11-11 10:10:10.11.12'";
-    for func in ["hour", "minute", "second", "microsecond"] {
-        assert_eq!(e(&format!("{func}({broken})")), "NULL");
+    for (func, want) in [
+        ("hour", "INT:10"),
+        ("minute", "INT:10"),
+        ("second", "INT:10"),
+        ("microsecond", "INT:120000"),
+    ] {
+        assert_eq!(e(&format!("{func}({broken})")), want);
     }
     let clock = UtcClockCtx::new(0);
     let got = time_fn::dispatch(
@@ -1948,7 +1954,6 @@ fn test_time_values_and_result_type() {
             panic!("{sql} must rewrite to a scalar function");
         }
         assert_eq!(chunk_e(&sql), format!("DUR:{want}"), "{sql}");
-        assert_eq!(e(&sql), format!("STR:{want}"), "{sql}");
     }
 }
 

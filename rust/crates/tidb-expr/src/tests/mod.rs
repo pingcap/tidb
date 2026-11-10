@@ -90,11 +90,9 @@ fn e_with(expr: &str, cols: &dyn Columns) -> String {
     }
 }
 
-/// Parses a constant expression and evaluates it through the CHUNK tier --
-/// the rewriter's `ScalarFunction` path that live SQL takes, as opposed to
-/// [`e`]'s AST/value tier. Only this tier carries each argument's static
-/// `FieldType` and the derived result collation, so it is the only one that
-/// can see a temporal argument or a `COLLATE` clause.
+/// Parses a constant expression, rewrites it WITHOUT constant folding and
+/// evaluates the built tree over a chunk row -- the per-row path live SQL
+/// takes, where [`e`] folds the constant at build time.
 pub(super) fn chunk_e(expr: &str) -> String {
     chunk_e_with(expr, &NoColumns)
 }
@@ -645,29 +643,6 @@ fn convert_using_invalid_binary_literal_is_null_in_both_evaluators() {
             "chunk evaluator: {expression}"
         );
     }
-}
-
-#[test]
-fn char_length_rejects_unresolved_field_type_before_runtime_datum() {
-    struct RuntimeBytes;
-
-    impl Columns for RuntimeBytes {
-        fn get(&self, _: &[String]) -> Option<Datum> {
-            Some(Datum::new_bytes_datum("你".as_bytes().to_vec()))
-        }
-    }
-
-    let expression = Expr::Func {
-        name: "CHAR_LENGTH".to_string(),
-        args: vec![Expr::Column(vec!["binary_col".to_string()])],
-        origin_position: 0,
-    };
-    assert_eq!(
-        eval_in(&expression, &RuntimeBytes),
-        Err(EvalError::Unsupported(
-            "unresolved CHAR_LENGTH argument FieldType"
-        ))
-    );
 }
 
 #[test]
@@ -2139,15 +2114,10 @@ fn weight_string_and_load_file_source_vectors() {
         "STR:0032003000310039002D00300038002D00320031"
     );
 
-    // The AST/value tier agrees on every row EXCEPT the explicit COLLATE one:
-    // it has no collation derivation, so it keys `'A'` under the connection
-    // default and answers `41` where the chunk tier answers the
-    // `utf8mb4_general_ci` weight `0041`. The same documented boundary the
-    // other collation-aware builtins carry.
     assert_eq!(e("hex(weight_string('ab' as binary(4)))"), "STR:61620000");
     assert_eq!(
         e("hex(weight_string('A' collate utf8mb4_general_ci))"),
-        "STR:41"
+        "STR:0041"
     );
 }
 

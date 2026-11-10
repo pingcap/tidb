@@ -13,8 +13,7 @@
 
 //! Family modules for builtin scalar functions. Each family exposes
 //! `dispatch(name, vals) -> Option<Result<Datum, EvalError>>`; `None` falls
-//! through to the next family and ultimately to `crate::func::eval_func`'s
-//! `Unsupported` error.
+//! through to the next family.
 //!
 //! These files are seed material until their complete upstream Go packages
 //! are transcreated. Every builtin must cite the Go function it was read from

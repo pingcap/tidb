@@ -60,10 +60,10 @@ pub(crate) fn dispatch(
 /// the signatures built by `leastFunctionClass` and
 /// `greatestFunctionClass` in `pkg/expression/builtin_compare.go`.
 fn extremum(vals: &[Datum], want: Ordering, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
-    // The AST/value evaluator has no argument `FieldType`s, so it can name
-    // neither Go's signature nor a derived collation. Both are the chunk
-    // evaluator's ([`extremum_with_signature`]'s other caller,
-    // `ScalarFunction::eval_by_signature`) -- this tier asks for the
+    // A values-only call has no argument `FieldType`s, so it can name
+    // neither Go's signature nor a derived collation
+    // ([`extremum_with_signature`]'s other caller,
+    // `ScalarFunction::eval_by_signature`, has both) -- it asks for the
     // value-derived signature and the connection default collation.
     extremum_with_signature(
         vals,

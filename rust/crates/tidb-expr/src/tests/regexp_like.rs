@@ -17,8 +17,7 @@
 use super::{chunk_e, e};
 
 /// Scalar rows from `pkg/expression/builtin_regexp_test.go:210`
-/// (`TestRegexpLike`).  Run through both evaluators: named calls must not be
-/// limited to the AST tier while live SQL uses the rewritten scalar tier.
+/// (`TestRegexpLike`), folded at build time and evaluated per row.
 #[test]
 fn regexp_like_source_vectors_reach_the_rewritten_evaluator() {
     for (expr, want) in [

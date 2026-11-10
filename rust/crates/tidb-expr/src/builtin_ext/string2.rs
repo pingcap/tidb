@@ -249,10 +249,10 @@ fn format_with_locale(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum,
 
 /// `FIND_IN_SET(str, strlist)`, ported from `builtinFindInSetSig.evalInt` in
 /// `pkg/expression/builtin_string.go`. The values-only entry point retains a
-/// non-default collation already carried by a datum; plain AST literals use
-/// the connection default because that tier has no derived function type.
+/// non-default collation already carried by a datum; plain literals use
+/// the connection default.
 fn find_in_set(vals: &[Datum]) -> Result<Datum, EvalError> {
-    // The AST/value tier has no separately derived function type, so retain
+    // A values-only call has no separately derived function type, so retain
     // the explicit collation stamped on a COLLATE operand. Plain literals
     // carry the connection default (`utf8mb4_bin`) and therefore do not
     // override an explicit non-default operand collation.
@@ -411,9 +411,15 @@ fn export_set(vals: &[Datum]) -> Result<Datum, EvalError> {
 mod tests {
     use super::{build_find_in_set_lookup, dispatch, find_in_set_lookup, locate3};
     use crate::coerce::coerce_str;
-    use crate::string_fn::{char_func, format_num, format_num_locale, position, substring};
+    use crate::string_fn::{
+        char_func, format_num, format_num_locale, position_with_collation, substring,
+    };
     use crate::string_packet::to_base64;
     use crate::Datum;
+
+    fn position(substr: Option<String>, str: Option<String>) -> Datum {
+        position_with_collation(substr, str, tidb_charset::Collation::Utf8Mb4Bin)
+    }
     use tidb_datatype::{MysqlEnum, MysqlSet};
 use tidb_charset::Collation;
 
@@ -1203,18 +1209,11 @@ use tidb_charset::Collation;
         for name in ["LTRIM", "RTRIM"] {
             assert_eq!(call(name, &[Datum::Null]), Datum::Null);
             // Go declares this argument `types.ETString`, so an INTEGER one
-            // is already rendered by the time the signature body runs --
-            // `crate::arg_eval_type::wrap_string_args` does it, not this
-            // body. Handing the body an un-cast integer is a refusal now,
-            // which is the layer's contract; the wrap is what makes the
-            // Go-derived answer come back.
-            let cast = crate::arg_eval_type::wrap_string_args(
-                name,
-                vec![Datum::Int(123)],
-                &[],
-                &crate::NoColumns,
-            )
-            .unwrap();
+            // is already rendered by its argument cast when the signature
+            // body runs.
+            let cast =
+                vec![crate::cast::cast_arg_as_string(&Datum::Int(123), None, &crate::NoColumns)
+                    .unwrap()];
             assert_eq!(call(name, &cast), string("123"));
             assert!(dispatch(name, &[], &crate::NoColumns).is_none());
         }

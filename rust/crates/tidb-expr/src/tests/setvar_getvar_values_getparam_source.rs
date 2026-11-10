@@ -529,24 +529,6 @@ fn getparam_function_evaluation_matches_plan_cache_values() {
         Err(EvalError::ParamIndexExceedParamCounts)
     );
 
-    // The AST/value path uses the same GETPARAM dispatch and error identity,
-    // so row and chunk evaluation cannot drift.
-    let ast = tidb_ast::Expr::Func {
-        name: "getparam".to_owned(),
-        args: vec![tidb_ast::Expr::Int("1".to_owned())],
-        origin_position: 0,
-    };
-    assert_eq!(
-        crate::func::eval_func("GETPARAM", &ast_args(&ast), &ctx, None),
-        Ok(Datum::new_string_datum("abc".to_owned()))
-    );
-}
-
-fn ast_args(expr: &tidb_ast::Expr) -> &[tidb_ast::Expr] {
-    let tidb_ast::Expr::Func { args, .. } = expr else {
-        unreachable!("test helper receives a function")
-    };
-    args
 }
 
 /// GO PORT of `pkg/expression/builtin_other_vec_test.go:58

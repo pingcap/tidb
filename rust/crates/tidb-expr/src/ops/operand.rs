@@ -40,15 +40,13 @@ use crate::expression::Expression;
 pub(crate) enum Operand<'a> {
     /// A real expression-tree argument -- Go's `args[i]`.
     Expr(&'a Expression),
-    /// An operand the caller evaluated from a parsed `tidb_ast::Expr` with no
-    /// built expression tree behind it: the AST tier's `eval_in`, and every
+    /// An operand with no built expression tree behind it: every
     /// hand-assembled call into [`crate::apply_binary`]/[`crate::apply_unary`].
     ///
-    /// It answers [`Operand::is_constant`] TRUE, and that is faithful rather
-    /// than a fallback: that tier only ever walks literals and operators over
-    /// literals, which is precisely what Go's `foldConstant` collapses into a
-    /// `*Constant` before any signature is built. Its field type is genuinely
-    /// absent, so every type-driven rule below declines instead of guessing.
+    /// It answers [`Operand::is_constant`] TRUE: such a call hands over
+    /// values, which is what Go's `foldConstant` collapses into a `*Constant`
+    /// before any signature is built. Its field type is genuinely absent, so
+    /// every type-driven rule below declines instead of guessing.
     Literal,
 }
 

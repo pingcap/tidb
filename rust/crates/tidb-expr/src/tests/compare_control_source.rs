@@ -433,9 +433,8 @@ fn test_if_typed_conditions() {
         assert_eq!(chunk_e(expr), want, "{expr}");
     }
 
-    // Arity error: getFunction over MakeDatums(1, 2) must fail. The AST
-    // evaluator surfaces Go's build-time arity error as Unsupported.
-    assert_eq!(e("if(1, 2)"), "Unsupported(\"bad IF arguments\")");
+    // Arity error: getFunction over MakeDatums(1, 2) must fail.
+    assert_eq!(e("if(1, 2)"), "WrongParameterCount(\"if\")");
 
     // The `{errors.New("must error"), 1, 2}` condition row again needs a
     // non-SQL error datum; see TestCaseWhen's note above.
@@ -605,10 +604,6 @@ fn test_interval_func() {
 /// TestGreatestLeastFunc` (MySQL 8.0 compatible GREATEST/LEAST). Temporal
 /// fixtures are pinned to the module clock day; the two `float-mixing` rows
 /// reproduce Go's primitiveValsToConstants typing with REAL literals.
-///
-/// The three-tier mismatch row (`{105969664.0, 120000, dur20h}`) pins the
-/// CHUNK tier, where Go runs; the AST/value evaluator answers FLOAT there,
-/// a pre-existing tier difference outside these families.
 ///
 /// The injected-error row again requires a non-SQL datum (noted, not built);
 /// the `{nil}` propagation rows appear twice through greatest AND least.

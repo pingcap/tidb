@@ -12,10 +12,9 @@
 // limitations under the License.
 
 //! String builtin functions (`CONCAT`, `LENGTH`, `UPPER`/`LOWER`,
-//! `LEFT`/`RIGHT`, `SUBSTRING`), dispatched from `crate::func::eval_func`,
-//! plus `position`/`trim_value` below. `POSITION(a IN b)` and `TRIM(...)`
-//! have dedicated AST grammars; the row evaluator handles those nodes
-//! directly, while the production rewriter lowers them to scalar functions.
+//! `LEFT`/`RIGHT`, `SUBSTRING`), plus `position_with_collation`/`trim_value`
+//! below. `POSITION(a IN b)` and `TRIM(...)` have dedicated AST grammars; the
+//! rewriter lowers them to scalar functions.
 
 use tidb_datatype::CollationCollator;
 use crate::coerce::{coerce_str, coerce_str_bytes};
@@ -250,14 +249,6 @@ pub(crate) fn reverse(vals: &[Datum]) -> Result<Datum, EvalError> {
         out.extend_from_slice(unit);
     }
     Ok(units.pack(out))
-}
-
-/// `POSITION(substr IN str)`: the 1-indexed, character-based position of
-/// `substr`'s first occurrence in `str`; `0` if not found; an empty
-/// `substr` always matches at position `1` (confirmed via `gorun`).
-/// `NULL` if either operand is `NULL`.
-pub(crate) fn position(substr: Option<String>, str: Option<String>) -> Datum {
-    position_with_collation(substr, str, tidb_charset::Collation::Utf8Mb4Bin)
 }
 
 /// `LOCATE(substr, str)` / `INSTR(str, substr)` / `POSITION(substr IN str)`
@@ -982,8 +973,8 @@ fn radix_string_bits_bytes(value: &[u8]) -> u64 {
 /// important: pairwise equality would compare a string/string pair as text
 /// even when a numeric argument later forces the source's REAL signature.
 ///
-/// The collation-free entry point, for the AST evaluator and any caller with
-/// no derived collation to offer; see [`field_with_collation`].
+/// The collation-free entry point, for a caller with no derived collation
+/// to offer; see [`field_with_collation`].
 pub(crate) fn field(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     field_with_collation(vals, crate::ops::DERIVATION_FREE_COLLATION, ctx)
 }

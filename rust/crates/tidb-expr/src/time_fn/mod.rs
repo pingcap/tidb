@@ -671,15 +671,6 @@ fn tidb_parse_tso_logical(vals: &[Datum]) -> Result<Datum, EvalError> {
     Ok(Datum::Int(tikv_client::oracle::extract_logical(tso as u64)))
 }
 
-/// The `GET_FORMAT` lookup table. `format_type` is one of `DATE`/`DATETIME`/
-/// `TIME` (the AST selector; `TIMESTAMP` collapses into `DATETIME` upstream, so
-/// it shares the datetime row). Location matching is case-insensitive; an
-/// unknown combination returns an empty string. Port of
-/// `builtinGetFormatSig.getFormat`.
-pub(crate) fn get_format(format_type: &str, location: &str) -> String {
-    get_format_bytes(format_type.as_bytes(), location.as_bytes()).to_owned()
-}
-
 fn get_format_value(vals: &[Datum]) -> Result<Datum, EvalError> {
     let [format_type, location] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));

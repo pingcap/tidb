@@ -91,9 +91,10 @@ fn utc_date_answers_the_utc_statement_date() {
 #[test]
 fn yearweek_source_rows_pin_zero_month_null_and_boundary_years() {
     // The date reaches the signature through its ETDatetime argument cast.
-    let args = |values: Vec<Datum>| {
-        crate::arg_eval_type::wrap_datetime_args("YEARWEEK", values, &[], &NoColumns)
-            .expect("the ETDatetime argument cast")
+    let args = |mut values: Vec<Datum>| {
+        values[0] = crate::cast::cast_arg_as_datetime(&values[0], None, &NoColumns)
+            .expect("the ETDatetime argument cast");
+        values
     };
     assert_eq!(
         dispatched(
@@ -978,20 +979,6 @@ fn tidb_bounded_staleness_safets_windows_and_monotonicity() {
             &ctx,
         ),
         Datum::Null
-    );
-
-    // The row/AST entry point applies the same ETDatetime wrappers before
-    // dispatching, so string endpoints select the same result signature and
-    // safe timestamp as the chunk path above.
-    let ast_args = [
-        tidb_ast::Expr::String("2015-09-21 09:53:04".to_owned()),
-        tidb_ast::Expr::String("2025-01-02 10:00:00".to_owned()),
-    ];
-    assert_eq!(
-        crate::func::eval_func("TIDB_BOUNDED_STALENESS", &ast_args, &ctx, None),
-        Ok(Datum::Time(
-            Time::from_date_checked(2020, 6, 7, 8, 9, 10, 123_000, TimeType::DateTime, 3).unwrap(),
-        ))
     );
 
     // Invalid-zero endpoints are rejected by the signature before window

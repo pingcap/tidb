@@ -103,8 +103,7 @@ pub(super) fn float_binary(
     })
 }
 
-// This value-level entrypoint also serves the literal AST evaluator. Keep
-// its operands in their own domains: converting a Decimal/UInt partner to
+// Keep its operands in their own domains: converting a Decimal/UInt partner to
 // f64 first would irreversibly lose precision before the DIV cast.
 pub(super) fn decimal_div_operand(
     value: Datum,

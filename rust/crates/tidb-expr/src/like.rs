@@ -69,18 +69,6 @@ impl CompiledIlikePattern {
     }
 }
 
-/// Matches `text` against a `LIKE` pattern (`%` any run, `_` one character),
-/// case-sensitively. Greedy scan with backtracking on the most recent `%`.
-/// `escape` is `tidb_ast::Expr::Like::escape` passed straight through —
-/// see `compile_like`'s own doc for its exact meaning.
-pub(crate) fn like_match(
-    text: impl AsRef<[u8]>,
-    pattern: impl AsRef<[u8]>,
-    escape: Option<u8>,
-) -> bool {
-    like_match_with_collation(text, pattern, escape, Collation::Utf8Mb4Bin)
-}
-
 /// Matches a pattern using one of the collations translated into
 /// `tidb-datatype`.
 ///
@@ -155,7 +143,11 @@ fn lower_ascii_excluding_escape(value: &[u8], escape: u8) -> (Vec<u8>, u8) {
 mod tests {
     use tidb_charset::Collation;
 
-    use super::{ilike_match, like_match, like_match_with_collation};
+    use super::{ilike_match, like_match_with_collation};
+
+    fn like_match(text: &str, pattern: &str, escape: Option<u8>) -> bool {
+        like_match_with_collation(text, pattern, escape, Collation::Utf8Mb4Bin)
+    }
 
     #[test]
     fn binary_like_fast_path_matches_wildcards_and_escapes() {

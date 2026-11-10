@@ -128,10 +128,16 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   classes. `getvar` must stay in `is_unfoldable` (Go
   `unFoldableFunctions`): without it `SELECT @i := @i + 1, @i` folds the
   second read at plan time.
-- [ ] Milestone 11b: evaluation dispatches on the signature object alone
-  (`scalar_function.rs` by-name kernel, `arg_eval_type.rs`), the catalog's
-  second description of a call and the collation post-pass are deleted;
-  X01 leaves the register.
+- [x] (2026-11-10) Milestone 11b-1: one evaluator. The AST evaluator
+  (`eval_in`'s own tree walk, `func::eval_func`) and the runtime
+  argument-cast layer (`arg_eval_type.rs` masks and `wrap_*_args`) are
+  deleted. `eval_in` is Go `EvalSimpleAst`: a rewrite through
+  `rewriter::ContextResolver` (builds and folds in the evaluation context)
+  and one evaluation of the built tree.
+- [ ] Milestone 11b-2: evaluation dispatches on the signature object alone
+  (`scalar_function.rs` by-name kernel, `func::eval_func_values`), the
+  catalog's second description of a call and the collation post-pass are
+  deleted; X01 leaves the register.
 
 ## Surprises & Discoveries
 

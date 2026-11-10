@@ -21,13 +21,12 @@ fn string_datum(value: &str) -> Datum {
 }
 
 /// A single argument as an `types.ETDatetime`-declaring signature
-/// actually receives it: through Go's build-time `WrapWithCastAsTime`
-/// (`crate::arg_eval_type`), which both evaluators apply before dispatch.
+/// actually receives it: through Go's build-time `WrapWithCastAsTime`.
 /// A source vector written against `builtin_time_test.go` states the SQL
 /// input, so it must enter through the same layer a query does.
 fn datetime_arg(value: Datum) -> Vec<Datum> {
-    crate::arg_eval_type::wrap_datetime_args("MONTH", vec![value], &[], &crate::NoColumns)
-        .expect("the ETDatetime argument cast")
+    vec![crate::cast::cast_arg_as_datetime(&value, None, &crate::NoColumns)
+        .expect("the ETDatetime argument cast")]
 }
 
 /// [`datetime_arg`] for a string-valued argument.
@@ -39,6 +38,9 @@ fn datetime_str_arg(value: &str) -> Vec<Datum> {
 /// case-insensitive location, empty for unknown, TIMESTAMP shares DATETIME.
 #[test]
 fn get_format_table() {
+    let get_format = |format_type: &str, location: &str| {
+        get_format_bytes(format_type.as_bytes(), location.as_bytes())
+    };
     assert_eq!(get_format("DATE", "USA"), "%m.%d.%Y");
     assert_eq!(get_format("DATE", "JIS"), "%Y-%m-%d");
     assert_eq!(get_format("DATE", "ISO"), "%Y-%m-%d");

@@ -109,9 +109,6 @@ fn convert_using_result_type_carries_target_charset_metadata() {
 /// step, same observable refusal before any evaluation.
 #[test]
 fn convert_using_unknown_charset_fails_before_evaluation() {
-    // cp866: both evaluators refuse through the shared encoding gate.
-    let ast = e("convert('haha' using cp866)");
-    assert!(ast.contains("unknown character set"), "AST tier: {ast}");
     let rewritten = chunk_e("convert('haha' using cp866)");
     assert!(
         rewritten.contains("Unknown character set: 'cp866'"),

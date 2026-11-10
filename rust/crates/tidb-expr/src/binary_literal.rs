@@ -37,61 +37,10 @@
 //! therefore follow the same representation path; only an operation that
 //! explicitly needs character semantics performs checked decoding.
 
-use tidb_ast::BitLiteralValue;
-use tidb_datatype::BinaryLiteral;
 
-use crate::{Datum, EvalError};
+use crate::Datum;
 
-/// Decodes a normalized hex-literal digit string (`tidb_ast::Expr::Hex`'s
-/// own field — already lowercase, even-length hex digit PAIRS, confirmed
-/// by that type's own doc) into its raw-byte `Datum::BinaryLiteral`.
-pub(crate) fn hex_literal_value(digits: &str) -> Result<Datum, EvalError> {
-    let bytes: Vec<u8> = digits
-        .as_bytes()
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|pair| {
-            let hi = (pair[0] as char)
-                .to_digit(16)
-                .expect("normalized hex digit");
-            let lo = (pair[1] as char)
-                .to_digit(16)
-                .expect("normalized hex digit");
-            ((hi << 4) | lo) as u8
-        })
-        .collect();
-    bytes_to_value(bytes)
-}
 
-/// Carries [`tidb_ast::Expr::Bit`]'s decoded, byte-width-preserving payload
-/// into Go's runtime `BinaryLiteral` datum kind.
-///
-/// `b'101'` is `[0x05]`, `b'111111111'` is `[0x01, 0xff]`, and
-/// `b'000000001'` is `[0x00, 0x01]`. Bare literals are not limited to BIT
-/// columns' 64-bit width; numeric conversion applies its own truncation rule.
-pub(crate) fn bit_literal_value(value: &BitLiteralValue) -> Result<Datum, EvalError> {
-    Ok(Datum::new_binary_literal(BinaryLiteral::from(
-        value.as_bytes(),
-    )))
-}
-
-/// Source `Datum.SetValueWithDefaultCollation`/`SetValue`, whose
-/// `case BitLiteral` and `case HexLiteral` arms BOTH read
-/// "Store as BinaryLiteral for Bit and Hex literals" and call
-/// `SetBinaryLiteral` (`pkg/types/datum.go:626-630`). A hex or bit literal
-/// is therefore `KindBinaryLiteral` in Go from the moment the parser driver
-/// builds it -- never `KindBytes` -- and that kind is what tells an
-/// arithmetic, comparison or numeric-function context to read the octets as
-/// an unsigned INTEGER rather than as text.
-///
-/// Carrying it as `Datum::Bytes` was not merely a refusal: it made
-/// `-0x1A` answer `-0` instead of Go's `-26`, `ABS(b'11')` answer `0`
-/// instead of `3`, and `0x1A > 25` answer `0` instead of `1` -- wrong
-/// values, silently.
-fn bytes_to_value(bytes: Vec<u8>) -> Result<Datum, EvalError> {
-    Ok(Datum::new_binary_literal(BinaryLiteral::from(bytes)))
-}
 
 /// Go's `WrapWithCastAsInt` over an ARITHMETIC operand that is a binary
 /// literal, which is where the one difference between the two literal forms

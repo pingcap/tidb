@@ -14,11 +14,9 @@
 //! Thin builtin-family routing plus the non-family control functions and the
 //! `[NOT] IN (list)` predicate. Called from `crate::eval_in`.
 
-use tidb_ast::{BinaryOp, Expr};
+use tidb_ast::BinaryOp;
 
-use crate::coerce::{bool_int, truthy_of};
-use crate::eval_in;
-use crate::row::row_compare;
+use crate::coerce::truthy_of;
 use crate::string_fn::{
     ascii, bin, bit_count, bit_length, case_convert, char_func_with_context, concat_with_context,
     concat_ws_with_context, elt, export_set, field, format_num, from_base64,
@@ -27,283 +25,8 @@ use crate::string_fn::{
     unhex,
 };
 use crate::string_packet::{pad, repeat, space, to_base64};
-use crate::time_fn::calendar::{date_add, date_diff, date_part, from_days, time_part};
-use crate::{BuildContext, Columns, Datum, EvalError, StringLengthFunction};
-
-/// Evaluates a builtin scalar function over its evaluated arguments.
-pub(crate) fn eval_func(
-    name: &str,
-    args: &[Expr],
-    cols: &dyn Columns,
-    function_key: Option<usize>,
-) -> Result<Datum, EvalError> {
-    let name = name.to_ascii_uppercase();
-    // The AST evaluator is also an expression-construction entry point for
-    // session execution, so it must enforce the same function-class arity as
-    // `new_function_impl`. DATE_ADD/SUB and ADDDATE/SUBDATE retain their
-    // interval unit inside one Rust AST argument, while Go's function class
-    // counts that unit as the third argument.
-    let arity_count = if matches!(
-        name.as_str(),
-        "DATE_ADD" | "DATE_SUB" | "ADDDATE" | "SUBDATE"
-    ) && matches!(args, [_, Expr::Interval { .. }])
-    {
-        3
-    } else {
-        args.len()
-    };
-    crate::builtin_registry::verify_args_by_count(&name, arity_count)?;
-    // `DATE_ADD`/`DATE_SUB`'s second argument is an `Expr::Interval` (a
-    // value *and* a unit keyword), not a plain expression `eval_in` can
-    // evaluate on its own — handled here, before every other function's
-    // uniform eager-eval of `args` below, which would otherwise choke on it.
-    // `ADDDATE`/`SUBDATE` share this SAME `date, Expr::Interval` shape —
-    // `tidb_parser::parse_adddate_or_subdate` already normalizes their own
-    // dual `INTERVAL n unit` / bare-number grammar down to it (see that
-    // function's own doc) — and evaluate IDENTICALLY to `DATE_ADD`/
-    // `DATE_SUB` respectively (confirmed via `gorun`: `ADDDATE(d, 1)` and
-    // `DATE_ADD(d, INTERVAL 1 DAY)` produce the same result for every
-    // case tried, including a month-end rollover, `NULL` propagation in
-    // either argument, and a sub-day `HOUR` unit) — so `ADDDATE` takes
-    // the SAME `sign = 1` as `DATE_ADD`, `SUBDATE` the same `sign = -1`
-    // as `DATE_SUB`, reusing `date_add` with no new logic at all.
-    if name == "DATE_ADD" || name == "DATE_SUB" || name == "ADDDATE" || name == "SUBDATE" {
-        let [date_expr, Expr::Interval { value, unit }] = args else {
-            return Err(EvalError::Unsupported("DATE_ADD/DATE_SUB arguments"));
-        };
-        let date_val = eval_in(date_expr, cols)?;
-        let amount_val = eval_in(value, cols)?;
-        let sign = if name == "DATE_SUB" || name == "SUBDATE" {
-            -1
-        } else {
-            1
-        };
-        return date_add(unit, &date_val, &amount_val, sign);
-    }
-    // `NEXTVAL`/`LASTVAL`/`SETVAL`'s first argument is the SEQUENCE NAME
-    // (real TiDB parses it as a `TableNameExpr`, this crate as a plain
-    // `Expr::Column` — see task #121's restore-equivalence finding), so it
-    // must NOT be evaluated as a column reference the way the uniform
-    // eager-eval below would — dispatched to the resolver's own sequence
-    // catalog instead, the same interior-mutability side-effect
-    // architecture `Columns::set_uservar` established.
-    if name == "NEXTVAL" || name == "LASTVAL" || name == "SETVAL" {
-        let Some(Expr::Column(path)) = args.first() else {
-            return Err(EvalError::Unsupported("sequence function argument"));
-        };
-        return match (name.as_str(), args.len()) {
-            ("NEXTVAL", 1) => cols.sequence_nextval(path),
-            ("LASTVAL", 1) => cols.sequence_lastval(path),
-            ("SETVAL", 2) => match eval_in(&args[1], cols)? {
-                // NULL propagates without touching the sequence, matching
-                // real TiDB's own `EvalInt` isNull short-circuit (read
-                // from `builtinSetValSig.evalInt` directly).
-                Datum::Null => Ok(Datum::Null),
-                Datum::Int(n) => cols.sequence_setval(path, n),
-                Datum::UInt(n) => cols.sequence_setval(path, n as i64),
-                _ => Err(EvalError::Unsupported("SETVAL value")),
-            },
-            _ => Err(EvalError::Unsupported("sequence function arguments")),
-        };
-    }
-    // Go selects these signatures from the argument expression's FieldType
-    // while building the function, before EvalString produces a runtime
-    // datum. Keep the same ordering here: source AST type facts choose one
-    // immutable evaluator first, then only that evaluator sees the value.
-    if args.len() == 1 {
-        let function = match name.as_str() {
-            "LENGTH" | "OCTET_LENGTH" => Some(StringLengthFunction::Length),
-            "CHAR_LENGTH" | "CHARACTER_LENGTH" => Some(StringLengthFunction::CharLength),
-            _ => None,
-        };
-        if let Some(function) = function {
-            let built = BuildContext::default().build_string_length_for_expr(function, &args[0])?;
-            let value = eval_in(&args[0], cols)?;
-            // `LENGTH`/`OCTET_LENGTH` are binary-aware and count the ENCODED
-            // bytes; `CHAR_LENGTH` is `funcPropNone` and counts characters of
-            // the UTF-8 form, so only the former transcodes.
-            let value = match function {
-                StringLengthFunction::Length => {
-                    crate::convert_charset::to_binary_by_collation(&value)?
-                }
-                StringLengthFunction::CharLength => value,
-            };
-            return built.eval(&value);
-        }
-    }
-    if let Some(result) = crate::builtin_ext::eval_aes_lazy(
-        name.as_str(),
-        args.len(),
-        |index| eval_in(&args[index], cols),
-        cols,
-    ) {
-        return result;
-    }
-    // `IF` is a lazy control function in Go: `builtinIf*Sig` evaluates the
-    // condition through its wrapped `EvalInt`, then evaluates exactly one
-    // result branch.  Handle it before the ordinary eager argument material-
-    // ization below so an unreachable error (for example `1 / 0`) cannot
-    // leak into the selected result.  The value-only evaluator has no
-    // FieldType result-promotion pass; the selected branch therefore keeps
-    // its natural Datum domain, while the Go function-class type boundary is
-    // recorded as explicit partial evidence rather than guessed at runtime.
-    if name == "IF" {
-        let [condition, when_true, when_false] = args else {
-            return Err(EvalError::Unsupported("bad IF arguments"));
-        };
-        let condition = eval_in(condition, cols)?;
-        // Go's `wrapWithIsTrue` gives the condition the same `Datum.ToBool`
-        // reading every other boolean context uses; NULL is false because
-        // `keepNull` is disabled.
-        let take_true = truthy_of(&condition)? == Some(true);
-        return eval_in(if take_true { when_true } else { when_false }, cols);
-    }
-    if name == "IFNULL" {
-        let [first, fallback] = args else {
-            return Err(EvalError::Unsupported("bad IFNULL arguments"));
-        };
-        let first = eval_in(first, cols)?;
-        return if first.is_null() {
-            eval_in(fallback, cols)
-        } else {
-            Ok(first)
-        };
-    }
-    if name == "COALESCE" {
-        for arg in args {
-            let value = eval_in(arg, cols)?;
-            if !value.is_null() {
-                return Ok(value);
-            }
-        }
-        return Ok(Datum::Null);
-    }
-    if name == "BENCHMARK" {
-        let [count, expression] = args else {
-            return Err(EvalError::Unsupported("BENCHMARK arguments"));
-        };
-        // Go builds both arguments left-to-right before evaluating the count.
-        // The direct AST evaluator can resolve a column's VALUE through
-        // `Columns` but has no planning schema, so only that one build result
-        // may stay untyped; every other build error remains observable.
-        let rewrite_argument = |argument| match crate::rewriter::rewrite_expr(argument) {
-            Ok(rewritten) => Ok(Some(rewritten)),
-            Err(EvalError::UnknownColumn(_) | EvalError::UnknownColumnInClause(..)) => Ok(None),
-            Err(error) => Err(error),
-        };
-        let rewritten_count = rewrite_argument(count)?;
-        let rewritten_expression = rewrite_argument(expression)?;
-        let Some(loop_count) = benchmark_loop_count(
-            eval_in(count, cols)?,
-            rewritten_count.as_ref().and_then(|arg| arg.static_type()),
-            cols,
-        )?
-        else {
-            return Ok(Datum::Null);
-        };
-        if loop_count < 0 {
-            return Ok(Datum::Null);
-        }
-        if let Some(rewritten) = rewritten_expression {
-            ensure_benchmark_eval_type(rewritten.static_type())?;
-        }
-        for _ in 0..loop_count {
-            eval_in(expression, cols)?;
-        }
-        return Ok(Datum::Int(0));
-    }
-    if matches!(name.as_str(), "CHARSET" | "COLLATION" | "COERCIBILITY") {
-        let [arg] = args else {
-            return Err(EvalError::Unsupported(
-                "CHARSET/COLLATION/COERCIBILITY arguments",
-            ));
-        };
-        let arg = crate::rewriter::rewrite_expr(arg)?;
-        return crate::collation_derive::info_metadata_value(&name.to_ascii_lowercase(), &arg)
-            .ok_or(EvalError::Unsupported("information metadata function"));
-    }
-    if name == "REGEXP_LIKE" && matches!(args.len(), 2 | 3) {
-        let string_arg = |index: usize| -> Result<Option<String>, EvalError> {
-            let value = eval_in(&args[index], cols)?;
-            let value = crate::cast::cast_arg_as_string(&value, None, cols)?;
-            if value.is_null() {
-                return Ok(None);
-            }
-            value
-                .sql_string()
-                .map(Some)
-                .map_err(|_| EvalError::Unsupported("invalid UTF-8 REGEXP_LIKE argument"))
-        };
-        let Some(text) = string_arg(0)? else {
-            return Ok(Datum::Null);
-        };
-        let Some(pattern) = string_arg(1)? else {
-            return Ok(Datum::Null);
-        };
-        let match_type = if args.len() == 3 {
-            let Some(match_type) = string_arg(2)? else {
-                return Ok(Datum::Null);
-            };
-            match_type
-        } else {
-            String::new()
-        };
-        return Ok(Datum::Int(i64::from(
-            crate::regexp::regexp_like_with_collation(
-                &text,
-                &pattern,
-                &match_type,
-                crate::ops::DERIVATION_FREE_COLLATION,
-            )?,
-        )));
-    }
-    let vals: Vec<Datum> = args
-        .iter()
-        .enumerate()
-        .map(|(index, arg)| {
-            if name == "CHAR_FUNC" && index + 1 == args.len() {
-                if let Expr::RawString(charset) = arg {
-                    return Ok(Datum::new_string_datum(charset.clone()));
-                }
-            }
-            eval_in(arg, cols)
-        })
-        .collect::<Result<_, _>>()?;
-    // Go `HandleBinaryLiteral`'s `funcPropBinAware` arm. The chunk path reads
-    // the argument's static charset; this value-only path reads the datum's
-    // own collation, which carries the same charset -- so a `gbk` string
-    // reaching `HEX`/`LENGTH`/`ASCII` transcodes here exactly as it does
-    // there. See `crate::convert_charset` for why this is the only implicit
-    // transcode.
-    let vals: Vec<Datum> = if crate::convert_charset::func_prop(&name.to_ascii_lowercase())
-        == crate::convert_charset::FuncProp::BinAware
-    {
-        vals.iter()
-            .map(crate::convert_charset::to_binary_by_collation)
-            .collect::<Result<_, _>>()?
-    } else {
-        vals
-    };
-    // Go's `newBaseBuiltinFuncWithTp` argument-cast layer. This tier has no
-    // static argument types (see `crate::arg_eval_type`), so it gets Go's
-    // wrap from the values alone -- which is everything except the `YEAR`
-    // distinction, a type no value can carry.
-    let vals = crate::arg_eval_type::wrap_datetime_args(name.as_str(), vals, &[], cols)?;
-    let vals = crate::arg_eval_type::wrap_int_args(name.as_str(), vals, &[], cols)?;
-    let vals = crate::arg_eval_type::wrap_string_args(name.as_str(), vals, &[], cols)?;
-    if let Some(result) = crate::math_fn::dispatch(name.as_str(), args, &vals, cols, function_key) {
-        return result;
-    }
-    if let Some(result) = eval_func_values_in(name.as_str(), &vals, cols) {
-        return result;
-    }
-    // Family extension modules (`crate::builtin_ext`), the shared values-only
-    // arms, and the session-state functions all live in
-    // `eval_func_values_in`, tried above; only the session-clock time family
-    // remains.
-    crate::time_fn::dispatch(name.as_str(), &vals, cols)
-        .unwrap_or(Err(EvalError::Unsupported("unsupported function")))
-}
+use crate::time_fn::calendar::{date_diff, date_part, from_days, time_part};
+use crate::{Columns, Datum, EvalError};
 
 /// Go `builtinBenchmarkSig.evalInt`'s first-argument `EvalInt` boundary.
 pub(crate) fn benchmark_loop_count(
@@ -375,8 +98,7 @@ fn eval_session_state(
         },
         // `CURRENT_RESOURCE_GROUP()` is a zero-argument session builtin just
         // like the other information functions.  Keep it in the shared
-        // session-state table so the AST/value evaluator returns the same
-        // effective statement group as the rewritten/chunk evaluator.
+        // session-state table.
         ("CURRENT_RESOURCE_GROUP", []) => Ok(match cols.current_resource_group() {
             Some(group) => Datum::new_string_datum(group.into_bytes()),
             None => Datum::Null,
@@ -458,12 +180,7 @@ pub(crate) fn eval_func_values_in(
     }
 
     // The session-state builtins: pure functions of their argument VALUES
-    // plus the session, which `cols` supplies. They live here rather than in
-    // `eval_func_values` (values alone) so the row path and the chunk path
-    // run the SAME implementation -- `eval_func`'s own arms used to be the
-    // only ones, which is why `ROW_COUNT()` in a chunk-evaluated statement
-    // reported "not yet ported" while the identical AST-evaluated statement
-    // answered.
+    // plus the session, which `cols` supplies.
     if let Some(result) = eval_session_state(name, vals, cols) {
         return Some(result);
     }
@@ -478,31 +195,9 @@ pub(crate) fn eval_func_values_in(
 }
 
 /// Evaluates a builtin whose result is a pure function of its
-/// already-evaluated argument values — the values-only subset of
-/// [`eval_func`]'s eager path. This is the bridge entry
-/// `crate::scalar_function::ScalarFunction::eval` uses to run builtins over
-/// chunk rows; `eval_func` calls it too, so there is exactly ONE
-/// implementation of each function.
-///
-/// Deliberately OUTSIDE this entry (they stay AST/session-bound in
-/// `eval_func`):
-/// - lazy control forms: `IF` (Go's `builtinIf*Sig` evaluates exactly one
-///   branch, so eager-evaluating both would change semantics, e.g. a guarded
-///   `1/0`), `CASE`, and the `DATE_ADD`/`DATE_SUB`/`ADDDATE`/`SUBDATE`
-///   family whose second argument is an `Expr::Interval`, not a value;
-/// - session-state functions: `RAND` (needs
-///   the argument AST and per-call `function_key` for generator identity),
-///   the sequence functions (`NEXTVAL`/`LASTVAL`/`SETVAL`), and the
-///   `time_fn` family (its dispatch takes `Columns` for the statement clock,
-///   time zone, and `default_week_format`);
-/// - the `LENGTH`/`OCTET_LENGTH`/`CHAR_LENGTH`/`CHARACTER_LENGTH` family: Go
-///   selects the signature from the argument expression's FieldType via
-///   `BuildContext::build_string_length_for_expr` BEFORE seeing any runtime
-///   value, so it genuinely needs the argument AST, not just the value.
-///
-/// `COALESCE` is eager here exactly as in `eval_func`'s existing eager path
-/// (Go's `builtinCoalesceSig` evaluates arguments in order over values, not
-/// lazily over unevaluated branches — no guarded-error semantics to protect).
+/// already-evaluated argument values. This is the bridge entry
+/// `crate::scalar_function::ScalarFunction::eval` uses to run the builtins
+/// that have no signature object of their own yet.
 pub(crate) fn eval_func_values(
     name: &str,
     vals: &[Datum],
@@ -937,138 +632,9 @@ fn mysql_integer_prefix(value: &str) -> i64 {
     }
 }
 
-/// Evaluates `expr [NOT] IN (list)` in MySQL three-valued logic: a match is
-/// TRUE; no match with a NULL in the list (or a NULL left side) is NULL; no
-/// match with no NULL is FALSE. `NOT IN` negates TRUE/FALSE but keeps NULL.
-/// Element equality reuses `=`, so it honors the string collation.
-///
-/// A row-value operand (`(a, b) [NOT] IN (...)`, `expr` a bare
-/// `Expr::Row`) is handled as its OWN case, checked FIRST: `eval_in`
-/// itself has no arm for a standalone `Expr::Row` (see `crate::row`'s
-/// own doc for why), so `expr`/each `list` item must be recognized as
-/// row-shaped and compared via `crate::row::row_compare`'s own
-/// `Eq`-mode element-wise logic BEFORE ever calling plain `eval_in` on
-/// them — every `list` item is required to be a `Expr::Row` of the
-/// SAME arity too (both a literal row-value list,
-/// `(a,b) IN ((1,2),(3,4))`, and a resolved subquery's own captured
-/// rows — see `tidb-exec`'s own `Database::in_subquery_rows` — always
-/// produce `Expr::Row` list items here, never a mix).
-///
-/// EVERY list item is evaluated and compared, even after a match is
-/// found: the boolean answer is settled by the first match, but the
-/// evaluation of the remaining items is OBSERVABLE and so cannot be
-/// skipped. Our string-versus-number coercion lives inside the
-/// comparison (`crate::ops::eval_binary_in`), so skipping a comparison
-/// skips its `1292 Truncated incorrect DOUBLE value` warning and any
-/// error it would raise.
-///
-/// Go settles this the same way, in the vectorized `in` that real
-/// execution uses (`pkg/expression/builtin_other_vec_generated.go`,
-/// `builtinInRealSig.vecEvalInt`):
-///
-/// ```text
-/// for j := 0; j < len(args); j++ {
-///     if err := args[j].VecEvalReal(ctx, input, buf1); err != nil {
-///         return err
-///     }
-///     ...
-///     for i := 0; i < n; i++ {
-///         if r64s[i] != 0 {
-///             continue
-///         }
-/// ```
-///
-/// `args[j].VecEvalReal` -- which IS the coercion, because
-/// `newBaseBuiltinFuncWithTp` wrapped every arg in `cast(... as double)`
-/// at build time (`pkg/expression/builtin.go`, `WrapWithCastAsReal`) --
-/// runs for every arg unconditionally; `if r64s[i] != 0 { continue }`
-/// skips only the COMPARISON for an already-matched row, never the
-/// evaluation. An error from a later arg is returned even for rows that
-/// already matched. The scalar `builtinInRealSig.evalInt`
-/// (`pkg/expression/builtin_other.go`) does `return 1, false, nil` from
-/// inside its loop, but that path is the non-vectorized fallback; the
-/// warning count a client observes comes from the vectorized one.
-pub(crate) fn eval_in_list(
-    expr: &Expr,
-    list: &[Expr],
-    not: bool,
-    cols: &dyn Columns,
-) -> Result<Datum, EvalError> {
-    if let Expr::Row(left_items) = expr {
-        let lv: Vec<Datum> = left_items
-            .iter()
-            .map(|e| eval_in(e, cols))
-            .collect::<Result<_, _>>()?;
-        let mut found_null = false;
-        let mut found_match = false;
-        for item in list {
-            let Expr::Row(right_items) = item else {
-                return Err(EvalError::Unsupported(
-                    "row value IN list item arity mismatch",
-                ));
-            };
-            let rv: Vec<Datum> = right_items
-                .iter()
-                .map(|e| eval_in(e, cols))
-                .collect::<Result<_, _>>()?;
-            match row_compare(BinaryOp::Eq, &lv, &rv)? {
-                Datum::Int(0) => {}
-                Datum::Null => found_null = true,
-                _ => found_match = true,
-            }
-        }
-        return Ok(in_result(found_match, found_null, not));
-    }
-    let v = eval_in(expr, cols)?;
-    let mut found_null = false;
-    let mut found_match = false;
-    for item in list {
-        let iv = eval_in(item, cols)?;
-        match crate::ops::eval_binary_in(BinaryOp::Eq, v.clone(), iv, cols)? {
-            Datum::Int(0) => {}
-            Datum::Null => found_null = true,
-            _ => found_match = true,
-        }
-    }
-    Ok(in_result(found_match, found_null, not))
-}
-
-/// The three-valued answer of an `IN` whose whole list has been compared:
-/// a match anywhere is TRUE and outranks a NULL, no match with a NULL is
-/// NULL, no match with no NULL is FALSE. `NOT` negates TRUE/FALSE and
-/// leaves NULL alone.
-///
-/// Match-outranks-NULL is what the short-circuiting form produced too --
-/// it returned TRUE from inside the loop even when an earlier item had
-/// already set `found_null` -- so folding the whole list changes WHICH
-/// items get evaluated, never the boolean this returns.
-fn in_result(found_match: bool, found_null: bool, not: bool) -> Datum {
-    if found_match {
-        bool_int(!not)
-    } else if found_null {
-        Datum::Null
-    } else {
-        bool_int(not) // no match, no NULL: FALSE for IN, TRUE for NOT IN
-    }
-}
-
-/// Negates a three-valued boolean when `neg` is set; NULL stays NULL. Called
-/// from `crate::eval_in`'s `BETWEEN` handling.
-pub(crate) fn negate_if(v: Datum, neg: bool) -> Datum {
-    match (neg, v) {
-        (true, Datum::Int(i)) => bool_int(i == 0),
-        (true, Datum::UInt(i)) => bool_int(i == 0),
-        (_, v) => v,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn d(s: &str) -> Datum {
-        Datum::new_string_datum(s.to_string())
-    }
 
     /// Go `builtinCastRealAsRealSig.evalReal`
     /// (`builtin_cast.go:1346-1352`): an in-union unsigned-target cast

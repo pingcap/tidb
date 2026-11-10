@@ -15,134 +15,21 @@
 //! Source-family implementation for the currently translated portion of
 //! `pkg/expression/builtin_math.go`.
 //!
-//! One dispatch owns RAND's AST identity, ABS, SIGN, CEIL/FLOOR,
-//! ROUND/TRUNCATE, CONV, CRC32, and the existing transcendental functions.
-//! It intentionally does not claim the unimplemented remainder of the Go
-//! source. Arguments are still evaluated by `crate::func::eval_func` before
-//! this dispatch; RAND additionally receives the original argument AST so its
-//! constant-versus-row-dependent generator identity remains unchanged.
+//! ABS, SIGN, CEIL/FLOOR, ROUND/TRUNCATE, CONV, CRC32, and the
+//! transcendental functions, over already-evaluated argument values.
 
 mod go_exp_log;
 mod go_trig;
 
 use std::cmp::Ordering;
 
-use tidb_ast::{BinaryOp, Expr, UnaryOp};
 
 use crate::coerce::{coerce_str, coerce_str_bytes};
 use crate::ops::{finite_float, to_f64, to_f64_with_mysql_string};
 use crate::{Columns, Datum, EvalError, MysqlRng};
 
-/// Dispatches translated `builtin_math.go` functions, or returns `None` when
-/// the name belongs to another source family.
-pub(crate) fn dispatch(
-    name: &str,
-    args: &[Expr],
-    vals: &[Datum],
-    cols: &dyn Columns,
-    function_key: Option<usize>,
-) -> Option<Result<Datum, EvalError>> {
-    // RAND is the one arm that needs the argument AST (constant-versus-row
-    // generator identity), the session `Columns`, and the per-call
-    // `function_key`; every other math builtin is a function of `vals` plus
-    // the statement warning sink, and lives in [`dispatch_values`] so the
-    // chunk-row bridge can reuse it.
-    if name == "RAND" {
-        return Some(eval_rand(args, vals, cols, function_key));
-    }
-    dispatch_values(name, vals, cols)
-        .map(|result| result.map_err(|error| ast_math_overflow_error(name, args, error)))
-}
 
-/// Go's math signatures attach the source expression to their 1690 overflow.
-/// The AST evaluator has the original nodes, so it can preserve that text
-/// before the values-only implementation returns its datum-level carrier.
-fn ast_math_overflow_error(name: &str, args: &[Expr], error: EvalError) -> EvalError {
-    let value = match (name, &error) {
-        ("ABS", EvalError::IntOverflow) => "BIGINT",
-        ("EXP", EvalError::FloatOverflow) => "DOUBLE",
-        _ => return error,
-    };
-    let args = args
-        .iter()
-        .map(render_ast_expression)
-        .collect::<Option<Vec<_>>>();
-    let Some(args) = args else {
-        return error;
-    };
-    let expression = format!("{}({})", name.to_ascii_lowercase(), args.join(", "));
-    EvalError::DataOutOfRange { value, expression }
-}
 
-/// Renders the expression text Go includes in a function-owned overflow.
-/// The value-tier helper has no AST and therefore cannot use this boundary.
-pub(crate) fn render_ast_expression(expression: &Expr) -> Option<String> {
-    match expression {
-        Expr::Int(value) => Some(value.clone()),
-        Expr::Float(value) => Some(tidb_datatype::format_float_g_shortest(*value)),
-        Expr::Decimal(value) => Some(value.clone()),
-        Expr::Null => Some("NULL".to_owned()),
-        Expr::Column(path) => Some(path.join(".")),
-        Expr::Unary(UnaryOp::Plus, expression) => {
-            Some(format!("+{}", render_ast_expression(expression)?))
-        }
-        Expr::Unary(UnaryOp::Minus, expression) => {
-            Some(format!("-{}", render_ast_expression(expression)?))
-        }
-        Expr::Paren(expression) => Some(format!("({})", render_ast_expression(expression)?)),
-        Expr::Binary(operator, left, right) => render_ast_binary_expression(*operator, left, right),
-        Expr::Func { name, args, .. } => {
-            let args = args
-                .iter()
-                .map(render_ast_expression)
-                .collect::<Option<Vec<_>>>()?;
-            Some(format!(
-                "{}({})",
-                name.to_ascii_lowercase(),
-                args.join(", ")
-            ))
-        }
-        _ => None,
-    }
-}
-
-/// Renders a binary AST expression with the same parenthesized source shape
-/// used by Go's arithmetic overflow signatures.
-pub(crate) fn render_ast_binary_expression(
-    operator: BinaryOp,
-    left: &Expr,
-    right: &Expr,
-) -> Option<String> {
-    let operator = match operator {
-        BinaryOp::Plus => "+",
-        BinaryOp::Minus => "-",
-        BinaryOp::Mul => "*",
-        BinaryOp::Div => "/",
-        BinaryOp::Mod => "%",
-        BinaryOp::IntDiv => "DIV",
-        BinaryOp::BitOr => "|",
-        BinaryOp::BitAnd => "&",
-        BinaryOp::BitXor => "^",
-        BinaryOp::LeftShift => "<<",
-        BinaryOp::RightShift => ">>",
-        BinaryOp::Eq => "=",
-        BinaryOp::NullEq => "<=>",
-        BinaryOp::Ge => ">=",
-        BinaryOp::Gt => ">",
-        BinaryOp::Le => "<=",
-        BinaryOp::Lt => "<",
-        BinaryOp::Ne => "!=",
-        BinaryOp::LogicAnd => "AND",
-        BinaryOp::LogicOr => "OR",
-        BinaryOp::LogicXor => "XOR",
-    };
-    Some(format!(
-        "({} {} {})",
-        render_ast_expression(left)?,
-        operator,
-        render_ast_expression(right)?
-    ))
-}
 
 /// The values-only subset of [`dispatch`]: every math builtin whose result is
 /// a function of its already-evaluated arguments alone. Shared by the
@@ -730,28 +617,6 @@ pub(crate) fn atan2(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalErro
     finite_float(go_trig::go_atan2(y, x))
 }
 
-/// `randFunctionClass` / `builtinRandSig` / `builtinRandWithSeedFirstGenSig`
-/// from `pkg/expression/builtin_math.go`. Constant `RAND(N)` owns one
-/// statement-scoped generator per AST occurrence; nonconstant inputs start a
-/// fresh generator for every row evaluation.
-fn eval_rand(
-    args: &[Expr],
-    vals: &[Datum],
-    cols: &dyn Columns,
-    function_key: Option<usize>,
-) -> Result<Datum, EvalError> {
-    match (args, vals) {
-        ([], []) => eval_rand_values(&[], cols, function_key, false),
-        ([arg], [value]) => eval_rand_values(
-            std::slice::from_ref(value),
-            cols,
-            function_key,
-            is_constant_expr(arg),
-        ),
-        _ => Err(EvalError::Unsupported("bad function arity")),
-    }
-}
-
 /// The value-level half of [`eval_rand`], shared with the chunk-row bridge
 /// (`ScalarFunction::eval`), which has no `tidb_ast::Expr` to classify --
 /// its caller passes the constant-vs-row identity it already knows instead.
@@ -823,25 +688,6 @@ fn rand_string_seed(text: &str, datum: &Datum, cols: &dyn Columns) -> Result<i64
     let seed = crate::cast::str_int_prefix(text);
     crate::cast::report_int_truncation(datum, cols)?;
     Ok(seed)
-}
-
-/// This AST-only classifier mirrors the build-time distinction TiDB's
-/// function builder makes between a `Constant` and a row-dependent
-/// expression. The parser represents a constant arithmetic tree directly,
-/// so recurse through its structural wrappers as well.
-fn is_constant_expr(expr: &Expr) -> bool {
-    match expr {
-        Expr::Int(_)
-        | Expr::Decimal(_)
-        | Expr::Float(_)
-        | Expr::Hex(_)
-        | Expr::Bit(_)
-        | Expr::String(_)
-        | Expr::Null => true,
-        Expr::Paren(expr) | Expr::Unary(_, expr) => is_constant_expr(expr),
-        Expr::Binary(_, left, right) => is_constant_expr(left) && is_constant_expr(right),
-        _ => false,
-    }
 }
 
 /// CEIL/CEILING (`ceiling: true`) or FLOOR (`false`): `Int` is unchanged;
@@ -1207,9 +1053,8 @@ fn go_truncate_uint(val: u64, dec: i64) -> u64 {
 mod tests {
     use std::cell::Cell;
 
-    use super::{cot, dispatch, log2, sin, sqrt};
+    use super::{cot, log2, sin, sqrt};
     use crate::{Columns, Datum, EvalError};
-    use tidb_ast::Expr;
 
     struct RandColumns {
         seeded: Cell<Option<(usize, i64)>>,
@@ -1224,24 +1069,6 @@ mod tests {
             self.seeded.set(Some((key, seed)));
             Some(0.25)
         }
-    }
-
-    #[test]
-    fn rand_dispatch_retains_constant_ast_and_function_identity() {
-        let columns = RandColumns {
-            seeded: Cell::new(None),
-        };
-        assert_eq!(
-            dispatch(
-                "RAND",
-                &[Expr::Int("7".to_string())],
-                &[Datum::Int(7)],
-                &columns,
-                Some(41),
-            ),
-            Some(Ok(Datum::Real(0.25)))
-        );
-        assert_eq!(columns.seeded.get(), Some((41, 7)));
     }
 
     #[test]

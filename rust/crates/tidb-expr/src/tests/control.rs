@@ -47,8 +47,8 @@ fn if_source_vectors_use_wrapped_condition_and_lazy_branch() {
     // Go's IF never evaluates an unreachable result branch.  Keep both
     // directions covered so a future eager argument materialization cannot
     // reintroduce a division-by-zero error from the unused arm.
-    assert_eq!(e("if(0, 1 / 0, 2)"), "INT:2");
-    assert_eq!(e("if(1, 3, 1 / 0)"), "INT:3");
+    assert_eq!(e("if(0, 1 / 0, 2)"), "DEC:2.0000");
+    assert_eq!(e("if(1, 3, 1 / 0)"), "DEC:3.0000");
 }
 
 /// Scalar SQL-value rows from `pkg/expression/builtin_control_test.go:155`
@@ -131,7 +131,7 @@ fn case_when_source_vectors_preserve_lazy_truthiness() {
 
     // Only the taken branch is evaluated: an unreachable error-producing
     // expression must not affect the scalar result.
-    assert_eq!(e("case when false then 1 / 0 else 3 end"), "INT:3");
+    assert_eq!(e("case when false then 1 / 0 else 3 end"), "DEC:3.0000");
 
     // Go `newBaseBuiltinFuncWithFieldTypes` wraps every THEN/ELSE argument in
     // the merged control type, so the integer else-branch is promoted to the

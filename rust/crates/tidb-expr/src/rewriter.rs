@@ -433,6 +433,68 @@ impl ColumnResolver for ZonedNoResolver {
     }
 }
 
+/// Go `EvalSimpleAst`'s build context: a rewrite over no schema that builds
+/// and folds each node in the evaluation context itself, so the fold reads
+/// the SQL mode and raises its warnings where the evaluation would.
+pub struct ContextResolver<'a>(pub &'a dyn tidb_exprctx::context::Columns);
+
+impl ColumnResolver for ContextResolver<'_> {
+    fn user_vars(&self) -> Option<&tidb_variable::user_vars::UserVars> {
+        self.0.user_vars()
+    }
+
+    fn param_value(&self, order: usize) -> Result<Datum, EvalError> {
+        self.0.param_value(order)
+    }
+
+    fn resolve(&self, _path: &[String]) -> Option<(usize, FieldType, i64)> {
+        None
+    }
+
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        self.0.time_zone()
+    }
+
+    fn date_modes(&self) -> tidb_datatype::DateModes {
+        self.0.date_modes()
+    }
+
+    fn connection_charset_info(&self) -> (&str, &str) {
+        self.0.connection_charset_info()
+    }
+
+    fn like_default_escape(&self) -> u8 {
+        self.0.like_default_escape()
+    }
+
+    fn no_unsigned_subtraction(&self) -> bool {
+        self.0.no_unsigned_subtraction()
+    }
+
+    fn comparison_context(&self) -> Option<&dyn tidb_exprctx::context::Columns> {
+        Some(self.0)
+    }
+
+    fn div_precision_increment(&self) -> u32 {
+        self.0.div_precision_increment()
+    }
+
+    fn current_database(&self) -> Option<String> {
+        self.0.current_database()
+    }
+
+    fn fold_constant(&self, expression: &mut Expression, mode: ConstantFoldMode) {
+        if mode != ConstantFoldMode::Disabled {
+            crate::constant_fold::derive_constant_null_flag(expression);
+        }
+        crate::constant_fold::fold_constant_in_mode(expression, self.0, mode);
+    }
+
+    fn eval_constant(&self, expression: &Expression) -> Result<Datum, EvalError> {
+        crate::eval_expression_once(expression, self.0)
+    }
+}
+
 /// A resolver that knows no columns (for constant-only expressions).
 pub struct NoResolver;
 

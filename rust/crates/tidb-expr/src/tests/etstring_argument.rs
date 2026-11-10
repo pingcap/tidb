@@ -45,12 +45,12 @@
 //! ```
 
 use super::*;
-use crate::arg_eval_type::{eval_string, wrap_string_args};
+use crate::arg_eval_type::eval_string;
 use tidb_datatype::{BinaryLiteral, MysqlEnum, MysqlSet};
 use tidb_charset::Collation;
 
 /// Both evaluator tiers impose the layer, so every expression assertion is
-/// made twice. A tier that stopped calling `wrap_string_args` would otherwise
+/// made twice. A tier that stopped casting the argument would otherwise
 /// keep passing on the other one's evidence.
 fn both(expr: &str) -> (String, String) {
     (e(expr), chunk_e(expr))
@@ -75,91 +75,6 @@ fn a_non_string_etstring_argument_is_cast_before_the_signature_runs() {
         assert_eq!(row, want, "{expr}");
         assert_eq!(chunk, want, "{expr} (chunk tier)");
     }
-}
-
-/// The mask is the `argTps...` TAIL, and `QUOTE`/`LTRIM`/`RTRIM` each declare
-/// `types.ETString, types.ETString` -- the FIRST of which is the RETURN type.
-/// A mask shifted by one would cast nothing at all for those three (they are
-/// one-argument functions), and `ELT`'s would cast its integer SELECTOR.
-///
-/// The zero entries are the measured NON-members: five names whose
-/// `types.ETString` is chosen by the arguments' own types (so what varies is
-/// the SIGNATURE), two whose verifier makes the declared cast unreachable,
-/// and `JSON_TYPE`, whose `types.ETString` is its RETURN type over a
-/// `types.ETJson` argument. See `crate::arg_eval_type::string_arg_mask`'s doc
-/// for the quoted Go behind each.
-#[test]
-fn the_string_mask_positions_follow_the_argtps_tail() {
-    // Position 0 is the SELECTOR and is `types.ETInt`; every other position
-    // is `types.ETString`, for any arity.
-    assert_eq!(
-        wrap_string_args(
-            "ELT",
-            vec![Datum::Int(2), Datum::Int(7), Datum::Int(8)],
-            &[],
-            &NoColumns,
-        )
-        .unwrap(),
-        vec![
-            Datum::Int(2),
-            Datum::new_string_datum("7"),
-            Datum::new_string_datum("8"),
-        ]
-    );
-    // ...and the ETInt rung owns that selector, so the two masks are
-    // complementary rather than overlapping.
-    assert_eq!(
-        crate::arg_eval_type::int_arg_mask("ELT"),
-        1,
-        "the selector is the ETInt rung's"
-    );
-
-    for one_argument in ["QUOTE", "LTRIM", "RTRIM"] {
-        assert_eq!(
-            wrap_string_args(one_argument, vec![Datum::Int(7)], &[], &NoColumns).unwrap(),
-            vec![Datum::new_string_datum("7")],
-            "{one_argument}"
-        );
-    }
-
-    for non_member in [
-        "FIELD",
-        "GREATEST",
-        "LEAST",
-        "INTERVAL",
-        "JSON_VALID",
-        "JSON_TYPE",
-        "JSON_QUOTE",
-        "JSON_UNQUOTE",
-        "TRIM",
-        "CONCAT",
-    ] {
-        assert_eq!(
-            wrap_string_args(non_member, vec![Datum::Int(7)], &[], &NoColumns).unwrap(),
-            vec![Datum::Int(7)],
-            "{non_member} must not be routed"
-        );
-    }
-}
-
-/// `ELT` accepts an UNBOUNDED argument list, and Go declares its
-/// `types.ETString` tail with a LOOP. The mask's top bit therefore covers
-/// every position from 31 upward -- without that, argument 35 would either be
-/// left un-cast (and the body would refuse it) or shift past the mask's width
-/// and PANIC.
-#[test]
-fn the_masks_top_bit_covers_an_unbounded_argument_list() {
-    let mut vals = vec![Datum::Int(35)];
-    vals.extend((0..40).map(Datum::Int));
-    let out = wrap_string_args("ELT", vals, &[], &NoColumns).unwrap();
-    assert_eq!(out[0], Datum::Int(35), "the selector stays an integer");
-    assert_eq!(out[31], Datum::new_string_datum("30"));
-    assert_eq!(out[40], Datum::new_string_datum("39"));
-    // And the body reads the selected one, 35 positions in.
-    assert_eq!(
-        crate::string_fn::elt(&out).unwrap(),
-        Datum::new_string_datum("34")
-    );
 }
 
 /// `WrapWithCastAsString`'s early return is `EvalType() == types.ETString`,
@@ -188,8 +103,8 @@ fn the_string_typed_hybrids_take_the_early_return_and_bit_does_not() {
         Datum::new_bytes_datum(vec![0xFF]),
         Datum::Null,
     ] {
-        let out = wrap_string_args("QUOTE", vec![value.clone()], &[None], &NoColumns).unwrap();
-        assert_eq!(out[0], value, "{value:?} must survive the cast verbatim");
+        let out = crate::cast::cast_arg_as_string(&value, None, &NoColumns).unwrap();
+        assert_eq!(out, value, "{value:?} must survive the cast verbatim");
     }
     // The NAME, never the ordinal.
     assert_eq!(eval_string(&enum_value).unwrap().unwrap(), b"b");
@@ -202,8 +117,8 @@ fn the_string_typed_hybrids_take_the_early_return_and_bit_does_not() {
 
     // BIT alone is rewritten, and to its bytes.
     let bit = Datum::Bit(BinaryLiteral::from_uint(3, None));
-    let out = wrap_string_args("LTRIM", vec![bit], &[None], &NoColumns).unwrap();
-    assert_eq!(out[0], Datum::new_bytes_datum(vec![3]));
+    let out = crate::cast::cast_arg_as_string(&bit, None, &NoColumns).unwrap();
+    assert_eq!(out, Datum::new_bytes_datum(vec![3]));
 }
 
 /// The reader is Go's `EvalString`, which returns a Go `string`: a BYTE
@@ -221,14 +136,15 @@ fn an_etstring_argument_is_read_as_bytes_not_as_utf8() {
     let binary = Datum::new_bytes_datum(vec![0xFF]);
     let bit = Datum::Bit(BinaryLiteral::from_uint(0xFF, None));
     for value in [binary, bit] {
-        let quoted = wrap_string_args("QUOTE", vec![value.clone()], &[None], &NoColumns).unwrap();
+        let cast = crate::cast::cast_arg_as_string(&value, None, &NoColumns).unwrap();
+        let quoted = vec![cast.clone()];
         assert_eq!(
             crate::string_fn::quote(&quoted).unwrap(),
             Datum::new_bytes_datum(vec![b'\'', 0xEF, 0xBF, 0xBD, b'\'']),
             "quote({value:?})"
         );
 
-        let trimmed = wrap_string_args("LTRIM", vec![value.clone()], &[None], &NoColumns).unwrap();
+        let trimmed = vec![cast.clone()];
         assert_eq!(
             crate::builtin_ext::string2::dispatch("LTRIM", &trimmed, &NoColumns)
                 .unwrap()
@@ -237,13 +153,7 @@ fn an_etstring_argument_is_read_as_bytes_not_as_utf8() {
             "ltrim({value:?})"
         );
 
-        let selected = wrap_string_args(
-            "ELT",
-            vec![Datum::Int(1), value.clone()],
-            &[None, None],
-            &NoColumns,
-        )
-        .unwrap();
+        let selected = vec![Datum::Int(1), cast];
         assert_eq!(
             crate::string_fn::elt(&selected).unwrap(),
             Datum::new_bytes_datum(vec![0xFF]),
@@ -274,8 +184,7 @@ fn the_space_scan_is_one_sided_and_byte_exact() {
         ("RTRIM", " 中 ", " 中"),
     ];
     for (name, input, want) in cases {
-        let vals =
-            wrap_string_args(name, vec![Datum::new_string_datum(input)], &[None], &NoColumns).unwrap();
+        let vals = vec![Datum::new_string_datum(input)];
         assert_eq!(
             crate::builtin_ext::string2::dispatch(name, &vals, &NoColumns)
                 .unwrap()

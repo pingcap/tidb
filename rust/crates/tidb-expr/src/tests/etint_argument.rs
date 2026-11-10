@@ -28,13 +28,11 @@
 //! and `OCT` over a `BIT(8)` column at `r/expression/issues.result:80-84`.
 
 use super::*;
-use crate::arg_eval_type::wrap_int_args;
 use tidb_datatype::{BinaryLiteral, MysqlEnum, MysqlSet};
 use tidb_charset::Collation;
 
-/// Both evaluator tiers impose the layer, so every value assertion is made
-/// twice. A tier that stopped calling `wrap_int_args` would otherwise keep
-/// passing on the other one's evidence.
+/// Every value assertion is made through both entry points: the folded
+/// constant and the per-row chunk evaluation.
 fn both(expr: &str) -> (String, String) {
     (e(expr), chunk_e(expr))
 }
@@ -139,8 +137,8 @@ fn every_hybrid_etint_argument_reads_as_its_ordinal() {
         (Datum::BinaryLiteral(BinaryLiteral::from_uint(3, None)), 3),
     ];
     for (value, want) in cases {
-        let out = wrap_int_args("MAKE_SET", vec![value.clone()], &[None], &NoColumns).unwrap();
-        assert_eq!(out[0], Datum::Int(want), "{value:?}");
+        let out = crate::cast::cast_arg_as_int(&value, None, &NoColumns).unwrap();
+        assert_eq!(out, Datum::Int(want), "{value:?}");
     }
 }
 
@@ -166,43 +164,21 @@ fn the_int_cast_raises_the_cast_s_own_1292() {
         }
     }
 
-    for (name, vals, want) in [
-        (
-            "ROUND",
-            vec![Datum::Int(3), Datum::new_string_datum("abc".to_string())],
-            "1292 Truncated incorrect INTEGER value: 'abc'",
-        ),
-        (
-            "MAKE_SET",
-            vec![Datum::new_string_datum("x".to_string())],
-            "1292 Truncated incorrect INTEGER value: 'x'",
-        ),
-        (
-            "INSERT",
-            vec![
-                Datum::new_string_datum("abcdef".to_string()),
-                Datum::new_string_datum("2x".to_string()),
-                Datum::Int(2),
-                Datum::new_string_datum("X".to_string()),
-            ],
-            "1292 Truncated incorrect INTEGER value: '2x'",
-        ),
+    for (name, value, want) in [
+        ("ROUND", "abc", "1292 Truncated incorrect INTEGER value: 'abc'"),
+        ("MAKE_SET", "x", "1292 Truncated incorrect INTEGER value: 'x'"),
+        ("INSERT", "2x", "1292 Truncated incorrect INTEGER value: '2x'"),
     ] {
         let sink = Sink::default();
-        wrap_int_args(name, vals, &[], &sink).unwrap();
+        crate::cast::cast_arg_as_int(&Datum::new_string_datum(value.to_string()), None, &sink)
+            .unwrap();
         assert_eq!(sink.warnings.into_inner(), vec![want.to_string()], "{name}");
     }
 
     // An argument the cast consumes WHOLE raises nothing, which is the half
     // that makes the warning above evidence rather than noise.
     let sink = Sink::default();
-    wrap_int_args(
-        "ROUND",
-        vec![Datum::Int(3), Datum::new_string_datum("2".to_string())],
-        &[],
-        &sink,
-    )
-    .unwrap();
+    crate::cast::cast_arg_as_int(&Datum::new_string_datum("2".to_string()), None, &sink).unwrap();
     assert!(sink.warnings.into_inner().is_empty());
 }
 
@@ -215,8 +191,6 @@ fn the_int_cast_raises_the_cast_s_own_1292() {
 /// the ENUM its ordinal and break the first two.
 #[test]
 fn oct_is_signature_selected_and_not_a_member_of_the_layer() {
-    assert_eq!(crate::arg_eval_type::int_arg_mask("OCT"), 0);
-
     let oct = |value: Datum| crate::string_fn::oct(&[value]).unwrap().label();
     assert_eq!(
         oct(Datum::Enum(MysqlEnum::new("y", 2), Collation::Utf8Mb4Bin)),

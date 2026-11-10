@@ -245,7 +245,7 @@ fn math_functions() {
     assert_eq!(e("log2(8)"), "FLOAT:3");
     assert_eq!(e("log10(100)"), "FLOAT:2");
     assert_eq!(e("pi()"), "FLOAT:3.141592653589793");
-    assert_eq!(e("pi(1)"), "Unsupported(\"bad function arity\")");
+    assert_eq!(e("pi(1)"), "WrongParameterCount(\"pi\")");
     // SQRT/LN/LOG/LOG2/LOG10 return NULL for an out-of-domain
     // argument — MySQL's own explicit domain check (confirmed via
     // goeval, not assumed) — the OPPOSITE failure mode from POW/EXP
@@ -307,7 +307,7 @@ fn exp_matches_go_source_vectors_and_arity() {
             "exp(100000)",
             "DataOutOfRange { value: \"DOUBLE\", expression: \"exp(100000)\" }",
         ),
-        ("exp(1, 2)", "Unsupported(\"bad function arity\")"),
+        ("exp(1, 2)", "WrongParameterCount(\"exp\")"),
     ] {
         assert_eq!(e(sql), want, "{sql}");
     }
@@ -523,10 +523,10 @@ fn ceil_floor() {
         "DEC:-100000000000000000000"
     );
     assert_eq!(e("ceil(9223372036854775807.5)"), "DEC:9223372036854775808");
-    // Go's getEvalTp4FloorAndCeil uses the declared integer width, not the
-    // rounded value's magnitude: 18 integer digits still return BIGINT,
-    // while the 19-digit boundary above remains DECIMAL.
-    assert_eq!(e("ceil(999999999999999999.5)"), "INT:1000000000000000000");
+    // Go's getEvalTp4FloorAndCeil reads the literal's declared width
+    // (`flen - decimal`, the point counted), so this 18-integer-digit
+    // literal stays DECIMAL too (Go: `decimal(21,0)`).
+    assert_eq!(e("ceil(999999999999999999.5)"), "DEC:1000000000000000000");
     // A scale-zero DECIMAL whose integer part is 19 digits still selects the
     // decimal return signature, even when the exact result fits i64.  This
     // is distinct from the INT literal with the same value above.
@@ -551,7 +551,7 @@ fn round_truncate() {
     // Int stays Int for the 1-arg form (a plain passthrough); TRUNCATE
     // has no 1-arg form at all.
     assert_eq!(e("round(5)"), "INT:5");
-    assert_eq!(e("truncate(5)"), "Unsupported(\"bad function arity\")");
+    assert_eq!(e("truncate(5)"), "WrongParameterCount(\"truncate\")");
     // Decimal NEVER collapses to Int (unlike CEIL/FLOOR) and rounds
     // ties AWAY from zero.
     assert_eq!(e("round(3.14159)"), "DEC:3");

@@ -74,10 +74,9 @@ pub(crate) enum TemporalKind {
     Other,
 }
 
-/// The argument branch, taken from the static `FieldType` where the chunk
-/// tier has one and from the DATUM otherwise. The AST tier has no field
-/// types at all, so a plain string literal lands on `Other` -- which is the
-/// arm Go itself selects for a string constant.
+/// The argument branch, taken from the static `FieldType` where the caller
+/// has one and from the DATUM otherwise. A plain string value lands on
+/// `Other` -- which is the arm Go itself selects for a string constant.
 pub(crate) fn kind_of(field_type: Option<&FieldType>, value: &Datum) -> TemporalKind {
     if let Some(ft) = field_type {
         return match ft.code() {

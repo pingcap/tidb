@@ -218,19 +218,6 @@ pub fn regexp_match_bin_collation(text: &[u8], pattern: &[u8]) -> Option<bool> {
     regexp_match(text, pattern).ok()
 }
 
-/// `REGEXP_LIKE` applies the expression's derived collation before its
-/// user-supplied match type. A later `c`/`i` therefore wins, as Go's
-/// `getRegexpMatchType` requires.
-pub(crate) fn regexp_like_with_collation(
-    text: &str,
-    pattern: &str,
-    match_type: &str,
-    collation: tidb_charset::Collation,
-) -> Result<bool, EvalError> {
-    let match_type = regexp_match_type_with_collation(match_type, collation);
-    regexp_like(text, pattern, &match_type)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
