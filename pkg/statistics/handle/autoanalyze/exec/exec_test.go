@@ -32,6 +32,14 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 )
 
+// unexpectedDispatcher fails every statement that the runner dispatches.
+type unexpectedDispatcher struct{}
+
+// Dispatch implements exec.Dispatcher.
+func (unexpectedDispatcher) Dispatch(sessionctx.Context, exec.AnalyzedTable, string, ...any) error {
+	return fmt.Errorf("unexpected dispatch")
+}
+
 func TestExecAutoAnalyzes(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -44,10 +52,12 @@ func TestExecAutoAnalyzes(t *testing.T) {
 	sctx := se.(sessionctx.Context)
 	handle := dom.StatsHandle()
 
-	exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker(), nil).AutoAnalyze(
-		sctx,
-		2, false, exec.AnalyzedTable{}, "analyze table %n", "t",
-	)
+	// Upgraded clusters keep tidb_enable_dist_auto_analyze OFF, so the statement runs on this
+	// node although the runner has a dispatcher.
+	tk.MustExec("set global tidb_enable_dist_auto_analyze = OFF")
+	defer tk.MustExec("set global tidb_enable_dist_auto_analyze = ON")
+	runner := exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker(), unexpectedDispatcher{})
+	require.True(t, runner.AutoAnalyze(sctx, 2, false, exec.AnalyzedTable{}, "analyze table %n", "t"))
 
 	// Check the result of analyze.
 	is := dom.InfoSchema()

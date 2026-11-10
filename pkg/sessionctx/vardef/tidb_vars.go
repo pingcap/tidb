@@ -1835,7 +1835,7 @@ const (
 	DefTiDBMemOOMAction                               = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                         = 12 * 60 * 60
 	DefTiDBAutoAnalyzeConcurrency                     = 3
-	DefTiDBEnableDistAutoAnalyze                      = false
+	DefTiDBEnableDistAutoAnalyze                      = true
 	DefTiDBEnablePrepPlanCache                        = true
 	DefTiDBPrepPlanCacheSize                          = 100
 	DefTiDBSessionPlanCacheSize                       = 100
