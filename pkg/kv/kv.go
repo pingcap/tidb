@@ -651,6 +651,12 @@ type Request struct {
 	StoreBusyThreshold time.Duration
 	// TiKVClientReadTimeout is the timeout of kv read request
 	TiKVClientReadTimeout uint64
+	// MaxKeysRead is the per-statement cap on storage engine keys examined (0 = unlimited).
+	MaxKeysRead uint64
+	// MaxKeysReadCounter, when non-nil, is shared across all coprocessor iterators
+	// of the same statement so that the cap is enforced statement-wide.
+	// nil means the caller does not need cross-iterator accounting.
+	MaxKeysReadCounter *atomic.Uint64
 
 	RunawayChecker resourcegroup.RunawayChecker
 

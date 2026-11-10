@@ -132,6 +132,7 @@ import (
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	gouberatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -2785,7 +2786,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	sc := vars.StmtCtx
 
 	dctx := sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
-		return &distsqlctx.DistSQLContext{
+		ret := &distsqlctx.DistSQLContext{
 			WarnHandler:     sc.WarnHandler,
 			InRestrictedSQL: sc.InRestrictedSQL,
 			Client:          s.GetClient(),
@@ -2829,6 +2830,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			LoadBasedReplicaReadThreshold: vars.LoadBasedReplicaReadThreshold,
 			RunawayChecker:                sc.RunawayChecker,
 			TiKVClientReadTimeout:         vars.GetTiKVClientReadTimeout(),
+			MaxKeysRead:                   vars.GetMaxKeysRead(),
 
 			ReplicaClosestReadThreshold: vars.ReplicaClosestReadThreshold,
 			ConnectionID:                vars.ConnectionID,
@@ -2836,6 +2838,10 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 
 			ExecDetails: &sc.SyncExecDetails,
 		}
+		if ret.MaxKeysRead > 0 {
+			ret.MaxKeysReadCounter = new(gouberatomic.Uint64)
+		}
+		return ret
 	})
 
 	// Check if the runaway checker is updated. This is to avoid that evaluating a non-correlated subquery
@@ -3877,6 +3883,12 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 // GetOrCreateDomainWithFilter gets the associated domain for store. If domain not created, create a new one with the given schema filter.
 func GetOrCreateDomainWithFilter(store kv.Storage, filter issyncer.Filter) (*domain.Domain, error) {
 	return domap.GetOrCreateWithFilter(store, filter)
+}
+
+// GetOrCreateBRDomain gets or creates the domain used by standalone BR.
+// WithDisableRPC is set before Init so the published server info is not an RPC target.
+func GetOrCreateBRDomain(store kv.Storage, filter issyncer.Filter) (*domain.Domain, error) {
+	return domap.GetOrCreateBRDomain(store, filter)
 }
 
 func getStartMode(ver int64) ddl.StartMode {
