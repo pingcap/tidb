@@ -2267,3 +2267,62 @@ fn a_constant_seed_or_scale_is_cast_once() {
     );
     assert_eq!(row_text(session.run("select rand(1) = rand(1)")), [["1"]]);
 }
+
+/// Go `builtinRandSig` owns the generator a constant argument seeded, so the
+/// rows of one statement walk one sequence. Captured from Go.
+#[test]
+fn rand_of_a_constant_seed_walks_one_sequence_over_the_rows() {
+    let mut session = Session::new();
+    session.run("create table t(a int)").unwrap();
+    session.run("insert into t values (1),(2),(3)").unwrap();
+    let mut rows = row_text(session.run("select rand(1) from t"));
+    rows.sort();
+    assert_eq!(
+        rows,
+        [["0.1418603212962489"], ["0.40540353712197724"], ["0.8716141803857071"]]
+    );
+}
+
+/// Go `builtinInetAtonSig` and `builtinInet6AtonSig`: `vecEval*` answers NULL for an address
+/// `net.ParseIP` rejects, `evalString` answers `errWrongValueForType`, which
+/// also keeps the constant from folding. Captured from Go.
+#[test]
+fn inet_aton_of_a_bad_address_is_null_in_a_projection_and_an_error_in_a_row_evaluation() {
+    let mut session = Session::new();
+    session.run("create table t(a varbinary(20))").unwrap();
+    session.run("insert into t values ('x'),('y'),('z')").unwrap();
+    assert_eq!(
+        row_text(session.run("select inet6_aton(a) from t")),
+        [["NULL"], ["NULL"], ["NULL"]]
+    );
+    assert_eq!(row_text(session.run("select inet6_aton('1')")), [["NULL"]]);
+    assert_eq!(row_text(session.run("show warnings")), [[""; 3]; 0]);
+    assert_eq!(
+        row_text(session.run("select inet_aton(a), inet_aton('1.') from t")),
+        [["NULL", "NULL"], ["NULL", "NULL"], ["NULL", "NULL"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "select coercibility(schema()), coercibility(session_user()), \
+             coercibility(system_user()), coercibility(user()), coercibility(database())"
+        )),
+        [["4", "4", "4", "3", "3"]]
+    );
+    for sql in [
+        "insert into t values (inet6_aton('1'))",
+        "set @a = inet6_aton('')",
+        "insert into t values (inet_aton('1.'))",
+        "set @a = inet_aton('x')",
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 1411, "{sql}");
+    }
+    assert_eq!(
+        session
+            .run("insert into t values (inet6_aton('1'))")
+            .unwrap_err()
+            .to_mysql_error()
+            .message,
+        "Incorrect string value: '1' for function inet_aton6"
+    );
+}

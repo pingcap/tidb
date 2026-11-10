@@ -736,13 +736,12 @@ pub(crate) fn derive_collation_with_arg_tps(
             }
             Ok(default_collation(ret_type, connection))
         }
-        // Go `ast.Database, ast.User, ast.Version, ...`: a system constant.
+        // Go `ast.Database, ast.User, ast.CurrentUser, ast.Version, ...`: a
+        // system constant. `schema`, `session_user` and `system_user` are not
+        // in Go's list.
         "database"
-        | "schema"
         | "user"
-        | "session_user"
         | "current_user"
-        | "system_user"
         | "version"
         | "current_role"
         | "tidb_version"

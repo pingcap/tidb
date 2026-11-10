@@ -73,8 +73,16 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   signature. Left: the legacy `signature_args.rs` / `result_type.rs` rows
   and `wrap_power_arguments` for these names, still reached through
   `builtin_return_type`.
-- [ ] Milestone 6: `builtin_miscellaneous.go` (29), `builtin_info.go` (26),
-  `builtin_encryption.go` (14).
+- [x] (2026-11-10) Milestone 6: `builtin_miscellaneous.go` and
+  `builtin_info.go` (56 names). `inet_aton` and `inet6_aton` answer as Go's
+  two evaluations do: NULL from `vecEval*`, `errWrongValueForType` from
+  `eval*` (which keeps a constant unfolded). `schema`, `session_user` and
+  `system_user` are coercible, not system constants. Left: Go's
+  `default_func`, `uuid_short` and `tidb_row_checksum` classes only raise
+  errors and stay on the legacy path; `tidb_decode_sql_digests`' PROCESS
+  check and the sequence functions' column-path argument stay in the
+  rewriter, which holds the session.
+- [ ] Milestone 6b: `builtin_encryption.go` (14).
 - [ ] Milestone 7: `builtin_json.go` (29), `builtin_regexp.go` (4),
   `builtin_convert_charset.go` (2), `builtin_other.go` (11).
 - [ ] Milestone 8: `builtin_string.go` (44).

@@ -274,6 +274,10 @@ fn builtin_vec_result(function: &ScalarFunction) -> Option<VecResult> {
         // builtin_miscellaneous_vec.go `*AnyValue` evaluate their argument
         // into `result`.
         "any_value" => Arg(0),
+        // builtin_miscellaneous_vec.go `builtinInetAtonSig` resizes and
+        // `builtinInet6AtonSig` reserves and appends; both answer NULL for
+        // an address their `eval*` rejects.
+        "inet_aton" | "inet6_aton" => Allocate,
         // builtin_info_vec.go: the info builtins resize or reserve;
         // `LAST_INSERT_ID(expr)` evaluates its argument into `result`.
         "database" | "schema" | "user" | "current_user" | "session_user" | "system_user"

@@ -891,8 +891,24 @@ fn inet_aton(value: &Datum) -> Result<Datum, EvalError> {
     let Some(text) = coerce_str(value)? else {
         return Ok(Datum::Null);
     };
+    match inet_aton_text(&text) {
+        Some(address) => Ok(Datum::UInt(address)),
+        // Go `builtinInetAtonSig.vecEvalInt` sets NULL for a malformed
+        // address; `evalInt` is `errWrongValueForType("string", val,
+        // "inet_aton")` (1411).
+        None if crate::chunk_executor::in_vec_eval() => Ok(Datum::Null),
+        None => Err(EvalError::WrongValueForType {
+            value_class: "string",
+            value: text,
+            function: "inet_aton",
+        }),
+    }
+}
+
+/// The address, or `None` where Go answers `errWrongValueForType`.
+fn inet_aton_text(text: &str) -> Option<u64> {
     if text.is_empty() || text.ends_with('.') {
-        return Ok(Datum::Null);
+        return None;
     }
     let mut result = 0_u64;
     let mut byte_result = 0_u64;
@@ -902,18 +918,18 @@ fn inet_aton(value: &Datum) -> Result<Datum, EvalError> {
             b'0'..=b'9' => {
                 byte_result = byte_result * 10 + u64::from(byte - b'0');
                 if byte_result > 255 {
-                    return Ok(Datum::Null);
+                    return None;
                 }
             }
             b'.' => {
                 dots += 1;
                 if dots > 3 {
-                    return Ok(Datum::Null);
+                    return None;
                 }
                 result = (result << 8) + byte_result;
                 byte_result = 0;
             }
-            _ => return Ok(Datum::Null),
+            _ => return None,
         }
     }
     if dots == 1 {
@@ -922,7 +938,7 @@ fn inet_aton(value: &Datum) -> Result<Datum, EvalError> {
     if dots <= 2 {
         result <<= 8;
     }
-    Ok(Datum::UInt((result << 8) + byte_result))
+    Some((result << 8) + byte_result)
 }
 
 /// `INET_NTOA(expr)`: unsigned 32-bit integer to canonical dotted IPv4.
@@ -964,43 +980,47 @@ fn inet_ntoa(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError
 /// input.  Port of `builtinInet6AtonSig.evalString` in
 /// `pkg/expression/builtin_miscellaneous.go`.
 fn inet6_aton(value: &Datum) -> Result<Datum, EvalError> {
-    let text: Option<std::borrow::Cow<'_, str>> = match value {
+    let text = match value {
         Datum::Null => return Ok(Datum::Null),
         // `EvalString` in the Go signature preserves raw bytes.  IP syntax is
         // ASCII, so invalid UTF-8 is simply the same parse failure rather than
         // a lossy replacement conversion.
-        Datum::String(value) => std::str::from_utf8(value.bytes())
-            .ok()
-            .map(std::borrow::Cow::Borrowed),
-        Datum::Bytes(value) => std::str::from_utf8(value)
-            .ok()
-            .map(std::borrow::Cow::Borrowed),
-        _ => coerce_str(value)?.map(std::borrow::Cow::Owned),
+        Datum::String(value) => String::from_utf8_lossy(value.bytes()).into_owned(),
+        Datum::Bytes(value) => String::from_utf8_lossy(value).into_owned(),
+        _ => match coerce_str(value)? {
+            Some(text) => text,
+            None => return Ok(Datum::Null),
+        },
     };
-    // go `net.ParseIP` failure answers SQL NULL, not an error.
-    let Some(text) = text.as_deref() else {
-        return Ok(Datum::Null);
-    };
-    inet6_aton_text(text)
+    match inet6_aton_text(&text) {
+        Some(bytes) => Ok(bytes),
+        // Go `builtinInet6AtonSig.vecEvalString` appends NULL for an empty
+        // or unparseable address; `evalString` is
+        // `errWrongValueForType("string", val, "inet_aton6")` (1411).
+        None if crate::chunk_executor::in_vec_eval() => Ok(Datum::Null),
+        None => Err(EvalError::WrongValueForType {
+            value_class: "string",
+            value: text,
+            function: "inet_aton6",
+        }),
+    }
 }
 
-fn inet6_aton_text(text: &str) -> Result<Datum, EvalError> {
-    if text.is_empty() {
-        // go `net.ParseIP("")` is nil -> NULL.
-        return Ok(Datum::Null);
-    }
+/// The address bytes, or `None` where Go's `net.ParseIP` is nil (the empty
+/// string included).
+fn inet6_aton_text(text: &str) -> Option<Datum> {
     // Keep the source's four-byte result only when the original spelling is
     // plain IPv4.  `Ipv6Addr::from_str` handles all colon-containing forms,
     // including embedded IPv4 and mapped IPv4, and its octets are exactly the
     // bytes Go copies from `ip.To16()`/`ip.To4()`.
     if !text.contains(':') {
         if let Ok(ip) = Ipv4Addr::from_str(text) {
-            return Ok(Datum::new_bytes_datum(ip.octets()));
+            return Some(Datum::new_bytes_datum(ip.octets()));
         }
     }
-    Ok(Ipv6Addr::from_str(text)
+    Ipv6Addr::from_str(text)
+        .ok()
         .map(|ip| Datum::new_bytes_datum(ip.octets()))
-        .unwrap_or(Datum::Null))
 }
 
 /// `INET6_NTOA(expr)`: render a four- or sixteen-byte binary string as the
@@ -1259,9 +1279,19 @@ mod tests {
         for (arg, want) in cases {
             assert_eq!(call("INET_ATON", &[arg]), want);
         }
-        // go's TestInetAton marks every malformed input `expectNil`: the sig
-        // answers NULL, not a strict-context error.
+        // Go `vecEvalInt` answers NULL for a malformed input, `evalInt`
+        // answers `errWrongValueForType`.
         for invalid in ["", "0.0.0.256", "127,256", "123.2.1.", "127.0.0.1.1"] {
+            assert_eq!(
+                dispatch("INET_ATON", &[s(invalid)], &crate::NoColumns).unwrap(),
+                Err(crate::EvalError::WrongValueForType {
+                    value_class: "string",
+                    value: invalid.to_owned(),
+                    function: "inet_aton",
+                }),
+                "INET_ATON({invalid:?})"
+            );
+            let _vec_eval = crate::chunk_executor::enter_vec_eval(true);
             assert_eq!(
                 dispatch("INET_ATON", &[s(invalid)], &crate::NoColumns).unwrap(),
                 Ok(Datum::Null),
@@ -1327,11 +1357,23 @@ mod tests {
         ];
         for (text, want) in cases {
             match want {
-                // go `net.ParseIP` failure answers NULL, not an error.
-                Datum::Null => assert_eq!(
-                    dispatch("INET6_ATON", &[s(text)], &crate::NoColumns).unwrap(),
-                    Ok(Datum::Null)
-                ),
+                // Go `vecEvalString` answers NULL where `net.ParseIP` fails,
+                // `evalString` answers `errWrongValueForType`.
+                Datum::Null => {
+                    assert_eq!(
+                        dispatch("INET6_ATON", &[s(text)], &crate::NoColumns).unwrap(),
+                        Err(crate::EvalError::WrongValueForType {
+                            value_class: "string",
+                            value: text.to_owned(),
+                            function: "inet_aton6",
+                        })
+                    );
+                    let _vec_eval = crate::chunk_executor::enter_vec_eval(true);
+                    assert_eq!(
+                        dispatch("INET6_ATON", &[s(text)], &crate::NoColumns).unwrap(),
+                        Ok(Datum::Null)
+                    );
+                }
                 want => assert_eq!(call("INET6_ATON", &[s(text)]), want),
             }
         }
