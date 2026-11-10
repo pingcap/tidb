@@ -176,12 +176,53 @@ func TestSingleColumnCommonHandle(t *testing.T) {
 	}
 }
 
-func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
+func buildTableInfo(t testing.TB, sql string) *model.TableInfo {
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 	tblInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
 	require.NoError(t, err)
 	return tblInfo
+}
+
+func newBinaryUniqueKeyEncoder(t testing.TB) (table.Table, *lkv.BaseKVEncoder, []types.Datum) {
+	t.Helper()
+	tblInfo := buildTableInfo(t, "create table t (id int primary key clustered, b varbinary(1024), unique key k (b))")
+	tblInfo.State = model.StatePublic
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
+	require.NoError(t, err)
+	encoder, err := lkv.NewBaseKVEncoder(&encode.EncodingConfig{Table: tbl})
+	require.NoError(t, err)
+	t.Cleanup(encoder.SessionCtx.Close)
+	return tbl, encoder, types.MakeDatums(1, make([]byte, 1024))
+}
+
+func TestAddRecordBinaryUniqueKeyAllocations(t *testing.T) {
+	tbl, encoder, record := newBinaryUniqueKeyEncoder(t)
+	allocs := func(mode table.DupKeyCheckMode) float64 {
+		return testing.AllocsPerRun(100, func() {
+			_, err := tbl.AddRecord(encoder.SessionCtx.GetTableCtx(), encoder.SessionCtx.Txn(), record, mode)
+			require.NoError(t, err)
+			encoder.SessionCtx.TakeKvPairs().Clear()
+		})
+	}
+	// The encoder's transaction always reports missing keys. Allow a small fixed
+	// checking overhead, but no allocation of duplicate-key diagnostics on success.
+	withoutCheck := allocs(table.DupKeyCheckSkip)
+	withCheck := allocs(table.DupKeyCheckInPlace)
+	require.LessOrEqual(t, withCheck, withoutCheck+2)
+}
+
+func BenchmarkAddRecordBinaryUniqueKey(b *testing.B) {
+	tbl, encoder, record := newBinaryUniqueKeyEncoder(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		_, err := tbl.AddRecord(encoder.SessionCtx.GetTableCtx(), encoder.SessionCtx.Txn(), record, table.DupKeyCheckInPlace)
+		if err != nil {
+			b.Fatal(err)
+		}
+		encoder.SessionCtx.TakeKvPairs().Clear()
+	}
 }
 
 func TestIndexKVGenerator(t *testing.T) {
