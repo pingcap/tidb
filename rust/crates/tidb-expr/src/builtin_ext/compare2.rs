@@ -108,6 +108,46 @@ pub struct GlSignature {
     pub ret_date: bool,
 }
 
+impl GlSignature {
+    /// The signature a GREATEST/LEAST pb code names: Go's
+    /// `greatestFunctionClass.getFunction` switch, read backwards.
+    pub(crate) fn of_signature(signature: tidb_proto::tipb::ScalarFuncSig) -> Option<Self> {
+        use tidb_datatype::EvalType;
+        use tidb_proto::tipb::ScalarFuncSig as Sig;
+        let (arg_type, cmp_string_mode, ret_date) = match signature {
+            Sig::GreatestInt | Sig::LeastInt => (EvalType::Int, GlCmpStringMode::Directly, false),
+            Sig::GreatestReal | Sig::LeastReal => (EvalType::Real, GlCmpStringMode::Directly, false),
+            Sig::GreatestDecimal | Sig::LeastDecimal => {
+                (EvalType::Decimal, GlCmpStringMode::Directly, false)
+            }
+            Sig::GreatestString | Sig::LeastString => {
+                (EvalType::String, GlCmpStringMode::Directly, false)
+            }
+            Sig::GreatestCmpStringAsDate | Sig::LeastCmpStringAsDate => {
+                (EvalType::String, GlCmpStringMode::AsDate, false)
+            }
+            Sig::GreatestCmpStringAsTime | Sig::LeastCmpStringAsTime => {
+                (EvalType::String, GlCmpStringMode::AsDatetime, false)
+            }
+            Sig::GreatestDuration | Sig::LeastDuration => {
+                (EvalType::Duration, GlCmpStringMode::Directly, false)
+            }
+            Sig::GreatestDate | Sig::LeastDate => {
+                (EvalType::Datetime, GlCmpStringMode::Directly, true)
+            }
+            Sig::GreatestTime | Sig::LeastTime => {
+                (EvalType::Datetime, GlCmpStringMode::Directly, false)
+            }
+            _ => return None,
+        };
+        Some(Self {
+            arg_type,
+            cmp_string_mode,
+            ret_date,
+        })
+    }
+}
+
 /// [`extremum`] with the two things only the chunk evaluator knows: the
 /// SIGNATURE `resolveType4Extremum` derived from the argument FieldTypes, and
 /// the collation `deriveCollation` derived for the function.
@@ -1495,14 +1535,16 @@ mod tests {
             ],
             origin_position: 0,
         };
+        // Go `mergeFieldType`: a vector and a string aggregate to VARCHAR, so
+        // `resolveType4Extremum` picks the string signature.
         let rewritten =
             crate::rewriter::rewrite_expr(&expression).expect("vector extremum rewrite");
         assert_eq!(
             rewritten
                 .static_type()
-                .expect("vector return type")
+                .expect("extremum return type")
                 .eval_type(),
-            tidb_datatype::EvalType::VectorFloat32
+            tidb_datatype::EvalType::String
         );
     }
 }

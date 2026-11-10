@@ -12,32 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `pkg/expression/builtin_compare.go`: the comparison operators' result-type
-//! derivation (`compareFunctionClass.getFunction` / `generateCmpSigs`),
-//! transcreated as [`infer_compare_type`].
+//! `pkg/expression/builtin_compare.go`: the comparison, COALESCE, GREATEST,
+//! LEAST and INTERVAL function classes.
 //!
-//! In Go the comparison operand type (`GetAccurateCmpType`) only selects the
-//! *signature* (which eval path compares the operands); the *result*
-//! `FieldType` is always the ETInt base type from
-//! `newReturnFieldTypeForBaseBuiltinFunc` (TypeLonglong, BinaryFlag, flen
-//! MaxIntWidth) with `bf.tp.SetFlen(1)`, plus `mysql.IsBooleanFlag` because
-//! every comparison name is in the `booleanFunctions` map
-//! (`function_traits.go`).
-//!
-//! `refineArgs`' constant refinement (`int non-constant <cmp> non-int
-//! constant`) IS ported, as [`refine_comparisons`] over the built tree --
-//! see that function for the Go it follows and for what within `refineArgs`
-//! is still deferred. The same pass folds `generateCmpSigs`' implicit
-//! DATETIME cast for a string constant compared with a temporal expression.
-//! JSON comparisons also clear `ParseToJSONFlag` on every non-column operand,
-//! matching `generateCmpSigs`.
+//! [`CompareFunctionClass`] is Go `compareFunctionClass`: `refineArgs`, then
+//! `GetAccurateCmpType` over the refined arguments, then `generateCmpSigs`.
 
-use crate::wrap_cast::{
-    wrap_with_cast_as_decimal, wrap_with_cast_as_duration, wrap_with_cast_as_int,
-    wrap_with_cast_as_json, wrap_with_cast_as_real, wrap_with_cast_as_string,
-    wrap_with_cast_as_time, wrap_with_cast_as_vector_float32,
-};
 use crate::builtin_arithmetic::new_return_field_type_for_base_builtin_func;
+use crate::builtin_ext::GlCmpStringMode;
 use crate::constant::Constant;
 use tidb_exprctx::context::{Columns, EvalError};
 use crate::expression::Expression;
@@ -58,45 +40,6 @@ pub fn infer_compare_type(name: &str) -> Option<FieldType> {
             Some(ret)
         }
         _ => None,
-    }
-}
-
-/// Go `generateCmpSigs`' JSON argument rule. `GetAccurateCmpType` selects the
-/// JSON comparison signature when either operand has MySQL type JSON. The
-/// signature then clears `ParseToJSONFlag` on constants and scalar functions,
-/// but deliberately leaves columns and correlated columns unchanged.
-///
-/// A syntactic `CAST(... AS JSON)` is the one function whose flag SURVIVES:
-/// Go's `WrapWithCastAsJSON` wraps it again (`CastJsonAsJson`, whose own
-/// ret type the disable strips), so the disable never reaches the inner
-/// string-source signature that reads the flag (`builtin_cast.go:795` adds
-/// it there). Measured on the oracle: `CAST('123' AS JSON) = CAST(123 AS JSON)`
-/// is TRUE — both sides PARSE — while `JSON_EXTRACT('123', '$') = '123'` is
-/// FALSE — the bare string stays value-semantics.
-pub(crate) fn prepare_json_comparison_args(args: &mut [Expression]) {
-    if !args
-        .iter()
-        .any(|arg| arg.static_type().map(FieldType::code) == Some(FieldTypeCode::Json))
-    {
-        return;
-    }
-    for arg in args {
-        let ret_type = match arg {
-            Expression::Column(_) | Expression::CorrelatedColumn(_) => continue,
-            Expression::Constant(constant) => constant.ret_type.as_mut(),
-            Expression::ScalarFunction(function) => {
-                // The syntactic JSON cast keeps its parse semantics in
-                // comparisons; Go's disable strips only the wrapper cast.
-                if function.func_name.lowercase() == "cast_json" {
-                    continue;
-                }
-                function.ret_type.as_mut()
-            }
-            Expression::ScalarSubQuery(subquery) => subquery.constant.ret_type.as_mut(),
-        };
-        if let Some(ret_type) = ret_type {
-            ret_type.and_flag(!FieldTypeFlags::PARSE_TO_JSON);
-        }
     }
 }
 
@@ -369,178 +312,6 @@ fn refine_numeric_constant_cmp_datetime(
     true
 }
 
-/// Go `generateCmpSigs`' argument wrapping for the ONE operand pair whose
-/// comparison domain the value evaluator cannot recover from the datums:
-/// a `DATE`/`DATETIME`/`TIMESTAMP` expression compared with a `YEAR` one.
-///
-/// `getBaseCmpType` (`builtin_compare.go:1424-1427`) is where the pair is
-/// decided, and this is its LAST arm before the ETReal fallback:
-///
-/// ```go
-/// } else if lft != nil && rft != nil && (types.IsTemporalWithDate(lft.GetType()) && rft.GetType() == mysql.TypeYear ||
-///     lft.GetType() == mysql.TypeYear && types.IsTemporalWithDate(rft.GetType())) {
-///     return types.ETDatetime
-/// }
-/// ```
-///
-/// `types.IsTemporalWithDate` is `IsTypeTime` (`pkg/types/etc.go:119-121`):
-/// `TypeDatetime`, `TypeDate`, `TypeTimestamp` and nothing else.
-/// `GetAccurateCmpType` leaves that ETDatetime alone -- its own arms fire only
-/// for JSON, vector, ETString or ETReal -- and `generateCmpSigs` then calls
-/// `newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, tp, tp)` with
-/// `tp == ETDatetime`, which runs `WrapWithCastAsTime` over both arguments.
-///
-/// `WrapWithCastAsTime` (`builtin_cast.go:2817-2823`) inserts NOTHING on the
-/// temporal side -- `tp.GetType() == exprTp` for a DATETIME, and the explicit
-/// `(exprTp == mysql.TypeDate || exprTp == mysql.TypeTimestamp) && tp.GetType()
-/// == mysql.TypeDatetime` early return covers the other two -- so this wraps
-/// only the YEAR side, exactly as Go does. The cast itself is the YEAR-source
-/// branch of `cast::eval_cast`'s time path.
-///
-/// # Why the value evaluator cannot do this on its own
-///
-/// A YEAR column reaches it as a plain `Datum::Int`, indistinguishable from a
-/// `BIGINT`'s -- and `getBaseCmpType` sends DATETIME-vs-BIGINT to ETReal, the
-/// opposite domain. Only the FIELD TYPE separates the two, and the field type
-/// exists only here. Left alone, the comparison decided every row by
-/// `20000503164444 < 2018`, i.e. by the operator alone: `<` returned no rows
-/// and `>` returned all of them, with no error and no warning.
-fn wrap_year_operand_for_datetime_compare(left: &mut Expression, right: &mut Expression) {
-    let code = |expr: &Expression| expr.static_type().map(FieldType::code);
-    let is_temporal_with_date = |expr: &Expression| {
-        matches!(
-            code(expr),
-            Some(FieldTypeCode::Datetime | FieldTypeCode::Date | FieldTypeCode::Timestamp)
-        )
-    };
-    let is_year = |expr: &Expression| code(expr) == Some(FieldTypeCode::Year);
-
-    let year_side = if is_temporal_with_date(left) && is_year(right) {
-        right
-    } else if is_year(left) && is_temporal_with_date(right) {
-        left
-    } else {
-        return;
-    };
-    let mut target = FieldType::new(FieldTypeCode::Datetime);
-    // `WrapWithCastAsTime`'s own width/scale for an ETInt source:
-    // `tp.SetDecimal(types.MinFsp)` then `tp.SetFlen(mysql.MaxDatetimeWidthNoFsp)`.
-    target.set_decimal(0);
-    target.set_flen(19);
-    let arg = std::mem::replace(
-        year_side,
-        Expression::Constant(Constant::new(
-            Datum::Null,
-            FieldType::new(FieldTypeCode::Null),
-        )),
-    );
-    *year_side = Expression::ScalarFunction(crate::expression::ScalarFunction::new(
-        tidb_ast::CiString::new("cast_datetime"),
-        target,
-        vec![arg],
-    ));
-}
-
-/// Go `WrapWithCastAsDecimal` for integer arguments of comparisons and
-/// arithmetic: fold strict literals and retain a cast for runtime inputs.
-pub(crate) fn wrap_integer_operand_as_decimal(integer: &mut Expression) {
-    if integer.static_type().map(FieldType::eval_type) != Some(EvalType::Int) {
-        return;
-    }
-    let Some(source_type) = integer.static_type().cloned() else {
-        return;
-    };
-    let precision = match source_type.code() {
-        FieldTypeCode::Tiny => 3,
-        FieldTypeCode::Short => 5,
-        FieldTypeCode::Int24 => 8,
-        FieldTypeCode::Long => 10,
-        FieldTypeCode::LongLong => 20,
-        FieldTypeCode::Year => 4,
-        _ => 20,
-    };
-    let mut target = FieldType::new(FieldTypeCode::NewDecimal);
-    target.set_flen(precision);
-    target.set_decimal(0);
-    target.add_flags(
-        FieldTypeFlags::BINARY
-            | (source_type.flags() & (FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL)),
-    );
-    // Go WrapWithCastAsDecimal folds strict integer constants and then uses
-    // the result's natural precision/scale. A parameter or deferred constant
-    // keeps the cast node, so subsequent executions read its current value.
-    if let Expression::Constant(constant) = integer {
-        let decimal = match constant.literal_value() {
-            Some(Datum::Int(value)) => Some(tidb_datatype::Decimal::from_int(*value)),
-            Some(Datum::UInt(value)) => Some(tidb_datatype::Decimal::from_uint(*value)),
-            _ => None,
-        };
-        if let Some(decimal) = decimal {
-            let (precision, scale) = decimal.precision_and_frac();
-            target.set_flen(i64::from(precision));
-            target.set_decimal(i64::from(scale));
-            *integer = Expression::Constant(Constant::new(Datum::Decimal(decimal), target));
-            return;
-        }
-    }
-    let argument = std::mem::replace(
-        integer,
-        Expression::Constant(Constant::new(
-            Datum::Null,
-            FieldType::new(FieldTypeCode::Null),
-        )),
-    );
-    *integer = Expression::ScalarFunction(crate::expression::ScalarFunction::new(
-        tidb_ast::CiString::new("cast_decimal"),
-        target,
-        vec![argument],
-    ));
-}
-
-fn wrap_integer_operand_for_decimal_compare(left: &mut Expression, right: &mut Expression) {
-    let eval_type = |expression: &Expression| expression.static_type().map(FieldType::eval_type);
-    let integer = match (eval_type(left), eval_type(right)) {
-        (Some(EvalType::Decimal), Some(EvalType::Int)) => right,
-        (Some(EvalType::Int), Some(EvalType::Decimal)) => left,
-        _ => return,
-    };
-    wrap_integer_operand_as_decimal(integer);
-}
-
-/// Go `compareFunctionClass.refineArgs` (`builtin_compare.go:1778`), applied
-/// to every comparison in an already-built expression tree.
-///
-/// Go runs this inside `getFunction` (`:1984`), where the comparison is
-/// constructed. This tier also retains a tree walk for comparisons assembled
-/// before a real function builder is available. That compatibility walk keeps
-/// its context-free structural casts; the real builder uses
-/// [`refine_comparison`] so generated casts can follow Go's
-/// `BuildCastFunction` constant-folding boundary.
-///
-/// Ported: the `int non-constant [cmp] non-int constant` arm (`:1811-1833`)
-/// and its mirror through `symmetricOp` (`:1836-1854`), and the
-/// numeric-constant-vs-datetime rule (`refineNumericConstantCmpDatetime`,
-/// `:1802-1808`) -- see [`refine_numeric_constant_cmp_datetime`].
-/// The plan-cache guard and mutable constant removal run before refinement;
-/// unsigned-flag refinement runs after integer and YEAR argument adjustment.
-pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) -> Result<(), EvalError> {
-    if let Expression::ScalarFunction(function) = expr {
-        for arg in &mut function.args {
-            refine_comparisons(arg, ctx)?;
-        }
-    }
-    if refine_comparison_core(expr, ctx)? {
-        if let Expression::ScalarFunction(function) = expr {
-            wrap_comparison_arguments_with_context(
-                &mut function.args,
-                ctx.connection_charset_info(),
-                ctx,
-            )?;
-        }
-    }
-    Ok(())
-}
-
 /// Applies the comparison refinement that does not require a statement
 /// context while an AST binary expression is being built.
 ///
@@ -550,9 +321,7 @@ pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) -> Result<()
 /// conversion may need to report warnings.  The integer/non-integer constant
 /// rule is independent of both.  Running that rule here preserves Go's
 /// rounded integer constants (for example `a < '1.0'` -> `a < 1`) before
-/// comparison signature casts are selected.  A later context-aware
-/// [`refine_comparisons`] pass remains responsible for the session-sensitive
-/// rules and warning policy.
+/// comparison signature casts are selected.
 pub(crate) fn refine_integer_comparison_for_rewrite(name: &str, arguments: &mut [Expression]) {
     refine_integer_comparison_for_rewrite_with_context(name, arguments, &tidb_exprctx::context::NoColumns);
 }
@@ -576,45 +345,6 @@ pub(crate) fn refine_integer_comparison_for_rewrite_with_context(
     let left_is_int = eval_type(left) == Some(EvalType::Int);
     let right_is_int = eval_type(right) == Some(EvalType::Int);
     refine_int_operand_constant(left, right, left_is_int, right_is_int, name, mirrored, ctx);
-}
-
-/// Runs Go `compareFunctionClass.getFunction`'s comparison-only refinement
-/// for the expression at `expr`, without rebuilding already-constructed
-/// descendants. `NewFunction` calls this root form for the one function it is
-/// constructing; [`refine_comparisons`] remains the compatibility walk for an
-/// AST tree whose nodes were built before a real function builder was wired.
-pub(crate) fn refine_comparison<C: Columns>(
-    expr: &mut Expression,
-    ctx: &C,
-) -> Result<(), EvalError> {
-    if refine_comparison_core(expr, ctx)? {
-        if let Expression::ScalarFunction(function) = expr {
-            wrap_comparison_arguments_with_context(
-                &mut function.args,
-                ctx.connection_charset_info(),
-                ctx,
-            )?;
-        }
-    }
-    Ok(())
-}
-
-/// Context-erased comparison refinement used by plan rewriters whose resolver
-/// exposes a live statement context as a trait object.
-pub(crate) fn refine_comparison_dyn(
-    expr: &mut Expression,
-    ctx_dyn: &dyn Columns,
-) -> Result<(), EvalError> {
-    if refine_comparison_core(expr, ctx_dyn)? {
-        if let Expression::ScalarFunction(function) = expr {
-            wrap_comparison_arguments_with_context(
-                &mut function.args,
-                ctx_dyn.connection_charset_info(),
-                ctx_dyn,
-            )?;
-        }
-    }
-    Ok(())
 }
 
 /// Go expressionRewriter.inToExpression refines integer IN candidates before
@@ -712,254 +442,6 @@ fn allow_comparison_refinement(ctx: &dyn Columns, args: &[Expression]) -> Result
         return Ok(true);
     }
     Ok(false)
-}
-
-/// Applies Go's comparison argument refinement before either wrapper chooses
-/// the comparison signature. The caller decides whether the generated casts
-/// have a real construction context and therefore can be folded immediately.
-fn refine_comparison_core(expr: &mut Expression, ctx: &dyn Columns) -> Result<bool, EvalError> {
-    let Expression::ScalarFunction(function) = expr else {
-        return Ok(false);
-    };
-    let name = function.func_name.lowercase();
-    let Some(mirrored) = symmetric_op(name) else {
-        return Ok(false);
-    };
-    if function.args.len() != 2 {
-        return Ok(false);
-    }
-    let allow_refining = allow_comparison_refinement(ctx, &function.args)?;
-    if allow_refining {
-        crate::expr_util::remove_mutable_const(&mut function.args, ctx)?;
-    }
-    let [left, right] = function.args.as_mut_slice() else {
-        unreachable!()
-    };
-    if allow_refining {
-        if name == "nulleq" && rewrite_invalid_duration_null_eq(left, right, ctx)? {
-            return Ok(false);
-        }
-        refine_args(left, right, name, mirrored, ctx);
-        fold_temporal_comparison_string_constant(left, right, ctx)?;
-    }
-    // Go's own order: `getFunction` runs `refineArgs` first and only then
-    // derives the comparison type -- and the argument casts that go with it --
-    // from the arguments that survived it (`builtin_compare.go:1984-1989`).
-    wrap_integer_operand_for_decimal_compare(left, right);
-    wrap_year_operand_for_datetime_compare(left, right);
-    prepare_json_comparison_args(&mut function.args);
-    Ok(true)
-}
-
-/// Go `compareFunctionClass.generateCmpSigs`: cast both operands to the
-/// comparison domain chosen by `GetAccurateCmpType`.
-pub(crate) fn generate_cmp_sigs(
-    arguments: &mut Vec<Expression>,
-    connection: (&str, &str),
-) -> Result<(), EvalError> {
-    let [left, right] = arguments.as_slice() else {
-        return Ok(());
-    };
-    fn operand(expression: &Expression) -> Option<CmpOperand<'_>> {
-        expression.static_type().map(move |field_type| CmpOperand {
-            field_type,
-            // Go's `NewFunction` folds a wholly-constant subtree before
-            // `GetAccurateCmpType` sees it. The Rust rewriter keeps that
-            // subtree as a scalar node, so use the same foldability gate
-            // instead of testing only the node variant.
-            is_constant: crate::constant_fold::folds_to_constant(expression),
-            is_column: matches!(expression, Expression::Column(_)),
-        })
-    }
-    let (Some(left), Some(right)) = (operand(left), operand(right)) else {
-        return Ok(());
-    };
-    let comparison_type = get_accurate_cmp_type(left, right);
-    let wrap = |expression: Expression| match comparison_type {
-        EvalType::Int => wrap_with_cast_as_int(expression, None),
-        EvalType::Real => wrap_with_cast_as_real(expression),
-        EvalType::Decimal => wrap_with_cast_as_decimal(expression),
-        EvalType::String => wrap_with_cast_as_string(expression, connection),
-        EvalType::Datetime => {
-            wrap_with_cast_as_time(expression, FieldType::new(FieldTypeCode::Datetime))
-        }
-        EvalType::Timestamp => {
-            wrap_with_cast_as_time(expression, FieldType::new(FieldTypeCode::Timestamp))
-        }
-        EvalType::Duration => wrap_with_cast_as_duration(expression),
-        // Go `generateCmpSigs`: "In compare, if we cast string to JSON, we
-        // shouldn't parse it" -- the flag is cleared on the wrapped operand.
-        EvalType::Json => wrap_with_cast_as_json(expression).map(|mut wrapped| {
-            crate::expr_util::predicates::disable_parse_json_flag_4_expr(&mut wrapped);
-            wrapped
-        }),
-        EvalType::VectorFloat32 => wrap_with_cast_as_vector_float32(expression),
-    };
-    // Go derives the comparison collation before the casts and hands it to
-    // `HandleBinaryLiteral` for every ETString argument: a binary operand
-    // compared under a character-set collation decodes through an implicit
-    // `from_binary` (`u = 0x6162` folds to `eq(u, "ab")`).
-    let derived = (comparison_type == EvalType::String)
-        .then(|| {
-            crate::collation_derive::derive_collation_with_connection(
-                "eq",
-                arguments,
-                EvalType::Int,
-                connection,
-            )
-        })
-        .transpose()?;
-    *arguments = arguments
-        .iter()
-        .cloned()
-        .map(wrap)
-        .map(|argument| {
-            let argument = argument?;
-            Ok(match &derived {
-                Some(derived) => crate::rewriter::wrap_implicit_from_binary(
-                    argument,
-                    &derived.charset,
-                    &derived.collation,
-                ),
-                None => argument,
-            })
-        })
-        .collect::<Result<Vec<_>, EvalError>>()?;
-    Ok(())
-}
-
-/// Comparison signature generation's context-aware wrapper.
-///
-/// Go's `generateCmpSigs` calls `WrapWithCastAs*`, which delegates to
-/// `BuildCastFunction`; that builder folds every wholly-constant cast except
-/// JSON before the comparison signature is returned. Concrete and erased
-/// contexts use the same construction boundary; AST resolvers supply their
-/// own folding callback through wrap_comparison_arguments_with_fold.
-fn wrap_comparison_arguments_with_context(
-    arguments: &mut Vec<Expression>,
-    connection: (&str, &str),
-    ctx: &dyn Columns,
-) -> Result<(), EvalError> {
-    wrap_comparison_arguments_with_fold(arguments, connection, |argument| {
-        crate::constant_fold::fold_constant_in_mode(
-            argument,
-            ctx,
-            crate::constant_fold::ConstantFoldMode::Normal,
-        );
-    })
-}
-
-/// Fold generated casts at Go's BuildCastFunction construction boundary.
-/// JSON stays mutable until its evaluation flags have been installed.
-pub(crate) fn wrap_comparison_arguments_with_fold(
-    arguments: &mut Vec<Expression>,
-    connection: (&str, &str),
-    mut fold: impl FnMut(&mut Expression),
-) -> Result<(), EvalError> {
-    generate_cmp_sigs(arguments, connection)?;
-    // `BuildCastFunction` folds its newly-built cast in the statement
-    // context. This is observable for temporal and numeric constants: the
-    // comparison receives a `Constant`, not a Rust-only cast node, and
-    // conversion warnings are raised once during construction.
-    for argument in arguments {
-        if matches!(argument, Expression::ScalarFunction(function)
-            if (function.func_name.lowercase().starts_with("cast_")
-                || function.func_name.lowercase() == "from_binary")
-                && function.ret_type.as_ref().is_some_and(|tp| tp.eval_type() != EvalType::Json))
-        {
-            fold(argument);
-        }
-    }
-    Ok(())
-}
-
-/// Go `GetAccurateCmpType` chooses ETDatetime when a DATE/DATETIME/TIMESTAMP
-/// expression is compared with a string, then `generateCmpSigs` applies
-/// `WrapWithCastAsTime`. `BuildCastFunction` folds a constant argument at
-/// build time, including an invalid datetime becoming NULL after its warning.
-fn fold_temporal_comparison_string_constant(
-    left: &mut Expression,
-    right: &mut Expression,
-    ctx: &dyn Columns,
-) -> Result<(), EvalError> {
-    let is_temporal_expr = |expression: &Expression| {
-        expression.static_type().is_some_and(|field_type| {
-            matches!(
-                field_type.code(),
-                FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp
-            )
-        })
-    };
-    let string_constant = |expression: &Expression| {
-        matches!(
-            expression,
-            Expression::Constant(constant)
-                if constant.deferred_expr.is_none()
-                    && constant.param_marker.is_none()
-                    && matches!(constant.value, Datum::String(_) | Datum::Bytes(_))
-        )
-    };
-    let (constant, column_kind) = if is_temporal_expr(left) && string_constant(right) {
-        (right, temporal_expr_kind(left))
-    } else if is_temporal_expr(right) && string_constant(left) {
-        (left, temporal_expr_kind(right))
-    } else {
-        return Ok(());
-    };
-    let Expression::Constant(source) = constant else {
-        return Ok(());
-    };
-    // Go folds a VALID constant cast at build time, but an UNPARSEABLE one
-    // never becomes a folded `NULL` here: Go's own fold path warns once
-    // through the coprocessor's merged-warning channel, while this tier
-    // evaluates the comparison row by row, and each of those evaluations
-    // parses the same string and warns 1292 itself
-    // (`ops::time_compare_ordering`). Folding an unparseable string would
-    // silence every per-row warning, so leave such a constant in place --
-    // the row-level parse answers NULL for every row, which is the same
-    // result with the warning surface intact. The validity probe mirrors the
-    // evaluator's own flags (`Time::compare_string`: zero-in-date and
-    // invalid-date allowed, fsp 6) so anything it accepts still folds.
-    let source_text = match &source.value {
-        Datum::String(value) => String::from_utf8_lossy(value.bytes()).into_owned(),
-        Datum::Bytes(value) => String::from_utf8_lossy(value).into_owned(),
-        _ => return Ok(()),
-    };
-    let parses_cleanly = tidb_datatype::parse_time(
-        source_text.trim(),
-        column_kind,
-        6,
-        false,
-        true,
-        true,
-        &chrono_tz::Tz::UTC,
-    )
-    .is_ok_and(|parsed| !parsed.truncated);
-    if !parses_cleanly {
-        return Ok(());
-    }
-    let converted = crate::cast::parse_computed_time(
-        &source.value,
-        ctx,
-        tidb_datatype::TimeType::DateTime,
-        Some(6),
-    )?;
-    let mut target = FieldType::new(FieldTypeCode::Datetime);
-    // WrapWithCastAsTime uses MaxFsp for an ETString source.
-    target.set_decimal(6);
-    target.set_flen(26);
-    *constant = Expression::Constant(Constant::new(converted, target));
-    Ok(())
-}
-
-/// The parse kind the ROW-LEVEL evaluation uses for a temporal expression:
-/// its own field type's code, exactly as `ops::time_compare_ordering` reads
-/// it off the evaluated `Datum::Time`.
-fn temporal_expr_kind(expression: &Expression) -> tidb_datatype::TimeType {
-    match expression.static_type().map(tidb_datatype::FieldType::code) {
-        Some(tidb_datatype::FieldTypeCode::Date) => tidb_datatype::TimeType::Date,
-        _ => tidb_datatype::TimeType::DateTime,
-    }
 }
 
 /// Go `handleDurationTypeComparisonForNullEq`: when a plain non-NULL
@@ -1955,8 +1437,8 @@ mod tests {
                 parameter.param_marker = None;
                 parameter.deferred_expr = Some(Box::new(child));
             }
-            let mut cast = Expression::Constant(parameter);
-            wrap_integer_operand_as_decimal(&mut cast);
+            let cast = crate::wrap_cast::wrap_with_cast_as_decimal(Expression::Constant(parameter))
+                .unwrap();
             assert!(
                 matches!(&cast, Expression::ScalarFunction(function) if function.func_name.lowercase() == "cast_decimal")
             );
@@ -2241,4 +1723,412 @@ pub fn get_accurate_cmp_type(left: CmpOperand<'_>, right: CmpOperand<'_>) -> Eva
         }
     }
     cmp_type
+}
+
+/// Go `coalesceFunctionClass`.
+pub(crate) struct CoalesceFunctionClass;
+
+impl crate::builtin::FunctionClass for CoalesceFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn crate::builtin::BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<crate::builtin::BaseBuiltinFunc, EvalError> {
+        use tidb_proto::tipb::ScalarFuncSig;
+
+        // COALESCE is NOT NULL when any argument is.
+        let flag = args.iter().fold(0, |flag, arg| {
+            flag | (crate::wrap_cast::type_of(arg).flags() & FieldTypeFlags::NOT_NULL)
+        });
+        let mut result_field_type =
+            crate::builtin_control::infer_type_4_control_funcs(ctx, "coalesce", &args)?;
+        result_field_type.add_flags(flag);
+        let ret_eval_tp = result_field_type.eval_type();
+        let field_eval_tps = vec![ret_eval_tp; args.len()];
+        let mut bf = crate::builtin::new_base_builtin_func_with_tp(
+            ctx,
+            "coalesce",
+            args,
+            ret_eval_tp,
+            &field_eval_tps,
+        )?;
+        let decimal = result_field_type.decimal();
+        bf.tp = result_field_type;
+        bf.pb_code = match ret_eval_tp {
+            EvalType::Int => ScalarFuncSig::CoalesceInt,
+            EvalType::Real => ScalarFuncSig::CoalesceReal,
+            EvalType::Decimal => ScalarFuncSig::CoalesceDecimal,
+            EvalType::String => ScalarFuncSig::CoalesceString,
+            EvalType::Datetime | EvalType::Timestamp => {
+                bf.tp.set_decimal(decimal);
+                ScalarFuncSig::CoalesceTime
+            }
+            EvalType::Duration => {
+                bf.tp.set_decimal(decimal);
+                ScalarFuncSig::CoalesceDuration
+            }
+            EvalType::Json => ScalarFuncSig::CoalesceJson,
+            // Go sets no pb code for `builtinCoalesceVectorFloat32Sig`.
+            EvalType::VectorFloat32 => ScalarFuncSig::Unspecified,
+        };
+        Ok(bf)
+    }
+}
+
+/// Go `resolveType4Extremum`: the aggregated type, whether it is a DATE
+/// (`GLRetDate`), and how string arguments compare.
+fn resolve_type_4_extremum(args: &[Expression]) -> (FieldType, bool, GlCmpStringMode) {
+    let arg_types: Vec<FieldType> = args.iter().map(crate::wrap_cast::type_of).collect();
+    let agg_type = tidb_datatype::agg_field_type(&arg_types);
+    let mut cmp_string_mode = GlCmpStringMode::Directly;
+    if agg_type.eval_type().is_string_kind() {
+        let mut temporal_item: Option<FieldTypeCode> = None;
+        for item in &arg_types {
+            if item.code().is_type_temporal()
+                && (temporal_item.is_none() || item.code() == FieldTypeCode::Datetime)
+            {
+                temporal_item = Some(item.code());
+            }
+        }
+        if let Some(temporal_item) = temporal_item {
+            if !agg_type.code().is_type_temporal() && temporal_item.is_temporal_with_date() {
+                cmp_string_mode = if temporal_item == FieldTypeCode::Date {
+                    GlCmpStringMode::AsDate
+                } else {
+                    GlCmpStringMode::AsDatetime
+                };
+            }
+        }
+    }
+    let ret_date = agg_type.code() == FieldTypeCode::Date;
+    (agg_type, ret_date, cmp_string_mode)
+}
+
+/// Go `unsupportedJSONComparison`.
+fn unsupported_json_comparison(ctx: &dyn crate::builtin::BuildContext, args: &[Expression]) {
+    if args
+        .iter()
+        .any(|arg| crate::wrap_cast::type_of(arg).code() == FieldTypeCode::Json)
+    {
+        ctx.append_warning(&crate::expression_errors::ERR_UNSUPPORTED_JSON_COMPARISON);
+    }
+}
+
+/// Go `fixFlenAndDecimalForGreatestAndLeast`.
+fn fix_flen_and_decimal_for_greatest_and_least(args: &[Expression]) -> (i64, i64) {
+    args.iter().fold((0, 0), |(flen, decimal), arg| {
+        let arg_type = crate::wrap_cast::type_of(arg);
+        (flen.max(arg_type.flen()), decimal.max(arg_type.decimal()))
+    })
+}
+
+/// The signatures of `GREATEST` or of `LEAST`, in the order of Go's
+/// `getFunction` switch.
+struct ExtremumSigs {
+    int: tidb_proto::tipb::ScalarFuncSig,
+    real: tidb_proto::tipb::ScalarFuncSig,
+    decimal: tidb_proto::tipb::ScalarFuncSig,
+    cmp_string_as_date: tidb_proto::tipb::ScalarFuncSig,
+    cmp_string_as_time: tidb_proto::tipb::ScalarFuncSig,
+    string: tidb_proto::tipb::ScalarFuncSig,
+    duration: tidb_proto::tipb::ScalarFuncSig,
+    date: tidb_proto::tipb::ScalarFuncSig,
+    time: tidb_proto::tipb::ScalarFuncSig,
+}
+
+/// Go `greatestFunctionClass.getFunction` and `leastFunctionClass.getFunction`,
+/// which differ in their signatures only.
+fn extremum_function(
+    ctx: &dyn crate::builtin::BuildContext,
+    func_name: &str,
+    args: Vec<Expression>,
+    sigs: &ExtremumSigs,
+) -> Result<crate::builtin::BaseBuiltinFunc, EvalError> {
+    let (res_field_type, ret_date, cmp_string_mode) = resolve_type_4_extremum(&args);
+    let mut res_tp = res_field_type.eval_type();
+    let mut arg_tp = res_tp;
+    if cmp_string_mode != GlCmpStringMode::Directly {
+        arg_tp = EvalType::String;
+    } else if res_tp == EvalType::Json {
+        unsupported_json_comparison(ctx, &args);
+        arg_tp = EvalType::String;
+        res_tp = EvalType::String;
+    }
+    let arg_tps = vec![arg_tp; args.len()];
+    let mut bf =
+        crate::builtin::new_base_builtin_func_with_tp(ctx, func_name, args, res_tp, &arg_tps)?;
+    bf.pb_code = match arg_tp {
+        EvalType::Int => {
+            bf.tp.add_flags(res_field_type.flags());
+            sigs.int
+        }
+        EvalType::Real => sigs.real,
+        EvalType::Decimal => sigs.decimal,
+        EvalType::String => match cmp_string_mode {
+            GlCmpStringMode::AsDate => sigs.cmp_string_as_date,
+            GlCmpStringMode::AsDatetime => sigs.cmp_string_as_time,
+            GlCmpStringMode::Directly => sigs.string,
+        },
+        EvalType::Duration => sigs.duration,
+        EvalType::Datetime | EvalType::Timestamp => {
+            if ret_date {
+                sigs.date
+            } else {
+                sigs.time
+            }
+        }
+        // Go sets no pb code for the vector signatures.
+        EvalType::VectorFloat32 => tidb_proto::tipb::ScalarFuncSig::Unspecified,
+        EvalType::Json => {
+            return Err(EvalError::Unsupported("unsupported type json during evaluation"))
+        }
+    };
+    let (flen, decimal) = fix_flen_and_decimal_for_greatest_and_least(&bf.args);
+    bf.tp = bf.get_ret_tp();
+    bf.tp.set_flen_under_limit(flen);
+    bf.tp.set_decimal_under_limit(decimal);
+    Ok(bf)
+}
+
+/// Go `greatestFunctionClass`.
+pub(crate) struct GreatestFunctionClass;
+
+impl crate::builtin::FunctionClass for GreatestFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn crate::builtin::BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<crate::builtin::BaseBuiltinFunc, EvalError> {
+        use tidb_proto::tipb::ScalarFuncSig;
+        extremum_function(
+            ctx,
+            "greatest",
+            args,
+            &ExtremumSigs {
+                int: ScalarFuncSig::GreatestInt,
+                real: ScalarFuncSig::GreatestReal,
+                decimal: ScalarFuncSig::GreatestDecimal,
+                cmp_string_as_date: ScalarFuncSig::GreatestCmpStringAsDate,
+                cmp_string_as_time: ScalarFuncSig::GreatestCmpStringAsTime,
+                string: ScalarFuncSig::GreatestString,
+                duration: ScalarFuncSig::GreatestDuration,
+                date: ScalarFuncSig::GreatestDate,
+                time: ScalarFuncSig::GreatestTime,
+            },
+        )
+    }
+}
+
+/// Go `leastFunctionClass`.
+pub(crate) struct LeastFunctionClass;
+
+impl crate::builtin::FunctionClass for LeastFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn crate::builtin::BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<crate::builtin::BaseBuiltinFunc, EvalError> {
+        use tidb_proto::tipb::ScalarFuncSig;
+        extremum_function(
+            ctx,
+            "least",
+            args,
+            &ExtremumSigs {
+                int: ScalarFuncSig::LeastInt,
+                real: ScalarFuncSig::LeastReal,
+                decimal: ScalarFuncSig::LeastDecimal,
+                cmp_string_as_date: ScalarFuncSig::LeastCmpStringAsDate,
+                cmp_string_as_time: ScalarFuncSig::LeastCmpStringAsTime,
+                string: ScalarFuncSig::LeastString,
+                duration: ScalarFuncSig::LeastDuration,
+                date: ScalarFuncSig::LeastDate,
+                time: ScalarFuncSig::LeastTime,
+            },
+        )
+    }
+}
+
+/// Go `intervalFunctionClass`.
+pub(crate) struct IntervalFunctionClass;
+
+impl crate::builtin::FunctionClass for IntervalFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn crate::builtin::BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<crate::builtin::BaseBuiltinFunc, EvalError> {
+        use tidb_proto::tipb::ScalarFuncSig;
+        let all_int = args
+            .iter()
+            .all(|arg| crate::wrap_cast::type_of(arg).eval_type() == EvalType::Int);
+        let arg_tp = if all_int { EvalType::Int } else { EvalType::Real };
+        let arg_tps = vec![arg_tp; args.len()];
+        let mut bf = crate::builtin::new_base_builtin_func_with_tp(
+            ctx,
+            "interval",
+            args,
+            EvalType::Int,
+            &arg_tps,
+        )?;
+        bf.pb_code = if all_int {
+            ScalarFuncSig::IntervalInt
+        } else {
+            ScalarFuncSig::IntervalReal
+        };
+        Ok(bf)
+    }
+}
+
+/// Go `compareFunctionClass`, one per comparison operator.
+pub(crate) struct CompareFunctionClass {
+    /// Go `funcName`.
+    pub(crate) func_name: &'static str,
+}
+
+/// The comparison at `expr` rebuilt through its function class in `ctx`,
+/// for a test whose resolver built it without a statement context.
+#[cfg(test)]
+pub(crate) fn refine_comparison(expr: &mut Expression, ctx: &dyn Columns) -> Result<(), EvalError> {
+    let Expression::ScalarFunction(function) = expr else {
+        return Ok(());
+    };
+    let name = function.func_name.lowercase().to_owned();
+    if symmetric_op(&name).is_none() || function.args.len() != 2 {
+        return Ok(());
+    }
+    let class = crate::builtin::funcs(&name).expect("a comparison class");
+    let f = class.get_function(
+        &crate::builtin::ColumnsBuildContext(ctx),
+        std::mem::take(&mut function.args),
+    )?;
+    *function = crate::new_function::scalar_function_of(
+        &name,
+        FieldType::new(FieldTypeCode::Unspecified),
+        f,
+    );
+    Ok(())
+}
+
+/// [`refine_comparison`] over every comparison of the tree at `expr`.
+#[cfg(test)]
+pub(crate) fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) -> Result<(), EvalError> {
+    if let Expression::ScalarFunction(function) = expr {
+        for arg in &mut function.args {
+            refine_comparisons(arg, ctx)?;
+        }
+    }
+    refine_comparison(expr, ctx)
+}
+
+impl CompareFunctionClass {
+    /// Go `refineArgs`.
+    fn refine_args(
+        &self,
+        ctx: &dyn crate::builtin::BuildContext,
+        args: &mut Vec<Expression>,
+    ) -> Result<(), EvalError> {
+        let name = self.func_name;
+        let Some(columns) = ctx.columns() else {
+            refine_integer_comparison_for_rewrite(name, args);
+            return Ok(());
+        };
+        if !allow_comparison_refinement(columns, args)? {
+            return Ok(());
+        }
+        crate::expr_util::remove_mutable_const(args, columns)?;
+        let [left, right] = args.as_mut_slice() else {
+            unreachable!("verifyArgs admits two arguments")
+        };
+        if name == "nulleq" && rewrite_invalid_duration_null_eq(left, right, columns)? {
+            return Ok(());
+        }
+        let mirrored = symmetric_op(name).expect("a comparison operator");
+        refine_args(left, right, name, mirrored, columns);
+        Ok(())
+    }
+}
+
+impl crate::builtin::FunctionClass for CompareFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn crate::builtin::BuildContext,
+        mut args: Vec<Expression>,
+    ) -> Result<crate::builtin::BaseBuiltinFunc, EvalError> {
+        use tidb_proto::tipb::ScalarFuncSig as Sig;
+
+        self.refine_args(ctx, &mut args)?;
+        let arg_types: Vec<FieldType> = args.iter().map(crate::wrap_cast::type_of).collect();
+        let operand = |index: usize| CmpOperand {
+            field_type: &arg_types[index],
+            // Go's `NewFunction` folds a wholly-constant subtree before
+            // `GetAccurateCmpType` sees it; the Rust rewriter keeps that
+            // subtree as a scalar node.
+            is_constant: crate::constant_fold::folds_to_constant(&args[index]),
+            is_column: matches!(args[index], Expression::Column(_)),
+        };
+        let tp = get_accurate_cmp_type(operand(0), operand(1));
+
+        // Go `generateCmpSigs`.
+        let mut bf = crate::builtin::new_base_builtin_func_with_tp(
+            ctx,
+            self.func_name,
+            args,
+            EvalType::Int,
+            &[tp, tp],
+        )?;
+        if tp == EvalType::Json {
+            // In compare, if we cast string to JSON, we shouldn't parse it.
+            for arg in &mut bf.args {
+                crate::expr_util::predicates::disable_parse_json_flag_4_expr(arg);
+            }
+        }
+        bf.tp.set_flen(1);
+        // lt, le, gt, eq, ge, ne, nulleq
+        let sigs = match tp {
+            EvalType::Int => [
+                Sig::LtInt, Sig::LeInt, Sig::GtInt, Sig::EqInt, Sig::GeInt, Sig::NeInt,
+                Sig::NullEqInt,
+            ],
+            EvalType::Real => [
+                Sig::LtReal, Sig::LeReal, Sig::GtReal, Sig::EqReal, Sig::GeReal, Sig::NeReal,
+                Sig::NullEqReal,
+            ],
+            EvalType::Decimal => [
+                Sig::LtDecimal, Sig::LeDecimal, Sig::GtDecimal, Sig::EqDecimal, Sig::GeDecimal,
+                Sig::NeDecimal, Sig::NullEqDecimal,
+            ],
+            EvalType::String => [
+                Sig::LtString, Sig::LeString, Sig::GtString, Sig::EqString, Sig::GeString,
+                Sig::NeString, Sig::NullEqString,
+            ],
+            EvalType::Duration => [
+                Sig::LtDuration, Sig::LeDuration, Sig::GtDuration, Sig::EqDuration,
+                Sig::GeDuration, Sig::NeDuration, Sig::NullEqDuration,
+            ],
+            EvalType::Datetime | EvalType::Timestamp => [
+                Sig::LtTime, Sig::LeTime, Sig::GtTime, Sig::EqTime, Sig::GeTime, Sig::NeTime,
+                Sig::NullEqTime,
+            ],
+            EvalType::Json => [
+                Sig::LtJson, Sig::LeJson, Sig::GtJson, Sig::EqJson, Sig::GeJson, Sig::NeJson,
+                Sig::NullEqJson,
+            ],
+            EvalType::VectorFloat32 => [
+                Sig::LtVectorFloat32, Sig::LeVectorFloat32, Sig::GtVectorFloat32,
+                Sig::EqVectorFloat32, Sig::GeVectorFloat32, Sig::NeVectorFloat32,
+                Sig::NullEqVectorFloat32,
+            ],
+        };
+        bf.pb_code = match self.func_name {
+            "lt" => sigs[0],
+            "le" => sigs[1],
+            "gt" => sigs[2],
+            "eq" => sigs[3],
+            "ge" => sigs[4],
+            "ne" => sigs[5],
+            "nulleq" => sigs[6],
+            other => unreachable!("{other} is not a comparison operator"),
+        };
+        Ok(bf)
+    }
 }

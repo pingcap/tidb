@@ -1849,12 +1849,8 @@ impl ScalarFunction {
     /// the one the arguments select.
     pub(crate) fn extremum_signature(&self) -> Option<crate::builtin_ext::GlSignature> {
         self.gl_signature
+            .or_else(|| self.pb_builtin.as_ref().and_then(|builtin| crate::builtin_ext::GlSignature::of_signature(builtin.signature())))
             .or_else(|| crate::rewriter::result_type::gl_signature(&self.args))
-    }
-
-    /// Whether this function evaluates through a protobuf-selected builtin.
-    pub(crate) fn has_pb_builtin(&self) -> bool {
-        self.pb_builtin.is_some()
     }
 
     /// Go's string `GREATEST`/`LEAST` `vecEvalString` for one row: the

@@ -58,7 +58,15 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   the ILIKE it stands for. Left, and the planner's, not a class's: Go's
   `FTSFunctionIsUsed` statement flag and the alternative-plan rounds (the
   LIKE fallback here is a rewrite of the query's AST before its one build).
-- [ ] Milestone 4: `builtin_compare.go` (5), `builtin_control.go` (3).
+- [x] (2026-11-10) Milestone 4: `builtin_compare.go` (5 classes, 11
+  names), `builtin_control.go` (3). `refineArgs` runs inside the compare
+  class, and `refine_comparison*`, `generate_cmp_sigs` and the rewriter's
+  compare wrappers are deleted. Left: `builtin_return_type`'s two callers
+  (`simple_expr.rs`, `pushdown_catalog.rs`) still reach
+  `rewriter/control_type.rs`, `result_type.rs`'s `gl_signature` /
+  `extremum_return_type` and `set_gl_signature`; `is_constant` asks
+  `folds_to_constant` where Go asks for a `*Constant`; `interval`'s
+  `hasNullable` reads the cast arguments.
 - [ ] Milestone 5: `builtin_math.go` (25).
 - [ ] Milestone 6: `builtin_miscellaneous.go` (29), `builtin_info.go` (26),
   `builtin_encryption.go` (14).
@@ -185,6 +193,34 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   `match_against` at 0.1 selectivity.
   Evidence: `only_a_query_gets_the_like_fallback_round`,
   `a_native_match_against_is_estimated_as_its_ilike`.
+- Observation: a constant's repertoire is a stored field in Go, set once
+  by `initConstantRepertoire` when the rewriter turns a literal or a
+  parameter marker into a `Constant`; a constant built any other way keeps
+  the zero value. Deriving it lazily from the value made `CASE`'s and
+  `COALESCE`'s aggregated collation differ from Go's for folded constants.
+  Evidence: the `case` and `coalesce` rows of the function-class matrix.
+- Observation: Go's `NewFunction` folds every function it builds
+  (`newFunctionImpl` ends in `FoldConstant`), so the node a class returns
+  is folded before its parent sees it. With the fold only at the rewriter's
+  outer call, an `IN` list's `eq(0, 1)` members stayed unfolded and the
+  index-merge plans of `a < 50 or b < 50` changed.
+  Evidence: `an_always_false_refined_comparison_folds_away`, the
+  `explain_indexmerge_stats` replay topic.
+- Observation: `ifNullFoldHandler` (issue 51765) gives the IFNULL the
+  charset and collation of its second argument when the first folds to
+  NULL, before the fold keeps the node's collation. Both fold
+  implementations (`constant_fold.rs`, `expr_util/fold.rs`) need the step.
+  Evidence: `set_names_reaches_literal_and_folded_expression_collations`,
+  the `expression/constant_fold` replay topic.
+- Observation: every class-built node carries a signature, so "has a
+  signature" no longer means "decoded from protobuf". The projection's
+  string `GREATEST` / `LEAST` buffer shaping skipped such nodes and charged
+  640 bytes more than Go.
+  Evidence: `a_string_extremum_projection_peaks_like_gos_ping_pong`.
+- Observation: the matrix probe had no ENUM or SET argument and no NULL
+  literal beside a NOT NULL column, so the control classes' enum/set and
+  nullability arms were unpinned (two mutants survived). The probe gained
+  the letters `E` and `S` and the mixed shapes (37,206 rows).
 
 ## Decision Log
 

@@ -165,27 +165,27 @@ pub(crate) fn info_metadata_value(name: &str, arg: &Expression) -> Option<Datum>
     }
 }
 
-/// Go `Column.Repertoire()` and `initConstantRepertoire`
-/// (`pkg/planner/core/expression_rewriter.go`): a stored non-zero value wins;
-/// otherwise a constant's repertoire comes from its BYTES (any byte >= 0x80
-/// makes it UNICODE) and a column's from its charset.
+/// Go `initConstantRepertoire` (`pkg/planner/core/expression_rewriter.go`):
+/// a literal is ASCII unless it is a string holding a byte >= 0x80.
+pub fn init_constant_repertoire(c: &mut crate::constant::Constant) {
+    c.collation.set_repertoire(Repertoire::ASCII);
+    if c.ret_type.as_ref().is_some_and(|tp| tp.eval_type() == EvalType::String)
+        && c.value.go_bytes().iter().any(|b| *b >= 0x80)
+    {
+        c.collation.set_repertoire(Repertoire::UNICODE);
+    }
+}
+
+/// Go `Expression.Repertoire()`: a constant's is the one stored on it
+/// (`initConstantRepertoire` for a literal, the folded function's for a
+/// fold); a column's stored non-zero value wins over its charset's.
 #[must_use]
 pub fn repertoire_of(expr: &Expression) -> Repertoire {
     let info = collation_info_of(expr);
-    if info.repertoire() != Repertoire::default() {
+    if info.repertoire() != Repertoire::default() || matches!(expr, Expression::Constant(_)) {
         return info.repertoire();
     }
     let ft = ret_type_of(expr);
-    if let Expression::Constant(c) = expr {
-        if ft.eval_type() == EvalType::String {
-            if let Some(bytes) = c.value.as_raw_bytes() {
-                if bytes.iter().any(|b| *b >= 0x80) {
-                    return Repertoire::UNICODE;
-                }
-            }
-        }
-        return Repertoire::ASCII;
-    }
     match ft.eval_type() {
         EvalType::Json => Repertoire::UNICODE,
         EvalType::String => {
@@ -408,7 +408,7 @@ pub fn check_and_derive_collation_from_exprs(
     )
 }
 
-fn check_and_derive_collation_from_exprs_with_connection(
+pub(crate) fn check_and_derive_collation_from_exprs_with_connection(
     func_name: &str,
     eval_type: EvalType,
     args: &[Expression],
@@ -522,11 +522,45 @@ pub fn derive_collation(
     derive_collation_with_connection(func_name, args, ret_type, connection_charset_info())
 }
 
-/// [`derive_collation`] under the statement's connection charset/collation.
+/// [`derive_collation`] under the statement's connection charset/collation,
+/// for a caller that has no declared argument types: the ones Go's function
+/// class would declare are read off the arguments.
 pub fn derive_collation_with_connection(
     func_name: &str,
     args: &[Expression],
     ret_type: EvalType,
+    connection: (&str, &str),
+) -> Result<ExprCollation, EvalError> {
+    let string_if = |string: bool| if string { EvalType::String } else { EvalType::Int };
+    let arg_tps: Vec<EvalType> = match func_name {
+        // `fieldFunctionClass` declares `ETString` only when `isAllString`.
+        "field" => {
+            let all_string = args
+                .iter()
+                .all(|arg| ret_type_of(arg).eval_type() == EvalType::String);
+            vec![string_if(all_string); args.len()]
+        }
+        // `GetAccurateCmpType` is a string comparison when both operands are.
+        "ge" | "le" | "gt" | "lt" | "eq" | "ne" | "nulleq" if args.len() == 2 => {
+            vec![string_if(compare_is_string(args)); 2]
+        }
+        // `strcmpFunctionClass` declares `ETString, ETString` whatever it is
+        // handed, so `STRCMP(123, '123 ')` still aggregates a collation.
+        "strcmp" => vec![EvalType::String; args.len()],
+        // `caseWhenFunctionClass` declares every value slot in the result type.
+        "case" => vec![ret_type; args.len()],
+        _ => Vec::new(),
+    };
+    derive_collation_with_arg_tps(func_name, args, ret_type, &arg_tps, connection)
+}
+
+/// Go `deriveCollation(ctx, funcName, args, retType, argTps...)`.
+#[allow(clippy::too_many_lines)]
+pub(crate) fn derive_collation_with_arg_tps(
+    func_name: &str,
+    args: &[Expression],
+    ret_type: EvalType,
+    arg_tps: &[EvalType],
     connection: (&str, &str),
 ) -> Result<ExprCollation, EvalError> {
     match func_name {
@@ -582,16 +616,10 @@ pub fn derive_collation_with_connection(
             args,
             connection,
         ),
-        // `FIELD(needle, a, b, ...)` aggregates over EVERY argument, but only
-        // when the whole list is string-typed. Go tests `argTps[0] ==
-        // types.ETString`, and `fieldFunctionClass.getFunction` fills `argTps`
-        // with ONE eval type chosen for the entire list (`ETString` only when
-        // `isAllString`), so that single test is an all-string test.
+        // `FIELD(needle, a, b, ...)` aggregates over EVERY argument when the
+        // declared argument type is string.
         "field" if !args.is_empty() => {
-            if args
-                .iter()
-                .all(|arg| ret_type_of(arg).eval_type() == EvalType::String)
-            {
+            if arg_tps.first() == Some(&EvalType::String) {
                 return check_and_derive_collation_from_exprs_with_connection(
                     func_name, ret_type, args, connection,
                 );
@@ -617,29 +645,12 @@ pub fn derive_collation_with_connection(
                 connection,
             )
         }
-        // Comparison: aggregate when the compare type is string, then report
-        // the RESULT as a NUMERIC/ASCII int (the aggregated collation stays on
-        // the result type, which is where the comparer reads it from).
-        // `STRCMP` shares the comparison arm's SHAPE but not its condition:
-        // Go tests `argTps[0] == types.ETString`, the DECLARED argument type,
-        // and `strcmpFunctionClass` declares `ETString, ETString` whatever it
-        // is handed (`builtin_string.go`'s `newBaseBuiltinFuncWithTp`). So
-        // `STRCMP(123, '123 ')` still aggregates a collation and still pads --
-        // Go answers 0 -- where the comparison operators would have promoted
-        // to REAL and consulted none.
-        "strcmp" if args.len() == 2 => {
-            let mut ec = check_and_derive_collation_from_exprs_with_connection(
-                func_name,
-                EvalType::Int,
-                args,
-                connection,
-            )?;
-            ec.coer = Coercibility::NUMERIC;
-            ec.repe = Repertoire::ASCII;
-            Ok(ec)
-        }
-        "ge" | "le" | "gt" | "lt" | "eq" | "ne" | "nulleq" => {
-            if args.len() == 2 && compare_is_string(args) {
+        // Comparison: aggregate when the declared argument type is string,
+        // then report the RESULT as a NUMERIC/ASCII int (the aggregated
+        // collation stays on the result type, which is where the comparer
+        // reads it from).
+        "ge" | "le" | "gt" | "lt" | "eq" | "ne" | "nulleq" | "strcmp" => {
+            if arg_tps.first() == Some(&EvalType::String) {
                 let mut ec = check_and_derive_collation_from_exprs_with_connection(
                     func_name,
                     EvalType::Int,
@@ -654,7 +665,7 @@ pub fn derive_collation_with_connection(
         }
         // Go's CASE signature declares every value slot in the merged result
         // domain. Only those slots participate in string collation aggregation.
-        "case" if args.len() >= 2 && ret_type == EvalType::String => {
+        "case" if args.len() >= 2 && arg_tps.get(1) == Some(&EvalType::String) => {
             let values = args
                 .iter()
                 .enumerate()

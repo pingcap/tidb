@@ -332,6 +332,7 @@ pub mod builtin_arithmetic;
 mod builtin_cast_semantics;
 mod chunk_executor;
 pub mod builtin_compare;
+mod builtin_control;
 mod builtin_ext;
 mod builtin_fts;
 mod builtin_grouping;

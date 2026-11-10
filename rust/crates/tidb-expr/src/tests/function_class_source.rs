@@ -126,6 +126,7 @@ fn value_text(value: &Datum) -> String {
         Datum::UInt(value) => ("uint", value.to_string()),
         Datum::Real(value) => ("real", value.to_string()),
         Datum::Decimal(value) => ("decimal", value.to_string()),
+        Datum::String(value) => ("string", String::from_utf8_lossy(value.bytes()).into_owned()),
         value => panic!("constant {value:?}"),
     };
     let hex: String = text.bytes().map(|byte| format!("{byte:02x}")).collect();

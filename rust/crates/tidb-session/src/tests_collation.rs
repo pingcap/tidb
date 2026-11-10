@@ -82,6 +82,42 @@ fn set_names_reaches_literal_and_folded_expression_collations() {
     );
 }
 
+/// Go `initConstantRepertoire` stamps each literal the rewriter builds:
+/// ASCII, or UNICODE when a string's bytes leave ASCII. Between two
+/// COERCIBLE literals of different non-Unicode charsets `inferCollation`
+/// takes the side whose repertoire is not ASCII, and has no rule for two
+/// ASCII ones. Go testkit probe.
+#[test]
+fn a_literals_repertoire_decides_between_two_non_unicode_charsets() {
+    let mut session = Session::new();
+    for sql in [
+        "SELECT COLLATION(CONCAT(_ascii'a', _latin1 0xE9))",
+        "SELECT COLLATION(CONCAT(_latin1 0xE9, _ascii'a'))",
+        "SELECT COLLATION(COALESCE(_ascii'a', _latin1 0xE9))",
+        "SELECT COLLATION(IF(1, _ascii'a', _latin1 0xE9))",
+        "SELECT COLLATION(GREATEST(_ascii'a', _latin1 0xE9))",
+    ] {
+        assert_eq!(one(&mut session, sql), "latin1_bin", "{sql}");
+    }
+    assert_eq!(one(&mut session, "SELECT _ascii'a' = _latin1 0xE9"), "0");
+    for (sql, operation) in [
+        ("SELECT COLLATION(CONCAT(_ascii'a', _latin1'b'))", "concat"),
+        ("SELECT COLLATION(COALESCE(_ascii'a', _latin1'b'))", "coalesce"),
+        ("SELECT _ascii'a' = _latin1'b'", "="),
+    ] {
+        assert_eq!(
+            error_of(&mut session, sql),
+            (
+                1267,
+                format!(
+                    "Illegal mix of collations (ascii_bin,COERCIBLE) and (latin1_bin,COERCIBLE) for operation '{operation}'"
+                )
+            ),
+            "{sql}"
+        );
+    }
+}
+
 /// A `_ci` column compared with a literal folds case: the literal is
 /// COERCIBLE (4) and the column IMPLICIT (2), so the column's collation wins
 /// every one of these. Captured: each count is 2, where a byte-wise

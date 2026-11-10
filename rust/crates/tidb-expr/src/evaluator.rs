@@ -521,18 +521,16 @@ impl EvaluatorSuite {
                     if let (Some((arity, directly)), Expression::ScalarFunction(function)) =
                         (crate::chunk_executor::string_extremum_arity(expression), expression)
                     {
-                        if !function.has_pb_builtin() {
-                            string_extremum_vec(
-                                function,
-                                arity,
-                                directly,
-                                ctx,
-                                input,
-                                output,
-                                *output_index,
-                            )?;
-                            continue;
-                        }
+                        string_extremum_vec(
+                            function,
+                            arity,
+                            directly,
+                            ctx,
+                            input,
+                            output,
+                            *output_index,
+                        )?;
+                        continue;
                     }
                     crate::chunk_executor::eval_one_vec(expression, input, output, *output_index);
                 }

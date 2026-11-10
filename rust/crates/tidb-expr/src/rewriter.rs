@@ -939,15 +939,18 @@ fn scalar(name: &str, args: Vec<Expression>) -> Expression {
     ))
 }
 
-/// Go `er.newFunction` for a name `funcs` lists: `class` builds the node,
-/// which the caller folds.
+/// Go `er.newFunction` for a name `funcs` lists: `class` builds the node
+/// and `newFunctionImpl` folds it.
 fn class_function(
     class: &dyn crate::builtin::FunctionClass,
     name: &str,
     args: Vec<Expression>,
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
-    class_scalar_function(class, name, args, resolver).map(Expression::ScalarFunction)
+    let mut call =
+        class_scalar_function(class, name, args, resolver).map(Expression::ScalarFunction)?;
+    resolver.fold_constant(&mut call, resolver.fold_mode());
+    Ok(call)
 }
 
 /// [`class_function`]'s node, for a caller that initializes it (Go
@@ -958,7 +961,10 @@ fn class_scalar_function(
     mut args: Vec<Expression>,
     resolver: &impl ColumnResolver,
 ) -> Result<ScalarFunction, EvalError> {
-    crate::new_function::type_infer_for_null(&mut args);
+    // Go `newFunctionImpl`: the control functions and ROW infer their own.
+    if !matches!(name, "if" | "ifnull" | "nullif" | "row") {
+        crate::new_function::type_infer_for_null(&mut args);
+    }
     let f = class.get_function(&crate::builtin::ResolverBuildContext(resolver), args)?;
     Ok(crate::new_function::scalar_function_of(
         name,
@@ -978,11 +984,10 @@ fn not_to_expression(
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
     let class = crate::builtin::funcs(op).expect("the operator's function class is ported");
-    let mut call = class_function(class, op, args, resolver)?;
+    let call = class_function(class, op, args, resolver)?;
     if !has_not {
         return Ok(call);
     }
-    resolver.fold_constant(&mut call, resolver.fold_mode());
     let name = unary_op_name(UnaryOp::Not);
     let class = crate::builtin::funcs(name).expect("builtin_op.go registers NOT");
     class_function(class, name, vec![call], resolver)
@@ -1087,60 +1092,7 @@ fn binary_expression(
     if let Some(class) = crate::builtin::funcs(name) {
         return class_function(class, name, vec![left, right], resolver);
     }
-    match crate::builtin_compare::infer_compare_type(name) {
-        Some(mut ret_type) => {
-            let mut args = vec![left, right];
-            // Go `adjustNullFlagForReturnType` runs on the arguments AFTER the
-            // implicit casts wrapped them.
-            result_type::stamp_builtin_return_flags(name, &args, &mut ret_type);
-            if crate::builtin_compare::infer_compare_type(name).is_some() {
-                if let Some(ctx) = resolver.comparison_context() {
-                    let mut expression = Expression::ScalarFunction(ScalarFunction::new(
-                        CiString::new(name),
-                        ret_type.clone(),
-                        args,
-                    ));
-                    crate::builtin_compare::refine_comparison_dyn(&mut expression, ctx)?;
-                    // Go `NewFunction` folds the comparison it built: an
-                    // always-false refinement (`refineArgs` returning `0, 1`
-                    // for `int_not_null = 0.12`) becomes the constant 0. This
-                    // tier settles a string comparison's collation after
-                    // construction, so only a comparison of two plain INT
-                    // constants -- which no collation can change -- folds
-                    // here.
-                    let integer_constants = matches!(
-                        &expression,
-                        Expression::ScalarFunction(function)
-                            if function.args.iter().all(|argument| matches!(
-                                argument,
-                                Expression::Constant(constant)
-                                    if constant.param_marker.is_none()
-                                        && constant.deferred_expr.is_none()
-                                        && matches!(constant.value, tidb_datatype::Datum::Int(_))
-                            ))
-                    );
-                    if integer_constants {
-                        resolver.fold_constant(&mut expression, ConstantFoldMode::Normal);
-                    }
-                    return Ok(expression);
-                } else {
-                    crate::builtin_compare::refine_integer_comparison_for_rewrite(name, &mut args);
-                }
-                crate::builtin_compare::prepare_json_comparison_args(&mut args);
-                crate::builtin_compare::wrap_comparison_arguments_with_fold(
-                    &mut args,
-                    resolver.connection_charset_info(),
-                    |argument| resolver.fold_constant(argument, ConstantFoldMode::Normal),
-                )?;
-            }
-            Ok(Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new(name),
-                ret_type,
-                args,
-            )))
-        }
-        None => Ok(scalar(name, vec![left, right])),
-    }
+    Ok(scalar(name, vec![left, right]))
 }
 
 /// Go `ResolveType4Between` (`pkg/expression/builtin_compare.go:395`), which
@@ -1198,42 +1150,6 @@ fn resolve_type4_between(args: [&Expression; 3]) -> EvalType {
         return EvalType::Int;
     }
     cmp_type
-}
-
-/// Go `newBaseBuiltinFuncWithFieldTypes`' implicit cast for one CASE branch:
-/// every THEN/ELSE argument is wrapped in the MERGED control type. Decimal,
-/// datetime, timestamp, and duration targets take the FULL merged type
-/// (`flen`/`decimal`), which is what turns a folded `0` into `0.0000`; the
-/// other families use the same `WrapWithCastAs*` helpers Go calls.
-///
-/// The flag says whether a cast was built: Go folds only a cast it just built
-/// (`BuildCastFunctionWithCheck`), never an argument it passes through.
-fn wrap_case_branch(
-    branch: Expression,
-    target: &FieldType,
-    connection: (&str, &str),
-) -> Result<(Expression, bool), EvalError> {
-    // Go `FieldType.Equal`: every flag but UNSIGNED is ignored, so a branch
-    // that merely differs in NOT NULL is passed through uncast.
-    let already = branch
-        .static_type()
-        .is_some_and(|source| source.equal(target));
-    let was_cast = is_newly_built_cast(&branch);
-    let wrapped = match target.eval_type() {
-        EvalType::Int => wrap_with_cast_as_int(branch, Some(target))?,
-        EvalType::Real => wrap_with_cast_as_real(branch)?,
-        EvalType::Decimal | EvalType::Datetime | EvalType::Timestamp | EvalType::Duration => {
-            if already {
-                return Ok((branch, false));
-            }
-            crate::simple_expr::build_cast_function(branch, target.clone(), false)?
-        }
-        EvalType::String => wrap_with_cast_as_string(branch, connection)?,
-        EvalType::Json => crate::wrap_cast::wrap_with_cast_as_json(branch)?,
-        EvalType::VectorFloat32 => return Ok((branch, false)),
-    };
-    let built = is_newly_built_cast(&wrapped) && !was_cast;
-    Ok((wrapped, built))
 }
 
 /// Applies Go's `wrapExpWithCast` to all three BETWEEN operands. The common
@@ -1903,10 +1819,18 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
         | Expr::Hex(_)
         | Expr::Bit(_)
         | Expr::CharsetBinary { .. }
-        | Expr::Assign { .. }
-        | Expr::UserVar(_)
-        | Expr::Collate { .. }
-        | Expr::CharsetString { .. } => rewrite_leaf_literal(expr, resolver),
+        | Expr::CharsetString { .. } => {
+            // Go `expressionRewriter.Leave`'s `*driver.ValueExpr` arm and
+            // `toParamMarker`: `initConstantRepertoire` on the built constant.
+            let mut literal = rewrite_leaf_literal(expr, resolver)?;
+            if let Expression::Constant(constant) = &mut literal {
+                crate::collation_derive::init_constant_repertoire(constant);
+            }
+            Ok(literal)
+        }
+        Expr::Assign { .. } | Expr::UserVar(_) | Expr::Collate { .. } => {
+            rewrite_leaf_literal(expr, resolver)
+        }
         Expr::In { .. }
         | Expr::Between { .. }
         | Expr::Like { .. }
@@ -2745,54 +2669,14 @@ fn rewrite_leaf_compound(
                     }
                     None => condition,
                 };
-                // Go `caseWhenFunctionClass.getFunction`: every WHEN
-                // condition runs through `wrapWithIsTrue(ctx, true, arg, false)`.
-                args.push(crate::builtin_op::wrap_with_is_true(
-                    &crate::builtin::ResolverBuildContext(&child_resolver),
-                    true,
-                    condition,
-                    false,
-                )?);
+                args.push(condition);
                 args.push(rewrite_expr_resolved(result, &child_resolver)?);
             }
             if let Some(else_clause) = else_clause {
                 args.push(rewrite_expr_resolved(else_clause, &child_resolver)?);
             }
-            let ret_type = builtin_return_type("case", &args).ok_or(EvalError::Unsupported(
-                "a CASE whose branches have different types",
-            ))?;
-            // Go's `caseWhenFunctionClass.getFunction` builds the signature
-            // with the merged type as every result argument's expected type,
-            // so the branches are cast to it before the function is built.
-            let connection = resolver.connection_charset_info();
-            let mut result_indexes: Vec<usize> = (1..args.len()).step_by(2).collect();
-            if args.len() % 2 == 1 {
-                // The trailing ELSE is a result branch too.
-                result_indexes.push(args.len() - 1);
-            }
-            for index in result_indexes {
-                let branch = args[index].clone();
-                let (mut wrapped, built) = wrap_case_branch(branch, &ret_type, connection)?;
-                // Go `BuildCastFunctionWithCheck` (`builtin_cast.go:2655`)
-                // folds the constant cast it just built, which is why a
-                // constant branch renders as the cast's own type
-                // (`0.0000`). Rust's builders defer that fold so conversion
-                // diagnostics stay with the live statement context; this is
-                // that context, and a non-constant branch is untouched.
-                if let (true, Some(context)) = (built, resolver.comparison_context()) {
-                    crate::constant_fold::fold_constant_in_mode(
-                        &mut wrapped,
-                        context,
-                        ConstantFoldMode::Normal,
-                    );
-                }
-                args[index] = wrapped;
-            }
-            Ok(Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("case"),
-                ret_type,
-                args,
-            )))
+            // Go `caseToExpression`: `er.newFunction(ast.Case, &v.Type, args...)`.
+            class_function(&crate::builtin_control::CaseWhenFunctionClass, "case", args, resolver)
         }
         // Go's parser represents `candidate MEMBER OF (document)` as a
         // two-argument JSON_MEMBER_OF call; only the restore syntax is infix.
@@ -2912,85 +2796,6 @@ fn finish_function_call(
     let mut ret_type = builtin_return_type(&lowered, &rewritten).ok_or_else(|| {
         crate::builtin_registry::unresolved_error(&lowered, resolver.current_database())
     })?;
-    // Go `ifFunctionClass` / `ifNullFunctionClass` build with
-    // `newBaseBuiltinFuncWithFieldTypes`, the merged type as each
-    // value argument's expected type: the values are cast to it
-    // exactly as CASE's branches are (`wrap_case_branch`).
-    let rewritten = if matches!(lowered.as_str(), "if" | "ifnull") {
-        let first_value = usize::from(lowered == "if");
-        let connection = resolver.connection_charset_info();
-        rewritten
-            .into_iter()
-            .enumerate()
-            .map(|(index, arg)| {
-                if index < first_value {
-                    // Go `ifFunctionClass.getFunction`:
-                    // `wrapWithIsTrue(ctx, true, args[0], false)`.
-                    return crate::builtin_op::wrap_with_is_true(
-                        &crate::builtin::ResolverBuildContext(resolver),
-                        true,
-                        arg,
-                        false,
-                    );
-                }
-                let (mut wrapped, built) = wrap_case_branch(arg, &ret_type, connection)?;
-                if let (true, Some(context)) = (built, resolver.comparison_context()) {
-                    crate::constant_fold::fold_constant_in_mode(
-                        &mut wrapped,
-                        context,
-                        ConstantFoldMode::Normal,
-                    );
-                }
-                Ok(wrapped)
-            })
-            .collect::<Result<Vec<_>, EvalError>>()?
-    } else if lowered == "coalesce" {
-        // Go `coalesceFunctionClass` builds with
-        // `newBaseBuiltinFuncWithTp`: every argument is cast to the
-        // merged EVAL type only, keeping its own length and scale, so
-        // an unfolded COALESCE answers the chosen argument as it is
-        // (a folded one is padded by the constant's `adjustDecimal`).
-        let connection = resolver.connection_charset_info();
-        rewritten
-            .into_iter()
-            .map(|arg| {
-                let was_cast = is_newly_built_cast(&arg);
-                let mut wrapped = match ret_type.eval_type() {
-                    EvalType::Int => wrap_with_cast_as_int(arg, None)?,
-                    EvalType::Real => wrap_with_cast_as_real(arg)?,
-                    EvalType::Decimal => wrap_with_cast_as_decimal(arg)?,
-                    EvalType::String => wrap_with_cast_as_string(arg, connection)?,
-                    EvalType::Datetime => {
-                        crate::wrap_cast::wrap_with_cast_as_time(
-                            arg,
-                            FieldType::new(tidb_datatype::FieldTypeCode::Datetime),
-                        )?
-                    }
-                    EvalType::Timestamp => {
-                        crate::wrap_cast::wrap_with_cast_as_time(
-                            arg,
-                            FieldType::new(tidb_datatype::FieldTypeCode::Timestamp),
-                        )?
-                    }
-                    EvalType::Duration => wrap_with_cast_as_duration(arg)?,
-                    EvalType::Json => wrap_with_cast_as_json(arg)?,
-                    EvalType::VectorFloat32 => arg,
-                };
-                if is_newly_built_cast(&wrapped) && !was_cast {
-                    if let Some(context) = resolver.comparison_context() {
-                        crate::constant_fold::fold_constant_in_mode(
-                            &mut wrapped,
-                            context,
-                            ConstantFoldMode::Normal,
-                        );
-                    }
-                }
-                Ok(wrapped)
-            })
-            .collect::<Result<Vec<_>, EvalError>>()?
-    } else {
-        rewritten
-    };
     if lowered == "tidb_version" {
         ret_type.set_flen(i64::try_from(resolver.tidb_info_len()).unwrap_or(i64::MAX));
     }

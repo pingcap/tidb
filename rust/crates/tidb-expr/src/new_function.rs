@@ -319,14 +319,7 @@ pub fn new_function_impl(
     let mut ret_type = ret_type;
     crate::rewriter::result_type::stamp_builtin_return_flags(func_name, &func_args, &mut ret_type);
 
-    let function = ScalarFunction::new(CiString::new(registered_name), ret_type, func_args);
-    // Go getFunction refines comparison arguments before collation, the
-    // construction callback and the selected constant-folding mode.
-    let mut expression = Expression::ScalarFunction(function);
-    crate::builtin_compare::refine_comparison_dyn(&mut expression, ctx)?;
-    let Expression::ScalarFunction(mut function) = expression else {
-        unreachable!("comparison refinement preserves the function node")
-    };
+    let mut function = ScalarFunction::new(CiString::new(registered_name), ret_type, func_args);
     let ret_type = function.ret_type.as_ref().expect("constructed return type");
     let func_args = &function.args;
 
@@ -1075,11 +1068,14 @@ mod tests {
             vec![untyped_null(), not_null_double_column()],
         )
         .expect("ifnull builds");
-        assert_eq!(
-            as_func(&control).get_args()[0]
-                .static_type()
-                .map(FieldType::code),
-            Some(FieldTypeCode::Null),
+        // `ifNullFunctionClass` casts the NULL to the DOUBLE it returns; a
+        // retyped NULL would carry the column's NOT NULL flag instead.
+        let null_type = as_func(&control).get_args()[0]
+            .static_type()
+            .expect("the cast NULL is typed");
+        assert_eq!(null_type.code(), FieldTypeCode::Double);
+        assert!(
+            null_type.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL == 0,
             "IFNULL must not have its NULL argument retyped"
         );
 

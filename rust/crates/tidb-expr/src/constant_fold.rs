@@ -137,7 +137,24 @@ fn fold_constant_in_mode_inner(
     if replacement.is_none() && ctx.warning_count() > error_bookmark {
         ctx.truncate_warnings(error_bookmark);
     }
+    let replacement = match replacement {
+        // Go `ifNullFoldHandler` (issue 51765): an IFNULL whose first
+        // argument folds to NULL takes the charset and collation of its
+        // second argument before the fold keeps them.
+        Some(Folded::IfNullSecond(second)) => {
+            if let Expression::ScalarFunction(function) = expr {
+                let second_type = function.args[1].static_type().cloned();
+                if let (Some(ret_type), Some(second_type)) = (function.ret_type.as_mut(), second_type) {
+                    ret_type.set_charset_name(second_type.charset_name());
+                    ret_type.set_collation_name(second_type.collation_name());
+                }
+            }
+            Some(*second)
+        }
+        other => other,
+    };
     match replacement {
+        Some(Folded::IfNullSecond(_)) => unreachable!("peeled above"),
         Some(Folded::Constant(folded, is_deferred)) => {
             let mut folded = Expression::Constant(folded);
             crate::collation_derive::keep_collation_after_fold(expr, &mut folded);
@@ -164,6 +181,8 @@ enum Folded {
     /// One of the node's own arguments: a special handler picked the branch
     /// a constant condition decides.
     Branch(Expression),
+    /// IFNULL's second argument, picked because the first folds to NULL.
+    IfNullSecond(Box<Folded>),
 }
 
 fn fold_current_value_in(
@@ -276,6 +295,10 @@ fn special_fold(
             Expression::Constant(constant) => Some(constant.clone()),
             other => match fold_current_value_in(other, ctx, false) {
                 Some(Folded::Constant(constant, _)) => Some(constant),
+                Some(Folded::IfNullSecond(second)) => match *second {
+                    Folded::Constant(constant, _) => Some(constant),
+                    _ => None,
+                },
                 _ => None,
             },
         }
@@ -328,7 +351,7 @@ fn special_fold(
                 return Some(None);
             };
             if constant.value.is_null() {
-                Some(branch(second))
+                Some(Folded::IfNullSecond(Box::new(branch(second))))
             } else {
                 let deferred = constant.literal_value().is_none();
                 Some(Folded::Constant(constant, deferred))

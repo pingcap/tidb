@@ -12,7 +12,7 @@
 //! class is ported. Every other name is still built by the name tables in
 //! `new_function.rs` and the rewriter.
 
-use crate::collation_derive::derive_collation_with_connection;
+use crate::collation_derive::derive_collation_with_arg_tps;
 use crate::constant::Constant;
 use crate::constant_fold::{fold_constant_in_mode, ConstantFoldMode};
 use crate::expr_collation::{CollationInfo, ExprCollation};
@@ -57,6 +57,9 @@ pub(crate) trait BuildContext {
     fn eval_constant(&self, expression: &Expression) -> Result<Datum, EvalError>;
     /// Go `ctx.GetEvalCtx().AppendWarning(err)`.
     fn append_warning(&self, error: &TerrorError);
+    /// Go `ctx.GetEvalCtx()` itself, for a build that evaluates in the
+    /// statement: a context-free resolver has none.
+    fn columns(&self) -> Option<&dyn Columns>;
 }
 
 /// The [`BuildContext`] of a function built through `NewFunction`.
@@ -85,6 +88,10 @@ impl BuildContext for ColumnsBuildContext<'_> {
 
     fn append_warning(&self, error: &TerrorError) {
         self.0.append_error_warning(&error.to_sql_error());
+    }
+
+    fn columns(&self) -> Option<&dyn Columns> {
+        Some(self.0)
     }
 }
 
@@ -124,6 +131,10 @@ impl<R: ColumnResolver> BuildContext for ResolverBuildContext<'_, R> {
             error.identity,
         ));
     }
+
+    fn columns(&self) -> Option<&dyn Columns> {
+        self.0.comparison_context()
+    }
 }
 
 /// Go `functionClass`.
@@ -148,6 +159,8 @@ pub(crate) fn funcs(name: &str) -> Option<&'static dyn FunctionClass> {
     use crate::builtin_fts::{FtsMatchWordFunctionClass, FtsMysqlMatchAgainstFunctionClass};
     use crate::builtin_grouping::GroupingImplFunctionClass;
     use crate::builtin_ilike::IlikeFunctionClass;
+    use crate::builtin_compare::CompareFunctionClass;
+    use crate::builtin_control::{CaseWhenFunctionClass, IfFunctionClass, IfNullFunctionClass};
     use crate::builtin_like::LikeFunctionClass;
     use crate::builtin_op::{
         BitNegFunctionClass, IsNullFunctionClass, LogicAndFunctionClass, LogicOrFunctionClass,
@@ -155,6 +168,20 @@ pub(crate) fn funcs(name: &str) -> Option<&'static dyn FunctionClass> {
         BIT_XOR, IS_FALSITY, IS_TRUTH_WITHOUT_NULL, IS_TRUTH_WITH_NULL, LEFT_SHIFT, RIGHT_SHIFT,
     };
     Some(match name {
+        "lt" => &CompareFunctionClass { func_name: "lt" },
+        "le" => &CompareFunctionClass { func_name: "le" },
+        "gt" => &CompareFunctionClass { func_name: "gt" },
+        "eq" => &CompareFunctionClass { func_name: "eq" },
+        "ge" => &CompareFunctionClass { func_name: "ge" },
+        "ne" => &CompareFunctionClass { func_name: "ne" },
+        "nulleq" => &CompareFunctionClass { func_name: "nulleq" },
+        "case" => &CaseWhenFunctionClass,
+        "coalesce" => &crate::builtin_compare::CoalesceFunctionClass,
+        "greatest" => &crate::builtin_compare::GreatestFunctionClass,
+        "least" => &crate::builtin_compare::LeastFunctionClass,
+        "interval" => &crate::builtin_compare::IntervalFunctionClass,
+        "if" => &IfFunctionClass,
+        "ifnull" => &IfNullFunctionClass,
         "like" => &LikeFunctionClass,
         "ilike" => &IlikeFunctionClass,
         "grouping" => &GroupingImplFunctionClass,
@@ -379,8 +406,13 @@ pub(crate) fn new_base_builtin_func_with_tp(
         "unexpected length of args and argTps"
     );
     // The collation is derived before the implicit casts.
-    let ec =
-        derive_collation_with_connection(func_name, &args, ret_type, ctx.connection_charset_info())?;
+    let ec = derive_collation_with_arg_tps(
+        func_name,
+        &args,
+        ret_type,
+        arg_tps,
+        ctx.connection_charset_info(),
+    )?;
     for (arg, arg_tp) in args.iter_mut().zip(arg_tps) {
         let given = std::mem::replace(arg, Expression::Constant(Constant::new_null()));
         *arg = match arg_tp {
@@ -409,17 +441,86 @@ pub(crate) fn new_base_builtin_func_with_tp(
             }
         };
     }
-    let mut tp = new_return_field_type_for_base_builtin_func(func_name, ret_type, &ec);
+    Ok(base_builtin_func_of(func_name, args, ret_type, &ec))
+}
+
+/// Go `newBaseBuiltinFuncWithFieldTypes`: the builtin function over `args`
+/// cast to the field types `arg_tps`, returning `ret_type`. A decimal,
+/// datetime, timestamp or duration argument is cast to the whole declared
+/// type, its length and scale included.
+///
+/// # Panics
+///
+/// As Go does, when `args` and `arg_tps` differ in length.
+pub(crate) fn new_base_builtin_func_with_field_types(
+    ctx: &dyn BuildContext,
+    func_name: &str,
+    mut args: Vec<Expression>,
+    ret_type: EvalType,
+    arg_tps: &[FieldType],
+) -> Result<BaseBuiltinFunc, EvalError> {
+    assert_eq!(
+        args.len(),
+        arg_tps.len(),
+        "unexpected length of args and argTps"
+    );
+    // The collation is derived before the implicit casts.
+    let arg_eval_tps: Vec<EvalType> = arg_tps.iter().map(FieldType::eval_type).collect();
+    let ec = derive_collation_with_arg_tps(
+        func_name,
+        &args,
+        ret_type,
+        &arg_eval_tps,
+        ctx.connection_charset_info(),
+    )?;
+    for (arg, arg_tp) in args.iter_mut().zip(arg_tps) {
+        let given = std::mem::replace(arg, Expression::Constant(Constant::new_null()));
+        *arg = match arg_tp.eval_type() {
+            EvalType::Int => fold_built_cast(ctx, wrap_with_cast_as_int(given, Some(arg_tp))?),
+            EvalType::Real => fold_built_cast(ctx, wrap_with_cast_as_real(given)?),
+            EvalType::String => {
+                let wrapped = fold_built_cast(
+                    ctx,
+                    wrap_with_cast_as_string(given, ctx.connection_charset_info())?,
+                );
+                crate::convert_charset::handle_binary_literal(ctx, wrapped, &ec, func_name)
+            }
+            EvalType::Json => fold_built_cast(ctx, wrap_with_cast_as_json(given)?),
+            EvalType::Decimal | EvalType::Datetime | EvalType::Timestamp | EvalType::Duration => {
+                if type_of(&given).equal(arg_tp) {
+                    given
+                } else {
+                    fold_built_cast(
+                        ctx,
+                        crate::simple_expr::build_cast_function(given, arg_tp.clone(), false)?,
+                    )
+                }
+            }
+            EvalType::VectorFloat32 => given,
+        };
+    }
+    Ok(base_builtin_func_of(func_name, args, ret_type, &ec))
+}
+
+/// The tail `newBaseBuiltinFuncWithTp` and `newBaseBuiltinFuncWithFieldTypes`
+/// share: the return type and collation `ec` gives, the null flag read off
+/// the arguments after their casts.
+fn base_builtin_func_of(
+    func_name: &str,
+    args: Vec<Expression>,
+    ret_type: EvalType,
+    ec: &ExprCollation,
+) -> BaseBuiltinFunc {
+    let mut tp = new_return_field_type_for_base_builtin_func(func_name, ret_type, ec);
     let mut collation = CollationInfo::default();
     collation.set_coercibility(ec.coer);
     collation.set_repertoire(ec.repe);
     collation.set_charset_and_collation(&ec.charset, &ec.collation);
-    // The null flag reads the arguments after their casts.
     adjust_null_flag_for_return_type(func_name, &args, &mut tp);
-    Ok(BaseBuiltinFunc {
+    BaseBuiltinFunc {
         args,
         tp,
         pb_code: ScalarFuncSig::Unspecified,
         collation,
-    })
+    }
 }
