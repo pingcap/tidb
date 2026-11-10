@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -168,6 +169,171 @@ func BuildFTSToILikeExpression(
 	searchText string,
 	modifier ast.FulltextSearchModifier,
 ) (Expression, error) {
+	return buildFTSToILikeExpression(ctx, columns, searchText, modifier, literalFTSLikePattern)
+}
+
+// BuildFTSToILikeExpressionForParam is BuildFTSToILikeExpression for a search
+// string bound to a plan-cache parameter (`AGAINST(?)`). searchText is the
+// parameter's current value and decides the structure of the result, exactly
+// as for a literal. Each ILIKE pattern, though, is a deferred constant that
+// fts_like_pattern() recomputes from the parameter on every execution, so a
+// cached plan can be reused for any search string with the same
+// FTSLikeFallbackShape. The plan-cache key includes that shape (see
+// FTSLikeFallbackShape), which is what makes the reuse safe.
+func BuildFTSToILikeExpressionForParam(
+	ctx BuildContext,
+	columns []Expression,
+	searchText string,
+	modifier ast.FulltextSearchModifier,
+	against *Constant,
+) (Expression, error) {
+	shared := &builtinFuncCache[*ftsLikePatterns]{}
+	return buildFTSToILikeExpression(ctx, columns, searchText, modifier,
+		func(ctx BuildContext, kind ftsLikeTermKind, idx int, term string) (Expression, error) {
+			return deferredFTSLikePattern(ctx, against, modifier, kind, idx, term, shared)
+		})
+}
+
+// ftsLikeTermKind is the role of a search term in the LIKE fallback.
+type ftsLikeTermKind int64
+
+const (
+	ftsLikeTermRequired ftsLikeTermKind = iota // boolean mode `+word`
+	ftsLikeTermExcluded                        // boolean mode `-word`
+	ftsLikeTermOptional                        // boolean mode `word`
+	ftsLikeTermNatural                         // natural-language mode `word`
+)
+
+// ftsLikeTerms is the term layout the LIKE fallback translates a valid search
+// string into. The expression built from it, and therefore the plan, depends
+// only on how many terms of each kind are used; the words themselves only
+// appear inside the ILIKE patterns.
+type ftsLikeTerms struct {
+	// alwaysFalse is set when no row can match: an empty search string, no
+	// terms, or a boolean-mode search with only excluded terms.
+	alwaysFalse bool
+	required    []string
+	excluded    []string
+	// optional terms are only used when there are no required terms, since
+	// LIKE cannot rank; otherwise optional is left empty.
+	optional []string
+	natural  []string
+}
+
+// ftsLikeTermsOf extracts the term layout of a search string that has passed
+// ValidateFTSSearchStringForLikeFallback.
+func ftsLikeTermsOf(searchText string, modifier ast.FulltextSearchModifier) ftsLikeTerms {
+	var t ftsLikeTerms
+	if modifier.IsBooleanMode() {
+		var optional []string
+		for _, term := range parseFTSBooleanSearchString(searchText) {
+			switch {
+			case term.word == "":
+			case term.isRequired:
+				t.required = append(t.required, term.word)
+			case term.isExcluded:
+				t.excluded = append(t.excluded, term.word)
+			default:
+				optional = append(optional, term.word)
+			}
+		}
+		// MySQL boolean mode: a search with only excluded terms ("-a -b")
+		// returns no rows, and so does a search with no terms at all.
+		if len(t.required) == 0 && len(optional) == 0 {
+			return ftsLikeTerms{alwaysFalse: true}
+		}
+		if len(t.required) == 0 {
+			t.optional = optional
+		}
+		return t
+	}
+	t.natural = strings.Fields(searchText)
+	if len(t.natural) == 0 {
+		return ftsLikeTerms{alwaysFalse: true}
+	}
+	return t
+}
+
+func (t *ftsLikeTerms) termsOfKind(kind ftsLikeTermKind) []string {
+	switch kind {
+	case ftsLikeTermRequired:
+		return t.required
+	case ftsLikeTermExcluded:
+		return t.excluded
+	case ftsLikeTermOptional:
+		return t.optional
+	default:
+		return t.natural
+	}
+}
+
+// FTSLikeFallbackShape returns a signature of everything about a MATCH...AGAINST
+// search value that affects the structure of the plan the planner builds for
+// it: NULL, a non-string value, a string the LIKE fallback rejects, a search
+// that matches nothing, or the number of terms of each kind. Two values with
+// the same shape produce plans that differ only in ILIKE pattern constants,
+// which BuildFTSToILikeExpressionForParam makes deferred. The plan cache adds
+// the shape of every `AGAINST(?)` parameter to its key.
+//
+// The shape is computed from the value's text and tagged with its datum kind,
+// so it stays exact even if the planner converts the parameter's type before
+// reading it; values the LIKE fallback rejects fail planning and are never
+// cached.
+func FTSLikeFallbackShape(d types.Datum, modifier ast.FulltextSearchModifier) string {
+	if d.IsNull() {
+		return "null"
+	}
+	if modifier.WithQueryExpansion() {
+		return "expansion"
+	}
+	searchText, err := d.ToString()
+	if err != nil {
+		return fmt.Sprintf("k%d:unconvertible", d.Kind())
+	}
+	shape := "invalid"
+	if ValidateFTSSearchStringForLikeFallback(searchText, modifier) == nil {
+		t := ftsLikeTermsOf(searchText, modifier)
+		switch {
+		case searchText == "" || t.alwaysFalse:
+			shape = "false"
+		case modifier.IsBooleanMode():
+			shape = fmt.Sprintf("b%d.%d.%d", len(t.required), len(t.excluded), len(t.optional))
+		default:
+			shape = fmt.Sprintf("n%d", len(t.natural))
+		}
+	}
+	return fmt.Sprintf("k%d:%s", d.Kind(), shape)
+}
+
+// ftsLikePatternFunc returns the pattern argument of the ILIKE predicate for
+// the idx-th term of the given kind.
+type ftsLikePatternFunc func(ctx BuildContext, kind ftsLikeTermKind, idx int, term string) (Expression, error)
+
+// ftsLikePatternOf is the ILIKE pattern for a search term: a substring match
+// with LIKE wildcards in the term escaped.
+//
+// NOTE: Prefix matching (word*) in MySQL full-text search matches words that START with
+// the prefix, but the word can appear anywhere in the text. Using LIKE without REGEXP,
+// we cannot perfectly enforce word-start boundaries. We use %term% which may produce
+// false positives but avoids false negatives.
+func ftsLikePatternOf(term string) string {
+	return "%" + escapeFTSLikePattern(term) + "%"
+}
+
+func literalFTSLikePattern(_ BuildContext, _ ftsLikeTermKind, _ int, term string) (Expression, error) {
+	return &Constant{
+		Value:   types.NewStringDatum(ftsLikePatternOf(term)),
+		RetType: types.NewFieldType(mysql.TypeVarchar),
+	}, nil
+}
+
+func buildFTSToILikeExpression(
+	ctx BuildContext,
+	columns []Expression,
+	searchText string,
+	modifier ast.FulltextSearchModifier,
+	pattern ftsLikePatternFunc,
+) (Expression, error) {
 	if len(columns) == 0 {
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with no columns")
 	}
@@ -191,14 +357,17 @@ func BuildFTSToILikeExpression(
 	if searchText == "" {
 		return ftsZeroIntConst(), nil
 	}
-
+	if !modifier.IsBooleanMode() && !modifier.IsNaturalLanguageMode() {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST modifier is not supported in the LIKE fallback")
+	}
+	terms := ftsLikeTermsOf(searchText, modifier)
+	if terms.alwaysFalse {
+		return ftsZeroIntConst(), nil
+	}
 	if modifier.IsBooleanMode() {
-		return buildFTSBooleanModeILikeExpression(ctx, columns, searchText)
+		return buildFTSBooleanModeILikeExpression(ctx, columns, &terms, pattern)
 	}
-	if modifier.IsNaturalLanguageMode() {
-		return buildFTSNaturalLanguageModeILikeExpression(ctx, columns, searchText)
-	}
-	return nil, ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST modifier is not supported in the LIKE fallback")
+	return buildFTSNaturalLanguageModeILikeExpression(ctx, columns, &terms, pattern)
 }
 
 // ftsZeroIntConst returns the constant-0 tiny-int expression used whenever
@@ -211,99 +380,72 @@ func ftsZeroIntConst() Expression {
 	}
 }
 
+// ftsTermColumnDNF builds (col1 ILIKE %term% OR col2 ILIKE %term% ...) for the
+// idx-th term of the given kind.
+func ftsTermColumnDNF(ctx BuildContext, columns []Expression, kind ftsLikeTermKind, idx int, term string, pattern ftsLikePatternFunc) (Expression, error) {
+	preds := make([]Expression, 0, len(columns))
+	for _, column := range columns {
+		pred, err := buildFTSILikePredicate(ctx, column, kind, idx, term, pattern)
+		if err != nil {
+			return nil, err
+		}
+		preds = append(preds, pred)
+	}
+	return ComposeDNFCondition(ctx, preds...), nil
+}
+
 // buildFTSBooleanModeILikeExpression handles `IN BOOLEAN MODE`. Required
 // terms become an AND of per-term column-DNFs, excluded terms become NOT over
 // per-term column-DNFs, and optional terms anchor the result only when no
 // required terms exist (since LIKE cannot rank).
-func buildFTSBooleanModeILikeExpression(ctx BuildContext, columns []Expression, searchText string) (Expression, error) {
-	terms := parseFTSBooleanSearchString(searchText)
-	if len(terms) == 0 {
-		return ftsZeroIntConst(), nil
-	}
-
-	var required, excluded, optional []ftsSearchTerm
-	for _, term := range terms {
-		if term.word == "" {
-			continue
-		}
-		if term.isRequired {
-			required = append(required, term)
-		} else if term.isExcluded {
-			excluded = append(excluded, term)
-		} else {
-			optional = append(optional, term)
-		}
-	}
-
-	// MySQL Boolean mode: a query with only excluded terms ("-a -b") returns
-	// an empty result set. The LIKE fallback must match this: when there are
-	// no required and no optional terms, no row can possibly satisfy the
-	// search, so return a constant FALSE immediately.
-	if len(required) == 0 && len(optional) == 0 && len(excluded) > 0 {
-		return ftsZeroIntConst(), nil
-	}
-
-	var allPredicates []Expression
+func buildFTSBooleanModeILikeExpression(ctx BuildContext, columns []Expression, terms *ftsLikeTerms, pattern ftsLikePatternFunc) (Expression, error) {
+	// +1 for the optional-term DNF added below when there are no required terms.
+	allPredicates := make([]Expression, 0, len(terms.required)+len(terms.excluded)+1)
 
 	// For each required term: (col1 ILIKE %term% OR col2 ILIKE %term% ...)
-	for _, term := range required {
-		var termColumnPreds []Expression
-		for _, column := range columns {
-			pred, err := buildFTSILikePredicate(ctx, column, term.word)
-			if err != nil {
-				return nil, err
-			}
-			termColumnPreds = append(termColumnPreds, pred)
+	for i, term := range terms.required {
+		dnf, err := ftsTermColumnDNF(ctx, columns, ftsLikeTermRequired, i, term, pattern)
+		if err != nil {
+			return nil, err
 		}
-		if len(termColumnPreds) > 0 {
-			allPredicates = append(allPredicates, ComposeDNFCondition(ctx, termColumnPreds...))
-		}
+		allPredicates = append(allPredicates, dnf)
 	}
 
 	// For each excluded term: NOT(col1 ILIKE %term% OR col2 ILIKE %term% ...)
-	for _, term := range excluded {
-		var termColumnPreds []Expression
-		for _, column := range columns {
-			pred, err := buildFTSILikePredicate(ctx, column, term.word)
-			if err != nil {
-				return nil, err
-			}
-			termColumnPreds = append(termColumnPreds, pred)
+	for i, term := range terms.excluded {
+		dnf, err := ftsTermColumnDNF(ctx, columns, ftsLikeTermExcluded, i, term, pattern)
+		if err != nil {
+			return nil, err
 		}
-		if len(termColumnPreds) > 0 {
-			notPred, err := NewFunction(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny),
-				ComposeDNFCondition(ctx, termColumnPreds...))
-			if err != nil {
-				return nil, err
-			}
-			allPredicates = append(allPredicates, notPred)
+		notPred, err := NewFunction(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), dnf)
+		if err != nil {
+			return nil, err
 		}
+		allPredicates = append(allPredicates, notPred)
 	}
 
 	// For optional terms: since LIKE cannot rank, treat optionals as a
-	// positive filter when no required terms exist.
-	// - required>0: ignore optionals (required terms already anchor the result)
+	// positive filter when no required terms exist (ftsLikeTermsOf leaves
+	// optional empty otherwise).
 	// - required==0, excluded==0: at least one optional must match (pure optional query)
 	// - required==0, excluded>0: at least one optional must match AND excluded terms
 	//   must be absent; AND the optional-DNF into allPredicates below
-	if len(optional) > 0 && len(required) == 0 {
-		var allOptionalPreds []Expression
-		for _, term := range optional {
+	if len(terms.optional) > 0 {
+		allOptionalPreds := make([]Expression, 0, len(terms.optional)*len(columns))
+		for i, term := range terms.optional {
 			for _, column := range columns {
-				pred, err := buildFTSILikePredicate(ctx, column, term.word)
+				pred, err := buildFTSILikePredicate(ctx, column, ftsLikeTermOptional, i, term, pattern)
 				if err != nil {
 					return nil, err
 				}
 				allOptionalPreds = append(allOptionalPreds, pred)
 			}
 		}
-		if len(allOptionalPreds) > 0 {
-			optionalDNF := ComposeDNFCondition(ctx, allOptionalPreds...)
-			if len(excluded) == 0 {
-				return optionalDNF, nil
-			}
-			allPredicates = append(allPredicates, optionalDNF)
+		optionalDNF := ComposeDNFCondition(ctx, allOptionalPreds...)
+		if len(terms.excluded) == 0 {
+			return optionalDNF, nil
 		}
+		allPredicates = append(allPredicates, optionalDNF)
 	}
 
 	if len(allPredicates) == 0 {
@@ -316,31 +458,19 @@ func buildFTSBooleanModeILikeExpression(ctx BuildContext, columns []Expression, 
 // buildFTSNaturalLanguageModeILikeExpression handles the default
 // natural-language mode by splitting the search string into whitespace
 // tokens and OR-ing per-column per-word ILIKE predicates together.
-func buildFTSNaturalLanguageModeILikeExpression(ctx BuildContext, columns []Expression, searchText string) (Expression, error) {
-	words := strings.Fields(searchText)
-	if len(words) == 0 {
-		return ftsZeroIntConst(), nil
-	}
-
-	var columnPredicates []Expression
+func buildFTSNaturalLanguageModeILikeExpression(ctx BuildContext, columns []Expression, terms *ftsLikeTerms, pattern ftsLikePatternFunc) (Expression, error) {
+	columnPredicates := make([]Expression, 0, len(columns))
 	for _, column := range columns {
-		var wordPredicates []Expression
-		for _, word := range words {
-			pred, err := buildFTSILikePredicate(ctx, column, word)
+		wordPredicates := make([]Expression, 0, len(terms.natural))
+		for i, word := range terms.natural {
+			pred, err := buildFTSILikePredicate(ctx, column, ftsLikeTermNatural, i, word, pattern)
 			if err != nil {
 				return nil, err
 			}
 			wordPredicates = append(wordPredicates, pred)
 		}
-		if len(wordPredicates) > 0 {
-			columnPredicates = append(columnPredicates, ComposeDNFCondition(ctx, wordPredicates...))
-		}
+		columnPredicates = append(columnPredicates, ComposeDNFCondition(ctx, wordPredicates...))
 	}
-
-	if len(columnPredicates) == 0 {
-		return ftsZeroIntConst(), nil
-	}
-
 	return ComposeDNFCondition(ctx, columnPredicates...), nil
 }
 
@@ -398,18 +528,10 @@ func BuildFTSToILikeExpressionFromBuiltin(ctx BuildContext, fts *ScalarFunction)
 
 // buildFTSILikePredicate builds a single ILIKE predicate for a column and search term,
 // wrapped in IFNULL so that NULL columns are treated as not containing the term.
-func buildFTSILikePredicate(ctx BuildContext, column Expression, term string) (Expression, error) {
-	escapedTerm := escapeFTSLikePattern(term)
-
-	// NOTE: Prefix matching (word*) in MySQL full-text search matches words that START with
-	// the prefix, but the word can appear anywhere in the text. Using LIKE without REGEXP,
-	// we cannot perfectly enforce word-start boundaries. We use %term% which may produce
-	// false positives but avoids false negatives.
-	pattern := "%" + escapedTerm + "%"
-
-	patternConst := &Constant{
-		Value:   types.NewStringDatum(pattern),
-		RetType: types.NewFieldType(mysql.TypeVarchar),
+func buildFTSILikePredicate(ctx BuildContext, column Expression, kind ftsLikeTermKind, idx int, term string, pattern ftsLikePatternFunc) (Expression, error) {
+	patternConst, err := pattern(ctx, kind, idx, term)
+	if err != nil {
+		return nil, err
 	}
 
 	// Backslash escape character (=92) for ILIKE.
