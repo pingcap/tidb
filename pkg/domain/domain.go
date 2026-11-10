@@ -700,7 +700,7 @@ func (do *Domain) Init(
 	do.cancelFns.fns = append(do.cancelFns.fns, cancelFunc)
 	do.cancelFns.mu.Unlock()
 
-	ddlNotifierStore := notifier.OpenTableStore("mysql", metadef.NotifierTableName)
+	ddlNotifierStore := notifier.OpenTableStore("mysql", metadef.TiDBDDLNotifierTableName)
 	do.ddlNotifier = notifier.NewDDLNotifier(
 		do.sysSessionPool,
 		ddlNotifierStore,
