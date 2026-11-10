@@ -28,35 +28,35 @@ func TestSwissTable(t *testing.T) {
 		m := make(map[int]int)
 		tp := ToSwissMap(m).Type
 		require.True(t, tp.GroupSize == 136)
-		require.True(t, tp.SlotSize == 16)
+		require.True(t, tp.KeyStride == 16)
 		require.True(t, tp.ElemOff == 8)
 	}
 	{
 		m := make(map[int32]int32)
 		tp := ToSwissMap(m).Type
 		require.True(t, tp.GroupSize == 72)
-		require.True(t, tp.SlotSize == 8)
+		require.True(t, tp.KeyStride == 8)
 		require.True(t, tp.ElemOff == 4)
 	}
 	{
 		m := make(map[int8]int8)
 		tp := ToSwissMap(m).Type
 		require.True(t, tp.GroupSize == 24)
-		require.True(t, tp.SlotSize == 2)
+		require.True(t, tp.KeyStride == 2)
 		require.True(t, tp.ElemOff == 1)
 	}
 	{
 		m := make(map[int64]float64)
 		tp := ToSwissMap(m).Type
 		require.True(t, tp.GroupSize == 136)
-		require.True(t, tp.SlotSize == 16)
+		require.True(t, tp.KeyStride == 16)
 		require.True(t, tp.ElemOff == 8)
 	}
 	{
 		m := make(map[complex128]complex128)
 		tp := ToSwissMap(m).Type
 		require.True(t, tp.GroupSize == 264)
-		require.True(t, tp.SlotSize == 32)
+		require.True(t, tp.KeyStride == 32)
 		require.True(t, tp.ElemOff == 16)
 	}
 	{
@@ -71,7 +71,7 @@ func TestSwissTable(t *testing.T) {
 		require.Equal(t, N+1, len(mp))
 		require.Equal(t, uint64(N+1), sm.Data.Used)
 		found := false
-		var lastTab *swissMapTable
+		var lastTab *mapTable
 
 		for i := range sm.Data.dirLen {
 			table := sm.Data.directoryAt(uintptr(i))
@@ -80,9 +80,8 @@ func TestSwissTable(t *testing.T) {
 			}
 			for i := range table.groups.lengthMask + 1 {
 				ref := table.groups.group(sm.Type, i)
-				require.True(t, (sm.Type.GroupSize-groupSlotsOffset)%sm.Type.SlotSize == 0)
 				capacity := ref.cap(sm.Type)
-				require.True(t, capacity == swissMapGroupSlots)
+				require.True(t, capacity == mapGroupSlots)
 				for j := range capacity {
 					k, v := *(*uint64)(ref.key(sm.Type, uintptr(j))), *(*uint64)(ref.elem(sm.Type, uintptr(j)))
 					if k == 1234 && v == 5678 {

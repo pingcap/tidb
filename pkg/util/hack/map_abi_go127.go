@@ -1,4 +1,4 @@
-// Copyright 2025 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,6 +12,42 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// The runtime map and ABI declarations below are derived from Go's
+// src/internal/runtime/maps and src/internal/abi packages.
+// Copyright 2023 The Go Authors. All rights reserved.
+// Copyright 2024 The Go Authors. All rights reserved.
+// The Go-derived portions are distributed under the following BSD license:
+//
+// Copyright 2009 The Go Authors.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are
+// met:
+//
+//    * Redistributions of source code must retain the above copyright
+// notice, this list of conditions and the following disclaimer.
+//    * Redistributions in binary form must reproduce the above
+// copyright notice, this list of conditions and the following disclaimer
+// in the documentation and/or other materials provided with the
+// distribution.
+//    * Neither the name of Google LLC nor the names of its
+// contributors may be used to endorse or promote products derived from
+// this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+//go:build go1.27 && !go1.28
+
 package hack
 
 import (
@@ -24,18 +60,18 @@ import (
 const maxTableCapacity = 1024
 
 // Number of bits in the group.slot count.
-const swissMapGroupSlotsBits = 3
+const mapGroupSlotsBits = 3
 
 // Number of slots in a group.
-const swissMapGroupSlots = 1 << swissMapGroupSlotsBits // 8
+const mapGroupSlots = 1 << mapGroupSlotsBits // 8
 
 // $GOROOT/src/internal/runtime/maps/table.go:`type table struct`
-type swissMapTable struct {
+type mapTable struct {
 	// The number of filled slots (i.e. the number of elements in the table).
 	used uint16
 
 	// The total number of slots (always 2^N). Equal to
-	// `(groups.lengthMask+1)*abi.SwissMapGroupSlots`.
+	// `(groups.lengthMask+1)*abi.MapGroupSlots`.
 	capacity uint16
 
 	// The number of slots we can still fill without needing to rehash.
@@ -58,15 +94,11 @@ type swissMapTable struct {
 	// directory).
 	index int
 
-	// groups is an array of slot groups. Each group holds abi.SwissMapGroupSlots
+	// groups is an array of slot groups. Each group holds abi.MapGroupSlots
 	// key/elem slots and their control bytes. A table has a fixed size
 	// groups array. The table is replaced (in rehash) when more space is
 	// required.
 	//
-	// TODO(prattmic): keys and elements are interleaved to maximize
-	// locality, but it comes at the expense of wasted space for some types
-	// (consider uint8 key, uint64 element). Consider placing all keys
-	// together in these cases to save space.
 	groups groupsReference
 }
 
@@ -84,7 +116,7 @@ type groupsReference struct {
 }
 
 // $GOROOT/src/internal/runtime/maps/map.go:`type Map struct`
-type swissMap struct {
+type mapData struct {
 	// The number of filled slots (i.e. the number of elements in all
 	// tables). Excludes deleted slots.
 	// Must be first (known by the compiler, for len() builtin).
@@ -104,7 +136,7 @@ type swissMap struct {
 	// details.
 	//
 	// Small map optimization: if the map always contained
-	// abi.SwissMapGroupSlots or fewer entries, it fits entirely in a
+	// abi.MapGroupSlots or fewer entries, it fits entirely in a
 	// single group. In that case dirPtr points directly to a single group.
 	//
 	// dirPtr *group
@@ -137,39 +169,39 @@ type swissMap struct {
 	clearSeq uint64
 }
 
-func (m *swissMap) directoryAt(i uintptr) *swissMapTable {
-	return *(**swissMapTable)(unsafe.Pointer(uintptr(m.dirPtr) + uintptr(sizeofPtr)*i))
+func (m *mapData) directoryAt(i uintptr) *mapTable {
+	return *(**mapTable)(unsafe.Pointer(uintptr(m.dirPtr) + uintptr(sizeofPtr)*i))
 }
 
-// Size returns the accurate memory size of the swissMap including all its tables.
-func (m *swissMap) Size(groupSize uint64) (sz uint64) {
-	sz += swissMapSize
+// Size returns the accurate memory size of the map including all its tables.
+func (m *mapData) Size(groupSize uint64) (sz uint64) {
+	sz += mapSize
 	sz += sizeofPtr * uint64(m.dirLen)
 	if m.dirLen == 0 {
 		sz += groupSize
 		return
 	}
 
-	var lastTab *swissMapTable
+	var lastTab *mapTable
 	for i := range m.dirLen {
 		t := m.directoryAt(uintptr(i))
 		if t == lastTab {
 			continue
 		}
 		lastTab = t
-		sz += swissTableSize
+		sz += mapTableSize
 		sz += groupSize * (t.groups.lengthMask + 1)
 	}
 	return
 }
 
-// Cap returns the total capacity of the swissMap.
-func (m *swissMap) Cap() uint64 {
+// Cap returns the total capacity of the map.
+func (m *mapData) Cap() uint64 {
 	if m.dirLen == 0 {
-		return swissMapGroupSlots
+		return mapGroupSlots
 	}
 	var capacity uint64
-	var lastTab *swissMapTable
+	var lastTab *mapTable
 	for i := range m.dirLen {
 		t := m.directoryAt(uintptr(i))
 		if t == lastTab {
@@ -187,14 +219,14 @@ func (m *SwissMapWrap) Size() uint64 {
 }
 
 const (
-	swissMapSize   = uint64(unsafe.Sizeof(swissMap{}))
-	swissTableSize = uint64(unsafe.Sizeof(swissMapTable{}))
-	sizeofPtr      = uint64(unsafe.Sizeof(uintptr(0)))
+	mapSize      = uint64(unsafe.Sizeof(mapData{}))
+	mapTableSize = uint64(unsafe.Sizeof(mapTable{}))
+	sizeofPtr    = uint64(unsafe.Sizeof(uintptr(0)))
 )
 
 // TODO: use a more accurate size calculation if necessary
 func approxSize(groupSize uint64, maxLen uint64) (size uint64) {
-	// 204 can fit the `split`/`rehash` behavior of different kinds of swisstable
+	// 204 can fit the `split`/`rehash` behavior of different kinds of map tables.
 	const ratio = 204
 	return groupSize * maxLen * ratio / 1000
 }
@@ -202,22 +234,12 @@ func approxSize(groupSize uint64, maxLen uint64) (size uint64) {
 type ctrlGroup uint64
 
 type groupReference struct {
-	// data points to the group, which is described by typ.Group and has
-	// layout:
-	//
-	// type group struct {
-	// 	ctrls ctrlGroup
-	// 	slots [abi.SwissMapGroupSlots]slot
-	// }
-	//
-	// type slot struct {
-	// 	key  typ.Key
-	// 	elem typ.Elem
-	// }
+	// The runtime type describes either interleaved key/elem slots or,
+	// with GOEXPERIMENT=mapsplitgroup, separate key and elem arrays.
 	data unsafe.Pointer // data *typ.Group
 }
 
-func (g *groupsReference) group(typ *swissMapType, i uint64) groupReference {
+func (g *groupsReference) group(typ *mapType, i uint64) groupReference {
 	// TODO(prattmic): Do something here about truncation on cast to
 	// uintptr on 32-bit systems?
 	offset := uintptr(i) * typ.GroupSize
@@ -227,15 +249,16 @@ func (g *groupsReference) group(typ *swissMapType, i uint64) groupReference {
 	}
 }
 
+// revive:disable:var-naming Keep field names identical to the Go runtime ABI mirror.
 // $GOROOT/src/internal/abi/type.go:`type Type struct`
 type abiType struct {
-	Size       uintptr
-	PtrBytes   uintptr // number of (prefix) bytes in the type that can contain pointers
-	Hash       uint32  // hash of type; avoids computation in hash tables
-	TFlag      uint8   // extra type information flags
-	Align      uint8   // alignment of variable with this type
-	FieldAlign uint8   // alignment of struct field with this type
-	Kind       uint8   // enumeration for C
+	Size_       uintptr
+	PtrBytes    uintptr // number of (prefix) bytes in the type that can contain pointers
+	Hash        uint32  // hash of type; avoids computation in hash tables
+	TFlag       uint8   // extra type information flags
+	Align_      uint8   // alignment of variable with this type
+	FieldAlign_ uint8   // alignment of struct field with this type
+	Kind_       uint8   // enumeration for C
 	// function for comparing objects of this type
 	// (ptr to object A, ptr to object B) -> ==?
 	Equal func(unsafe.Pointer, unsafe.Pointer) bool
@@ -255,24 +278,29 @@ type abiType struct {
 	PtrToThis int32 // type for pointer to this type, may be zero
 }
 
-// $GOROOT/src/internal/abi/map_swiss.go:`type SwissMapType struct`
-type swissMapType struct {
+// revive:enable:var-naming
+
+// $GOROOT/src/internal/abi/map.go:`type MapType struct`
+type mapType struct {
 	abiType
 	Key   *abiType
 	Elem  *abiType
 	Group *abiType // internal type representing a slot group
 	// function for hashing keys (ptr to key, seed) -> hash
-	Hasher    func(unsafe.Pointer, uintptr) uintptr
-	GroupSize uintptr // == Group.Size_
-	SlotSize  uintptr // size of key/elem slot
-	ElemOff   uintptr // offset of elem in key/elem slot; aka key size; elem size: SlotSize - ElemOff;
-	Flags     uint32
+	Hasher     func(unsafe.Pointer, uintptr) uintptr
+	GroupSize  uintptr // == Group.Size_
+	KeysOff    uintptr
+	KeyStride  uintptr
+	ElemsOff   uintptr
+	ElemStride uintptr
+	ElemOff    uintptr // only used by the interleaved layout
+	Flags      uint32
 }
 
 // SwissMapWrap is a wrapper of map to access its internal structure.
 type SwissMapWrap struct {
-	Type *swissMapType
-	Data *swissMap
+	Type *mapType
+	Data *mapData
 }
 
 // ToSwissMap converts a map to SwissMapWrap.
@@ -287,24 +315,21 @@ const (
 	groupSlotsOffset = ctrlGroupsSize
 )
 
-func (g *groupReference) cap(typ *swissMapType) uint64 {
-	_ = g
-	return groupCap(uint64(typ.GroupSize), uint64(typ.SlotSize))
-}
-
-func groupCap(groupSize, slotSize uint64) uint64 {
-	return (groupSize - uint64(groupSlotsOffset)) / slotSize
+func (*groupReference) cap(_ *mapType) uint64 {
+	// GroupSize includes padding, and split groups may have zero strides.
+	// Neither layout's capacity can be inferred by dividing by a slot size.
+	return mapGroupSlots
 }
 
 // key returns a pointer to the key at index i.
-func (g *groupReference) key(typ *swissMapType, i uintptr) unsafe.Pointer {
-	offset := groupSlotsOffset + i*typ.SlotSize
+func (g *groupReference) key(typ *mapType, i uintptr) unsafe.Pointer {
+	offset := typ.KeysOff + i*typ.KeyStride
 	return unsafe.Pointer(uintptr(g.data) + offset)
 }
 
 // elem returns a pointer to the element at index i.
-func (g *groupReference) elem(typ *swissMapType, i uintptr) unsafe.Pointer {
-	offset := groupSlotsOffset + i*typ.SlotSize + typ.ElemOff
+func (g *groupReference) elem(typ *mapType, i uintptr) unsafe.Pointer {
+	offset := typ.ElemsOff + i*typ.ElemStride
 	return unsafe.Pointer(uintptr(g.data) + offset)
 }
 
@@ -325,8 +350,8 @@ func (m *MemAwareMap[K, V]) MockSeedForTest() {
 	m.unwrap().MockSeedForTest(mockSeedForTest)
 }
 
-// MockSeedForTest sets the seed of the swissMap
-func (m *swissMap) MockSeedForTest(seed uint64) (oriSeed uint64) {
+// MockSeedForTest sets the seed of the map internals.
+func (m *mapData) MockSeedForTest(seed uint64) (oriSeed uint64) {
 	if m.Used != 0 {
 		panic("MockSeedForTest can only be called on empty map")
 	}
@@ -351,8 +376,8 @@ func (m *MemAwareMap[K, V]) Exist(val K) bool {
 	return ok
 }
 
-func (m *MemAwareMap[K, V]) unwrap() *swissMap {
-	return *(**swissMap)(unsafe.Pointer(&m.M))
+func (m *MemAwareMap[K, V]) unwrap() *mapData {
+	return *(**mapData)(unsafe.Pointer(&m.M))
 }
 
 // Set sets the value for the key in the map and returns the memory delta.
@@ -388,8 +413,8 @@ func (m *MemAwareMap[K, V]) Init(v map[K]V) int64 {
 
 	m.groupSize = uint64(ToSwissMap(m.M).Type.GroupSize)
 	m.Bytes = sm.Size(m.groupSize)
-	if sm.Used <= swissMapGroupSlots {
-		m.nextCheckpoint = swissMapGroupSlots * 2
+	if sm.Used <= mapGroupSlots {
+		m.nextCheckpoint = mapGroupSlots * 2
 	} else {
 		m.nextCheckpoint = min(sm.Used, maxTableCapacity) + sm.Used
 	}
@@ -411,10 +436,8 @@ func (m *MemAwareMap[K, V]) RealBytes() uint64 {
 }
 
 func checkMapABI() {
-	// Go 1.26 retains the map, table, group, and type layouts used here.
-	version := runtime.Version()
-	if !strings.Contains(version, `go1.25`) && !strings.Contains(version, `go1.26`) {
-		panic("The hack package only supports go1.25 and go1.26, please confirm the correctness of the ABI before upgrading")
+	if !strings.Contains(runtime.Version(), `go1.27`) {
+		panic("The hack package only supports go1.27, please confirm the correctness of the ABI before upgrading")
 	}
 }
 
