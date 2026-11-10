@@ -49,8 +49,6 @@ func TestAutoAnalyzeThroughDXF(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int, index idx(a))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
-	tk.MustExec("set global tidb_enable_dist_auto_analyze = ON")
-	defer tk.MustExec("set global tidb_enable_dist_auto_analyze = OFF")
 	// The stats owner has a service scope of its own, which the tasks must not follow.
 	vardef.ServiceScope.Store("stats-owner")
 	defer vardef.ServiceScope.Store("")
@@ -259,8 +257,6 @@ func TestKillDispatchedAutoAnalyze(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, index idx(a)) partition by range (a) " +
 		"(partition p0 values less than (2), partition p1 values less than (10))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
-	tk.MustExec("set global tidb_enable_dist_auto_analyze = ON")
-	defer tk.MustExec("set global tidb_enable_dist_auto_analyze = OFF")
 	ctx := context.Background()
 	h := dom.StatsHandle()
 	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
