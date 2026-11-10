@@ -541,6 +541,37 @@ func TestHintTableNameWithoutDBName(t *testing.T) {
 	require.Contains(t, buildSideIndex("hash_join_build(hintdb2.t)"), "index:ia2(a)")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
+	// Unlike MySQL's alias-only hint matching, TiDB keeps the current-database
+	// preference for duplicate table names. Index hints must resolve identically
+	// to join hints, without leaking an index name to the other database's table.
+	for _, currentDB := range []string{"hintdb1", "hintdb2"} {
+		tk.MustExec("use " + currentDB)
+		indexName := "ia1"
+		if currentDB == "hintdb2" {
+			indexName = "ia2"
+		}
+		sql := fmt.Sprintf(twoSchemas, "use_index(t, "+indexName+")")
+		require.True(t, planHas(sql, "index:ia1(a)"), sql)
+		require.True(t, planHas(sql, "index:ia2(a)"), sql)
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+	}
+	for _, currentDB := range []string{"test", ""} {
+		if currentDB == "" {
+			tk.RefreshSession()
+		} else {
+			tk.MustExec("use " + currentDB)
+		}
+		// With no current-database match, an unqualified duplicate name stays
+		// inapplicable. Distinct aliases unambiguously select each table instead.
+		tk.MustQuery("explain format = 'brief' " + fmt.Sprintf(twoSchemas, "use_index(t, ia1)"))
+		tk.MustQuery("show warnings").CheckContain("is inapplicable")
+		aliased := "select /*+ use_index(x, ia1) use_index(y, ia2) */ * from hintdb1.t x join hintdb2.t y on x.a = y.a"
+		require.True(t, planHas(aliased, "index:ia1(a)"))
+		require.True(t, planHas(aliased, "index:ia2(a)"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+	}
+	tk.MustExec("use test")
+
 	// A binding resolves the unqualified hint name the same way when it is created.
 	tk.MustExec("create table test.j (ns bigint, id bigint, primary key (ns, id) clustered)")
 	bindingQuery := "select j.id, c.oid from j left join hintdb1.c on c.ns = j.ns and c.sjid = j.id where j.ns = 1 and j.id in (1, 2)"
