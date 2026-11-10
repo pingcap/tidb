@@ -3094,6 +3094,9 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 		if tnW.TableInfo.IsSequence() {
 			return nil, errors.Errorf("analyze sequence %s is not supported now", tbl.Name.O)
 		}
+		if err := CheckMViewReadable(b.ctx.GetSessionVars(), tnW.TableInfo, tbl.Name.O); err != nil {
+			return nil, err
+		}
 
 		physicalIDs, partitionNames, err := GetPhysicalIDsAndPartitionNames(tnW.TableInfo, as.PartitionNames)
 		if err != nil {
