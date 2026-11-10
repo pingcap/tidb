@@ -549,7 +549,7 @@ func TestCreateMaterializedViewCancelRollback(t *testing.T) {
 }
 
 func TestCreateMaterializedViewRefreshInfoRunningAndSuccess(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
@@ -591,10 +591,26 @@ func TestCreateMaterializedViewRefreshInfoRunningAndSuccess(t *testing.T) {
 		return true
 	}, 30*time.Second, 100*time.Millisecond)
 
+	err := tk.ExecToErr("analyze table mv_state")
+	require.ErrorContains(t, err, "initial build is in progress")
+	for _, sql := range []string{
+		"refresh materialized view mv_state fast",
+		"refresh materialized view mv_state complete in place",
+	} {
+		err := tk.ExecToErr(sql)
+		require.ErrorContains(t, err, "initial build is in progress", sql)
+	}
+
 	require.NoError(t, failpoint.Disable(pauseBuildFailpoint))
 	enabled = false
 	require.NoError(t, <-ddlDone)
 	tk.MustQuery("select a, s, cnt from mv_state order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+
+	mvTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv_state"))
+	require.NoError(t, err)
+	require.NotNil(t, mvTable.Meta().MaterializedView)
+	require.Equal(t, model.MViewInitBuildReady, mvTable.Meta().MaterializedView.GetInitBuildState())
+	tk.MustExec("analyze table mv_state")
 
 	rows := tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).Rows()
 	finalTS, err := strconv.ParseUint(fmt.Sprint(rows[0][0]), 10, 64)
