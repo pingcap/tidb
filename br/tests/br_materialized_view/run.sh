@@ -78,7 +78,10 @@ check_graph() {
 
 check_fast_refresh() {
     local extra_mv=$1
-    run_sql "UPDATE $DB.base SET b=17 WHERE a=1;
+    # TiFlash-only is for initial builds. FAST refresh also reads the MV itself;
+    # mv_dropped intentionally has no TiFlash replica, so allow TiKV in this session.
+    run_sql "SET SESSION tidb_mv_maintain_isolation_read_engines='tikv,tiflash';
+        UPDATE $DB.base SET b=17 WHERE a=1;
         DELETE FROM $DB.base WHERE a<>1;
         INSERT INTO $DB.base VALUES (5,50);
         REFRESH MATERIALIZED VIEW $DB.mv FAST;
