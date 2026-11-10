@@ -51,6 +51,8 @@ go_test(
     deps = [
         "//pkg/kv",
         "//pkg/planner/core",
+        "//pkg/sessionctx",
+        "@com_github_pingcap_kvproto//pkg/mpp",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
     ],
