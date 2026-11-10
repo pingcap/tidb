@@ -41,7 +41,7 @@ use crate::column::Column;
 use tidb_exprctx::context::NoColumns;
 use crate::expr_util::{
     evaluate_expr_with_null, fold_constant_with, FoldOptions, FunctionBuildError, FunctionBuilder,
-    PreservingFunctionBuilder, RealFunctionBuilder, SubstituteOptions,
+    RealFunctionBuilder, SubstituteOptions,
 };
 use crate::expression::Expression;
 use crate::schema::Schema;
@@ -291,33 +291,6 @@ fn evaluate_expr_with_null_folds_a_column_against_a_literal() {
         0,
         "comparisons stay IS_BOOLEAN-flagged"
     );
-}
-
-/// Guards the composition above against silent drift: with the PRESERVING
-/// builder alone the same inputs keep the rebuilt ifnull node, proving the
-/// fold came from the folded-builder choice rather than from the walk itself
-/// (Go gets it from `NewFunctionInternal`'s `foldConstant`).
-#[test]
-fn the_walk_requires_the_folding_builder_to_reduce_rebuilt_nodes() {
-    let ctx = NoColumns;
-    let preserving = PreservingFunctionBuilder;
-    let col1 = Expression::Column(Column::new(1, longlong()));
-    let inner = PreservingFunctionBuilder
-        .new_function("ifnull", Some(longlong()), vec![col1, one()])
-        .expect("must build");
-    let outer = PreservingFunctionBuilder
-        .new_function("ifnull", Some(longlong()), vec![null_longlong(), inner])
-        .expect("must build");
-    let schema = Schema::new(vec![Column::new(0, longlong())]);
-    let options = SubstituteOptions::new(&preserving);
-    let result =
-        evaluate_expr_with_null(&outer, &schema, false, &ctx, &options).expect("must succeed");
-    let Expression::ScalarFunction(function) = &result else {
-        panic!("preserving builder must not fold")
-    };
-    // The outer argument stays the TypeNull NULL constant produced by the
-    // walk: without the special handler nothing collapses.
-    assert!(matches!(&function.args[0], Expression::Constant(c) if c.value.is_null()));
 }
 
 /// Anchor asserting the flag Go strips is representable: `PARSE_TO_JSON` lives

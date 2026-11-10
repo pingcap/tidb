@@ -866,8 +866,7 @@ impl LogicalPlan {
         rewrite::push_down_topn_with_builder(builder, allocator, self, topn)
     }
 
-    /// Test-only convenience over [`LogicalPlan::push_down_topn_with`] using
-    /// the preserving test builder.
+    /// Test-only convenience over [`LogicalPlan::push_down_topn_with`].
     #[cfg(test)]
     #[must_use]
     pub fn push_down_topn(
@@ -875,7 +874,7 @@ impl LogicalPlan {
         allocator: &tidb_planner_core_base::PlanIdAllocator,
         topn: Option<LogicalTopN>,
     ) -> Self {
-        self.push_down_topn_with(&tidb_expr::expr_util::builder::PreservingFunctionBuilder, allocator, topn)
+        self.push_down_topn_with(&tidb_expr::expr_util::builder::RealFunctionBuilder::new(&tidb_exprctx::NoColumns), allocator, topn)
     }
 
     /// Go `DeriveTopN()` (`<5th>`), gated on `AllowDeriveTopN`.

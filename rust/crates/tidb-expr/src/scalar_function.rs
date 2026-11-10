@@ -609,9 +609,10 @@ impl ScalarFunction {
         self.hashcode.capacity()
     }
 
-    /// Builds a scalar-function node.
+    /// A node that carries a call's name, type and arguments for type and
+    /// collation inference only; it has no signature and is never evaluated.
     #[must_use]
-    pub fn new(func_name: CiString, ret_type: FieldType, args: Vec<Expression>) -> Self {
+    pub(crate) fn new(func_name: CiString, ret_type: FieldType, args: Vec<Expression>) -> Self {
         ScalarFunction {
             func_name,
             ret_type: Some(ret_type),
@@ -627,8 +628,12 @@ impl ScalarFunction {
 
     /// Go `BuildJSONSumCrc32FunctionWithCheck`'s node: a `BIGINT` result over
     /// `arg`, whose elements convert to `array_type`'s element type.
-    pub fn new_json_sum_crc32(arg: Expression, ret_type: FieldType, array_type: FieldType) -> Self {
-        let mut function = Self::new(CiString::new("json_sum_crc32"), ret_type, vec![arg]);
+    pub(crate) fn new_json_sum_crc32(
+        f: crate::builtin::BaseBuiltinFunc,
+        ret_type: FieldType,
+        array_type: FieldType,
+    ) -> Self {
+        let mut function = Self::from_builtin_func(CiString::new("json_sum_crc32"), ret_type, f);
         function.json_sum_crc32_type = Some(array_type);
         function
     }
@@ -1242,9 +1247,6 @@ impl ScalarFunction {
             };
             return self.coerce_to_ret_type(value);
         }
-        if let Some(value) = self.eval_fast_integer_binary(ctx, row)? {
-            return self.coerce_to_ret_type(value);
-        }
         let value = self.eval_by_signature(ctx, row)?;
         self.coerce_to_ret_type(value)
     }
@@ -1414,48 +1416,7 @@ impl ScalarFunction {
     /// The argument evaluation domain selected by Go's arithmetic builder.
     /// DIV returns Int but consumes Decimal unless both arguments are Int.
     fn numeric_operand_domain(&self) -> Option<EvalType> {
-        if let Some(builtin) = self.pb_builtin {
-            return builtin.numeric_domain();
-        }
-        let op = binary_op_for_name(self.func_name.lowercase())?;
-        if self.args.len() != 2
-            || !matches!(
-                op,
-                BinaryOp::Plus
-                    | BinaryOp::Minus
-                    | BinaryOp::Mul
-                    | BinaryOp::Div
-                    | BinaryOp::IntDiv
-                    | BinaryOp::Mod
-            )
-        {
-            return None;
-        }
-        let output = self.get_static_type()?.eval_type();
-        let domain = if op == BinaryOp::IntDiv {
-            if output != EvalType::Int {
-                return None;
-            }
-            if self.args.iter().all(|arg| {
-                crate::builtin_arithmetic::numeric_context_result_type(arg) == EvalType::Int
-            }) {
-                EvalType::Int
-            } else {
-                EvalType::Decimal
-            }
-        } else {
-            output
-        };
-        if (op == BinaryOp::Div && domain == EvalType::Int)
-            || !matches!(domain, EvalType::Int | EvalType::Real | EvalType::Decimal)
-            || self.args.iter().any(|arg| {
-                numeric_argument_source(arg, domain)
-                    .is_none_or(|source| !numeric_argument_domain(source, domain))
-            })
-        {
-            return None;
-        }
-        Some(domain)
+        self.pb_builtin?.numeric_domain()
     }
 
     /// [`can_implicit_eval_int`] for one operand of a binary operator: Go
@@ -1589,83 +1550,6 @@ impl ScalarFunction {
             return Datum::Decimal(quotient.round_to_scale(target as i32));
         }
         result
-    }
-
-    /// The typed fast path for an integer arithmetic/comparison operator.
-    ///
-    /// Go's `getFunction` compiles a scalar function whose arguments are all
-    /// `types.ETInt` to one integer signature BEFORE any row arrives; the
-    /// per-row cost is one typed call. The generic ladder this port otherwise
-    /// runs ([`Self::eval_by_signature`] plus `ops::eval_binary_full`)
-    /// re-derives that compile-time knowledge on every row of every hot loop.
-    /// When the operator name and both arguments' static field types already
-    /// pin the ETInt family, route straight to the same typed tail the ladder
-    /// ends at (`ops::integer_binary_typed`) -- identical semantics (NULL
-    /// propagation, unsigned reinterpretation from argument field types,
-    /// binary-literal operand casting, overflow errors,
-    /// NO_UNSIGNED_SUBTRACTION), none of the re-derivation.
-    ///
-    /// Returns `Ok(None)` for every shape the gate does not cover, including
-    /// runtime values no ETInt signature can produce; those keep the ordinary
-    /// ladder as their behavior contract.
-    fn eval_fast_integer_binary(
-        &self,
-        ctx: &dyn Columns,
-        row: Row<'_>,
-    ) -> Result<Option<Datum>, EvalError> {
-        if self.args.len() != 2 {
-            return Ok(None);
-        }
-        let op = match binary_op_for_name(self.func_name.lowercase()) {
-            Some(
-                op @ (BinaryOp::Plus
-                | BinaryOp::Minus
-                | BinaryOp::Mul
-                | BinaryOp::Eq
-                | BinaryOp::Ne
-                | BinaryOp::Lt
-                | BinaryOp::Le
-                | BinaryOp::Gt
-                | BinaryOp::Ge),
-            ) => op,
-            _ => return Ok(None),
-        };
-        // Go `mysql.HasUnsignedFlag(args[i].GetType(ctx).GetFlag())`: the
-        // unsigned fact lives on the ARGUMENT'S FIELD TYPE, and the ETInt
-        // families are exactly where both argument types are Int.
-        let signed = [0, 1].map(|index| {
-            self.args[index]
-                .static_type()
-                .filter(|field_type| field_type.eval_type() == EvalType::Int)
-                .map(|field_type| !field_type.is_unsigned())
-        });
-        let [Some(lhs_signed), Some(rhs_signed)] = signed else {
-            return Ok(None);
-        };
-        let arithmetic = matches!(op, BinaryOp::Plus | BinaryOp::Minus | BinaryOp::Mul);
-        let lhs = if arithmetic {
-            eval_numeric_row(&self.args[0], ctx, row, EvalType::Int)?
-        } else {
-            self.args[0].eval(ctx, row)?
-        };
-        if arithmetic && lhs.is_null() {
-            return Ok(Some(Datum::Null));
-        }
-        let rhs = if arithmetic {
-            eval_numeric_row(&self.args[1], ctx, row, EvalType::Int)?
-        } else {
-            self.args[1].eval(ctx, row)?
-        };
-        crate::ops::integer_binary_typed(op, lhs, rhs, [lhs_signed, rhs_signed], ctx).map_err(
-            |error| match error {
-                // Go's arithmetic signatures raise
-                // `types.ErrOverflow.GenWithStackByArgs("BIGINT[ UNSIGNED]",
-                // "(arg OP arg)")` -- MySQL 1690 carries the OPERANDS, same as
-                // the generic entry below.
-                EvalError::IntOverflow => arithmetic_overflow_error(self, op, ctx),
-                other => other,
-            },
-        )
     }
 
     /// Go `regexpBaseFuncSig`'s positional family (`REGEXP_SUBSTR`,

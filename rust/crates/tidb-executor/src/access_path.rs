@@ -6476,9 +6476,9 @@ impl IndexJoinLookupExec {
                     op.name(),
                     FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
                     vec![target.clone(), constant],
-                ).unwrap()
+                )
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, _>>()?;
         let col_length = self
             .probe_key_prefix_lengths
             .get(key.len())

@@ -36,7 +36,7 @@ use std::collections::BTreeSet;
 use crate::column::Column;
 use crate::constant::Constant;
 use tidb_exprctx::context::{EvalError, NoColumns};
-use crate::expr_util::{column_substitute_impl, PreservingFunctionBuilder, SubstituteOptions};
+use crate::expr_util::{column_substitute_impl, RealFunctionBuilder, SubstituteOptions};
 use crate::expression::{expressions_semantic_equal, ConstLevel, Expression};
 use crate::grouping::GroupingMode;
 use crate::new_function::new_function_with_init;
@@ -254,7 +254,7 @@ fn test_column_substitute_grouping_cleans_hash_code() {
     let original_hash = original.hash_code().to_vec();
     let original_canonical = original.canonical_hash_code();
 
-    let builder = PreservingFunctionBuilder;
+    let builder = RealFunctionBuilder::new(&crate::NoColumns);
     let options = SubstituteOptions::new(&builder);
     let schema = Schema::new(vec![Column::new(1, longlong_type())]);
     let outcome = column_substitute_impl(

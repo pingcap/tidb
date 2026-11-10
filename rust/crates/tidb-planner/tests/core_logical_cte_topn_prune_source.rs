@@ -39,7 +39,7 @@ use std::rc::Rc;
 
 use tidb_expression_aggregation::ByItems;
 use tidb_expr::column::Column;
-use tidb_expr::expr_util::builder::PreservingFunctionBuilder;
+use tidb_expr::expr_util::builder::RealFunctionBuilder;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
@@ -76,7 +76,11 @@ fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
         estimator_options: Default::default(),
         allocator,
         column_allocator: &COLUMN_ALLOCATOR,
-        builder: &PreservingFunctionBuilder,
+        builder: {
+            static BUILDER: RealFunctionBuilder<'static, tidb_exprctx::NoColumns> =
+                RealFunctionBuilder::new(&tidb_exprctx::NoColumns);
+            &BUILDER
+        },
         eval_context: &tidb_exprctx::NoColumns,
         use_plan_cache: false,
         plan_cache_marker: None,

@@ -28,7 +28,7 @@
 
 use crate::column::Column;
 use crate::constant::Constant;
-use crate::expr_util::builder::PreservingFunctionBuilder;
+use crate::expr_util::builder::RealFunctionBuilder;
 use crate::expr_util::normal_form::extract_filters_from_dn_fs;
 use crate::expr_util::push_not::push_down_not;
 use crate::expression::Expression;
@@ -127,7 +127,7 @@ fn render_list(exprs: &[Expression]) -> String {
 /// by HashCode, stringify. Sorting replicates
 /// `bytes.Compare(afterFunc[i].HashCode(), afterFunc[j].HashCode())`.
 fn push_down_extract_and_render(condition: Expression) -> String {
-    let builder = PreservingFunctionBuilder;
+    let builder = RealFunctionBuilder::new(&crate::NoColumns);
     let pushed = push_down_not(&condition, &builder);
     let mut after = extract_filters_from_dn_fs(vec![pushed]);
     // Go's HashCode is `[retType + operands...]`; Rust's [`Expression::hash_code`

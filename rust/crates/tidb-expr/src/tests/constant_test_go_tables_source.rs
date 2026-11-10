@@ -29,7 +29,7 @@ use crate::constant::Constant;
 use crate::evaluator::EvaluatorSuite;
 use crate::expr_util::FunctionBuilder;
 use crate::expr_util::{
-    fold_constant_with, FoldOptions, PreservingFunctionBuilder, RealFunctionBuilder,
+    fold_constant_with, FoldOptions, RealFunctionBuilder,
     SubstituteOptions,
 };
 use crate::expression::Expression;
@@ -65,7 +65,11 @@ fn build(name: &str, args: Vec<Expression>) -> Expression {
 
 /// Go `FoldConstant(ctx, expr)` over a freshly built tree.
 fn fold(expr: &Expression) -> Expression {
-    let opts = SubstituteOptions::new(&PreservingFunctionBuilder);
+    let opts = SubstituteOptions::new({
+            static BUILDER: RealFunctionBuilder<'static, crate::NoColumns> =
+                RealFunctionBuilder::new(&crate::NoColumns);
+            &BUILDER
+        });
     crate::expr_util::fold_constant(expr, &NoColumns, &opts)
 }
 
@@ -211,7 +215,11 @@ fn null_reject_conditions_survive_both_fold_modes() {
 
     for in_null_reject_check in [false, true] {
         let opts = FoldOptions {
-            builder: &PreservingFunctionBuilder,
+            builder: {
+            static BUILDER: RealFunctionBuilder<'static, crate::NoColumns> =
+                RealFunctionBuilder::new(&crate::NoColumns);
+            &BUILDER
+        },
             use_plan_cache: false,
             in_null_reject_check,
         };
@@ -247,7 +255,11 @@ fn null_reject_conditions_survive_both_fold_modes() {
         field_args,
     ).unwrap();
     let opts = FoldOptions {
-        builder: &PreservingFunctionBuilder,
+        builder: {
+            static BUILDER: RealFunctionBuilder<'static, crate::NoColumns> =
+                RealFunctionBuilder::new(&crate::NoColumns);
+            &BUILDER
+        },
         use_plan_cache: false,
         in_null_reject_check: true,
     };

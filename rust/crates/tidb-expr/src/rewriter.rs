@@ -1145,8 +1145,15 @@ fn rewrite_json_sum_crc32(
     }
     let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
     result_type::set_binary_charset(&mut ret_type);
+    // Go `newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)`.
+    let f = crate::builtin::new_base_builtin_func(
+        &crate::builtin::ResolverBuildContext(resolver),
+        "json_sum_crc32",
+        vec![arg],
+        array_type.clone(),
+    )?;
     let mut node = Expression::ScalarFunction(ScalarFunction::new_json_sum_crc32(
-        arg, ret_type, array_type,
+        f, ret_type, array_type,
     ));
     // `jsonSumFunction.SetCoercibility(CoercibilityNumeric)` and
     // `SetRepertoire(ASCII)`.

@@ -30,7 +30,7 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expression_aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
-use tidb_expr::expr_util::builder::PreservingFunctionBuilder;
+use tidb_expr::expr_util::builder::RealFunctionBuilder;
 use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
@@ -56,7 +56,7 @@ use tidb_planner_core_operator_logicalop::sort::LogicalSort;
 use tidb_planner_core_operator_logicalop::topn::LogicalTopN;
 use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalPartitionUnionAll, LogicalPlan, LogicalUnionScan};
 
-pub(crate) const TEST_BUILDER: PreservingFunctionBuilder = PreservingFunctionBuilder;
+pub(crate) const TEST_BUILDER: RealFunctionBuilder<'static, tidb_exprctx::NoColumns> = RealFunctionBuilder::new(&tidb_exprctx::NoColumns);
 
 /// A [`RuleContext`] over a caller-owned allocator, for tests elsewhere in the
 /// crate as well as this file.
@@ -986,8 +986,20 @@ fn predicate_push_down_splits_an_inner_join_condition_by_side() {
     join.other_conditions = vec![eq_cols(1, 3)];
     let mut join = LogicalPlan::Join(join);
     join.set_children(vec![left, right]);
-    // WHERE left.a = 7 AND right.c = 9
-    let root = selection_over(&allocator, vec![eq_const(1, 7), eq_const(3, 9)], join);
+    // WHERE left.a > 7 AND right.c > 9
+    let gt_const = |id: i64, value: i64| {
+        tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "gt",
+            int_type(),
+            vec![
+                col_expr(id),
+                Expression::Constant(Constant::new(Datum::Int(value), int_type())),
+            ],
+        )
+        .unwrap()
+    };
+    let root = selection_over(&allocator, vec![gt_const(1, 7), gt_const(3, 9)], join);
 
     let out = push(&ctx, root);
     let LogicalPlan::Join(join) = &out else {

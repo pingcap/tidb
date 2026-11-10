@@ -640,7 +640,11 @@ fn planner_rewriter_stage(expr: &Expression) -> Expression {
                 if string_column_numeric_members {
                     let column = rewritten.args[0].clone();
                     let cast = tidb_expr::expr_util::builder::FunctionBuilder::new_function(
-                        &tidb_expr::expr_util::builder::PreservingFunctionBuilder,
+                        {
+            static BUILDER: tidb_expr::expr_util::builder::RealFunctionBuilder<'static, tidb_exprctx::NoColumns> =
+                tidb_expr::expr_util::builder::RealFunctionBuilder::new(&tidb_exprctx::NoColumns);
+            &BUILDER
+        },
                         "cast",
                         Some(FieldType::new(FieldTypeCode::Double)),
                         vec![column],

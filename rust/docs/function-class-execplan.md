@@ -142,12 +142,19 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
     `compose_condition_with_binary_op`, the null-reject fold, the
     partition-id `IN` filters, `de_cor_col_from_eq_expr`, `CAST(.. AS ..
     ARRAY)` (Go `castAsArrayFunctionClass` inside
-    `BuildCastFunctionWithCheck`). Open: the driver's
-    `join_equality_with_collation` (the index join takes its matching from
-    equality expressions where Go's takes hash keys and their types),
-    `pushdown_catalog`'s `metadata_expression` (goes with 11b-2c), then the
-    test call sites and the test-only `PreservingFunctionBuilder` (they go
-    when 11b-2b makes the bound evaluation mandatory).
+    `BuildCastFunctionWithCheck`), the driver's join key equality,
+    `json_sum_crc32` (Go `jsonSumCRC32FunctionClass.getFunction`), and every
+    test call site in the workspace. The test-only
+    `PreservingFunctionBuilder` is deleted; `RealFunctionBuilder` is the one
+    `FunctionBuilder`, and a cast without a target type is a build error. A
+    plan-cache build context for tests (`tidb_exprctx::PlanCacheParams`)
+    carries the parameter values Go's `ParamMarker` reads at build. The
+    name-keyed integer fast path and the name-keyed numeric-domain fallback
+    are deleted: a built node answers both from its signature. Open:
+    `ScalarFunction::new` is now crate-private and has one user,
+    `pushdown_catalog`'s `metadata_expression` / `control_expression`
+    (type and collation inference only, never evaluated); it and the
+    optional `pb_builtin` go with 11b-2c.
   - [ ] 11b-2b: the class's `getFunction` binds the signature's evaluation
     (Go's `builtinXxxSig.evalT`), one Go file at a time, until
     `ScalarFunction::eval_by_signature` and `func::eval_func_values` are

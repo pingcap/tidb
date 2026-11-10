@@ -2276,19 +2276,21 @@ where
             // Go `NewFunctionBase` (no constant folding), then
             // `expr.SetCharsetAndCollation(partition column's)`: the
             // comparison runs under the column's collation.
-            let mut ret_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+            let mut function = tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                op,
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                vec![bound, tidb_expr::expression::Expression::Constant(constant.clone())],
+            )
+            .unwrap()
+            .into_scalar_function()
+            .unwrap();
             if let Some(column_type) = self.column.ret_type.as_ref() {
-                ret_type.set_charset_name(column_type.charset_name());
-                ret_type.set_collation_name(column_type.collation_name());
+                function
+                    .collation
+                    .set_charset_and_collation(column_type.charset_name(), column_type.collation_name());
             }
-            let function = tidb_expr::expression::Expression::ScalarFunction(
-                tidb_expr::new_function_base(
-                    &tidb_exprctx::NoColumns,
-                    op,
-                    ret_type,
-                    vec![bound, tidb_expr::expression::Expression::Constant(constant.clone())],
-                ).unwrap().into_scalar_function().unwrap(),
-            );
+            let function = tidb_expr::expression::Expression::ScalarFunction(function);
             match tidb_expr::eval_expression_once(&function, self.ctx) {
                 Ok(Datum::Null) => {
                     is_null = true;

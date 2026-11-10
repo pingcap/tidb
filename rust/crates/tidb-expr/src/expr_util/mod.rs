@@ -71,14 +71,10 @@
 //!   REBUILDS a function -- `ColumnSubstituteImpl`, `SubstituteCorCol2Constant`,
 //!   `PushDownNot`, `EliminateNoPrecisionLossCast`, `EvaluateExprWithNull`,
 //!   `PopRowFirstArg`, `BuildNotNullExpr` -- takes a [`FunctionBuilder`]
-//!   rather than hard-wiring construction. Two are supplied:
-//!   [`RealFunctionBuilder`] routes to the crate's real
-//!   [`crate::new_function`], giving Go's argument type inference, arity
-//!   checking, registry dispatch and post-construction folding, and is what
-//!   callers with an evaluation context should use;
-//!   [`PreservingFunctionBuilder`] is the context-free fallback that keeps the
-//!   caller-supplied result type verbatim, for callers that only need the tree
-//!   SHAPE. The rewrite rules themselves are identical under both.
+//!   rather than hard-wiring construction. [`RealFunctionBuilder`] routes
+//!   to the crate's [`crate::new_function`], giving Go's argument type
+//!   inference, arity checking, registry dispatch and post-construction
+//!   folding.
 //! - `// boundary:` Go `BuildCastFunctionWithCheck`. Go routes `cast` to a
 //!   DEDICATED builder, which `new_function` explicitly refuses; that builder
 //!   is not in this crate yet. [`FunctionBuilder::build_cast`] therefore
@@ -184,7 +180,7 @@ pub use normal_form::{
 };
 
 pub use builder::{
-    FunctionBuildError, FunctionBuilder, PreservingFunctionBuilder, RealFunctionBuilder,
+    FunctionBuildError, FunctionBuilder, RealFunctionBuilder,
 };
 pub use extract::{
     extract_all_columns_from_expressions, extract_all_columns_from_expressions_in_used_slices,

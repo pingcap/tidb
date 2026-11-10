@@ -17,15 +17,12 @@
 //!
 //! Rewrites use this boundary for argument inference, collation, signature
 //! selection and folding. RealFunctionBuilder supplies the live evaluation
-//! context; PreservingFunctionBuilder deliberately retains the requested
-//! structure for callers that do not perform construction-time evaluation.
+//! context.
 //! These native construction paths remain part of the whole expression
 //! package audit; this module does not claim package acceptance.
 
 use super::traits::is_logical_op;
 use crate::expression::Expression;
-use crate::scalar_function::ScalarFunction;
-use tidb_ast::CiString;
 use tidb_datatype::{FieldType, FieldTypeCode};
 
 /// Go's `err` from `NewFunction`: construction rejected the arguments.
@@ -176,72 +173,19 @@ pub fn double_field_type() -> FieldType {
     FieldType::new(FieldTypeCode::Double)
 }
 
-/// The narrow default [`FunctionBuilder`]: builds the node Go's rewrite asks
-/// for while KEEPING the caller-supplied result type verbatim.
+/// The [`FunctionBuilder`]: Go's `NewFunction`, with the evaluation context
+/// it needs.
 ///
-/// What it reproduces: the tree SHAPE -- which function name wraps which
-/// arguments, in which order. That is the entire content of the `util.go`
-/// rewrites and is what a downstream planner rule reads.
-///
-/// What it does NOT reproduce, and what a real `NewFunction` adds:
-///
-/// - argument type inference and implicit cast insertion,
-/// - collation and coercibility derivation over the new argument list,
-/// - the constant folding `NewFunction` performs on the built node,
-/// - the `getFunction` signature dispatch, and with it the rejection of
-///   argument lists no signature accepts -- so this builder never returns
-///   [`FunctionBuildError`], where Go sometimes does.
-///
-/// Swapping in the real builder upgrades every ported rewrite with no change
-/// to the rewrites themselves.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct PreservingFunctionBuilder;
-
-impl FunctionBuilder for PreservingFunctionBuilder {
-    fn new_function(
-        &self,
-        func_name: &str,
-        ret_type: Option<FieldType>,
-        args: Vec<Expression>,
-    ) -> Result<Expression, FunctionBuildError> {
-        // Go `NewFunction`'s `case ast.Cast: return BuildCastFunction(ctx,
-        // args[0], retType)`.
-        if is_cast_name(func_name) && args.len() == 1 && ret_type.is_some() {
-            return self.build_cast(
-                args.into_iter().next().expect("one argument"),
-                ret_type,
-                false,
-            );
-        }
-        let mut func = ScalarFunction::new(
-            CiString::new(func_name),
-            ret_type.clone().unwrap_or_else(tiny_int_type),
-            args,
-        );
-        // `ScalarFunction::new` cannot express a nil `RetType`; restore it so a
-        // caller that deliberately passed `None` gets `None` back.
-        func.ret_type = ret_type;
-        Ok(Expression::ScalarFunction(func))
-    }
-}
-
-/// The FAITHFUL [`FunctionBuilder`]: Go's real `NewFunction`, with the
-/// evaluation context it needs.
-///
-/// This is what closes the boundary this module describes. It routes every
-/// rebuild through [`crate::new_function`], so a rewrite built with it gets
+/// It routes every rebuild through [`crate::new_function`], so a rewrite gets
 /// Go's argument type inference, null-type propagation, arity checking,
-/// registry dispatch and post-construction constant folding -- the whole
-/// contract [`PreservingFunctionBuilder`] defers.
-///
-/// Prefer this wherever an evaluation context is available.
+/// registry dispatch and post-construction constant folding.
 pub struct RealFunctionBuilder<'a, C: tidb_exprctx::context::Columns> {
     ctx: &'a C,
 }
 
 impl<'a, C: tidb_exprctx::context::Columns> RealFunctionBuilder<'a, C> {
     /// Binds Go's `BuildContext` for the rebuilds this builder performs.
-    pub fn new(ctx: &'a C) -> Self {
+    pub const fn new(ctx: &'a C) -> Self {
         RealFunctionBuilder { ctx }
     }
 }
@@ -290,7 +234,11 @@ impl<C: tidb_exprctx::context::Columns> FunctionBuilder for RealFunctionBuilder<
         // its port; the generic `cast` name has no executor arm, so a
         // placeholder left under it fails at run time.
         let Some(target) = ret_type else {
-            return PreservingFunctionBuilder.new_function("cast", None, vec![arg]);
+            return Err(FunctionBuildError {
+                func_name: "cast".to_owned(),
+                reason: "a cast is built to a target type".to_owned(),
+                error: None,
+            });
         };
         crate::builtin_cast::build_cast_function_with_check(
             &crate::builtin::ColumnsBuildContext(self.ctx),
@@ -322,7 +270,7 @@ mod tests {
         let mut target = FieldType::new(FieldTypeCode::NewDecimal);
         target.set_flen(34);
         target.set_decimal(2);
-        let cast = PreservingFunctionBuilder
+        let cast = RealFunctionBuilder::new(&crate::NoColumns)
             .build_cast(argument, Some(target), false)
             .expect("a decimal cast builds");
         let Expression::ScalarFunction(function) = cast else {

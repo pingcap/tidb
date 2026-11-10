@@ -1836,12 +1836,12 @@ impl OwnedRewrite for PushDownTopN<'_> {
     }
 }
 
-/// Test convenience: the rule body with the preserving test builder.
+/// Test convenience: the rule body.
 #[cfg(test)]
 #[must_use]
 pub(crate) fn push_down_topn(plan: LogicalPlan, topn: Option<LogicalTopN>) -> LogicalPlan {
     let allocator = tidb_planner_core_base::PlanIdAllocator::new();
-    push_down_topn_with_builder(&tidb_expr::expr_util::builder::PreservingFunctionBuilder, &allocator, plan, topn)
+    push_down_topn_with_builder(&tidb_expr::expr_util::builder::RealFunctionBuilder::new(&tidb_exprctx::NoColumns), &allocator, plan, topn)
 }
 
 /// Go `base.LogicalPlan.PushDownTopN(topN)` over a whole tree, Go rule #21's

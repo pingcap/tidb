@@ -795,7 +795,7 @@ mod tests {
 
     #[test]
     fn prepared_public_folding_keeps_nested_lazy_branches_live() {
-        let builder = crate::expr_util::PreservingFunctionBuilder;
+        let builder = crate::expr_util::RealFunctionBuilder::new(&crate::NoColumns);
         let mut options = crate::expr_util::FoldOptions::new(&builder);
         options.use_plan_cache = true;
         // Go EXECUTE results for parameters [0, 1, NULL, -2]. Compare with

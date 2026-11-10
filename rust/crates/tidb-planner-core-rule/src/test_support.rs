@@ -17,11 +17,11 @@
 
 use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 use tidb_expr::schema::Schema;
-use tidb_expr::expr_util::builder::PreservingFunctionBuilder;
+use tidb_expr::expr_util::builder::RealFunctionBuilder;
 use tidb_planner_core_operator_logicalop::plan_context::{DisabledLogicalRules, RuleContext};
 use tidb_planner_property::stats_info::StatsInfo;
 
-pub(crate) const TEST_BUILDER: PreservingFunctionBuilder = PreservingFunctionBuilder;
+pub(crate) const TEST_BUILDER: RealFunctionBuilder<'static, tidb_exprctx::NoColumns> = RealFunctionBuilder::new(&tidb_exprctx::NoColumns);
 
 /// Core's hooks, which these tests must not reach.
 struct NoCore;

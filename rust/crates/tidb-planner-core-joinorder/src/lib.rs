@@ -2559,7 +2559,11 @@ mod tests {
             estimator_options: Default::default(),
             allocator,
             column_allocator: &COLUMN_ALLOCATOR,
-            builder: &tidb_expr::expr_util::builder::PreservingFunctionBuilder,
+            builder: {
+            static BUILDER: tidb_expr::expr_util::builder::RealFunctionBuilder<'static, tidb_exprctx::NoColumns> =
+                tidb_expr::expr_util::builder::RealFunctionBuilder::new(&tidb_exprctx::NoColumns);
+            &BUILDER
+        },
             eval_context: &tidb_exprctx::NoColumns,
             use_plan_cache: false,
             plan_cache_marker: None,

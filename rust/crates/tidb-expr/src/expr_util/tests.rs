@@ -15,8 +15,8 @@
 //! Tests for [`super`].
 //!
 //! Tests labelled GO PORT come from `pkg/expression/util_test.go`.
-//! Their expression-building helpers use [`PreservingFunctionBuilder`]
-//! instead of Go's `newFunctionWithMockCtx`.
+//! Their expression-building helpers use [`RealFunctionBuilder`] for Go's
+//! `newFunctionWithMockCtx`.
 //!
 //! Tree equality is asserted through `HashCode`, not `Expression::equal`:
 //! `expression.rs` documents the latter as context-free, reporting `false` for
@@ -24,7 +24,7 @@
 //! assertions vacuous. `HashCode` is structural and context-free by
 //! construction, which is exactly what these shape assertions need.
 
-use super::builder::PreservingFunctionBuilder;
+use super::builder::RealFunctionBuilder;
 use super::*;
 use crate::column::{Column, CorrelatedColumn};
 use crate::constant::Constant;
@@ -92,7 +92,7 @@ fn same_shape(left: &Expression, right: &Expression) -> bool {
     shape(left) == shape(right)
 }
 
-fn opts<'a>(builder: &'a PreservingFunctionBuilder) -> SubstituteOptions<'a> {
+fn opts<'a>(builder: &'a RealFunctionBuilder<'static, crate::NoColumns>) -> SubstituteOptions<'a> {
     SubstituteOptions::new(builder)
 }
 
@@ -148,7 +148,7 @@ fn go_set_expr_column_in_operand() {
 /// two correlated columns directly.
 #[test]
 fn go_substitute_cor_col_2_constant() {
-    let builder = PreservingFunctionBuilder;
+    let builder = RealFunctionBuilder::new(&crate::NoColumns);
     let opts = opts(&builder);
     let cor1 = cor_col(1, Some(Datum::Int(1)));
     let cor2 = cor_col(2, Some(Datum::Int(1)));
@@ -176,7 +176,7 @@ fn go_substitute_cor_col_2_constant() {
 /// GO PORT of `TestPopRowFirstArg` (`util_test.go:202`).
 #[test]
 fn go_pop_row_first_arg() {
-    let builder = PreservingFunctionBuilder;
+    let builder = RealFunctionBuilder::new(&crate::NoColumns);
     let opts = opts(&builder);
     let row = func("row", vec![col(1), col(2), col(3)]);
     let popped = pop_row_first_arg(&row, &opts)
@@ -195,7 +195,7 @@ fn go_pop_row_first_arg() {
 /// it says `||a=1`, but the code builds `neFunc`.
 #[test]
 fn go_push_down_not_de_morgan() {
-    let builder = PreservingFunctionBuilder;
+    let builder = RealFunctionBuilder::new(&crate::NoColumns);
     let eq = func("eq", vec![col(1), int_const(1)]);
     let or = func("or", vec![eq.clone(), eq.clone()]);
     let and = func("and", vec![or, eq]);
@@ -218,7 +218,7 @@ fn go_push_down_not_de_morgan() {
 /// GO PORT of `TestPushDownNot`, the double-negation cases (issue 15725).
 #[test]
 fn go_push_down_not_double_negation() {
-    let builder = PreservingFunctionBuilder;
+    let builder = RealFunctionBuilder::new(&crate::NoColumns);
 
     // `not not (a=1)` optimizes to `a=1`.
     let eq = func("eq", vec![col(1), int_const(1)]);
@@ -244,7 +244,7 @@ fn go_push_down_not_double_negation() {
 /// `not not a` becomes `a is true`, because `a` is not itself a truth value.
 #[test]
 fn go_push_down_not_wraps_non_predicate_in_is_true() {
-    let builder = PreservingFunctionBuilder;
+    let builder = RealFunctionBuilder::new(&crate::NoColumns);
 
     let not2 = func("not", vec![func("not", vec![col(1)])]);
     let expected = func("istrue_with_null", vec![col(1)]);
