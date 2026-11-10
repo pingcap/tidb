@@ -13,6 +13,8 @@
 // limitations under the License.
 
 use super::*;
+use crate::wrap_cast::MAX_BLOB_WIDTH;
+use crate::constant::Constant;
 
 // `adjustRetFtForCastString` sizes an unspecified CHAR target from the
 // source family (LongLong -> 20), but Go's NUL padding is gated on the
@@ -773,25 +775,27 @@ mod go_string_flen_tests {
     /// and a `double` one 370.
     #[test]
     fn arg_zero_width_family_matches_go() {
-        for name in [
-            "lower",
-            "upper",
-            "lcase",
-            "ucase",
-            "reverse",
-            "ltrim",
-            "rtrim",
-            "left",
-            "right",
-            "substr",
-            "substring",
-            "mid",
-            "substring_index",
+        for (name, rest) in [
+            ("lower", 0),
+            ("upper", 0),
+            ("lcase", 0),
+            ("ucase", 0),
+            ("reverse", 0),
+            ("ltrim", 0),
+            ("rtrim", 0),
+            ("left", 1),
+            ("right", 1),
+            ("substr", 1),
+            ("substring", 1),
+            ("mid", 2),
+            ("substring_index", 2),
         ] {
             // Go: lower(c_int_d) / reverse(c_int_d) / left(c_int_d, c_int_d).
-            assert_go(name, &[c_int_d(), c_int_d()], FieldTypeCode::VarString, 20);
-            assert_go(name, &[c_char(), c_int_d()], FieldTypeCode::VarString, 20);
-            assert_go(name, &[c_binary(), c_int_d()], FieldTypeCode::VarString, 20);
+            for first in [c_int_d(), c_char(), c_binary()] {
+                let mut args = vec![first];
+                args.extend(std::iter::repeat_with(c_int_d).take(rest));
+                assert_go(name, &args, FieldTypeCode::VarString, 20);
+            }
         }
         // `TRIM` is the same rule in its one- and three-argument forms; its
         // two-argument form is the exception, asserted separately below.

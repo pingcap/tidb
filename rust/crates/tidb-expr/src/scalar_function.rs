@@ -1857,11 +1857,6 @@ impl ScalarFunction {
             .then_some(self.fts_modifier)
     }
 
-    /// Records the GREATEST/LEAST signature chosen at construction.
-    pub(crate) fn set_gl_signature(&mut self, signature: Option<crate::builtin_ext::GlSignature>) {
-        self.gl_signature = signature;
-    }
-
     /// The GREATEST/LEAST signature: the one chosen at construction, else
     /// the one the arguments select.
     pub(crate) fn extremum_signature(&self) -> Option<crate::builtin_ext::GlSignature> {

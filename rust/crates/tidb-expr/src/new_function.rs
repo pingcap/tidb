@@ -49,33 +49,12 @@
 //!
 //! # Narrowings, each named
 //!
-//! - **`fc.getFunction` is not reachable.** Go's `functionClass.getFunction`
-//!   does three things: verify arity, infer the return type, and derive
-//!   collation. Only the first is a table lookup; the other two live in
-//!   hundreds of per-class Go method bodies keyed to `builtinFunc`
-//!   signatures, which this crate does not model (see
-//!   [`crate::scalar_function`]'s BRIDGE DECISION). Consequently:
-//!   - Arity is verified exactly, via
-//!     [`crate::builtin_registry::verify_args_by_count`].
-//!   - The return type comes from this crate's arithmetic inference table
-//!     followed by the name-keyed `rewriter::result_type::builtin_return_type`,
-//!     which together are the nearest thing to `f.getRetTp()`. When neither
-//!     table has an entry, the CALLER's `ret_type` is kept. Go's rule is
-//!     `if builtinRetTp != TypeUnspecified || retType == TypeUnspecified {
-//!     retType = builtinRetTp }`; the Rust rule is the same statement with
-//!     "the table produced an answer" standing in for "the signature's
-//!     `getRetTp` is not `TypeUnspecified`".
-//!   - Comparison argument refinement and signature casts run at this shared
-//!     construction boundary before collation, callbacks and constant folding.
-//!     This includes direct Base/TryFold callers and planner rebuilds.
-//!   - Collation derivation and `HandleBinaryLiteral` wrapping run here in the
-//!     same order as Go's `newBaseBuiltinFuncWithTp` for string-bearing calls:
-//!     derive the result charset first, then wrap non-legacy string arguments
-//!     when the function consumes a binary result. The ordinary AST rewriter
-//!     shares the same wrapping helper, so direct `NewFunction` callers and
-//!     rewritten SQL cannot disagree on charset bytes. Purely numeric calls
-//!     retain their existing metadata so constant-propagation rebuilds stay
-//!     structurally identical.
+//! - **`fc.getFunction` is the class's own.** Every name in Go's `funcs` map
+//!   has its function class in [`crate::builtin::funcs`]; arity is verified
+//!   by [`crate::builtin_registry::verify_args_by_count`], and the class's
+//!   `get_function` wraps the arguments, infers the return type and derives
+//!   the collation, as Go's does. Only extension functions, registered by
+//!   arity alone, have no class yet.
 //!
 //! - **Three special-cased names are refused, not built.** `newFunctionImpl`
 //!   opens with a switch that hands four names to dedicated node builders
@@ -120,7 +99,7 @@ use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;
 use crate::{Columns, EvalError};
 use tidb_ast::CiString;
-use tidb_datatype::{EvalType, FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
 
 /// Go `ScalarFunctionCallBack` (`scalar_function.go:295`): a hook run on the
 /// freshly built node before folding, able to reject or replace it.
@@ -298,89 +277,17 @@ pub fn new_function_impl(
     }
 
     verify_args_by_count(func_name, func_args.len())?;
-    // Go: `f, err := fc.getFunction(ctx, funcArgs)`, for the classes
-    // `crate::builtin::funcs` lists.
-    if let Some(class) = crate::builtin::funcs(func_name) {
-        let f = class.get_function(&crate::builtin::ColumnsBuildContext(ctx), func_args)?;
-        let function = scalar_function_of(registered_name, ret_type, f);
-        return check_or_init_and_fold(ctx, fold, check_or_init, function);
-    }
-
-    // Go: `if builtinRetTp.GetType() != TypeUnspecified || retType.GetType()
-    // == TypeUnspecified { retType = builtinRetTp }`. See the module header's
-    // `getFunction` narrowing for why the inference table stands in for
-    // `f.getRetTp()`.
-    let ret_type = crate::rewriter::result_type::builtin_return_type(func_name, &func_args)
-        .filter(|inferred| {
-            inferred.code() != FieldTypeCode::Unspecified
-                || ret_type.code() == FieldTypeCode::Unspecified
-        })
-        .unwrap_or(ret_type);
-    let mut ret_type = ret_type;
-    crate::rewriter::result_type::stamp_builtin_return_flags(func_name, &func_args, &mut ret_type);
-
-    let mut function = ScalarFunction::new(CiString::new(registered_name), ret_type, func_args);
-    let ret_type = function.ret_type.as_ref().expect("constructed return type");
-    let func_args = &function.args;
-
-    // Go `newBaseBuiltinFuncWithTp` derives every call's collation from the
-    // arguments as given, before their casts: `instr(json, int)` is a
-    // `utf8mb4_bin` search although neither argument is a string.
-    let derived = crate::collation_derive::derive_collation_with_connection(
-        func_name,
-        func_args,
-        ret_type.eval_type(),
-        ctx.connection_charset_info(),
-    )?;
-    // The derivation reaches the result type only when the call produces a
-    // string or consumes one. Numeric-only rebuilds (for example constant
-    // propagation's `gt(INT, INT)`) deliberately keep the pre-existing result
-    // metadata; their structural identity is observable by the rewrite passes.
-    let stamps_result_type = (ret_type.code() != FieldTypeCode::Unspecified
-        && ret_type.eval_type() == EvalType::String)
-        || func_args.iter().any(|arg| {
-            arg.static_type()
-                .is_some_and(|field_type| field_type.eval_type() == EvalType::String)
-        });
-    // Go `newBaseBuiltinFuncWithTp`: after deriving the collation, every
-    // argument is cast to its signature type (`argTps`). Go does this on
-    // every construction, so a function rebuilt by a rewrite (a predicate
-    // substituted through an aggregation) is wrapped again: an argument that
-    // already has the type stays as it is, but a string cast to JSON keeps
-    // its parse flag and is cast once more (`cast(cast(s, json), json)`).
-    // Go `resolveType4Extremum` reads the arguments before their casts.
-    let gl_signature = matches!(func_name, "greatest" | "least")
-        .then(|| crate::rewriter::result_type::gl_signature(&function.args))
-        .flatten();
-    function.args = crate::rewriter::signature_args::wrap_builtin_arguments(
-        func_name,
-        std::mem::take(&mut function.args),
-        &crate::builtin::ColumnsBuildContext(ctx),
-        function.ret_type.as_ref(),
-    )?;
-    function.args = crate::rewriter::handle_binary_literal(
-        func_name,
-        &derived.charset,
-        &derived.collation,
-        ret_type.eval_type(),
-        std::mem::take(&mut function.args),
-        |expression| fold_constant_in_mode(expression, ctx, ConstantFoldMode::Normal),
-    );
-    if gl_signature.is_some() {
-        function.set_gl_signature(gl_signature);
-    }
-
-    function.collation.set_coercibility(derived.coer);
-    function.collation.set_repertoire(derived.repe);
-    function.collation.set_charset_and_collation(&derived.charset, &derived.collation);
-    let mut expr = Expression::ScalarFunction(function);
-    if stamps_result_type {
-        crate::collation_derive::apply_derived_collation(&mut expr, &derived);
-        crate::rewriter::restore_function_result_charset(&mut expr)?;
-    }
-    let Expression::ScalarFunction(function) = expr else {
-        unreachable!("collation derivation preserves the function node")
+    // Go: `f, err := fc.getFunction(ctx, funcArgs)`. Every name of Go's
+    // `funcs` has its class; an `extensionFuncs` entry is registered by
+    // arity alone and has none to build with.
+    let Some(class) = crate::builtin::funcs(func_name) else {
+        return Err(crate::builtin_registry::unresolved_error(
+            func_name,
+            ctx.current_database(),
+        ));
     };
+    let f = class.get_function(&crate::builtin::ColumnsBuildContext(ctx), func_args)?;
+    let function = scalar_function_of(registered_name, ret_type, f);
     check_or_init_and_fold(ctx, fold, check_or_init, function)
 }
 

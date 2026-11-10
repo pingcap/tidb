@@ -39,13 +39,11 @@ const DEFAULT_DECIMAL_LITERAL: &str =
 
 pub(crate) mod control_type;
 mod fold_mode;
-pub(crate) mod signature_args;
 pub(crate) mod result_type;
 
 pub use control_type::{infer_type_4_control_funcs, set_numeric_len_from_args};
 use fold_mode::FoldModeResolver;
 pub(crate) use result_type::adjust_ret_ft_for_cast_string;
-pub(crate) use result_type::builtin_return_type;
 use result_type::{
     binary_literal_type, cast_target, decimal_literal_type, int_literal_type,
     returns_binary_string, set_binary_charset, check_func_cast_expr, validate_name_const_args,
@@ -514,112 +512,6 @@ fn constant_string(text: &str) -> Expression {
     Expression::Constant(Constant::new(datum, field_type))
 }
 
-/// Go `HandleBinaryLiteral`, applied where Go applies it: as each builtin's
-/// arguments are built.
-///
-/// A non-legacy-charset argument (in practice `gbk` or `gb18030`) of a
-/// binary-aware function, or of any function whose result is the binary
-/// charset, is wrapped with the implicit `to_binary` call that performs the
-/// UTF-8 -> charset transcode. See `crate::convert_charset` for why that is
-/// the only place the bytes ever change.
-///
-/// The `funcPropAuto` arm's other direction -- a BINARY argument of a
-/// function whose derived charset is not binary -- decodes through an
-/// implicit `from_binary`, but only at the positions the function class
-/// declares `ETString` ([`string_declared_args`]): an integer argument also
-/// carries the binary charset and is never wrapped.
-pub(crate) fn handle_binary_literal(
-    name: &str,
-    result_charset: &str,
-    result_collation: &str,
-    ret_eval_type: tidb_datatype::EvalType,
-    args: Vec<Expression>,
-    fold: impl Fn(&mut Expression),
-) -> Vec<Expression> {
-    let prop = crate::convert_charset::func_prop(name);
-    if prop == crate::convert_charset::FuncProp::None {
-        return args;
-    }
-    let declared_string = if prop == crate::convert_charset::FuncProp::Auto {
-        string_declared_args(name, &args, ret_eval_type)
-    } else {
-        Vec::new()
-    };
-    args.into_iter()
-        .enumerate()
-        .map(|(position, arg)| {
-            let Some(arg_type) = arg.static_type() else {
-                return arg;
-            };
-            if crate::convert_charset::needs_to_binary(
-                prop,
-                arg_type.charset_name(),
-                result_charset,
-            ) {
-                return build_to_binary(arg, &fold);
-            }
-            if declared_string.get(position).copied().unwrap_or(false) {
-                let mut wrapped = wrap_from_binary(arg, result_charset, result_collation, false);
-                if matches!(&wrapped, Expression::ScalarFunction(function)
-                    if function.func_name.lowercase() == "from_binary")
-                {
-                    // Go `BuildFromBinaryFunction` folds the new node.
-                    fold(&mut wrapped);
-                }
-                return wrapped;
-            }
-            arg
-        })
-        .collect()
-}
-
-/// The argument positions a `funcPropAuto` function class declares
-/// `ETString` -- the only ones `newBaseBuiltinFuncWithTp` /
-/// `newBaseBuiltinFuncWithFieldTypes` hand to `HandleBinaryLiteral`.
-/// Comparisons and CAST take their own builders.
-fn string_declared_args(
-    name: &str,
-    args: &[Expression],
-    ret_eval_type: tidb_datatype::EvalType,
-) -> Vec<bool> {
-    use tidb_datatype::EvalType;
-    let count = args.len();
-    let at = |positions: &[usize]| {
-        (0..count)
-            .map(|index| positions.contains(&index))
-            .collect::<Vec<_>>()
-    };
-    let string_result = ret_eval_type == EvalType::String;
-    match name {
-        "concat" | "concat_ws" | "find_in_set" | "instr" | "replace" | "strcmp" | "crc32"
-        | "regexp" | "regexp_like" => vec![true; count],
-        // `exportSetFunctionClass`: bits and number_of_bits are integers.
-        "export_set" => at(&[1, 2, 3]),
-        // `fieldFunctionClass`: ETString only when every argument is a
-        // string type (`types.IsStringType`).
-        "field" => vec![
-            args.iter()
-                .all(|arg| arg.static_type().is_some_and(FieldType::is_string));
-            count
-        ],
-        "insert_func" => at(&[0, 3]),
-        "lpad" | "rpad" => at(&[0, 2]),
-        "locate" | "position" | "substring_index" | "trim" => at(&[0, 1]),
-        "make_set" | "elt" => (0..count).map(|index| index > 0).collect(),
-        "regexp_instr" => at(&[0, 1, 5]),
-        "regexp_substr" => at(&[0, 1, 4]),
-        "regexp_replace" => at(&[0, 1, 2, 5]),
-        // The control functions declare their value arguments with the
-        // result type.
-        "if" => (0..count).map(|index| index > 0 && string_result).collect(),
-        "ifnull" => vec![string_result; count],
-        "case" => (0..count)
-            .map(|index| string_result && (index % 2 == 1 || index + 1 == count))
-            .collect(),
-        _ => vec![false; count],
-    }
-}
-
 /// Go `BuildToBinaryFunction`, which folds the new node before its parent
 /// inspects argument constancy. `tidbToBinaryFunctionClass` clones the
 /// argument's type into a binary VAR_STRING.
@@ -705,56 +597,6 @@ pub(crate) fn restore_function_result_charset(expr: &mut Expression) -> Result<(
         }
     }
     result_type::restore_char_result_charset(func)
-}
-
-fn wrap_power_arguments(
-    name: &str,
-    args: Vec<Expression>,
-    resolver: &impl ColumnResolver,
-) -> Result<Vec<Expression>, EvalError> {
-    if !matches!(name, "pow" | "power") {
-        return Ok(args);
-    }
-    args.into_iter()
-        .map(|arg| {
-            if arg
-                .static_type()
-                .is_some_and(|field_type| field_type.eval_type() == tidb_datatype::EvalType::Real)
-            {
-                return Ok(arg);
-            }
-            let ret_type = arg.static_type().map_or_else(
-                || crate::builtin_arithmetic::new_return_field_type_for_base_builtin_func(tidb_datatype::EvalType::Real),
-                |source| crate::builtin_arithmetic::real_argument_type(source).into_owned(),
-            );
-            if let Expression::Constant(constant) = &arg {
-                // Immutable integer literals need no runtime conversion.
-                // Markers use the context-aware cast builder below.
-                let real = match constant.literal_value() {
-                    Some(Datum::Int(value)) => Some(*value as f64),
-                    Some(Datum::UInt(value)) => Some(*value as f64),
-                    _ => None,
-                };
-                if let Some(value) = real {
-                    return Ok(Expression::Constant(Constant::new(
-                        Datum::Real(value),
-                        ret_type,
-                    )));
-                }
-            }
-            let mut cast = Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("cast_double"),
-                ret_type,
-                vec![arg],
-            ));
-            // WrapWithCastAsReal calls BuildCastFunction, which folds its
-            // newly constructed cast even under a try/disabled-fold parent.
-            // Parameter results keep their deferred expression for rebinding.
-            derive_tree_collation_with_connection(&mut cast, resolver.connection_charset_info())?;
-            resolver.fold_constant(&mut cast, ConstantFoldMode::Normal);
-            Ok(cast)
-        })
-        .collect()
 }
 
 fn constant(datum: Datum, code: FieldTypeCode) -> Expression {
@@ -1249,20 +1091,6 @@ fn rewrite_expr_resolved_inner(
         });
     }
     let mut built = rewrite_leaf(expr, resolver)?;
-    // Go stamps every builtin's return type as it is constructed (binary on a
-    // non-string result, NOT NULL by `adjustNullFlagForReturnType`); the arms
-    // above that build their own `ScalarFunction` are covered here, on the
-    // node this call produced -- its operands were stamped by their own
-    // rewrites.
-    if let Expression::ScalarFunction(function) = &mut built {
-        if let Some(ret_type) = function.ret_type.as_mut() {
-            result_type::stamp_builtin_return_flags(
-                &function.func_name.lowercase().to_owned(),
-                &function.args,
-                ret_type,
-            );
-        }
-    }
     derive_tree_collation_with_connection(&mut built, resolver.connection_charset_info())?;
     // Go FuncCastExpr calls BuildCastFunctionWithCheck directly, outside
     // newFunctionWithInit's try/disabled-fold counters. JSON casts alone
@@ -2335,52 +2163,13 @@ fn finish_function_call(
         ));
         return finish_function_call("if", vec![condition, null, value], resolver);
     }
-    if let Some(class) = crate::builtin::funcs(&lowered) {
-        return class_function(class, &lowered, rewritten, resolver);
-    }
-    // Go `newFunctionImpl`: an untyped NULL argument takes the last
-    // typed argument's type before the function class sees it
-    // (control functions and ROW infer their own).
-    if !matches!(lowered.as_str(), "if" | "ifnull" | "nullif" | "row") {
-        crate::new_function::type_infer_for_null(&mut rewritten);
-    }
-    let rewritten = wrap_power_arguments(&lowered, rewritten, resolver)?;
-    let mut ret_type = builtin_return_type(&lowered, &rewritten).ok_or_else(|| {
-        crate::builtin_registry::unresolved_error(&lowered, resolver.current_database())
-    })?;
-    if lowered == "tidb_version" {
-        ret_type.set_flen(i64::try_from(resolver.tidb_info_len()).unwrap_or(i64::MAX));
-    }
-    // Go derives the function collation before applying
-    // `HandleBinaryLiteral`. In particular, CONCAT with a binary
-    // operand has a binary result, so a non-legacy argument such as
-    // GBK must be wrapped with `to_binary` before the node is built.
-    // The tree-level derivation below still stamps the complete
-    // `ExprCollation` (including coercibility and repertoire), but
-    // this early charset/collation result is needed for the
-    // construction-time conversion decision itself.
-    let derived = crate::collation_derive::derive_collation_with_connection(
-        &lowered,
-        &rewritten,
-        ret_type.eval_type(),
-        resolver.connection_charset_info(),
-    )?;
-    ret_type.set_charset_name(derived.charset.clone());
-    ret_type.set_collation_name(derived.collation.clone());
-    let rewritten = handle_binary_literal(
-        &lowered,
-        &derived.charset,
-        &derived.collation,
-        ret_type.eval_type(),
-        rewritten,
-        |expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
-    );
-    signature_args::build_call(
-        &lowered,
-        ret_type,
-        rewritten,
-        &crate::builtin::ResolverBuildContext(resolver),
-    )
+    let Some(class) = crate::builtin::funcs(&lowered) else {
+        return Err(crate::builtin_registry::unresolved_error(
+            &lowered,
+            resolver.current_database(),
+        ));
+    };
+    class_function(class, &lowered, rewritten, resolver)
 }
 
 /// [`rewrite_leaf`]'s arms for CALLS and casts -- and the catch-all, in a function of their own.
@@ -2554,15 +2343,8 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                     for arg in &args[1..] {
                         rewritten.push(rewrite_expr_resolved(arg, &child_resolver)?);
                     }
-                    let ret_type =
-                        builtin_return_type(&lowered, &rewritten).ok_or(EvalError::Unsupported(
-                            "this builtin is not yet built for chunk evaluation",
-                        ))?;
-                    return Ok(Expression::ScalarFunction(ScalarFunction::new(
-                        CiString::new(&lowered),
-                        ret_type,
-                        rewritten,
-                    )));
+                    let class = crate::builtin::funcs(&lowered).expect("sequence function class");
+                    return class_function(class, &lowered, rewritten, resolver);
                 }
             }
             // The `DATE_ADD` family's second argument is an `Expr::Interval`
@@ -3798,16 +3580,14 @@ mod literal_tests {
     }
 }
 
-/// The chunk evaluator's builtin gate is [`builtin_return_type`]: a name it
-/// does not type is refused outright, however complete the value
-/// implementation behind it is. These tests pin the RESULT TYPE each newly
-/// gated builtin reports against the `getFunction` that fixes it in
-/// `pkg/expression/builtin_*.go`, and the VALUES against a `goeval` capture --
-/// a builtin that returns the right string with the wrong flen, charset, or
-/// unsigned flag is a latent bug, not a passing port.
+/// These tests pin the RESULT TYPE each builtin reports against the
+/// `getFunction` that fixes it in `pkg/expression/builtin_*.go`, and the
+/// VALUES against a `goeval` capture -- a builtin that returns the right
+/// string with the wrong flen, charset, or unsigned flag is a latent bug,
+/// not a passing port.
 #[cfg(test)]
 mod builtin_type_tests {
-    use super::result_type::base64_needed_encoded_length;
+    use crate::builtin_string::base64_needed_encoded_length;
     use super::*;
 
     fn rewrite(sql_expr: &str) -> Expression {
@@ -4076,10 +3856,6 @@ mod builtin_type_tests {
         assert_eq!(base64_needed_encoded_length(57), 76);
         // 58 bytes encode to 80 characters, which crosses one line break.
         assert_eq!(base64_needed_encoded_length(58), 81);
-        assert_eq!(
-            base64_needed_encoded_length(tidb_datatype::UNSPECIFIED_LENGTH),
-            tidb_datatype::UNSPECIFIED_LENGTH
-        );
         // Go's overflow sentinel is -1, which is `UNSPECIFIED_LENGTH` itself.
         assert_eq!(
             base64_needed_encoded_length(6_827_690_988_321_067_804),

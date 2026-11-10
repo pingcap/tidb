@@ -866,7 +866,7 @@ function_class!(
 );
 
 /// Go `base64NeededEncodedLength`, on a 64-bit `int`.
-fn base64_needed_encoded_length(n: i64) -> i64 {
+pub(crate) fn base64_needed_encoded_length(n: i64) -> i64 {
     // Returns -1 indicate the result will overflow.
     if n > 6_827_690_988_321_067_803 {
         return -1;
