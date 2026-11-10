@@ -5,7 +5,10 @@ go_library(
     srcs = ["geocodec.go"],
     importpath = "github.com/pingcap/tidb/pkg/util/geocodec",
     visibility = ["//visibility:public"],
-    deps = ["@com_github_peterstace_simplefeatures//geom"],
+    deps = [
+        "//pkg/util/size",
+        "@com_github_peterstace_simplefeatures//geom",
+    ],
 )
 
 go_test(

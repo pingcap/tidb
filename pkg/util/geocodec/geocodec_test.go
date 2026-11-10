@@ -110,16 +110,16 @@ func (m *mysqlWriter) geometry(g geom.Geometry, depth int) error {
 	switch typ {
 	case geom.TypePoint:
 		c, _ := g.MustAsPoint().Coordinates()
-		m.enc.coordinates(c, ctype)
-		return nil
+		return m.enc.coordinates(c, ctype)
 	case geom.TypeLineString:
-		m.enc.sequence(g.MustAsLineString().Coordinates(), ctype)
-		return nil
+		return m.enc.sequence(g.MustAsLineString().Coordinates(), ctype)
 	case geom.TypePolygon:
 		rings := g.MustAsPolygon().Coordinates()
 		m.enc.uint32(uint32(len(rings)))
 		for _, ring := range rings {
-			m.enc.sequence(ring, ctype)
+			if err := m.enc.sequence(ring, ctype); err != nil {
+				return err
+			}
 		}
 		return nil
 	case geom.TypeMultiPoint:
@@ -144,26 +144,25 @@ func (m *mysqlWriter) geometry(g geom.Geometry, depth int) error {
 	return nil
 }
 
-// checkAgainstReference requires StoredToMySQL to agree with referenceStoredToMySQL on
-// b. The one difference allowed is big-endian geometry, which the reference reads and
-// StoredToMySQL rejects with ErrInvalid; b is then not in the canonical form.
+// checkAgainstReference requires StoredToMySQL to agree with referenceStoredToMySQL on b,
+// except that it refuses a big-endian geometry, and only then may differ.
 func checkAgainstReference(t testing.TB, b []byte) {
 	got, err := StoredToMySQL(b)
 	want, wantErr := referenceStoredToMySQL(b)
 	if errors.Is(err, ErrInvalid) && !errors.Is(wantErr, ErrInvalid) {
-		if errors.Is(wantErr, ErrTooDeep) {
-			// A big-endian geometry ahead of the depth overflow.
-			require.GreaterOrEqual(t, bytes.IndexByte(b, byteOrderBig), 0, "%X", b)
-			return
+		require.ErrorIs(t, err, errBigEndianStored, "%X", b)
+		// With big-endian geometries accepted, the scan agrees with the reference.
+		payload, payloadErr := payloadOf(b)
+		require.NoError(t, payloadErr, "%X", b)
+		s := scanner{r: reader{buf: payload, dialect: dialectEWKB}, ingest: true}
+		scanErr := s.scan()
+		if scanErr == nil && s.notMySQL {
+			scanErr = ErrNotMySQLExpressible
 		}
-		srid, g, decodeErr := decodeStored(b)
-		require.NoError(t, decodeErr, "%X", b)
-		canonical, encodeErr := encode(g, srid)
-		require.NoError(t, encodeErr, "%X", b)
-		require.NotEqual(t, canonical, b, "%X", b)
+		require.Equal(t, wantErr, scanErr, "%X", b)
 		return
 	}
-	require.Equal(t, wantErr, err, "%X", b)
+	require.ErrorIs(t, err, wantErr, "%X", b)
 	require.Equal(t, want, got, "%X", b)
 }
 
@@ -278,6 +277,33 @@ func TestStoredLayout(t *testing.T) {
 	mysql, err := StoredToMySQL(flagless)
 	require.NoError(t, err)
 	require.Equal(t, mustHex(t, "00000000 01 01000000 000000000000F03F 0000000000000040"), mysql)
+}
+
+// TestEncodeRefusesUnreadable checks that encode refuses what the reader would refuse, so
+// no value is stored that cannot be read back.
+func TestEncodeRefusesUnreadable(t *testing.T) {
+	nan, inf := math.NaN(), math.Inf(1)
+	emptyRing, err := geom.UnmarshalWKT("POLYGON((0 0,1 0,1 1,0 0),EMPTY)", geom.NoValidate{})
+	require.NoError(t, err)
+	for name, g := range map[string]geom.Geometry{
+		"NaN Z":                 geom.NewPointXYZ(1, 2, nan).AsGeometry(),
+		"NaN X and Y":           geom.NewPointXY(nan, nan).AsGeometry(),
+		"infinite Y":            geom.NewPointXY(1, -inf).AsGeometry(),
+		"infinite M in a line":  geom.NewLineStringXYM(0, 0, 1, 1, 1, inf).AsGeometry(),
+		"empty ring":            emptyRing,
+		"NaN Z in a collection": geom.NewGeometryCollection([]geom.Geometry{geom.NewPointXYZ(1, 2, nan).AsGeometry()}).AsGeometry(),
+	} {
+		_, err := encode(g, 0)
+		require.ErrorIs(t, err, ErrInvalid, name)
+	}
+	// POINT EMPTY is written with NaNs and read back as empty.
+	stored, err := encode(geom.NewEmptyPoint(geom.DimXYZ).AsGeometry(), 4326)
+	require.NoError(t, err)
+	srid, g, err := decodeStored(stored)
+	require.NoError(t, err)
+	require.Equal(t, uint32(4326), srid)
+	require.True(t, g.IsEmpty())
+	require.Equal(t, geom.DimXYZ, g.CoordinatesType())
 }
 
 func TestStoredRejects(t *testing.T) {

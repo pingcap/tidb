@@ -14,25 +14,15 @@
 
 // Package geocodec converts between the two byte forms of a geometry value.
 //
-//   - The stored format, which is what a geometry column holds and what every geometry
-//     expression evaluates to: a format-version byte followed by little-endian EWKB, the
-//     PostGIS/GEOS extension of WKB whose type word carries Z, M and SRID flags. The SRID
-//     flag is always set, so a stored value is self-describing.
-//   - MySQL's binary format, which a bare SELECT returns and a bare literal carries: a
-//     4-byte little-endian SRID followed by 2D WKB.
+//   - The stored format, which a geometry column holds: a version byte, then little-endian
+//     EWKB (WKB with Z, M and SRID flags) with the SRID flag always set.
+//   - MySQL's binary format, which a bare SELECT returns: a 4-byte little-endian SRID, then
+//     2D WKB.
 //
-// The stored format and MySQL's format hold coordinates in the same order, longitude
-// first on a geographic SRS, and below the root header their bodies are the same bytes,
-// so converting a stored value to MySQL's format rewrites only the header.
-//
-// Converting between the formats, in either direction, builds no geometry: a scan checks
-// the value, and then only the header is rewritten. A geometry is built only when one is
-// read, so a conversion costs what the value's size does, whatever its nesting.
-//
-// Every reader and every scan bounds nesting at MaxDepth, requires the input to be
-// consumed exactly, and checks counts against the input before allocating, each against
-// what remains and all of them together against the whole, because the bytes can come
-// straight from a client.
+// Both hold the same coordinates in the same order below the root header, so a conversion
+// checks the value with a scan that builds nothing and rewrites only the header. Every
+// read and scan bounds nesting at MaxDepth, consumes the input exactly and checks counts
+// before allocating.
 package geocodec
 
 import (
@@ -42,15 +32,14 @@ import (
 	"math"
 
 	"github.com/peterstace/simplefeatures/geom"
+	"github.com/pingcap/tidb/pkg/util/size"
 )
 
 const (
 	// Version1 is the stored-format version whose payload is EWKB.
 	Version1 byte = 1
-	// MaxDepth bounds geometry nesting, counted in geometry headers from the root: a
-	// POINT is 1, GEOMETRYCOLLECTION(GEOMETRYCOLLECTION(POINT(1 2))) is 3. Real data
-	// stays in single digits; the bound exists so hostile input fails cleanly instead
-	// of overflowing the goroutine stack, which Go cannot recover from.
+	// MaxDepth bounds nesting, counted in geometry headers from the root (a POINT is 1), so
+	// hostile input fails instead of overflowing the goroutine stack.
 	MaxDepth = 1024
 )
 
@@ -61,53 +50,44 @@ var (
 	ErrTooDeep = fmt.Errorf("geometry nested deeper than %d levels", MaxDepth)
 	// ErrUnsupportedVersion means a stored value starts with an unknown version byte.
 	ErrUnsupportedVersion = errors.New("unsupported geometry storage format version")
-	// ErrNotMySQLExpressible means the geometry has no form in MySQL's binary format: it
-	// has Z or M coordinates, or an empty geometry other than a GEOMETRYCOLLECTION at any
-	// depth, which WKB cannot represent or MySQL does not accept.
+	// ErrNotMySQLExpressible means the geometry has Z or M coordinates, or an empty geometry
+	// other than a GEOMETRYCOLLECTION, which MySQL's binary format cannot hold.
 	ErrNotMySQLExpressible = errors.New("geometry cannot be expressed in MySQL's binary format")
-	// ErrTooComplex means building the geometry would take too much work for its size:
-	// it nests much of its data in many collections. The value is well-formed and can be
-	// stored and converted; only building it as a geometry is refused.
+	// ErrTooComplex means building the geometry would exceed the decode budget; it can still
+	// be stored and converted.
 	ErrTooComplex = errors.New("geometry nests too much of its data too deep to be built")
+
+	// errBigEndianStored is the ErrInvalid of a big-endian geometry in a stored value, which
+	// StoredToMySQL cannot copy into MySQL's little-endian format.
+	errBigEndianStored = fmt.Errorf("%w: big-endian geometry in a stored value", ErrInvalid)
 )
 
-// The budget for building a geometry. Building a collection copies everything below it,
-// at every level, so the work is the sum, over the collections, of the bytes of their
-// members and of decodeWorkPerGeometry for each geometry below them, which the scan
-// measures before anything is built. Data that nests in single digits needs at most a few
-// times its size; a collection chain around most of the value needs its depth times its
-// size or more: 1.5 times that around points, 2.2 times around empty geometries.
+// The decode budget. Building a collection copies everything below it, so the work is the
+// sum over collections of their members' bytes and decodeWorkPerGeometry per geometry.
 const (
 	// decodeWorkFactor is the work allowed per byte of the value.
 	decodeWorkFactor = 16
-	// decodeWorkFloor is the work always allowed, so short values nested deep, such as
-	// 1,024 empty collections (about 10.5 MB of work), are still built.
-	decodeWorkFloor = 16 << 20
-	// decodeWorkPerGeometry is the work each geometry below a collection adds to building
-	// it, besides its bytes. A copy of a geometry allocates about 48 bytes whatever its
-	// size, a collection member's 16-byte geom.Geometry and its 32-byte struct, so its
-	// bytes alone undercount a small one: an empty polygon is 9 bytes. Building allocates
-	// about 4.6 bytes per byte of work, measured on collection chains around points, so
-	// the 48 bytes count as 48 / 4.6 = 10.4 bytes of work, rounded up.
+	// decodeWorkFloor is the work always allowed, so short deep values such as 1,024 empty
+	// collections (about 10.5 MB of work) are still built.
+	decodeWorkFloor = 16 * size.MB
+	// decodeWorkPerGeometry is the fixed cost of copying one geometry: about 48 bytes
+	// allocated, at about 4.6 bytes per unit of work (measured), rounded up.
 	decodeWorkPerGeometry = 11
 )
 
-// decodeWork is the work of building a geometry, which the scan of its WKB counts
-// collection by collection. A reader that builds a geometry from another format counts
-// it through the same methods, so that a value is refused or built whatever its format.
+// decodeWork is the work of building a geometry, counted by the scan collection by
+// collection.
 type decodeWork uint64
 
-// addCollection adds the work of building a collection whose members take memberBytes
-// bytes of WKB and hold geometries geometries, the members and every geometry below
-// them: building it copies each of them.
+// addCollection adds the work of building a collection: its members' bytes, and the fixed
+// cost of every geometry below it.
 func (w *decodeWork) addCollection(memberBytes, geometries uint64) {
 	*w += decodeWork(memberBytes + decodeWorkPerGeometry*geometries)
 }
 
-// exceeds reports whether the work passes the budget for a geometry of size bytes of WKB:
-// max(decodeWorkFactor x size, decodeWorkFloor).
-func (w decodeWork) exceeds(size uint64) bool {
-	return uint64(w) > max(decodeWorkFactor*size, decodeWorkFloor)
+// exceeds reports whether the work passes max(decodeWorkFactor x n, decodeWorkFloor).
+func (w decodeWork) exceeds(n uint64) bool {
+	return uint64(w) > max(decodeWorkFactor*n, decodeWorkFloor)
 }
 
 const (
@@ -150,12 +130,8 @@ type Summary struct {
 	Type geom.GeometryType
 }
 
-// MySQLToStored converts MySQL's binary format into the stored format, and also returns
-// the SRID and a summary of the geometry. The WKB must be little-endian at the root and
-// in every member, as MySQL's format is. Any SRID is accepted, since the coordinates are
-// taken in the order they are stored and no SRS axis order is applied. A scan that builds
-// nothing makes the reader's checks, and then only the header is rewritten: below it the
-// stored format holds the same bytes.
+// MySQLToStored converts MySQL's binary format into the stored format. It checks the WKB
+// framing, not MySQL's structure rules such as a linestring's minimum of two points.
 func MySQLToStored(b []byte) (stored []byte, srid uint32, sum Summary, err error) {
 	if len(b) < 4 {
 		return nil, 0, Summary{}, ErrInvalid
@@ -174,12 +150,8 @@ func MySQLToStored(b []byte) (stored []byte, srid uint32, sum Summary, err error
 	return append(stored, b[9:]...), srid, s.sum, nil
 }
 
-// StoredToMySQL converts a stored value into MySQL's binary format. A scan that builds
-// nothing first checks that the value is well-formed, little-endian throughout and
-// expressible in MySQL's format, which rules out Z or M coordinates and an empty
-// geometry other than a GEOMETRYCOLLECTION at any depth. Then only the header is
-// rewritten: the SRID moves in front and the root type word loses its flags, while the
-// body is copied unchanged.
+// StoredToMySQL converts a stored value into MySQL's binary format, rewriting only the
+// header; a value MySQL's format cannot hold gives ErrNotMySQLExpressible.
 func StoredToMySQL(stored []byte) ([]byte, error) {
 	payload, err := payloadOf(stored)
 	if err != nil {
@@ -259,7 +231,7 @@ func read(b []byte, d dialect) (uint32, geom.Geometry, error) {
 	if err := s.scan(); err != nil {
 		return 0, geom.Geometry{}, err
 	}
-	if s.work.exceeds(uint64(len(b))) {
+	if s.work.exceeds(s.budgetSize()) {
 		return 0, geom.Geometry{}, ErrTooComplex
 	}
 	return build(b, d)
@@ -283,11 +255,8 @@ type reader struct {
 	pos     int
 	dialect dialect
 	srid    uint32
-	// claimed is the sum of the least bytes each count read so far needs. The elements of
-	// different counts never share bytes, so a well-formed value claims at most its own
-	// length. Bounding the sum, not only each count, keeps nested counts from claiming the
-	// same bytes again at every level, which would let a small value allocate many times
-	// its size before it fails.
+	// claimed sums the least bytes each count read so far needs, so nested counts cannot
+	// claim the same bytes again and allocate many times the value's size.
 	claimed uint64
 }
 
@@ -325,9 +294,8 @@ func (r *reader) uint32(order byte) (uint32, error) {
 	return v, nil
 }
 
-// count reads an element count and checks that that many elements of at least
-// minSize bytes each fit in the remaining input, together with the elements of every
-// count read before.
+// count reads an element count and checks that its elements, at least minSize bytes each,
+// fit in the input together with every earlier count's.
 func (r *reader) count(order byte, minSize int) (int, error) {
 	n, err := r.uint32(order)
 	if err != nil {
@@ -487,9 +455,8 @@ func collection(typ geom.GeometryType, members []geom.Geometry, ctype geom.Coord
 	default:
 		g = geom.NewGeometryCollection(members).AsGeometry()
 	}
-	// The constructors take the coordinate type from the members, which all have ctype.
-	// Only an empty collection has none to take it from; forcing it on any other would
-	// copy every member again.
+	// The constructors take the coordinate type from the members; only an empty collection
+	// needs it set.
 	if len(members) == 0 {
 		g = g.ForceCoordinatesType(ctype)
 	}
@@ -510,9 +477,8 @@ func (r *reader) coordinates(order byte, ctype geom.CoordinatesType, n int) ([]f
 	return floats, nil
 }
 
-// floats reads len(dst) coordinate values into dst and reports whether all of them are
-// finite. The check is made while decoding, since a second pass over the values just
-// written costs more than the decoding itself on some CPUs.
+// floats reads len(dst) values into dst and reports whether all are finite, checked while
+// decoding since a second pass costs more.
 func (r *reader) floats(order byte, dst []float64) (bool, error) {
 	if r.remaining() < 8*len(dst) {
 		return false, ErrInvalid
@@ -625,24 +591,19 @@ func (r *reader) polygon(order byte, ctype geom.CoordinatesType) (geom.Polygon, 
 	return geom.NewPolygon(rings), nil
 }
 
-// scanner walks a payload with the reader's primitives and makes the reader's checks in
-// the reader's order, but builds no geometry, so it allocates nothing. It accepts exactly
-// the payloads the reader accepts in the same dialect, except that StoredToMySQL's scan
-// rejects a big-endian geometry, and it records what its caller needs to know about the
-// value.
+// scanner checks a payload as the reader does, in the same order, but builds nothing and
+// allocates nothing.
 type scanner struct {
 	r reader
-	// ingest is set for a value given for storage or to be built: a big-endian geometry
-	// is accepted. Without it, as for StoredToMySQL, which copies the body unchanged into
-	// MySQL's little-endian format, a big-endian geometry is ErrInvalid: stored values
-	// are written little-endian, so it was not written here.
+	// ingest accepts big-endian geometries; StoredToMySQL, which copies the body into
+	// MySQL's little-endian format, scans without it.
 	ingest bool
 
-	// notMySQL is set by Z or M coordinates, or by an empty geometry other than a
-	// GEOMETRYCOLLECTION. It is reported only once the whole value is known to be
-	// well-formed, so a malformed value reports its structural error whatever its
-	// coordinates.
+	// notMySQL records Z or M coordinates or an empty non-collection, reported only once the
+	// value is known to be well-formed.
 	notMySQL bool
+	// sridBytes is 4 when the root carries an EWKB SRID.
+	sridBytes int
 	// geometries counts the geometry headers scanned so far.
 	geometries uint64
 	// work is the work of building the value.
@@ -650,6 +611,10 @@ type scanner struct {
 	// sum is the summary.
 	sum Summary
 }
+
+// budgetSize is the length the decode budget scales with: the WKB without an EWKB SRID, so
+// a value gets the same budget in either format.
+func (s *scanner) budgetSize() uint64 { return uint64(len(s.r.buf) - s.sridBytes) }
 
 // scan scans the whole payload: one geometry, and nothing after it.
 func (s *scanner) scan() error {
@@ -674,7 +639,7 @@ func (s *scanner) geometry(depth int, want geom.GeometryType, parentCType geom.C
 		return err
 	}
 	if order != byteOrderLittle && !s.ingest {
-		return ErrInvalid
+		return errBigEndianStored
 	}
 	typ, ctype, hasSRID, err := s.r.typeWord(order, root)
 	if err != nil {
@@ -693,6 +658,7 @@ func (s *scanner) geometry(depth int, want geom.GeometryType, parentCType geom.C
 		if _, err = s.r.uint32(order); err != nil {
 			return err
 		}
+		s.sridBytes = 4
 	}
 	switch typ {
 	case geom.TypePoint:
@@ -893,7 +859,13 @@ func typeCodeOf(typ geom.GeometryType) (uint32, bool) {
 	return 0, false
 }
 
-func (w *writer) coordinates(c geom.Coordinates, ctype geom.CoordinatesType) {
+// coordinates writes one position; a non-finite value is ErrInvalid, as the reader would
+// refuse it.
+func (w *writer) coordinates(c geom.Coordinates, ctype geom.CoordinatesType) error {
+	if !isFinite(c.X) || !isFinite(c.Y) || ctype.Is3D() && !isFinite(c.Z) ||
+		ctype.IsMeasured() && !isFinite(c.M) {
+		return ErrInvalid
+	}
 	w.float64(c.X)
 	w.float64(c.Y)
 	if ctype.Is3D() {
@@ -902,14 +874,27 @@ func (w *writer) coordinates(c geom.Coordinates, ctype geom.CoordinatesType) {
 	if ctype.IsMeasured() {
 		w.float64(c.M)
 	}
+	return nil
 }
 
-func (w *writer) sequence(seq geom.Sequence, ctype geom.CoordinatesType) {
+func isFinite(f float64) bool { return math.Float64bits(f)&nonFinite != nonFinite }
+
+// emptyPoint writes POINT EMPTY as EWKB does, every coordinate the quiet NaN.
+func (w *writer) emptyPoint(ctype geom.CoordinatesType) {
+	for range ctype.Dimension() {
+		w.buf = binary.LittleEndian.AppendUint64(w.buf, emptyPointNaN)
+	}
+}
+
+func (w *writer) sequence(seq geom.Sequence, ctype geom.CoordinatesType) error {
 	n := seq.Length()
 	w.uint32(uint32(n))
 	for i := range n {
-		w.coordinates(seq.Get(i), ctype)
+		if err := w.coordinates(seq.Get(i), ctype); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func (w *writer) geometry(g geom.Geometry, depth int) error {
@@ -925,17 +910,23 @@ func (w *writer) geometry(g geom.Geometry, depth int) error {
 	case geom.TypePoint:
 		c, ok := g.MustAsPoint().Coordinates()
 		if !ok {
-			nan := math.Float64frombits(emptyPointNaN)
-			c = geom.Coordinates{XY: geom.XY{X: nan, Y: nan}, Z: nan, M: nan, Type: ctype}
+			w.emptyPoint(ctype)
+			return nil
 		}
-		w.coordinates(c, ctype)
+		return w.coordinates(c, ctype)
 	case geom.TypeLineString:
-		w.sequence(g.MustAsLineString().Coordinates(), ctype)
+		return w.sequence(g.MustAsLineString().Coordinates(), ctype)
 	case geom.TypePolygon:
 		rings := g.MustAsPolygon().Coordinates()
 		w.uint32(uint32(len(rings)))
 		for _, ring := range rings {
-			w.sequence(ring, ctype)
+			// The reader refuses a ring without points.
+			if ring.Length() == 0 {
+				return ErrInvalid
+			}
+			if err := w.sequence(ring, ctype); err != nil {
+				return err
+			}
 		}
 	case geom.TypeMultiPoint:
 		mp := g.MustAsMultiPoint()

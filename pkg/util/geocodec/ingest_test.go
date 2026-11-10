@@ -25,8 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// referenceMySQLToStored is MySQLToStored as it was before the scan: it reads the value
-// into a geometry and encodes that.
+// referenceMySQLToStored converts by building the geometry and encoding it.
 func referenceMySQLToStored(b []byte) (stored []byte, srid uint32, g geom.Geometry, err error) {
 	if len(b) < 4 {
 		return nil, 0, geom.Geometry{}, ErrInvalid
@@ -378,6 +377,11 @@ func TestDecodeBudget(t *testing.T) {
 		payload := storedFromMySQL(c.mysql)[1:]
 		s := scanner{r: reader{buf: payload, dialect: dialectEWKB}, ingest: true}
 		require.NoError(t, s.scan(), c.name)
+		// The same value gets the same work and the same budget in either format.
+		m := scanner{r: reader{buf: c.mysql[4:], dialect: dialectMySQL}, ingest: true}
+		require.NoError(t, m.scan(), c.name)
+		require.Equal(t, m.work, s.work, c.name)
+		require.Equal(t, m.budgetSize(), s.budgetSize(), c.name)
 		_, _, err := read(payload, dialectEWKB)
 		t.Logf("%s: %d bytes, work %d (%.1f times the size), %v", c.name, len(payload), s.work,
 			float64(s.work)/float64(len(payload)), err)
