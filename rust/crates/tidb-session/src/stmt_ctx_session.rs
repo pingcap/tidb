@@ -198,6 +198,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &mut self.published_last_insert_id
     }
 
+    fn readonly_user_vars_ref(&self) -> &Arc<std::collections::HashSet<String>> {
+        &self.readonly_user_vars
+    }
+
     fn rand_ref(&self) -> &Arc<MysqlRng> {
         &self.rand
     }

@@ -56,17 +56,6 @@
 //!   the collation, as Go's does. Only extension functions, registered by
 //!   arity alone, have no class yet.
 //!
-//! - **Three special-cased names are refused, not built.** `newFunctionImpl`
-//!   opens with a switch that hands four names to dedicated node builders
-//!   rather than the `funcs` map. `ast.Cast` -> `BuildCastFunction` is
-//!   [`crate::simple_expr::build_cast_function`]. The other three --
-//!   `ast.GetVar` -> `BuildGetVarFunction`, `InternalFuncFromBinary` ->
-//!   `BuildFromBinaryFunction`, and `InternalFuncToBinary` ->
-//!   `BuildToBinaryFunction` -- are refused with a named
-//!   [`EvalError::Unsupported`]: none of them is in the `funcs` map, so
-//!   without the refusal they would surface as a misleading 1305 "function
-//!   does not exist".
-//!
 //! - **`ast.Sysdate` -> `ast.Now` IS honored**, through
 //!   [`crate::Columns::sysdate_is_now`].
 //!
@@ -196,21 +185,6 @@ fn default_scalar_function_check(function: ScalarFunction) -> Result<ScalarFunct
     Ok(function)
 }
 
-/// The names `newFunctionImpl` routes to dedicated node builders
-/// (`scalar_function.go:207-215`) that are not built here, with the Go
-/// builder each one needs. See the module header.
-fn dedicated_builder_refusal(func_name: &str) -> Option<EvalError> {
-    let reason = match func_name {
-        "getvar" => {
-            "NewFunction(getvar) needs BuildGetVarFunction, which builds a getvar_<kind> node"
-        }
-        "from_binary" => "NewFunction(from_binary) needs BuildFromBinaryFunction",
-        "to_binary" => "NewFunction(to_binary) needs BuildToBinaryFunction",
-        _ => return None,
-    };
-    Some(EvalError::Unsupported(reason))
-}
-
 /// Go `newFunctionImpl` (`scalar_function.go:203`), the shared body of the
 /// whole `NewFunction` family.
 ///
@@ -223,7 +197,6 @@ fn dedicated_builder_refusal(func_name: &str) -> Option<EvalError> {
 ///
 /// # Errors
 ///
-/// - [`EvalError::Unsupported`] for the three refused dedicated-builder names.
 /// - [`EvalError::NoDatabaseSelected`] (Go `plannererrors.ErrNoDB`, 1046) for
 ///   an unregistered name with no current database.
 /// - [`EvalError::FunctionNotExists`] (1305) for an unregistered name.
@@ -237,8 +210,33 @@ pub fn new_function_impl(
     check_or_init: Option<ScalarFunctionCallBack<'_>>,
     args: Vec<Expression>,
 ) -> Result<Expression, EvalError> {
-    if let Some(refusal) = dedicated_builder_refusal(func_name) {
-        return Err(refusal);
+    // Go: `case InternalFuncFromBinary: return BuildFromBinaryFunction(ctx,
+    // args[0], retType, false), nil`.
+    if func_name == crate::convert_charset::INTERNAL_FUNC_FROM_BINARY {
+        let mut args = args;
+        return Ok(crate::convert_charset::build_from_binary_function(
+            &crate::builtin::ColumnsBuildContext(ctx),
+            args.swap_remove(0),
+            ret_type,
+            false,
+        ));
+    }
+    // Go: `case InternalFuncToBinary: return BuildToBinaryFunction(ctx, args[0]), nil`.
+    if func_name == crate::convert_charset::INTERNAL_FUNC_TO_BINARY {
+        let mut args = args;
+        return Ok(crate::convert_charset::build_to_binary_function(
+            &crate::builtin::ColumnsBuildContext(ctx),
+            args.swap_remove(0),
+        ));
+    }
+    // Go: `case ast.GetVar: return BuildGetVarFunction(ctx, args[0], retType)`.
+    if func_name == "getvar" {
+        let mut args = args;
+        return crate::builtin_other::build_get_var_function(
+            &crate::builtin::ColumnsBuildContext(ctx),
+            args.swap_remove(0),
+            ret_type,
+        );
     }
     // Go: `case ast.Cast: return BuildCastFunction(ctx, args[0], retType), nil`.
     if func_name == "cast" {
@@ -893,28 +891,6 @@ mod tests {
             .unwrap_err(),
             EvalError::NoDatabaseSelected
         );
-    }
-
-    /// NEW COVERAGE for the module header's dedicated-builder narrowing: the
-    /// three refused names must be REFUSED by name, not misreported as
-    /// nonexistent functions and not built as plain nodes that could never
-    /// evaluate.
-    #[test]
-    fn dedicated_builder_names_are_refused_rather_than_built() {
-        for name in ["getvar", "from_binary", "to_binary"] {
-            let result = new_function_base(
-                &WithDatabase,
-                name,
-                FieldType::new(FieldTypeCode::LongLong),
-                vec![int_constant(1)],
-            );
-            match result {
-                Err(EvalError::Unsupported(reason)) => {
-                    assert!(reason.contains(name), "{name} must be named: {reason}");
-                }
-                other => panic!("{name} must be refused, got {other:?}"),
-            }
-        }
     }
 
     /// Go `newFunctionImpl`: `case ast.Cast: return BuildCastFunction(ctx,

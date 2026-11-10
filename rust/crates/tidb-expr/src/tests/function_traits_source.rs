@@ -21,16 +21,13 @@
 /// Go asserts `unFoldableFunctions[ast.Sysdate]` exists -- the map is the one
 /// consulted by constant folding. The crate keeps that map twice by
 /// construction (the rewriter-tier [`crate::scalar_function::is_unfoldable_function`]
-/// and the folding tier's `constant_fold::is_unfoldable`, which additionally
-/// prefixes `getvar_`), so both spellings must agree on sysdate.
+/// and the folding tier's `constant_fold::is_unfoldable`), so both must agree
+/// on sysdate.
 #[test]
 fn unfoldable_functions_contains_sysdate() {
     assert!(crate::scalar_function::is_unfoldable_function("sysdate"));
     // The same membership drives constant_fold's handler; pin both faces.
     assert!(crate::scalar_function::is_unfoldable_function("getvar"));
-    assert!(crate::scalar_function::is_unfoldable_function(
-        "getvar_string"
-    ));
     assert!(crate::scalar_function::is_unfoldable_function("rand"));
     assert!(crate::scalar_function::is_unfoldable_function("uuid"));
     assert!(crate::scalar_function::is_unfoldable_function("getparam"));

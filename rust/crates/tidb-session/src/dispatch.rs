@@ -1662,6 +1662,13 @@ impl Session {
         // statement's `ROW_COUNT()` (captured: a failed SELECT leaves -1, a
         // failed INSERT leaves 0).
         self.statement_kind = statement_kind_of(&stmt);
+        // Go `Preprocess` runs on the statement the session was handed: an
+        // execution of a prepared statement preprocesses its `EXECUTE`,
+        // which reads no variable under a SELECT.
+        self.readonly_user_vars = std::sync::Arc::new(match prepared {
+            None => tidb_planner::preprocess::readonly_user_vars(&stmt),
+            Some(_) => std::collections::HashSet::new(),
+        });
         self.begin_statement_keys_read();
         // Go `buildDo`: DO evaluates its expressions as a Projection over a
         // one-row TableDual and discards the row, so `DO @a := 1` assigns and

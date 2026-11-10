@@ -80,6 +80,59 @@ impl CteScope {
 /// # Errors
 ///
 /// `ErrNoDB` when an unqualified name has no current database to take.
+/// Go `preprocessor.varsReadonly` after `Preprocess`: the user variables
+/// the statement reads under a SELECT and never assigns. Names are
+/// lowercased, as the session stores them.
+#[must_use]
+pub fn readonly_user_vars(stmt: &tidb_ast::Stmt) -> std::collections::HashSet<String> {
+    #[derive(Default)]
+    struct Vars {
+        /// Go `stmtTp == TypeSelect`: the statement node entered last is a
+        /// SELECT.
+        in_select: bool,
+        mutable: std::collections::HashSet<String>,
+        readonly: std::collections::HashSet<String>,
+    }
+    impl Visitor for Vars {
+        fn enter(&mut self, node: &mut dyn Any) -> bool {
+            if node.is::<tidb_ast::SelectStmt>() {
+                self.in_select = true;
+            } else if node.is::<tidb_ast::UpdateStmt>()
+                || node.is::<tidb_ast::DeleteStmt>()
+                || node.is::<tidb_ast::InsertStmt>()
+                || node.is::<tidb_ast::ShowStmt>()
+            {
+                self.in_select = false;
+            } else if let Some(expr) = node.downcast_ref::<tidb_ast::Expr>() {
+                match expr {
+                    tidb_ast::Expr::Assign { name, .. } => {
+                        let name = go_to_lower(name);
+                        self.readonly.remove(&name);
+                        self.mutable.insert(name);
+                    }
+                    tidb_ast::Expr::UserVar(name) if self.in_select => {
+                        let name = go_to_lower(name);
+                        if !self.mutable.contains(&name) {
+                            self.readonly.insert(name);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn Any) -> bool {
+            true
+        }
+    }
+
+    let mut statement = stmt.clone();
+    let mut vars = Vars::default();
+    statement.accept(&mut vars);
+    vars.readonly
+}
+
 pub fn handle_table_name<N: Visitable>(node: &mut N, current_db: &str) -> Result<(), PlanError> {
     struct Pinner<'a> {
         current_db: &'a str,

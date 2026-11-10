@@ -23,7 +23,7 @@ use crate::expr_util::predicates::disable_parse_json_flag_4_expr;
 use crate::expression::Expression;
 use crate::wrap_cast::type_of;
 use crate::EvalError;
-use tidb_datatype::{Datum, EvalType, FieldTypeCode};
+use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode};
 use tidb_proto::tipb::ScalarFuncSig;
 
 /// Go `inFunctionClass`.
@@ -222,6 +222,141 @@ impl FunctionClass for SetVarFunctionClass {
         bf.tp.set_flen_under_limit(flen);
         Ok(bf)
     }
+}
+
+/// Go `getVarFunctionClass` with its five embedders (`getStringVarFunctionClass`,
+/// `getIntVarFunctionClass`, `getRealVarFunctionClass`,
+/// `getDecimalVarFunctionClass`, `getTimeVarFunctionClass`): `ret_tp` is the
+/// embedder, `tp` the variable's declared type.
+pub(crate) struct GetVarFunctionClass {
+    ret_tp: EvalType,
+    tp: FieldType,
+}
+
+impl FunctionClass for GetVarFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        let mut bf =
+            new_base_builtin_func_with_tp(ctx, "getvar", args, self.ret_tp, &[EvalType::String])?;
+        match self.ret_tp {
+            EvalType::Int => {
+                bf.tp.set_flen(self.tp.flen());
+                bf.tp.set_raw_flags(self.tp.raw_flags());
+            }
+            EvalType::Real => bf.tp.set_flen(self.tp.flen()),
+            EvalType::Decimal => bf.tp.set_flen_under_limit(self.tp.flen()),
+            EvalType::Datetime => {
+                if self.tp.code() == FieldTypeCode::Datetime {
+                    let mut fsp = self.tp.flen() - MAX_DATETIME_WIDTH_NO_FSP;
+                    if fsp > 0 {
+                        fsp -= 1;
+                    }
+                    bf.set_decimal_and_flen_for_datetime(fsp);
+                } else {
+                    bf.set_decimal_and_flen_for_date();
+                }
+            }
+            _ => {
+                bf.tp.set_flen(self.tp.flen());
+                if !self.tp.charset_name().is_empty() {
+                    bf.tp.set_charset_name(self.tp.charset_name());
+                    bf.tp.set_collation_name(self.tp.collation_name());
+                }
+            }
+        }
+        Ok(bf)
+    }
+}
+
+/// Go `mysql.MaxDatetimeWidthNoFsp`.
+const MAX_DATETIME_WIDTH_NO_FSP: i64 = 19;
+
+/// Go `BuildGetVarFunction`.
+pub(crate) fn build_get_var_function(
+    ctx: &dyn BuildContext,
+    expr: Expression,
+    ret_type: FieldType,
+) -> Result<Expression, EvalError> {
+    let ret_tp = match ret_type.eval_type() {
+        tp @ (EvalType::Int | EvalType::Decimal | EvalType::Real | EvalType::Datetime) => tp,
+        _ => EvalType::String,
+    };
+    let fc = GetVarFunctionClass { ret_tp, tp: ret_type.clone() };
+    let f = fc.get_function(ctx, vec![expr])?;
+    Ok(convert_readonly_var_to_const(
+        ctx,
+        crate::new_function::scalar_function_of("getvar", ret_type, f),
+    ))
+}
+
+/// Go `convertReadonlyVarToConst`: a user variable the statement only reads
+/// is the constant it holds.
+fn convert_readonly_var_to_const(
+    ctx: &dyn BuildContext,
+    get_var: crate::scalar_function::ScalarFunction,
+) -> Expression {
+    let var_name = match get_var.args.first() {
+        Some(Expression::Constant(arg0)) if arg0.deferred_expr.is_none() => {
+            String::from_utf8_lossy(arg0.value.go_bytes()).into_owned()
+        }
+        _ => return Expression::ScalarFunction(get_var),
+    };
+    let Some(eval_ctx) = ctx.columns().filter(|eval_ctx| eval_ctx.is_readonly_user_var(&var_name))
+    else {
+        return Expression::ScalarFunction(get_var);
+    };
+    let ret_type = get_var.ret_type.clone();
+    let get_var = Expression::ScalarFunction(get_var);
+    let Ok(mut v) = ctx.eval_constant(&get_var) else {
+        return get_var;
+    };
+    if matches!(eval_ctx.get_uservar(&var_name), Some(Datum::BinaryLiteral(_))) {
+        v = Datum::BinaryLiteral(v.go_bytes().to_vec().into());
+    }
+    let mut constant = crate::constant::Constant::default();
+    constant.value = v;
+    constant.ret_type = ret_type;
+    Expression::Constant(constant)
+}
+
+/// Go `valuesFunctionClass`: `offset` is the column's position in the
+/// insert row, `tp` its type.
+pub(crate) struct ValuesFunctionClass {
+    offset: usize,
+    tp: FieldType,
+}
+
+impl FunctionClass for ValuesFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        if !args.is_empty() {
+            return Err(EvalError::WrongParameterCount("values"));
+        }
+        let mut bf = crate::builtin::new_base_builtin_func(ctx, "values", args, self.tp.clone())?;
+        bf.sig = crate::builtin::SigFields::Values { offset: self.offset };
+        Ok(bf)
+    }
+}
+
+/// Go `NewValuesFunc`.
+pub(crate) fn new_values_func(
+    ctx: &dyn BuildContext,
+    offset: usize,
+    ret_tp: FieldType,
+) -> Result<crate::scalar_function::ScalarFunction, EvalError> {
+    let fc = ValuesFunctionClass { offset, tp: ret_tp.clone() };
+    let bt = fc.get_function(ctx, Vec::new())?;
+    Ok(crate::scalar_function::ScalarFunction::from_builtin_func(
+        tidb_ast::CiString::new("values"),
+        ret_tp,
+        bt,
+    ))
 }
 
 function_class!(

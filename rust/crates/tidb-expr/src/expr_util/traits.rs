@@ -18,9 +18,7 @@
 //!
 //! `unFoldableFunctions` was ALREADY PORTED, privately, in
 //! `scalar_function.rs` (where `ConstLevel` needs it). It is re-exported here
-//! rather than written twice. `constant_fold.rs` keys the same idea on the
-//! signature-suffixed names the AST rewriter mints (`getvar_int`, ...); the
-//! shared table already accepts both spellings.
+//! rather than written twice.
 
 /// Go `unFoldableFunctions` (`function_traits.go:48`): functions whose result
 /// is not a property of their arguments -- a clock, a counter, a random

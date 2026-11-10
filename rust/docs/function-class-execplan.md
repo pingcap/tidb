@@ -119,8 +119,19 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   context at hand pass `UnfoldedBuildContext` (`window.rs`
   `update_compare_cols`, `inject_extra_projection.rs`, `task_attach.rs`,
   `mv_index.rs`, `expr_util/builder.rs`); `castAsArrayFunctionClass`.
-- [ ] Milestone 11: the legacy paths deleted; evaluation dispatches on the
-  signature object alone; X01 leaves the register.
+- [x] (2026-11-10) Milestone 11a: the name-keyed return-type,
+  signature-argument and flag-stamping tables are deleted; `getvar`
+  (`BuildGetVarFunction`, `convertReadonlyVarToConst` with the
+  preprocessor's read-only variable set), `values` (`NewValuesFunc`),
+  `to_binary` / `from_binary` (`BuildToBinaryFunction`,
+  `BuildFromBinaryFunction`, `HandleBinaryLiteral`) build through their
+  classes. `getvar` must stay in `is_unfoldable` (Go
+  `unFoldableFunctions`): without it `SELECT @i := @i + 1, @i` folds the
+  second read at plan time.
+- [ ] Milestone 11b: evaluation dispatches on the signature object alone
+  (`scalar_function.rs` by-name kernel, `arg_eval_type.rs`), the catalog's
+  second description of a call and the collation post-pass are deleted;
+  X01 leaves the register.
 
 ## Surprises & Discoveries
 

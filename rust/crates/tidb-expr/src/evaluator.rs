@@ -37,7 +37,6 @@ pub fn has_get_set_var_func(expression: &Expression) -> bool {
     let name = function.func_name.lowercase();
     name == "setvar"
         || name == "getvar"
-        || name.starts_with("getvar_")
         || function.get_args().iter().any(has_get_set_var_func)
 }
 
@@ -831,7 +830,7 @@ mod tests {
         let suite = EvaluatorSuite::new(
             vec![
                 parameter(long()),
-                scalar("getvar_int", vec![string_const("v")]),
+                scalar("getvar", vec![string_const("v")]),
             ],
             false,
         );
@@ -1096,7 +1095,7 @@ mod tests {
             vec![string_const("v"), Expression::Column(column)],
         ));
         let getvar = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("getvar_string"),
+            CiString::new("getvar"),
             string(),
             vec![string_const("v")],
         ));
@@ -1125,7 +1124,7 @@ mod tests {
     fn vectorizable_matches_user_variable_and_sequence_ordering_rules() {
         let nested_getvar = scalar(
             "plus",
-            vec![scalar("getvar_int", vec![string_const("v")]), int_const(1)],
+            vec![scalar("getvar", vec![string_const("v")]), int_const(1)],
         );
         assert!(has_get_set_var_func(&nested_getvar));
         assert!(!vectorizable(&[nested_getvar]));

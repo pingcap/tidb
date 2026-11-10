@@ -858,6 +858,13 @@ pub trait Columns {
         None
     }
 
+    /// Go `BuildContext.IsReadonlyUserVar`: whether the statement only reads
+    /// the user variable `name`.
+    fn is_readonly_user_var(&self, name: &str) -> bool {
+        let _ = name;
+        false
+    }
+
     /// Reads a case-insensitive user variable.
     fn get_uservar(&self, name: &str) -> Option<Datum> {
         let _ = name;

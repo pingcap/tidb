@@ -1009,7 +1009,12 @@ impl PbBuiltin {
                             let charset = function
                                 .get_static_type()
                                 .map_or("binary", FieldType::charset_name);
-                            crate::convert_charset::from_binary(value, charset, false, ctx)
+                            crate::convert_charset::from_binary(
+                                value,
+                                charset,
+                                function.cannot_convert_string_as_warning,
+                                ctx,
+                            )
                         } else {
                             let charset = args[0]
                                 .static_type()

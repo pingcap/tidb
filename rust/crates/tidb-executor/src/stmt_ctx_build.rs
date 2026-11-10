@@ -1747,6 +1747,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_rand_session(Arc::clone(self.rand_ref()))
                     .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)
                     .with_user_vars(self.user_vars().clone())
+                    .with_readonly_user_vars(Arc::clone(self.readonly_user_vars_ref()))
                     .with_previous_statement(self.session_vars().last_insert_id, self.session_vars().prev_row_count)
                     .with_last_found_rows(self.session_vars().last_found_rows)
                     .with_client_found_rows(
@@ -1948,6 +1949,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_rand_session(Arc::clone(self.rand_ref()))
                 .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)
                 .with_user_vars(self.user_vars().clone())
+                    .with_readonly_user_vars(Arc::clone(self.readonly_user_vars_ref()))
                 .with_previous_statement(self.session_vars().last_insert_id, self.session_vars().prev_row_count)
                 .with_last_found_rows(self.session_vars().last_found_rows)
                 .with_client_found_rows(
@@ -2466,6 +2468,8 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn published_last_insert_id_ref(&self) -> &Arc<std::sync::Mutex<Option<u64>>>;
     /// Go `SessionVars` / `StmtCtx` state `published_last_insert_id`, mutably.
     fn published_last_insert_id_mut(&mut self) -> &mut Arc<std::sync::Mutex<Option<u64>>>;
+    /// Go `PlanCtxExtended.readonlyUserVars`, read.
+    fn readonly_user_vars_ref(&self) -> &Arc<std::collections::HashSet<String>>;
     /// Go `SessionVars` / `StmtCtx` state `rand`, read.
     fn rand_ref(&self) -> &Arc<MysqlRng>;
     /// Go `SessionVars` / `StmtCtx` state `rand`, mutably.

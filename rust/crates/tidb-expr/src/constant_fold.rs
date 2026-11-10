@@ -586,13 +586,6 @@ pub(crate) fn folds_to_constant(expr: &Expression) -> bool {
 /// functions whose result is not a property of their arguments -- a clock, a
 /// counter, a random source, a session variable, or a side effect.
 pub fn is_unfoldable(name: &str) -> bool {
-    // Go's `GetVar` is one name; this rewriter encodes the signature the
-    // session's declared type picked into the name (`getvar_int`,
-    // `getvar_string`, ...), so a bare `"getvar"` arm below would never match
-    // anything the rewriter builds. The prefix test is what actually fires.
-    if name.starts_with("getvar_") {
-        return true;
-    }
     matches!(
         name,
         "sysdate"
@@ -605,6 +598,7 @@ pub fn is_unfoldable(name: &str) -> bool {
             | "row"
             | "values"
             | "setvar"
+            | "getvar"
             | "getparam"
             | "benchmark"
             | "dayname"

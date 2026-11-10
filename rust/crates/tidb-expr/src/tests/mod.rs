@@ -32,6 +32,7 @@ mod compare_time_builtin_rows_source;
 mod constant_test_go_tables_source;
 mod context_override_values_source;
 mod control;
+mod builtin_convert_charset_source;
 mod convert_using_signature_source;
 mod crypto_encryption_source;
 mod datetime;

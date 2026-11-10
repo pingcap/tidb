@@ -1320,18 +1320,14 @@ pub(crate) fn field_name_ambiguity(names: &[FieldName], path: &[String]) -> Opti
 }
 
 impl ColumnResolver for PlanScopeResolver<'_> {
-    fn resolve_values(&self, path: &[String]) -> Option<Expression> {
+    fn resolve_values(&self, path: &[String]) -> Option<(usize, FieldType)> {
         if let Some((target_len, schema, names)) = self.values_scope {
             let index = find_field_name(&names[..target_len.min(names.len())], path)?;
             let field_type = schema.columns.get(index)?.ret_type.clone()?;
-            return Some(Expression::ScalarFunction(
-                tidb_expr::scalar_function::ScalarFunction::new_values(index, field_type),
-            ));
+            return Some((index, field_type));
         }
         let (index, field_type, _) = self.resolve(path)?;
-        Some(Expression::ScalarFunction(
-            tidb_expr::scalar_function::ScalarFunction::new_values(index, field_type),
-        ))
+        Some((index, field_type))
     }
 
     fn resolve_default_in_query(&self, path: &[String]) -> Option<Result<Expression, EvalError>> {

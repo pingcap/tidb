@@ -107,7 +107,7 @@ impl ColumnResolver for FoldModeResolver<'_> {
         self.base.resolve_default_in_query(path)
     }
 
-    fn resolve_values(&self, path: &[String]) -> Option<Expression> {
+    fn resolve_values(&self, path: &[String]) -> Option<(usize, FieldType)> {
         self.base.resolve_values(path)
     }
 

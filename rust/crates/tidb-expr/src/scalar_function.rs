@@ -200,8 +200,7 @@ fn unary_op_for_name(name: &str) -> Option<UnaryOp> {
 /// constant folding even when every argument is a strict literal.
 #[must_use]
 pub fn is_unfoldable_function(name: &str) -> bool {
-    name.starts_with("getvar_")
-        || matches!(
+    matches!(
             name,
             "sysdate"
                 | "found_rows"
@@ -329,11 +328,6 @@ pub struct ScalarFunction {
     pub ret_type: Option<FieldType>,
     /// The function arguments. In Go these live inside `Function.getArgs()`.
     pub args: Vec<Expression>,
-    /// Go `builtinValues*Sig.offset`, carried by `NewValuesFunc`. `VALUES()`
-    /// has no runtime argument: its column position is fixed when the
-    /// expression is built and the value is read from the statement's
-    /// current-insert row at evaluation time.
-    values_offset: Option<usize>,
     /// Go Function: a protobuf-selected builtin, independent of FuncName.
     pb_builtin: Option<PbBuiltin>,
     /// Lazily-filled `HashCode` cache (Go `hashcode`).
@@ -624,16 +618,9 @@ impl ScalarFunction {
         }
     }
 
-    /// Go `BuildFromBinaryFunction` before its `FoldConstant`: decodes the
-    /// binary `arg` into `ret_type`'s charset.
-    pub fn build_from_binary_function(
-        arg: Expression,
-        ret_type: FieldType,
-        cannot_convert_string_as_warning: bool,
-    ) -> Self {
-        let mut function = Self::new(CiString::new("from_binary"), ret_type, vec![arg]);
-        function.cannot_convert_string_as_warning = cannot_convert_string_as_warning;
-        function
+    /// Go `builtinInternalFromBinarySig.cannotConvertStringAsWarning`.
+    pub(crate) fn set_cannot_convert_string_as_warning(&mut self, warning: bool) {
+        self.cannot_convert_string_as_warning = warning;
     }
 
     /// Go `BuildJSONSumCrc32FunctionWithCheck`'s node: a `BIGINT` result over
@@ -709,16 +696,11 @@ impl ScalarFunction {
         self.pb_builtin.map(PbBuiltin::signature)
     }
 
-    /// Builds Go's `NewValuesFunc(ctx, offset, retTp)` node. The offset is
-    /// immutable build-time state, while the current insert row is supplied
-    /// by [`Columns::current_insert_value`] for each evaluation.
-    #[must_use]
-    pub fn new_values(offset: usize, ret_type: FieldType) -> Self {
-        Self {
-            func_name: CiString::new("values"),
-            ret_type: Some(ret_type),
-            values_offset: Some(offset),
-            ..Default::default()
+    /// Go `builtinValues*Sig.offset`.
+    fn values_offset(&self) -> Option<usize> {
+        match self.sig {
+            crate::builtin::SigFields::Values { offset } => Some(offset),
+            _ => None,
         }
     }
 
@@ -827,11 +809,10 @@ impl ScalarFunction {
         }
         let name = self.func_name.lowercase();
         if name == "values" {
-            encode_int(
-                &mut self.hashcode,
-                self.values_offset
-                    .map_or(-1, |offset| i64::try_from(offset).unwrap_or(i64::MAX)),
-            );
+            let offset = self
+                .values_offset()
+                .map_or(-1, |offset| i64::try_from(offset).unwrap_or(i64::MAX));
+            encode_int(&mut self.hashcode, offset);
         }
         // Cast is special: its result type is effectively an argument.
         if name == "cast" {
@@ -942,7 +923,7 @@ impl ScalarFunction {
                 if name == "values" {
                     encode_int(
                         &mut canonical,
-                        self.values_offset
+                        self.values_offset()
                             .map_or(-1, |offset| i64::try_from(offset).unwrap_or(i64::MAX)),
                     );
                 }
@@ -965,7 +946,7 @@ impl ScalarFunction {
         let mut hasher = crate::column::Fnv64::default();
         SCALAR_FUNCTION_FLAG.hash(&mut hasher);
         self.func_name.lowercase().hash(&mut hasher);
-        self.values_offset.hash(&mut hasher);
+        self.values_offset().hash(&mut hasher);
         match &self.ret_type {
             Some(ret_type) => {
                 1_u8.hash(&mut hasher);
@@ -986,7 +967,7 @@ impl ScalarFunction {
     #[must_use]
     pub fn equals(&self, other: &Self) -> bool {
         self.func_name.lowercase() == other.func_name.lowercase()
-            && self.values_offset == other.values_offset
+            && self.values_offset() == other.values_offset()
             && self.ret_type == other.ret_type
             && self.args.len() == other.args.len()
             && self
@@ -1906,7 +1887,7 @@ impl ScalarFunction {
                 return Err(EvalError::WrongParameterCount("values"));
             }
             let offset = self
-                .values_offset
+                .values_offset()
                 .ok_or(EvalError::Unsupported("VALUES offset is not initialized"))?;
             return match ctx.current_insert_value(offset)? {
                 None => Ok(Datum::Null),
@@ -2309,8 +2290,16 @@ impl ScalarFunction {
         // variable when the value is NULL -- unlike top-level `SET @x = NULL`,
         // which clears it.
         if let Some(var) = self.uservar_name() {
-            if let Some(kind) = name.strip_prefix("getvar_") {
-                if self.args.len() == 1 {
+            if name == "getvar" {
+                if let (1, Some(ret_type)) = (self.args.len(), self.ret_type.as_ref()) {
+                    let kind = match ret_type.eval_type() {
+                        EvalType::Int if ret_type.is_unsigned() => "uint",
+                        EvalType::Int => "int",
+                        EvalType::Real => "real",
+                        EvalType::Decimal => "decimal",
+                        EvalType::Datetime => "time",
+                        _ => "string",
+                    };
                     let value = ctx.get_uservar(&var).unwrap_or(Datum::Null);
                     // The name fixed the DECLARED type from what the session
                     // held when the statement was built; an assignment earlier
@@ -5508,7 +5497,6 @@ mod tests {
             "values",
             "setvar",
             "getvar",
-            "getvar_string",
             "getparam",
             "benchmark",
             "dayname",

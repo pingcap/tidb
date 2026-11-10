@@ -348,11 +348,11 @@ fn eval_getvar(kind: &str, name: &str, ctx: &VarStore) -> Result<Datum, EvalErro
         "time" => FieldType::new(C::Datetime),
         _ => FieldType::new(C::VarString),
     };
-    let function = ScalarFunction::new(
-        CiString::new(format!("getvar_{kind}")),
+    let function = crate::builtin_other::build_get_var_function(
+        &crate::builtin::ColumnsBuildContext(ctx),
+        var_name(name),
         ret_type,
-        vec![var_name(name)],
-    );
+    )?;
     let empty = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     function.eval(ctx, empty.get_row(0))
 }
@@ -437,7 +437,12 @@ fn setvar_from_column_snapshots_the_row_value() {
 #[test]
 fn values_function_reads_the_current_insert_row() {
     let string_type = FieldType::new(C::VarString);
-    let function = ScalarFunction::new_values(1, string_type.clone());
+    let function = crate::builtin_other::new_values_func(
+        &crate::builtin::ColumnsBuildContext(&crate::NoColumns),
+        1,
+        string_type.clone(),
+    )
+    .unwrap();
     assert_eq!(function.func_name.lowercase(), "values");
     assert!(function.args.is_empty());
     assert_eq!(function.get_static_type(), Some(&string_type));
@@ -592,4 +597,108 @@ fn vectorized_builtin_other_func_representable_arms() {
     // ast.BitCount arm: both tiers agree on the packed-popcount builtin.
     assert_eq!(chunk_e("bit_count(7)"), e("bit_count(7)"));
     assert_eq!(chunk_e("bit_count(-1)"), e("bit_count(-1)"));
+}
+
+/// Go `BuildGetVarFunction` over a declared type, captured from Go
+/// (`expression.BuildGetVarFunction(mock.NewContext(), DatumToConstant("v",
+/// TypeString, 0), tp)`): the return type's code, flen, decimal, flags,
+/// charset and collation, then the function's own charset, collation,
+/// coercibility and repertoire.
+#[test]
+fn build_get_var_function_types_the_read_like_go() {
+    let declared = |code: C, flen: i64, decimal: i64, flags: u64, charset: Option<(&str, &str)>| {
+        let mut ft = FieldType::new(code);
+        ft.set_flen(flen);
+        ft.set_decimal(decimal);
+        ft.set_raw_flags(ft.raw_flags() | flags);
+        if let Some((charset, collation)) = charset {
+            ft.set_charset_name(charset);
+            ft.set_collation_name(collation);
+        }
+        ft
+    };
+    const BINARY: u64 = 128;
+    const UNSIGNED: u64 = 32;
+    const NOT_NULL: u64 = 1;
+    type Pin = (C, i64, i64, u64, &'static str, &'static str, &'static str, &'static str, i32, i32);
+    let numeric = |code: C, flen: i64, decimal: i64, flags: u64| -> Pin {
+        (code, flen, decimal, flags, "binary", "binary", "binary", "binary", 5, 1)
+    };
+    let string = |code: C, flen: i64, charset: &'static str, collation: &'static str| -> Pin {
+        (code, flen, -1, 0, charset, collation, "utf8mb4", "utf8mb4_bin", 4, 3)
+    };
+    let cases: Vec<(&str, FieldType, Pin)> = vec![
+        ("int", declared(C::LongLong, 20, 0, BINARY, None), numeric(C::LongLong, 20, 0, 128)),
+        (
+            "uint",
+            declared(C::LongLong, 20, 0, UNSIGNED | BINARY, None),
+            numeric(C::LongLong, 20, 0, 160),
+        ),
+        ("tiny_notnull", declared(C::Tiny, 4, 0, NOT_NULL, None), numeric(C::LongLong, 4, 0, 1)),
+        ("real", declared(C::Double, 23, 31, 0, None), numeric(C::Double, 23, -1, 128)),
+        ("float", declared(C::Float, 12, 2, 0, None), numeric(C::Double, 12, -1, 128)),
+        ("decimal", declared(C::NewDecimal, 20, 4, 0, None), numeric(C::NewDecimal, 20, 0, 128)),
+        (
+            "decimal_wide",
+            declared(C::NewDecimal, 80, 4, 0, None),
+            numeric(C::NewDecimal, 65, 0, 128),
+        ),
+        ("datetime0", declared(C::Datetime, 19, 0, 0, None), numeric(C::Datetime, 19, 0, 128)),
+        ("datetime3", declared(C::Datetime, 23, 3, 0, None), numeric(C::Datetime, 23, 3, 128)),
+        ("datetime6", declared(C::Datetime, 26, 6, 0, None), numeric(C::Datetime, 26, 6, 128)),
+        ("date", declared(C::Date, 10, 0, 0, None), numeric(C::Date, 10, 0, 128)),
+        (
+            "timestamp3",
+            declared(C::Timestamp, 23, 3, 0, None),
+            string(C::VarString, 23, "binary", "binary"),
+        ),
+        (
+            "string_default",
+            declared(C::VarString, 65535, -1, 0, None),
+            string(C::VarString, 65535, "utf8mb4", "utf8mb4_bin"),
+        ),
+        (
+            "string_gbk",
+            declared(C::VarString, 30, -1, 0, Some(("gbk", "gbk_chinese_ci"))),
+            string(C::VarString, 30, "gbk", "gbk_chinese_ci"),
+        ),
+        (
+            "string_binary",
+            declared(C::VarString, 30, -1, BINARY, Some(("binary", "binary"))),
+            string(C::VarString, 30, "binary", "binary"),
+        ),
+        ("duration", declared(C::Duration, 10, 0, 0, None), string(C::VarString, 10, "binary", "binary")),
+        (
+            "json",
+            declared(C::Json, 4_294_967_295, 0, 0, None),
+            string(C::LongBlob, 4_294_967_295, "binary", "binary"),
+        ),
+    ];
+    for (name, tp, want) in cases {
+        let built = crate::builtin_other::build_get_var_function(
+            &crate::builtin::ColumnsBuildContext(&crate::NoColumns),
+            var_name("v"),
+            tp,
+        )
+        .unwrap();
+        let Expression::ScalarFunction(function) = &built else {
+            panic!("{name}: getvar is a function");
+        };
+        assert_eq!(function.func_name.lowercase(), "getvar", "{name}");
+        let rt = function.ret_type.as_ref().unwrap();
+        let (charset, collation) = function.collation.charset_and_collation();
+        let got = (
+            rt.code(),
+            rt.flen(),
+            rt.decimal(),
+            rt.raw_flags(),
+            rt.charset_name(),
+            rt.collation_name(),
+            charset,
+            collation,
+            function.collation.coercibility().0,
+            function.collation.repertoire().0,
+        );
+        assert_eq!(got, want, "{name}");
+    }
 }

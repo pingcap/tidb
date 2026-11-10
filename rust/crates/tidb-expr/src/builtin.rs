@@ -517,6 +517,9 @@ pub(crate) enum SigFields {
     WeightStringNull,
     /// Go `builtinWeightStringSig.padding` and `.length`.
     WeightString { padding: WeightStringPadding, length: i64 },
+    /// Go `builtinValues*Sig.offset`: the column's position in the
+    /// statement's current-insert row.
+    Values { offset: usize },
 }
 
 /// Go `baseBuiltinFunc` with the signature's `pbCode`.

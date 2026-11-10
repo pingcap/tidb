@@ -166,17 +166,15 @@ pub trait ColumnResolver {
         None
     }
 
-    /// Resolves `VALUES(column)` to Go's `NewValuesFunc`. Go's rewriter builds
-    /// it in every scope over the column the current schema names
-    /// (`FindFieldName`, else 1054); an INSERT's ON DUPLICATE KEY UPDATE
-    /// resolves `insertPlan.TableColNames` instead, which its resolver
-    /// overrides this with. Outside that scope the function reads an empty
-    /// `CurrInsertValues` and answers NULL.
-    fn resolve_values(&self, path: &[String]) -> Option<Expression> {
+    /// Resolves `VALUES(column)` to the offset and type Go's rewriter hands
+    /// `NewValuesFunc`. Go's rewriter builds it in every scope over the
+    /// column the current schema names (`FindFieldName`, else 1054); an
+    /// INSERT's ON DUPLICATE KEY UPDATE resolves `insertPlan.TableColNames`
+    /// instead, which its resolver overrides this with. Outside that scope
+    /// the function reads an empty `CurrInsertValues` and answers NULL.
+    fn resolve_values(&self, path: &[String]) -> Option<(usize, FieldType)> {
         let (index, field_type, _) = self.resolve(path)?;
-        Some(Expression::ScalarFunction(ScalarFunction::new_values(
-            index, field_type,
-        )))
+        Some((index, field_type))
     }
 
     /// The session `time_zone` the rewrite runs under -- Go's
@@ -334,7 +332,7 @@ impl<T: ColumnResolver + ?Sized> ColumnResolver for &T {
     fn resolve_default_in_query(&self, path: &[String]) -> Option<Result<Expression, EvalError>> {
         (**self).resolve_default_in_query(path)
     }
-    fn resolve_values(&self, path: &[String]) -> Option<Expression> {
+    fn resolve_values(&self, path: &[String]) -> Option<(usize, FieldType)> {
         (**self).resolve_values(path)
     }
     fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
@@ -510,79 +508,6 @@ fn constant_string(text: &str) -> Expression {
     field_type.set_flen(text.len() as i64);
     let datum = Datum::new_collation_string_datum(text.as_bytes().to_vec(), field_type.collation());
     Expression::Constant(Constant::new(datum, field_type))
-}
-
-/// Go `BuildToBinaryFunction`, which folds the new node before its parent
-/// inspects argument constancy. `tidbToBinaryFunctionClass` clones the
-/// argument's type into a binary VAR_STRING.
-pub(crate) fn build_to_binary(arg: Expression, fold: &dyn Fn(&mut Expression)) -> Expression {
-    let mut ret_type = arg
-        .static_type()
-        .cloned()
-        .unwrap_or_else(|| FieldType::new(FieldTypeCode::VarString));
-    ret_type.set_code(FieldTypeCode::VarString);
-    set_binary_charset(&mut ret_type);
-    let mut wrapped = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("to_binary"),
-        ret_type,
-        vec![arg],
-    ));
-    fold(&mut wrapped);
-    wrapped
-}
-
-/// `HandleBinaryLiteral`'s `from_binary` arm: a binary-charset argument of
-/// a function whose derived charset is not binary decodes into it, and an
-/// undecodable value is an error unless the conversion is an
-/// `explicit_cast`, which warns.
-pub(crate) fn wrap_from_binary(
-    arg: Expression,
-    result_charset: &str,
-    result_collation: &str,
-    explicit_cast: bool,
-) -> Expression {
-    let Some(arg_type) = arg.static_type() else {
-        return arg;
-    };
-    // Go reaches `HandleBinaryLiteral` after `WrapWithCastAsString`, so a
-    // non-string argument is a connection-charset string by then.
-    if arg_type.eval_type() != tidb_datatype::EvalType::String
-        || arg_type.charset_name() != "binary"
-        || result_charset == "binary"
-        || arg_type.code() == FieldTypeCode::Null
-    {
-        return arg;
-    }
-    let mut ret_type = arg_type.clone();
-    ret_type.set_charset_name(result_charset);
-    ret_type.set_collation_name(result_collation);
-    let (coer, repe) = (
-        crate::collation_derive::coercibility_of(&arg),
-        crate::collation_derive::repertoire_of(&arg),
-    );
-    let mut wrapped =
-        Expression::ScalarFunction(ScalarFunction::build_from_binary_function(arg, ret_type, explicit_cast));
-    pin_result_collation(&mut wrapped, coer, repe);
-    wrapped
-}
-
-/// Marks a node built with a fixed result charset as already derived, with
-/// that charset and the given coercibility.
-fn pin_result_collation(
-    node: &mut Expression,
-    coer: crate::expr_collation::Coercibility,
-    repe: crate::expr_collation::Repertoire,
-) {
-    let Some(ret_type) = node.static_type() else {
-        return;
-    };
-    let ec = crate::expr_collation::ExprCollation {
-        coer,
-        repe,
-        charset: ret_type.charset_name().to_owned(),
-        collation: ret_type.collation_name().to_owned(),
-    };
-    crate::collation_derive::apply_derived_collation(node, &ec);
 }
 
 /// Reapplies the result-charset rules whose Go function classes override the
@@ -1013,39 +938,6 @@ fn ensure_single_column(args: &[&Expression]) -> Result<(), EvalError> {
 /// Rewrites a parsed AST expression without a column scope.
 pub fn rewrite_expr(expr: &Expr) -> Result<Expression, EvalError> {
     rewrite_expr_resolved(expr, &NoResolver)
-}
-
-/// Go BuildGetVarFunction and the get*Var function classes.
-fn user_variable_read_type(declared: &FieldType) -> (&'static str, FieldType) {
-    use tidb_datatype::EvalType;
-    let (kind, code) = match declared.eval_type() {
-        EvalType::Int if declared.is_unsigned() => ("uint", FieldTypeCode::LongLong),
-        EvalType::Int => ("int", FieldTypeCode::LongLong),
-        EvalType::Real => ("real", FieldTypeCode::Double),
-        EvalType::Decimal => ("decimal", FieldTypeCode::NewDecimal),
-        EvalType::Datetime => ("time", declared.code()),
-        _ => ("string", FieldTypeCode::VarString),
-    };
-    let mut result = FieldType::new(code);
-    result.set_flen_under_limit(declared.flen());
-    result.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
-    match declared.eval_type() {
-        EvalType::Int => {
-            result.set_raw_flags(declared.raw_flags());
-            result.set_decimal(0);
-        }
-        EvalType::Datetime => {
-            result.set_decimal(declared.decimal());
-        }
-        _ if kind == "string" => {
-            if !declared.charset_name().is_empty() {
-                result.set_charset_name(declared.charset_name());
-                result.set_collation_name(declared.collation_name());
-            }
-        }
-        _ => {}
-    }
-    (kind, result)
 }
 
 /// [`rewrite_expr`] with column resolution: `Expr::Column` paths are bound
@@ -1639,22 +1531,16 @@ fn rewrite_leaf_literal(
                     field.set_flen(65_535);
                     field
                 });
-            let (kind, ret_type) = user_variable_read_type(&declared);
-            let mut function = ScalarFunction::new(
-                CiString::new(format!("getvar_{kind}")),
-                ret_type.clone(),
-                vec![constant_string(&name)],
+            let mut function = crate::builtin_other::build_get_var_function(
+                &crate::builtin::ResolverBuildContext(resolver),
+                constant_string(&name),
+                declared,
+            )?;
+            crate::collation_derive::set_coercibility(
+                &mut function,
+                crate::expr_collation::Coercibility::IMPLICIT,
             );
-            function
-                .collation
-                .set_coercibility(crate::expr_collation::Coercibility::IMPLICIT);
-            function
-                .collation
-                .set_repertoire(crate::expr_collation::Repertoire::UNICODE);
-            function
-                .collation
-                .set_charset_and_collation(ret_type.charset_name(), ret_type.collation_name());
-            Ok(Expression::ScalarFunction(function))
+            Ok(function)
         }
         // Go rewriteUserVariable publishes the RHS type while building the
         // plan, even if no rows execute or the RHS later evaluates to NULL.
@@ -2265,8 +2151,13 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             let lowered = name.to_ascii_lowercase();
             if lowered == "values" {
                 if let [Expr::Column(path)] = args.as_slice() {
-                    if let Some(values) = resolver.resolve_values(path) {
-                        return Ok(values);
+                    if let Some((offset, ret_tp)) = resolver.resolve_values(path) {
+                        return crate::builtin_other::new_values_func(
+                            &crate::builtin::ResolverBuildContext(resolver),
+                            offset,
+                            ret_tp,
+                        )
+                        .map(Expression::ScalarFunction);
                     }
                 }
             }

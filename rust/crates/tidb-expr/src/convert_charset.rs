@@ -59,6 +59,14 @@ use tidb_charset::Collation;
 use tidb_charset::TransformOp;
 
 use crate::EvalError;
+use crate::builtin::{
+    new_base_builtin_func_with_tp, BaseBuiltinFunc, BuildContext, FunctionClass,
+};
+use crate::expression::Expression;
+use crate::scalar_function::ScalarFunction;
+use tidb_datatype::{EvalType, FieldTypeCode};
+use tidb_ast::CiString;
+use tidb_proto::tipb::ScalarFuncSig;
 
 /// Go `funcProp`: how a function's arguments meet the charset boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,51 +128,143 @@ pub fn func_prop(name: &str) -> FuncProp {
     }
 }
 
-/// Whether Go's `HandleBinaryLiteral` would wrap this argument with
-/// `to_binary` -- the ONLY implicit transcode in the expression tree.
-///
-/// `from_binary` (the `funcPropAuto` binary-argument-into-string-result arm)
-/// is deliberately NOT modelled: reaching it needs the DERIVED result charset
-/// of the whole function, which `collation_derive` owns, and every captured
-/// case that actually transcodes goes through `to_binary`.
-pub fn needs_to_binary(prop: FuncProp, arg_charset: &str, result_charset: &str) -> bool {
-    if is_legacy_charset(arg_charset) {
-        return false;
+/// Go `tidbToBinaryFunctionClass`.
+pub(crate) struct TidbToBinaryFunctionClass;
+
+impl FunctionClass for TidbToBinaryFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        let arg_tp = crate::wrap_cast::type_of(&args[0]);
+        if arg_tp.eval_type() != EvalType::String {
+            return Err(EvalError::Unsupported("to_binary: unexpected argTp"));
+        }
+        let mut bf = new_base_builtin_func_with_tp(
+            ctx,
+            INTERNAL_FUNC_TO_BINARY,
+            args,
+            EvalType::String,
+            &[EvalType::String],
+        )?;
+        bf.tp = arg_tp;
+        bf.tp.set_code(FieldTypeCode::VarString);
+        bf.tp.set_charset_name("binary");
+        bf.tp.set_collation_name("binary");
+        bf.pb_code = ScalarFuncSig::ToBinary;
+        Ok(bf)
     }
-    match prop {
-        FuncProp::None => false,
-        FuncProp::BinAware => true,
-        FuncProp::Auto => result_charset == "binary",
+}
+
+/// Go `tidbFromBinaryFunctionClass`: `tp` is the type the argument decodes
+/// into.
+pub(crate) struct TidbFromBinaryFunctionClass {
+    tp: FieldType,
+}
+
+impl FunctionClass for TidbFromBinaryFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        if crate::wrap_cast::type_of(&args[0]).eval_type() != EvalType::String {
+            return Err(EvalError::Unsupported("from_binary: unexpected argTp"));
+        }
+        let mut bf = new_base_builtin_func_with_tp(
+            ctx,
+            INTERNAL_FUNC_FROM_BINARY,
+            args,
+            EvalType::String,
+            &[EvalType::String],
+        )?;
+        bf.tp = self.tp.clone();
+        bf.pb_code = ScalarFuncSig::FromBinary;
+        Ok(bf)
     }
+}
+
+/// Go `InternalFuncToBinary`.
+pub(crate) const INTERNAL_FUNC_TO_BINARY: &str = "to_binary";
+/// Go `InternalFuncFromBinary`.
+pub(crate) const INTERNAL_FUNC_FROM_BINARY: &str = "from_binary";
+
+/// Go `BuildToBinaryFunction`: `expr` itself when the class refuses it.
+pub(crate) fn build_to_binary_function(ctx: &dyn BuildContext, expr: Expression) -> Expression {
+    let f = match TidbToBinaryFunctionClass.get_function(ctx, vec![expr.clone()]) {
+        Ok(f) => f,
+        Err(_) => return expr,
+    };
+    let ret_type = f.get_ret_tp();
+    let mut res = Expression::ScalarFunction(ScalarFunction::from_builtin_func(
+        CiString::new(INTERNAL_FUNC_TO_BINARY),
+        ret_type,
+        f,
+    ));
+    ctx.fold_constant(&mut res);
+    res
+}
+
+/// Go `BuildFromBinaryFunction`: `expr` itself when the class refuses it.
+pub(crate) fn build_from_binary_function(
+    ctx: &dyn BuildContext,
+    expr: Expression,
+    tp: FieldType,
+    cannot_convert_string_as_warning: bool,
+) -> Expression {
+    let fc = TidbFromBinaryFunctionClass { tp: tp.clone() };
+    let f = match fc.get_function(ctx, vec![expr.clone()]) {
+        Ok(f) => f,
+        Err(_) => return expr,
+    };
+    let mut function =
+        ScalarFunction::from_builtin_func(CiString::new(INTERNAL_FUNC_FROM_BINARY), tp, f);
+    function.set_cannot_convert_string_as_warning(cannot_convert_string_as_warning);
+    let mut res = Expression::ScalarFunction(function);
+    ctx.fold_constant(&mut res);
+    res
 }
 
 /// Go `HandleBinaryLiteral`: wraps `expr`, an argument of `func_name` whose
 /// derived collation is `ec`, with `to_binary` or `from_binary`. Under an
 /// `explicit_cast` a value `from_binary` cannot decode is a warning.
 pub(crate) fn handle_binary_literal(
-    ctx: &dyn crate::builtin::BuildContext,
-    expr: crate::expression::Expression,
+    ctx: &dyn BuildContext,
+    expr: Expression,
     ec: &crate::expr_collation::ExprCollation,
     func_name: &str,
     explicit_cast: bool,
-) -> crate::expression::Expression {
-    let prop = func_prop(func_name);
-    let arg_charset = crate::wrap_cast::type_of(&expr).charset_name().to_owned();
-    if needs_to_binary(prop, &arg_charset, &ec.charset) {
-        return crate::rewriter::build_to_binary(expr, &|built| ctx.fold_constant(built));
+) -> Expression {
+    let arg_tp = crate::wrap_cast::type_of(&expr);
+    let (arg_chs, dst_chs) = (arg_tp.charset_name(), ec.charset.as_str());
+    match func_prop(func_name) {
+        FuncProp::None => expr,
+        FuncProp::BinAware => {
+            if is_legacy_charset(arg_chs) {
+                return expr;
+            }
+            build_to_binary_function(ctx, expr)
+        }
+        FuncProp::Auto => {
+            if arg_chs != "binary" && dst_chs == "binary" {
+                if is_legacy_charset(arg_chs) {
+                    return expr;
+                }
+                build_to_binary_function(ctx, expr)
+            } else if arg_chs == "binary"
+                && dst_chs != "binary"
+                && arg_tp.code() != FieldTypeCode::Null
+            {
+                let mut ft = arg_tp.clone();
+                ft.set_charset_name(&ec.charset);
+                ft.set_collation_name(&ec.collation);
+                build_from_binary_function(ctx, expr, ft, explicit_cast)
+            } else {
+                expr
+            }
+        }
     }
-    if prop != FuncProp::Auto {
-        return expr;
-    }
-    let mut wrapped =
-        crate::rewriter::wrap_from_binary(expr, &ec.charset, &ec.collation, explicit_cast);
-    if matches!(&wrapped, crate::expression::Expression::ScalarFunction(function)
-        if function.func_name.lowercase() == "from_binary")
-    {
-        // Go `BuildFromBinaryFunction` folds the new node.
-        ctx.fold_constant(&mut wrapped);
-    }
-    wrapped
 }
 
 /// Go `builtinInternalToBinarySig`: UTF-8 in, the argument charset's own

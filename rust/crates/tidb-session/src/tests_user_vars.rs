@@ -459,3 +459,79 @@ fn one_set_mixes_user_system_and_names_assignments() {
         ["1", "2", "", "latin1"]
     );
 }
+
+/// Go `convertReadonlyVarToConst`: a user variable a SELECT reads and the
+/// statement never assigns is planned as the constant it holds, so it
+/// builds ranges; one the statement assigns, or reads outside a SELECT,
+/// stays `getvar`. Captured from Go (operator, operator info):
+///
+/// ```text
+/// select * from rv where a = @i                          Point_Get handle:1
+/// select * from rv where a = @I                          Point_Get handle:1
+/// select * from rv where b = @s                          IndexRangeScan range:["A","A"]
+/// select * from rv where b = @x                          Selection eq(test.rv.b, "0x41")
+/// select * from rv where c = @d                          Selection eq(test.rv.c, 1.5)
+/// select * from rv where a = @n                          TableDual rows:0
+/// select * from rv where a = @undefined                  TableDual rows:0
+/// select @i := 2, a from rv where a = @i                 Selection eq(test.rv.a, getvar("i"))
+/// select a from rv where a = @i and (@i := 3) > 0        Selection eq(test.rv.a, getvar("i")), gt(setvar("i", 3), 0)
+/// update rv set b = 'z' where a = @i                     Selection eq(test.rv.a, getvar("i"))
+/// delete from rv where a = @i                            Selection eq(test.rv.a, getvar("i"))
+/// insert into rv select a + 10, b, c from rv where a = @i   Point_Get handle:1
+/// select coercibility(@s), collation(@s), charset(@x), collation(@x)   2 utf8mb4_bin binary binary
+/// select * from rv where b = @x                          1 A 1.5
+/// ```
+#[test]
+fn a_user_variable_a_select_only_reads_is_planned_as_its_constant() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE DATABASE rovar",
+        "USE rovar",
+        "CREATE TABLE rv (a INT PRIMARY KEY, b VARCHAR(20), c DOUBLE, KEY ib(b))",
+        "INSERT INTO rv VALUES (1,'A',1.5),(2,'b',2.5)",
+        "SET @i = 1",
+        "SET @s = 'A'",
+        "SET @x = 0x41",
+        "SET @d = 1.5",
+        "SET @n = NULL",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let mut explain = |sql: &str| {
+        row_text(session.run(&format!("EXPLAIN FORMAT='brief' {sql}")))
+            .iter()
+            .map(|row| row.join(" | "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    for (sql, wants) in [
+        ("SELECT * FROM rv WHERE a = @i", &["Point_Get", "handle:1"][..]),
+        ("SELECT * FROM rv WHERE a = @I", &["Point_Get", "handle:1"]),
+        ("SELECT * FROM rv WHERE b = @s", &["IndexRangeScan", r#"range:["A","A"]"#]),
+        ("SELECT * FROM rv WHERE b = @x", &[r#"eq(rovar.rv.b, "0x41")"#, r#"range:["A","A"]"#]),
+        ("SELECT * FROM rv WHERE c = @d", &["eq(rovar.rv.c, 1.5)"]),
+        ("SELECT * FROM rv WHERE a = @n", &["TableDual", "rows:0"]),
+        ("SELECT * FROM rv WHERE a = @undefined", &["TableDual", "rows:0"]),
+        ("SELECT @i := 2, a FROM rv WHERE a = @i", &[r#"eq(rovar.rv.a, getvar("i"))"#]),
+        (
+            "SELECT a FROM rv WHERE a = @i AND (@i := 3) > 0",
+            &[r#"eq(rovar.rv.a, getvar("i")), gt(setvar("i", 3), 0)"#],
+        ),
+        ("UPDATE rv SET b = 'z' WHERE a = @i", &[r#"eq(rovar.rv.a, getvar("i"))"#]),
+        ("DELETE FROM rv WHERE a = @i", &[r#"eq(rovar.rv.a, getvar("i"))"#]),
+        ("INSERT INTO rv SELECT a + 10, b, c FROM rv WHERE a = @i", &["Point_Get", "handle:1"]),
+    ] {
+        let plan = explain(sql);
+        for want in wants {
+            assert!(plan.contains(want), "{sql}: want {want} in\n{plan}");
+        }
+    }
+    assert_eq!(
+        one_row(
+            &mut session,
+            "SELECT COERCIBILITY(@s), COLLATION(@s), CHARSET(@x), COLLATION(@x)"
+        ),
+        ["2", "utf8mb4_bin", "binary", "binary"]
+    );
+    assert_eq!(one_row(&mut session, "SELECT * FROM rv WHERE b = @x"), ["1", "A", "1.5"]);
+}

@@ -793,6 +793,9 @@ pub struct Session {
     /// context, because `@x := expr` writes it from INSIDE expression
     /// evaluation -- once per row, visible to the next select-list item.
     user_vars: tidb_variable::user_vars::UserVars,
+    /// Go `PlanCtxExtended.readonlyUserVars`: the user variables `Preprocess`
+    /// found the current statement only reads.
+    readonly_user_vars: Arc<std::collections::HashSet<String>>,
     /// Go `SessionVars.SequenceState`: the last value THIS SESSION took from
     /// each sequence, keyed by lowercase `db.name`, which is what `LASTVAL`
     /// reports. It is SESSION state, not the sequence's stored counter -- a
@@ -1088,6 +1091,7 @@ impl Session {
             last_result_output_names: Vec::new(),
             last_result_current_db: String::new(),
             user_vars: tidb_variable::user_vars::UserVars::new(),
+            readonly_user_vars: Arc::default(),
             sequence_last_values: Arc::default(),
             statement_boundary_open: false,
             process: None,

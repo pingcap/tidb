@@ -934,6 +934,9 @@ pub struct StmtContextData {
     /// Typed execute-time values. Clones within one execution share this
     /// immutable snapshot; later executions install a different snapshot.
     prepared_params: Option<Arc<[Datum]>>,
+    /// Go `PlanCtxExtended.readonlyUserVars`: the user variables the
+    /// preprocessor found the statement only reads.
+    readonly_user_vars: Arc<std::collections::HashSet<String>>,
     /// Go `SessionVars.CurrInsertValues`, the candidate row visible to a
     /// `VALUES(col)` expression while an INSERT/ON DUPLICATE assignment is
     /// evaluated. The DML path currently substitutes these references before
@@ -2717,6 +2720,16 @@ context_configuration! {
         self
     }
 
+    /// Go `SetReadonlyUserVarMap`.
+    #[must_use]
+    pub fn with_readonly_user_vars(
+        mut self,
+        readonly_user_vars: Arc<std::collections::HashSet<String>>,
+    ) -> Self {
+        self.readonly_user_vars = readonly_user_vars;
+        self
+    }
+
     /// Supplies one execution's parameter snapshot to every ordinary
     /// expression evaluator built with this statement context.
     #[must_use]
@@ -3046,6 +3059,7 @@ impl StmtContext {
             rand_session: None,
             user_vars: None,
             prepared_params: None,
+            readonly_user_vars: Arc::default(),
             current_insert_values: Arc::default(),
             rand_seeded: Arc::default(),
             last_insert_id: session.last_insert_id,
@@ -6916,6 +6930,10 @@ impl Columns for StmtContext {
 
     fn user_vars(&self) -> Option<&tidb_variable::user_vars::UserVars> {
         self.user_vars.as_ref()
+    }
+
+    fn is_readonly_user_var(&self, name: &str) -> bool {
+        self.readonly_user_vars.contains(name)
     }
 
     /// Go `SessionVars.GetUserVarVal`: names are case-insensitive, and an
