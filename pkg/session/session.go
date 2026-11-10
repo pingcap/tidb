@@ -3488,10 +3488,10 @@ func (s *session) rebuildFromPrepareCache(
 	// newly-parsed tree rather than the cached one.
 	plannercore.CollectPlanCacheStmtInfo(ctx, is, newStmt, stmtNode)
 
-	// dbName and tbls are only read during Execute (not written to by
+	// The table names and tbls are only read during Execute (not written to by
 	// CollectPlanCacheStmtInfo since that populates tables, not tbls).
 	// Clone them so that planCachePreprocess can safely replace tbls[i].
-	newStmt.SetDBNameAndTbls(cached.Stmt.DBName(), cached.Stmt.Tbls())
+	newStmt.SetDBNameAndTbls(cached.Stmt.DBName(), cached.Stmt.TableNames(), cached.Stmt.Tbls())
 
 	return newStmt, nil
 }
