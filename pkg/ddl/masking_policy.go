@@ -506,7 +506,7 @@ func (w *worker) insertMaskingPolicyIntoSysTable(jobCtx *jobContext, policy *mod
 
 func (w *worker) updateMaskingPolicyInSysTable(jobCtx *jobContext, policy *model.MaskingPolicyInfo) error {
 	failpoint.Inject("mockMaskingPolicyUpdateError", func(val failpoint.Value) {
-		if val == true {
+		if enabled, ok := val.(bool); ok && enabled {
 			failpoint.Return(errors.New("mock masking policy update error"))
 		}
 	})
@@ -602,7 +602,7 @@ func (w *worker) updateMaskingPolicyTableIDAfterTruncate(jobCtx *jobContext, old
 	now := time.Now()
 	for _, policy := range policies {
 		failpoint.Inject("mockMaskingPolicyUpdateError", func(val failpoint.Value) {
-			if val == true {
+			if enabled, ok := val.(bool); ok && enabled {
 				failpoint.Return(errors.New("mock masking policy update error"))
 			}
 		})
@@ -661,7 +661,7 @@ func (w *worker) updateMaskingPolicyNamesAfterRename(
 // updateMaskingPolicyNamesInSysTable updates only the db_name and table_name fields.
 func (w *worker) updateMaskingPolicyNamesInSysTable(ctx context.Context, policy *model.MaskingPolicyInfo) error {
 	failpoint.Inject("mockMaskingPolicyUpdateError", func(val failpoint.Value) {
-		if val == true {
+		if enabled, ok := val.(bool); ok && enabled {
 			failpoint.Return(errors.New("mock masking policy update error"))
 		}
 	})
