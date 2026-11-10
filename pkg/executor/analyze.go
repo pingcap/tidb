@@ -104,6 +104,11 @@ func runningUnderGoTest() bool {
 // tasks will capture base count / modify_count from mysql.stats_meta. Without this, a stale
 // pre-analyze delta can be applied later and double count rows or modifications.
 func flushStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, plan *core.Analyze) error {
+	if sctx.GetPlanCtx().IsCrossKS() {
+		// The broadcast goes to the TiDB servers of the keyspace of this TiDB, not of the session.
+		// Whoever asks a node of another keyspace to analyze must first flush in the table's keyspace.
+		return nil
+	}
 	flushObjects := collectStatsDeltaFlushObjectsForAnalyze(plan)
 	if len(flushObjects) == 0 {
 		return nil
