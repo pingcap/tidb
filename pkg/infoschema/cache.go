@@ -48,6 +48,27 @@ type InfoCache struct {
 
 	lastCheckVersion int64
 	lastCheckTime    time.Time
+
+	// onDemand lists the tables that GetLatestWithOnDemandTables resolves besides
+	// the cached ones. It is nil unless EnableOnDemandTables was called.
+	onDemand *OnDemandTables
+}
+
+// EnableOnDemandTables lets GetLatestWithOnDemandTables resolve the tables listed in the returned
+// OnDemandTables. Call it one time, before the cache is used: no lock guards it against readers.
+func (h *InfoCache) EnableOnDemandTables() *OnDemandTables {
+	h.onDemand = newOnDemandTables(h.store)
+	return h.onDemand
+}
+
+// GetLatestWithOnDemandTables is GetLatest for a session, which wraps it in SessionExtendedInfoSchema:
+// it also resolves the listed tables. What maintains the cache must not see a table it does not load.
+func (h *InfoCache) GetLatestWithOnDemandTables() InfoSchema {
+	is := h.GetLatest()
+	if is == nil || h.onDemand == nil || h.onDemand.empty() {
+		return is
+	}
+	return &onDemandInfoSchema{InfoSchema: is, tables: h.onDemand}
 }
 
 type schemaAndTimestamp struct {
