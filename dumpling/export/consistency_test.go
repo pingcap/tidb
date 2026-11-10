@@ -4,9 +4,13 @@ package export
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
@@ -140,6 +144,51 @@ func TestConsistencyLockControllerEmpty(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// blockingFlushConnector is a minimal driver stub for testing
+// resolveAutoConsistency. Its FLUSH TABLES WITH READ LOCK blocks until the
+// passed context is done, mimicking an upstream session holding FTWRL for a
+// long time; any other statement succeeds immediately.
+type blockingFlushConnector struct{}
+
+func (blockingFlushConnector) Connect(context.Context) (driver.Conn, error) {
+	return &blockingFlushConn{}, nil
+}
+
+func (blockingFlushConnector) Driver() driver.Driver {
+	return blockingFlushDriver{}
+}
+
+type blockingFlushDriver struct{}
+
+func (blockingFlushDriver) Open(string) (driver.Conn, error) {
+	return &blockingFlushConn{}, nil
+}
+
+type blockingFlushConn struct{}
+
+func (blockingFlushConn) Prepare(string) (driver.Stmt, error) {
+	return nil, errors.New("prepare not supported")
+}
+
+func (blockingFlushConn) Close() error { return nil }
+
+func (blockingFlushConn) Begin() (driver.Tx, error) {
+	return nil, errors.New("begin not supported")
+}
+
+func (c *blockingFlushConn) ExecContext(ctx context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
+	if strings.Contains(query, "FLUSH TABLES WITH READ LOCK") {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return blockingFlushResult{}, nil
+}
+
+type blockingFlushResult struct{}
+
+func (blockingFlushResult) LastInsertId() (int64, error) { return 0, nil }
+func (blockingFlushResult) RowsAffected() (int64, error) { return 0, nil }
+
 func TestResolveAutoConsistency(t *testing.T) {
 	conf := defaultConfigForTest(t)
 	cases := []struct {
@@ -195,6 +244,30 @@ func TestResolveAutoConsistency(t *testing.T) {
 		require.Equalf(t, ConsistencyTypeLock, conf.Consistency, "server type: %s", x.serverTp.String())
 	}
 	require.NoError(t, mock.ExpectationsWereMet())
+
+	// test FLUSH blocked for a long time will fallback to ConsistencyTypeLock.
+	// The stub blocks FLUSH until the context is done, so without the timeout
+	// passed to the FLUSH step this would hang forever; the test guards
+	// against that with its own timeout so a regression fails instead of
+	// hanging.
+	stubDB := sql.OpenDB(blockingFlushConnector{})
+	defer stubDB.Close()
+	for _, x := range cases {
+		conf.Consistency = ConsistencyTypeAuto
+		conf.ServerInfo.ServerType = x.serverTp
+		d := &Dumper{tctx: tctx, conf: conf, dbHandle: stubDB}
+		done := make(chan error, 1)
+		go func() {
+			done <- resolveAutoConsistency(d)
+		}()
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+			require.Equalf(t, ConsistencyTypeLock, conf.Consistency, "server type: %s", x.serverTp.String())
+		case <-time.After(30 * time.Second):
+			t.Fatalf("resolveAutoConsistency did not return in 30 seconds, server type: %s", x.serverTp.String())
+		}
+	}
 }
 
 func TestConsistencyControllerError(t *testing.T) {
