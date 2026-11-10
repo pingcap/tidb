@@ -5050,6 +5050,16 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 	tableInfo := tbl.Meta()
+	if sessionVars.StmtCtx.InExplainStmt {
+		hypoTblInfo, _ := sessionVars.GetHypoIndexTableInfo(dbName.L, tableInfo)
+		if hypoTblInfo != tableInfo {
+			tbl, err = table.TableFromMeta(tbl.Allocators(nil), hypoTblInfo)
+			if err != nil {
+				return nil, err
+			}
+			tableInfo = hypoTblInfo
+		}
+	}
 
 	if b.isCreateView && tableInfo.TempTableType == model.TempTableLocal {
 		return nil, plannererrors.ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
@@ -5214,8 +5224,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	// Try to substitute generate column only if there is an index on generate column.
-	for _, index := range tableInfo.Indices {
-		if index.State != model.StatePublic {
+	for _, path := range possiblePaths {
+		index := path.Index
+		if index == nil || index.State != model.StatePublic {
 			continue
 		}
 		for _, indexCol := range index.Columns {

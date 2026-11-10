@@ -110,6 +110,12 @@ show create table t;
 drop hypo index hypo_a on t;
 drop hypo index hypo_bc on t;
 show create table t;
+create index hypo_expr type hypo on t ((b + 1));
+explain select b + 1 from t where b + 1 = 42;
+show create table t;
+select * from t;
+drop hypo index hypo_expr on t;
+show create table t;
 
 
 # TestHypoIndexPlan

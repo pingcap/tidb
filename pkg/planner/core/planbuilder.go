@@ -1432,13 +1432,10 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	}
 
 	// consider hypo-indexes
-	hypoIndexes := ctx.GetSessionVars().HypoIndexes // session level hypo-indexes
-	if ctx.GetSessionVars().StmtCtx.InExplainStmt && hypoIndexes != nil {
-		originalTableName := tblInfo.Name.L
-		if hypoIndexes[dbName.L] != nil && hypoIndexes[dbName.L][originalTableName] != nil {
-			for _, index := range hypoIndexes[dbName.L][originalTableName] {
-				publicPaths = append(publicPaths, &util.AccessPath{Index: index})
-			}
+	if ctx.GetSessionVars().StmtCtx.InExplainStmt {
+		_, hypoIndexes := ctx.GetSessionVars().GetHypoIndexTableInfo(dbName.L, tblInfo)
+		for _, index := range hypoIndexes {
+			publicPaths = append(publicPaths, &util.AccessPath{Index: index})
 		}
 	}
 	if len(ctx.GetSessionVars().StmtCtx.HintedHypoIndexes) > 0 { // statement-level hypo-indexes from hints

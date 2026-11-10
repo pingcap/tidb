@@ -5813,24 +5813,27 @@ func (e *executor) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt
 }
 
 // addHypoIndexIntoCtx adds this index as a hypo-index into this ctx.
-func (*executor) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableName ast.CIStr, indexInfo *model.IndexInfo) error {
+func (*executor) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableName ast.CIStr, indexInfo *model.IndexInfo, hiddenCols []*model.ColumnInfo) error {
 	sctx := ctx.GetSessionVars()
 	indexName := indexInfo.Name
 
 	if sctx.HypoIndexes == nil {
-		sctx.HypoIndexes = make(map[string]map[string]map[string]*model.IndexInfo)
+		sctx.HypoIndexes = make(map[string]map[string]map[string]*model.HypoIndexInfo)
 	}
 	if sctx.HypoIndexes[schemaName.L] == nil {
-		sctx.HypoIndexes[schemaName.L] = make(map[string]map[string]*model.IndexInfo)
+		sctx.HypoIndexes[schemaName.L] = make(map[string]map[string]*model.HypoIndexInfo)
 	}
 	if sctx.HypoIndexes[schemaName.L][tableName.L] == nil {
-		sctx.HypoIndexes[schemaName.L][tableName.L] = make(map[string]*model.IndexInfo)
+		sctx.HypoIndexes[schemaName.L][tableName.L] = make(map[string]*model.HypoIndexInfo)
 	}
 	if _, exist := sctx.HypoIndexes[schemaName.L][tableName.L][indexName.L]; exist {
 		return errors.Trace(errors.Errorf("conflict hypo index name %s", indexName.L))
 	}
 
-	sctx.HypoIndexes[schemaName.L][tableName.L][indexName.L] = indexInfo
+	sctx.HypoIndexes[schemaName.L][tableName.L][indexName.L] = &model.HypoIndexInfo{
+		IndexInfo:     indexInfo,
+		HiddenColumns: hiddenCols,
+	}
 	return nil
 }
 
@@ -5908,13 +5911,18 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		if len(hiddenCols) > 0 {
 			hypoTblInfo = tblInfo.Clone()
 			hypoTblInfo.Columns = finalColumns
+			for i, col := range hiddenCols {
+				col.ID = tblInfo.MaxColumnID + int64(i) + 1
+				col.Offset = len(tblInfo.Columns) + i
+				col.State = model.StatePublic
+			}
 		}
 		indexInfo, err := BuildIndexInfo(metaBuildCtx, hypoTblInfo, indexName, false, unique, model.ColumnarIndexTypeNA,
 			indexPartSpecifications, indexOption, model.StatePublic)
 		if err != nil {
 			return err
 		}
-		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
+		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo, hiddenCols)
 	}
 
 	splitOpt, autoPreSplit, err := buildIndexPreSplitOpt(indexOption)

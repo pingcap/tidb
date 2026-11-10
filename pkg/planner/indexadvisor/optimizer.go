@@ -202,15 +202,17 @@ func (opt *optimizerImpl) addHypoIndex(hypoIndexes ...Index) error {
 		}
 
 		if opt.sctx.GetSessionVars().HypoIndexes == nil {
-			opt.sctx.GetSessionVars().HypoIndexes = make(map[string]map[string]map[string]*model.IndexInfo)
+			opt.sctx.GetSessionVars().HypoIndexes = make(map[string]map[string]map[string]*model.HypoIndexInfo)
 		}
 		if opt.sctx.GetSessionVars().HypoIndexes[h.SchemaName] == nil {
-			opt.sctx.GetSessionVars().HypoIndexes[h.SchemaName] = make(map[string]map[string]*model.IndexInfo)
+			opt.sctx.GetSessionVars().HypoIndexes[h.SchemaName] = make(map[string]map[string]*model.HypoIndexInfo)
 		}
 		if opt.sctx.GetSessionVars().HypoIndexes[h.SchemaName][h.TableName] == nil {
-			opt.sctx.GetSessionVars().HypoIndexes[h.SchemaName][h.TableName] = make(map[string]*model.IndexInfo)
+			opt.sctx.GetSessionVars().HypoIndexes[h.SchemaName][h.TableName] = make(map[string]*model.HypoIndexInfo)
 		}
-		opt.sctx.GetSessionVars().HypoIndexes[h.SchemaName][h.TableName][h.IndexName] = idxInfo
+		opt.sctx.GetSessionVars().HypoIndexes[h.SchemaName][h.TableName][h.IndexName] = &model.HypoIndexInfo{
+			IndexInfo: idxInfo,
+		}
 	}
 	return nil
 }

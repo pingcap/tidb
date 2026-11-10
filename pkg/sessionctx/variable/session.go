@@ -1830,7 +1830,7 @@ type SessionVars struct {
 	FastCheckTable bool
 
 	// HypoIndexes are for the Index Advisor.
-	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
+	HypoIndexes map[string]map[string]map[string]*model.HypoIndexInfo // dbName -> tblName -> idxName -> idxInfo
 
 	// TiFlashReplicaRead indicates the policy of TiFlash node selection when the query needs the TiFlash engine.
 	TiFlashReplicaRead tiflash.ReplicaRead
@@ -3237,6 +3237,57 @@ func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.Temp
 	}
 
 	return nil
+}
+
+// GetHypoIndexTableInfo returns private table metadata and name-sorted hypothetical
+// indexes. Expression columns are rebased against the current table and remaining
+// hypothetical indexes so dropping an index cannot leave stale column offsets.
+func (s *SessionVars) GetHypoIndexTableInfo(dbName string, tblInfo *model.TableInfo) (*model.TableInfo, []*model.IndexInfo) {
+	hypoIndexes := s.HypoIndexes[dbName][tblInfo.Name.L]
+	if len(hypoIndexes) == 0 {
+		return tblInfo, nil
+	}
+	ordered := make([]*model.HypoIndexInfo, 0, len(hypoIndexes))
+	for _, index := range hypoIndexes {
+		ordered = append(ordered, index)
+	}
+	slices.SortFunc(ordered, func(a, b *model.HypoIndexInfo) int {
+		return strings.Compare(a.Name.O, b.Name.O)
+	})
+	columnsByName := make(map[string]*model.ColumnInfo, len(tblInfo.Columns))
+	for _, col := range tblInfo.Columns {
+		columnsByName[col.Name.L] = col
+	}
+	hypoTblInfo := tblInfo
+	indexes := make([]*model.IndexInfo, 0, len(ordered))
+	for _, hypoIndex := range ordered {
+		index := hypoIndex.IndexInfo
+		if len(hypoIndex.HiddenColumns) > 0 {
+			for _, hiddenCol := range hypoIndex.HiddenColumns {
+				if columnsByName[hiddenCol.Name.L] != nil {
+					continue
+				}
+				if hypoTblInfo == tblInfo {
+					hypoTblInfo = tblInfo.Clone()
+				}
+				col := hiddenCol.Clone()
+				hypoTblInfo.MaxColumnID++
+				col.ID = hypoTblInfo.MaxColumnID
+				col.Offset = len(hypoTblInfo.Columns)
+				col.State = model.StatePublic
+				hypoTblInfo.Columns = append(hypoTblInfo.Columns, col)
+				columnsByName[col.Name.L] = col
+			}
+			index = index.Clone()
+			for _, indexCol := range index.Columns {
+				if col := columnsByName[indexCol.Name.L]; col != nil {
+					indexCol.Offset = col.Offset
+				}
+			}
+		}
+		indexes = append(indexes, index)
+	}
+	return hypoTblInfo, indexes
 }
 
 // EncodeSessionStates saves session states into SessionStates.
