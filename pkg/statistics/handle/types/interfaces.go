@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/tiancaiamao/gp"
 )
 
 // StatsGC is used to GC unnecessary stats.
@@ -493,4 +494,27 @@ type StatsHandle interface {
 
 	// DDL is used to handle ddl events.
 	DDL
+}
+
+// AnalyzeStatsHandle is the part of the stats handle that an ANALYZE statement uses.
+type AnalyzeStatsHandle interface {
+	GPool() *gp.Pool
+
+	// GetPhysicalTableStats returns the statistics of a physical table, or pseudo statistics.
+	GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table
+
+	// Update loads the new statistics of the tables into the cache, if the handle has one.
+	Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error
+
+	StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error)
+	SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool) (err error)
+	GetLockedTables(tableIDs ...int64) (map[int64]struct{}, error)
+	GetPredicateColumns(tableID int64) ([]int64, error)
+
+	InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error
+	StartAnalyzeJob(job *statistics.AnalyzeJob)
+	UpdateAnalyzeJobProgress(job *statistics.AnalyzeJob, rowCount int64)
+	FinishAnalyzeJob(job *statistics.AnalyzeJob, failReason error, analyzeType statistics.JobType)
+
+	StatsGlobal
 }

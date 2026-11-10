@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"go.uber.org/zap"
@@ -47,7 +47,7 @@ func newAnalyzeSaveStatsWorker(
 // enters "drain mode": do not save more stats, just keep consuming resultsCh
 // and finish jobs with the same error so upstream analyze workers are not
 // blocked on sending.
-func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *handle.Handle, analyzeSnapshot bool) {
+func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle statstypes.AnalyzeStatsHandle, analyzeSnapshot bool) {
 	// Report at most one error per save worker. errCh is drained only after all
 	// save workers exit, so sending every per-partition failure can fill errCh
 	// and block this worker, which may deadlock the analyze pipeline.
