@@ -5011,6 +5011,7 @@ fn convert_mpp_join_partition_keys_if_need(
         let (common, l_convert, r_convert) = negotiate_mpp_join_key_type(l_type, r_type);
         casts.push((l_convert.then(|| common.clone()), r_convert.then_some(common)));
     }
+    let expr_ctx = tidb_planner_core_operator_physicalop::enforce::get_expr_ctx(session);
     let left_changed = casts.iter().any(|(l, _)| l.is_some());
     let right_changed = casts.iter().any(|(_, r)| r.is_some());
     if !left_changed && !right_changed {
@@ -5039,7 +5040,7 @@ fn convert_mpp_join_partition_keys_if_need(
             let mut target = target.clone();
             target.set_flag(key.col.get_static_type().map(tidb_datatype::FieldType::flags).unwrap_or_default());
             let cast_expr =
-                tidb_expr::wrap_cast::build_cast_function(&tidb_expr::wrap_cast::UnfoldedBuildContext, Expression::Column(key.col.clone()), target.clone())
+                tidb_expr::wrap_cast::build_cast_function(&tidb_expr::wrap_cast::ColumnsBuildContext(expr_ctx), Expression::Column(key.col.clone()), target.clone())
                     .map_err(|error| PlanError::internal(format!("{error:?}")))?;
             // Go `appendExpr`.
             let mut column = tidb_expr::column::Column::new(

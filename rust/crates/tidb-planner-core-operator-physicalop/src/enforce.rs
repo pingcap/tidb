@@ -271,8 +271,18 @@ pub fn push_down_reporter(session: Option<&dyn MppWarningSink>) -> impl Fn(Strin
     }
 }
 
+/// Go `p.SCtx().GetExprCtx()` where physical planning builds an expression.
+#[must_use]
+pub fn get_expr_ctx(session: Option<&dyn MppWarningSink>) -> &dyn tidb_exprctx::Columns {
+    session.map_or(&tidb_exprctx::NoColumns, MppWarningSink::get_expr_ctx)
+}
+
 /// The statement context is where Go's `RaiseWarningWhenMPPEnforced` writes.
 impl MppWarningSink for tidb_sessionctx::StmtContext {
+    fn get_expr_ctx(&self) -> &dyn tidb_exprctx::Columns {
+        self
+    }
+
     fn raise_mpp_warning(&self, message: &str) {
         tidb_sessionctx::StmtContext::raise_warning_when_mpp_enforced(self, message);
     }
@@ -370,6 +380,10 @@ mod tests {
             warnings: std::cell::RefCell<Vec<String>>,
         }
         impl MppWarningSink for Session {
+            fn get_expr_ctx(&self) -> &dyn tidb_exprctx::Columns {
+                &tidb_exprctx::NoColumns
+            }
+
             fn raise_mpp_warning(&self, message: &str) {
                 self.warnings.borrow_mut().push(message.to_owned());
             }
@@ -447,6 +461,9 @@ mod tests {
 /// executor. This trait carries that side effect across the crate boundary
 /// without making the planner depend on a session implementation.
 pub trait MppWarningSink {
+    /// Go `PlanContext.GetExprCtx()`.
+    fn get_expr_ctx(&self) -> &dyn tidb_exprctx::Columns;
+
     /// Raises one source-shaped MPP refusal warning when enforcement is on.
     fn raise_mpp_warning(&self, message: &str);
 

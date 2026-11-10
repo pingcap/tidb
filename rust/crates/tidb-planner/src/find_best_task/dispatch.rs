@@ -5747,6 +5747,10 @@ mod tests {
     struct RecordingMppWarningSink(RefCell<Vec<String>>);
 
     impl tidb_planner_core_operator_physicalop::enforce::MppWarningSink for RecordingMppWarningSink {
+        fn get_expr_ctx(&self) -> &dyn tidb_exprctx::Columns {
+            &tidb_exprctx::NoColumns
+        }
+
         fn raise_mpp_warning(&self, message: &str) {
             self.0.borrow_mut().push(message.to_owned());
         }
