@@ -1,0 +1,159 @@
+Q use test
+Q create table t (a int, b int, c int, j json, d datetime, key(a), key(b), key(c))
+Q alter table t set hypo tiflash replica 1
+Q explain format='brief' select /*+ use_index_merge(t) */ a from t where a = 1 or (b = 2 and tan(c) > 1)
+P Projection 15.99 root  test.t.a
+P └─Selection 15.99 root  or(eq(test.t.a, 1), and(eq(test.t.b, 2), gt(tan(cast(test.t.c, double BINARY)), 1)))
+P   └─IndexMerge 19.99 root  type: union
+P     ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo
+P     ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[2,2], keep order:false, stats:pseudo
+P     └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to storage layer now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tiflash now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to storage layer now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tiflash now.
+Q explain format='brief' select /*+ use_index_merge(t) */ a from t where (a = 1 or b = 2) and tan(c) > 1
+P Projection 15.99 root  test.t.a
+P └─Selection 15.99 root  gt(tan(cast(test.t.c, double BINARY)), 1)
+P   └─IndexMerge 19.99 root  type: union
+P     ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo
+P     ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[2,2], keep order:false, stats:pseudo
+P     └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to storage layer now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tiflash now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to storage layer now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tiflash now.
+Q explain format='brief' select /*+ use_index_merge(t) */ a from t where a = 1 or tan(b) > 1
+P Projection 8000.00 root  test.t.a
+P └─Selection 8000.00 root  or(eq(test.t.a, 1), gt(tan(cast(test.t.b, double BINARY)), 1))
+P   └─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender
+P     └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough
+P       └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to storage layer now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W IndexMerge is inapplicable
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tiflash now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tiflash now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tiflash now.
+Q explain format='brief' select a from t where a = 1 or (b = 2 and tan(c) > 1)
+P Projection 8000.00 root  test.t.a
+P └─Selection 8000.00 root  or(eq(test.t.a, 1), and(eq(test.t.b, 2), gt(tan(cast(test.t.c, double BINARY)), 1)))
+P   └─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender
+P     └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough
+P       └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to storage layer now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tiflash now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tiflash now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tiflash now.
+Q explain format='brief' select /*+ use_index_merge(t, a, b) */ a from t where a = 1 and b = 2 and tan(c) > 1
+P Projection 0.80 root  test.t.a
+P └─Selection 0.80 root  gt(tan(cast(test.t.c, double BINARY)), 1)
+P   └─IndexMerge 1.00 root  type: intersection
+P     ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo
+P     ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[2,2], keep order:false, stats:pseudo
+P     └─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to storage layer now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tiflash now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tiflash now.
+Q explain format='brief' select /*+ use_index_merge(t) */ a from t where (a = 1 and tan(a) > 1) or (b = 2 and tan(c) > 1)
+P Projection 15.99 root  test.t.a
+P └─Selection 15.99 root  or(eq(test.t.a, 1), and(eq(test.t.b, 2), gt(tan(cast(test.t.c, double BINARY)), 1)))
+P   └─IndexMerge 19.99 root  type: union
+P     ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo
+P     ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[2,2], keep order:false, stats:pseudo
+P     └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to storage layer now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tiflash now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tikv now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to storage layer now.
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to tiflash now.
+Q set @@tidb_allow_mpp=1
+Q set @@tidb_enforce_mpp=1
+Q explain format='brief' select /*+ read_from_storage(tiflash[t]) */ max(json_type(j)) over (partition by b) from t
+P Projection 10000.00 root  Column#11->Column#12
+P └─Shuffle 10000.00 root  execution info: concurrency:5, data sources:[Projection]
+P   └─Window 10000.00 root  max(Column#10)->Column#11 over(partition by test.t.b)
+P     └─Sort 10000.00 root  test.t.b
+P       └─ShuffleReceiver 10000.00 root  
+P         └─Projection 10000.00 root  test.t.b, json_type(test.t.j)->Column#10
+P           └─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender
+P             └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough
+P               └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo
+  W Scalar function 'json_type'(signature: JsonTypeSig, return type: var_string(51)) is not supported to push down to tiflash now.
+  W Scalar function 'json_type'(signature: JsonTypeSig, return type: var_string(51)) is not supported to push down to tiflash now.
+  W Scalar function 'json_type'(signature: JsonTypeSig, return type: var_string(51)) is not supported to push down to tiflash now.
+Q insert into mysql.expr_pushdown_blacklist values('minus','tiflash','x')
+Q admin reload expr_pushdown_blacklist
+Q explain format='brief' select /*+ read_from_storage(tiflash[t]) */ sum(a) over (partition by b order by c range between 1 preceding and current row) from t
+P Projection 10000.00 root  Column#9->Column#10
+P └─Shuffle 10000.00 root  execution info: concurrency:5, data sources:[TableReader]
+P   └─Window 10000.00 root  sum(cast(test.t.a, decimal(10,0) BINARY))->Column#9 over(partition by test.t.b order by test.t.c range between 1 preceding and current row)
+P     └─Sort 10000.00 root  test.t.b, test.t.c
+P       └─ShuffleReceiver 10000.00 root  
+P         └─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender
+P           └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough
+P             └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo
+  W Scalar function 'minus'(signature: MinusInt, return type: bigint) is not supported to push down to tiflash now.
+  W MPP mode may be blocked because window function frame can't be pushed down
+  W Scalar function 'minus'(signature: MinusInt, return type: bigint) is not supported to push down to tiflash now.
+  W MPP mode may be blocked because window function frame can't be pushed down
+Q explain format='brief' select /*+ read_from_storage(tiflash[t]) */ sum(a) over (partition by b order by c range between current row and 1 following) from t
+P TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender
+P └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough
+P   └─Projection 10000.00 mpp[tiflash]  Column#9->Column#10, stream_count: 8
+P     └─Window 10000.00 mpp[tiflash]  sum(cast(test.t.a, decimal(10,0) BINARY))->Column#9 over(partition by test.t.b order by test.t.c range between current row and 1 following), stream_count: 8
+P       └─Sort 10000.00 mpp[tiflash]  test.t.b, test.t.c, stream_count: 8
+P         └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8
+P           └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary], stream_count: 8
+P             └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo
+Q set @@tidb_enforce_mpp=0
+Q explain format='brief' select /*+ read_from_storage(tiflash[t]) */ sum(a) over (partition by b order by c range between 1 preceding and current row) from t
+P Projection 10000.00 root  Column#9->Column#10
+P └─Shuffle 10000.00 root  execution info: concurrency:5, data sources:[TableReader]
+P   └─Window 10000.00 root  sum(cast(test.t.a, decimal(10,0) BINARY))->Column#9 over(partition by test.t.b order by test.t.c range between 1 preceding and current row)
+P     └─Sort 10000.00 root  test.t.b, test.t.c
+P       └─ShuffleReceiver 10000.00 root  
+P         └─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender
+P           └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough
+P             └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo
+  W Scalar function 'minus'(signature: MinusInt, return type: bigint) is not supported to push down to tiflash now.
+  W Scalar function 'minus'(signature: MinusInt, return type: bigint) is not supported to push down to tiflash now.

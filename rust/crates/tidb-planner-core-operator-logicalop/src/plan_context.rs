@@ -494,13 +494,40 @@ pub trait PartitionPruning {
 }
 
 /// The statement-context writes of Go `deriveStats4DataSource`.
-pub trait DeriveStatsSink {
+pub trait DeriveStatsSink: PushDownWarningSink {
     /// `derivePathStatsAndTryHeuristics`' note: Go `StmtCtx.AppendNote` under
     /// `InVerboseExplain`, `AppendExtraNote` otherwise.
     fn append_planner_note(&self, message: &str);
 
     /// Go `StmtCtx.SetIndexForce`, from `getGeneralAttributesFromPaths`.
     fn set_index_force(&self);
+}
+
+/// Go `PushDownContext.AppendWarning` (`util.GetPushDownCtx`): where a
+/// push-down check reports each scalar function it refuses.
+pub trait PushDownWarningSink {
+    /// The statement's warnings under EXPLAIN, its extra warnings otherwise.
+    fn append_push_down_warning(&self, message: &str);
+}
+
+impl PushDownWarningSink for tidb_sessionctx::StmtContext {
+    fn append_push_down_warning(&self, message: &str) {
+        if self.in_explain_stmt() {
+            self.append_warning_parts(1105, message);
+        } else {
+            self.append_extra_warning_parts(1105, message);
+        }
+    }
+}
+
+/// Go `util.GetPushDownCtx(sctx)`'s warning half: the reporter a push-down
+/// check hands each refusal to.
+pub fn push_down_reporter(session: Option<&dyn PushDownWarningSink>) -> impl Fn(String) + '_ {
+    move |message: String| {
+        if let Some(session) = session {
+            session.append_push_down_warning(&message);
+        }
+    }
 }
 
 /// The statement context is where Go's `deriveStats4DataSource` writes.

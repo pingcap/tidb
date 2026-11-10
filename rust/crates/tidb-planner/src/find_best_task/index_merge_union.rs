@@ -33,7 +33,9 @@ pub fn build_union_index_merge_task(
     ds: &DataSource,
     ctx: &mut DispatchContext<'_>,
 ) -> Result<Option<Task>, PlanError> {
-    crate::access_path::index_merge::prepare_union_index_merge_path(ds, &ctx.access_path_derivation_context())?
+    crate::access_path::indexmerge_unfinished_path::generate_or_index_merge(ds, &ctx.access_path_derivation_context(), false)?
+        .into_iter()
+        .next()
         .map(|path| {
             build_prepared_union_index_merge_task(
                 ds,
@@ -1094,7 +1096,8 @@ fn partial_handle_columns(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::access_path::index_merge::{is_in_index_merge_hints, is_specified_in_index_merge_hints, prepare_union_index_merge_path};
+    use crate::access_path::index_merge::{is_in_index_merge_hints, is_specified_in_index_merge_hints};
+    use crate::access_path::indexmerge_unfinished_path::generate_or_index_merge;
 
     #[test]
     fn named_intersection_hint_does_not_make_other_merge_hints_wildcards() {
@@ -1231,13 +1234,14 @@ mod tests {
             expression_evaluator: &tidb_ranger::points::evaluate_static,
             plan_cache_marker: None,
             used_stats_recorder: None,
+            push_down_warning_sink: None,
         };
         let plan_id_before = allocator.current();
         // Go `buildIntoAccessPath`: a union reading through one index is no
         // index merge.
-        assert!(prepare_union_index_merge_path(&ds, &derivation)
+        assert!(generate_or_index_merge(&ds, &derivation, false)
             .unwrap()
-            .is_none());
+            .is_empty());
         assert_eq!(
             allocator.current(),
             plan_id_before,
@@ -1257,8 +1261,10 @@ mod tests {
         choices
             .all_possible_access_paths
             .push(tidb_planner_util::path::AccessPath::index_path(choices.table_indices()[1].clone()));
-        let alternatives = prepare_union_index_merge_path(&choices, &derivation)
+        let alternatives = generate_or_index_merge(&choices, &derivation, false)
             .unwrap()
+            .into_iter()
+            .next()
             .unwrap();
         assert!(alternatives.count_after_access().unwrap() >= 0.0);
         assert_eq!(alternatives.partial_alternative_index_paths.len(), 2);
@@ -1298,7 +1304,7 @@ mod tests {
             only_b.all_conds = only_b.pushed_down_conds.clone();
             only_b
         };
-        assert!(crate::access_path::index_merge::prepare_union_index_merge_paths(&only_b, &derivation, false)
+        assert!(generate_or_index_merge(&only_b, &derivation, false)
             .unwrap()
             .is_empty());
         // Two indexes led by `b` serve the second OR.
@@ -1326,7 +1332,7 @@ mod tests {
             "or", ty.clone(), vec![eq_b(1), eq_b(2)],
         ).unwrap());
         multiple_or.all_conds = multiple_or.pushed_down_conds.clone();
-        let candidates = crate::access_path::index_merge::prepare_union_index_merge_paths(&multiple_or, &derivation, false).unwrap();
+        let candidates = generate_or_index_merge(&multiple_or, &derivation, false).unwrap();
         assert_eq!(candidates.len(), 2, "each top-level OR retains its own candidate");
         assert_ne!(
             candidates[0].index_merge_or_source_filter.as_ref().unwrap().canonical_hash_code(),
@@ -1553,8 +1559,10 @@ mod tests {
         );
         // Restoring the datasource schema changes the derivation inputs.
         // Rebuild candidates instead of reading a later schema during costing.
-        let alternatives = prepare_union_index_merge_path(&choices, &derivation)
+        let alternatives = generate_or_index_merge(&choices, &derivation, false)
             .unwrap()
+            .into_iter()
+            .next()
             .unwrap();
         let ordered =
             build_prepared_union_index_merge_task(&choices, &alternatives, &advisory, &ctx)

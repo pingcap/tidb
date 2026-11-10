@@ -3930,11 +3930,13 @@ pub struct PhysicalWindow {
 fn window_func_can_push_down_to_tiflash(
     desc: &tidb_expression_aggregation::WindowFuncDesc,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    report: &dyn Fn(String),
 ) -> bool {
-    tidb_expr::infer_pushdown::can_exprs_push_down(
+    tidb_expr::infer_pushdown::can_exprs_push_down_reporting(
         &desc.base.args,
         tidb_kv::store_type::StoreType::TiFlash,
         blacklist,
+        report,
     ) && matches!(
         desc.base.name.as_str(),
         "row_number"
@@ -3953,11 +3955,6 @@ fn window_func_can_push_down_to_tiflash(
 }
 
 /// Go `tryToGetMppWindows` (`physical_window.go:340`).
-///
-/// Go also converts a RANGE frame's bound functions to protobuf
-/// (`ExpressionsToPBList`); Rust converts expressions only when it lowers a
-/// dispatched plan, so the TiFlash pushdown check stands for that
-/// conversion here.
 fn try_to_get_mpp_windows(
     window: &tidb_planner_core_operator_logicalop::LogicalWindow,
     prop: &PhysicalProperty,
@@ -3972,6 +3969,7 @@ fn try_to_get_mpp_windows(
             sink.raise_mpp_warning(message);
         }
     };
+    let report = enforce::push_down_reporter(warnings);
     if !prop.is_sort_item_all_for_partition() {
         return Vec::new();
     }
@@ -3983,7 +3981,7 @@ fn try_to_get_mpp_windows(
     }
     let mut all_supported = true;
     for desc in &window.window_func_descs {
-        if !window_func_can_push_down_to_tiflash(desc, blacklist) {
+        if !window_func_can_push_down_to_tiflash(desc, blacklist, &report) {
             raise(&format!(
                 "MPP mode may be blocked because window function `{}` or its arguments are not supported now.",
                 desc.base.name
@@ -4010,11 +4008,28 @@ fn try_to_get_mpp_windows(
         .filter(|frame| frame.frame_type == tidb_planner_core_operator_logicalop::window::FrameType::Ranges)
     {
         let bounds = [frame.start.as_ref(), frame.end.as_ref()];
+        let expr_ctx = enforce::get_expr_ctx(warnings);
+        let zone = expr_ctx.time_zone();
+        let pc = tidb_expr::expr_to_pb::PbConverter::new(expr_ctx, false, &zone);
         for bound in bounds.into_iter().flatten() {
-            if !tidb_expr::infer_pushdown::can_exprs_push_down(
+            if let Err(expr) = tidb_expr::expr_to_pb::expressions_to_pb_list(&pc, &bound.calc_funcs) {
+                let text = tidb_expr::explain::physical_expression_text_with_columns(
+                    expr_ctx,
+                    expr,
+                    &[],
+                    tidb_expr::explain::ExpressionTextStyle::StringWithCtx,
+                )
+                .unwrap_or_default();
+                raise(&format!(
+                    "MPP mode may be blocked because window function frame can't be pushed down, because [planner:1815]expression {text} cannot be pushed down"
+                ));
+                return Vec::new();
+            }
+            if !tidb_expr::infer_pushdown::can_exprs_push_down_reporting(
                 &bound.calc_funcs,
                 tidb_kv::store_type::StoreType::TiFlash,
                 blacklist,
+                &report,
             ) {
                 raise("MPP mode may be blocked because window function frame can't be pushed down");
                 return Vec::new();

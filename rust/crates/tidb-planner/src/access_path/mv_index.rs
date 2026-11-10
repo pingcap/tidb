@@ -854,90 +854,13 @@ pub(crate) fn clean_access_path_for_mv_index_hint(
     }
 }
 
-/// Go `unfinishedAccessPath` for one MV index candidate of one OR branch.
-pub(crate) struct UnfinishedAccessPath {
-    usable_filters: Vec<Expression>,
-    need_keep_filter: bool,
-}
-
-/// Go `initUnfinishedPathsFromExpr` for an MV index candidate: case 2
-/// (`collectFilters4MVIndex` yields an OR or single-value access) or case 3
-/// (one usable filter per index column, gathered column by column). `None`
-/// when no filter is usable.
-pub(crate) fn init_unfinished_paths_from_expr(
-    ds: &DataSource,
-    ctx: &AccessPathDerivationContext<'_>,
-    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
-    expr: &Expression,
-) -> Option<UnfinishedAccessPath> {
-    let idx_cols = prepare_idx_cols_and_unwrap_array_type(ds, index, false)?;
-    let cnf_items = tidb_expr::expr_util::normal_form::split_cnf_items(expr);
-    let unpushable = cnf_items.iter().any(|item| {
-        !tidb_expr::infer_pushdown::can_exprs_push_down(
-            std::slice::from_ref(item),
-            tidb_kv::store_type::StoreType::TiKv,
-            ctx.expr_pushdown_blacklist,
-        )
-    });
-    // Case 2: the previous logic, which must build a valid range at once.
-    let (access, remaining, access_type) = collect_filters_4_mv_index(ctx.expression_evaluator, &cnf_items, &idx_cols);
-    if !access.is_empty()
-        && matches!(
-            access_type,
-            Some(AccessFilterType::MultiValuesOrOnMvCol | AccessFilterType::SingleValueOnMvCol)
-        )
-    {
-        return Some(UnfinishedAccessPath {
-            usable_filters: access,
-            need_keep_filter: !remaining.is_empty(),
-        });
-    }
-    // Case 3: collect access filters column by column; only the OR list's
-    // union semantics is handled here, so json_contains is excluded.
-    let mut has_usable_filter = false;
-    let mut collected = vec![false; cnf_items.len()];
-    let mut usable_filters = Vec::new();
-    for column in &idx_cols {
-        for (position, item) in cnf_items.iter().enumerate() {
-            if collected[position] {
-                continue;
-            }
-            if matches!(
-                check_access_filter_4_idx_col(ctx.expression_evaluator, item, column),
-                Some(
-                    AccessFilterType::EqOrInOnNonMvCol
-                        | AccessFilterType::MultiValuesOrOnMvCol
-                        | AccessFilterType::SingleValueOnMvCol
-                )
-            ) {
-                usable_filters.push(item.clone());
-                has_usable_filter = true;
-                collected[position] = true;
-                break;
-            }
-        }
-    }
-    has_usable_filter.then(|| UnfinishedAccessPath {
-        usable_filters,
-        need_keep_filter: unpushable || collected.contains(&false),
-    })
-}
-
-impl UnfinishedAccessPath {
-    /// Go `mergeANDItemIntoUnfinishedIndexMergePath`: a top-level AND item's
-    /// usable filters for the same candidate join this branch's.
-    pub(crate) fn merge_and_item_into_unfinished_index_merge_path(&mut self, item: UnfinishedAccessPath) {
-        self.usable_filters.extend(item.usable_filters);
-    }
-}
-
 /// Go `buildIntoAccessPath`'s MV arm: the alternative's partial paths (one
-/// per value, uniting) and whether the OR source filter must be kept.
+/// per value, uniting) and whether filters remain (`needSelection`).
 pub(crate) fn build_mv_alternative(
     ds: &DataSource,
     ctx: &AccessPathDerivationContext<'_>,
     index: &tidb_model::GoShared<tidb_model::IndexInfo>,
-    unfinished: &UnfinishedAccessPath,
+    usable_filters: &[Expression],
     use_plan_cache: bool,
 ) -> Result<Option<(Vec<AccessPath>, bool)>, PlanError> {
     let Some(idx_cols) = prepare_idx_cols_and_unwrap_array_type(ds, index, true)
@@ -945,7 +868,7 @@ pub(crate) fn build_mv_alternative(
         return Ok(None);
     };
     let (access, remaining, _) =
-        collect_filters_4_mv_index(ctx.expression_evaluator, &unfinished.usable_filters, &idx_cols);
+        collect_filters_4_mv_index(ctx.expression_evaluator, usable_filters, &idx_cols);
     if access.is_empty() {
         return Ok(None);
     }
@@ -967,7 +890,7 @@ pub(crate) fn build_mv_alternative(
     }
     Ok(Some((
         partials,
-        !remaining.is_empty() || unfinished.need_keep_filter,
+        !remaining.is_empty(),
     )))
 }
 

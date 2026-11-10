@@ -545,11 +545,12 @@ fn aggregation_push_down_refusals_warn_as_go() {
         ]
     );
     let tikv_approx = "Warning|1105|Aggregation can not be pushed to tikv because AggFunc `approx_count_distinct` is not supported now";
-    // Go reports both MPP refusals before the TiKV ones; this port's
-    // exploration interleaves them (register X02), so the set is compared.
-    let mut warnings = text(&mut session, "show warnings");
-    warnings.sort();
-    assert_eq!(warnings, [mpp_distinct, mpp_distinct, tikv_approx, tikv_approx]);
+    // The root property's exhaust, the two cop attaches, then the MPP
+    // property's exhaust.
+    assert_eq!(
+        text(&mut session, "show warnings"),
+        [mpp_distinct, tikv_approx, tikv_approx, mpp_distinct]
+    );
 }
 
 /// Go `ExhaustPhysicalPlans4LogicalProjection` and `canExprsInJoinPushdown`
@@ -716,4 +717,43 @@ fn tiflash_selection_sends_integer_builtin_types_as_go() {
     set_table_ids(&mut want, &[(117, t)]);
     let hex = |executor: &tipb::Executor| executor.encode_to_vec().iter().map(|b| format!("{b:02x}")).collect::<String>();
     assert_eq!(hex(&got), hex(&want), "\ngot:  {got:?}\nwant: {want:?}");
+}
+
+/// Go reports a push-down refusal each time `canScalarFuncPushDown` refuses:
+/// `generateORIndexMerge` asks about a filter once per candidate path while
+/// collecting (`generateNormalIndexPartialPath`, `initUnfinishedPathsFromExpr`)
+/// and again while building (`buildIntoAccessPath`), and the window's MPP
+/// attempt asks about its frame bounds. The plans and warnings of
+/// `testdata/push_down_refusal_warnings.txt` are a Go tidb-server's.
+#[test]
+fn index_merge_and_window_push_down_refusals_warn_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(437)).expect("session opens");
+    let fixture = include_str!("../../../../../testdata/push_down_refusal_warnings.txt");
+    let mut statements: Vec<(&str, Vec<&str>)> = Vec::new();
+    for line in fixture.lines() {
+        match line.strip_prefix("Q ") {
+            Some(sql) => statements.push((sql, Vec::new())),
+            None => statements.last_mut().expect("a statement precedes its output").1.push(line),
+        }
+    }
+    assert_eq!(statements.iter().filter(|(_, want)| !want.is_empty()).count(), 10);
+    for (sql, want) in statements {
+        if sql.starts_with("create table") || sql.starts_with("alter table") {
+            let sql = sql.replace("table t ", "table test.t ");
+            session.node_conn().execute_write(&sql).expect(&sql);
+            continue;
+        }
+        let plan = displayed(rows(&mut session, sql));
+        if !sql.starts_with("explain") {
+            continue;
+        }
+        let mut got = plan.iter().map(|row| format!("P {}", row.join(" "))).collect::<Vec<_>>();
+        got.extend(
+            displayed(rows(&mut session, "show warnings"))
+                .iter()
+                .map(|row| format!("  W {}", row[2])),
+        );
+        assert_eq!(got, want, "{sql}");
+    }
 }

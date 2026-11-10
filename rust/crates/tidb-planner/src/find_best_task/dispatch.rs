@@ -400,6 +400,7 @@ impl<'a> DispatchContext<'a> {
             expression_evaluator: self.expression_evaluator,
             plan_cache_marker: self.plan_cache_marker.filter(|_| self.use_plan_cache),
             used_stats_recorder: None,
+            push_down_warning_sink: self.mpp_warning_sink.map(|sink| sink as _),
         }
     }
 
@@ -5746,6 +5747,12 @@ mod tests {
 
     struct RecordingMppWarningSink(RefCell<Vec<String>>);
 
+    impl tidb_planner_core_operator_logicalop::plan_context::PushDownWarningSink for RecordingMppWarningSink {
+        fn append_push_down_warning(&self, message: &str) {
+            self.0.borrow_mut().push(message.to_owned());
+        }
+    }
+
     impl tidb_planner_core_operator_physicalop::enforce::MppWarningSink for RecordingMppWarningSink {
         fn get_expr_ctx(&self) -> &dyn tidb_exprctx::Columns {
             &tidb_exprctx::NoColumns
@@ -5760,10 +5767,6 @@ mod tests {
         }
 
         fn append_warning(&self, message: &str) {
-            self.0.borrow_mut().push(message.to_owned());
-        }
-
-        fn append_push_down_warning(&self, message: &str) {
             self.0.borrow_mut().push(message.to_owned());
         }
 

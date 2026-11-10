@@ -23,6 +23,7 @@ use tidb_planner_core_operator_logicalop::data_source::PossibleAccessPath;
 use tidb_sessionctx::{IndexLookUpPushDownPolicy, IndexLookupPushDownSession};
 
 pub(crate) mod index_merge;
+pub(crate) mod indexmerge_unfinished_path;
 pub(crate) mod mv_index;
 pub(crate) mod ordinary;
 
@@ -54,9 +55,24 @@ pub(crate) struct AccessPathDerivationContext<'a> {
     /// Go `recordUsedItemStatsStatus`; `None` outside the statement's
     /// statistics derivation.
     pub used_stats_recorder: Option<&'a dyn tidb_planner_core_operator_logicalop::plan_context::UsedStatsRecorder>,
+    /// Go `util.GetPushDownCtx(ds.SCtx())`'s warning half.
+    pub push_down_warning_sink:
+        Option<&'a dyn tidb_planner_core_operator_logicalop::plan_context::PushDownWarningSink>,
 }
 
 impl AccessPathDerivationContext<'_> {
+    /// Go `expression.CanExprsPushDown(util.GetPushDownCtx(ds.SCtx()), exprs, kv.TiKV)`.
+    pub(crate) fn can_exprs_push_down_tikv(&self, exprs: &[tidb_expr::expression::Expression]) -> bool {
+        tidb_expr::infer_pushdown::can_exprs_push_down_reporting(
+            exprs,
+            tidb_kv::store_type::StoreType::TiKv,
+            self.expr_pushdown_blacklist,
+            &tidb_planner_core_operator_logicalop::plan_context::push_down_reporter(
+                self.push_down_warning_sink,
+            ),
+        )
+    }
+
     pub(crate) fn detach_index_range(
         &self,
         conditions: &[tidb_expr::expression::Expression],
@@ -137,7 +153,7 @@ pub(crate) fn generate_index_merge_path(
                 "IndexMerge is inapplicable or disabled. No available filter or available index.",
             );
         } else {
-            merges.extend(index_merge::prepare_union_index_merge_paths(source, context, use_plan_cache)?);
+            merges.extend(indexmerge_unfinished_path::generate_or_index_merge(source, context, use_plan_cache)?);
             merges.extend(index_merge::generate_and_index_merge_4_normal_index(
                 source,
                 context,
@@ -156,6 +172,8 @@ pub(crate) fn generate_index_merge_path(
                         .skip(1)
                         .any(|path| !path.access_conds.is_empty());
                 }
+                // Go resets the statement's warnings around this
+                // `PushDownExprs`, so it reports nothing.
                 if need_consider_index_merge
                     && !tidb_expr::infer_pushdown::can_exprs_push_down(
                         &source.all_conds,

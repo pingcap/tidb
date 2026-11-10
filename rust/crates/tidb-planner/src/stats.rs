@@ -217,6 +217,10 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                         used_stats_recorder: env
                             .rule_context
                             .and_then(|context| context.used_stats_recorder),
+                        push_down_warning_sink: env
+                            .rule_context
+                            .and_then(|context| context.derive_stats_sink)
+                            .map(|sink| sink as _),
                     };
                     let filled_paths = op.derive_stats_filled_paths();
                     // Go `deriveStatsByFilter`'s `Selectivity` reports the
@@ -278,6 +282,10 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                 used_stats_recorder: env
                     .rule_context
                     .and_then(|context| context.used_stats_recorder),
+                push_down_warning_sink: env
+                    .rule_context
+                    .and_then(|context| context.derive_stats_sink)
+                    .map(|sink| sink as _),
             };
             // Go `derivePathStatsAndTryHeuristics`: the heuristic-pruned
             // paths become `ds.PossibleAccessPaths`.
