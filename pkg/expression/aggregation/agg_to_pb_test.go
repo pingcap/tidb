@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -104,6 +105,7 @@ func TestNumericBinaryLiteralToPB(t *testing.T) {
 			require.NoError(t, err)
 			if name == ast.AggFuncSum || name == ast.AggFuncAvg {
 				require.Equal(t, tipb.ExprType_Float64, pb.Children[0].Tp)
+				require.Equal(t, codec.EncodeFloat(nil, tc.numeric), pb.Children[0].Val)
 				require.Equal(t, tc.numeric, agg.Args[0].(*expression.Constant).Value.GetFloat64())
 			} else {
 				require.Equal(t, tipb.ExprType_String, pb.Children[0].Tp)
