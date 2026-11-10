@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -81,13 +82,32 @@ func NewStatsAnalyze(
 
 // InsertAnalyzeJob inserts the analyze job to the storage.
 func (sa *statsAnalyze) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error {
-	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	return InsertAnalyzeJob(sa.statsHandle.SPool(), job, instance, procID)
+}
+
+func (sa *statsAnalyze) StartAnalyzeJob(job *statistics.AnalyzeJob) {
+	StartAnalyzeJob(sa.statsHandle.SPool(), job)
+}
+
+func (sa *statsAnalyze) UpdateAnalyzeJobProgress(job *statistics.AnalyzeJob, rowCount int64) {
+	UpdateAnalyzeJobProgress(sa.statsHandle.SPool(), job, rowCount)
+}
+
+func (sa *statsAnalyze) FinishAnalyzeJob(job *statistics.AnalyzeJob, failReason error, analyzeType statistics.JobType) {
+	FinishAnalyzeJob(sa.statsHandle.SPool(), job, failReason, analyzeType)
+}
+
+// InsertAnalyzeJob inserts the analyze job to the storage with a session of pool.
+func InsertAnalyzeJob(pool syssession.Pool, job *statistics.AnalyzeJob, instance string, procID uint64) error {
+	return statsutil.CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		return insertAnalyzeJob(sctx, job, instance, procID)
 	})
 }
 
-func (sa *statsAnalyze) StartAnalyzeJob(job *statistics.AnalyzeJob) {
-	err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+// StartAnalyzeJob marks the analyze job as running with a session of pool, and
+// only logs a failure.
+func StartAnalyzeJob(pool syssession.Pool, job *statistics.AnalyzeJob) {
+	err := statsutil.CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		startAnalyzeJob(sctx, job)
 		return nil
 	})
@@ -96,8 +116,10 @@ func (sa *statsAnalyze) StartAnalyzeJob(job *statistics.AnalyzeJob) {
 	}
 }
 
-func (sa *statsAnalyze) UpdateAnalyzeJobProgress(job *statistics.AnalyzeJob, rowCount int64) {
-	err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+// UpdateAnalyzeJobProgress updates the processed rows of the analyze job with a
+// session of pool, and only logs a failure.
+func UpdateAnalyzeJobProgress(pool syssession.Pool, job *statistics.AnalyzeJob, rowCount int64) {
+	err := statsutil.CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		updateAnalyzeJobProgress(sctx, job, rowCount)
 		return nil
 	})
@@ -106,8 +128,10 @@ func (sa *statsAnalyze) UpdateAnalyzeJobProgress(job *statistics.AnalyzeJob, row
 	}
 }
 
-func (sa *statsAnalyze) FinishAnalyzeJob(job *statistics.AnalyzeJob, failReason error, analyzeType statistics.JobType) {
-	err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+// FinishAnalyzeJob finishes the analyze job with a session of pool, and only
+// logs a failure.
+func FinishAnalyzeJob(pool syssession.Pool, job *statistics.AnalyzeJob, failReason error, analyzeType statistics.JobType) {
+	err := statsutil.CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		finishAnalyzeJob(sctx, job, failReason, analyzeType)
 		return nil
 	})
