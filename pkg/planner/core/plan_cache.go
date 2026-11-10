@@ -137,6 +137,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 			schemaNotMatch = true
 			continue
 		}
+		// A table name may resolve to a different ID after RENAME TABLE even if the revision is the same.
 		if stmt.tbls[i].Meta().ID != newTbl.Meta().ID || stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision {
 			schemaNotMatch = true
 		}
