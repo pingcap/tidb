@@ -70,14 +70,17 @@ type domainMap struct {
 	domains map[string]*domain.Domain
 }
 
-// newAutoAnalyzeDispatcher creates the dispatcher that runs the auto-analyze statements of a
-// stats handle as DXF tasks.
-func newAutoAnalyzeDispatcher(
-	statsCache statstypes.StatsCacheLoader,
-	procIDs statsutil.AutoAnalyzeProcIDGenerator,
-	sysProcTracker sysproctrack.Tracker,
-) autoanalyzeexec.Dispatcher {
-	return dxfautoanalyze.NewDispatcher(statsCache, procIDs, sysProcTracker)
+// newAutoAnalyzeDispatcher returns the function that creates the dispatcher that runs the
+// auto-analyze statements of a stats handle as DXF tasks. The dispatcher stops waiting for a task
+// when shuttingDown reports true.
+func newAutoAnalyzeDispatcher(shuttingDown func() bool) autoanalyzeexec.NewDispatcherFunc {
+	return func(
+		statsCache statstypes.StatsCacheLoader,
+		procIDs statsutil.AutoAnalyzeProcIDGenerator,
+		sysProcTracker sysproctrack.Tracker,
+	) autoanalyzeexec.Dispatcher {
+		return dxfautoanalyze.NewDispatcher(statsCache, procIDs, sysProcTracker, shuttingDown)
+	}
 }
 
 type domainCreateOptions struct {
@@ -149,7 +152,7 @@ func (dm *domainMap) getWithEtcdClient(
 			opts.serverInfoSyncerOptions...,
 		)
 		d.SetExternalWorkloadManager(opts.extWorkloadMgr)
-		d.SetAutoAnalyzeDispatcher(newAutoAnalyzeDispatcher)
+		d.SetAutoAnalyzeDispatcher(newAutoAnalyzeDispatcher(d.AutoAnalyzeStopped))
 
 		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {

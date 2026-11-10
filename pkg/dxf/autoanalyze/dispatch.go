@@ -74,17 +74,19 @@ type Dispatcher struct {
 	statsCache     statstypes.StatsCacheLoader
 	procIDs        statsutil.AutoAnalyzeProcIDGenerator
 	sysProcTracker sysproctrack.Tracker
+	shuttingDown   func() bool
 }
 
 // NewDispatcher creates a Dispatcher. It waits for each task as an auto-analyze process with an ID
 // from procIDs in sysProcTracker, and after a task succeeds, it loads the new stats of the table
-// into statsCache.
+// into statsCache. When shuttingDown reports true, it stops waiting and leaves the task running.
 func NewDispatcher(
 	statsCache statstypes.StatsCacheLoader,
 	procIDs statsutil.AutoAnalyzeProcIDGenerator,
 	sysProcTracker sysproctrack.Tracker,
+	shuttingDown func() bool,
 ) *Dispatcher {
-	return &Dispatcher{statsCache: statsCache, procIDs: procIDs, sysProcTracker: sysProcTracker}
+	return &Dispatcher{statsCache: statsCache, procIDs: procIDs, sysProcTracker: sysProcTracker, shuttingDown: shuttingDown}
 }
 
 // Dispatch implements exec.Dispatcher.
@@ -102,7 +104,7 @@ func (d *Dispatcher) Dispatch(
 	if err != nil {
 		return err
 	}
-	return runAsTask(sctx, d.statsCache, d.procIDs, d.sysProcTracker, taskMeta)
+	return runAsTask(sctx, d.statsCache, d.procIDs, d.sysProcTracker, d.shuttingDown, taskMeta)
 }
 
 // runAsTask runs the statement as a DXF task and waits for it as an auto-analyze process,
@@ -112,6 +114,7 @@ func runAsTask(
 	statsCache statstypes.StatsCacheLoader,
 	procIDs statsutil.AutoAnalyzeProcIDGenerator,
 	sysProcTracker sysproctrack.Tracker,
+	shuttingDown func() bool,
 	taskMeta *TaskMeta,
 ) error {
 	taskMgr, err := storage.GetDXFSvcTaskMgr()
@@ -156,7 +159,7 @@ func runAsTask(
 	failpoint.InjectCall("afterFindActiveTask")
 	adopted := task != nil
 	if adopted {
-		adopted = waitTask(ctx, task, killed) == nil
+		adopted = waitTask(ctx, task, killed, shuttingDown) == nil
 	}
 	if !adopted {
 		// A kill up to here ends the statement before it has a task of its own.
@@ -167,7 +170,7 @@ func runAsTask(
 		if err != nil {
 			return err
 		}
-		err = waitTask(ctx, task, killed)
+		err = waitTask(ctx, task, killed, shuttingDown)
 	}
 	if err == nil {
 		// Refresh the dispatching node's cache before returning success. The priority
@@ -307,8 +310,8 @@ func targetScope() string {
 }
 
 // waitTask waits until the task succeeds. A kill also cancels the task and waits for its end,
-// at most cancelWaitTimeout.
-func waitTask(ctx context.Context, task *proto.TaskBase, killed <-chan struct{}) error {
+// at most cancelWaitTimeout. A shutdown of this node only ends the wait: the task runs on.
+func waitTask(ctx context.Context, task *proto.TaskBase, killed <-chan struct{}, shuttingDown func() bool) error {
 	waitCtx, stopWaiting := context.WithCancel(ctx)
 	defer stopWaiting()
 	var wg sync.WaitGroup
@@ -318,6 +321,12 @@ func waitTask(ctx context.Context, task *proto.TaskBase, killed <-chan struct{})
 		select {
 		case <-killed:
 		case <-waitCtx.Done():
+			return
+		}
+		if shuttingDown() {
+			// If this node runs the subtask, the shutdown also kills the
+			// statement, and the task fails.
+			stopWaiting()
 			return
 		}
 		timer := time.AfterFunc(cancelWaitTimeout, stopWaiting)
