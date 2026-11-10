@@ -887,7 +887,7 @@ fn interval_real(value: &Datum, ctx: &dyn crate::Columns) -> Result<f64, EvalErr
 /// Invalid non-NULL input is an evaluation error in TiDB's strict-context
 /// unit test; this family has no matching generic SQL-error variant, so it is
 /// surfaced as `Unsupported` until the frozen `EvalError` domain grows one.
-fn inet_aton(value: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn inet_aton(value: &Datum) -> Result<Datum, EvalError> {
     let Some(text) = coerce_str(value)? else {
         return Ok(Datum::Null);
     };
@@ -946,7 +946,7 @@ fn inet_aton_text(text: &str) -> Option<u64> {
 /// `pkg/expression/builtin_miscellaneous.go`. The scalar domain has no
 /// planning-time `ETInt` cast, so only its already-integer values are
 /// representable faithfully; other types remain honestly unsupported.
-fn inet_ntoa(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+pub(crate) fn inet_ntoa(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     let value = match value {
         Datum::Null => return Ok(Datum::Null),
         Datum::Int(value) => *value as u64,
@@ -979,7 +979,7 @@ fn inet_ntoa(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError
 /// then keeps the four-byte representation only for a plain dotted IPv4
 /// input.  Port of `builtinInet6AtonSig.evalString` in
 /// `pkg/expression/builtin_miscellaneous.go`.
-fn inet6_aton(value: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn inet6_aton(value: &Datum) -> Result<Datum, EvalError> {
     let text = match value {
         Datum::Null => return Ok(Datum::Null),
         // `EvalString` in the Go signature preserves raw bytes.  IP syntax is
@@ -1030,7 +1030,7 @@ fn inet6_aton_text(text: &str) -> Option<Datum> {
 /// spelling.  Any other byte length is SQL `NULL`, matching the source's
 /// `net.ParseIP(ip) == nil` branch.  Port of
 /// `builtinInet6NtoaSig.evalString` in `pkg/expression/builtin_miscellaneous.go`.
-fn inet6_ntoa(value: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn inet6_ntoa(value: &Datum) -> Result<Datum, EvalError> {
     let bytes = match value {
         Datum::Null => return Ok(Datum::Null),
         Datum::String(value) => value.bytes().to_vec(),
@@ -1053,7 +1053,7 @@ fn inet6_ntoa(value: &Datum) -> Result<Datum, EvalError> {
 /// `IS_IPV4(expr)`: strict four-component decimal IPv4 predicate. Port of
 /// `builtinIsIPv4Sig.evalInt` and its `isIPv4` helper in
 /// `pkg/expression/builtin_miscellaneous.go`.
-fn is_ipv4_value(value: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn is_ipv4_value(value: &Datum) -> Result<Datum, EvalError> {
     let Some(value) = coerce_str(value)? else {
         return Ok(Datum::Null);
     };
@@ -1095,7 +1095,7 @@ fn is_ipv4(value: &str) -> bool {
 /// this helper byte-oriented is important because arbitrary SQL strings are
 /// allowed to contain invalid UTF-8.  Port of
 /// `builtinIsIPv4MappedSig.evalInt` in `pkg/expression/builtin_miscellaneous.go`.
-fn is_ipv4_mapped_value(value: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn is_ipv4_mapped_value(value: &Datum) -> Result<Datum, EvalError> {
     let Some(bytes) = eval_string_bytes(value)? else {
         return Ok(Datum::Null);
     };
@@ -1107,7 +1107,7 @@ fn is_ipv4_mapped_value(value: &Datum) -> Result<Datum, EvalError> {
 /// first twelve bytes are all zero (`::/96`, excluding the mapped `::ffff:`
 /// prefix by construction).  Port of `builtinIsIPv4CompatSig.evalInt` in
 /// `pkg/expression/builtin_miscellaneous.go`.
-fn is_ipv4_compat_value(value: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn is_ipv4_compat_value(value: &Datum) -> Result<Datum, EvalError> {
     let Some(bytes) = eval_string_bytes(value)? else {
         return Ok(Datum::Null);
     };
@@ -1130,7 +1130,7 @@ fn eval_string_bytes(value: &Datum) -> Result<Option<Vec<u8>>, EvalError> {
 /// `IS_IPV6(expr)`: true for a parseable IPv6 address, including an IPv4
 /// mapped spelling, but false for a pure IPv4 address. Port of
 /// `builtinIsIPv6Sig.evalInt` in `pkg/expression/builtin_miscellaneous.go`.
-fn is_ipv6_value(value: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn is_ipv6_value(value: &Datum) -> Result<Datum, EvalError> {
     let Some(value) = coerce_str(value)? else {
         return Ok(Datum::Null);
     };

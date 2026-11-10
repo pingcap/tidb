@@ -455,7 +455,8 @@ impl FunctionClass for ArithmeticPlusFunctionClass {
                 args,
                 EvalType::VectorFloat32,
                 &[EvalType::VectorFloat32, EvalType::VectorFloat32],
-            );
+            )
+            .map(|bf| bf.evaluated_by(crate::scalar_function::Kernel::Row(crate::scalar_function::class_kernels::plus_vector_float32)));
         }
         let (lhs_eval_tp, rhs_eval_tp) =
             (numeric_context_result_type(&args[0]), numeric_context_result_type(&args[1]));
@@ -517,7 +518,8 @@ impl FunctionClass for ArithmeticMinusFunctionClass {
                 args,
                 EvalType::VectorFloat32,
                 &[EvalType::VectorFloat32, EvalType::VectorFloat32],
-            );
+            )
+            .map(|bf| bf.evaluated_by(crate::scalar_function::Kernel::Row(crate::scalar_function::class_kernels::minus_vector_float32)));
         }
         let (lhs_eval_tp, rhs_eval_tp) =
             (numeric_context_result_type(&args[0]), numeric_context_result_type(&args[1]));
@@ -581,7 +583,8 @@ impl FunctionClass for ArithmeticMultiplyFunctionClass {
                 args,
                 EvalType::VectorFloat32,
                 &[EvalType::VectorFloat32, EvalType::VectorFloat32],
-            );
+            )
+            .map(|bf| bf.evaluated_by(crate::scalar_function::Kernel::Row(crate::scalar_function::class_kernels::multiply_vector_float32)));
         }
         // The types of the arguments as given, before their casts.
         let (lhs_unsigned, rhs_unsigned) =

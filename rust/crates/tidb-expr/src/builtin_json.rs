@@ -302,6 +302,7 @@ json_class!(
         new_base_builtin_func_with_tp(
             ctx, "json_overlaps", args, EvalType::Int, &[EvalType::Json, EvalType::Json],
         )
+        .map(|bf| bf.evaluated_by(crate::scalar_function::Kernel::Method(crate::scalar_function::class_kernels::json_overlaps)))
     }
 );
 
@@ -419,5 +420,6 @@ json_class!(
         new_base_builtin_func_with_tp(
             ctx, "json_schema_valid", args, EvalType::Int, &[EvalType::Json, EvalType::Json],
         )
+        .map(|bf| bf.evaluated_by(crate::scalar_function::Kernel::Row(crate::scalar_function::class_kernels::json_schema_valid)))
     }
 );

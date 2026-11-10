@@ -403,7 +403,7 @@ fn unix_result(micros: i64, fsp: usize) -> Datum {
 
 /// `TIDB_PARSE_TSO(tso)`: the physical half as a full-precision native
 /// DATETIME in the session zone.
-pub(super) fn tidb_parse_tso(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn tidb_parse_tso(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("bad function arity"));
     }

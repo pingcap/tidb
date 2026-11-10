@@ -1774,7 +1774,10 @@ impl crate::builtin::FunctionClass for CoalesceFunctionClass {
             }
             EvalType::Json => ScalarFuncSig::CoalesceJson,
             // Go sets no pb code for `builtinCoalesceVectorFloat32Sig`.
-            EvalType::VectorFloat32 => ScalarFuncSig::Unspecified,
+            EvalType::VectorFloat32 => {
+                bf.kernel = Some(crate::scalar_function::Kernel::Coalesce(EvalType::VectorFloat32));
+                ScalarFuncSig::Unspecified
+            }
         };
         Ok(bf)
     }
@@ -1839,6 +1842,7 @@ struct ExtremumSigs {
     duration: tidb_proto::tipb::ScalarFuncSig,
     date: tidb_proto::tipb::ScalarFuncSig,
     time: tidb_proto::tipb::ScalarFuncSig,
+    vector_float32: crate::scalar_function::Kernel,
 }
 
 /// Go `greatestFunctionClass.getFunction` and `leastFunctionClass.getFunction`,
@@ -1883,7 +1887,10 @@ fn extremum_function(
             }
         }
         // Go sets no pb code for the vector signatures.
-        EvalType::VectorFloat32 => tidb_proto::tipb::ScalarFuncSig::Unspecified,
+        EvalType::VectorFloat32 => {
+            bf.kernel = Some(sigs.vector_float32);
+            tidb_proto::tipb::ScalarFuncSig::Unspecified
+        }
         EvalType::Json => {
             return Err(EvalError::Unsupported("unsupported type json during evaluation"))
         }
@@ -1919,6 +1926,7 @@ impl crate::builtin::FunctionClass for GreatestFunctionClass {
                 duration: ScalarFuncSig::GreatestDuration,
                 date: ScalarFuncSig::GreatestDate,
                 time: ScalarFuncSig::GreatestTime,
+                vector_float32: crate::scalar_function::Kernel::Method(crate::scalar_function::greatest_method),
             },
         )
     }
@@ -1948,6 +1956,7 @@ impl crate::builtin::FunctionClass for LeastFunctionClass {
                 duration: ScalarFuncSig::LeastDuration,
                 date: ScalarFuncSig::LeastDate,
                 time: ScalarFuncSig::LeastTime,
+                vector_float32: crate::scalar_function::Kernel::Method(crate::scalar_function::least_method),
             },
         )
     }

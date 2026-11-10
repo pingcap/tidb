@@ -53,7 +53,7 @@ pub(crate) fn dispatch(
 /// || ... args[1] ... || ... args[2] ...`), which [`translate_binary`] ports;
 /// the charset test itself is [`is_binary_str`], the same reading every other
 /// binary/UTF-8 signature pair in this crate makes.
-fn translate(vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn translate(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.iter().take(3).any(is_binary_str) {
         return translate_binary(vals);
     }
@@ -169,7 +169,7 @@ fn translate_binary(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// (`gorun`), `hex(ltrim(v))` over a `varbinary` holding `0xFF` is `FF` and
 /// `hex(ltrim(b))` over a `bit(8)` holding `b'11111111'` is `FF`; both were
 /// hard errors under the previous UTF-8 coercion.
-fn ltrim(value: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn ltrim(value: &Datum) -> Result<Datum, EvalError> {
     trimmed(value, |bytes| {
         let cut = bytes.iter().take_while(|&&byte| byte == b' ').count();
         bytes[cut..].to_vec()
@@ -179,7 +179,7 @@ fn ltrim(value: &Datum) -> Result<Datum, EvalError> {
 /// `RTRIM(str)`, ported from `builtinRTrimSig.evalString` in
 /// `pkg/expression/builtin_string.go`; it has the same ETString and
 /// U+0020-only contract as [`ltrim`].
-fn rtrim(value: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn rtrim(value: &Datum) -> Result<Datum, EvalError> {
     trimmed(value, |bytes| {
         let cut = bytes.iter().rev().take_while(|&&byte| byte == b' ').count();
         bytes[..bytes.len() - cut].to_vec()
@@ -242,7 +242,7 @@ fn locate3(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// `pkg/expression/builtin_string.go`. A `NULL` locale warns 1649 naming the
 /// literal text `NULL` and then falls back to `en_US`; an unrecognized one
 /// warns 1649 naming itself. [`format_num_locale`] owns both.
-fn format_with_locale(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+pub(crate) fn format_with_locale(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     let locale = coerce_str(&vals[2])?;
     format_num_locale(vals, locale.as_deref(), ctx)
 }

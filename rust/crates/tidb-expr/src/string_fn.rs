@@ -1294,6 +1294,24 @@ pub(crate) fn str_insert(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// 1-based position has the corresponding bit set in `bits` (arg `i` is
 /// included when bit `i-1` of `bits` is `1`). `NULL` arguments are excluded
 /// even when their bit is set (matching MySQL). `NULL` if `bits` is `NULL`.
+/// Go `builtinInsertSig` / `builtinInsertUTF8Sig`: a result longer than
+/// `max_allowed_packet` is NULL with the packet-overflow warning.
+pub(crate) fn insert_with_context(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    let result = str_insert(vals)?;
+    let result_len = match &result {
+        Datum::String(value) => value.bytes().len(),
+        Datum::Bytes(value) => value.len(),
+        Datum::Null => return Ok(Datum::Null),
+        _ => return Err(EvalError::Unsupported("INSERT result type")),
+    };
+    if result_len as u64 > ctx.max_allowed_packet() {
+        crate::expression_errors::handle_allowed_packet_overflowed(ctx, "insert")?;
+        Ok(Datum::Null)
+    } else {
+        Ok(result)
+    }
+}
+
 pub(crate) fn make_set(vals: &[Datum]) -> Result<Datum, EvalError> {
     // `bits` is Go's `types.ETInt` argument, cast by `crate::arg_eval_type`
     // before this body runs, so a SET/ENUM/BIT operand reaches here as the

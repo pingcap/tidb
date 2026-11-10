@@ -129,7 +129,7 @@ pub(super) fn parse_datetime(s: &str) -> Option<(NaiveDateTime, String)> {
 }
 
 /// `CONVERT_TZ(dt, from_tz, to_tz)`.
-pub(super) fn convert_tz(vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn convert_tz(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.len() != 3 {
         return Err(EvalError::Unsupported("bad function arity"));
     }

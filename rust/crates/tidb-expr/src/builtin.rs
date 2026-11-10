@@ -543,9 +543,18 @@ pub(crate) struct BaseBuiltinFunc {
     pub(crate) collation: CollationInfo,
     /// The signature's own fields.
     pub(crate) sig: SigFields,
+    /// The evaluation of a signature that sets no `pbCode`: the Go
+    /// signature object the class returned.
+    pub(crate) kernel: Option<crate::scalar_function::Kernel>,
 }
 
 impl BaseBuiltinFunc {
+    /// The signature object of a class that sets no `pbCode`.
+    pub(crate) fn evaluated_by(mut self, kernel: crate::scalar_function::Kernel) -> Self {
+        self.kernel = Some(kernel);
+        self
+    }
+
     /// Go `getRetTp`.
     pub(crate) fn get_ret_tp(&self) -> FieldType {
         /// Go's literal `65536`, one past `mysql.MaxBlobSize`.
@@ -838,6 +847,7 @@ pub(crate) fn new_base_builtin_func(
         pb_code: ScalarFuncSig::Unspecified,
         collation,
         sig: SigFields::None,
+        kernel: None,
     })
 }
 
@@ -898,5 +908,6 @@ fn base_builtin_func_of(
         pb_code: ScalarFuncSig::Unspecified,
         collation,
         sig: SigFields::None,
+        kernel: None,
     }
 }

@@ -340,7 +340,12 @@ pub(crate) fn eval_pb(
     use tidb_proto::tipb::ScalarFuncSig;
     match sig {
         ScalarFuncSig::JsonMemberOfSig => json_member_of(vals, arg_types),
-        ScalarFuncSig::JsonReplaceSig => {
+        ScalarFuncSig::JsonSetSig | ScalarFuncSig::JsonInsertSig | ScalarFuncSig::JsonReplaceSig => {
+            let mode = match sig {
+                ScalarFuncSig::JsonSetSig => JsonModifyMode::Set,
+                ScalarFuncSig::JsonInsertSig => JsonModifyMode::Insert,
+                _ => JsonModifyMode::Replace,
+            };
             if let Some(cache) = paths_cache {
                 let Some(document) = json_document(&vals[0], arg_types[0].as_ref())? else {
                     return Ok(Datum::Null);
@@ -350,14 +355,46 @@ pub(crate) fn eval_pb(
                 let Some(paths) = paths.as_ref() else {
                     return Ok(Datum::Null);
                 };
-                json_modify_with_document(document, vals, arg_types, JsonModifyMode::Replace, paths)
+                json_modify_with_document(document, vals, arg_types, mode, paths)
             } else {
-                json_modify(vals, arg_types, JsonModifyMode::Replace)
+                json_modify(vals, arg_types, mode)
             }
         }
+        ScalarFuncSig::JsonTypeSig => json_type(vals, arg_types),
+        ScalarFuncSig::JsonUnquoteSig => json_unquote(&vals[0]),
+        ScalarFuncSig::JsonLengthSig => json_length(vals, arg_types),
+        ScalarFuncSig::JsonObjectSig => json_object(vals, arg_types),
+        ScalarFuncSig::JsonArraySig => json_array(vals, arg_types),
+        // Go `builtinJSONMergeSig.evalJSON`: the `JsonMergeSig` pbCode is the
+        // deprecated JSON_MERGE name, warned about once the merge succeeded.
+        ScalarFuncSig::JsonMergeSig => {
+            let merged = json_merge(vals, arg_types)?;
+            if merged != Datum::Null {
+                ctx.append_go_warning(
+                    &crate::expression_errors::ERR_DEPRECATED_SYNTAX_NO_REPLACEMENT,
+                    "JSON_MERGE is deprecated and will be removed in a future release.",
+                );
+            }
+            Ok(merged)
+        }
+        ScalarFuncSig::JsonRemoveSig => json_remove(vals, arg_types),
+        ScalarFuncSig::JsonContainsSig => json_contains(vals, arg_types),
+        ScalarFuncSig::JsonValidJsonSig
+        | ScalarFuncSig::JsonValidStringSig
+        | ScalarFuncSig::JsonValidOthersSig => json_valid(&vals[0]),
         ScalarFuncSig::JsonExtractSig => json_extract(vals, arg_types),
         ScalarFuncSig::JsonArrayAppendSig => json_array_append(vals, arg_types),
         ScalarFuncSig::JsonMergePatchSig => json_merge_patch(vals, arg_types),
+        ScalarFuncSig::JsonMergePreserveSig => json_merge(vals, arg_types),
+        ScalarFuncSig::JsonArrayInsertSig => json_array_insert(vals, arg_types),
+        ScalarFuncSig::JsonContainsPathSig => json_contains_path(vals, arg_types),
+        ScalarFuncSig::JsonDepthSig => json_depth(&vals[0], arg_types[0].as_ref()),
+        ScalarFuncSig::JsonKeysSig | ScalarFuncSig::JsonKeys2ArgsSig => json_keys(vals, arg_types),
+        ScalarFuncSig::JsonPrettySig => json_pretty(vals, arg_types),
+        ScalarFuncSig::JsonQuoteSig => json_quote(&vals[0]),
+        ScalarFuncSig::JsonSearchSig => json_search(vals, arg_types),
+        ScalarFuncSig::JsonStorageFreeSig => json_storage_free(&vals[0], arg_types[0].as_ref()),
+        ScalarFuncSig::JsonStorageSizeSig => json_storage_size(&vals[0], arg_types[0].as_ref()),
         _ => Err(EvalError::Unsupported("unknown JSON protobuf signature")),
     }
 }

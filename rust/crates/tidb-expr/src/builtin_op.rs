@@ -238,7 +238,15 @@ impl FunctionClass for IsTrueOrFalseFunctionClass {
             (true, EvalType::Int, true) => IntIsFalseWithNull,
             (true, EvalType::Int, false) => IntIsFalse,
             // `builtinVectorFloat32Is{True,False}Sig` set no pb code.
-            (_, EvalType::VectorFloat32, _) => Unspecified,
+            (_, EvalType::VectorFloat32, _) => {
+                bf.kernel = Some(crate::scalar_function::Kernel::Truth {
+                    negate: false,
+                    domain: EvalType::VectorFloat32,
+                    keep_null: self.keep_null,
+                    falsity: self.falsity,
+                });
+                Unspecified
+            }
             (_, other, _) => {
                 return Err(EvalError::Raw(format!(
                     "unexpected types.EvalType {}",

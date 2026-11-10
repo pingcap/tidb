@@ -488,7 +488,7 @@ string_class!(
 
 function_class!(
     /// Go `currentDateFunctionClass`.
-    CurrentDateFunctionClass, Datetime, [], Unspecified, |bf, _ctx| {
+    CurrentDateFunctionClass, Datetime, [], Unspecified => crate::scalar_function::Kernel::Method(crate::scalar_function::class_kernels::current_date), |bf, _ctx| {
         bf.set_decimal_and_flen_for_date();
     }
 );
@@ -532,7 +532,7 @@ string_class!(
 
 function_class!(
     /// Go `utcDateFunctionClass`.
-    UTCDateFunctionClass, Datetime, [], Unspecified, |bf, _ctx| {
+    UTCDateFunctionClass, Datetime, [], Unspecified => crate::scalar_function::Kernel::Method(crate::scalar_function::class_kernels::utc_date), |bf, _ctx| {
         bf.set_decimal_and_flen_for_date();
     }
 );
@@ -1063,14 +1063,14 @@ string_class!(
 
 function_class!(
     /// Go `periodAddFunctionClass`.
-    PeriodAddFunctionClass, Int, [Int, Int], Unspecified, |bf, _ctx| {
+    PeriodAddFunctionClass, Int, [Int, Int], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::period_add), |bf, _ctx| {
         bf.tp.set_flen(6);
     }
 );
 
 function_class!(
     /// Go `periodDiffFunctionClass`.
-    PeriodDiffFunctionClass, Int, [Int, Int], Unspecified, |bf, _ctx| {
+    PeriodDiffFunctionClass, Int, [Int, Int], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::period_diff), |bf, _ctx| {
         bf.tp.set_flen(6);
     }
 );
@@ -1227,23 +1227,23 @@ string_class!(
         bf.tp.set_code(FieldTypeCode::Datetime);
         bf.tp.set_flen(MAX_DATE_WIDTH);
         bf.tp.set_decimal(DEFAULT_FSP);
-        Ok(bf)
+        Ok(bf.evaluated_by(crate::scalar_function::Kernel::Values(crate::time_fn::session_tz::tidb_parse_tso)))
     }
 );
 
 function_class!(
     /// Go `tidbParseTsoLogicalFunctionClass`.
-    TidbParseTsoLogicalFunctionClass, Int, [Int], Unspecified
+    TidbParseTsoLogicalFunctionClass, Int, [Int], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::tidb_parse_tso_logical)
 );
 
 function_class!(
     /// Go `tidbBoundedStalenessFunctionClass`.
-    TidbBoundedStalenessFunctionClass, Datetime, [Datetime, Datetime], Unspecified, |bf, _ctx| {
+    TidbBoundedStalenessFunctionClass, Datetime, [Datetime, Datetime], Unspecified => crate::scalar_function::Kernel::Values(crate::time_fn::tidb_bounded_staleness), |bf, _ctx| {
         bf.set_decimal_and_flen_for_datetime(3);
     }
 );
 
 function_class!(
     /// Go `tidbCurrentTsoFunctionClass`.
-    TidbCurrentTsoFunctionClass, Int, [], Unspecified
+    TidbCurrentTsoFunctionClass, Int, [], Unspecified => crate::scalar_function::Kernel::Values(crate::time_fn::current_tso)
 );

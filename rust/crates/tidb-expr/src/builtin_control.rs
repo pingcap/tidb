@@ -345,7 +345,10 @@ impl FunctionClass for CaseWhenFunctionClass {
             EvalType::Duration => ScalarFuncSig::CaseWhenDuration,
             EvalType::Json => ScalarFuncSig::CaseWhenJson,
             // Go sets no pb code for `builtinCaseWhenVectorFloat32Sig`.
-            EvalType::VectorFloat32 => ScalarFuncSig::Unspecified,
+            EvalType::VectorFloat32 => {
+                bf.kernel = Some(crate::scalar_function::Kernel::Case(EvalType::VectorFloat32));
+                ScalarFuncSig::Unspecified
+            }
         };
         Ok(bf)
     }
@@ -380,6 +383,8 @@ impl FunctionClass for IfFunctionClass {
                 // Go sets no pb code for `builtinIfVectorFloat32Sig`.
                 EvalType::VectorFloat32 => ScalarFuncSig::Unspecified,
             },
+            kernel: (eval_tps == EvalType::VectorFloat32)
+                .then_some(crate::scalar_function::Kernel::If(EvalType::VectorFloat32)),
             ..bf
         })
     }
@@ -419,6 +424,8 @@ impl FunctionClass for IfNullFunctionClass {
                 // Go sets no pb code for `builtinIfNullVectorFloat32Sig`.
                 EvalType::VectorFloat32 => ScalarFuncSig::Unspecified,
             },
+            kernel: (eval_tps == EvalType::VectorFloat32)
+                .then_some(crate::scalar_function::Kernel::IfNull(EvalType::VectorFloat32)),
             ..bf
         })
     }

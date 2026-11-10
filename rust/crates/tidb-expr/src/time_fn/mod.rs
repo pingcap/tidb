@@ -25,7 +25,7 @@
 
 pub(crate) mod add_sub;
 pub(crate) mod calendar;
-mod convert_tz;
+pub(crate) mod convert_tz;
 pub(crate) mod duration_parse;
 pub(crate) mod extract;
 pub(crate) mod session_tz;
@@ -129,7 +129,7 @@ pub(crate) fn dispatch(
 
 /// `TIDB_CURRENT_TSO()`: the active transaction's start timestamp, or zero
 /// when the session is not inside a transaction.
-fn current_tso(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn current_tso(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     if !vals.is_empty() {
         return Err(EvalError::Unsupported("bad function arity"));
     }
@@ -141,7 +141,7 @@ fn current_tso(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 /// (`GetStmtMinSafeTime`, zero without a store), placed by
 /// `calAppropriateTime`. The result is always a DATETIME with millisecond
 /// precision, matching `setDecimalAndFlenForDatetime(3)`.
-fn tidb_bounded_staleness(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn tidb_bounded_staleness(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     let [left, right] = vals else {
         return Err(EvalError::WrongParameterCount("tidb_bounded_staleness"));
     };
@@ -237,7 +237,7 @@ pub(crate) fn date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalErro
 /// `builtinNowWithArgSig` / `builtinNowWithoutArgSig`: local
 /// (`time_zone`-adjusted) statement time, always truncating fractional
 /// seconds. `CURRENT_TIMESTAMP` is the same function class.
-fn now(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn now(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     let fsp = parse_fsp_with_null_as_zero(vals, "now")?.unwrap_or(0);
     let (utc_secs, nanos, tz_offset) = cols.now().ok_or(no_clock_err())?;
     Ok(Datum::new_string_datum(format_datetime(
@@ -250,7 +250,7 @@ fn now(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 
 /// `builtinUTCTimestampWithArgSig` / `builtinUTCTimestampWithoutArgSig`:
 /// raw UTC statement time, always rounding fractional seconds half-up.
-fn utc_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn utc_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     let fsp = parse_fsp_with_null_as_zero(vals, "utc_timestamp")?.unwrap_or(0);
     let (utc_secs, nanos, _) = cols.now().ok_or(no_clock_err())?;
     Ok(Datum::new_string_datum(format_datetime(
@@ -260,7 +260,7 @@ fn utc_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError>
 
 /// `builtinCurrentDateSig`: local statement date. `CURDATE` and
 /// `CURRENT_DATE` share this signature and accept no argument.
-fn current_date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn current_date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     if !vals.is_empty() {
         return Err(EvalError::Unsupported("bad function arity"));
     }
@@ -271,7 +271,7 @@ fn current_date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> 
 }
 
 /// `builtinUTCDateSig`: raw UTC statement date with no arguments.
-fn utc_date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn utc_date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     if !vals.is_empty() {
         return Err(EvalError::Unsupported("bad function arity"));
     }
@@ -282,7 +282,7 @@ fn utc_date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 /// `builtinCurrentTime0ArgSig` / `builtinCurrentTime1ArgSig`: local
 /// statement time. The zero-argument signature truncates; an explicit FSP,
 /// including zero, rounds half-up. `CURTIME` and `CURRENT_TIME` are aliases.
-fn current_time(
+pub(crate) fn current_time(
     vals: &[Datum],
     function: &'static str,
     cols: &dyn Columns,
@@ -305,7 +305,7 @@ fn current_time(
 /// `builtinUTCTimeWithoutArgSig` / `builtinUTCTimeWithArgSig`: raw UTC
 /// statement time with the same zero-argument-truncate / explicit-FSP-round
 /// split as [`current_time`].
-fn utc_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn utc_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     if matches!(vals, [Datum::Null]) {
         return Ok(Datum::Null);
     }
@@ -343,7 +343,7 @@ pub(crate) fn microsecond(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// `builtinTimeSig.evalDuration`: parse the string as a TiDB duration while
 /// preserving its written FSP. `ErrTruncatedWrongVal` is a statement warning
 /// for a SELECT and leaves Go's zero-value duration as the result.
-fn time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
@@ -564,14 +564,14 @@ pub(crate) fn month(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// because `dayOfMonthFunctionClass` declares its argument
 /// `types.ETDatetime` (`builtin_time.go:1284`) and so receives a value
 /// `EvalTime` already produced non-NULL — see [`calendar::component_date`].
-fn day_of_month(vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn day_of_month(vals: &[Datum]) -> Result<Datum, EvalError> {
     Ok(calendar::component_date(vals)?
         .map_or(Datum::Null, |(_, _, day)| Datum::Int(i64::from(day))))
 }
 
 /// `builtinDayOfWeekSig.evalInt`: Sunday is 1 through Saturday 7; an
 /// invalid zero date warns and is NULL.
-fn day_of_week(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn day_of_week(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     let [value] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -588,7 +588,7 @@ fn day_of_week(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 
 /// `builtinDayOfYearSig.evalInt`: one-based day within the calendar year;
 /// an invalid zero date warns and is NULL.
-fn day_of_year(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn day_of_year(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     let [value] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -603,7 +603,7 @@ fn day_of_year(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 
 /// `builtinWeekDaySig.evalInt`: Monday is 0 through Sunday 6; a zero or
 /// invalid zero date warns and is NULL.
-fn weekday(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn weekday(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     let [value] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -627,7 +627,7 @@ fn weekday(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 /// ETDatetime cast ([`crate::arg_eval_type`]) is what decides a string, and
 /// it is `types.ParseTime` under the READ path's `IgnoreZeroInDate`, which
 /// keeps a zero month exactly as Go does.
-fn quarter(vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn quarter(vals: &[Datum]) -> Result<Datum, EvalError> {
     Ok(
         calendar::component_date(vals)?.map_or(Datum::Null, |(_, month, _)| {
             Datum::Int(i64::from(month.div_ceil(3)))
@@ -642,7 +642,7 @@ fn quarter(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// `WEEKOFYEAR(date)`. Port of `builtinWeekOfYearSig.evalInt`, which is
 /// `date.Week(3)` — the ISO-like mode-3 week number. Zero and invalid dates are
 /// NULL after a warning, matching `week`.
-fn week_of_year_builtin(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn week_of_year_builtin(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     let [value] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -658,7 +658,7 @@ fn week_of_year_builtin(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, Eva
 /// half, `TIDB_PARSE_TSO`, is not, because it renders a datetime in the session
 /// time zone). For a positive `tso`, masking the low 18 bits as `i64` equals
 /// Go's `uint64(tso) & logicalBits`.
-fn tidb_parse_tso_logical(vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn tidb_parse_tso_logical(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
@@ -671,7 +671,7 @@ fn tidb_parse_tso_logical(vals: &[Datum]) -> Result<Datum, EvalError> {
     Ok(Datum::Int(tikv_client::oracle::extract_logical(tso as u64)))
 }
 
-fn get_format_value(vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn get_format_value(vals: &[Datum]) -> Result<Datum, EvalError> {
     let [format_type, location] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -750,7 +750,7 @@ pub(crate) fn week(
 
 /// `builtinYearWeekWithModeSig` / `builtinYearWeekWithoutModeSig` in
 /// `pkg/expression/builtin_time.go`.
-fn yearweek(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn yearweek(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     if !(1..=2).contains(&vals.len()) {
         return Err(EvalError::Unsupported("bad function arity"));
     }
@@ -780,7 +780,7 @@ fn yearweek(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 
 /// `builtinMonthNameSig` in `pkg/expression/builtin_time.go`: a zero date
 /// warns under NO_ZERO_DATE and is otherwise NULL, as a zero month is.
-fn monthname(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn monthname(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     const MONTHS: [&str; 12] = [
         "January",
         "February",
@@ -810,7 +810,7 @@ fn monthname(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 
 /// `builtinDayNameSig` in `pkg/expression/builtin_time.go`: an invalid zero
 /// date warns and is NULL.
-fn dayname(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn dayname(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     const DAYS: [&str; 7] = [
         "Sunday",
         "Monday",
@@ -831,7 +831,7 @@ fn dayname(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 
 /// `builtinLastDaySig` in `pkg/expression/builtin_time.go`: a zero month,
 /// or a zero day under NO_ZERO_DATE, warns and is NULL.
-fn last_day(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn last_day(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     let [value] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -1032,7 +1032,7 @@ fn format_time_diff(micros: i64, fsp: usize) -> String {
 }
 
 /// `builtinTimeToSecSig` in `pkg/expression/builtin_time.go`.
-fn time_to_sec(vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn time_to_sec(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
@@ -1040,7 +1040,7 @@ fn time_to_sec(vals: &[Datum]) -> Result<Datum, EvalError> {
 }
 
 /// `builtinSecToTimeSig` in `pkg/expression/builtin_time.go`.
-fn sec_to_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn sec_to_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
@@ -1149,7 +1149,7 @@ fn format_duration(seconds: f64, fsp: usize) -> String {
 }
 
 /// `builtinMakeDateSig` in `pkg/expression/builtin_time.go`.
-fn makedate(vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn makedate(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.len() != 2 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
@@ -1177,7 +1177,7 @@ fn makedate(vals: &[Datum]) -> Result<Datum, EvalError> {
 }
 
 /// `builtinMakeTimeSig` in `pkg/expression/builtin_time.go`.
-fn maketime(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn maketime(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     if vals.len() != 3 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
@@ -1229,7 +1229,7 @@ fn maketime(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 /// helpers operate on `uint64`, so their arithmetic (including conversion
 /// back through `int64`) deliberately wraps; the wrapping methods below are
 /// the structural Rust translation, not overflow recovery.
-fn period_add(vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn period_add(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.len() != 2 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
@@ -1249,7 +1249,7 @@ fn period_add(vals: &[Datum]) -> Result<Datum, EvalError> {
 
 /// `PERIOD_DIFF(period1, period2)`, ported from
 /// `builtinPeriodDiffSig.evalInt` in `pkg/expression/builtin_time.go`.
-fn period_diff(vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn period_diff(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.len() != 2 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
@@ -1304,7 +1304,7 @@ fn month_to_period(month: u64) -> u64 {
 
 /// `builtinTimeFormatSig` in `pkg/expression/builtin_time.go`; shares the
 /// `types.Duration.DurationFormat` specifier family with DATE_FORMAT.
-fn time_format(vals: &[Datum]) -> Result<Datum, EvalError> {
+pub(crate) fn time_format(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.len() != 2 {
         return Err(EvalError::Unsupported("bad function arity"));
     }

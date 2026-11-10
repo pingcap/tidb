@@ -128,7 +128,7 @@ function_class!(
 
 function_class!(
     /// Go `randomBytesFunctionClass`.
-    RandomBytesFunctionClass, String, [Int], Unspecified, |bf, _ctx| {
+    RandomBytesFunctionClass, String, [Int], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::random_bytes), |bf, _ctx| {
         bf.tp.set_flen(1024); // Max allowed random bytes
         set_bin_chs_cln_flag(&mut bf.tp);
     }
@@ -160,7 +160,7 @@ function_class!(
 
 function_class!(
     /// Go `sm3FunctionClass`.
-    Sm3FunctionClass, String, [String], Unspecified, |bf, ctx| {
+    Sm3FunctionClass, String, [String], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::sm3), |bf, ctx| {
         set_connection_charset(bf, ctx);
         bf.tp.set_flen(40);
     }
@@ -194,7 +194,7 @@ function_class!(
 
 function_class!(
     /// Go `validatePasswordStrengthFunctionClass`.
-    ValidatePasswordStrengthFunctionClass, Int, [String], Unspecified, |bf, _ctx| {
+    ValidatePasswordStrengthFunctionClass, Int, [String], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::validate_password_strength), |bf, _ctx| {
         bf.tp.set_flen(21);
     }
 );

@@ -21,7 +21,7 @@ use crate::string_fn::{
     ascii, bin, bit_count, bit_length, case_convert, char_func_with_context, concat_with_context,
     concat_ws_with_context, elt, export_set, field, format_num, from_base64,
     from_base64_with_packet_limit, hex, locate, locate_collation, locate_with_position, make_set,
-    oct, ord, quote, replace, reverse, str_insert, str_take, strcmp, substring, substring_index,
+    oct, ord, quote, replace, reverse, str_take, strcmp, substring, substring_index,
     unhex,
 };
 use crate::string_packet::{pad, repeat, space, to_base64};
@@ -145,7 +145,7 @@ fn eval_session_state(
 /// SAME `&[String]` the row path hands it straight from the parser.
 pub(crate) const SEQUENCE_PATH_SEPARATOR: char = '\0';
 
-fn sequence_path(value: &Datum) -> Result<Vec<String>, EvalError> {
+pub(crate) fn sequence_path(value: &Datum) -> Result<Vec<String>, EvalError> {
     match value {
         Datum::Bytes(bytes) => Ok(String::from_utf8(bytes.clone())
             .map_err(|_| EvalError::Unsupported("a sequence name must be text"))?
@@ -356,20 +356,7 @@ pub(crate) fn eval_func_values(
         // The parser renames `INSERT(...)` to `INSERT_FUNC` to avoid the
         // reserved statement keyword (the same desugar `CHAR`→`CHAR_FUNC`
         // uses).
-        "INSERT_FUNC" if vals.len() == 4 => str_insert(vals).and_then(|result| {
-            let result_len = match &result {
-                Datum::String(value) => value.bytes().len(),
-                Datum::Bytes(value) => value.len(),
-                Datum::Null => return Ok(Datum::Null),
-                _ => return Err(EvalError::Unsupported("INSERT result type")),
-            };
-            if result_len as u64 > ctx.max_allowed_packet() {
-                crate::expression_errors::handle_allowed_packet_overflowed(ctx, "insert")?;
-                Ok(Datum::Null)
-            } else {
-                Ok(result)
-            }
-        }),
+        "INSERT_FUNC" if vals.len() == 4 => crate::string_fn::insert_with_context(vals, ctx),
         "MAKE_SET" if !vals.is_empty() => make_set(vals),
         "DATE_FORMAT" if vals.len() == 2 => {
             crate::time_fn::calendar::date_format_in(&vals[0], &vals[1], Some(ctx))

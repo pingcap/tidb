@@ -36,7 +36,7 @@ pub(crate) fn dispatch(
 
 /// `TIDB_ENCODE_SQL_DIGEST(sql)`: the digest of the parser-normalized SQL,
 /// using the same normalizer and SHA-256 representation as `parser.DigestHash`.
-fn encode_sql_digest(value: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn encode_sql_digest(value: &Datum) -> Result<Datum, EvalError> {
     let Some(sql) = crate::arg_eval_type::eval_string(value)? else {
         return Ok(Datum::Null);
     };
@@ -50,7 +50,7 @@ fn encode_sql_digest(value: &Datum) -> Result<Datum, EvalError> {
 /// `TIDB_DECODE_PLAN(value)`. TiDB deliberately returns the original encoded
 /// value when a textual plan is malformed, so slow-log queries remain useful
 /// even when one row predates the current codec.
-fn decode_plan(value: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn decode_plan(value: &Datum) -> Result<Datum, EvalError> {
     let Some(input) = crate::arg_eval_type::eval_string(value)? else {
         return Ok(Datum::Null);
     };
@@ -62,7 +62,7 @@ fn decode_plan(value: &Datum) -> Result<Datum, EvalError> {
 
 /// `TIDB_DECODE_BINARY_PLAN(value)`. Its error policy differs from the textual
 /// builtin: malformed data becomes an empty string and one statement warning.
-fn decode_binary_plan(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+pub(crate) fn decode_binary_plan(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     let Some(input) = crate::arg_eval_type::eval_string(value)? else {
         return Ok(Datum::Null);
     };
@@ -79,7 +79,7 @@ fn decode_binary_plan(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, 
 
 /// `FORMAT_BYTES(value)`, ported from `builtinFormatBytesSig.evalString` and
 /// `GetFormatBytes` in `pkg/expression/builtin_info.go` / `util.go`.
-fn format_bytes(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+pub(crate) fn format_bytes(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     let Some(value) = real_arg(value, ctx)? else {
         return Ok(Datum::Null);
     };
@@ -101,7 +101,7 @@ fn format_bytes(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalEr
 /// `GetFormatNanoTime` in `pkg/expression/builtin_info.go` / `util.go`.
 /// Despite the similarly named MySQL documentation function, TiDB's SQL name
 /// is `FORMAT_NANO_TIME` and its input unit is nanoseconds.
-fn format_nano_time(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+pub(crate) fn format_nano_time(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     let Some(value) = real_arg(value, ctx)? else {
         return Ok(Datum::Null);
     };

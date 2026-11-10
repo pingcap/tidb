@@ -85,7 +85,10 @@ impl FunctionClass for InFunctionClass {
             EvalType::Datetime | EvalType::Timestamp => ScalarFuncSig::InTime,
             EvalType::Duration => ScalarFuncSig::InDuration,
             EvalType::Json => ScalarFuncSig::InJson,
-            EvalType::VectorFloat32 => ScalarFuncSig::Unspecified,
+            EvalType::VectorFloat32 => {
+                bf.kernel = Some(crate::scalar_function::Kernel::In(EvalType::VectorFloat32));
+                ScalarFuncSig::Unspecified
+            }
         };
         Ok(bf)
     }
@@ -192,7 +195,7 @@ impl FunctionClass for RowFunctionClass {
 
 function_class!(
     /// Go `bitCountFunctionClass`.
-    BitCountFunctionClass, Int, [Int], Unspecified, |bf, _ctx| {
+    BitCountFunctionClass, Int, [Int], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::bit_count), |bf, _ctx| {
         bf.tp.set_flen(2);
     }
 );
@@ -220,7 +223,7 @@ impl FunctionClass for SetVarFunctionClass {
             new_base_builtin_func_with_tp(ctx, "setvar", args, arg_tp, &[EvalType::String, arg_tp])?;
         let flen = type_of(&bf.args[1]).flen();
         bf.tp.set_flen_under_limit(flen);
-        Ok(bf)
+        Ok(bf.evaluated_by(crate::scalar_function::Kernel::Row(crate::scalar_function::class_kernels::setvar)))
     }
 }
 
@@ -267,7 +270,7 @@ impl FunctionClass for GetVarFunctionClass {
                 }
             }
         }
-        Ok(bf)
+        Ok(bf.evaluated_by(crate::scalar_function::Kernel::Row(crate::scalar_function::class_kernels::getvar)))
     }
 }
 
@@ -340,7 +343,7 @@ impl FunctionClass for ValuesFunctionClass {
         }
         let mut bf = crate::builtin::new_base_builtin_func(ctx, "values", args, self.tp.clone())?;
         bf.sig = crate::builtin::SigFields::Values { offset: self.offset };
-        Ok(bf)
+        Ok(bf.evaluated_by(crate::scalar_function::Kernel::Row(crate::scalar_function::class_kernels::values)))
     }
 }
 
@@ -361,7 +364,7 @@ pub(crate) fn new_values_func(
 
 function_class!(
     /// Go `getParamFunctionClass`.
-    GetParamFunctionClass, String, [Int], Unspecified, |bf, _ctx| {
+    GetParamFunctionClass, String, [Int], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::getparam), |bf, _ctx| {
         bf.tp.set_flen(65_535);
     }
 );

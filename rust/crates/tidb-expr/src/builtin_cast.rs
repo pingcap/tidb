@@ -48,6 +48,7 @@ fn set_sig_of_arg(bf: &mut BaseBuiltinFunc, arg_tp: EvalType, sigs: [ScalarFuncS
         EvalType::String => string,
         EvalType::VectorFloat32 => {
             bf.sig = SigFields::CastVectorFloat32AsUnsupported;
+            bf.kernel = Some(crate::scalar_function::Kernel::Row(crate::scalar_function::class_kernels::cast_vector_float32_as_unsupported));
             return;
         }
     };
@@ -196,6 +197,7 @@ fn new_base_builtin_cast_func_4_string(
         pb_code: ScalarFuncSig::Unspecified,
         collation,
         sig: crate::builtin::SigFields::None,
+        kernel: None,
     };
     Ok(bf)
 }
@@ -406,7 +408,7 @@ impl FunctionClass for CastAsArrayFunctionClass {
         }
         let mut bf = new_base_builtin_func(ctx, "cast", args, self.tp.clone())?;
         bf.sig = SigFields::CastJsonAsArray;
-        Ok(bf)
+        Ok(bf.evaluated_by(crate::scalar_function::Kernel::Row(crate::scalar_function::class_kernels::cast_json_as_array)))
     }
 }
 
@@ -426,8 +428,14 @@ impl FunctionClass for CastAsVectorFloat32FunctionClass {
             EvalType::VectorFloat32 => {
                 bf.pb_code = ScalarFuncSig::CastVectorFloat32AsVectorFloat32;
             }
-            EvalType::String => bf.sig = SigFields::CastStringAsVectorFloat32,
-            _ => bf.sig = SigFields::CastUnsupportedAsVectorFloat32,
+            EvalType::String => {
+                bf.sig = SigFields::CastStringAsVectorFloat32;
+                bf.kernel = Some(crate::scalar_function::Kernel::Row(crate::scalar_function::class_kernels::cast_string_as_vector_float32));
+            }
+            _ => {
+                bf.sig = SigFields::CastUnsupportedAsVectorFloat32;
+                bf.kernel = Some(crate::scalar_function::Kernel::Row(crate::scalar_function::class_kernels::cast_unsupported_as_vector_float32));
+            }
         }
         Ok(bf)
     }

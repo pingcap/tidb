@@ -37,7 +37,7 @@ function_class!(
 );
 function_class!(
     /// Go `vecFromTextFunctionClass`. `builtinVecFromTextSig` sets no pb code.
-    VecFromTextFunctionClass, VectorFloat32, [String], Unspecified
+    VecFromTextFunctionClass, VectorFloat32, [String], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::vec_from_text)
 );
 function_class!(
     /// Go `vecAsTextFunctionClass`.

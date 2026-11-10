@@ -58,11 +58,11 @@ fn vector(value: &Datum) -> Result<Option<VectorFloat32>, EvalError> {
     }
 }
 
-fn dims(value: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn dims(value: &Datum) -> Result<Datum, EvalError> {
     Ok(vector(value)?.map_or(Datum::Null, |value| Datum::Int(value.len() as i64)))
 }
 
-fn distance(
+pub(crate) fn distance(
     left: &Datum,
     right: &Datum,
     operation: impl FnOnce(&VectorFloat32, &VectorFloat32) -> Result<f64, tidb_datatype::VectorError>,
@@ -81,7 +81,7 @@ fn distance(
     })
 }
 
-fn l2_norm(value: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn l2_norm(value: &Datum) -> Result<Datum, EvalError> {
     let Some(value) = vector(value)? else {
         return Ok(Datum::Null);
     };
@@ -93,7 +93,7 @@ fn l2_norm(value: &Datum) -> Result<Datum, EvalError> {
     })
 }
 
-fn from_text(value: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn from_text(value: &Datum) -> Result<Datum, EvalError> {
     let Some(bytes) = crate::arg_eval_type::eval_string(value)? else {
         return Ok(Datum::Null);
     };
@@ -103,7 +103,7 @@ fn from_text(value: &Datum) -> Result<Datum, EvalError> {
         .map_err(|error| EvalError::Vector(error.to_string()))
 }
 
-fn as_text(value: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn as_text(value: &Datum) -> Result<Datum, EvalError> {
     Ok(vector(value)?.map_or(Datum::Null, |value| Datum::new_string_datum(value.to_string())))
 }
 

@@ -514,7 +514,7 @@ pub(crate) fn cos(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError>
     unary_finite(vals, ctx, go_trig::go_cos)
 }
 
-fn tan(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn tan(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     unary_finite(vals, ctx, go_trig::go_tan)
 }
 

@@ -38,7 +38,17 @@ macro_rules! function_class {
     ($(#[$doc:meta])* $class:ident, $ret:ident, [$($arg:ident),*], $sig:ident) => {
         function_class!($(#[$doc])* $class, $ret, [$($arg),*], $sig, |_bf, _ctx| {});
     };
+    ($(#[$doc:meta])* $class:ident, $ret:ident, [$($arg:ident),*], $sig:ident => $kernel:expr) => {
+        function_class!($(#[$doc])* $class, $ret, [$($arg),*], $sig => $kernel, |_bf, _ctx| {});
+    };
     ($(#[$doc:meta])* $class:ident, $ret:ident, [$($arg:ident),*], $sig:ident, |$bf:ident, $ctx:ident| $body:block) => {
+        function_class!($(#[$doc])* $class, $ret, [$($arg),*], $sig, None, |$bf, $ctx| $body);
+    };
+    // A signature with no `pbCode`: the class hands over its evaluation.
+    ($(#[$doc:meta])* $class:ident, $ret:ident, [$($arg:ident),*], $sig:ident => $kernel:expr, |$bf:ident, $ctx:ident| $body:block) => {
+        function_class!($(#[$doc])* $class, $ret, [$($arg),*], $sig, Some($kernel), |$bf, $ctx| $body);
+    };
+    ($(#[$doc:meta])* $class:ident, $ret:ident, [$($arg:ident),*], $sig:ident, $kernel:expr, |$bf:ident, $ctx:ident| $body:block) => {
         $(#[$doc])*
         pub(crate) struct $class {
             pub(crate) func_name: &'static str,
@@ -59,6 +69,7 @@ macro_rules! function_class {
                     $body
                 }
                 bf.pb_code = ScalarFuncSig::$sig;
+                bf.kernel = $kernel;
                 Ok(bf)
             }
         }
@@ -76,21 +87,21 @@ pub(crate) fn set_connection_charset(bf: &mut BaseBuiltinFunc, ctx: &dyn BuildCo
 
 function_class!(
     /// Go `sleepFunctionClass`.
-    SleepFunctionClass, Int, [Real], Unspecified, |bf, _ctx| {
+    SleepFunctionClass, Int, [Real], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::sleep), |bf, _ctx| {
         bf.tp.set_flen(21);
     }
 );
 
 function_class!(
     /// Go `lockFunctionClass`.
-    LockFunctionClass, Int, [String, Int], Unspecified, |bf, _ctx| {
+    LockFunctionClass, Int, [String, Int], Unspecified => crate::scalar_function::Kernel::Method(crate::scalar_function::class_kernels::get_lock), |bf, _ctx| {
         bf.tp.set_flen(1);
     }
 );
 
 function_class!(
     /// Go `releaseLockFunctionClass`.
-    ReleaseLockFunctionClass, Int, [String], Unspecified, |bf, _ctx| {
+    ReleaseLockFunctionClass, Int, [String], Unspecified => crate::scalar_function::Kernel::Method(crate::scalar_function::class_kernels::release_lock), |bf, _ctx| {
         bf.tp.set_flen(1);
     }
 );
@@ -138,6 +149,10 @@ fn value_typed_function(
             time
         }
     };
+    // Go `nameConstFunctionClass`: none of its signatures sets a pb code.
+    if bf.pb_code == ScalarFuncSig::Unspecified {
+        bf.kernel = Some(crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::name_const));
+    }
     Ok(bf)
 }
 
@@ -199,7 +214,7 @@ function_class!(
 
 function_class!(
     /// Go `isFreeLockFunctionClass`.
-    IsFreeLockFunctionClass, Int, [String], Unspecified, |bf, _ctx| {
+    IsFreeLockFunctionClass, Int, [String], Unspecified => crate::scalar_function::Kernel::Method(crate::scalar_function::class_kernels::is_free_lock), |bf, _ctx| {
         bf.tp.set_flen(1);
     }
 );
@@ -234,7 +249,7 @@ function_class!(
 
 function_class!(
     /// Go `isUsedLockFunctionClass`.
-    IsUsedLockFunctionClass, Int, [String], Unspecified, |bf, _ctx| {
+    IsUsedLockFunctionClass, Int, [String], Unspecified => crate::scalar_function::Kernel::Method(crate::scalar_function::class_kernels::is_used_lock), |bf, _ctx| {
         bf.tp.set_flen(1);
     }
 );
@@ -262,7 +277,7 @@ impl FunctionClass for NameConstFunctionClass {
 
 function_class!(
     /// Go `releaseAllLocksFunctionClass`.
-    ReleaseAllLocksFunctionClass, Int, [], Unspecified, |bf, _ctx| {
+    ReleaseAllLocksFunctionClass, Int, [], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::release_all_locks), |bf, _ctx| {
         bf.tp.set_flen(1);
     }
 );
@@ -348,7 +363,7 @@ impl FunctionClass for UuidToBinFunctionClass {
         bf.tp.set_flen(16);
         set_bin_chs_cln_flag(&mut bf.tp);
         bf.tp.set_decimal(0);
-        Ok(bf)
+        Ok(bf.evaluated_by(crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::uuid_to_bin)))
     }
 }
 
@@ -368,7 +383,7 @@ impl FunctionClass for BinToUuidFunctionClass {
         set_connection_charset(&mut bf, ctx);
         bf.tp.set_flen(32);
         bf.tp.set_decimal(0);
-        Ok(bf)
+        Ok(bf.evaluated_by(crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::bin_to_uuid)))
     }
 }
 

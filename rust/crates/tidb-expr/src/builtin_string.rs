@@ -931,7 +931,7 @@ string_class!(
 
 function_class!(
     /// Go `loadFileFunctionClass`.
-    LoadFileFunctionClass, String, [String], Unspecified, |bf, ctx| {
+    LoadFileFunctionClass, String, [String], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::load_file), |bf, ctx| {
         set_connection_charset(bf, ctx);
         bf.tp.set_flen(64);
     }
@@ -940,7 +940,7 @@ function_class!(
 function_class!(
     /// Go `translateFunctionClass`: `builtinTranslateBinarySig` and
     /// `builtinTranslateUTF8Sig` have no pb code.
-    TranslateFunctionClass, String, [String, String, String], Unspecified, |bf, _ctx| {
+    TranslateFunctionClass, String, [String, String, String], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::translate), |bf, _ctx| {
         let arg_type = type_of(&bf.args[0]);
         bf.tp.set_flen(arg_type.flen());
         set_bin_flag_or_bin_str(&arg_type, &mut bf.tp);
@@ -1011,11 +1011,12 @@ string_class!(
         set_bin_chs_cln_flag(&mut bf.tp);
         // A numeric argument is `weightStringPaddingNull`, which `AS BINARY`
         // alone replaces.
-        bf.sig = if numeric && padding != WeightStringPadding::AsBinary {
-            SigFields::WeightStringNull
+        let kernel;
+        (bf.sig, kernel) = if numeric && padding != WeightStringPadding::AsBinary {
+            (SigFields::WeightStringNull, crate::scalar_function::Kernel::Row(crate::scalar_function::class_kernels::weight_string_null))
         } else {
-            SigFields::WeightString { padding, length }
+            (SigFields::WeightString { padding, length }, crate::scalar_function::Kernel::Row(crate::scalar_function::class_kernels::weight_string))
         };
-        Ok(bf)
+        Ok(bf.evaluated_by(kernel))
     }
 );

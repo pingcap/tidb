@@ -67,6 +67,7 @@ mod setvar_getvar_values_getparam_source;
 mod timestamp_weight_string_class_source;
 mod util_filter_condition_source;
 mod vectorizable_and_chunk_eval_source;
+mod vector_float32_class_kernels_source;
 
 /// Parses and evaluates a constant expression to its label.
 pub(super) fn e(expr: &str) -> String {

@@ -26,56 +26,56 @@ use tidb_proto::tipb::ScalarFuncSig;
 
 function_class!(
     /// Go `databaseFunctionClass`.
-    DatabaseFunctionClass, String, [], Unspecified, |bf, _ctx| {
+    DatabaseFunctionClass, String, [], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::database), |bf, _ctx| {
         bf.tp.set_flen(64);
     }
 );
 
 function_class!(
     /// Go `currentUserFunctionClass`.
-    CurrentUserFunctionClass, String, [], Unspecified, |bf, _ctx| {
+    CurrentUserFunctionClass, String, [], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::current_user), |bf, _ctx| {
         bf.tp.set_flen(64);
     }
 );
 
 function_class!(
     /// Go `currentRoleFunctionClass`.
-    CurrentRoleFunctionClass, String, [], Unspecified, |bf, _ctx| {
+    CurrentRoleFunctionClass, String, [], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::current_role), |bf, _ctx| {
         bf.tp.set_flen(64);
     }
 );
 
 function_class!(
     /// Go `currentResourceGroupFunctionClass`.
-    CurrentResourceGroupFunctionClass, String, [], Unspecified, |bf, _ctx| {
+    CurrentResourceGroupFunctionClass, String, [], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::current_resource_group), |bf, _ctx| {
         bf.tp.set_flen(64);
     }
 );
 
 function_class!(
     /// Go `userFunctionClass`.
-    UserFunctionClass, String, [], Unspecified, |bf, _ctx| {
+    UserFunctionClass, String, [], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::user), |bf, _ctx| {
         bf.tp.set_flen(64);
     }
 );
 
 function_class!(
     /// Go `versionFunctionClass`.
-    VersionFunctionClass, String, [], Unspecified, |bf, _ctx| {
+    VersionFunctionClass, String, [], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::version), |bf, _ctx| {
         bf.tp.set_flen(64);
     }
 );
 
 function_class!(
     /// Go `foundRowsFunctionClass`.
-    FoundRowsFunctionClass, Int, [], Unspecified, |bf, _ctx| {
+    FoundRowsFunctionClass, Int, [], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::found_rows), |bf, _ctx| {
         bf.tp.add_flags(FieldTypeFlags::UNSIGNED);
     }
 );
 
 function_class!(
     /// Go `connectionIDFunctionClass`.
-    ConnectionIdFunctionClass, Int, [], Unspecified, |bf, _ctx| {
+    ConnectionIdFunctionClass, Int, [], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::connection_id), |bf, _ctx| {
         bf.tp.add_flags(FieldTypeFlags::UNSIGNED);
     }
 );
@@ -109,7 +109,7 @@ impl FunctionClass for LastInsertIdFunctionClass {
 
 function_class!(
     /// Go `tidbVersionFunctionClass`.
-    TidbVersionFunctionClass, String, [], Unspecified, |bf, _ctx| {
+    TidbVersionFunctionClass, String, [], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::tidb_version), |bf, _ctx| {
         let flen = tidb_printer::get_tidb_info().len();
         bf.tp.set_flen(i64::try_from(flen).unwrap_or(i64::MAX));
     }
@@ -117,7 +117,7 @@ function_class!(
 
 function_class!(
     /// Go `tidbIsDDLOwnerFunctionClass`.
-    TidbIsDdlOwnerFunctionClass, Int, [], Unspecified
+    TidbIsDdlOwnerFunctionClass, Int, [], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::tidb_is_ddl_owner)
 );
 
 /// The evaluation types of `args`, for the Go classes that take each
@@ -138,6 +138,7 @@ impl FunctionClass for BenchmarkFunctionClass {
     ) -> Result<BaseBuiltinFunc, EvalError> {
         let same_eval_type = type_of(&args[1]).eval_type();
         new_base_builtin_func_with_tp(ctx, "benchmark", args, EvalType::Int, &[EvalType::Int, same_eval_type])
+            .map(|bf| bf.evaluated_by(crate::scalar_function::Kernel::Row(crate::scalar_function::class_kernels::benchmark)))
     }
 }
 
@@ -152,7 +153,7 @@ fn charset_or_collation(
     let mut bf = new_base_builtin_func_with_tp(ctx, func_name, args, EvalType::String, &arg_tps)?;
     set_connection_charset(&mut bf, ctx);
     bf.tp.set_flen(64);
-    Ok(bf)
+    Ok(bf.evaluated_by(crate::scalar_function::Kernel::Row(crate::scalar_function::class_kernels::info_metadata)))
 }
 
 /// Go `charsetFunctionClass`.
@@ -179,6 +180,7 @@ impl FunctionClass for CoercibilityFunctionClass {
     ) -> Result<BaseBuiltinFunc, EvalError> {
         let arg_tps = eval_types(&args);
         new_base_builtin_func_with_tp(ctx, "coercibility", args, EvalType::Int, &arg_tps)
+            .map(|bf| bf.evaluated_by(crate::scalar_function::Kernel::Row(crate::scalar_function::class_kernels::info_metadata)))
     }
 }
 
@@ -202,12 +204,12 @@ function_class!(
 
 function_class!(
     /// Go `tidbMVCCInfoFunctionClass`.
-    TidbMvccInfoFunctionClass, String, [String], Unspecified
+    TidbMvccInfoFunctionClass, String, [String], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::not_yet_ported)
 );
 
 function_class!(
     /// Go `tidbDecodeKeyFunctionClass`.
-    TidbDecodeKeyFunctionClass, String, [String], Unspecified
+    TidbDecodeKeyFunctionClass, String, [String], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::tidb_decode_key)
 );
 
 /// Go `tidbRowChecksumFunctionClass`: every build is refused with
@@ -273,36 +275,59 @@ impl FunctionClass for TidbDecodeSqlDigestsFunctionClass {
             EvalType::String,
             &arg_tps[..args_len],
         )
+        .map(|bf| bf.evaluated_by(crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::tidb_decode_sql_digests)))
     }
 }
 
 function_class!(
     /// Go `tidbEncodeSQLDigestFunctionClass`.
-    TidbEncodeSqlDigestFunctionClass, String, [String], Unspecified
+    TidbEncodeSqlDigestFunctionClass, String, [String], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::tidb_encode_sql_digest)
 );
 
-function_class!(
-    /// Go `tidbDecodePlanFunctionClass`.
-    TidbDecodePlanFunctionClass, String, [String], Unspecified
-);
+/// Go `tidbDecodePlanFunctionClass`, which `tidb_decode_plan` and
+/// `tidb_decode_binary_plan` share: the name picks the signature.
+pub(crate) struct TidbDecodePlanFunctionClass {
+    pub(crate) func_name: &'static str,
+}
+
+impl FunctionClass for TidbDecodePlanFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        let bf = new_base_builtin_func_with_tp(
+            ctx,
+            self.func_name,
+            args,
+            EvalType::String,
+            &[EvalType::String],
+        )?;
+        Ok(bf.evaluated_by(if self.func_name == "tidb_decode_plan" {
+            crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::tidb_decode_plan)
+        } else {
+            crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::tidb_decode_binary_plan)
+        }))
+    }
+}
 
 function_class!(
     /// Go `nextValFunctionClass`.
-    NextValFunctionClass, Int, [String], Unspecified, |bf, _ctx| {
+    NextValFunctionClass, Int, [String], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::nextval), |bf, _ctx| {
         bf.tp.set_flen(10);
     }
 );
 
 function_class!(
     /// Go `lastValFunctionClass`.
-    LastValFunctionClass, Int, [String], Unspecified, |bf, _ctx| {
+    LastValFunctionClass, Int, [String], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::lastval), |bf, _ctx| {
         bf.tp.set_flen(10);
     }
 );
 
 function_class!(
     /// Go `setValFunctionClass`.
-    SetValFunctionClass, Int, [String, Int], Unspecified, |bf, _ctx| {
+    SetValFunctionClass, Int, [String, Int], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::setval), |bf, _ctx| {
         // Go reads `args[1]` after `newBaseBuiltinFuncWithTp` cast it in place.
         let flen = type_of(&bf.args[1]).flen();
         bf.tp.set_flen(flen);
@@ -311,14 +336,14 @@ function_class!(
 
 function_class!(
     /// Go `formatBytesFunctionClass`.
-    FormatBytesFunctionClass, String, [Real], Unspecified, |bf, ctx| {
+    FormatBytesFunctionClass, String, [Real], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::format_bytes), |bf, ctx| {
         set_connection_charset(bf, ctx);
     }
 );
 
 function_class!(
     /// Go `formatNanoTimeFunctionClass`.
-    FormatNanoTimeFunctionClass, String, [Real], Unspecified, |bf, ctx| {
+    FormatNanoTimeFunctionClass, String, [Real], Unspecified => crate::scalar_function::Kernel::Values(crate::scalar_function::class_kernels::format_nano_time), |bf, ctx| {
         set_connection_charset(bf, ctx);
     }
 );

@@ -65,7 +65,7 @@ pub(crate) fn dispatch_in(
     }
 }
 
-fn tidb_decode_key(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+pub(crate) fn tidb_decode_key(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     if value.is_null() {
         return Ok(Datum::Null);
     }
@@ -89,7 +89,7 @@ pub(crate) fn err_specific_access_denied() -> EvalError {
 /// not a string or whose digest no statement summary knows, each text cut to
 /// `truncate_length` bytes plus `...` when that is positive. A digest list
 /// that is not a JSON array is a 1210 warning and NULL.
-fn tidb_decode_sql_digests(
+pub(crate) fn tidb_decode_sql_digests(
     digests: &Datum,
     truncate_length: Option<&Datum>,
     ctx: &dyn crate::Columns,
@@ -204,7 +204,7 @@ fn random_bytes(bytes: &mut [u8]) -> Result<(), EvalError> {
 /// library's process-random fallback instead of exposing a hardware address;
 /// it remains process-stable, and the 14-bit clock sequence advances whenever
 /// the clock does not advance.
-fn uuid_v1() -> Result<Datum, EvalError> {
+pub(crate) fn uuid_v1() -> Result<Datum, EvalError> {
     let unix_100ns = u64::try_from(unix_nanos()? / 100)
         .map_err(|_| EvalError::Unsupported("system clock exceeds the UUID time domain"))?;
     let timestamp =
@@ -238,7 +238,7 @@ fn uuid_v1() -> Result<Datum, EvalError> {
 }
 
 /// `UUID_V4()`: 122 random bits with the RFC version and variant bits.
-fn uuid_v4() -> Result<Datum, EvalError> {
+pub(crate) fn uuid_v4() -> Result<Datum, EvalError> {
     let mut uuid = [0_u8; 16];
     random_bytes(&mut uuid)?;
     uuid[6] = (uuid[6] & 0x0f) | 0x40;
@@ -248,7 +248,7 @@ fn uuid_v4() -> Result<Datum, EvalError> {
 
 /// `UUID_V7()`: the Unix-millisecond prefix and sub-millisecond sequence
 /// used by TiDB's pinned `google/uuid.NewV7`, plus random tail bits.
-fn uuid_v7() -> Result<Datum, EvalError> {
+pub(crate) fn uuid_v7() -> Result<Datum, EvalError> {
     let mut uuid = [0_u8; 16];
     random_bytes(&mut uuid)?;
     uuid[8] = (uuid[8] & 0x3f) | 0x80;
@@ -291,7 +291,7 @@ fn uuid_v7() -> Result<Datum, EvalError> {
 /// strict whitespace check is intentionally performed before `parse_uuid`,
 /// because MySQL rejects surrounding spaces although `google/uuid.Parse`
 /// accepts the inner spelling.
-fn uuid_to_bin(value: &Datum, flag: Option<&Datum>) -> Result<Datum, EvalError> {
+pub(crate) fn uuid_to_bin(value: &Datum, flag: Option<&Datum>) -> Result<Datum, EvalError> {
     let Some(input) = eval_string_bytes(value)? else {
         return Ok(Datum::Null);
     };
@@ -325,7 +325,7 @@ fn uuid_to_bin(value: &Datum, flag: Option<&Datum>) -> Result<Datum, EvalError> 
 /// payload (16 bytes); unlike `coerce_str`, this path deliberately accepts
 /// arbitrary non-UTF-8 bytes so binary UUID data cannot be corrupted by a
 /// text conversion.
-fn bin_to_uuid(
+pub(crate) fn bin_to_uuid(
     ctx: &dyn crate::Columns,
     value: &Datum,
     flag: Option<&Datum>,
@@ -446,7 +446,7 @@ fn format_uuid_swapped(uuid: &[u8; 16]) -> String {
 /// TiDB first casts the one argument to signed `ETInt`, then Vitess-hashes its
 /// two's-complement `uint64` bits and takes the big-endian ciphertext's low
 /// byte. The bucket count is 256, so the low byte is exactly the modulo.
-fn tidb_shard(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+pub(crate) fn tidb_shard(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     if matches!(value, Datum::Null) {
         return Ok(Datum::Null);
     }
@@ -461,7 +461,7 @@ fn tidb_shard(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalErro
 /// `TIDB_SHARD`, the ETInt-coerced argument is Vitess-hashed, but the whole
 /// 64-bit digest is returned. The result column is UNSIGNED, so it is a
 /// `Datum::UInt`.
-fn vitess_hash(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+pub(crate) fn vitess_hash(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     if matches!(value, Datum::Null) {
         return Ok(Datum::Null);
     }
@@ -478,7 +478,7 @@ fn vitess_hash(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalErr
 /// and its 38-byte "Microsoft style" form where only the *middle* 36 bytes
 /// are examined. Keep that last behavior: it is explicitly covered by
 /// TiDB's `TestIsUUID` and is why this is not a canonical-format validator.
-fn is_uuid(value: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn is_uuid(value: &Datum) -> Result<Datum, EvalError> {
     let Some(value) = eval_string_bytes(value)? else {
         return Ok(Datum::Null);
     };
@@ -506,7 +506,7 @@ fn is_uuid(value: &Datum) -> Result<Datum, EvalError> {
 /// strings, so invalid-UTF-8 arguments and their charset/binary metadata are
 /// not representable; every successful UUID spelling is ASCII. No collation
 /// or warning behavior is omitted for successful scalar values.
-fn uuid_version(value: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn uuid_version(value: &Datum) -> Result<Datum, EvalError> {
     let Some(value) = coerce_str(value)? else {
         return Ok(Datum::Null);
     };
@@ -531,7 +531,7 @@ fn uuid_version(value: &Datum) -> Result<Datum, EvalError> {
 /// `Time.UnixTime` from TiDB's pinned module: the 1582 UUID epoch is converted
 /// to Unix microseconds before making a fixed six-place decimal. Invalid text
 /// is Go's 1411.
-fn uuid_timestamp(value: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn uuid_timestamp(value: &Datum) -> Result<Datum, EvalError> {
     let Some(value) = coerce_str(value)? else {
         return Ok(Datum::Null);
     };

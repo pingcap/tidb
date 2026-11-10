@@ -69,7 +69,7 @@ pub(crate) fn dispatch(
 /// as the original byte length followed by a zlib stream. A trailing dot keeps
 /// a stream ending in ASCII space from being changed by SQL trailing-space
 /// handling, matching TiDB's public format.
-fn compress(arg: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn compress(arg: &Datum) -> Result<Datum, EvalError> {
     let Some(payload) = sql_string_bytes(arg)? else {
         return Ok(Datum::Null);
     };
@@ -156,7 +156,7 @@ fn inflate(data: &[u8], max_output: usize) -> Result<Vec<u8>, InflateError> {
 /// stream. Empty input yields an empty string; NULL, a too-short/corrupted
 /// payload, an undecodable stream, or a stored length below the decompressed
 /// length all yield NULL and append the same statement warning as Go.
-fn uncompress(arg: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn uncompress(arg: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let Some(payload) = sql_string_bytes(arg)? else {
         return Ok(Datum::Null);
     };
@@ -202,7 +202,7 @@ fn uncompress(arg: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
 /// `builtinUncompressedLengthSig.evalInt`: returns the 4-byte little-endian
 /// prefix as the original length. NULL yields NULL; empty or too-short/corrupted
 /// input yields 0.
-fn uncompressed_length(arg: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn uncompressed_length(arg: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let Some(payload) = sql_string_bytes(arg)? else {
         return Ok(Datum::Null);
     };
@@ -372,7 +372,7 @@ fn hex_lower(bytes: &[u8]) -> String {
 /// `errDeprecatedSyntaxNoReplacement`; warning propagation belongs to the
 /// statement context and is intentionally not fabricated in this value-only
 /// dispatch.
-fn password_hash(value: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn password_hash(value: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
     // go `builtinPasswordSig.evalString`: an empty password is '' without a
     // word; any other spelling warns ErrDeprecatedSyntaxNoReplacement (1681)
     // and still hashes.
@@ -394,7 +394,7 @@ fn password_hash(value: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
 /// The deterministic MySQL 3.21 stream cipher used by TiDB's deprecated
 /// `ENCODE(str, password)` function. The byte algorithm is owned once by
 /// `tidb_encrypt`, the direct transcreation of `pkg/util/encrypt`.
-fn sql_encode(data: &Datum, password: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn sql_encode(data: &Datum, password: &Datum) -> Result<Datum, EvalError> {
     let Some(data) = sql_string_bytes(data)? else {
         return Ok(Datum::Null);
     };
@@ -407,7 +407,7 @@ fn sql_encode(data: &Datum, password: &Datum) -> Result<Datum, EvalError> {
 }
 
 /// `DECODE(str, password)`, the inverse stream operation of [`sql_encode`].
-fn sql_decode(data: &Datum, password: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn sql_decode(data: &Datum, password: &Datum) -> Result<Datum, EvalError> {
     let Some(data) = sql_string_bytes(data)? else {
         return Ok(Datum::Null);
     };
@@ -489,7 +489,7 @@ fn identity_username(identity: &str) -> &str {
 }
 
 /// `VALIDATE_PASSWORD_STRENGTH(str)`.
-fn validate_password_strength(value: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn validate_password_strength(value: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
     use tidb_password_validation::{self as password_validation, PasswordUser};
 
     let Some(password) = sql_string_bytes(value)? else {
@@ -549,7 +549,7 @@ fn validate_password_strength(value: &Datum, ctx: &dyn Columns) -> Result<Datum,
 /// `builtinSHA1Sig.evalString` (`pkg/expression/builtin_encryption.go`),
 /// which differ only in the hash used — both eval the argument as a string
 /// (numbers arrive as their decimal text) and hex-encode the sum.
-fn hash_unary<D: Digest>(v: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn hash_unary<D: Digest>(v: &Datum) -> Result<Datum, EvalError> {
     match hash_input(v)? {
         Some(bytes) => Ok(Datum::new_string_datum(hex_lower(
             D::digest(bytes.as_slice()).as_slice(),
@@ -560,7 +560,7 @@ fn hash_unary<D: Digest>(v: &Datum) -> Result<Datum, EvalError> {
 
 /// `SM3(str)`: the parser-auth SM3 digest rendered as lowercase hex. TiDB's
 /// SQL builtin and password plugin deliberately share this digest owner.
-fn sm3_hash(value: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn sm3_hash(value: &Datum) -> Result<Datum, EvalError> {
     match hash_input(value)? {
         Some(bytes) => Ok(Datum::new_string_datum(hex_lower(&tidb_parser::auth::sm3_hash(
             &bytes,
@@ -572,7 +572,7 @@ fn sm3_hash(value: &Datum) -> Result<Datum, EvalError> {
 /// `RANDOM_BYTES(len)`: one fresh OS-random binary string per evaluation.
 /// The bytes themselves are unspecified; the stable SQL contract is the
 /// requested length, NULL propagation, and inclusive 1..=1024 range gate.
-fn random_bytes(length: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn random_bytes(length: &Datum) -> Result<Datum, EvalError> {
     let Some(length) = encryption_int_argument(length)? else {
         return Ok(Datum::Null);
     };
@@ -623,7 +623,7 @@ fn hash_input(value: &Datum) -> Result<Option<Vec<u8>>, EvalError> {
 /// the Go code returns as `NULL` (not an error). Its function class declares
 /// the second argument `ETInt`, so [`encryption_int_argument`] ports that implicit cast
 /// before applying the switch.
-fn sha2_hash(arg: &Datum, len: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn sha2_hash(arg: &Datum, len: &Datum) -> Result<Datum, EvalError> {
     let Some(bytes) = hash_input(arg)? else {
         return Ok(Datum::Null);
     };

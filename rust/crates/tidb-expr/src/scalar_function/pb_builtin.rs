@@ -15,15 +15,462 @@
 //! Go `getSignatureByPB`: select an implementation from the wire enum.
 //! SQL function names are diagnostic metadata, never an overload selector here.
 
-use super::{cast_json_argument_value, eval_numeric_operand_row, eval_numeric_row, ScalarFunction};
+use super::{class_kernels, cast_json_argument_value, eval_numeric_operand_row, eval_numeric_row, ScalarFunction};
 use tidb_exprctx::context::{Columns, EvalError};
 use crate::expression::{ConstLevel, Expression};
 use tidb_ast::BinaryOp;
 use tidb_chunk::row::Row;
-use tidb_datatype::{Datum, EvalType, FieldType};
+use tidb_datatype::{Datum, EvalType, FieldType, VectorFloat32};
 use tidb_proto::tipb::ScalarFuncSig;
 
-type ValuesKernel = fn(&[Datum], &dyn Columns) -> Result<Datum, EvalError>;
+pub(crate) type ValuesKernel = fn(&[Datum], &dyn Columns) -> Result<Datum, EvalError>;
+/// A signature that reads its node's build state -- Go `baseBuiltinFunc`'s
+/// collator or an argument's field type -- beside the argument values.
+pub(crate) type MethodKernel = fn(&ScalarFunction, &[Datum], &dyn Columns) -> Result<Datum, EvalError>;
+
+/// Go `builtinStrcmpSig`: the comparison under `b.collation`.
+fn strcmp_method(function: &ScalarFunction, values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::string_fn::strcmp_with_collation(values, function.derived_collation())
+}
+
+/// Go `builtinFieldStringSig` compares under `b.collation`; the int and real
+/// signatures read arguments their class already cast.
+fn field_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::string_fn::field_with_collation(values, function.derived_collation(), ctx)
+}
+
+/// Go `builtinHexStrArgSig` / `builtinHexIntArgSig` over the argument's type.
+fn hex_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::string_fn::hex_with_type(values, function.args.first().and_then(Expression::static_type), ctx)
+}
+
+/// Go `builtinFromDaysSig.evalTime`: a DATE.
+fn from_days_values(values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    let date = crate::time_fn::calendar::from_days(values)?;
+    crate::cast::parse_computed_time(&date, ctx, tidb_datatype::TimeType::Date, Some(0))
+}
+
+/// Go `builtinMakeDateSig.evalTime`: a DATE.
+fn make_date_values(values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    let date = crate::time_fn::makedate(values)?;
+    crate::cast::parse_computed_time(&date, ctx, tidb_datatype::TimeType::Date, Some(0))
+}
+
+/// Go `builtinMakeTimeSig.evalDuration`: a duration of the fsp its class
+/// derived into the result type.
+fn make_time_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    let time = crate::time_fn::maketime(values, ctx)?;
+    crate::cast::parse_computed_duration(&time, ctx, function.get_static_type().map(FieldType::decimal))
+}
+
+/// Go `builtinSysDateWithFspSig` / `builtinSysDateWithoutFspSig`: a DATETIME
+/// of the result type's fsp.
+fn sys_date_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    let now = crate::time_fn::add_sub::sysdate(values, ctx)?;
+    crate::cast::parse_computed_time(
+        &now,
+        ctx,
+        tidb_datatype::TimeType::DateTime,
+        function.get_static_type().map(FieldType::decimal),
+    )
+}
+
+/// A signature that reads its arguments itself, or not at all.
+pub(crate) type RowKernel = fn(&ScalarFunction, &dyn Columns, Row<'_>) -> Result<Datum, EvalError>;
+
+/// Go `builtinFtsMatchWordSig.evalReal`: only a fulltext index computes a
+/// relevance score.
+fn fts_match_word_row(_: &ScalarFunction, _: &dyn Columns, _: Row<'_>) -> Result<Datum, EvalError> {
+    Err(EvalError::Raw("cannot use 'FTS_MATCH_WORD()' outside of fulltext index".to_owned()))
+}
+
+/// Go `builtinFtsMysqlMatchAgainstSig.evalReal`: a NULL search constant is
+/// NULL; anything else needs a fulltext index.
+fn fts_match_against_row(function: &ScalarFunction, _: &dyn Columns, _: Row<'_>) -> Result<Datum, EvalError> {
+    if let Some(Expression::Constant(against)) = function.args.first() {
+        if against.value.is_null() {
+            return Ok(Datum::Null);
+        }
+    }
+    Err(EvalError::Raw("cannot use 'MATCH ... AGAINST' outside of fulltext index".to_owned()))
+}
+
+/// Go `builtinRandWithSeedFirstGenSig.evalReal`: a nonconstant seed starts a
+/// fresh generator every row; this node's address is the occurrence's
+/// identity.
+fn rand_row(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+    let values = function
+        .args
+        .iter()
+        .map(|arg| arg.eval(ctx, row))
+        .collect::<Result<Vec<_>, _>>()?;
+    crate::math_fn::eval_rand_values(&values, ctx, Some(std::ptr::from_ref(function) as usize), false)
+}
+
+/// Go `builtinRandSig.evalReal`: the generator the class seeded, one per
+/// occurrence.
+fn rand_const_row(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+    let values = function
+        .args
+        .iter()
+        .map(|arg| arg.eval(ctx, row))
+        .collect::<Result<Vec<_>, _>>()?;
+    crate::math_fn::eval_rand_values(&values, ctx, Some(std::ptr::from_ref(function) as usize), true)
+}
+
+/// Go `builtinTruncate{Int,Uint,Real,Decimal}Sig`: the decimal signature caps
+/// the scale by the result type's.
+fn truncate_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::math_fn::round_or_truncate_with_result_decimal(
+        values,
+        false,
+        function.ret_type.as_ref().map(FieldType::decimal),
+        ctx,
+    )
+}
+
+/// Go `builtinUnaryNotJSONSig`.
+fn unary_not_json_row(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+    let value = function.args[0].eval(ctx, row)?;
+    crate::ops::eval_unary(
+        tidb_ast::UnaryOp::Not,
+        value,
+        crate::ops::Operand::Expr(&function.args[0]),
+        ctx,
+    )
+}
+
+/// The value a temporal signature computed, in the function's return type:
+/// the chunk column Go writes it to carries that type's decimal.
+pub(super) fn temporal_of_ret_type(function: &ScalarFunction, result: Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    use tidb_datatype::{FieldTypeCode, TimeType};
+    let ret_type = function.get_static_type();
+    let decimal = ret_type.map(FieldType::decimal);
+    match ret_type.map(FieldType::code) {
+        Some(FieldTypeCode::Datetime) => {
+            crate::cast::parse_computed_time(&result, ctx, TimeType::DateTime, decimal)
+        }
+        Some(FieldTypeCode::Date) => {
+            crate::cast::parse_computed_time(&result, ctx, TimeType::Date, Some(0))
+        }
+        Some(FieldTypeCode::Duration) => crate::cast::parse_computed_duration(&result, ctx, decimal),
+        _ => Ok(result),
+    }
+}
+
+/// Go `builtin*TimeDiffSig`: the eight signatures `timeDiffFunctionClass`
+/// picks from its arguments' eval types.
+fn time_diff_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    use crate::time_fn::time_diff::TimeDiffArg::{Duration, String, Time};
+    let kinds = match function.pb_signature() {
+        Some(ScalarFuncSig::DurationDurationTimeDiff) => [Duration, Duration],
+        Some(ScalarFuncSig::DurationStringTimeDiff) => [Duration, String],
+        Some(ScalarFuncSig::StringDurationTimeDiff) => [String, Duration],
+        Some(ScalarFuncSig::StringStringTimeDiff) => [String, String],
+        Some(ScalarFuncSig::StringTimeTimeDiff) => [String, Time],
+        Some(ScalarFuncSig::TimeStringTimeDiff) => [Time, String],
+        Some(ScalarFuncSig::TimeTimeTimeDiff) => [Time, Time],
+        // `builtinNullTimeDiffSig` answers NULL without reading either side.
+        _ => return Ok(Datum::Null),
+    };
+    let fsp = function
+        .get_static_type()
+        .map_or(tidb_datatype::MAX_FSP, FieldType::decimal);
+    crate::time_fn::time_diff::time_diff(values, kinds, fsp, ctx)
+}
+
+/// Go `builtinAdd*Sig` / `builtinSub*Sig` of `ADDTIME` / `SUBTIME`: the
+/// signature carries the two kinds its class switched on.
+fn add_sub_time_of(function: &ScalarFunction, values: &[Datum], sign: i64, ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    use tidb_datatype::{FieldTypeCode, TimeType};
+    let kinds = function
+        .pb_signature()
+        .and_then(crate::time_fn::add_sub::kinds_of_signature)
+        .ok_or(EvalError::Unsupported("not an ADDTIME/SUBTIME signature"))?;
+    let row_path = !function.runs_vectorized_body();
+    let result = crate::time_fn::add_sub::add_sub_time(values, kinds, sign, row_path, ctx)?;
+    match function.get_static_type().map(FieldType::code) {
+        Some(FieldTypeCode::Datetime) => {
+            crate::cast::parse_computed_time(&result, ctx, TimeType::DateTime, None)
+        }
+        Some(FieldTypeCode::Duration) => crate::cast::parse_computed_duration(&result, ctx, None),
+        _ => Ok(result),
+    }
+}
+
+fn add_time_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    add_sub_time_of(function, values, 1, ctx)
+}
+
+fn sub_time_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    add_sub_time_of(function, values, -1, ctx)
+}
+
+/// Go `builtinTimestamp1ArgSig` / `builtinTimestamp2ArgsSig`.
+fn timestamp_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    let is_float = function.sig == crate::builtin::SigFields::Timestamp { is_float: true };
+    let result = crate::time_fn::add_sub::timestamp(values, is_float, ctx)?;
+    crate::cast::parse_computed_time(&result, ctx, tidb_datatype::TimeType::DateTime, None)
+}
+
+/// Go `builtinNowWithArgSig` / `builtinNowWithoutArgSig`.
+fn now_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    temporal_of_ret_type(function, crate::time_fn::now(values, ctx)?, ctx)
+}
+
+/// Go `builtinUTCTimestampWithArgSig` / `builtinUTCTimestampWithoutArgSig`.
+fn utc_timestamp_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    temporal_of_ret_type(function, crate::time_fn::utc_timestamp(values, ctx)?, ctx)
+}
+
+/// Go `builtinCurrentTime0ArgSig` / `builtinCurrentTime1ArgSig`; the
+/// function's own name is the one an fsp error reports.
+fn current_time_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    let name = if function.func_name.lowercase() == "curtime" {
+        "curtime"
+    } else {
+        "current_time"
+    };
+    temporal_of_ret_type(function, crate::time_fn::current_time(values, name, ctx)?, ctx)
+}
+
+/// Go `builtinUTCTimeWithArgSig` / `builtinUTCTimeWithoutArgSig`.
+fn utc_time_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    temporal_of_ret_type(function, crate::time_fn::utc_time(values, ctx)?, ctx)
+}
+
+/// Go `builtinSecToTimeSig`.
+fn sec_to_time_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    temporal_of_ret_type(function, crate::time_fn::sec_to_time(values, ctx)?, ctx)
+}
+
+/// Go `builtinStrToDateDateSig` / `builtinStrToDateDatetimeSig` /
+/// `builtinStrToDateDurationSig`: a time-only parse under the datetime
+/// signature is the zero date with that time, which NO_ZERO_DATE refuses.
+fn str_to_date_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    let mut result = crate::time_fn::calendar::str_to_date(values, ctx)?;
+    if function.pb_signature() == Some(ScalarFuncSig::StrToDateDatetime) {
+        if let Ok(text) = result.sql_string() {
+            if text.contains(':') && !text.contains('-') {
+                if ctx.date_modes().no_zero_date {
+                    return Ok(Datum::Null);
+                }
+                result = Datum::new_string_datum(format!("0000-00-00 {text}"));
+            }
+        }
+    }
+    temporal_of_ret_type(function, result, ctx)
+}
+
+/// Go `builtinConvertTzSig.evalTime` reads its arguments in turn and answers
+/// NULL at the first that is NULL or fails, the error dropped: a strict
+/// write stores NULL where other builtins fail.
+fn convert_tz_row(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+    let mut values = Vec::with_capacity(function.args.len());
+    for argument in &function.args {
+        match argument.eval(ctx, row) {
+            Ok(Datum::Null) | Err(_) => return Ok(Datum::Null),
+            Ok(value) => values.push(value),
+        }
+    }
+    temporal_of_ret_type(function, crate::time_fn::convert_tz::convert_tz(&values)?, ctx)
+}
+
+/// Go `builtinGreatest*Sig`: the string signature compares under the
+/// function's collation.
+pub(crate) fn greatest_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    function.extremum_of(true, values, function.derived_collation(), ctx)
+}
+
+/// Go `builtinLeast*Sig`.
+pub(crate) fn least_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    function.extremum_of(false, values, function.derived_collation(), ctx)
+}
+
+/// Go `builtinIntervalIntSig` / `builtinIntervalRealSig`.
+fn interval_row(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+    let arg_types = function
+        .args
+        .iter()
+        .map(|argument| argument.static_type().cloned())
+        .collect::<Vec<_>>();
+    crate::builtin_ext::interval_lazy(&arg_types, |index| function.args[index].eval(ctx, row), ctx)
+}
+
+/// Go `builtinAesEncryptSig` / `builtinAesEncryptIVSig`.
+fn aes_encrypt_row(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+    crate::builtin_ext::eval_aes_lazy(
+        "aes_encrypt",
+        function.args.len(),
+        |index| function.args[index].eval(ctx, row),
+        ctx,
+    )
+    .expect("aes_encrypt is an AES function")
+}
+
+/// Go `builtinAesDecryptSig` / `builtinAesDecryptIVSig`.
+fn aes_decrypt_row(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+    crate::builtin_ext::eval_aes_lazy(
+        "aes_decrypt",
+        function.args.len(),
+        |index| function.args[index].eval(ctx, row),
+        ctx,
+    )
+    .expect("aes_decrypt is an AES function")
+}
+
+/// Go `builtinLastInsertIDSig.evalInt`: the session's previous last insert
+/// id, in the unsigned domain.
+fn last_insert_id_values(_: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    Ok(match ctx.last_insert_id() {
+        Some(id) => Datum::UInt(id),
+        None => Datum::Null,
+    })
+}
+
+/// Go `builtinLastInsertIDWithIDSig.evalInt`: records the argument as the
+/// session's last insert id and returns it; NULL for a NULL argument.
+fn last_insert_id_with_id_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    if values[0].is_null() {
+        return Ok(Datum::Null);
+    }
+    let cast = crate::cast::cast_arg_as_int(&values[0], function.args[0].static_type(), ctx)?;
+    let recorded = match cast {
+        Datum::Int(i) => i as u64,
+        Datum::UInt(u) => u,
+        _ => return Err(EvalError::Unsupported("LAST_INSERT_ID argument")),
+    };
+    ctx.set_last_insert_id(recorded);
+    Ok(Datum::Int(recorded as i64))
+}
+
+/// Go `BuiltinGroupingImplSig.evalInt`: the planner installs the grouping
+/// metadata before execution; a NULL grouping id is NULL.
+fn grouping_method(function: &ScalarFunction, values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
+    let Some(grouping_id) = crate::arg_eval_type::eval_int(&values[0])? else {
+        return Ok(Datum::Null);
+    };
+    let metadata = function
+        .grouping_metadata
+        .as_ref()
+        .ok_or(EvalError::Unsupported("Meta data is not initialized"))?;
+    Ok(Datum::UInt(metadata.eval(grouping_id as u64)))
+}
+
+fn ltrim_values(values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::builtin_ext::string2::ltrim(&values[0])
+}
+
+fn rtrim_values(values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::builtin_ext::string2::rtrim(&values[0])
+}
+
+fn left_values(values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::string_fn::str_take(values, true)
+}
+
+fn lpad_values(values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::string_packet::pad(values, true, ctx)
+}
+
+fn rpad_values(values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::string_packet::pad(values, false, ctx)
+}
+
+fn unhex_values(values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::string_fn::unhex(values)
+}
+
+fn oct_values(values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::string_fn::oct(values)
+}
+
+fn export_set_values(values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::string_fn::export_set(values)
+}
+
+fn make_set_values(values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::string_fn::make_set(values)
+}
+
+/// Go `builtinLocate2ArgsSig` / `builtinLocate2ArgsUTF8Sig`: the search runs
+/// under the function's collation.
+fn locate_2_args_method(function: &ScalarFunction, values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::string_fn::locate(&values[0], &values[1], function.derived_collation())
+}
+
+/// Go `builtinLocate3ArgsSig` / `builtinLocate3ArgsUTF8Sig`.
+fn locate_3_args_method(function: &ScalarFunction, values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::string_fn::locate_with_position(values, function.derived_collation())
+}
+
+/// Go `builtinInstrSig` / `builtinInstrUTF8Sig`.
+fn instr_method(function: &ScalarFunction, values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::string_fn::instr(&values[0], &values[1], function.derived_collation())
+}
+
+/// Go `builtinTrim1ArgSig` / `builtinTrim2ArgsSig` / `builtinTrim3ArgsSig`:
+/// the optional second argument is the string to remove (a space by default)
+/// and the optional third an `ast.TrimDirectionType` integer.
+fn trim_row(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+    let value = function.args[0].eval(ctx, row)?;
+    if value.is_null() {
+        return Ok(Datum::Null);
+    }
+    let remstr = match function.args.get(1) {
+        Some(argument) => argument.eval(ctx, row)?,
+        None => Datum::new_string_datum(" "),
+    };
+    if remstr.is_null() {
+        return Ok(Datum::Null);
+    }
+    let direction = match function.args.get(2) {
+        Some(argument) => {
+            let direction = argument.eval(ctx, row)?;
+            if direction.is_null() {
+                return Ok(Datum::Null);
+            }
+            match direction.get_int64() {
+                2 => tidb_ast::TrimDirection::Leading,
+                3 => tidb_ast::TrimDirection::Trailing,
+                _ => tidb_ast::TrimDirection::Both,
+            }
+        }
+        None => tidb_ast::TrimDirection::Both,
+    };
+    let binary = matches!(value, Datum::Bytes(_));
+    let text = crate::coerce::coerce_str_bytes(&value)?;
+    let remove = crate::coerce::coerce_str_bytes(&remstr)?;
+    Ok(crate::string_fn::trim_value(text, remove, direction, binary))
+}
+
+/// Go `builtinConvertSig.evalString`.
+fn convert_row(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+    let value = function.args[0].eval(ctx, row)?;
+    if value.is_null() {
+        return Ok(Datum::Null);
+    }
+    let target = function.args[1].eval(ctx, row)?;
+    let target = crate::coerce::coerce_str_bytes(&target)?.unwrap_or_default();
+    let target = String::from_utf8_lossy(&target).into_owned();
+    let arg_type = function.args[0]
+        .static_type()
+        .cloned()
+        .unwrap_or_else(|| FieldType::new(tidb_datatype::FieldTypeCode::VarString));
+    let value = crate::cast::cast_arg_as_string(&value, Some(&arg_type), ctx)?;
+    let explicit_collation = crate::collation_derive::coercibility_of(&function.args[0])
+        == crate::expr_collation::Coercibility::EXPLICIT;
+    let string_type = crate::cast::cast_arg_as_string_type(
+        &arg_type,
+        explicit_collation,
+        ctx.connection_charset_info(),
+    );
+    crate::convert_charset::convert_using(&value, &string_type, &target)
+}
+
+fn right_values(values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::string_fn::str_take(values, false)
+}
 
 /// Go `builtinCeil*Sig` / `builtinFloor*Sig`: an `*IntToInt` or `*Real`
 /// signature keeps its argument's domain; a `*DecTo*` one answers the
@@ -98,23 +545,18 @@ fn crc32_values(values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
 }
 
 #[derive(Clone, Copy, Debug)]
-enum Kernel {
+pub(crate) enum Kernel {
     Binary(BinaryOp, EvalType),
     /// Go comparisons evaluate both typed operands before applying NULL semantics.
     Compare(BinaryOp, EvalType),
     In(EvalType),
     Like,
+    Ilike,
     Conv,
     DateArithmetic {
         subtract: bool,
     },
     Logic(BinaryOp),
-    /// The builtin TiDB itself evaluates under this Go name: unistore runs a
-    /// pushed builtin with the same Go implementation the TiDB tier does.
-    Named(&'static str),
-    /// A signature only its function class builds -- Go `getSignatureByPB`
-    /// has no arm for it -- evaluated by the node's own Go implementation.
-    Function,
     /// Go `builtinBitNegSig` / `builtinUnaryMinus*Sig` over their one
     /// argument.
     Unary(tidb_ast::UnaryOp),
@@ -164,10 +606,12 @@ enum Kernel {
     RegexpFamily(&'static str),
     Json,
     Values(ValuesKernel),
+    Method(MethodKernel),
+    Row(RowKernel),
 }
 
 #[derive(Clone, Copy, Debug)]
-enum StringOp {
+pub(crate) enum StringOp {
     Length,
     Upper,
     Lower,
@@ -276,9 +720,9 @@ impl PbBuiltin {
             InDuration => Kernel::In(EvalType::Duration),
             InJson => Kernel::In(EvalType::Json),
             LikeSig => Kernel::Like,
-            IlikeSig => Kernel::Named("ilike"),
-            FtsMatchWord => Kernel::Named("fts_match_word"),
-            FtsMatchExpression => Kernel::Named("match_against"),
+            IlikeSig => Kernel::Ilike,
+            FtsMatchWord => Kernel::Row(fts_match_word_row),
+            FtsMatchExpression => Kernel::Row(fts_match_against_row),
             LogicalAnd => Kernel::Logic(BinaryOp::LogicAnd),
             LogicalOr => Kernel::Logic(BinaryOp::LogicOr),
             LogicalXor => Kernel::Logic(BinaryOp::LogicXor),
@@ -478,54 +922,56 @@ impl PbBuiltin {
             CeilDecToDec => Kernel::Values(ceil_dec_to_dec),
             FloorDecToInt => Kernel::Values(floor_dec_to_int),
             FloorDecToDec => Kernel::Values(floor_dec_to_dec),
-            VecDimsSig => Kernel::Named("vec_dims"),
-            VecL2NormSig => Kernel::Named("vec_l2_norm"),
-            VecAsTextSig => Kernel::Named("vec_as_text"),
-            VecL1DistanceSig => Kernel::Named("vec_l1_distance"),
-            VecL2DistanceSig => Kernel::Named("vec_l2_distance"),
-            VecNegativeInnerProductSig => Kernel::Named("vec_negative_inner_product"),
-            VecCosineDistanceSig => Kernel::Named("vec_cosine_distance"),
-            Uuid => Kernel::Named("uuid"),
-            UuidTimestamp => Kernel::Named("uuid_timestamp"),
-            UuidVersion => Kernel::Named("uuid_version"),
-            SysDateWithoutFsp | SysDateWithFsp => Kernel::Named("sysdate"),
-            RandWithSeedFirstGen => Kernel::Named("rand"),
-            Sha1 => Kernel::Named("sha1"),
-            Sha2 => Kernel::Named("sha2"),
-            UncompressedLength => Kernel::Named("uncompressed_length"),
-            JsonTypeSig => Kernel::Named("json_type"),
-            JsonUnquoteSig => Kernel::Named("json_unquote"),
-            JsonLengthSig => Kernel::Named("json_length"),
-            JsonObjectSig => Kernel::Named("json_object"),
-            JsonArraySig => Kernel::Named("json_array"),
-            JsonMergeSig => Kernel::Named("json_merge"),
-            JsonSetSig => Kernel::Named("json_set"),
-            JsonInsertSig => Kernel::Named("json_insert"),
-            JsonRemoveSig => Kernel::Named("json_remove"),
-            JsonContainsSig => Kernel::Named("json_contains"),
-            JsonValidJsonSig | JsonValidStringSig | JsonValidOthersSig => Kernel::Named("json_valid"),
-            DayOfMonth => Kernel::Named("dayofmonth"),
-            DayOfWeek => Kernel::Named("dayofweek"),
-            DayOfYear => Kernel::Named("dayofyear"),
-            WeekOfYear => Kernel::Named("weekofyear"),
-            Year => Kernel::Named("year"),
-            MonthName => Kernel::Named("monthname"),
-            FromDays => Kernel::Named("from_days"),
-            MakeDate => Kernel::Named("makedate"),
-            MakeTime => Kernel::Named("maketime"),
-            TimeToSec => Kernel::Named("time_to_sec"),
-            Ascii => Kernel::Named("ascii"),
-            BitLength => Kernel::Named("bit_length"),
-            Reverse | ReverseUtf8 => Kernel::Named("reverse"),
-            Replace => Kernel::Named("replace"),
-            Strcmp => Kernel::Named("strcmp"),
-            Elt => Kernel::Named("elt"),
-            FieldInt | FieldReal | FieldString => Kernel::Named("field"),
-            HexStrArg | HexIntArg => Kernel::Named("hex"),
-            LTrim => Kernel::Named("ltrim"),
-            RTrim => Kernel::Named("rtrim"),
-            Right | RightUtf8 => Kernel::Named("right"),
-            Space => Kernel::Named("space"),
+            VecDimsSig => Kernel::Values(|values, _| crate::builtin_ext::vec::dims(&values[0])),
+            VecL2NormSig => Kernel::Values(|values, _| crate::builtin_ext::vec::l2_norm(&values[0])),
+            VecAsTextSig => Kernel::Values(|values, _| crate::builtin_ext::vec::as_text(&values[0])),
+            VecL1DistanceSig => Kernel::Values(|values, _| {
+                crate::builtin_ext::vec::distance(&values[0], &values[1], VectorFloat32::l1_distance)
+            }),
+            VecL2DistanceSig => Kernel::Values(|values, _| {
+                crate::builtin_ext::vec::distance(&values[0], &values[1], VectorFloat32::l2_distance)
+            }),
+            VecNegativeInnerProductSig => Kernel::Values(|values, _| {
+                crate::builtin_ext::vec::distance(&values[0], &values[1], VectorFloat32::negative_inner_product)
+            }),
+            VecCosineDistanceSig => Kernel::Values(|values, _| {
+                crate::builtin_ext::vec::distance(&values[0], &values[1], VectorFloat32::cosine_distance)
+            }),
+            Uuid => Kernel::Values(|_, _| crate::builtin_ext::misc::uuid_v1()),
+            UuidTimestamp => Kernel::Values(|values, _| crate::builtin_ext::misc::uuid_timestamp(&values[0])),
+            UuidVersion => Kernel::Values(|values, _| crate::builtin_ext::misc::uuid_version(&values[0])),
+            SysDateWithoutFsp | SysDateWithFsp => Kernel::Method(sys_date_method),
+            RandWithSeedFirstGen => Kernel::Row(rand_row),
+            Sha1 => Kernel::Values(|values, _| crate::builtin_ext::crypto::hash_unary::<sha1::Sha1>(&values[0])),
+            Sha2 => Kernel::Values(|values, _| crate::builtin_ext::crypto::sha2_hash(&values[0], &values[1])),
+            UncompressedLength => Kernel::Values(|values, ctx| {
+                crate::builtin_ext::crypto::uncompressed_length(&values[0], ctx)
+            }),
+            JsonTypeSig | JsonUnquoteSig | JsonLengthSig | JsonObjectSig | JsonArraySig
+            | JsonMergeSig | JsonSetSig | JsonInsertSig | JsonRemoveSig | JsonContainsSig
+            | JsonValidJsonSig | JsonValidStringSig | JsonValidOthersSig => Kernel::Json,
+            DayOfMonth => Kernel::Values(|values, _| crate::time_fn::day_of_month(values)),
+            DayOfWeek => Kernel::Values(crate::time_fn::day_of_week),
+            DayOfYear => Kernel::Values(crate::time_fn::day_of_year),
+            WeekOfYear => Kernel::Values(crate::time_fn::week_of_year_builtin),
+            Year => Kernel::Values(|values, _| crate::time_fn::calendar::date_part(values, |date| date.0)),
+            MonthName => Kernel::Values(crate::time_fn::monthname),
+            FromDays => Kernel::Values(from_days_values),
+            MakeDate => Kernel::Values(make_date_values),
+            MakeTime => Kernel::Method(make_time_method),
+            TimeToSec => Kernel::Values(|values, _| crate::time_fn::time_to_sec(values)),
+            Ascii => Kernel::Values(|values, _| crate::string_fn::ascii(values)),
+            BitLength => Kernel::Values(|values, _| crate::string_fn::bit_length(values)),
+            Reverse | ReverseUtf8 => Kernel::Values(|values, _| crate::string_fn::reverse(values)),
+            Replace => Kernel::Values(|values, _| crate::string_fn::replace(values)),
+            Strcmp => Kernel::Method(strcmp_method),
+            Elt => Kernel::Values(|values, _| crate::string_fn::elt(values)),
+            FieldInt | FieldReal | FieldString => Kernel::Method(field_method),
+            HexStrArg | HexIntArg => Kernel::Method(hex_method),
+            LTrim => Kernel::Values(ltrim_values),
+            RTrim => Kernel::Values(rtrim_values),
+            Right | RightUtf8 => Kernel::Values(right_values),
+            Space => Kernel::Values(crate::string_packet::space),
             Md5 => Kernel::Values(md5_values),
             Crc32 => Kernel::Values(crc32_values),
             Concat => Kernel::Values(crate::string_fn::concat_with_context),
@@ -655,6 +1101,53 @@ impl PbBuiltin {
             | SubDateStringInt
             | SubDateStringReal
             | SubDateStringString => Kernel::DateArithmetic { subtract: true },
+            // builtin_math.go
+            Tan => Kernel::Method(class_kernels::tan),
+            // builtin_string.go
+            Bin => Kernel::Values(crate::string_fn::bin),
+            SubstringIndex => Kernel::Values(|values, _| crate::string_fn::substring_index(values)),
+            ToBase64 => Kernel::Values(crate::string_packet::to_base64),
+            FromBase64 => Kernel::Values(|values, ctx| {
+                crate::string_fn::from_base64_with_packet_limit(values, Some(ctx))
+            }),
+            Quote => Kernel::Method(class_kernels::quote),
+            Ord => Kernel::Method(class_kernels::ord),
+            Repeat => Kernel::Method(class_kernels::repeat),
+            FindInSet => Kernel::Row(class_kernels::find_in_set),
+            // builtin_time.go
+            WeekDay => Kernel::Values(crate::time_fn::weekday),
+            Quarter => Kernel::Values(|values, _| crate::time_fn::quarter(values)),
+            GetFormat => Kernel::Values(|values, _| crate::time_fn::get_format_value(values)),
+            DayName => Kernel::Values(crate::time_fn::dayname),
+            TimeFormat => Kernel::Values(|values, _| crate::time_fn::time_format(values)),
+            ToDays => Kernel::Values(crate::time_fn::calendar::to_days),
+            ToSeconds => Kernel::Values(crate::time_fn::calendar::to_seconds),
+            LastDay => Kernel::Method(class_kernels::last_day),
+            // builtin_miscellaneous.go
+            InetAton => Kernel::Values(|values, _| crate::builtin_ext::compare2::inet_aton(&values[0])),
+            InetNtoa => Kernel::Values(|values, ctx| crate::builtin_ext::compare2::inet_ntoa(&values[0], ctx)),
+            Inet6Aton => Kernel::Values(|values, _| crate::builtin_ext::compare2::inet6_aton(&values[0])),
+            Inet6Ntoa => Kernel::Values(|values, _| crate::builtin_ext::compare2::inet6_ntoa(&values[0])),
+            IsIPv4 => Kernel::Method(|_, values, _| crate::builtin_ext::compare2::is_ipv4_value(&values[0])),
+            IsIPv4Compat => {
+                Kernel::Method(|_, values, _| crate::builtin_ext::compare2::is_ipv4_compat_value(&values[0]))
+            }
+            IsIPv4Mapped => {
+                Kernel::Method(|_, values, _| crate::builtin_ext::compare2::is_ipv4_mapped_value(&values[0]))
+            }
+            IsIPv6 => Kernel::Method(|_, values, _| crate::builtin_ext::compare2::is_ipv6_value(&values[0])),
+            UuiDv4 => Kernel::Method(|_, _, _| crate::builtin_ext::misc::uuid_v4()),
+            UuiDv7 => Kernel::Method(|_, _, _| crate::builtin_ext::misc::uuid_v7()),
+            DecimalAnyValue | DurationAnyValue | IntAnyValue | JsonAnyValue | RealAnyValue
+            | StringAnyValue | TimeAnyValue | VectorFloat32AnyValue => {
+                Kernel::Values(|values, _| Ok(values[0].clone()))
+            }
+            // builtin_encryption.go
+            Compress => Kernel::Values(|values, _| crate::builtin_ext::crypto::compress(&values[0])),
+            Uncompress => Kernel::Values(|values, ctx| crate::builtin_ext::crypto::uncompress(&values[0], ctx)),
+            Password => Kernel::Method(class_kernels::password),
+            // builtin_info.go
+            RowCount => Kernel::Method(|_, values, ctx| class_kernels::row_count(values, ctx)),
             _ => {
                 let (source, target) = cast_types(signature)?;
                 Kernel::Cast { source, target, in_union: false }
@@ -665,17 +1158,106 @@ impl PbBuiltin {
 
     /// Go `builtinFunc.PbCode()` of the function a class's `getFunction`
     /// returned: the signature the class set, decodable or not.
-    pub(crate) fn of_builtin_func(signature: ScalarFuncSig) -> Self {
-        Self::new(signature).unwrap_or(Self {
-            signature,
-            kernel: Kernel::Function,
+    pub(crate) fn of_builtin_func(signature: ScalarFuncSig, kernel: Option<Kernel>) -> Self {
+        let kernel = kernel
+            .or_else(|| Self::new(signature).map(|builtin| builtin.kernel))
+            .or_else(|| Self::class_only(signature))
+            .unwrap_or(Kernel::Values(class_kernels::not_yet_ported));
+        Self { signature, kernel }
+    }
+
+    /// The evaluation of a signature a class sets and `getSignatureByPB`
+    /// does not decode.
+    fn class_only(signature: ScalarFuncSig) -> Option<Kernel> {
+        use ScalarFuncSig::*;
+        Some(match signature {
+            // builtin_miscellaneous.go
+            IsUuid => Kernel::Values(|values, _| crate::builtin_ext::misc::is_uuid(&values[0])),
+            TiDbShard => Kernel::Values(|values, ctx| crate::builtin_ext::misc::tidb_shard(&values[0], ctx)),
+            VitessHash => Kernel::Values(|values, ctx| crate::builtin_ext::misc::vitess_hash(&values[0], ctx)),
+            // builtin_encryption.go
+            Encode => Kernel::Values(|values, _| crate::builtin_ext::crypto::sql_encode(&values[0], &values[1])),
+            Decode => Kernel::Values(|values, _| crate::builtin_ext::crypto::sql_decode(&values[0], &values[1])),
+            // builtin_string.go
+            Left | LeftUtf8 => Kernel::Values(left_values),
+            Lpad | LpadUtf8 => Kernel::Values(lpad_values),
+            Rpad | RpadUtf8 => Kernel::Values(rpad_values),
+            Locate2Args | Locate2ArgsUtf8 => Kernel::Method(locate_2_args_method),
+            Locate3Args | Locate3ArgsUtf8 => Kernel::Method(locate_3_args_method),
+            Instr | InstrUtf8 => Kernel::Method(instr_method),
+            UnHex => Kernel::Values(unhex_values),
+            OctInt | OctString => Kernel::Values(oct_values),
+            ExportSet3Arg | ExportSet4Arg | ExportSet5Arg => Kernel::Values(export_set_values),
+            MakeSet => Kernel::Values(make_set_values),
+            Format => Kernel::Values(crate::string_fn::format_num),
+            FormatWithLocale => Kernel::Values(crate::builtin_ext::string2::format_with_locale),
+            Insert | InsertUtf8 => Kernel::Values(crate::string_fn::insert_with_context),
+            Char => Kernel::Values(crate::string_fn::char_func_with_context),
+            Trim1Arg | Trim2Args | Trim3Args => Kernel::Row(trim_row),
+            Convert => Kernel::Row(convert_row),
+            // builtin_math.go
+            Rand => Kernel::Row(rand_const_row),
+            RoundWithFracInt | RoundWithFracReal | RoundWithFracDec => Kernel::Round,
+            TruncateInt | TruncateUint | TruncateReal | TruncateDecimal => {
+                Kernel::Method(truncate_method)
+            }
+            // builtin_json.go
+            JsonMergePreserveSig | JsonArrayInsertSig | JsonContainsPathSig | JsonDepthSig
+            | JsonKeysSig | JsonKeys2ArgsSig | JsonPrettySig | JsonQuoteSig | JsonSearchSig
+            | JsonStorageFreeSig | JsonStorageSizeSig => Kernel::Json,
+            // builtin_compare.go
+            GreatestInt | GreatestReal | GreatestDecimal | GreatestString | GreatestTime
+            | GreatestDate | GreatestDuration | GreatestCmpStringAsTime
+            | GreatestCmpStringAsDate => Kernel::Method(greatest_method),
+            LeastInt | LeastReal | LeastDecimal | LeastString | LeastTime | LeastDate
+            | LeastDuration | LeastCmpStringAsTime | LeastCmpStringAsDate => {
+                Kernel::Method(least_method)
+            }
+            IntervalInt | IntervalReal => Kernel::Row(interval_row),
+            // builtin_encryption.go
+            AesEncrypt | AesEncryptIv => Kernel::Row(aes_encrypt_row),
+            AesDecrypt | AesDecryptIv => Kernel::Row(aes_decrypt_row),
+            // builtin_info.go
+            LastInsertId => Kernel::Values(last_insert_id_values),
+            LastInsertIdWithId => Kernel::Method(last_insert_id_with_id_method),
+            // builtin_grouping.go
+            GroupingSig => Kernel::Method(grouping_method),
+            // builtin_op.go
+            UnaryNotJson => Kernel::Row(unary_not_json_row),
+            // builtin_time.go
+            DurationDurationTimeDiff | DurationStringTimeDiff | StringDurationTimeDiff
+            | StringStringTimeDiff | StringTimeTimeDiff | TimeStringTimeDiff | TimeTimeTimeDiff
+            | NullTimeDiff => Kernel::Method(time_diff_method),
+            AddDatetimeAndDuration | AddTimeDateTimeNull | AddDatetimeAndString
+            | AddDateAndDuration | AddTimeStringNull | AddDateAndString | AddDurationAndDuration
+            | AddTimeDurationNull | AddDurationAndString | AddStringAndDuration
+            | AddStringAndString => Kernel::Method(add_time_method),
+            SubDatetimeAndDuration | SubTimeDateTimeNull | SubDatetimeAndString
+            | SubDateAndDuration | SubTimeStringNull | SubDateAndString | SubDurationAndDuration
+            | SubTimeDurationNull | SubDurationAndString | SubStringAndDuration
+            | SubStringAndString => Kernel::Method(sub_time_method),
+            Timestamp1Arg | Timestamp2Args => Kernel::Method(timestamp_method),
+            NowWithArg | NowWithoutArg => Kernel::Method(now_method),
+            UtcTimestampWithArg | UtcTimestampWithoutArg => Kernel::Method(utc_timestamp_method),
+            CurrentTime0Arg | CurrentTime1Arg => Kernel::Method(current_time_method),
+            UtcTimeWithArg | UtcTimeWithoutArg => Kernel::Method(utc_time_method),
+            SecToTime => Kernel::Method(sec_to_time_method),
+            StrToDateDate | StrToDateDatetime | StrToDateDuration => {
+                Kernel::Method(str_to_date_method)
+            }
+            ConvertTz => Kernel::Row(convert_tz_row),
+            Time => Kernel::Values(crate::time_fn::time),
+            YearWeekWithMode | YearWeekWithoutMode => Kernel::Values(crate::time_fn::yearweek),
+            UnixTimestampCurrent => Kernel::Values(crate::time_fn::session_tz::unix_timestamp),
+            TimestampAdd => Kernel::Values(crate::time_fn::add_sub::timestamp_add),
+            _ => return None,
         })
     }
 
     /// Go `newBaseBuiltinCastFunc(bf, inUnion)` of the signature a cast
     /// class's `getFunction` set.
-    pub(crate) fn of_cast_func(signature: ScalarFuncSig, in_union: bool) -> Self {
-        let mut builtin = Self::of_builtin_func(signature);
+    pub(crate) fn of_cast_func(signature: ScalarFuncSig, kernel: Option<Kernel>, in_union: bool) -> Self {
+        let mut builtin = Self::of_builtin_func(signature, kernel);
         if let Kernel::Cast { source, target, .. } = builtin.kernel {
             builtin.kernel = Kernel::Cast { source, target, in_union };
         }
@@ -690,14 +1272,6 @@ impl PbBuiltin {
         match self.kernel {
             Kernel::Binary(_, domain) => Some(domain),
             Kernel::IntegerMod { .. } | Kernel::IntegerMultiply { .. } => Some(EvalType::Int),
-            _ => None,
-        }
-    }
-
-    /// The Go name a [`Kernel::Named`] builtin evaluates under.
-    pub(crate) fn named(self) -> Option<&'static str> {
-        match self.kernel {
-            Kernel::Named(name) => Some(name),
             _ => None,
         }
     }
@@ -724,7 +1298,6 @@ impl PbBuiltin {
             Ok(crate::arg_eval_type::eval_int(&value)?.map(|value| value != 0))
         };
         match self.kernel {
-            Kernel::Named(_) | Kernel::Function => function.eval_by_signature(ctx, row),
             Kernel::Case(domain) => {
                 let (pairs, remainder) = args.as_chunks::<2>();
                 for (index, pair) in pairs.iter().enumerate() {
@@ -926,6 +1499,8 @@ impl PbBuiltin {
                 crate::math_fn::conv(&[text, from, to])
             }
             Kernel::Like => function.eval_like(ctx, row, false),
+            Kernel::Ilike => function.eval_like(ctx, row, true),
+            Kernel::Row(eval) => eval(function, ctx, row),
             Kernel::DateArithmetic { subtract } => {
                 if args.len() != 3 {
                     return Err(EvalError::Unsupported("protobuf date arithmetic arity"));
@@ -1013,13 +1588,14 @@ impl PbBuiltin {
                     // The root tier's evaluators read a NULL argument
                     // themselves: Go `builtinConcatWSSig` skips a NULL member
                     // and `builtinWeekWithModeSig` reads a NULL mode as 0.
-                    if value.is_null() && !matches!(kernel, Kernel::Json | Kernel::Values(_)) {
+                    if value.is_null() && !matches!(kernel, Kernel::Json | Kernel::Values(_) | Kernel::Method(_)) {
                         return Ok(Datum::Null);
                     }
                     values.push(value);
                 }
                 match kernel {
                     Kernel::Values(eval) => eval(&values, ctx),
+                    Kernel::Method(eval) => eval(function, &values, ctx),
                     Kernel::RegexpFamily(name) => function.eval_regexp_family(name, &values, ctx),
                     Kernel::ConvertCharset { from_binary } => {
                         let [value] = values.as_slice() else {
@@ -1220,6 +1796,10 @@ mod tests {
                     tidb_datatype::MySqlDuration::from_nanoseconds(3_600_000_000_000, 0).unwrap(),
                 ),
                 FieldTypeCode::Duration,
+            ),
+            EvalType::VectorFloat32 => (
+                Datum::VectorFloat32(VectorFloat32::parse("[1,2]").unwrap()),
+                FieldTypeCode::VectorFloat32,
             ),
             domain => panic!("no literal for {domain:?}"),
         };
