@@ -241,6 +241,16 @@ impl tikvpb::tikv_server::Tikv for PeerService {
         ))))
     }
 
+    /// Go `rpcServer.ReportMPPTaskStatus`.
+    async fn report_mpp_task_status(
+        &self,
+        request: tonic::Request<tidb_proto::mpp::ReportTaskStatusRequest>,
+    ) -> Result<tonic::Response<tidb_proto::mpp::ReportTaskStatusResponse>, tonic::Status> {
+        Ok(tonic::Response::new(
+            tidb_executor::mppcoordmanager::INSTANCE_MPP_COORDINATOR_MANAGER.report_status(request.get_ref()),
+        ))
+    }
+
     async fn batch_commands(
         &self,
         request: tonic::Request<tonic::Streaming<tikvpb::BatchCommandsRequest>>,

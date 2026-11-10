@@ -916,6 +916,7 @@ async fn establish_mpp_response<S: tikv_client::PdClient>(
                 receive_timeout: MPP_RECEIVE_TIMEOUT,
                 completed,
                 closed: false,
+                packet_error: None,
             })
         }
         Err(error) => {
@@ -996,6 +997,8 @@ struct MppQueryResponse<S: tikv_client::PdClient> {
     receive_timeout: std::time::Duration,
     completed: bool,
     closed: bool,
+    /// Go `MPPDataPacket.Error.Msg` of the packet `pull` failed on.
+    packet_error: Option<String>,
 }
 
 impl<S: tikv_client::PdClient> MppQueryResponse<S> {
@@ -1038,11 +1041,11 @@ impl<S: tikv_client::PdClient> MppQueryResponse<S> {
             self.target = None;
             return Ok(None);
         };
-        if let Some(ref error) = packet.error {
-            return Err(QueryResponseError::Source(format!(
-                "tiflash mpp: task error: {} ({})",
-                error.msg, error.code
-            )));
+        if let Some(error) = packet.error {
+            // Go `handleMPPStreamResponse`.
+            let err = QueryResponseError::Source(format!("other error for mpp stream: {}", error.msg));
+            self.packet_error = Some(error.msg);
+            return Err(err);
         }
         self.held_bytes = packet.encoded_len() as i64;
         self.memory.consume(self.held_bytes);
@@ -1058,6 +1061,10 @@ impl<S: tikv_client::PdClient> MppQueryResponse<S> {
 impl<S: tikv_client::PdClient> MppStreamResponse for MppQueryResponse<S> {
     fn release_packet_memory(&mut self) {
         self.release_packet();
+    }
+
+    fn packet_error(&self) -> Option<&str> {
+        self.packet_error.as_deref()
     }
 }
 
@@ -1621,9 +1628,17 @@ mod mpp_read_batch_tests {
                 Ok(mut response) => {
                     let first = response.next();
                     if matches!(opening, Opening::MemoryLimit) {
-                        assert!(first.is_err());
+                        // Go `handleMPPStreamResponse`.
+                        assert_eq!(
+                            first,
+                            Err(QueryResponseError::Source(
+                                "other error for mpp stream: Memory limit exceeded".into()
+                            ))
+                        );
+                        assert_eq!(response.packet_error(), Some("Memory limit exceeded"));
                     } else {
                         assert!(first.unwrap().is_some());
+                        assert_eq!(response.packet_error(), None);
                     }
                     if fail_tail {
                         assert!(response.next().is_err());

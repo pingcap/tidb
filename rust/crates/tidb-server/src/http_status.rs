@@ -32,6 +32,33 @@ impl StatusServer {
         self.local_addr
     }
 }
+/// Go `Server.GetStatusServerAddr`: whether the status server is on, and
+/// the address a peer reaches it at.
+#[must_use]
+pub fn get_status_server_addr(report_status: bool, status_addr: &str, advertise_address: &str) -> (bool, String) {
+    if !report_status {
+        return (false, String::new());
+    }
+    if status_addr.contains(tidb_config::config_tree::config::DEF_STATUS_HOST) {
+        if !advertise_address.is_empty() {
+            return (true, status_addr.replace(tidb_config::config_tree::config::DEF_STATUS_HOST, advertise_address));
+        }
+        return (false, String::new());
+    }
+    (true, status_addr.to_owned())
+}
+
+/// Go `Server.Run`'s `InitServerAddr(s.GetStatusServerAddr())`, once the
+/// status server listens on `status_host:status_port`.
+pub fn init_mpp_coordinator_server_addr(status_host: &str, status_port: u16) {
+    let (server_on, server_addr) = get_status_server_addr(
+        true,
+        &tidb_session::domain::join_host_port(status_host, status_port),
+        &tidb_config::config_tree::config::get_global_config().advertise_address,
+    );
+    tidb_executor::mppcoordmanager::INSTANCE_MPP_COORDINATOR_MANAGER.init_server_addr(server_on, &server_addr);
+}
+
 impl Drop for StatusServer {
     fn drop(&mut self) {
         if let Some(stop) = self.stop.take() {
@@ -1209,6 +1236,23 @@ fn route_response(
 
 #[cfg(test)]
 mod tests {
+    /// Go `Server.GetStatusServerAddr`: off without the status server; the
+    /// wildcard host is reachable only at the advertised address.
+    #[test]
+    fn the_status_server_address_is_the_advertised_one_for_the_wildcard_host() {
+        use super::get_status_server_addr;
+        assert_eq!(get_status_server_addr(false, "10.0.0.1:10080", "10.0.0.2"), (false, String::new()));
+        assert_eq!(
+            get_status_server_addr(true, "0.0.0.0:10080", "10.0.0.2"),
+            (true, "10.0.0.2:10080".to_owned())
+        );
+        assert_eq!(get_status_server_addr(true, "0.0.0.0:10080", ""), (false, String::new()));
+        assert_eq!(
+            get_status_server_addr(true, "10.0.0.1:10080", "10.0.0.2"),
+            (true, "10.0.0.1:10080".to_owned())
+        );
+    }
+
     /// Go `pprof.Symbol`: a program counter the binary maps to a function
     /// answers its name, and every answer ends with `num_symbols: 1`.
     #[test]

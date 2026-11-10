@@ -31,6 +31,7 @@ use tidb_txnkv::{KeyRange, MppClient, MppQueryId, QueryResponseError};
 
 use crate::local_mpp_coordinator::LocalMppCoordinator;
 use crate::mpp_coordinator::{ExecutorWithRetry, MppGatherResponse};
+use crate::mppcoordmanager::INSTANCE_MPP_COORDINATOR_MANAGER;
 
 /// Go `useMPPExecution`: the session allows MPP and the reader's plan is an
 /// MPP fragment's sender.
@@ -227,19 +228,24 @@ impl MppGather {
 }
 
 /// Go `ExecutorWithRetry.setupMPPCoordinator`: a new gather id, the
-/// coordinator's `Execute`, and at least one TiFlash node.
+/// coordinator (`buildCoordinator`) registered with the manager, its
+/// `Execute`, and at least one TiFlash node.
 fn setup_mpp_coordinator(
     ctx: &crate::StmtContext,
     is: &tidb_infoschema::SessionExtendedInfoSchema,
     client: &Arc<dyn MppClient>,
     plan: &PhysicalPlan,
+    plan_ids: &[isize],
     start_ts: u64,
     mpp_query_id: MppQueryId,
 ) -> Result<(LocalMppCoordinator, Vec<KeyRange>), String> {
     // Make sure gatherID is updated before build coord.
     let gather_id = ctx.mpp_query_info().alloc_gather_id();
-    let (coord, kv_ranges) =
-        LocalMppCoordinator::execute(ctx, is, client, plan, start_ts, mpp_query_id, gather_id)?;
+    let (_, server_addr) = INSTANCE_MPP_COORDINATOR_MANAGER.get_server_addr();
+    let mut coord =
+        LocalMppCoordinator::new(ctx, plan, plan_ids.to_vec(), start_ts, mpp_query_id, gather_id, server_addr);
+    INSTANCE_MPP_COORDINATOR_MANAGER.register(coord.unique_id(), coord.reports())?;
+    let kv_ranges = coord.execute(ctx, is, client, plan)?;
     let node_cnt = coord.node_count();
     if node_cnt == 0 {
         return Err(format!("tiflash node count should be greater than zero: {node_cnt}"));
@@ -258,6 +264,7 @@ impl Executor for MppGather {
             &self.is,
             &self.client,
             &self.original_plan,
+            &plan_ids,
             self.start_ts,
             self.mpp_query_id,
         )
@@ -270,11 +277,12 @@ impl Executor for MppGather {
         let enable_mpp_recovery = config.disaggregated_tiflash
             && config.use_auto_scaler
             && !statement.allow_tiflash_fallback;
-        let (ctx, is, client, plan, start_ts, mpp_query_id) = (
+        let (ctx, is, client, plan, reopen_plan_ids, start_ts, mpp_query_id) = (
             self.ctx.clone(),
             self.is.clone(),
             Arc::clone(&self.client),
             self.original_plan.clone(),
+            plan_ids.clone(),
             self.start_ts,
             self.mpp_query_id,
         );
@@ -283,7 +291,7 @@ impl Executor for MppGather {
             enable_mpp_recovery,
             statement.memory.clone(),
             Box::new(move || {
-                setup_mpp_coordinator(&ctx, &is, &client, &plan, start_ts, mpp_query_id)
+                setup_mpp_coordinator(&ctx, &is, &client, &plan, &reopen_plan_ids, start_ts, mpp_query_id)
                     .map(|(coord, _)| Box::new(coord) as Box<dyn MppGatherResponse>)
                     .map_err(QueryResponseError::Source)
             }),

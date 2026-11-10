@@ -3534,6 +3534,7 @@ pub fn process_plan_info_with_brief(
         ),
         // Go `runStmt`: a binary-protocol EXECUTE's `currentPlan` is nil, so
         // its process info publishes no plan.
+        stmt_plan: Some(crate::StoredPlan::new(std::sync::Arc::clone(&stored))),
         plan: with_brief.then(|| crate::StoredPlan::new(stored)),
         // Go `SetProcessInfo`'s `RuntimeStatsColl: sc.RuntimeStatsColl`.
         runtime_stats_coll: statement_context

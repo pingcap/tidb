@@ -91,7 +91,7 @@ impl<T: MppTaskLocation + ?Sized> MppTaskLocation for Arc<T> {
 }
 
 /// Query-wide MPP identity.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct MppQueryId {
     /// Query execution timestamp.
     pub query_ts: u64,
@@ -310,6 +310,10 @@ pub trait MppStreamResponse: crate::Response + Send {
     /// Releases the charge for the packet the last `next` returned; the
     /// gather that holds the packet charges it itself.
     fn release_packet_memory(&mut self);
+
+    /// Go `MPPDataPacket.Error`'s message, when the last `next` failed on a
+    /// packet that carries the task's error.
+    fn packet_error(&self) -> Option<&str>;
 }
 
 /// Go `kv.MPPClient` (`pkg/store/copr/mpp.go`): where a fragment's tasks run,

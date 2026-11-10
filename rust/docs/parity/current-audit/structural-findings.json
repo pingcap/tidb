@@ -2,9 +2,9 @@
   "date": "2026-11-09",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 27,
+    "unresolved": 26,
     "open": 4,
-    "partial": 23
+    "partial": 22
   },
   "findings": [
     {
@@ -133,15 +133,8 @@
       "id": "M01",
       "status": "partial",
       "group": "TiFlash and MPP",
-      "finding": "An MPP reader runs as Go's `MPPGather` over Go's local coordinator (`tidb-executor` `mpp_gather.rs`, `local_mpp_coordinator.rs`): the planner's fragments (`GenerateRootMPPTasks`), each fragment's `ToPB` DAG dispatched to its tasks, the root tasks' packets received; the embedded store serves Go's MPP tasks, tunnels and exchange/join executors, and Go's `tiflashtest` tests pass on mock TiFlash stores (`TestMppExecution`, `TestReadUnsigedPK`, `TestJoinRace`, `TestInjectExtraProj`, `TestMppEnum`, `TestMppUnionAll`, `TestUnionWithEmptyDualTable`, `TestAvgOverflow`, `TestMppApply`, `TestTiFlashVirtualColumn`, `TestAggPushDownApplyAll`, `TestAggPushDownCountStar`, `TestIssue41014`, `TestMPP47766`, `TestAggPushDownUnionAndMPP`, `TestGroupStreamAggOnTiFlash`, `TestIssue50358`, `TestNonsupportCharsetTable`, `TestIssue57149`, `TestCanGenerateTiFlashCopWithKeepOrer`, `TestIssue59877`, `TestForbidTiFlashIfExtraPhysTableIDIsNeeded`, `TestIndexMergeCarePreferTiflash`, `TestTiFlashPlanCacheable`, and the enforcempp casetest `TestMPPMultiDistinct3Stage`; `unistore_cop/mpp_execution.rs`). Partitioned reads are Go's too (the generator's `partitionPruning`, per-partition task building and `TableRegions`, a union scan's buffer read; `TestReadPartitionTable`, `TestTiflashEmptyDynamicPruneResult`). TiFlash late materialization is Go's (`tiflash_predicate_push_down.rs`: the scan's pushed down filter, its `lm_col_scan` cost and `PushedDownFilterConditions`). Left: a TiFlash scan's `UsedColumnarIndexes` (vector, inverted and full-text indexes, with the inverted-index arm of `handleTiFlashPredicatePushDown`), the disaggregated (consistent-hash) task building for a partitioned request, the MPP CTE operators (CTE sink and source with their `ToPB`, the generator's CTE task counts and `fillLocalCTECounts`), the index scan's `ToPB`, the local index lookup in `ToPB` and the store (`indexLookUpExec`), the dispatch meta's SQL and plan digests, the coordinator's zone helper, and the single-fragment lowering (`mpp_coordinator.rs` `open_mpp_scan`) a non-MPP TiFlash read still takes where Go reads TiFlash through batch-cop or cop (no batch-cop client or `BatchCoprocessor` server here). Go's `tiflashtest` tests not yet run here: `TestCancelMppTasks`, the `TestDisaggregatedTiFlash*` four, `TestDispatchTaskRetry`, `TestIssue59703`, `TestMPPMemoryTracker`, `TestMPPRecovery`, `TestMppAggShouldAlignFinalMode`, `TestMppGoroutinesExitFromErrors`, `TestMppStoreCntWithErrors`, `TestMppTableReaderCacheForSingleSQL`, `TestMppVersionError`, `TestNoAliveTiFlashRetry`, `TestPartitionTable`, `TestTiFlashComputeDispatchPolicy`, the `TestTiFlashPartitionTable*` four, `TestTiflashPartitionTableScan`, `TestTiflashSupportStaleRead` and `TestUnionScan`",
+      "finding": "An MPP reader runs as Go's `MPPGather` over Go's local coordinator (`tidb-executor` `mpp_gather.rs`, `local_mpp_coordinator.rs`): the planner's fragments (`GenerateRootMPPTasks`), each fragment's `ToPB` DAG dispatched to its tasks, the root tasks' packets received; the embedded store serves Go's MPP tasks, tunnels and exchange/join executors, and Go's `tiflashtest` tests pass on mock TiFlash stores (`TestMppExecution`, `TestReadUnsigedPK`, `TestJoinRace`, `TestInjectExtraProj`, `TestMppEnum`, `TestMppUnionAll`, `TestUnionWithEmptyDualTable`, `TestAvgOverflow`, `TestMppApply`, `TestTiFlashVirtualColumn`, `TestAggPushDownApplyAll`, `TestAggPushDownCountStar`, `TestIssue41014`, `TestMPP47766`, `TestAggPushDownUnionAndMPP`, `TestGroupStreamAggOnTiFlash`, `TestIssue50358`, `TestNonsupportCharsetTable`, `TestIssue57149`, `TestCanGenerateTiFlashCopWithKeepOrer`, `TestIssue59877`, `TestForbidTiFlashIfExtraPhysTableIDIsNeeded`, `TestIndexMergeCarePreferTiflash`, `TestTiFlashPlanCacheable`, and the enforcempp casetest `TestMPPMultiDistinct3Stage`; `unistore_cop/mpp_execution.rs`). Partitioned reads are Go's too (the generator's `partitionPruning`, per-partition task building and `TableRegions`, a union scan's buffer read; `TestReadPartitionTable`, `TestTiflashEmptyDynamicPruneResult`). TiFlash late materialization is Go's (`tiflash_predicate_push_down.rs`: the scan's pushed down filter, its `lm_col_scan` cost and `PushedDownFilterConditions`). Left: a TiFlash scan's `UsedColumnarIndexes` (vector, inverted and full-text indexes, with the inverted-index arm of `handleTiFlashPredicatePushDown`), the disaggregated (consistent-hash) task building for a partitioned request, the MPP CTE operators (CTE sink and source with their `ToPB`, the generator's CTE task counts and `fillLocalCTECounts`), the index scan's `ToPB`, the local index lookup in `ToPB` and the store (`indexLookUpExec`), the dispatch meta's SQL and plan digests, the coordinator's zone helper, the cross-AZ `RUConsumptionReporter` report in `handleAllReports`, `Close` returning the report error (logged here), and the single-fragment lowering (`mpp_coordinator.rs` `open_mpp_scan`) a non-MPP TiFlash read still takes where Go reads TiFlash through batch-cop or cop (no batch-cop client or `BatchCoprocessor` server here). Go's `tiflashtest` tests not yet run here: `TestCancelMppTasks`, the `TestDisaggregatedTiFlash*` four, `TestDispatchTaskRetry`, `TestIssue59703`, `TestMPPMemoryTracker`, `TestMPPRecovery`, `TestMppAggShouldAlignFinalMode`, `TestMppGoroutinesExitFromErrors`, `TestMppStoreCntWithErrors`, `TestMppTableReaderCacheForSingleSQL`, `TestMppVersionError`, `TestNoAliveTiFlashRetry`, `TestPartitionTable`, `TestTiFlashComputeDispatchPolicy`, the `TestTiFlashPartitionTable*` four, `TestTiflashPartitionTableScan`, `TestTiflashSupportStaleRead` and `TestUnionScan`",
       "go_owner": "`pkg/planner/core` (MPP fragments), `pkg/executor/mpp_gather.go`, `pkg/store/copr/mpp.go`, `pkg/store/copr/batch_coprocessor.go`"
-    },
-    {
-      "id": "M04",
-      "status": "partial",
-      "group": "TiFlash and MPP",
-      "finding": "`pkg/executor/mppcoordmanager` (`MPPCoordinatorManager`: coordinator registration, `detectAndDelete` expiry, the server address) and the RPC server's `ReportMPPTaskStatus` have no port, so TiFlash's task-status reports reach no coordinator; Go's coordinator only asks TiFlash for reports when its plan has a Limit above the table reader (`needReportExecutionSummary`), which the single-fragment scan never builds (M01)",
-      "go_owner": "`pkg/executor/internal/mpp`"
     },
     {
       "id": "P03",
@@ -201,7 +194,7 @@
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
-  "unresolved": 27,
+  "unresolved": 26,
   "open": 4,
-  "partial": 23
+  "partial": 22
 }

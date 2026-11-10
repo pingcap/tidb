@@ -234,7 +234,10 @@ fn start_cluster_status(
             gc_resolve_locks,
         },
     ) {
-        Ok(server) => Ok(Some(server)),
+        Ok(server) => {
+            crate::http_status::init_mpp_coordinator_server_addr(&config.status_host, config.status_port);
+            Ok(Some(server))
+        }
         Err(error) => {
             crate::log_status_listen_failed(&error);
             Err(error)

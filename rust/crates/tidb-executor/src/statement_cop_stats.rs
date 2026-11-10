@@ -260,18 +260,10 @@ impl CopResponseSink for RuntimeStatsCollSink {
                 record_copr_cache_hit_telemetry(stats);
             }
         }
-        // Only TiKV's positional summaries are recorded here: TiFlash's
-        // carry executor IDs and have their own arm.
-        if metadata.store_type != tidb_txnkv::StoreType::TiKv {
-            return;
-        }
         let store_type = runtime_store_type(metadata.store_type);
         let plan_ids = &metadata.cop_plan_ids;
-        let Some(&root_plan_id) = plan_ids.last() else {
-            return;
-        };
         let record_root = |summary| {
-            if root_plan_id > 0 {
+            if let Some(&root_plan_id) = plan_ids.last().filter(|plan_id| **plan_id > 0) {
                 self.coll.record_cop_stats(
                     root_plan_id as i64,
                     store_type,
@@ -281,24 +273,46 @@ impl CopResponseSink for RuntimeStatsCollSink {
                 );
             }
         };
-        if execution_summaries.is_empty() {
-            // The response contributes no operator rows, but its
-            // request-root scan and time evidence remain.
-            record_root(None);
-            return;
-        }
         let valid = |summary: &ExecutorExecutionSummary| {
             summary.time_processed_ns.is_some()
                 && summary.num_produced_rows.is_some()
                 && summary.num_iterations.is_some()
         };
-        if execution_summaries.len() != plan_ids.len() || !execution_summaries.iter().all(valid) {
+        // If has_executor is true, the summary is returned from TiFlash.
+        let has_executor = execution_summaries
+            .iter()
+            .find(|summary| valid(summary))
+            .is_some_and(|summary| summary.executor_id.is_some());
+        if metadata.store_type == tidb_txnkv::StoreType::TiKv {
+            if execution_summaries.is_empty() {
+                // The response contributes no operator rows, but its
+                // request-root scan and time evidence remain.
+                record_root(None);
+                return;
+            }
+            if execution_summaries.len() != plan_ids.len() || !execution_summaries.iter().all(valid) {
+                return;
+            }
+        } else if !has_executor && execution_summaries.len() != plan_ids.len() {
+            // TiFlash streaming responses carry positional execution
+            // summaries only in the last response.
+            return;
+        }
+        if has_executor {
+            record_root(None);
+            tidb_distsql::select_result_stats::record_execution_summaries_for_tiflash_tasks(
+                &*self.coll,
+                execution_summaries,
+                store_type,
+                plan_ids,
+            );
             return;
         }
         for (index, (summary, plan_id)) in execution_summaries.iter().zip(plan_ids).enumerate() {
+            let summary = valid(summary).then_some(summary);
             if index + 1 == plan_ids.len() {
-                record_root(Some(summary));
-            } else if *plan_id > 0 {
+                record_root(summary);
+            } else if let Some(summary) = summary.filter(|_| *plan_id > 0) {
                 self.coll
                     .record_one_cop_task(*plan_id as i64, store_type, summary);
             }

@@ -180,7 +180,10 @@ pub fn run_unistore_cluster_session(
                 },
             },
         ) {
-            Ok(server) => Some(server),
+            Ok(server) => {
+                crate::http_status::init_mpp_coordinator_server_addr(&config.status_host, config.status_port);
+                Some(server)
+            }
             Err(error) => {
                 tidb_session::domain::log_status_listen_failed(&error);
                 return Err(RunConfiguredNodeError::Engine(SqlQueryError::unknown(

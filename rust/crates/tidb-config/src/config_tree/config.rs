@@ -71,6 +71,8 @@ const MIN_DXF_RESOURCE_LIMIT: i64 = 10;
 const MAX_DXF_RESOURCE_LIMIT: i64 = 100;
 const DEF_PORT: usize = 4000;
 const DEF_HOST: &str = "0.0.0.0";
+/// Go `DefStatusHost`: the default status host of TiDB.
+pub const DEF_STATUS_HOST: &str = "0.0.0.0";
 const DEF_TEMP_DIR: &str = "/tmp/tidb";
 
 /// Go `EnvClusterCA`.

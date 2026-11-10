@@ -221,6 +221,8 @@ fn print_info() {
 fn run_node_with_log(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     initialize_compute_topology(&config.global_config)?;
     tidb_copr::mpp_probe::global_mpp_failed_store_prober().run();
+    tidb_executor::mppcoordmanager::INSTANCE_MPP_COORDINATOR_MANAGER.run();
+    let _mpp_coordinator_manager_cleanup = MppCoordinatorManagerCleanup;
     let _mpp_prober_cleanup = MppProberCleanup;
     tidb_cgmon::start_cgroup_monitor();
     let _cgroup_monitor_cleanup = CgroupMonitorCleanup;
@@ -268,6 +270,13 @@ fn run_node_with_log(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
         );
     }
     run_cluster_session_node_with_spill(config, spill_storage, memory_arbitrator.arbitrator())
+}
+
+struct MppCoordinatorManagerCleanup;
+impl Drop for MppCoordinatorManagerCleanup {
+    fn drop(&mut self) {
+        tidb_executor::mppcoordmanager::INSTANCE_MPP_COORDINATOR_MANAGER.stop();
+    }
 }
 
 struct MppProberCleanup;

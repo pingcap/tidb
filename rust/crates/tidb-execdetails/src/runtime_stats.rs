@@ -2055,6 +2055,18 @@ pub trait ExecutorRuntimeStatsSource: Send + Sync {
     /// join's, a reader's, ...), merged into the group of the same kind.
     fn register_stats(&self, _plan_id: i64, _stats: Box<dyn crate::RuntimeStats>) {}
 
+    /// Go `RuntimeStatsColl.RecordOneCopTask`: one cop task's execution
+    /// summary, recorded on the plan its executor ID names (`plan_id`
+    /// otherwise); returns that plan ID.
+    fn record_one_cop_task(
+        &self,
+        plan_id: i64,
+        _store_type: StoreType,
+        _summary: &ExecutorExecutionSummary,
+    ) -> i64 {
+        plan_id
+    }
+
     /// Go `RuntimeStatsColl.GetPlanActRows`: the rows the root executors of
     /// `plan_id` returned, `None` when the source keeps no root stats.
     fn plan_act_rows(&self, _plan_id: i64) -> Option<i64> {
@@ -2090,6 +2102,15 @@ impl ExecutorRuntimeStats for BasicRuntimeStats {
 }
 
 impl ExecutorRuntimeStatsSource for RuntimeStatsColl {
+    fn record_one_cop_task(
+        &self,
+        plan_id: i64,
+        store_type: StoreType,
+        summary: &ExecutorExecutionSummary,
+    ) -> i64 {
+        RuntimeStatsColl::record_one_cop_task(self, plan_id, store_type, summary)
+    }
+
     fn for_executor(&self, plan_id: i64) -> Option<Arc<dyn ExecutorRuntimeStats>> {
         self.get_basic_runtime_stats(plan_id, true)
             .map(|stats| stats as Arc<dyn ExecutorRuntimeStats>)

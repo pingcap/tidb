@@ -411,3 +411,47 @@ mod tests {
         );
     }
 }
+
+/// Go `FillDummySummariesForTiFlashTasks`: a dummy summary for every plan
+/// no execution summary was recorded on, so that each TiFlash plan shows
+/// its cop stats.
+pub fn fill_dummy_summaries_for_tiflash_tasks(
+    runtime_stats_coll: &dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource,
+    store_type: tidb_kv::store_type::StoreType,
+    all_plan_ids: &[isize],
+    recorded_plan_ids: &std::collections::HashSet<i64>,
+) {
+    let dummy_summary = tidb_proto::ExecutorExecutionSummary {
+        time_processed_ns: Some(0),
+        num_produced_rows: Some(0),
+        num_iterations: Some(0),
+        executor_id: None,
+        ..Default::default()
+    };
+    for plan_id in all_plan_ids {
+        let plan_id = *plan_id as i64;
+        if !recorded_plan_ids.contains(&plan_id) {
+            runtime_stats_coll.record_one_cop_task(plan_id, store_type, &dummy_summary);
+        }
+    }
+}
+
+/// Go `recordExecutionSummariesForTiFlashTasks`: the summaries TiFlash
+/// names by executor ID, then the dummies of the plans none of them named.
+pub fn record_execution_summaries_for_tiflash_tasks(
+    runtime_stats_coll: &dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource,
+    execution_summaries: &[tidb_proto::ExecutorExecutionSummary],
+    store_type: tidb_kv::store_type::StoreType,
+    all_plan_ids: &[isize],
+) {
+    let mut recorded_plan_ids = std::collections::HashSet::new();
+    for detail in execution_summaries {
+        if detail.time_processed_ns.is_some()
+            && detail.num_produced_rows.is_some()
+            && detail.num_iterations.is_some()
+        {
+            recorded_plan_ids.insert(runtime_stats_coll.record_one_cop_task(-1, store_type, detail));
+        }
+    }
+    fill_dummy_summaries_for_tiflash_tasks(runtime_stats_coll, store_type, all_plan_ids, &recorded_plan_ids);
+}

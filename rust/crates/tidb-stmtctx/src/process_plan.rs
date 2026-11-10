@@ -145,6 +145,10 @@ pub struct ProcessPlanInfo {
     pub execution_started: Option<(std::time::Instant, chrono::DateTime<chrono::Utc>)>,
     /// Go `ProcessInfo.Plan`: the plan, for `EXPLAIN FOR CONNECTION`.
     pub plan: Option<StoredPlan>,
+    /// Go `StmtCtx.GetPlan()` unwrapped to its physical plan
+    /// (`getActualPhysicalPlan`): the plan this statement runs, whichever
+    /// protocol it arrived by.
+    pub stmt_plan: Option<StoredPlan>,
     /// The plan the connection's previous statement published; Go keeps it
     /// on the process info until the next statement replaces it.
     pub previous_plan: Option<StoredPlan>,

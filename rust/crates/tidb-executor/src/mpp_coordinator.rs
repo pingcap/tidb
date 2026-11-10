@@ -449,6 +449,13 @@ impl Drop for MppTaskResponses {
 pub trait MppGatherResponse: tidb_txnkv::Response + Send {
     /// Go `GetNodeCnt`: the nodes the gather's tasks run on.
     fn node_count(&self) -> usize;
+
+    /// Go `localMppCoordinator.closeWithoutReport`, which a recovery closes
+    /// the failed coordinator with: only report runtime stats when there is
+    /// no error.
+    fn close_without_report(&mut self) {
+        self.close();
+    }
 }
 
 impl MppGatherResponse for MppTaskResponses {
@@ -530,7 +537,7 @@ impl ExecutorWithRetry {
                     if (self.recover)(self.gather.node_count()).is_err() {
                         return Err(error);
                     }
-                    self.gather.close();
+                    self.gather.close_without_report();
                     let replacement = (self.open.as_mut().expect("open recovery response"))()
                         .map_err(|_| error)?;
                     self.clear_held();
@@ -903,6 +910,10 @@ mod recovery_tests {
     }
     impl MppStreamResponse for Packets {
         fn release_packet_memory(&mut self) {}
+
+        fn packet_error(&self) -> Option<&str> {
+            None
+        }
     }
     impl tidb_txnkv::Response for Packets {
         fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {

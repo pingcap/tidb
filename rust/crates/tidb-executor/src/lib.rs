@@ -114,6 +114,7 @@ pub mod cop_reader;
 pub mod mpp_coordinator;
 pub mod local_mpp_coordinator;
 pub mod mpp_gather;
+pub mod mppcoordmanager;
 #[cfg(test)]
 pub(crate) mod test_region;
 #[cfg(test)]

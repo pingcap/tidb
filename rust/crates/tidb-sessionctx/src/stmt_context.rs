@@ -4990,6 +4990,18 @@ impl StmtContext {
         self.in_execute
     }
 
+    /// Go `StmtCtx.GetPlan()` unwrapped to its physical plan, once the
+    /// statement published it.
+    #[must_use]
+    pub fn stmt_plan(&self) -> Option<tidb_stmtctx::StoredPlan> {
+        self.process_plan_info
+            .as_ref()?
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .stmt_plan
+            .clone()
+    }
+
     /// The second half: stamps the rendered `plan` with the statement's own
     /// state and publishes it.
     pub fn finish_physical_process_info(

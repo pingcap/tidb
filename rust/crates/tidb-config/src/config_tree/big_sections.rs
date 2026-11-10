@@ -178,7 +178,7 @@ impl Default for Status {
     // From Go `defaultConf.Status`.
     fn default() -> Self {
         Status {
-            status_host: "0.0.0.0".into(),
+            status_host: super::config::DEF_STATUS_HOST.into(),
             metrics_addr: String::new(),
             status_port: 10080,
             metrics_interval: 15,
