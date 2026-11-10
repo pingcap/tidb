@@ -413,7 +413,7 @@ func TestDecodeBudget(t *testing.T) {
 // TestSmallValueWithinBudget checks the bound that lets read build a value of at most
 // smallValue bytes without a scan: the work of the worst such shapes is within the floor.
 func TestSmallValueWithinBudget(t *testing.T) {
-	require.LessOrEqual(t, uint64(20*smallValue*smallValue/81), uint64(decodeWorkFloor))
+	require.LessOrEqual(t, uint64(20*smallValue*smallValue/81), decodeWorkFloor)
 	// Empty collections are the most geometries per byte; nesting copies them most often.
 	const most = smallValue / minGeometrySize
 	shapes := [][]byte{nestedCollections(most)}
