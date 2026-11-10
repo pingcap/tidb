@@ -376,6 +376,44 @@ func TestMergeAggregatesBothValuesAcrossTypes(t *testing.T) {
 	}
 }
 
+// TestMergeJSONNonTransitiveOrder: JSON comparison is not transitive,
+// an integer and a float within 1e-8 compare equal while two floats
+// compare exactly, so [0,1] < [-5e-9,2] < [5e-9,0] < [0,1]. A value in
+// several partitions' TopN must still take one global TopN slot.
+func TestMergeJSONNonTransitiveOrder(t *testing.T) {
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+	killer := sqlkiller.SQLKiller{}
+	ft := ftOf(mysql.TypeJSON)
+	enc := func(s string) []byte {
+		bj, err := types.ParseBinaryJSONFromString(s)
+		require.NoError(t, err)
+		e, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewJSONDatum(bj))
+		require.NoError(t, err)
+		return e
+	}
+	a, b, c := enc("[0,1]"), enc("[-5e-9,2]"), enc("[5e-9,0]")
+	// One TopN entry per partition, in the order a, b, c, a: every
+	// adjacent pair is already in order, so a sort can leave the two a
+	// entries apart.
+	var topNs []*statistics.TopN
+	var hists []*statistics.Histogram
+	for _, key := range [][]byte{a, b, c, a} {
+		topN := statistics.NewTopN(1)
+		topN.AppendTopN(key, 10)
+		topNs = append(topNs, topN)
+		hists = append(hists, statistics.NewHistogram(1, 0, 0, 0, ft, chunk.InitialCapacity, 0))
+	}
+	gTopN, _, err := statistics.MergePartTopNAndHistToGlobal(sc, &killer, topNs, hists, 4, 2, false)
+	require.NoError(t, err)
+	require.NotNil(t, gTopN)
+	byKey := map[string]uint64{}
+	for _, m := range gTopN.TopN {
+		byKey[string(m.Encoded)] += m.Count
+	}
+	require.Lenf(t, gTopN.TopN, len(byKey), "no value may occupy two TopN slots; got %v", gTopN.TopN)
+	require.Equal(t, uint64(20), byKey[string(a)])
+}
+
 // TestTopNOrderingMatchesDatumOrder pins the type list inside
 // sortTopNEntries against what the encodings actually do.
 //
