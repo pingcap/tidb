@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // maskingResult describes how to display one raw output column. policyID is set
@@ -183,17 +184,38 @@ func (m *maskingResultBuilder) buildColumn(p base.LogicalPlan, col *expression.C
 		if err != nil || !result.masked || !isGroupingCol {
 			return result, err
 		}
-		// A grouping-set level sets this generated column to NULL. The masked
-		// value is rebuilt from raw inputs that Expand keeps, so it must follow
-		// the generated column back to NULL on those rows.
+		// Grouping-set levels that do not group on this column set it to NULL.
+		// The masked value is rebuilt from raw inputs that Expand keeps, so it
+		// must follow those levels back to NULL. The levels are identified by
+		// the grouping ID, so a NULL already present in the data still goes
+		// through the policy.
+		nullGIDs := []expression.Expression{x.GID}
+		seen := make(map[uint64]struct{}, len(x.RollupGroupingSets))
+		for offset, groupingSet := range x.RollupGroupingSets {
+			if groupingSet.AllColIDs().Has(int(col.UniqueID)) {
+				continue
+			}
+			gid := x.GenerateGroupingIDModeBitAnd(groupingSet)
+			if x.GroupingMode == tipb.GroupingMode_ModeNumericSet {
+				gid = x.GenerateGroupingIDIncrementModeNumericSet(offset)
+			}
+			if _, ok := seen[gid]; ok {
+				continue
+			}
+			seen[gid] = struct{}{}
+			nullGIDs = append(nullGIDs, expression.NewUInt64ConstWithFieldType(gid, x.GID.RetType.Clone()))
+		}
+		if len(nullGIDs) == 1 {
+			return result, nil
+		}
 		ectx := m.b.ctx.GetExprCtx()
-		isNull, err := expression.NewFunction(ectx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), col)
+		isRollupNull, err := expression.NewFunction(ectx, ast.In, types.NewFieldType(mysql.TypeLonglong), nullGIDs...)
 		if err != nil {
 			return plain, err
 		}
 		retType := result.expr.GetType(ectx.GetEvalCtx()).Clone()
 		retType.DelFlag(mysql.NotNullFlag)
-		result.expr, err = expression.NewFunction(ectx, ast.If, retType, isNull, expression.NewNull(), result.expr)
+		result.expr, err = expression.NewFunction(ectx, ast.If, retType, isRollupNull, expression.NewNull(), result.expr)
 		if err != nil {
 			return plain, err
 		}

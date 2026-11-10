@@ -145,6 +145,11 @@ func TestMaskingPolicyResultShapes(t *testing.T) {
 	tk.MustQuery("select c, count(*) from t_shapes group by c with rollup order by c").Check(testkit.Rows("<nil> 3", "[aa] 2", "[bb] 1"))
 	tk.MustQuery("select c, id from t_shapes where id < 3 group by c, id with rollup order by c, id").Check(testkit.Rows(
 		"<nil> <nil>", "[aa] <nil>", "[aa] 1", "[bb] <nil>", "[bb] 2"))
+	// A NULL that is present in the data still goes through the policy.
+	tk.MustExec("create table t_rollup_null(id int primary key, c varchar(10))")
+	tk.MustExec("insert into t_rollup_null values (1, 'aa'), (2, null)")
+	tk.MustExec("create masking policy p_rollup_null on t_rollup_null(c) as ifnull(c, 'N/A') enable")
+	tk.MustQuery("select c, count(*) from t_rollup_null group by c with rollup order by grouping(c), c").Check(testkit.Rows("N/A 1", "aa 1", "<nil> 2"))
 
 	// DISTINCT compares raw result values, even when they have the same masked display.
 	tk.MustExec("alter table t_shapes modify masking policy p_shapes set expression = mask_full(c)")
@@ -290,6 +295,13 @@ func TestMaskingPolicyScalarSubqueryClauses(t *testing.T) {
 	// A predicate subquery nested in a value subquery still compares raw values.
 	tk.MustExec("set @w = (select c from t_scalar where c = (select c from t_scalar where id = 1))")
 	tk.MustQuery("select @w").Check(testkit.Rows("XXXXXX"))
+	// EXISTS, IN and quantified subqueries do not pass the value context to their inner query blocks.
+	tk.MustExec("set @e = exists(select 1 from t_scalar where c = (select c from t_scalar where id = 1))")
+	tk.MustExec("set @i = 1 in (select id from t_scalar where c = (select c from t_scalar where id = 1))")
+	tk.MustExec("set @a = 1 = any(select id from t_scalar where c = (select c from t_scalar where id = 1))")
+	tk.MustQuery("select @e, @i, @a").Check(testkit.Rows("1 1 1"))
+	tk.MustExec("update t_scalar_dst set id = 10 + exists(select 1 from t_scalar where c = (select c from t_scalar where id = 1)) where id = 3")
+	tk.MustQuery("select id from t_scalar_dst where id > 3").Check(testkit.Rows("11"))
 }
 
 func TestMaskingPolicyFastPathRepresentations(t *testing.T) {

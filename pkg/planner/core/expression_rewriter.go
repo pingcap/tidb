@@ -488,6 +488,11 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, subq *ast.SubqueryExpr, subqueryCtx subQueryCtx) (np base.LogicalPlan, hintFlags uint64, err error) {
 	intest.AssertNotNil(planCtx)
 	b := planCtx.builder
+	// The inner query block is not a value context of the outer statement.
+	// Scalar callers decide before this call whether to mask their own result.
+	savedValueCtx := b.maskScalarSubqueryValue
+	b.maskScalarSubqueryValue = 0
+	defer func() { b.maskScalarSubqueryValue = savedValueCtx }()
 	if er.schema != nil {
 		outerSchema := er.schema.Clone()
 		b.outerSchemas = append(b.outerSchemas, outerSchema)
@@ -1382,17 +1387,14 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 	resultField := planCtx.curClause == fieldList && !planCtx.builder.inUpdateStmt && !planCtx.builder.inDeleteStmt
 	// The value of a scalar subquery in SET, DO, UPDATE assignments and INSERT
 	// values is stored or returned without passing through a final SELECT
-	// projection, so the subquery masks its own result. Nested subqueries keep
-	// the ordinary rules and only become value producers in the same contexts.
+	// projection, so the subquery masks its own result. buildSubquery resets
+	// the context, so subqueries nested in it keep the ordinary rules.
 	valueResult := planCtx.builder.maskScalarSubqueryValue > 0
-	savedValueCtx := planCtx.builder.maskScalarSubqueryValue
-	planCtx.builder.maskScalarSubqueryValue = 0
 	ci := planCtx.builder.prepareCTECheckForSubQuery()
 	defer resetCTECheckForSubQuery(ci)
 	savedClause := planCtx.builder.curClause
 	np, hintFlags, err := er.buildSubquery(ctx, planCtx, v, handlingScalarSubquery)
 	planCtx.builder.curClause = savedClause
-	planCtx.builder.maskScalarSubqueryValue = savedValueCtx
 	if err != nil {
 		er.err = err
 		return v, true
