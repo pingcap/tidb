@@ -170,6 +170,9 @@ pub struct DispatchContext<'a> {
     pub tiflash_cop_banned: bool,
     /// Go `SessionVars.TiFlashFastScan`.
     pub tiflash_fast_scan: bool,
+    /// Go `SessionVars.EnableLateMaterialization`
+    /// (`tidb_opt_enable_late_materialization`).
+    pub enable_late_materialization: bool,
     /// Go `config.GetGlobalConfig().DisaggregatedTiFlash`.
     pub disaggregated_tiflash: bool,
     /// Go `SessionVars.AllowBatchCop`.
@@ -276,6 +279,8 @@ impl<'a> DispatchContext<'a> {
             // Go `DefTiDBAllowTiFlashCop` is false.
             tiflash_cop_banned: true,
             tiflash_fast_scan: false,
+            // Go `DefTiDBOptEnableLateMaterialization`.
+            enable_late_materialization: true,
             disaggregated_tiflash: false,
             allow_batch_cop: 1,
             mpp_join: crate::plan_cost_ver2::MppJoinSession::default(),
@@ -571,6 +576,13 @@ impl<'a> DispatchContext<'a> {
         self.tiflash_fast_scan = fast_scan;
         self.allow_batch_cop = allow_batch_cop;
         self.disaggregated_tiflash = disaggregated;
+        self
+    }
+
+    /// Go `SessionVars.EnableLateMaterialization`.
+    #[must_use]
+    pub const fn with_enable_late_materialization(mut self, enabled: bool) -> Self {
+        self.enable_late_materialization = enabled;
         self
     }
 
@@ -3884,6 +3896,8 @@ fn find_best_task_4_logical_data_source_paths(
                     base,
                     plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
                     filter_condition: table_filters.clone(),
+                    late_materialization_filter_condition: Vec::new(),
+                    late_materialization_selectivity: 0.0,
                     table_id: ds.physical_table_id,
                     table_as_name: ds.table_as_name.clone(),
                     dynamic_partition_access: ds.dynamic_partition_access.clone(),
@@ -4105,7 +4119,7 @@ fn find_best_task_4_logical_data_source_paths(
                 } else {
                     tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::Range
                 };
-                let scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
+                let mut scan = tidb_planner_core_operator_physicalop::PhysicalTableScan {
                     table: ds.table_info.clone(),
                     columns: ds.columns.clone(),
                     is_mpp_or_batch_cop: false,
@@ -4130,18 +4144,47 @@ fn find_best_task_4_logical_data_source_paths(
                     prop: None,
                     plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
                     filter_condition: path.table_filters.clone(),
+                    late_materialization_filter_condition: Vec::new(),
+                    late_materialization_selectivity: 0.0,
                     resolved_descriptor: Some(tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor::new(
                         ds.physical_table_id,
                         ds.is_common_handle(),
                         scan_kind,
                         tidb_planner_core_operator_logicalop::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
                     )),
-                });
+                };
                 let (table_filters, root_task_conds) = tidb_planner_core_operator_physicalop::pushdown::split_scan_filters(
                     path.table_filters.clone(), tidb_kv::store_type::StoreType::TiFlash,
                     &ctx.expr_pushdown_blacklist,
                     &tidb_planner_core_operator_physicalop::enforce::push_down_reporter(ctx.mpp_warning_sink),
                 );
+                scan.filter_condition = table_filters;
+                // Go `BuildPushedDownSelection`'s TiFlash arm: late
+                // materialization takes some filter conditions into the scan,
+                // the Selection the rest.
+                let table_filters = if scan.filter_condition.is_empty() {
+                    Vec::new()
+                } else {
+                    let tbl_col_hists = table_stats.as_ref().and_then(|stats| stats.hist_coll());
+                    tidb_planner_core_operator_physicalop::tiflash_predicate_push_down::handle_tiflash_predicate_push_down(
+                        &mut scan,
+                        tbl_col_hists.map_or(0, |hist_coll| hist_coll.realtime_count()),
+                        ctx.enable_late_materialization,
+                        &|conds| {
+                            table_stats.as_ref().and_then(|stats| {
+                                crate::stats::analyzed_filter_selectivity_with_evaluator(
+                                    stats,
+                                    conds,
+                                    &ctx.estimator_options,
+                                    ctx.expression_evaluator,
+                                )
+                            })
+                        },
+                        ctx.skew_ratio,
+                    );
+                    tidb_planner_core_operator_physicalop::tiflash_predicate_push_down::conditions_after_late_materialization(&scan)
+                };
+                let scan = PhysicalPlan::TableScan(scan);
                 let table_plan = if table_filters.is_empty() {
                     scan
                 } else {
@@ -4940,6 +4983,8 @@ fn find_best_task_4_logical_data_source_paths(
                             prop: None,
                             plan_part_info: None,
                             filter_condition: Vec::new(),
+                            late_materialization_filter_condition: Vec::new(),
+                            late_materialization_selectivity: 0.0,
                             resolved_descriptor: Some(
                                 tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor::new(
                                     ds.physical_table_id,
@@ -5204,8 +5249,12 @@ fn find_best_task_4_logical_data_source_paths(
         return Ok(best);
     }
     // All alternative choices were fixed before ordinary physical construction.
-    // Index merges read TiKV, which an MPP property does not take.
-    for candidate in merge_candidates.iter().filter(|_| !prop.is_flash_prop()) {
+    // Index merges read TiKV, which an MPP property does not take; Go's
+    // candidate loop: "prefer tiflash, while current table path is tikv, skip
+    // it."
+    let prefer_tiflash =
+        ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIFLASH != 0;
+    for candidate in merge_candidates.iter().filter(|_| !prop.is_flash_prop() && !prefer_tiflash) {
         let mut merge_task = match candidate {
             super::candidate_preparation::PreparedMerge::Union(path) =>
                 super::index_merge_union::build_converged_union_index_merge_task(ds, path, ctx)?,

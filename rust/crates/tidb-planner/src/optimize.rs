@@ -475,6 +475,7 @@ pub fn physical_optimize<C: OptimizeContext>(
         optimizer_cost_env.session.allow_batch_cop,
         optimizer_cost_env.session.disaggregated_tiflash,
     )
+    .with_enable_late_materialization(optimizer_cost_env.session.enable_late_materialization)
     .with_mpp_join_inputs(
         optimizer_cost_env.session.mpp_join,
         ctx.isolation_read_engines()

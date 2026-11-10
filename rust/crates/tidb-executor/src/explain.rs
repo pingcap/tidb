@@ -1487,6 +1487,16 @@ fn physical_operator_own_info(
             {
                 parts.push(format!("range:{}", scan_ranges_text(&scan.ranges)));
             }
+            // Go prints the pushed down filter under `EnableLateMaterialization`
+            // for a filtered TiFlash scan; only such a plan carries one.
+            if scan.store_type == tidb_kv::store_type::StoreType::TiFlash
+                && !scan.late_materialization_filter_condition.is_empty()
+            {
+                parts.push(format!(
+                    "pushed down filter:{}",
+                    sorted_expressions_text(eval_ctx, &scan.late_materialization_filter_condition)
+                ));
+            }
             parts.push(scan_keep_order_text(scan.keep_order, scan.desc));
             if let Some(stats) = used_stats_suffix_for_scan(
                 statement_context,
@@ -3172,8 +3182,20 @@ fn physical_normalized_info(
                 is_index_join_table_range(plan, index_join_context),
                 !scan.ranges.is_empty(),
             );
+            let pushed_down_filter = if scan.store_type == tidb_kv::store_type::StoreType::TiFlash
+                && !scan.late_materialization_filter_condition.is_empty()
+            {
+                format!(
+                    "pushed down filter:{}, ",
+                    tidb_expr::expr_util::sorted_explain_normalized_expression_list(
+                        &scan.late_materialization_filter_condition
+                    )
+                )
+            } else {
+                String::new()
+            };
             format!(
-                "{}, {ranges}{}",
+                "{}, {ranges}{pushed_down_filter}{}",
                 access(plan),
                 scan_keep_order_text(scan.keep_order, scan.desc)
             )

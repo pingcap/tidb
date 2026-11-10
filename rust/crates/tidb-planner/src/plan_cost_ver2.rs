@@ -319,6 +319,9 @@ pub struct CostSessionOpts {
     pub tiflash_cop_banned: bool,
     /// Go `SessionVars.TiFlashFastScan` (`tiflash_fastscan`).
     pub tiflash_fast_scan: bool,
+    /// Go `SessionVars.EnableLateMaterialization`
+    /// (`tidb_opt_enable_late_materialization`).
+    pub enable_late_materialization: bool,
     /// Go `SessionVars.AllowBatchCop` (`tidb_allow_batch_cop`).
     pub allow_batch_cop: i64,
     /// Go `config.GetGlobalConfig().DisaggregatedTiFlash`.
@@ -387,6 +390,7 @@ impl Default for CostSessionOpts {
             // Go `DefTiDBAllowTiFlashCop` is false.
             tiflash_cop_banned: true,
             tiflash_fast_scan: false,
+            enable_late_materialization: true,
             allow_batch_cop: 1,
             disaggregated_tiflash: false,
             mpp_join: MppJoinSession::default(),
@@ -821,23 +825,38 @@ pub fn table_scan_cost(
     mul_cost_ver2(&cost, cost_factor)
 }
 
-/// `getPlanCostVer24PhysicalTableScan` for TiFlash WITHOUT late
-/// materialization or a columnar index: the scan plus a fixed startup penalty
-/// of [`TIFLASH_STARTUP_ROW_PENALTY`] rows, which keeps small scans on TiKV.
+/// `getPlanCostVer24PhysicalTableScan` for TiFlash without a columnar
+/// index: under late materialization (`late_materialization`, the filter
+/// columns' row size and the conditions' selectivity) the
+/// [`tiflash_late_materialization_scan_cost`], otherwise the scan plus a fixed
+/// startup penalty of [`TIFLASH_STARTUP_ROW_PENALTY`] rows, which keeps small
+/// scans on TiKV.
 #[must_use]
 pub fn tiflash_table_scan_cost(
     option: Option<&PlanCostOption>,
     rows: f64,
     row_size: f64,
-    scan_factor: &CostVer2Factor,
+    late_materialization: Option<(f64, f64)>,
+    factors: &Ver2Factors,
     table_tiflash_scan_cost_factor: f64,
 ) -> CostVer2 {
     let rows = rows.max(MIN_NUM_ROWS);
     let row_size = row_size.max(MIN_ROW_SIZE);
-    let cost = sum_cost_ver2(&[
-        scan_cost(option, rows, row_size, scan_factor),
-        scan_cost(option, TIFLASH_STARTUP_ROW_PENALTY, row_size, scan_factor),
-    ]);
+    let scan_factor = &factors.tiflash_scan;
+    let cost = match late_materialization {
+        Some((lm_row_size, lm_selectivity)) => tiflash_late_materialization_scan_cost(
+            option,
+            rows,
+            row_size,
+            lm_row_size,
+            lm_selectivity,
+            factors,
+        ),
+        None => sum_cost_ver2(&[
+            scan_cost(option, rows, row_size, scan_factor),
+            scan_cost(option, TIFLASH_STARTUP_ROW_PENALTY, row_size, scan_factor),
+        ]),
+    };
     mul_cost_ver2(&cost, table_tiflash_scan_cost_factor)
 }
 

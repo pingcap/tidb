@@ -434,6 +434,11 @@ impl PhysicalTableScan {
         ts_exec.desc = Some(self.desc);
         ts_exec.keep_order = Some(self.keep_order);
         ts_exec.is_fast_scan = Some(ctx.tiflash_fast_scan);
+
+        if !self.late_materialization_filter_condition.is_empty() {
+            ts_exec.pushed_down_filter_conditions =
+                expressions_to_pb_list(ctx, &self.late_materialization_filter_condition, schema_of(plan)?)?;
+        }
         // Go `int32(p.maxWaitTimeMs)`, zero without runtime filters.
         ts_exec.max_wait_time_ms = Some(0);
         // Go `p.isPartition` (`ds.PartitionDefIdx != nil`): the scan reads
@@ -475,6 +480,11 @@ impl PhysicalTableScan {
     ) -> Result<tipb::Executor, PlanError> {
         let mut pts_exec =
             tidb_table::tables::scan_from_infos::build_partition_table_scan_from_infos(table, &self.columns, ctx.tiflash_fast_scan);
+
+        if !self.late_materialization_filter_condition.is_empty() {
+            pts_exec.pushed_down_filter_conditions =
+                expressions_to_pb_list(ctx, &self.late_materialization_filter_condition, schema_of(plan)?)?;
+        }
         // Go `int32(p.maxWaitTimeMs)`, zero without runtime filters.
         pts_exec.max_wait_time_ms = Some(0);
         pts_exec.desc = Some(self.desc);

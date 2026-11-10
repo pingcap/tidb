@@ -608,3 +608,70 @@ fn projection_and_join_push_down_refusals_warn_as_go() {
         "Warning|1105|Scalar function 'eq'(signature: EQJson, return type: bigint) is not supported to push down to tiflash now.";
     assert_eq!(text(&mut session, "show warnings"), [eq_json, eq_json]);
 }
+
+/// Go `handleTiFlashPredicatePushDown`: over a pseudo table larger than a
+/// TiFlash pack, late materialization takes the selective `eq(s, 0)` into
+/// the scan, which prices it with `lm_col_scan` and `lm_rest_col_scan` and
+/// sends it as the scan's `PushedDownFilterConditions` (Go testkit probe
+/// `zzprobe/latemat`, Go `TestIndexMergeCarePreferTiflash`'s query; t is Go's
+/// table 117).
+#[test]
+fn tiflash_late_materialization_explains_costs_and_to_pbs_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(435)).expect("session opens");
+    for sql in [
+        "CREATE TABLE test.t (`i` bigint(20) NOT NULL, `w` varchar(32) NOT NULL,`l` varchar(32) NOT NULL,`a` tinyint(4) NOT NULL DEFAULT '0',`m` int(11) NOT NULL DEFAULT '0',`s` int(11) NOT NULL DEFAULT '0',PRIMARY KEY (`i`) /*T![clustered_index] NONCLUSTERED */,KEY `idx_win_user_site_code` (`w`,`m`),KEY `idx_lose_user_site_code` (`l`,`m`),KEY `idx_win_site_code_status` (`w`,`a`),KEY `idx_lose_site_code_status` (`l`,`a`))",
+        "ALTER TABLE test.t SET HYPO TIFLASH REPLICA 1",
+    ] {
+        session.node_conn().execute_write(sql).expect(sql);
+    }
+    rows(&mut session, "use test");
+    let t: i64 = displayed(rows(
+        &mut session,
+        "select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 't'",
+    ))[0][0]
+        .parse()
+        .unwrap();
+    let sql = "explain format='verbose' SELECT /*+ read_from_storage(tiflash[a]) */ a.i FROM t a WHERE a.s = 0 AND a.a NOT IN (-1, 0) AND m >= 1726910326 AND m <= 1726910391 AND ( a.w IN ('1123') OR a.l IN ('1123'))";
+    assert_eq!(
+        displayed(rows(&mut session, sql)).into_iter().map(|row| row.join("|")).collect::<Vec<_>>(),
+        [
+            "TableReader_14|1.00|61955.44|root||MppVersion: 3, data:ExchangeSender_13",
+            "└─ExchangeSender_13|1.00|929314.00|mpp[tiflash]||ExchangeType: PassThrough",
+            "  └─Projection_5|1.00|929314.00|mpp[tiflash]||test.t.i",
+            "    └─Selection_12|1.00|929314.00|mpp[tiflash]||ge(test.t.m, 1726910326), le(test.t.m, 1726910391), not(in(test.t.a, -1, 0)), or(eq(test.t.w, \"1123\"), eq(test.t.l, \"1123\"))",
+            "      └─TableFullScan_11|10.00|929218.00|mpp[tiflash]|table:a|pushed down filter:eq(test.t.s, 0), keep order:false, stats:pseudo",
+        ]
+    );
+    let plan = session.published_plan().expect("the explain publishes its plan");
+    let reader = find_reader(&plan).expect("a TableReader");
+    let table_plan = reader.table_plan.as_deref().expect("the reader has a table plan");
+    let eval_ctx = tidb_exprctx::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
+    let ctx = BuildPbContext {
+        expr_ctx: &eval_ctx,
+        tiflash_fast_scan: false,
+        tiflash_fine_grained_shuffle_batch_size: 8192,
+        group_concat_max_len: 1024,
+        in_explain_stmt: true,
+        use_dynamic_partition_prune: true,
+    };
+    let got = table_plan.to_pb(&ctx, tidb_kv::store_type::StoreType::TiFlash).expect("ToPB");
+    let mut want = tipb::Executor::decode(decode_hex("0809521145786368616e676553656e6465725f313362e30a080022bc0a080b520c50726f6a656374696f6e5f356aa30a0a3108c9011208800000000000000020002a1e08081083201814200028c1ffffffffffffffff01320662696e617279400038001aed09080222d4090ae90108904e1abd0108904e1a3008c9011208800000000000000320002a1d080110011804200028c1ffffffffffffffff01320662696e617279400038001a2f080112087fffffffffffffff20002a1d080110011804200028c1ffffffffffffffff01320662696e617279400038001a2f08011208800000000000000020002a1d080110011804200028c1ffffffffffffffff01320662696e6172794000380020a11f2a1f0808108081201801200028c1ffffffffffffffff01320662696e6172794000380020a0182a1f0808108081201801200028c1ffffffffffffffff01320662696e617279400038000a8d0108904e1a3008c9011208800000000000000420002a1d08031001180b200028c1ffffffffffffffff01320662696e617279400038001a30080112088000000066ee8f7620002a1e0808108101180a200028c1ffffffffffffffff01320662696e617279400038002082012a1f0808108081201801200028c1ffffffffffffffff01320662696e617279400038000a8c0108904e1a3008c9011208800000000000000420002a1d08031001180b200028c1ffffffffffffffff01320662696e617279400038001a30080112088000000066ee8fb720002a1e0808108101180a200028c1ffffffffffffffff01320662696e61727940003800206e2a1f0808108081201801200028c1ffffffffffffffff01320662696e617279400038000ad90208904e1a950108904e1a3208c9011208800000000000000120002a1f080f1089201820200028d2ffffffffffffffff013207757466386d6234400038001a36080512043131323320002a2808fd011001180420ffffffffffffffffff0128d2ffffffffffffffff013207757466386d623440003800208f012a1f0808108081201801200028d2ffffffffffffffff01320662696e617279400038001a950108904e1a3208c9011208800000000000000220002a1f080f1089201820200028d2ffffffffffffffff013207757466386d6234400038001a36080512043131323320002a2808fd011001180420ffffffffffffffffff0128d2ffffffffffffffff013207757466386d623440003800208f012a1f0808108081201801200028d2ffffffffffffffff01320662696e61727940003800209e182a1f0808108081201801200028c1ffffffffffffffff01320662696e617279400038001aea02080012cd020875121c0801100818c1ffffffffffffffff0120142800308320a80100b00100121c0802100f18d2ffffffffffffffff0120202800308920a80100b00100121c0803100f18d2ffffffffffffffff0120202800308920a80100b00100121b0804100118c1ffffffffffffffff01200428003001a80100b00100121b0805100318c1ffffffffffffffff01200b28003001a80100b00100121b0806100318c1ffffffffffffffff01200b28003001a80100b001001800280040004800528d0108904e1a3008c9011208800000000000000520002a1d08031001180b200028c1ffffffffffffffff01320662696e617279400038001a3008011208800000000000000020002a1e08081081011801200028c1ffffffffffffffff01320662696e61727940003800208c012a1f0808108081201801200028c1ffffffffffffffff01320662696e61727940003800600052105461626c6546756c6c5363616e5f3131880100900100520c53656c656374696f6e5f3132880100900100880100900100321e08081083201814200028c1ffffffffffffffff01320662696e6172794000380088010090018040").as_slice()).unwrap();
+    set_table_ids(&mut want, &[(117, t)]);
+    // The scan with its `PushedDownFilterConditions`. (The Selection's
+    // `in(test.t.a, -1, 0)` differs: Go sends the IN constants refined to the
+    // column's tinyint and `InInt` with `BinaryFlag`; register X01.)
+    fn scan_of(executor: &tipb::Executor) -> &tipb::Executor {
+        let child = executor
+            .exchange_sender
+            .as_ref()
+            .and_then(|sender| sender.child.as_deref())
+            .or_else(|| executor.projection.as_ref().and_then(|projection| projection.child.as_deref()))
+            .or_else(|| executor.selection.as_ref().and_then(|selection| selection.child.as_deref()));
+        child.map_or(executor, scan_of)
+    }
+    let (got, want) = (scan_of(&got), scan_of(&want));
+    assert_eq!(got.tbl_scan.as_ref().map(|scan| scan.pushed_down_filter_conditions.len()), Some(1));
+    let hex = |executor: &tipb::Executor| executor.encode_to_vec().iter().map(|b| format!("{b:02x}")).collect::<String>();
+    assert_eq!(hex(got), hex(want), "\ngot:  {got:?}\nwant: {want:?}");
+}

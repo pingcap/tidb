@@ -51,6 +51,7 @@ pub mod pushdown;
 mod memory;
 pub mod part_info;
 pub mod range_rebuild;
+pub mod tiflash_predicate_push_down;
 pub use part_info::PhysPlanPartInfo;
 use tidb_planner_property::stats_info::HistCollExt as _;
 use tidb_kv::store_type::StoreType;
@@ -1248,6 +1249,11 @@ pub struct PhysicalTableScan {
     /// Go `FilterCondition`: the conditions evaluated at the scan, which Go
     /// also hands to the pushed-down Selection.
     pub filter_condition: Vec<Expression>,
+    /// Go `LateMaterializationFilterCondition`: the filter conditions a
+    /// TiFlash scan evaluates while it reads (late materialization).
+    pub late_materialization_filter_condition: Vec<Expression>,
+    /// Go `LateMaterializationSelectivity`.
+    pub late_materialization_selectivity: f64,
     /// Go `DBName`.
     pub db_name: String,
     /// Go `Table.Name.O`: the scan's own table spelling, which a cluster
@@ -4969,6 +4975,8 @@ impl PhysicalPlan {
                 resolved_descriptor: op.resolved_descriptor,
                 plan_part_info: op.plan_part_info.clone(),
                 filter_condition: op.filter_condition.clone(),
+                late_materialization_filter_condition: op.late_materialization_filter_condition.clone(),
+                late_materialization_selectivity: op.late_materialization_selectivity,
                 db_name: op.db_name.clone(),
                 table_name: op.table_name.clone(),
                 handle_col_unique_id: op.handle_col_unique_id,

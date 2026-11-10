@@ -1028,3 +1028,113 @@ fn test_issue_59877() {
         ]
     );
 }
+
+/// Go `TestForbidTiFlashIfExtraPhysTableIDIsNeeded`.
+#[test]
+fn test_forbid_tiflash_if_extra_phys_table_id_is_needed() {
+    let (stack, mut session) = tiflash_session(2, 2174);
+    rows(&mut session, "drop table if exists t");
+    rows(&mut session, "create table t(a int not null primary key, b int not null) partition by hash(a) partitions 2");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+    rows(&mut session, "set tidb_partition_prune_mode=dynamic");
+    rows(&mut session, "set tidb_enforce_mpp=1");
+    let explain = |session: &mut Session, sql: &str| -> String {
+        displayed(rows(session, sql)).into_iter().map(|row| format!("{row:?}\n")).collect()
+    };
+
+    let res = explain(&mut session, "explain select count(*) from t");
+    assert!(res.contains("tiflash"), "{res}");
+    assert!(!res.contains("tikv"), "{res}");
+
+    let res = explain(&mut session, "explain select count(*) from t for update");
+    assert!(!res.contains("tiflash"), "{res}");
+    assert!(res.contains("tikv"), "{res}");
+
+    rows(&mut session, "begin");
+    let res = explain(&mut session, "explain select count(*) from t");
+    assert!(res.contains("tiflash"), "{res}");
+    assert!(!res.contains("tikv"), "{res}");
+    rows(&mut session, "insert into t values(1,2)");
+    let res = explain(&mut session, "explain select count(*) from t");
+    assert!(res.contains("tiflash"), "{res}");
+    assert!(!res.contains("tikv"), "{res}");
+    rows(&mut session, "rollback");
+}
+
+/// Go `TestIndexMergeCarePreferTiflash`.
+#[test]
+fn test_index_merge_care_prefer_tiflash() {
+    let (stack, mut session) = tiflash_session(1, 2175);
+    rows(&mut session, "drop table if exists t");
+    rows(
+        &mut session,
+        "CREATE TABLE `t` (\
+         `i` bigint(20) NOT NULL, \
+         `w` varchar(32) NOT NULL,\
+         `l` varchar(32) NOT NULL,\
+         `a` tinyint(4) NOT NULL DEFAULT '0',\
+         `m` int(11) NOT NULL DEFAULT '0',\
+         `s` int(11) NOT NULL DEFAULT '0',\
+         PRIMARY KEY (`i`) /*T![clustered_index] NONCLUSTERED */,\
+         KEY `idx_win_user_site_code` (`w`,`m`),\
+         KEY `idx_lose_user_site_code` (`l`,`m`),\
+         KEY `idx_win_site_code_status` (`w`,`a`),\
+         KEY `idx_lose_site_code_status` (`l`,`a`)\
+         )",
+    );
+    rows(&mut session, "alter table t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+    check(
+        &mut session,
+        "explain format=\"brief\" SELECT      /*+ read_from_storage(tiflash[a]) */ a.i FROM t a WHERE a.s = 0 AND a.a NOT IN (-1, 0) AND m >= 1726910326 AND m <= 1726910391 AND ( a.w IN ('1123') OR a.l IN ('1123'))",
+        &[
+            &["TableReader", "1.00", "root", "", "MppVersion: 3, data:ExchangeSender"],
+            &["└─ExchangeSender", "1.00", "mpp[tiflash]", "", "ExchangeType: PassThrough"],
+            &["  └─Projection", "1.00", "mpp[tiflash]", "", "test.t.i"],
+            &["    └─Selection", "1.00", "mpp[tiflash]", "", "ge(test.t.m, 1726910326), le(test.t.m, 1726910391), not(in(test.t.a, -1, 0)), or(eq(test.t.w, \"1123\"), eq(test.t.l, \"1123\"))"],
+            &["      └─TableFullScan", "10.00", "mpp[tiflash]", "table:a", "pushed down filter:eq(test.t.s, 0), keep order:false, stats:pseudo"],
+        ],
+    );
+}
+
+/// Go `TestTiFlashPlanCacheable`.
+#[test]
+fn test_tiflash_plan_cacheable() {
+    let (stack, mut session) = tiflash_session(2, 2176);
+    rows(&mut session, "set tidb_enable_prepared_plan_cache=1");
+    rows(&mut session, "drop table if exists t;");
+    rows(&mut session, "create table t(a int);");
+    rows(&mut session, "set @@tidb_enable_collect_execution_info=0;");
+    rows(&mut session, "alter table test.t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+    rows(&mut session, "set @@session.tidb_isolation_read_engines = 'tikv, tiflash'");
+    // unistore does not support later materialization
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+    rows(&mut session, "insert into t values(1);");
+    rows(&mut session, "prepare stmt from 'select /*+ read_from_storage(tiflash[t]) */ * from t;';");
+    check(&mut session, "execute stmt;", &[&["1"]]);
+    check(&mut session, "select @@last_plan_from_cache", &[&["0"]]);
+    check(&mut session, "execute stmt;", &[&["1"]]);
+    // The TiFlash plan can not be cached.
+    check(&mut session, "select @@last_plan_from_cache", &[&["0"]]);
+
+    rows(&mut session, "prepare stmt from 'select /*+ read_from_storage(tikv[t]) */ * from t;';");
+    check(&mut session, "execute stmt;", &[&["1"]]);
+    check(&mut session, "select @@last_plan_from_cache", &[&["0"]]);
+    check(&mut session, "execute stmt;", &[&["1"]]);
+    // The TiKV plan can be cached.
+    check(&mut session, "select @@last_plan_from_cache", &[&["1"]]);
+
+    // test the mpp plan
+    rows(&mut session, "set @@session.tidb_allow_mpp = 1;");
+    rows(&mut session, "set @@session.tidb_enforce_mpp = 1;");
+    rows(&mut session, "prepare stmt from 'select count(t1.a) from t t1 join t t2 on t1.a = t2.a where t1.a > ?;';");
+    rows(&mut session, "set @a = 0;");
+    check(&mut session, "execute stmt using @a;", &[&["1"]]);
+
+    rows(&mut session, "set @a = 1;");
+    check(&mut session, "execute stmt using @a;", &[&["0"]]);
+    // The TiFlash plan can not be cached.
+    check(&mut session, "select @@last_plan_from_cache", &[&["0"]]);
+}

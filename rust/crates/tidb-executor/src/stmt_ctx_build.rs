@@ -369,6 +369,8 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         env.session.mpp_enforced = env.session.mpp_allowed && enabled("tidb_enforce_mpp", false);
         env.session.tiflash_cop_banned = !enabled(tidb_vardef::tidb_vars::TIDB_ALLOW_TIFLASH_COP, false);
         env.session.tiflash_fast_scan = enabled(tidb_vardef::tidb_vars::TIFLASH_FAST_SCAN, false);
+        env.session.enable_late_materialization =
+            enabled(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_LATE_MATERIALIZATION, true);
         env.session.allow_batch_cop = number(tidb_vardef::tidb_vars::TIDB_ALLOW_BATCH_COP, 1.0) as i64;
         env.session.disaggregated_tiflash =
             tidb_config::config_tree::config::get_global_config().disaggregated_tiflash;
@@ -893,6 +895,12 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         self.statement_context_ignoring(is_dml, false)
     }
 
+    /// Go `optimizeNoCache`: a statement that is not read-only plans without
+    /// TiFlash under a strict `sql_mode`.
+    fn tiflash_engine_removed_due_to_strict_sql_mode(&self, stmt: &tidb_ast::Stmt) -> bool {
+        self.session_vars().sql_mode().has_strict_mode() && !stmt.is_read_only(true)
+    }
+
     /// Go `ResetContextOfStmt`'s statement-scoped modifiers: the session
     /// snapshot plus the statement's own priority and `SQL_NO_CACHE`. Both
     /// ride the `StmtContext` into every coprocessor request the statement
@@ -907,9 +915,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             .with_statement_priority(statement_priority(stmt))
             .with_not_fill_cache(crate::sessionctx::statement_not_fill_cache(stmt))
             .with_client_warning_counts(self.sys_error_count(), self.sys_warning_count());
-        // Go `Optimize`: a statement that is not read-only plans without
-        // TiFlash under a strict `sql_mode`.
-        if self.session_vars().sql_mode().has_strict_mode() && !stmt.is_read_only(true) {
+        if self.tiflash_engine_removed_due_to_strict_sql_mode(stmt) {
             ctx = ctx.with_tiflash_engine_removed_due_to_strict_sql_mode();
         }
         ctx

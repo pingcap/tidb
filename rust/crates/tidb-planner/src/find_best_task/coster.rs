@@ -434,11 +434,28 @@ impl Ver2Coster {
                     )
                 };
                 if scan.store_type == tidb_kv::store_type::StoreType::TiFlash {
+                    // Go: "late materialization cost = lmRowSize * scanFactor
+                    // * totalRowCount + restRowSize * scanFactor * rows *
+                    // lateMaterializationFactor".
+                    let late_materialization = (!scan.late_materialization_filter_condition.is_empty()).then(|| {
+                        let cols = tidb_expr::simple_expr::extract_columns_from_expressions(
+                            &scan.late_materialization_filter_condition,
+                            None,
+                        );
+                        let lm_row_size = Self::row_size_for_columns(
+                            cols.iter(),
+                            plan.stats_info()
+                                .and_then(tidb_planner_property::stats_info::StatsInfo::hist_coll)
+                                .map(std::convert::AsRef::as_ref),
+                        );
+                        (lm_row_size, scan.late_materialization_selectivity)
+                    });
                     crate::plan_cost_ver2::tiflash_table_scan_cost(
                         self.cost_option(),
                         rows,
                         Self::row_size(plan),
-                        &self.factors.tiflash_scan,
+                        late_materialization,
+                        &self.factors,
                         self.session_factors.table_tiflash_scan,
                     )
                 } else {

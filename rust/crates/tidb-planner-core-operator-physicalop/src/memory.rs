@@ -204,6 +204,7 @@ fn table_scan_usage(scan: &PhysicalTableScan) -> i64 {
             .as_ref()
             .map_or(0, |rebuild| exprs_memory_usage(&rebuild.access_conditions))
         + exprs_memory_usage(&scan.filter_condition)
+        + exprs_memory_usage(&scan.late_materialization_filter_condition)
         + scan_ranges_memory_usage(
             &scan.ranges,
             scan.resolved_explain_id(true).as_deref() == Some("TableRowIDScan"),
