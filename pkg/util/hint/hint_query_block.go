@@ -39,6 +39,18 @@ type QBHintHandler struct {
 
 	warnHandler      hintWarnHandler
 	selectStmtOffset int
+
+	// blockTables records the tables of each query block, see resolveHintDBName.
+	blockTables map[int][]blockTable
+	// offsetStack holds the offsets of the query blocks being visited.
+	offsetStack []int
+}
+
+// blockTable is a table referenced in a query block, by its alias if it has one.
+// dbName is empty when the table name is written without a database name.
+type blockTable struct {
+	dbName ast.CIStr
+	name   ast.CIStr
 }
 
 // QBHintBuildState stores the per-build runtime state for a QBHintHandler.
@@ -93,6 +105,9 @@ func (p *QBHintHandler) Enter(in ast.Node) (ast.Node, bool) {
 		// Handle the view hints and update the left hint.
 		node.TableHints = p.handleViewHints(node.TableHints, node.QueryBlockOffset)
 		p.checkQueryBlockHints(node.TableHints, node.QueryBlockOffset)
+		p.offsetStack = append(p.offsetStack, node.QueryBlockOffset)
+	case *ast.TableSource:
+		p.recordBlockTable(node)
 	case *ast.ExplainStmt:
 		return in, true
 	case *ast.CreateBindingStmt:
@@ -101,9 +116,76 @@ func (p *QBHintHandler) Enter(in ast.Node) (ast.Node, bool) {
 	return in, false
 }
 
+<<<<<<< HEAD
 // Leave implements Visitor interface.
 func (*QBHintHandler) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
+=======
+// Leave implements ast.InPlaceVisitor.
+func (p *QBHintHandler) Leave(in ast.Node) bool {
+	if _, ok := in.(*ast.SelectStmt); ok && len(p.offsetStack) > 0 {
+		p.offsetStack = p.offsetStack[:len(p.offsetStack)-1]
+	}
+	return true
+>>>>>>> ae5be6915c7 (planner: match unqualified hint table names in any database (#72838))
+}
+
+// recordBlockTable records a table or derived table of the query block being visited.
+// Tables outside any SELECT, e.g. the target tables of UPDATE and DELETE, belong to offset 0.
+func (p *QBHintHandler) recordBlockTable(ts *ast.TableSource) {
+	offset := 0
+	if len(p.offsetStack) > 0 {
+		offset = p.offsetStack[len(p.offsetStack)-1]
+	}
+	var tbl blockTable
+	switch src := ts.Source.(type) {
+	case *ast.TableName:
+		tbl = blockTable{dbName: src.Schema, name: src.Name}
+	default:
+		// A derived table is in the current database for hint matching, like ExtractTableAlias.
+		if ts.AsName.L == "" {
+			return
+		}
+	}
+	if ts.AsName.L != "" {
+		tbl.name = ts.AsName
+	}
+	if p.blockTables == nil {
+		p.blockTables = make(map[int][]blockTable)
+	}
+	p.blockTables[offset] = append(p.blockTables[offset], tbl)
+}
+
+// resolveHintDBName returns the database of a hint table name written without one, e.g. `t` in HASH_JOIN(t).
+// It is the current database if the query block at offset has a table or alias of that name in the current
+// database, or none at all, as before. Otherwise, if all the tables of that name in the block are in one
+// other database, it is that database, so that `HASH_JOIN(t)` applies to `db1.t` when the current database is
+// another one or empty. If they are in several other databases, the name is ambiguous and the current database
+// is kept, so the hint does not match.
+func (p *QBHintHandler) resolveHintDBName(offset int, tblName ast.CIStr, currentDB string) ast.CIStr {
+	current := ast.NewCIStr(currentDB)
+	if p == nil {
+		return current
+	}
+	var resolved ast.CIStr
+	found := false
+	for _, tbl := range p.blockTables[offset] {
+		if tbl.name.L != tblName.L {
+			continue
+		}
+		dbName := tbl.dbName
+		if dbName.L == "" || dbName.L == current.L {
+			return current
+		}
+		if found && resolved.L != dbName.L {
+			return current
+		}
+		resolved, found = dbName, true
+	}
+	if found {
+		return resolved
+	}
+	return current
 }
 
 const hintQBName = "qb_name"
