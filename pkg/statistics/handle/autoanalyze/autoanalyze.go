@@ -513,7 +513,8 @@ func RandomPickOneTableAndTryAutoAnalyze(
 			for _, def := range partitionDefs {
 				sql := "analyze table %n.%n partition %n"
 				statsTbl := partitionStats[def.ID]
-				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, exec.AnalyzedTable{ID: tblInfo.ID}, sql, db, tblInfo.Name.O, def.Name.O)
+				table := exec.AnalyzedTable{ID: tblInfo.ID, PartitionNames: []string{def.Name.O}}
+				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, table, sql, db, tblInfo.Name.O, def.Name.O)
 				if analyzed {
 					return true
 				}
@@ -702,6 +703,13 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 		sqlBuilder.WriteString(suffix)
 		return sqlBuilder.String()
 	}
+	analyzedTable := func(partitionNames []any) exec.AnalyzedTable {
+		table := exec.AnalyzedTable{ID: tblInfo.ID, PartitionNames: make([]string, 0, len(partitionNames))}
+		for _, name := range partitionNames {
+			table.PartitionNames = append(table.PartitionNames, name.(string))
+		}
+		return table
+	}
 
 	if len(needAnalyzePartitionNames) > 0 {
 		statslogutil.StatsLogger().Info("start to auto analyze",
@@ -725,7 +733,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				zap.String("table", tblInfo.Name.String()),
 				zap.Any("partitions", needAnalyzePartitionNames[start:end]),
 			)
-			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, exec.AnalyzedTable{ID: tblInfo.ID}, sql, params...)
+			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, analyzedTable(needAnalyzePartitionNames[start:end]), sql, params...)
 		}
 
 		return true
@@ -766,7 +774,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 					zap.String("index", idx.Name.String()),
 					zap.Any("partitions", needAnalyzePartitionNames[start:end]),
 				)
-				exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, exec.AnalyzedTable{ID: tblInfo.ID}, sql, params...)
+				exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, analyzedTable(needAnalyzePartitionNames[start:end]), sql, params...)
 			}
 
 			return true

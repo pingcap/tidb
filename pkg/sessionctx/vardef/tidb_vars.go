@@ -1307,7 +1307,7 @@ const (
 	// TiDBAutoAnalyzeConcurrency is the concurrency of the auto analyze
 	TiDBAutoAnalyzeConcurrency = "tidb_auto_analyze_concurrency"
 	// TiDBEnableDistAutoAnalyze indicates whether the stats owner runs the auto-analyze
-	// statements as DXF tasks.
+	// statements that analyze at least 1,000,000 rows as DXF tasks.
 	TiDBEnableDistAutoAnalyze = "tidb_enable_dist_auto_analyze"
 	// TiDBEnableDistTask indicates whether to enable the distributed execute background tasks(For example DDL, Import etc).
 	TiDBEnableDistTask = "tidb_enable_dist_task"

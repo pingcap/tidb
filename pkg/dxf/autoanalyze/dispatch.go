@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -39,8 +40,14 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	// rowLimit is the row count from which a statement goes to DXF, because a task adds
+	// seconds of scheduling. It is a conservative round number, not a measured break-even.
+	rowLimit = 1_000_000
+)
+
 // Register registers the auto-analyze task type to DXF, and the dispatcher that the stats
-// owner uses for the auto-analyze statements, see exec.SetDispatcher.
+// owner uses for the statements at or above the row limit, see exec.SetDispatcher.
 func Register() {
 	scheduler.RegisterSchedulerFactory(proto.AutoAnalyze,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
@@ -55,7 +62,8 @@ func Register() {
 	exec.SetDispatcher(dispatch)
 }
 
-// dispatch implements exec.Dispatcher.
+// dispatch implements exec.Dispatcher. It returns false, before it changes anything, for a
+// statement that is below the row limit or that the task meta cannot describe.
 func dispatch(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
@@ -64,16 +72,51 @@ func dispatch(
 	table exec.AnalyzedTable,
 	sql string,
 	params ...any,
-) error {
+) (bool, error) {
+	// The statement of a table that is gone runs here, and fails as it does without DXF.
 	tblInfo, ok := sctx.GetLatestInfoSchema().TableInfoByID(table.ID)
 	if !ok {
-		return errors.Errorf("table %d does not exist", table.ID)
+		return false, nil
 	}
-	taskMeta, err := newTaskMeta(tblInfo, needVersionRewriteWarn, sql, params)
-	if err != nil {
-		return err
+	taskMeta, ok := newTaskMeta(tblInfo, needVersionRewriteWarn, sql, params)
+	if !ok || !reachesRowLimit(statsHandle, tblInfo, table.PartitionNames) {
+		return false, nil
 	}
-	return runAsTask(sctx, statsHandle, taskMeta)
+	return true, runAsTask(sctx, statsHandle, taskMeta)
+}
+
+// reachesRowLimit reports whether the stats cache of this node has at least
+// rowLimit rows for the table or the partitions that the statement analyzes.
+func reachesRowLimit(statsHandle statstypes.StatsHandle, tblInfo *model.TableInfo, partitionNames []string) bool {
+	var rows int64
+	for _, id := range analyzedPhysicalIDs(tblInfo, partitionNames) {
+		// The cache can hold pseudo stats: GetPhysicalTableStats puts them there when it
+		// finds none. Their row count is a placeholder.
+		if tblStats, ok := statsHandle.GetNonPseudoPhysicalTableStats(id); ok && !tblStats.Pseudo {
+			rows += tblStats.RealtimeCount
+		}
+	}
+	return rows >= rowLimit
+}
+
+// analyzedPhysicalIDs returns the ID of the table, or the IDs of the partitions that the statement
+// names. Auto-analyze always names them: a statement that names none stays below the row limit.
+func analyzedPhysicalIDs(tblInfo *model.TableInfo, partitionNames []string) []int64 {
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil {
+		return []int64{tblInfo.ID}
+	}
+	named := make(map[string]struct{}, len(partitionNames))
+	for _, name := range partitionNames {
+		named[strings.ToLower(name)] = struct{}{}
+	}
+	physicalIDs := make([]int64, 0, len(named))
+	for _, def := range pi.Definitions {
+		if _, ok := named[def.Name.L]; ok {
+			physicalIDs = append(physicalIDs, def.ID)
+		}
+	}
+	return physicalIDs
 }
 
 // runAsTask runs the statement as a DXF task and waits for it, so the slot of
@@ -133,8 +176,9 @@ func loadTableStats(ctx context.Context, sctx sessionctx.Context, statsHandle st
 	return errors.Trace(statsHandle.Update(ctx, is, ids...))
 }
 
-// newTaskMeta builds the task meta of the statement. The meta holds identifiers only.
-func newTaskMeta(tblInfo *model.TableInfo, needVersionRewriteWarn bool, sql string, params []any) (*TaskMeta, error) {
+// newTaskMeta builds the task meta of the statement. The meta holds identifiers only, so it
+// returns false for a statement with any other parameter, which then runs on this node.
+func newTaskMeta(tblInfo *model.TableInfo, needVersionRewriteWarn bool, sql string, params []any) (*TaskMeta, bool) {
 	meta := &TaskMeta{
 		SQL:                    sql,
 		Params:                 make([]string, 0, len(params)),
@@ -144,11 +188,11 @@ func newTaskMeta(tblInfo *model.TableInfo, needVersionRewriteWarn bool, sql stri
 	for _, p := range params {
 		s, ok := p.(string)
 		if !ok {
-			return nil, errors.Errorf("unexpected parameter %v of the auto analyze statement", p)
+			return nil, false
 		}
 		meta.Params = append(meta.Params, s)
 	}
-	return meta, nil
+	return meta, true
 }
 
 // submitTask submits the statement as a task that runs on one node.

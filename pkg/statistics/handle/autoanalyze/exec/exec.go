@@ -56,13 +56,15 @@ func execOptionForAnalyzeVersion(statsVer int, needVersionRewriteWarn bool, sql 
 	return sqlexec.ExecOptionAnalyzeVer2
 }
 
-// AnalyzedTable is the table that an auto-analyze statement analyzes.
+// AnalyzedTable is the table that an auto-analyze statement analyzes. A
+// statement for some partitions of the table names them in PartitionNames.
 type AnalyzedTable struct {
-	ID int64
+	PartitionNames []string
+	ID             int64
 }
 
 // Dispatcher runs an auto-analyze statement on some TiDB node and waits for the result. sctx is an
-// idle session of the statement's keyspace.
+// idle session of the statement's keyspace. On false, sctx is unchanged and the caller runs it.
 type Dispatcher func(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
@@ -71,7 +73,7 @@ type Dispatcher func(
 	table AnalyzedTable,
 	sql string,
 	params ...any,
-) error
+) (taken bool, err error)
 
 var dispatcher atomic.Pointer[Dispatcher]
 
@@ -92,10 +94,14 @@ func AutoAnalyze(
 	params ...any,
 ) bool {
 	startTime := time.Now()
-	var err error
+	var (
+		taken bool
+		err   error
+	)
 	if d := dispatcher.Load(); d != nil && vardef.EnableDistAutoAnalyze.Load() {
-		err = (*d)(sctx, statsHandle, sysProcTracker, needVersionRewriteWarn, table, sql, params...)
-	} else {
+		taken, err = (*d)(sctx, statsHandle, sysProcTracker, needVersionRewriteWarn, table, sql, params...)
+	}
+	if !taken {
 		_, _, err = RunAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, needVersionRewriteWarn, sql, params...)
 	}
 	dur := time.Since(startTime)

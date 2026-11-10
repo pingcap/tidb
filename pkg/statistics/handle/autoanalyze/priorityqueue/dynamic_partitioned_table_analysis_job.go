@@ -290,7 +290,8 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 
 		sql := getPartitionSQL("analyze table %n.%n partition", "", end-start)
 		params := append([]any{j.SchemaName, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
-		success := exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, exec.AnalyzedTable{ID: j.GlobalTableID}, sql, params...)
+		table := exec.AnalyzedTable{ID: j.GlobalTableID, PartitionNames: j.PartitionNames[start:end]}
+		success := exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, table, sql, params...)
 		if !success {
 			return false
 		}
@@ -319,7 +320,8 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 			sql := getPartitionSQL("analyze table %n.%n partition", " index %n", end-start)
 			params := append([]any{j.SchemaName, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
 			params = append(params, indexName)
-			success = exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, exec.AnalyzedTable{ID: j.GlobalTableID}, sql, params...)
+			table := exec.AnalyzedTable{ID: j.GlobalTableID, PartitionNames: partitionNames[start:end]}
+			success = exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, table, sql, params...)
 			if !success {
 				return false
 			}
