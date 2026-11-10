@@ -385,3 +385,42 @@ fn a_non_integer_date_part_warns_8034() {
         assert_eq!(warnings(&session), expected, "column {value}");
     }
 }
+
+/// Go `builtinCastRealAsStringSig` formats with 32 bits when its ARGUMENT's
+/// type is FLOAT, whatever expression produced the value: `IF(a>0,a,a)` is
+/// still FLOAT, while `COALESCE(a, 1.5)`, `a+0` and `-a` are DOUBLE and show
+/// the widened float32. Captured from real TiDB.
+#[test]
+fn a_real_cast_to_a_string_formats_by_its_arguments_type_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE DATABASE f32").unwrap();
+    session.run("USE f32").unwrap();
+    session.run("CREATE TABLE f32(a FLOAT, b DOUBLE)").unwrap();
+    session
+        .run("INSERT INTO f32 VALUES (208.867, 208.867)")
+        .unwrap();
+    for (sql, expected) in [
+        (
+            "SELECT CAST(a AS CHAR), CAST(b AS CHAR) FROM f32",
+            ["208.867", "208.867"].as_slice(),
+        ),
+        (
+            "SELECT CAST(COALESCE(a, 1.5) AS CHAR), CAST(COALESCE(a, b) AS CHAR), CAST(IFNULL(a, 1e0) AS CHAR) FROM f32",
+            &["208.86700439453125", "208.86700439453125", "208.86700439453125"],
+        ),
+        (
+            "SELECT CAST(IF(a>0,a,a) AS CHAR), CAST(a+0 AS CHAR), CAST(-a AS CHAR) FROM f32",
+            &["208.867", "208.86700439453125", "-208.86700439453125"],
+        ),
+        (
+            "SELECT CONCAT(a), CONCAT(COALESCE(a,b)), CONCAT(IFNULL(a,1.5)), CONCAT(IF(a>0,a,b)) FROM f32",
+            &["208.867", "208.86700439453125", "208.86700439453125", "208.86700439453125"],
+        ),
+        (
+            "SELECT CAST(CASE WHEN a>0 THEN a ELSE b END AS CHAR), CAST(GREATEST(a, 1) AS CHAR), CAST(LEAST(a, b) AS CHAR) FROM f32",
+            &["208.86700439453125", "208.86700439453125", "208.867"],
+        ),
+    ] {
+        assert_eq!(rows(&mut session, sql), [expected], "{sql}");
+    }
+}

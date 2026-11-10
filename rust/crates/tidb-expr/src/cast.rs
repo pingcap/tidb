@@ -42,9 +42,18 @@ pub(crate) fn eval_string_cast_with_type(
         }
         value => value,
     };
-    let bytes = match year_zero_string(&value, source) {
-        Some(text) => text.into_bytes(),
-        None => datum_binary_bytes(&value)?,
+    let bytes = match (&value, year_zero_string(&value, source)) {
+        (_, Some(text)) => text.into_bytes(),
+        // Go `builtinCastRealAsStringSig`: the argument's type, not the
+        // value, chooses the 32-bit format.
+        (Datum::Real(real) | Datum::Float32(real), None) => {
+            let bits = match source.map(FieldType::code) {
+                Some(FieldTypeCode::Float) => 32,
+                _ => 64,
+            };
+            tidb_goruntime::go_strconv::format_float(*real, b'f', -1, bits).into_bytes()
+        }
+        (_, None) => datum_binary_bytes(&value)?,
     };
     let warnings = crate::constant::ConversionWarnings(ctx);
     let zone = ctx.time_zone();
