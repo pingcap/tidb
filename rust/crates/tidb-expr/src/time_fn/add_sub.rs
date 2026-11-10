@@ -475,24 +475,21 @@ fn trailing_dash_group(text: &str) -> bool {
 /// `builtinTimestamp2ArgsSig`. The result is a DATETIME whose fsp is the
 /// argument's own; the second argument is a DURATION added to it, and it is
 /// rejected outright when it carries a date part.
-pub(crate) fn timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn timestamp(
+    vals: &[Datum],
+    is_float: bool,
+    cols: &dyn Columns,
+) -> Result<Datum, EvalError> {
     if vals.is_empty() || vals.len() > 2 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
     let Some(text) = coerce_str(&vals[0])? else {
         return Ok(Datum::Null);
     };
-    // Go selects `ParseTimeFromFloatString` for numeric and DECIMAL
-    // signatures, even though all signatures first call EvalString.  That
-    // parser treats a suffix after a packed date as a fractional second and
-    // preserves zero-date DECIMAL values (for example `0.123`).  String and
-    // temporal signatures use `ParseTime`; retaining the source-kind bit here
-    // keeps the date-only compact suffix (`20240315.5`) as an hour for STRING
-    // but as a fractional second for numeric values.
-    let is_float = matches!(
-        vals[0],
-        Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_) | Datum::Float32(_)
-    );
+    // `isFloat` selects `ParseTimeFromFloatString`, which reads a suffix
+    // after a packed date as a fractional second and keeps a zero-date
+    // DECIMAL (`0.123`); `ParseTime` reads the date-only compact suffix
+    // (`20240315.5`) as an hour.
     let parsed = tidb_datatype::parse_time(
         &text,
         tidb_datatype::TimeType::DateTime,
@@ -503,10 +500,11 @@ pub(crate) fn timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, Eva
         &cols.time_zone(),
     );
     let Ok(parsed) = parsed else {
-        cols.append_go_warning(
-            &tidb_datatype::types_errors::ERR_WRONG_VALUE,
+        crate::cast::handle_invalid_time_error(
+            cols,
+            tidb_errno::errcode::ErrTruncatedWrongValue,
             &format!("Incorrect datetime value: '{text}'"),
-        );
+        )?;
         return Ok(Datum::Null);
     };
     let core = parsed.time.core_time();
@@ -534,18 +532,45 @@ pub(crate) fn timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, Eva
         return Ok(Datum::Null);
     }
     let Ok(delta) = parse_duration(&second, get_fsp(&second)) else {
+        crate::cast::handle_invalid_time_error(
+            cols,
+            tidb_errno::errcode::ErrTruncatedWrongValue,
+            &format!("Truncated incorrect time value: '{second}'"),
+        )?;
         return Ok(Datum::Null);
     };
-    match base.add(delta) {
-        Some(result) if result.in_range() => Ok(Datum::new_string_datum(
-            GoDateTime {
-                fsp: base.fsp.max(delta.fsp),
-                ..result
-            }
-            .format(),
-        )),
-        _ => Ok(Datum::Null),
+    // Go returns `tm.Add`'s own error: the `Check` of a sum outside the
+    // DATETIME range is `ErrWrongValue`, which no SQL mode downgrades.
+    let result = base
+        .add(delta)
+        .ok_or(EvalError::Unsupported("timestamp sum overflows"))?;
+    // `checkDatetimeType`: the zero date `getDateFromDaynr` answers for a
+    // day number before year 1 passes, a year past `MaxDatetime` does not.
+    if result.year > 9999 {
+        return Err(EvalError::Conversion(
+            tidb_datatype::types_errors::ERR_WRONG_VALUE.gen_with_stack_by_args(&[
+                "time".into(),
+                format!(
+                    "{{{} {} {} {} {} {} {}}}",
+                    result.year,
+                    result.month,
+                    result.day,
+                    result.hour,
+                    result.minute,
+                    result.second,
+                    result.micros
+                )
+                .into(),
+            ]),
+        ));
     }
+    Ok(Datum::new_string_datum(
+        GoDateTime {
+            fsp: base.fsp.max(delta.fsp),
+            ..result
+        }
+        .format(),
+    ))
 }
 
 /// `builtinTimestampAddSig.evalString` + `addUnitToTime`.

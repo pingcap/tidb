@@ -182,6 +182,14 @@ pub(crate) fn funcs(name: &str) -> Option<&'static dyn FunctionClass> {
     use crate::builtin_string as s;
     use crate::builtin_miscellaneous as misc;
     Some(match name {
+        "vec_dims" => &crate::builtin_vec::VecDimsFunctionClass { func_name: "vec_dims" },
+        "vec_l1_distance" => &crate::builtin_vec::VecL1DistanceFunctionClass { func_name: "vec_l1_distance" },
+        "vec_l2_distance" => &crate::builtin_vec::VecL2DistanceFunctionClass { func_name: "vec_l2_distance" },
+        "vec_negative_inner_product" => &crate::builtin_vec::VecNegativeInnerProductFunctionClass { func_name: "vec_negative_inner_product" },
+        "vec_cosine_distance" => &crate::builtin_vec::VecCosineDistanceFunctionClass { func_name: "vec_cosine_distance" },
+        "vec_l2_norm" => &crate::builtin_vec::VecL2NormFunctionClass { func_name: "vec_l2_norm" },
+        "vec_from_text" => &crate::builtin_vec::VecFromTextFunctionClass { func_name: "vec_from_text" },
+        "vec_as_text" => &crate::builtin_vec::VecAsTextFunctionClass { func_name: "vec_as_text" },
         "sleep" => &misc::SleepFunctionClass { func_name: "sleep" },
         "get_lock" => &misc::LockFunctionClass { func_name: "get_lock" },
         "release_lock" => &misc::ReleaseLockFunctionClass { func_name: "release_lock" },
@@ -337,6 +345,7 @@ pub(crate) fn funcs(name: &str) -> Option<&'static dyn FunctionClass> {
         "substring_index" => &s::SubstringIndexFunctionClass { func_name: "substring_index" },
         "to_base64" => &s::ToBase64FunctionClass { func_name: "to_base64" },
         "trim" => &s::TrimFunctionClass { func_name: "trim" },
+        "weight_string" => &s::WeightStringFunctionClass { func_name: "weight_string" },
         "translate" => &s::TranslateFunctionClass { func_name: "translate" },
         "upper" => &s::UpperFunctionClass { func_name: "upper" },
         "ucase" => &s::UpperFunctionClass { func_name: "ucase" },
@@ -387,6 +396,7 @@ pub(crate) fn funcs(name: &str) -> Option<&'static dyn FunctionClass> {
         "time_to_sec" => &t::TimeToSecFunctionClass { func_name: "time_to_sec" },
         "timediff" => &t::TimeDiffFunctionClass { func_name: "timediff" },
         "timestampadd" => &t::TimestampAddFunctionClass { func_name: "timestampadd" },
+        "timestamp" => &t::TimestampFunctionClass { func_name: "timestamp" },
         "timestampdiff" => &t::TimestampDiffFunctionClass { func_name: "timestampdiff" },
         "to_days" => &t::ToDaysFunctionClass { func_name: "to_days" },
         "to_seconds" => &t::ToSecondsFunctionClass { func_name: "to_seconds" },
@@ -477,6 +487,33 @@ pub(crate) fn funcs(name: &str) -> Option<&'static dyn FunctionClass> {
     })
 }
 
+/// Go `weightStringPadding`, without `weightStringPaddingNull`: a numeric
+/// argument builds [`SigFields::WeightStringNull`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WeightStringPadding {
+    /// Go `weightStringPaddingNone`.
+    None,
+    /// Go `weightStringPaddingAsChar`.
+    AsChar,
+    /// Go `weightStringPaddingAsBinary`.
+    AsBinary,
+}
+
+/// The fields a Go signature struct carries beside its `baseBuiltinFunc`,
+/// for the signatures whose `pbCode` does not name them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum SigFields {
+    /// A signature that is its `baseBuiltinFunc` alone.
+    #[default]
+    None,
+    /// Go `builtinTimestamp1ArgSig.isFloat` / `builtinTimestamp2ArgsSig.isFloat`.
+    Timestamp { is_float: bool },
+    /// Go `builtinWeightStringNullSig`.
+    WeightStringNull,
+    /// Go `builtinWeightStringSig.padding` and `.length`.
+    WeightString { padding: WeightStringPadding, length: i64 },
+}
+
 /// Go `baseBuiltinFunc` with the signature's `pbCode`.
 #[derive(Debug)]
 pub(crate) struct BaseBuiltinFunc {
@@ -488,6 +525,8 @@ pub(crate) struct BaseBuiltinFunc {
     pub(crate) pb_code: ScalarFuncSig,
     /// Go's embedded `collationInfo`.
     pub(crate) collation: CollationInfo,
+    /// The signature's own fields.
+    pub(crate) sig: SigFields,
 }
 
 impl BaseBuiltinFunc {
@@ -782,6 +821,7 @@ pub(crate) fn new_base_builtin_func(
         tp,
         pb_code: ScalarFuncSig::Unspecified,
         collation,
+        sig: SigFields::None,
     })
 }
 
@@ -841,5 +881,6 @@ fn base_builtin_func_of(
         tp,
         pb_code: ScalarFuncSig::Unspecified,
         collation,
+        sig: SigFields::None,
     }
 }

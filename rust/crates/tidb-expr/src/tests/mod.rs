@@ -63,6 +63,7 @@ mod regexp_like;
 mod regexp_vec_cache_source;
 mod scalar_function_semantics_source;
 mod setvar_getvar_values_getparam_source;
+mod timestamp_weight_string_class_source;
 mod util_filter_condition_source;
 mod vectorizable_and_chunk_eval_source;
 
@@ -97,7 +98,7 @@ pub(super) fn chunk_e(expr: &str) -> String {
     chunk_e_with(expr, &NoColumns)
 }
 
-fn chunk_e_with(expr: &str, ctx: &impl Columns) -> String {
+pub(super) fn chunk_e_with(expr: &str, ctx: &impl Columns) -> String {
     let stmt = tidb_parser::parse(&format!("select {expr}")).expect("parse");
     let Stmt::Query(query) = stmt else {
         panic!("not query")
@@ -2100,8 +2101,40 @@ fn weight_string_and_load_file_source_vectors() {
     // Non-string values first pass through `WrapWithCastAsString`; the
     // wrapped temporal value keys under this statement's connection
     // collation rather than the temporal type's binary metadata.
+    // Go wraps the cast when the class builds the function, so the
+    // connection collation is the build context's.
+    impl crate::rewriter::ColumnResolver for GeneralCi {
+        fn resolve(&self, _: &[String]) -> Option<(usize, tidb_datatype::FieldType, i64)> {
+            None
+        }
+
+        fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+            Columns::time_zone(self)
+        }
+
+        fn connection_charset_info(&self) -> (&str, &str) {
+            Columns::connection_charset_info(self)
+        }
+    }
+    let Stmt::Query(query) =
+        tidb_parser::parse("select hex(weight_string(cast(20190821 as date)))").expect("parse")
+    else {
+        panic!("not query")
+    };
+    let QueryStmt::Select(select) = query.into_inner() else {
+        panic!("not select")
+    };
+    let SelectField::Expr { expr, .. } = &select.fields[0] else {
+        panic!("no expr")
+    };
+    let rewritten = crate::rewriter::rewrite_expr_resolved(expr, &GeneralCi).expect("rewrite");
+    let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
+    chunk.set_num_virtual_rows(1);
     assert_eq!(
-        chunk_e_with("hex(weight_string(cast(20190821 as date)))", &GeneralCi),
+        rewritten
+            .eval(&GeneralCi, chunk.get_row(0))
+            .expect("eval")
+            .label(),
         "STR:0032003000310039002D00300038002D00320031"
     );
 

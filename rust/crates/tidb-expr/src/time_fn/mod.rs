@@ -96,7 +96,21 @@ pub(crate) fn dispatch(
         // directly; see that module's doc for the row/vec split this
         // `row_path = true` selects.
         "ADDTIME" | "SUBTIME" => add_sub::add_sub_untyped(name, vals, cols),
-        "TIMESTAMP" => add_sub::timestamp(vals, cols),
+        // No static argument type reaches here; the value's kind is what
+        // `timestampFunctionClass` reads `isFloat` off for a constant.
+        "TIMESTAMP" => {
+            let is_float = matches!(
+                vals.first(),
+                Some(
+                    Datum::Int(_)
+                        | Datum::UInt(_)
+                        | Datum::Decimal(_)
+                        | Datum::Real(_)
+                        | Datum::Float32(_)
+                )
+            );
+            add_sub::timestamp(vals, is_float, cols)
+        }
         "TIMESTAMPADD" => add_sub::timestamp_add(vals, cols),
         "SYSDATE" => add_sub::sysdate(vals, cols),
         "TO_DAYS" => calendar::to_days(vals, cols),

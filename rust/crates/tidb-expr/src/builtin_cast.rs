@@ -189,6 +189,7 @@ fn new_base_builtin_cast_func_4_string(
         tp,
         pb_code: ScalarFuncSig::Unspecified,
         collation,
+        sig: crate::builtin::SigFields::None,
     };
     Ok(bf)
 }

@@ -2792,9 +2792,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
         // Go `weightStringFunctionClass`: the `AS CHAR(n)`/`AS BINARY(n)`
         // clause is not syntax sugar over a cast -- it becomes the second and
         // third ARGUMENTS of the builtin, which `verifyArgs` requires to be
-        // constants, and only then does `getFunction` pick the padding. Both
-        // spellings are rebuilt here as those constants so one evaluator arm
-        // reads them.
+        // constants, and only then does `getFunction` pick the padding.
         Expr::WeightString { expr, as_type } => {
             let mut args = vec![rewrite_expr_resolved(expr, resolver)?];
             if let Some((kind, length)) = as_type {
@@ -2807,14 +2805,9 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                     FieldType::new(FieldTypeCode::LongLong),
                 )));
             }
-            let mut ret_type = FieldType::new(FieldTypeCode::VarString);
-            ret_type.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
-            set_binary_charset(&mut ret_type);
-            Ok(Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("weight_string"),
-                ret_type,
-                args,
-            )))
+            let class =
+                crate::builtin::funcs("weight_string").expect("weight_string is registered");
+            class_function(class, "weight_string", args, resolver)
         }
         // Go's parser builds `trim(str)`, `trim(str, remstr)` or
         // `trim(str, remstr, direction)` (`parseTrimFunc`): the direction is

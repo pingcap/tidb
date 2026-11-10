@@ -361,6 +361,8 @@ pub struct ScalarFunction {
     /// signature has no field for: a copy read back from the wire searches
     /// in natural-language mode.
     fts_modifier: tidb_ast::MatchModifier,
+    /// The fields of the Go signature struct `getFunction` built.
+    sig: crate::builtin::SigFields,
 
     /// Go embedded collation state (via the `Function`'s `collationInfo`).
     pub collation: CollationInfo,
@@ -396,7 +398,7 @@ fn arithmetic_symbol(op: tidb_ast::BinaryOp) -> Option<&'static str> {
 
 /// Go `Expression.StringWithCtx(ctx, errors.RedactLogDisable)`: the text a
 /// signature's error names its arguments with.
-fn string_with_ctx(expression: &Expression, ctx: &dyn Columns) -> Option<String> {
+pub(crate) fn string_with_ctx(expression: &Expression, ctx: &dyn Columns) -> Option<String> {
     crate::explain::physical_expression_text_with_columns(
         ctx,
         expression,
@@ -656,6 +658,7 @@ impl ScalarFunction {
             args: f.args,
             pb_builtin: Some(PbBuiltin::of_builtin_func(f.pb_code)),
             collation: f.collation,
+            sig: f.sig,
             ..Default::default()
         }
     }
@@ -3002,45 +3005,32 @@ impl ScalarFunction {
                         .collect::<Result<_, _>>()?;
                     return self.extremum_of(name == "greatest", &vals, collation, ctx);
                 }
-                // Go `weightStringFunctionClass`: a NUMERIC argument builds
-                // `builtinWeightStringNullSig` (always NULL) from the
-                // argument's FieldType, and the sort key is taken under the
-                // ARGUMENT's collation -- the function's own is forced to
-                // `binary`, so `derived_collation` is the wrong one here.
-                "weight_string" if !self.args.is_empty() => {
-                    // The `AS` clause travels as the constant second and
-                    // third arguments the rewriter built.
-                    let padding = match self.args.len() {
-                        3 => {
-                            let kind = self.args[1].eval(ctx, row)?;
-                            let length = self.args[2].eval(ctx, row)?;
-                            let binary = kind.sql_string().is_ok_and(|k| k == "BINARY");
-                            Some((binary, crate::cast::to_i64_signed(&length)))
-                        }
-                        _ => None,
+                // Go `builtinWeightStringNullSig.evalString`.
+                "weight_string"
+                    if self.sig == crate::builtin::SigFields::WeightStringNull =>
+                {
+                    return Ok(Datum::Null);
+                }
+                // Go `builtinWeightStringSig.evalString`: the sort key is
+                // taken under the ARGUMENT's collation -- the function's own
+                // is forced to `binary`.
+                "weight_string" => {
+                    use crate::builtin::{SigFields, WeightStringPadding};
+                    let SigFields::WeightString { padding, length } = self.sig else {
+                        return Err(EvalError::Unsupported(
+                            "weight_string is built by weightStringFunctionClass",
+                        ));
                     };
-                    let arg_type = self.args[0].static_type().cloned().unwrap_or_else(|| {
-                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString)
-                    });
-                    // Go starts numeric inputs on the NULL signature, then
-                    // lets AS BINARY replace it with the binary-padding
-                    // signature. AS CHAR deliberately does not replace it.
-                    if arg_type.code().is_type_numeric() && !matches!(padding, Some((true, _))) {
-                        return Ok(Datum::Null);
-                    }
+                    let padding = match padding {
+                        WeightStringPadding::None => None,
+                        WeightStringPadding::AsChar => Some((false, length)),
+                        WeightStringPadding::AsBinary => Some((true, length)),
+                    };
                     let value = self.args[0].eval(ctx, row)?;
-                    let value = crate::cast::cast_arg_as_string(&value, Some(&arg_type), ctx)?;
-                    let explicit_collation =
-                        crate::collation_derive::coercibility_of(&self.args[0])
-                            == crate::expr_collation::Coercibility::EXPLICIT;
-                    let string_type = crate::cast::cast_arg_as_string_type(
-                        &arg_type,
-                        explicit_collation,
-                        ctx.connection_charset_info(),
-                    );
-                    let arg_collation =
-                        tidb_charset::Collation::from_name(string_type.collation_name())
-                            .unwrap_or(crate::ops::DERIVATION_FREE_COLLATION);
+                    let arg_collation = self.args[0]
+                        .static_type()
+                        .and_then(|tp| tidb_charset::Collation::from_name(tp.collation_name()))
+                        .unwrap_or(crate::ops::DERIVATION_FREE_COLLATION);
                     return crate::string_packet::weight_string(
                         &value,
                         padding,
@@ -3270,7 +3260,9 @@ impl ScalarFunction {
             };
         }
         if upper == "TIMESTAMP" {
-            let result = crate::time_fn::add_sub::timestamp(&vals, ctx)?;
+            let is_float =
+                self.sig == crate::builtin::SigFields::Timestamp { is_float: true };
+            let result = crate::time_fn::add_sub::timestamp(&vals, is_float, ctx)?;
             return crate::cast::parse_computed_time(
                 &result,
                 ctx,

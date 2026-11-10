@@ -19,7 +19,8 @@
 //! the type before the build.
 
 use crate::builtin::{
-    new_base_builtin_func_with_tp, BaseBuiltinFunc, BuildContext, FunctionClass,
+    new_base_builtin_func_with_tp, BaseBuiltinFunc, BuildContext, FunctionClass, SigFields,
+    WeightStringPadding,
 };
 use crate::builtin_control::{is_binary_str, is_non_binary_str};
 use crate::builtin_miscellaneous::{function_class, set_connection_charset};
@@ -943,5 +944,78 @@ function_class!(
         let arg_type = type_of(&bf.args[0]);
         bf.tp.set_flen(arg_type.flen());
         set_bin_flag_or_bin_str(&arg_type, &mut bf.tp);
+    }
+);
+
+string_class!(
+    /// Go `weightStringFunctionClass`. `verifyArgs` reads the padding and
+    /// the length off the constant second and third arguments.
+    WeightStringFunctionClass, |func_name, ctx, args| {
+        let incorrect_type = |argument: String| {
+            EvalError::Conversion(
+                crate::expression_errors::ERR_INCORRECT_TYPE
+                    .gen_with_stack_by_args(&[argument.into(), func_name.into()]),
+            )
+        };
+        let text = |arg: &Expression| {
+            crate::scalar_function::string_with_ctx(
+                arg,
+                ctx.columns().unwrap_or(&tidb_exprctx::NoColumns),
+            )
+            .unwrap_or_default()
+        };
+        if !matches!(args.len(), 1 | 3) {
+            return Err(EvalError::Conversion(
+                crate::expression_errors::ERR_INCORRECT_PARAMETER_COUNT
+                    .gen_with_stack_by_args(&[func_name.into()]),
+            ));
+        }
+        let numeric = type_of(&args[0]).code().is_type_numeric();
+        let mut padding = WeightStringPadding::None;
+        let mut length = 0;
+        if args.len() == 3 {
+            let (Expression::Constant(c1), EvalType::String) =
+                (&args[1], type_of(&args[1]).eval_type())
+            else {
+                return Err(incorrect_type(text(&args[1])));
+            };
+            match c1.value.sql_string().unwrap_or_default().as_str() {
+                "CHAR" => padding = WeightStringPadding::AsChar,
+                "BINARY" => padding = WeightStringPadding::AsBinary,
+                other => return Err(incorrect_type(other.to_owned())),
+            }
+            if type_of(&args[2]).eval_type() != EvalType::Int {
+                return Err(incorrect_type(text(&args[2])));
+            }
+            let Expression::Constant(c2) = &args[2] else {
+                return Err(incorrect_type(text(&args[1])));
+            };
+            length = match c2.value {
+                Datum::Int(value) => value,
+                Datum::UInt(value) => value as i64,
+                _ => 0,
+            };
+            if length == 0 {
+                return Err(incorrect_type(text(&args[2])));
+            }
+        }
+        let arg_tps = [EvalType::String, EvalType::String, EvalType::Int];
+        let arg_len = args.len();
+        let mut bf = new_base_builtin_func_with_tp(
+            ctx,
+            func_name,
+            args,
+            EvalType::String,
+            &arg_tps[..arg_len],
+        )?;
+        set_bin_chs_cln_flag(&mut bf.tp);
+        // A numeric argument is `weightStringPaddingNull`, which `AS BINARY`
+        // alone replaces.
+        bf.sig = if numeric && padding != WeightStringPadding::AsBinary {
+            SigFields::WeightStringNull
+        } else {
+            SigFields::WeightString { padding, length }
+        };
+        Ok(bf)
     }
 );

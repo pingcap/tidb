@@ -19,7 +19,7 @@
 //! the type before the build.
 
 use crate::builtin::{
-    new_base_builtin_func_with_tp, BaseBuiltinFunc, BuildContext, FunctionClass,
+    new_base_builtin_func_with_tp, BaseBuiltinFunc, BuildContext, FunctionClass, SigFields,
 };
 use crate::builtin_miscellaneous::{function_class, set_connection_charset};
 use crate::builtin_string::string_class;
@@ -800,6 +800,40 @@ impl FunctionClass for AddSubDateFunctionClass {
         Ok(bf)
     }
 }
+
+string_class!(
+    /// Go `timestampFunctionClass`.
+    TimestampFunctionClass, |func_name, ctx, args| {
+        let eval_tps = [EvalType::String; 2];
+        let mut fsp = get_expression_fsp(ctx, &args[0])?;
+        if args.len() == 2 {
+            fsp = fsp.max(get_expression_fsp(ctx, &args[1])?);
+        }
+        let is_float = matches!(
+            type_of(&args[0]).code(),
+            FieldTypeCode::Float
+                | FieldTypeCode::Double
+                | FieldTypeCode::NewDecimal
+                | FieldTypeCode::LongLong
+        );
+        let arg_len = args.len();
+        let mut bf = new_base_builtin_func_with_tp(
+            ctx,
+            func_name,
+            args,
+            EvalType::Datetime,
+            &eval_tps[..arg_len],
+        )?;
+        bf.set_decimal_and_flen_for_datetime(fsp);
+        bf.sig = SigFields::Timestamp { is_float };
+        bf.pb_code = if arg_len == 2 {
+            ScalarFuncSig::Timestamp2Args
+        } else {
+            ScalarFuncSig::Timestamp1Arg
+        };
+        Ok(bf)
+    }
+);
 
 function_class!(
     /// Go `timestampDiffFunctionClass`.
