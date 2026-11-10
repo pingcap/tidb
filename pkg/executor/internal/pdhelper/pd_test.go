@@ -20,7 +20,9 @@ import (
 	"time"
 
 	"github.com/jellydator/ttlcache/v3"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,6 +41,21 @@ func (m *mockClient) getFakeApproximateTableCountFromStorage(_ context.Context, 
 	return 1.0, true
 }
 
+type keyspaceStore struct {
+	kv.Storage
+	keyspace string
+}
+
+func (s keyspaceStore) GetKeyspace() string {
+	return s.keyspace
+}
+
+func newKeyspaceSCtx(keyspace string) sessionctx.Context {
+	sctx := mock.NewContext()
+	sctx.Store = keyspaceStore{keyspace: keyspace}
+	return sctx
+}
+
 func TestTTLCache(t *testing.T) {
 	cache := ttlcache.New[string, float64](
 		ttlcache.WithTTL[string, float64](100*time.Millisecond),
@@ -49,21 +66,26 @@ func TestTTLCache(t *testing.T) {
 		getApproximateTableCountFromStorageFunc:  globalMockClient.getFakeApproximateTableCountFromStorage,
 	}
 	ctx := context.Background()
-	helper.GetApproximateTableCountFromStorage(ctx, nil, 1, "db", "table", "partition") // Miss
+	sctx := newKeyspaceSCtx("ks1")
+	helper.GetApproximateTableCountFromStorage(ctx, sctx, 1, "db", "table", "partition") // Miss
 	require.Equal(t, 1, globalMockClient.getMissCnt())
-	helper.GetApproximateTableCountFromStorage(ctx, nil, 1, "db", "table", "partition") // Hit
+	helper.GetApproximateTableCountFromStorage(ctx, sctx, 1, "db", "table", "partition") // Hit
 	require.Equal(t, 1, globalMockClient.getMissCnt())
-	helper.GetApproximateTableCountFromStorage(ctx, nil, 2, "db1", "table1", "partition") // Miss
+	helper.GetApproximateTableCountFromStorage(ctx, sctx, 2, "db1", "table1", "partition") // Miss
 	require.Equal(t, 2, globalMockClient.getMissCnt())
-	helper.GetApproximateTableCountFromStorage(ctx, nil, 3, "db2", "table2", "partition") // Miss
-	helper.GetApproximateTableCountFromStorage(ctx, nil, 1, "db", "table", "partition")   // Miss
+	helper.GetApproximateTableCountFromStorage(ctx, sctx, 3, "db2", "table2", "partition") // Miss
+	helper.GetApproximateTableCountFromStorage(ctx, sctx, 1, "db", "table", "partition")   // Miss
 	require.Equal(t, 4, globalMockClient.getMissCnt())
-	helper.GetApproximateTableCountFromStorage(ctx, nil, 3, "db2", "table2", "partition") // Hit
+	helper.GetApproximateTableCountFromStorage(ctx, sctx, 3, "db2", "table2", "partition") // Hit
 	require.Equal(t, 4, globalMockClient.getMissCnt())
 	time.Sleep(200 * time.Millisecond)
 	// All is miss.
-	helper.GetApproximateTableCountFromStorage(ctx, nil, 1, "db", "table", "partition")
-	helper.GetApproximateTableCountFromStorage(ctx, nil, 2, "db1", "table1", "partition")
-	helper.GetApproximateTableCountFromStorage(ctx, nil, 3, "db2", "table2", "partition")
+	helper.GetApproximateTableCountFromStorage(ctx, sctx, 1, "db", "table", "partition")
+	helper.GetApproximateTableCountFromStorage(ctx, sctx, 2, "db1", "table1", "partition")
+	helper.GetApproximateTableCountFromStorage(ctx, sctx, 3, "db2", "table2", "partition")
 	require.Equal(t, 7, globalMockClient.getMissCnt())
+	// The same table ID and names in another keyspace get their own entry.
+	otherKS := newKeyspaceSCtx("ks2")
+	helper.GetApproximateTableCountFromStorage(ctx, otherKS, 3, "db2", "table2", "partition") // Miss
+	require.Equal(t, 8, globalMockClient.getMissCnt())
 }
