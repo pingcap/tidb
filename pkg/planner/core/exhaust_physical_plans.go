@@ -1162,37 +1162,21 @@ func constructInnerTableScanTask(
 	if keepOrder && ds.TableInfo.GetPartitionInfo() != nil {
 		return nil
 	}
-<<<<<<< HEAD
 	ts := PhysicalTableScan{
-		Table:           ds.TableInfo,
-		Columns:         ds.Columns,
-		TableAsName:     ds.TableAsName,
-		DBName:          ds.DBName,
-		filterCondition: ds.PushedDownConds,
-		Ranges:          ranges,
-		rangeInfo:       rangeInfo,
-		KeepOrder:       keepOrder,
-		Desc:            desc,
-		physicalTableID: ds.PhysicalTableID,
-		isPartition:     ds.PartitionDefIdx != nil,
-		tblCols:         ds.TblCols,
-		tblColHists:     ds.TblColHists,
-=======
-	ts := physicalop.PhysicalTableScan{
 		Table:                                    ds.TableInfo,
 		Columns:                                  ds.Columns,
 		TableAsName:                              ds.TableAsName,
 		DBName:                                   ds.DBName,
-		FilterCondition:                          filterConds,
+		filterCondition:                          ds.PushedDownConds,
 		Ranges:                                   ranges,
-		RangeInfo:                                rangeInfo,
+		rangeInfo:                                rangeInfo,
 		KeepOrder:                                keepOrder,
 		Desc:                                     desc,
-		PhysicalTableID:                          ds.PhysicalTableID,
-		TblCols:                                  ds.TblCols,
-		TblColHists:                              ds.TblColHists,
+		physicalTableID:                          ds.PhysicalTableID,
+		isPartition:                              ds.PartitionDefIdx != nil,
+		tblCols:                                  ds.TblCols,
+		tblColHists:                              ds.TblColHists,
 		ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
->>>>>>> e2f259adf7d (planner: support TiFlash LM filter hint (#72191))
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema().Clone())
 	if rowCount <= 0 {
@@ -1410,27 +1394,16 @@ func constructInnerIndexScanTask(
 	}
 	if !path.IsSingleScan {
 		// On this way, it's double read case.
-<<<<<<< HEAD
 		ts := PhysicalTableScan{
-			Columns:         ds.Columns,
-			Table:           is.Table,
-			TableAsName:     ds.TableAsName,
-			DBName:          ds.DBName,
-			isPartition:     ds.PartitionDefIdx != nil,
-			physicalTableID: ds.PhysicalTableID,
-			tblCols:         ds.TblCols,
-			tblColHists:     ds.TblColHists,
-=======
-		ts := physicalop.PhysicalTableScan{
 			Columns:                                  ds.Columns,
 			Table:                                    is.Table,
 			TableAsName:                              ds.TableAsName,
 			DBName:                                   ds.DBName,
-			PhysicalTableID:                          ds.PhysicalTableID,
-			TblCols:                                  ds.TblCols,
-			TblColHists:                              ds.TblColHists,
+			isPartition:                              ds.PartitionDefIdx != nil,
+			physicalTableID:                          ds.PhysicalTableID,
+			tblCols:                                  ds.TblCols,
+			tblColHists:                              ds.TblColHists,
 			ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
->>>>>>> e2f259adf7d (planner: support TiFlash LM filter hint (#72191))
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
 		ts.schema = is.dataSourceSchema.Clone()
 		if ds.TableInfo.IsCommonHandle {

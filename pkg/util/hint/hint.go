@@ -585,10 +585,10 @@ type HintedIndex struct {
 
 // HintedColumn indicates which columns this hint should take effect on.
 type HintedColumn struct {
-	DBName       ast.CIStr
-	TblName      ast.CIStr
+	DBName       pmodel.CIStr
+	TblName      pmodel.CIStr
 	SelectOffset int
-	Columns      []ast.CIStr
+	Columns      []pmodel.CIStr
 	Matched      bool
 }
 
@@ -923,7 +923,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			}
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
-				dbName = ast.NewCIStr(currentDB)
+				dbName = pmodel.NewCIStr(currentDB)
 			}
 			tiflashLMFilters = append(tiflashLMFilters, HintedColumn{
 				DBName:       dbName,
@@ -1202,7 +1202,7 @@ func collectUnmatchedColumnHintWarning(hintType string, columnHints []HintedColu
 	return warnings
 }
 
-func getHintTableQBName(hint *ast.TableOptimizerHint) ast.CIStr {
+func getHintTableQBName(hint *ast.TableOptimizerHint) pmodel.CIStr {
 	if len(hint.Tables) > 0 && hint.Tables[0].QBName.L != "" {
 		return hint.Tables[0].QBName
 	}

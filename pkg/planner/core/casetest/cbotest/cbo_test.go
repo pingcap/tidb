@@ -707,7 +707,7 @@ func TestLimitIndexEstimation(t *testing.T) {
 }
 
 func TestAnalyzeSuiteRegression(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists repro_hash_join_issue")
 	tk.MustExec("use repro_hash_join_issue")
@@ -729,9 +729,10 @@ func TestAnalyzeSuiteRegression(t *testing.T) {
 		"  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
 		"  KEY idx_id1_id2_id3_id4_id5 (id1, id2, id3, id4, id5)\n" +
 		")")
-	tk.MustExec("insert into t_small(id1, id2, id3, id4) values " + buildReproHashJoinIssueSmallRows(1000))
-	tk.MustExec("insert into t_big(id1, id2, id3, id4, id5) values " + buildReproHashJoinIssueBigRows(1000))
-	tk.MustExec("analyze table t_small, t_big all columns")
+	// This test checks plan selection against fixed statistics. Collecting them
+	// with ANALYZE here makes the expected estimates depend on the mock scan.
+	require.NoError(t, loadTableStats("analyzeSuiteRegression_t_small.json", dom))
+	require.NoError(t, loadTableStats("analyzeSuiteRegression_t_big.json", dom))
 	tk.MustExec("set @@session.tidb_cost_model_version = 2")
 	tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor = 100")
 	tk.MustExec("set @@session.tidb_opt_index_join_cost_factor = 0.1")
@@ -760,24 +761,6 @@ func TestAnalyzeSuiteRegression(t *testing.T) {
 	tk.MustExec("set @@session.tidb_opt_index_join_max_scan_rows_ratio = 0")
 	tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor = default")
 	tk.MustExec("set @@session.tidb_opt_index_join_cost_factor = default")
-}
-
-func buildReproHashJoinIssueSmallRows(n int) string {
-	vals := make([]string, 0, n)
-	for i := 0; i < n; i++ {
-		// Keep predicates on t_small selective while preserving >=100 build rows.
-		vals = append(vals, fmt.Sprintf("('10001', 0, 123456789, %d)", i%10))
-	}
-	return strings.Join(vals, ",")
-}
-
-func buildReproHashJoinIssueBigRows(n int) string {
-	vals := make([]string, 0, n)
-	for i := 0; i < n; i++ {
-		// Low cardinality on id1 makes each outer-row probe hit many inner rows.
-		vals = append(vals, fmt.Sprintf("(%d, 10001, 0, 20991231, %d)", i%10, i))
-	}
-	return strings.Join(vals, ",")
 }
 
 func TestTop2SeedGreedyJoinReorderWithLoadedStats(t *testing.T) {

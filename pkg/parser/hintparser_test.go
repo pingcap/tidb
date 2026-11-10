@@ -178,15 +178,15 @@ func TestParseHint(t *testing.T) {
 			input: "TIFLASH_LM_FILTER(@qb1 tbl1 a, b) TIFLASH_LM_FILTER(tbl2@qb2 c)",
 			output: []*ast.TableOptimizerHint{
 				{
-					HintName: ast.NewCIStr("TIFLASH_LM_FILTER"),
-					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("tbl1")}},
-					QBName:   ast.NewCIStr("qb1"),
-					Indexes:  []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+					HintName: model.NewCIStr("TIFLASH_LM_FILTER"),
+					Tables:   []ast.HintTable{{TableName: model.NewCIStr("tbl1")}},
+					QBName:   model.NewCIStr("qb1"),
+					Indexes:  []model.CIStr{model.NewCIStr("a"), model.NewCIStr("b")},
 				},
 				{
-					HintName: ast.NewCIStr("TIFLASH_LM_FILTER"),
-					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("tbl2"), QBName: ast.NewCIStr("qb2")}},
-					Indexes:  []ast.CIStr{ast.NewCIStr("c")},
+					HintName: model.NewCIStr("TIFLASH_LM_FILTER"),
+					Tables:   []ast.HintTable{{TableName: model.NewCIStr("tbl2"), QBName: model.NewCIStr("qb2")}},
+					Indexes:  []model.CIStr{model.NewCIStr("c")},
 				},
 			},
 		},
