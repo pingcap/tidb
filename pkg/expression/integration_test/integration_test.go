@@ -1572,27 +1572,28 @@ func TestGetLock(t *testing.T) {
 
 	// Test someone else has the lock with short timeout.
 	tk2 := testkit.NewTestKit(t, store)
+	// Follow the session that backs this advisory lock. InternalSessionCount also
+	// includes DDL and TTL sessions, and those checkouts race with installing the
+	// mock session manager, so a global count is not a stable expected value.
 	sessionManager := domain.GetDomain(tk.Session()).InfoSyncer().GetSessionManager()
-	checkInternalSessionCount := func(expected int) {
-		t.Helper()
-		// Background tasks can temporarily borrow sessions from the same pool.
-		require.Eventually(t, func() bool {
-			return sessionManager.InternalSessionCount() == expected
-		}, 10*time.Second, 20*time.Millisecond, "expected %d internal sessions", expected)
-	}
-	checkInternalSessionCount(0)
+	require.Nil(t, session.AdvisoryLockInternalSession4Test(tk2.Session(), "mygloballock"))
 	tk2.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("1"))
-	checkInternalSessionCount(1)
+	lockSession := session.AdvisoryLockInternalSession4Test(tk2.Session(), "mygloballock")
+	require.NotNil(t, lockSession)
+	require.True(t, sessionManager.ContainsInternalSession(lockSession))
 	tk.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("0")) // someone else has the lock
-	checkInternalSessionCount(1)
+	require.Nil(t, session.AdvisoryLockInternalSession4Test(tk.Session(), "mygloballock"))
+	require.True(t, sessionManager.ContainsInternalSession(lockSession))
 	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0")) // never had the lock
 	// try again
 	tk.MustQuery("SELECT get_lock('mygloballock', 0)").Check(testkit.Rows("0")) // someone else has the lock
-	checkInternalSessionCount(1)
+	require.Nil(t, session.AdvisoryLockInternalSession4Test(tk.Session(), "mygloballock"))
+	require.True(t, sessionManager.ContainsInternalSession(lockSession))
 	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0")) // never had the lock
 	// release it
 	tk2.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("1")) // works
-	checkInternalSessionCount(0)
+	require.Nil(t, session.AdvisoryLockInternalSession4Test(tk2.Session(), "mygloballock"))
+	require.False(t, sessionManager.ContainsInternalSession(lockSession))
 
 	// Confirm all locks are released
 	tk2.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
