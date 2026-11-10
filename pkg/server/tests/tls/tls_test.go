@@ -325,6 +325,15 @@ func TestTLSVerify(t *testing.T) {
 	// Success: when using a secure connection, the value of "require_secure_transport" can change to "ON"
 	err = cli.RunTestEnableSecureTransport(t, connOverrider)
 	require.NoError(t, err)
+	err = cli.RunReloadTLS(t, connOverrider, false)
+	require.NoError(t, err)
+
+	// issue:69870 A TLS connection without a client certificate should still succeed after
+	// enabling require_secure_transport and reloading the server TLS config.
+	err = cli.RunTestTLSConnection(t, func(config *mysql.Config) {
+		config.TLSConfig = "skip-verify"
+	})
+	require.NoError(t, err)
 
 	// This connection will now fail since the client is not configured to use TLS.
 	err = cli.RunTestTLSConnection(t, nil)

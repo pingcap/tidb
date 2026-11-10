@@ -323,6 +323,19 @@ func TestCreateMaterializedViewLogRollbackUpdateSchemaVersionFailureRetries(t *t
 	releaseRetry()
 	require.Error(t, <-ddlErrCh)
 	tk.MustQuery("show tables like '$mlog$t_create_mlog_rollback_retry'").Check(testkit.Rows())
+	// A full InfoSchema reload can hide an invalid rollback diff.
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(_ context.Context, txn kv.Transaction) error {
+		metaMut := meta.NewMutator(txn)
+		version, err := metaMut.GetSchemaVersion()
+		require.NoError(t, err)
+		diff, err := metaMut.GetSchemaDiff(version)
+		require.NoError(t, err)
+		require.NotNil(t, diff)
+		require.Equal(t, model.ActionCreateMaterializedViewLog, diff.Type)
+		require.Equal(t, mlogID, diff.OldTableID)
+		require.Zero(t, diff.TableID)
+		return nil
+	}))
 }
 
 func TestCreateMaterializedViewLogPrivilege(t *testing.T) {
@@ -375,6 +388,7 @@ func TestCreateMaterializedViewAndLog(t *testing.T) {
 	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set div_precision_increment = 9")
+	tk.MustExec("set time_zone = 'Asia/Shanghai'")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
 
@@ -407,6 +421,17 @@ func TestCreateMaterializedViewAndLog(t *testing.T) {
 	require.NotNil(t, mviewTable.Meta().MaterializedView)
 	require.Equal(t, model.MViewInitBuildReady, mviewTable.Meta().MaterializedView.GetInitBuildState())
 	require.Equal(t, 9, mviewTable.Meta().MaterializedView.DefinitionDivPrecisionIncrement)
+	require.Equal(t, []int64{baseTable.Meta().ID}, mviewTable.Meta().MaterializedView.BaseTableIDs)
+	require.Equal(t, "FAST", mviewTable.Meta().MaterializedView.RefreshMethod)
+	require.Empty(t, mviewTable.Meta().MaterializedView.RefreshStartWith)
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 1 HOUR)", mviewTable.Meta().MaterializedView.RefreshNext)
+	require.Zero(t, mviewTable.Meta().MaterializedView.AlertWarningSec)
+	require.Zero(t, mviewTable.Meta().MaterializedView.AlertOverdueSec)
+	require.False(t, mviewTable.Meta().MaterializedView.AlertRefreshFailed)
+	require.Equal(t, tk.Session().GetSessionVars().SQLMode, mviewTable.Meta().MaterializedView.DefinitionSQLMode)
+	require.Equal(t, tk.Session().GetSessionVars().SQLMode, mviewTable.Meta().MaterializedView.RefreshScheduleSQLMode)
+	require.Equal(t, "Asia/Shanghai", mviewTable.Meta().MaterializedView.DefinitionTimeZone.Name)
+	require.Zero(t, mviewTable.Meta().MaterializedView.DefinitionTimeZone.Offset)
 
 	tk.MustQuery("select count(*) from mysql.tidb_mlog_purge_info where mlog_id = ?", mlogTable.Meta().ID).Check(testkit.Rows("1"))
 	tk.MustQuery("select last_success_read_tso > 0 from mysql.tidb_mview_refresh_info where mview_id = ?", mviewTable.Meta().ID).Check(testkit.Rows("1"))

@@ -454,12 +454,13 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		refreshExecutionVars.IsolationReadEngines,
 	)
 
-	restoreSessVars, err := initRefreshMaterializedViewSession(sessVars, tblInfo.MaterializedView)
+	restoreSessVars, err := ddl.InitMViewSession(sessVars, tblInfo.MaterializedView,
+		schemaName.O, e.Ctx().GetSessionVars().StmtCtx.ResourceGroupName)
 	if err != nil {
 		return err
 	}
 	defer restoreSessVars()
-	failpoint.InjectCall("refreshMaterializedViewAfterInitSession", sessVars.SQLMode, sessVars.Location().String())
+	failpoint.InjectCall("refreshMaterializedViewAfterInitSession", sessVars.SQLMode, sessVars.Location().String(), refreshSctx)
 
 	mviewID = tblInfo.ID
 	advisoryLockName, err := acquireMVRefreshAdvisoryLock(refreshSctx, schemaName, tblInfo)
@@ -1048,11 +1049,13 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		buildSessVars.MViewMaintainImportDiskQuota,
 	)
 
-	restoreBuildSessVars, err := initRefreshMaterializedViewSession(buildSessVars, tblInfo.MaterializedView)
+	restoreBuildSessVars, err := ddl.InitMViewSession(buildSessVars, tblInfo.MaterializedView,
+		schemaName.O, e.Ctx().GetSessionVars().StmtCtx.ResourceGroupName)
 	if err != nil {
 		return 0, err
 	}
 	defer restoreBuildSessVars()
+	failpoint.InjectCall("refreshMaterializedViewAfterInitSession", buildSessVars.SQLMode, buildSessVars.Location().String(), buildSctx)
 
 	origInMViewMaintenance := buildSessVars.InMViewMaintenance
 	buildSessVars.InMViewMaintenance = true
@@ -1506,55 +1509,6 @@ func getMVRefreshOutOfPlaceShadowTableID(
 		return 0, errors.New("refresh materialized view complete OUT OF PLACE: invalid shadow table id")
 	}
 	return shadowTableID, nil
-}
-
-func initRefreshMaterializedViewSession(
-	sessVars *variable.SessionVars,
-	mviewInfo *model.MaterializedViewInfo,
-) (func(), error) {
-	if mviewInfo == nil {
-		return nil, errors.New("refresh materialized view: invalid materialized view metadata")
-	}
-	timezone := mviewInfo.DefinitionTimeZone.Clone()
-	loc, err := timezone.GetLocation()
-	if err != nil {
-		return nil, errors.Annotate(err, "refresh materialized view: invalid definition timezone")
-	}
-
-	origEnableMView := sessVars.EnableMView
-	if err := sessVars.SetSystemVar(vardef.TiDBMViewEnable, "on"); err != nil {
-		return nil, errors.Annotate(err, "refresh materialized view: failed to enable materialized view support")
-	}
-	origSQLMode := sessVars.SQLMode
-	origDivPrecisionIncrement := sessVars.DivPrecisionIncrement
-	origTimeZone := sessVars.TimeZone
-	origMViewMaintenance := sessVars.InMViewMaintenance
-	origStmtCtxTimeZone := sessVars.StmtCtx.TimeZone()
-	origTypeFlags := sessVars.StmtCtx.TypeFlags()
-	origErrLevels := sessVars.StmtCtx.ErrLevels()
-
-	sessVars.SQLMode = mviewInfo.DefinitionSQLMode
-	sessVars.DivPrecisionIncrement = mviewInfo.DefinitionDivPrecisionIncrement
-	sessVars.InMViewMaintenance = true
-	sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sessVars.SQLMode.HasNoBackslashEscapesMode())
-	sessVars.TimeZone = loc
-	sessVars.StmtCtx.SetTimeZone(loc)
-	sessVars.StmtCtx.SetTypeFlags(expression.MaterializedScheduleTypeFlagsWithSQLMode(sessVars.SQLMode))
-	sessVars.StmtCtx.SetErrLevels(expression.MaterializedScheduleErrLevelsWithSQLMode(sessVars.SQLMode))
-
-	return func() {
-		if err := sessVars.SetSystemVar(vardef.TiDBMViewEnable, variable.BoolToOnOff(origEnableMView)); err != nil {
-			logutil.BgLogger().Warn("refresh materialized view: failed to restore materialized view enablement", zap.Error(err))
-		}
-		sessVars.SQLMode = origSQLMode
-		sessVars.DivPrecisionIncrement = origDivPrecisionIncrement
-		sessVars.InMViewMaintenance = origMViewMaintenance
-		sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, origSQLMode.HasNoBackslashEscapesMode())
-		sessVars.TimeZone = origTimeZone
-		sessVars.StmtCtx.SetTimeZone(origStmtCtxTimeZone)
-		sessVars.StmtCtx.SetTypeFlags(origTypeFlags)
-		sessVars.StmtCtx.SetErrLevels(origErrLevels)
-	}, nil
 }
 
 func validateRefreshMaterializedViewStmt(s *ast.RefreshMaterializedViewStmt, isInternalSQL bool) (ast.RefreshMaterializedViewMode, string, error) {

@@ -40,9 +40,11 @@ func Start(t *testing.T, handler http.Handler) string {
 	listener, err := net.Listen("unix", socketPath)
 	require.NoError(t, err)
 	serverDone := make(chan struct{})
+	acceptedConn := make(chan net.Conn, 1)
 	go func() {
 		defer close(serverDone)
 		connection, err := listener.Accept()
+		acceptedConn <- connection
 		if err != nil {
 			return
 		}
@@ -55,6 +57,11 @@ func Start(t *testing.T, handler http.Handler) string {
 
 	t.Cleanup(func() {
 		require.NoError(t, listener.Close())
+		// Closing the listener unblocks Accept, including when no client connected.
+		if connection := <-acceptedConn; connection != nil {
+			// ServeConn may have already closed the connection.
+			_ = connection.Close()
+		}
 		select {
 		case <-serverDone:
 		case <-time.After(time.Second):

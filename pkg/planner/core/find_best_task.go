@@ -917,6 +917,12 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		lhsFullMatch := isFullIndexMatch(lhs)
 		rhsFullMatch := isFullIndexMatch(rhs)
 		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch, eqOrInResult, lhs.eqOrInCount, rhs.eqOrInCount)
+		// A broad index lookup must not prune a table path on predicate counts alone.
+		rangeMaxCount := sctx.GetSessionVars().RangeMaxCount
+		if (pseudoResult > 0 && !canPseudoWinnerPrune(lhs, rhs, rangeMaxCount)) ||
+			(pseudoResult < 0 && !canPseudoWinnerPrune(rhs, lhs, rangeMaxCount)) {
+			pseudoResult = 0
+		}
 		// Predicate counts alone cannot justify pruning an index on different columns.
 		// The winner must also strictly dominate the other path's access conditions.
 		if pseudoResult > 0 && comparable1 && accessResult > 0 && totalSum >= 0 {
@@ -1018,6 +1024,30 @@ func hasStatsForEstimation(c *candidatePath, statsTbl *statistics.Table) bool {
 		found++
 	}
 	return found == len(c.accessCondsColMap)
+}
+
+// isBroadIndexLookup returns true if c is a non-covering index that may read so much of the table that a
+// table lookup per row can cost more than scanning the table. That is the case if either:
+//   - its own estimate reads at least cost.SelectionFactor (the default selectivity) of tableRows. The estimate
+//     of an index without statistics is unreliable, but it still scales with the number of ranges. For example,
+//     a single column IN list with 900 values is estimated to read 90% of the table.
+//   - it has more ranges than rangeMaxCount (tidb_opt_range_max_count). Zero disables this check.
+//
+// See https://github.com/pingcap/tidb/issues/72561.
+func isBroadIndexLookup(c *candidatePath, tableRows float64, rangeMaxCount int64) bool {
+	if c.path.IsTablePath() || c.path.IsSingleScan {
+		return false
+	}
+	if rangeMaxCount > 0 && int64(len(c.path.Ranges)) > rangeMaxCount {
+		return true
+	}
+	return c.path.CountAfterAccess > 0 && c.path.CountAfterAccess >= tableRows*cost.SelectionFactor
+}
+
+// canPseudoWinnerPrune returns false if winner is a broad index lookup relative to the table path loser,
+// so that both paths are left for cost comparison.
+func canPseudoWinnerPrune(winner, loser *candidatePath, rangeMaxCount int64) bool {
+	return !loser.path.IsTablePath() || !isBroadIndexLookup(winner, loser.path.CountAfterAccess, rangeMaxCount)
 }
 
 func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount int) int {
@@ -2070,7 +2100,13 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				continue
 			}
 			result, missingStats := compareCandidates(ds.SCtx(), ds.StatisticTable, prop, candidates[i], currentCandidate)
-			if missingStats {
+			winner := currentCandidate
+			if result == 1 {
+				winner = candidates[i]
+			}
+			// idxMissingStats removes full scan paths below, so a broad index lookup must not set it,
+			// even if it won against another index.
+			if missingStats && !isBroadIndexLookup(winner, ds.TableStats.RowCount, ds.SCtx().GetSessionVars().RangeMaxCount) {
 				idxMissingStats = true // Ensure that we track idxMissingStats across all iterations
 			}
 			if result == 1 {

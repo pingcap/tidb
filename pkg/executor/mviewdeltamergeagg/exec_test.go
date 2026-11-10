@@ -35,24 +35,70 @@ import (
 )
 
 func TestMergeRuntimeStats(t *testing.T) {
-	stats := newMergeRuntimeStats(2)
-	stats.readerTime = time.Second
-	stats.writerTime = 2 * time.Second
-	stats.mergeWorkerTime[0] = 3 * time.Second
-	stats.writerDetail = mergeWriterStats{chunks: 1, rowOps: 2, insertRows: 1, noopRows: 1}
+	stats := newMergeRuntimeStats(3)
+	stats.readerTime = 15 * time.Millisecond
+	stats.writerTime = 8 * time.Millisecond
+	stats.mergeWorkerTime = []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 0}
 
-	clone := stats.Clone().(*mergeRuntimeStats)
+	s := stats.String()
+	require.Contains(t, s, "mview_delta_merge_agg")
+	require.Contains(t, s, "total:3")
+	require.Contains(t, s, "active:2")
+	require.Contains(t, s, "min:10ms")
+	require.Contains(t, s, "max:20ms")
+	require.Contains(t, s, "avg:15ms")
+	require.Contains(t, s, "reader:15ms")
+	require.Contains(t, s, "writer:{time:8ms")
+	require.Contains(t, s, "chunks:0")
+	require.Contains(t, s, "row_ops:0")
+
+	stats = newMergeRuntimeStats(2)
+	stats.readerTime = 3 * time.Millisecond
+	stats.writerTime = 4 * time.Millisecond
+	stats.mergeWorkerTime = []time.Duration{5 * time.Millisecond, 7 * time.Millisecond}
+	stats.writerDetail = mergeWriterStats{
+		chunks:     1,
+		rowOps:     11,
+		noopRows:   1,
+		insertRows: 3,
+		updateRows: 5,
+		deleteRows: 2,
+	}
+	other := newMergeRuntimeStats(3)
+	other.readerTime = 2 * time.Millisecond
+	other.writerTime = time.Millisecond
+	other.mergeWorkerTime = []time.Duration{time.Millisecond, 2 * time.Millisecond, 9 * time.Millisecond}
+	other.writerDetail = mergeWriterStats{
+		chunks:     2,
+		rowOps:     9,
+		noopRows:   2,
+		insertRows: 1,
+		updateRows: 4,
+		deleteRows: 2,
+	}
+	stats.Merge(other)
+	require.Equal(t, 5*time.Millisecond, stats.readerTime)
+	require.Equal(t, 5*time.Millisecond, stats.writerTime)
+	require.Equal(t, []time.Duration{
+		6 * time.Millisecond,
+		9 * time.Millisecond,
+		9 * time.Millisecond,
+	}, stats.mergeWorkerTime)
+	require.Equal(t, int64(3), stats.writerDetail.chunks)
+	require.Equal(t, int64(20), stats.writerDetail.rowOps)
+	require.Equal(t, int64(3), stats.writerDetail.noopRows)
+	require.Equal(t, int64(4), stats.writerDetail.insertRows)
+	require.Equal(t, int64(9), stats.writerDetail.updateRows)
+	require.Equal(t, int64(4), stats.writerDetail.deleteRows)
+
+	clone, ok := stats.Clone().(*mergeRuntimeStats)
+	require.True(t, ok)
+	require.Equal(t, stats.readerTime, clone.readerTime)
+	require.Equal(t, stats.writerTime, clone.writerTime)
+	require.Equal(t, stats.mergeWorkerTime, clone.mergeWorkerTime)
+	require.Equal(t, stats.writerDetail, clone.writerDetail)
 	require.Equal(t, stats.String(), clone.String())
 	require.Equal(t, execdetails.TpMViewDeltaMergeAggRuntimeStats, clone.Tp())
-
-	other := newMergeRuntimeStats(2)
-	other.readerTime = time.Second
-	other.mergeWorkerTime[1] = 4 * time.Second
-	other.writerDetail = mergeWriterStats{chunks: 2, rowOps: 3, updateRows: 2}
-	stats.Merge(other)
-	require.Equal(t, 2*time.Second, stats.readerTime)
-	require.Equal(t, int64(3), stats.writerDetail.chunks)
-	require.Contains(t, stats.String(), "active:2")
 }
 
 func TestEncodeChunkKeyRows(t *testing.T) {

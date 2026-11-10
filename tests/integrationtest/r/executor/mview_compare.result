@@ -30,6 +30,38 @@ cnt
 _Differ_type_1
 show index from mv_compare_output;
 Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+create table t_compare_snapshot (id int primary key);
+insert into t_compare_snapshot values (1);
+do sleep(0.01);
+set @stale_ts = now(6);
+do sleep(0.1);
+start transaction read only as of timestamp @stale_ts;
+set @transaction_ts = @@tidb_current_ts;
+select id from t_compare_snapshot order by id;
+id
+1
+insert into t_compare_snapshot values (2);
+compare materialized view mv_compare as of timestamp @stale_ts;
+compare result
+There are no differences result in 0 rows compared to source base tables at timestamp '<timestamp>' (TSO: <tso>)
+compare materialized view mv_compare as of timestamp @stale_ts output into table mv_compare_stale_output;
+Error 1105 (HY000): only support read-only statement during read-only staleness transactions
+select @@tidb_current_ts = @transaction_ts as same_transaction;
+same_transaction
+1
+select id from t_compare_snapshot order by id;
+id
+1
+select count(*) from information_schema.tables
+where table_schema = 'test' and table_name = 'mv_compare_stale_output';
+count(*)
+0
+rollback;
+select id from t_compare_snapshot order by id;
+id
+1
+2
+drop table t_compare_snapshot;
 insert into t_compare values (1, 40), (2, 50);
 set @compare_ts = now(6);
 do sleep(0.1);
