@@ -436,7 +436,16 @@ func TestBalanceMultipleTasks(t *testing.T) {
 	b.balance(ctx, manager)
 	require.True(t, ctrl.Satisfied())
 
-	// balance multiple tasks
+	// A failed slot query stops this round without updating assignments.
+	manager.getSchedulers()[0].(*mock.MockScheduler).EXPECT().
+		GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
+	mockTaskMgr.EXPECT().GetActiveSubtasks(gomock.Any(), int64(1)).Return(taskCases[0].subtasks, nil)
+	mockTaskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, errors.New("mock slot query error"))
+	b.balance(ctx, manager)
+	require.True(t, ctrl.Satisfied())
+	require.Equal(t, map[string]int{"tidb1": 0, "tidb2": 0, "tidb3": 0}, b.currUsedSlots)
+
+	// The next round reloads slots and balances all tasks.
 	mockTaskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
 	for i, c := range taskCases {
 		taskID := int64(i + 1)
@@ -530,15 +539,27 @@ func TestBalanceAvoidPreemptingRunningSubtasks(t *testing.T) {
 		require.Equal(t, map[string]int{"n1": 3, "n2": 3, "n3": 3, "n4": 3}, b.actualUsedSlots)
 	})
 
+	t.Run("retain existing pending subtask", func(t *testing.T) {
+		taskSubtasks := [][]*proto.SubtaskBase{
+			{{ID: 1, ExecID: "n1", State: proto.SubtaskStatePending}},
+			{{ID: 2, ExecID: "n1", State: proto.SubtaskStateRunning}},
+		}
+		b := runBalance(t, []string{"n1", "n2"}, map[string]int{"n1": 6}, taskSubtasks)
+		require.Equal(t, "n1", taskSubtasks[0][0].ExecID)
+		require.Equal(t, "n2", taskSubtasks[1][0].ExecID)
+		require.Equal(t, map[string]int{"n1": 3, "n2": 3}, b.actualUsedSlots)
+	})
+
 	t.Run("preempt lower ranking task if no idle node", func(t *testing.T) {
 		taskSubtasks := [][]*proto.SubtaskBase{
 			{{ID: 1, ExecID: "n1", State: proto.SubtaskStateRunning}},
 			{{ID: 2, ExecID: "n1", State: proto.SubtaskStatePending}},
 			{{ID: 3, ExecID: "n2", State: proto.SubtaskStateRunning}},
 		}
-		runBalance(t, []string{"n1", "n2"}, map[string]int{"n1": 6, "n2": 3}, taskSubtasks)
+		b := runBalance(t, []string{"n1", "n2"}, map[string]int{"n1": 6, "n2": 3}, taskSubtasks)
 		require.Equal(t, "n1", taskSubtasks[0][0].ExecID)
 		require.Equal(t, "n2", taskSubtasks[1][0].ExecID)
+		require.Equal(t, map[string]int{"n1": 3, "n2": 6}, b.actualUsedSlots)
 		// no node has enough slots for task 3, it's not balanced.
 		require.Equal(t, "n2", taskSubtasks[2][0].ExecID)
 	})

@@ -111,11 +111,11 @@ func (b *balancer) balanceSubtasks(ctx context.Context, sch Scheduler, managedNo
 	return b.doBalanceSubtasks(ctx, task, eligibleNodes)
 }
 
-// orderAndFilterNodes orders nodes to balance subtasks to, and keeps at most
-// maxNodeCnt of them. If maxNodeCnt takes effect, nodes which already have more
-// subtasks of the task come first. Then nodes on which canRunWithoutPreempt
-// returns true come first, so we don't preempt running subtasks of lower ranking
-// tasks when some other node is free. Otherwise, the original order is kept.
+// orderAndFilterNodes sorts nodes in place and applies a positive maxNodeCnt limit.
+// When the limit applies, existing subtask count takes priority over avoiding
+// preemption; otherwise only the no-preemption preference applies. Ties retain
+// their original order. This orders relocation candidates, without forcing
+// subtasks already on eligible nodes to move to idle nodes.
 func orderAndFilterNodes(nodes []string, subtasks []*proto.SubtaskBase, maxNodeCnt int,
 	canRunWithoutPreempt func(node string) bool) []string {
 	limitNodeCnt := maxNodeCnt > 0 && len(nodes) > maxNodeCnt
@@ -161,7 +161,7 @@ func (b *balancer) updateActualUsedSlots(task *proto.Task, oldNodes, newNodes ma
 }
 
 func getNodesOfSubtasks(subtasks []*proto.SubtaskBase) map[string]struct{} {
-	nodes := make(map[string]struct{}, len(subtasks))
+	nodes := make(map[string]struct{})
 	for _, st := range subtasks {
 		nodes[st.ExecID] = struct{}{}
 	}
