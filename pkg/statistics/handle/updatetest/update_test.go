@@ -747,7 +747,7 @@ func TestStatsVariables(t *testing.T) {
 	pruneMode, err := util.GetCurrentPruneMode(h.SPool())
 	require.NoError(t, err)
 	require.Equal(t, string(variable.Dynamic), pruneMode)
-	err = util.UpdateSCtxVarsForStats(sctx)
+	restoreStatsVars, err := util.UpdateSCtxVarsForStats(sctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, sctx.GetSessionVars().AnalyzeVersion)
 	require.Equal(t, 4, sctx.GetSessionVars().AnalyzeStoreBatchSize)
@@ -755,6 +755,7 @@ func TestStatsVariables(t *testing.T) {
 	require.Equal(t, string(variable.Dynamic), sctx.GetSessionVars().PartitionPruneMode.Load())
 	require.Equal(t, false, sctx.GetSessionVars().EnableAnalyzeSnapshot)
 	require.Equal(t, true, sctx.GetSessionVars().SkipMissingPartitionStats)
+	restoreStatsVars()
 
 	tk.MustExec(`set global tidb_analyze_version=2`)
 	tk.MustExec(`set global tidb_analyze_store_batch_size=7`)
@@ -766,7 +767,7 @@ func TestStatsVariables(t *testing.T) {
 	pruneMode, err = util.GetCurrentPruneMode(h.SPool())
 	require.NoError(t, err)
 	require.Equal(t, string(variable.Static), pruneMode)
-	err = util.UpdateSCtxVarsForStats(sctx)
+	restoreStatsVars, err = util.UpdateSCtxVarsForStats(sctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, sctx.GetSessionVars().AnalyzeVersion)
 	require.Equal(t, 7, sctx.GetSessionVars().AnalyzeStoreBatchSize)
@@ -774,6 +775,7 @@ func TestStatsVariables(t *testing.T) {
 	require.Equal(t, string(variable.Static), sctx.GetSessionVars().PartitionPruneMode.Load())
 	require.Equal(t, true, sctx.GetSessionVars().EnableAnalyzeSnapshot)
 	require.Equal(t, false, sctx.GetSessionVars().SkipMissingPartitionStats)
+	restoreStatsVars()
 }
 
 func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {

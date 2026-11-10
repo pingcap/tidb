@@ -463,7 +463,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 				continue
 			}
 
-			if tblInfo.IsView() {
+			if tblInfo.IsView() || tblInfo.MaterializedViewLog != nil {
 				continue
 			}
 

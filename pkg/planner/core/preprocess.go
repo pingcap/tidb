@@ -82,6 +82,12 @@ func WithPreprocessorReturn(ret *PreprocessorReturn) PreprocessOpt {
 	}
 }
 
+// useProvidedInfoSchemaAsIs keeps table resolution on the infoschema selected
+// by the caller instead of upgrading table metadata through MDL.
+func useProvidedInfoSchemaAsIs(p *preprocessor) {
+	p.useInfoSchemaAsIs = true
+}
+
 // TryAddExtraLimit trys to add an extra limit for SELECT or UNION statement when sql_select_limit is set.
 func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 	if ctx.GetSessionVars().SelectLimit == math.MaxUint64 || ctx.GetSessionVars().InRestrictedSQL {
@@ -163,7 +169,8 @@ const (
 	// inTxnRetry is set when visiting in transaction retry.
 	inTxnRetry
 	// inCreateOrDropTable is set when visiting create/drop table/view/sequence,
-	// rename table, alter table add foreign key, alter table in prepare stmt, and BR restore.
+	// rename table, complete out-of-place materialized view refresh, alter table add
+	// foreign key, alter table in prepare stmt, and BR restore.
 	// TODO need a better name to clarify it's meaning
 	inCreateOrDropTable
 	// parentIsJoin is set when visiting node's parent is join.
@@ -254,6 +261,10 @@ type preprocessor struct {
 	err error
 
 	resolveCtx *resolve.Context
+
+	// useInfoSchemaAsIs keeps table resolution on the infoschema selected by the
+	// caller, instead of upgrading table metadata to the latest domain schema.
+	useInfoSchemaAsIs bool
 }
 
 func (p *preprocessor) Enter(in ast.Node) bool {
@@ -329,12 +340,24 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		p.checkAlterTableGrammar(node)
 	case *ast.AlterMaterializedViewStmt:
 		p.stmtTp = TypeAlter
-		// The view name is not an existing table. Avoid resolving it as a normal table name.
+		// ALTER MATERIALIZED VIEW validates its target during DDL handling; do not
+		// register it as an ordinary table dependency during preprocessing.
 		p.flag |= inCreateOrDropTable
 	case *ast.AlterMaterializedViewLogStmt:
 		p.stmtTp = TypeAlter
 	case *ast.PurgeMaterializedViewLogStmt:
 		p.stmtTp = TypeAlter
+	case *ast.CompareMaterializedViewStmt:
+		// Resolve the MV and its output table separately from historical data reads.
+		p.flag |= inCreateOrDropTable
+	case *ast.RefreshMaterializedViewStmt:
+		if node.Type == ast.RefreshMaterializedViewTypeComplete &&
+			node.CompleteType == ast.RefreshMaterializedViewCompleteTypeOutOfPlace {
+			// Complete out-of-place refresh validates its target in the refresh
+			// executor and manages cutover separately. Do not register the target as
+			// a normal table dependency in the refresh session's MDL-related table set.
+			p.flag |= inCreateOrDropTable
+		}
 	case *ast.CreateDatabaseStmt:
 		p.stmtTp = TypeCreate
 		p.checkCreateDatabaseGrammar(node)
@@ -578,7 +601,7 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 	is := p.ensureInfoSchema()
 
 	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
-	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateSequence) {
+	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateSequence || p.showTp == ast.ShowCreateMaterializedView || p.showTp == ast.ShowCreateMaterializedViewLog || p.showTp == ast.ShowMaterializedViewRemainLogs || p.showTp == ast.ShowMaterializedViewLogWaitPurge) {
 		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
 	}
 
@@ -669,7 +692,7 @@ func (p *preprocessor) Leave(in ast.Node) bool {
 		p.flag &= ^inCreateOrDropTable
 	case *ast.CreateMaterializedViewStmt:
 		p.flag &= ^inCreateOrDropTable
-	case *ast.AlterMaterializedViewStmt, *ast.DropMaterializedViewStmt, *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
+	case *ast.AlterMaterializedViewStmt, *ast.DropMaterializedViewStmt, *ast.RefreshMaterializedViewStmt, *ast.CompareMaterializedViewStmt, *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
 		p.flag &= ^inCreateOrDropTable
 	case *driver.ParamMarkerExpr:
 		if p.flag&inPrepare == 0 {
@@ -1843,7 +1866,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	if !p.skipLockMDL() {
+	if !p.skipLockMDL() && !p.useInfoSchemaAsIs {
 		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, p.sctx.GetPlanCtx(), ast.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
 		if err != nil {
 			p.err = err
@@ -1948,15 +1971,36 @@ func (p *preprocessor) popLockSelectCtx() {
 // checkLockClauseTables validates/attaches tables referenced by SELECT ... FOR UPDATE/LOCK IN SHARE MODE.
 // It binds lock targets to the tables in FROM and keeps backward compatibility by accepting
 // base-table names even when aliases exist, with a warning to guide users to explicit aliases.
+// It rejects MV-related lock targets within the current SELECT.
 func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt, lockCtx *lockSelectCtx) {
-	if stmt.LockInfo == nil || stmt.LockInfo.LockType == ast.SelectLockNone || len(stmt.LockInfo.Tables) == 0 {
+	if stmt.LockInfo == nil || stmt.LockInfo.LockType == ast.SelectLockNone {
 		return
 	}
 	if lockCtx == nil {
 		emptyCtx := newLockSelectCtx(nil)
 		lockCtx = &emptyCtx
 	}
+	checkMViewLockTarget := func(target *ast.TableName) error {
+		tNameW := p.resolveCtx.GetTableName(target)
+		if tNameW == nil {
+			// CTE references have no resolved table metadata.
+			return nil
+		}
+		return CheckMViewUpdatable(p.sctx.GetSessionVars(), tNameW.TableInfo, target.Name.O, "SELECT")
+	}
+	if len(stmt.LockInfo.Tables) == 0 {
+		// Derived queries and CTE bodies have their own SELECT contexts, so their
+		// underlying tables must not become lock targets of this SELECT.
+		for _, ref := range lockCtx.orderedRefs {
+			if err := checkMViewLockTarget(ref.table); err != nil {
+				p.err = err
+				return
+			}
+		}
+		return
+	}
 	warnedCompatRefs := make(map[string]struct{})
+	hasResolvedLockTarget := false
 
 	for _, ref := range stmt.LockInfo.Tables {
 		name := ref.Name.L
@@ -2025,12 +2069,33 @@ func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt, lockCtx *lock
 			// CTE has no *model.HintedTable, we need to skip it.
 			continue
 		}
+		hasResolvedLockTarget = true
 
 		p.resolveCtx.AddTableName(&resolve.TableNameW{
 			TableName: ref,
 			DBInfo:    tNameW.DBInfo,
 			TableInfo: tNameW.TableInfo,
 		})
+	}
+	if p.err != nil {
+		return
+	}
+
+	for _, target := range stmt.LockInfo.Tables {
+		if err := checkMViewLockTarget(target); err != nil {
+			p.err = err
+			return
+		}
+	}
+	if !hasResolvedLockTarget {
+		// CTE-only OF targets leave the executor's lock-all fallback active. Check
+		// this SELECT's direct references without descending into derived queries or CTE bodies.
+		for _, ref := range lockCtx.orderedRefs {
+			if err := checkMViewLockTarget(ref.table); err != nil {
+				p.err = err
+				return
+			}
+		}
 	}
 }
 

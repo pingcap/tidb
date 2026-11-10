@@ -462,8 +462,15 @@ func TestPrepareOverMaxPreparedStmtCount(t *testing.T) {
 
 	// test change global limit and make it affected in test session.
 	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("-1"))
-	tk.MustExec("set @@global.max_prepared_stmt_count = 2")
-	tk.MustQuery("select @@global.max_prepared_stmt_count").Check(testkit.Rows("2"))
+	// Earlier tests in this process can leave sessions open, so the process-wide
+	// prepared-statement count may already be at least 2.
+	limit := readGaugeInt(metrics.PreparedStmtGauge) + 1
+	if limit < 2 {
+		limit = 2
+	}
+	limitStr := strconv.Itoa(limit)
+	tk.MustExec("set @@global.max_prepared_stmt_count = " + limitStr)
+	tk.MustQuery("select @@global.max_prepared_stmt_count").Check(testkit.Rows(limitStr))
 
 	// test close session to give up all prepared stmt
 	tk.MustExec(`prepare stmt2 from "select 1"`)
@@ -474,10 +481,10 @@ func TestPrepareOverMaxPreparedStmtCount(t *testing.T) {
 
 	// test meet max limit.
 	tk.RefreshSession()
-	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("2"))
+	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows(limitStr))
 	for i := 1; ; i++ {
 		prePrepared = readGaugeInt(metrics.PreparedStmtGauge)
-		if prePrepared >= 2 {
+		if prePrepared >= limit {
 			tk.MustGetErrCode(`prepare stmt`+strconv.Itoa(i)+` from "select 1"`, errno.ErrMaxPreparedStmtCountReached)
 			break
 		}

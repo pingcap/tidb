@@ -78,7 +78,7 @@ func (w *worker) cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx *jobContext, jo
 
 	// Materialized views in Stage-1 are non-partitioned, so their table-level
 	// affinity group ID is derived directly from the old physical table ID.
-	groupID := GetTableAffinityGroupID(args.OldMViewID)
+	groupID := GetTableAffinityGroupID(jobCtx.store.GetCodec(), args.OldMViewID)
 	if err := affinity.DeleteGroupsWithRetry(jobCtx.ctx, []string{groupID}); err != nil {
 		logutil.DDLLogger().Warn(
 			"failed to delete old materialized view affinity group after cutover",
@@ -216,8 +216,8 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 				return ver, errors.Trace(err)
 			}
 		}
-		// Placement rules cannot be removed immediately after drop table / truncate table, because the
-		// tables can be flashed back or recovered, therefore it moved to doGCPlacementRules in gc_worker.go.
+		// Keep placement rules until delete-range GC so flashback/recover can retain
+		// the dropped table's placement. doGCPlacementRules removes them later.
 		if !tblInfo.IsSequence() && !tblInfo.IsView() {
 			dropTableEvent := notifier.NewDropTableEvent(tblInfo)
 			err = asyncNotifyEvent(jobCtx, dropTableEvent, job, noSubJob, w.sess)
@@ -556,7 +556,7 @@ func getTableInfo(t *meta.Mutator, tableID, schemaID int64) (*model.TableInfo, e
 
 // onTruncateTable delete old table meta, and creates a new table identical to old table except for table ID.
 // As all the old data is encoded with old table ID, it can not be accessed anymore.
-// A background job will be created to delete old data.
+// A delete-range task will be enqueued to delete the old data.
 func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	args, err := model.GetTruncateTableArgs(job)
@@ -1005,6 +1005,9 @@ func (w *worker) onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, 
 	fkh := newForeignKeyHelper()
 	metaMut := jobCtx.metaMut
 	is := jobCtx.infoCache.GetLatest()
+	firstRenameByTableID := make(map[int64]*model.RenameTableArgs)
+	finalRenameByTableID := make(map[int64]*model.RenameTableArgs)
+	renamedTableByID := make(map[int64]schemaIDAndTableInfo)
 	for _, info := range args.RenameTableInfos {
 		job.TableID = info.TableID
 		job.TableName = info.OldTableName.L
@@ -1016,12 +1019,11 @@ func (w *worker) onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		err = adjustForeignKeyChildTableInfoAfterRenameTable(
-			jobCtx.infoCache, metaMut, job, &fkh, tblInfo,
-			info.OldSchemaName, info.OldTableName, info.NewTableName, info.NewSchemaID)
-		if err != nil {
-			return ver, errors.Trace(err)
+		if _, ok := firstRenameByTableID[info.TableID]; !ok {
+			firstRenameByTableID[info.TableID] = info
 		}
+		finalRenameByTableID[info.TableID] = info
+		renamedTableByID[info.TableID] = schemaIDAndTableInfo{schemaID: info.NewSchemaID, tblInfo: tblInfo}
 		// Update masking policy names after table rename.
 		newDB, ok := is.SchemaByID(info.NewSchemaID)
 		if !ok {
@@ -1032,6 +1034,11 @@ func (w *worker) onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, 
 			info.OldSchemaName, newDB.Name, info.OldTableName, info.NewTableName); err != nil {
 			return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
 		}
+	}
+	err = adjustForeignKeyChildTableInfoAfterRenameTables(
+		is, metaMut, &fkh, firstRenameByTableID, finalRenameByTableID, renamedTableByID)
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
 
 	ver, err = updateSchemaVersion(jobCtx, job, fkh.getLoadedTables()...)
@@ -1116,6 +1123,59 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(
 		return nil
 	}
 	fkh.addLoadedTable(oldSchemaName.L, oldTableName.L, newDB.ID, tblInfo)
+	err := adjustReferredForeignKeysAfterRename(is, t, fkh, referredFKs, newDB.Name, newTableName)
+	if err != nil {
+		return err
+	}
+	return updateLoadedForeignKeyTables(t, fkh)
+}
+
+func adjustForeignKeyChildTableInfoAfterRenameTables(
+	is infoschema.InfoSchema,
+	t *meta.Mutator,
+	fkh *foreignKeyHelper,
+	firstRenameByTableID, finalRenameByTableID map[int64]*model.RenameTableArgs,
+	renamedTableByID map[int64]schemaIDAndTableInfo,
+) error {
+	if !vardef.EnableForeignKey.Load() {
+		return nil
+	}
+
+	// The InfoSchema referred-FK map describes table names before the statement.
+	// Register each renamed object under its original name, but point to the
+	// TableInfo at its final location so child tables renamed earlier in the same
+	// statement are updated in place.
+	for tableID, firstRename := range firstRenameByTableID {
+		renamedTable := renamedTableByID[tableID]
+		fkh.addLoadedTable(firstRename.OldSchemaName.L, firstRename.OldTableName.L,
+			renamedTable.schemaID, renamedTable.tblInfo)
+	}
+
+	for tableID, firstRename := range firstRenameByTableID {
+		referredFKs := is.GetTableReferredForeignKeys(firstRename.OldSchemaName.L, firstRename.OldTableName.L)
+		if len(referredFKs) == 0 {
+			continue
+		}
+		finalRename := finalRenameByTableID[tableID]
+		newDB, ok := is.SchemaByID(finalRename.NewSchemaID)
+		if !ok {
+			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", finalRename.NewSchemaID))
+		}
+		if err := adjustReferredForeignKeysAfterRename(
+			is, t, fkh, referredFKs, newDB.Name, finalRename.NewTableName); err != nil {
+			return err
+		}
+	}
+	return updateLoadedForeignKeyTables(t, fkh)
+}
+
+func adjustReferredForeignKeysAfterRename(
+	is infoschema.InfoSchema,
+	t *meta.Mutator,
+	fkh *foreignKeyHelper,
+	referredFKs []*model.ReferredFKInfo,
+	newSchemaName, newTableName ast.CIStr,
+) error {
 	for _, referredFK := range referredFKs {
 		childTableInfo, err := fkh.getTableFromStorage(is, t, referredFK.ChildSchema, referredFK.ChildTable)
 		if err != nil {
@@ -1128,9 +1188,13 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(
 		if childFKInfo == nil {
 			continue
 		}
-		childFKInfo.RefSchema = newDB.Name
+		childFKInfo.RefSchema = newSchemaName
 		childFKInfo.RefTable = newTableName
 	}
+	return nil
+}
+
+func updateLoadedForeignKeyTables(t *meta.Mutator, fkh *foreignKeyHelper) error {
 	for _, info := range fkh.loaded {
 		err := updateTable(t, info.schemaID, info.tblInfo, false)
 		if err != nil {

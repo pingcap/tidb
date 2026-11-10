@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -52,6 +53,65 @@ func runSQL(t *testing.T, ctx sessionctx.Context, is infoschema.InfoSchema, sql 
 	nodeW := resolve.NewNodeW(stmt)
 	err = core.Preprocess(context.Background(), ctx, nodeW, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))...)
 	require.Truef(t, terror.ErrorEqual(err, terr), "sql: %s, err:%v, terr:%v", sql, err, terr)
+}
+
+func TestPreprocessMViewShadowResolution(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{AuthUsername: "u", AuthHostname: "%"}
+
+	shadow := &model.TableInfo{
+		ID:                     1,
+		Name:                   ast.NewCIStr("mv_shadow"),
+		State:                  model.StatePublic,
+		MaterializedViewShadow: &model.MaterializedViewShadowInfo{SourceMViewID: 2},
+	}
+	is := infoschema.MockInfoSchema([]*model.TableInfo{shadow})
+	stmts, err := session.Parse(tk.Session(), "select * from mv_shadow")
+	require.NoError(t, err)
+	require.Len(t, stmts, 1)
+
+	err = core.Preprocess(
+		context.Background(),
+		tk.Session(),
+		resolve.NewNodeW(stmts[0]),
+		core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}),
+	)
+	require.NoError(t, err)
+}
+
+func TestPreprocessRefreshMaterializedViewTargetResolution(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tests := []struct {
+		sql       string
+		expectErr bool
+	}{
+		{"refresh materialized view mv complete out of place", false},
+		{"refresh materialized view mv complete in place", true},
+		{"refresh materialized view mv complete delta apply", true},
+		{"refresh materialized view mv fast", true},
+	}
+	for _, tt := range tests {
+		stmts, err := session.Parse(tk.Session(), tt.sql)
+		require.NoError(t, err, tt.sql)
+		require.Len(t, stmts, 1, tt.sql)
+
+		err = core.Preprocess(
+			context.Background(),
+			tk.Session(),
+			resolve.NewNodeW(stmts[0]),
+			core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: infoschema.MockInfoSchema(nil)}),
+		)
+		if tt.expectErr {
+			require.ErrorContains(t, err, "Table 'test.mv' doesn't exist", tt.sql)
+		} else {
+			require.NoError(t, err, tt.sql)
+		}
+	}
 }
 
 func TestValidator(t *testing.T) {

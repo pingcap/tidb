@@ -312,7 +312,7 @@ func checkShowCreateTable(t *testing.T, tblInfo *model.TableInfo, expected strin
 	sctx := mock.NewContext()
 
 	result := bytes.NewBuffer(make([]byte, 0, 512))
-	err := executor.ConstructResultOfShowCreateTable(sctx, tblInfo, autoid.Allocators{}, result)
+	err := executor.ConstructResultOfShowCreateTable(sctx, ast.CIStr{}, tblInfo, autoid.Allocators{}, result)
 	require.NoError(t, err)
 	require.Equal(t, expected, result.String())
 }
@@ -321,7 +321,7 @@ func checkShowCreateTableError(t *testing.T, tblInfo *model.TableInfo, expectedE
 	sctx := mock.NewContext()
 
 	result := bytes.NewBuffer(make([]byte, 0, 512))
-	err := executor.ConstructResultOfShowCreateTable(sctx, tblInfo, autoid.Allocators{}, result)
+	err := executor.ConstructResultOfShowCreateTable(sctx, ast.CIStr{}, tblInfo, autoid.Allocators{}, result)
 	require.ErrorContains(t, err, expectedErr)
 }
 

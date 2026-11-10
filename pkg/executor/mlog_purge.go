@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -355,8 +356,8 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 			purgeJobID,
 			mlogID,
 			mvTaskHistStatusFailed,
-			historyTime(purgeStart, histLocation),
-			historyTime(purgeEnd, histLocation),
+			histTime(purgeStart, histLocation),
+			histTime(purgeEnd, histLocation),
 			totalPurgeRows,
 			&purgeErrMsg,
 		); historyErr != nil {
@@ -440,7 +441,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	if !skipPurgeByCutoffFence {
 		if err := insertMLogPurgeHistRunning(
 			kctx, histSQLExec, purgeJobID, mlogID, schemaName.O, baseTable.Name.O,
-			purgeMethod, safePurgeTSO, historyTime(purgeStart, histLocation),
+			purgeMethod, safePurgeTSO, histTime(purgeStart, histLocation),
 		); err != nil {
 			return finalizeFailure(err)
 		}
@@ -524,7 +525,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	var nextUnixSeconds *int64
 	shouldUpdateNext := false
 	if isInternalSQL {
-		nextUnixSeconds, shouldUpdateNext, err = deriveMLogPurgeNextUnixSeconds(kctx, evalSctx, mlogInfo)
+		nextUnixSeconds, shouldUpdateNext, err = deriveMLogPurgeNextUnixSeconds(kctx, evalSctx, mlogInfo, schemaName.O, mlogName.O)
 		if err != nil {
 			return finalizeFailure(err)
 		}
@@ -552,7 +553,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		})
 		if historyErr == nil {
 			end := time.Now()
-			historyErr = finalizeMLogPurgeHistWithRetry(finalizeCtx, histSQLExec, purgeJobID, mlogID, mvTaskHistStatusSuccess, historyTime(purgeStart, histLocation), historyTime(end, histLocation), totalPurgeRows, nil)
+			historyErr = finalizeMLogPurgeHistWithRetry(finalizeCtx, histSQLExec, purgeJobID, mlogID, mvTaskHistStatusSuccess, histTime(purgeStart, histLocation), histTime(end, histLocation), totalPurgeRows, nil)
 		}
 		if historyErr != nil {
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.Annotate(
@@ -1068,7 +1069,7 @@ func deriveMLogPurgeThrottleDeadline(
 	evalSctx sessionctx.Context,
 	mlogInfo *model.MaterializedViewLogInfo,
 	isInternalSQL bool,
-	_, _ string,
+	schemaName, mlogName string,
 	fallbackNextTime *time.Time,
 ) (*time.Time, error) {
 	failpoint.Inject("mockMLogPurgeAdaptiveDeadlineErr", func(val failpoint.Value) {
@@ -1081,7 +1082,7 @@ func deriveMLogPurgeThrottleDeadline(
 		if mlogInfo == nil || evalSctx == nil {
 			return nil, errors.New("purge materialized view log: schedule evaluation metadata is unavailable")
 		}
-		next, shouldUpdate, err := deriveMLogPurgeNextUnixSeconds(kctx, evalSctx, mlogInfo)
+		next, shouldUpdate, err := deriveMLogPurgeNextUnixSeconds(kctx, evalSctx, mlogInfo, schemaName, mlogName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1370,6 +1371,7 @@ func deriveMLogPurgeNextUnixSeconds(
 	kctx context.Context,
 	evalSctx sessionctx.Context,
 	mlogInfo *model.MaterializedViewLogInfo,
+	schemaName, mlogName string,
 ) (*int64, bool, error) {
 	if strings.TrimSpace(mlogInfo.PurgeNext) == "" {
 		return nil, true, nil
@@ -1382,10 +1384,29 @@ func deriveMLogPurgeNextUnixSeconds(
 		return nil, false, err
 	}
 	if nextAt == nil {
+		if shouldUpdate {
+			logRuntimeMaterializedViewLogPurgeNextUnixSecondsUpdateNull(schemaName, mlogName, mlogInfo.PurgeNext)
+		}
 		return nil, shouldUpdate, nil
 	}
 	nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt)
 	return nextUnixSeconds, shouldUpdate, errors.Trace(err)
+}
+
+func logRuntimeMaterializedViewLogPurgeNextUnixSecondsUpdateNull(
+	schemaName string,
+	mlogName string,
+	nextExpr string,
+) {
+	if strings.TrimSpace(nextExpr) == "" {
+		return
+	}
+	logutil.BgLogger().Error(
+		"purge materialized view log: automatic purge schedule disabled because NEXT expression evaluated to NULL, updating NEXT_PURGE_UNIX_SECONDS to NULL",
+		zap.String("schemaName", schemaName),
+		zap.String("tableName", mlogName),
+		zap.String("purgeNext", parser.Normalize(nextExpr, errors.RedactLogEnable)),
+	)
 }
 
 func updateMaterializedViewLogPurgeInfoOnSuccess(
@@ -1490,7 +1511,7 @@ PURGE_JOB_ID, MLOG_ID, BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_METHOD,
 PURGE_START_TIME, PURGE_END_TIME, PURGE_ROWS, PURGE_DURATION_SEC, PURGE_STATUS, PURGE_FAILED_REASON)
 VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
 		purgeJobID, mlogID, baseSchema, baseTable, method, startAt, endAt, rows,
-		formatPurgeDuration(startAt, endAt), mvTaskHistStatusFailed, reasonValue,
+		formatDurationSecondsBetween(startAt, endAt), mvTaskHistStatusFailed, reasonValue,
 	)
 	if err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
@@ -1538,8 +1559,8 @@ func (e *PurgeMaterializedViewLogExec) insertMLogPurgeHistFailedFallback(
 		baseSchema,
 		baseTable,
 		method,
-		historyTime(purgeStart, histLoc),
-		historyTime(endAt, histLoc),
+		histTime(purgeStart, histLoc),
+		histTime(endAt, histLoc),
 		purgeRows,
 		&purgeErrMsg,
 	); err != nil {
@@ -1564,7 +1585,7 @@ func finalizeMLogPurgeHist(
 	_, err := sqlExec.ExecuteInternal(kctx, `UPDATE mysql.tidb_mlog_purge_hist
 SET PURGE_END_TIME = %?, PURGE_ROWS = %?, PURGE_DURATION_SEC = %?, PURGE_STATUS = %?, PURGE_FAILED_REASON = %?
 WHERE PURGE_JOB_ID = %?`,
-		endAt, rows, formatPurgeDuration(startAt, endAt), status, reasonValue, purgeJobID,
+		endAt, rows, formatDurationSecondsBetween(startAt, endAt), status, reasonValue, purgeJobID,
 	)
 	failpoint.Inject("mockUpdateMaterializedViewLogPurgeStateErr", func(val failpoint.Value) {
 		if v, ok := val.(bool); ok && v {
@@ -1602,19 +1623,4 @@ func finalizeMLogPurgeHistWithRetry(
 		zap.Uint64("purgeJobID", purgeJobID), zap.Int64("mlogID", mlogID), zap.String("status", status),
 		zap.NamedError("firstAttemptErr", firstErr), zap.NamedError("retryErr", secondErr))
 	return errors.Annotatef(secondErr, "first finalize attempt failed: %v", firstErr)
-}
-
-func formatPurgeDuration(startAt, endAt time.Time) string {
-	d := endAt.Sub(startAt)
-	if d <= 0 {
-		return "0.000000"
-	}
-	return fmt.Sprintf("%d.%06d", d.Microseconds()/1_000_000, d.Microseconds()%1_000_000)
-}
-
-func historyTime(t time.Time, loc *time.Location) time.Time {
-	if loc != nil {
-		t = t.In(loc)
-	}
-	return t.Truncate(time.Microsecond)
 }

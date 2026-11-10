@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -116,6 +117,10 @@ func (s *OSSStore) Close() {
 //   - PutObject
 //   - DeleteObject
 func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Options) (obj *OSSStore, errRet error) {
+	if _, err := url.Parse(backend.Endpoint); err != nil {
+		// The parse error includes the full URL, which may contain credentials.
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "invalid OSS endpoint URL")
+	}
 	qs := *backend
 
 	// TODO changing the input backend is a side effect, it shouldn't be part of

@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -49,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -212,6 +214,91 @@ func isValidMaterializedViewLogBaseTable(schemaLowerName string, tblInfo *model.
 		tblInfo.MaterializedViewLog == nil
 }
 
+// formatSQLMode formats mode as the value of the sql_mode variable.
+func formatSQLMode(mode mysql.SQLMode) string {
+	names := make([]string, 0, len(mysql.Str2SQLMode))
+	for name, m := range mysql.Str2SQLMode {
+		if mode&m != 0 {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return strings.Join(names, ",")
+}
+
+// InitMViewSession applies the MV definition and maintenance state and returns its restore function.
+func InitMViewSession(
+	sessVars *variable.SessionVars,
+	mviewInfo *model.MaterializedViewInfo,
+	currentDB, resourceGroup string,
+) (func(), error) {
+	timezone := mviewInfo.DefinitionTimeZone.Clone()
+	loc, err := timezone.GetLocation()
+	if err != nil {
+		return nil, errors.Annotate(err, "materialized view: invalid definition timezone")
+	}
+
+	originalDB := sessVars.CurrentDB
+	originalResourceGroup := sessVars.ResourceGroupName
+	originalStmtResourceGroup := sessVars.StmtCtx.ResourceGroupName
+	origEnableMView := sessVars.EnableMView
+	if err := sessVars.SetSystemVar(vardef.TiDBMViewEnable, "on"); err != nil {
+		return nil, errors.Annotate(err, "materialized view: failed to enable materialized view support")
+	}
+	origSQLMode := sessVars.SQLMode
+	origDivPrecisionIncrement := sessVars.DivPrecisionIncrement
+	origTimeZone := sessVars.TimeZone
+	origMViewMaintenance := sessVars.InMViewMaintenance
+	origStmtCtxTimeZone := sessVars.StmtCtx.TimeZone()
+	origTypeFlags := sessVars.StmtCtx.TypeFlags()
+	origErrLevels := sessVars.StmtCtx.ErrLevels()
+
+	originalVars := make(map[string]string, 3)
+	restore := func() {
+		sessVars.CurrentDB = originalDB
+		sessVars.ResourceGroupName = originalResourceGroup
+		sessVars.StmtCtx.ResourceGroupName = originalStmtResourceGroup
+		if err := sessVars.SetSystemVar(vardef.TiDBMViewEnable, variable.BoolToOnOff(origEnableMView)); err != nil {
+			logutil.DDLLogger().Warn("materialized view: failed to restore materialized view enablement", zap.Error(err))
+		}
+		for name, value := range originalVars {
+			if err := sessVars.SetSystemVar(name, value); err != nil {
+				logutil.DDLLogger().Warn("materialized view: failed to restore session variable", zap.String("name", name), zap.Error(err))
+			}
+		}
+		sessVars.SQLMode = origSQLMode
+		sessVars.DivPrecisionIncrement = origDivPrecisionIncrement
+		sessVars.InMViewMaintenance = origMViewMaintenance
+		sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, origSQLMode.HasNoBackslashEscapesMode())
+		sessVars.TimeZone = origTimeZone
+		sessVars.StmtCtx.SetTimeZone(origStmtCtxTimeZone)
+		sessVars.StmtCtx.SetTypeFlags(origTypeFlags)
+		sessVars.StmtCtx.SetErrLevels(origErrLevels)
+	}
+	for _, assignment := range []struct{ name, value string }{
+		{vardef.SQLModeVar, formatSQLMode(mviewInfo.DefinitionSQLMode)},
+		{vardef.TimeZone, timeutil.ZoneName(loc)},
+		{vardef.DivPrecisionIncrement, strconv.Itoa(mviewInfo.DefinitionDivPrecisionIncrement)},
+	} {
+		oldValue, err := sessVars.SetSystemVarWithOldStateAsRet(assignment.name, assignment.value)
+		if err != nil {
+			restore()
+			return nil, errors.Annotatef(err, "materialized view: failed to set %s", assignment.name)
+		}
+		originalVars[assignment.name] = oldValue
+	}
+	sessVars.CurrentDB = currentDB
+	if resourceGroup != "" {
+		sessVars.ResourceGroupName = resourceGroup
+	}
+	sessVars.StmtCtx.ResourceGroupName = sessVars.ResourceGroupName
+	sessVars.InMViewMaintenance = true
+	sessVars.StmtCtx.SetTimeZone(loc)
+	sessVars.StmtCtx.SetTypeFlags(expression.MaterializedScheduleTypeFlagsWithSQLMode(sessVars.SQLMode))
+	sessVars.StmtCtx.SetErrLevels(expression.MaterializedScheduleErrLevelsWithSQLMode(sessVars.SQLMode))
+	return restore, nil
+}
+
 // ApplyMViewExecutionSessionVars applies MV execution vars onto a session and returns a restore closure.
 func ApplyMViewExecutionSessionVars(sessVars *variable.SessionVars, target variable.MViewExecutionSessionVars) (func(), error) {
 	return applyMViewExecutionSessionVars(sessVars, target, false)
@@ -290,6 +377,8 @@ func AddMViewExecutionSessionVarsToJob(job *model.Job, sessVars *variable.Sessio
 	job.AddSystemVars(vardef.TiFlashFineGrainedShuffleBatchSize, strconv.FormatUint(target.FineGrainedBatchSize, 10))
 	job.AddSystemVars(vardef.TiDBMViewMaintainImportThreads, strconv.Itoa(target.ImportThreads))
 	job.AddSystemVars(vardef.TiDBMViewMaintainImportDiskQuota, target.ImportDiskQuota)
+	job.AddSystemVars(vardef.TiDBTrackAggregateMemoryUsage, variable.BoolToOnOff(target.TrackAggregateMemoryUsage))
+	job.AddSystemVars(vardef.TiDBEnableParallelHashaggSpill, variable.BoolToOnOff(target.EnableParallelHashaggSpill))
 }
 
 // MViewExecutionSessionVarsFromJob reconstructs MV execution vars from a DDL job.
@@ -338,6 +427,12 @@ func MViewExecutionSessionVarsFromJob(job *model.Job, defaultSessVars *variable.
 	}
 	if val, ok := job.GetSystemVars(vardef.TiDBMViewMaintainImportDiskQuota); ok {
 		target.ImportDiskQuota = val
+	}
+	if val, ok := job.GetSystemVars(vardef.TiDBTrackAggregateMemoryUsage); ok {
+		target.TrackAggregateMemoryUsage = variable.TiDBOptOn(val)
+	}
+	if val, ok := job.GetSystemVars(vardef.TiDBEnableParallelHashaggSpill); ok {
+		target.EnableParallelHashaggSpill = variable.TiDBOptOn(val)
 	}
 	return target, nil
 }

@@ -43,6 +43,7 @@ func TestAddIndexOnSystemTable(t *testing.T) {
 	userStore := runtimes["keyspace1"].Store
 	// submit add index sql on user keyspace
 	tk := testkit.NewTestKit(t, userStore)
+	realtikvtest.SetupNextGenGlobalSortForAllKeyspaces(t, runtimes)
 	tk.PrepareDB("crossks")
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("insert into t values (1, 2);")
@@ -86,6 +87,7 @@ func TestAddIndexOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 	}, userKeyspace)
 	userStore := runtimes[userKeyspace].Store
 	tk := testkit.NewTestKit(t, userStore)
+	realtikvtest.SetupNextGenGlobalSortForAllKeyspaces(t, runtimes)
 	tk.MustQuery(`select variable_value from mysql.tidb where variable_name = 'new_collation_enabled'`).
 		Check(testkit.Rows("False"))
 	require.False(t, collate.NewCollationEnabled())
@@ -249,6 +251,7 @@ func TestCrossKSInfoSchemaSync(t *testing.T) {
 	sysDom := runtimes[keyspace.System].Dom
 	ks1Store, ks1Dom := runtimes["keyspace1"].Store, runtimes["keyspace1"].Dom
 	ks2Store, ks2Dom := runtimes["keyspace2"].Store, runtimes["keyspace2"].Dom
+	realtikvtest.SetupNextGenGlobalSortForAllKeyspaces(t, runtimes)
 
 	t.Run("cross keyspace is lazily initialized in SYSTEM ks", func(t *testing.T) {
 		require.Empty(t, sysDom.GetCrossKSMgr().GetAllKeyspace())

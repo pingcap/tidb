@@ -15,6 +15,7 @@
 package core
 
 import (
+	"context"
 	"math"
 	"math/bits"
 	"reflect"
@@ -31,12 +32,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -670,4 +673,51 @@ func TestOptRuleListFlagAlignment(t *testing.T) {
 		"unique optRuleFlags count (%d) does not match Flag* count (%d); "+
 			"did you add a flag without mapping it to a rule or vice versa?",
 		len(seenFlags), numFlags)
+}
+
+func TestInternalSQLScanUserTableCollectsPredicateColumns(t *testing.T) {
+	sql := "select * from t where a > 2"
+	s := coretestsdk.CreatePlannerSuiteElems()
+	defer s.Close()
+	ctx := context.Background()
+	stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	nodeW := resolve.NewNodeW(stmt)
+	err = Preprocess(ctx, s.GetSCtx(), nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.GetIS()}))
+	require.NoError(t, err)
+	builder, _ := NewPlanBuilder().Init(s.GetCtx(), s.GetIS(), hint.NewQBHintHandler(nil))
+	p, err := builder.Build(ctx, nodeW)
+	require.NoError(t, err)
+	lp, ok := p.(base.LogicalPlan)
+	require.True(t, ok)
+	baseFlags := builder.GetOptFlag() &^ (rule.FlagCollectPredicateColumnsPoint | rule.FlagSyncWaitStatsLoadPoint)
+
+	sessVars := s.GetSCtx().GetSessionVars()
+	origRestricted := sessVars.InRestrictedSQL
+	origInternalScan := sessVars.InternalSQLScanUserTable
+	origMVMaintenance := sessVars.InMViewMaintenance
+	defer func() {
+		sessVars.InRestrictedSQL = origRestricted
+		sessVars.InternalSQLScanUserTable = origInternalScan
+		sessVars.InMViewMaintenance = origMVMaintenance
+	}()
+
+	sessVars.InRestrictedSQL = true
+	sessVars.InternalSQLScanUserTable = false
+	sessVars.InMViewMaintenance = false
+	flags := adjustOptimizationFlags(baseFlags, lp)
+	require.Zero(t, flags&rule.FlagCollectPredicateColumnsPoint)
+	require.Zero(t, flags&rule.FlagSyncWaitStatsLoadPoint)
+
+	sessVars.InMViewMaintenance = true
+	flags = adjustOptimizationFlags(baseFlags, lp)
+	require.Zero(t, flags&rule.FlagCollectPredicateColumnsPoint)
+	require.Zero(t, flags&rule.FlagSyncWaitStatsLoadPoint)
+
+	sessVars.InternalSQLScanUserTable = true
+	flags = adjustOptimizationFlags(baseFlags, lp)
+	require.NotZero(t, flags&rule.FlagCollectPredicateColumnsPoint)
+	require.NotZero(t, flags&rule.FlagSyncWaitStatsLoadPoint)
+	_, err = logicalOptimize(ctx, flags, lp)
+	require.NoError(t, err)
 }
