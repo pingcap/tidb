@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -177,7 +178,7 @@ func TestAutoAnalyzeThroughDXF(t *testing.T) {
 				}
 			},
 		)
-		meta, err := json.Marshal(&autoanalyze.TaskMeta{SQL: c.sql, Params: c.params, TableID: tblInfo.ID})
+		meta, err := json.Marshal(&autoanalyze.TaskMeta{SQL: c.sql, Params: c.params, DBID: tblInfo.DBID, TableID: tblInfo.ID})
 		require.NoError(t, err)
 		tasks := len(tk.MustQuery(allTasks).Rows())
 		taskKey := fmt.Sprintf("%s/%s/%d/other-owner-%d", keyspace, proto.AutoAnalyze, tblInfo.ID, i)
@@ -393,4 +394,41 @@ func TestKillDispatchedAutoAnalyze(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return len(tk.MustQuery(runningTask).Rows()) == 0 && len(dom.SysProcTracker().GetSysProcessList()) == 0
 	}, 30*time.Second, 50*time.Millisecond)
+}
+
+// TestStatementPoolWaitsForUsers checks that the session pool of a statement
+// is only idle after everybody who works in one of its sessions is done.
+func TestStatementPoolWaitsForUsers(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	pool := autoanalyze.NewStatementPool(syssession.NewAdvancedSessionPool(4, func() (syssession.SessionContext, error) {
+		return testkit.NewTestKit(t, store).Session(), nil
+	}))
+	defer pool.Close()
+	working, finish := make(chan struct{}), make(chan struct{})
+	workerDone := make(chan error, 1)
+	go func() {
+		workerDone <- pool.WithSession(func(*syssession.Session) error {
+			close(working)
+			<-finish
+			return nil
+		})
+	}()
+	<-working
+	idle := make(chan struct{})
+	go func() {
+		pool.WaitIdle()
+		close(idle)
+	}()
+	// Nobody else gets a session any more, and the pool is not idle yet.
+	require.Eventually(t, func() bool {
+		return pool.WithSession(func(*syssession.Session) error { return nil }) != nil
+	}, 10*time.Second, 10*time.Millisecond)
+	select {
+	case <-idle:
+		require.FailNow(t, "the pool is idle while a session is in use")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(finish)
+	require.NoError(t, <-workerDone)
+	<-idle
 }

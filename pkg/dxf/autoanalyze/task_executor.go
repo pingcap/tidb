@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
@@ -52,7 +53,7 @@ func (*taskExecutor) IsIdempotent(*proto.Subtask) bool {
 }
 
 func (e *taskExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
-	return &stepExecutor{keyspace: task.Keyspace, taskTable: e.GetTaskTable()}, nil
+	return &stepExecutor{runtime: e.TaskRuntime, keyspace: task.Keyspace, taskTable: e.GetTaskTable()}, nil
 }
 
 // IsRetryableError returns false: the priority queue of the stats owner
@@ -63,6 +64,7 @@ func (*taskExecutor) IsRetryableError(error) bool {
 
 type stepExecutor struct {
 	taskexecutor.BaseStepExecutor
+	runtime   sqlsvrapi.Runtime
 	keyspace  string
 	taskTable taskexecutor.TaskTable
 }
@@ -73,7 +75,8 @@ func (s *stepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) e
 	if err := json.Unmarshal(subtask.Meta, meta); err != nil {
 		return errors.Trace(err)
 	}
-	// The domain of the current node, which must serve the task keyspace.
+	// The domain of the current node. It serves the task keyspace on the classic
+	// kernel, and the SYSTEM keyspace on a DXF service node of the next-gen kernel.
 	var localDom *domain.Domain
 	if err := s.taskTable.WithNewSession(func(se sessionctx.Context) error {
 		localDom = domain.GetDomain(se)
@@ -84,15 +87,18 @@ func (s *stepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) e
 	if localDom == nil {
 		return errors.New("the current node has no domain")
 	}
-	if ks := localDom.Store().GetKeyspace(); ks != s.keyspace {
-		return errors.Errorf("a node of keyspace %q cannot run an auto analyze statement of keyspace %q", ks, s.keyspace)
-	}
 
 	start := time.Now()
-	err := runOnNormalNode(ctx, localDom, meta)
+	var err error
+	onServiceNode := localDom.Store().GetKeyspace() != s.keyspace
+	if onServiceNode {
+		err = runOnServiceNode(ctx, s.runtime, localDom, meta)
+	} else {
+		err = runOnNormalNode(ctx, localDom, meta)
+	}
 	logutil.Logger(ctx).Info("dist auto analyze subtask finished",
 		zap.String("taskKeyspace", s.keyspace), zap.String("sql", meta.SQL), zap.Strings("params", meta.Params),
-		zap.Duration("cost", time.Since(start)), zap.Error(err))
+		zap.Bool("onServiceNode", onServiceNode), zap.Duration("cost", time.Since(start)), zap.Error(err))
 	return err
 }
 

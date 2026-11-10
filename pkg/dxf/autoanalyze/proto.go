@@ -14,6 +14,9 @@
 
 // Package autoanalyze runs the auto-analyze statements at or above a row limit as DXF tasks, each
 // on the least used node. The stats owner keeps the priority queue and the concurrency control.
+//
+// The node is a normal TiDB node on the classic kernel. On the next-gen kernel it is a DXF service
+// node of the SYSTEM keyspace, where a runtime serves the task keyspace, see service_exec.go.
 package autoanalyze
 
 import (
@@ -30,7 +33,8 @@ type TaskMeta struct {
 	// NeedVersionRewriteWarn tells the node that runs the statement to log that
 	// it rewrites version 1 statistics.
 	NeedVersionRewriteWarn bool `json:"need_version_rewrite_warn,omitempty"`
-	// DBID and TableID identify the table that the statement analyzes.
+	// DBID and TableID identify the table that the statement analyzes. A DXF service node
+	// loads this table, and only this one, into the info schema of its sessions.
 	DBID    int64 `json:"db_id"`
 	TableID int64 `json:"table_id"`
 }
