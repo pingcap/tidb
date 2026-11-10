@@ -168,6 +168,13 @@ func runAsTask(
 
 	keyspace := sctx.GetStore().GetKeyspace()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	if kv.IsUserKS(sctx.GetStore()) {
+		// A DXF service node cannot ask the nodes of this keyspace to flush their
+		// stats deltas, so flush them before submitting.
+		if err := flushStatsDelta(sctx, taskMeta); err != nil {
+			return errors.Annotate(err, "flush stats delta before dispatching auto analyze")
+		}
+	}
 	// The task keys of a table share a prefix, by which activeTask finds them,
 	// and end in a UUID: DXF refuses a key that an earlier task has used.
 	keyPrefix := fmt.Sprintf("%s/%s/%d/", keyspace, proto.AutoAnalyze, taskMeta.TableID)
@@ -207,6 +214,18 @@ func runAsTask(
 		zap.Int64("taskID", task.ID), zap.String("taskKey", task.Key), zap.Bool("adopted", adopted),
 		zap.String("sql", taskMeta.SQL), zap.Strings("params", taskMeta.Params),
 		zap.Duration("cost", time.Since(start)), zap.Error(err))
+	return err
+}
+
+// flushStatsDelta makes the TiDB nodes of this keyspace flush their stats deltas of the table.
+func flushStatsDelta(sctx sessionctx.Context, meta *TaskMeta) error {
+	is := sctx.GetLatestInfoSchema()
+	dbInfo, dbExists := is.SchemaByID(meta.DBID)
+	tblInfo, tblExists := is.TableInfoByID(meta.TableID)
+	if !dbExists || !tblExists {
+		return errors.Errorf("table %d does not exist", meta.TableID)
+	}
+	_, _, err := statsutil.ExecWithOpts(sctx, nil, "flush stats_delta %n.%n cluster", dbInfo.Name.O, tblInfo.Name.O)
 	return err
 }
 
@@ -270,6 +289,7 @@ func newTaskMeta(tblInfo *model.TableInfo, needVersionRewriteWarn bool, sql stri
 		SQL:                    sql,
 		Params:                 make([]string, 0, len(params)),
 		NeedVersionRewriteWarn: needVersionRewriteWarn,
+		DBID:                   tblInfo.DBID,
 		TableID:                tblInfo.ID,
 	}
 	for _, p := range params {

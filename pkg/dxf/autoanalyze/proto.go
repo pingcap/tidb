@@ -30,7 +30,8 @@ type TaskMeta struct {
 	// NeedVersionRewriteWarn tells the node that runs the statement to log that
 	// it rewrites version 1 statistics.
 	NeedVersionRewriteWarn bool `json:"need_version_rewrite_warn,omitempty"`
-	// TableID identifies the table the statement analyzes.
+	// DBID and TableID identify the table that the statement analyzes.
+	DBID    int64 `json:"db_id"`
 	TableID int64 `json:"table_id"`
 }
 
