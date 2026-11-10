@@ -2,9 +2,9 @@
   "date": "2026-11-09",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 29,
+    "unresolved": 28,
     "open": 4,
-    "partial": 25
+    "partial": 24
   },
   "findings": [
     {
@@ -206,16 +206,9 @@
       "group": "Domain and process services",
       "finding": "Go's `ExecRestrictedSQL` / `ExecuteInternal` are methods of the issuing session (`withRestrictedSQLExecutor`); this port's executors are adapters beside it (`NodeRestrictedSql`, `SystemSqlExecutor`, `ClusterStatsSqlExecutor`, the plan replayer's `SessionSql`). The node's two apply `ExecOption`'s `SnapshotTS`, `AnalyzeVer`, `AnalyzeSnapshot`, `EnableDDLAnalyze` and `PartitionPruneMode` and restore them as Go's `useCurrentSession` / `getInternalSession` do, but with no issuing session they cannot inherit `OptimizerUseInvisibleIndexes` / `SkipMissingPartitionStats` or append the internal session's warnings to the caller's (`IgnoreWarning`), and `ClusterStatsSqlExecutor` honours the options on the auto-analyze path alone. `rebuildSysVarCache` consumes the rows the domain's sysvar reload loop last read (`SysVarCacheDeps::table_contents`) where Go's runs `fetchTableValues` itself",
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
-    },
-    {
-      "id": "O22",
-      "status": "partial",
-      "group": "Domain and process services",
-      "finding": "The executable defaults `host` to `127.0.0.1` (`NodeConfig::deployment_defaults`) where Go's default is `0.0.0.0`, so a node started without `--host` advertises the loopback address (`INSTANCE` columns, server info) where Go's advertises `util.GetLocalIP()`; the loopback default goes with this port's refusal of a non-loopback listener under `--auth-file`, which Go has no counterpart of",
-      "go_owner": "`cmd/tidb-server/main.go` (`overrideConfig`), `pkg/util/misc.go` (`GetLocalIP`)"
     }
   ],
-  "unresolved": 29,
+  "unresolved": 28,
   "open": 4,
-  "partial": 25
+  "partial": 24
 }

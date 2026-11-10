@@ -520,17 +520,27 @@ fn packet_limit_and_help_are_checked_before_startup() {
 /// Go `overrideConfig`: `--advertise-address` is what a PEER dials, and
 /// it is what this node publishes in `/tidb/server/info`. The flag wins;
 /// with none, the bind host stands in -- unless that host is the
-/// wildcard, where Go leaves the field empty for a later local-IP lookup
-/// rather than advertising `0.0.0.0` to the cluster. More than one
-/// address is refused by name.
-///
-/// The wildcard branch has no case here because this tier refuses a
-/// non-loopback bind outright (`NonLoopbackHost`), so `--host 0.0.0.0`
-/// never reaches the resolution; the branch is kept for the day that
-/// gate lifts, which is when Go's deferred local-IP lookup starts to
-/// matter.
+/// wildcard, where Go advertises `util.GetLocalIP()` rather than `0.0.0.0`
+/// to the cluster. More than one address is refused by name.
 #[test]
 fn the_advertise_address_follows_gos_resolution() {
+    // Go `defaultConf.Host` is `DefHost`, the wildcard.
+    let wildcard = tidb_server::parse_node_config(["tidb-server", "--path", "127.0.0.1:2379"])
+        .expect("a cluster node needs no --host");
+    assert_eq!(wildcard.host, IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+    let local_ip = tidb_util::misc::get_local_ip();
+    assert_eq!(
+        wildcard.advertise_address,
+        if local_ip.is_empty() { "0.0.0.0" } else { &local_ip },
+        "the wildcard host advertises the local IP"
+    );
+
+    // The account file is this port's own account source; it serves loopback
+    // clients only, and its listener defaults there.
+    let account_file = tidb_server::parse_node_config(required()).unwrap();
+    assert_eq!(account_file.host, IpAddr::V4(Ipv4Addr::LOCALHOST));
+    assert_eq!(account_file.advertise_address, "127.0.0.1");
+
     let mut arguments = required();
     arguments.extend(["--advertise-address", "10.0.0.7"]);
     assert_eq!(

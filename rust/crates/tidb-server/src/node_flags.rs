@@ -154,7 +154,7 @@ where
         .transpose()?;
     // The native executable's deployment defaults. TOML and explicit
     // flags override these through the single shared owner.
-    let defaults = NodeConfig::deployment_defaults();
+    let defaults = NodeConfig::deployment_defaults(auth_file.is_some());
     main_flags.host = host;
     main_flags.port = port;
     main_flags.store_path = path;

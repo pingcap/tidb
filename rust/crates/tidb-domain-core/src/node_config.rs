@@ -363,12 +363,16 @@ impl Default for NodeOptions {
 
 impl NodeConfig {
     /// The native executable's deployment defaults, which a config file and
-    /// the command line then override: a loopback listener over TiKV with no
-    /// PD path yet.
+    /// the command line then override: Go's defaults over TiKV with no PD
+    /// path yet. An account file serves loopback clients only
+    /// (`NonLoopbackHost`), so a node started with one listens there where
+    /// every other node listens on Go's `0.0.0.0`.
     #[must_use]
-    pub fn deployment_defaults() -> SourceConfig {
+    pub fn deployment_defaults(account_file: bool) -> SourceConfig {
         let mut defaults = SourceConfig::default();
-        defaults.host = "127.0.0.1".to_owned();
+        if account_file {
+            defaults.host = "127.0.0.1".to_owned();
+        }
         defaults.store = tidb_config::store::StoreType("tikv".to_owned());
         defaults.path.clear();
         defaults
@@ -381,7 +385,7 @@ impl NodeConfig {
         edit: impl FnOnce(&mut SourceConfig),
         options: NodeOptions,
     ) -> Result<Self, NodeConfigError> {
-        let mut config = Self::deployment_defaults();
+        let mut config = Self::deployment_defaults(options.auth_file.is_some());
         edit(&mut config);
         Self::from_config(config, options)
     }
