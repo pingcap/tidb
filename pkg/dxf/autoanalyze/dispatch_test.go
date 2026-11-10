@@ -210,7 +210,8 @@ func TestAutoAnalyzeThroughDXF(t *testing.T) {
 }
 
 // TestKillDispatchedAutoAnalyze kills the auto-analyze process of the stats
-// owner while the statement runs as a DXF task. A kill must cancel the task.
+// owner while the statement runs as a DXF task. A kill must cancel the task,
+// except a kill by the graceful shutdown of the stats owner.
 func TestKillDispatchedAutoAnalyze(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -322,4 +323,35 @@ func TestKillDispatchedAutoAnalyze(t *testing.T) {
 	}
 	require.Empty(t, dom.SysProcTracker().GetSysProcessList())
 	tk.MustQuery(allTasks).Check(testkit.Rows("AutoAnalyze reverted"))
+
+	// The stats owner shuts down gracefully. The test kills only the process that
+	// waits for the task, which models a task that runs on another node: the
+	// waiting stops and the task runs on.
+	analyzed := make(chan bool, 1)
+	go func() {
+		_ = statsutil.CallWithSCtx(h.SPool(), func(sctx sessionctx.Context) error {
+			analyzed <- analyze(sctx)
+			return nil
+		})
+	}()
+	waitingID = waitForStatement()
+	dom.StopAutoAnalyze()
+	dom.SysProcTracker().KillSysProcess(waitingID)
+	select {
+	case ok := <-analyzed:
+		require.False(t, ok)
+	case <-time.After(60 * time.Second):
+		require.FailNow(t, "the auto analyze did not stop when the stats owner shut down")
+	}
+	tk.MustQuery(runningTask).Check(testkit.Rows("1"))
+	running := dom.SysProcTracker().GetSysProcessList()
+	require.Len(t, running, 1)
+
+	// Stop the statement, which blocks until it is killed.
+	for id := range running {
+		dom.SysProcTracker().KillSysProcess(id)
+	}
+	require.Eventually(t, func() bool {
+		return len(tk.MustQuery(runningTask).Rows()) == 0 && len(dom.SysProcTracker().GetSysProcessList()) == 0
+	}, 30*time.Second, 50*time.Millisecond)
 }
