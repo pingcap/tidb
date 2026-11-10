@@ -16,3 +16,19 @@ package autoanalyze
 
 // RowLimit exports rowLimit for test.
 const RowLimit = rowLimit
+
+var (
+	// OrderByUsedSlots exports orderByUsedSlots for test.
+	OrderByUsedSlots = orderByUsedSlots
+	// PlaceTask places a task the way the schedulers of this process do, for test.
+	PlaceTask = placed.place
+	// ReleaseTask releases the place of a task for test.
+	ReleaseTask = placed.release
+)
+
+// PlacedTasks returns the number of tasks that hold a place, for test.
+func PlacedTasks() int {
+	placed.mu.Lock()
+	defer placed.mu.Unlock()
+	return len(placed.nodes)
+}

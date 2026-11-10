@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package autoanalyze runs the auto-analyze statements at or above a row limit as DXF tasks. The
-// stats owner keeps the priority queue and the concurrency control.
+// Package autoanalyze runs the auto-analyze statements at or above a row limit as DXF tasks, each
+// on the least used node. The stats owner keeps the priority queue and the concurrency control.
 package autoanalyze
 
 import (
