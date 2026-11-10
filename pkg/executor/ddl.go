@@ -572,7 +572,20 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return err
 	}
 	if len(s.NewName) != 0 {
+<<<<<<< HEAD
 		tblInfo.Name = pmodel.NewCIStr(s.NewName)
+=======
+		oldTableName := tblInfo.Name
+		tblInfo = tblInfo.Clone()
+		tblInfo.Name = ast.NewCIStr(s.NewName)
+		oldSchemaName := ast.NewCIStr(job.SchemaName)
+		for _, fk := range tblInfo.ForeignKeys {
+			if fk.Version >= model.FKVersion1 &&
+				fk.RefSchema.L == oldSchemaName.L && fk.RefTable.L == oldTableName.L {
+				fk.RefTable = tblInfo.Name
+			}
+		}
+>>>>>>> b1322c5d663 (ddl: reject unsafe standalone recovery of foreign keys (#71074))
 	}
 	// Check the table ID was not exists.
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
