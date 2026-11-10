@@ -42,11 +42,14 @@ go_library(
 go_test(
     name = "autoanalyze_test",
     timeout = "short",
-    srcs = ["dispatch_test.go"],
+    srcs = [
+        "dispatch_test.go",
+        "export_test.go",
+    ],
+    embed = [":autoanalyze"],
     flaky = True,
     shard_count = 2,
     deps = [
-        ":autoanalyze",
         "//pkg/config/kerneltype",
         "//pkg/dxf/framework/handle",
         "//pkg/dxf/framework/proto",
