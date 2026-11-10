@@ -141,6 +141,11 @@ func TestMaskingPolicyResultShapes(t *testing.T) {
 	tk.MustQuery("select concat(s.c, '-') from (select c from t_shapes where id = 2) s left join t_shapes t on s.c = t.c limit 1").Check(testkit.Rows("[bb]-"))
 	tk.MustQuery("select max(c), min(c) from t_shapes").Check(testkit.Rows("[bb] [aa]"))
 
+	// ROLLUP grouping-set rows keep NULL instead of masking the raw value.
+	tk.MustQuery("select c, count(*) from t_shapes group by c with rollup order by c").Check(testkit.Rows("<nil> 3", "[aa] 2", "[bb] 1"))
+	tk.MustQuery("select c, id from t_shapes where id < 3 group by c, id with rollup order by c, id").Check(testkit.Rows(
+		"<nil> <nil>", "[aa] <nil>", "[aa] 1", "[bb] <nil>", "[bb] 2"))
+
 	// DISTINCT compares raw result values, even when they have the same masked display.
 	tk.MustExec("alter table t_shapes modify masking policy p_shapes set expression = mask_full(c)")
 	tk.MustQuery("select distinct concat(c, '-') from t_shapes order by 1 limit 2").Check(testkit.Rows("XX-", "XX-"))
@@ -266,6 +271,25 @@ func TestMaskingPolicyScalarSubqueryClauses(t *testing.T) {
 	// Nested clauses must not turn a predicate subquery into a result-field check.
 	tk.MustQuery("select id from t_scalar where id = (select id from t_scalar order by id limit 1) and c = (select c from t_scalar where id = 1)").Check(testkit.Rows("1"))
 	tk.MustQuery("select (select id from t_scalar order by id limit 1), (select max(id) from t_scalar)").Check(testkit.Rows("1 2"))
+
+	// Values stored or returned outside a SELECT result are masked by the subquery itself.
+	tk.MustExec("create table t_scalar_dst(id int primary key, c varchar(10))")
+	tk.MustExec("insert into t_scalar_dst values (1, 'x'), (2, 'y')")
+	tk.MustExec("set @v = (select c from t_scalar where id = 1)")
+	tk.MustQuery("select @v").Check(testkit.Rows("XXXXXX"))
+	tk.MustExec("do (@z := (select concat(c, '!') from t_scalar where id = 1))")
+	tk.MustQuery("select @z").Check(testkit.Rows("XXXXXX!"))
+	tk.MustExec("update t_scalar_dst set c = (select c from t_scalar where id = 1) where id = 1")
+	tk.MustExec("insert into t_scalar_dst values (3, (select c from t_scalar where id = 2))")
+	tk.MustExec("insert into t_scalar_dst values (2, 'z') on duplicate key update c = (select c from t_scalar where id = 1)")
+	tk.MustQuery("select id, c from t_scalar_dst order by id").Check(testkit.Rows("1 XXXXXX", "2 XXXXXX", "3 XXXXXX"))
+	// An error raised while storing a masked value must not reveal the original value.
+	err := tk.ExecToErr("update t_scalar_dst set id = (select c from t_scalar where id = 1) where id = 1")
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "secret")
+	// A predicate subquery nested in a value subquery still compares raw values.
+	tk.MustExec("set @w = (select c from t_scalar where c = (select c from t_scalar where id = 1))")
+	tk.MustQuery("select @w").Check(testkit.Rows("XXXXXX"))
 }
 
 func TestMaskingPolicyFastPathRepresentations(t *testing.T) {

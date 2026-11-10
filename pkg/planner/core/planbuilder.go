@@ -300,6 +300,11 @@ type PlanBuilder struct {
 	// (i.e., inside buildResultSetNode). This prevents AT RESULT masking from being
 	// applied inside derived tables, where outer queries need to see original values.
 	buildingResultSetNode bool
+	// maskScalarSubqueryValue is positive while building expressions whose
+	// value is stored or returned by a statement other than SELECT, such as
+	// SET, DO, UPDATE assignments and INSERT values. Scalar subqueries in these
+	// expressions apply masking to their own results.
+	maskScalarSubqueryValue int
 	// Check whether the current building query is a CTE
 	isCTE bool
 	// CTE table name in lower case, it can be nil
@@ -686,7 +691,15 @@ func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (bas
 	return exe, nil
 }
 
+// enterMaskedValueContext marks scalar subqueries built until the returned
+// function is called as producing stored or returned values.
+func (b *PlanBuilder) enterMaskedValueContext() func() {
+	b.maskScalarSubqueryValue++
+	return func() { b.maskScalarSubqueryValue-- }
+}
+
 func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, error) {
+	defer b.enterMaskedValueContext()()
 	var p base.LogicalPlan
 	dual := logicalop.LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 	dual.SetSchema(expression.NewSchema())
@@ -745,6 +758,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, er
 }
 
 func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, error) {
+	defer b.enterMaskedValueContext()()
 	p := &Set{}
 	for _, vars := range v.Variables {
 		if vars.IsGlobal {
@@ -4541,6 +4555,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 }
 
 func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *logicalop.LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
+	defer b.enterMaskedValueContext()()
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
 		return err

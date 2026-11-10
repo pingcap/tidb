@@ -183,6 +183,7 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 }
 
 func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan base.LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
+	defer b.enterMaskedValueContext()()
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -1379,11 +1380,19 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 	intest.AssertNotNil(planCtx)
 	// In 8.5, UPDATE assignments also use fieldList; they are not displayed results.
 	resultField := planCtx.curClause == fieldList && !planCtx.builder.inUpdateStmt && !planCtx.builder.inDeleteStmt
+	// The value of a scalar subquery in SET, DO, UPDATE assignments and INSERT
+	// values is stored or returned without passing through a final SELECT
+	// projection, so the subquery masks its own result. Nested subqueries keep
+	// the ordinary rules and only become value producers in the same contexts.
+	valueResult := planCtx.builder.maskScalarSubqueryValue > 0
+	savedValueCtx := planCtx.builder.maskScalarSubqueryValue
+	planCtx.builder.maskScalarSubqueryValue = 0
 	ci := planCtx.builder.prepareCTECheckForSubQuery()
 	defer resetCTECheckForSubQuery(ci)
 	savedClause := planCtx.builder.curClause
 	np, hintFlags, err := er.buildSubquery(ctx, planCtx, v, handlingScalarSubquery)
 	planCtx.builder.curClause = savedClause
+	planCtx.builder.maskScalarSubqueryValue = savedValueCtx
 	if err != nil {
 		er.err = err
 		return v, true
@@ -1393,7 +1402,13 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 		er.err = err
 		return v, true
 	}
-	if resultField && maskingEnabled {
+	if valueResult && maskingEnabled {
+		np, err = planCtx.builder.buildFinalProjectionWithMasking(ctx, np, np.Schema().Len())
+		if err != nil {
+			er.err = err
+			return v, true
+		}
+	} else if resultField && maskingEnabled {
 		// Scalar preprocessing may turn the raw result into a constant, losing
 		// its policy identity before the outer final projection can inspect it.
 		m := maskingResultBuilder{b: planCtx.builder, ctx: ctx, outerPlan: planCtx.plan, cache: make(map[maskingResultKey]maskingResult)}

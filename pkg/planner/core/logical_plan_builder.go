@@ -6570,6 +6570,7 @@ func isCTE(tlW *resolve.TableNameW) bool {
 }
 
 func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.TableName, list []*ast.Assignment, p base.LogicalPlan) (newList []*expression.Assignment, po base.LogicalPlan, allAssignmentsAreConstant bool, e error) {
+	defer b.enterMaskedValueContext()()
 	b.curClause = fieldList
 	// modifyColumns indicates which columns are in set list,
 	// and if it is set to `DEFAULT`

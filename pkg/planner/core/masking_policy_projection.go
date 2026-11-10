@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -174,34 +175,64 @@ func (m *maskingResultBuilder) buildColumn(p base.LogicalPlan, col *expression.C
 			}
 		}
 		return plain, nil
-	default:
-		for _, child := range p.Children() {
-			if !child.Schema().Contains(col) {
-				continue
-			}
-			result, err := m.column(child, col)
-			if err != nil || !result.masked {
-				return plain, err
-			}
-			// Row-preserving operators inherit their child's schema. For joins,
-			// dependencies of a derived output may need explicit propagation.
-			inputs := expression.ExtractColumns(result.expr)
-			replacements := make([]expression.Expression, len(inputs))
-			for i, input := range inputs {
-				inputIdx := p.Schema().ColumnIndex(input)
-				if inputIdx < 0 {
-					output := input.Clone().(*expression.Column)
-					output.RetType = output.RetType.Clone()
-					output.RetType.DelFlag(mysql.NotNullFlag)
-					inputIdx = p.Schema().Len()
-					p.Schema().Append(output)
-					p.SetOutputNames(append(p.OutputNames(), types.EmptyName))
-				}
-				replacements[i] = p.Schema().Columns[inputIdx]
-			}
-			result.expr = expression.ColumnSubstitute(m.b.ctx.GetExprCtx(), result.expr, expression.NewSchema(inputs...), replacements)
-			return result, nil
+	case *logicalop.LogicalExpand:
+		result, err := m.passThrough(p, col)
+		isGroupingCol := slices.ContainsFunc(x.DistinctGroupByCol, func(c *expression.Column) bool {
+			return c.UniqueID == col.UniqueID
+		})
+		if err != nil || !result.masked || !isGroupingCol {
+			return result, err
 		}
+		// A grouping-set level sets this generated column to NULL. The masked
+		// value is rebuilt from raw inputs that Expand keeps, so it must follow
+		// the generated column back to NULL on those rows.
+		ectx := m.b.ctx.GetExprCtx()
+		isNull, err := expression.NewFunction(ectx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), col)
+		if err != nil {
+			return plain, err
+		}
+		retType := result.expr.GetType(ectx.GetEvalCtx()).Clone()
+		retType.DelFlag(mysql.NotNullFlag)
+		result.expr, err = expression.NewFunction(ectx, ast.If, retType, isNull, expression.NewNull(), result.expr)
+		if err != nil {
+			return plain, err
+		}
+		return result, nil
+	default:
+		return m.passThrough(p, col)
+	}
+}
+
+// passThrough builds the result of a column that a row-preserving operator
+// inherits from one of its children.
+func (m *maskingResultBuilder) passThrough(p base.LogicalPlan, col *expression.Column) (maskingResult, error) {
+	plain := maskingResult{expr: col}
+	for _, child := range p.Children() {
+		if !child.Schema().Contains(col) {
+			continue
+		}
+		result, err := m.column(child, col)
+		if err != nil || !result.masked {
+			return plain, err
+		}
+		// Row-preserving operators inherit their child's schema. For joins,
+		// dependencies of a derived output may need explicit propagation.
+		inputs := expression.ExtractColumns(result.expr)
+		replacements := make([]expression.Expression, len(inputs))
+		for i, input := range inputs {
+			inputIdx := p.Schema().ColumnIndex(input)
+			if inputIdx < 0 {
+				output := input.Clone().(*expression.Column)
+				output.RetType = output.RetType.Clone()
+				output.RetType.DelFlag(mysql.NotNullFlag)
+				inputIdx = p.Schema().Len()
+				p.Schema().Append(output)
+				p.SetOutputNames(append(p.OutputNames(), types.EmptyName))
+			}
+			replacements[i] = p.Schema().Columns[inputIdx]
+		}
+		result.expr = expression.ColumnSubstitute(m.b.ctx.GetExprCtx(), result.expr, expression.NewSchema(inputs...), replacements)
+		return result, nil
 	}
 	return plain, nil
 }
