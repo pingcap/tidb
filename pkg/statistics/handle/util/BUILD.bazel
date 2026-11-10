@@ -48,6 +48,7 @@ go_test(
     deps = [
         ":util",
         "//pkg/infoschema",
+        "//pkg/infoschema/context",
         "//pkg/meta/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",

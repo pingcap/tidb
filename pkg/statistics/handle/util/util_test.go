@@ -21,6 +21,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -33,6 +34,14 @@ import (
 type partitionItemLookupForbiddenInfoSchema struct {
 	infoschema.InfoSchema
 	t *testing.T
+	// partitionMapBuilds counts the scans of all tables. On InfoSchema V1, only the build of
+	// the partition map does such a scan through this wrapper.
+	partitionMapBuilds *int
+}
+
+func (is partitionItemLookupForbiddenInfoSchema) ListTablesWithSpecialAttribute(filter infoschemacontext.SpecialAttributeFilter) []infoschemacontext.TableInfoResult {
+	*is.partitionMapBuilds++
+	return is.InfoSchema.ListTablesWithSpecialAttribute(filter)
 }
 
 func (is partitionItemLookupForbiddenInfoSchema) TableItemByPartitionID(partitionID int64) (infoschema.TableItem, bool) {
@@ -152,22 +161,26 @@ func TestSnapshotTableInfoGetterAvoidsV1PartitionScan(t *testing.T) {
 	require.NotEmpty(t, partitionInfo.Definitions)
 	partitionID := partitionInfo.Definitions[0].ID
 
+	partitionMapBuilds := 0
 	is := partitionItemLookupForbiddenInfoSchema{
-		InfoSchema: infoschema.MockInfoSchemaWithSchemaVer([]*model.TableInfo{normalInfo, partitionedInfo}, 1),
-		t:          t,
+		InfoSchema:         infoschema.MockInfoSchemaWithSchemaVer([]*model.TableInfo{normalInfo, partitionedInfo}, 1),
+		t:                  t,
+		partitionMapBuilds: &partitionMapBuilds,
 	}
 	snapshotGetter := util.NewSnapshotTableInfoGetter(is)
 	tbl, ok := snapshotGetter.TableInfoByID(normalInfo.ID)
 	require.True(t, ok)
 	require.Equal(t, normalInfo.ID, tbl.Meta().ID)
+	item, ok := snapshotGetter.TableItemByID(normalInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, "normal", item.TableName.L)
+	// A table ID lookup does not need the partition map, so the map must not exist yet.
+	require.Zero(t, partitionMapBuilds)
 	tbl, ok = snapshotGetter.TableInfoByID(partitionID)
 	require.True(t, ok)
 	require.Equal(t, partitionedInfo.ID, tbl.Meta().ID)
 	_, ok = snapshotGetter.TableInfoByID(1 << 60)
 	require.False(t, ok)
-	item, ok := snapshotGetter.TableItemByID(normalInfo.ID)
-	require.True(t, ok)
-	require.Equal(t, "normal", item.TableName.L)
 	item, ok = snapshotGetter.TableItemByID(partitionID)
 	require.True(t, ok)
 	require.Equal(t, "partitioned", item.TableName.L)
@@ -180,4 +193,6 @@ func TestSnapshotTableInfoGetterAvoidsV1PartitionScan(t *testing.T) {
 	require.Equal(t, partitionedInfo.ID, tableID)
 	_, ok = snapshotGetter.ParentTableID(1 << 60)
 	require.False(t, ok)
+	// The partition ID and unknown ID lookups above all use one map.
+	require.Equal(t, 1, partitionMapBuilds)
 }
