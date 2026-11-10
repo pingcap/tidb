@@ -580,20 +580,18 @@ func (s *BaseScheduler) switch2NextStep() error {
 	if err != nil {
 		return err
 	}
-	// OnNextSubtasksBatch may use len(execIDs) as a hint to calculate the
-	// number of subtasks, so it gets the nodes limited by MaxNodeCount. Which
-	// nodes to place the subtasks on is decided in scheduleSubTask.
-	execIDs := eligibleNodes
-	if task.MaxNodeCount > 0 && len(execIDs) > task.MaxNodeCount {
-		execIDs = execIDs[:task.MaxNodeCount]
+	// Limit the planning hint without restricting the nodes available for placement.
+	nodeCnt := len(eligibleNodes)
+	if task.MaxNodeCount > 0 {
+		nodeCnt = min(nodeCnt, task.MaxNodeCount)
 	}
 
-	s.logger.Info("eligible instances", zap.Int("num", len(execIDs)))
-	if len(execIDs) == 0 {
+	s.logger.Info("eligible instances", zap.Int("num", nodeCnt))
+	if nodeCnt == 0 {
 		return errors.New("no available TiDB node to dispatch subtasks")
 	}
 
-	metas, err := s.OnNextSubtasksBatch(s.ctx, s, task, execIDs, nextStep)
+	metas, err := s.OnNextSubtasksBatch(s.ctx, s, task, nodeCnt, nextStep)
 	if err != nil {
 		s.logger.Warn("generate part of subtasks failed", zap.Error(err))
 		return s.handlePrepareOrPlanErr(err)

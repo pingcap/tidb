@@ -232,8 +232,8 @@ func TestSchedulerScheduleSubtasksToNodesWithEnoughSlots(t *testing.T) {
 	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
 	schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
 	schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ storage.TaskHandle, _ *proto.Task, execIDs []string, _ proto.Step) ([][]byte, error) {
-			require.Len(t, execIDs, 1)
+		DoAndReturn(func(_ context.Context, _ storage.TaskHandle, _ *proto.Task, nodeCnt int, _ proto.Step) ([][]byte, error) {
+			require.Equal(t, 1, nodeCnt)
 			return [][]byte{[]byte(`{}`), []byte(`{}`)}, nil
 		})
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{"n1": 3, "n2": 1}, nil)

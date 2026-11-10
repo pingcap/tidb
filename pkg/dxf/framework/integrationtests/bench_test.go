@@ -151,7 +151,7 @@ func registerTaskTypeForBench(c *testutil.TestDXFContext) {
 		},
 	).AnyTimes()
 	schedulerExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ []string, nextStep proto.Step) (metas [][]byte, err error) {
+		func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ int, nextStep proto.Step) (metas [][]byte, err error) {
 			cnt := 1
 			res := make([][]byte, cnt)
 			for i := range cnt {
