@@ -1387,7 +1387,7 @@ fn json_set_insert_replace_go_vectors() {
 /// Adjacent objects combine; arrays and scalars are preserved in an
 /// output array. JSON_MERGE is the deprecated synonym for
 /// JSON_MERGE_PRESERVE and differs only in the 1681 warning its caller
-/// raises (see `func::eval_func_values_in`).
+/// raises (Go `jsonMergeFunctionClass.getFunction`).
 #[test]
 fn json_merge_go_vectors() {
     for name in ["JSON_MERGE", "JSON_MERGE_PRESERVE"] {

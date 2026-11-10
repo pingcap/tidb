@@ -207,7 +207,7 @@ impl GlSignature {
 ///    `unsupportedJSONComparison` warns.
 ///  * DROP `gl_signature`'s requirement that EVERY argument be statically
 ///    typed, aggregating only the typed ones. No fixture reaches it because
-///    the rewriter types every expression it hands to `eval_by_signature`
+///    the rewriter types every expression it hands to a function class
 ///    today -- but `ScalarFunction::ret_type` is an `Option`, so an inner
 ///    builtin the return-type table cannot name would make the aggregate a
 ///    claim about a partial argument list. Go always holds every type, so

@@ -118,7 +118,7 @@ pub fn bind_partial_aggregate(
         .iter_mut()
         .filter_map(|function| function.input.as_mut())
     {
-        tidb_expr::pushdown_catalog::con_or_cor_col_to_pb_expr(input, context)?;
+        tidb_expr::expr_to_pb::con_or_cor_col_to_pb_expr(input, context)?;
     }
     Ok(())
 }

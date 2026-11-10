@@ -85,7 +85,10 @@ fn func(name: &str, ret_type: FieldType, args: Vec<Expression>) -> Expression {
 
 /// Go `function.(*ScalarFunction).Function.PbCode()`.
 fn pb_code(function: &Expression) -> ScalarFuncSig {
-    crate::pushdown_catalog::pb_code(function)
+    match function {
+        Expression::ScalarFunction(function) => function.pb_signature().unwrap_or_default(),
+        _ => ScalarFuncSig::Unspecified,
+    }
 }
 
 /// The row's place in its Go table, its function and its argument types.

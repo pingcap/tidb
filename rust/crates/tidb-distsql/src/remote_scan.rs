@@ -65,7 +65,7 @@ use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_context::WarningCollector;
 use tidb_expr::expression::Expression;
-use tidb_expr::pushdown_catalog::PbConverterContext;
+use tidb_expr::expr_to_pb::PbConverterContext;
 use tidb_txnkv::Key;
 
 /// Go `kv.StoreType` narrowed to the engines a pushdown scan names.

@@ -36,7 +36,14 @@ use super::function_class_source::{argument, type_from_text, type_text, value_te
 use crate::builtin::ColumnsBuildContext;
 use crate::builtin_cast::build_cast_function_with_check;
 use crate::expression::Expression;
-use crate::pushdown_catalog::pb_code;
+
+/// Go `function.(*ScalarFunction).Function.PbCode()`.
+fn pb_code(function: &Expression) -> tidb_proto::tipb::ScalarFuncSig {
+    match function {
+        Expression::ScalarFunction(function) => function.pb_signature().unwrap_or_default(),
+        _ => tidb_proto::tipb::ScalarFuncSig::Unspecified,
+    }
+}
 use crate::wrap_cast::type_of;
 
 const MATRIX: &str = include_str!("../../testdata/cast_class_matrix.txt");

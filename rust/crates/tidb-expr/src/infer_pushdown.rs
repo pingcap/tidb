@@ -638,7 +638,7 @@ pub fn can_enum_pushdown_preliminarily(name: &str, return_type: &FieldType) -> b
 //
 // Go `canExprPushDown` first proves that an expression has a protobuf
 // representation, and `canScalarFuncPushDown` then applies the store policy
-// above recursively; concrete signatures come from `pushdown_catalog`.
+// above recursively; concrete signatures are the ones the function classes set.
 
 /// Go `CanExprsPushDown(ctx, exprs, kv.TiKV)` over the expression families
 /// represented by the shared TiPB scalar catalog.
@@ -841,7 +841,7 @@ fn can_expr_push_down_reported(
     };
     // Go `canScalarFuncPushDown`: the function itself first, with the
     // refusal warning, then each argument.
-    let signature = crate::pushdown_catalog::pb_code(expr);
+    let signature = function.pb_signature().unwrap_or(ScalarFuncSig::Unspecified);
     if !scalar_function_can_be_pushed(expr, function, signature, store, blacklist) {
         if let Some(report) = report {
             let storage = match store {
@@ -1217,11 +1217,15 @@ mod push_down_admission_tests {
     use crate::constant::Constant;
     use crate::scalar_function::ScalarFunction;
 
+    /// Go `NewFunctionBase`: the function its class builds, unfolded.
     fn func(name: &str, args: Vec<Expression>) -> Expression {
-        let mut sf = ScalarFunction::default();
-        sf.func_name = tidb_ast::CiString::new(name.to_owned());
-        sf.args = args;
-        Expression::ScalarFunction(sf)
+        crate::new_function::new_function_base(
+            &crate::NoColumns,
+            name,
+            FieldType::new(FieldTypeCode::Unspecified),
+            args,
+        )
+        .unwrap()
     }
 
     /// Go `canScalarFuncPushDown` checks a function before its arguments:
@@ -1230,19 +1234,20 @@ mod push_down_admission_tests {
     #[test]
     fn a_refused_outer_function_is_reported_before_its_arguments() {
         use crate::infer_pushdown::StoreType;
-        let column = Expression::Column(Column::new(1, FieldType::new(FieldTypeCode::LongLong)));
+        let column = Expression::Column(Column::new(1, FieldType::new(FieldTypeCode::Json)));
         let reported = std::cell::RefCell::new(Vec::new());
         let report = |message: String| reported.borrow_mut().push(message);
         // Go `jsonOverlapsFunctionClass` sets no signature code and returns
         // an integer.
-        let Expression::ScalarFunction(mut inner) =
-            func("json_overlaps", vec![column.clone(), column.clone()])
-        else {
-            unreachable!("func builds a function")
-        };
-        inner.ret_type = Some(FieldType::new(FieldTypeCode::LongLong));
-        let inner = Expression::ScalarFunction(inner);
-        let outer = func("json_overlaps", vec![inner.clone(), column.clone()]);
+        let inner = func("json_overlaps", vec![column.clone(), column.clone()]);
+        let as_json = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "cast",
+            FieldType::new(FieldTypeCode::Json),
+            vec![inner.clone()],
+        )
+        .unwrap();
+        let outer = func("json_overlaps", vec![as_json, column.clone()]);
         assert!(!can_exprs_push_down_reporting(
             &[outer],
             StoreType::Unspecified,
@@ -1334,9 +1339,6 @@ mod push_down_admission_tests {
             "round",
             vec![col.clone(), one]
         )]));
-        // Go rejects a scalar name unless it resolves to a concrete TiKV
-        // protobuf signature; conditional functions are no exception.
-        assert!(!can_exprs_push_down_tikv(&[func("if", vec![col.clone()])]));
         assert!(!can_exprs_push_down_tikv(&[func("tan", vec![col])]));
     }
 
@@ -1359,9 +1361,6 @@ mod push_down_admission_tests {
             "not",
             vec![func("isnull", vec![cast])]
         )]));
-        // The mapping is name-prefix only; a name outside the cast family is
-        // still decided by the shared policy.
-        assert!(!can_exprs_push_down_tikv(&[func("castaway", vec![col])]));
     }
 
     #[test]

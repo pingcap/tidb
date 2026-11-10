@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Go's `Function.PbCode()` for every builtin over every combination of up to
-//! three argument types, against [`crate::pushdown_catalog::pb_code`].
+//! three argument types, against the signature the function class set.
 //!
 //! `testdata/pb_code_matrix.txt` is Go's own answer: each line is a builtin's
 //! name and, per arity, `*N=Sig` when every combination of N argument types
@@ -134,7 +134,49 @@ fn rust_pb_code(name: &str, shape: &str) -> Result<&'static str, String> {
     let function =
         crate::new_function::new_function(&MockContext, name, FieldType::new(FieldTypeCode::Unspecified), args)
             .map_err(|error| format!("{error:?}"))?;
-    Ok(crate::pushdown_catalog::pb_code(&function).as_str_name())
+    Ok(pb_code(&function).as_str_name())
+}
+
+/// Go `function.(*ScalarFunction).Function.PbCode()`.
+fn pb_code(function: &Expression) -> tidb_proto::tipb::ScalarFuncSig {
+    match function {
+        Expression::ScalarFunction(function) => function.pb_signature().unwrap_or_default(),
+        _ => tidb_proto::tipb::ScalarFuncSig::Unspecified,
+    }
+}
+
+/// Each signature the first matrix builds, with the evaluation types of the
+/// arguments its function holds.
+pub(crate) fn signature_arg_types() -> Vec<(tidb_proto::tipb::ScalarFuncSig, Vec<tidb_datatype::EvalType>)> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut rows = Vec::new();
+    for (name, shape, _) in go_matrix(MATRIX) {
+        let args = shape.chars().enumerate().map(|(index, label)| column(index, label)).collect();
+        let Ok(Expression::ScalarFunction(function)) = crate::new_function::new_function(
+            &MockContext,
+            &name,
+            FieldType::new(FieldTypeCode::Unspecified),
+            args,
+        ) else {
+            continue;
+        };
+        let Some(signature) = function.pb_signature() else {
+            continue;
+        };
+        if !seen.insert(signature) {
+            continue;
+        }
+        let Some(domains) = function
+            .args
+            .iter()
+            .map(|arg| arg.static_type().map(FieldType::eval_type))
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        rows.push((signature, domains));
+    }
+    rows
 }
 
 fn column(index: usize, label: char) -> Expression {
@@ -188,7 +230,7 @@ fn pb_code_matches_go_for_the_calls_no_column_shape_reaches() {
                 FieldType::new(FieldTypeCode::Unspecified),
                 args,
             )
-            .map_or("-", |function| crate::pushdown_catalog::pb_code(&function).as_str_name())
+            .map_or("-", |function| pb_code(&function).as_str_name())
         }))
         .unwrap_or("panic");
         if got != want {
@@ -212,7 +254,7 @@ fn a_cast_of_a_vector_has_gos_signature() {
     ] {
         let cast = crate::builtin_cast::build_cast_function_with_check(&crate::builtin::UnfoldedBuildContext, column(0, 'v'), FieldType::new(target), false, false)
             .expect("the cast builds");
-        assert_eq!(crate::pushdown_catalog::pb_code(&cast).as_str_name(), want, "{target:?}");
+        assert_eq!(pb_code(&cast).as_str_name(), want, "{target:?}");
     }
     for source in "irdsbthj".chars() {
         let cast = crate::builtin_cast::build_cast_function_with_check(
@@ -223,7 +265,7 @@ fn a_cast_of_a_vector_has_gos_signature() {
             false,
         )
         .expect("the cast builds");
-        assert_eq!(crate::pushdown_catalog::pb_code(&cast).as_str_name(), "Unspecified", "{source}");
+        assert_eq!(pb_code(&cast).as_str_name(), "Unspecified", "{source}");
     }
 }
 
@@ -259,7 +301,13 @@ fn the_converter_refuses_the_signatures_no_store_lists() {
         )
         .expect("the signature matrix builds it");
         checked += 1;
-        if crate::pushdown_catalog::from_expression(&function).is_none() != want_refused {
+        let converted = crate::expr_to_pb::PbConverter::new(
+            &MockContext,
+            false,
+            &tidb_datatype::SessionTimeZone::utc(),
+        )
+        .expr_to_pb(&function);
+        if converted.is_none() != want_refused {
             wrong
                 .entry(name)
                 .or_default()
@@ -332,7 +380,7 @@ fn rand_reads_its_seed_before_the_cast() {
             vec![seed.clone()],
         )
         .expect("rand builds");
-        assert_eq!(crate::pushdown_catalog::pb_code(&function).as_str_name(), want, "{seed:?}");
+        assert_eq!(pb_code(&function).as_str_name(), want, "{seed:?}");
     }
 }
 

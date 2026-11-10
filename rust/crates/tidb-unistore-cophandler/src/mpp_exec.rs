@@ -1307,7 +1307,7 @@ impl<'a> MppExec<'a> for SelExec<'a> {
             for condition in &self.conditions {
                 for (row, keep) in chk.iter().zip(selected.iter_mut()) {
                     if *keep {
-                        *keep = condition_holds(condition, row)?;
+                        *keep = condition_holds(condition, row, &self.base.sctx)?;
                     }
                 }
             }

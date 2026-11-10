@@ -30,6 +30,7 @@ tidb-chunk = { path = "../tidb-chunk" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-expr = { path = "../tidb-expr" }
+tidb-proto = { path = "../tidb-proto" }
 
 [dev-dependencies]
 tidb-ast = { path = "../tidb-ast" }

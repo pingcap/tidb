@@ -82,6 +82,7 @@ pub mod fts;
 mod func;
 mod grouping;
 pub mod grouping_sets;
+pub mod expr_to_pb;
 pub mod infer_pushdown;
 mod like;
 mod math_fn;
@@ -94,8 +95,6 @@ pub use new_function::{
 };
 mod ops;
 pub mod distsql_builtin;
-pub mod pb_predicate;
-pub mod pushdown_catalog;
 mod regexp;
 pub mod rewriter;
 mod row;

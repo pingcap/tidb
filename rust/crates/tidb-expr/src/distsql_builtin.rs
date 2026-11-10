@@ -541,7 +541,6 @@ mod tests {
 
     #[test]
     fn timestamp_literals_use_the_same_zone_in_both_wire_directions() {
-        use crate::pushdown_catalog::{build_call, to_pb_in, PbScalar};
         use tidb_datatype::{SessionTimeZone, Time, TimeType};
         for (zone, hour) in [
             (SessionTimeZone::utc(), 3),
@@ -559,11 +558,9 @@ mod tests {
                 (FieldTypeCode::Datetime, TimeType::DateTime),
             ] {
                 let local = Time::from_date_checked(2024, 1, 2, hour, 4, 5, 0, kind, 0).unwrap();
-                let literal = PbScalar::TimeLiteral {
-                    value: local,
-                    field_type: FieldType::new(code).with_decimal(0),
-                };
-                let pb = to_pb_in(&literal, &|_| None, &zone).unwrap();
+                let literal = constant(Datum::Time(local), FieldType::new(code).with_decimal(0));
+                let converter = crate::expr_to_pb::PbConverter::new(&crate::NoColumns, false, &zone);
+                let pb = converter.expr_to_pb(&literal).unwrap();
                 let wire = Time::from_date_checked(
                     2024,
                     1,
@@ -586,8 +583,14 @@ mod tests {
                     .eval(&crate::ZonedNoColumns(zone.clone()), row.to_row())
                     .unwrap();
                 assert_eq!(value, Datum::Time(local));
-                let call = build_call("isnull", vec![literal]).unwrap();
-                let parent = to_pb_in(&call, &|_| None, &zone).unwrap();
+                let call = crate::new_function::new_function_base(
+                    &crate::NoColumns,
+                    "isnull",
+                    FieldType::new(FieldTypeCode::LongLong),
+                    vec![literal],
+                )
+                .unwrap();
+                let parent = converter.expr_to_pb(&call).unwrap();
                 assert_eq!(parent.children[0].val, pb.val);
             }
         }
@@ -631,59 +634,47 @@ mod tests {
             )
         );
         let constant = constant(Datum::Float32(1.25), FieldType::new(FieldTypeCode::Double));
-        let pb = crate::pushdown_catalog::expression_to_pb(&constant, &|_| None).unwrap();
+        let pb = crate::expr_to_pb::PbConverter::new(&crate::NoColumns, false, &tidb_datatype::SessionTimeZone::utc())
+            .expr_to_pb(&constant)
+            .unwrap();
         assert_eq!(pb.tp(), tipb::ExprType::Float32);
     }
 
     #[test]
     fn bit_enum_and_vector_literals_decode_like_go() {
-        use crate::pushdown_catalog::{to_pb, PbScalar};
+        let enum_type = FieldType::new(FieldTypeCode::Enum).with_elems(["red", "green"]);
         let literals = [
-            PbScalar::BitLiteral {
-                value: vec![3].into(),
-                field_type: FieldType::new(FieldTypeCode::Bit),
-            },
-            PbScalar::EnumLiteral {
-                value: 2,
-                field_type: FieldType::new(FieldTypeCode::Enum).with_elems(["red", "green"]),
-            },
-            PbScalar::VectorLiteral {
-                value: tidb_datatype::VectorFloat32::must_create([1.0, 2.0]),
-                field_type: FieldType::new(FieldTypeCode::VectorFloat32),
-            },
+            constant(Datum::Bit(vec![3].into()), FieldType::new(FieldTypeCode::Bit)),
+            constant(
+                Datum::Enum(tidb_datatype::MysqlEnum::new("green", 2), enum_type.collation()),
+                enum_type,
+            ),
+            constant(
+                Datum::VectorFloat32(tidb_datatype::VectorFloat32::must_create([1.0, 2.0])),
+                FieldType::new(FieldTypeCode::VectorFloat32),
+            ),
         ];
         let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(&[]);
         for literal in literals {
-            let pb = to_pb(&literal, &|_| None).unwrap();
+            let pb = crate::expr_to_pb::PbConverter::new(&crate::NoColumns, false, &tidb_datatype::SessionTimeZone::utc())
+                .expr_to_pb(&literal)
+                .unwrap();
             let decoded = pb_to_expr(&pb, &[]).unwrap();
             let value = decoded.eval(&crate::NoColumns, row.to_row()).unwrap();
-            match literal {
-                PbScalar::BitLiteral {
-                    value: expected, ..
-                } => assert_eq!(value, Datum::Bit(expected)),
-                PbScalar::EnumLiteral { .. } => assert_eq!(
-                    value,
-                    Datum::Enum(
-                        tidb_datatype::MysqlEnum::new("green", 2),
-                        decoded.static_type().unwrap().collation()
-                    )
-                ),
-                PbScalar::VectorLiteral {
-                    value: expected, ..
-                } => assert_eq!(value, Datum::VectorFloat32(expected)),
-                _ => unreachable!(),
-            }
+            let Expression::Constant(literal) = literal else {
+                unreachable!()
+            };
+            assert_eq!(Some(&value), literal.literal_value());
         }
     }
 
     #[test]
     fn json_literals_follow_go_admission_and_decoder_kind_checks() {
         let value = tidb_datatype::BinaryJSON::parse("{\"a\":1}").unwrap();
-        let scalar = crate::pushdown_catalog::PbScalar::JsonLiteral {
-            value,
-            field_type: FieldType::new(FieldTypeCode::Json),
-        };
-        assert!(crate::pushdown_catalog::to_pb(&scalar, &|_| None).is_none());
+        let literal = constant(Datum::Json(value), FieldType::new(FieldTypeCode::Json));
+        assert!(crate::expr_to_pb::PbConverter::new(&crate::NoColumns, false, &tidb_datatype::SessionTimeZone::utc())
+            .expr_to_pb(&literal)
+            .is_none());
         let pb = tipb::Expr {
             tp: Some(tipb::ExprType::MysqlJson as i32),
             val: Some(tidb_codec::encode_value(&[Datum::Int(1)]).unwrap()),
@@ -705,26 +696,6 @@ mod tests {
         );
     }
 
-    /// Every signature `scalarExprSupportedByTiKV` admits is one this decoder
-    /// (the coprocessor's side of Go `getSignatureByPB`) reads -- but for
-    /// `UnaryNotJSON`, which Go's `getSignatureByPB` has no arm for either:
-    /// unistore fails `sum(not(json_col))` where TiKV evaluates it.
-    #[test]
-    fn every_encoder_signature_has_a_typed_decoder() {
-        use crate::infer_pushdown::{scalar_expr_supported_by_tikv, PushDownPolicy};
-
-        let missing = crate::pushdown_catalog::CATALOG
-            .iter()
-            .filter(|row| scalar_expr_supported_by_tikv(&PushDownPolicy::new(row.name, row.sig)))
-            .map(|row| row.sig)
-            .chain(crate::pushdown_catalog::implicit_cast_signatures())
-            .filter(|signature| !supports_signature(*signature))
-            .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(
-            missing,
-            std::collections::BTreeSet::from([tipb::ScalarFuncSig::UnaryNotJson])
-        );
-    }
     /// Go `getSignatureByPB` decodes the three extract signatures, each
     /// reading its value in its own domain. The vectors are Go
     /// `TestExtractDatetimeNum`, `TestExtractDurationNum` and the DAY_HOUR
@@ -735,7 +706,9 @@ mod tests {
     fn protobuf_unary_not_and_week_with_mode_decode_in_their_own_domain() {
         use tipb::ScalarFuncSig::*;
         let value = |expression: &Expression| {
-            crate::pushdown_catalog::expression_to_pb(expression, &|_| None).unwrap()
+            crate::expr_to_pb::PbConverter::new(&crate::NoColumns, false, &tidb_datatype::SessionTimeZone::utc())
+                .expr_to_pb(expression)
+                .unwrap()
         };
         let real = |real: f64| {
             value(&constant(
@@ -821,7 +794,9 @@ mod tests {
             FieldType::new(FieldTypeCode::Duration),
         );
         let value = |expression: &Expression| {
-            crate::pushdown_catalog::expression_to_pb(expression, &|_| None).unwrap()
+            crate::expr_to_pb::PbConverter::new(&crate::NoColumns, false, &tidb_datatype::SessionTimeZone::utc())
+                .expr_to_pb(expression)
+                .unwrap()
         };
         let result = tipb::FieldType {
             tp: Some(8),

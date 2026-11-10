@@ -120,7 +120,6 @@ pub(crate) mod test_region;
 pub(crate) mod test_store;
 pub mod dag_request;
 pub mod driver;
-pub mod wide_scan_selection;
 pub mod explain;
 pub(crate) mod foreign_key;
 use tidb_executor_internal_exec::predicate_pushdown::PushedScanFilter;

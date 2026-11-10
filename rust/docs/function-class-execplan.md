@@ -150,12 +150,9 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
     plan-cache build context for tests (`tidb_exprctx::PlanCacheParams`)
     carries the parameter values Go's `ParamMarker` reads at build. The
     name-keyed integer fast path and the name-keyed numeric-domain fallback
-    are deleted: a built node answers both from its signature. Open:
-    `ScalarFunction::new` is now crate-private and has one user,
-    `pushdown_catalog`'s `metadata_expression` / `control_expression`
-    (type and collation inference only, never evaluated); it and the
-    optional `pb_builtin` go with 11b-2c.
-  - [ ] 11b-2b: the class's `getFunction` binds the signature's evaluation
+    are deleted: a built node answers both from its signature.
+    `ScalarFunction::new` is deleted. Open: `pb_builtin` is still optional.
+  - [x] 11b-2b: the class's `getFunction` binds the signature's evaluation
     (Go's `builtinXxxSig.evalT`), one Go file at a time, until
     `ScalarFunction::eval_by_signature` and `func::eval_func_values` are
     empty; the PB decoder (`getSignatureByPB`) binds the same functions.
@@ -174,18 +171,32 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
       node's collation or types, `Kernel::Row` for one that reads its
       arguments itself); `Kernel::Named` is deleted and a decoded node is
       named `sig_<signature>` as Go's `newDistSQLFunctionBySig` names it.
-    - [ ] The signatures only a class builds (`Kernel::Function`, about 130
-      with a `pbCode` plus every `Unspecified` one) still evaluate through
-      `eval_by_signature` by name. Each class hands its signature's
-      evaluation to `BaseBuiltinFunc` (a `RowKernel`), one Go file at a
-      time; `Kernel::Function` and `eval_by_signature` go with the last.
-  - [ ] 11b-2c: `pushdown_catalog`'s second description of a call
-    (`PbScalar`, `BuiltinSignature`, `resolve`) is deleted; `ExprToPB`
-    reads the node's signature.
+    - [x] The signatures only a class builds evaluate by the kernel their
+      class hands to `BaseBuiltinFunc` (`evaluated_by`); `Kernel::Function`,
+      `ScalarFunction::eval_by_signature` and the name-keyed dispatch tables
+      are deleted. A class that sets no `pbCode` hands its evaluation the
+      same way (`json_sum_crc32`).
+  - [x] 11b-2c: `pushdown_catalog.rs` (`PbScalar`, `BuiltinSignature`,
+    `resolve`, `CATALOG`) is deleted; `expr_to_pb.rs` is Go's `PbConverter`
+    and reads the node's signature, checked against Go's `expr_to_pb_test.go`
+    JSON vectors. The request side's other descriptions went with it:
+    `predicate_pushdown::ScanPredicate`, `wide_scan_selection.rs` and
+    `pb_predicate.rs` are deleted, and a request's conditions, aggregate
+    arguments, group and sort keys are converted by `PbConverter` -- all of
+    a Selection's conditions or none.
   - [ ] 11b-2d: the collation post-pass (`derive_tree_collation`,
     `restore_function_result_charset`, `returns_binary_string`) is deleted.
 
 ## Surprises & Discoveries
+
+- Observation: binding `TIME()` to Go's `builtinTimeSig` showed the Rust
+  duration parser dropped Go's datetime fallback warning.
+  Evidence: Go `types.ParseDuration` falls back to `ParseDatetime`, which
+  appends its own "Truncated incorrect datetime value" warning, then
+  `ConvertToDuration` and `RoundFrac(fsp)`; `TIME('2011-11-11
+  10:10:10.11.12')` is `10:10:10.12` with that warning, where Rust returned
+  the zero duration. `tidb_datatype::parse_duration_in_context` now carries
+  the fallback's warning to the caller.
 
 - Observation: the signature code alone does not say whether a function has
   a TiPB form. Go `scalarFuncToPBExpr` also asks

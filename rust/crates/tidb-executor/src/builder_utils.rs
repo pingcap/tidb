@@ -22,7 +22,6 @@
 use tidb_datatype::{FieldType, SessionTimeZone};
 use tidb_driver_error::DriverError;
 use tidb_expr::expression::Expression;
-use tidb_expr::pushdown_catalog::ColumnDescriptor;
 use tidb_expr::schema::Schema;
 use tidb_expression_aggregation::{AggFuncDesc, AggFunctionMode};
 use tidb_planner_core_operator_physicalop::{PhysicalPlan, PhysicalTableScan};
@@ -64,27 +63,6 @@ fn flatten_push_down_plan(root: &PhysicalPlan) -> Vec<&PhysicalPlan> {
     plans
 }
 
-/// The descriptor of one column of a pushed executor's input row, from the
-/// column's own type (Go `ExprToPB` writes `ToPBFieldType(col.RetType)`).
-fn column_descriptor(schema: &Schema, offset: u32) -> Option<ColumnDescriptor> {
-    let field_type = schema.columns.get(offset as usize)?.ret_type.as_ref()?;
-    Some(ColumnDescriptor {
-        tp: i32::from(field_type.code().mysql_type()),
-        flag: field_type.flags(),
-        // Go `ToPBFieldType`: `int32(ft.GetFlen())`, wrapping as Go does.
-        flen: field_type.flen() as i32,
-        decimal: field_type.decimal() as i32,
-        charset: field_type.charset_name().to_owned(),
-        collation: field_type.collation_name().to_owned(),
-        elems: field_type
-            .elems_snapshot()
-            .into_iter()
-            .map(|elem| elem.to_string())
-            .collect(),
-        array: field_type.is_array(),
-    })
-}
-
 /// Go `expression.ExpressionsToPBList` over the input row `schema`.
 fn expressions_to_pb_list(
     expressions: &[Expression],
@@ -95,12 +73,9 @@ fn expressions_to_pb_list(
     resolved
         .iter()
         .map(|expression| {
-            tidb_expr::pushdown_catalog::expression_to_pb_in(
-                expression,
-                &|offset| column_descriptor(schema, offset),
-                zone,
-            )
-            .ok_or_else(|| unsupported("an expression pushed to TiDB cannot be converted to PB"))
+            tidb_expr::expr_to_pb::PbConverter::new(&tidb_exprctx::NoColumns, false, zone)
+                .expr_to_pb(expression)
+                .ok_or_else(|| unsupported("an expression pushed to TiDB cannot be converted to PB"))
         })
         .collect()
 }
@@ -266,8 +241,7 @@ fn agg_func_to_pb_expr(
     let tp = get_tipb_expr(&agg_func.base.name)
         .ok_or_else(|| unsupported("select request is not supported by client"))?;
     let children = expressions_to_pb_list(&agg_func.base.args, input, zone)?;
-    let field_type = tidb_expr::pushdown_catalog::to_pb_field_type(&agg_func.base.ret_type)
-        .ok_or_else(|| unsupported("an aggregate's return type cannot be converted to PB"))?;
+    let field_type = tidb_expr::expr_to_pb::to_pb_field_type(&agg_func.base.ret_type);
     let mut expr = tipb::Expr {
         tp: Some(tp as i32),
         children,

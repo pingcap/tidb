@@ -2144,8 +2144,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 .expect("builtin_time.go registers TIMESTAMPDIFF");
             class_function(class, "timestampdiff", args, resolver)
         }
-        // An ordinary builtin call: every argument is evaluated eagerly and
-        // the shared `eval_func_values` implementation runs it.
+        // An ordinary builtin call: its function class builds the node.
         Expr::Func { name, args, .. } => {
             let lowered = name.to_ascii_lowercase();
             if lowered == "values" {

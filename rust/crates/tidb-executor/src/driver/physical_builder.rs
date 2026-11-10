@@ -2388,7 +2388,7 @@ fn pushed_partial_aggregation(
             input = None;
         }
         if input.as_ref().is_some_and(|argument| {
-            tidb_expr::pushdown_catalog::from_expression(argument).is_none()
+            !tidb_executor_internal_exec::predicate_pushdown::pb_condition_exists(argument, ctx)
         }) {
             return Ok(None);
         }
@@ -2444,7 +2444,7 @@ fn pushed_partial_aggregation(
     let mut group_keys = Vec::with_capacity(group_by.len());
     let mut group_types = Vec::with_capacity(group_by.len());
     for expression in group_by {
-        if tidb_expr::pushdown_catalog::from_expression(expression).is_none()
+        if !tidb_executor_internal_exec::predicate_pushdown::pb_condition_exists(expression, ctx)
             || crate::access_path::expression_column_offsets(std::slice::from_ref(expression))
                 .iter()
                 .any(|offset| *offset >= child_schema.len())

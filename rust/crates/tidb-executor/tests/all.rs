@@ -50,4 +50,3 @@ mod cluster_peer_source;
 mod column_flag_builders_agree_source;
 mod tikv_scan_dag_lowering_source;
 mod txn_summary_source;
-mod wide_scan_selection_source;

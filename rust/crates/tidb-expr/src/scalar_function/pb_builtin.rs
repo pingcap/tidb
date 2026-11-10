@@ -1804,7 +1804,9 @@ mod tests {
             domain => panic!("no literal for {domain:?}"),
         };
         let constant = Expression::Constant(Constant::new(value, FieldType::new(code)));
-        crate::pushdown_catalog::expression_to_pb(&constant, &|_| None).unwrap()
+        crate::expr_to_pb::PbConverter::new(&crate::NoColumns, false, &tidb_datatype::SessionTimeZone::utc())
+            .expr_to_pb(&constant)
+            .unwrap()
     }
 
     fn eval(signature: ScalarFuncSig, children: Vec<tipb::Expr>) -> Datum {
@@ -1841,7 +1843,9 @@ mod tests {
                 Datum::new_string_datum(value),
                 FieldType::new(FieldTypeCode::VarString),
             ));
-            crate::pushdown_catalog::expression_to_pb(&constant, &|_| None).unwrap()
+            crate::expr_to_pb::PbConverter::new(&crate::NoColumns, false, &tidb_datatype::SessionTimeZone::utc())
+            .expr_to_pb(&constant)
+            .unwrap()
         };
         let mut swept = std::collections::BTreeSet::new();
         // `ceil` and `floor` resolve outside the catalog's rows.
@@ -1858,16 +1862,19 @@ mod tests {
                 (FloorDecToDec, &[EvalType::Decimal]),
             ]
         };
-        let rows = crate::pushdown_catalog::CATALOG
+        let built = crate::tests::pb_code_matrix_source::signature_arg_types();
+        let rows = built
             .iter()
-            .map(|row| (row.sig, row.arg_types))
+            .map(|(sig, domains)| (*sig, &domains[..]))
             .chain(rounding.iter().map(|(sig, domains)| (*sig, &domains[..])));
         for (sig, arg_types) in rows {
             let Some(Kernel::Values(_)) = PbBuiltin::new(sig).map(|builtin| builtin.kernel) else {
                 continue;
             };
             swept.insert(sig);
-            for position in 0..arg_types.len() {
+            // A NULL member of CONCAT_WS is skipped; its rows are below.
+            let nullable = if sig == ScalarFuncSig::ConcatWs { 1 } else { arg_types.len() };
+            for position in 0..nullable {
                 let children = arg_types
                     .iter()
                     .enumerate()

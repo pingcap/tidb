@@ -4517,17 +4517,7 @@ fn explain_analyze_intersect_uses_the_common_physical_plan() {
 ///
 /// Strict projection elimination removes the identity projection here, as in
 /// Go. The read is a cop task under its `TableReader`, so the shape matches
-/// the capture for every conjunct this tier's push-down catalog admits.
-///
-/// The middle statement is the one place the two still differ, and the
-/// difference is the CATALOG, not the boundary: Go's coprocessor evaluates
-/// `plus(int, int)` and this tier's `tidb_expr::pushdown_catalog` does not,
-/// so `lt(plus(b, 1), 10)` is `CopTask.RootTaskConds` here -- a root
-/// `Selection` above the reader, which is exactly where Go puts a condition
-/// `expression.PushDownExprs` refuses
-/// (`pkg/planner/core/operator/physicalop/task.go:47`). The estimate is
-/// unaffected: Go's captured `2666.67` is what the two halves compose to,
-/// because Go prices its own two halves the same way.
+/// the capture.
 #[test]
 fn pushing_a_predicate_into_the_scan_keeps_the_captured_plan_shape() {
     let mut session = Session::new();

@@ -20,8 +20,7 @@
 //! response back as rows.
 //!
 //! [`crate::dag_request`] lowers the scan, the Selection and the cap into a
-//! `DAGRequest`; [`crate::wide_scan_selection`] converts the pushed conjuncts
-//! into that Selection's condition shape; `tidb-distsql` owns ranges, region
+//! `DAGRequest`; `tidb-distsql` owns ranges, region
 //! tasks, dispatch, retry and response decoding; the client below
 //! ([`tidb_txnkv::Client`], Go `kv.Storage.GetClient()`) carries the encoded
 //! request onto the wire.
@@ -79,7 +78,6 @@ use crate::dag_request::{
     construct_capped_read_only_dag_req_with_conditions,
     construct_grouped_aggregate_read_only_dag_req_with_conditions, DagRequestContext, TiKvScanPlan,
 };
-use tidb_executor_internal_exec::predicate_pushdown::ScanPredicate;
 use tidb_distsql::remote_scan::EXTRA_HANDLE_COLUMN_ID;
 use tidb_distsql::remote_scan::PushdownScannerError;
 use tidb_distsql::remote_scan::PushdownScanRequest;
@@ -89,7 +87,7 @@ use tidb_distsql::remote_scan::PushdownPartialAggregate;
 use tidb_distsql::remote_scan::PushdownAggregateKind;
 use tidb_distsql::remote_scan::CopPlanKind;
 use tidb_kv::storage::StorageError;
-use crate::wide_scan_selection::{accepts_in, wide_scan_selection_conditions_in};
+use tidb_expr::expr_to_pb::PbConverter;
 
 enum LoweredAggregate {
     Global {
@@ -149,20 +147,8 @@ pub mod scan_receipt {
 const NOT_NULL_FLAG: i32 = 1;
 /// Go `mysql.PriKeyFlag`.
 const PRI_KEY_FLAG: i32 = 2;
-
-#[derive(Clone)]
-struct SelectionCache {
-    columns: Vec<ScanColumnInfo>,
-    predicates: Vec<ScanPredicate>,
-    conditions: Vec<Expr>,
-}
-
-/// The same table lookup opens several region scans with identical columns
-/// and predicates. Keep the lowered Selection for that request shape so a
-/// large `IN` list is encoded once instead of once per region window. The
-/// key includes the full descriptors and source predicates, so it cannot
-/// cross a schema or statement boundary.
-static SELECTION_CACHE: Mutex<Option<SelectionCache>> = Mutex::new(None);
+/// Go `mysql.BinaryFlag`.
+const BINARY_FLAG: u32 = 128;
 
 /// Go `TableReaderExecutor.buildResp` for a TiKV read: lowers `request` into
 /// a `DAGRequest`, builds its `kv.Request`, and selects through `client`.
@@ -223,13 +209,6 @@ fn build_resp_with(
         .map(|column| column.field_type.clone())
         .collect();
 
-    // Every conjunct this lowering accepts travels; the rest simply stay
-    // behind, because the scan source tests all of them locally anyway.
-    // Table lookup windows repeat this exact shape, often with a large
-    // string `IN` list. Reuse both the admission result and its protobuf
-    // tree across those opens; the cache key includes the full descriptors
-    // and source predicates, so it cannot cross a schema or statement
-    // boundary.
     // Go `ExprToPB` over the scan's COMPLETE Selection: every condition
     // converts or the request carries none of them. A subset would let an
     // operator above the Selection (a limit, a TopN, an aggregate) count
@@ -239,53 +218,25 @@ fn build_resp_with(
         .eval_context
         .as_ref()
         .map(tidb_distsql::remote_scan::StatementEval::context);
-    let described: Option<Vec<ScanPredicate>> = request
+    let conditions: Option<Vec<Expr>> = request
         .conditions
         .iter()
         .flat_map(tidb_expr::expr_util::split_cnf_items)
         .map(|condition| {
-            tidb_executor_internal_exec::predicate_pushdown::describe_request_condition(&condition, eval_context).ok()
+            tidb_executor_internal_exec::predicate_pushdown::condition_to_pb(
+                &condition,
+                eval_context,
+                &request.statement.time_zone,
+            )
         })
         .collect();
-    let described = described.filter(|predicates| {
-        predicates
-            .iter()
-            .all(|predicate| accepts_in(predicate, &columns, &request.statement.time_zone))
-    });
-    let cached = described.as_ref().and_then(|predicates| {
-        SELECTION_CACHE
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .as_ref()
-            .filter(|cache| cache.columns == columns && cache.predicates == *predicates)
-            .cloned()
-    });
-    let (predicates_applied, conditions) = match (described, cached) {
-        (None, _) => (false, Vec::new()),
-        (Some(_), Some(cache)) => (true, cache.conditions),
-        (Some(predicates), None) => {
-            let conditions: Vec<Expr> = if predicates.is_empty() {
-                Vec::new()
-            } else {
-                wide_scan_selection_conditions_in(
-                    &predicates,
-                    &columns,
-                    &request.statement.time_zone,
-                )
-                .map_err(|error| {
-                    PushdownScannerError::Backend(StorageError::Backend(error.to_string()))
-                })?
-            };
-            let mut slot = SELECTION_CACHE
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            *slot = Some(SelectionCache {
-                columns: columns.clone(),
-                predicates,
-                conditions: conditions.clone(),
-            });
-            (true, conditions)
-        }
+    let predicates_applied = conditions.is_some();
+    let conditions = conditions.unwrap_or_default();
+    // Go `NewPBConverter(client, ctx)`, for the operators above the
+    // Selection.
+    let pc = match eval_context {
+        Some(context) => PbConverter::new(context, true, &request.statement.time_zone),
+        None => PbConverter::new(&tidb_exprctx::NoColumns, false, &request.statement.time_zone),
     };
 
     // Go's `ConstructDAGReq` narrows a projected scan by sending
@@ -366,7 +317,7 @@ fn build_resp_with(
                 ));
             }
             let lowered =
-                lower_aggregate_functions(functions, &columns, &request.statement.time_zone)
+                lower_aggregate_functions(functions, &pc)
                     .ok_or_else(|| {
                         refuse("a global aggregate function cannot be lowered to TiPB")
                     })?;
@@ -395,11 +346,11 @@ fn build_resp_with(
                 ));
             }
             let lowered_functions =
-                lower_aggregate_functions(functions, &columns, &request.statement.time_zone)
+                lower_aggregate_functions(functions, &pc)
                     .ok_or_else(|| {
                         refuse("a grouped aggregate function cannot be lowered to TiPB")
                     })?;
-            let group_by = lower_group_by(group_keys, group_types, &columns, &request.statement.time_zone)
+            let group_by = lower_group_by(group_keys, group_types, &pc)
                 .ok_or_else(|| refuse("a grouped aggregate key cannot be lowered to TiPB"))?;
             field_types = functions
                 .iter()
@@ -564,11 +515,9 @@ fn build_resp_with(
             column.field_type.clone(),
         );
         expression.index = prefix.column_offset as i64;
-        let expression = tidb_expr::pushdown_catalog::expression_to_pb(
-            &tidb_expr::expression::Expression::Column(expression),
-            &|offset| scan_column_descriptor(&columns, offset),
-        )
-        .ok_or_else(|| refuse("a prefix Limit column cannot be lowered to TiPB"))?;
+        let expression = pc
+            .expr_to_pb(&tidb_expr::expression::Expression::Column(expression))
+            .ok_or_else(|| refuse("a prefix Limit column cannot be lowered to TiPB"))?;
         dag.executors
             .last_mut()
             .and_then(|executor| executor.limit.as_mut())
@@ -582,11 +531,9 @@ fn build_resp_with(
             .iter()
             .map(|item| {
                 // Go `PhysicalTopN.ToPB`: each `ByItem` lowers whole.
-                let expression = tidb_expr::pushdown_catalog::expression_to_pb(
-                    &item.expr,
-                    &|offset| scan_column_descriptor(&columns, offset),
-                )
-                .ok_or_else(|| refuse("a coprocessor TopN key cannot be lowered to TiPB"))?;
+                let expression = pc
+                    .expr_to_pb(&item.expr)
+                    .ok_or_else(|| refuse("a coprocessor TopN key cannot be lowered to TiPB"))?;
                 Ok(ByItem {
                     expr: Some(expression),
                     desc: Some(item.desc),
@@ -623,10 +570,7 @@ fn build_resp_with(
                 let mut expression =
                     tidb_expr::column::Column::new(i64::from(offset) + 1, column.field_type.clone());
                 expression.index = i64::from(offset);
-                tidb_expr::pushdown_catalog::expression_to_pb(
-                    &tidb_expr::expression::Expression::Column(expression),
-                    &|offset| scan_column_descriptor(&columns, offset),
-                )
+                pc.column_to_pb_expr(&expression, false)
             })
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| refuse("a coprocessor Projection column cannot be lowered to TiPB"))?;
@@ -644,10 +588,10 @@ fn build_resp_with(
     if let Some((exprs, _)) = &request.statement.cop_projection_exprs {
         let exprs = exprs
             .iter()
-            .map(|expression| {
-                tidb_expr::pushdown_catalog::expression_to_pb(expression, &|offset| {
-                    scan_column_descriptor(&columns, offset)
-                })
+            .map(|expression| match expression {
+                // Go `ProjectionExpressionsToPBList`.
+                tidb_expr::expression::Expression::Column(column) => pc.column_to_pb_expr(column, false),
+                expression => pc.expr_to_pb(expression),
             })
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| refuse("a coprocessor Projection expression cannot be lowered to TiPB"))?;
@@ -1325,10 +1269,7 @@ pub fn column_to_proto(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
     // An integer column's collation is `binary`, rewritten like any other
     // (`-63` under the new collation framework); a string column's is its
     // own, and it is what tells TiKV which collator to compare and case-fold
-    // with. The
-    // predicate lowering reads this very field back
-    // (`tidb_executor::wide_scan_selection`), so the leaf and the scan descriptor
-    // cannot disagree about the collator by construction.
+    // with.
     let collation = if matches!(
         code,
         FieldTypeCode::Varchar
@@ -1371,42 +1312,13 @@ pub fn column_to_proto(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
     })
 }
 
-fn scan_column_descriptor(
-    columns: &[ScanColumnInfo],
-    offset: u32,
-) -> Option<tidb_expr::pushdown_catalog::ColumnDescriptor> {
-    let column = columns.get(offset as usize)?;
-    let collation = tidb_datatype::proto_to_collation(column.collation);
-    let charset = tidb_charset::get_collation_by_name(&collation)
-        .map_or_else(|_| "binary".to_owned(), |row| row.charset_name);
-    Some(tidb_expr::pushdown_catalog::ColumnDescriptor {
-        tp: column.tp,
-        flag: u32::try_from(column.flag).ok()?,
-        flen: column.column_len,
-        decimal: column.decimal,
-        charset,
-        collation,
-        elems: column.elems.clone(),
-        array: column.array,
-    })
-}
-
 fn lower_aggregate_functions(
     functions: &[tidb_distsql::remote_scan::PushdownAggregateFunction],
-    columns: &[ScanColumnInfo],
-    zone: &tidb_datatype::SessionTimeZone,
+    pc: &PbConverter<'_>,
 ) -> Option<Vec<Expr>> {
     functions
         .iter()
-        .map(|function| {
-            lower_aggregate_function(
-                function.kind,
-                function.input.as_ref(),
-                &function.ret_type,
-                columns,
-                zone,
-            )
-        })
+        .map(|function| lower_aggregate_function(function.kind, function.input.as_ref(), &function.ret_type, pc))
         .collect()
 }
 
@@ -1414,20 +1326,21 @@ fn lower_aggregate_function(
     kind: PushdownAggregateKind,
     input: Option<&tidb_expr::expression::Expression>,
     output_type: &FieldType,
-    columns: &[ScanColumnInfo],
-    zone: &tidb_datatype::SessionTimeZone,
+    pc: &PbConverter<'_>,
 ) -> Option<Expr> {
     let children = match input {
-        Some(input) => vec![tidb_expr::pushdown_catalog::expression_to_pb_in(
-            input,
-            &|offset| scan_column_descriptor(columns, offset),
-            zone,
-        )?],
+        Some(input) => vec![pc.expr_to_pb(input)?],
         None if kind == PushdownAggregateKind::Count => {
-            vec![tidb_expr::pushdown_catalog::to_pb(
-                &tidb_expr::pushdown_catalog::PbScalar::int_literal(1),
-                &|_| None,
-            )?]
+            vec![pc.expr_to_pb(&tidb_expr::expression::Expression::Constant(
+                tidb_expr::constant::Constant::new(
+                    tidb_datatype::Datum::Int(1),
+                    // Go `types.DefaultTypeForValue(1)`.
+                    FieldType::new(FieldTypeCode::LongLong)
+                        .with_flen(1)
+                        .with_decimal(0)
+                        .with_flags(NOT_NULL_FLAG as u32 | BINARY_FLAG),
+                ),
+            ))?]
         }
         None => return None,
     };
@@ -1448,7 +1361,7 @@ fn lower_aggregate_function(
         val: None,
         children,
         sig: Some(ScalarFuncSig::Unspecified as i32),
-        field_type: Some(tidb_expr::pushdown_catalog::to_pb_field_type(output_type)?),
+        field_type: Some(tidb_expr::expr_to_pb::to_pb_field_type(output_type)),
         has_distinct: Some(false),
         agg_func_mode: Some(tidb_proto::tipb::AggFunctionMode::Partial1Mode as i32),
         ..Default::default()
@@ -1458,22 +1371,12 @@ fn lower_aggregate_function(
 fn lower_group_by(
     group_by: &[tidb_expr::expression::Expression],
     group_types: &[FieldType],
-    columns: &[ScanColumnInfo],
-    zone: &tidb_datatype::SessionTimeZone,
+    pc: &PbConverter<'_>,
 ) -> Option<Vec<Expr>> {
     if group_by.len() != group_types.len() {
         return None;
     }
-    group_by
-        .iter()
-        .map(|key| {
-            tidb_expr::pushdown_catalog::expression_to_pb_in(
-                key,
-                &|offset| scan_column_descriptor(columns, offset),
-                zone,
-            )
-        })
-        .collect()
+    group_by.iter().map(|key| pc.expr_to_pb(key)).collect()
 }
 
 /// Whether a request names the implicit `_tidb_rowid` handle column, which is
@@ -1596,28 +1499,21 @@ mod tests {
         let mut column = Column::new(1, FieldType::new(FieldTypeCode::LongLong));
         column.index = 0;
         let input = Expression::Column(column);
-        let columns = [ScanColumnInfo {
-            column_id: 1,
-            tp: 8,
-            collation: 63,
-            column_len: 20,
-            ..ScanColumnInfo::default()
-        }];
+        let zone = tidb_datatype::SessionTimeZone::utc();
+        let pc = PbConverter::new(&tidb_exprctx::NoColumns, false, &zone);
 
         let max = lower_aggregate_function(
             PushdownAggregateKind::MaxCount,
             Some(&input),
             &FieldType::new(FieldTypeCode::LongLong),
-            &columns,
-            &tidb_datatype::SessionTimeZone::utc(),
+            &pc,
         )
         .expect("MAX_COUNT lowers to a tipb aggregate expression");
         let min = lower_aggregate_function(
             PushdownAggregateKind::MinCount,
             Some(&input),
             &FieldType::new(FieldTypeCode::LongLong),
-            &columns,
-            &tidb_datatype::SessionTimeZone::utc(),
+            &pc,
         )
         .expect("MIN_COUNT lowers to a tipb aggregate expression");
         assert_eq!(max.tp, Some(ExprType::MaxCount as i32));

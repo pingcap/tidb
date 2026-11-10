@@ -18,5 +18,3 @@
 mod benchmark_source;
 mod field_name_resolution_source;
 mod info_metadata_source;
-mod pb_int_predicate_source;
-mod pb_string_predicate_source;

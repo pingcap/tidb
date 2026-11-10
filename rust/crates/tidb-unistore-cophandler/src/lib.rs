@@ -1293,65 +1293,42 @@ fn collation_of(expr: &tipb::Expr) -> i32 {
     tidb_datatype::restore_collation_id_if_needed(protocol)
 }
 
-/// One condition of Go `selExec`'s filter over one row: NULL or zero
-/// rejects it.
+/// One condition of Go `selExec`'s filter over one row, Go `EvalBool`: a
+/// NULL rejects the row and any other value is its `Datum.ToBool`.
 pub(crate) fn condition_holds(
     condition: &SimpleExpr,
     row: &[tidb_datatype::Datum],
+    sctx: &RequestEvalContext,
 ) -> Result<bool, CopExecError> {
     // A builtin condition's evaluation error keeps its terror code for
     // `SelectResponse.error`.
     let value = match condition {
-        SimpleExpr::Shared(shared) => match eval_shared(shared, row)? {
-            tidb_datatype::Datum::Int(value) => Some(i128::from(value)),
-            tidb_datatype::Datum::UInt(value) => Some(i128::from(value)),
-            tidb_datatype::Datum::Null => None,
-            other => Some(shared.context.condition_value(&other)?),
-        },
-        other => eval_expr(other, row)?,
+        SimpleExpr::Shared(shared) => eval_shared(shared, row)?,
+        leaf => eval_datum(leaf, row)?,
     };
-    Ok(value.is_some_and(|value| value != 0))
+    if value.is_null() {
+        return Ok(false);
+    }
+    Ok(sctx.condition_value(&value)? != 0)
 }
 
-/// Evaluates one pushed-down expression against a scanned row: MySQL's
-/// three-valued int (`Some(0/1/n)`) or NULL, beside Go's expression-level
-/// error -- the 1690 overflow terror the request-level answer carries.
-///
-/// The value is carried as `i128` because an integer column is either signed
-/// or UNSIGNED and the two domains do not fit in one 64-bit slot: a
-/// `BIGINT UNSIGNED` above `i64::MAX` and a negative `BIGINT` must both
-/// compare exactly. Go reaches the same result by selecting a signedness
-/// -specific comparison signature per operand pair; one wider integer settles
-/// every pairing at once, which is what a filter that must never invent a row
-/// needs.
+/// A pushed-down expression's value over one row as a filter reads it:
+/// MySQL's three-valued int, with NULL as `None`.
+#[cfg(test)]
 pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Result<Option<i128>, String> {
     use tidb_datatype::Datum;
     let value = match expr {
-        // Shared builtins retain their result type. Go converts a filter
-        // result with ToBool; NULL remains UNKNOWN.
         SimpleExpr::Shared(shared) => match eval_shared(shared, row)? {
             Datum::Int(value) => Some(i128::from(value)),
             Datum::UInt(value) => Some(i128::from(value)),
             Datum::Null => None,
             other => Some(shared.context.condition_value(&other)?),
         },
-        SimpleExpr::Null => None,
-        SimpleExpr::Int(value) => Some(i128::from(*value)),
-        SimpleExpr::Column(offset) => match row.get(*offset) {
-            Some(Datum::Int(value)) => Some(i128::from(*value)),
-            // An UNSIGNED column decodes to this, and dropping it here made
-            // every predicate over such a column filter the row out.
-            Some(Datum::UInt(value)) => Some(i128::from(*value)),
-            Some(Datum::Null) | None => None,
-            Some(_) => None, // non-int columns wait on their course
+        leaf => match eval_datum(leaf, row)? {
+            Datum::Int(value) => Some(i128::from(value)),
+            Datum::UInt(value) => Some(i128::from(value)),
+            _ => None,
         },
-        // A bare string, decimal, real or json is not a truth value; only a
-        // comparison reads them.
-        SimpleExpr::Bytes(_)
-        | SimpleExpr::Decimal(_)
-        | SimpleExpr::Json(_)
-        | SimpleExpr::Real(_)
-        | SimpleExpr::Time(_) => None,
     };
     Ok(value)
 }
@@ -2709,48 +2686,5 @@ mod tests {
         let second = tidb_codec::decode(chunks[1].rows_data.as_deref().expect("rows"), 1)
             .expect("one datum");
         assert_eq!(second, vec![tidb_datatype::Datum::Int(64)]);
-    }
-
-    /// Every catalog signature TiKV admits decodes here: the admission side
-    /// and the execution side read the same inventory, as Go's
-    /// `scalarExprSupportedByTiKV` and `getSignatureByPB` do -- but for
-    /// `UnaryNotJSON`, which `getSignatureByPB` has no arm for.
-    #[test]
-    fn every_admitted_signature_decodes_like_go_pb_to_expr() {
-        let column = |offset: i64| {
-            let mut val = Vec::new();
-            tidb_codec::encode_int(&mut val, offset);
-            tipb::Expr {
-                tp: Some(tipb::ExprType::ColumnRef as i32),
-                val: Some(val),
-                field_type: Some(tipb::FieldType {
-                    tp: Some(8),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }
-        };
-        let mut refused = Vec::new();
-        for row in tidb_expr::pushdown_catalog::CATALOG.iter().filter(|row| {
-            tidb_expr::infer_pushdown::scalar_expr_supported_by_tikv(
-                &tidb_expr::infer_pushdown::PushDownPolicy::new(row.name, row.sig),
-            )
-        }) {
-            let arity = row.arg_types.len().max(3);
-            let expr = tipb::Expr {
-                tp: Some(tipb::ExprType::ScalarFunc as i32),
-                sig: Some(row.sig as i32),
-                children: (0..arity as i64).map(column).collect(),
-                field_type: Some(tipb::FieldType {
-                    tp: Some(8),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            };
-            if convert_expr(&expr).is_err() {
-                refused.push(row.sig);
-            }
-        }
-        assert_eq!(refused, [tipb::ScalarFuncSig::UnaryNotJson]);
     }
 }

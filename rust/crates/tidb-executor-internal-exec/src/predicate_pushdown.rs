@@ -21,200 +21,16 @@
 //! evaluation of local/staged rows and for the request builder, which
 //! converts all of them or, when one has no TiPB form, none -- so what a
 //! coprocessor receipt covers is always the complete condition list.
-//! [`ScanPredicate`] is the converter's parse of one condition, produced at
-//! conversion time and never retained by a scan.
 use std::collections::HashSet;
 
 use tidb_chunk::chunk::Chunk;
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::Datum;
 use tidb_expr::expression::Expression;
-use tidb_expr::pushdown_catalog::PbConverterContext;
+use tidb_expr::expr_to_pb::{PbConverter, PbConverterContext};
 use tidb_expr::truthy_of;
 use tidb_exprctx::Columns;
 
 use tidb_driver_error::ExecError;
-
-/// The comparison operators a scan filter accepts, which are exactly the ones
-/// the bounded TiKV Selection lowering speaks.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ScanComparisonOp {
-    /// `=`
-    Eq,
-    /// `!=` / `<>`
-    Ne,
-    /// `<`
-    Lt,
-    /// `<=`
-    Le,
-    /// `>`
-    Gt,
-    /// `>=`
-    Ge,
-}
-
-/// One pushed conjunct, described independently of how it is evaluated.
-///
-/// A description is what a coprocessor lowering reads; the paired
-/// [`Expression`] is what an in-process source evaluates. Both halves describe
-/// the same conjunct, so a lowering may refuse any subset of them without
-/// changing an answer -- see [`PushedScanFilter`].
-///
-/// # The `collation` a string comparison runs in
-///
-/// It is the FUNCTION's derived collation, not the column's declared one. Go
-/// derives it over ALL the arguments (`expression/collation.go:290` for
-/// `ast.In`, `:282` for `ast.Like`) and writes it onto the function's own
-/// `FieldType`, which is what `ExprToPB` sends and what TiKV picks its
-/// collator from. The two differ whenever an argument carries an explicit
-/// `COLLATE`: that is EXPLICIT coercibility, and it outranks the column's
-/// IMPLICIT.
-///
-/// Every variant that compares strings therefore CARRIES that collation
-/// rather than letting each consumer re-derive it from `column_type`. Five
-/// consumers had re-derived it, and each got a different answer than the
-/// expression beside it; carrying it is what makes "the description and the
-/// expression agree" true by construction instead of by repetition.
-///
-/// Each description is derived from the already-built physical expression,
-/// so this collation is the function collation the planner retained.
-#[derive(Clone, Debug, PartialEq)]
-pub enum ScanPredicate {
-    /// A column compared with a constant, in either operand order.
-    Compare(ScanComparison),
-    /// A comparison between two columns of the scanned table.
-    ///
-    /// Go's `scalarFuncToPBExpr` sends both `ColumnRef` children when the
-    /// comparison is supported by TiKV. Keeping this separate from
-    /// [`ScanComparison`] preserves the latter's literal-oriented contract
-    /// for callers that build range predicates.
-    ColumnCompare(ScanColumnComparison),
-    /// `column IS NULL`, or `column IS NOT NULL` when `negated`.
-    IsNull {
-        /// Zero-based offset of the column in the scan's output row.
-        column_offset: u32,
-        /// The column's declared type.
-        column_type: FieldType,
-        /// `true` for the `IS NOT NULL` spelling.
-        negated: bool,
-    },
-    /// `column IN (constants)`, or `NOT IN` when `negated`. The list is never
-    /// empty and never holds [`Datum::Null`]: a NULL member makes the whole
-    /// predicate's three-valued result depend on the non-matching case, which
-    /// is not a shape this description promises, so such a conjunct stays
-    /// residual.
-    In {
-        /// Zero-based offset of the column in the scan's output row.
-        column_offset: u32,
-        /// The column's declared type.
-        column_type: FieldType,
-        /// The constant list, in source order.
-        literals: Vec<Datum>,
-        /// `true` for the `NOT IN` spelling.
-        negated: bool,
-        /// The collation the comparison RUNS IN -- see [`ScanPredicate`]'s
-        /// note on it.
-        collation: tidb_charset::Collation,
-    },
-    /// A pushable string scalar tested against non-NULL string constants.
-    ///
-    /// Go chooses `IN`'s signature from the tested expression's evaluation
-    /// type, so this is not limited to a bare column: calls such as
-    /// `SUBSTRING(column, 1, 2)` retain their complete TiPB scalar tree.
-    ScalarIn {
-        /// The string expression being tested.
-        tested: tidb_expr::pushdown_catalog::PbScalar,
-        /// The non-empty constant list, in source order.
-        literals: Vec<Datum>,
-        /// `true` for the `NOT IN` spelling.
-        negated: bool,
-        /// The collation the comparison RUNS IN -- see [`ScanPredicate`]'s
-        /// note on it.
-        collation: tidb_charset::Collation,
-    },
-    /// `string_column LIKE constant_pattern` with a constant escape byte.
-    /// `NOT LIKE` is represented by the existing [`Self::Not`] wrapper, as
-    /// Go rewrites it to `UnaryNotInt(LikeSig(...))` before protobuf lowering.
-    Like {
-        /// Zero-based offset of the tested column in the scan output.
-        column_offset: u32,
-        /// The column's declared string type and collation.
-        column_type: FieldType,
-        /// Pattern bytes exactly as parsed from the SQL literal.
-        pattern: Vec<u8>,
-        /// Explicit escape byte, or the session default supplied by rewrite.
-        escape: u8,
-        /// The collation the comparison RUNS IN -- see [`ScanPredicate`]'s
-        /// note on it.
-        collation: tidb_charset::Collation,
-    },
-    /// A builtin function call whose `tipb.ScalarFuncSig` the push-down
-    /// catalog resolved and whose signature TiKV evaluates.
-    ///
-    /// The whole call -- name, signature, and the operand tree -- lives in
-    /// [`tidb_expr::pushdown_catalog`], which is also what decides whether
-    /// TiKV may evaluate it; nothing here holds a second opinion about
-    /// either. A call reaching this variant has already been admitted;
-    /// whether it can also be *encoded* is the lowering's own question
-    /// (`pushdown_catalog::to_pb`), and refusing there costs network only.
-    Builtin(tidb_expr::pushdown_catalog::PbScalar),
-    /// One source conjunct that Go expands into multiple Selection
-    /// conditions. The current producer is non-negated `BETWEEN`, whose
-    /// lower and upper comparisons remain one local filter.
-    And(Vec<ScanPredicate>),
-    /// A disjunction of two or more descriptions, flattened out of the source
-    /// `OR` chain in source order.
-    Or(Vec<ScanPredicate>),
-    /// `NOT description`.
-    Not(Box<ScanPredicate>),
-}
-
-/// A column-versus-constant comparison.
-///
-/// This names the scan input offset, the operator, the constant, and which
-/// side the column was written on, which is everything
-/// `PhysicalSelection.ToPB` needs and nothing that ties the description to
-/// in-process evaluation.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ScanComparison {
-    /// Zero-based offset of the column in the scan's output row.
-    pub column_offset: u32,
-    /// The column's declared type, which decides whether a lowering may
-    /// treat the comparison as the signed-BIGINT shape TiKV accepts.
-    pub column_type: FieldType,
-    /// The constant's type after Go-equivalent constant folding and any
-    /// comparison-domain cast. TiPB carries this metadata on the literal
-    /// leaf, so retaining only the [`Datum`] is not sufficient for DECIMAL
-    /// precision/scale or temporal FSP.
-    pub literal_type: FieldType,
-    /// The comparison operator, as written.
-    pub op: ScanComparisonOp,
-    /// The already-evaluated constant operand. Never [`Datum::Null`]: a NULL
-    /// comparison is unknown for every row, which is not the "filter" shape
-    /// this split describes, so such a conjunct stays residual.
-    pub literal: Datum,
-    /// `true` when the column was written on the left (`a > 5`), `false` for
-    /// the flipped spelling (`5 < a`). The lowering preserves operand order
-    /// rather than canonicalizing it, as the source protobuf does.
-    pub column_on_left: bool,
-    /// The collation the comparison RUNS IN -- see [`ScanPredicate`]'s note
-    /// on it. Meaningful only for a string comparison.
-    pub collation: tidb_charset::Collation,
-}
-
-/// A source-ordered column-to-column comparison.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ScanColumnComparison {
-    /// Zero-based offset of the left operand in the scan output.
-    pub left_offset: u32,
-    /// Declared type of the left operand.
-    pub left_type: FieldType,
-    /// Zero-based offset of the right operand in the scan output.
-    pub right_offset: u32,
-    /// Declared type of the right operand.
-    pub right_type: FieldType,
-    /// The comparison operator, as written.
-    pub op: ScanComparisonOp,
-}
 
 /// The conjuncts a scan agreed to apply itself, with both the description a
 /// lowering reads and the expressions an in-process source evaluates.
@@ -407,250 +223,41 @@ impl PushedScanFilter {
     }
 }
 
-/// Go `PbConverter.ExprToPB` over one retained condition, first stage: the
-/// converter's parse of it under the statement's context (blacklist,
-/// parameters, correlated bindings) or, for a caller with no statement, from
-/// its strict literals alone. The request builder encodes the result against
-/// the scan's column descriptors and keeps none of it.
-pub fn describe_request_condition(
+/// Go `PushDownExprs(.., kv.TiKV)` then `PbConverter.ExprToPB` over one
+/// retained condition: under the statement's context (blacklist, parameters,
+/// correlated bindings) or, for a caller with no statement, from its
+/// literals alone.
+#[must_use]
+pub fn condition_to_pb(
     expression: &Expression,
     context: Option<&dyn PbConverterContext>,
-) -> Result<ScanPredicate, ExecError> {
-    match context {
-        Some(context) => describe_execution_condition(expression, context),
-        None => describe_compiled_condition(expression)
-            .ok_or_else(|| ExecError::unsupported("cop predicate lowering")),
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<tidb_proto::tipb::Expr> {
+    let (ctx, bind_values): (&dyn Columns, bool) = match context {
+        Some(context) => (context, true),
+        None => (&tidb_exprctx::NoColumns, false),
+    };
+    if !tidb_expr::infer_pushdown::can_exprs_push_down(
+        std::slice::from_ref(expression),
+        tidb_kv::store_type::StoreType::TiKv,
+        ctx.expr_pushdown_blacklist(),
+    ) {
+        return None;
     }
+    PbConverter::new(ctx, bind_values, zone).expr_to_pb(expression)
 }
 
 /// Whether `expression` converts to TiPB under `context` (Go `ExprToPB`
 /// answering a condition rather than nil).
 pub fn pb_condition_exists(expression: &Expression, context: &tidb_sessionctx::StmtContext) -> bool {
-    describe_execution_condition(expression, context).is_ok()
+    condition_to_pb(expression, Some(context), &context.time_zone()).is_some()
 }
 
 fn all_describable(filters: &[Expression], ctx: &tidb_sessionctx::StmtContext) -> bool {
     filters
         .iter()
         .flat_map(tidb_expr::expr_util::split_cnf_items)
-        .all(|filter| describe_execution_condition(&filter, ctx).is_ok())
-}
-
-/// Go `ExprToPB` reads the compiled function and its arguments. This immutable
-/// description adapter copies strict literals without rewriting or folding SQL.
-fn describe_compiled_condition(expression: &Expression) -> Option<ScanPredicate> {
-    if !tidb_expr::infer_pushdown::can_exprs_push_down_tikv(std::slice::from_ref(expression)) {
-        return None;
-    }
-    describe_condition(expression, None).ok()
-}
-
-/// Go PbConverter owns the current statement context. Lower the retained
-/// expression directly; do not rewrite a clone to replace its leaves.
-pub fn describe_execution_condition(
-    expression: &Expression,
-    context: &dyn PbConverterContext,
-) -> Result<ScanPredicate, ExecError> {
-    // Go `PushDownExprs(.., kv.TiKV)`: the converter below admits what any
-    // store evaluates, so TiKV's own list and blacklist rows are asked here.
-    if !tidb_expr::infer_pushdown::can_exprs_push_down(
-        std::slice::from_ref(expression),
-        tidb_kv::store_type::StoreType::TiKv,
-        context.expr_pushdown_blacklist(),
-    ) {
-        return Err(ExecError::unsupported("cop predicate is not evaluated by TiKV"));
-    }
-    describe_condition(expression, Some(context))
-}
-
-fn describe_condition(
-    expression: &Expression,
-    context: Option<&dyn PbConverterContext>,
-) -> Result<ScanPredicate, ExecError> {
-    use tidb_expr::pushdown_catalog::{from_expression, expr_to_pb, PbScalar};
-
-    fn unsupported() -> ExecError {
-        ExecError::unsupported("cop predicate lowering")
-    }
-
-    fn scalar(
-        expression: &Expression,
-        context: Option<&dyn PbConverterContext>,
-    ) -> Result<PbScalar, ExecError> {
-        match context {
-            Some(context) => expr_to_pb(expression, context)?,
-            None => from_expression(expression),
-        }
-        .ok_or_else(unsupported)
-    }
-
-    fn column(expression: &Expression) -> Option<(u32, FieldType)> {
-        let column = expression.as_column()?;
-        Some((
-            u32::try_from(column.index).ok()?,
-            column.get_static_type()?.clone(),
-        ))
-    }
-    fn literal(
-        expression: &Expression,
-        context: Option<&dyn PbConverterContext>,
-    ) -> Result<(Datum, FieldType), ExecError> {
-        let (value, field_type) = match expression {
-            Expression::Constant(constant) => {
-                let value = match context {
-                    Some(context) => constant.eval_in(context)?,
-                    None => constant.literal_value().ok_or_else(unsupported)?.clone(),
-                };
-                (value, constant.ret_type.as_ref())
-            }
-            Expression::CorrelatedColumn(column) if context.is_some() => {
-                (column.eval(), column.column.ret_type.as_ref())
-            }
-            _ => return Err(unsupported()),
-        };
-        Ok((value, field_type.ok_or_else(unsupported)?.clone()))
-    }
-
-    let Expression::ScalarFunction(function) = expression else {
-        return Err(unsupported());
-    };
-    let name = function.func_name.lowercase();
-    let args = function.args.as_slice();
-    let collation = function.derived_collation();
-    match (name, args) {
-        ("not", [inner]) => Ok(ScanPredicate::Not(Box::new(describe_condition(
-            inner, context,
-        )?))),
-        ("and" | "or", _) => {
-            let branches = args
-                .iter()
-                .map(|branch| describe_condition(branch, context))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(if name == "and" {
-                ScanPredicate::And(branches)
-            } else {
-                ScanPredicate::Or(branches)
-            })
-        }
-        ("isnull", [argument]) => {
-            if let Some((column_offset, column_type)) = column(argument) {
-                Ok(ScanPredicate::IsNull {
-                    column_offset,
-                    column_type,
-                    negated: false,
-                })
-            } else {
-                Ok(ScanPredicate::Builtin(scalar(expression, context)?))
-            }
-        }
-        ("like", [tested, pattern, escape]) => {
-            let (column_offset, column_type) = column(tested).ok_or_else(unsupported)?;
-            if !column_type.is_string() {
-                return Err(unsupported());
-            }
-            let (pattern, _) = literal(pattern, context)?;
-            let (Datum::Int(escape), _) = literal(escape, context)? else {
-                return Err(unsupported());
-            };
-            Ok(ScanPredicate::Like {
-                column_offset,
-                column_type,
-                pattern: pattern.as_raw_bytes().ok_or_else(unsupported)?.to_vec(),
-                escape: escape as u8,
-                collation,
-            })
-        }
-        ("in", [tested, members @ ..]) if !members.is_empty() => {
-            let Ok(literals) = members
-                .iter()
-                .map(|member| literal(member, context))
-                .collect::<Result<Vec<_>, _>>()
-            else {
-                // A member that is not a literal (`a IN (b, 1)`): Go converts
-                // the whole `in` call, every argument cast to the comparison
-                // type, through the generic signature rows.
-                return match scalar(expression, context)? {
-                    call @ PbScalar::Call { .. } => Ok(ScanPredicate::Builtin(call)),
-                    _ => Err(unsupported()),
-                };
-            };
-            if let Some((column_offset, column_type)) = column(tested) {
-                return Ok(ScanPredicate::In {
-                    column_offset,
-                    column_type,
-                    collation,
-                    literals: literals.into_iter().map(|(value, _)| value).collect(),
-                    negated: false,
-                });
-            }
-            let tested = scalar(tested, context)?;
-            if tested.eval_type() != tidb_datatype::EvalType::String
-                || literals.iter().any(|(value, field_type)| {
-                    field_type.eval_type() != tidb_datatype::EvalType::String
-                        || value.as_raw_bytes().is_none()
-                })
-            {
-                return Err(unsupported());
-            }
-            Ok(ScanPredicate::ScalarIn {
-                tested,
-                literals: literals.into_iter().map(|(value, _)| value).collect(),
-                negated: false,
-                collation,
-            })
-        }
-        ("eq" | "ne" | "lt" | "le" | "gt" | "ge", [left, right]) => {
-            let op = match name {
-                "eq" => ScanComparisonOp::Eq,
-                "ne" => ScanComparisonOp::Ne,
-                "lt" => ScanComparisonOp::Lt,
-                "le" => ScanComparisonOp::Le,
-                "gt" => ScanComparisonOp::Gt,
-                _ => ScanComparisonOp::Ge,
-            };
-            if let (Some((left_offset, left_type)), Some((right_offset, right_type))) =
-                (column(left), column(right))
-            {
-                return Ok(ScanPredicate::ColumnCompare(ScanColumnComparison {
-                    left_offset,
-                    left_type,
-                    right_offset,
-                    right_type,
-                    op,
-                }));
-            }
-            if let Some((offset, field_type)) = column(left).or_else(|| column(right)) {
-                let column_on_left = column(left).is_some();
-                let constant = if column_on_left { right } else { left };
-                // The other side is a literal, or a call that the generic
-                // catalog conversion below describes whole (`b * 2 = c`).
-                if let Ok((literal, literal_type)) = literal(constant, context) {
-                    return Ok(ScanPredicate::Compare(ScanComparison {
-                        column_offset: offset,
-                        column_type: field_type,
-                        literal_type,
-                        op,
-                        literal,
-                        column_on_left,
-                        collation,
-                    }));
-                }
-            }
-            // Neither operand is a bare column (an arithmetic or builtin side,
-            // as in `sbig + 1 > 999`). Go pushes the comparison expression
-            // whole (`scalarExprSupportedByTiKV` walks the tree), so describe
-            // it as a builtin call and let the catalog's comparison rows
-            // encode it, instead of refusing here.
-            match scalar(expression, context)? {
-                call @ PbScalar::Call { .. } => Ok(ScanPredicate::Builtin(call)),
-                _ => Err(unsupported()),
-            }
-        }
-        _ => match scalar(expression, context)? {
-            call @ PbScalar::Call { .. } => Ok(ScanPredicate::Builtin(call)),
-            _ => Err(unsupported()),
-        },
-    }
+        .all(|filter| pb_condition_exists(&filter, ctx))
 }
 
 impl FastScanFilter {

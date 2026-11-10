@@ -26,7 +26,7 @@
 
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
-use tidb_expr::pushdown_catalog::{self, ColumnDescriptor};
+use tidb_expr::expr_to_pb::{self, PbConverter};
 use tidb_expr::schema::Schema;
 use tidb_kv::store_type::StoreType;
 use tidb_planner_core_base::PlanError;
@@ -56,30 +56,9 @@ pub struct BuildPbContext<'a> {
     pub use_dynamic_partition_prune: bool,
 }
 
-/// The descriptor of one column of an executor's input row, from the
-/// column's own type (Go `columnToPBExpr` writes `ToPBFieldType(col.RetType)`).
-fn column_descriptor(schema: &Schema, offset: u32) -> Option<ColumnDescriptor> {
-    let field_type = schema.columns.get(offset as usize)?.ret_type.as_ref()?;
-    Some(ColumnDescriptor {
-        tp: i32::from(field_type.code().mysql_type()),
-        flag: field_type.flags(),
-        flen: field_type.flen() as i32,
-        decimal: field_type.decimal() as i32,
-        charset: field_type.charset_name().to_owned(),
-        collation: field_type.collation_name().to_owned(),
-        elems: field_type.elems_snapshot().into_iter().map(|elem| elem.to_string()).collect(),
-        array: field_type.is_array(),
-    })
-}
-
-/// Go `PbConverter.ExprToPB` over the operator's input row `input`.
-fn expr_to_pb(ctx: &BuildPbContext<'_>, expr: &Expression, input: &Schema) -> Option<tipb::Expr> {
-    pushdown_catalog::expression_to_pb_in_context(
-        expr,
-        ctx.expr_ctx,
-        &|offset| column_descriptor(input, offset),
-        &ctx.expr_ctx.time_zone(),
-    )
+/// Go `PbConverter.ExprToPB`.
+fn expr_to_pb(ctx: &BuildPbContext<'_>, expr: &Expression, _input: &Schema) -> Option<tipb::Expr> {
+    PbConverter::new(ctx.expr_ctx, true, &ctx.expr_ctx.time_zone()).expr_to_pb(expr)
 }
 
 /// Go `plannererrors.ErrInternal.GenWithStack("expression %v cannot be
@@ -147,29 +126,14 @@ pub fn projection_expressions_to_pb_list(
         .iter()
         .map(|expr| {
             let v = match expr {
-                Expression::Column(column) => column_to_pb_expr(column),
+                Expression::Column(column) => {
+                    PbConverter::new(ctx.expr_ctx, true, &ctx.expr_ctx.time_zone()).column_to_pb_expr(column, false)
+                }
                 _ => expr_to_pb(ctx, expr, input),
             };
             v.ok_or_else(|| cannot_be_pushed_down(ctx, expr))
         })
         .collect()
-}
-
-/// Go `PbConverter.columnToPBExpr(column, false)`: a `ColumnRef` to the
-/// column's resolved index, typed by `ToPBFieldType(column.RetType)`.
-fn column_to_pb_expr(column: &Column) -> Option<tipb::Expr> {
-    let field_type = column.ret_type.as_ref()?;
-    let mut val = Vec::new();
-    tidb_codec::encode_int(&mut val, column.index);
-    Some(tipb::Expr {
-        tp: Some(tipb::ExprType::ColumnRef as i32),
-        val: Some(val),
-        // gogoproto's non-nullable `sig` and `has_distinct` are always sent.
-        sig: Some(tipb::ScalarFuncSig::Unspecified as i32),
-        field_type: Some(pushdown_catalog::to_pb_field_type(field_type)?),
-        has_distinct: Some(false),
-        ..tipb::Expr::default()
-    })
 }
 
 /// Go `expression.SortByItemToPB`.
@@ -180,7 +144,7 @@ fn sort_by_item_to_pb(ctx: &BuildPbContext<'_>, expr: &Expression, desc: bool, i
 
 /// Go `expression.ToPBFieldTypeWithCheck`, as a planner error.
 fn to_pb_field_type_with_check(ft: &tidb_datatype::FieldType, store_type: StoreType) -> Result<tipb::FieldType, PlanError> {
-    pushdown_catalog::to_pb_field_type_with_check(ft, store_type).map_err(PlanError::internal)
+    expr_to_pb::to_pb_field_type_with_check(ft, store_type).map_err(PlanError::internal)
 }
 
 /// Go `util.GetPushDownCtxFromBuildPBContext`: the push-down context over the
@@ -190,7 +154,7 @@ struct PushDownCtx<'a, 'b> {
     input: &'a Schema,
 }
 
-impl pushdown_catalog::PushDownContext for PushDownCtx<'_, '_> {
+impl expr_to_pb::PushDownContext for PushDownCtx<'_, '_> {
     fn expr_to_pb(&self, expr: &Expression) -> Option<tipb::Expr> {
         expr_to_pb(self.ctx, expr, self.input)
     }

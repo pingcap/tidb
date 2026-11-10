@@ -547,18 +547,6 @@ impl ScalarFunction {
         self.hashcode.capacity()
     }
 
-    /// A node that carries a call's name, type and arguments for type and
-    /// collation inference only; it has no signature and is never evaluated.
-    #[must_use]
-    pub(crate) fn new(func_name: CiString, ret_type: FieldType, args: Vec<Expression>) -> Self {
-        ScalarFunction {
-            func_name,
-            ret_type: Some(ret_type),
-            args,
-            ..Default::default()
-        }
-    }
-
     /// Go `builtinInternalFromBinarySig.cannotConvertStringAsWarning`.
     pub(crate) fn set_cannot_convert_string_as_warning(&mut self, warning: bool) {
         self.cannot_convert_string_as_warning = warning;
@@ -630,13 +618,18 @@ impl ScalarFunction {
             &args,
             ret_type.eval_type(),
         )?;
-        let function = Self {
+        let mut function = Self {
             func_name: CiString::new(format!("sig_{:?}", builtin.signature())),
-            ret_type: Some(ret_type),
             args,
             pb_builtin: Some(builtin),
             ..Default::default()
         };
+        // Go `newBaseBuiltinFuncWithFieldType`: the signature's charset and
+        // collation are the wire type's.
+        function
+            .collation
+            .set_charset_and_collation(ret_type.charset_name(), ret_type.collation_name());
+        function.ret_type = Some(ret_type);
         function.collation.set_coercibility(collation.coer);
         Ok(function)
     }

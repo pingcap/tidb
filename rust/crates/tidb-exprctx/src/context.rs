@@ -948,7 +948,7 @@ pub trait Columns {
     ///
     /// This is THE sequence seam, shared by both evaluators: the row path
     /// (`eval_func`) hands over the parser's own path, and the chunk path
-    /// (`eval_func_values_in`) hands over the string constants the rewriter
+    /// (the `nextval` signature) hands over the string constants the rewriter
     /// substituted for the column reference. Keeping one method means a
     /// `NEXTVAL` cannot behave differently depending on which evaluator ran.
     fn sequence_nextval(&self, path: &[String]) -> Result<Datum, EvalError> {

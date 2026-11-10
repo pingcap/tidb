@@ -19,7 +19,7 @@
 //! its pushdown catalog (register row X01), so only a name with no PB type
 //! is refused here.
 
-use tidb_expr::pushdown_catalog::{to_pb_field_type_with_check, PushDownContext};
+use tidb_expr::expr_to_pb::{to_pb_field_type_with_check, PushDownContext};
 use tidb_kv::store_type::StoreType;
 use tidb_proto::tipb;
 
@@ -198,7 +198,7 @@ pub fn window_func_to_pb_expr(ctx: &dyn PushDownContext, desc: &crate::WindowFun
         children,
         // gogoproto's non-nullable `sig` and `has_distinct` are always sent.
         sig: Some(tipb::ScalarFuncSig::Unspecified as i32),
-        field_type: Some(tidb_expr::pushdown_catalog::to_pb_field_type(&desc.base.ret_type)?),
+        field_type: Some(tidb_expr::expr_to_pb::to_pb_field_type(&desc.base.ret_type)),
         has_distinct: Some(false),
         ..tipb::Expr::default()
     })

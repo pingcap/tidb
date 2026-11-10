@@ -235,7 +235,8 @@ mod tests {
         let in_union =
             crate::wrap_cast::build_cast_function_4_union(&ctx, source(), target).unwrap();
         let val = |cast| {
-            crate::pushdown_catalog::expression_to_pb(cast, &|_| None)
+            crate::expr_to_pb::PbConverter::new(&crate::NoColumns, false, &tidb_datatype::SessionTimeZone::utc())
+                .expr_to_pb(cast)
                 .expect("the cast is sent")
                 .val
         };

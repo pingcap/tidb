@@ -668,7 +668,7 @@ mod tests {
             if !tidb_expr::infer_pushdown::can_exprs_push_down_tikv(std::slice::from_ref(&condition)) {
                 continue;
             }
-            if tidb_executor_internal_exec::predicate_pushdown::describe_request_condition(&condition, Some(&context)).is_err() {
+            if tidb_executor_internal_exec::predicate_pushdown::condition_to_pb(&condition, Some(&context), &tidb_datatype::SessionTimeZone::utc()).is_none() {
                 refused.push(*sql);
             }
         }
@@ -720,18 +720,21 @@ mod tests {
             let mut condition =
                 tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).expect("rewrites");
             tidb_expr::scalar_function::into_coprocessor_form(&mut condition);
+            let zone = tidb_datatype::SessionTimeZone::utc();
             assert!(
-                tidb_expr::pushdown_catalog::from_expression(&condition).is_some(),
+                tidb_expr::expr_to_pb::PbConverter::new(&tidb_exprctx::NoColumns, false, &zone)
+                    .expr_to_pb(&condition)
+                    .is_some(),
                 "ExprToPB expresses {sql}"
             );
-            use tidb_executor_internal_exec::predicate_pushdown::describe_request_condition;
+            use tidb_executor_internal_exec::predicate_pushdown::condition_to_pb;
             assert_eq!(
-                describe_request_condition(&condition, None).is_ok(),
+                condition_to_pb(&condition, None, &zone).is_some(),
                 travels,
                 "{sql} without a statement"
             );
             assert_eq!(
-                describe_request_condition(&condition, Some(&context)).is_ok(),
+                condition_to_pb(&condition, Some(&context), &zone).is_some(),
                 travels,
                 "{sql}"
             );

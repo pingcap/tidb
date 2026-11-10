@@ -43,7 +43,14 @@ use crate::column::Column;
 use crate::constant::Constant;
 use crate::expression::Expression;
 use crate::new_function::new_function;
-use crate::pushdown_catalog::pb_code;
+
+/// Go `function.(*ScalarFunction).Function.PbCode()`.
+fn pb_code(function: &Expression) -> tidb_proto::tipb::ScalarFuncSig {
+    match function {
+        Expression::ScalarFunction(function) => function.pb_signature().unwrap_or_default(),
+        _ => tidb_proto::tipb::ScalarFuncSig::Unspecified,
+    }
+}
 use crate::wrap_cast::type_of;
 
 const MATRIX: &str = include_str!("../../testdata/function_class_matrix.txt");

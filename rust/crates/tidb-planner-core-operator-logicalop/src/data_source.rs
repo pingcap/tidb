@@ -925,7 +925,7 @@ impl DataSource {
     /// The split asks
     /// `expression.PushDownExprs(pushDownCtx, predicates, kv.UnSpecified)`,
     /// which consults the store's function whitelist. That whitelist lives in
-    /// [`tidb_expr::infer_pushdown`] and [`tidb_expr::pushdown_catalog`].
+    /// [`tidb_expr::infer_pushdown`] and [`tidb_expr::expr_to_pb`].
     ///
     /// The caller has already run `Conds2TableDual` over `AllConds`, which is
     /// Go's order (`logical_datasource.go:366-369`): a constant-NULL predicate

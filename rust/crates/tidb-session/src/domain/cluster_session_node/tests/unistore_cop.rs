@@ -26247,9 +26247,8 @@ fn a_non_point_pessimistic_update_retries_after_a_conflict_found_by_its_lock() {
 
 /// A conjunct the cop predicate description cannot express must never change
 /// an answer. Go pushes down exactly the conditions `CanExprsPushDown` admits
-/// and the coprocessor Selection applies all of them; a condition this port's
-/// second description IR (`ScanPredicate`) cannot hold used to be dropped from
-/// the request while the source believed the Selection carried it. Every shape
+/// and the coprocessor Selection applies all of them; the request carries every
+/// condition `ExprToPB` converts or none of them. Every shape
 /// below is compared with the same predicate evaluated as a plain expression
 /// over the same rows.
 #[test]

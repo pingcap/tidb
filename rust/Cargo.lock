@@ -5219,6 +5219,7 @@ dependencies = [
  "tidb-kv",
  "tidb-model",
  "tidb-ppcpuusage",
+ "tidb-proto",
  "tidb-ranger",
  "tidb-sessionctx",
  "tidb-stats",

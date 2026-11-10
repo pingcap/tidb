@@ -7,8 +7,7 @@ use crate::*;
 
 /// A handful of everyday string/date builtins that were previously
 /// refused by the chunk rewriter's return-type gate (`builtin_return_type`
-/// had no arm for them, even though `eval_func_values`/`time_fn::dispatch`
-/// already implement them). Expected values captured from upstream Go
+/// had no arm for them, even though they were already implemented). Expected values captured from upstream Go
 /// via `SELECT ...` in a mock-store testkit session.
 #[test]
 fn everyday_string_and_date_builtins() {
