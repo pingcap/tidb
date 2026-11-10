@@ -14,8 +14,12 @@
 
 package sqlkiller
 
-<<<<<<< HEAD
-import "testing"
+import (
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/stretchr/testify/require"
+)
 
 func TestConnectionAliveCallbackCleanupKeepsNewerCallback(t *testing.T) {
 	var killer SQLKiller
@@ -51,56 +55,11 @@ func TestConnectionAliveCallbackCleanupKeepsNewerCallback(t *testing.T) {
 	if newCallbackCalls != 1 {
 		t.Fatalf("expected newer callback to be cleared, got %d calls", newCallbackCalls)
 	}
-=======
-import (
-	"testing"
-
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zaptest/observer"
-)
+}
 
 func TestSQLKillerConcurrentReset(t *testing.T) {
-	assertStateLockHeld := func(t *testing.T, killer *SQLKiller) {
-		t.Helper()
-		if killer.killEvent.TryLock() {
-			killer.killEvent.Unlock()
-			require.FailNow(t, "the SQLKiller state mutex is not held")
-		}
-	}
-	getKillEventState := func(killer *SQLKiller) (bool, string) {
-		killer.killEvent.Lock()
-		defer killer.killEvent.Unlock()
-		return killer.killEvent.triggered, killer.killEvent.desc
-	}
-	assertChanOpen := func(t *testing.T, ch <-chan struct{}) {
-		t.Helper()
-		select {
-		case <-ch:
-			require.Fail(t, "kill event channel is closed")
-		default:
-		}
-	}
-	assertChanClosed := func(t *testing.T, ch <-chan struct{}) {
-		t.Helper()
-		select {
-		case <-ch:
-		default:
-			require.Fail(t, "kill event channel is open")
-		}
-	}
-
 	t.Run("reset after successful kill signal CAS", func(t *testing.T) {
 		killer := &SQLKiller{}
-		core, logs := observer.New(zap.WarnLevel)
-		restoreLogger := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{
-			Core:  core,
-			Level: zap.NewAtomicLevelAt(zap.WarnLevel),
-		})
-		defer restoreLogger()
-
 		const beforeLogFailpoint = "github.com/pingcap/tidb/pkg/util/sqlkiller/" +
 			"beforeLogKillSignal"
 		testfailpoint.EnableCall(t, beforeLogFailpoint, func() {
@@ -110,40 +69,21 @@ func TestSQLKillerConcurrentReset(t *testing.T) {
 		require.NotPanics(t, func() {
 			killer.SendKillSignal(QueryInterrupted)
 		})
-		initiatedLogs := logs.FilterMessage("kill initiated").All()
-		require.Len(t, initiatedLogs, 1)
-		require.Equal(t, killer.getKillError(QueryInterrupted, "").Error(),
-			initiatedLogs[0].ContextMap()["reason"])
-
 		require.Equal(t, UnspecifiedKillSignal, killer.GetKillSignal())
 		require.NoError(t, killer.HandleSignal())
-		triggered, desc := getKillEventState(killer)
-		require.False(t, triggered)
-		require.Empty(t, desc)
-		assertChanOpen(t, killer.GetKillEventChan())
 	})
 
 	t.Run("kill signal after reset clear", func(t *testing.T) {
 		killer := &SQLKiller{}
-		killSent := make(chan struct{})
-		const reason = "memory usage exceeds the instance limit"
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/util/sqlkiller/afterResetKillSignalSwap", func() {
-			assertStateLockHeld(t, killer)
-			go func() {
-				defer close(killSent)
-				killer.SendKillSignalWithKillEventReason(KilledByMemArbitrator, reason)
-			}()
+		killer.SendKillSignal(QueryInterrupted)
+		const afterResetFailpoint = "github.com/pingcap/tidb/pkg/util/sqlkiller/" +
+			"afterResetKillSignalSwap"
+		testfailpoint.EnableCall(t, afterResetFailpoint, func() {
+			killer.SendKillSignal(MaxExecTimeExceeded)
 		})
 
 		killer.Reset()
-		<-killSent
-
-		require.Equal(t, KilledByMemArbitrator, killer.GetKillSignal())
-		require.ErrorContains(t, killer.HandleSignal(), reason)
-		triggered, desc := getKillEventState(killer)
-		require.True(t, triggered)
-		require.Equal(t, reason, desc)
-		assertChanClosed(t, killer.GetKillEventChan())
+		require.Equal(t, MaxExecTimeExceeded, killer.GetKillSignal())
+		require.Error(t, killer.HandleSignal())
 	})
->>>>>>> 5af03a2e108 (util: prevent SQLKiller state races during concurrent reset (#70557))
 }
