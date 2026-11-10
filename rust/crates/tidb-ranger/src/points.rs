@@ -2171,14 +2171,15 @@ mod tests {
         unsigned_decimal.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
         let column =
             Expression::Column(tidb_expr::column::Column::new(1, unsigned_decimal.clone()));
-        let mut decimal_result = unsigned_decimal.clone();
+        let mut decimal_result = FieldType::new(FieldTypeCode::NewDecimal);
         decimal_result.set_flen(1);
         decimal_result.set_decimal(0);
-        let wrapped_negative = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("cast"),
+        let wrapped_negative = tidb_expr::wrap_cast::build_cast_function(
+            &tidb_expr::wrap_cast::UnfoldedBuildContext,
+            func_expr("unaryminus", vec![int_const_expr(1)]),
             decimal_result,
-            vec![func_expr("unaryminus", vec![int_const_expr(1)])],
-        ));
+        )
+        .unwrap();
         let compare = |name: &str| {
             let expression = func_expr(name, vec![column.clone(), wrapped_negative.clone()]);
             let mut builder = Builder::default();
