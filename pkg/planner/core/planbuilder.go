@@ -2894,7 +2894,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 		maps.Copy(resetOpts, astResets)
 	}
 
-	tblFilledOpts := fillAnalyzeOptions(tblOpts)
+	tblFilledOpts := fillAnalyzeOptions(AnalyzeOptionDefault(), tblOpts)
 
 	tblColsInfo, tblColList, err := b.getFullAnalyzeColumnsInfo(tbl, tblColChoice, tblColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
 	if err != nil {
@@ -2953,7 +2953,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 			savedColChoice, savedColList := pickColumnList(parSavedColChoice, parSavedColList, tblSavedColChoice, tblSavedColList)
 			// then merge statement level options
 			mergedOpts := mergeAnalyzeOptions(astOpts, stmtResets, savedOpts)
-			filledMergedOpts := fillAnalyzeOptions(mergedOpts)
+			filledMergedOpts := fillAnalyzeOptions(AnalyzeOptionDefault(), mergedOpts)
 			finalColChoice, mergedColList := pickColumnList(astColChoice, astColList, savedColChoice, savedColList)
 			finalColsInfo, finalColList, err := b.getFullAnalyzeColumnsInfo(tbl, finalColChoice, mergedColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
 			if err != nil {
@@ -3285,8 +3285,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 	return optMap, resetOpts, nil
 }
 
-func fillAnalyzeOptions(optMap map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
-	defaults := AnalyzeOptionDefault()
+func fillAnalyzeOptions(defaults, optMap map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
 	filledMap := make(map[ast.AnalyzeOptionType]uint64, len(defaults))
 	for key, defaultVal := range defaults {
 		if val, ok := optMap[key]; ok {
@@ -3322,7 +3321,7 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (base.Plan, error) 
 	// saved options drops it and fillAnalyzeOptions supplies the default. When
 	// persistence is on, the per-table options built by
 	// buildAnalyzeFullSamplingTask take precedence over these in the executor.
-	filledOpts := fillAnalyzeOptions(mergeAnalyzeOptions(stmtOpts, stmtResets, nil))
+	filledOpts := fillAnalyzeOptions(AnalyzeOptionDefault(), mergeAnalyzeOptions(stmtOpts, stmtResets, nil))
 
 	if as.IndexFlag {
 		if len(as.IndexNames) == 0 {
