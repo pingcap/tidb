@@ -14,6 +14,7 @@
 package parser_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -83,6 +84,13 @@ func TestParseHint(t *testing.T) {
 		{
 			input: "QB_NAME(1)",
 			errs:  []string{`Optimizer hint syntax error at line 1 `},
+		},
+		{
+			input: "QB_NAME(1.5)",
+			errs: []string{
+				`Cannot use decimal number`,
+				`Optimizer hint syntax error at line 1 `,
+			},
 		},
 		{
 			input: "QB_NAME('string literal')",
@@ -173,6 +181,22 @@ func TestParseHint(t *testing.T) {
 			},
 		},
 		{
+			input: "TIFLASH_LM_FILTER(@qb1 tbl1 a, b) TIFLASH_LM_FILTER(tbl2@qb2 c)",
+			output: []*ast.TableOptimizerHint{
+				{
+					HintName: ast.NewCIStr("TIFLASH_LM_FILTER"),
+					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("tbl1")}},
+					QBName:   ast.NewCIStr("qb1"),
+					Indexes:  []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+				},
+				{
+					HintName: ast.NewCIStr("TIFLASH_LM_FILTER"),
+					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("tbl2"), QBName: ast.NewCIStr("qb2")}},
+					Indexes:  []ast.CIStr{ast.NewCIStr("c")},
+				},
+			},
+		},
+		{
 			input: "USE_INDEX(@qb1 tbl1 partition(p0) x) USE_INDEX_MERGE(@qb2 tbl2@qb2 partition(p0, p1) x, y, z)",
 			output: []*ast.TableOptimizerHint{
 				{
@@ -197,7 +221,7 @@ func TestParseHint(t *testing.T) {
 			},
 		},
 		{
-			input: `SET_VAR(sbs = 16M) SET_VAR(fkc=OFF) SET_VAR(os="mcb=off") set_var(abc=1) set_var(os2='mcb2=off')`,
+			input: `SET_VAR(sbs = 16M) SET_VAR(fkc=OFF) SET_VAR(os="mcb=off") set_var(abc=1) set_var(os2='mcb2=off') set_var(sel=0.3) set_var(sel_plus=+0.3) set_var(sel_minus=-0.3)`,
 			output: []*ast.TableOptimizerHint{
 				{
 					HintName: ast.NewCIStr("SET_VAR"),
@@ -232,6 +256,27 @@ func TestParseHint(t *testing.T) {
 					HintData: ast.HintSetVar{
 						VarName: "os2",
 						Value:   "mcb2=off",
+					},
+				},
+				{
+					HintName: ast.NewCIStr("set_var"),
+					HintData: ast.HintSetVar{
+						VarName: "sel",
+						Value:   "0.3",
+					},
+				},
+				{
+					HintName: ast.NewCIStr("set_var"),
+					HintData: ast.HintSetVar{
+						VarName: "sel_plus",
+						Value:   "0.3",
+					},
+				},
+				{
+					HintName: ast.NewCIStr("set_var"),
+					HintData: ast.HintSetVar{
+						VarName: "sel_minus",
+						Value:   "-0.3",
 					},
 				},
 			},
@@ -325,9 +370,14 @@ func TestParseHint(t *testing.T) {
 		},
 		{
 			input: "set_var(timestamp = 1.5)",
-			errs: []string{
-				`Cannot use decimal number`,
-				`Optimizer hint syntax error at line 1 `,
+			output: []*ast.TableOptimizerHint{
+				{
+					HintName: ast.NewCIStr("set_var"),
+					HintData: ast.HintSetVar{
+						VarName: "timestamp",
+						Value:   "1.5",
+					},
+				},
 			},
 		},
 		{
@@ -482,4 +532,13 @@ func TestParseHint(t *testing.T) {
 		}
 		require.Equalf(t, tc.output, output, "input = %s,\n... output = %q", tc.input, output)
 	}
+}
+
+func TestMaxOptimizerHintDepth(t *testing.T) {
+	input := "/*+LEADING(" + strings.Repeat("(", 10000) + "t" + strings.Repeat(")", 10000) + ")*/"
+	mode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
+	require.NoError(t, err)
+	_, errs := parser.ParseHint(input, mode, parser.Pos{Line: 1})
+	require.NotEmpty(t, errs)
+	require.Contains(t, errs[0].Error(), "parentheses nesting depth exceeds maximum 10000")
 }

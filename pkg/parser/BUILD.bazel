@@ -15,6 +15,7 @@ go_library(
         "keywords.go",
         "lexer.go",
         "misc.go",
+        "mview_stmt_options.go",
         "parser.go",
         "yy_parser.go",
     ],
@@ -30,6 +31,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/parser/tidb",
         "//pkg/parser/types",
+        "//pkg/parser/util",
         "@com_github_pingcap_errors//:errors",
     ],
 )
@@ -43,6 +45,7 @@ go_test(
         "digester_test.go",
         "hintparser_test.go",
         "keywords_test.go",
+        "lateral_test.go",
         "lexer_test.go",
         "main_test.go",
         "parser_test.go",

@@ -461,10 +461,10 @@ And one can also disable it anytime:
 
 ```
 // disable it
-ALTER TABLE t DISABLE SOFTDELETE;
+ALTER TABLE t SOFTDELETE='OFF';
 ```
 
-`ALTER TABLE DISABLE` statements will not delete hidden columns or indexes, but just disable the functionality on this table.
+`ALTER TABLE t SOFTDELETE='OFF'` statements will not delete hidden columns or indexes, but just disable the functionality on this table.
 
 That said, to completely disable softdelete, one needs to manually drop columns and indexes using admin:
 

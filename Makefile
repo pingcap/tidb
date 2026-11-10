@@ -88,7 +88,8 @@ errdoc:tools/bin/errdoc-gen
 .PHONY: lint
 lint:tools/bin/revive
 	@echo "linting"
-	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
+	@tools/bin/revive -formatter friendly -config tools/check/revive.toml \
+	-exclude pkg/util/hack/... -exclude ./pkg/util/hack/...  $(FILES_TIDB_TESTS)
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml ./lightning/...
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/overview.json
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/performance_overview.json
@@ -161,6 +162,10 @@ test_part_parser_dev: parser_fmt parser_unit_test
 .PHONY: parser
 parser:
 	@cd pkg/parser && make parser
+
+.PHONY: parser_ast_visitor
+parser_ast_visitor: ## Regenerate in-place AST visitor methods
+	@cd pkg/parser && $(GO) run ./ast/visitor_codegen/cmd -source-dir ast -output ast/visitor_inplace_generated.go
 
 .PHONY: parser_yacc
 parser_yacc:
@@ -255,6 +260,11 @@ else
 	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
 endif
 
+.PHONY: server_failpoint
+server_failpoint: failpoint-enable ## Build TiDB server binary with failpoints enabled
+	$(SERVER_BUILD_CMD) || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
+
 .PHONY: init-submodule
 init-submodule:
 	git submodule init && git submodule update --force
@@ -340,6 +350,14 @@ failpoint-disable: tools/bin/failpoint-ctl
 # Restoring gofail failpoints...
 	@$(FAILPOINT_DISABLE)
 
+.PHONY: bazel-failpoint-enable
+bazel-failpoint-enable:
+	BAZEL_GLOBAL_CONFIG="$(BAZEL_GLOBAL_CONFIG)" BAZEL_CMD_CONFIG="$(BAZEL_CMD_CONFIG)" ./tools/check/failpoint-state.sh enable bazel
+
+.PHONY: bazel-failpoint-disable
+bazel-failpoint-disable:
+	BAZEL_GLOBAL_CONFIG="$(BAZEL_GLOBAL_CONFIG)" BAZEL_CMD_CONFIG="$(BAZEL_CMD_CONFIG)" ./tools/check/failpoint-state.sh disable bazel
+
 .PHONY: tools/bin/ut
 tools/bin/ut: tools/check/ut.go tools/check/longtests.go
 	cd tools/check; \
@@ -356,7 +374,15 @@ tools/bin/revive:
 
 .PHONY: tools/bin/failpoint-ctl
 tools/bin/failpoint-ctl:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/failpoint/failpoint-ctl@9b3b6e3
+	$(eval FP_GITHASH := 9b3b6e3)
+	$(eval FP_PKG := github.com/pingcap/failpoint/failpoint-ctl)
+	$(eval FP_BIN := $(CURDIR)/tools/bin/failpoint-ctl)
+	@if [ ! -x "$(FP_BIN)" ] || [ "$$($(GO) version -m $(FP_BIN) 2>/dev/null | grep -o '$(FP_GITHASH)' || echo unknown)" != "$(FP_GITHASH)" ]; then \
+		echo "Installing $(FP_PKG)@$(FP_GITHASH)"; \
+		GOBIN=$$(pwd)/tools/bin $(GO) install $(FP_PKG)@$(FP_GITHASH) || { echo "failed to install $(FP_PKG)@$(FP_GITHASH)"; exit 1; }; \
+	else \
+		echo "Using existing $(FP_PKG)@$(FP_GITHASH)"; \
+	fi
 
 .PHONY: tools/bin/errdoc-gen
 tools/bin/errdoc-gen:
@@ -366,10 +392,6 @@ tools/bin/errdoc-gen:
 tools/bin/golangci-lint:
 	$(eval GOLANGCI_LINT_VERSION := $(shell grep 'github.com/golangci/golangci-lint/v2' go.mod | awk '{print $$2}'))
 	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
-
-.PHONY: tools/bin/vfsgendev
-tools/bin/vfsgendev:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/shurcooL/vfsgen/cmd/vfsgendev@0d455de
 
 .PHONY: tools/bin/gotestsum
 tools/bin/gotestsum:
@@ -411,9 +433,9 @@ bench-daily:
 	go test github.com/pingcap/tidb/pkg/executor -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/executor/test/splittest -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/pkg/planner/core/casetest/plancache -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/tests/partition -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/casetest/tpcds -run TestBenchDaily -bench Ignore --outfile bench_daily.json
-	go test github.com/pingcap/tidb/pkg/planner/core/casetest/plancache -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/casetest/tpch -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/session -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/statistics -run TestBenchDaily -bench Ignore --outfile bench_daily.json
@@ -430,10 +452,6 @@ bench-daily:
 .PHONY: build_tools
 build_tools: build_br build_lightning build_lightning-ctl ## Build all BR and Lightning tools
 
-.PHONY: lightning_web
-lightning_web: ## Build Lightning web UI
-	@cd lightning/web && npm install && npm run build
-
 .PHONY: build_br
 build_br: ## Build BR (backup and restore) tool 
 ifeq ($(shell echo $(GOOS) | tr A-Z a-z),darwin)
@@ -444,17 +462,23 @@ else
 	CGO_ENABLED=0 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
 endif
 
-.PHONY: build_lightning_for_web
-build_lightning_for_web:
-	CGO_ENABLED=1 $(GOBUILD_NO_TAGS) -tags dev $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) lightning/cmd/tidb-lightning/main.go
-
 .PHONY: build_lightning
 build_lightning: ## Build TiDB Lightning data import tool
+ifeq ("$(GOOS)", "freebsd")
+	@echo "Building lightning for FreeBSD, assuming crossbuild, disabling CGO"
+	CGO_ENABLED=0 $(GOBUILD_NO_TAGS) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
+else
 	CGO_ENABLED=1 $(GOBUILD_NO_TAGS) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
+endif
 
 .PHONY: build_lightning-ctl
 build_lightning-ctl: ## Build TiDB Lightning control tool
+	@echo "Building lightning-ctl for FreeBSD, assuming crossbuild, disabling CGO"
+ifeq ("$(GOOS)", "freebsd")
+	CGO_ENABLED=0 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_CTL_BIN) ./lightning/cmd/tidb-lightning-ctl
+else
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_CTL_BIN) ./lightning/cmd/tidb-lightning-ctl
+endif
 
 .PHONY: build_for_lightning_integration_test
 build_for_lightning_integration_test:
@@ -536,25 +560,32 @@ mock_import: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter > br/pkg/mock/backend.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/common ChunkFlushStatus > br/pkg/mock/common.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend/encode Encoder,EncodingBuilder,Rows,Row > br/pkg/mock/encode.go
-	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/pkg/lightning/backend/local DiskUsage,TiKVModeSwitcher,StoreHelper > br/pkg/mock/mocklocal/local.go
+	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/pkg/ingestor/ingestctrl DiskUsage,TiKVModeSwitcher,StoreHelper > br/pkg/mock/mocklocal/local.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/utils TaskRegister > br/pkg/mock/task_register.go
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor TaskTable,TaskExecutor,Extension > pkg/disttask/framework/mock/task_executor_mock.go
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/scheduler Scheduler,CleanUpRoutine,TaskManager > pkg/disttask/framework/mock/scheduler_mock.go
-	tools/bin/mockgen -destination pkg/disttask/framework/scheduler/mock/scheduler_mock.go -package mock github.com/pingcap/tidb/pkg/disttask/framework/scheduler Extension
-	tools/bin/mockgen -embed -package mockexecute github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute StepExecutor > pkg/disttask/framework/mock/execute/execute_mock.go
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/importinto MiniTaskExecutor > pkg/disttask/importinto/mock/import_mock.go
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/planner LogicalPlan,PipelineSpec > pkg/disttask/framework/mock/plan_mock.go
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/storage Manager > pkg/disttask/framework/mock/storage_manager_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor TaskTable,TaskExecutor,Extension > pkg/dxf/framework/mock/task_executor_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/framework/scheduler Scheduler,Cleaner,ExpiredFileCleaner,TaskManager > pkg/dxf/framework/mock/scheduler_mock.go
+	tools/bin/mockgen -destination pkg/dxf/framework/scheduler/mock/scheduler_mock.go -package mock github.com/pingcap/tidb/pkg/dxf/framework/scheduler Extension
+	tools/bin/mockgen -embed -package mockexecute github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute StepExecutor > pkg/dxf/framework/mock/execute/execute_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/importinto MiniTaskExecutor > pkg/dxf/importinto/mock/import_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/framework/planner LogicalPlan,PipelineSpec > pkg/dxf/framework/mock/plan_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/framework/storage Manager > pkg/dxf/framework/mock/storage_manager_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ingestor/ingestcli Client,WriteClient > pkg/ingestor/ingestcli/mock/client_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/importsdk FileScanner,JobManager,SQLGenerator,SDK > pkg/importsdk/mock/sdk_mock.go
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/lightning/pkg/importinto CheckpointManager > lightning/pkg/importinto/mock/import_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/lightning/pkg/importinto CheckpointManager,JobSubmitter,JobMonitor,JobOrchestrator,ProgressUpdater > lightning/pkg/importinto/mock/import_mock.go
 
 .PHONY: gen_mock
 gen_mock: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/util/sqlexec RestrictedSQLExecutor > pkg/util/sqlexec/mock/restricted_sql_executor_mock.go
-	tools/bin/mockgen -package mockstorage github.com/pingcap/tidb/br/pkg/storage ExternalStorage > br/pkg/mock/storage/storage.go
+	tools/bin/mockgen -package mockobjstore github.com/pingcap/tidb/pkg/objstore Storage > pkg/objstore/mockobjstore/objstore_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/objstore/s3store S3API > pkg/objstore/s3store/mock/s3api_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/objstore/ossstore API > pkg/objstore/ossstore/mock/api_mock.go
+	tools/bin/mockgen -package mock github.com/aliyun/credentials-go/credentials/providers CredentialsProvider > pkg/objstore/ossstore/mock/provider_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/objstore/s3like PrefixClient > pkg/objstore/s3like/mock/client_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ddl SchemaLoader > pkg/ddl/mock/schema_loader_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ddl/systable Manager > pkg/ddl/mock/systable_manager_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/domain/sqlsvrapi Server > pkg/domain/sqlsvrapi/mock/server_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/domain/sqlsvrapi Runtime > pkg/domain/sqlsvrapi/mock/runtime_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/domain/sqlsvrapi KSRuntimeHandle > pkg/domain/sqlsvrapi/mock/ksruntime_mock.go
 
 # There is no FreeBSD environment for GitHub actions. So cross-compile on Linux
 # but that doesn't work with CGO_ENABLED=1, so disable cgo. The reason to have
@@ -585,9 +616,8 @@ br_bins:
 	@rm tmp_parser.go
 
 .PHONY: data_parsers
-data_parsers: tools/bin/vfsgendev pkg/lightning/mydump/parser_generated.go lightning_web
-	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOMODCACHE)" pkg/lightning/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
-	tools/bin/vfsgendev -source='"github.com/pingcap/tidb/lightning/pkg/web".Res' && mv res_vfsdata.go lightning/pkg/web/
+data_parsers: pkg/lightning/mydump/parser_generated.go
+	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOMODCACHE)" lightning/pkg/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
 
 .PHONY: build_dumpling
 build_dumpling: ## Build Dumpling data export tool
@@ -637,7 +667,7 @@ generate_grafana_scripts:
 bazel_ci_prepare:
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable -prune
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror:mirror -- --mirror> tmp.txt
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror:mirror > tmp.txt
 	mv tmp.txt DEPS.bzl
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  \
 		--run_under="cd $(CURDIR) && " \
@@ -658,7 +688,7 @@ bazel_prepare: ## Update and generate BUILD.bazel files. Please run this before 
 		--run_under="cd $(CURDIR) && " \
 		 //tools/tazel:tazel
 	$(eval $@TMP_OUT := $(shell mktemp -d -t tidbbzl.XXXXXX))
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //cmd/mirror -- --mirror> $($@TMP_OUT)/tmp.txt
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //cmd/mirror > $($@TMP_OUT)/tmp.txt
 	cp $($@TMP_OUT)/tmp.txt DEPS.bzl
 	rm -rf $($@TMP_OUT)
 
@@ -676,31 +706,47 @@ check-bazel-prepare:
 	./tools/check/check-bazel-prepare.sh
 
 .PHONY: bazel_test
-bazel_test: failpoint-enable bazel_prepare ## Run all tests using Bazel
+bazel_test: bazel-failpoint-enable bazel_prepare ## Run all tests using Bazel
 	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --build_tests_only --test_keep_going=false \
 		--define gotags=$(UNIT_TEST_TAGS) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
+.PHONY: bazel_ci_test
+bazel_ci_test: bazel-failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc test $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=HOST_CPUS*0.9 --build_tests_only --test_keep_going=false \
+		--define gotags=$(UNIT_TEST_TAGS) \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
+
+.PHONY: bazel_ci_test_ddlargsv1
+bazel_ci_test_ddlargsv1: bazel-failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --build_tests_only --test_keep_going=false \
+		--define gotags=$(UNIT_TEST_TAGS),ddlargsv1 \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
+
 .PHONY: bazel_coverage_test
-bazel_coverage_test: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
-		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=$(UNIT_TEST_TAGS) \
+bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --build_tests_only --test_keep_going=false \
+		--combined_report=lcov \
+		--define gotags=$(UNIT_TEST_TAGS) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
 .PHONY: bazel_coverage_test_ddlargsv1
-bazel_coverage_test_ddlargsv1: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
-		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=$(UNIT_TEST_TAGS),ddlargsv1 \
+bazel_coverage_test_ddlargsv1: bazel-failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --build_tests_only --test_keep_going=false \
+		--combined_report=lcov \
+		--define gotags=$(UNIT_TEST_TAGS),ddlargsv1 \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
 .PHONY: bazel_bin
 bazel_bin: ## Build importer/tidb binary files with Bazel build system
 	mkdir -p bin; \
-	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/importer:importer //cmd/tidb-server:tidb-server --define gotags=$(BUILD_TAGS) --norun_validations ;\
+	NEXT_GEN=$(NEXT_GEN) bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+		//cmd/importer:importer //cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-workspace-status.sh --action_env=NEXT_GEN --define gotags=$(BUILD_TAGS) --norun_validations ;\
  	cp -f ${TIDB_SERVER_PATH} ./bin/ ; \
  	cp -f ${IMPORTER_PATH} ./bin/ ;
 
@@ -709,13 +755,13 @@ bazel_build: ## Build TiDB using Bazel build system
 	mkdir -p bin
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//... --//build:with_nogo_flag=$(NOGO_FLAG)
-	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --define gotags=$(BUILD_TAGS) --//build:with_nogo_flag=$(NOGO_FLAG) ;\
+	NEXT_GEN=$(NEXT_GEN) bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --stamp --workspace_status_command=./build/print-workspace-status.sh --action_env=NEXT_GEN --define gotags=$(BUILD_TAGS) --//build:with_nogo_flag=$(NOGO_FLAG) ;\
 	cp -f ${TIDB_SERVER_PATH} ./bin/ ;\
 	cp -f ${IMPORTER_PATH} ./bin/ ; \
 	cp -f ${TIDB_SERVER_CHECK_PATH} ./bin/ ; \
-	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-enterprise-workspace-status.sh --define gotags=$(BUILD_TAGS),enterprise; \
+	NEXT_GEN=$(NEXT_GEN) bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+		//cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-enterprise-workspace-status.sh --action_env=NEXT_GEN --define gotags=$(BUILD_TAGS),enterprise; \
 	cp -f ${TIDB_SERVER_PATH} ./bin/ ;\
 	./bin/tidb-server -V
 
@@ -744,7 +790,7 @@ bazel_golangcilinter:
 .PHONY: bazel_brietest
 bazel_brietest: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
-	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+	--test_env=BRIETEST_TMPDIR --sandbox_writable_path=$${BRIETEST_TMPDIR:-$(CURDIR)} \
 		-- //tests/realtikvtest/brietest/...
 
 .PHONY: bazel_pessimistictest
@@ -756,6 +802,12 @@ bazel_pessimistictest: failpoint-enable bazel_ci_simple_prepare
 bazel_sessiontest: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=$(REAL_TIKV_TEST_TAGS) --jobs=1 \
 		-- //tests/realtikvtest/sessiontest/...
+
+.PHONY: startertest
+startertest: failpoint-enable bazel_ci_simple_prepare
+	# Starter mode needs an external tidb-server process, so this wrapper
+	# intentionally invokes the starter shell runner instead of bazel test.
+	STARTER_KEYSPACE_NAME=startertest STARTER_RUN_EXIT_WAIT_TEST=1 tests/realtikvtest/scripts/next-gen/run-starter-tests-with-server.sh --under-cluster startertest 40m -count=1
 
 .PHONY: bazel_statisticstest
 bazel_statisticstest: failpoint-enable bazel_ci_simple_prepare
@@ -843,6 +895,16 @@ bazel_ddltest: failpoint-enable bazel_ci_simple_prepare
 bazel_lint: bazel_prepare
 	bazel build $(BAZEL_CMD_CONFIG) //... --//build:with_nogo_flag=$(NOGO_FLAG)
 
+.PHONY: bazel_lint_changed
+bazel_lint_changed: bazel_prepare
+	@PKGS="$$(build/get_changed_bazel_pkgs.sh)"; \
+	echo "$$PKGS"; \
+	if [ -z "$$PKGS" ]; then \
+		echo "No changed bazel packages detected, skip bazel_lint_changed."; \
+		exit 0; \
+	fi; \
+	bazel build $(BAZEL_CMD_CONFIG) $$PKGS --//build:with_nogo_flag=$(NOGO_FLAG)
+
 .PHONY: docker
 docker: ## Build TiDB Docker image
 	docker build -t "$(DOCKERPREFIX)tidb:latest" --build-arg 'GOPROXY=$(shell go env GOPROXY),' -f Dockerfile .
@@ -854,7 +916,7 @@ docker-test:
 .PHONY: bazel_mirror
 bazel_mirror:
 	$(eval $@TMP_OUT := $(shell mktemp -d -t tidbbzl.XXXXXX))
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) --norun_validations //cmd/mirror:mirror -- --mirror> $($@TMP_OUT)/tmp.txt
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) --norun_validations //cmd/mirror:mirror > $($@TMP_OUT)/tmp.txt
 	cp $($@TMP_OUT)/tmp.txt DEPS.bzl
 	rm -rf $($@TMP_OUT)
 
@@ -864,7 +926,7 @@ bazel_sync:
 
 .PHONY: bazel_mirror_upload
 bazel_mirror_upload:
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) --norun_validations //cmd/mirror -- --mirror --upload
+	@echo "bazel_mirror_upload is deprecated; Go modules are resolved through GOPROXY. Run 'make bazel_mirror' to regenerate DEPS.bzl."
 
 .PHONY: bazel_check_abi
 bazel_check_abi:

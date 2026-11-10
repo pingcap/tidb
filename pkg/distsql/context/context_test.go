@@ -81,6 +81,7 @@ func TestContextDetach(t *testing.T) {
 		EnablePaging:                  true,
 		MinPagingSize:                 1,
 		MaxPagingSize:                 1,
+		PagingSizeBytes:               1,
 		RequestSourceType:             "a",
 		ExplicitRequestSourceType:     "b",
 		StoreBatchSize:                1,
@@ -88,6 +89,8 @@ func TestContextDetach(t *testing.T) {
 		LoadBasedReplicaReadThreshold: time.Second,
 		TiKVClientReadTimeout:         1,
 		MaxExecutionTime:              1,
+		MaxKeysRead:                   1,
+		MaxKeysReadCounter:            new(atomic.Uint64),
 
 		ReplicaClosestReadThreshold: 1,
 		ConnectionID:                1,
@@ -108,6 +111,7 @@ func TestContextDetach(t *testing.T) {
 			"$.RunawayChecker",
 			"$.RUConsumptionReporter",
 			"$.ExecDetails",
+			"$.QueryCopStoreLimiter",
 		}))
 
 	staticObj := obj.Detach()

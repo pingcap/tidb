@@ -82,6 +82,15 @@ func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err err
 	}, util.FlagWrapTxn)
 }
 
+// IsStatsMetaWriteTooSlow reports whether a stats_meta write that took dur can be missed by the
+// stats cache Update of other TiDB nodes, which looks back only LeaseOffset * lease from its newest version.
+func IsStatsMetaWriteTooSlow(lease, dur time.Duration) bool {
+	// Note: In unit tests, the lease is set to a value less than 0, which means the lease is disabled.
+	// This is why we need to explicitly check the lease here. Without this check,
+	// the duration validation would always evaluate to true, which is not the intended behavior.
+	return lease > 0 && dur >= cache.LeaseOffset*lease
+}
+
 // handleSlowStatsSaving is used to handle the slow stats saving process.
 // Once the saving process is too slow, we need to log a warning.
 // Also, we need to update the stats meta with a more recent version to avoid other nodes missing the delta update.
@@ -89,10 +98,7 @@ func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err err
 // See more at stats cache's Update function.
 func (s *statsReadWriter) handleSlowStatsSaving(tableID int64, start time.Time) (uint64, error) {
 	dur := time.Since(start)
-	// Note: In unit tests, the lease is set to a value less than 0, which means the lease is disabled.
-	// This is why we need to explicitly check the lease here. Without this check,
-	// the duration validation would always evaluate to true, which is not the intended behavior.
-	isLoadIntervalExceeded := s.statsHandler.Lease() > 0 && dur >= cache.LeaseOffset*s.statsHandler.Lease()
+	isLoadIntervalExceeded := IsStatsMetaWriteTooSlow(s.statsHandler.Lease(), dur)
 	// Use failpoint to simulate slow saving.
 	failpoint.Inject("slowStatsSaving", func(val failpoint.Value) {
 		if val.(bool) {
@@ -204,6 +210,7 @@ func (s *statsReadWriter) SaveColOrIdxStatsToStorage(
 	hg *statistics.Histogram,
 	cms *statistics.CMSketch,
 	topN *statistics.TopN,
+	fms *statistics.FMSketch,
 	statsVersion int,
 	updateAnalyzeTime bool,
 	source string,
@@ -212,10 +219,11 @@ func (s *statsReadWriter) SaveColOrIdxStatsToStorage(
 	start := time.Now()
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = SaveColOrIdxStatsToStorage(sctx, tableID,
-			count, modifyCount, isIndex, hg, cms, topN, statsVersion, updateAnalyzeTime)
+			count, modifyCount, isIndex, hg, cms, topN, fms, statsVersion, updateAnalyzeTime)
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
+		failpoint.InjectCall("afterSaveColOrIdxStatsToStorage", tableID, isIndex)
 		// Check if saving was slow and update stats version if needed
 		version, err2 := s.handleSlowStatsSaving(tableID, start)
 		if err2 != nil {
@@ -252,45 +260,6 @@ func (s *statsReadWriter) SaveMetaToStorage(
 	return
 }
 
-// InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
-func (s *statsReadWriter) InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
-	var statsVer uint64
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		statsVer, err = InsertExtendedStats(sctx, s.statsHandler, statsName, colIDs, tp, tableID, ifNotExists)
-		return err
-	}, util.FlagWrapTxn)
-	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(statsVer, "extended stats", false, tableID)
-	}
-	return
-}
-
-// MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
-func (s *statsReadWriter) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error) {
-	var statsVer uint64
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		statsVer, err = MarkExtendedStatsDeleted(sctx, s.statsHandler, statsName, tableID, ifExists)
-		return err
-	}, util.FlagWrapTxn)
-	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(statsVer, "extended stats", false, tableID)
-	}
-	return
-}
-
-// SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
-func (s *statsReadWriter) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error) {
-	var statsVer uint64
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		statsVer, err = SaveExtendedStatsToStorage(sctx, tableID, extStats, isLoad)
-		return err
-	}, util.FlagWrapTxn)
-	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(statsVer, "extended stats", false, tableID)
-	}
-	return
-}
-
 func (s *statsReadWriter) LoadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
 	var partitionStats *statistics.Table
 	partitionStats, err := s.TableStatsFromStorage(tableInfo, partitionDef.ID, true, 0)
@@ -312,24 +281,6 @@ func (s *statsReadWriter) LoadNeededHistograms(is infoschema.InfoSchema) (err er
 		return LoadNeededHistograms(sctx, is, s.statsHandler)
 	}, util.FlagWrapTxn)
 	return err
-}
-
-// ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
-func (s *statsReadWriter) ReloadExtendedStatistics() error {
-	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		tables := make([]*statistics.Table, 0, s.statsHandler.Len())
-		for _, tbl := range s.statsHandler.Values() {
-			t, err := ExtendedStatsFromStorage(sctx, tbl.CopyAs(statistics.ExtendedStatsWritable), tbl.PhysicalID, true)
-			if err != nil {
-				return err
-			}
-			tables = append(tables, t)
-		}
-		s.statsHandler.UpdateStatsCache(statstypes.CacheUpdate{
-			Updated: tables,
-		})
-		return nil
-	}, util.FlagWrapTxn)
 }
 
 // DumpStatsToJSON dumps statistic to json.
@@ -671,10 +622,9 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 
 	var outerErr error
 	tbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		// loadStatsFromJSON doesn't support partition table now.
 		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		if err := s.SaveColOrIdxStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.GetStatsVer()), false, util.StatsMetaHistorySourceLoadStats); err != nil {
+		if err := s.SaveColOrIdxStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, col.FMSketch, int(col.GetStatsVer()), false, util.StatsMetaHistorySourceLoadStats); err != nil {
 			outerErr = err
 			return true
 		}
@@ -684,10 +634,9 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 		return outerErr
 	}
 	tbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
-		// loadStatsFromJSON doesn't support partition table now.
 		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		if err := s.SaveColOrIdxStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.GetStatsVer()), false, util.StatsMetaHistorySourceLoadStats); err != nil {
+		if err := s.SaveColOrIdxStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, idx.FMSketch, int(idx.GetStatsVer()), false, util.StatsMetaHistorySourceLoadStats); err != nil {
 			outerErr = err
 			return true
 		}
@@ -695,10 +644,6 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 	})
 	if outerErr != nil {
 		return outerErr
-	}
-	err = s.SaveExtendedStatsToStorage(tbl.PhysicalID, tbl.ExtendedStats, true)
-	if err != nil {
-		return errors.Trace(err)
 	}
 	err = s.SaveColumnStatsUsageToStorage(tbl.PhysicalID, jsonTbl.PredicateColumns)
 	if err != nil {

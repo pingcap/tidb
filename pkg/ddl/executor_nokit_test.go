@@ -15,15 +15,211 @@
 package ddl
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
+
+type recoverTableForeignKeySnapshotReader struct {
+	meta.Reader
+	table    *model.TableInfo
+	err      error
+	reads    int
+	schemaID int64
+	tableID  int64
+}
+
+func (r *recoverTableForeignKeySnapshotReader) GetTable(schemaID, tableID int64) (*model.TableInfo, error) {
+	r.reads++
+	r.schemaID, r.tableID = schemaID, tableID
+	return r.table, r.err
+}
+
+type recoverTableForeignKeyInfoSchema struct {
+	infoschema.InfoSchema
+	referred []*model.ReferredFKInfo
+	schema   string
+	table    string
+}
+
+func (is *recoverTableForeignKeyInfoSchema) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
+	is.schema, is.table = schema, table
+	return is.referred
+}
+
+func TestCheckRecoverTableForeignKeys(t *testing.T) {
+	decodeErr := errors.New("invalid historical table metadata")
+	for _, tc := range []struct {
+		name      string
+		change    func(*model.RecoverTableInfo, *recoverTableForeignKeySnapshotReader, *recoverTableForeignKeyInfoSchema)
+		wantError func(error) bool
+		permanent bool
+		reads     int
+	}{
+		{name: "self rename", reads: 1},
+		{name: "unchanged self", change: func(info *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+			info.TableInfo.Name = ast.NewCIStr("old")
+			info.TableInfo.ForeignKeys[0].RefTable = info.TableInfo.Name
+			reader.err = decodeErr
+		}},
+		{name: "original external endpoint", reads: 1, permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
+			change: func(_ *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				reader.table.ForeignKeys[0].RefTable = ast.NewCIStr("restored")
+			}},
+		{name: "original external schema", reads: 1, permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
+			change: func(_ *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				reader.table.ForeignKeys[0].RefSchema = ast.NewCIStr("other")
+			}},
+		{name: "missing old schema", permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
+			change: func(info *model.RecoverTableInfo, _ *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				info.OldSchemaName = ""
+			}},
+		{name: "missing old table", permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
+			change: func(info *model.RecoverTableInfo, _ *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				info.OldTableName = ""
+			}},
+		{name: "missing snapshot timestamp", permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
+			change: func(info *model.RecoverTableInfo, _ *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				info.SnapshotTS = 0
+			}},
+		{name: "missing historical table", reads: 1, permanent: true, wantError: infoschema.ErrTableNotExists.Equal,
+			change: func(_ *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				reader.table = nil
+			}},
+		{name: "mismatched historical table", reads: 1, permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
+			change: func(_ *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				reader.table.Name = ast.NewCIStr("other")
+			}},
+		{name: "missing historical schema", reads: 1, permanent: true, wantError: meta.ErrDBNotExists.Equal,
+			change: func(_ *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				reader.err = meta.ErrDBNotExists
+			}},
+		{name: "retryable metadata read", reads: 1, wantError: kv.ErrTxnRetryable.Equal,
+			change: func(_ *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				reader.err = kv.ErrTxnRetryable
+			}},
+		{name: "metadata decode error", reads: 1, wantError: func(err error) bool { return errors.Is(err, decodeErr) },
+			change: func(_ *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				reader.err = decodeErr
+			}},
+		{name: "legacy untracked foreign key", change: func(info *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+			info.TableInfo.ForeignKeys[0].Version = 0
+			info.TableInfo.ForeignKeys[0].RefTable = ast.NewCIStr("other")
+			info.OldSchemaName, info.OldTableName, info.SnapshotTS = "", "", 0
+			reader.err = decodeErr
+		}},
+		{name: "no foreign key", change: func(info *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+			info.TableInfo.ForeignKeys = nil
+			info.OldSchemaName, info.OldTableName, info.SnapshotTS = "", "", 0
+			reader.err = decodeErr
+		}},
+		{name: "current external endpoint", reads: 1, permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
+			change: func(info *model.RecoverTableInfo, _ *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				info.TableInfo.ForeignKeys[0].RefTable = ast.NewCIStr("other")
+			}},
+		{name: "incoming target reference", reads: 1, permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
+			change: func(_ *model.RecoverTableInfo, _ *recoverTableForeignKeySnapshotReader, is *recoverTableForeignKeyInfoSchema) {
+				is.referred = []*model.ReferredFKInfo{{}}
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := &model.TableInfo{ID: 42, Name: ast.NewCIStr("old"), ForeignKeys: []*model.FKInfo{{
+				Version: model.FKVersion1, RefSchema: ast.NewCIStr("test"), RefTable: ast.NewCIStr("old"),
+			}}}
+			restored := original.Clone()
+			restored.Name = ast.NewCIStr("restored")
+			restored.ForeignKeys[0].RefTable = restored.Name
+			info := &model.RecoverTableInfo{
+				SchemaID: 1, TableInfo: restored, SnapshotTS: 100, OldSchemaName: "test", OldTableName: "old",
+			}
+			reader := &recoverTableForeignKeySnapshotReader{table: original}
+			is := &recoverTableForeignKeyInfoSchema{}
+			if tc.change != nil {
+				tc.change(info, reader, is)
+			}
+			err := checkRecoverTableForeignKeys(is, "test", info, reader)
+			if tc.wantError == nil {
+				require.NoError(t, err)
+			} else {
+				require.True(t, tc.wantError(err), "unexpected error type: %v", err)
+			}
+			require.Equal(t, tc.permanent, isPermanentRecoverTableForeignKeyError(err))
+			require.Equal(t, tc.reads, reader.reads)
+			if reader.reads > 0 {
+				require.Equal(t, info.SchemaID, reader.schemaID)
+				require.Equal(t, restored.ID, reader.tableID)
+			}
+			if is.table != "" {
+				require.Equal(t, "test", is.schema)
+				require.Equal(t, restored.Name.L, is.table)
+			}
+		})
+	}
+}
+
+func TestIsSessionDoneHandlesWrappedQueryInterrupted(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+
+	done, killed := isSessionDone(sctx)
+	require.True(t, done)
+	require.Equal(t, uint32(1), killed)
+}
+
+func TestConvertKillFlag(t *testing.T) {
+	require.NoError(t, convertKillFlag(0))
+	err := convertKillFlag(1)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
+}
+
+func TestWaitPendingTableThresholdAbortsOnKill(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+
+	finished, _, _, forceCheck, killed := (&executor{}).waitPendingTableThreshold(sctx, 1, 1, 0, 0, 1)
+	require.True(t, finished)
+	require.False(t, forceCheck)
+	require.Equal(t, uint32(1), killed)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(convertKillFlag(killed)))
+}
+
+func TestIsRetryableDDLCancelErr(t *testing.T) {
+	tests := []struct {
+		name  string
+		err   error
+		retry bool
+	}{
+		{name: "finished", err: dbterror.ErrCancelFinishedDDLJob, retry: false},
+		{name: "finished wrapped", err: dbterror.ErrCancelFinishedDDLJob.GenWithStackByArgs(1), retry: false},
+		{name: "cannot cancel", err: dbterror.ErrCannotCancelDDLJob, retry: false},
+		{name: "cannot cancel wrapped", err: dbterror.ErrCannotCancelDDLJob.GenWithStackByArgs(1), retry: false},
+		{name: "not found", err: dbterror.ErrDDLJobNotFound, retry: false},
+		{name: "not found wrapped", err: dbterror.ErrDDLJobNotFound.GenWithStackByArgs(1), retry: false},
+		{name: "retryable processJobs error", err: errors.New("mock failed admin command on ddl jobs"), retry: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.retry, isRetryableDDLCancelErr(tt.err))
+		})
+	}
+}
 
 func TestBuildQueryStringFromJobs(t *testing.T) {
 	testCases := []struct {
@@ -218,5 +414,193 @@ func TestMergeCreateTableJobs(t *testing.T) {
 			"db4": {7},
 			"db5": {7, 7, 8},
 		}, schemaCnts)
+	})
+}
+
+func TestIsUndroppableTable(t *testing.T) {
+	tests := []struct {
+		name        string
+		schema      string
+		table       string
+		tableID     int64
+		want        bool
+		skipClassic bool
+		skipNextGen bool
+	}{
+		// Test reserved ID in next gen
+		{
+			name:        "reserved ID upper bound in next gen",
+			schema:      "test",
+			table:       "test_table",
+			tableID:     metadef.ReservedGlobalIDUpperBound,
+			want:        true,
+			skipClassic: true,
+		},
+		{
+			name:        "reserved ID lower bound in next gen",
+			schema:      "test",
+			table:       "test_table",
+			tableID:     metadef.ReservedGlobalIDLowerBound + 1,
+			want:        true,
+			skipClassic: true,
+		},
+		{
+			name:        "non-reserved ID in next gen",
+			schema:      "test",
+			table:       "test_table",
+			tableID:     100,
+			want:        false,
+			skipClassic: true,
+		},
+		{
+			name:        "reserved ID in classic",
+			schema:      "test",
+			table:       "test_table",
+			tableID:     metadef.ReservedGlobalIDUpperBound,
+			want:        false,
+			skipNextGen: true,
+		},
+		// Test WorkloadSchema
+		{
+			name:    "table in workload_schema",
+			schema:  mysql.WorkloadSchema,
+			table:   "any_table",
+			tableID: 100,
+			want:    true,
+		},
+		// Test SystemDB with system tables
+		{
+			name:    "tidb table in mysql schema",
+			schema:  mysql.SystemDB,
+			table:   "tidb",
+			tableID: 100,
+			want:    true,
+		},
+		{
+			name:    "gc_delete_range table in mysql schema",
+			schema:  mysql.SystemDB,
+			table:   "gc_delete_range",
+			tableID: 100,
+			want:    true,
+		},
+		{
+			name:    "gc_delete_range_done table in mysql schema",
+			schema:  mysql.SystemDB,
+			table:   "gc_delete_range_done",
+			tableID: 100,
+			want:    true,
+		},
+		// Test SystemDB with non-system tables
+		{
+			name:    "non-system table in mysql schema",
+			schema:  mysql.SystemDB,
+			table:   "user",
+			tableID: 100,
+			want:    false,
+		},
+		// Test non-system schemas
+		{
+			name:    "table in test schema",
+			schema:  "test",
+			table:   "test_table",
+			tableID: 100,
+			want:    false,
+		},
+		{
+			name:    "table in information_schema",
+			schema:  "information_schema",
+			table:   "tables",
+			tableID: 100,
+			want:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.skipClassic && kerneltype.IsClassic() {
+				t.Skip("This test is only for nextgen kernel.")
+			}
+			if tt.skipNextGen && kerneltype.IsNextGen() {
+				t.Skip("This test is only for classic kernel.")
+			}
+
+			tableInfo := &model.TableInfo{
+				ID:   tt.tableID,
+				Name: ast.NewCIStr(tt.table),
+			}
+
+			result := isUndroppableTable(tt.schema, tt.table, tableInfo)
+			require.Equal(t, tt.want, result, "schema=%s, table=%s, tableID=%d", tt.schema, tt.table, tt.tableID)
+		})
+	}
+}
+
+func TestMaterializedViewPartitionDependencyConstraints(t *testing.T) {
+	t.Run("base table dependencies", func(t *testing.T) {
+		baseWithMLog := &model.TableInfo{
+			MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: 1},
+		}
+		err := checkBaseTableMaterializedViewDependencyConstraints(baseWithMLog, "ALTER TABLE ... REMOVE PARTITIONING")
+		require.ErrorContains(t, err, "ALTER TABLE ... REMOVE PARTITIONING with materialized view log")
+
+		baseWithMViews := &model.TableInfo{
+			MaterializedViewBase: &model.MaterializedViewBaseInfo{MViewIDs: []int64{2}},
+		}
+		err = checkBaseTableMaterializedViewDependencyConstraints(baseWithMViews, "ALTER TABLE ... PARTITION BY")
+		require.ErrorContains(t, err, "ALTER TABLE ... PARTITION BY with materialized view dependencies")
+
+		require.NoError(t, checkBaseTableMaterializedViewDependencyConstraints(&model.TableInfo{}, "ALTER TABLE ... PARTITION BY"))
+	})
+
+	t.Run("exchange table roles", func(t *testing.T) {
+		err := checkExchangePartitionMaterializedViewConstraints(
+			&model.TableInfo{MaterializedViewLog: &model.MaterializedViewLogInfo{}},
+			"non-partitioned table",
+		)
+		require.ErrorContains(t, err, "EXCHANGE PARTITION on non-partitioned table with materialized view log")
+
+		err = checkExchangePartitionMaterializedViewConstraints(
+			&model.TableInfo{MaterializedView: &model.MaterializedViewInfo{}},
+			"non-partitioned table",
+		)
+		require.ErrorContains(t, err, "EXCHANGE PARTITION on non-partitioned table materialized view table")
+
+		err = checkExchangePartitionMaterializedViewConstraints(
+			&model.TableInfo{MaterializedViewBase: &model.MaterializedViewBaseInfo{MViewIDs: []int64{2}}},
+			"partitioned table",
+		)
+		require.ErrorContains(t, err, "EXCHANGE PARTITION on partitioned table with materialized view dependencies")
+
+		shadowTable := &model.TableInfo{
+			MaterializedViewShadow: &model.MaterializedViewShadowInfo{SourceMViewID: 42},
+		}
+		err = checkExchangePartitionMaterializedViewConstraints(shadowTable, "partitioned table")
+		require.ErrorContains(t, err, "EXCHANGE PARTITION on partitioned table materialized view shadow table")
+		err = checkTableMaterializedViewConstraints(nil, shadowTable, "DROP TABLE")
+		require.ErrorContains(t, err, "DROP TABLE on materialized view shadow table")
+		baseWithMLog := &model.TableInfo{
+			MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: 7},
+		}
+		err = checkTableMaterializedViewConstraints(nil, baseWithMLog, "DROP TABLE")
+		require.ErrorContains(t, err, "DROP TABLE on base table with materialized view log")
+		err = checkTableMaterializedViewConstraints(nil, baseWithMLog, "TRUNCATE TABLE")
+		require.ErrorContains(t, err, "TRUNCATE TABLE on base table with materialized view log")
+		err = CheckIndexOperationMaterializedViewConstraints(nil, shadowTable, "DROP INDEX", false)
+		require.ErrorContains(t, err, "DROP INDEX on materialized view shadow table")
+
+		likeInfo, err := BuildTableInfoWithLike(
+			ast.Ident{Name: ast.NewCIStr("shadow_copy")},
+			shadowTable,
+			&ast.CreateTableStmt{},
+		)
+		require.NoError(t, err)
+		require.Nil(t, likeInfo.MaterializedViewShadow)
+
+		maintenanceVars := &variable.SessionVars{
+			InMViewMaintenance: true,
+			InRestrictedSQL:    true,
+		}
+		require.NoError(t, checkTableMaterializedViewConstraints(maintenanceVars, shadowTable, "DROP TABLE"))
+		require.NoError(t, CheckIndexOperationMaterializedViewConstraints(maintenanceVars, shadowTable, "DROP INDEX", false))
 	})
 }

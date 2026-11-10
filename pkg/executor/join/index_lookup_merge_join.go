@@ -92,6 +92,7 @@ type InnerMergeCtx struct {
 	RowTypes                []*types.FieldType
 	JoinKeys                []*expression.Column
 	KeyCols                 []int
+	KeyColIDs               []int64
 	KeyCollators            []collate.Collator
 	CompareFuncs            []expression.CompareFunc
 	ColLens                 []int
@@ -159,6 +160,9 @@ type indexMergeJoinResult struct {
 
 // Open implements the Executor interface
 func (e *IndexLookUpMergeJoin) Open(ctx context.Context) error {
+	for _, w := range e.Joiners {
+		w.resetJoinedRows(e.RuntimeStats() != nil)
+	}
 	err := exec.Open(ctx, e.Children(0))
 	if err != nil {
 		return err
@@ -184,7 +188,7 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	for i := range concurrency {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, numResChkHold)
 		for range numResChkHold {
-			e.joinChkResourceCh[i] <- chunk.NewChunkWithCapacity(e.RetFieldTypes(), e.MaxChunkSize())
+			e.joinChkResourceCh[i] <- e.NewChunk()
 		}
 	}
 	workerCtx, cancelFunc := context.WithCancel(ctx)
@@ -692,7 +696,11 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 		}
 		dLookupKey = append(dLookupKey, innerValue)
 	}
-	return &IndexJoinLookUpContent{Keys: dLookupKey, Row: task.outerResult.GetRow(idx)}, nil
+	return &IndexJoinLookUpContent{
+		Keys:      dLookupKey,
+		Row:       task.outerResult.GetRow(idx),
+		KeyColIDs: imw.KeyColIDs,
+	}, nil
 }
 
 func (imw *innerMergeWorker) dedupDatumLookUpKeys(lookUpContents []*IndexJoinLookUpContent) []*IndexJoinLookUpContent {
@@ -712,7 +720,7 @@ func (imw *innerMergeWorker) dedupDatumLookUpKeys(lookUpContents []*IndexJoinLoo
 
 // fetchNextInnerResult collects a chunk of inner results from inner child executor.
 func (imw *innerMergeWorker) fetchNextInnerResult(ctx context.Context, task *lookUpMergeJoinTask) (beginRow chunk.Row, err error) {
-	task.innerResult = imw.innerExec.NewChunkWithCapacity(imw.innerExec.RetFieldTypes(), imw.innerExec.MaxChunkSize(), imw.innerExec.MaxChunkSize())
+	task.innerResult = imw.innerExec.NewChunkWithCapacity(imw.innerExec.RetFieldTypes(), imw.innerExec.InitCap(), imw.innerExec.MaxChunkSize())
 	err = exec.Next(ctx, imw.innerExec, task.innerResult)
 	task.innerIter = chunk.NewIterator4Chunk(task.innerResult)
 	beginRow = task.innerIter.Begin()
@@ -721,6 +729,11 @@ func (imw *innerMergeWorker) fetchNextInnerResult(ctx context.Context, task *loo
 
 // Close implements the Executor interface.
 func (e *IndexLookUpMergeJoin) Close() error {
+	defer func() {
+		for _, w := range e.Joiners {
+			w.registerJoinedRows(e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl, e.ID())
+		}
+	}()
 	if e.RuntimeStats() != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.RuntimeStats())
 	}

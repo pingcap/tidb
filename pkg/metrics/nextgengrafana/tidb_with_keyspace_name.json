@@ -290,7 +290,7 @@
               "step": 90
             },
             {
-              "expr": "sum(tidb_server_connections{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}) * sum(rate(tidb_server_handle_query_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) / sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m]))",
+              "expr": "sum(tidb_server_connections{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}) * sum(rate(tidb_server_handle_command_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) / sum(rate(tidb_server_handle_command_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m]))",
               "format": "time_series",
               "hide": true,
               "instant": false,
@@ -413,6 +413,13 @@
               "intervalFactor": 2,
               "legendFormat": "total",
               "refId": "B"
+            },
+            {
+              "expr": "sum(rate(tidb_server_slow_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m]))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "SlowQuery",
+              "refId": "C"
             }
           ],
           "thresholds": [],
@@ -2196,11 +2203,181 @@
     {
       "collapsed": true,
       "datasource": null,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 2},
+      "id": 23763575000,
+      "panels": [
+        {
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Average duration of MySQL commands by SQL type, preserving request-level timing; a command can contain multiple SQL statements. Older TiDB versions show no data; mixed-version clusters include only reporting instances (partial coverage).",
+          "fill": 0,
+          "gridPos": {"h": 7, "w": 24, "x": 0, "y": 3},
+          "id": 23763575003,
+          "legend": {"show": true, "hideEmpty": false, "hideZero": false},
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "pluginVersion": "7.5.17",
+          "points": false,
+          "renderer": "flot",
+          "stack": false,
+          "targets": [
+            {
+              "expr": "sum(rate(tidb_server_handle_command_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (sql_type) / sum(rate(tidb_server_handle_command_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (sql_type)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{sql_type}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Average Command Duration By Type",
+          "tooltip": {"shared": true, "sort": 0, "value_type": "individual"},
+          "type": "graph",
+          "xaxis": {"mode": "time", "show": true, "values": []},
+          "yaxes": [
+            {"format": "s", "label": null, "logBase": 1, "min": 0, "max": null, "show": true},
+            {"format": "short", "label": null, "logBase": 1, "min": null, "max": null, "show": false}
+          ]
+        },
+        {
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "P999 duration of MySQL commands by SQL type, preserving request-level timing; a command can contain multiple SQL statements. Older TiDB versions show no data; mixed-version clusters include only reporting instances (partial coverage).",
+          "fill": 0,
+          "gridPos": {"h": 7, "w": 12, "x": 0, "y": 10},
+          "id": 23763575005,
+          "legend": {"show": true, "hideEmpty": false, "hideZero": false},
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "pluginVersion": "7.5.17",
+          "points": false,
+          "renderer": "flot",
+          "stack": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.999, sum(rate(tidb_server_handle_command_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (le, sql_type))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{sql_type}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Command Duration P999 By Type",
+          "tooltip": {"shared": true, "sort": 0, "value_type": "individual"},
+          "type": "graph",
+          "xaxis": {"mode": "time", "show": true, "values": []},
+          "yaxes": [
+            {"format": "s", "label": null, "logBase": 1, "min": 0, "max": null, "show": true},
+            {"format": "short", "label": null, "logBase": 1, "min": null, "max": null, "show": false}
+          ]
+        },
+        {
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "P99 duration of MySQL commands by SQL type, preserving request-level timing; a command can contain multiple SQL statements. Older TiDB versions show no data; mixed-version clusters include only reporting instances (partial coverage).",
+          "fill": 0,
+          "gridPos": {"h": 7, "w": 12, "x": 12, "y": 10},
+          "id": 23763575006,
+          "legend": {"show": true, "hideEmpty": false, "hideZero": false},
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "pluginVersion": "7.5.17",
+          "points": false,
+          "renderer": "flot",
+          "stack": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_server_handle_command_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (le, sql_type))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{sql_type}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Command Duration P99 By Type",
+          "tooltip": {"shared": true, "sort": 0, "value_type": "individual"},
+          "type": "graph",
+          "xaxis": {"mode": "time", "show": true, "values": []},
+          "yaxes": [
+            {"format": "s", "label": null, "logBase": 1, "min": 0, "max": null, "show": true},
+            {"format": "short", "label": null, "logBase": 1, "min": null, "max": null, "show": false}
+          ]
+        },
+        {
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "P95 duration of MySQL commands by SQL type, preserving request-level timing; a command can contain multiple SQL statements. Older TiDB versions show no data; mixed-version clusters include only reporting instances (partial coverage).",
+          "fill": 0,
+          "gridPos": {"h": 7, "w": 12, "x": 0, "y": 17},
+          "id": 23763575007,
+          "legend": {"show": true, "hideEmpty": false, "hideZero": false},
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "pluginVersion": "7.5.17",
+          "points": false,
+          "renderer": "flot",
+          "stack": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_server_handle_command_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (le, sql_type))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{sql_type}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Command Duration P95 By Type",
+          "tooltip": {"shared": true, "sort": 0, "value_type": "individual"},
+          "type": "graph",
+          "xaxis": {"mode": "time", "show": true, "values": []},
+          "yaxes": [
+            {"format": "s", "label": null, "logBase": 1, "min": 0, "max": null, "show": true},
+            {"format": "short", "label": null, "logBase": 1, "min": null, "max": null, "show": false}
+          ]
+        },
+        {
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "P80 duration of MySQL commands by SQL type, preserving request-level timing; a command can contain multiple SQL statements. Older TiDB versions show no data; mixed-version clusters include only reporting instances (partial coverage).",
+          "fill": 0,
+          "gridPos": {"h": 7, "w": 12, "x": 12, "y": 17},
+          "id": 23763575008,
+          "legend": {"show": true, "hideEmpty": false, "hideZero": false},
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "pluginVersion": "7.5.17",
+          "points": false,
+          "renderer": "flot",
+          "stack": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.80, sum(rate(tidb_server_handle_command_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (le, sql_type))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{sql_type}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Command Duration P80 By Type",
+          "tooltip": {"shared": true, "sort": 0, "value_type": "individual"},
+          "type": "graph",
+          "xaxis": {"mode": "time", "show": true, "values": []},
+          "yaxes": [
+            {"format": "s", "label": null, "logBase": 1, "min": 0, "max": null, "show": true},
+            {"format": "short", "label": null, "logBase": 1, "min": null, "max": null, "show": false}
+          ]
+        }
+      ],
+      "title": "Command",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 2
+        "y": 3
       },
       "id": 140,
       "panels": [
@@ -2225,7 +2402,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 3
+            "y": 4
           },
           "hiddenSeries": false,
           "id": 184,
@@ -2259,7 +2436,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "count(up{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"} == 1)",
+              "expr": "count(max(up{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}) by (instance) == 1)",
               "format": "time_series",
               "hide": false,
               "interval": "",
@@ -2270,7 +2447,7 @@
             },
             {
               "exemplar": true,
-              "expr": "count(up{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"} == 0)",
+              "expr": "count(max(up{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}) by (instance) == 0)",
               "hide": false,
               "interval": "",
               "legendFormat": "Down",
@@ -2342,7 +2519,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 3
+            "y": 4
           },
           "hiddenSeries": false,
           "id": 23763572003,
@@ -2452,7 +2629,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 10
+            "y": 11
           },
           "hiddenSeries": false,
           "id": 168,
@@ -2573,7 +2750,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 10
+            "y": 11
           },
           "hiddenSeries": false,
           "id": 3,
@@ -2799,7 +2976,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 17
+            "y": 18
           },
           "id": 292,
           "options": {
@@ -2816,8 +2993,8 @@
           "targets": [
             {
               "editorMode": "code",
-              "expr": "rate(go_gc_cycles_total_gc_cycles_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}[1m])",
-              "legendFormat": "gc-rate - {{instance}}",
+              "expr": "increase(go_gc_cycles_total_gc_cycles_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}[1m])",
+              "legendFormat": "gc-increase(1m) - {{instance}}",
               "range": true,
               "refId": "A"
             },
@@ -2830,7 +3007,7 @@
               "refId": "B"
             }
           ],
-          "title": "Runtime GC Rate And GOMEMLIMIT",
+          "title": "Runtime GC Increase(1m) And GOMEMLIMIT",
           "type": "timeseries"
         },
         {
@@ -2850,7 +3027,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 17
+            "y": 18
           },
           "hiddenSeries": false,
           "id": 188,
@@ -2948,7 +3125,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 31
+            "y": 32
           },
           "hiddenSeries": false,
           "id": 61,
@@ -3049,7 +3226,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 17
+            "y": 18
           },
           "hiddenSeries": false,
           "id": 8,
@@ -3165,7 +3342,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 24
+            "y": 25
           },
           "hiddenSeries": false,
           "id": 49,
@@ -3266,7 +3443,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 24
+            "y": 25
           },
           "hiddenSeries": false,
           "id": 205,
@@ -3375,7 +3552,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 31
+            "y": 32
           },
           "hiddenSeries": false,
           "id": 165,
@@ -3489,7 +3666,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 38
+            "y": 39
           },
           "hiddenSeries": false,
           "id": 54,
@@ -3596,7 +3773,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 38
+            "y": 39
           },
           "hiddenSeries": false,
           "id": 82,
@@ -3694,7 +3871,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 45
+            "y": 46
           },
           "hiddenSeries": false,
           "id": 111,
@@ -3790,7 +3967,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 45
+            "y": 46
           },
           "hiddenSeries": false,
           "id": 166,
@@ -3888,7 +4065,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 52
+            "y": 53
           },
           "hiddenSeries": false,
           "id": 211,
@@ -3996,7 +4173,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 52
+            "y": 53
           },
           "hiddenSeries": false,
           "id": 191,
@@ -4095,7 +4272,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 73
+            "y": 74
           },
           "hiddenSeries": false,
           "id": 171,
@@ -4192,7 +4369,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 59
+            "y": 60
           },
           "hiddenSeries": false,
           "id": 167,
@@ -4293,7 +4470,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 66
+            "y": 67
           },
           "hiddenSeries": false,
           "id": 23763572016,
@@ -4403,7 +4580,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 73
+            "y": 74
           },
           "hiddenSeries": false,
           "id": 23763572020,
@@ -4490,6 +4667,430 @@
             "align": false,
             "alignLevel": null
           }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Connections per TLS Cipher and instance",
+          "editable": true,
+          "error": false,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
+          "grid": {},
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 74
+          },
+          "hiddenSeries": false,
+          "id": 23763574014,
+          "legend": {
+            "alignAsTable": true,
+            "avg": false,
+            "current": true,
+            "hideEmpty": true,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "sideWidth": null,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "rate(tidb_server_tls_cipher{keyspace_name=~\"$keyspace_name\", k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}[1m])",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "{{cipher}} - {{instance}}",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Connections Per TLS Cipher",
+          "tooltip": {
+            "msResolution": true,
+            "shared": true,
+            "sort": 0,
+            "value_type": "cumulative"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:321",
+              "format": "short",
+              "label": "",
+              "logBase": 1,
+              "max": null,
+              "min": "0",
+              "show": true
+            },
+            {
+              "$$hashKey": "object:322",
+              "format": "short",
+              "label": "",
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": false
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Connections per TLS version and instance",
+          "editable": true,
+          "error": false,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
+          "grid": {},
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 81
+          },
+          "hiddenSeries": false,
+          "id": 23763574015,
+          "legend": {
+            "alignAsTable": true,
+            "avg": false,
+            "current": true,
+            "hideEmpty": true,
+            "hideZero": false,
+            "max": true,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "sideWidth": null,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "rate(tidb_server_tls_version{keyspace_name=~\"$keyspace_name\", k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}[1m])",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "{{version}} - {{instance}}",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Connections Per TLS Version",
+          "tooltip": {
+            "msResolution": true,
+            "shared": true,
+            "sort": 0,
+            "value_type": "cumulative"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:321",
+              "format": "short",
+              "label": "",
+              "logBase": 1,
+              "max": null,
+              "min": "0",
+              "show": true
+            },
+            {
+              "$$hashKey": "object:322",
+              "format": "short",
+              "label": "",
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": false
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "The number of statement summary records currently tracked by statement summary.",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 88
+          },
+          "hiddenSeries": false,
+          "id": 23763574017,
+          "legend": {
+            "alignAsTable": true,
+            "avg": false,
+            "current": true,
+            "max": true,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "editorMode": "code",
+              "exemplar": true,
+              "expr": "tidb_stmt_summary_window_record_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "{{instance}} {{type}}",
+              "range": true,
+              "refId": "A",
+              "step": 30
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Statement Summary Window Record Count",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": "0",
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": false
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "The number of LRU evictions in the current statement summary window. Resets to 0 on window rotation for V2 and on interval advance for V1.",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 88
+          },
+          "hiddenSeries": false,
+          "id": 23763574018,
+          "legend": {
+            "alignAsTable": true,
+            "avg": false,
+            "current": true,
+            "max": true,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "editorMode": "code",
+              "exemplar": true,
+              "expr": "tidb_stmt_summary_window_evicted_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "{{instance}} {{type}}",
+              "range": true,
+              "refId": "A",
+              "step": 30
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Statement Summary Window Evicted Count",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": "0",
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": false
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
         }
       ],
       "repeat": null,
@@ -4503,7 +5104,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 3
+        "y": 4
       },
       "id": 141,
       "panels": [
@@ -4530,7 +5131,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 4
+            "y": 5
           },
           "hiddenSeries": false,
           "id": 69,
@@ -4641,7 +5242,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 4
+            "y": 5
           },
           "hiddenSeries": false,
           "id": 72,
@@ -4752,7 +5353,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 4
+            "y": 5
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -4821,7 +5422,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 11
+            "y": 12
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -4890,7 +5491,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 11
+            "y": 12
           },
           "hiddenSeries": false,
           "id": 36,
@@ -4990,7 +5591,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 11
+            "y": 12
           },
           "hiddenSeries": false,
           "id": 196,
@@ -5107,7 +5708,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 18
+            "y": 19
           },
           "hiddenSeries": false,
           "id": 4,
@@ -5209,7 +5810,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 18
+            "y": 19
           },
           "hiddenSeries": false,
           "id": 193,
@@ -5329,7 +5930,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 18
+            "y": 19
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -5398,7 +5999,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 25
+            "y": 26
           },
           "hiddenSeries": false,
           "id": 33,
@@ -5518,7 +6119,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 25
+            "y": 26
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -5587,7 +6188,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 25
+            "y": 26
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -5657,7 +6258,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 32
+            "y": 33
           },
           "hiddenSeries": false,
           "id": 194,
@@ -5778,7 +6379,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 32
+            "y": 33
           },
           "hiddenSeries": false,
           "id": 34,
@@ -5898,7 +6499,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 32
+            "y": 33
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -5967,7 +6568,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 39
+            "y": 40
           },
           "hiddenSeries": false,
           "id": 197,
@@ -6088,7 +6689,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 39
+            "y": 40
           },
           "hiddenSeries": false,
           "id": 195,
@@ -6192,7 +6793,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 39
+            "y": 40
           },
           "hiddenSeries": false,
           "id": 83,
@@ -6300,7 +6901,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 46
+            "y": 47
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -6369,7 +6970,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 46
+            "y": 47
           },
           "id": 212,
           "legend": {
@@ -6483,7 +7084,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 46
+            "y": 47
           },
           "id": 224,
           "legend": {
@@ -6604,7 +7205,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 53
+            "y": 54
           },
           "id": 226,
           "legend": {
@@ -6701,7 +7302,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 53
+            "y": 54
           },
           "id": 225,
           "legend": {
@@ -6800,7 +7401,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 53
+            "y": 54
           },
           "hiddenSeries": false,
           "id": 231,
@@ -6899,7 +7500,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 60
+            "y": 61
           },
           "hiddenSeries": false,
           "id": 252,
@@ -7015,7 +7616,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 60
+            "y": 61
           },
           "hiddenSeries": false,
           "id": 253,
@@ -7128,7 +7729,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 60
+            "y": 61
           },
           "hiddenSeries": false,
           "id": 255,
@@ -7242,7 +7843,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 67
+            "y": 68
           },
           "hiddenSeries": false,
           "id": 254,
@@ -7341,7 +7942,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 67
+            "y": 68
           },
           "hiddenSeries": false,
           "id": 256,
@@ -7440,7 +8041,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 67
+            "y": 68
           },
           "hiddenSeries": false,
           "id": 261,
@@ -7540,7 +8141,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 74
+            "y": 75
           },
           "hiddenSeries": false,
           "id": 295,
@@ -7639,7 +8240,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 74
+            "y": 75
           },
           "hiddenSeries": false,
           "id": 296,
@@ -7743,7 +8344,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 74
+            "y": 75
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -7814,7 +8415,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 82
+            "y": 83
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -7882,7 +8483,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 82
+            "y": 83
           },
           "hiddenSeries": false,
           "id": 335,
@@ -8026,7 +8627,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 4
+        "y": 5
       },
       "id": 142,
       "panels": [
@@ -8051,7 +8652,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 5
+            "y": 6
           },
           "hiddenSeries": false,
           "id": 156,
@@ -8162,7 +8763,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 5
+            "y": 6
           },
           "hiddenSeries": false,
           "id": 154,
@@ -8273,7 +8874,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 13
+            "y": 14
           },
           "hiddenSeries": false,
           "id": 169,
@@ -8384,7 +8985,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 13
+            "y": 14
           },
           "hiddenSeries": false,
           "id": 76,
@@ -8492,7 +9093,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 21
+            "y": 22
           },
           "hiddenSeries": false,
           "id": 91,
@@ -8600,7 +9201,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 21
+            "y": 22
           },
           "hiddenSeries": false,
           "id": 258,
@@ -8708,7 +9309,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 29
+            "y": 30
           },
           "hiddenSeries": false,
           "id": 249,
@@ -8816,7 +9417,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 29
+            "y": 30
           },
           "hiddenSeries": false,
           "id": 269,
@@ -8921,7 +9522,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 37
+            "y": 38
           },
           "hiddenSeries": false,
           "id": 271,
@@ -9031,7 +9632,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 37
+            "y": 38
           },
           "hiddenSeries": false,
           "id": 23763572017,
@@ -9142,7 +9743,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 45
+            "y": 46
           },
           "hiddenSeries": false,
           "id": 311,
@@ -9242,7 +9843,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 45
+            "y": 46
           },
           "hiddenSeries": false,
           "id": 312,
@@ -9367,7 +9968,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 47
+            "y": 48
           },
           "hiddenSeries": false,
           "id": 23763574009,
@@ -9503,7 +10104,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 47
+            "y": 48
           },
           "hiddenSeries": false,
           "id": 23763574010,
@@ -9634,7 +10235,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 54
+            "y": 55
           },
           "hiddenSeries": false,
           "id": 23763574013,
@@ -9765,7 +10366,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 54
+            "y": 55
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -9826,7 +10427,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 5
+        "y": 6
       },
       "id": 143,
       "panels": [
@@ -9845,7 +10446,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 122
+            "y": 123
           },
           "id": 12,
           "legend": {
@@ -9966,7 +10567,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 122
+            "y": 123
           },
           "id": 14,
           "legend": {
@@ -10059,7 +10660,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 129
+            "y": 130
           },
           "id": 60,
           "legend": {
@@ -10149,7 +10750,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 129
+            "y": 130
           },
           "id": 57,
           "legend": {
@@ -10249,7 +10850,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 129
+            "y": 130
           },
           "id": 58,
           "legend": {
@@ -10349,7 +10950,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 136
+            "y": 137
           },
           "id": 59,
           "legend": {
@@ -10452,7 +11053,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 163
+            "y": 164
           },
           "id": 175,
           "legend": {
@@ -10547,7 +11148,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 136
+            "y": 137
           },
           "id": 41,
           "legend": {
@@ -10639,7 +11240,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 6
+        "y": 7
       },
       "id": 144,
       "panels": [
@@ -10658,7 +11259,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 7
+            "y": 8
           },
           "id": 6,
           "legend": {
@@ -10768,7 +11369,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 7
+            "y": 8
           },
           "id": 11,
           "legend": {
@@ -10869,7 +11470,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 14
+            "y": 15
           },
           "id": 53,
           "legend": {
@@ -10962,7 +11563,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 14
+            "y": 15
           },
           "id": 32,
           "legend": {
@@ -11059,7 +11660,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 21
+            "y": 22
           },
           "id": 223,
           "legend": {
@@ -11151,7 +11752,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 7
+        "y": 8
       },
       "id": 145,
       "panels": [
@@ -11175,7 +11776,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 8
+            "y": 9
           },
           "hiddenSeries": false,
           "id": 172,
@@ -11278,7 +11879,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 8
+            "y": 9
           },
           "hiddenSeries": false,
           "id": 48,
@@ -11383,7 +11984,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 8
+            "y": 9
           },
           "hiddenSeries": false,
           "id": 30,
@@ -11488,7 +12089,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 15
+            "y": 16
           },
           "hiddenSeries": false,
           "id": 219,
@@ -11591,7 +12192,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 15
+            "y": 16
           },
           "hiddenSeries": false,
           "id": 220,
@@ -11691,7 +12292,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 15
+            "y": 16
           },
           "hiddenSeries": false,
           "id": 164,
@@ -11788,7 +12389,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 22
+            "y": 23
           },
           "hiddenSeries": false,
           "id": 250,
@@ -11888,7 +12489,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 22
+            "y": 23
           },
           "hiddenSeries": false,
           "id": 9999,
@@ -11996,7 +12597,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 22
+            "y": 23
           },
           "hiddenSeries": false,
           "id": 262,
@@ -12105,7 +12706,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 22
+            "y": 23
           },
           "hiddenSeries": false,
           "id": 263,
@@ -12216,7 +12817,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 29
+            "y": 30
           },
           "hiddenSeries": false,
           "id": 306,
@@ -12317,7 +12918,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 29
+            "y": 30
           },
           "hiddenSeries": false,
           "id": 307,
@@ -12421,7 +13022,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 29
+            "y": 30
           },
           "hiddenSeries": false,
           "id": 308,
@@ -12521,7 +13122,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 36
+            "y": 37
           },
           "hiddenSeries": false,
           "id": 337,
@@ -12612,7 +13213,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 36
+            "y": 37
           },
           "hiddenSeries": false,
           "id": 338,
@@ -12689,6 +13290,112 @@
           "yaxis": {
             "align": false
           }
+        },
+        {
+          "aliasColors": {},
+          "bars": true,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Abnormal results of liveness checks in TiKV client. Non empty value means either unable to connect to store or store reports unservable.",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 8,
+            "y": 44
+          },
+          "hiddenSeries": false,
+          "id": 23763574016,
+          "legend": {
+            "alignAsTable": true,
+            "avg": true,
+            "current": true,
+            "max": true,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": false,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": false
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": true,
+          "steppedLine": false,
+          "targets": [
+            {
+              "editorMode": "code",
+              "exemplar": true,
+              "expr": "count(max_over_time(tidb_tikvclient_store_liveness_state{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m]) == 2) by (instance, store)",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "{{instance}}-store-{{store}}-unknown",
+              "range": true,
+              "refId": "A",
+              "step": 30
+            },
+            {
+              "exemplar": true,
+              "expr": "count(max_over_time(tidb_tikvclient_store_liveness_state{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m]) == 1) by (instance, store)",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "{{instance}}-store-{{store}}-unreachable",
+              "refId": "B"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Store Liveness Check Faults",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "none",
+              "logBase": 1,
+              "min": "0",
+              "show": true
+            },
+            {
+              "format": "Bps",
+              "logBase": 1,
+              "show": false
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
         }
       ],
       "repeat": null,
@@ -12702,7 +13409,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 8
+        "y": 9
       },
       "id": 147,
       "panels": [
@@ -12726,7 +13433,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 9
+            "y": 10
           },
           "hiddenSeries": false,
           "id": 20,
@@ -12829,7 +13536,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 9
+            "y": 10
           },
           "hiddenSeries": false,
           "id": 35,
@@ -12952,7 +13659,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 9
+            "y": 10
           },
           "hiddenSeries": false,
           "id": 43,
@@ -13055,7 +13762,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 16
+            "y": 17
           },
           "hiddenSeries": false,
           "id": 79,
@@ -13162,7 +13869,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 16
+            "y": 17
           },
           "hiddenSeries": false,
           "id": 77,
@@ -13284,7 +13991,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 16
+            "y": 17
           },
           "hiddenSeries": false,
           "id": 78,
@@ -13406,7 +14113,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 23
+            "y": 24
           },
           "hiddenSeries": false,
           "id": 23763572011,
@@ -13507,7 +14214,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 23
+            "y": 24
           },
           "hiddenSeries": false,
           "id": 159,
@@ -13620,7 +14327,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 23
+            "y": 24
           },
           "hiddenSeries": false,
           "id": 222,
@@ -13723,7 +14430,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 23
+            "y": 24
           },
           "hiddenSeries": false,
           "id": 246,
@@ -13879,7 +14586,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 30
+            "y": 31
           },
           "hiddenSeries": false,
           "id": 247,
@@ -13995,7 +14702,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 30
+            "y": 31
           },
           "hiddenSeries": false,
           "id": 248,
@@ -14111,7 +14818,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 37
+            "y": 38
           },
           "hiddenSeries": false,
           "id": 339,
@@ -14212,7 +14919,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 37
+            "y": 38
           },
           "hiddenSeries": false,
           "id": 23763572019,
@@ -14318,7 +15025,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 30
+            "y": 31
           },
           "hiddenSeries": false,
           "id": 315,
@@ -14444,7 +15151,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 9
+        "y": 10
       },
       "id": 148,
       "panels": [
@@ -14468,7 +15175,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 10
+            "y": 11
           },
           "hiddenSeries": false,
           "id": 27,
@@ -14572,7 +15279,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 10
+            "y": 11
           },
           "hiddenSeries": false,
           "id": 251,
@@ -14679,7 +15386,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 17
+            "y": 18
           },
           "hiddenSeries": false,
           "id": 29,
@@ -14785,7 +15492,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 17
+            "y": 18
           },
           "hiddenSeries": false,
           "id": 28,
@@ -14896,7 +15603,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 24
+            "y": 25
           },
           "hiddenSeries": false,
           "id": 157,
@@ -15009,7 +15716,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 24
+            "y": 25
           },
           "hiddenSeries": false,
           "id": 314,
@@ -15117,7 +15824,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 31
+            "y": 32
           },
           "hiddenSeries": false,
           "id": 23763572002,
@@ -15222,7 +15929,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 31
+            "y": 32
           },
           "hiddenSeries": false,
           "id": 23763572012,
@@ -15340,7 +16047,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 38
+            "y": 39
           },
           "hiddenSeries": false,
           "id": 23763572014,
@@ -15450,7 +16157,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 38
+            "y": 39
           },
           "hiddenSeries": false,
           "id": 23763572015,
@@ -15584,7 +16291,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 46
+            "y": 47
           },
           "hiddenSeries": false,
           "id": 23763572018,
@@ -15676,7 +16383,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 10
+        "y": 11
       },
       "id": 149,
       "panels": [
@@ -15697,7 +16404,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 11
+            "y": 12
           },
           "hiddenSeries": false,
           "id": 190,
@@ -15798,7 +16505,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 11
+            "y": 12
           },
           "hiddenSeries": false,
           "id": 9,
@@ -15911,7 +16618,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 18
+            "y": 19
           },
           "hiddenSeries": false,
           "id": 56,
@@ -16016,7 +16723,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 18
+            "y": 19
           },
           "hiddenSeries": false,
           "id": 65,
@@ -16134,7 +16841,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 25
+            "y": 26
           },
           "hiddenSeries": false,
           "id": 264,
@@ -16235,7 +16942,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 25
+            "y": 26
           },
           "hiddenSeries": false,
           "id": 62,
@@ -16329,7 +17036,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 32
+            "y": 33
           },
           "hiddenSeries": false,
           "id": 265,
@@ -16422,7 +17129,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 32
+            "y": 33
           },
           "hiddenSeries": false,
           "id": 64,
@@ -16513,7 +17220,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 39
+            "y": 40
           },
           "hiddenSeries": false,
           "id": 55,
@@ -16604,7 +17311,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 39
+            "y": 40
           },
           "hiddenSeries": false,
           "id": 192,
@@ -16703,7 +17410,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 46
+            "y": 47
           },
           "hiddenSeries": false,
           "id": 63,
@@ -16799,7 +17506,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 46
+            "y": 47
           },
           "hiddenSeries": false,
           "id": 23763572001,
@@ -16909,7 +17616,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 53
+            "y": 54
           },
           "hiddenSeries": false,
           "id": 23763573002,
@@ -17003,7 +17710,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 46
+            "y": 47
           },
           "hiddenSeries": false,
           "id": 23763573003,
@@ -17093,7 +17800,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 11
+        "y": 12
       },
       "id": 153,
       "panels": [
@@ -17114,7 +17821,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 20
+            "y": 21
           },
           "hiddenSeries": false,
           "id": 322,
@@ -17217,7 +17924,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 20
+            "y": 21
           },
           "hiddenSeries": false,
           "id": 326,
@@ -17320,7 +18027,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 30
+            "y": 31
           },
           "hiddenSeries": false,
           "id": 329,
@@ -17415,7 +18122,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 28
+            "y": 29
           },
           "hiddenSeries": false,
           "id": 330,
@@ -17608,7 +18315,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 36
+            "y": 37
           },
           "id": 331,
           "options": {
@@ -17685,7 +18392,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 20
+            "y": 21
           },
           "id": 332,
           "options": {
@@ -17776,7 +18483,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 36
+            "y": 37
           },
           "id": 328,
           "options": {
@@ -17824,7 +18531,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 12
+        "y": 13
       },
       "id": 150,
       "panels": [
@@ -17845,7 +18552,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 13
+            "y": 14
           },
           "hiddenSeries": false,
           "id": 46,
@@ -17967,7 +18674,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 13
+            "y": 14
           },
           "hiddenSeries": false,
           "id": 47,
@@ -18072,7 +18779,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 13
+            "y": 14
           },
           "hiddenSeries": false,
           "id": 70,
@@ -18183,7 +18890,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 20
+            "y": 21
           },
           "hiddenSeries": false,
           "id": 71,
@@ -18280,7 +18987,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 20
+            "y": 21
           },
           "hiddenSeries": false,
           "id": 93,
@@ -18377,7 +19084,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 20
+            "y": 21
           },
           "hiddenSeries": false,
           "id": 233,
@@ -18476,7 +19183,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 27
+            "y": 28
           },
           "hiddenSeries": false,
           "id": 229,
@@ -18596,7 +19303,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 27
+            "y": 28
           },
           "hiddenSeries": false,
           "id": 230,
@@ -18711,7 +19418,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 34
+            "y": 35
           },
           "hiddenSeries": false,
           "id": 234,
@@ -18823,7 +19530,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 34
+            "y": 35
           },
           "hiddenSeries": false,
           "id": 235,
@@ -18926,7 +19633,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 41
+            "y": 42
           },
           "hiddenSeries": false,
           "id": 236,
@@ -19045,7 +19752,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 41
+            "y": 42
           },
           "hiddenSeries": false,
           "id": 237,
@@ -19155,7 +19862,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 48
+            "y": 49
           },
           "hiddenSeries": false,
           "id": 23763572006,
@@ -19254,7 +19961,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 48
+            "y": 49
           },
           "hiddenSeries": false,
           "id": 23763572005,
@@ -19360,7 +20067,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 56
+            "y": 57
           },
           "hiddenSeries": false,
           "id": 23763572008,
@@ -19465,7 +20172,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 56
+            "y": 57
           },
           "hiddenSeries": false,
           "id": 23763572009,
@@ -19570,7 +20277,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 56
+            "y": 57
           },
           "hiddenSeries": false,
           "id": 23763572010,
@@ -19663,7 +20370,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 13
+        "y": 14
       },
       "id": 161,
       "panels": [
@@ -19682,7 +20389,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 150
+            "y": 151
           },
           "id": 162,
           "legend": {
@@ -19772,7 +20479,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 150
+            "y": 151
           },
           "id": 163,
           "legend": {
@@ -19858,7 +20565,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 14
+        "y": 15
       },
       "id": 151,
       "panels": [
@@ -19874,7 +20581,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 14
+            "y": 15
           },
           "id": 50,
           "legend": {
@@ -19962,7 +20669,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 14
+            "y": 15
           },
           "id": 51,
           "legend": {
@@ -20057,7 +20764,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 42
+            "y": 43
           },
           "id": 52,
           "legend": {
@@ -20150,7 +20857,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 22
+            "y": 23
           },
           "hiddenSeries": false,
           "id": 23763571994,
@@ -20248,7 +20955,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 15
+        "y": 16
       },
       "id": 152,
       "panels": [
@@ -20269,7 +20976,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 16
+            "y": 17
           },
           "hiddenSeries": false,
           "id": 85,
@@ -20370,7 +21077,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 16
+            "y": 17
           },
           "hiddenSeries": false,
           "id": 86,
@@ -20469,7 +21176,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 16
+            "y": 17
           },
           "hiddenSeries": false,
           "id": 87,
@@ -20565,7 +21272,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 23
+            "y": 24
           },
           "hiddenSeries": false,
           "id": 88,
@@ -20661,7 +21368,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 23
+            "y": 24
           },
           "hiddenSeries": false,
           "id": 158,
@@ -20759,7 +21466,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 23
+            "y": 24
           },
           "hiddenSeries": false,
           "id": 90,
@@ -20855,7 +21562,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 30
+            "y": 31
           },
           "hiddenSeries": false,
           "id": 89,
@@ -20954,7 +21661,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 30
+            "y": 31
           },
           "hiddenSeries": false,
           "id": 181,
@@ -21063,7 +21770,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 30
+            "y": 31
           },
           "hiddenSeries": false,
           "id": 182,
@@ -21170,7 +21877,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 37
+            "y": 38
           },
           "heatmap": {},
           "hideZeroBuckets": false,
@@ -21243,7 +21950,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 37
+            "y": 38
           },
           "heatmap": {},
           "hideZeroBuckets": false,
@@ -21304,7 +22011,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 31
+        "y": 32
       },
       "id": 178,
       "panels": [
@@ -21320,7 +22027,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 16
+            "y": 17
           },
           "id": 203,
           "legend": {
@@ -21409,7 +22116,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 16
+            "y": 17
           },
           "id": 180,
           "legend": {
@@ -21503,7 +22210,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 16
+            "y": 17
           },
           "id": 204,
           "legend": {
@@ -21598,7 +22305,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 23
+            "y": 24
           },
           "hiddenSeries": false,
           "id": 228,
@@ -21713,7 +22420,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 32
+        "y": 33
       },
       "id": 232,
       "panels": [
@@ -21737,7 +22444,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 17
+            "y": 18
           },
           "hiddenSeries": false,
           "id": 305,
@@ -21841,7 +22548,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 17
+            "y": 18
           },
           "hiddenSeries": false,
           "id": 239,
@@ -21951,7 +22658,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 24
+            "y": 25
           },
           "hiddenSeries": false,
           "id": 242,
@@ -22052,7 +22759,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 24
+            "y": 25
           },
           "hiddenSeries": false,
           "id": 243,
@@ -22172,7 +22879,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 31
+            "y": 32
           },
           "hiddenSeries": false,
           "id": 241,
@@ -22278,7 +22985,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 31
+            "y": 32
           },
           "hiddenSeries": false,
           "id": 245,
@@ -22375,7 +23082,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 33
+        "y": 34
       },
       "id": 257,
       "panels": [
@@ -22399,7 +23106,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 20
+            "y": 21
           },
           "hiddenSeries": false,
           "id": 297,
@@ -22517,7 +23224,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 20
+            "y": 21
           },
           "hiddenSeries": false,
           "id": 279,
@@ -22630,7 +23337,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 36
+            "y": 37
           },
           "hiddenSeries": false,
           "id": 302,
@@ -22730,7 +23437,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 36
+            "y": 37
           },
           "hiddenSeries": false,
           "id": 287,
@@ -22828,7 +23535,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 44
+            "y": 45
           },
           "hiddenSeries": false,
           "id": 298,
@@ -22928,7 +23635,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 44
+            "y": 45
           },
           "hiddenSeries": false,
           "id": 303,
@@ -23027,7 +23734,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 52
+            "y": 53
           },
           "hiddenSeries": false,
           "id": 284,
@@ -23148,7 +23855,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 52
+            "y": 53
           },
           "hiddenSeries": false,
           "id": 285,
@@ -23269,7 +23976,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 60
+            "y": 61
           },
           "hiddenSeries": false,
           "id": 276,
@@ -23399,7 +24106,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 60
+            "y": 61
           },
           "hiddenSeries": false,
           "id": 282,
@@ -23529,7 +24236,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 68
+            "y": 69
           },
           "hiddenSeries": false,
           "id": 281,
@@ -23643,7 +24350,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 68
+            "y": 69
           },
           "hiddenSeries": false,
           "id": 294,
@@ -23754,7 +24461,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 74
+            "y": 75
           },
           "hiddenSeries": false,
           "id": 300,
@@ -23925,7 +24632,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 74
+            "y": 75
           },
           "id": 304,
           "options": {
@@ -24015,7 +24722,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 111
+            "y": 112
           },
           "hiddenSeries": false,
           "id": 313,
@@ -24123,7 +24830,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 34
+        "y": 35
       },
       "id": 291,
       "panels": [
@@ -24143,7 +24850,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 20
+            "y": 21
           },
           "hiddenSeries": false,
           "id": 289,
@@ -24239,7 +24946,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 20
+            "y": 21
           },
           "hiddenSeries": false,
           "id": 293,
@@ -24329,7 +25036,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 35
+        "y": 36
       },
       "id": 323,
       "panels": [
@@ -24350,7 +25057,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 105
+            "y": 106
           },
           "hiddenSeries": false,
           "id": 310,
@@ -24452,7 +25159,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 105
+            "y": 106
           },
           "hiddenSeries": false,
           "id": 324,
@@ -24554,7 +25261,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 113
+            "y": 114
           },
           "hiddenSeries": false,
           "id": 325,
@@ -24675,7 +25382,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 36
+        "y": 37
       },
       "id": 327,
       "panels": [
@@ -24696,7 +25403,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 20
+            "y": 21
           },
           "hiddenSeries": false,
           "id": 316,
@@ -24808,7 +25515,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 20
+            "y": 21
           },
           "hiddenSeries": false,
           "id": 317,
@@ -24928,7 +25635,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 28
+            "y": 29
           },
           "hiddenSeries": false,
           "id": 318,
@@ -25026,7 +25733,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 28
+            "y": 29
           },
           "hiddenSeries": false,
           "id": 319,
@@ -25206,7 +25913,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 36
+            "y": 37
           },
           "id": 320,
           "options": {
@@ -25256,7 +25963,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 37
+        "y": 38
       },
       "id": 23763571995,
       "panels": [
@@ -25273,7 +25980,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 1
+            "y": 2
           },
           "hiddenSeries": false,
           "id": 23763571996,
@@ -25381,7 +26088,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 1
+            "y": 2
           },
           "hiddenSeries": false,
           "id": 23763571997,
@@ -25493,7 +26200,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 7
+            "y": 8
           },
           "hiddenSeries": false,
           "id": 23763571998,
@@ -25601,7 +26308,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 7
+            "y": 8
           },
           "hiddenSeries": false,
           "id": 23763571999,
@@ -25719,7 +26426,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 13
+            "y": 14
           },
           "hiddenSeries": false,
           "id": 23763572000,
@@ -25851,7 +26558,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 105
+            "y": 106
           },
           "id": 336,
           "options": {
@@ -25892,7 +26599,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 38
+        "y": 39
       },
       "id": 23763573000,
       "panels": [
@@ -25913,7 +26620,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 39
+            "y": 40
           },
           "hiddenSeries": false,
           "id": 23763573001,
@@ -26003,7 +26710,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 39
+        "y": 40
       },
       "id": 23763574000,
       "panels": [
@@ -26024,7 +26731,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 40
+            "y": 41
           },
           "hiddenSeries": false,
           "id": 23763574001,
@@ -26130,7 +26837,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 40
+            "y": 41
           },
           "hiddenSeries": false,
           "id": 23763574008,
@@ -26234,7 +26941,7 @@
             "h": 7,
             "w": 24,
             "x": 0,
-            "y": 47
+            "y": 48
           },
           "hiddenSeries": false,
           "id": 23763574003,
@@ -26344,7 +27051,7 @@
             "h": 7,
             "w": 24,
             "x": 0,
-            "y": 54
+            "y": 55
           },
           "hiddenSeries": false,
           "id": 23763574004,
@@ -26463,7 +27170,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 61
+            "y": 62
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -26534,7 +27241,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 61
+            "y": 62
           },
           "hiddenSeries": false,
           "id": 23763574007,
@@ -26640,7 +27347,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 68
+            "y": 69
           },
           "hiddenSeries": false,
           "id": 23763574006,
@@ -26744,7 +27451,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 68
+            "y": 69
           },
           "hiddenSeries": false,
           "id": 23763574005,
@@ -26834,6 +27541,469 @@
         }
       ],
       "title": "Memory Arbitrator",
+      "type": "row"
+    },
+    {
+      "collapse": true,
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      },
+      "id": 23763573020,
+      "panels": [
+        {
+          "aliasColors": {},
+          "dashLength": 10,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Current MV service and task executor counts by component and status type.",
+          "fill": 1,
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 42
+          },
+          "id": 23763573021,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": false,
+            "hideEmpty": true,
+            "hideZero": true,
+            "max": false,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": false
+          },
+          "pointradius": 5,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "targets": [
+            {
+              "expr": "sum(tidb_mv_service_task_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}) by (component, type)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{component}}/{{type}}",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "MV Service Task Status",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 2,
+              "show": true,
+              "$$hashKey": "object:83",
+              "min": "0",
+              "decimals": 0
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false,
+              "$$hashKey": "object:84"
+            }
+          ],
+          "yaxis": {
+            "align": false
+          },
+          "stack": false,
+          "bars": false,
+          "dashes": false,
+          "fillGradient": 0,
+          "hiddenSeries": false,
+          "percentage": false,
+          "points": false,
+          "steppedLine": false,
+          "timeFrom": null,
+          "timeShift": null
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "MV service scheduler and task executor events per second by component and type.",
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 42
+          },
+          "hiddenSeries": false,
+          "id": 23763573022,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": false,
+            "hideEmpty": true,
+            "hideZero": false,
+            "max": false,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": false
+          },
+          "percentage": false,
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "sum(rate(tidb_mv_service_run_event_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (component, type)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{component}}/{{type}}",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "timeFrom": null,
+          "timeShift": null,
+          "title": "MV Service Run Events OPS",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 2,
+              "show": true,
+              "$$hashKey": "object:194"
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false,
+              "$$hashKey": "object:195"
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "MV service operation duration for successful and failed operations by type.",
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 49
+          },
+          "hiddenSeries": false,
+          "id": 23763573023,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": false,
+            "hideEmpty": true,
+            "max": false,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": false
+          },
+          "percentage": false,
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "histogram_quantile(0.999, sum(rate(tidb_mv_service_operation_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", result=\"success\"}[1m])) by (le, type))",
+              "format": "time_series",
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "{{type}}-success-p999",
+              "refId": "A"
+            },
+            {
+              "exemplar": true,
+              "expr": "histogram_quantile(0.999, sum(rate(tidb_mv_service_operation_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", result=\"failed\"}[1m])) by (le, type))",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "{{type}}-failed-p999",
+              "refId": "B"
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(rate(tidb_mv_service_operation_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", result=\"success\"}[1m])) by (type) / sum(rate(tidb_mv_service_operation_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", result=\"success\"}[1m])) by (type)",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "{{type}}-success-avg",
+              "refId": "C"
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(rate(tidb_mv_service_operation_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", result=\"failed\"}[1m])) by (type) / sum(rate(tidb_mv_service_operation_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", result=\"failed\"}[1m])) by (type)",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "{{type}}-failed-avg",
+              "refId": "D"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "timeFrom": null,
+          "timeShift": null,
+          "title": "MV Operation Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 2,
+              "show": true,
+              "$$hashKey": "object:621"
+            },
+            {
+              "format": "s",
+              "logBase": 1,
+              "show": false,
+              "$$hashKey": "object:622"
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "MV refresh duration, including successful and failed refresh execution duration and successful internal refresh schedule duration.",
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 49
+          },
+          "hiddenSeries": false,
+          "id": 23763573024,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": false,
+            "hideEmpty": true,
+            "max": false,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": false
+          },
+          "percentage": false,
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "histogram_quantile(0.999, sum(rate(tidb_mv_service_operation_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", type=\"mv_refresh\", result=\"success\"}[1m])) by (le))",
+              "format": "time_series",
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "refresh-success-duration-p999",
+              "refId": "A"
+            },
+            {
+              "exemplar": true,
+              "expr": "histogram_quantile(0.999, sum(rate(tidb_mv_service_operation_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", type=\"mv_refresh\", result=\"failed\"}[1m])) by (le))",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "refresh-failed-duration-p999",
+              "refId": "B"
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(rate(tidb_mv_service_operation_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", type=\"mv_refresh\", result=\"success\"}[1m])) / sum(rate(tidb_mv_service_operation_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", type=\"mv_refresh\", result=\"success\"}[1m]))",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "refresh-success-duration-avg",
+              "refId": "C"
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(rate(tidb_mv_service_operation_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", type=\"mv_refresh\", result=\"failed\"}[1m])) / sum(rate(tidb_mv_service_operation_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", type=\"mv_refresh\", result=\"failed\"}[1m]))",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "refresh-failed-duration-avg",
+              "refId": "D"
+            },
+            {
+              "exemplar": true,
+              "expr": "histogram_quantile(0.999, sum(rate(tidb_mv_service_refresh_schedule_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) by (le))",
+              "format": "time_series",
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "schedule-duration-p999",
+              "refId": "E"
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(rate(tidb_mv_service_refresh_schedule_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m])) / sum(rate(tidb_mv_service_refresh_schedule_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[1m]))",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "schedule-duration-avg",
+              "refId": "F"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "timeFrom": null,
+          "timeShift": null,
+          "title": "MV Refresh Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 2,
+              "show": true,
+              "$$hashKey": "object:623"
+            },
+            {
+              "format": "s",
+              "logBase": 1,
+              "show": false,
+              "$$hashKey": "object:624"
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        }
+      ],
+      "repeat": null,
+      "repeatIteration": null,
+      "repeatRowId": null,
+      "showTitle": true,
+      "title": "Materialized View",
+      "titleSize": "h6",
       "type": "row"
     }
   ],

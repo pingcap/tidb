@@ -245,6 +245,10 @@ func (c *Context) GetTableCtx() tblctx.MutateContext {
 func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	vars := c.GetSessionVars()
 	sc := vars.StmtCtx
+	var queryCopStoreLimiter *kv.QueryCopStoreLimiter
+	if vars.QueryCopStoreLimit > 0 {
+		queryCopStoreLimiter = kv.NewQueryCopStoreLimiter(vars.QueryCopStoreLimit)
+	}
 
 	return &distsqlctx.DistSQLContext{
 		WarnHandler:                          sc.WarnHandler,
@@ -269,6 +273,7 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 		TiFlashMaxQueryMemoryPerNode:         vars.TiFlashMaxQueryMemoryPerNode,
 		TiFlashQuerySpillRatio:               vars.TiFlashQuerySpillRatio,
 		TiFlashHashJoinVersion:               vars.TiFlashHashJoinVersion,
+		QueryCopStoreLimiter:                 queryCopStoreLimiter,
 		ResourceGroupName:                    sc.ResourceGroupName,
 		ExecDetails:                          &sc.SyncExecDetails,
 	}
@@ -457,11 +462,11 @@ func (*fakeTxn) SetDiskFullOpt(_ kvrpcpb.DiskFullOpt) {}
 
 func (*fakeTxn) SetOption(_ int, _ any) {}
 
-func (*fakeTxn) Get(ctx context.Context, _ kv.Key) ([]byte, error) {
+func (*fakeTxn) Get(ctx context.Context, _ kv.Key, _ ...kv.GetOption) (kv.ValueEntry, error) {
 	// Check your implementation if you meet this error. It's dangerous if some calculation relies on the data but the
 	// read result is faked.
 	logutil.Logger(ctx).Warn("mock.Context: No store is specified but trying to access data from a transaction.")
-	return nil, nil
+	return kv.ValueEntry{}, nil
 }
 
 func (*fakeTxn) Valid() bool { return true }
@@ -607,6 +612,11 @@ func (*Context) ReleaseAdvisoryLock(_ string) bool {
 // ReleaseAllAdvisoryLocks releases all advisory locks
 func (*Context) ReleaseAllAdvisoryLocks() int {
 	return 0
+}
+
+// CheckCanMigrateStates implements the sessionapi.Session interface
+func (*Context) CheckCanMigrateStates() error {
+	return nil
 }
 
 // EncodeStates implements the sessionapi.Session interface

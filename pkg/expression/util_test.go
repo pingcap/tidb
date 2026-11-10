@@ -144,7 +144,7 @@ func TestClone(t *testing.T) {
 		&builtinToSecondsSig{}, &builtinUTCTimeWithArgSig{}, &builtinUTCTimeWithoutArgSig{}, &builtinTimestamp1ArgSig{}, &builtinTimestamp2ArgsSig{},
 		&builtinTimestampLiteralSig{}, &builtinLastDaySig{}, &builtinStrToDateDateSig{}, &builtinStrToDateDatetimeSig{}, &builtinStrToDateDurationSig{},
 		&builtinFromUnixTime1ArgSig{}, &builtinFromUnixTime2ArgSig{}, &builtinExtractDatetimeFromStringSig{}, &builtinExtractDatetimeSig{}, &builtinExtractDurationSig{}, &builtinAddSubDateAsStringSig{},
-		&builtinAddSubDateDatetimeAnySig{}, &builtinAddSubDateDurationAnySig{},
+		&builtinAddSubDateDatetimeAnySig{}, &builtinAddSubDateDurationAnySig{}, &builtinUUIDv4Sig{}, &builtinUUIDv7Sig{}, &builtinUUIDVersionSig{}, &builtinUUIDTimestampSig{},
 	}
 	for _, f := range builtinFuncs {
 		cf := f.Clone()
@@ -286,6 +286,13 @@ func TestPushDownNot(t *testing.T) {
 	ret = PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, col)))
 
+	// (not not (a=1)) should be optimized to (a=1)
+	eqFunc = newFunctionWithMockCtx(ast.EQ, col, NewOne())
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, eqFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	require.True(t, ret.Equal(ctx, eqFunc))
+
 	// (not not (a+1)) should be optimized to (a+1 is true)
 	plusFunc := newFunctionWithMockCtx(ast.Plus, col, NewOne())
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, plusFunc)
@@ -298,6 +305,13 @@ func TestPushDownNot(t *testing.T) {
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.UnaryNot, newFunctionWithMockCtx(ast.IsTruthWithNull, col))))
+	// (not not not (a > 1)) should be optimized to (a <= 1)
+	gtFunc := newFunctionWithMockCtx(ast.GT, col, NewOne())
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, gtFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.LE, col, NewOne())))
 	// (not not not not a) should be optimized to (a is true)
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, col)
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
@@ -305,6 +319,15 @@ func TestPushDownNot(t *testing.T) {
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, col)))
+
+	// (not not not not (a <= 1)) should be optimized to (a <= 1)
+	leFunc := newFunctionWithMockCtx(ast.LE, col, NewOne())
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, leFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	require.True(t, ret.Equal(ctx, leFunc))
 }
 
 func TestFilter(t *testing.T) {
@@ -396,6 +419,80 @@ func TestDisableParseJSONFlag4Expr(t *testing.T) {
 }
 
 func TestSQLDigestTextRetriever(t *testing.T) {
+	t.Run("empty digests do not trigger lookups", func(t *testing.T) {
+		for _, global := range []bool{false, true} {
+			for _, unresolved := range []bool{false, true} {
+				r := NewSQLDigestTextRetriever()
+				r.SQLDigestsMap = map[string]string{"": "", "known": "known SQL"}
+				if unresolved {
+					r.SQLDigestsMap["digest1"] = ""
+				}
+				calls := 0
+				r.mockQuery = func(queryGlobal, history bool, inValues []any) (map[string]string, error) {
+					calls++
+					require.False(t, queryGlobal)
+					require.False(t, history)
+					require.Equal(t, []any{"digest1"}, inValues)
+					return map[string]string{"digest1": "text1"}, nil
+				}
+				var err error
+				if global {
+					err = r.RetrieveGlobal(context.Background(), nil)
+				} else {
+					err = r.RetrieveLocal(context.Background(), nil)
+				}
+				require.NoError(t, err)
+				require.Empty(t, r.SQLDigestsMap[""])
+				require.Equal(t, "known SQL", r.SQLDigestsMap["known"])
+				if unresolved {
+					require.Equal(t, 1, calls)
+					require.Equal(t, "text1", r.SQLDigestsMap["digest1"])
+				} else {
+					require.Zero(t, calls)
+				}
+			}
+		}
+	})
+
+	t.Run("global lookup error precedence", func(t *testing.T) {
+		for _, tc := range []struct {
+			name            string
+			localHistory    map[string]string
+			localHistoryErr error
+			wantErr         error
+		}{
+			{"local history resolves all", map[string]string{"digest1": "text1"}, nil, nil},
+			{"unresolved returns cluster current error", nil, nil, context.Canceled},
+			{"local history error wins", nil, context.DeadlineExceeded, context.DeadlineExceeded},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				r := NewSQLDigestTextRetriever()
+				r.SQLDigestsMap = map[string]string{"digest1": ""}
+				var calls [][2]bool
+				r.mockQuery = func(global, history bool, _ []any) (map[string]string, error) {
+					calls = append(calls, [2]bool{global, history})
+					switch {
+					case global && !history:
+						return nil, context.Canceled
+					case !global && history:
+						return tc.localHistory, tc.localHistoryErr
+					case global && history:
+						t.Fatal("cluster history must not be queried after a cluster-current error")
+					}
+					return nil, nil
+				}
+				err := r.RetrieveGlobal(context.Background(), nil)
+				if tc.wantErr == nil {
+					require.NoError(t, err)
+					require.Equal(t, "text1", r.SQLDigestsMap["digest1"])
+				} else {
+					require.ErrorIs(t, err, tc.wantErr)
+				}
+				require.Equal(t, [][2]bool{{false, false}, {true, false}, {false, true}}, calls)
+			})
+		}
+	})
+
 	// Create a fake session as the argument to the retriever, though it's actually not used when mock data is set.
 
 	r := NewSQLDigestTextRetriever()
@@ -409,16 +506,30 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 		}
 	}
 	clearResult()
-	r.mockLocalData = map[string]string{
+	localData := map[string]string{
 		"digest1": "text1",
 		"digest2": "text2",
 		"digest6": "text6",
 	}
-	r.mockGlobalData = map[string]string{
+	globalData := map[string]string{
 		"digest2": "text2",
 		"digest3": "text3",
 		"digest4": "text4",
 		"digest7": "text7",
+	}
+	localHistoryData := map[string]string{}
+	globalHistoryData := map[string]string{"digest5": "text5"}
+	r.mockQuery = func(queryGlobal, history bool, inValues []any) (map[string]string, error) {
+		if history {
+			if queryGlobal {
+				return r.runMockQuery(globalHistoryData, inValues)
+			}
+			return r.runMockQuery(localHistoryData, inValues)
+		}
+		if queryGlobal {
+			return r.runMockQuery(globalData, inValues)
+		}
+		return r.runMockQuery(localData, inValues)
 	}
 
 	expectedLocalResult := map[string]string{
@@ -433,7 +544,7 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 		"digest2": "text2",
 		"digest3": "text3",
 		"digest4": "text4",
-		"digest5": "",
+		"digest5": "text5",
 	}
 
 	err := r.RetrieveLocal(context.Background(), nil)
@@ -455,6 +566,103 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 	err = r.RetrieveGlobal(context.Background(), nil)
 	require.NoError(t, err)
 	require.Equal(t, expectedGlobalResult, r.SQLDigestsMap)
+
+	t.Run("current summary hit skips history", func(t *testing.T) {
+		r := NewSQLDigestTextRetriever()
+		r.SQLDigestsMap = map[string]string{"digest1": ""}
+		historyQueries := 0
+		r.mockQuery = func(_, history bool, _ []any) (map[string]string, error) {
+			if history {
+				historyQueries++
+				return nil, nil
+			}
+			return map[string]string{"digest1": "text1"}, nil
+		}
+
+		err := r.RetrieveLocal(context.Background(), nil)
+		require.NoError(t, err)
+		require.Zero(t, historyQueries)
+		require.Equal(t, map[string]string{"digest1": "text1"}, r.SQLDigestsMap)
+	})
+
+	t.Run("cluster current hit precedes local history", func(t *testing.T) {
+		type queryCall struct {
+			queryGlobal bool
+			history     bool
+			digests     []string
+		}
+		r := NewSQLDigestTextRetriever()
+		r.SQLDigestsMap = map[string]string{"digest1": "", "digest2": "", "digest3": ""}
+		var calls []queryCall
+		r.mockQuery = func(queryGlobal, history bool, inValues []any) (map[string]string, error) {
+			digests := make([]string, len(inValues))
+			for i, value := range inValues {
+				digests[i] = value.(string)
+			}
+			calls = append(calls, queryCall{queryGlobal: queryGlobal, history: history, digests: digests})
+			switch {
+			case queryGlobal && !history:
+				return map[string]string{"digest3": "text3"}, nil
+			case !queryGlobal && !history:
+				return map[string]string{"digest1": "text1"}, nil
+			case !queryGlobal && history:
+				return map[string]string{"digest2": "text2"}, nil
+			default:
+				return nil, nil
+			}
+		}
+
+		err := r.RetrieveGlobal(context.Background(), nil)
+		require.NoError(t, err)
+		require.Equal(t, map[string]string{
+			"digest1": "text1",
+			"digest2": "text2",
+			"digest3": "text3",
+		}, r.SQLDigestsMap)
+		require.Equal(t, []queryCall{
+			{queryGlobal: false, history: false, digests: []string{"digest1", "digest2", "digest3"}},
+			{queryGlobal: true, history: false, digests: []string{"digest2", "digest3"}},
+			{queryGlobal: false, history: true, digests: []string{"digest2"}},
+		}, calls)
+	})
+
+	t.Run("unrequested results do not replace requested digests", func(t *testing.T) {
+		r := NewSQLDigestTextRetriever()
+		r.SQLDigestsMap = map[string]string{"requested": ""}
+		r.mockQuery = func(_, _ bool, _ []any) (map[string]string, error) {
+			return map[string]string{"unrequested": "some SQL"}, nil
+		}
+
+		err := r.RetrieveLocal(context.Background(), nil)
+		require.NoError(t, err)
+		require.Equal(t, map[string]string{"requested": ""}, r.SQLDigestsMap)
+	})
+
+	t.Run("large history lookup scans history once", func(t *testing.T) {
+		r := NewSQLDigestTextRetriever()
+		r.fetchAllLimit = 2
+		r.SQLDigestsMap = map[string]string{
+			"digest1": "",
+			"digest2": "",
+			"digest3": "",
+			"digest4": "",
+			"digest5": "",
+		}
+		// Every history query rescans all summary files, so the number of history
+		// queries equals the number of history scans. Record len(inValues) per call:
+		// more digests than the limit must fetch all rows in one unfiltered query.
+		var historyCalls []int
+		r.mockQuery = func(_, history bool, inValues []any) (map[string]string, error) {
+			if history {
+				historyCalls = append(historyCalls, len(inValues))
+			}
+			return nil, nil
+		}
+
+		err := r.RetrieveLocal(context.Background(), nil)
+		require.NoError(t, err)
+		require.Equal(t, []int{0}, historyCalls)
+	})
 }
 
 func TestProjectionBenefitsFromPushedDown(t *testing.T) {

@@ -55,7 +55,7 @@ type Executor interface {
 	RuntimeStats() *execdetails.BasicRuntimeStats
 
 	HandleSQLKillerSignal() error
-	RegisterSQLAndPlanInExecForTopSQL()
+	RegisterSQLAndPlanInExecForTopProfiling()
 
 	AllChildren() []Executor
 	SetAllChildren([]Executor)
@@ -248,9 +248,9 @@ func (e *executorStats) RuntimeStats() *execdetails.BasicRuntimeStats {
 	return e.runtimeStats
 }
 
-// RegisterSQLAndPlanInExecForTopSQL registers the current SQL and Plan on top sql
-func (e *executorStats) RegisterSQLAndPlanInExecForTopSQL() {
-	if topsqlstate.TopSQLEnabled() && e.isSQLAndPlanRegistered.CompareAndSwap(false, true) {
+// RegisterSQLAndPlanInExecForTopProfiling registers the current SQL and Plan on top profiling.
+func (e *executorStats) RegisterSQLAndPlanInExecForTopProfiling() {
+	if topsqlstate.TopProfilingEnabled() && e.isSQLAndPlanRegistered.CompareAndSwap(false, true) {
 		topsql.RegisterSQL(e.normalizedSQL, e.sqlDigest, e.inRestrictedSQL)
 		if len(e.normalizedPlan) > 0 {
 			topsql.RegisterPlan(e.normalizedPlan, e.planDigest)
@@ -278,10 +278,9 @@ func newExecutorKillerHandler(handler signalHandler) executorKillerHandler {
 // BaseExecutorV2 is a simplified version of `BaseExecutor`, which doesn't contain a full session context
 type BaseExecutorV2 struct {
 	_ constructor.Constructor `ctor:"NewBaseExecutorV2,BuildNewBaseExecutorV2"`
-
-	executorMeta
 	executorKillerHandler
 	executorStats
+	executorMeta
 	executorChunkAllocator
 }
 
@@ -456,12 +455,13 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 	r, ctx := tracing.StartRegionEx(ctx, reflect.TypeOf(e).String()+".Next")
 	defer r.End()
 
-	e.RegisterSQLAndPlanInExecForTopSQL()
+	e.RegisterSQLAndPlanInExecForTopProfiling()
 	err = e.Next(ctx, req)
 
 	if err != nil {
 		return err
 	}
+
 	// recheck whether the session/query is killed during the Next()
 	return e.HandleSQLKillerSignal()
 }

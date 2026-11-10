@@ -32,7 +32,8 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/golang/snappy"
 	"github.com/klauspost/compress/zstd"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/dumpformat/testutils"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -243,7 +244,7 @@ func (s *mockGCSSuite) TestAutoDetectFileType() {
 		{objectName: "csv_as_sql.sql", options: "", wantSubstr: "encode kv error"},
 	}
 
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID", "return(true)")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/storage/testSetLastTaskID", "return(true)")
 	taskMgr, err := storage.GetTaskManager()
 	s.NoError(err)
 	ctx := util.WithInternalSourceType(context.Background(), "taskManager")
@@ -295,7 +296,7 @@ func (s *mockGCSSuite) getCompressedData(compression mydump.Compression, data []
 }
 
 func (s *mockGCSSuite) getParquetData() []byte {
-	pc := []mydump.ParquetColumn{
+	pc := []testutils.ParquetColumn{
 		{
 			Name:      "a",
 			Type:      parquet.Types.Int32,
@@ -315,7 +316,7 @@ func (s *mockGCSSuite) getParquetData() []byte {
 	}
 
 	tmpDir := s.T().TempDir()
-	s.Require().NoError(mydump.WriteParquetFile(tmpDir, "test.parquet", pc, 2))
+	s.Require().NoError(testutils.WriteParquetFile(tmpDir, "test.parquet", pc, 2))
 	data, err := os.ReadFile(filepath.Join(tmpDir, "test.parquet"))
 	s.Require().NoError(err)
 	s.NotEmpty(data)

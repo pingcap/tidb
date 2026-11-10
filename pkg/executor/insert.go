@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -80,6 +81,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 		}
 	}
 	sessVars.StmtCtx.AddRecordRows(uint64(len(rows)))
+	recordWriteCPUWork(e.writeStats, e.Table, len(rows))
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
 	// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
@@ -124,7 +126,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	return txn.MayFlush()
 }
 
-func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) (map[string][]byte, error) {
+func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) (map[string]kv.ValueEntry, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "prefetchUniqueIndices")
 	defer r.End()
 
@@ -153,7 +155,7 @@ func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeC
 	return txn.BatchGet(ctx, batchKeys)
 }
 
-func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow, values map[string][]byte) error {
+func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow, values map[string]kv.ValueEntry) error {
 	r, ctx := tracing.StartRegionEx(ctx, "prefetchConflictedOldRows")
 	defer r.End()
 
@@ -167,7 +169,7 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 					// temp indexes.
 					continue
 				}
-				handle, err := tablecodec.DecodeHandleInIndexValue(val)
+				handle, err := tablecodec.DecodeHandleInIndexValue(val.Value)
 				if err != nil {
 					return err
 				}
@@ -368,6 +370,10 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	err := insertRows(ctx, e)
 	if err != nil {
+		// Rebase errors can bypass InsertValues.handleErr.
+		if autoid.IsRPCRetryLimitError(err) {
+			return err
+		}
 		terr, ok := errors.Cause(err).(*terror.Error)
 		if ok && len(e.OnDuplicate) == 0 && terr.Code() == errno.ErrAutoincReadFailed {
 			ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
@@ -380,6 +386,9 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (e *InsertExec) Close() error {
+	if e.writeStats != nil {
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.writeStats)
+	}
 	if e.RuntimeStats() != nil && e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
@@ -393,6 +402,10 @@ func (e *InsertExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *InsertExec) Open(ctx context.Context) error {
+	e.writeStats = nil
+	if e.RuntimeStats() != nil {
+		e.writeStats = &execdetails.WriteRuntimeStats{}
+	}
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 

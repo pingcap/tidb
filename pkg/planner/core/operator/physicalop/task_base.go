@@ -115,6 +115,10 @@ type RootTask struct {
 
 	// Warnings passed through different task copy attached with more upper operator specific Warnings. (not concurrent safe)
 	Warnings SimpleWarnings
+
+	// IdxMergeMVCoveredConds are conditions that the IndexMergeReader at the bottom of this task enforces exactly
+	// through MVIndex ranges. See util.AccessPath.IndexMergeMVCoveredConds.
+	IdxMergeMVCoveredConds []expression.Expression
 }
 
 // GetPlan returns the root task's plan.
@@ -133,7 +137,8 @@ func (t *RootTask) Copy() base.Task {
 		p: t.p,
 
 		// when copying, just copy it out.
-		IndexJoinInfo: t.IndexJoinInfo,
+		IndexJoinInfo:          t.IndexJoinInfo,
+		IdxMergeMVCoveredConds: t.IdxMergeMVCoveredConds,
 	}
 	// since *t will reuse the same warnings slice, we need to copy it out.
 	// because different task instance should have different warning slice.
@@ -315,6 +320,14 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	}.Init(ctx, t.p.QueryBlockOffset())
 	p.SetStats(t.p.StatsInfo())
 	collectPartitionInfosFromMPPPlan(p, t.p)
+	// Preserve partition pruning metadata for single-table readers.
+	// The metadata is produced on the DataSource side and already aligned with
+	// ds.TblCols, so it can be reused by root-task fallback paths.
+	if len(p.TableScanAndPartitionInfos) == 1 {
+		if pi := p.TableScanAndPartitionInfos[0].PhysPlanPartInfo; pi != nil {
+			p.PlanPartInfo = pi.CloneForPlanCache()
+		}
+	}
 	rt = &RootTask{}
 	rt.SetPlan(p)
 
@@ -333,7 +346,7 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 			logutil.BgLogger().Error("expect Selection or TableScan for mppTask.p", zap.String("mppTask.p", t.p.TP()))
 			return base.InvalidTask.(*RootTask)
 		}
-		selectivity, _, err := cardinality.Selectivity(ctx, t.tblColHists, t.RootTaskConds, nil)
+		selectivity, err := cardinality.Selectivity(ctx, t.tblColHists, t.RootTaskConds, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
@@ -384,6 +397,16 @@ type CopTask struct {
 	IdxMergePartPlans      []base.PhysicalPlan
 	IdxMergeIsIntersection bool
 	IdxMergeAccessMVIndex  bool
+	// IdxMergeMVCoveredConds comes from util.AccessPath.IndexMergeMVCoveredConds.
+	IdxMergeMVCoveredConds []expression.Expression
+	// IdxMergeMatchWithAdvisorySortItems indicates the IndexMerge property matching
+	// used advisory sort items (i.e. no SortItems but SortItemsHints was set).
+	IdxMergeMatchWithAdvisorySortItems bool
+	// IdxMergePartPlansMatchResults stores each partial path's matchProperty result.
+	// Set by convertToIndexMergeScan. Length equals len(IdxMergePartPlans) or 0.
+	// 0 length may be caused by cases like Intersection type IndexMerge, which can't satisfy any order property. When
+	// its length is 0, it should be considered as all property.PropNotMatched.
+	IdxMergePartPlansMatchResults []property.PhysicalPropMatchResult
 
 	// RootTaskConds stores select conditions containing virtual columns.
 	// These conditions can't push to TiKV, so we have to add a selection for rootTask
@@ -399,6 +422,10 @@ type CopTask struct {
 	// For copTask and rootTask, when we compose physical tree bottom-up, index join need some special info
 	// fetched from underlying ds which built index range or table range based on these runtime constant.
 	IndexJoinInfo *IndexJoinInfo
+
+	// PartialOrderMatchResult stores the match result for partial order optimization.
+	// Set by convertToIndexScan when a prefix index provides partial order for TopN.
+	PartialOrderMatchResult *property.PartialOrderMatchResult
 
 	// Warnings passed through different task copy attached with more upper operator specific Warnings. (not concurrent safe)
 	Warnings SimpleWarnings
@@ -448,7 +475,7 @@ func (t *CopTask) MemoryUsage() (sum int64) {
 	}
 
 	sum = size.SizeOfInterface*(2+int64(cap(t.IdxMergePartPlans)+cap(t.RootTaskConds))) + size.SizeOfBool*3 + size.SizeOfUint64 +
-		size.SizeOfPointer*(3+int64(cap(t.CommonHandleCols)+cap(t.TblCols))) + size.SizeOfSlice*4 + t.PhysPlanPartInfo.MemoryUsage()
+		size.SizeOfPointer*(4+int64(cap(t.CommonHandleCols)+cap(t.TblCols))) + size.SizeOfSlice*4 + t.PhysPlanPartInfo.MemoryUsage()
 	if t.IndexPlan != nil {
 		sum += t.IndexPlan.MemoryUsage()
 	}
@@ -473,6 +500,9 @@ func (t *CopTask) MemoryUsage() (sum int64) {
 	}
 	for _, expr := range t.RootTaskConds {
 		sum += expr.MemoryUsage()
+	}
+	if t.PartialOrderMatchResult != nil {
+		sum += t.PartialOrderMatchResult.MemoryUsage()
 	}
 	return
 }
@@ -525,6 +555,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		}.Init(ctx, t.IdxMergePartPlans[0].QueryBlockOffset())
 		p.PlanPartInfo = t.PhysPlanPartInfo
 		newTask.SetPlan(p)
+		newTask.IdxMergeMVCoveredConds = t.IdxMergeMVCoveredConds
 		if t.NeedExtraProj {
 			schema := t.OriginSchema
 			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.IdxMergePartPlans[0].QueryBlockOffset(), nil)

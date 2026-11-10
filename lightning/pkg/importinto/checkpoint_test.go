@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/stretchr/testify/require"
 )
@@ -100,6 +101,18 @@ func TestFileCheckpointManager(t *testing.T) {
 			},
 		},
 		{
+			name:  "IgnoreError returns not found for missing table",
+			setup: func(t *testing.T, mgr *FileCheckpointManager, ctx context.Context) {},
+			operation: func(t *testing.T, mgr *FileCheckpointManager, ctx context.Context, filePath string) {
+				err := mgr.IgnoreError(ctx, "db.t404")
+				require.Error(t, err)
+				require.True(t, perrors.IsNotFound(err))
+				require.Contains(t, err.Error(), "checkpoint for table db.t404 not found")
+				require.NotContains(t, err.Error(), "--checkpoint-error-ignore")
+				require.NotContains(t, err.Error(), "--checkpoint-error-destroy")
+			},
+		},
+		{
 			name: "DestroyError removes checkpoint",
 			setup: func(t *testing.T, mgr *FileCheckpointManager, ctx context.Context) {
 				cp1 := &TableCheckpoint{
@@ -118,6 +131,19 @@ func TestFileCheckpointManager(t *testing.T) {
 				cp, err := mgr.Get(ctx, "db.t1")
 				require.NoError(t, err)
 				require.Nil(t, cp)
+			},
+		},
+		{
+			name:  "DestroyError returns not found for missing table",
+			setup: func(t *testing.T, mgr *FileCheckpointManager, ctx context.Context) {},
+			operation: func(t *testing.T, mgr *FileCheckpointManager, ctx context.Context, filePath string) {
+				destroyed, err := mgr.DestroyError(ctx, "db.t404")
+				require.Error(t, err)
+				require.True(t, perrors.IsNotFound(err))
+				require.Nil(t, destroyed)
+				require.Contains(t, err.Error(), "checkpoint for table db.t404 not found")
+				require.NotContains(t, err.Error(), "--checkpoint-error-ignore")
+				require.NotContains(t, err.Error(), "--checkpoint-error-destroy")
 			},
 		},
 		{
@@ -336,6 +362,25 @@ func TestMySQLCheckpointManager(t *testing.T) {
 			},
 		},
 		{
+			name: "IgnoreError single checkpoint not found",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec("UPDATE `test_schema`.`import_into_checkpoints` SET status = \\?, message = '', job_id = 0 WHERE table_name = \\? AND status = \\?").
+					WithArgs(CheckpointStatusPending, "db.t404", CheckpointStatusFailed).
+					WillReturnResult(sqlmock.NewResult(0, 0))
+				mock.ExpectQuery("SELECT job_id, status, message, group_key FROM `test_schema`.`import_into_checkpoints` WHERE table_name = \\?").
+					WithArgs("db.t404").
+					WillReturnError(sql.ErrNoRows)
+			},
+			operation: func(t *testing.T, mgr *MySQLCheckpointManager, ctx context.Context) {
+				err := mgr.IgnoreError(ctx, "db.t404")
+				require.Error(t, err)
+				require.True(t, perrors.IsNotFound(err))
+				require.Contains(t, err.Error(), "checkpoint for table db.t404 not found")
+				require.NotContains(t, err.Error(), "--checkpoint-error-ignore")
+				require.NotContains(t, err.Error(), "--checkpoint-error-destroy")
+			},
+		},
+		{
 			name: "IgnoreError all checkpoints",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE `test_schema`.`import_into_checkpoints` SET status = \\?, message = '', job_id = 0 WHERE status = \\?").
@@ -364,6 +409,31 @@ func TestMySQLCheckpointManager(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, destroyed, 1)
 				require.Equal(t, "db.t1", destroyed[0].TableName)
+			},
+		},
+		{
+			name: "DestroyError single checkpoint not found",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectQuery("SELECT table_name, job_id, status, message, group_key FROM `test_schema`.`import_into_checkpoints` WHERE table_name = \\? AND status = \\?").
+					WithArgs("db.t404", CheckpointStatusFailed).
+					WillReturnRows(sqlmock.NewRows([]string{"table_name", "job_id", "status", "message", "group_key"}))
+				mock.ExpectExec("DELETE FROM `test_schema`.`import_into_checkpoints` WHERE table_name = \\? AND status = \\?").
+					WithArgs("db.t404", CheckpointStatusFailed).
+					WillReturnResult(sqlmock.NewResult(0, 0))
+				mock.ExpectCommit()
+				mock.ExpectQuery("SELECT job_id, status, message, group_key FROM `test_schema`.`import_into_checkpoints` WHERE table_name = \\?").
+					WithArgs("db.t404").
+					WillReturnError(sql.ErrNoRows)
+			},
+			operation: func(t *testing.T, mgr *MySQLCheckpointManager, ctx context.Context) {
+				destroyed, err := mgr.DestroyError(ctx, "db.t404")
+				require.Error(t, err)
+				require.True(t, perrors.IsNotFound(err))
+				require.Nil(t, destroyed)
+				require.Contains(t, err.Error(), "checkpoint for table db.t404 not found")
+				require.NotContains(t, err.Error(), "--checkpoint-error-ignore")
+				require.NotContains(t, err.Error(), "--checkpoint-error-destroy")
 			},
 		},
 		{

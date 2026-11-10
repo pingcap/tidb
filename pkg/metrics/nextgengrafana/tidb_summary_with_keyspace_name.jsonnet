@@ -61,7 +61,7 @@ local newDash = dashboard.new(
     label='tidb_cluster',
     multi=false,
     name='tidb_cluster',
-    query='label_values(pd_cluster_status{k8s_cluster="$kuberentes"}, tidb_cluster)',
+    query='label_values(pd_cluster_status{k8s_cluster="$k8s_cluster"}, tidb_cluster)',
     refresh='time',
     regex='',
     sort=1,
@@ -233,7 +233,7 @@ local cpsP = graphPanel.new(
 )
 .addTarget(
   prometheus.target(
-    'sum(tidb_server_connections{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}) * sum(rate(tidb_server_handle_query_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) / sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m]))',
+    'sum(tidb_server_connections{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}) * sum(rate(tidb_server_handle_command_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) / sum(rate(tidb_server_handle_command_duration_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m]))',
     legendFormat='ideal CPS',
     hide=true,
   )

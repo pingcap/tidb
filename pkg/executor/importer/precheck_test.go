@@ -16,16 +16,23 @@ package importer_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"math/rand"
+	"net"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -43,28 +50,65 @@ import (
 
 const addrFmt = "http://127.0.0.1:%d"
 
-func createMockETCD(t *testing.T) (string, *embed.Etcd) {
-	cfg := embed.NewConfig()
-	cfg.Dir = t.TempDir()
-	// rand port in [20000, 60000)
-	randPort := int(rand.Int31n(40000)) + 20000
-	clientAddr := fmt.Sprintf(addrFmt, randPort)
-	lcurl, _ := url.Parse(clientAddr)
-	cfg.ListenClientUrls, cfg.AdvertiseClientUrls = []url.URL{*lcurl}, []url.URL{*lcurl}
-	lpurl, _ := url.Parse(fmt.Sprintf(addrFmt, randPort+1))
-	cfg.ListenPeerUrls, cfg.AdvertisePeerUrls = []url.URL{*lpurl}, []url.URL{*lpurl}
-	cfg.InitialCluster = "default=" + lpurl.String()
-	cfg.Logger = "zap"
-	embedEtcd, err := embed.StartEtcd(cfg)
-	require.NoError(t, err)
+func getFreePort(t *testing.T) int {
+	t.Helper()
 
-	select {
-	case <-embedEtcd.Server.ReadyNotify():
-	case <-time.After(5 * time.Second):
-		embedEtcd.Server.Stop() // trigger a shutdown
-		require.False(t, true, "server took too long to start")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, listener.Close())
+	}()
+
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	require.True(t, ok)
+	return addr.Port
+}
+
+func isAddrInUse(err error) bool {
+	return errors.Is(err, syscall.EADDRINUSE)
+}
+
+func createMockETCD(t *testing.T) (string, *embed.Etcd) {
+	t.Helper()
+
+	const maxAttempts = 5
+	for attempt := range maxAttempts {
+		cfg := embed.NewConfig()
+		cfg.Dir = t.TempDir()
+
+		clientPort := getFreePort(t)
+		peerPort := getFreePort(t)
+		for peerPort == clientPort {
+			peerPort = getFreePort(t)
+		}
+
+		clientAddr := fmt.Sprintf(addrFmt, clientPort)
+		lcurl, _ := url.Parse(clientAddr)
+		cfg.ListenClientUrls, cfg.AdvertiseClientUrls = []url.URL{*lcurl}, []url.URL{*lcurl}
+		lpurl, _ := url.Parse(fmt.Sprintf(addrFmt, peerPort))
+		cfg.ListenPeerUrls, cfg.AdvertisePeerUrls = []url.URL{*lpurl}, []url.URL{*lpurl}
+		cfg.InitialCluster = "default=" + lpurl.String()
+		cfg.Logger = "zap"
+
+		embedEtcd, err := embed.StartEtcd(cfg)
+		if err != nil {
+			if isAddrInUse(err) && attempt < maxAttempts-1 {
+				continue
+			}
+			require.NoError(t, err)
+		}
+
+		select {
+		case <-embedEtcd.Server.ReadyNotify():
+		case <-time.After(5 * time.Second):
+			embedEtcd.Server.Stop() // trigger a shutdown
+			require.FailNow(t, "server took too long to start")
+		}
+		return clientAddr, embedEtcd
 	}
-	return clientAddr, embedEtcd
+
+	require.FailNow(t, "failed to start etcd after retries")
+	return "", nil
 }
 
 func TestCheckRequirements(t *testing.T) {
@@ -78,11 +122,14 @@ func TestCheckRequirements(t *testing.T) {
 	is := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
 	tableObj, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
+	sourceFile := filepath.Join(t.TempDir(), "source.csv")
+	require.NoError(t, os.WriteFile(sourceFile, []byte("1\n"), 0o600))
 
 	c := &importer.LoadDataController{
 		Plan: &importer.Plan{
 			DBName:         "test",
 			DataSourceType: importer.DataSourceTypeFile,
+			Path:           sourceFile,
 			TableInfo:      tableObj.Meta(),
 		},
 		Table: tableObj,
@@ -97,9 +144,27 @@ func TestCheckRequirements(t *testing.T) {
 	err = c.CheckRequirements(ctx, tk.Session())
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
 	require.ErrorContains(t, err, "there is active job on the target table already")
+	err = c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session())
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorContains(t, err, "there is active job on the target table already")
 	// cancel the job
 	require.NoError(t, importer.CancelJob(ctx, conn, jobID))
 
+	// async-prepare submit path skips file-size check before InitDataFiles.
+	c.DisablePrecheck = true
+	require.NoError(t, c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session()))
+	c.Path = filepath.Join(filepath.Dir(sourceFile), "*.csv")
+	require.NoError(t, c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session()))
+	// This probe checks access only; matching and empty-file validation remain
+	// part of asynchronous prepare.
+	c.Path = filepath.Join(filepath.Dir(sourceFile), "not-matched-*.csv")
+	require.NoError(t, c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session()))
+	c.Path = filepath.Join(filepath.Dir(sourceFile), "missing.csv")
+	err = c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session())
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataCantRead)
+	require.ErrorContains(t, err, "Please check the file location is correct")
+	c.Path = sourceFile
+	c.DisablePrecheck = false
 	// source data file size = 0
 	require.ErrorIs(t, c.CheckRequirements(ctx, tk.Session()), exeerrors.ErrLoadDataPreCheckFailed)
 
@@ -107,6 +172,27 @@ func TestCheckRequirements(t *testing.T) {
 	c.TotalFileSize = 1
 	c.ThreadCnt = 1
 	c.CloudStorageURI = ""
+
+	if kerneltype.IsNextGen() {
+		func() {
+			originDeployMode := deploymode.Get()
+			originGlobalConfig := config.GetGlobalConfig()
+			defer func() {
+				c.TotalRealSize = 0
+				config.StoreGlobalConfig(originGlobalConfig)
+				require.NoError(t, deploymode.Set(originDeployMode))
+			}()
+			require.NoError(t, deploymode.Set(deploymode.Starter))
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.DeployMode = deploymode.Starter
+				conf.StarterParams.MaxImportDataSize = 1
+			})
+			c.TotalRealSize = 2
+			err = c.CheckRequirements(ctx, tk.Session())
+			require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+			require.ErrorContains(t, err, "total real import data size 2B exceeds maximum import size limit 1B (total file size 1B)")
+		}()
+	}
 
 	// non-empty table
 	_, err = conn.Execute(ctx, "insert into test.t values(1)")
@@ -182,10 +268,23 @@ func TestCheckRequirements(t *testing.T) {
 	c.Plan.ThreadCnt = 2
 	c.Plan.CloudStorageURI = ":"
 	require.ErrorIs(t, c.CheckRequirements(ctx, tk.Session()), exeerrors.ErrLoadDataInvalidURI)
+	c.Plan.CloudStorageURI = "s3:///path?access-key=secret-id&secret-access-key=secret-key&session-token=secret-token"
+	err = c.CheckRequirements(ctx, tk.Session())
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataInvalidURI)
+	require.Contains(t, err.Error(), "please specify the bucket for s3 in s3:///path?access-key=xxxxxx&secret-access-key=xxxxxx&session-token=xxxxxx")
+	require.NotContains(t, err.Error(), "secret-id")
+	require.NotContains(t, err.Error(), "secret-key")
+	require.NotContains(t, err.Error(), "secret-token")
 	c.Plan.CloudStorageURI = "sdsdsdsd://sdsdsdsd"
 	require.ErrorIs(t, c.CheckRequirements(ctx, tk.Session()), exeerrors.ErrLoadDataInvalidURI)
 	c.Plan.CloudStorageURI = "local:///tmp"
 	require.ErrorContains(t, c.CheckRequirements(ctx, tk.Session()), "unsupported cloud storage uri scheme: local")
+	c.Plan.CloudStorageURI = "azblob://test-bucket/path?account-name=test-account&sas-token=xxxxxx&endpoint=http://127.0.0.1:1/devstoreaccount1"
+	// Azure SDK retries unreachable endpoints aggressively; bound this negative check
+	// so the test still verifies the same failure path without dominating runtime.
+	azblobCtx, cancel := context.WithTimeout(ctx, time.Second)
+	require.ErrorContains(t, c.CheckRequirements(azblobCtx, tk.Session()), "check cloud storage uri access")
+	cancel()
 	// this mock cannot mock credential check, so we just skip it.
 	backend := s3mem.New()
 	faker := gofakes3.New(backend)
@@ -194,4 +293,48 @@ func TestCheckRequirements(t *testing.T) {
 	require.NoError(t, backend.CreateBucket("test-bucket"))
 	c.Plan.CloudStorageURI = fmt.Sprintf("s3://test-bucket/path?region=us-east-1&endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", ts.URL)
 	require.NoError(t, c.CheckRequirements(ctx, tk.Session()))
+}
+
+func TestCheckRequirementsTTL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := util.WithInternalSourceType(context.Background(), kv.InternalImportInto)
+
+	tk.MustExec("create table test.t(id int primary key, created_at datetime) TTL = `created_at` + INTERVAL 1 DAY")
+	is := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
+	tableObj, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.True(t, tableObj.Meta().TTLInfo.Enable)
+
+	c := &importer.LoadDataController{
+		Plan: &importer.Plan{
+			DBName:          "test",
+			DataSourceType:  importer.DataSourceTypeQuery,
+			DisablePrecheck: true,
+			TableInfo:       tableObj.Meta(),
+		},
+		Table: tableObj,
+	}
+	err = c.CheckRequirements(ctx, tk.Session())
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorContains(t, err, "target table has TTL enabled, please disable TTL before IMPORT INTO")
+	err = c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session())
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorContains(t, err, "target table has TTL enabled, please disable TTL before IMPORT INTO")
+
+	tk.MustExec("alter table test.t ttl_enable = 'OFF'")
+	is = tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
+	tableObj, err = is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	c = &importer.LoadDataController{
+		Plan: &importer.Plan{
+			DBName:          "test",
+			DataSourceType:  importer.DataSourceTypeQuery,
+			DisablePrecheck: true,
+			TableInfo:       tableObj.Meta(),
+		},
+		Table: tableObj,
+	}
+	require.NoError(t, c.CheckRequirements(ctx, tk.Session()))
+	require.NoError(t, c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session()))
 }

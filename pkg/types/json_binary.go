@@ -29,12 +29,14 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
@@ -330,9 +332,8 @@ func (bj BinaryJSON) valEntryGet(valEntryOff int) BinaryJSON {
 
 func (bj BinaryJSON) marshalFloat64To(buf []byte) ([]byte, error) {
 	// NOTE: copied from Go standard library.
-	// TODO: this function is very similar to `util.AppendFormatFloat`, it'd be better to unify them.
-	// Now the `util.AppendFormatFloat` is an internal function of `server` package, and the `marshalFloat64To`
-	// handles the tailing `.0` specially, so they are not merged yet.
+	// TODO: this function is very similar to `textrow.AppendFormatFloat`, it'd be better to unify them.
+	// Now the `marshalFloat64To` handles the tailing `.0` specially, so they are not merged yet.
 	f := bj.GetFloat64()
 	if math.IsInf(f, 0) || math.IsNaN(f) {
 		return buf, &json.UnsupportedValueError{Str: strconv.FormatFloat(f, 'g', -1, 64)}
@@ -347,7 +348,7 @@ func (bj BinaryJSON) marshalFloat64To(buf []byte) ([]byte, error) {
 	ffmt := byte('f')
 	// Note: Must use float32 comparisons for underlying float32 value to get precise cutoffs right.
 	if abs != 0 {
-		// The scientific notation range for MySQL is different from Go JSON. Ref `util.AppendFormatFloat`
+		// The scientific notation range for MySQL is different from Go JSON. Ref `textrow.AppendFormatFloat`
 		if abs < 1e-15 || abs >= 1e15 {
 			ffmt = 'e'
 		}
@@ -358,15 +359,16 @@ func (bj BinaryJSON) marshalFloat64To(buf []byte) ([]byte, error) {
 	floatBuf := buf[floatPos:]
 
 	if ffmt == 'e' {
-		// clean up e-09 to e-9
-		n := len(floatBuf)
-		if n >= 4 && buf[n-4] == 'e' && buf[n-3] == '-' && buf[n-2] == '0' {
+		// clean up e-09 to e-9. The float is at the end of `buf`, and `buf` may
+		// already contain other content before `floatPos`.
+		n := len(buf)
+		if n-floatPos >= 4 && buf[n-4] == 'e' && buf[n-3] == '-' && buf[n-2] == '0' {
 			buf[n-2] = buf[n-1]
 			buf = buf[:n-1]
 		}
 
 		// remove the leading '+' in the exponent
-		plusPos := bytes.IndexRune(floatBuf, '+')
+		plusPos := bytes.IndexByte(buf[floatPos:], '+')
 		if plusPos > 0 {
 			buf = slices.Delete(buf, floatPos+plusPos, floatPos+plusPos+1)
 		}
@@ -586,6 +588,36 @@ func getUint64FractionLength(i uint64) int {
 	return fraction
 }
 
+// CalculateHashValueSize calculate the size of hash value
+func (bj BinaryJSON) CalculateHashValueSize() int64 {
+	switch bj.TypeCode {
+	case JSONTypeCodeInt64:
+		if getInt64FractionLength(bj.GetInt64()) <= 52 {
+			return int64(unsafe.Sizeof(JSONTypeCodeFloat64)) + 8
+		}
+		return int64(len(bj.Value)) + int64(unsafe.Sizeof(bj.TypeCode))
+	case JSONTypeCodeUint64:
+		if getUint64FractionLength(bj.GetUint64()) <= 52 {
+			return int64(unsafe.Sizeof(JSONTypeCodeFloat64)) + 8
+		}
+		return int64(len(bj.Value)) + int64(unsafe.Sizeof(bj.TypeCode))
+	case JSONTypeCodeArray:
+		size := int64(unsafe.Sizeof(bj.TypeCode)) + dataSizeOff
+		elemCount := int(jsonEndian.Uint32(bj.Value))
+		for i := range elemCount {
+			size += bj.ArrayGetElem(i).CalculateHashValueSize()
+		}
+	case JSONTypeCodeObject:
+		elemCount := int(jsonEndian.Uint32(bj.Value))
+		size := int64(unsafe.Sizeof(bj.TypeCode)) + dataSizeOff
+		for i := range elemCount {
+			size += CalculateBinaryJSONSize(string(bj.objectGetKey(i)))
+			size += bj.objectGetVal(i).CalculateHashValueSize()
+		}
+	}
+	return int64(len(bj.Value)) + int64(unsafe.Sizeof(bj.TypeCode))
+}
+
 // HashValue converts certain JSON values for aggregate comparisons.
 // For example int64(3) == float64(3.0)
 // Other than the numeric condition, this function has to construct a bidirectional map between hash value
@@ -684,6 +716,47 @@ func CreateBinaryJSONWithCheck(in any) (BinaryJSON, error) {
 	return bj, nil
 }
 
+// CalculateBinaryJSONSize calculates the size of binary JSON
+func CalculateBinaryJSONSize(in any) int64 {
+	switch x := in.(type) {
+	case nil:
+		return size.SizeOfByte
+	case bool:
+		return size.SizeOfByte
+	case int64, uint64, float64:
+		return 8
+	case json.Number:
+		size, err := calculateBinaryNumberSize(x)
+		if err != nil {
+			panic(errors.Trace(err))
+		}
+		return size
+	case string:
+		return calculateBinaryStringSize(x)
+	case BinaryJSON:
+		return int64(len(x.Value))
+	case []any:
+		size, err := calculateBinaryArraySize(x)
+		if err != nil {
+			panic(errors.Trace(err))
+		}
+		return size
+	case map[string]any:
+		size, err := calculateBinaryObjectSize(x)
+		if err != nil {
+			panic(errors.Trace(err))
+		}
+		return size
+	case Opaque:
+		return calculateBinaryOpaque(x)
+	case Time:
+		return 8
+	case Duration:
+		return 12
+	}
+	panic(fmt.Errorf(unknownTypeErrorMsg, reflect.TypeOf(in)))
+}
+
 func appendBinaryJSON(buf []byte, in any) (JSONTypeCode, []byte, error) {
 	var typeCode byte
 	var err error
@@ -769,6 +842,54 @@ func appendUint32(buf []byte, v uint32) []byte {
 	var tmp [4]byte
 	jsonEndian.PutUint32(tmp[:], v)
 	return append(buf, tmp[:]...)
+}
+
+func calculateBinaryNumberSize(x json.Number) (int64, error) {
+	if strings.Contains(x.String(), "Ee.") {
+		_, err := x.Float64()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return 8, nil
+	} else if _, err := x.Int64(); err == nil {
+		return 8, nil
+	} else if _, err := strconv.ParseUint(string(x), 10, 64); err == nil {
+		return 8, nil
+	}
+	_, err := x.Float64()
+	if err == nil {
+		return 8, nil
+	}
+	return 0, errors.Trace(err)
+}
+
+func calculateBinaryStringSize(v string) int64 {
+	return binary.MaxVarintLen64 + int64(len(v))
+}
+
+func calculateBinaryArraySize(array []any) (int64, error) {
+	arrayLen := int64(len(array))
+	size := arrayLen + dataSizeOff + arrayLen*valEntrySize
+	for _, val := range array {
+		size += calculateBinaryValElemSize(val)
+	}
+	return size, nil
+}
+
+func calculateBinaryValElemSize(val any) int64 {
+	return CalculateBinaryJSONSize(val)
+}
+
+func calculateBinaryObjectSize(x map[string]any) (int64, error) {
+	size := 4 + dataSizeOff + int64(len(x))*keyEntrySize + int64(len(x))*valEntrySize
+	for key, val := range x {
+		size += int64(len(key)) + calculateBinaryValElemSize(val)
+	}
+	return size, nil
+}
+
+func calculateBinaryOpaque(v Opaque) int64 {
+	return int64(unsafe.Sizeof(v.TypeCode)) + binary.MaxVarintLen64 + int64(len(v.Buf))
 }
 
 func appendBinaryNumber(buf []byte, x json.Number) (JSONTypeCode, []byte, error) {

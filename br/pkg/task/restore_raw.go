@@ -12,7 +12,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -20,6 +19,7 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/pkg/util/httputil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
@@ -43,6 +43,10 @@ func DefineRawRestoreFlags(command *cobra.Command) {
 
 // ParseFromFlags parses the backup-related flags from the flag set.
 func (cfg *RestoreRawConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+	if renameFlag := flags.Lookup(FlagRename); renameFlag != nil && flags.Changed(FlagRename) {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"--%s is not supported by raw or transactional KV restore", FlagRename)
+	}
 	var err error
 	cfg.Online, err = flags.GetBool(flagOnline)
 	if err != nil {
@@ -74,7 +78,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 
 	// Restore raw does not need domain.
 	needDomain := false
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
+	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}

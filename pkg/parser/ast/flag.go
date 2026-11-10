@@ -25,17 +25,17 @@ func HasWindowFlag(expr ExprNode) bool {
 // SetFlag sets flag for expression.
 func SetFlag(n Node) {
 	var setter flagSetter
-	n.Accept(&setter)
+	Walk(n, &setter)
 }
 
 type flagSetter struct {
 }
 
-func (f *flagSetter) Enter(in Node) (Node, bool) {
-	return in, false
+func (f *flagSetter) Enter(Node) bool {
+	return false
 }
 
-func (f *flagSetter) Leave(in Node) (Node, bool) {
+func (f *flagSetter) Leave(in Node) bool {
 	if x, ok := in.(ParamMarkerExpr); ok {
 		x.SetFlag(FlagHasParamMarker)
 	}
@@ -92,7 +92,7 @@ func (f *flagSetter) Leave(in Node) (Node, bool) {
 		}
 	}
 
-	return in, true
+	return true
 }
 
 func (f *flagSetter) caseExpr(x *CaseExpr) {

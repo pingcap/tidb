@@ -1,0 +1,25 @@
+# PointGet must read dirty partition data without UnionScan outside the fast path.
+set tidb_partition_prune_mode = 'dynamic';
+create table p(a int primary key clustered, b int) partition by hash(a) partitions 4;
+create table t(a int primary key clustered);
+insert into p values (1, 10), (2, 20);
+insert into t values (2);
+begin pessimistic;
+update p set b = 11 where a = 1;
+explain format = 'brief' select * from p where a = 1 order by b;
+select * from p where a = 1 order by b;
+
+# The join keeps SelectLock, which needs PointGet to supply the physical partition ID.
+explain format = 'brief' select /*+ hash_join(p, t) */ p.* from p join t on p.a = t.a where p.a = 2 for update;
+select /*+ hash_join(p, t) */ p.* from p join t on p.a = t.a where p.a = 2 for update;
+connect (locker, localhost, root, , executor__partition__dirty_point_get);
+connection locker;
+begin pessimistic;
+--error 3572
+select * from p where a = 2 for update nowait;
+rollback;
+connection default;
+disconnect locker;
+rollback;
+drop table p, t;
+set tidb_partition_prune_mode = default;

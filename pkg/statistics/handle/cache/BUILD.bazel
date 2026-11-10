@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "cache",
     srcs = [
-        "stats_table_row_cache.go",
         "statscache.go",
         "statscacheinner.go",
     ],
@@ -12,7 +11,6 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/infoschema",
-        "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
@@ -25,11 +23,9 @@ go_library(
         "//pkg/statistics/handle/metrics",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
-        "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/intest",
         "//pkg/util/logutil",
-        "//pkg/util/syncutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_zap//:zap",

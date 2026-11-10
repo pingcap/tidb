@@ -12401,9 +12401,9 @@
     {
       "sql": "SELECT DATE('2024-00-15')",
       "args": null,
-      "pass": false,
-      "known": true,
-      "comment": "https://github.com/pingcap/tidb/issues/59417"
+      "pass": true,
+      "known": false,
+      "comment": ""
     },
     {
       "sql": "SELECT DATE('2023-02-29')",
@@ -18809,9 +18809,9 @@
     {
       "sql": "SELECT GET_FORMAT(TIME, 'usa')",
       "args": null,
-      "pass": false,
-      "known": true,
-      "comment": "https://github.com/pingcap/tidb/issues/59420"
+      "pass": true,
+      "known": false,
+      "comment": ""
     },
     {
       "sql": "SELECT GET_FORMAT('', 'EUR')",

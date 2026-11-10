@@ -27,10 +27,10 @@ import (
 
 	"github.com/joho/sqltocsv"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore"
 )
 
 // CheckpointStatus represents the status of a table import job.
@@ -81,7 +81,10 @@ type CheckpointManager interface {
 	Update(ctx context.Context, cp *TableCheckpoint) error
 	// Remove removes the checkpoint for a specific table.
 	Remove(ctx context.Context, tableName string) error
-	// IgnoreError resets the status of a failed checkpoint to Pending.
+	// IgnoreError resets failed checkpoints to Pending.
+	// IgnoreError and DestroyError accept `all` or `db`.`table`; table-scoped
+	// calls return an error matching common.ErrCheckpointTableNotFound when the
+	// target checkpoint does not exist.
 	IgnoreError(ctx context.Context, tableName string) error
 	// DestroyError removes the checkpoint for a specific table if it is in Failed state.
 	// It returns the list of checkpoints that were removed.
@@ -163,7 +166,7 @@ func (*NoopCheckpointManager) Close() error { return nil }
 // FileCheckpointManager implements CheckpointManager using a local file.
 type FileCheckpointManager struct {
 	filePath    string
-	storage     *storage.LocalStorage
+	storage     *objstore.LocalStorage
 	checkpoints map[string]*TableCheckpoint
 	mu          sync.RWMutex
 }
@@ -182,7 +185,7 @@ func (m *FileCheckpointManager) Initialize(ctx context.Context) error {
 	defer m.mu.Unlock()
 
 	dir := filepath.Dir(m.filePath)
-	st, err := storage.NewLocalStorage(dir)
+	st, err := objstore.NewLocalStorage(dir)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -261,7 +264,11 @@ func (m *FileCheckpointManager) IgnoreError(ctx context.Context, tableName strin
 			}
 		}
 	} else {
-		if cp, ok := m.checkpoints[tableName]; ok && cp.Status == CheckpointStatusFailed {
+		cp, ok := m.checkpoints[tableName]
+		if !ok {
+			return common.ErrCheckpointTableNotFound.GenWithStackByArgs(tableName)
+		}
+		if cp.Status == CheckpointStatusFailed {
 			cp.Status = CheckpointStatusPending
 			cp.Message = ""
 			cp.JobID = 0
@@ -284,7 +291,11 @@ func (m *FileCheckpointManager) DestroyError(ctx context.Context, tableName stri
 			}
 		}
 	} else {
-		if cp, ok := m.checkpoints[tableName]; ok && cp.Status == CheckpointStatusFailed {
+		cp, ok := m.checkpoints[tableName]
+		if !ok {
+			return nil, common.ErrCheckpointTableNotFound.GenWithStackByArgs(tableName)
+		}
+		if cp.Status == CheckpointStatusFailed {
 			destroyed = append(destroyed, cp)
 			delete(m.checkpoints, tableName)
 		}
@@ -389,14 +400,13 @@ func (m *MySQLCheckpointManager) Initialize(ctx context.Context) error {
 
 	// Create table if not exists
 	createTableSQL := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s.%s (
-		db_name VARCHAR(64) NOT NULL,
-		table_name VARCHAR(64) NOT NULL,
+		table_name VARCHAR(256) NOT NULL,
 		job_id BIGINT NOT NULL,
 		status TINYINT NOT NULL,
 		message TEXT,
 		group_key VARCHAR(128),
 		update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		PRIMARY KEY (db_name, table_name)
+		PRIMARY KEY (table_name)
 	)`, common.EscapeIdentifier(m.schemaName), common.EscapeIdentifier(m.tableName))
 
 	if _, err := m.db.ExecContext(ctx, createTableSQL); err != nil {
@@ -465,8 +475,31 @@ func (m *MySQLCheckpointManager) IgnoreError(ctx context.Context, tableName stri
 	}
 	query := fmt.Sprintf("UPDATE %s.%s SET status = ?, message = '', job_id = 0 WHERE table_name = ? AND status = ?",
 		common.EscapeIdentifier(m.schemaName), common.EscapeIdentifier(m.tableName))
-	_, err := m.db.ExecContext(ctx, query, CheckpointStatusPending, tableName, CheckpointStatusFailed)
-	return errors.Trace(err)
+	result, err := m.db.ExecContext(ctx, query, CheckpointStatusPending, tableName, CheckpointStatusFailed)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	affectedRows, err := result.RowsAffected()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if affectedRows == 0 {
+		if err := m.ensureTableCheckpointExists(ctx, tableName); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *MySQLCheckpointManager) ensureTableCheckpointExists(ctx context.Context, tableName string) error {
+	cp, err := m.Get(ctx, tableName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if cp == nil {
+		return common.ErrCheckpointTableNotFound.GenWithStackByArgs(tableName)
+	}
+	return nil
 }
 
 // DestroyError deletes checkpoints that are stuck in failed state.
@@ -523,6 +556,11 @@ func (m *MySQLCheckpointManager) DestroyError(ctx context.Context, tableName str
 
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if tableName != common.AllTables && len(destroyed) == 0 {
+		if err := m.ensureTableCheckpointExists(ctx, tableName); err != nil {
+			return nil, err
+		}
 	}
 	return destroyed, nil
 }

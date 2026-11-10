@@ -37,6 +37,9 @@ func TestTheSessionIsoation(t *testing.T) {
 	g := New()
 	glueSe, err := g.CreateSession(store)
 	req.NoError(err)
+	brDom, err := session.GetDomain(store)
+	req.NoError(err)
+	req.True(brDom.InfoSyncer().ServerInfoSyncer().GetLocalServerInfo().IsDisableRPC())
 	t.Cleanup(func() {
 		existDom, _ := session.GetDomain(nil)
 		if existDom != nil {
@@ -44,7 +47,7 @@ func TestTheSessionIsoation(t *testing.T) {
 		}
 	})
 
-	require.NoError(t, glueSe.CreateDatabase(ctx, &model.DBInfo{
+	require.NoError(t, glueSe.CreateDatabaseOnExistError(ctx, &model.DBInfo{
 		Name: ast.NewCIStr("test_db"),
 	}))
 	tk := testkit.NewTestKit(t, store)

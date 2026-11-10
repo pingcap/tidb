@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 
@@ -69,8 +70,9 @@ func IsASTCacheable(ctx context.Context, sctx base.PlanContext, node ast.Node, i
 		schema:       is,
 		sumInListLen: 0,
 		maxNumParam:  getMaxParamLimit(sctx),
+		cteCanUsed:   make([]string, 0),
 	}
-	node.Accept(&checker)
+	ast.Walk(node, &checker)
 	return checker.cacheable, checker.reason
 }
 
@@ -84,11 +86,20 @@ type cacheableChecker struct {
 
 	sumInListLen int // the accumulated number of elements in all in-lists
 	maxNumParam  int
+	// cteCanUsed tracks CTE names visible at current traversal point.
+	cteCanUsed []string
+	// withScopeOffset stores offsets for query block scopes that have WITH clause.
+	withScopeOffset []int
 }
 
-// Enter implements Visitor interface.
-func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+// Enter implements InPlaceVisitor interface.
+func (checker *cacheableChecker) Enter(in ast.Node) (skipChildren bool) {
 	switch node := in.(type) {
+	case *ast.SelectStmt:
+		if node.With != nil {
+			// Record the CTE visibility boundary for this query block.
+			checker.withScopeOffset = append(checker.withScopeOffset, len(checker.cteCanUsed))
+		}
 	case *ast.InsertStmt:
 		if node.Select == nil {
 			nRows := len(node.Lists)
@@ -99,7 +110,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			if nRows*nCols > checker.maxNumParam { // to save memory
 				checker.cacheable = false
 				checker.reason = "too many values in the insert statement"
-				return in, true
+				return true
 			}
 		}
 	case *ast.PatternInExpr:
@@ -107,31 +118,34 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		if checker.sumInListLen > checker.maxNumParam { // to save memory
 			checker.cacheable = false
 			checker.reason = "too many values in in-list"
-			return in, true
+			return true
 		}
 	case *ast.VariableExpr:
 		checker.cacheable = false
 		checker.reason = "query has user-defined variables is un-cacheable"
-		return in, true
-	case *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
-		if !checker.sctx.GetSessionVars().EnablePlanCacheForSubquery {
-			checker.cacheable = false
-			checker.reason = "query has sub-queries is un-cacheable"
-			return in, true
+		return true
+	case *ast.ExistsSubqueryExpr:
+		return checker.skipForSubqueryDisabled()
+	case *ast.CommonTableExpression:
+		if node.IsRecursive {
+			// Recursive CTE can reference itself, so expose the name before traversing Query.
+			checker.cteCanUsed = append(checker.cteCanUsed, node.Name.L)
 		}
-		return in, false
+		return false
+	case *ast.SubqueryExpr:
+		return checker.skipForSubqueryDisabled()
 	case *ast.FuncCallExpr:
 		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
 			checker.reason = fmt.Sprintf("query has '%v' is un-cacheable", node.FnName.L)
-			return in, true
+			return true
 		}
 	case *ast.OrderByClause:
 		for _, item := range node.Items {
 			if _, isParamMarker := item.Expr.(*driver.ParamMarkerExpr); isParamMarker {
 				checker.cacheable = false
 				checker.reason = "query has 'order by ?' is un-cacheable"
-				return in, true
+				return true
 			}
 		}
 	case *ast.GroupByClause:
@@ -139,7 +153,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			if _, isParamMarker := item.Expr.(*driver.ParamMarkerExpr); isParamMarker {
 				checker.cacheable = false
 				checker.reason = "query has 'group by ?' is un-cacheable"
-				return in, true
+				return true
 			}
 		}
 	case *ast.Limit:
@@ -147,36 +161,72 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			if _, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker && !checker.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
 				checker.cacheable = false
 				checker.reason = "query has 'limit ?' is un-cacheable"
-				return in, true
+				return true
 			}
 		}
 		if node.Offset != nil {
 			if _, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker && !checker.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
 				checker.cacheable = false
 				checker.reason = "query has 'limit ?, 10' is un-cacheable"
-				return in, true
+				return true
 			}
 		}
 	case *ast.FrameBound:
 		if _, ok := node.Expr.(*driver.ParamMarkerExpr); ok {
 			checker.cacheable = false
 			checker.reason = "query has ? in window function frames is un-cacheable"
-			return in, true
+			return true
 		}
 	case *ast.TableName:
 		if checker.schema != nil {
+			if node.Schema.L == "" && slices.Contains(checker.cteCanUsed, node.Name.L) {
+				// Unqualified names can refer to CTEs in current scope; do not resolve them as physical tables.
+				return false
+			}
 			checker.cacheable, checker.reason = checkTableCacheable(checker.ctx, checker.sctx, checker.schema, node, false)
 			if !checker.cacheable {
-				return in, true
+				return true
 			}
 		}
 	}
-	return in, false
+	return false
 }
 
-// Leave implements Visitor interface.
-func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, checker.cacheable
+func (checker *cacheableChecker) skipForSubqueryDisabled() bool {
+	if !checker.sctx.GetSessionVars().EnablePlanCacheForSubquery {
+		checker.cacheable = false
+		checker.reason = "query has sub-queries is un-cacheable"
+		return true
+	}
+	return false
+}
+
+// Leave implements InPlaceVisitor interface.
+func (checker *cacheableChecker) Leave(in ast.Node) (proceed bool) {
+	switch node := in.(type) {
+	case *ast.CommonTableExpression:
+		if !node.IsRecursive {
+			// Non-recursive CTE becomes visible only after its definition has been fully traversed.
+			checker.cteCanUsed = append(checker.cteCanUsed, node.Name.L)
+		}
+	case *ast.SelectStmt:
+		if node.With != nil {
+			// Leave query-block WITH scope and restore CTE visibility from outer context.
+			checker.leaveWithScope()
+		}
+	}
+	return checker.cacheable
+}
+
+func (checker *cacheableChecker) leaveWithScope() {
+	l := len(checker.withScopeOffset)
+	if l == 0 {
+		return
+	}
+	offset := checker.withScopeOffset[l-1]
+	// Pop one WITH scope and roll back CTE names introduced in this query block.
+	checker.withScopeOffset = checker.withScopeOffset[:l-1]
+	checker.cteCanUsed = checker.cteCanUsed[:offset]
 }
 
 var nonPrepCacheCheckerPool = &sync.Pool{New: func() any { return &nonPreparedPlanCacheableChecker{} }}
@@ -191,6 +241,7 @@ func NonPreparedPlanCacheableWithCtx(sctx base.PlanContext, node ast.Node, is in
 
 	maxNumParam := getMaxParamLimit(sctx)
 	var tableNames []*ast.TableName
+	var updateAssignments []*ast.Assignment
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		tableNames, ok, reason = isSelectStmtNonPrepCacheableFastCheck(sctx, x)
@@ -207,6 +258,9 @@ func NonPreparedPlanCacheableWithCtx(sctx base.PlanContext, node ast.Node, is in
 		tableNames, ok, reason = extractTableNames(x.TableRefs.TableRefs, tableNames)
 		if !ok {
 			return ok, reason
+		}
+		if len(tableNames) == 1 {
+			updateAssignments = x.List
 		}
 	case *ast.InsertStmt:
 		if len(x.TableHints) > 0 {
@@ -257,8 +311,11 @@ func NonPreparedPlanCacheableWithCtx(sctx base.PlanContext, node ast.Node, is in
 	// allocate and init the checker
 	checker := nonPrepCacheCheckerPool.Get().(*nonPreparedPlanCacheableChecker)
 	checker.reset(sctx, is, tableNames, maxNumParam)
+	for _, assignment := range updateAssignments {
+		checker.coalesceAssignments = append(checker.coalesceAssignments, checker.supportedCoalesceAssignment(assignment)...)
+	}
 
-	node.Accept(checker)
+	ast.Walk(node, checker)
 	cacheable, reason := checker.cacheable, checker.reason
 
 	if !cacheable {
@@ -267,6 +324,7 @@ func NonPreparedPlanCacheableWithCtx(sctx base.PlanContext, node ast.Node, is in
 	}
 
 	// put the checker back
+	clear(checker.coalesceAssignments)
 	nonPrepCacheCheckerPool.Put(checker)
 	return cacheable, reason
 }
@@ -360,6 +418,8 @@ type nonPreparedPlanCacheableChecker struct {
 	constCnt  int // the number of constants/parameters in this query
 	filterCnt int // the number of filters in the current node
 
+	coalesceAssignments []*ast.FuncCallExpr
+
 	maxNumberParam int // the maximum number of parameters for a query to be cached.
 }
 
@@ -372,26 +432,27 @@ func (checker *nonPreparedPlanCacheableChecker) reset(sctx base.PlanContext, sch
 	checker.constCnt = 0
 	checker.filterCnt = 0
 	checker.maxNumberParam = maxNumberParam
+	checker.coalesceAssignments = checker.coalesceAssignments[:0]
 }
 
-// Enter implements Visitor interface.
-func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+// Enter implements InPlaceVisitor interface.
+func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (skipChildren bool) {
 	if checker.isFilterNode(in) {
 		checker.filterCnt++
 	}
 
 	switch node := in.(type) {
-	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join, *ast.BetweenExpr, *ast.OnCondition,
-		*ast.InsertStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.Assignment, *ast.ParenthesesExpr, *ast.RowExpr,
-		*ast.TableSource, *ast.ColumnNameExpr, *ast.PatternInExpr, *ast.BinaryOperationExpr, *ast.ByItem, *ast.AggregateFuncExpr,
-		*ast.TableOptimizerHint:
-		return in, !checker.cacheable // skip child if un-cacheable
+	case *ast.AggregateFuncExpr, *ast.Assignment, *ast.BetweenExpr, *ast.BinaryOperationExpr, *ast.ByItem,
+		*ast.ColumnNameExpr, *ast.DeleteStmt, *ast.FieldList, *ast.InsertStmt, *ast.IsNullExpr, *ast.Join,
+		*ast.OnCondition, *ast.ParenthesesExpr, *ast.PatternInExpr, *ast.RowExpr, *ast.SelectField,
+		*ast.SelectStmt, *ast.TableOptimizerHint, *ast.TableRefsClause, *ast.TableSource, *ast.UpdateStmt:
+		return !checker.cacheable // skip child if un-cacheable
 	case *ast.Limit:
 		if !checker.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
 			checker.cacheable = false
 			checker.reason = "query has 'limit ?' is un-cacheable"
 		}
-		return in, !checker.cacheable
+		return !checker.cacheable
 	case *ast.ColumnName:
 		if checker.filterCnt > 0 {
 			// this column is appearing some filters, e.g. `col = 1`
@@ -413,13 +474,16 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 				checker.reason = "some column is not found in table schema"
 			}
 		}
-		return in, !checker.cacheable
+		return !checker.cacheable
 	case *ast.FuncCallExpr:
+		if node.FnName.L == ast.Coalesce && slices.Contains(checker.coalesceAssignments, node) {
+			return false
+		}
 		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
 			checker.reason = "query has un-cacheable functions"
 		}
-		return in, !checker.cacheable
+		return !checker.cacheable
 	case *driver.ValueExpr:
 		if node.GetType().GetFlag()&mysql.UnderScoreCharsetFlag > 0 {
 			// for safety, not support values with under-score charsets, e.g. select _latin1'abc' from t.
@@ -443,53 +507,53 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			checker.cacheable = false
 			checker.reason = "query has too many constants"
 		}
-		return in, !checker.cacheable
+		return !checker.cacheable
 	case *ast.GroupByClause:
 		for _, item := range node.Items {
 			if _, isCol := item.Expr.(*ast.ColumnNameExpr); !isCol {
 				checker.cacheable = false
 				checker.reason = "only support group by {columns}'"
-				return in, !checker.cacheable
+				return !checker.cacheable
 			}
 		}
-		return in, !checker.cacheable
+		return !checker.cacheable
 	case *ast.OrderByClause:
 		for _, item := range node.Items {
 			if _, isCol := item.Expr.(*ast.ColumnNameExpr); !isCol {
 				checker.cacheable = false
 				checker.reason = "only support order by {columns}'"
-				return in, !checker.cacheable
+				return !checker.cacheable
 			}
 		}
-		return in, !checker.cacheable
+		return !checker.cacheable
 	case *ast.TableName:
 		if filter.IsSystemSchema(node.Schema.L) {
 			checker.cacheable = false
 			checker.reason = "access tables in system schema"
-			return in, !checker.cacheable
+			return !checker.cacheable
 		}
 		if checker.schema != nil {
 			checker.cacheable, checker.reason = checkTableCacheable(nil, checker.sctx, checker.schema, node, true)
 		}
-		return in, !checker.cacheable
+		return !checker.cacheable
 	}
 
 	checker.cacheable = false // unexpected cases
 	checker.reason = "query has some unsupported Node"
-	return in, !checker.cacheable
+	return !checker.cacheable
 }
 
-// Leave implements Visitor interface.
-func (checker *nonPreparedPlanCacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+// Leave implements InPlaceVisitor interface.
+func (checker *nonPreparedPlanCacheableChecker) Leave(in ast.Node) (proceed bool) {
 	if checker.isFilterNode(in) {
 		checker.filterCnt--
 	}
-	return in, checker.cacheable
+	return checker.cacheable
 }
 
 func (*nonPreparedPlanCacheableChecker) isFilterNode(node ast.Node) bool {
 	switch node.(type) {
-	case *ast.BetweenExpr, *ast.PatternInExpr, *ast.BinaryOperationExpr:
+	case *ast.BetweenExpr, *ast.BinaryOperationExpr, *ast.IsNullExpr, *ast.PatternInExpr:
 		return true
 	}
 	return false
@@ -543,6 +607,10 @@ func isPlanCacheable(sctx base.PlanContext, p base.Plan, paramNum, limitParamNum
 
 // isPhysicalPlanCacheable returns whether this physical plan is cacheable and return the reason if not.
 func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNum, limitParamNum int, underIndexMerge bool) (cacheable bool, reason string) {
+	if reason := p.GetNoncacheableReason(); reason != "" {
+		return false, reason
+	}
+
 	var subPlans []base.PhysicalPlan
 	switch x := p.(type) {
 	case *physicalop.PhysicalTableDual:
@@ -563,6 +631,11 @@ func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNu
 		}
 		underIndexMerge = true
 		subPlans = append(subPlans, x.PartialPlansRaw...)
+	case *physicalop.PhysicalIndexReader:
+		subPlans = append(subPlans, x.IndexPlan)
+	case *physicalop.PhysicalIndexLookUpReader:
+		// Currently, there's no need to check the table plan of the IndexLookUpReader.
+		subPlans = append(subPlans, x.IndexPlan)
 	case *physicalop.PhysicalIndexScan:
 		if underIndexMerge && x.IsFullScan() {
 			return false, "IndexMerge plan with full-scan is un-cacheable"
@@ -660,4 +733,81 @@ func checkTableCacheable(ctx context.Context, sctx base.PlanContext, schema info
 	}
 
 	return true, ""
+}
+
+// supportedCoalesceAssignment returns every COALESCE node in an eligible
+// non-prepared UPDATE assignment, or nil if any part of the assignment fails.
+// Each node accepts a numeric literal (or nested COALESCE) followed by a column
+// (or nested COALESCE). All fallback columns must match the target column type.
+// This checks AST shape and column types, not inferred expression types; cached
+// plans separately require exact DECIMAL precision for all COALESCE parameters.
+// TODO: Rebuild dependent expression types and implicit casts before allowing
+// cross-precision reuse. Never mutate expression types in a shared cached plan.
+// TODO: Extend MySQL compatibility coverage (metadata, NULL transitions, rounding,
+// warnings and scalar/vectorized evaluation) before broadening this exception.
+func (checker *nonPreparedPlanCacheableChecker) supportedCoalesceAssignment(assignment *ast.Assignment) []*ast.FuncCallExpr {
+	fn, ok := assignment.Expr.(*ast.FuncCallExpr)
+	if !ok || fn.FnName.L != ast.Coalesce || len(checker.tableNodes) != 1 || checker.schema == nil {
+		return nil
+	}
+	table := checker.tableNodes[0]
+	tb, err := checker.schema.TableByName(context.Background(), table.Schema, table.Name)
+	if err != nil {
+		return nil
+	}
+	var target *types.FieldType
+	for _, c := range tb.Cols() {
+		if c.Name.L == assignment.Column.Name.L {
+			target = &c.FieldType
+			break
+		}
+	}
+	if target == nil {
+		return nil
+	}
+	switch target.GetType() {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
+	default:
+		return nil
+	}
+
+	var nodes []*ast.FuncCallExpr
+	var check func(ast.ExprNode) bool
+	check = func(expr ast.ExprNode) bool {
+		fn, ok := expr.(*ast.FuncCallExpr)
+		if !ok || fn.FnName.L != ast.Coalesce || len(fn.Args) != 2 {
+			return false
+		}
+		if value, ok := fn.Args[0].(*driver.ValueExpr); ok {
+			if value.Kind() != types.KindInt64 && value.Kind() != types.KindUint64 && value.Kind() != types.KindMysqlDecimal {
+				return false
+			}
+		} else if !check(fn.Args[0]) {
+			return false
+		}
+		if col, ok := fn.Args[1].(*ast.ColumnNameExpr); ok {
+			var fallback *types.FieldType
+			for _, c := range tb.Cols() {
+				if c.Name.L == col.Name.Name.L {
+					fallback = &c.FieldType
+					break
+				}
+			}
+			// Equal covers precision, signedness, charset and collation. Keep
+			// scale and value-related flags identical at every fallback leaf.
+			const flags = mysql.NotNullFlag | mysql.UnsignedFlag | mysql.ZerofillFlag
+			if fallback == nil || !target.Equal(fallback) || target.GetDecimal() != fallback.GetDecimal() ||
+				target.GetFlag()&flags != fallback.GetFlag()&flags {
+				return false
+			}
+		} else if !check(fn.Args[1]) {
+			return false
+		}
+		nodes = append(nodes, fn)
+		return true
+	}
+	if !check(fn) {
+		return nil // Never admit a valid subtree of an unsupported assignment.
+	}
+	return nodes
 }

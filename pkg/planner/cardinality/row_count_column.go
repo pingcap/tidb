@@ -17,8 +17,8 @@ package cardinality
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -106,8 +106,14 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	histCnt, matched := c.Histogram.EqualRowCount(sctx, val, true)
 	// Calculate histNDV here as it's needed for both the underrepresented check and later calculations
 	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
+	// A bucket's upper bound is a value observed in the data, so a zero
+	// Repeat is not a count of zero rows: it means no point frequency was
+	// recorded for it. Merged global histograms produce such buckets when
+	// an upper falls on a merge cut, and the sampled builder produces them
+	// when the estimated NDV exceeds the histogram's row count. Fall
+	// through to the uniform estimate rather than report an exact zero.
 	// also check if this last bucket end value is underrepresented
-	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
+	if matched && histCnt > 0 && !IsLastBucketEndValueUnderrepresented(sctx,
 		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
 		return statistics.DefaultRowEst(histCnt), nil
 	}
@@ -216,8 +222,11 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
 		cnt.MultiplyAll(increaseFactor)
 
-		// handling the out-of-range part
-		if (c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal) {
+		// Calculate if the estimate already covers the full range of realtimeRowCount.
+		// Use a tolerance factor to avoid precision issues.
+		atFullRange := cnt.Est >= float64(realtimeRowCount)*(1-cost.ToleranceFactor)
+		// handling the out-of-range part if the estimate does not cover the full range.
+		if !atFullRange && ((c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal)) {
 			histNDV := c.NDV
 			// Exclude the TopN
 			if c.StatsVer == statistics.Version2 {
@@ -230,16 +239,7 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 
 		totalCount.Add(cnt)
 	}
-	allowZeroEst := fixcontrol.GetBoolWithDefault(
-		sctx.GetSessionVars().GetOptimizerFixControlMap(),
-		fixcontrol.Fix47400,
-		false,
-	)
-	minCount := float64(1)
-	if allowZeroEst {
-		minCount = 0
-	}
-	totalCount.Clamp(minCount, float64(realtimeRowCount))
+	totalCount.Clamp(1.0, float64(realtimeRowCount))
 	return totalCount, nil
 }
 
@@ -254,6 +254,19 @@ func betweenRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, l, 
 	// Only add TopN count to the main estimate, keep min/max estimates from histogram
 	histBetweenCnt.Est += topNCnt
 	return histBetweenCnt
+}
+
+// allColumnsHaveStats returns true if the first n columns of idxCols all have valid column statistics.
+func allColumnsHaveStats(sctx planctx.PlanContext, coll *statistics.HistColl, idxCols []*expression.Column, n int) bool {
+	if n > len(idxCols) {
+		return false
+	}
+	for _, col := range idxCols[:n] {
+		if statistics.ColumnStatsIsInvalid(coll.GetCol(col.UniqueID), sctx, coll, col.UniqueID) {
+			return false
+		}
+	}
+	return true
 }
 
 // getPseudoRowCountWithPartialStats calculates the row count if there are no statistics on the index, but there are column stats available.
@@ -284,7 +297,26 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 	)
 	totalCount = float64(0)
 	maxCount = float64(0)
+	colsIDs := make([]int64, len(idxCols))
+	for i, col := range idxCols {
+		colsIDs[i] = col.UniqueID
+	}
 	for _, indexRange := range indexRanges {
+		// Prefer exponential backoff when every column of the range has statistics. Assuming independence by
+		// multiplying the single column selectivities can badly underestimate an index whose columns each have
+		// a low NDV. If any column lacks statistics (e.g. a virtual column), exponential backoff would skip it
+		// entirely, so fall back to the pseudo estimation for that column below.
+		if len(indexRange.LowVal) > 1 && allColumnsHaveStats(sctx, coll, idxCols, len(indexRange.LowVal)) {
+			sel, _, maxSel, ok, err := expBackoffEstimationByColIDs(sctx, coll, colsIDs, 0, len(idxCols), false, indexRange, idxCols)
+			if err != nil {
+				return 0, 0, errors.Trace(err)
+			}
+			if ok {
+				totalCount += sel * tableRowCount
+				maxCount += maxSel * tableRowCount
+				continue
+			}
+		}
 		selectivity := float64(1.0)
 		corrSelectivity := float64(1.0)
 		for i := range indexRange.LowVal {

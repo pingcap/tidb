@@ -25,15 +25,25 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
@@ -50,6 +60,93 @@ func TestFormatSQL(t *testing.T) {
 	vardef.QueryLogMaxLen.Store(5)
 	val = executor.FormatSQL("aaaaaaaaaaaaaaaaaaaa")
 	require.Equal(t, "aaaaa(len:20)", val.String())
+}
+
+func TestScalarSubqueryRegistryLifecycle(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table scalar_registry (id int primary key, v int)")
+	tk.MustExec("insert into scalar_registry values (1, 10), (2, 20), (3, 30)")
+	const scalarSQL = "select (select sum(v) from scalar_registry)"
+	const pointSQL = "select v from scalar_registry where id = 1"
+	const batchSQL = "select v from scalar_registry where id in (1, 2)"
+
+	checkScalarPlans := func(t *testing.T, tk *testkit.TestKit, expected int) base.Plan {
+		t.Helper()
+		vars := tk.Session().GetSessionVars()
+		plan, ok := vars.StmtCtx.GetPlan().(base.Plan)
+		require.True(t, ok)
+		flat := plannercore.FlattenPhysicalPlan(plan, true)
+		t.Logf("plan=%T registry=%d flattened scalar trees=%d", plan, len(vars.MapScalarSubQ), len(flat.ScalarSubQueries))
+		require.Len(t, flat.ScalarSubQueries, expected)
+		require.Len(t, vars.MapScalarSubQ, expected)
+		return plan
+	}
+	newSession := func(t *testing.T) *testkit.TestKit {
+		t.Helper()
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		return tk
+	}
+	runScalar := func(t *testing.T, tk *testkit.TestKit) {
+		t.Helper()
+		tk.MustQuery(scalarSQL).Check(testkit.Rows("60"))
+		checkScalarPlans(t, tk, 1)
+	}
+
+	t.Run("current scalar survives planning context restoration", func(t *testing.T) {
+		tk := newSession(t)
+		for _, alternative := range []string{"off", "on"} {
+			tk.MustExec("set tidb_opt_enable_alternative_logical_plans = " + alternative)
+			runScalar(t, tk)
+		}
+	})
+	t.Run("following PointGet", func(t *testing.T) {
+		tk := newSession(t)
+		runScalar(t, tk)
+		tk.MustQuery(pointSQL).Check(testkit.Rows("10"))
+		require.IsType(t, &physicalop.PointGetPlan{}, checkScalarPlans(t, tk, 0))
+	})
+	t.Run("following non-prepared BatchPointGet cache hit", func(t *testing.T) {
+		tk := newSession(t)
+		tk.MustExec("set tidb_enable_non_prepared_plan_cache = on")
+		tk.MustQuery(batchSQL).Sort().Check(testkit.Rows("10", "20"))
+		runScalar(t, tk)
+		tk.MustQuery(batchSQL).Sort().Check(testkit.Rows("10", "20"))
+		require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+		require.IsType(t, &physicalop.BatchPointGetPlan{}, checkScalarPlans(t, tk, 0))
+	})
+	t.Run("following prepared PointGet cache hit", func(t *testing.T) {
+		tk := newSession(t)
+		tk.MustExec("set tidb_enable_prepared_plan_cache = on")
+		tk.MustExec("prepare stmt from 'select v from scalar_registry where id = ?'")
+		tk.MustExec("set @id = 1")
+		tk.MustQuery("execute stmt using @id").Check(testkit.Rows("10"))
+		runScalar(t, tk)
+		tk.MustQuery("execute stmt using @id").Check(testkit.Rows("10"))
+		require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+		checkScalarPlans(t, tk, 0)
+	})
+	t.Run("prepared scalar is rebuilt for each execution", func(t *testing.T) {
+		tk := newSession(t)
+		tk.MustExec("set tidb_enable_prepared_plan_cache = on")
+		tk.MustExec("prepare stmt from 'select (select sum(v) from scalar_registry where id > ?)'")
+		tk.MustExec("set @id = 0")
+		tk.MustQuery("execute stmt using @id").Check(testkit.Rows("60"))
+		checkScalarPlans(t, tk, 1)
+		tk.MustExec("set @id = 1")
+		tk.MustQuery("execute stmt using @id").Check(testkit.Rows("50"))
+		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+		checkScalarPlans(t, tk, 1)
+	})
+	t.Run("PointGet after scalar evaluation error", func(t *testing.T) {
+		tk := newSession(t)
+		tk.MustGetErrCode("select (select v from scalar_registry)", 1242)
+		require.NotEmpty(t, tk.Session().GetSessionVars().MapScalarSubQ)
+		tk.MustQuery(pointSQL).Check(testkit.Rows("10"))
+		require.IsType(t, &physicalop.PointGetPlan{}, checkScalarPlans(t, tk, 0))
+	})
 }
 
 func TestContextCancelWhenReadFromCopIterator(t *testing.T) {
@@ -95,7 +192,7 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 	sessVars.CurrentDB = "testdb"
 	sessVars.DurationParse = time.Second
 	sessVars.DurationCompile = 2 * time.Second
-	sessVars.DurationOptimization = 3 * time.Second
+	sessVars.DurationOptimizer.Total = 3 * time.Second
 	sessVars.DurationWaitTS = 4 * time.Second
 	sessVars.StmtCtx.ExecRetryCount = 2
 	sessVars.StmtCtx.ExecSuccess = true
@@ -129,7 +226,8 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 				strings.ToLower(variable.SlowLogDBStr):      {},
 				strings.ToLower(variable.SlowLogSucc):       {},
 				strings.ToLower(execdetails.ProcessTimeStr): {},
-			}})
+			},
+		})
 
 	sessVars.SlowLogRules.NeedUpdateEffectiveFields = false
 	items := executor.PrepareSlowLogItemsForRules(goCtx, vardef.GlobalSlowLogRules.Load(), sessVars)
@@ -141,8 +239,10 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogSucc)].Match(ctx.GetSessionVars(), items, true))
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.ProcessTimeStr)].Match(ctx.GetSessionVars(), items, copExec.TimeDetail.ProcessTime.Seconds()))
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.BackoffTimeStr)].Match(ctx.GetSessionVars(), items, copExec.BackoffTime.Seconds()))
-	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.ProcessKeysStr)].Match(ctx.GetSessionVars(), items, copExec.ScanDetail.ProcessedKeys))
-	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.TotalKeysStr)].Match(ctx.GetSessionVars(), items, copExec.ScanDetail.TotalKeys))
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.ProcessKeysStr)].Match(ctx.GetSessionVars(), items, uint64(copExec.ScanDetail.ProcessedKeys)))
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(execdetails.TotalKeysStr)].Match(ctx.GetSessionVars(), items, uint64(copExec.ScanDetail.TotalKeys)))
+	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogCopMVCCReadAmplification)].Match(ctx.GetSessionVars(), items, 0.49))
+	require.False(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogCopMVCCReadAmplification)].Match(ctx.GetSessionVars(), items, 0.5))
 
 	// fields not in Fields should be zero at this point
 	require.Equal(t, uint64(0), items.ExecRetryCount)
@@ -336,6 +436,26 @@ func TestShouldWriteSlowLog(t *testing.T) {
 		seVars.SessionAlias = "sessA"
 		require.True(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, baseItems))
 	})
+
+	t.Run("session rules match by cop_mvcc_read_amplification", func(t *testing.T) {
+		tk.MustExec(`set global tidb_slow_log_rules=""`)
+		tk.MustExec(`set session tidb_slow_log_rules="cop_mvcc_read_amplification:10"`)
+		seVars := tk.Session().GetSessionVars()
+		items := &variable.SlowQueryLogItems{
+			ExecDetail: &execdetails.ExecDetails{
+				CopExecDetails: execdetails.CopExecDetails{
+					ScanDetail: &util.ScanDetail{
+						TotalKeys:     100,
+						ProcessedKeys: 10,
+					},
+				},
+			},
+		}
+		require.True(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, items))
+
+		tk.MustExec(`set session tidb_slow_log_rules="cop_mvcc_read_amplification:10.01"`)
+		require.False(t, executor.ShouldWriteSlowLog(vardef.GlobalSlowLogRules.Load(), seVars, items))
+	})
 }
 
 func TestWriteSlowLog(t *testing.T) {
@@ -353,12 +473,22 @@ func TestWriteSlowLog(t *testing.T) {
 	defer func() { logutil.SlowQueryLogger = prev }()
 
 	sql := "select * from t where a = 1;"
+	readSlowQueryCounter := func() float64 {
+		counter := metrics.SlowQueryCounter.WithLabelValues(metrics.LblGeneral)
+		pb := &dto.Metric{}
+		require.NoError(t, counter.Write(pb))
+		return pb.GetCounter().GetValue()
+	}
 	checkWriteSlowLog := func(expectWrite bool) {
+		before := readSlowQueryCounter()
 		tk.MustExec(sql)
+		after := readSlowQueryCounter()
 		if !expectWrite {
 			require.Equal(t, 0, recorded.Len())
+			require.Equal(t, 0.0, after-before)
 		} else {
 			require.NotEqual(t, 0, recorded.Len())
+			require.Equal(t, 1.0, after-before)
 		}
 
 		writeMsg := slices.ContainsFunc(recorded.All(), func(entry observer.LoggedEntry) bool {
@@ -437,6 +567,45 @@ func TestSlowLogMaxPerSec(t *testing.T) {
 	tk.MustQuery(`show variables like "tidb_slow_log_max_per_sec"`).Check(
 		testkit.Rows("tidb_slow_log_max_per_sec 0"),
 	)
+}
+
+type compilePanicStmt struct {
+	ast.StmtNode
+}
+
+func (*compilePanicStmt) AcceptInPlace(ast.InPlaceVisitor) bool {
+	panic(exeerrors.ErrMemoryExceedForQuery)
+}
+
+func TestCompilePanicSQLRedaction(t *testing.T) {
+	const sql = "SELECT 'compile-secret', 12345"
+	for _, tc := range []struct {
+		mode     string
+		expected string
+	}{
+		{mode: "OFF", expected: sql},
+		{mode: "ON", expected: "select ..."},
+		{mode: "MARKER", expected: "select ‹compile-secret› , ‹12345›"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			stmt, err := parser.New().ParseOneStmt(sql, "", "")
+			require.NoError(t, err)
+			sctx := mock.NewContext()
+			sctx.GetSessionVars().EnableRedactLog = tc.mode
+			core, recorded := observer.New(zap.ErrorLevel)
+			ctx := logutil.WithLogger(context.Background(), zap.New(core))
+			compiler := executor.Compiler{Ctx: sctx}
+
+			// Raise a handled panic while preprocessing, so the real recovery log runs.
+			execStmt, err := compiler.Compile(ctx, &compilePanicStmt{StmtNode: stmt})
+			require.Nil(t, execStmt)
+			require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err), "%v", err)
+			entries := recorded.FilterMessage("compile SQL panic").All()
+			require.Len(t, entries, 1)
+			require.Equal(t, tc.expected, entries[0].ContextMap()["SQL"])
+			require.Equal(t, sql, stmt.Text())
+		})
+	}
 }
 
 func BenchmarkCheckSlowThreshold(b *testing.B) {
@@ -538,5 +707,185 @@ func BenchmarkCheckSlowLogRulesPreAlloc(b *testing.B) {
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		execStmt.LogSlowQuery(ts, true, false)
+	}
+}
+
+func TestMaxExecutionTimeIncludesTSOWaitTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	testCases := []struct {
+		name             string
+		tsoDelayMs       int
+		maxExecutionTime uint64 // in milliseconds
+		expectTimeout    bool
+		description      string
+	}{
+		{
+			name:             "TSO delay 50ms, timeout 500ms - should not timeout",
+			tsoDelayMs:       50,
+			maxExecutionTime: 500,
+			expectTimeout:    false,
+			description:      "TSO wait time (50ms) should be included, total << 500ms",
+		},
+		{
+			name:             "TSO delay 150ms, timeout 500ms - should not timeout",
+			tsoDelayMs:       150,
+			maxExecutionTime: 500,
+			expectTimeout:    false,
+			description:      "TSO wait time (150ms) should be included, total << 500ms",
+		},
+		{
+			name:             "TSO delay 300ms, timeout 50ms - should timeout",
+			tsoDelayMs:       300,
+			maxExecutionTime: 50,
+			expectTimeout:    true,
+			description:      "TSO wait time (300ms) exceeds timeout (50ms) clearly",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Enable failpoint to inject delay in TSO Wait()
+			failpointName := "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectTSOWaitDelay"
+			require.NoError(t, failpoint.Enable(failpointName, `return(`+fmt.Sprintf("%d", tc.tsoDelayMs)+`)`))
+			defer func() {
+				require.NoError(t, failpoint.Disable(failpointName))
+			}()
+			// Set max_execution_time
+			tk.MustExec("set @@max_execution_time = ?", tc.maxExecutionTime)
+
+			// Execute a SELECT statement that will trigger TSO wait
+			// Use range scan instead of point get to avoid optimization
+			startTime := time.Now()
+			if tc.expectTimeout {
+				rs, err := tk.Exec("select * from t where a >= 1")
+				require.Nil(t, rs)
+				require.ErrorContains(t, err, "maximum statement execution time exceeded")
+			} else {
+				tk.MustQuery("select * from t where a >= 1")
+			}
+			elapsed := time.Since(startTime)
+
+			// Verify that the elapsed time includes the TSO delay
+			// Allow some skew for CI scheduling / overhead.
+			expectedMinTime := time.Duration(tc.tsoDelayMs) * time.Millisecond
+			skew := 200 * time.Millisecond
+			require.GreaterOrEqual(t, elapsed, expectedMinTime-skew,
+				"Elapsed time should include TSO wait time. Expected at least %v, got %v", expectedMinTime, elapsed)
+
+			// Check ProcessInfo to verify the start time was set before TSO wait
+			pi := tk.Session().ShowProcess()
+			require.NotNil(t, pi)
+			if pi.MaxExecutionTime > 0 {
+				processElapsed := time.Since(pi.Time)
+				require.GreaterOrEqual(t, processElapsed, expectedMinTime-skew,
+					"ProcessInfo elapsed time should include TSO wait time. Expected at least %v, got %v", expectedMinTime, processElapsed)
+			}
+		})
+	}
+}
+
+func TestDMLMaxExecutionTimeExpiresBeforeExecutorOpen(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key)")
+	tk.MustExec("set @@tidb_dml_max_execution_time = 50")
+	vars := tk.Session().GetSessionVars()
+	checkReleased := func() {
+		require.Empty(t, vars.MemTracker.GetChildrenForTest())
+		require.Empty(t, vars.DiskTracker.GetChildrenForTest())
+		require.Nil(t, vars.StmtCtx.CTEStorageMap)
+	}
+	const cteQuery = "with recursive cte(n) as (select 1 union all select n+1 from cte where n<3) select n from cte"
+
+	const failpointName = "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectTSOWaitDelay"
+	func() {
+		require.NoError(t, failpoint.Enable(failpointName, "return(300)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable(failpointName))
+		}()
+
+		rs, err := tk.Exec("insert into t " + cteQuery)
+		require.Nil(t, rs)
+		require.ErrorContains(t, err, "maximum statement execution time exceeded")
+		checkReleased()
+	}()
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+
+	// A returned record set must keep its resources until it is closed.
+	func() {
+		rs, err := tk.Exec(cteQuery)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, rs.Close()) }()
+		require.NotEmpty(t, vars.MemTracker.GetChildrenForTest())
+		require.Len(t, vars.StmtCtx.CTEStorageMap, 1)
+		rows, err := session.GetRows4Test(context.Background(), tk.Session(), rs)
+		require.NoError(t, err)
+		require.Len(t, rows, 3)
+	}()
+	checkReleased()
+
+	// Other early returns also need statement cleanup, even after executor.Close.
+	tk.MustExec("set tidb_low_resolution_tso = ON")
+	tk.MustExec("begin optimistic")
+	err := tk.ExecToErr("select * from t for update")
+	require.ErrorContains(t, err, "can not execute select for update statement")
+	checkReleased()
+	tk.MustExec("rollback")
+}
+
+type canceledBuildTxnManager struct {
+	sessiontxn.TxnManager
+	onGetForUpdateTS func()
+}
+
+func (m canceledBuildTxnManager) GetStmtForUpdateTS() (uint64, error) {
+	m.onGetForUpdateTS()
+	return 0, context.Canceled
+}
+
+func TestDMLBuildCancellationPreservesTimeout(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	setup := testkit.NewTestKit(t, store)
+	setup.MustExec("use test")
+	setup.MustExec("create table build_cancel (a int primary key)")
+	setup.MustExec("insert into build_cancel values (1)")
+	for _, panicOnBuild := range []bool{false, true} {
+		t.Run(fmt.Sprintf("panic=%v", panicOnBuild), func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set tidb_dml_max_execution_time = 10000")
+			vars := tk.Session().GetSessionVars()
+
+			originalGetTxnManager := sessiontxn.GetTxnManager
+			t.Cleanup(func() { sessiontxn.GetTxnManager = originalGetTxnManager })
+			sessiontxn.GetTxnManager = func(sctx sessionctx.Context) sessiontxn.TxnManager {
+				manager := originalGetTxnManager(sctx)
+				if sctx.GetSessionVars() != vars {
+					return manager
+				}
+				return canceledBuildTxnManager{TxnManager: manager, onGetForUpdateTS: func() {
+					vars.SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
+					if panicOnBuild {
+						panic(exeerrors.ErrMaxExecTimeExceeded)
+					}
+				}}
+			}
+
+			// UPDATE requests its for-update timestamp while building the executor.
+			// Cleanup must preserve the kill reason before detaching its trackers.
+			rs, err := tk.Exec("update build_cancel set a = a + 1 where a > 0")
+			sessiontxn.GetTxnManager = originalGetTxnManager
+			require.Nil(t, rs)
+			require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err), "%v", err)
+			require.Empty(t, vars.MemTracker.GetChildrenForTest())
+			require.Empty(t, vars.DiskTracker.GetChildrenForTest())
+			tk.MustQuery("select * from build_cancel").Check(testkit.Rows("1"))
+		})
 	}
 }

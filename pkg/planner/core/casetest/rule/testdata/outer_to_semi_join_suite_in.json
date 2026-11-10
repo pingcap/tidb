@@ -1,0 +1,66 @@
+[
+  {
+    "name": "TestOuterToSemiJoin",
+    "cases": [
+      // GROUP 1: LEFT JOIN to SEMI JOIN (Positive cases, equi-join on id)
+      "select A.* from A left join B on A.id = B.a_id where B.val > 0",
+      "select A.* from A left join B on A.id = B.a_id is null where B.val > 0",
+      "select A.* from A left join B on A.id <=> B.a_id where B.val > 0",
+      "select A.* from A left join B on A.id = B.a_id and B.val > 100 where B.id is not null",
+
+      // GROUP 2: LEFT JOIN to ANTI SEMI JOIN (Positive cases, equi-join on id)
+      "select A.* from A left join B on A.id = B.a_id where B.id IS NULL order by A.id",
+      "select A.* from A left join B on A.id = B.a_id where B.non_null_col IS NULL",
+      "select A.* from A left join B on A.id = B.a_id is null where B.non_null_col IS NULL",
+      "select A.* from A left join B on A.id <=> B.a_id where B.id IS NULL",
+      "select A.* from A left join B on A.id = B.a_id where B.id is null and A.val > 30 order by A.id",
+
+      // GROUP 3: LEFT JOIN (Negative cases, should NOT be converted, equi-join on id)
+      "select A.* from A left join B on A.id = B.a_id where B.nullable_col IS NULL",
+      "select A.* from A left join B on A.id = B.a_id where B.id IS NULL OR B.val > 100",
+      "select A.* from A left join B on A.id = B.a_id and B.val > 500 where B.id is null",
+
+      // GROUP 4: RIGHT JOIN to SEMI/ANTI SEMI JOIN (Positive cases, equi-join)
+      "select B.* from A right join B on A.id = B.a_id where A.val > 10",
+      "select B.* from A right join B on A.id = B.a_id where A.id IS NULL",
+      "select B.* from A right join B on A.id = B.a_id is null where A.id IS NULL",
+      "select B.* from A right join B on A.id <=> B.a_id where A.id IS NULL",
+      "select B.* from A right join B on A.id = B.a_id where A.id is null and B.val > 100 order by B.id",
+      "select B.* from A right join B on A.val <=> B.val where A.id IS NULL",
+      "select B.* from A right join B on A.val <=> B.val where A.id IS NOT NULL",
+      "select B.* from A right join B on A.id = B.a_id and B.val > 100 where A.id is null",
+
+      // GROUP 5: RIGHT JOIN (Negative cases, should NOT be converted, equi-join)
+      "select B.* from A right join B on A.id = B.a_id where A.nullable_val IS NULL",
+      "select B.* from A right join B on A.id = B.a_id where A.id IS NULL OR A.val > 20",
+
+      // GROUP 6: Non-Equi JOINs
+      // Sub-group: Positive cases (should be converted to Anti Semi Join)
+      "select A.* from A left join B on A.id < B.a_id where B.id is null",
+      "select A.* from A left join B on A.id > B.a_id where B.non_null_col is null",
+      "select B.* from A right join B on A.id > B.a_id where A.id is null",
+      // Sub-group: Negative cases (should NOT be converted)
+      "select A.* from A left join B on A.id > B.a_id where B.val > 0",
+      "select A.* from A left join B on A.id > B.a_id where B.nullable_col is null",
+
+      // GROUP 7: JOIN on nullable & non-unique columns (A.val = B.val)
+      "select A.* from A left join B on A.val = B.val where B.id IS NULL",
+      "select A.* from A left join B on A.val = B.val where B.non_null_col IS NULL",
+      "select A.* from A left join B on A.val = B.val where B.nullable_col IS NULL",
+      "select A.* from A left join B on A.val <=> B.val where B.id IS NULL",
+      "select A.* from A left join B on A.val <=> B.val where B.non_null_col > 0",
+
+      // GROUP 8: Projecting columns from both tables (Negative cases for Semi Join conversion)
+      // These conversions should NOT happen because Semi/Anti-Semi Join cannot project columns from the inner table.
+      "select A.*, B.val from A left join B on A.id = B.a_id where B.val > 10",
+      "select A.id, B.val from A left join B on A.id <=> B.a_id where B.val > 0",
+      "select A.id, B.non_null_col from A left join B on A.id = B.a_id where B.non_null_col IS NULL",
+      "select B.id, A.val from A right join B on A.id = B.a_id where A.val > 10",
+      "select B.val, A.id from A right join B on A.val <=> B.val where A.id IS NULL",
+      "select A.id, B.id from A left join B on A.id < B.a_id where B.id is null",
+      "select A.val, B.val from A left join B on A.val = B.val where B.non_null_col IS NULL",
+      "select A.id, B.val from A left join B on A.id = B.a_id where B.val > 0",
+      "SELECT * FROM t1 LEFT JOIN (t2 LEFT JOIN t3 ON t3.i = t2.i) ON t2.i = t1.i WHERE t3.i IS NULL"
+    ]
+  }
+]

@@ -25,17 +25,16 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/engine"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -131,7 +130,6 @@ func (rc *SnapClient) updateTemporaryUserTable(ctx context.Context, renamedTable
 func (rc *SnapClient) replaceTables(
 	ctx context.Context,
 	createdTables []*restoreutils.CreatedTable,
-	schemaVersionPair SchemaVersionPairT,
 	restoreTS uint64,
 	loadStatsPhysical, loadSysTablePhysical bool,
 	kvClient kv.Client,
@@ -155,7 +153,7 @@ func (rc *SnapClient) replaceTables(
 		return 0, errors.Trace(err)
 	}
 
-	if err := updateStatsTableSchema(ctx, renamedTables, schemaVersionPair, rc.db.Session().Execute); err != nil {
+	if err := updateStatsTableSchema(ctx, renamedTables, rc.dom.InfoSchema(), rc.db.Session().Execute); err != nil {
 		return 0, errors.Trace(err)
 	}
 
@@ -182,12 +180,11 @@ type PipelineContext struct {
 	LogProgress         bool
 	ChecksumConcurrency uint
 	StatsConcurrency    uint
-	SchemaVersionPair   SchemaVersionPairT
 	RestoreTS           uint64
 
 	// pipeline item tool client
 	KvClient   kv.Client
-	ExtStorage storage.ExternalStorage
+	ExtStorage storeapi.Storage
 	Glue       glue.Glue
 }
 
@@ -209,7 +206,7 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 	}
 	progressLen := int64(pipelineNum * len(createdTables))
 	if plCtx.LoadStatsPhysical || plCtx.LoadSysTablePhysical {
-		renamedTableCount, err := rc.replaceTables(ctx, createdTables, plCtx.SchemaVersionPair, plCtx.RestoreTS, plCtx.LoadStatsPhysical, plCtx.LoadSysTablePhysical, plCtx.KvClient, plCtx.Checksum, plCtx.ChecksumConcurrency)
+		renamedTableCount, err := rc.replaceTables(ctx, createdTables, plCtx.RestoreTS, plCtx.LoadStatsPhysical, plCtx.LoadSysTablePhysical, plCtx.KvClient, plCtx.Checksum, plCtx.ChecksumConcurrency)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -561,7 +558,7 @@ func updateStatsMetaForTable(ctx context.Context, buffer *statsMetaItemBuffer, s
 
 func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 	builder *PipelineConcurrentBuilder,
-	s storage.ExternalStorage,
+	s storeapi.Storage,
 	updateCh glue.Progress,
 	statsConcurrency uint,
 ) {
@@ -572,14 +569,17 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 		oldTable := tbl.OldTable
 		var statsErr error = nil
 		if oldTable.Stats != nil {
+			targetStats := *oldTable.Stats
+			targetStats.DatabaseName = tbl.TargetDBName().O
+			targetStats.TableName = tbl.Table.Name.O
 			log.Info("start loads analyze after validate checksum",
 				zap.Int64("old id", oldTable.Info.ID),
 				zap.Int64("new id", tbl.Table.ID),
 			)
 			start := time.Now()
 			// NOTICE: skip updating cache after load stats from json
-			if statsErr = statsHandler.LoadStatsFromJSONNoUpdate(c, rc.dom.InfoSchema(), oldTable.Stats, 0); statsErr != nil {
-				log.Error("analyze table failed", zap.Any("table", oldTable.Stats), zap.Error(statsErr))
+			if statsErr = statsHandler.LoadStatsFromJSONNoUpdate(c, rc.dom.InfoSchema(), &targetStats, 0); statsErr != nil {
+				log.Error("analyze table failed", zap.Any("table", &targetStats), zap.Error(statsErr))
 			}
 			log.Info("restore stat done",
 				zap.Stringer("table", oldTable.Info.Name),
@@ -625,17 +625,9 @@ func (rc *SnapClient) registerWaitTiFlashReady(
 	updateCh glue.Progress,
 ) error {
 	// TODO support tiflash store changes
-	tikvStats, err := infosync.GetTiFlashStoresStat(context.Background())
+	tiFlashStores, tikvStores, err := infosync.GetTiFlashProgressStores(context.Background())
 	if err != nil {
 		return errors.Trace(err)
-	}
-	tiFlashStores := make(map[int64]pdhttp.StoreInfo)
-	for _, store := range tikvStats.Stores {
-		// Note that only TiFlash write nodes need to be polled under NextGen kernel.
-		// TiFlash compute nodes under NextGen kernel do not hold any Regions data, so it is excluded here.
-		if engine.IsTiFlashWriteHTTPResp(&store.Store) {
-			tiFlashStores[store.Store.ID] = store
-		}
 	}
 
 	builder.RegisterPipelineTask("Wait For Tiflash Ready", 4, func(c context.Context, tbl *restoreutils.CreatedTable) error {
@@ -645,6 +637,13 @@ func (rc *SnapClient) registerWaitTiFlashReady(
 				zap.Stringer("db", tbl.OldTable.DB.Name))
 			updateCh.Inc()
 			return nil
+		}
+		var progressTiKVStores map[int64]pdhttp.StoreInfo
+		if len(tiFlashStores) == 0 {
+			log.Warn("no tiflash store found, check columnar store for replica instead",
+				zap.Stringer("table", tbl.OldTable.Info.Name),
+				zap.Stringer("db", tbl.OldTable.DB.Name))
+			progressTiKVStores = tikvStores
 		}
 		if rc.dom == nil {
 			// unreachable, current we have initial domain in mgr.
@@ -657,7 +656,7 @@ func (rc *SnapClient) registerWaitTiFlashReady(
 			var progress float64
 			if pi := tbl.Table.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
 				for _, p := range pi.Definitions {
-					progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
+					progressOfPartition, err := infosync.MustGetTiFlashProgress(c, p.ID, tbl.Table.TiFlashReplica.Count, tiFlashStores, progressTiKVStores)
 					if err != nil {
 						log.Warn("failed to get progress for tiflash partition replica, retry it",
 							zap.Int64("tableID", tbl.Table.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
@@ -669,7 +668,7 @@ func (rc *SnapClient) registerWaitTiFlashReady(
 				progress = progress / float64(len(pi.Definitions))
 			} else {
 				var err error
-				progress, err = infosync.MustGetTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
+				progress, err = infosync.MustGetTiFlashProgress(c, tbl.Table.ID, tbl.Table.TiFlashReplica.Count, tiFlashStores, progressTiKVStores)
 				if err != nil {
 					log.Warn("failed to get progress for tiflash replica, retry it",
 						zap.Int64("tableID", tbl.Table.ID), zap.Error(err))

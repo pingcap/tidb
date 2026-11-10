@@ -80,6 +80,12 @@ func TestNormalizeError(t *testing.T) {
 		errStack2 := fmt.Sprintf("%+v", stackTrace.StackTrace())
 		require.Equal(t, errStack, errStack2)
 	}
+
+	err = ErrCastValue.GenWithStackByArgs("c1", "tinyint(4)", "\"BAD\"", "out of range")
+	normalizedErr := NormalizeError(err)
+	require.Error(t, normalizedErr)
+	require.True(t, berrors.Is(normalizedErr, ErrCastValue))
+	require.EqualError(t, normalizedErr, "[Import:ErrCastValue]Value conversion failed for column 'c1'. Expected type: tinyint(4), received value: \"BAD\". Reason: out of range.")
 }
 
 func TestNormalizeOrWrapErr(t *testing.T) {
@@ -91,4 +97,21 @@ func TestNormalizeOrWrapErr(t *testing.T) {
 	err = NormalizeOrWrapErr(ErrInvalidArgument, io.EOF)
 	require.Error(t, err)
 	require.True(t, berrors.Is(err, ErrInvalidArgument))
+}
+
+func TestErrCastValueRedact(t *testing.T) {
+	originalMode := errors.RedactLogEnabled.Load()
+	t.Cleanup(func() { errors.RedactLogEnabled.Store(originalMode) })
+
+	errors.RedactLogEnabled.Store(errors.RedactLogDisable)
+	err := ErrCastValue.GenWithStackByArgs("c1", "tinyint(4)", "\"BAD\"", "out of range")
+	require.EqualError(t, err, "[Import:ErrCastValue]Value conversion failed for column 'c1'. Expected type: tinyint(4), received value: \"BAD\". Reason: out of range.")
+
+	errors.RedactLogEnabled.Store(errors.RedactLogEnable)
+	err = ErrCastValue.GenWithStackByArgs("c1", "tinyint(4)", "\"BAD\"", "out of range")
+	require.EqualError(t, err, "[Import:ErrCastValue]Value conversion failed for column 'c1'. Expected type: tinyint(4), received value: ?. Reason: out of range.")
+
+	errors.RedactLogEnabled.Store(errors.RedactLogMarker)
+	err = ErrCastValue.GenWithStackByArgs("c1", "tinyint(4)", "\"BAD\"", "out of range")
+	require.EqualError(t, err, "[Import:ErrCastValue]Value conversion failed for column 'c1'. Expected type: tinyint(4), received value: ‹\"BAD\"›. Reason: out of range.")
 }

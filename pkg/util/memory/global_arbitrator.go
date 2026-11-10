@@ -21,19 +21,24 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 const (
 	memStateVer             = "v1"
 	memStateStoreNamePrefix = "mem-state."
 	memStateStoreNameSuffix = ".json"
+	memArbitratorDirName    = "mem_arbitrator"
+
+	// DefaultGlobalMemArbitratorModeName is the default work mode of the global memory arbitrator.
+	DefaultGlobalMemArbitratorModeName = ArbitratorModePriorityName
 )
 
 var (
@@ -48,29 +53,30 @@ var (
 		}
 		v struct {
 			atomic.Pointer[MemArbitrator]
-			baseDir string
 			sync.Mutex
 		}
-		enable struct { // register callbacks after the global memory arbitrator is enabled
-			callbacks []func()
-			atomic.Bool
+		runtimeHandler struct {
+			heapProfiler atomic.Pointer[heapProfileCollector]
 			sync.Mutex
+			reset atomic.Bool
 		}
 		metrics struct {
 			last struct {
 				updateUtimeSec atomic.Int64
 				execMetricsCounter
 			}
-			smallPool atomic.Int64
-			bigPool   struct {
-				atomic.Int64
-				into atomic.Int64
+			pools struct {
+				internal atomic.Int64
+				small    atomic.Int64
+				big      atomic.Int64
+				intoBig  atomic.Int64
 			}
-			init  atomic.Bool
-			reset atomic.Bool
+			init atomic.Bool
 			sync.Mutex
 		}
+		enable atomic.Bool
 	}
+	mockinitGlobalMemArbitrator func() *MemArbitrator
 )
 
 func reportGlobalMemArbitratorMetrics() {
@@ -105,12 +111,13 @@ func reportGlobalMemArbitratorMetrics() {
 			metrics.SetGlobalMemArbitratorGauge(metrics.GlobalMemArbitratorQuota, label, value)
 		}
 		setQuota("allocated", m.allocated())
-		setQuota("out-of-control", m.avoidance.size.Load())
+		setQuota("out-of-control", m.OutOfControl())
 		setQuota("buffer", m.reservedBuffer())
+		setQuota("available", m.available())
 		setQuota("tracked-heap", m.avoidance.heapTracked.Load())
 		setQuota("awaitfree-pool-cap", m.awaitFreePoolCap())
 		setQuota("awaitfree-pool-used", m.approxAwaitFreePoolUsed().quota)
-		setQuota("awaitfree-pool-tracked-heap", m.approxAwaitFreePoolUsed().trackedHeap)
+		setQuota("awaitfree-pool-tracked-heap", m.approxAwaitFreePoolUsed().tracked)
 		setQuota("mem-inuse", m.heapController.memInuse.Load())
 		setQuota("soft-limit", m.softLimit())
 		setQuota("wait-alloc", m.WaitingAllocSize())
@@ -135,13 +142,14 @@ func reportGlobalMemArbitratorMetrics() {
 		setRootPool := func(label string, value int64) {
 			metrics.SetGlobalMemArbitratorGauge(metrics.GlobalMemArbitratorRootPool, label, value)
 		}
-		setRootPool("root-pool-uid", m.RootPoolNum())
+		setRootPool("rootpool-total", m.RootPoolNum())
 		setRootPool("under-kill", m.underKill.approxSize())
 		setRootPool("under-cancel", m.underCancel.approxSize())
 		setRootPool("digest-cache", m.digestProfileCache.num.Load())
-		setRootPool("big-running", globalArbitrator.metrics.bigPool.Load())
-		setRootPool("small-running", globalArbitrator.metrics.smallPool.Load())
-		setRootPool("into-big", globalArbitrator.metrics.bigPool.into.Load())
+		setRootPool("sql-total-big", globalArbitrator.metrics.pools.big.Load())
+		setRootPool("sql-total-small", globalArbitrator.metrics.pools.small.Load())
+		setRootPool("sql-internal", globalArbitrator.metrics.pools.internal.Load())
+		setRootPool("sql-total-intobig", globalArbitrator.metrics.pools.intoBig.Load())
 	}
 	{ // counter
 		newExecMetrics := m.ExecMetrics()
@@ -191,24 +199,43 @@ func doReportGlobalMemArbitratorCounter(oriExecMetrics, newExecMetrics *execMetr
 	addEventCount("shrink-digest-cache", (newExecMetrics.ShrinkDigest - oriExecMetrics.ShrinkDigest))
 }
 
+func readRuntimeMemStats() memStats {
+	s := SampleRuntimeMemStats()
+	return memStats{
+		HeapAlloc:  int64(s.HeapAlloc),
+		HeapInuse:  int64(s.HeapInuse),
+		MemOffHeap: int64(s.MemOffHeap),
+		TotalFree:  int64(s.TotalFree),
+		LastGC:     approxLastGCTime(),
+	}
+}
+
 // HandleGlobalMemArbitratorRuntime is used to handle runtime memory stats.
-func HandleGlobalMemArbitratorRuntime(s *runtime.MemStats) {
-	m := GlobalMemArbitrator()
-	if m == nil {
-		if globalArbitrator.metrics.reset.Load() {
-			resetGlobalMemArbitratorMetrics()
-		}
+func HandleGlobalMemArbitratorRuntime() {
+	if !globalArbitrator.runtimeHandler.TryLock() {
 		return
 	}
-	m.HandleRuntimeStats(intoRuntimeMemStats(s))
+	defer globalArbitrator.runtimeHandler.Unlock()
+
+	profiler := globalArbitrator.runtimeHandler.heapProfiler.Load()
+	if globalArbitrator.runtimeHandler.reset.Load() && globalArbitrator.runtimeHandler.reset.Swap(false) {
+		if profiler != nil {
+			profiler.resetTriggerState()
+		}
+		resetGlobalMemArbitratorMetrics()
+	}
+	m := GlobalMemArbitrator()
+	if m == nil {
+		return
+	}
+	m.handleRuntimeStats(readRuntimeMemStats())
+	if profiler != nil && profiler.shouldCheck() {
+		profiler.tryCapture(m)
+	}
 	reportGlobalMemArbitratorMetrics()
 }
 
 func resetGlobalMemArbitratorMetrics() {
-	if !globalArbitrator.metrics.reset.Swap(false) {
-		return
-	}
-
 	globalArbitrator.metrics.Lock()
 	defer globalArbitrator.metrics.Unlock()
 
@@ -291,16 +318,18 @@ func CleanupGlobalMemArbitratorForTest() {
 	globalArbitrator.v.Lock()
 	defer globalArbitrator.v.Unlock()
 
-	if globalArbitrator.v.baseDir == "" {
-		panic("env of the global memory arbitrator is not set, please call `SetupGlobalMemArbitratorForTest` first")
-	}
+	globalArbitrator.runtimeHandler.heapProfiler.Store(nil)
 	m := globalArbitrator.v.Load()
 	if m == nil {
 		return
 	}
 	m.stop()
 	globalArbitrator.v.Store(nil)
-	_ = os.Remove(runtimeMemStateRecorderFilePath(globalArbitrator.v.baseDir))
+
+	mockNow = nil
+	mockDebugInject = nil
+	mockWinupCB = nil
+	mockinitGlobalMemArbitrator = nil
 }
 
 // SetupGlobalMemArbitratorForTest sets up the global memory arbitrator for tests.
@@ -311,7 +340,34 @@ func SetupGlobalMemArbitratorForTest(baseDir string) {
 	if globalArbitrator.v.Load() != nil {
 		panic("the global memory arbitrator is already set up")
 	}
-	globalArbitrator.v.baseDir = baseDir
+
+	_ = os.Remove(runtimeMemStateRecorderFilePath(baseDir))
+	mockinitGlobalMemArbitrator = func() *MemArbitrator {
+		m := NewMemArbitrator(
+			0,
+			4,
+			defPoolQuotaShards,
+			newMemStateRecorder(baseDir),
+		)
+		// Skip logWithFields and wrapLogFieldsAction when reporting callers.
+		logger := logutil.BgLogger().WithOptions(zap.AddCallerSkip(2))
+		m.AutoRun(
+			MemArbitratorActions{
+				Info:  wrapLogFieldsAction(logger.Info),
+				Warn:  wrapLogFieldsAction(logger.Warn),
+				Error: wrapLogFieldsAction(logger.Error),
+				UpdateRuntimeMemStats: func() {
+				},
+				GC: func() {
+				},
+			},
+			defAwaitFreePoolAllocAlignSize,
+			4,
+			defTaskTickDur,
+		)
+		globalArbitrator.v.Store(m)
+		return m
+	}
 }
 
 // GetGlobalMemArbitratorWorkModeText returns the text of the global memory arbitrator work mode.
@@ -324,6 +380,12 @@ func setGlobalMemArbitratorWorkModeText(str string) {
 
 // SetGlobalMemArbitratorWorkMode sets the work mode of the global memory arbitrator.
 func SetGlobalMemArbitratorWorkMode(str string) bool {
+	if intest.InTest {
+		if mockinitGlobalMemArbitrator == nil {
+			return false
+		}
+	}
+
 	if !globalArbitrator.metrics.init.Load() {
 		globalArbitrator.metrics.Lock()
 
@@ -378,7 +440,7 @@ func SetGlobalMemArbitratorWorkMode(str string) bool {
 	if newMode == ArbitratorModeDisable {
 		m.SetWorkMode(newMode)
 		globalArbitrator.enable.Store(false)
-		globalArbitrator.metrics.reset.Store(true)
+		globalArbitrator.runtimeHandler.reset.Store(true)
 		return true
 	}
 
@@ -394,9 +456,6 @@ func SetGlobalMemArbitratorWorkMode(str string) bool {
 }
 
 func doSetGlobalMemArbitratorLimit() {
-	for _, callback := range globalArbitrator.enable.callbacks {
-		callback()
-	}
 	globalArbitrator.v.Load().SetLimit(ServerMemoryLimit.Load())
 }
 
@@ -414,16 +473,11 @@ func AjustGlobalMemArbitratorLimit() {
 	doSetGlobalMemArbitratorLimit()
 }
 
-// RegisterCallbackForGlobalMemArbitrator registers a callback to be called after the global memory arbitrator is enabled.
-func RegisterCallbackForGlobalMemArbitrator(f func()) {
-	globalArbitrator.enable.Lock()
-
-	globalArbitrator.enable.callbacks = append(globalArbitrator.enable.callbacks, f)
-
-	globalArbitrator.enable.Unlock()
-}
-
 func initGlobalMemArbitrator() (m *MemArbitrator) {
+	if intest.InTest {
+		return mockinitGlobalMemArbitrator()
+	}
+
 	globalArbitrator.v.Lock()
 	defer globalArbitrator.v.Unlock()
 
@@ -431,10 +485,12 @@ func initGlobalMemArbitrator() (m *MemArbitrator) {
 		return
 	}
 
-	baseDir := globalArbitrator.v.baseDir
-	if baseDir == "" {
+	baseDir := ""
+	if logDir, _ := filepath.Split(config.GetGlobalConfig().Log.File.Filename); logDir != "" {
+		baseDir = filepath.Join(logDir, memArbitratorDirName)
+	} else {
 		cfg := config.GetGlobalConfig()
-		baseDir = filepath.Join(cfg.TempDir, fmt.Sprintf("mem_arbitrator-%d", cfg.Port))
+		baseDir = filepath.Join(cfg.TempDir, fmt.Sprintf(memArbitratorDirName+"-%d", cfg.Port))
 	}
 
 	limit := ServerMemoryLimit.Load()
@@ -442,22 +498,23 @@ func initGlobalMemArbitrator() (m *MemArbitrator) {
 		limit = GetMemTotalIgnoreErr()
 	}
 
+	profiler := newHeapProfileCollector(filepath.Join(baseDir, heapProfileDirName))
 	m = NewMemArbitrator(
 		int64(limit),
 		defPoolStatusShards,
 		defPoolQuotaShards,
-		64*byteSizeKB, /* 64k ~ */
 		newMemStateRecorder(baseDir),
 	)
+	// Skip logWithFields and wrapLogFieldsAction when reporting callers.
+	logger := logutil.BgLogger().WithOptions(zap.AddCallerSkip(2))
 
 	m.AutoRun(
 		MemArbitratorActions{
-			Info:  logutil.BgLogger().Info,
-			Warn:  logutil.BgLogger().Warn,
-			Error: logutil.BgLogger().Error,
+			Info:  wrapLogFieldsAction(logger.Info),
+			Warn:  wrapLogFieldsAction(logger.Warn),
+			Error: wrapLogFieldsAction(logger.Error),
 			UpdateRuntimeMemStats: func() {
-				s := ForceReadMemStats()
-				m.SetRuntimeMemStats(intoRuntimeMemStats(s))
+				m.setRuntimeMemStats(readRuntimeMemStats())
 			},
 			GC: func() {
 				runtime.GC() //nolint: revive
@@ -468,6 +525,7 @@ func initGlobalMemArbitrator() (m *MemArbitrator) {
 		defTaskTickDur,
 	)
 
+	globalArbitrator.runtimeHandler.heapProfiler.Store(profiler)
 	globalArbitrator.v.Store(m)
 	return
 }
@@ -482,10 +540,8 @@ func RemovePoolFromGlobalMemArbitrator(uid uint64) bool {
 }
 
 func init() {
-	workMode := ArbitratorModeDisable
-	setGlobalMemArbitratorWorkModeText(workMode.String())
+	setGlobalMemArbitratorWorkModeText(ArbitratorModeDisable.String())
 	globalArbitrator.softLimit.originText.Store(ArbitratorSoftLimitModDisableName)
-	globalArbitrator.enable.callbacks = make([]func(), 0, 1)
 }
 
 type runtimeMemStateRecorder struct {
@@ -505,80 +561,61 @@ func newMemStateRecorder(baseDir string) *runtimeMemStateRecorder {
 }
 
 func (m *runtimeMemStateRecorder) Store(memState *RuntimeMemStateV1) error {
-	if _, err := os.Stat(m.baseDir); err != nil && !os.IsExist(err) {
-		err = os.MkdirAll(m.baseDir, 0750)
-		if err != nil {
-			return fmt.Errorf("failed to create dir `%s`, err: %v", m.baseDir, err)
+	if err := os.MkdirAll(m.baseDir, 0750); err != nil {
+		return fmt.Errorf("failed to create dir %q: %w", m.baseDir, err)
+	}
+
+	data, err := json.Marshal(memState)
+	if err != nil {
+		return fmt.Errorf("failed to marshal mem state: %w", err)
+	}
+
+	f, err := os.CreateTemp(m.baseDir, ".mem-state.*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create mem state temp file: %w", err)
+	}
+	tmpPath := f.Name()
+	closed := false
+	renamed := false
+	defer func() {
+		if !closed {
+			_ = f.Close()
 		}
+		if !renamed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if _, err := f.Write(data); err != nil {
+		return fmt.Errorf("failed to write mem state: %w", err)
 	}
-
-	buff, err := json.Marshal(memState)
-	if err != nil {
-		return err
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("failed to close mem state: %w", err)
 	}
+	closed = true
 
-	f, err := os.CreateTemp(m.baseDir, ".mem_state.*.json")
-
-	if err != nil {
-		return err
+	if err := os.Rename(tmpPath, m.filePath); err != nil {
+		return fmt.Errorf("failed to rename mem state: %w", err)
 	}
-
-	_, err = f.Write(buff)
-
-	f.Close()
-
-	if err != nil {
-		return err
-	}
-
-	return os.Rename(f.Name(), m.filePath)
+	renamed = true
+	return nil
 }
 
 func (m *runtimeMemStateRecorder) Load() (*RuntimeMemStateV1, error) {
-	entries, err := os.ReadDir(m.baseDir)
+	data, err := os.ReadFile(m.filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read dir `%s`: %w", m.baseDir, err)
-	}
-	var realPath string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		if name := entry.Name(); len(name) >= len(memStateStoreNamePrefix) && name[:len(memStateStoreNamePrefix)] == memStateStoreNamePrefix {
-			suffix := name[len(memStateStoreNamePrefix):]
-			suffixes := strings.Split(suffix, ".")
-			if len(suffixes) < 2 {
-				continue
+		if os.IsNotExist(err) {
+			if _, statErr := os.Stat(m.baseDir); statErr != nil {
+				return nil, fmt.Errorf("failed to read dir %q: %w", m.baseDir, statErr)
 			}
-			if suffixes[0] == memStateVer { // v1
-				realPath = filepath.Join(m.baseDir, name)
-				break
-			}
+			return nil, nil
 		}
+		return nil, fmt.Errorf("failed to read file %q: %w", m.filePath, err)
 	}
 
-	if realPath == "" {
-		return nil, nil
+	memState := new(RuntimeMemStateV1)
+	if err := json.Unmarshal(data, memState); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal mem state from %q: %w", m.filePath, err)
 	}
-
-	buff, err := os.ReadFile(realPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file `%s`: %w", realPath, err)
-	}
-	memState := RuntimeMemStateV1{}
-	err = json.Unmarshal(buff, &memState)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal mem state: %w", err)
-	}
-	return &memState, nil
-}
-
-func intoRuntimeMemStats(s *runtime.MemStats) RuntimeMemStats {
-	return RuntimeMemStats{
-		HeapAlloc:  int64(s.HeapAlloc),
-		HeapInuse:  int64(s.HeapInuse),
-		TotalFree:  int64(s.TotalAlloc - s.Alloc),
-		MemOffHeap: int64(s.StackSys + s.MSpanSys + s.MCacheSys + s.BuckHashSys + s.GCSys + s.OtherSys),
-		LastGC:     int64(s.LastGC),
-	}
+	return memState, nil
 }

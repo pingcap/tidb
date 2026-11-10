@@ -264,23 +264,9 @@ func (c *Column) appendNullBitmap(notNull bool) {
 
 // Reserve allocates some memory for the column
 func (c *Column) Reserve(moreBytesNumNullBitmapNeed int64, moreBytesNumDataNeed int64, moreBytesNumOffsetNeed int64) {
-	currentNullBitmapLen := int64(len(c.nullBitmap))
-	nullBitmapExpectedCap := currentNullBitmapLen + moreBytesNumNullBitmapNeed
-	if int64(cap(c.nullBitmap)) < nullBitmapExpectedCap {
-		c.nullBitmap = slices.Grow(c.nullBitmap, int(nullBitmapExpectedCap))
-	}
-
-	currentDataLen := int64(len(c.data))
-	dataExpectedCap := currentDataLen + moreBytesNumDataNeed
-	if int64(cap(c.data)) < dataExpectedCap {
-		c.data = slices.Grow(c.data, int(dataExpectedCap))
-	}
-
-	currentOffsetLen := int64(len(c.offsets))
-	offsetExpectedCap := currentOffsetLen + moreBytesNumOffsetNeed
-	if int64(cap(c.offsets)) < offsetExpectedCap {
-		c.offsets = slices.Grow(c.offsets, int(offsetExpectedCap))
-	}
+	c.nullBitmap = slices.Grow(c.nullBitmap, int(moreBytesNumNullBitmapNeed))
+	c.data = slices.Grow(c.data, int(moreBytesNumDataNeed))
+	c.offsets = slices.Grow(c.offsets, int(moreBytesNumOffsetNeed))
 }
 
 // CalculateLenDeltaForAppendCellNTimesForNullBitMap calculates the memory usage of nullBitmap for `AppendCellNTimes` function
@@ -322,6 +308,54 @@ func (c *Column) AppendCellNTimes(src *Column, pos, times int) {
 		}
 	}
 	c.length += times
+}
+
+// AppendCellRange appends cells in [begin, end) from the source column.
+func (c *Column) AppendCellRange(src *Column, begin, end int) {
+	if src == nil {
+		return
+	}
+	srcRows := src.Rows()
+	if begin < 0 || begin >= end || end > srcRows {
+		return
+	}
+	appendedRows := end - begin
+	oldLen := c.length
+	newLen := oldLen + appendedRows
+	sizeNulls := (newLen + 7) >> 3
+	if cap(c.nullBitmap) >= sizeNulls {
+		c.nullBitmap = c.nullBitmap[:sizeNulls]
+	} else {
+		oldNullBitmap := c.nullBitmap
+		c.nullBitmap = make([]byte, sizeNulls)
+		copy(c.nullBitmap, oldNullBitmap)
+	}
+	for i := range appendedRows {
+		dstRowIdx := oldLen + i
+		srcRowIdx := begin + i
+		byteIdx := dstRowIdx >> 3
+		bitMask := byte(1 << uint(dstRowIdx&7))
+		if src.IsNull(srcRowIdx) {
+			c.nullBitmap[byteIdx] &^= bitMask
+		} else {
+			c.nullBitmap[byteIdx] |= bitMask
+		}
+	}
+	if c.IsFixed() {
+		elemLen := len(src.elemBuf)
+		beginOffset, endOffset := begin*elemLen, end*elemLen
+		c.data = append(c.data, src.data[beginOffset:endOffset]...)
+		c.length = newLen
+		return
+	}
+	beginOffset, endOffset := src.offsets[begin], src.offsets[end]
+	dstDataStart := int64(len(c.data))
+	srcDataStart := src.offsets[begin]
+	c.data = append(c.data, src.data[beginOffset:endOffset]...)
+	for rowIdx := begin + 1; rowIdx <= end; rowIdx++ {
+		c.offsets = append(c.offsets, dstDataStart+(src.offsets[rowIdx]-srcDataStart))
+	}
+	c.length = newLen
 }
 
 // appendMultiSameNullBitmap appends multiple same bit value to `nullBitMap`.
@@ -572,6 +606,23 @@ func (c *Column) nullCount() int {
 	return cnt
 }
 
+// HasNull returns true if there is any null value in this Column.
+func (c *Column) HasNull() bool {
+	var i int
+	for ; i+8 <= c.length; i += 8 {
+		// 0 is null and 1 is not null
+		if c.nullBitmap[i>>3] != 0xFF {
+			return true
+		}
+	}
+	for ; i < c.length; i++ {
+		if c.IsNull(i) {
+			return true
+		}
+	}
+	return false
+}
+
 // ResizeInt64 resizes the column so that it contains n int64 elements.
 func (c *Column) ResizeInt64(n int, isNull bool) {
 	c.resize(n, sizeInt64, isNull)
@@ -610,6 +661,12 @@ func (c *Column) ResizeTime(n int, isNull bool) {
 // ReserveString changes the column capacity to store n string elements and set the length to zero.
 func (c *Column) ReserveString(n int) {
 	c.reserve(n, 8)
+}
+
+// ReserveStringWithSizeHint changes the column capacity to store n strings of a predetermined size.
+// example: a 36 character text format UUID: ReserveStringWithSizeHint(1, 36) for a single entry.
+func (c *Column) ReserveStringWithSizeHint(n int, size int) {
+	c.reserve(n, size)
 }
 
 // ReserveBytes changes the column capacity to store n bytes elements and set the length to zero.

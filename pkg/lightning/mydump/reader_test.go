@@ -22,9 +22,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	mockstorage "github.com/pingcap/tidb/br/pkg/mock/storage"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	. "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/mockobjstore"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -35,7 +35,7 @@ func TestExportStatementNoTrailingNewLine(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(file.Name())
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 
 	_, err = file.Write([]byte("CREATE DATABASE whatever;"))
@@ -89,7 +89,7 @@ func exportStatmentShouldBe(t *testing.T, stmt string, expected string) {
 	err = file.Close()
 	require.NoError(t, err)
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name(), FileSize: stat.Size()}}
 	data, err := ExportStatement(context.TODO(), store, f, "auto")
@@ -115,7 +115,7 @@ func TestExportStatementGBK(t *testing.T) {
 	err = file.Close()
 	require.NoError(t, err)
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name(), FileSize: stat.Size()}}
 	data, err := ExportStatement(context.TODO(), store, f, "auto")
@@ -136,7 +136,7 @@ func TestExportStatementGibberishError(t *testing.T) {
 	err = file.Close()
 	require.NoError(t, err)
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 
 	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name(), FileSize: stat.Size()}}
@@ -169,7 +169,7 @@ func TestExportStatementHandleNonEOFError(t *testing.T) {
 
 	ctx := context.TODO()
 
-	mockStorage := mockstorage.NewMockExternalStorage(controller)
+	mockStorage := mockobjstore.NewMockStorage(controller)
 	mockStorage.EXPECT().
 		Open(ctx, "no-perm-file", nil).
 		Return(AlwaysErrorReadSeekCloser{}, nil)
@@ -185,7 +185,7 @@ func TestExportStatementCompressed(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(file.Name())
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 
 	gzipFile := gzip.NewWriter(file)
@@ -259,7 +259,7 @@ func TestExportStatementMissingTrailingSemicolon(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, file.Close())
 
-			store, err := storage.NewLocalStorage(dir)
+			store, err := objstore.NewLocalStorage(dir)
 			require.NoError(t, err)
 			f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name(), FileSize: stat.Size()}}
 

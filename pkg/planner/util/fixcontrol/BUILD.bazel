@@ -20,6 +20,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+    shard_count = 2,
     deps = [
         ":fixcontrol",
         "//pkg/testkit",

@@ -62,7 +62,7 @@ func NewWindowFuncDesc(ctx expression.BuildContext, name string, args []expressi
 	// Some window functions' return column type must be nullable or not nullable
 	switch name {
 	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncCumeDist, ast.WindowFuncPercentRank,
-		ast.AggFuncCount, ast.AggFuncApproxCountDistinct, ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
+		ast.AggFuncCount, ast.AggFuncMaxCount, ast.AggFuncMinCount, ast.AggFuncApproxCountDistinct, ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		base.RetTp.SetFlag(mysql.NotNullFlag)
 	case ast.WindowFuncLead, ast.WindowFuncLag:
 		if len(args) == 3 &&

@@ -45,13 +45,9 @@ var (
 
 	GlobalMemArbitratorTaskExecCounter prometheus.CounterVec
 	GlobalMemArbitratorSubTasks        struct {
-		CancelWaitAverseParse   prometheus.Counter
-		CancelWaitAversePlan    prometheus.Counter
-		CancelStandardModeParse prometheus.Counter
-		CancelStandardModePlan  prometheus.Counter
-		ForceKillParse          prometheus.Counter
-		ForceKillPlan           prometheus.Counter
-		NoLimit                 prometheus.Counter
+		ForceKillParse prometheus.Counter
+		ForceKillPlan  prometheus.Counter
+		NoLimit        prometheus.Counter
 	}
 
 	counters struct {
@@ -71,7 +67,7 @@ func InitMemoryMetrics() {
 		Subsystem: subsystem,
 		Name:      "arbitration_duration_seconds",
 		Help:      "Bucketed histogram of mem quota arbitration time (s) in SQL execution",
-		Buckets:   prometheus.ExponentialBuckets(0.00005, 4, 18),
+		Buckets:   prometheus.ExponentialBucketsRange(0.00005 /*50us*/, 3600*24 /*1d*/, 17),
 	})
 	GlobalMemArbitratorQuota = *metricscommon.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: namespace,
@@ -121,10 +117,6 @@ func InitMemoryMetrics() {
 	GlobalMemArbitratorSubEvents.PoolInitMediumQuota = GlobalMemArbitratorEventCounter.WithLabelValues("pool-init-medium-quota")
 	GlobalMemArbitratorSubEvents.PoolInitNone = GlobalMemArbitratorEventCounter.WithLabelValues("pool-init-none")
 
-	GlobalMemArbitratorSubTasks.CancelWaitAverseParse = GlobalMemArbitratorTaskExecCounter.WithLabelValues("cancel-wait-averse-parse")
-	GlobalMemArbitratorSubTasks.CancelWaitAversePlan = GlobalMemArbitratorTaskExecCounter.WithLabelValues("cancel-wait-averse-plan")
-	GlobalMemArbitratorSubTasks.CancelStandardModeParse = GlobalMemArbitratorTaskExecCounter.WithLabelValues("cancel-standard-mode-parse")
-	GlobalMemArbitratorSubTasks.CancelStandardModePlan = GlobalMemArbitratorTaskExecCounter.WithLabelValues("cancel-standard-mode-plan")
 	GlobalMemArbitratorSubTasks.ForceKillParse = GlobalMemArbitratorTaskExecCounter.WithLabelValues("force-kill-parse")
 	GlobalMemArbitratorSubTasks.ForceKillPlan = GlobalMemArbitratorTaskExecCounter.WithLabelValues("force-kill-plan")
 	GlobalMemArbitratorSubTasks.NoLimit = GlobalMemArbitratorTaskExecCounter.WithLabelValues("nolimit")

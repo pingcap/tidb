@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -31,9 +32,11 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -44,14 +47,224 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+// LoadPlanReplayerForExplainExplore loads a plan replayer file and returns the target SQL for EXPLAIN EXPLORE.
+var LoadPlanReplayerForExplainExplore func(sessionctx.Context, string) (string, error)
+
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
 	physicalop.SimpleSchemaProducer
+}
+
+// DataReaderSnapshot binds a read timestamp to the infoschema used for planning.
+type DataReaderSnapshot struct {
+	TS         uint64
+	InfoSchema infoschema.InfoSchema
+}
+
+// MViewDeltaMerge represents the physical fast-refresh merge operator.
+type MViewDeltaMerge struct {
+	physicalop.SimpleSchemaProducer
+	Source                      base.PhysicalPlan
+	FullUpdateInnerSource       base.PhysicalPlan
+	FullUpdateInnerColumnCount  int
+	FullUpdateIndexRanges       ranger.MutableRanges
+	FullUpdateKeyOff2IdxOff     []int
+	FullUpdateKeyResultColIdxes []int
+	FullUpdateOutputMVOffsets   []int
+	FullUpdateSnapshot          *DataReaderSnapshot
+	MVTableID                   int64
+	BaseTableID                 int64
+	MLogTableID                 int64
+	MVColumnCount               int
+	DeltaColumnCount            int
+	MVTablePKCols               util.HandleCols
+	GroupKeyMVOffsets           []int
+	CountStarMVOffset           int
+	AggInfos                    []mview.AggInfo
+	// MLogEmpty means the optimizer proved that the mlog input produces no rows.
+	// MIN/MAX recomputation is unreachable, so its lookup template can be omitted.
+	MLogEmpty bool
+}
+
+// ExplainInfo returns the aggregate dependencies and lookup strategy of the merge operator.
+func (p *MViewDeltaMerge) ExplainInfo() string {
+	if len(p.AggInfos) == 0 {
+		return "agg_deps:[]"
+	}
+	var b strings.Builder
+	b.WriteString("agg_deps:[")
+	for i, info := range p.AggInfos {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(formatMViewDeltaMergeAggDependency(info))
+	}
+	b.WriteByte(']')
+	if p.FullUpdateInnerSource != nil {
+		b.WriteString(", full_update:index_lookup")
+	}
+	return b.String()
+}
+
+// MemoryUsage returns the memory usage of MViewDeltaMerge.
+func (p *MViewDeltaMerge) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface*4 + size.SizeOfInt64*3 + size.SizeOfPointer + size.SizeOfInt*4 + size.SizeOfSlice*5 + size.SizeOfBool
+	sum += int64(cap(p.GroupKeyMVOffsets)) * size.SizeOfInt
+	sum += int64(cap(p.AggInfos)) * size.SizeOfInterface
+	sum += int64(cap(p.FullUpdateKeyOff2IdxOff)) * size.SizeOfInt
+	sum += int64(cap(p.FullUpdateKeyResultColIdxes)) * size.SizeOfInt
+	sum += int64(cap(p.FullUpdateOutputMVOffsets)) * size.SizeOfInt
+	if p.FullUpdateSnapshot != nil {
+		sum += size.SizeOfUint64 + size.SizeOfInterface
+	}
+	if p.Source != nil {
+		sum += p.Source.MemoryUsage()
+	}
+	if p.FullUpdateInnerSource != nil {
+		sum += p.FullUpdateInnerSource.MemoryUsage()
+	}
+	if p.FullUpdateIndexRanges != nil {
+		sum += p.FullUpdateIndexRanges.Range().MemUsage()
+	}
+	return
+}
+
+func formatMViewDeltaMergeAggDependency(aggInfo mview.AggInfo) string {
+	return fmt.Sprintf(
+		"%s@%d->%s",
+		formatMViewDeltaMergeAggName(aggInfo),
+		aggInfo.MVOffset,
+		formatMViewDeltaMergeOffsets(aggInfo.Dependencies),
+	)
+}
+
+func formatMViewDeltaMergeAggName(aggInfo mview.AggInfo) string {
+	if aggInfo.Kind == mview.AggCountStar {
+		return "count(*)"
+	}
+	name := formatMViewDeltaMergeAggKind(aggInfo.Kind)
+	if aggInfo.ArgColName != "" {
+		name += "(" + aggInfo.ArgColName + ")"
+	}
+	return name
+}
+
+func formatMViewDeltaMergeOffsets(offsets []int) string {
+	if len(offsets) == 0 {
+		return "[]"
+	}
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, offset := range offsets {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(strconv.Itoa(offset))
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+func formatMViewDeltaMergeAggKind(kind mview.AggKind) string {
+	switch kind {
+	case mview.AggCount:
+		return "count"
+	case mview.AggSum:
+		return "sum"
+	case mview.AggMin:
+		return "min"
+	case mview.AggMax:
+		return "max"
+	default:
+		return fmt.Sprintf("agg(%d)", kind)
+	}
+}
+
+// MViewCompleteDeltaApply represents the COMPLETE DELTA APPLY sink.
+type MViewCompleteDeltaApply struct {
+	physicalop.SimpleSchemaProducer
+	Source                   base.PhysicalPlan
+	MVTableID                int64
+	MVColumnCount            int
+	OpColID                  int
+	MarkerMVOffset           int
+	GroupKeyMVOffsets        []int
+	CurrentHandleCols        util.HandleCols
+	CurrentRowInputColIDs    []int
+	RecomputedRowInputColIDs []int
+}
+
+// ExplainInfo returns the row-diff layout used by the complete delta-apply operator.
+func (p *MViewCompleteDeltaApply) ExplainInfo() string {
+	return fmt.Sprintf(
+		"op_offset:%d, current_marker_offset:%d, recomputed_marker_offset:%d, current_group_keys_offset:%s, recomputed_group_keys_offset:%s, current_handle_offset:%s, current_row_offset:%s, recomputed_row_offset:%s",
+		p.OpColID,
+		inputOffsetAtMVOffset(p.CurrentRowInputColIDs, p.MarkerMVOffset),
+		inputOffsetAtMVOffset(p.RecomputedRowInputColIDs, p.MarkerMVOffset),
+		formatMViewDeltaMergeOffsets(inputOffsetsAtMVOffsets(p.CurrentRowInputColIDs, p.GroupKeyMVOffsets)),
+		formatMViewDeltaMergeOffsets(inputOffsetsAtMVOffsets(p.RecomputedRowInputColIDs, p.GroupKeyMVOffsets)),
+		formatHandleColsInputOffsets(p.CurrentHandleCols),
+		formatMViewDeltaMergeOffsets(p.CurrentRowInputColIDs),
+		formatMViewDeltaMergeOffsets(p.RecomputedRowInputColIDs),
+	)
+}
+
+// MemoryUsage returns the memory usage of MViewCompleteDeltaApply.
+func (p *MViewCompleteDeltaApply) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfInt64 + size.SizeOfInt*3 + size.SizeOfSlice*3
+	sum += int64(cap(p.GroupKeyMVOffsets)) * size.SizeOfInt
+	sum += int64(cap(p.CurrentRowInputColIDs)) * size.SizeOfInt
+	sum += int64(cap(p.RecomputedRowInputColIDs)) * size.SizeOfInt
+	if p.Source != nil {
+		sum += p.Source.MemoryUsage()
+	}
+	return
+}
+
+func inputOffsetAtMVOffset(inputColIDs []int, mvOffset int) int {
+	if mvOffset < 0 || mvOffset >= len(inputColIDs) {
+		return -1
+	}
+	return inputColIDs[mvOffset]
+}
+
+func inputOffsetsAtMVOffsets(inputColIDs, mvOffsets []int) []int {
+	if len(mvOffsets) == 0 {
+		return nil
+	}
+	offsets := make([]int, 0, len(mvOffsets))
+	for _, mvOffset := range mvOffsets {
+		offsets = append(offsets, inputOffsetAtMVOffset(inputColIDs, mvOffset))
+	}
+	return offsets
+}
+
+func formatHandleColsInputOffsets(handleCols util.HandleCols) string {
+	if handleCols == nil {
+		return "[]"
+	}
+	offsets := make([]int, 0, handleCols.NumCols())
+	for i := range handleCols.NumCols() {
+		col := handleCols.GetCol(i)
+		if col != nil {
+			offsets = append(offsets, col.Index)
+		}
+	}
+	return formatMViewDeltaMergeOffsets(offsets)
 }
 
 // ShowSlow is for showing slow queries.
@@ -288,8 +501,10 @@ const (
 	OpFlushBindings
 	// OpCaptureBindings is used to capture plan bindings.
 	OpCaptureBindings
-	// OpReloadBindings is used to reload plan binding.
+	// OpReloadBindings is used to reload plan binding in this node.
 	OpReloadBindings
+	// OpReloadClusterBindings is used to reload plan binding in the entire cluster.
+	OpReloadClusterBindings
 	// OpSetBindingStatus is used to set binding status.
 	OpSetBindingStatus
 	// OpSQLBindDropByDigest is used to drop SQL binds by digest
@@ -304,9 +519,10 @@ const (
 type SQLBindPlan struct {
 	physicalop.SimpleSchemaProducer
 
-	IsGlobal  bool
-	SQLBindOp SQLBindOpType
-	Details   []*SQLBindOpDetail
+	IsGlobal     bool
+	SQLBindOp    SQLBindOpType
+	Details      []*SQLBindOpDetail
+	IsFromRemote bool
 }
 
 // SQLBindOpDetail represents the detail of an operation on a single binding.
@@ -341,31 +557,30 @@ type Simple struct {
 	ResolveCtx *resolve.Context
 }
 
-// MemoryUsage return the memory usage of Simple
-func (s *Simple) MemoryUsage() (sum int64) {
-	if s == nil {
-		return
-	}
+// PurgeMaterializedViewLog represents a "PURGE MATERIALIZED VIEW LOG" plan.
+type PurgeMaterializedViewLog struct {
+	physicalop.SimpleSchemaProducer
 
-	sum = s.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool + size.SizeOfUint64
-	return
+	Statement *ast.PurgeMaterializedViewLogStmt
 }
 
-// PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
+// PhysicalPlanWrapper is a wrapper to wrap any Plan to a PhysicalPlan.
 //
 //	Used for simple statements executing in coprocessor.
-type PhysicalSimpleWrapper struct {
+type PhysicalPlanWrapper struct {
 	physicalop.BasePhysicalPlan
-	Inner Simple
+	Inner base.Plan
 }
 
 // MemoryUsage return the memory usage of PhysicalSimpleWrapper
-func (p *PhysicalSimpleWrapper) MemoryUsage() (sum int64) {
+func (p *PhysicalPlanWrapper) MemoryUsage() (sum int64) {
 	if p == nil {
 		return
 	}
 
-	sum = p.BasePhysicalPlan.MemoryUsage() + p.Inner.MemoryUsage()
+	// base.Plan doesn't have MemoryUsage method, so we just use a fixed size.
+	planMem := int64(256)
+	sum = p.BasePhysicalPlan.MemoryUsage() + planMem
 	return
 }
 
@@ -384,6 +599,7 @@ type V2AnalyzeOptions struct {
 	PhyTableID  int64
 	RawOpts     map[ast.AnalyzeOptionType]uint64
 	FilledOpts  map[ast.AnalyzeOptionType]uint64
+	ResetOpts   map[ast.AnalyzeOptionType]struct{}
 	ColChoice   ast.ColumnChoice
 	ColumnList  []*model.ColumnInfo
 	IsPartition bool
@@ -489,6 +705,7 @@ type UnlockStats struct {
 type PlanReplayer struct {
 	physicalop.SimpleSchemaProducer
 	ExecStmt          ast.StmtNode
+	StmtList          []string // For PLAN REPLAYER DUMP EXPLAIN ( "sql1", "sql2", ... )
 	Analyze           bool
 	Load              bool
 	File              string
@@ -553,6 +770,24 @@ type DDL struct {
 	physicalop.SimpleSchemaProducer
 
 	Statement ast.DDLNode
+}
+
+// RefreshMaterializedView represents a REFRESH MATERIALIZED VIEW statement.
+type RefreshMaterializedView struct {
+	physicalop.SimpleSchemaProducer
+	Statement *ast.RefreshMaterializedViewStmt
+}
+
+// DryRunRefreshMaterializedView represents a refresh dry-run statement.
+type DryRunRefreshMaterializedView struct {
+	physicalop.SimpleSchemaProducer
+	Statement *ast.RefreshMaterializedViewStmt
+}
+
+// ProfileRefreshMaterializedView represents a refresh profile statement.
+type ProfileRefreshMaterializedView struct {
+	physicalop.SimpleSchemaProducer
+	Statement *ast.RefreshMaterializedViewStmt
 }
 
 // SelectInto represents a select-into plan.
@@ -625,6 +860,61 @@ type ExplainInfoForEncode struct {
 	SubOperators        []*ExplainInfoForEncode `json:"subOperators,omitempty"`
 }
 
+// ExplainRUOperatorResult is the finalized RU projection for one flat-plan
+// occurrence. Operator belongs to the exact forest used by the calculator, so
+// it preserves occurrence identity even when different operators share a plan
+// ID. The result is used only by synchronous RU EXPLAIN rendering; formal
+// statement-RU publication uses the value-only aggregate result instead.
+type ExplainRUOperatorResult struct {
+	Operator *FlatOperator
+	SelfRU   float64
+	CumRU    float64
+}
+
+// ExplainRUResult is an occurrence-preserving RU EXPLAIN result produced by the
+// statement-RU calculator. Its trees are the single source of truth for later
+// rendering: each entry owns the exact flat-plan occurrence together with its
+// finalized RU values. TotalRU is the whole-statement denominator and is not
+// reconstructed from operator cumulative values.
+type ExplainRUResult struct {
+	inExplain        bool
+	TotalRU          float64
+	Main             []ExplainRUOperatorResult
+	CTEs             [][]ExplainRUOperatorResult
+	ScalarSubQueries [][]ExplainRUOperatorResult
+}
+
+// NewExplainRUResult creates an occurrence-aligned RU result from flat. It
+// copies the forest containers but retains their operators, so the caller may
+// discard or mutate the original slices but must not mutate the referenced
+// operators. Callers only fill RU values at the returned coordinates before
+// transferring the result to Explain.SetRUResult.
+func NewExplainRUResult(flat *FlatPhysicalPlan) *ExplainRUResult {
+	if flat == nil {
+		return nil
+	}
+	newTree := func(tree FlatPlanTree) []ExplainRUOperatorResult {
+		result := make([]ExplainRUOperatorResult, len(tree))
+		for i, operator := range tree {
+			result[i].Operator = operator
+		}
+		return result
+	}
+	result := &ExplainRUResult{
+		inExplain:        flat.InExplain,
+		Main:             newTree(flat.Main),
+		CTEs:             make([][]ExplainRUOperatorResult, len(flat.CTEs)),
+		ScalarSubQueries: make([][]ExplainRUOperatorResult, len(flat.ScalarSubQueries)),
+	}
+	for i, tree := range flat.CTEs {
+		result.CTEs[i] = newTree(tree)
+	}
+	for i, tree := range flat.ScalarSubQueries {
+		result.ScalarSubQueries[i] = newTree(tree)
+	}
+	return result
+}
+
 // JSONToString convert json to string
 func JSONToString(j []*ExplainInfoForEncode) (string, error) {
 	byteBuffer := bytes.NewBuffer([]byte{})
@@ -648,11 +938,27 @@ type Explain struct {
 	Analyze          bool
 	Explore          bool   // EXPLAIN EXPLORE statement
 	SQLDigest        string // "EXPLAIN EXPLORE <sql_digest>"
+	ReplayerFile     string // "EXPLAIN EXPLORE REPLAYER <replayer_file_path>"
 	ExecStmt         ast.StmtNode
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 
 	Rows            [][]string
 	BriefBinaryPlan string
+	ruResult        *ExplainRUResult
+	ruResultSet     bool
+}
+
+// SetRUResult transfers one calculator result to Explain for later RU-format
+// rendering. The caller must not mutate result or its owned flat operators
+// after this call. A nil result marks the attempted calculation unavailable, so
+// rendering fails closed instead of consulting legacy plan-ID-keyed RU stats
+// that cannot represent forest occurrences.
+func (e *Explain) SetRUResult(result *ExplainRUResult) {
+	if e == nil {
+		return
+	}
+	e.ruResultSet = true
+	e.ruResult = result
 }
 
 // GetBriefBinaryPlan returns the binary plan of the plan for explainfor.
@@ -693,6 +999,19 @@ func (e *Explain) prepareSchema() error {
 		format = types.ExplainFormatROW
 		e.Format = types.ExplainFormatROW
 	}
+	// Ensure StmtCtx.ExplainFormat is set early so shouldRemoveColumnNumbers can access it
+	// This needs to be set before any ExplainInfo() calls are made
+	// ResetContextOfStmt already set ExplainFormat to the original format (normalized to lowercase),
+	// so we preserve that value instead of overwriting it with the converted format
+	if e.SCtx() != nil {
+		stmtCtx := e.SCtx().GetSessionVars().StmtCtx
+		stmtCtx.InExplainStmt = true
+		// Only set ExplainFormat if it's not already set (it should be set in ResetContextOfStmt)
+		// This preserves the original format value for test compatibility
+		if stmtCtx.ExplainFormat == "" {
+			stmtCtx.ExplainFormat = format
+		}
+	}
 	switch {
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (!e.Analyze && e.RuntimeStatsColl == nil):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
@@ -722,6 +1041,9 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"binary plan"}
 	case format == types.ExplainFormatTiDBJSON:
 		fieldNames = []string{"TiDB_JSON"}
+	case format == types.ExplainFormatRU:
+		// TODO: Populate RU-specific columns after per-operator RU attribution is available.
+		fieldNames = []string{"id", "task", "actRows", "selfRU", "cumRU", "cumRU%", "detail"}
 	case e.Explore:
 		fieldNames = []string{"statement", "binding_hint", "plan", "plan_digest", "avg_latency", "exec_times", "avg_scan_rows",
 			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason",
@@ -747,11 +1069,26 @@ func (e *Explain) prepareSchema() error {
 }
 
 func (e *Explain) renderResultForExplore() error {
-	bindingHandle := domain.GetDomain(e.SCtx()).BindingHandle()
 	sqlOrDigest := e.SQLDigest
-	if sqlOrDigest == "" {
+	if e.ReplayerFile != "" {
+		if LoadPlanReplayerForExplainExplore == nil {
+			return errors.NewNoStackError("EXPLAIN EXPLORE REPLAYER is not available")
+		}
+		sctx, err := AsSctx(e.SCtx())
+		if err != nil {
+			return err
+		}
+		sqlOrDigest, err = LoadPlanReplayerForExplainExplore(sctx, e.ReplayerFile)
+		if err != nil {
+			return err
+		}
+	} else if sqlOrDigest == "" {
+		if e.ExecStmt == nil {
+			return errors.NewNoStackError("EXPLAIN EXPLORE target SQL is empty")
+		}
 		sqlOrDigest = e.ExecStmt.Text()
 	}
+	bindingHandle := domain.GetDomain(e.SCtx()).BindingHandle()
 	plans, err := bindingHandle.ExplorePlansForSQL(e.SCtx(), sqlOrDigest, e.Analyze)
 	if err != nil {
 		return err
@@ -775,10 +1112,23 @@ func (e *Explain) renderResultForExplore() error {
 			strconv.FormatFloat(p.ScanRowsPerReturnRow, 'f', -1, 64),
 			p.Recommend,
 			p.Reason,
-			fmt.Sprintf("EXPLAIN ANALYZE '%v'", p.PlanDigest),
-			fmt.Sprintf("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST '%v'", p.PlanDigest)})
+			fmt.Sprintf("EXPLAIN ANALYZE %v", p.BindSQL),
+			fmt.Sprintf("CREATE GLOBAL BINDING USING %v", p.BindSQL)})
 	}
 	return nil
+}
+
+func (e *Explain) shouldDecodeBriefBinaryPlan() bool {
+	if e.BriefBinaryPlan == "" {
+		return false
+	}
+	if e.RuntimeStatsColl == nil {
+		return true
+	}
+	// Prepared Execute plans can keep ParamMarker or DeferredExpr nodes whose values
+	// belong to the original execution context, so live rendering may evaluate missing params.
+	_, isExecute := e.TargetPlan.(*Execute)
+	return isExecute
 }
 
 // RenderResult renders the explain result as specified format.
@@ -830,8 +1180,9 @@ func (e *Explain) RenderResult() error {
 			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("'explain format=true_card_cost' cannot support this plan"))
 		}
 	}
-	// For explain for connection, we can directly decode the binary plan to get the explain rows.
-	if e.BriefBinaryPlan != "" {
+	// EXPLAIN FOR CONNECTION should prefer the live runtime stats collector because
+	// BriefBinaryPlan is only a snapshot taken when ProcessInfo was recorded.
+	if e.shouldDecodeBriefBinaryPlan() {
 		if strings.ToLower(e.Format) != types.ExplainFormatBrief && strings.ToLower(e.Format) != types.ExplainFormatROW && strings.ToLower(e.Format) != types.ExplainFormatVerbose {
 			return errors.Errorf("explain format '%s' for connection is not supported now", e.Format)
 		}
@@ -841,6 +1192,13 @@ func (e *Explain) RenderResult() error {
 		}
 		e.Rows = rows
 		return nil
+	}
+	// Ensure StmtCtx.ExplainFormat is set to match e.Format so shouldRemoveColumnNumbers can access it
+	// e.Format is already normalized to lowercase in planbuilder.go and may have been converted from Traditional to ROW in prepareSchema()
+	// prepareSchema() already set ExplainFormat (preserving the original from ResetContextOfStmt), so we just ensure InExplainStmt is set
+	if e.SCtx() != nil {
+		e.SCtx().GetSessionVars().StmtCtx.InExplainStmt = true
+		// ExplainFormat should already be set correctly in prepareSchema() or ResetContextOfStmt
 	}
 	switch strings.ToLower(e.Format) {
 	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache, types.ExplainFormatPlanTree:
@@ -883,6 +1241,18 @@ func (e *Explain) RenderResult() error {
 			return err
 		}
 		e.Rows = append(e.Rows, []string{str})
+	case types.ExplainFormatRU:
+		if e.ruResultSet {
+			var ok bool
+			e.Rows, ok = explainRUResultInRUFormat(e.RuntimeStatsColl, e.ruResult)
+			if !ok {
+				flat := FlattenPhysicalPlan(e.TargetPlan, true)
+				e.Rows = explainFlatPlanInRUFormatUnavailable(flat, e.RuntimeStatsColl)
+			}
+		} else {
+			flat := FlattenPhysicalPlan(e.TargetPlan, true)
+			e.Rows = explainFlatPlanInRUFormatLegacy(flat, e.RuntimeStatsColl)
+		}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -1057,6 +1427,187 @@ func prepareOperatorInfo(flatOp *FlatOperator, format string, analyze bool,
 	return append(rows, row)
 }
 
+// ExplainFlatPlanInRUFormat returns the explain analyze result with RU columns.
+func ExplainFlatPlanInRUFormat(flat *FlatPhysicalPlan, runtimeStatsColl *execdetails.RuntimeStatsColl) (rows [][]string) {
+	return explainFlatPlanInRUFormatLegacy(flat, runtimeStatsColl)
+}
+
+func explainRUResultInRUFormat(
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	result *ExplainRUResult,
+) (rows [][]string, ok bool) {
+	if result == nil {
+		return nil, false
+	}
+	if len(result.Main) == 0 || result.inExplain {
+		return nil, true
+	}
+	validTree := func(tree []ExplainRUOperatorResult) bool {
+		for _, operatorResult := range tree {
+			if operatorResult.Operator == nil || operatorResult.Operator.Origin == nil {
+				return false
+			}
+		}
+		return true
+	}
+	if !validTree(result.Main) {
+		return nil, false
+	}
+	for _, tree := range result.CTEs {
+		if !validTree(tree) {
+			return nil, false
+		}
+	}
+	for _, tree := range result.ScalarSubQueries {
+		if !validTree(tree) {
+			return nil, false
+		}
+	}
+
+	visitTree := func(tree []ExplainRUOperatorResult) {
+		for _, operatorResult := range tree {
+			cumRUPct := "0.00%"
+			if result.TotalRU > 0 {
+				cumRUPct = fmt.Sprintf("%.2f%%", operatorResult.CumRU/result.TotalRU*100)
+			}
+			fields := explainRUFields{
+				selfRU:   strconv.FormatFloat(operatorResult.SelfRU, 'f', 2, 64),
+				cumRU:    strconv.FormatFloat(operatorResult.CumRU, 'f', 2, 64),
+				cumRUPct: cumRUPct,
+			}
+			rows = prepareRUOperatorInfoWithFields(operatorResult.Operator, runtimeStatsColl, fields, rows)
+		}
+	}
+	visitTree(result.Main)
+	for _, tree := range result.CTEs {
+		visitTree(tree)
+	}
+	for _, tree := range result.ScalarSubQueries {
+		visitTree(tree)
+	}
+	return rows, true
+}
+
+func explainFlatPlanInRUFormatUnavailable(
+	flat *FlatPhysicalPlan,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+) (rows [][]string) {
+	return explainFlatPlanInRUFormatWithProvider(
+		flat,
+		runtimeStatsColl,
+		func(*FlatOperator) explainRUFields {
+			return explainRUFields{}
+		},
+	)
+}
+
+func explainFlatPlanInRUFormatLegacy(
+	flat *FlatPhysicalPlan,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+) (rows [][]string) {
+	totalRU := getExplainRUTotal(flat.Main, runtimeStatsColl)
+	return explainFlatPlanInRUFormatWithProvider(
+		flat,
+		runtimeStatsColl,
+		func(flatOp *FlatOperator) explainRUFields {
+			ruStats := getExplainRURuntimeStats(runtimeStatsColl, flatOp.Origin)
+			if ruStats == nil {
+				return explainRUFields{}
+			}
+			cumRUPct := "0.00%"
+			if totalRU > 0 {
+				cumRUPct = fmt.Sprintf("%.2f%%", ruStats.CumRU/totalRU*100)
+			}
+			return explainRUFields{
+				selfRU:   strconv.FormatFloat(ruStats.SelfRU, 'f', 2, 64),
+				cumRU:    strconv.FormatFloat(ruStats.CumRU, 'f', 2, 64),
+				cumRUPct: cumRUPct,
+			}
+		},
+	)
+}
+
+type explainRUFields struct {
+	selfRU   string
+	cumRU    string
+	cumRUPct string
+}
+
+func explainFlatPlanInRUFormatWithProvider(
+	flat *FlatPhysicalPlan,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	provider func(*FlatOperator) explainRUFields,
+) (rows [][]string) {
+	if flat == nil || len(flat.Main) == 0 || flat.InExplain {
+		return
+	}
+	visitTree := func(tree FlatPlanTree) {
+		for _, flatOp := range tree {
+			fields := provider(flatOp)
+			rows = prepareRUOperatorInfoWithFields(flatOp, runtimeStatsColl, fields, rows)
+		}
+	}
+	visitTree(flat.Main)
+	for _, tree := range flat.CTEs {
+		visitTree(tree)
+	}
+	for _, tree := range flat.ScalarSubQueries {
+		visitTree(tree)
+	}
+	return rows
+}
+
+func prepareRUOperatorInfoWithFields(
+	flatOp *FlatOperator,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	fields explainRUFields,
+	rows [][]string,
+) [][]string {
+	p := flatOp.Origin
+	if p.ExplainID().String() == "_0" {
+		return rows
+	}
+	taskType, id := getExplainIDAndTaskTp(flatOp)
+	actRows, _, _, _ := getRuntimeInfoStr(p.SCtx(), p, runtimeStatsColl)
+	return append(rows, []string{
+		id,
+		taskType,
+		actRows,
+		fields.selfRU,
+		fields.cumRU,
+		fields.cumRUPct,
+		"",
+	})
+}
+
+func getExplainRUTotal(tree FlatPlanTree, runtimeStatsColl *execdetails.RuntimeStatsColl) float64 {
+	if len(tree) == 0 || tree[0] == nil || tree[0].Origin == nil {
+		return 0
+	}
+	if ruStats := getExplainRURuntimeStats(runtimeStatsColl, tree[0].Origin); ruStats != nil {
+		return ruStats.CumRU
+	}
+	return 0
+}
+
+func getExplainRURuntimeStats(runtimeStatsColl *execdetails.RuntimeStatsColl, p base.Plan) *execdetails.ExplainRURuntimeStats {
+	if runtimeStatsColl == nil && p != nil && p.SCtx() != nil &&
+		p.SCtx().GetSessionVars() != nil && p.SCtx().GetSessionVars().StmtCtx != nil {
+		runtimeStatsColl = p.SCtx().GetSessionVars().StmtCtx.RuntimeStatsColl
+	}
+	if runtimeStatsColl == nil || p == nil || !runtimeStatsColl.ExistsRootStats(p.ID()) {
+		return nil
+	}
+	rootStats := runtimeStatsColl.GetRootStats(p.ID())
+	_, groups := rootStats.MergeStats()
+	for _, group := range groups {
+		if ruStats, ok := group.(*execdetails.ExplainRURuntimeStats); ok {
+			return ruStats
+		}
+	}
+	return nil
+}
+
 func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, explainID string) *ExplainInfoForEncode {
 	if p.ExplainID().String() == "_0" {
 		return nil
@@ -1086,6 +1637,13 @@ func getOperatorInfo(p base.Plan, format string) (estRows, estCost, costFormula,
 	estCost = "N/A"
 	costFormula = "N/A"
 	sctx := p.SCtx()
+	// Ensure StmtCtx.ExplainFormat is set before calling ExplainInfo() so shouldRemoveColumnNumbers can access it
+	// format is already normalized to lowercase when passed from ExplainFlatPlanInRowFormat (which uses e.Format)
+	if sctx != nil {
+		stmtCtx := sctx.GetSessionVars().StmtCtx
+		stmtCtx.InExplainStmt = true
+		stmtCtx.ExplainFormat = format
+	}
 	if isPhysicalPlan {
 		if format != types.ExplainFormatPlanTree {
 			estRows = strconv.FormatFloat(pp.GetEstRowCountForDisplay(), 'f', 2, 64)
@@ -1113,6 +1671,8 @@ func getOperatorInfo(p base.Plan, format string) (estRows, estCost, costFormula,
 		}
 		operatorInfo = p.ExplainInfo()
 	}
+
+	// Column numbers are now removed in column.ExplainInfo() when format is plan_tree
 	return estRows, estCost, costFormula, accessObject, operatorInfo
 }
 
@@ -1417,4 +1977,11 @@ func IsAutoCommitTxn(vars *variable.SessionVars) bool {
 // AdminShowBDRRole represents a show bdr role plan.
 type AdminShowBDRRole struct {
 	physicalop.SimpleSchemaProducer
+}
+
+// CompareMaterializedView represents a "COMPARE MATERIALIZED VIEW ..." plan.
+type CompareMaterializedView struct {
+	physicalop.SimpleSchemaProducer
+
+	Statement *ast.CompareMaterializedViewStmt
 }

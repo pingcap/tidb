@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -167,7 +168,7 @@ func forkScopeSettings(t *testfork.T, store kv.Storage) func() {
 		}
 	}
 
-	if testfork.PickEnum(t, "", "closetRead") != "" {
+	if testfork.PickEnum(t, "", "closetRead") != "" && !kerneltype.IsNextGen() {
 		tk.MustExec("set @@global.tidb_replica_read='closest-replicas'")
 		if zone != "" {
 			assertReplicaReadScope = zone

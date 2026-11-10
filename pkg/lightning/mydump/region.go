@@ -23,9 +23,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
@@ -167,7 +168,7 @@ type DataDivideConfig struct {
 	// when nil, no limit.
 	IOWorkers *worker.Pool
 	// we need it read row-count for parquet, and to read line terminator to split large CSV files
-	Store     storage.ExternalStorage
+	Store     storeapi.Storage
 	TableMeta *MDTableMeta
 	// whether to skip reading parquet row count
 	SkipParquetRowCount bool
@@ -184,7 +185,7 @@ type DataDivideConfig struct {
 func NewDataDivideConfig(cfg *config.Config,
 	columns int,
 	ioWorkers *worker.Pool,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	meta *MDTableMeta,
 ) *DataDivideConfig {
 	return &DataDivideConfig{
@@ -405,7 +406,7 @@ func makeParquetFileRegion(
 		err        error
 	)
 	if !cfg.SkipParquetRowCount {
-		if numberRows, err = ReadParquetFileRowCountByFile(ctx, cfg.Store, dataFile.FileMeta); err != nil {
+		if numberRows, err = parquetfile.ReadRowCount(ctx, cfg.Store, dataFile.FileMeta.Path); err != nil {
 			return nil, nil, err
 		}
 	} else {
@@ -436,7 +437,7 @@ func makeParquetFileRegion(
 			RowIDMax:     numberRows,
 		},
 	}
-	return []*TableRegion{region}, []float64{float64(dataFile.FileMeta.FileSize)}, nil
+	return []*TableRegion{region}, []float64{float64(dataFile.FileMeta.RealSize)}, nil
 }
 
 func openCSVParser(

@@ -133,6 +133,57 @@ func TestParseTimeZone(t *testing.T) {
 	}
 }
 
+func TestZoneName(t *testing.T) {
+	cases := []struct {
+		name     string
+		loc      *time.Location
+		expected string
+	}{
+		{
+			name:     "iana timezone",
+			loc:      time.UTC,
+			expected: "UTC",
+		},
+		{
+			name:     "unnamed positive fixed zone",
+			loc:      time.FixedZone("", int((8*time.Hour + 30*time.Minute).Seconds())),
+			expected: "+08:30",
+		},
+		{
+			name:     "unnamed negative fixed zone",
+			loc:      time.FixedZone("", -int((6*time.Hour + 15*time.Minute).Seconds())),
+			expected: "-06:15",
+		},
+		{
+			name:     "unnamed zero fixed zone",
+			loc:      time.FixedZone("", 0),
+			expected: "+00:00",
+		},
+		{name: "positive seconds", loc: time.FixedZone("", 30), expected: "+00:00:30"},
+		{name: "negative seconds", loc: time.FixedZone("", -30), expected: "-00:00:30"},
+		{name: "positive mixed offset", loc: time.FixedZone("", 8*3600+30*60+45), expected: "+08:30:45"},
+		{name: "negative mixed offset", loc: time.FixedZone("", -(6*3600 + 15*60 + 45)), expected: "-06:15:45"},
+		{
+			name:     "named fixed zone",
+			loc:      time.FixedZone("UTC+8", int((8 * time.Hour).Seconds())),
+			expected: "UTC+8",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require.Equal(t, c.expected, ZoneName(c.loc))
+			if c.loc.String() == "" {
+				parsed, err := ParseTimeZone(ZoneName(c.loc))
+				require.NoError(t, err)
+				_, expectedOffset := time.Now().In(c.loc).Zone()
+				_, actualOffset := time.Now().In(parsed).Zone()
+				require.Equal(t, expectedOffset, actualOffset)
+			}
+		})
+	}
+}
+
 func TestConstructTimeZone(t *testing.T) {
 	secondsEastOfUTC := int((8 * time.Hour).Seconds())
 	loc, err := ConstructTimeZone("", secondsEastOfUTC)

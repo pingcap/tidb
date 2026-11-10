@@ -80,14 +80,6 @@ const (
 	SetPresumeKeyNotExists FlagsOp = iota
 	// SetNeedLocked marks the associated key need to be acquired lock.
 	SetNeedLocked
-	// SetAssertExist marks the associated key must exist.
-	SetAssertExist
-	// SetAssertNotExist marks the associated key must not exists.
-	SetAssertNotExist
-	// SetAssertUnknown marks the associated key is unknown and can not apply other assertion.
-	SetAssertUnknown
-	// SetAssertNone marks the associated key without any assert.
-	SetAssertNone
 	// SetNeedConstraintCheckInPrewrite sets the flag flagNeedConstraintCheckInPrewrite
 	SetNeedConstraintCheckInPrewrite
 	// SetPreviousPresumeKeyNotExists marks the PNE flag is set in previous statements, thus it cannot be unset when
@@ -103,15 +95,6 @@ func ApplyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 			origin |= flagPresumeKNE
 		case SetNeedLocked:
 			origin |= flagNeedLocked
-		case SetAssertExist:
-			origin |= flagAssertExists
-			origin &= ^flagAssertNotExists
-		case SetAssertNotExist:
-			origin |= flagAssertNotExists
-			origin &= ^flagAssertExists
-		case SetAssertUnknown:
-			origin |= flagAssertExists
-			origin |= flagAssertNotExists
 		case SetNeedConstraintCheckInPrewrite:
 			origin |= flagNeedConstraintCheckInPrewrite
 		case SetPreviousPresumeKeyNotExists:

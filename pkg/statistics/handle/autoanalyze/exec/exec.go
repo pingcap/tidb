@@ -30,16 +30,28 @@ import (
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
-var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
-	statistics.Version0: sqlexec.ExecOptionAnalyzeVer1,
-	statistics.Version1: sqlexec.ExecOptionAnalyzeVer1,
-	statistics.Version2: sqlexec.ExecOptionAnalyzeVer2,
+func execOptionForAnalyzeVersion(statsVer int, needVersionRewriteWarn bool, sql string, params ...any) sqlexec.OptionFuncAlias {
+	if needVersionRewriteWarn {
+		escapedSQL, err := sqlescape.EscapeSQL(sql, params...)
+		intest.Assert(err == nil, "sql escaping should not fail")
+		// No need to fail the analyze task if the SQL escaping fails, just log the original SQL.
+		if err != nil {
+			escapedSQL = sql
+		}
+		statslogutil.StatsLogger().Warn(
+			"auto analyze rewrites legacy statistics version 1 to version 2",
+			zap.String("sql", escapedSQL),
+		)
+	}
+	intest.Assert(statsVer == statistics.Version2, "auto analyze should use stats version 2")
+	return sqlexec.ExecOptionAnalyzeVer2
 }
 
 // AutoAnalyze executes the auto analyze task.
@@ -48,11 +60,12 @@ func AutoAnalyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 	statsVer int,
+	needVersionRewriteWarn bool,
 	sql string,
 	params ...any,
 ) bool {
 	startTime := time.Now()
-	_, _, err := RunAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, sql, params...)
+	_, _, err := RunAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, needVersionRewriteWarn, sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
@@ -79,6 +92,7 @@ func RunAnalyzeStmt(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 	statsVer int,
+	needVersionRewriteWarn bool,
 	sql string,
 	params ...any,
 ) ([]chunk.Row, []*resolve.ResultField, error) {
@@ -87,7 +101,7 @@ func RunAnalyzeStmt(
 	autoAnalyzeTracker := statsutil.NewAutoAnalyzeTracker(sysProcTracker.Track, sysProcTracker.UnTrack)
 	autoAnalyzeProcID := statsHandle.AutoAnalyzeProcID()
 	optFuncs := []sqlexec.OptionFuncAlias{
-		execOptionForAnalyze[statsVer],
+		execOptionForAnalyzeVersion(statsVer, needVersionRewriteWarn, sql, params...),
 		sqlexec.GetAnalyzeSnapshotOption(analyzeSnapshot),
 		sqlexec.GetPartitionPruneModeOption(pruneMode),
 		sqlexec.ExecOptionUseCurSession,

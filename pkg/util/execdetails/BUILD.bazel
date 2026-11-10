@@ -5,6 +5,8 @@ go_library(
     srcs = [
         "execdetails.go",
         "runtime_stats.go",
+        "ruv2_metrics.go",
+        "tiflash_execution_units.go",
         "tiflash_stats.go",
         "util.go",
     ],
@@ -13,6 +15,7 @@ go_library(
     deps = [
         "//pkg/kv",
         "@com_github_influxdata_tdigest//:tdigest",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_tikv_client_go_v2//util",
@@ -26,6 +29,7 @@ go_test(
     srcs = [
         "execdetails_test.go",
         "main_test.go",
+        "tiflash_execution_units_test.go",
     ],
     embed = [":execdetails"],
     flaky = True,

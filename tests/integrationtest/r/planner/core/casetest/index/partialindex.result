@@ -1,0 +1,110 @@
+create table t(
+a int, b int, c int,
+index idx1(a) where a is not null,
+index idx2(b) where b > 2,
+unique index idx3(c) where b > 10
+);
+create table tt(
+a int, b int, c int,
+index idx1(a),
+index idx2(b),
+unique index idx3(c)
+);
+explain format='brief' select * from t where a = 1;
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx1(a)	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='brief' select * from t use index(idx2) where b > 1;
+id	estRows	task	access object	operator info
+TableReader	3333.33	root		data:Selection
+└─Selection	3333.33	cop[tikv]		gt(planner__core__casetest__index__partialindex.t.b, 1)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='brief' select * from t use index(idx2) where b > 2;
+id	estRows	task	access object	operator info
+IndexLookUp	3333.33	root		
+├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t, index:idx2(b)	range:(2,+inf], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='brief' select * from t use index(idx2) where b > 5;
+id	estRows	task	access object	operator info
+IndexLookUp	3333.33	root		
+├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t, index:idx2(b)	range:(5,+inf], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='brief' select * from t use index(idx2) where b > 4 and b < 100;
+id	estRows	task	access object	operator info
+IndexLookUp	250.00	root		
+├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t, index:idx2(b)	range:(4,100), keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='brief' select * from t use index(idx2) where b < 100;
+id	estRows	task	access object	operator info
+TableReader	3323.33	root		data:Selection
+└─Selection	3323.33	cop[tikv]		lt(planner__core__casetest__index__partialindex.t.b, 100)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='brief' select * from t where c = 10 and b > 30;
+id	estRows	task	access object	operator info
+Selection	1.00	root		gt(planner__core__casetest__index__partialindex.t.b, 30)
+└─Point_Get	1.00	root	table:t, index:idx3(c)	
+explain format='brief' select * from t where c = 10 and b > 40;
+id	estRows	task	access object	operator info
+Selection	1.00	root		gt(planner__core__casetest__index__partialindex.t.b, 40)
+└─Point_Get	1.00	root	table:t, index:idx3(c)	
+explain format='brief' select * from t where c > 20;
+id	estRows	task	access object	operator info
+TableReader	3333.33	root		data:Selection
+└─Selection	3333.33	cop[tikv]		gt(planner__core__casetest__index__partialindex.t.c, 20)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='brief' select * from t where c = 1;
+id	estRows	task	access object	operator info
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__casetest__index__partialindex.t.c, 1)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='brief' select /*+ inl_join(t2) */ * from t t1, t t2 where t1.a=t2.b;
+id	estRows	task	access object	operator info
+HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__index__partialindex.t.a, planner__core__casetest__index__partialindex.t.b)]
+├─TableReader(Build)	9990.00	root		data:Selection
+│ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.t.b))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	9990.00	root		data:Selection
+  └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.t.a))
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='brief' select /*+ inl_join(t2) */ * from tt t1, tt t2 where t1.a=t2.b;
+id	estRows	task	access object	operator info
+IndexJoin	12487.50	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__partialindex.tt.a, inner key:planner__core__casetest__index__partialindex.tt.b, equal cond:eq(planner__core__casetest__index__partialindex.tt.a, planner__core__casetest__index__partialindex.tt.b)
+├─TableReader(Build)	9990.00	root		data:Selection
+│ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.tt.a))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─IndexLookUp(Probe)	12487.50	root		
+  ├─Selection(Build)	12487.50	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.tt.b))
+  │ └─IndexRangeScan	12500.00	cop[tikv]	table:t2, index:idx2(b)	range: decided by [eq(planner__core__casetest__index__partialindex.tt.b, planner__core__casetest__index__partialindex.tt.a)], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format='brief' select /*+ inl_join(t2) */ * from t t1, t t2 where t1.b=t2.a;
+id	estRows	task	access object	operator info
+HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__index__partialindex.t.b, planner__core__casetest__index__partialindex.t.a)]
+├─TableReader(Build)	9990.00	root		data:Selection
+│ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.t.a))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	9990.00	root		data:Selection
+  └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.t.b))
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='brief' select /*+ inl_join(t2) */ * from tt t1, tt t2 where t1.b=t2.a;
+id	estRows	task	access object	operator info
+IndexJoin	12487.50	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__partialindex.tt.b, inner key:planner__core__casetest__index__partialindex.tt.a, equal cond:eq(planner__core__casetest__index__partialindex.tt.b, planner__core__casetest__index__partialindex.tt.a)
+├─TableReader(Build)	9990.00	root		data:Selection
+│ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.tt.b))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─IndexLookUp(Probe)	12487.50	root		
+  ├─Selection(Build)	12487.50	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.tt.a))
+  │ └─IndexRangeScan	12500.00	cop[tikv]	table:t2, index:idx1(a)	range: decided by [eq(planner__core__casetest__index__partialindex.tt.a, planner__core__casetest__index__partialindex.tt.b)], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format='brief' select /*+ use_index_merge(t, idx1, idx2) */ * from t where (a > 10) or (b > 10);
+id	estRows	task	access object	operator info
+TableReader	5555.56	root		data:Selection
+└─Selection	5555.56	cop[tikv]		or(gt(planner__core__casetest__index__partialindex.t.a, 10), gt(planner__core__casetest__index__partialindex.t.b, 10))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='brief' select /*+ use_index_merge(tt, idx1, idx2) */ * from tt where (a > 10) or (b > 10);
+id	estRows	task	access object	operator info
+IndexMerge	5555.56	root		type: union
+├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:tt, index:idx1(a)	range:(10,+inf], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:tt, index:idx2(b)	range:(10,+inf], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	5555.56	cop[tikv]	table:tt	keep order:false, stats:pseudo
+drop table t, tt;

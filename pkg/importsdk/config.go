@@ -32,19 +32,27 @@ type SDKConfig struct {
 	routes           config.Routes
 	filter           []string
 	charset          string
+	csvConfig        config.CSVConfig
+	dataCharacterSet string
 	maxScanFiles     *int
 	skipInvalidFiles bool
+	estimateRealSize bool
 
 	// General options
 	logger log.Logger
 }
 
 func defaultSDKConfig() *SDKConfig {
+	defaultCfg := config.NewConfig()
 	return &SDKConfig{
-		concurrency: 4,
-		filter:      config.GetDefaultFilter(),
-		logger:      log.L(),
-		charset:     "auto",
+		concurrency:      4,
+		filter:           config.GetDefaultFilter(),
+		logger:           log.L(),
+		charset:          "auto",
+		csvConfig:        defaultCfg.Mydumper.CSV,
+		dataCharacterSet: defaultCfg.Mydumper.DataCharacterSet,
+		// Estimate the real size (uncompressed / row-oriented) for compressed/parquet data files by default.
+		estimateRealSize: true,
 	}
 }
 
@@ -101,7 +109,25 @@ func WithCharset(cs string) SDKOption {
 	}
 }
 
-// WithMaxScanFiles specifies custom file scan limitation
+// WithCSVConfig specifies the CSV parsing configuration used for size estimation.
+func WithCSVConfig(csvCfg config.CSVConfig) SDKOption {
+	return func(cfg *SDKConfig) {
+		cfg.csvConfig = csvCfg
+	}
+}
+
+// WithDataCharacterSet specifies the source data character set used for CSV parsing.
+func WithDataCharacterSet(charset string) SDKOption {
+	return func(cfg *SDKConfig) {
+		if charset != "" {
+			cfg.dataCharacterSet = charset
+		}
+	}
+}
+
+// WithMaxScanFiles specifies a file scan limit. Automatic mapping requires a
+// complete listing and returns an error if the limit is exceeded. Explicit file
+// routers retain the existing partial-scan behavior.
 func WithMaxScanFiles(limit int) SDKOption {
 	return func(cfg *SDKConfig) {
 		if limit > 0 {
@@ -110,7 +136,16 @@ func WithMaxScanFiles(limit int) SDKOption {
 	}
 }
 
-// WithSkipInvalidFiles specifies whether sdk need raise error on found invalid files
+// WithEstimateRealSize specifies whether to estimate the real size for compressed and parquet data files.
+// When disabled, the SDK uses the storage-reported file size to speed up initialization.
+func WithEstimateRealSize(estimate bool) SDKOption {
+	return func(cfg *SDKConfig) {
+		cfg.estimateRealSize = estimate
+	}
+}
+
+// WithSkipInvalidFiles allows skipping invalid tables in generic sources.
+// Aurora automatic mappings never skip validation or invalid table mappings.
 func WithSkipInvalidFiles(skip bool) SDKOption {
 	return func(cfg *SDKConfig) {
 		cfg.skipInvalidFiles = skip

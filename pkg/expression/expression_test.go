@@ -139,6 +139,19 @@ func TestConstant(t *testing.T) {
 	require.True(t, NewZero().Decorrelate(nil).Equal(ctx, NewZero()))
 	require.Equal(t, []byte{0x0, 0x8, 0x0}, NewZero().HashCode())
 	require.False(t, NewZero().Equal(ctx, NewOne()))
+
+	decTp := types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(5).SetDecimal(2).BuildP()
+	con := &Constant{
+		Value:   types.NewDecimalDatum(types.NewDecFromStringForTest("0.99")),
+		RetType: decTp,
+	}
+	args := []Expression{con}
+	PropagateType(ctx.GetEvalCtx(), types.ETReal, args...)
+	require.NotSame(t, con, args[0])
+	require.Equal(t, 5, con.RetType.GetFlen())
+	require.Equal(t, 2, con.RetType.GetDecimal())
+	require.Equal(t, 48, args[0].GetType(ctx.GetEvalCtx()).GetFlen())
+	require.Equal(t, 30, args[0].GetType(ctx.GetEvalCtx()).GetDecimal())
 }
 
 func TestIsBinaryLiteral(t *testing.T) {
@@ -281,6 +294,34 @@ func tableInfoToSchemaForTest(tableInfo *model.TableInfo) *Schema {
 		})
 	}
 	return schema
+}
+
+func TestTableInfo2SchemaAndNamesKeys(t *testing.T) {
+	ctx := createContext(t)
+	tblInfo := newTestTableBuilder("t").
+		add("partial_col", mysql.TypeLonglong, mysql.NotNullFlag).
+		add("regular_col", mysql.TypeLonglong, mysql.NotNullFlag).
+		build()
+	tblInfo.Indices = []*model.IndexInfo{
+		{
+			Name:                ast.NewCIStr("partial_unique"),
+			Columns:             []*model.IndexColumn{{Name: ast.NewCIStr("partial_col"), Offset: 0}},
+			State:               model.StatePublic,
+			Unique:              true,
+			ConditionExprString: "`partial_col` > 0",
+		},
+		{
+			Name:    ast.NewCIStr("regular_unique"),
+			Columns: []*model.IndexColumn{{Name: ast.NewCIStr("regular_col"), Offset: 1}},
+			State:   model.StatePublic,
+			Unique:  true,
+		},
+	}
+
+	schema, _, err := TableInfo2SchemaAndNames(ctx, ast.NewCIStr("test"), tblInfo)
+	require.NoError(t, err)
+	require.Len(t, schema.PKOrUK, 1)
+	require.Equal(t, tblInfo.Columns[1].ID, schema.PKOrUK[0][0].ID)
 }
 
 func TestEvalExpr(t *testing.T) {

@@ -26,9 +26,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/task/operator"
-	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -182,11 +183,11 @@ func TestOperator(t *testing.T) {
 	ex := make(chan struct{})
 	cfg := operator.PauseGcConfig{
 		Config: task.Config{
-			PD: []string{"127.0.0.1:2379"},
+			PD: []string{realtikvtest.CurrentPDAddr()},
 		},
 		TTL:         5 * time.Minute,
 		SafePoint:   oracle.GoTimeToTS(time.Now()),
-		SafePointID: utils.MakeSafePointID(),
+		SafePointID: gc.MakeSafePointID(),
 		OnAllReady: func() {
 			close(rd)
 		},
@@ -242,11 +243,11 @@ func TestFailure(t *testing.T) {
 
 	cfg := operator.PauseGcConfig{
 		Config: task.Config{
-			PD: []string{"127.0.0.1:2379"},
+			PD: []string{realtikvtest.CurrentPDAddr()},
 		},
 		TTL:         5 * time.Minute,
 		SafePoint:   oracle.GoTimeToTS(time.Now()),
-		SafePointID: utils.MakeSafePointID(),
+		SafePointID: gc.MakeSafePointID(),
 	}
 
 	verifyTargetGCSafePointNotExist(req, cfg)

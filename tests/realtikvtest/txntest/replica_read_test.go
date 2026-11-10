@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
@@ -31,6 +32,9 @@ import (
 )
 
 func TestReplicaReadEffectScope(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("tidb_replica_read follower is not supported in next generation")
+	}
 	defer config.RestoreFunc()()
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)

@@ -494,7 +494,7 @@ func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
 			tkNO.MustQuery(`select * from t where a = 5`).Sort().Check(testkit.Rows("5 5 5"))
 			tkO.MustQuery(`select * from t where a = 6`).Sort().Check(testkit.Rows("6 6 6"))
 		case model.StateWriteReorganization.String():
-			// It will go through StateWriteReorg more than once.
+			// It will go through StateWriteReorganization more than once.
 			if doneStateWriteReorganize {
 				break
 			}
@@ -617,9 +617,9 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 		schemaState := res.Rows()[0][0].(string)
 		switch schemaState {
 		case model.StateDeleteOnly.String():
-			// we are only interested in StateWriteReorganization
+			// No checks are needed in this intermediate state.
 		case model.StateWriteOnly.String():
-			// we are only interested in StateDeleteReorganization->StatePublic
+			// No checks are needed in this intermediate state.
 		case model.StateWriteReorganization.String():
 		case model.StatePublic.String():
 			if !firstTimeToPublic {
@@ -674,6 +674,60 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 		}
 	}
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
+}
+
+// During multi-schema modify-column on a partitioned table, concurrent owner/non-owner DML should remain consistent and end with stable data.
+func TestMultiSchemaModifyColumnConcurrentDMLAcrossPartitions(t *testing.T) {
+	createSQL := `create table t (
+		a int primary key,
+		b int,
+		key k_b (b)
+	) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition p2 values less than (30),
+		partition pMax values less than (MAXVALUE)
+	)`
+	initFn := func(tkO *testkit.TestKit) {
+		tkO.MustExec(`insert into t values (1,1),(2,2),(11,11),(12,12),(21,21),(22,22)`)
+	}
+	alterSQL := `alter table t modify column b bigint unsigned`
+	var opSeq atomic.Int64
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
+		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
+		schemaState := res.Rows()[0][0].(string)
+		if schemaState == model.StateNone.String() {
+			return
+		}
+		// Generate disjoint PK/value pairs per loop to avoid incidental conflicts between owner and non-owner sessions.
+		n := opSeq.Add(1)
+		ownerPK := 1000 + n*2
+		nonOwnerPK := ownerPK + 1
+		ownerVal := 2000 + n*2
+		nonOwnerVal := ownerVal + 1
+
+		tkO.MustExec(fmt.Sprintf(`insert into t values (%d,%d)`, ownerPK, ownerVal))
+		tkNO.MustExec(fmt.Sprintf(`insert into t values (%d,%d)`, nonOwnerPK, nonOwnerVal))
+		tkO.MustExec(fmt.Sprintf(`update t set b = b + 1 where a in (1,11,21,%d)`, ownerPK))
+		tkNO.MustExec(fmt.Sprintf(`update t set b = b + 1 where a in (2,12,22,%d)`, nonOwnerPK))
+		tkO.MustExec(fmt.Sprintf(`delete from t where a = %d`, ownerPK))
+		tkNO.MustExec(fmt.Sprintf(`delete from t where a = %d`, nonOwnerPK))
+	}
+	postFn := func(tkO *testkit.TestKit, _ kv.Storage) {
+		tkO.MustExec("set session tidb_enable_fast_table_check = off")
+		tkO.MustExec(`admin check table t`)
+		tkO.MustQuery(`select count(*) from t`).Check(testkit.Rows("6"))
+		shift := opSeq.Load()
+		tkO.MustQuery(`select a, b from t order by a`).Check(testkit.Rows(
+			fmt.Sprintf("1 %d", 1+shift),
+			fmt.Sprintf("2 %d", 2+shift),
+			fmt.Sprintf("11 %d", 11+shift),
+			fmt.Sprintf("12 %d", 12+shift),
+			fmt.Sprintf("21 %d", 21+shift),
+			fmt.Sprintf("22 %d", 22+shift),
+		))
+	}
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, false)
 }
 
 // TestMultiSchemaDropUniqueIndex to show behavior when
@@ -956,22 +1010,30 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 		// Waiting for the next State change to be done (i.e. blocking the state after)
 		releaseHook := true
 		var job *model.Job
+		ddlDone := false
 		for {
 			select {
 			case job = <-hookChan:
 			case err := <-alterChan:
 				require.NoError(t, err)
 				releaseHook = false
+				ddlDone = true
 				logutil.BgLogger().Info("XXXXXXXXXXX release hook")
-				break
 			}
 			domOwner.Reload()
 			if domNonOwner.InfoSchema().SchemaMetaVersion() == domOwner.InfoSchema().SchemaMetaVersion() {
+				if ddlDone {
+					break
+				}
 				// looping over reorganize data/indexes
 				logutil.BgLogger().Info("XXXXXXXXXXX Schema Version has not changed")
 				hookChan <- nil
 				continue
 			}
+			break
+		}
+		if !releaseHook && domNonOwner.InfoSchema().SchemaMetaVersion() == domOwner.InfoSchema().SchemaMetaVersion() {
+			// DDL finished after the non-owner domain caught up, so there is no held hook to release.
 			break
 		}
 		logutil.BgLogger().Info("XXXXXXXXXXX states loop", zap.Int64("verCurr", verCurr), zap.Int64("NonOwner ver", domNonOwner.InfoSchema().SchemaMetaVersion()), zap.Int64("Owner ver", domOwner.InfoSchema().SchemaMetaVersion()))
@@ -2109,8 +2171,10 @@ func TestIssue58692(t *testing.T) {
 	})
 	tk.MustExec("alter table t remove partitioning")
 	<-done
+	tk.MustExec("begin")
 	rsIndex := tk.MustQuery("select *,_tidb_rowid from t use index(idx)").Sort()
 	rsTable := tk.MustQuery("select *,_tidb_rowid from t use index()").Sort()
+	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t where b = 20").Check(testkit.Rows("9 20"))
 	tk.MustQuery("select * from t use index(idx) where a = 9").Check(testkit.Rows("9 20"))

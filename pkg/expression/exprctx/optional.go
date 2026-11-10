@@ -75,6 +75,8 @@ const (
 	OptPropCurrentUser OptionalEvalPropKey = iota
 	// OptPropSessionVars indicates to provide `variable.SessionVariable`.
 	OptPropSessionVars
+	// OptPropSessionContext indicates to provide the current session context.
+	OptPropSessionContext
 	// OptPropInfoSchema indicates to provide the information schema.
 	OptPropInfoSchema
 	// OptPropKVStore indicates to provide the kv store.
@@ -124,6 +126,10 @@ var optionalPropertyDescList = []OptionalEvalPropDesc{
 	{
 		key: OptPropSessionVars,
 		str: "OptPropSessionVars",
+	},
+	{
+		key: OptPropSessionContext,
+		str: "OptPropSessionContext",
 	},
 	{
 		key: OptPropInfoSchema,

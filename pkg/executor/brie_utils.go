@@ -52,7 +52,7 @@ func showRestoredCreateDatabase(sctx sessionctx.Context, db *model.DBInfo, brCom
 	return result.String(), nil
 }
 
-// BRIECreateDatabase creates the database with OnExistIgnore option
+// BRIECreateDatabase creates the database with OnExistError option
 func BRIECreateDatabase(sctx sessionctx.Context, schema *model.DBInfo, brComment string) error {
 	d := domain.GetDomain(sctx).DDLExecutor()
 	query, err := showRestoredCreateDatabase(sctx, schema, brComment)
@@ -69,17 +69,17 @@ func BRIECreateDatabase(sctx sessionctx.Context, schema *model.DBInfo, brComment
 	if len(schema.Charset) == 0 {
 		schema.Charset = mysql.DefaultCharset
 	}
-	return d.CreateSchemaWithInfo(sctx, schema, ddl.OnExistIgnore)
+	return d.CreateSchemaWithInfo(sctx, schema, ddl.OnExistError)
 }
 
 // showRestoredCreateTable shows the result of SHOW CREATE TABLE from a tableInfo.
-func showRestoredCreateTable(sctx sessionctx.Context, tbl *model.TableInfo, brComment string) (string, error) {
+func showRestoredCreateTable(sctx sessionctx.Context, dbName ast.CIStr, tbl *model.TableInfo, brComment string) (string, error) {
 	result := bytes.NewBuffer(make([]byte, 0, defaultCapOfCreateTable))
 	if len(brComment) > 0 {
 		// this can never fail.
 		_, _ = result.WriteString(brComment)
 	}
-	if err := ConstructResultOfShowCreateTable(sctx, tbl, autoid.Allocators{}, result); err != nil {
+	if err := ConstructResultOfShowCreateTable(sctx, dbName, tbl, autoid.Allocators{}, result); err != nil {
 		return "", err
 	}
 	return result.String(), nil
@@ -94,7 +94,7 @@ func BRIECreateTable(
 	cs ...ddl.CreateTableOption,
 ) error {
 	d := domain.GetDomain(sctx).DDLExecutor()
-	query, err := showRestoredCreateTable(sctx, clonedTable, brComment)
+	query, err := showRestoredCreateTable(sctx, dbName, clonedTable, brComment)
 	if err != nil {
 		return err
 	}
@@ -130,7 +130,7 @@ func BRIECreateTables(
 		dbName := ast.NewCIStr(db)
 		querys := make([]string, 0, len(tablesInDB))
 		for _, table := range tablesInDB {
-			query, err := showRestoredCreateTable(sctx, table, brComment)
+			query, err := showRestoredCreateTable(sctx, dbName, table, brComment)
 			if err != nil {
 				return errors.Trace(err)
 			}

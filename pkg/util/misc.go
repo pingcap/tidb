@@ -35,6 +35,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -50,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -399,15 +399,14 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		}
 	}
 
-	var tlsCert tls.Certificate
-	tlsCert, err = tls.LoadX509KeyPair(cert, key)
+	certs, err := tls.LoadX509KeyPair(cert, key)
 	if err != nil {
 		logutil.BgLogger().Warn("load x509 failed", zap.Error(err))
 		err = errors.Trace(err)
 		return
 	}
-
-	requireTLS := tlsutil.RequireSecureTransport.Load()
+	cs := &atomic.Pointer[tls.Certificate]{}
+	cs.Store(&certs)
 
 	var minTLSVersion uint16 = tls.VersionTLS12
 	switch tlsver := config.GetGlobalConfig().Security.MinTLSVersion; tlsver {
@@ -429,9 +428,6 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 
 	// Try loading CA cert.
 	clientAuthPolicy := tls.NoClientCert
-	if requireTLS {
-		clientAuthPolicy = tls.RequestClientCert
-	}
 	var certPool *x509.CertPool
 	if len(ca) > 0 {
 		var caCert []byte
@@ -443,11 +439,7 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		}
 		certPool = x509.NewCertPool()
 		if certPool.AppendCertsFromPEM(caCert) {
-			if requireTLS {
-				clientAuthPolicy = tls.RequireAndVerifyClientCert
-			} else {
-				clientAuthPolicy = tls.VerifyClientCertIfGiven
-			}
+			clientAuthPolicy = tls.VerifyClientCertIfGiven
 		}
 	}
 
@@ -467,11 +459,23 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 
 	/* #nosec G402 */
 	tlsConfig = &tls.Config{
-		Certificates: []tls.Certificate{tlsCert},
 		ClientCAs:    certPool,
 		ClientAuth:   clientAuthPolicy,
 		MinVersion:   minTLSVersion,
 		CipherSuites: cipherSuites,
+	}
+	tlsConfig.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+		certs, err := tls.LoadX509KeyPair(cert, key)
+		if err != nil {
+			logutil.BgLogger().Warn("could not load server certificate, using the old one", zap.Error(err))
+			if old := cs.Load(); old != nil {
+				return old, nil
+			}
+			return nil, nil
+		}
+		newCerts := &certs
+		cs.Store(newCerts)
+		return newCerts, nil
 	}
 	return
 }

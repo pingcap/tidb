@@ -16,17 +16,18 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
+	goerrors "errors"
 	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	dxfstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	dxfstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	litkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -43,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -78,6 +81,19 @@ func newImportIntoExec(b exec.BaseExecutor, selectExec exec.Executor, userSctx s
 	}, nil
 }
 
+func inheritMViewMaintenanceFlag(parent, child sessionctx.Context) {
+	if parent == nil || child == nil {
+		return
+	}
+	parentVars := parent.GetSessionVars()
+	childVars := child.GetSessionVars()
+	childVars.InMViewMaintenance = parentVars.InMViewMaintenance
+	failpoint.InjectCall(
+		"inheritMViewMaintenanceFlagApplied",
+		childVars.InMViewMaintenance,
+	)
+}
+
 // Next implements the Executor Next interface.
 func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.GrowAndReset(e.MaxChunkSize())
@@ -101,18 +117,25 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	}
 	e.controller = controller
 
-	if e.selectExec != nil {
+	if runsQueryOnWorker(e.plan) {
+		if err := e.prepareQuery(ctx); err != nil {
+			return err
+		}
+	} else if e.selectExec != nil {
 		// `import from select` doesn't return rows, so no need to set dataFilled.
 		return e.importFromSelect(ctx)
 	}
 
-	if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
-		return err2
-	}
-	if kerneltype.IsNextGen() {
-		ksCodec := e.userSctx.GetStore().GetCodec().GetKeyspace()
-		if err2 := e.controller.CalResourceParams(ctx, ksCodec); err2 != nil {
+	useAsyncPrepare := importinto.ShouldUseAsyncPrepare(e.controller.Plan)
+	if e.controller.DataSourceType == importer.DataSourceTypeFile && !useAsyncPrepare {
+		if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
 			return err2
+		}
+		if kerneltype.IsNextGen() {
+			ksCodec := e.userSctx.GetStore().GetCodec().GetKeyspace()
+			if err2 := e.controller.CalResourceParams(ctx, ksCodec); err2 != nil {
+				return err2
+			}
 		}
 	}
 
@@ -122,7 +145,12 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err2
 	}
 	defer CloseSession(newSCtx)
-	if err2 = e.controller.CheckRequirements(ctx, newSCtx); err2 != nil {
+	inheritMViewMaintenanceFlag(e.userSctx, newSCtx)
+	if useAsyncPrepare {
+		if err2 = e.controller.CheckRequirementsBeforeInitDataFiles(ctx, newSCtx); err2 != nil {
+			return err2
+		}
+	} else if err2 = e.controller.CheckRequirements(ctx, newSCtx); err2 != nil {
 		return err2
 	}
 
@@ -141,6 +169,9 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		if err = e.waitTask(ctx, jobID, task); err != nil {
 			return err
 		}
+	}
+	if e.controller.DataSourceType == importer.DataSourceTypeQuery {
+		return e.fillQueryInfo(ctx, jobID, task.ID)
 	}
 	return e.fillJobInfo(ctx, jobID, req)
 }
@@ -210,19 +241,21 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 }
 
 func (e *ImportIntoExec) submitTask(ctx context.Context) (int64, *proto.TaskBase, error) {
-	importFromServer, err := storage.IsLocalPath(e.controller.Path)
-	if err != nil {
-		// since we have checked this during creating controller, this should not happen.
-		return 0, nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(plannercore.ImportIntoDataSource, err.Error())
-	}
 	logutil.Logger(ctx).Info("get job importer", zap.Stringer("param", e.controller.Parameters),
 		zap.Bool("dist-task-enabled", vardef.EnableDistTask.Load()))
-	if importFromServer {
-		chunkMap, err2 := e.controller.PopulateChunks(ctx)
-		if err2 != nil {
-			return 0, nil, err2
+	if e.controller.DataSourceType == importer.DataSourceTypeFile {
+		importFromServer, err := objstore.IsLocalPath(e.controller.Path)
+		if err != nil {
+			// The URI was checked while creating the controller.
+			return 0, nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(plannercore.ImportIntoDataSource, err.Error())
 		}
-		return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, chunkMap)
+		if importFromServer {
+			chunkMap, err := e.controller.PopulateChunks(ctx)
+			if err != nil {
+				return 0, nil, err
+			}
+			return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, chunkMap)
+		}
 	}
 	// if tidb_enable_dist_task=true, we import distributively, otherwise we import on current node.
 	if vardef.EnableDistTask.Load() {
@@ -253,6 +286,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 		return err2
 	}
 	defer CloseSession(newSCtx)
+	inheritMViewMaintenanceFlag(e.userSctx, newSCtx)
 
 	if err2 = e.controller.CheckRequirements(ctx, newSCtx); err2 != nil {
 		return err2
@@ -260,6 +294,9 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	if err := e.controller.InitTiKVConfigs(ctx, newSCtx); err != nil {
 		return err
 	}
+	failpoint.Inject("mockImportFromSelectSetupErr", func() {
+		failpoint.Return(errors.New("mock import from select setup error"))
+	})
 
 	importID := uuid.New().String()
 	logutil.Logger(ctx).Info("importing data from select statement",
@@ -287,36 +324,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	})
 	eg.Go(func() error {
 		defer close(selectedChunkCh)
-		fields := exec.RetTypes(e.selectExec)
-		var idAllocator int64
-		chkSize := e.selectExec.InitCap()
-		maxChkSize := e.selectExec.MaxChunkSize()
-		for {
-			// rows will be consumed concurrently, we cannot use chunk pool in session ctx.
-			chk := chunk.New(e.selectExec.RetFieldTypes(), chkSize, maxChkSize)
-			err := exec.Next(egCtx, e.selectExec, chk)
-			if err != nil {
-				return err
-			}
-			if chk.NumRows() == 0 {
-				break
-			}
-			select {
-			case selectedChunkCh <- importer.QueryChunk{
-				Fields:      fields,
-				Chk:         chk,
-				RowIDOffset: idAllocator,
-			}:
-				idAllocator += int64(chk.NumRows())
-			case <-egCtx.Done():
-				return egCtx.Err()
-			}
-			if chkSize < maxChkSize {
-				chkSize = chkSize * 2
-				chkSize = min(chkSize, maxChkSize)
-			}
-		}
-		return nil
+		return sendQueryChunks(egCtx, e.selectExec, selectedChunkCh)
 	})
 	if err := eg.Wait(); err != nil {
 		return err
@@ -395,15 +403,112 @@ func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, mana
 }
 
 func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	manager, err := dxfstorage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return err
 	}
-	if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
-		return manager.CancelTaskByKeySession(ctx, se, importinto.TaskKey(jobID))
-	}); err != nil {
+	taskKey := importinto.TaskKey(jobID)
+	_, err = manager.GetTaskBaseByKeyWithHistory(ctx, taskKey)
+	if err == nil {
+		if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			return manager.CancelTaskByKeySession(ctx, se, taskKey)
+		}); err != nil {
+			return err
+		}
+		return handle.WaitTaskDoneByKey(ctx, taskKey)
+	}
+	if !goerrors.Is(err, dxfstorage.ErrTaskNotFound) {
 		return err
 	}
-	return handle.WaitTaskDoneByKey(ctx, importinto.TaskKey(jobID))
+	failpoint.InjectCall("afterCancelImportTaskProbeMiss", jobID)
+
+	// In next-gen, the import job and DXF task are created in separate
+	// transactions. The job row can exist before the DXF task row is committed,
+	// or the task submission can fail after the job is created. The task lookup
+	// distinguishes a missing task from one outside the cancel update's
+	// state predicate. If the task row is committed after the lookup, do not wait
+	// for it. The dangling fallback will either cancel the still-pending import
+	// job or report that the scheduler changed the job state first.
+	// see job_doc.go for more detail
+	logutil.Logger(ctx).Info("cancel import job directly after initial dxf task lookup found no task",
+		zap.Int64("jobID", jobID),
+		zap.String("taskKey", taskKey))
+	failpoint.InjectCall("beforeCancelDanglingImportJob", jobID)
+	return cancelDanglingImportJob(ctx, jobID)
+}
+
+// cancelDanglingImportJob cancels a pending import job after cancellation could
+// not find its DXF task, so it will not block another import job for the same
+// table. see job_doc.go for more detail
+func cancelDanglingImportJob(ctx context.Context, jobID int64) error {
+	manager, err := dxfstorage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	return manager.WithNewSession(func(se sessionctx.Context) error {
+		if err2 := importer.CancelPendingJob(ctx, se.GetSQLExecutor(), jobID); err2 != nil {
+			return err2
+		}
+		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+			return errors.New("job state changed during cancel, please try again later")
+		}
+		return nil
+	})
+}
+
+// runsQueryOnWorker returns whether the SELECT of plan runs on a DXF worker
+// instead of the submitting session.
+func runsQueryOnWorker(plan *plannercore.ImportInto) bool {
+	return plan.SelectPlan != nil && kerneltype.IsNextGen()
+}
+
+// prepareQuery captures the SELECT for the query step on a DXF worker.
+func (e *ImportIntoExec) prepareQuery(ctx context.Context) error {
+	if !e.userSctx.GetSessionVars().InMViewMaintenance {
+		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("IMPORT INTO FROM SELECT outside materialized view maintenance")
+	}
+	if e.controller.IsLocalSort() {
+		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("IMPORT INTO FROM SELECT without global sort storage")
+	}
+	query, err := importer.CaptureQuerySource(e.userSctx, e.plan.Stmt)
+	if err != nil {
+		return err
+	}
+	e.controller.Plan.QuerySource = query
+	// TODO: split I/O-bound single-table queries into range subtasks, and remove
+	// this cap, which also keeps the later steps on one node.
+	e.controller.Plan.MaxNodeCnt = 1
+	// The query takes all slots of a DXF node.
+	cpuCnt, err := handle.GetCPUCountOfNode(ctx)
+	if err != nil {
+		return err
+	}
+	e.controller.Plan.ThreadCnt = cpuCnt
+	return nil
+}
+
+// fillQueryInfo preserves the affected-row response of IMPORT FROM SELECT.
+func (e *ImportIntoExec) fillQueryInfo(ctx context.Context, jobID, taskID int64) error {
+	e.dataFilled = true
+	mgr, err := dxfstorage.GetDXFSvcTaskMgr()
+	if err != nil {
+		return err
+	}
+	finished, err := mgr.GetTaskByIDWithHistory(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	// waitTask also returns when the task is paused.
+	if finished.State != proto.TaskStateSucceed {
+		return errors.Errorf("import task %d stopped in state %s", taskID, finished.State)
+	}
+	var meta importinto.TaskMeta
+	if err := json.Unmarshal(finished.Meta, &meta); err != nil {
+		return err
+	}
+	stmtCtx := e.userSctx.GetSessionVars().StmtCtx
+	stmtCtx.SetAffectedRows(uint64(meta.Summary.ImportedRows))
+	stmtCtx.SetMessage(fmt.Sprintf("Records: %d, ID: %d", meta.Summary.ImportedRows, jobID))
+	return nil
 }

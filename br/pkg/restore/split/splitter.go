@@ -11,6 +11,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -363,10 +364,15 @@ func (r *PipelineRegionsSplitterImpl) splitRegionByPoints(
 		number      int64    = initialNumber
 	)
 	for _, v := range valueds {
+		log.Debug("[split-point] accumlating a item for splitting.", zap.Stringer("range", logutil.StringifyRangeOf(v.GetStartKey(), v.GetEndKey())),
+			zap.Uint64("size", v.Value.Size), zap.Int64("number", v.Value.Number))
 		// decode will discard ts behind the key, which results in the same key for consecutive ranges
 		if !bytes.Equal(lastKey, v.GetStartKey()) && (v.Value.Size+length > r.splitThresholdSize || v.Value.Number+number > r.splitThresholdKeys) {
 			_, rawKey, _ := codec.DecodeBytes(v.GetStartKey(), nil)
 			splitPoints = append(splitPoints, rawKey)
+			log.Info("[split-point] added split key for region.",
+				logutil.Region(region.Region), logutil.Key("split", rawKey),
+				zap.Uint64("accumulated-size", length), zap.Int64("accumulated-keys", number))
 			length = 0
 			number = 0
 		}

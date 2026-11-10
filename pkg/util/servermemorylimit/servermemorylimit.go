@@ -73,7 +73,7 @@ func (smqh *Handle) Run() {
 	for {
 		select {
 		case <-ticker.C:
-			memory.HandleGlobalMemArbitratorRuntime(memory.ReadMemStats())
+			memory.HandleGlobalMemArbitratorRuntime()
 			killSessIfNeeded(sessionToBeKilled, memory.ServerMemoryLimit.Load(), sm)
 		case <-smqh.exitCh:
 			return
@@ -138,10 +138,6 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm sessmgr.Manager) {
 		return
 	}
 
-	if memory.UsingGlobalMemArbitration() {
-		return
-	}
-
 	failpoint.Inject("issue42662_2", func(val failpoint.Value) {
 		if val.(bool) {
 			bt = 1
@@ -151,6 +147,11 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm sessmgr.Manager) {
 	if instanceStats.HeapInuse > MemoryMaxUsed.Load() {
 		MemoryMaxUsed.Store(instanceStats.HeapInuse)
 	}
+
+	if memory.UsingGlobalMemArbitration() {
+		return
+	}
+
 	limitSessMinSize := memory.ServerMemoryLimitSessMinSize.Load()
 	if instanceStats.HeapInuse > bt {
 		t := memory.MemUsageTop1Tracker.Load()

@@ -1,0 +1,401 @@
+// Copyright 2023 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package globalsort
+
+import (
+	"context"
+	"time"
+
+	"github.com/docker/go-units"
+	"github.com/google/uuid"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/operator"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
+	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
+	"github.com/pingcap/tidb/pkg/resourcemanager/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/zap"
+)
+
+var (
+	// MaxMergingFilesPerThread is the maximum number of files that can be merged by a
+	// single thread. This value comes from the fact that 16 threads are ok to merge 4k
+	// files in parallel, so we set it to 250.
+	MaxMergingFilesPerThread = 250
+)
+
+const (
+	// maxMergeReaderMemoryPerCore allows 32 concurrent 8 MiB range reads per CPU;
+	// AWS S3 benchmarks showed this was sufficient for merge throughput.
+	maxMergeReaderMemoryPerCore = 256 * units.MiB
+)
+
+var _ execute.Collector = &mergeCollector{}
+
+// mergeCollector collects the bytes and row count in merge step.
+type mergeCollector struct {
+	summary *execute.SubtaskSummary
+	counter prometheus.Counter
+}
+
+// NewMergeCollector creates a new merge collector.
+func NewMergeCollector(ctx context.Context, summary *execute.SubtaskSummary) *mergeCollector {
+	var counter prometheus.Counter
+	if me, ok := metric.GetCommonMetric(ctx); ok {
+		counter = me.BytesCounter.WithLabelValues(metric.StateMerged)
+	}
+	return &mergeCollector{
+		summary: summary,
+		counter: counter,
+	}
+}
+
+func (*mergeCollector) Accepted(_ int64) {}
+
+func (c *mergeCollector) Processed(bytes, rowCnt int64) {
+	if c.summary != nil {
+		c.summary.Processed.Add(bytes)
+		c.summary.RowCnt.Add(rowCnt)
+	}
+	if c.counter != nil {
+		c.counter.Add(float64(bytes))
+	}
+}
+
+type mergeMinimalTask struct {
+	files            []string
+	activeGroupCount int
+	writerID         string
+}
+
+// RecoverArgs implements workerpool.TaskMayPanic interface.
+func (*mergeMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, err error) {
+	return "merge_sort", "mergeMinimalTask", nil
+}
+
+// MergeOperator is the operator that merges overlapping files.
+type MergeOperator struct {
+	*operator.AsyncOperator[*mergeMinimalTask, workerpool.None]
+	concurrency int
+}
+
+// getMergeReaderMemory returns the concurrent-reader budget for one merge subtask.
+// It gives each CPU up to 256 MiB and uses 20% of the memory per core as a
+// safety limit for memory-constrained workers.
+func getMergeReaderMemory(memoryPerCore int64, concurrency int) int64 {
+	return min(maxMergeReaderMemoryPerCore, memoryPerCore/5) * int64(concurrency)
+}
+
+// NewMergeOperator creates a new MergeOperator instance.
+func NewMergeOperator(
+	ctx *workerpool.Context,
+	store storeapi.Storage,
+	memoryPerCore int64,
+	newFilePrefix string,
+	blockSize int,
+	onWriterClose simplesst.OnWriterCloseFunc,
+	collector execute.Collector,
+	concurrency int,
+	checkHotspot bool,
+	onDup engineapi.OnDuplicateKey,
+) *MergeOperator {
+	concurrency = max(concurrency, 1)
+	totalReaderMemorySize := getMergeReaderMemory(memoryPerCore, concurrency)
+	logutil.Logger(ctx).Info("create merge operator",
+		zap.Int64("memory-per-core", memoryPerCore),
+		zap.Int64("total-reader-memory-size", totalReaderMemorySize))
+	pool := workerpool.NewWorkerPool(
+		"mergeOperator",
+		util.ImportInto,
+		concurrency,
+		func() workerpool.Worker[*mergeMinimalTask, workerpool.None] {
+			return &mergeWorker{
+				ctx:                   ctx,
+				store:                 store,
+				totalReaderMemorySize: totalReaderMemorySize,
+				newFilePrefix:         newFilePrefix,
+				blockSize:             blockSize,
+				onWriterClose:         onWriterClose,
+				collector:             collector,
+				checkHotspot:          checkHotspot,
+				onDup:                 onDup,
+			}
+		},
+	)
+
+	return &MergeOperator{
+		AsyncOperator: operator.NewAsyncOperator(ctx, pool),
+		concurrency:   concurrency,
+	}
+}
+
+// String implements the Operator interface.
+func (*MergeOperator) String() string {
+	return "mergeOperator"
+}
+
+type mergeWorker struct {
+	ctx context.Context
+
+	store                 storeapi.Storage
+	totalReaderMemorySize int64
+	newFilePrefix         string
+	blockSize             int
+	onWriterClose         simplesst.OnWriterCloseFunc
+	collector             execute.Collector
+	checkHotspot          bool
+	onDup                 engineapi.OnDuplicateKey
+}
+
+func (w *mergeWorker) HandleTask(task *mergeMinimalTask, _ func(workerpool.None)) error {
+	memorySizePerGroup := w.totalReaderMemorySize / int64(task.activeGroupCount)
+	return mergeOverlappingFilesInternal(
+		w.ctx,
+		task.files,
+		w.store,
+		w.newFilePrefix,
+		task.writerID,
+		w.blockSize,
+		w.onWriterClose,
+		w.collector,
+		w.checkHotspot,
+		w.onDup,
+		memorySizePerGroup,
+	)
+}
+
+func (*mergeWorker) Close() error {
+	return nil
+}
+
+// MergeOverlappingFiles reads from given files whose key range may overlap
+// and writes to new sorted, nonoverlapping files.
+func MergeOverlappingFiles(
+	ctx *workerpool.Context,
+	paths []string,
+	op *MergeOperator,
+) error {
+	concurrency := op.concurrency
+	dataFilesSlice := splitDataFiles(paths, concurrency)
+	logutil.Logger(ctx).Info("start to merge overlapping files",
+		zap.Int("file-count", len(paths)),
+		zap.Int("file-groups", len(dataFilesSlice)),
+		zap.Int("concurrency", concurrency))
+
+	mergeTasks := make([]*mergeMinimalTask, 0, len(dataFilesSlice))
+	activeGroupCount := min(len(dataFilesSlice), concurrency)
+	for _, files := range dataFilesSlice {
+		mergeTasks = append(mergeTasks, &mergeMinimalTask{
+			files:            files,
+			activeGroupCount: activeGroupCount,
+			writerID:         uuid.New().String(),
+		})
+	}
+
+	sourceOp := operator.NewSimpleDataSource(ctx, mergeTasks)
+	operator.Compose(sourceOp, op)
+
+	pipe := operator.NewAsyncPipeline(sourceOp, op)
+	if err := pipe.Execute(); err != nil {
+		return err
+	}
+
+	err := pipe.Close()
+	if opErr := ctx.OperatorErr(); opErr != nil {
+		return opErr
+	}
+	return err
+}
+
+func getTargetFileCount(fileCount, concurrency int) int {
+	if fileCount == 0 {
+		return 0
+	}
+	shares := max((fileCount+MaxMergingFilesPerThread-1)/MaxMergingFilesPerThread, concurrency)
+	if fileCount < 2*concurrency {
+		shares = max(1, fileCount/2)
+	}
+	return shares
+}
+
+// getGroupedTargetFileCount returns the total target file count when the input
+// files are divided as evenly as possible among groupCount groups.
+func getGroupedTargetFileCount(total, groupCount, concurrency int) int {
+	quotient := total / groupCount
+	remainder := total % groupCount
+	return remainder*getTargetFileCount(quotient+1, concurrency) +
+		(groupCount-remainder)*getTargetFileCount(quotient, concurrency)
+}
+
+// split input data files into multiple shares evenly, with the max number files
+// in each share MaxMergingFilesPerThread, if there are not enough files, merge at
+// least 2 files in one batch.
+func splitDataFiles(paths []string, concurrency int) [][]string {
+	shares := getTargetFileCount(len(paths), concurrency)
+	if shares == 0 {
+		return nil
+	}
+	dataFilesSlice := make([][]string, 0, shares)
+	batchCount := len(paths) / shares
+	remainder := len(paths) % shares
+	start := 0
+	for start < len(paths) {
+		end := start + batchCount
+		if remainder > 0 {
+			end++
+			remainder--
+		}
+		if end > len(paths) {
+			end = len(paths)
+		}
+		dataFilesSlice = append(dataFilesSlice, paths[start:end])
+		start = end
+	}
+	return dataFilesSlice
+}
+
+// mergeOverlappingFilesInternal reads from given files whose key range may overlap
+// and writes to one new sorted, nonoverlapping files.
+// since some memory are taken by library, such as HTTP2, that we cannot calculate
+// accurately, here we only consider the memory used by our code, the estimate max
+// memory usage of this function is:
+//
+//	DefaultOneWriterMemSizeLimit
+//	+ MaxMergingFilesPerThread * (X + DefaultReadBufferSize)
+//	+ maxUploadWorkersPerThread * (data-part-size + 5MiB(stat-part-size))
+//	+ memory taken by concurrent reading if check-hotspot is enabled
+//
+// where X is memory used for each read connection, it's http2 for GCP, X might be
+// 4 or more MiB, http1 for S3, it's smaller.
+//
+// The data part size is calculated from the actual input size below. Concurrent
+// reader memory is bounded separately by memorySizePerGroup when hotspot reads
+// are enabled.
+func mergeOverlappingFilesInternal(
+	ctx context.Context,
+	paths []string,
+	store storeapi.Storage,
+	newFilePrefix string,
+	writerID string,
+	blockSize int,
+	onWriterClose simplesst.OnWriterCloseFunc,
+	collector execute.Collector,
+	checkHotspot bool,
+	onDup engineapi.OnDuplicateKey,
+	memorySizePerGroup int64,
+) (err error) {
+	failpoint.Inject("mergeOverlappingFilesInternal", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			switch v {
+			case 1:
+				failpoint.Return(errors.Errorf("mock error in mergeOverlappingFilesInternal"))
+			case 2:
+				panic("mock panic in mergeOverlappingFilesInternal")
+			case 3:
+				time.Sleep(time.Second * 5)
+				failpoint.Return(ctx.Err())
+			default:
+				failpoint.Return(nil)
+			}
+		}
+	})
+	task := log.BeginTask(logutil.Logger(ctx).With(
+		zap.String("writer-id", writerID),
+		zap.Int("file-count", len(paths)),
+	), "merge overlapping files")
+	defer func() {
+		task.End(zap.ErrorLevel, err)
+	}()
+
+	zeroOffsets := make([]uint64, len(paths))
+	iter, err := simplesst.NewMergeKVIter(
+		ctx,
+		paths,
+		zeroOffsets,
+		store,
+		simplesst.DefaultReadBufferSize,
+		checkHotspot,
+		memorySizePerGroup,
+	)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err := iter.Close()
+		if err != nil {
+			logutil.Logger(ctx).Warn("close iterator failed", zap.Error(err))
+		}
+	}()
+
+	partSize := getMergePartSize(iter.InputSize(), len(paths), blockSize)
+	logutil.Logger(ctx).Info("calculated merge writer part size",
+		zap.Int64("input-size", iter.InputSize()),
+		zap.Int64("part-size", partSize),
+		zap.Int("file-count", len(paths)))
+
+	writer := simplesst.NewWriterBuilder().
+		SetMemorySizeLimit(simplesst.DefaultOneWriterMemSizeLimit).
+		SetBlockSize(blockSize).
+		SetOnCloseFunc(onWriterClose).
+		SetOnDup(onDup).
+		BuildOneFile(store, newFilePrefix, writerID)
+	writer.InitPartSizeAndLogger(ctx, partSize)
+	defer func() {
+		err2 := writer.Close(ctx)
+		if err2 == nil {
+			return
+		}
+
+		if err == nil {
+			err = err2
+		} else {
+			logutil.Logger(ctx).Warn("close writer failed", zap.Error(err2))
+		}
+	}()
+
+	// currently use same goroutine to do read and write. The main advantage is
+	// there's no KV copy and iter can reuse the buffer.
+	for iter.Next() {
+		key, value := iter.Key(), iter.Value()
+		err = writer.WriteRow(ctx, key, value)
+		if err != nil {
+			return err
+		}
+
+		if collector != nil {
+			collector.Processed(int64(len(key)+len(value)), 1)
+		}
+	}
+	return iter.Error()
+}
+
+func getMergePartSize(inputSize int64, fileCount, blockSize int) int64 {
+	// Conservatively allow each input file to contribute up to one additional
+	// block of output due to block alignment.
+	padding := int64(fileCount) * int64(blockSize)
+	maxOutputSize := inputSize + padding
+	partSize := maxOutputSize / simplesst.MaxUploadPartCount
+	if maxOutputSize%simplesst.MaxUploadPartCount != 0 {
+		partSize++
+	}
+	return max(simplesst.MinUploadPartSize, partSize)
+}

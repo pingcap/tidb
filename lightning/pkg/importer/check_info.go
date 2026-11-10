@@ -20,9 +20,9 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/objstore"
 )
 
 const (
@@ -40,7 +40,7 @@ const (
 )
 
 func (rc *Controller) isSourceInLocal() bool {
-	return strings.HasPrefix(rc.store.URI(), storage.LocalURIPrefix)
+	return strings.HasPrefix(rc.store.URI(), objstore.LocalURIPrefix)
 }
 
 func (rc *Controller) doPreCheckOnItem(ctx context.Context, checkItemID precheck.CheckItemID) error {

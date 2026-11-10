@@ -83,7 +83,7 @@ func TestAddLocalTemporaryTable(t *testing.T) {
 
 	val, err := sessVars.TemporaryTableData.Get(context.Background(), k)
 	require.NoError(t, err)
-	require.Equal(t, []byte("v1"), val)
+	require.Equal(t, kv.NewValueEntry([]byte("v1"), 0), val)
 
 	// insert dup table
 	tbl1x := newMockTable("t1")
@@ -140,7 +140,7 @@ func TestRemoveLocalTemporaryTable(t *testing.T) {
 	require.Equal(t, got.Meta(), tbl1)
 	val, err := sessVars.TemporaryTableData.Get(context.Background(), k)
 	require.NoError(t, err)
-	require.Equal(t, []byte("v1"), val)
+	require.Equal(t, kv.NewValueEntry([]byte("v1"), 0), val)
 
 	// remove success
 	err = ddl.DropLocalTemporaryTable(ast.NewCIStr("db1"), ast.NewCIStr("t1"))
@@ -150,7 +150,7 @@ func TestRemoveLocalTemporaryTable(t *testing.T) {
 	require.False(t, exists)
 	val, err = sessVars.TemporaryTableData.Get(context.Background(), k)
 	require.NoError(t, err)
-	require.Equal(t, []byte{}, val)
+	require.Equal(t, kv.NewValueEntry([]byte{}, 0), val)
 }
 
 func TestTruncateLocalTemporaryTable(t *testing.T) {
@@ -186,7 +186,7 @@ func TestTruncateLocalTemporaryTable(t *testing.T) {
 	require.Equal(t, got.Meta(), tbl1)
 	val, err := sessVars.TemporaryTableData.Get(context.Background(), k)
 	require.NoError(t, err)
-	require.Equal(t, []byte("v1"), val)
+	require.Equal(t, kv.NewValueEntry([]byte("v1"), 0), val)
 
 	// insert a new tbl
 	tbl2 := newMockTable("t2")
@@ -206,12 +206,12 @@ func TestTruncateLocalTemporaryTable(t *testing.T) {
 	require.Equal(t, int64(3), got.Meta().ID)
 	val, err = sessVars.TemporaryTableData.Get(context.Background(), k)
 	require.NoError(t, err)
-	require.Equal(t, []byte{}, val)
+	require.Equal(t, kv.NewValueEntry([]byte{}, 0), val)
 
 	// truncate just effect its own data
 	val, err = sessVars.TemporaryTableData.Get(context.Background(), k2)
 	require.NoError(t, err)
-	require.Equal(t, []byte("v2"), val)
+	require.Equal(t, kv.NewValueEntry([]byte("v2"), 0), val)
 }
 
 func newMockTable(tblName string) *model.TableInfo {

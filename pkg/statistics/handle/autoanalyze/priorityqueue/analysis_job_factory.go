@@ -61,8 +61,8 @@ func (f *AnalysisJobFactory) CreateNonPartitionedTableAnalysisJob(
 		return nil
 	}
 
-	tableStatsVer := f.sctx.GetSessionVars().AnalyzeVersion
-	statistics.CheckAnalyzeVerOnTable(tblStats, &tableStatsVer)
+	requestedVersion := f.sctx.GetSessionVars().AnalyzeVersion
+	versionMatches := f.analyzeVersionMatches(tblStats)
 
 	changePercentage := f.CalculateChangePercentage(tblStats)
 	tableSize := f.CalculateTableSize(tblStats)
@@ -79,7 +79,8 @@ func (f *AnalysisJobFactory) CreateNonPartitionedTableAnalysisJob(
 	return NewNonPartitionedTableAnalysisJob(
 		tblInfo.ID,
 		indexes,
-		tableStatsVer,
+		requestedVersion,
+		!versionMatches,
 		changePercentage,
 		tableSize,
 		lastAnalysisDuration,
@@ -96,8 +97,8 @@ func (f *AnalysisJobFactory) CreateStaticPartitionAnalysisJob(
 		return nil
 	}
 
-	tableStatsVer := f.sctx.GetSessionVars().AnalyzeVersion
-	statistics.CheckAnalyzeVerOnTable(partitionStats, &tableStatsVer)
+	requestedVersion := f.sctx.GetSessionVars().AnalyzeVersion
+	versionMatches := f.analyzeVersionMatches(partitionStats)
 
 	changePercentage := f.CalculateChangePercentage(partitionStats)
 	tableSize := f.CalculateTableSize(partitionStats)
@@ -115,7 +116,8 @@ func (f *AnalysisJobFactory) CreateStaticPartitionAnalysisJob(
 		globalTblInfo.ID,
 		partitionID,
 		indexes,
-		tableStatsVer,
+		requestedVersion,
+		!versionMatches,
 		changePercentage,
 		tableSize,
 		lastAnalysisDuration,
@@ -132,9 +134,8 @@ func (f *AnalysisJobFactory) CreateDynamicPartitionedTableAnalysisJob(
 		return nil
 	}
 
-	// TODO: figure out how to check the table stats version correctly for partitioned tables.
-	tableStatsVer := f.sctx.GetSessionVars().AnalyzeVersion
-	statistics.CheckAnalyzeVerOnTable(globalTblStats, &tableStatsVer)
+	requestedVersion := f.sctx.GetSessionVars().AnalyzeVersion
+	versionMatches := f.partitionedTableAnalyzeVersionMatches(globalTblStats, partitionStats)
 
 	avgChange, avgSize, minLastAnalyzeDuration, partitionIDs := f.CalculateIndicatorsForPartitions(globalTblStats, partitionStats)
 	partitionIndexes := f.CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(globalTblInfo, partitionStats)
@@ -150,11 +151,32 @@ func (f *AnalysisJobFactory) CreateDynamicPartitionedTableAnalysisJob(
 		globalTblInfo.ID,
 		partitionIDs,
 		partitionIndexes,
-		tableStatsVer,
+		requestedVersion,
+		!versionMatches,
 		avgChange,
 		avgSize,
 		minLastAnalyzeDuration,
 	)
+}
+
+func (f *AnalysisJobFactory) analyzeVersionMatches(tblStats *statistics.Table) bool {
+	return statistics.AnalyzeVersionMatchesForTableStats(tblStats, f.sctx.GetSessionVars().AnalyzeVersion)
+}
+
+func (f *AnalysisJobFactory) partitionedTableAnalyzeVersionMatches(
+	globalTblStats *statistics.Table,
+	partitionStats map[PartitionIDAndName]*statistics.Table,
+) bool {
+	requestedVersion := f.sctx.GetSessionVars().AnalyzeVersion
+	if !statistics.AnalyzeVersionMatchesForTableStats(globalTblStats, requestedVersion) {
+		return false
+	}
+	for _, tblStats := range partitionStats {
+		if !statistics.AnalyzeVersionMatchesForTableStats(tblStats, requestedVersion) {
+			return false
+		}
+	}
+	return true
 }
 
 // CalculateChangePercentage calculates the change percentage of the table

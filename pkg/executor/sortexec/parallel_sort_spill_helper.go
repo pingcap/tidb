@@ -204,6 +204,11 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 
 	spilledRowChannel := make(chan chunk.Row, 10000)
 	errChannel := make(chan error, 1)
+	stopCh := make(chan struct{})
+	var stopOnce sync.Once
+	stopProducer := func() {
+		stopOnce.Do(func() { close(stopCh) })
+	}
 
 	// We must wait the finish of the following goroutine,
 	// or we will exit `spillImpl` function in advance and
@@ -236,12 +241,19 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 				if row.IsEmpty() {
 					break
 				}
-				spilledRowChannel <- row
+				select {
+				case spilledRowChannel <- row:
+				case <-stopCh:
+					return
+				case <-p.finishCh:
+					return
+				}
 			}
 		},
 		func(r any) {
 			if r != nil {
 				errChannel <- util.GetRecoverError(r)
+				stopProducer()
 			}
 		})
 
@@ -280,6 +292,7 @@ OuterLoop:
 		if p.tmpSpillChunk.IsFull() {
 			err = p.spillTmpSpillChunk(inDisk)
 			if err != nil {
+				stopProducer()
 				break
 			}
 

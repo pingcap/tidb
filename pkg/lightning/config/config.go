@@ -38,9 +38,10 @@ import (
 	tidbcfg "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/cpu"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"go.uber.org/atomic"
@@ -59,6 +60,10 @@ const (
 	// BackendLocal is a constant for choosing the "Local" backup in the configuration.
 	// In this mode, we write & sort kv pairs with local storage and directly write them to tikv.
 	BackendLocal = "local"
+	// BackendImportInto is a constant for choosing the "ImportInto" backend in the configuration.
+	BackendImportInto = "import-into"
+	// UnlimitedQuota is the default value of DiskQuota, which means no limit.
+	UnlimitedQuota = ByteSize(math.MaxInt64)
 
 	// CheckpointDriverMySQL is a constant for choosing the "MySQL" checkpoint driver in the configuration.
 	CheckpointDriverMySQL = "mysql"
@@ -107,7 +112,7 @@ const (
 )
 
 var (
-	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs", "gs", "azure", "azblob"}
+	supportedStorageTypes = []string{"file", "local", "s3", "oss", "noop", "gcs", "gs", "azure", "azblob"}
 
 	defaultFilter = []string{
 		"*.*",
@@ -307,7 +312,7 @@ func (cfg *Config) Redact() string {
 	defer func() {
 		cfg.Mydumper.SourceDir = originDir
 	}()
-	cfg.Mydumper.SourceDir = ast.RedactURL(cfg.Mydumper.SourceDir)
+	cfg.Mydumper.SourceDir = objstore.RedactURL(cfg.Mydumper.SourceDir)
 	return cfg.String()
 }
 
@@ -363,9 +368,16 @@ func (l *Lightning) adjust(i *TikvImporter) {
 			l.MetaSchemaName = defaultMetaSchemaName
 		}
 		// RegionConcurrency > NumCPU is meaningless.
-		cpuCount := runtime.NumCPU()
+		cpuCount := cpu.GetCPUCount()
 		if l.RegionConcurrency > cpuCount {
 			l.RegionConcurrency = cpuCount
+		}
+	case BackendImportInto:
+		if len(l.MetaSchemaName) == 0 {
+			l.MetaSchemaName = defaultMetaSchemaName
+		}
+		if l.TableConcurrency == 0 {
+			l.TableConcurrency = l.RegionConcurrency
 		}
 	}
 }
@@ -919,8 +931,8 @@ func (m *MydumperRuntime) adjust() error {
 		if filepath.IsAbs(rule.Path) {
 			relPath, err := filepath.Rel(m.SourceDir, rule.Path)
 			if err != nil {
-				return common.ErrInvalidConfig.Wrap(err).
-					GenWithStack("cannot find relative path for file route path %s", rule.Path)
+				return common.ErrInvalidConfig.
+					GenWithStack("cannot find relative path for file route path %s in source dir %s", rule.Path, objstore.RedactURL(m.SourceDir))
 			}
 			// ".." means that this path is not in source dir, so we should return an error
 			if strings.HasPrefix(relPath, "..") {
@@ -988,7 +1000,7 @@ func (m *MydumperRuntime) adjustFilePath() error {
 		var err error
 		u, err = url.Parse(m.SourceDir)
 		if err != nil {
-			return common.ErrInvalidConfig.Wrap(err).GenWithStack("cannot parse `mydumper.data-source-dir` %s", m.SourceDir)
+			return common.ErrInvalidConfig.GenWithStack("cannot parse `mydumper.data-source-dir` %s", objstore.RedactURL(m.SourceDir))
 		}
 	} else {
 		u = &url.URL{}
@@ -1015,7 +1027,7 @@ func (m *MydumperRuntime) adjustFilePath() error {
 	if !found {
 		return common.ErrInvalidConfig.GenWithStack(
 			"unsupported data-source-dir url '%s', supported storage types are %s",
-			m.SourceDir, strings.Join(supportedStorageTypes, ","))
+			objstore.RedactURL(m.SourceDir), strings.Join(supportedStorageTypes, ","))
 	}
 	return nil
 }
@@ -1106,6 +1118,15 @@ type TikvImporter struct {
 	KeyspaceName      string `toml:"keyspace-name" json:"keyspace-name"`
 	AddIndexBySQL     bool   `toml:"add-index-by-sql" json:"add-index-by-sql"`
 
+	// StripS3ExternalIDForImportSQL strips explicit S3 external ID from
+	// generated IMPORT INTO SQL resource parameters while keeping the original
+	// source path unchanged for Lightning storage access. This compatibility flag
+	// is only for callers that need to work with older IMPORT INTO planners that
+	// reject explicit S3 external ID.
+	// Deprecated: remove this flag after downstream callers no longer need to
+	// keep compatibility with those older planners.
+	StripS3ExternalIDForImportSQL bool `toml:"-" json:"-"`
+
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
 	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
@@ -1185,6 +1206,8 @@ func (t *TikvImporter) adjust() error {
 		default:
 			return common.ErrInvalidConfig.Wrap(err).GenWithStack("invalid tikv-importer.sorted-kv-dir")
 		}
+	case BackendImportInto:
+		// TODO: add validation if necessary
 	default:
 		return common.ErrInvalidConfig.GenWithStack(
 			"unsupported `tikv-importer.backend` (%s)",
@@ -1448,7 +1471,7 @@ func (c *Conflict) adjust(i *TikvImporter) error {
 func NewConfig() *Config {
 	return &Config{
 		App: Lightning{
-			RegionConcurrency:  runtime.NumCPU(),
+			RegionConcurrency:  cpu.GetCPUCount(),
 			TableConcurrency:   0,
 			IndexConcurrency:   0,
 			IOConcurrency:      5,
@@ -1502,7 +1525,7 @@ func NewConfig() *Config {
 			RegionSplitBatchSize:    DefaultRegionSplitBatchSize,
 			RegionSplitConcurrency:  runtime.GOMAXPROCS(0),
 			RegionCheckBackoffLimit: DefaultRegionCheckBackoffLimit,
-			DiskQuota:               ByteSize(math.MaxInt64),
+			DiskQuota:               UnlimitedQuota,
 			DuplicateResolution:     NoneOnDup,
 			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
 			BlockSize:               DefaultBlockSize,
@@ -1521,6 +1544,9 @@ func NewConfig() *Config {
 			PrecheckConflictBeforeImport: false,
 			Threshold:                    -1,
 			MaxRecordRows:                -1,
+		},
+		Security: Security{
+			RedactInfoLog: true,
 		},
 	}
 }

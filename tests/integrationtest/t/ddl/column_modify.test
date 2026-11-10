@@ -127,7 +127,9 @@ select * from t1;
 drop table t1;
 create table t1 (a int, b int as (a+1), index idx(b));
 insert into t1 set a=1;
+-- error 3106
 alter table t1 modify column b bigint as (a+1);
+-- error 3106
 alter table t1 modify column b bigint as (a + 1);
 select * from t1;
 

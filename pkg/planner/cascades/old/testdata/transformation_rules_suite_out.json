@@ -35,8 +35,8 @@
         "Result": [
           "Group#0 Schema:[test.t.a,test.t.b]",
           "    Projection_4 input:[Group#1], test.t.a, test.t.b",
-          "Group#1 Schema:[test.t.a,test.t.b,Column#13]",
-          "    Projection_2 input:[Group#2], test.t.a, test.t.b, plus(test.t.a, test.t.b)->Column#13",
+          "Group#1 Schema:[test.t.a,test.t.b,Column#14]",
+          "    Projection_2 input:[Group#2], test.t.a, test.t.b, plus(test.t.a, test.t.b)->Column#14",
           "Group#2 Schema:[test.t.a,test.t.b]",
           "    TiKVSingleGather_7 input:[Group#3], table:t1",
           "Group#3 Schema:[test.t.a,test.t.b]",
@@ -48,12 +48,12 @@
       {
         "SQL": "select b, @i:=@i+1 as ii from (select b, @i:=0 from t as t1) as t2 where @i < 10",
         "Result": [
-          "Group#0 Schema:[test.t.b,Column#14]",
-          "    Projection_4 input:[Group#1], test.t.b, setvar(i, plus(getvar(i), 1))->Column#14",
-          "Group#1 Schema:[test.t.b,Column#13]",
+          "Group#0 Schema:[test.t.b,Column#15]",
+          "    Projection_4 input:[Group#1], test.t.b, setvar(i, plus(getvar(i), 1))->Column#15",
+          "Group#1 Schema:[test.t.b,Column#14]",
           "    Selection_3 input:[Group#2], lt(getvar(\"i\"), 10)",
-          "Group#2 Schema:[test.t.b,Column#13]",
-          "    Projection_2 input:[Group#3], test.t.b, setvar(i, 0)->Column#13",
+          "Group#2 Schema:[test.t.b,Column#14]",
+          "    Projection_2 input:[Group#3], test.t.b, setvar(i, 0)->Column#14",
           "Group#3 Schema:[test.t.b]",
           "    TiKVSingleGather_6 input:[Group#4], table:t1",
           "Group#4 Schema:[test.t.b]",
@@ -63,12 +63,12 @@
       {
         "SQL": "select b, @i:=@i+1 as ii from (select a, b, @i:=0 from t as t1) as t2 where @i < 10 and a > 10",
         "Result": [
-          "Group#0 Schema:[test.t.b,Column#14]",
-          "    Projection_4 input:[Group#1], test.t.b, setvar(i, plus(getvar(i), 1))->Column#14",
-          "Group#1 Schema:[test.t.a,test.t.b,Column#13]",
+          "Group#0 Schema:[test.t.b,Column#15]",
+          "    Projection_4 input:[Group#1], test.t.b, setvar(i, plus(getvar(i), 1))->Column#15",
+          "Group#1 Schema:[test.t.a,test.t.b,Column#14]",
           "    Selection_6 input:[Group#2], lt(getvar(\"i\"), 10)",
-          "Group#2 Schema:[test.t.a,test.t.b,Column#13]",
-          "    Projection_2 input:[Group#3], test.t.a, test.t.b, setvar(i, 0)->Column#13",
+          "Group#2 Schema:[test.t.a,test.t.b,Column#14]",
+          "    Projection_2 input:[Group#3], test.t.a, test.t.b, setvar(i, 0)->Column#14",
           "Group#3 Schema:[test.t.a,test.t.b]",
           "    TiKVSingleGather_8 input:[Group#4], table:t1",
           "Group#4 Schema:[test.t.a,test.t.b]",
@@ -78,9 +78,9 @@
       {
         "SQL": "select a, max(b) from t group by a having a > 1",
         "Result": [
-          "Group#0 Schema:[test.t.a,Column#13]",
-          "    Projection_3 input:[Group#1], test.t.a, Column#13",
-          "Group#1 Schema:[Column#13,test.t.a]",
+          "Group#0 Schema:[test.t.a,Column#14]",
+          "    Projection_3 input:[Group#1], test.t.a, Column#14",
+          "Group#1 Schema:[Column#14,test.t.a]",
           "    Aggregation_2 input:[Group#2], group by:test.t.a, funcs:max(test.t.b), firstrow(test.t.a)",
           "Group#2 Schema:[test.t.a,test.t.b]",
           "    TiKVSingleGather_8 input:[Group#3], table:t",
@@ -91,13 +91,13 @@
       {
         "SQL": "select a, avg(b) from t group by a having a > 1 and max(b) > 10",
         "Result": [
-          "Group#0 Schema:[test.t.a,Column#16]",
-          "    Projection_5 input:[Group#1], test.t.a, Column#13->Column#16",
-          "Group#1 Schema:[test.t.a,Column#13,Column#14]",
-          "    Projection_3 input:[Group#2], test.t.a, Column#13, Column#14",
-          "Group#2 Schema:[Column#13,Column#14,test.t.a]",
-          "    Selection_8 input:[Group#3], gt(Column#14, 10)",
-          "Group#3 Schema:[Column#13,Column#14,test.t.a]",
+          "Group#0 Schema:[test.t.a,Column#17]",
+          "    Projection_5 input:[Group#1], test.t.a, Column#14->Column#17",
+          "Group#1 Schema:[test.t.a,Column#14,Column#15]",
+          "    Projection_3 input:[Group#2], test.t.a, Column#14, Column#15",
+          "Group#2 Schema:[Column#14,Column#15,test.t.a]",
+          "    Selection_8 input:[Group#3], gt(Column#15, 10)",
+          "Group#3 Schema:[Column#14,Column#15,test.t.a]",
           "    Aggregation_2 input:[Group#4], group by:test.t.a, funcs:avg(test.t.b), max(test.t.b), firstrow(test.t.a)",
           "Group#4 Schema:[test.t.a,test.t.b]",
           "    TiKVSingleGather_10 input:[Group#5], table:t",
@@ -108,13 +108,13 @@
       {
         "SQL": "select a, approx_count_distinct(b) from t group by a having a > 1 and max(b) > 10",
         "Result": [
-          "Group#0 Schema:[test.t.a,Column#16]",
-          "    Projection_5 input:[Group#1], test.t.a, Column#13->Column#16",
-          "Group#1 Schema:[test.t.a,Column#13,Column#14]",
-          "    Projection_3 input:[Group#2], test.t.a, Column#13, Column#14",
-          "Group#2 Schema:[Column#13,Column#14,test.t.a]",
-          "    Selection_8 input:[Group#3], gt(Column#14, 10)",
-          "Group#3 Schema:[Column#13,Column#14,test.t.a]",
+          "Group#0 Schema:[test.t.a,Column#17]",
+          "    Projection_5 input:[Group#1], test.t.a, Column#14->Column#17",
+          "Group#1 Schema:[test.t.a,Column#14,Column#15]",
+          "    Projection_3 input:[Group#2], test.t.a, Column#14, Column#15",
+          "Group#2 Schema:[Column#14,Column#15,test.t.a]",
+          "    Selection_8 input:[Group#3], gt(Column#15, 10)",
+          "Group#3 Schema:[Column#14,Column#15,test.t.a]",
           "    Aggregation_2 input:[Group#4], group by:test.t.a, funcs:approx_count_distinct(test.t.b), max(test.t.b), firstrow(test.t.a)",
           "Group#4 Schema:[test.t.a,test.t.b]",
           "    TiKVSingleGather_10 input:[Group#5], table:t",
@@ -219,20 +219,20 @@
       {
         "SQL": "select a, b from ((select a, b from t) union all(select c as a, d as b from t)) as t1 where a > 1",
         "Result": [
-          "Group#0 Schema:[Column#25,Column#26]",
-          "    Projection_9 input:[Group#1], Column#25, Column#26",
-          "Group#1 Schema:[Column#25,Column#26]",
+          "Group#0 Schema:[Column#27,Column#28]",
+          "    Projection_9 input:[Group#1], Column#27, Column#28",
+          "Group#1 Schema:[Column#27,Column#28]",
           "    Union_5 input:[Group#2,Group#3]",
-          "Group#2 Schema:[Column#25,Column#26]",
-          "    Projection_6 input:[Group#4], test.t.a->Column#25, test.t.b->Column#26",
+          "Group#2 Schema:[Column#27,Column#28]",
+          "    Projection_6 input:[Group#4], test.t.a->Column#27, test.t.b->Column#28",
           "Group#4 Schema:[test.t.a,test.t.b]",
           "    Projection_2 input:[Group#5], test.t.a, test.t.b",
           "Group#5 Schema:[test.t.a,test.t.b]",
           "    TiKVSingleGather_15 input:[Group#6], table:t",
           "Group#6 Schema:[test.t.a,test.t.b]",
           "    TableScan_17 table:t, pk col:test.t.a, cond:[gt(test.t.a, 1)]",
-          "Group#3 Schema:[Column#25,Column#26]",
-          "    Projection_7 input:[Group#7], test.t.c->Column#25, test.t.d->Column#26",
+          "Group#3 Schema:[Column#27,Column#28]",
+          "    Projection_7 input:[Group#7], test.t.c->Column#27, test.t.d->Column#28",
           "Group#7 Schema:[test.t.c,test.t.d]",
           "    Projection_4 input:[Group#8], test.t.c, test.t.d",
           "Group#8 Schema:[test.t.c,test.t.d]",
@@ -251,11 +251,11 @@
         "Result": [
           "Group#0 Schema:[test.t.a,test.t.b]",
           "    Projection_7 input:[Group#1], test.t.a, test.t.b",
-          "Group#1 Schema:[test.t.a,test.t.b,Column#14]",
-          "    Projection_5 input:[Group#2], test.t.a, test.t.b, Column#14",
-          "Group#2 Schema:[test.t.a,test.t.b,Column#14]",
-          "    Selection_10 input:[Group#3], eq(test.t.b, Column#14), lt(test.t.a, 10)",
-          "Group#3 Schema:[test.t.a,test.t.b,Column#14]",
+          "Group#1 Schema:[test.t.a,test.t.b,Column#15]",
+          "    Projection_5 input:[Group#2], test.t.a, test.t.b, Column#15",
+          "Group#2 Schema:[test.t.a,test.t.b,Column#15]",
+          "    Selection_10 input:[Group#3], eq(test.t.b, Column#15), lt(test.t.a, 10)",
+          "Group#3 Schema:[test.t.a,test.t.b,Column#15]",
           "    Window_4 input:[Group#4]",
           "Group#4 Schema:[test.t.a,test.t.b]",
           "    Projection_3 input:[Group#5], test.t.a, test.t.b",
@@ -309,54 +309,54 @@
       {
         "SQL": "select b, sum(a) from t group by b",
         "Result": [
-          "Group#0 Schema:[test.t.b,Column#13], UniqueKey:[test.t.b]",
-          "    Projection_3 input:[Group#1], test.t.b, Column#13",
-          "Group#1 Schema:[Column#13,test.t.b], UniqueKey:[test.t.b]",
+          "Group#0 Schema:[test.t.b,Column#14], UniqueKey:[test.t.b]",
+          "    Projection_3 input:[Group#1], test.t.b, Column#14",
+          "Group#1 Schema:[Column#14,test.t.b], UniqueKey:[test.t.b]",
           "    Aggregation_2 input:[Group#2], group by:test.t.b, funcs:sum(test.t.a), firstrow(test.t.b)",
-          "    Aggregation_7 input:[Group#3], group by:test.t.b, funcs:sum(Column#14), firstrow(test.t.b)",
+          "    Aggregation_7 input:[Group#3], group by:test.t.b, funcs:sum(Column#15), firstrow(test.t.b)",
           "Group#2 Schema:[test.t.a,test.t.b], UniqueKey:[test.t.a]",
           "    TiKVSingleGather_5 input:[Group#4], table:t",
           "Group#4 Schema:[test.t.a,test.t.b], UniqueKey:[test.t.a]",
           "    TableScan_4 table:t, pk col:test.t.a",
-          "Group#3 Schema:[Column#14,test.t.b]",
+          "Group#3 Schema:[Column#15,test.t.b]",
           "    TiKVSingleGather_5 input:[Group#5], table:t",
-          "Group#5 Schema:[Column#14,test.t.b]",
+          "Group#5 Schema:[Column#15,test.t.b]",
           "    Aggregation_6 input:[Group#4], group by:test.t.b, funcs:sum(test.t.a)"
         ]
       },
       {
         "SQL": "select b, sum(a) from t group by c, b",
         "Result": [
-          "Group#0 Schema:[test.t.b,Column#13]",
-          "    Projection_3 input:[Group#1], test.t.b, Column#13",
-          "Group#1 Schema:[Column#13,test.t.b]",
+          "Group#0 Schema:[test.t.b,Column#14]",
+          "    Projection_3 input:[Group#1], test.t.b, Column#14",
+          "Group#1 Schema:[Column#14,test.t.b]",
           "    Aggregation_2 input:[Group#2], group by:test.t.b, test.t.c, funcs:sum(test.t.a), firstrow(test.t.b)",
-          "    Aggregation_7 input:[Group#3], group by:test.t.b, test.t.c, funcs:sum(Column#14), firstrow(test.t.b)",
+          "    Aggregation_7 input:[Group#3], group by:test.t.b, test.t.c, funcs:sum(Column#15), firstrow(test.t.b)",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c], UniqueKey:[test.t.a]",
           "    TiKVSingleGather_5 input:[Group#4], table:t",
           "Group#4 Schema:[test.t.a,test.t.b,test.t.c], UniqueKey:[test.t.a]",
           "    TableScan_4 table:t, pk col:test.t.a",
-          "Group#3 Schema:[Column#14,test.t.c,test.t.b]",
+          "Group#3 Schema:[Column#15,test.t.c,test.t.b]",
           "    TiKVSingleGather_5 input:[Group#5], table:t",
-          "Group#5 Schema:[Column#14,test.t.c,test.t.b]",
+          "Group#5 Schema:[Column#15,test.t.c,test.t.b]",
           "    Aggregation_6 input:[Group#4], group by:test.t.b, test.t.c, funcs:sum(test.t.a)"
         ]
       },
       {
         "SQL": "select b, sum(a) from t group by sin(b)+sin(c), b",
         "Result": [
-          "Group#0 Schema:[test.t.b,Column#13]",
-          "    Projection_3 input:[Group#1], test.t.b, Column#13",
-          "Group#1 Schema:[Column#13,test.t.b]",
+          "Group#0 Schema:[test.t.b,Column#14]",
+          "    Projection_3 input:[Group#1], test.t.b, Column#14",
+          "Group#1 Schema:[Column#14,test.t.b]",
           "    Aggregation_2 input:[Group#2], group by:plus(sin(cast(test.t.b, double BINARY)), sin(cast(test.t.c, double BINARY))), test.t.b, funcs:sum(test.t.a), firstrow(test.t.b)",
-          "    Aggregation_7 input:[Group#3], group by:Column#14, test.t.b, funcs:sum(Column#15), firstrow(test.t.b)",
+          "    Aggregation_7 input:[Group#3], group by:Column#15, test.t.b, funcs:sum(Column#16), firstrow(test.t.b)",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c], UniqueKey:[test.t.a]",
           "    TiKVSingleGather_5 input:[Group#4], table:t",
           "Group#4 Schema:[test.t.a,test.t.b,test.t.c], UniqueKey:[test.t.a]",
           "    TableScan_4 table:t, pk col:test.t.a",
-          "Group#3 Schema:[Column#15,Column#14,test.t.b]",
+          "Group#3 Schema:[Column#16,Column#15,test.t.b]",
           "    TiKVSingleGather_5 input:[Group#5], table:t",
-          "Group#5 Schema:[Column#15,Column#14,test.t.b]",
+          "Group#5 Schema:[Column#16,Column#15,test.t.b]",
           "    Aggregation_6 input:[Group#4], group by:plus(sin(cast(test.t.b, double BINARY)), sin(cast(test.t.c, double BINARY))), test.t.b, funcs:sum(test.t.a)"
         ]
       }
@@ -400,10 +400,10 @@
       {
         "SQL": "select a+b from t order by a limit 1 offset 2",
         "Result": [
-          "Group#0 Schema:[Column#14]",
-          "    Projection_5 input:[Group#1], Column#13->Column#14",
-          "Group#1 Schema:[Column#13]",
-          "    Projection_2 input:[Group#2], plus(test.t.a, test.t.b)->Column#13, test.t.a",
+          "Group#0 Schema:[Column#15]",
+          "    Projection_5 input:[Group#1], Column#14->Column#15",
+          "Group#1 Schema:[Column#14]",
+          "    Projection_2 input:[Group#2], plus(test.t.a, test.t.b)->Column#14, test.t.a",
           "Group#2 Schema:[test.t.a,test.t.b]",
           "    TopN_7 input:[Group#3], test.t.a, offset:2, count:1",
           "Group#3 Schema:[test.t.a,test.t.b]",
@@ -492,9 +492,9 @@
           "Group#3 Schema:[test.t.a]",
           "    Projection_9 input:[Group#5], test.t.a",
           "Group#5 Schema:[test.t.a]",
-          "    Projection_6 input:[Group#6], test.t.a, Column#25",
-          "Group#6 Schema:[test.t.a,Column#25]",
-          "    Projection_5 input:[Group#7], test.t.a, test.t.b->Column#25",
+          "    Projection_6 input:[Group#6], test.t.a, Column#27",
+          "Group#6 Schema:[test.t.a,Column#27]",
+          "    Projection_5 input:[Group#7], test.t.a, test.t.b->Column#27",
           "Group#7 Schema:[test.t.a,test.t.b]",
           "    TopN_14 input:[Group#8], test.t.b, offset:0, count:1",
           "Group#8 Schema:[test.t.a,test.t.b]",
@@ -508,12 +508,12 @@
       {
         "SQL": "select a, b from (select @i as a, @i := @i+1 as b from t) t order by a desc limit 1",
         "Result": [
-          "Group#0 Schema:[Column#13,Column#14]",
-          "    Projection_3 input:[Group#1], Column#13, Column#14",
-          "Group#1 Schema:[Column#13,Column#14]",
-          "    TopN_7 input:[Group#2], Column#13:desc, offset:0, count:1",
-          "Group#2 Schema:[Column#13,Column#14]",
-          "    Projection_2 input:[Group#3], getvar(i)->Column#13, setvar(i, plus(getvar(i), 1))->Column#14",
+          "Group#0 Schema:[Column#14,Column#15]",
+          "    Projection_3 input:[Group#1], Column#14, Column#15",
+          "Group#1 Schema:[Column#14,Column#15]",
+          "    TopN_7 input:[Group#2], Column#14:desc, offset:0, count:1",
+          "Group#2 Schema:[Column#14,Column#15]",
+          "    Projection_2 input:[Group#3], getvar(i)->Column#14, setvar(i, plus(getvar(i), 1))->Column#15",
           "Group#3 Schema:[test.t.a]",
           "    TiKVSingleGather_9 input:[Group#4], table:t",
           "    TiKVSingleGather_21 input:[Group#5], table:t, index:e_d_c_str_prefix",
@@ -778,12 +778,12 @@
       {
         "SQL": "(select a from t) union all (select b from t) order by a limit 2;",
         "Result": [
-          "Group#0 Schema:[Column#25]",
-          "    TopN_10 input:[Group#1], Column#25, offset:0, count:2",
-          "Group#1 Schema:[Column#25]",
+          "Group#0 Schema:[Column#27]",
+          "    TopN_10 input:[Group#1], Column#27, offset:0, count:2",
+          "Group#1 Schema:[Column#27]",
           "    Union_5 input:[Group#2,Group#3]",
-          "Group#2 Schema:[Column#25]",
-          "    Projection_6 input:[Group#4], test.t.a->Column#25",
+          "Group#2 Schema:[Column#27]",
+          "    Projection_6 input:[Group#4], test.t.a->Column#27",
           "Group#4 Schema:[test.t.a]",
           "    Projection_2 input:[Group#5], test.t.a",
           "Group#5 Schema:[test.t.a]",
@@ -836,8 +836,8 @@
           "    TopN_30 input:[Group#26], test.t.a, offset:0, count:2",
           "Group#26 Schema:[test.t.a]",
           "    TableScan_16 table:t, pk col:test.t.a",
-          "Group#3 Schema:[Column#25]",
-          "    Projection_7 input:[Group#27], test.t.b->Column#25",
+          "Group#3 Schema:[Column#27]",
+          "    Projection_7 input:[Group#27], test.t.b->Column#27",
           "Group#27 Schema:[test.t.b]",
           "    Projection_4 input:[Group#28], test.t.b",
           "Group#28 Schema:[test.t.b]",
@@ -853,12 +853,12 @@
       {
         "SQL": "(select a from t) union all (select b from t) limit 2;",
         "Result": [
-          "Group#0 Schema:[Column#25]",
+          "Group#0 Schema:[Column#27]",
           "    Limit_8 input:[Group#1], offset:0, count:2",
-          "Group#1 Schema:[Column#25]",
+          "Group#1 Schema:[Column#27]",
           "    Union_5 input:[Group#2,Group#3]",
-          "Group#2 Schema:[Column#25]",
-          "    Projection_6 input:[Group#4], test.t.a->Column#25",
+          "Group#2 Schema:[Column#27]",
+          "    Projection_6 input:[Group#4], test.t.a->Column#27",
           "Group#4 Schema:[test.t.a]",
           "    Projection_2 input:[Group#5], test.t.a",
           "Group#5 Schema:[test.t.a]",
@@ -911,8 +911,8 @@
           "    Limit_24 input:[Group#26], offset:0, count:2",
           "Group#26 Schema:[test.t.a]",
           "    TableScan_10 table:t, pk col:test.t.a",
-          "Group#3 Schema:[Column#25]",
-          "    Projection_7 input:[Group#27], test.t.b->Column#25",
+          "Group#3 Schema:[Column#27]",
+          "    Projection_7 input:[Group#27], test.t.b->Column#27",
           "Group#27 Schema:[test.t.b]",
           "    Projection_4 input:[Group#28], test.t.b",
           "Group#28 Schema:[test.t.b]",
@@ -928,12 +928,12 @@
       {
         "SQL": "(select a from t) union all (select b from t) limit 2 offset 5;",
         "Result": [
-          "Group#0 Schema:[Column#25]",
+          "Group#0 Schema:[Column#27]",
           "    Limit_8 input:[Group#1], offset:5, count:2",
-          "Group#1 Schema:[Column#25]",
+          "Group#1 Schema:[Column#27]",
           "    Union_5 input:[Group#2,Group#3]",
-          "Group#2 Schema:[Column#25]",
-          "    Projection_6 input:[Group#4], test.t.a->Column#25",
+          "Group#2 Schema:[Column#27]",
+          "    Projection_6 input:[Group#4], test.t.a->Column#27",
           "Group#4 Schema:[test.t.a]",
           "    Projection_2 input:[Group#5], test.t.a",
           "Group#5 Schema:[test.t.a]",
@@ -986,8 +986,8 @@
           "    Limit_24 input:[Group#26], offset:0, count:7",
           "Group#26 Schema:[test.t.a]",
           "    TableScan_10 table:t, pk col:test.t.a",
-          "Group#3 Schema:[Column#25]",
-          "    Projection_7 input:[Group#27], test.t.b->Column#25",
+          "Group#3 Schema:[Column#27]",
+          "    Projection_7 input:[Group#27], test.t.b->Column#27",
           "Group#27 Schema:[test.t.b]",
           "    Projection_4 input:[Group#28], test.t.b",
           "Group#28 Schema:[test.t.b]",
@@ -1003,12 +1003,12 @@
       {
         "SQL": "(select a from t) union all (select sum(a) from t where a > 2 group by b) order by a limit 2;",
         "Result": [
-          "Group#0 Schema:[Column#26]",
-          "    TopN_12 input:[Group#1], Column#26, offset:0, count:2",
-          "Group#1 Schema:[Column#26]",
+          "Group#0 Schema:[Column#28]",
+          "    TopN_12 input:[Group#1], Column#28, offset:0, count:2",
+          "Group#1 Schema:[Column#28]",
           "    Union_7 input:[Group#2,Group#3]",
-          "Group#2 Schema:[Column#26]",
-          "    Projection_8 input:[Group#4], cast(test.t.a, decimal(32,0) BINARY)->Column#26",
+          "Group#2 Schema:[Column#28]",
+          "    Projection_8 input:[Group#4], cast(test.t.a, decimal(32,0) BINARY)->Column#28",
           "Group#4 Schema:[test.t.a]",
           "    Projection_2 input:[Group#5], test.t.a",
           "Group#5 Schema:[test.t.a]",
@@ -1061,13 +1061,13 @@
           "    TopN_32 input:[Group#26], cast(test.t.a, decimal(32,0) BINARY), offset:0, count:2",
           "Group#26 Schema:[test.t.a]",
           "    TableScan_18 table:t, pk col:test.t.a",
-          "Group#3 Schema:[Column#26]",
-          "    Projection_9 input:[Group#27], Column#25->Column#26",
-          "Group#27 Schema:[Column#25]",
-          "    Projection_6 input:[Group#28], Column#25",
-          "Group#28 Schema:[Column#25]",
-          "    TopN_17 input:[Group#29], Column#25, offset:0, count:2",
-          "Group#29 Schema:[Column#25]",
+          "Group#3 Schema:[Column#28]",
+          "    Projection_9 input:[Group#27], Column#27->Column#28",
+          "Group#27 Schema:[Column#27]",
+          "    Projection_6 input:[Group#28], Column#27",
+          "Group#28 Schema:[Column#27]",
+          "    TopN_17 input:[Group#29], Column#27, offset:0, count:2",
+          "Group#29 Schema:[Column#27]",
           "    Aggregation_5 input:[Group#30], group by:test.t.b, funcs:sum(test.t.a)",
           "Group#30 Schema:[test.t.a,test.t.b]",
           "    Selection_4 input:[Group#31], gt(test.t.a, 2)",
@@ -1080,12 +1080,12 @@
       {
         "SQL": "(select a from t) union all (select sum(a) from t where a > 2 group by b) order by a limit 1, 2;",
         "Result": [
-          "Group#0 Schema:[Column#26]",
-          "    TopN_12 input:[Group#1], Column#26, offset:1, count:2",
-          "Group#1 Schema:[Column#26]",
+          "Group#0 Schema:[Column#28]",
+          "    TopN_12 input:[Group#1], Column#28, offset:1, count:2",
+          "Group#1 Schema:[Column#28]",
           "    Union_7 input:[Group#2,Group#3]",
-          "Group#2 Schema:[Column#26]",
-          "    Projection_8 input:[Group#4], cast(test.t.a, decimal(32,0) BINARY)->Column#26",
+          "Group#2 Schema:[Column#28]",
+          "    Projection_8 input:[Group#4], cast(test.t.a, decimal(32,0) BINARY)->Column#28",
           "Group#4 Schema:[test.t.a]",
           "    Projection_2 input:[Group#5], test.t.a",
           "Group#5 Schema:[test.t.a]",
@@ -1138,13 +1138,13 @@
           "    TopN_32 input:[Group#26], cast(test.t.a, decimal(32,0) BINARY), offset:0, count:3",
           "Group#26 Schema:[test.t.a]",
           "    TableScan_18 table:t, pk col:test.t.a",
-          "Group#3 Schema:[Column#26]",
-          "    Projection_9 input:[Group#27], Column#25->Column#26",
-          "Group#27 Schema:[Column#25]",
-          "    Projection_6 input:[Group#28], Column#25",
-          "Group#28 Schema:[Column#25]",
-          "    TopN_17 input:[Group#29], Column#25, offset:0, count:3",
-          "Group#29 Schema:[Column#25]",
+          "Group#3 Schema:[Column#28]",
+          "    Projection_9 input:[Group#27], Column#27->Column#28",
+          "Group#27 Schema:[Column#27]",
+          "    Projection_6 input:[Group#28], Column#27",
+          "Group#28 Schema:[Column#27]",
+          "    TopN_17 input:[Group#29], Column#27, offset:0, count:3",
+          "Group#29 Schema:[Column#27]",
           "    Aggregation_5 input:[Group#30], group by:test.t.b, funcs:sum(test.t.a)",
           "Group#30 Schema:[test.t.a,test.t.b]",
           "    Selection_4 input:[Group#31], gt(test.t.a, 2)",
@@ -1157,12 +1157,12 @@
       {
         "SQL": "(select a from t where a = 1) union all (select b from t where a = 2) union all (select c from t where a = 3) order by a limit 2;",
         "Result": [
-          "Group#0 Schema:[Column#37]",
-          "    TopN_16 input:[Group#1], Column#37, offset:0, count:2",
-          "Group#1 Schema:[Column#37]",
+          "Group#0 Schema:[Column#40]",
+          "    TopN_16 input:[Group#1], Column#40, offset:0, count:2",
+          "Group#1 Schema:[Column#40]",
           "    Union_10 input:[Group#2,Group#3,Group#4]",
-          "Group#2 Schema:[Column#37]",
-          "    Projection_11 input:[Group#5], test.t.a->Column#37",
+          "Group#2 Schema:[Column#40]",
+          "    Projection_11 input:[Group#5], test.t.a->Column#40",
           "Group#5 Schema:[test.t.a]",
           "    Projection_3 input:[Group#6], test.t.a",
           "Group#6 Schema:[test.t.a]",
@@ -1191,8 +1191,8 @@
           "    IndexScan_28 table:t, index:f",
           "Group#15 Schema:[test.t.a]",
           "    IndexScan_26 table:t, index:c, d, e",
-          "Group#3 Schema:[Column#37]",
-          "    Projection_12 input:[Group#16], test.t.b->Column#37",
+          "Group#3 Schema:[Column#40]",
+          "    Projection_12 input:[Group#16], test.t.b->Column#40",
           "Group#16 Schema:[test.t.b]",
           "    Projection_6 input:[Group#17], test.t.b",
           "Group#17 Schema:[test.t.a,test.t.b]",
@@ -1203,8 +1203,8 @@
           "    TiKVSingleGather_39 input:[Group#20], table:t",
           "Group#20 Schema:[test.t.a,test.t.b]",
           "    TableScan_38 table:t, pk col:test.t.a",
-          "Group#4 Schema:[Column#37]",
-          "    Projection_13 input:[Group#21], test.t.c->Column#37",
+          "Group#4 Schema:[Column#40]",
+          "    Projection_13 input:[Group#21], test.t.c->Column#40",
           "Group#21 Schema:[test.t.c]",
           "    Projection_9 input:[Group#22], test.t.c",
           "Group#22 Schema:[test.t.a,test.t.c]",
@@ -1235,8 +1235,8 @@
       {
         "SQL": "select a+b from (select a, b from t) as t2",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], plus(test.t.a, test.t.b)->Column#13",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], plus(test.t.a, test.t.b)->Column#14",
           "Group#1 Schema:[test.t.a,test.t.b]",
           "    DataSource_1 table:t"
         ]
@@ -1244,8 +1244,8 @@
       {
         "SQL": "select a from (select floor(a) as a from t) as t2",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_2 input:[Group#1], floor(test.t.a)->Column#13",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_2 input:[Group#1], floor(test.t.a)->Column#14",
           "Group#1 Schema:[test.t.a]",
           "    DataSource_1 table:t"
         ]
@@ -1260,8 +1260,8 @@
       {
         "SQL": "select a+c from (select floor(a) as a, b, c from t) as t2",
         "Result": [
-          "Group#0 Schema:[Column#14]",
-          "    Projection_4 input:[Group#1], plus(floor(test.t.a), test.t.c)->Column#14",
+          "Group#0 Schema:[Column#15]",
+          "    Projection_4 input:[Group#1], plus(floor(test.t.a), test.t.c)->Column#15",
           "Group#1 Schema:[test.t.a,test.t.c]",
           "    DataSource_1 table:t"
         ]
@@ -1274,9 +1274,9 @@
       {
         "SQL": "select max(a) from t;",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_2 input:[Group#2], funcs:max(test.t.a)",
           "    Aggregation_2 input:[Group#3], funcs:max(test.t.a)",
           "Group#2 Schema:[test.t.a]",
@@ -1288,9 +1288,9 @@
       {
         "SQL": "select min(a) from t;",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_2 input:[Group#2], funcs:min(test.t.a)",
           "    Aggregation_2 input:[Group#3], funcs:min(test.t.a)",
           "Group#2 Schema:[test.t.a]",
@@ -1307,13 +1307,13 @@
       {
         "SQL": "select b, max(a) from (select a, c+d as b from t as t1) as t2 group by b",
         "Result": [
-          "Group#0 Schema:[Column#13,Column#14]",
-          "    Projection_4 input:[Group#1], Column#13, Column#14",
-          "Group#1 Schema:[Column#14,Column#13]",
-          "    Aggregation_3 input:[Group#2], group by:Column#13, funcs:max(test.t.a), firstrow(Column#13)",
+          "Group#0 Schema:[Column#14,Column#15]",
+          "    Projection_4 input:[Group#1], Column#14, Column#15",
+          "Group#1 Schema:[Column#15,Column#14]",
+          "    Aggregation_3 input:[Group#2], group by:Column#14, funcs:max(test.t.a), firstrow(Column#14)",
           "    Aggregation_5 input:[Group#3], group by:plus(test.t.c, test.t.d), funcs:max(test.t.a), firstrow(plus(test.t.c, test.t.d))",
-          "Group#2 Schema:[test.t.a,Column#13]",
-          "    Projection_2 input:[Group#3], test.t.a, plus(test.t.c, test.t.d)->Column#13",
+          "Group#2 Schema:[test.t.a,Column#14]",
+          "    Projection_2 input:[Group#3], test.t.a, plus(test.t.c, test.t.d)->Column#14",
           "Group#3 Schema:[test.t.a,test.t.c,test.t.d]",
           "    DataSource_1 table:t1"
         ]
@@ -1321,13 +1321,13 @@
       {
         "SQL": "select max(a) from (select c+d as b, a+c as a from t as t1) as t2",
         "Result": [
-          "Group#0 Schema:[Column#15]",
-          "    Projection_4 input:[Group#1], Column#15",
-          "Group#1 Schema:[Column#15]",
-          "    Aggregation_3 input:[Group#2], funcs:max(Column#14)",
+          "Group#0 Schema:[Column#16]",
+          "    Projection_4 input:[Group#1], Column#16",
+          "Group#1 Schema:[Column#16]",
+          "    Aggregation_3 input:[Group#2], funcs:max(Column#15)",
           "    Aggregation_5 input:[Group#3], funcs:max(plus(test.t.a, test.t.c))",
-          "Group#2 Schema:[Column#14]",
-          "    Projection_2 input:[Group#3], plus(test.t.a, test.t.c)->Column#14",
+          "Group#2 Schema:[Column#15]",
+          "    Projection_2 input:[Group#3], plus(test.t.a, test.t.c)->Column#15",
           "Group#3 Schema:[test.t.a,test.t.c]",
           "    DataSource_1 table:t1"
         ]
@@ -1335,12 +1335,12 @@
       {
         "SQL": "select b, max(a) from (select a, c+d as b, @i:=0 from t as t1) as t2 group by b",
         "Result": [
-          "Group#0 Schema:[Column#13,Column#15]",
-          "    Projection_4 input:[Group#1], Column#13, Column#15",
-          "Group#1 Schema:[Column#15,Column#13]",
-          "    Aggregation_3 input:[Group#2], group by:Column#13, funcs:max(test.t.a), firstrow(Column#13)",
-          "Group#2 Schema:[test.t.a,Column#13,Column#14]",
-          "    Projection_2 input:[Group#3], test.t.a, plus(test.t.c, test.t.d)->Column#13, setvar(i, 0)->Column#14",
+          "Group#0 Schema:[Column#14,Column#16]",
+          "    Projection_4 input:[Group#1], Column#14, Column#16",
+          "Group#1 Schema:[Column#16,Column#14]",
+          "    Aggregation_3 input:[Group#2], group by:Column#14, funcs:max(test.t.a), firstrow(Column#14)",
+          "Group#2 Schema:[test.t.a,Column#14,Column#15]",
+          "    Projection_2 input:[Group#3], test.t.a, plus(test.t.c, test.t.d)->Column#14, setvar(i, 0)->Column#15",
           "Group#3 Schema:[test.t.a,test.t.c,test.t.d]",
           "    DataSource_1 table:t1"
         ]
@@ -1610,20 +1610,20 @@
       {
         "SQL": "select a, b from ((select a, b from t) union all(select c as a, d as b from t limit 0 offset 5)) as t1 where a > 1",
         "Result": [
-          "Group#0 Schema:[Column#25,Column#26]",
-          "    Projection_10 input:[Group#1], Column#25, Column#26",
-          "Group#1 Schema:[Column#25,Column#26]",
-          "    Selection_9 input:[Group#2], gt(Column#25, 1)",
-          "Group#2 Schema:[Column#25,Column#26]",
+          "Group#0 Schema:[Column#27,Column#28]",
+          "    Projection_10 input:[Group#1], Column#27, Column#28",
+          "Group#1 Schema:[Column#27,Column#28]",
+          "    Selection_9 input:[Group#2], gt(Column#27, 1)",
+          "Group#2 Schema:[Column#27,Column#28]",
           "    Union_6 input:[Group#3,Group#4]",
-          "Group#3 Schema:[Column#25,Column#26]",
-          "    Projection_7 input:[Group#5], test.t.a->Column#25, test.t.b->Column#26",
+          "Group#3 Schema:[Column#27,Column#28]",
+          "    Projection_7 input:[Group#5], test.t.a->Column#27, test.t.b->Column#28",
           "Group#5 Schema:[test.t.a,test.t.b]",
           "    Projection_2 input:[Group#6], test.t.a, test.t.b",
           "Group#6 Schema:[test.t.a,test.t.b]",
           "    DataSource_1 table:t",
-          "Group#4 Schema:[Column#25,Column#26]",
-          "    Projection_8 input:[Group#7], test.t.c->Column#25, test.t.d->Column#26",
+          "Group#4 Schema:[Column#27,Column#28]",
+          "    Projection_8 input:[Group#7], test.t.c->Column#27, test.t.d->Column#28",
           "Group#7 Schema:[test.t.c,test.t.d]",
           "    TableDual_11 rowcount:0"
         ]
@@ -1636,12 +1636,12 @@
       {
         "SQL": "select b from (select b+10 as b from t) as t1 order by b + 10 limit 10",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_8 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13,Column#14]",
-          "    TopN_10 input:[Group#2], Column#14, offset:0, count:10",
-          "Group#2 Schema:[Column#13,Column#14]",
-          "    Projection_11 input:[Group#3], plus(test.t.b, 10)->Column#13, plus(plus(test.t.b, 10), 10)->Column#14",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_8 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14,Column#15]",
+          "    TopN_10 input:[Group#2], Column#15, offset:0, count:10",
+          "Group#2 Schema:[Column#14,Column#15]",
+          "    Projection_11 input:[Group#3], plus(test.t.b, 10)->Column#14, plus(plus(test.t.b, 10), 10)->Column#15",
           "Group#3 Schema:[test.t.b]",
           "    DataSource_1 table:t"
         ]
@@ -1649,12 +1649,12 @@
       {
         "SQL": "select * from (select a+1 as c, a+b as d from t) as t1 order by c+d limit 10",
         "Result": [
-          "Group#0 Schema:[Column#13,Column#14]",
-          "    Projection_8 input:[Group#1], Column#13, Column#14",
-          "Group#1 Schema:[Column#13,Column#14,Column#15]",
-          "    TopN_10 input:[Group#2], Column#15, offset:0, count:10",
-          "Group#2 Schema:[Column#13,Column#14,Column#15]",
-          "    Projection_11 input:[Group#3], plus(test.t.a, 1)->Column#13, plus(test.t.a, test.t.b)->Column#14, plus(plus(test.t.a, 1), plus(test.t.a, test.t.b))->Column#15",
+          "Group#0 Schema:[Column#14,Column#15]",
+          "    Projection_8 input:[Group#1], Column#14, Column#15",
+          "Group#1 Schema:[Column#14,Column#15,Column#16]",
+          "    TopN_10 input:[Group#2], Column#16, offset:0, count:10",
+          "Group#2 Schema:[Column#14,Column#15,Column#16]",
+          "    Projection_11 input:[Group#3], plus(test.t.a, 1)->Column#14, plus(test.t.a, test.t.b)->Column#15, plus(plus(test.t.a, 1), plus(test.t.a, test.t.b))->Column#16",
           "Group#3 Schema:[test.t.a,test.t.b]",
           "    DataSource_1 table:t"
         ]
@@ -1708,18 +1708,18 @@
       {
         "SQL": "select a, b from ((select a, b from t) union all(select c as a, d as b from t limit 3)) as t1 where a > 1",
         "Result": [
-          "Group#0 Schema:[Column#25,Column#26]",
-          "    Selection_9 input:[Group#1], gt(Column#25, 1)",
-          "Group#1 Schema:[Column#25,Column#26]",
+          "Group#0 Schema:[Column#27,Column#28]",
+          "    Selection_9 input:[Group#1], gt(Column#27, 1)",
+          "Group#1 Schema:[Column#27,Column#28]",
           "    Union_6 input:[Group#2,Group#3]",
-          "Group#2 Schema:[Column#25,Column#26]",
-          "    Projection_7 input:[Group#4], test.t.a->Column#25, test.t.b->Column#26",
+          "Group#2 Schema:[Column#27,Column#28]",
+          "    Projection_7 input:[Group#4], test.t.a->Column#27, test.t.b->Column#28",
           "Group#4 Schema:[test.t.a,test.t.b]",
           "    TiKVSingleGather_12 input:[Group#5], table:t",
           "Group#5 Schema:[test.t.a,test.t.b]",
           "    TableScan_11 table:t, pk col:test.t.a",
-          "Group#3 Schema:[Column#25,Column#26]",
-          "    Projection_8 input:[Group#6], test.t.c->Column#25, test.t.d->Column#26",
+          "Group#3 Schema:[Column#27,Column#28]",
+          "    Projection_8 input:[Group#6], test.t.c->Column#27, test.t.d->Column#28",
           "Group#6 Schema:[test.t.c,test.t.d]",
           "    Limit_5 input:[Group#7], offset:0, count:3",
           "    Limit_5 input:[Group#8], offset:0, count:3",
@@ -1745,9 +1745,9 @@
       {
         "SQL": "select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a and t1.b = 3 group by t1.a;",
         "Result": [
-          "Group#0 Schema:[test.t.a,Column#25]",
-          "    Projection_6 input:[Group#1], test.t.a, Column#25",
-          "Group#1 Schema:[Column#25,test.t.a]",
+          "Group#0 Schema:[test.t.a,Column#27]",
+          "    Projection_6 input:[Group#1], test.t.a, Column#27",
+          "Group#1 Schema:[Column#27,test.t.a]",
           "    Aggregation_5 input:[Group#2], group by:test.t.a, funcs:max(test.t.b), firstrow(test.t.a)",
           "Group#2 Schema:[test.t.a,test.t.b]",
           "    DataSource_1 table:t1"
@@ -1756,9 +1756,9 @@
       {
         "SQL": "select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a group by t1.a;",
         "Result": [
-          "Group#0 Schema:[test.t.a,Column#25]",
-          "    Projection_6 input:[Group#1], test.t.a, Column#25",
-          "Group#1 Schema:[Column#25,test.t.a]",
+          "Group#0 Schema:[test.t.a,Column#27]",
+          "    Projection_6 input:[Group#1], test.t.a, Column#27",
+          "Group#1 Schema:[Column#27,test.t.a]",
           "    Aggregation_5 input:[Group#2], group by:test.t.a, funcs:max(test.t.b), firstrow(test.t.a)",
           "Group#2 Schema:[test.t.a,test.t.b]",
           "    DataSource_1 table:t1"
@@ -1767,9 +1767,9 @@
       {
         "SQL": "select t1.a, sum(t1.h) from t as t1 left join (select * from t) as t2 on t1.h = t2.h group by t1.a;",
         "Result": [
-          "Group#0 Schema:[test.t.a,Column#25]",
-          "    Projection_6 input:[Group#1], test.t.a, Column#25",
-          "Group#1 Schema:[Column#25,test.t.a]",
+          "Group#0 Schema:[test.t.a,Column#27]",
+          "    Projection_6 input:[Group#1], test.t.a, Column#27",
+          "Group#1 Schema:[Column#27,test.t.a]",
           "    Aggregation_5 input:[Group#2], group by:test.t.a, funcs:sum(test.t.h), firstrow(test.t.a)",
           "Group#2 Schema:[test.t.a,test.t.h]",
           "    Join_4 input:[Group#3,Group#4], left outer join, equal:[eq(test.t.h, test.t.h)]",
@@ -1784,9 +1784,9 @@
       {
         "SQL": "select t1.a, sum(distinct t1.h) from t as t1 left join (select * from t) as t2 on t1.h = t2.h group by t1.a;",
         "Result": [
-          "Group#0 Schema:[test.t.a,Column#25]",
-          "    Projection_6 input:[Group#1], test.t.a, Column#25",
-          "Group#1 Schema:[Column#25,test.t.a]",
+          "Group#0 Schema:[test.t.a,Column#27]",
+          "    Projection_6 input:[Group#1], test.t.a, Column#27",
+          "Group#1 Schema:[Column#27,test.t.a]",
           "    Aggregation_5 input:[Group#2], group by:test.t.a, funcs:sum(distinct test.t.h), firstrow(test.t.a)",
           "Group#2 Schema:[test.t.a,test.t.h]",
           "    DataSource_1 table:t1"
@@ -1795,9 +1795,9 @@
       {
         "SQL": "select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a group by t2.a;",
         "Result": [
-          "Group#0 Schema:[test.t.a,Column#25]",
-          "    Projection_6 input:[Group#1], test.t.a, Column#25",
-          "Group#1 Schema:[Column#25,test.t.a]",
+          "Group#0 Schema:[test.t.a,Column#27]",
+          "    Projection_6 input:[Group#1], test.t.a, Column#27",
+          "Group#1 Schema:[Column#27,test.t.a]",
           "    Aggregation_5 input:[Group#2], group by:test.t.a, funcs:max(test.t.b), firstrow(test.t.a)",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.a]",
           "    Join_4 input:[Group#3,Group#4], left outer join, equal:[eq(test.t.a, test.t.a)]",
@@ -1812,9 +1812,9 @@
       {
         "SQL": "select t1.a, max(t2.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a group by t1.a;",
         "Result": [
-          "Group#0 Schema:[test.t.a,Column#25]",
-          "    Projection_6 input:[Group#1], test.t.a, Column#25",
-          "Group#1 Schema:[Column#25,test.t.a]",
+          "Group#0 Schema:[test.t.a,Column#27]",
+          "    Projection_6 input:[Group#1], test.t.a, Column#27",
+          "Group#1 Schema:[Column#27,test.t.a]",
           "    Aggregation_5 input:[Group#2], group by:test.t.a, funcs:max(test.t.b), firstrow(test.t.a)",
           "Group#2 Schema:[test.t.a,test.t.b]",
           "    Join_4 input:[Group#3,Group#4], left outer join, equal:[eq(test.t.a, test.t.a)]",
@@ -1829,9 +1829,9 @@
       {
         "SQL": "select t2.a, max(t2.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a group by t2.a;",
         "Result": [
-          "Group#0 Schema:[test.t.a,Column#25]",
-          "    Projection_6 input:[Group#1], test.t.a, Column#25",
-          "Group#1 Schema:[Column#25,test.t.a]",
+          "Group#0 Schema:[test.t.a,Column#27]",
+          "    Projection_6 input:[Group#1], test.t.a, Column#27",
+          "Group#1 Schema:[Column#27,test.t.a]",
           "    Aggregation_5 input:[Group#2], group by:test.t.a, funcs:max(test.t.b), firstrow(test.t.a)",
           "Group#2 Schema:[test.t.a,test.t.b]",
           "    Projection_3 input:[Group#3], test.t.a, test.t.b",
@@ -1842,9 +1842,9 @@
       {
         "SQL": "select t2.a, max(t2.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a and t2.c = 3 group by t2.a;",
         "Result": [
-          "Group#0 Schema:[test.t.a,Column#25]",
-          "    Projection_6 input:[Group#1], test.t.a, Column#25",
-          "Group#1 Schema:[Column#25,test.t.a]",
+          "Group#0 Schema:[test.t.a,Column#27]",
+          "    Projection_6 input:[Group#1], test.t.a, Column#27",
+          "Group#1 Schema:[Column#27,test.t.a]",
           "    Aggregation_5 input:[Group#2], group by:test.t.a, funcs:max(test.t.b), firstrow(test.t.a)",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c]",
           "    Projection_3 input:[Group#3], test.t.a, test.t.b, test.t.c",
@@ -1855,9 +1855,9 @@
       {
         "SQL": "select t2.a, sum(t2.h) from t as t1 right join (select * from t) as t2 on t1.h = t2.h group by t2.a;",
         "Result": [
-          "Group#0 Schema:[test.t.a,Column#25]",
-          "    Projection_6 input:[Group#1], test.t.a, Column#25",
-          "Group#1 Schema:[Column#25,test.t.a]",
+          "Group#0 Schema:[test.t.a,Column#27]",
+          "    Projection_6 input:[Group#1], test.t.a, Column#27",
+          "Group#1 Schema:[Column#27,test.t.a]",
           "    Aggregation_5 input:[Group#2], group by:test.t.a, funcs:sum(test.t.h), firstrow(test.t.a)",
           "Group#2 Schema:[test.t.a,test.t.h]",
           "    Join_4 input:[Group#3,Group#4], right outer join, equal:[eq(test.t.h, test.t.h)]",
@@ -1872,9 +1872,9 @@
       {
         "SQL": "select t2.a, sum(distinct t2.h) from t as t1 right join (select * from t) as t2 on t1.h = t2.h group by t2.a;",
         "Result": [
-          "Group#0 Schema:[test.t.a,Column#25]",
-          "    Projection_6 input:[Group#1], test.t.a, Column#25",
-          "Group#1 Schema:[Column#25,test.t.a]",
+          "Group#0 Schema:[test.t.a,Column#27]",
+          "    Projection_6 input:[Group#1], test.t.a, Column#27",
+          "Group#1 Schema:[Column#27,test.t.a]",
           "    Aggregation_5 input:[Group#2], group by:test.t.a, funcs:sum(distinct test.t.h), firstrow(test.t.a)",
           "Group#2 Schema:[test.t.a,test.t.h]",
           "    Projection_3 input:[Group#3], test.t.a, test.t.h",
@@ -1885,9 +1885,9 @@
       {
         "SQL": "select t2.a, max(t2.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a group by t1.a;",
         "Result": [
-          "Group#0 Schema:[test.t.a,Column#25]",
-          "    Projection_6 input:[Group#1], test.t.a, Column#25",
-          "Group#1 Schema:[Column#25,test.t.a]",
+          "Group#0 Schema:[test.t.a,Column#27]",
+          "    Projection_6 input:[Group#1], test.t.a, Column#27",
+          "Group#1 Schema:[Column#27,test.t.a]",
           "    Aggregation_5 input:[Group#2], group by:test.t.a, funcs:max(test.t.b), firstrow(test.t.a)",
           "Group#2 Schema:[test.t.a,test.t.a,test.t.b]",
           "    Join_4 input:[Group#3,Group#4], right outer join, equal:[eq(test.t.a, test.t.a)]",
@@ -1902,9 +1902,9 @@
       {
         "SQL": "select t2.a, max(t1.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a group by t2.a;",
         "Result": [
-          "Group#0 Schema:[test.t.a,Column#25]",
-          "    Projection_6 input:[Group#1], test.t.a, Column#25",
-          "Group#1 Schema:[Column#25,test.t.a]",
+          "Group#0 Schema:[test.t.a,Column#27]",
+          "    Projection_6 input:[Group#1], test.t.a, Column#27",
+          "Group#1 Schema:[Column#27,test.t.a]",
           "    Aggregation_5 input:[Group#2], group by:test.t.a, funcs:max(test.t.b), firstrow(test.t.a)",
           "Group#2 Schema:[test.t.b,test.t.a]",
           "    Join_4 input:[Group#3,Group#4], right outer join, equal:[eq(test.t.a, test.t.a)]",
@@ -1989,9 +1989,9 @@
       {
         "SQL": "select t3.a, max(t3.b) from (select t1.a, t1.b from t as t1 left join t as t2 on t1.a = t2.a) t3 group by t3.a",
         "Result": [
-          "Group#0 Schema:[test.t.a,Column#25]",
-          "    Projection_6 input:[Group#1], test.t.a, Column#25",
-          "Group#1 Schema:[Column#25,test.t.a]",
+          "Group#0 Schema:[test.t.a,Column#27]",
+          "    Projection_6 input:[Group#1], test.t.a, Column#27",
+          "Group#1 Schema:[Column#27,test.t.a]",
           "    Aggregation_5 input:[Group#2], group by:test.t.a, funcs:max(test.t.b), firstrow(test.t.a)",
           "Group#2 Schema:[test.t.a,test.t.b]",
           "    Projection_4 input:[Group#3], test.t.a, test.t.b",
@@ -2007,9 +2007,9 @@
       {
         "SQL": "select count(case when a > 10 then b end) from t",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_5 input:[Group#2], funcs:count(test.t.b)",
           "Group#2 Schema:[test.t.a,test.t.b]",
           "    Selection_4 input:[Group#3], gt(test.t.a, 10)",
@@ -2020,9 +2020,9 @@
       {
         "SQL": "select count(case when a > 10 then b end) from t group by c",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_2 input:[Group#2], group by:test.t.c, funcs:count(case(gt(test.t.a, 10), test.t.b))",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c]",
           "    DataSource_1 table:t"
@@ -2031,9 +2031,9 @@
       {
         "SQL": "select count(case when a > 10 then b end) from t group by 'a'",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_2 input:[Group#2], group by:1, funcs:count(case(gt(test.t.a, 10), test.t.b))",
           "Group#2 Schema:[test.t.a,test.t.b]",
           "    DataSource_1 table:t"
@@ -2042,9 +2042,9 @@
       {
         "SQL": "select count(case when a > 10 then b end) from t group by concat(c, a)",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_2 input:[Group#2], group by:concat(cast(test.t.c, var_string(20)), cast(test.t.a, var_string(20))), funcs:count(case(gt(test.t.a, 10), test.t.b))",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c]",
           "    DataSource_1 table:t"
@@ -2053,9 +2053,9 @@
       {
         "SQL": "select count(case when a > 10 then b end) from t group by concat(c, 'a')",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_2 input:[Group#2], group by:concat(cast(test.t.c, var_string(20)), \"a\"), funcs:count(case(gt(test.t.a, 10), test.t.b))",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c]",
           "    DataSource_1 table:t"
@@ -2064,9 +2064,9 @@
       {
         "SQL": "select count(case when a > 10 then b end) from t group by concat('a', 'c')",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_2 input:[Group#2], group by:1, funcs:count(case(gt(test.t.a, 10), test.t.b))",
           "Group#2 Schema:[test.t.a,test.t.b]",
           "    DataSource_1 table:t"
@@ -2075,9 +2075,9 @@
       {
         "SQL": "select count(case when a > 10 then b else null end) from t",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_5 input:[Group#2], funcs:count(test.t.b)",
           "Group#2 Schema:[test.t.a,test.t.b]",
           "    Selection_4 input:[Group#3], gt(test.t.a, 10)",
@@ -2088,9 +2088,9 @@
       {
         "SQL": "select count(case when a > 10 then null else b end) from t",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_5 input:[Group#2], funcs:count(test.t.b)",
           "Group#2 Schema:[test.t.a,test.t.b]",
           "    Selection_4 input:[Group#3], not(gt(test.t.a, 10))",
@@ -2101,9 +2101,9 @@
       {
         "SQL": "select count(case when a > 10 then c else b end) from t",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_2 input:[Group#2], funcs:count(case(gt(test.t.a, 10), test.t.c, test.t.b))",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c]",
           "    DataSource_1 table:t"
@@ -2112,9 +2112,9 @@
       {
         "SQL": "select count(case when a > 10 then c else 0 end) from t",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_2 input:[Group#2], funcs:count(case(gt(test.t.a, 10), test.t.c, 0))",
           "Group#2 Schema:[test.t.a,test.t.c]",
           "    DataSource_1 table:t"
@@ -2123,9 +2123,9 @@
       {
         "SQL": "select sum(case when a > 10 then c else 0 end) from t",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_5 input:[Group#2], funcs:sum(test.t.c)",
           "Group#2 Schema:[test.t.a,test.t.c]",
           "    Selection_4 input:[Group#3], gt(test.t.a, 10)",
@@ -2136,9 +2136,9 @@
       {
         "SQL": "select sum(case when a > 10 then c else 0.0 end) from t",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_5 input:[Group#2], funcs:sum(cast(test.t.c, decimal(12,1) BINARY))",
           "Group#2 Schema:[test.t.a,test.t.c]",
           "    Selection_4 input:[Group#3], gt(test.t.a, 10)",
@@ -2149,9 +2149,9 @@
       {
         "SQL": "select sum(case when a > 10 then c else 1-1 end) from t",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_5 input:[Group#2], funcs:sum(test.t.c)",
           "Group#2 Schema:[test.t.a,test.t.c]",
           "    Selection_4 input:[Group#3], gt(test.t.a, 10)",
@@ -2162,9 +2162,9 @@
       {
         "SQL": "select sum(case when a > 0 then (case when a <= 1000 then b end) else 0 end) from t",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_7 input:[Group#2], funcs:sum(test.t.b)",
           "Group#2 Schema:[test.t.a,test.t.b]",
           "    Selection_6 input:[Group#3], le(test.t.a, 1000)",
@@ -2177,9 +2177,9 @@
       {
         "SQL": "select sum(case when a > 10 then 0 else c end) from t",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_5 input:[Group#2], funcs:sum(test.t.c)",
           "Group#2 Schema:[test.t.a,test.t.c]",
           "    Selection_4 input:[Group#3], not(gt(test.t.a, 10))",
@@ -2190,9 +2190,9 @@
       {
         "SQL": "select sum(case when a > 10 then 2 else 1 end) from t",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_2 input:[Group#2], funcs:sum(case(gt(test.t.a, 10), 2, 1))",
           "Group#2 Schema:[test.t.a]",
           "    DataSource_1 table:t"
@@ -2201,9 +2201,9 @@
       {
         "SQL": "select count(DISTINCT case when a > 10 then null else c end) from t",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_5 input:[Group#2], funcs:count(distinct test.t.c)",
           "Group#2 Schema:[test.t.a,test.t.c]",
           "    Selection_4 input:[Group#3], not(gt(test.t.a, 10))",
@@ -2214,9 +2214,9 @@
       {
         "SQL": "select approx_count_distinct(case when a > 10 then null else c end) from t",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_5 input:[Group#2], funcs:approx_count_distinct(test.t.c)",
           "Group#2 Schema:[test.t.a,test.t.c]",
           "    Selection_4 input:[Group#3], not(gt(test.t.a, 10))",
@@ -2227,9 +2227,9 @@
       {
         "SQL": "select sum(DISTINCT case when a > 10 then c else 0 end) from t",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_2 input:[Group#2], funcs:sum(distinct case(gt(test.t.a, 10), test.t.c, 0))",
           "Group#2 Schema:[test.t.a,test.t.c]",
           "    DataSource_1 table:t"
@@ -2238,8 +2238,8 @@
       {
         "SQL": "select case when c > 10 then c end from t",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_2 input:[Group#1], case(gt(test.t.c, 10), test.t.c)->Column#13",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_2 input:[Group#1], case(gt(test.t.c, 10), test.t.c)->Column#14",
           "Group#1 Schema:[test.t.c]",
           "    DataSource_1 table:t"
         ]
@@ -2247,9 +2247,9 @@
       {
         "SQL": "select count(case when a > 10 then c end), c from t",
         "Result": [
-          "Group#0 Schema:[Column#13,test.t.c]",
-          "    Projection_3 input:[Group#1], Column#13, test.t.c",
-          "Group#1 Schema:[Column#13,test.t.c]",
+          "Group#0 Schema:[Column#14,test.t.c]",
+          "    Projection_3 input:[Group#1], Column#14, test.t.c",
+          "Group#1 Schema:[Column#14,test.t.c]",
           "    Aggregation_2 input:[Group#2], funcs:count(case(gt(test.t.a, 10), test.t.c)), firstrow(test.t.c)",
           "Group#2 Schema:[test.t.a,test.t.c]",
           "    DataSource_1 table:t"
@@ -2258,9 +2258,9 @@
       {
         "SQL": "select count(case when a > 10 and d < 5 then b end) from t",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_5 input:[Group#2], funcs:count(test.t.b)",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.d]",
           "    Selection_4 input:[Group#3], gt(test.t.a, 10), lt(test.t.d, 5)",
@@ -2271,9 +2271,9 @@
       {
         "SQL": "select count(case when a > 10 and d < 5 then null else b end) from t",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_5 input:[Group#2], funcs:count(test.t.b)",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.d]",
           "    Selection_4 input:[Group#3], not(and(gt(test.t.a, 10), lt(test.t.d, 5)))",
@@ -2289,8 +2289,8 @@
       {
         "SQL": "select count(b) from t group by a",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_5 input:[Group#1], 1->Column#13",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_5 input:[Group#1], 1->Column#14",
           "Group#1 Schema:[test.t.a,test.t.b], UniqueKey:[test.t.a]",
           "    DataSource_1 table:t"
         ]
@@ -2298,9 +2298,9 @@
       {
         "SQL": "select count(b) from t group by b",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_2 input:[Group#2], group by:test.t.b, funcs:count(test.t.b)",
           "Group#2 Schema:[test.t.b]",
           "    DataSource_1 table:t"
@@ -2309,9 +2309,9 @@
       {
         "SQL": "select count(b) from t",
         "Result": [
-          "Group#0 Schema:[Column#13]",
-          "    Projection_3 input:[Group#1], Column#13",
-          "Group#1 Schema:[Column#13]",
+          "Group#0 Schema:[Column#14]",
+          "    Projection_3 input:[Group#1], Column#14",
+          "Group#1 Schema:[Column#14]",
           "    Aggregation_2 input:[Group#2], funcs:count(test.t.b)",
           "Group#2 Schema:[test.t.b]",
           "    DataSource_1 table:t"
@@ -2322,10 +2322,10 @@
         "Result": [
           "Group#0 Schema:[test.t.a]",
           "    Projection_5 input:[Group#1], test.t.a",
-          "Group#1 Schema:[test.t.a,Column#13]",
-          "    Selection_4 input:[Group#2], gt(Column#13, 4)",
-          "Group#2 Schema:[test.t.a,Column#13]",
-          "    Projection_7 input:[Group#3], test.t.a, cast(test.t.b, decimal(32,0) BINARY)->Column#13",
+          "Group#1 Schema:[test.t.a,Column#14]",
+          "    Selection_4 input:[Group#2], gt(Column#14, 4)",
+          "Group#2 Schema:[test.t.a,Column#14]",
+          "    Projection_7 input:[Group#3], test.t.a, cast(test.t.b, decimal(32,0) BINARY)->Column#14",
           "Group#3 Schema:[test.t.a,test.t.b], UniqueKey:[test.t.a]",
           "    DataSource_1 table:t"
         ]
@@ -2333,14 +2333,14 @@
       {
         "SQL": "select count(b), sum(b), avg(b), b, max(b), min(b), bit_and(b), bit_or(b), bit_xor(b) from t group by a having sum(b) >= 0 and count(b) >= 0 order by b",
         "Result": [
-          "Group#0 Schema:[Column#21,Column#22,Column#23,test.t.b,Column#25,Column#26,Column#27,Column#28,Column#29]",
-          "    Projection_6 input:[Group#1], Column#13->Column#21, Column#14->Column#22, Column#15->Column#23, test.t.b, Column#16->Column#25, Column#17->Column#26, Column#18->Column#27, Column#19->Column#28, Column#20->Column#29",
-          "Group#1 Schema:[Column#13,Column#14,Column#15,test.t.b,Column#16,Column#17,Column#18,Column#19,Column#20,Column#14,Column#13]",
+          "Group#0 Schema:[Column#22,Column#23,Column#24,test.t.b,Column#26,Column#27,Column#28,Column#29,Column#30]",
+          "    Projection_6 input:[Group#1], Column#14->Column#22, Column#15->Column#23, Column#16->Column#24, test.t.b, Column#17->Column#26, Column#18->Column#27, Column#19->Column#28, Column#20->Column#29, Column#21->Column#30",
+          "Group#1 Schema:[Column#14,Column#15,Column#16,test.t.b,Column#17,Column#18,Column#19,Column#20,Column#21,Column#15,Column#14]",
           "    Sort_5 input:[Group#2], test.t.b",
-          "Group#2 Schema:[Column#13,Column#14,Column#15,test.t.b,Column#16,Column#17,Column#18,Column#19,Column#20,Column#14,Column#13]",
-          "    Selection_4 input:[Group#3], ge(Column#13, 0), ge(Column#14, 0)",
-          "Group#3 Schema:[Column#13,Column#14,Column#15,test.t.b,Column#16,Column#17,Column#18,Column#19,Column#20,Column#14,Column#13]",
-          "    Projection_8 input:[Group#4], 1->Column#13, cast(test.t.b, decimal(32,0) BINARY)->Column#14, cast(test.t.b, decimal(15,4) BINARY)->Column#15, test.t.b, test.t.b->Column#16, test.t.b->Column#17, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#18, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#19, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#20, cast(test.t.b, decimal(32,0) BINARY)->Column#14, 1->Column#13",
+          "Group#2 Schema:[Column#14,Column#15,Column#16,test.t.b,Column#17,Column#18,Column#19,Column#20,Column#21,Column#15,Column#14]",
+          "    Selection_4 input:[Group#3], ge(Column#14, 0), ge(Column#15, 0)",
+          "Group#3 Schema:[Column#14,Column#15,Column#16,test.t.b,Column#17,Column#18,Column#19,Column#20,Column#21,Column#15,Column#14]",
+          "    Projection_8 input:[Group#4], 1->Column#14, cast(test.t.b, decimal(32,0) BINARY)->Column#15, cast(test.t.b, decimal(15,4) BINARY)->Column#16, test.t.b, test.t.b->Column#17, test.t.b->Column#18, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#19, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#20, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#21, cast(test.t.b, decimal(32,0) BINARY)->Column#15, 1->Column#14",
           "Group#4 Schema:[test.t.a,test.t.b], UniqueKey:[test.t.a]",
           "    DataSource_1 table:t"
         ]
@@ -2348,8 +2348,8 @@
       {
         "SQL": "select count(b), sum(b), avg(b), f, max(c), min(c), bit_and(c), bit_or(d), bit_xor(g) from t group by a",
         "Result": [
-          "Group#0 Schema:[Column#13,Column#14,Column#15,test.t.f,Column#16,Column#17,Column#18,Column#19,Column#20]",
-          "    Projection_5 input:[Group#1], 1->Column#13, cast(test.t.b, decimal(32,0) BINARY)->Column#14, cast(test.t.b, decimal(15,4) BINARY)->Column#15, test.t.f, test.t.c->Column#16, test.t.c->Column#17, ifnull(cast(test.t.c, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#18, ifnull(cast(test.t.d, bigint(21) UNSIGNED BINARY), 0)->Column#19, ifnull(cast(test.t.g, bigint(21) UNSIGNED BINARY), 0)->Column#20",
+          "Group#0 Schema:[Column#14,Column#15,Column#16,test.t.f,Column#17,Column#18,Column#19,Column#20,Column#21]",
+          "    Projection_5 input:[Group#1], 1->Column#14, cast(test.t.b, decimal(32,0) BINARY)->Column#15, cast(test.t.b, decimal(15,4) BINARY)->Column#16, test.t.f, test.t.c->Column#17, test.t.c->Column#18, ifnull(cast(test.t.c, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#19, ifnull(cast(test.t.d, bigint(21) UNSIGNED BINARY), 0)->Column#20, ifnull(cast(test.t.g, bigint(21) UNSIGNED BINARY), 0)->Column#21",
           "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.f,test.t.g], UniqueKey:[test.t.f,test.t.f,test.t.g,test.t.a]",
           "    DataSource_1 table:t"
         ]
@@ -2357,9 +2357,9 @@
       {
         "SQL": "select count(b), sum(b), avg(b), f, max(c), min(c), bit_and(c), bit_or(d), bit_xor(g), var_pop(b) from t group by a",
         "Result": [
-          "Group#0 Schema:[Column#13,Column#14,Column#15,test.t.f,Column#16,Column#17,Column#18,Column#19,Column#20,Column#21]",
-          "    Projection_3 input:[Group#1], Column#13, Column#14, Column#15, test.t.f, Column#16, Column#17, Column#18, Column#19, Column#20, Column#21",
-          "Group#1 Schema:[Column#13,Column#14,Column#15,Column#16,Column#17,Column#18,Column#19,Column#20,Column#21,test.t.f]",
+          "Group#0 Schema:[Column#14,Column#15,Column#16,test.t.f,Column#17,Column#18,Column#19,Column#20,Column#21,Column#22]",
+          "    Projection_3 input:[Group#1], Column#14, Column#15, Column#16, test.t.f, Column#17, Column#18, Column#19, Column#20, Column#21, Column#22",
+          "Group#1 Schema:[Column#14,Column#15,Column#16,Column#17,Column#18,Column#19,Column#20,Column#21,Column#22,test.t.f]",
           "    Aggregation_2 input:[Group#2], group by:test.t.a, funcs:count(test.t.b), sum(test.t.b), avg(test.t.b), max(test.t.c), min(test.t.c), bit_and(test.t.c), bit_or(test.t.d), bit_xor(test.t.g), var_pop(test.t.b), firstrow(test.t.f)",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.f,test.t.g], UniqueKey:[test.t.f,test.t.f,test.t.g,test.t.a]",
           "    DataSource_1 table:t"
@@ -2368,9 +2368,9 @@
       {
         "SQL": "select count(b), sum(b), avg(b), f, max(c), min(c), bit_and(c), bit_or(d), bit_xor(g), group_concat(b, c, d, f) from t group by a",
         "Result": [
-          "Group#0 Schema:[Column#13,Column#14,Column#15,test.t.f,Column#16,Column#17,Column#18,Column#19,Column#20,Column#21]",
-          "    Projection_3 input:[Group#1], Column#13, Column#14, Column#15, test.t.f, Column#16, Column#17, Column#18, Column#19, Column#20, Column#21",
-          "Group#1 Schema:[Column#13,Column#14,Column#15,Column#16,Column#17,Column#18,Column#19,Column#20,Column#21,test.t.f]",
+          "Group#0 Schema:[Column#14,Column#15,Column#16,test.t.f,Column#17,Column#18,Column#19,Column#20,Column#21,Column#22]",
+          "    Projection_3 input:[Group#1], Column#14, Column#15, Column#16, test.t.f, Column#17, Column#18, Column#19, Column#20, Column#21, Column#22",
+          "Group#1 Schema:[Column#14,Column#15,Column#16,Column#17,Column#18,Column#19,Column#20,Column#21,Column#22,test.t.f]",
           "    Aggregation_2 input:[Group#2], group by:test.t.a, funcs:count(test.t.b), sum(test.t.b), avg(test.t.b), max(test.t.c), min(test.t.c), bit_and(test.t.c), bit_or(test.t.d), bit_xor(test.t.g), group_concat(test.t.b, test.t.c, test.t.d, test.t.f separator \",\"), firstrow(test.t.f)",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.f,test.t.g]",
           "    DataSource_1 table:t"
@@ -2407,10 +2407,10 @@
         "Result": [
           "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
           "    Projection_6 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,Column#13]",
-          "    TopN_8 input:[Group#2], Column#13, offset:0, count:10",
-          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,Column#13]",
-          "    Projection_7 input:[Group#3], test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date, plus(test.t.a, test.t.b)->Column#13",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,Column#14]",
+          "    TopN_8 input:[Group#2], Column#14, offset:0, count:10",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,Column#14]",
+          "    Projection_7 input:[Group#3], test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date, plus(test.t.a, test.t.b)->Column#14",
           "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
           "    Projection_2 input:[Group#4], test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date",
           "Group#4 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
@@ -2420,12 +2420,12 @@
       {
         "SQL": "select max(a), min(b), avg(c) from t group by a+b",
         "Result": [
-          "Group#0 Schema:[Column#13,Column#14,Column#15]",
-          "    Projection_3 input:[Group#1], Column#13, Column#14, Column#15",
-          "Group#1 Schema:[Column#13,Column#14,Column#15]",
-          "    Aggregation_5 input:[Group#2], group by:Column#17, funcs:max(test.t.a), min(test.t.b), avg(Column#16)",
-          "Group#2 Schema:[test.t.a,test.t.b,Column#16,Column#17]",
-          "    Projection_4 input:[Group#3], test.t.a, test.t.b, cast(test.t.c, decimal(10,0) BINARY)->Column#16, plus(test.t.a, test.t.b)->Column#17",
+          "Group#0 Schema:[Column#14,Column#15,Column#16]",
+          "    Projection_3 input:[Group#1], Column#14, Column#15, Column#16",
+          "Group#1 Schema:[Column#14,Column#15,Column#16]",
+          "    Aggregation_5 input:[Group#2], group by:Column#18, funcs:max(test.t.a), min(test.t.b), avg(Column#17)",
+          "Group#2 Schema:[test.t.a,test.t.b,Column#17,Column#18]",
+          "    Projection_4 input:[Group#3], test.t.a, test.t.b, cast(test.t.c, decimal(10,0) BINARY)->Column#17, plus(test.t.a, test.t.b)->Column#18",
           "Group#3 Schema:[test.t.a,test.t.b,test.t.c]",
           "    DataSource_1 table:t"
         ]
@@ -2433,12 +2433,12 @@
       {
         "SQL": "select max(a), min(b), avg(a / b) from t group by a",
         "Result": [
-          "Group#0 Schema:[Column#13,Column#14,Column#15]",
-          "    Projection_3 input:[Group#1], Column#13, Column#14, Column#15",
-          "Group#1 Schema:[Column#13,Column#14,Column#15]",
-          "    Aggregation_5 input:[Group#2], group by:test.t.a, funcs:max(test.t.a), min(test.t.b), avg(Column#16)",
-          "Group#2 Schema:[test.t.a,test.t.b,Column#16,test.t.a]",
-          "    Projection_4 input:[Group#3], test.t.a, test.t.b, div(cast(test.t.a, decimal(10,0) BINARY), cast(test.t.b, decimal(10,0) BINARY))->Column#16, test.t.a",
+          "Group#0 Schema:[Column#14,Column#15,Column#16]",
+          "    Projection_3 input:[Group#1], Column#14, Column#15, Column#16",
+          "Group#1 Schema:[Column#14,Column#15,Column#16]",
+          "    Aggregation_5 input:[Group#2], group by:test.t.a, funcs:max(test.t.a), min(test.t.b), avg(Column#17)",
+          "Group#2 Schema:[test.t.a,test.t.b,Column#17,test.t.a]",
+          "    Projection_4 input:[Group#3], test.t.a, test.t.b, div(cast(test.t.a, decimal(10,0) BINARY), cast(test.t.b, decimal(10,0) BINARY))->Column#17, test.t.a",
           "Group#3 Schema:[test.t.a,test.t.b]",
           "    DataSource_1 table:t"
         ]
@@ -2446,12 +2446,12 @@
       {
         "SQL": "select max(a), min(b), avg(a / b) from t group by (a+b)",
         "Result": [
-          "Group#0 Schema:[Column#13,Column#14,Column#15]",
-          "    Projection_3 input:[Group#1], Column#13, Column#14, Column#15",
-          "Group#1 Schema:[Column#13,Column#14,Column#15]",
-          "    Aggregation_5 input:[Group#2], group by:Column#17, funcs:max(test.t.a), min(test.t.b), avg(Column#16)",
-          "Group#2 Schema:[test.t.a,test.t.b,Column#16,Column#17]",
-          "    Projection_4 input:[Group#3], test.t.a, test.t.b, div(cast(test.t.a, decimal(10,0) BINARY), cast(test.t.b, decimal(10,0) BINARY))->Column#16, plus(test.t.a, test.t.b)->Column#17",
+          "Group#0 Schema:[Column#14,Column#15,Column#16]",
+          "    Projection_3 input:[Group#1], Column#14, Column#15, Column#16",
+          "Group#1 Schema:[Column#14,Column#15,Column#16]",
+          "    Aggregation_5 input:[Group#2], group by:Column#18, funcs:max(test.t.a), min(test.t.b), avg(Column#17)",
+          "Group#2 Schema:[test.t.a,test.t.b,Column#17,Column#18]",
+          "    Projection_4 input:[Group#3], test.t.a, test.t.b, div(cast(test.t.a, decimal(10,0) BINARY), cast(test.t.b, decimal(10,0) BINARY))->Column#17, plus(test.t.a, test.t.b)->Column#18",
           "Group#3 Schema:[test.t.a,test.t.b]",
           "    DataSource_1 table:t"
         ]
@@ -2464,9 +2464,9 @@
       {
         "SQL": "select a, b, max(b) over (partition by c), sum(c) over (partition by c) from t",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,Column#19,Column#20]",
-          "    Projection_10 input:[Group#1], test.t.a, test.t.b, Column#16->Column#19, Column#15->Column#20",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,Column#15,Column#16]",
+          "Group#0 Schema:[test.t.a,test.t.b,Column#20,Column#21]",
+          "    Projection_10 input:[Group#1], test.t.a, test.t.b, Column#17->Column#20, Column#16->Column#21",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,Column#16,Column#17]",
           "    Window_9 input:[Group#2]",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c]",
           "    DataSource_1 table:t"
@@ -2475,11 +2475,11 @@
       {
         "SQL": "select a, b, max(b) over (partition by c), sum(c) over (partition by a) from t",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,Column#19,Column#20]",
-          "    Projection_9 input:[Group#1], test.t.a, test.t.b, Column#15->Column#19, Column#16->Column#20",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,Column#15,Column#16]",
+          "Group#0 Schema:[test.t.a,test.t.b,Column#20,Column#21]",
+          "    Projection_9 input:[Group#1], test.t.a, test.t.b, Column#16->Column#20, Column#17->Column#21",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,Column#16,Column#17]",
           "    Window_6 input:[Group#2]",
-          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,Column#15]",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,Column#16]",
           "    Window_4 input:[Group#3]",
           "Group#3 Schema:[test.t.a,test.t.b,test.t.c]",
           "    DataSource_1 table:t"
@@ -2488,9 +2488,9 @@
       {
         "SQL": "select a, max(b) over (partition by c, d), sum(c) over (partition by c, d) from t",
         "Result": [
-          "Group#0 Schema:[test.t.a,Column#18,Column#19]",
-          "    Projection_10 input:[Group#1], test.t.a, Column#16->Column#18, Column#15->Column#19",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15,Column#16]",
+          "Group#0 Schema:[test.t.a,Column#19,Column#20]",
+          "    Projection_10 input:[Group#1], test.t.a, Column#17->Column#19, Column#16->Column#20",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#17]",
           "    Window_9 input:[Group#2]",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d]",
           "    DataSource_1 table:t"
@@ -2499,9 +2499,9 @@
       {
         "SQL": "select a, max(b) over (partition by c, d), sum(c) over (partition by d, c) from t",
         "Result": [
-          "Group#0 Schema:[test.t.a,Column#18,Column#19]",
-          "    Projection_10 input:[Group#1], test.t.a, Column#16->Column#18, Column#15->Column#19",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15,Column#16]",
+          "Group#0 Schema:[test.t.a,Column#19,Column#20]",
+          "    Projection_10 input:[Group#1], test.t.a, Column#17->Column#19, Column#16->Column#20",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#17]",
           "    Window_9 input:[Group#2]",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d]",
           "    DataSource_1 table:t"
@@ -2510,9 +2510,9 @@
       {
         "SQL": "select a, b, c, d, max(b) over (partition by c order by d desc), sum(d) over (partition by c order by d desc) from t",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#15]",
-          "    Projection_7 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, Column#16, Column#15",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15,Column#16]",
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#17,Column#16]",
+          "    Projection_7 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, Column#17, Column#16",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#17]",
           "    Window_8 input:[Group#2]",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d]",
           "    DataSource_1 table:t"
@@ -2521,9 +2521,9 @@
       {
         "SQL": "select a, b, c, d, max(b) over (partition by c order by d desc), sum(d) over (partition by c order by d) from t",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15,Column#16]",
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#17]",
           "    Window_6 input:[Group#1]",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15]",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16]",
           "    Window_4 input:[Group#2]",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d]",
           "    DataSource_1 table:t"
@@ -2532,9 +2532,9 @@
       {
         "SQL": "select a, b, c, d, max(b) over (partition by c order by d desc), sum(d) over (partition by a order by b desc) from t",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15,Column#16]",
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#17]",
           "    Window_6 input:[Group#1]",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15]",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16]",
           "    Window_4 input:[Group#2]",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d]",
           "    DataSource_1 table:t"
@@ -2543,9 +2543,9 @@
       {
         "SQL": "select a, b, c, d, max(b) over (partition by c order by d desc rows 2 preceding), sum(d) over (partition by c order by d desc rows 2 preceding) from t",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#15]",
-          "    Projection_7 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, Column#16, Column#15",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15,Column#16]",
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#17,Column#16]",
+          "    Projection_7 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, Column#17, Column#16",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#17]",
           "    Window_8 input:[Group#2]",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d]",
           "    DataSource_1 table:t"
@@ -2554,9 +2554,9 @@
       {
         "SQL": "select a, b, c, d, max(b) over (partition by c order by d desc rows between 2 preceding and 2 following), sum(d) over (partition by c order by d desc rows between 2 preceding and 2 following) from t",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#15]",
-          "    Projection_7 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, Column#16, Column#15",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15,Column#16]",
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#17,Column#16]",
+          "    Projection_7 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, Column#17, Column#16",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#17]",
           "    Window_8 input:[Group#2]",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d]",
           "    DataSource_1 table:t"
@@ -2565,11 +2565,11 @@
       {
         "SQL": "select a, b, c, d, max(b) over (partition by c order by d desc rows between 2 preceding and 2 following), sum(d) over (partition by c order by d desc rows between 3 preceding and 2 following) from t",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#15]",
-          "    Projection_7 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, Column#16, Column#15",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15,Column#16]",
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#17,Column#16]",
+          "    Projection_7 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, Column#17, Column#16",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#17]",
           "    Window_6 input:[Group#2]",
-          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15]",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16]",
           "    Window_4 input:[Group#3]",
           "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d]",
           "    DataSource_1 table:t"
@@ -2578,11 +2578,11 @@
       {
         "SQL": "select a, b, c, d, max(b) over (partition by c order by d desc rows between 3 preceding and 2 following), sum(d) over (partition by c order by d desc rows between 2 preceding and 2 following) from t",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#15]",
-          "    Projection_7 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, Column#16, Column#15",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15,Column#16]",
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#17,Column#16]",
+          "    Projection_7 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, Column#17, Column#16",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#17]",
           "    Window_6 input:[Group#2]",
-          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15]",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16]",
           "    Window_4 input:[Group#3]",
           "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d]",
           "    DataSource_1 table:t"
@@ -2591,11 +2591,11 @@
       {
         "SQL": "select a, b, c, d, max(b) over (partition by c order by d desc rows between 2 preceding and 2 following), sum(d) over (partition by c order by d desc range between 2 preceding and 2 following) from t",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#15]",
-          "    Projection_7 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, Column#16, Column#15",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15,Column#16]",
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#17,Column#16]",
+          "    Projection_7 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, Column#17, Column#16",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#17]",
           "    Window_6 input:[Group#2]",
-          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15]",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16]",
           "    Window_4 input:[Group#3]",
           "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d]",
           "    DataSource_1 table:t"
@@ -2604,11 +2604,11 @@
       {
         "SQL": "select a, b, c, d, max(b) over (partition by c order by d desc rows 2 preceding), sum(d) over (partition by c order by d desc range between unbounded preceding and current row) from t",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#15]",
-          "    Projection_7 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, Column#16, Column#15",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15,Column#16]",
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#17,Column#16]",
+          "    Projection_7 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, Column#17, Column#16",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#17]",
           "    Window_6 input:[Group#2]",
-          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15]",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16]",
           "    Window_4 input:[Group#3]",
           "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d]",
           "    DataSource_1 table:t"
@@ -2617,11 +2617,11 @@
       {
         "SQL": "select a, b, c, d, max(b) over (partition by c order by d desc rows 2 preceding), sum(d) over (partition by c order by d desc rows 3 preceding) from t",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#15]",
-          "    Projection_7 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, Column#16, Column#15",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15,Column#16]",
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#17,Column#16]",
+          "    Projection_7 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, Column#17, Column#16",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16,Column#17]",
           "    Window_6 input:[Group#2]",
-          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15]",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#16]",
           "    Window_4 input:[Group#3]",
           "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d]",
           "    DataSource_1 table:t"
@@ -2630,9 +2630,9 @@
       {
         "SQL": "select a, b, max(b) over (partition by c), c, d, dd from (select a, b, c, d, sum(d) over (partition by c) as dd from t) as tt",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,Column#16,test.t.c,test.t.d,Column#14]",
-          "    Projection_9 input:[Group#1], test.t.a, test.t.b, Column#16, test.t.c, test.t.d, Column#14",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#14,Column#16]",
+          "Group#0 Schema:[test.t.a,test.t.b,Column#17,test.t.c,test.t.d,Column#15]",
+          "    Projection_9 input:[Group#1], test.t.a, test.t.b, Column#17, test.t.c, test.t.d, Column#15",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15,Column#17]",
           "    Window_10 input:[Group#2]",
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d]",
           "    DataSource_1 table:t"
@@ -2641,11 +2641,11 @@
       {
         "SQL": "select a, b, max(b) over (partition by c), c, d, dd from (select a, b, c, d, sum(d) over (partition by a) as dd from t) as tt",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,Column#16,test.t.c,test.t.d,Column#14]",
-          "    Projection_9 input:[Group#1], test.t.a, test.t.b, Column#16, test.t.c, test.t.d, Column#14",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#14,Column#16]",
+          "Group#0 Schema:[test.t.a,test.t.b,Column#17,test.t.c,test.t.d,Column#15]",
+          "    Projection_9 input:[Group#1], test.t.a, test.t.b, Column#17, test.t.c, test.t.d, Column#15",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15,Column#17]",
           "    Window_8 input:[Group#2]",
-          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#14]",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15]",
           "    Window_4 input:[Group#3]",
           "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d]",
           "    DataSource_1 table:t"
@@ -2654,11 +2654,11 @@
       {
         "SQL": "select a, b, rank() over (), max(b) over (partition by c), c, d, dd from (select a, b, c, d, sum(d) over (partition by c) as dd from t) as tt",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,Column#18,Column#17,test.t.c,test.t.d,Column#14]",
-          "    Projection_11 input:[Group#1], test.t.a, test.t.b, Column#18, Column#17, test.t.c, test.t.d, Column#14",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#14,Column#17,Column#18]",
+          "Group#0 Schema:[test.t.a,test.t.b,Column#19,Column#18,test.t.c,test.t.d,Column#15]",
+          "    Projection_11 input:[Group#1], test.t.a, test.t.b, Column#19, Column#18, test.t.c, test.t.d, Column#15",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15,Column#18,Column#19]",
           "    Window_10 input:[Group#2]",
-          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#14,Column#17]",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,Column#15,Column#18]",
           "    Window_12 input:[Group#3]",
           "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d]",
           "    DataSource_1 table:t"
@@ -2667,11 +2667,11 @@
       {
         "SQL": "select a, b, sum(bb) over (partition by a) as 'sum_bb' from (select a, b, max(b) over (partition by a) as 'bb' from t) as tt",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,Column#19]",
-          "    Projection_11 input:[Group#1], test.t.a, test.t.b, Column#16->Column#19",
-          "Group#1 Schema:[test.t.a,test.t.b,Column#14,Column#16]",
+          "Group#0 Schema:[test.t.a,test.t.b,Column#20]",
+          "    Projection_11 input:[Group#1], test.t.a, test.t.b, Column#17->Column#20",
+          "Group#1 Schema:[test.t.a,test.t.b,Column#15,Column#17]",
           "    Window_8 input:[Group#2]",
-          "Group#2 Schema:[test.t.a,test.t.b,Column#14]",
+          "Group#2 Schema:[test.t.a,test.t.b,Column#15]",
           "    Window_4 input:[Group#3]",
           "Group#3 Schema:[test.t.a,test.t.b]",
           "    DataSource_1 table:t"
@@ -2680,11 +2680,11 @@
       {
         "SQL": "select a, b, sum(bb) over (partition by a) as 'sum_bb', c from (select a, b, c, max(b) over (partition by a) as 'bb' from t) as tt",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,Column#19,test.t.c]",
-          "    Projection_11 input:[Group#1], test.t.a, test.t.b, Column#16->Column#19, test.t.c",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,Column#14,Column#16]",
+          "Group#0 Schema:[test.t.a,test.t.b,Column#20,test.t.c]",
+          "    Projection_11 input:[Group#1], test.t.a, test.t.b, Column#17->Column#20, test.t.c",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,Column#15,Column#17]",
           "    Window_8 input:[Group#2]",
-          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,Column#14]",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,Column#15]",
           "    Window_4 input:[Group#3]",
           "Group#3 Schema:[test.t.a,test.t.b,test.t.c]",
           "    DataSource_1 table:t"
@@ -2693,15 +2693,15 @@
       {
         "SQL": "select a, b, rank() over (partition by a), sum(bb) over (partition by a) as 'sum_bb', c from (select a, b, c, max(b) over (partition by a) as 'bb' from t) as tt",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,Column#21,Column#22,test.t.c]",
-          "    Projection_13 input:[Group#1], test.t.a, test.t.b, Column#18->Column#21, Column#17->Column#22, test.t.c",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,Column#17,Column#18]",
+          "Group#0 Schema:[test.t.a,test.t.b,Column#22,Column#23,test.t.c]",
+          "    Projection_13 input:[Group#1], test.t.a, test.t.b, Column#19->Column#22, Column#18->Column#23, test.t.c",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,Column#18,Column#19]",
           "    Window_10 input:[Group#2]",
-          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,Column#17]",
-          "    Projection_9 input:[Group#3], test.t.a, test.t.b, test.t.c, Column#17",
-          "Group#3 Schema:[test.t.a,test.t.b,test.t.c,Column#14,Column#17]",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,Column#18]",
+          "    Projection_9 input:[Group#3], test.t.a, test.t.b, test.t.c, Column#18",
+          "Group#3 Schema:[test.t.a,test.t.b,test.t.c,Column#15,Column#18]",
           "    Window_8 input:[Group#4]",
-          "Group#4 Schema:[test.t.a,test.t.b,test.t.c,Column#14]",
+          "Group#4 Schema:[test.t.a,test.t.b,test.t.c,Column#15]",
           "    Window_4 input:[Group#5]",
           "Group#5 Schema:[test.t.a,test.t.b,test.t.c]",
           "    DataSource_1 table:t"
@@ -2710,11 +2710,11 @@
       {
         "SQL": "select a, b, sum(bb) over (partition by a) as 'sum_bb', c, rank() over (partition by a) from (select a, b, c, max(b) over (partition by a) as 'bb' from t) as tt",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,Column#21,test.t.c,Column#23]",
-          "    Projection_14 input:[Group#1], test.t.a, test.t.b, Column#18->Column#21, test.t.c, Column#17->Column#23",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,Column#14,Column#17,Column#18]",
+          "Group#0 Schema:[test.t.a,test.t.b,Column#22,test.t.c,Column#24]",
+          "    Projection_14 input:[Group#1], test.t.a, test.t.b, Column#19->Column#22, test.t.c, Column#18->Column#24",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,Column#15,Column#18,Column#19]",
           "    Window_10 input:[Group#2]",
-          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,Column#14,Column#17]",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,Column#15,Column#18]",
           "    Window_13 input:[Group#3]",
           "Group#3 Schema:[test.t.a,test.t.b,test.t.c]",
           "    DataSource_1 table:t"
@@ -2723,15 +2723,15 @@
       {
         "SQL": "select a, b, sum(bb) over (partition by a) as 'sum_bb', c, rank() over () from (select a, b, c, max(b) over (partition by a) as 'bb' from t) as tt",
         "Result": [
-          "Group#0 Schema:[test.t.a,test.t.b,Column#21,test.t.c,Column#23]",
-          "    Projection_13 input:[Group#1], test.t.a, test.t.b, Column#17->Column#21, test.t.c, Column#18->Column#23",
-          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,Column#17,Column#18]",
+          "Group#0 Schema:[test.t.a,test.t.b,Column#22,test.t.c,Column#24]",
+          "    Projection_13 input:[Group#1], test.t.a, test.t.b, Column#18->Column#22, test.t.c, Column#19->Column#24",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,Column#18,Column#19]",
           "    Window_10 input:[Group#2]",
-          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,Column#17]",
-          "    Projection_9 input:[Group#3], test.t.a, test.t.b, test.t.c, Column#17",
-          "Group#3 Schema:[test.t.a,test.t.b,test.t.c,Column#14,Column#17]",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,Column#18]",
+          "    Projection_9 input:[Group#3], test.t.a, test.t.b, test.t.c, Column#18",
+          "Group#3 Schema:[test.t.a,test.t.b,test.t.c,Column#15,Column#18]",
           "    Window_8 input:[Group#4]",
-          "Group#4 Schema:[test.t.a,test.t.b,test.t.c,Column#14]",
+          "Group#4 Schema:[test.t.a,test.t.b,test.t.c,Column#15]",
           "    Window_4 input:[Group#5]",
           "Group#5 Schema:[test.t.a,test.t.b,test.t.c]",
           "    DataSource_1 table:t"

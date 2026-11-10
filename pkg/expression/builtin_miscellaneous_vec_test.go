@@ -39,7 +39,15 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 			newSelectRealGener([]float64{0, 0.000001}),
 		}},
 	},
-	ast.UUID: {},
+	ast.UUID:   {},
+	ast.UUIDv4: {},
+	ast.UUIDv7: {},
+	ast.UUIDTimestamp: {
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&uuidStrGener{newDefaultRandGen()}}},
+	},
+	ast.UUIDVersion: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&uuidStrGener{newDefaultRandGen()}}},
+	},
 	ast.Inet6Ntoa: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{
 			newSelectStringGener(

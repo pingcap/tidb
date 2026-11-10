@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -75,8 +76,13 @@ type reorgCtx struct {
 	doneCh chan reorgFnResult
 	// rowCount is used to simulate a job's row count.
 	rowCount int64
+	// snapshotVer records the read timestamp produced by a reorg worker.
+	snapshotVer uint64
 	// maxProgress is the historical maximum progress to prevent progress regression.
 	maxProgress atomicutil.Float64
+	// ru is collected by a background reorg function and transferred to the
+	// foreground worker when it receives the result.
+	ru atomicutil.Float64
 
 	mu struct {
 		sync.Mutex
@@ -92,7 +98,23 @@ type reorgCtx struct {
 // receiver determine if the result is from reorg function of previous DDL owner in this instance.
 type reorgFnResult struct {
 	ownerTS int64
+	ru      float64
 	err     error
+}
+
+func stageReorgResultRU(jobCtx *jobContext, result reorgFnResult) {
+	if result.err == nil {
+		jobCtx.pendingReorgRU += result.ru
+	}
+}
+
+func accountPendingReorgRU(jobCtx *jobContext, job *model.Job, transitionErr error) {
+	ru := jobCtx.pendingReorgRU
+	jobCtx.pendingReorgRU = 0
+	failpoint.InjectCall("accountPendingReorgRU", job.ID, ru, transitionErr == nil)
+	if transitionErr == nil {
+		job.RU += ru
+	}
 }
 
 func newReorgExprCtx() *exprstatic.ExprContext {
@@ -126,7 +148,10 @@ func newReorgExprCtxWithReorgMeta(reorgMeta *model.DDLReorgMeta, warnHandler con
 		exprstatic.WithErrLevelMap(reorgErrLevelsWithSQLMode(reorgMeta.SQLMode)),
 		exprstatic.WithWarnHandler(warnHandler),
 	)
-	return ctx.Apply(exprstatic.WithEvalCtx(evalCtx)), nil
+	return ctx.Apply(
+		exprstatic.WithEvalCtx(evalCtx),
+		exprstatic.WithNewCollationEnabled(reorgMeta.GetUseNewCollateOrDefault(collate.NewCollationEnabled())),
+	), nil
 }
 
 // reorgTableMutateContext implements table.MutateContext for reorganization.
@@ -306,6 +331,29 @@ func (rc *reorgCtx) getRowCount() int64 {
 	return row
 }
 
+func (rc *reorgCtx) setSnapshotVer(snapshotVer uint64) {
+	atomic.StoreUint64(&rc.snapshotVer, snapshotVer)
+}
+
+func (rc *reorgCtx) getSnapshotVer() uint64 {
+	return atomic.LoadUint64(&rc.snapshotVer)
+}
+
+func (rc *reorgCtx) setRU(ru float64) {
+	rc.ru.Store(ru)
+}
+
+// increaseRU adds the RU collected by one unit of reorganization work, such as
+// a committed backfill transaction. It is additive because a reorganization can
+// span many transactions and DDL rounds, while setRU overwrites the value.
+func (rc *reorgCtx) increaseRU(ru float64) {
+	rc.ru.Add(ru)
+}
+
+func (rc *reorgCtx) getRU() float64 {
+	return rc.ru.Load()
+}
+
 // setMaxProgress updates the maximum progress if the new progress is greater.
 // It returns the current maximum progress (which may be unchanged if newProgress <= oldMax).
 // This prevents progress regression when statistics change during backfill.
@@ -395,7 +443,7 @@ func (w *worker) runReorgJob(
 		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.Job.GetRowCount())
 		w.wg.Run(func() {
 			err := reorgFn()
-			rc.doneCh <- reorgFnResult{ownerTS: beOwnerTS, err: err}
+			rc.doneCh <- reorgFnResult{ownerTS: beOwnerTS, ru: rc.getRU(), err: err}
 		})
 	}
 
@@ -425,8 +473,12 @@ func (w *worker) runReorgJob(
 				d.removeReorgCtx(job.ID)
 				return err
 			}
+			stageReorgResultRU(jobCtx, res)
 			rowCount := rc.getRowCount()
 			job.SetRowCount(rowCount)
+			if snapshotVer := rc.getSnapshotVer(); snapshotVer != 0 {
+				job.SnapshotVer = snapshotVer
+			}
 			if err != nil {
 				logutil.DDLLogger().Warn("run reorg job done",
 					zap.Int64("jobID", reorgInfo.ID),
@@ -523,12 +575,12 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 	}
 	progress := float64(0)
 	if addedRowCount != 0 {
-		totalCount := getTableTotalCount(w, tblInfo)
-		if totalCount > 0 {
+		totalCount := getTableEstimatedCount(w, tblInfo)
+		if totalCount > 0 && totalCount != statistics.PseudoRowCount {
+			// Only update progress when totalCount is relatively precise
 			progress = float64(addedRowCount) / float64(totalCount)
-		} else {
-			progress = 0
 		}
+		// float compare is in-accurate
 		if progress > 1 {
 			progress = 1
 		}
@@ -537,43 +589,41 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		if rc != nil {
 			progress = rc.setMaxProgress(progress)
 		}
-		logutil.DDLLogger().Debug("update progress",
+		logutil.DDLLogger().Debug("update backfill progress",
 			zap.Float64("progress", progress),
 			zap.Int64("addedRowCount", addedRowCount),
-			zap.Int64("totalCount", totalCount))
+			zap.Int64("estimated totalCount", totalCount))
 	}
+	label := backfillProgressLabel(reorgInfo.Type, reorgInfo.mergingTmpIdx)
+	if label == "" {
+		return
+	}
+
+	colOrIdxName := ""
 	switch reorgInfo.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		var label string
-		if reorgInfo.mergingTmpIdx {
-			label = metrics.LblAddIndexMerge
-		} else {
-			label = metrics.LblAddIndex
-		}
-		idxNames := ""
 		args, err := model.GetModifyIndexArgs(reorgInfo.Job)
 		if err != nil {
 			logutil.DDLLogger().Error("Fail to get ModifyIndexArgs", zap.Error(err))
 		} else {
-			idxNames = getIdxNamesFromArgs(args)
+			colOrIdxName = getIdxNamesFromArgs(args)
 		}
-		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String(), idxNames).Set(progress * 100)
 	case model.ActionModifyColumn:
-		colName := ""
 		args, err := model.GetModifyColumnArgs(reorgInfo.Job)
 		if err != nil {
 			logutil.DDLLogger().Error("Fail to get ModifyColumnArgs", zap.Error(err))
 		} else {
-			colName = args.OldColumnName.O
+			colOrIdxName = args.OldColumnName.O
 		}
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String(), colName).Set(progress * 100)
-	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
-		model.ActionAlterTablePartitioning:
-		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, reorgInfo.SchemaName, tblInfo.Name.String(), "").Set(progress * 100)
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 	}
+	// Partition reorg progress/rate metrics are keyed by logical table ID so cleanup
+	// can always reach them after DroppingDefinitions is cleared.
+	metricTableID := backfillMetricsTableID(reorgInfo, label)
+	getBackfillProgressByTableID(metricTableID, label, reorgInfo.SchemaName, tblInfo.Name.String(), colOrIdxName).Set(progress * 100)
 }
 
-func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
+func getTableEstimatedCount(w *worker, tblInfo *model.TableInfo) int64 {
 	var ctx sessionctx.Context
 	ctx, err := w.sessPool.Get()
 	if err != nil {
@@ -601,7 +651,11 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	if len(rows) != 1 {
 		return statistics.PseudoRowCount
 	}
-	return rows[0].GetInt64(0)
+	count := rows[0].GetInt64(0)
+	if count == 0 {
+		return statistics.PseudoRowCount
+	}
+	return count
 }
 
 func (dc *ddlCtx) isReorgRunnable(ctx context.Context, isDistReorg bool) error {
@@ -800,7 +854,7 @@ func GetTableMaxHandle(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl 
 	row := chk.GetRow(0)
 	if tblInfo.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(tblInfo)
-		maxHandle, err = buildCommonHandleFromChunkRow(time.UTC, tblInfo, pkIdx, handleCols, row)
+		maxHandle, err = buildCommonHandleFromChunkRow(tbl.UseNewCollate(), time.UTC, tblInfo, pkIdx, handleCols, row)
 		return maxHandle, false, err
 	}
 	return kv.IntHandle(row.GetInt64(0)), false, nil
@@ -845,7 +899,7 @@ func buildHandleCols(tbl table.PhysicalTable) []*model.ColumnInfo {
 	return handleCols
 }
 
-func buildCommonHandleFromChunkRow(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+func buildCommonHandleFromChunkRow(useNewCollate bool, loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	cols []*model.ColumnInfo, row chunk.Row) (kv.Handle, error) {
 	fieldTypes := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
@@ -855,7 +909,7 @@ func buildCommonHandleFromChunkRow(loc *time.Location, tblInfo *model.TableInfo,
 	tablecodec.TruncateIndexValues(tblInfo, idxInfo, datumRow)
 
 	var handleBytes []byte
-	handleBytes, err := codec.EncodeKey(loc, nil, datumRow...)
+	handleBytes, err := codec.NewEncoder(useNewCollate).EncodeKey(loc, nil, datumRow...)
 	if err != nil {
 		return nil, err
 	}
@@ -1166,6 +1220,15 @@ func cleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
 	if err != nil {
 		// ignore error, cleanup is not that critical
 		logutil.DDLLogger().Warn("Failed removing the DDL reorg entry in tidb_ddl_reorg", zap.Stringer("job", job), zap.Error(err))
+	}
+
+	// Clean up backfill metrics registered by tableID.
+	// For non-partitioned tables and partition DDL operations (reorganize, etc.),
+	// the metric is registered under job.TableID (the logical table ID).
+	// For add-index on partitioned tables, metrics are registered per partition ID;
+	// those are cleaned up later when applyCreateTable rebuilds the infoschema.
+	if job != nil {
+		metrics.DDLClearBackfillMetrics(job.TableID)
 	}
 }
 

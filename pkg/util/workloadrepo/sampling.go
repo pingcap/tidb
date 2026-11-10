@@ -46,7 +46,11 @@ func (w *worker) samplingTable(ctx context.Context, rt *repositoryTable) {
 
 func (w *worker) startSample(ctx context.Context) func() {
 	return func() {
-		w.resetSamplingInterval(w.samplingInterval)
+		w.Lock()
+		if w.samplingTicker != nil {
+			w.resetSamplingInterval(w.samplingInterval)
+		}
+		w.Unlock()
 
 		for {
 			select {

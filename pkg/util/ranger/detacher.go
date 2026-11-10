@@ -129,51 +129,51 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 		}
 		return offset
 	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
-		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
-			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
+		var constVal *expression.Constant
+		c, ok := f.GetArgs()[0].(*expression.Column)
+		idxConst := 1
+		if !ok {
+			idxConst = 0
+			if c, ok = f.GetArgs()[1].(*expression.Column); !ok {
 				return -1
-			}
-			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
-				return -1
-			}
-			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
-				val, err := constVal.Eval(evalCtx, chunk.Row{})
-				intest.AssertFunc(func() bool {
-					if sctx.ExprCtx.ConnectionID() == 0 {
-						return sctx.RegardNULLAsPoint
-					}
-					return true
-				})
-				if err != nil || (!sctx.RegardNULLAsPoint && val.IsNull()) || (f.FuncName.L == ast.NullEQ && val.IsNull()) {
-					// treat col<=>null as range scan instead of point get to avoid incorrect results
-					// when nullable unique index has multiple matches for filter x is null
-					return -1
-				}
-				for i, col := range cols {
-					// When cols are a generated expression col, compare them in terms of virtual expr.
-					if col.EqualByExprAndID(evalCtx, c) {
-						return i
-					}
-				}
 			}
 		}
-		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
-			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
-				return -1
+
+		// TODO: This collation-compatibility check rejects columns with binary-casted literals
+		// (e.g. f = CAST('a' AS BINARY) on a non-binary string column), which causes the EQ/IN
+		// extraction path to demote such predicates to filters. As a consequence, suffix index
+		// columns on a composite index (e.g. index on (f,g) with f = CAST('a' AS BINARY) AND g = 1)
+		// cannot be used as index equalities and are treated as filters as well. Relax this check
+		// for the CAST(... AS BINARY) / binary-collation case so binary-cast equality predicates
+		// can be treated as index-equalities, and add a regression test for the composite-index
+		// scenario above. Fix in a later release.
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
+			return -1
+		}
+		if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
+			return -1
+		}
+
+		if constVal, ok = f.GetArgs()[idxConst].(*expression.Constant); !ok {
+			return -1
+		}
+
+		val, err := constVal.Eval(evalCtx, chunk.Row{})
+		intest.AssertFunc(func() bool {
+			if sctx.ExprCtx.ConnectionID() == 0 {
+				return sctx.RegardNULLAsPoint
 			}
-			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
-				return -1
-			}
-			if constVal, ok := f.GetArgs()[0].(*expression.Constant); ok {
-				val, err := constVal.Eval(evalCtx, chunk.Row{})
-				if err != nil || (!sctx.RegardNULLAsPoint && val.IsNull()) {
-					return -1
-				}
-				for i, col := range cols {
-					if col.EqualColumn(c) {
-						return i
-					}
-				}
+			return true
+		})
+		if err != nil || (!sctx.RegardNULLAsPoint && val.IsNull()) || (f.FuncName.L == ast.NullEQ && val.IsNull()) {
+			// treat col<=>null as range scan instead of point get to avoid incorrect results
+			// when nullable unique index has multiple matches for filter x is null
+			return -1
+		}
+		for i, col := range cols {
+			// When cols are a generated expression col, compare them in terms of virtual expr.
+			if col.EqualByExprAndID(evalCtx, c) {
+				return i
 			}
 		}
 	case ast.In:
@@ -575,12 +575,15 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		return res, nil
 	}
 	for _, cond := range newConditions {
-		isAccessCond, _ := checker.check(cond)
+		isAccessCond, shouldReserve := checker.check(cond)
 		if !isAccessCond {
 			filterConds = append(filterConds, cond)
 			continue
 		}
 		accessConds = append(accessConds, cond)
+		if shouldReserve {
+			filterConds = append(filterConds, cond)
+		}
 		// TODO: if it's prefix column, we need to add cond to filterConds?
 	}
 	ranges, accessConds, remainedConds, err = d.buildCNFIndexRange(eqOrInCount, accessConds)
@@ -1109,8 +1112,10 @@ func (d *rangeDetacher) detachCondAndBuildRangeForCols() (*DetachRangeResult, er
 // It will find the point query column firstly and then extract the range query column.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit. If you ask that all conditions must be used
 // for building ranges, set rangeMemQuota to 0 to avoid range fallback.
+// The returned remainedConds are conditions that must be re-applied as filters (e.g. when a
+// collation mismatch makes the range approximate but the condition is still needed for correctness).
 func DetachSimpleCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, conditions []expression.Expression,
-	cols []*expression.Column, lengths []int, rangeMaxSize int64) (Ranges, []expression.Expression, error) {
+	cols []*expression.Column, lengths []int, rangeMaxSize int64) (ranges Ranges, accessConds []expression.Expression, remainedConds []expression.Expression, err error) {
 	newTpSlice := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
 		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
@@ -1126,7 +1131,10 @@ func DetachSimpleCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, condit
 		rangeMaxSize:     rangeMaxSize,
 	}
 	res, err := d.detachCNFCondAndBuildRangeForIndex(conditions, false)
-	return res.Ranges, res.AccessConds, err
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return res.Ranges, res.AccessConds, res.RemainedConds, nil
 }
 
 func removeConditions(ectx expression.EvalContext, conditions, condsToRemove []expression.Expression) []expression.Expression {

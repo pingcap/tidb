@@ -44,7 +44,8 @@ func NewIndexUsageReporter(reporter *indexusage.StmtIndexUsageCollector,
 }
 
 // ReportCopIndexUsageForHandle wraps around `ReportCopIndexUsageForTable` to get the `indexID` automatically
-// from the `table.Table` if the table has a clustered index or integer primary key.
+// from the `table.Table` if the table has a clustered index or clustered integer primary key.
+// If the table has a non-clustered PK or no PK, this function simply returns without reporting index usage.
 func (e *IndexUsageReporter) ReportCopIndexUsageForHandle(tbl table.Table, planID int) {
 	idxID, ok := getClusterIndexID(tbl.Meta())
 	if !ok {
@@ -72,6 +73,7 @@ func (e *IndexUsageReporter) ReportCopIndexUsageForTable(tbl table.Table, indexI
 func (e *IndexUsageReporter) ReportCopIndexUsage(tableID int64, physicalTableID int64, indexID int64, planID int) {
 	tableRowCount, ok := e.getTableRowCount(physicalTableID)
 	if !ok {
+		// Index usage for pseudo stats is not reported.
 		return
 	}
 
@@ -135,6 +137,7 @@ func getClusterIndexID(tblInfo *model.TableInfo) (int64, bool) {
 		for _, idx := range tblInfo.Indices {
 			if idx.Primary {
 				idxID = idx.ID
+				break
 			}
 		}
 	} else {

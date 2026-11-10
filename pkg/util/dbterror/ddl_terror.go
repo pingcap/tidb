@@ -37,6 +37,8 @@ var (
 	ErrPausedDDLJob = ClassDDL.NewStd(mysql.ErrPausedDDLJob)
 	// ErrBDRRestrictedDDL means the DDL is restricted in BDR mode.
 	ErrBDRRestrictedDDL = ClassDDL.NewStd(mysql.ErrBDRRestrictedDDL)
+	// ErrDDLAutoPausedByKVDiskFull means TiDB paused the DDL job because a storage node disk is full.
+	ErrDDLAutoPausedByKVDiskFull = ClassDDL.NewStd(mysql.ErrDDLAutoPausedByKVDiskFull)
 	// ErrRunMultiSchemaChanges means we run multi schema changes.
 	ErrRunMultiSchemaChanges = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "multi schema change for %s"), nil))
 	// ErrOperateSameColumn means we change the same columns multiple times in a DDL.
@@ -432,6 +434,10 @@ var (
 	ErrUnsupportedTiFlashOperationForSysOrMemTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "`set TiFlash replica` settings for system table and memory table"), nil))
 	// ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable is used when alter alter tiflash related action(e.g. set tiflash mode, set tiflash replica) with unsupported charset.
 	ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "`set TiFlash replica` settings for table contains %s charset"), nil))
+	// ErrTiFlashColumnarStorageCheckFailed is returned when the Columnar Storage flag cannot be read (fail-closed).
+	ErrTiFlashColumnarStorageCheckFailed = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "`set TiFlash replica` because the Columnar Storage status of cluster %s cannot be verified, please retry later"), nil))
+	// ErrTiFlashColumnarStorageNotEnabled is returned when SET TIFLASH REPLICA n (n>0) is rejected because Columnar Storage is off.
+	ErrTiFlashColumnarStorageNotEnabled = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "`set TiFlash replica` because Columnar Storage is not enabled for cluster %s (tidb_columnar_storage_enabled=%q)"), nil))
 	// ErrTiFlashBackfillIndex is the error that tiflash backfill the index failed.
 	ErrTiFlashBackfillIndex = ClassDDL.NewStdErr(mysql.ErrTiFlashBackfillIndex,
 		parser_mysql.Message(mysql.MySQLErrName[mysql.ErrTiFlashBackfillIndex].Raw, nil))
@@ -461,6 +467,11 @@ var (
 	ErrUnsupportedTTLReferencedByFK = ClassDDL.NewStd(mysql.ErrUnsupportedTTLReferencedByFK)
 	// ErrUnsupportedPrimaryKeyTypeWithTTL returns when create or alter a table with TTL options but the primary key is not supported
 	ErrUnsupportedPrimaryKeyTypeWithTTL = ClassDDL.NewStd(mysql.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	// ErrUnsupportedTTLJobIntervalInStarter returns when a Starter TTL job interval is unsupported.
+	ErrUnsupportedTTLJobIntervalInStarter = ClassDDL.NewStdErr(
+		mysql.ErrUnsupportedDDLOperation,
+		parser_mysql.Message("TTL_JOB_INTERVAL other than '%s' is not supported in starter deployment mode", nil),
+	)
 
 	// ErrNotSupportedYet returns when tidb does not support this feature.
 	ErrNotSupportedYet = ClassDDL.NewStd(mysql.ErrNotSupportedYet)
@@ -511,20 +522,19 @@ var (
 	// ErrWarnGlobalIndexNeedManuallyAnalyze is used for global indexes,
 	// which cannot trigger automatic analysis when it contains prefix columns or virtual generated columns.
 	ErrWarnGlobalIndexNeedManuallyAnalyze = ClassDDL.NewStd(mysql.ErrWarnGlobalIndexNeedManuallyAnalyze)
-
 	// ErrEngineAttributeInvalidFormat is returned when meeting invalid format of engine attribute.
 	ErrEngineAttributeInvalidFormat = ClassDDL.NewStd(mysql.ErrEngineAttributeInvalidFormat)
 	// ErrStorageClassInvalidSpec is reserved for future use.
 	ErrStorageClassInvalidSpec = ClassDDL.NewStd(mysql.ErrStorageClassInvalidSpec)
-
 	// ErrCannotSetAffinityOnTable is returned when set an invalid affinity on a table
 	ErrCannotSetAffinityOnTable = ClassDDL.NewStdErr(
 		mysql.ErrInvalidAffinityOption,
 		parser_mysql.Message("Can not set %s on a %s.", nil),
 	)
-
 	// ErrInvalidTableAffinity is returned when set an invalid affinity value on a table
 	ErrInvalidTableAffinity = ClassDDL.NewStd(mysql.ErrInvalidAffinityOption)
+	// ErrForbiddenDDL is returned when a DDL operation is forbidden.
+	ErrForbiddenDDL = ClassDDL.NewStd(mysql.ErrForbiddenDDL)
 )
 
 // ReorgRetryableErrCodes are the error codes that are retryable for reorganization.
@@ -557,4 +567,5 @@ var ReorgRetryableErrMsgs = []string{
 	"context deadline exceeded",
 	"requested lease not found",
 	"mvcc: required revision has been compacted",
+	"All returned regions have no leaders",
 }

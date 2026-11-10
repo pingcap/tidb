@@ -54,6 +54,7 @@ func TestQ1(t *testing.T) {
 func TestQ2(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 		createPart(t, tk, dom)
 		createSupplier(t, tk, dom)
 		createPartsupp(t, tk, dom)
@@ -89,31 +90,60 @@ func TestQ2(t *testing.T) {
 
 func TestQ3(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
-		tk.MustExec("use test")
-		createCustomer(t, tk, dom)
-		createOrders(t, tk, dom)
-		createLineItem(t, tk, dom)
-		tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
-		tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
-		integrationSuiteData := GetTPCHSuiteData()
-		var (
-			input  []string
-			output []struct {
-				SQL    string
-				Result []string
-			}
-		)
-		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
-		for i := range input {
-			testdata.OnRecord(func() {
-				output[i].SQL = input[i]
-			})
-			testdata.OnRecord(func() {
-				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
-			})
-			tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
-		}
+		testQ3(t, tk, dom, cascades, caller, false)
 	})
+}
+
+func TestQ3RCAndDisableTikv(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		testQ3(t, tk, dom, cascades, caller, true)
+	})
+}
+
+func testQ3(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string, enableRC bool) {
+	tk.MustExec("use test")
+	createCustomer(t, tk, dom)
+	createOrders(t, tk, dom)
+	createLineItem(t, tk, dom)
+	if enableRC {
+		tk.MustExec(`set tx_isolation="READ-COMMITTED";`)
+		tk.MustExec("begin;")
+		tk.MustExec("set @@session.tidb_isolation_read_engines=\"tidb,tiflash\"")
+	}
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+
+	integrationSuiteData := GetTPCHSuiteData()
+	var (
+		input  []string
+		output []struct {
+			SQL                 string
+			Result              []string
+			ForUpdate           []string
+			ForUpdateAndEnforce []string
+		}
+	)
+	integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+		})
+		testdata.OnRecord(func() {
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+			output[i].ForUpdate = testdata.ConvertRowsToStrings(tk.MustQuery(input[i] + " for update").Rows())
+			tk.MustExec("SET tidb_enforce_mpp=1")
+			output[i].ForUpdateAndEnforce = testdata.ConvertRowsToStrings(tk.MustQuery(input[i] + " for update").Rows())
+			tk.MustExec("SET tidb_enforce_mpp=0")
+		})
+		tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+		tk.MustQuery(input[i] + " for update").Check(testkit.Rows(output[i].ForUpdate...))
+		tk.MustExec("SET tidb_enforce_mpp=1")
+		tk.MustQuery(input[i] + " for update").Check(testkit.Rows(output[i].ForUpdateAndEnforce...))
+		tk.MustExec("SET tidb_enforce_mpp=0")
+	}
+	if enableRC {
+		tk.MustExec(`commit;`)
+	}
 }
 
 func TestQ4(t *testing.T) {
@@ -187,6 +217,7 @@ func TestQ5(t *testing.T) {
 func TestQ14(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 		createLineItem(t, tk, dom)
 		createPart(t, tk, dom)
 		testkit.LoadTableStats("test.lineitem.json", dom)
@@ -238,6 +269,7 @@ func TestQ9(t *testing.T) {
 		createSupplier(t, tk, dom)
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+		tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 
 		integrationSuiteData := GetTPCHSuiteData()
 		var (
@@ -265,6 +297,7 @@ func TestQ13(t *testing.T) {
 		tk.MustExec("use test")
 		createCustomer(t, tk, dom)
 		createOrders(t, tk, dom)
+		tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
 		integrationSuiteData := GetTPCHSuiteData()
@@ -320,6 +353,7 @@ func TestQ18(t *testing.T) {
 func TestQ21(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec(`use test`)
+		tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 		createSupplier(t, tk, dom)
 		createLineItem(t, tk, dom)
 		createOrders(t, tk, dom)
@@ -354,6 +388,7 @@ func TestQ21(t *testing.T) {
 func TestQ22(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec(`use test`)
+		tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 		createCustomer(t, tk, dom)
 		createOrders(t, tk, dom)
 		tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery=true")

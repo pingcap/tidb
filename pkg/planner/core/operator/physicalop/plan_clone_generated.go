@@ -103,6 +103,8 @@ func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	cloned.AccessCondition = utilfuncp.CloneExpressionsForPlanCache(op.AccessCondition, nil)
 	cloned.FilterCondition = utilfuncp.CloneExpressionsForPlanCache(op.FilterCondition, nil)
 	cloned.LateMaterializationFilterCondition = utilfuncp.CloneExpressionsForPlanCache(op.LateMaterializationFilterCondition, nil)
+	cloned.ForcedLateMaterializationFilterColumnIDs = make([]int64, len(op.ForcedLateMaterializationFilterColumnIDs))
+	copy(cloned.ForcedLateMaterializationFilterColumnIDs, op.ForcedLateMaterializationFilterColumnIDs)
 	cloned.HandleIdx = make([]int, len(op.HandleIdx))
 	copy(cloned.HandleIdx, op.HandleIdx)
 	if op.HandleCols != nil {
@@ -190,6 +192,13 @@ func (op *PhysicalTopN) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 	cloned.PhysicalSchemaProducer = *basePlan
 	cloned.ByItems = sliceutil.DeepClone(op.ByItems)
 	cloned.PartitionBy = sliceutil.DeepClone(op.PartitionBy)
+	if op.PrefixCol != nil {
+		if op.PrefixCol.SafeToShareAcrossSession() {
+			cloned.PrefixCol = op.PrefixCol
+		} else {
+			cloned.PrefixCol = op.PrefixCol.Clone().(*expression.Column)
+		}
+	}
 	return cloned, true
 }
 
@@ -203,6 +212,13 @@ func (op *PhysicalLimit) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, 
 	}
 	cloned.PhysicalSchemaProducer = *basePlan
 	cloned.PartitionBy = sliceutil.DeepClone(op.PartitionBy)
+	if op.PrefixCol != nil {
+		if op.PrefixCol.SafeToShareAcrossSession() {
+			cloned.PrefixCol = op.PrefixCol
+		} else {
+			cloned.PrefixCol = op.PrefixCol.Clone().(*expression.Column)
+		}
+	}
 	return cloned, true
 }
 

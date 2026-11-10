@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -73,9 +74,17 @@ func (ctx *ExprContext) GetDefaultCollationForUTF8MB4() string {
 	return ctx.sctx.GetSessionVars().DefaultCollationForUTF8MB4
 }
 
+// NewCollationEnabled returns whether expression building should use new collation semantics.
+func (ctx *ExprContext) NewCollationEnabled() bool {
+	return collate.NewCollationEnabled()
+}
+
 // GetBlockEncryptionMode returns the variable block_encryption_mode
 func (ctx *ExprContext) GetBlockEncryptionMode() string {
-	blockMode, _ := ctx.sctx.GetSessionVars().GetSystemVar(vardef.BlockEncryptionMode)
+	blockMode, ok := ctx.sctx.GetSessionVars().GetSystemVar(vardef.BlockEncryptionMode)
+	if !ok {
+		return vardef.DefBlockEncryptionMode
+	}
 	return blockMode
 }
 
@@ -132,6 +141,11 @@ func (ctx *ExprContext) GetGroupConcatMaxLen() uint64 {
 	return ctx.sctx.GetSessionVars().GroupConcatMaxLen
 }
 
+// SetGroupConcatMaxLenForTest sets the `GroupConcatMaxLen` only for test
+func (ctx *ExprContext) SetGroupConcatMaxLenForTest(val uint64) {
+	ctx.sctx.GetSessionVars().GroupConcatMaxLen = val
+}
+
 // ConnectionID indicates the connection ID of the current session.
 // If the context is not in a session, it should return 0.
 func (ctx *ExprContext) ConnectionID() uint64 {
@@ -162,6 +176,7 @@ func NewEvalContext(sctx sessionctx.Context) *EvalContext {
 	// set all optional properties
 	ctx.setOptionalProp(currentUserProp(sctx))
 	ctx.setOptionalProp(expropt.NewSessionVarsProvider(sctx))
+	ctx.setOptionalProp(expropt.NewSessionContextPropProvider(sctx))
 	ctx.setOptionalProp(infoSchemaProp(sctx))
 	ctx.setOptionalProp(expropt.KVStorePropProvider(sctx.GetStore))
 	ctx.setOptionalProp(sqlExecutorProp(sctx))

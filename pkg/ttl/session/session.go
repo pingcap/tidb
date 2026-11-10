@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
@@ -59,8 +58,6 @@ type Session interface {
 	ExecuteSQL(ctx context.Context, sql string, args ...any) ([]chunk.Row, error)
 	// RunInTxn executes the specified function in a txn
 	RunInTxn(ctx context.Context, fn func() error, mode TxnMode) (err error)
-	// ResetWithGlobalTimeZone resets the session time zone to global time zone
-	ResetWithGlobalTimeZone(ctx context.Context) error
 	// GlobalTimeZone returns the global timezone. It is used to compute expire time for TTL
 	GlobalTimeZone(ctx context.Context) (*time.Location, error)
 	// KillStmt kills the current statement execution
@@ -75,6 +72,14 @@ type session struct {
 	sctx       sessionctx.Context
 	sqlExec    sqlexec.SQLExecutor
 	avoidReuse func()
+}
+
+type jobContextKey struct{}
+
+// WithJobContext attributes user-table scans/deletes and their commits to a TTL job.
+// Use the original context for metadata operations and session setup.
+func WithJobContext(ctx context.Context, jobID string) context.Context {
+	return context.WithValue(ctx, jobContextKey{}, jobID)
 }
 
 // NewSession creates a new Session
@@ -114,6 +119,10 @@ func (s *session) GetSQLExecutor() sqlexec.SQLExecutor {
 
 // ExecuteSQL executes the sql
 func (s *session) ExecuteSQL(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
+	vars := s.GetSessionVars()
+	previousJobID := vars.TTLJobID
+	vars.TTLJobID, _ = ctx.Value(jobContextKey{}).(string)
+	defer func() { vars.TTLJobID = previousJobID }()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnTTL)
 	rs, err := s.sqlExec.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
@@ -140,8 +149,11 @@ func (s *session) RunInTxn(ctx context.Context, fn func() error, txnMode TxnMode
 		if !success {
 			// For now, the "ROLLBACK" can execute successfully even when the context has already been cancelled.
 			// Using another timeout context to avoid that this behavior will be changed in the future.
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			_, rollbackErr := s.ExecuteSQL(ctx, "ROLLBACK")
+			jobID, _ := ctx.Value(jobContextKey{}).(string)
+			rollbackCtx, cancel := context.WithTimeout(
+				WithJobContext(context.Background(), jobID), time.Second,
+			)
+			_, rollbackErr := s.ExecuteSQL(rollbackCtx, "ROLLBACK")
 			terror.Log(rollbackErr)
 			cancel()
 		}
@@ -176,29 +188,6 @@ func (s *session) RunInTxn(ctx context.Context, fn func() error, txnMode TxnMode
 	tracer.EnterPhase(metrics.PhaseOther)
 
 	success = true
-	return err
-}
-
-// ResetWithGlobalTimeZone resets the session time zone to global time zone
-func (s *session) ResetWithGlobalTimeZone(ctx context.Context) error {
-	sessVar := s.sctx.GetSessionVars()
-	if sessVar.TimeZone != nil {
-		globalTZ, err := sessVar.GetGlobalSystemVar(ctx, vardef.TimeZone)
-		if err != nil {
-			return err
-		}
-
-		tz, err := sessVar.GetSessionOrGlobalSystemVar(ctx, vardef.TimeZone)
-		if err != nil {
-			return err
-		}
-
-		if globalTZ == tz {
-			return nil
-		}
-	}
-
-	_, err := s.ExecuteSQL(ctx, "SET @@time_zone=@@global.time_zone")
 	return err
 }
 

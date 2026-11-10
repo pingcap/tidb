@@ -51,18 +51,26 @@ const (
 	// https://github.com/tikv/pd/blob/c40e319f50822678cda71ae62ee2fd70a9cac010/pkg/core/store.go#L523
 
 	storeDisconnectionDuration = 100 * time.Second
+
+	// LabelRuleBatchSize is the batch size for getting/putting label rules to/from PD
+	// to avoid overwhelming PD with too many requests at once
+	LabelRuleBatchSize = 50
 )
 
 // IsTypeCompatible checks whether type target is compatible with type src
 // they're compatible if
-// - same null/not null and unsigned flag(maybe we can allow src not null flag, target null flag later)
-// - have same evaluation type
-// - target's flen and decimal should be bigger or equals to src's
-// - elements in target is superset of elements in src if they're enum or set type
-// - same charset and collate if they're string types
+//   - same unsigned flag
+//   - not-null is compatible: src NOT NULL can restore into target nullable
+//     (e.g. old bind_info.create_time), but not the reverse
+//   - have same evaluation type
+//   - target's flen and decimal should be bigger or equals to src's
+//   - elements in target is superset of elements in src if they're enum or set type
+//   - same charset and collate if they're string types
 func IsTypeCompatible(src types.FieldType, target types.FieldType) (typeEq, collateEq bool) {
 	collateEq = src.GetCollate() == target.GetCollate()
-	if mysql.HasNotNullFlag(src.GetFlag()) != mysql.HasNotNullFlag(target.GetFlag()) {
+	// Backup NOT NULL data can always fit a nullable cluster column; the reverse
+	// may introduce NULLs into a NOT NULL column, so reject that direction.
+	if !mysql.HasNotNullFlag(src.GetFlag()) && mysql.HasNotNullFlag(target.GetFlag()) {
 		return false, collateEq
 	}
 	if mysql.HasUnsignedFlag(src.GetFlag()) != mysql.HasUnsignedFlag(target.GetFlag()) {

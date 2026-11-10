@@ -24,9 +24,9 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -153,8 +153,8 @@ func (m *MockBackendCtx) AdvanceWatermark(imported bool) error {
 }
 
 // GetLocalBackend returns the local backend.
-func (m *MockBackendCtx) GetLocalBackend() *local.Backend {
-	b := &local.Backend{}
+func (m *MockBackendCtx) GetLocalBackend() *ingestctrl.Backend {
+	b := &ingestctrl.Backend{}
 	b.LocalStoreDir = filepath.Join(os.TempDir(), "mock_backend", strconv.FormatInt(m.jobID, 10))
 	return b
 }

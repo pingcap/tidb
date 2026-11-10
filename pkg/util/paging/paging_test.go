@@ -21,9 +21,9 @@ import (
 )
 
 func TestGrowPagingSize(t *testing.T) {
-	require.Equal(t, GrowPagingSize(MinPagingSize, MaxPagingSize), MinPagingSize*pagingSizeGrow)
-	require.Equal(t, GrowPagingSize(MaxPagingSize, MaxPagingSize), uint64(MaxPagingSize))
-	require.Equal(t, GrowPagingSize(MaxPagingSize/pagingSizeGrow+1, MaxPagingSize), uint64(MaxPagingSize))
+	require.Equal(t, GrowPagingSize(MinPagingSize, MinAllowedMaxPagingSize), MinPagingSize*pagingSizeGrow)
+	require.Equal(t, GrowPagingSize(MinAllowedMaxPagingSize, MinAllowedMaxPagingSize), uint64(MinAllowedMaxPagingSize))
+	require.Equal(t, GrowPagingSize(MinAllowedMaxPagingSize/pagingSizeGrow+1, MinAllowedMaxPagingSize), uint64(MinAllowedMaxPagingSize))
 }
 
 func TestCalculateSeekCnt(t *testing.T) {
@@ -32,5 +32,5 @@ func TestCalculateSeekCnt(t *testing.T) {
 	require.InDelta(t, CalculateSeekCnt(MinPagingSize), 1, 0.1)
 	require.InDelta(t, CalculateSeekCnt(pagingGrowingSum), maxPagingSizeShift+1, 0.1)
 	require.InDelta(t, CalculateSeekCnt(pagingGrowingSum+1), maxPagingSizeShift+2, 0.1)
-	require.InDelta(t, CalculateSeekCnt(pagingGrowingSum+MaxPagingSize), maxPagingSizeShift+2, 0.1)
+	require.InDelta(t, CalculateSeekCnt(pagingGrowingSum+MinAllowedMaxPagingSize), maxPagingSizeShift+2, 0.1)
 }

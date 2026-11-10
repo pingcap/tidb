@@ -22,6 +22,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Those functions are used in test only.
+func (r *HTTPFlightRecorder) SetCategories(categories TraceCategory) {
+	r.enabledCategories = categories
+}
+
+func (r *HTTPFlightRecorder) Disable(categories TraceCategory) {
+	current := r.enabledCategories
+	next := current &^ categories
+	r.enabledCategories = next
+}
+
+// Enable enables trace events for the specified categories.
+func (r *HTTPFlightRecorder) Enable(categories TraceCategory) {
+	current := r.enabledCategories
+	next := current | categories
+	r.enabledCategories = next
+}
+
 func testFlightRecorderConfigGoodCase(t *testing.T) {
 	conf1 := `{
   "enabled_categories": [

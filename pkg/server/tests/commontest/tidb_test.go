@@ -335,6 +335,7 @@ func TestStatusPort(t *testing.T) {
 
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
 	err = server.Run(ts.Domain)
 	require.Error(t, err)
 }
@@ -344,6 +345,18 @@ func TestMultiStatements(t *testing.T) {
 
 	ts.RunFailedTestMultiStatements(t)
 	ts.RunTestMultiStatements(t)
+}
+
+func TestNonPreparedPlanCacheMultiStatements(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	ts.RunTestNonPreparedPlanCacheMultiStatements(t)
+}
+
+func TestNonPreparedPlanCacheMultiStatementsPointGet(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	ts.RunTestNonPreparedPlanCacheMultiStatementsPointGet(t)
 }
 
 func TestSocketForwarding(t *testing.T) {
@@ -462,7 +475,7 @@ func TestSocketAndIp(t *testing.T) {
 			rows := dbt.MustQuery("select user()")
 			cli.CheckRows(t, rows, "root@localhost")
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			cli.CheckRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO `root`@`%` WITH GRANT OPTION")
 			dbt.MustQuery("CREATE USER user1@'%'")
 			dbt.MustQuery("GRANT SELECT ON test.* TO user1@'%'")
 		})
@@ -476,7 +489,7 @@ func TestSocketAndIp(t *testing.T) {
 			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
 			cli.CheckRows(t, rows, "user1@127.0.0.1")
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON `test`.* TO 'user1'@'%'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO `user1`@`%`\nGRANT SELECT ON `test`.* TO `user1`@`%`")
 			rows = dbt.MustQuery("select host from information_schema.processlist where user = 'user1'")
 			records := cli.Rows(t, rows)
 			require.Contains(t, records[0], ":", "Missing :<port> in is.processlist")
@@ -492,7 +505,7 @@ func TestSocketAndIp(t *testing.T) {
 			rows := dbt.MustQuery("select user()")
 			cli.CheckRows(t, rows, "user1@localhost")
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON `test`.* TO 'user1'@'%'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO `user1`@`%`\nGRANT SELECT ON `test`.* TO `user1`@`%`")
 		})
 
 	// Setup user1@127.0.0.1 for loop back network interface access
@@ -505,7 +518,7 @@ func TestSocketAndIp(t *testing.T) {
 			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
 			cli.CheckRows(t, rows, "root@127.0.0.1")
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			cli.CheckRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO `root`@`%` WITH GRANT OPTION")
 			dbt.MustQuery("CREATE USER user1@127.0.0.1")
 			dbt.MustQuery("GRANT SELECT,INSERT ON test.* TO user1@'127.0.0.1'")
 		})
@@ -519,7 +532,7 @@ func TestSocketAndIp(t *testing.T) {
 			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
 			cli.CheckRows(t, rows, "user1@127.0.0.1")
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT SELECT,INSERT ON `test`.* TO 'user1'@'127.0.0.1'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO `user1`@`127.0.0.1`\nGRANT SELECT,INSERT ON `test`.* TO `user1`@`127.0.0.1`")
 		})
 	// Test with unix domain socket file connection with all hosts
 	cli.RunTests(t, func(config *mysql.Config) {
@@ -532,7 +545,7 @@ func TestSocketAndIp(t *testing.T) {
 			rows := dbt.MustQuery("select user()")
 			cli.CheckRows(t, rows, "user1@localhost")
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON `test`.* TO 'user1'@'%'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO `user1`@`%`\nGRANT SELECT ON `test`.* TO `user1`@`%`")
 		})
 
 	// Setup user1@localhost for socket (and if MySQL compatible; loop back network interface access)
@@ -546,7 +559,7 @@ func TestSocketAndIp(t *testing.T) {
 			rows := dbt.MustQuery("select user()")
 			cli.CheckRows(t, rows, "root@localhost")
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			cli.CheckRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO `root`@`%` WITH GRANT OPTION")
 			dbt.MustExec("CREATE USER user1@localhost")
 			dbt.MustExec("GRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO user1@localhost")
 		})
@@ -561,7 +574,7 @@ func TestSocketAndIp(t *testing.T) {
 			cli.CheckRows(t, rows, "user1@127.0.0.1")
 			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT SELECT,INSERT ON `test`.* TO 'user1'@'127.0.0.1'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO `user1`@`127.0.0.1`\nGRANT SELECT,INSERT ON `test`.* TO `user1`@`127.0.0.1`")
 			require.NoError(t, rows.Close())
 		})
 	// Test with unix domain socket file connection with all hosts
@@ -576,7 +589,7 @@ func TestSocketAndIp(t *testing.T) {
 			cli.CheckRows(t, rows, "user1@localhost")
 			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON `test`.* TO 'user1'@'localhost'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO `user1`@`localhost`\nGRANT SELECT,INSERT,UPDATE,DELETE ON `test`.* TO `user1`@`localhost`")
 			require.NoError(t, rows.Close())
 		})
 }
@@ -630,18 +643,24 @@ func TestOnlySocket(t *testing.T) {
 			cli.CheckRows(t, rows, "root@localhost")
 			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			cli.CheckRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO `root`@`%` WITH GRANT OPTION")
 			require.NoError(t, rows.Close())
 			dbt.MustExec("CREATE USER user1@'%'")
 			dbt.MustExec("GRANT SELECT ON test.* TO user1@'%'")
 		})
 	// Test with Network interface connection with all hosts, should fail since server not configured
+	tcpListener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	cli.Port = uint(tcpListener.Addr().(*net.TCPAddr).Port)
+	require.NoError(t, tcpListener.Close())
 	db, err := sql.Open("mysql", cli.GetDSN(func(config *mysql.Config) {
 		config.User = "root"
 		config.DBName = "test"
 	}))
 	require.NoErrorf(t, err, "Open failed")
-	err = db.Ping()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	err = db.PingContext(ctx)
+	cancel()
 	require.Errorf(t, err, "Connect succeeded when not configured!?!")
 	db.Close()
 	db, err = sql.Open("mysql", cli.GetDSN(func(config *mysql.Config) {
@@ -649,7 +668,9 @@ func TestOnlySocket(t *testing.T) {
 		config.DBName = "test"
 	}))
 	require.NoErrorf(t, err, "Open failed")
-	err = db.Ping()
+	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	err = db.PingContext(ctx)
+	cancel()
 	require.Errorf(t, err, "Connect succeeded when not configured!?!")
 	db.Close()
 	// Test with unix domain socket file connection with all hosts
@@ -664,7 +685,7 @@ func TestOnlySocket(t *testing.T) {
 			cli.CheckRows(t, rows, "user1@localhost")
 			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON `test`.* TO 'user1'@'%'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO `user1`@`%`\nGRANT SELECT ON `test`.* TO `user1`@`%`")
 			require.NoError(t, rows.Close())
 		})
 
@@ -681,7 +702,7 @@ func TestOnlySocket(t *testing.T) {
 			cli.CheckRows(t, rows, "root@localhost")
 			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			cli.CheckRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO `root`@`%` WITH GRANT OPTION")
 			require.NoError(t, rows.Close())
 			dbt.MustExec("CREATE USER user1@127.0.0.1")
 			dbt.MustExec("GRANT SELECT,INSERT ON test.* TO user1@'127.0.0.1'")
@@ -698,7 +719,7 @@ func TestOnlySocket(t *testing.T) {
 			cli.CheckRows(t, rows, "user1@localhost")
 			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON `test`.* TO 'user1'@'%'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO `user1`@`%`\nGRANT SELECT ON `test`.* TO `user1`@`%`")
 			require.NoError(t, rows.Close())
 		})
 
@@ -714,7 +735,7 @@ func TestOnlySocket(t *testing.T) {
 			cli.CheckRows(t, rows, "root@localhost")
 			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			cli.CheckRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO `root`@`%` WITH GRANT OPTION")
 			require.NoError(t, rows.Close())
 			dbt.MustExec("CREATE USER user1@localhost")
 			dbt.MustExec("GRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO user1@localhost")
@@ -731,7 +752,7 @@ func TestOnlySocket(t *testing.T) {
 			cli.CheckRows(t, rows, "user1@localhost")
 			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON `test`.* TO 'user1'@'localhost'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO `user1`@`localhost`\nGRANT SELECT,INSERT,UPDATE,DELETE ON `test`.* TO `user1`@`localhost`")
 			require.NoError(t, rows.Close())
 		})
 }
@@ -1101,6 +1122,7 @@ func TestGracefulShutdown(t *testing.T) {
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	require.NotNil(t, server)
+	server.SetDomain(ts.Domain)
 
 	go func() {
 		err := server.Run(nil)
@@ -1179,8 +1201,9 @@ func TestTopSQLCatchRunningSQL(t *testing.T) {
 	}()
 
 	mc := mockTopSQLTraceCPU.NewTopSQLCollector()
-	topsql.SetupTopSQLForTest(mc)
+	topsql.SetupTopProfilingForTest(mc)
 	sqlCPUCollector := collector.NewSQLCPUCollector(mc)
+	sqlCPUCollector.SetProcessCPUUpdater(ts.Server)
 	sqlCPUCollector.Start()
 	defer sqlCPUCollector.Stop()
 
@@ -1244,7 +1267,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	defer topsqlstate.DisableTopSQL()
 
 	mc := mockTopSQLTraceCPU.NewTopSQLCollector()
-	topsql.SetupTopSQLForTest(mc)
+	topsql.SetupTopProfilingForTest(mc)
 	sqlCPUCollector := collector.NewSQLCPUCollector(mc)
 	sqlCPUCollector.SetProcessCPUUpdater(ts.Server)
 	sqlCPUCollector.Start()
@@ -2292,8 +2315,8 @@ func TestTopSQLResourceTag(t *testing.T) {
 		reqs []tikvrpc.CmdType
 	}{
 		{"replace into mysql.global_variables (variable_name,variable_value) values ('tidb_enable_1pc', '1')", []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
-		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]), AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where  (0 = 0) group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
-		{"select /*+ AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where  (0 = 0)  group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]), AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), count(*) from `stmtstats`.`t` use index() where (0 = 0)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"select /*+ AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), count(*) from `stmtstats`.`t` use index(`idx`) where (0 = 0)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
 		{"select /*+ read_from_storage(tikv[`stmtstats`.`t`]), AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index() where  (0 = 0) group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
 		{"select /*+ AGG_TO_COP() */ bit_xor(crc32(md5(concat_ws(0x2, `_tidb_rowid`, `a`)))), ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024), count(*) from `stmtstats`.`t` use index(`idx`) where  (0 = 0) group by ((cast(crc32(md5(concat_ws(0x2, `_tidb_rowid`))) as signed) - 0) div 1 % 1024)", []tikvrpc.CmdType{tikvrpc.CmdCop}},
 	}
@@ -2321,6 +2344,14 @@ func TestTopSQLResourceTag(t *testing.T) {
 				dbt.MustExec(ca.sql)
 			}
 		}
+
+		// Force the bucketed path in admin check to ensure the internal bucketed SQL is covered.
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/forceAdminCheckBucketed", `return(true)`))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/forceAdminCheckBucketed"))
+		}()
+		dbt.MustExec("admin check table t")
+		dbt.MustExec("admin check index t idx")
 	}
 	executeCaseFn(execFn)
 
@@ -2376,7 +2407,7 @@ func TestLocalhostClientMapping(t *testing.T) {
 	cli.CheckRows(t, rows, "root@localhost")
 	require.NoError(t, rows.Close())
 	rows = dbt.MustQuery("show grants")
-	cli.CheckRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+	cli.CheckRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO `root`@`%` WITH GRANT OPTION")
 	require.NoError(t, rows.Close())
 
 	dbt.MustExec("CREATE USER 'localhostuser'@'localhost'")
@@ -2401,7 +2432,7 @@ func TestLocalhostClientMapping(t *testing.T) {
 			cli.CheckRows(t, rows, "localhostuser@127.0.0.1")
 			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'localhostuser'@'localhost'\nGRANT SELECT,UPDATE ON `test`.* TO 'localhostuser'@'localhost'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO `localhostuser`@`localhost`\nGRANT SELECT,UPDATE ON `test`.* TO `localhostuser`@`localhost`")
 			require.NoError(t, rows.Close())
 		})
 
@@ -2420,7 +2451,7 @@ func TestLocalhostClientMapping(t *testing.T) {
 			cli.CheckRows(t, rows, "localhostuser@localhost")
 			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'localhostuser'@'%'\nGRANT SELECT ON `test`.* TO 'localhostuser'@'%'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO `localhostuser`@`%`\nGRANT SELECT ON `test`.* TO `localhostuser`@`%`")
 			require.NoError(t, rows.Close())
 		})
 
@@ -3026,7 +3057,7 @@ func (p *mockProxyProtocolProxy) onConn(conn net.Conn) {
 		fmt.Println(err)
 	}
 	defer bconn.Close()
-	ppHeader := p.generateProxyProtocolHeaderV2("tcp4", p.clientAddr, p.frontend)
+	ppHeader := p.generateProxyProtocolHeaderV2("tcp4", p.clientAddr, p.ListenAddr().String())
 	bconn.Write(ppHeader)
 	p.proxyPipe(conn, bconn)
 }
@@ -3084,7 +3115,7 @@ func (p *mockProxyProtocolProxy) generateProxyProtocolHeaderV2(network, srcAddr,
 
 func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	cfg := util2.NewTestConfig()
-	cfg.Port = 4999
+	cfg.Port = 0
 	cfg.Status.ReportStatus = false
 	// Setup proxy protocol config
 	cfg.ProxyProtocol.Networks = "*"
@@ -3101,20 +3132,19 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
 	defer func() {
 		server.Close()
 	}()
 	<-server2.RunInGoTestChan
 	require.NotNil(t, server.Listener())
 	require.Nil(t, server.Socket())
+	serverPort := testutil.GetPortFromTCPAddr(server.ListenAddr())
 
 	// Prepare Proxy
-	ppProxy := newMockProxyProtocolProxy("127.0.0.1:5000", "127.0.0.1:4999", "192.168.1.2:60055", false)
+	ppProxy := newMockProxyProtocolProxy("127.0.0.1:0", fmt.Sprintf("127.0.0.1:%d", serverPort), "192.168.1.2:60055", false)
 	go func() {
 		ppProxy.Run()
 	}()
-	time.Sleep(time.Millisecond * 100)
 	defer func() {
 		ppProxy.Close()
 	}()
@@ -3128,22 +3158,25 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 			config.User = "root"
 		},
 		func(dbt *testkit.DBTestKit) {
-			rows := dbt.MustQuery("SHOW PROCESSLIST;")
+			rows := dbt.MustQuery("SELECT HOST FROM information_schema.processlist WHERE ID = CONNECTION_ID()")
 			records := cli.Rows(t, rows)
+			require.Len(t, records, 1)
 			require.Contains(t, records[0], "192.168.1.2:60055")
-		},
-	)
 
-	cli2 := testserverclient.NewTestServerClient()
-	cli2.Port = 4999
-	cli2.RunTests(t,
-		func(config *mysql.Config) {
-			config.User = "root"
-		},
-		func(dbt *testkit.DBTestKit) {
-			rows := dbt.MustQuery("SHOW PROCESSLIST;")
-			records := cli.Rows(t, rows)
-			require.Contains(t, records[0], "127.0.0.1:")
+			// Keep the proxied session visible while checking the direct connection.
+			cli2 := testserverclient.NewTestServerClient()
+			cli2.Port = serverPort
+			cli2.RunTests(t,
+				func(config *mysql.Config) {
+					config.User = "root"
+				},
+				func(dbt *testkit.DBTestKit) {
+					rows := dbt.MustQuery("SELECT HOST FROM information_schema.processlist WHERE ID = CONNECTION_ID()")
+					records := cli.Rows(t, rows)
+					require.Len(t, records, 1)
+					require.Contains(t, records[0], "127.0.0.1:")
+				},
+			)
 		},
 	)
 }
@@ -3444,22 +3477,12 @@ func TestIssue57531(t *testing.T) {
 	var rsCnt int
 	for i := range 2 {
 		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
-			var conn *sql.Conn
-			var netConn net.Conn
-			conn, _ = dbt.GetDB().Conn(context.Background())
-
-			// get the TCP connection
-			conn.Raw(func(driverConn any) error {
-				v := reflect.ValueOf(driverConn)
-				if v.Kind() == reflect.Ptr {
-					v = v.Elem()
-				}
-				f := v.FieldByName("netConn")
-				if f.IsValid() && f.Type().Implements(reflect.TypeOf((*net.Conn)(nil)).Elem()) {
-					netConn = *(*net.Conn)(unsafe.Pointer(f.UnsafeAddr()))
-				}
-				return nil
-			})
+			conn, err := dbt.GetDB().Conn(context.Background())
+			require.NoError(t, err)
+			defer func() {
+				_ = conn.Close()
+			}()
+			netConn := getRawNetConn(t, conn)
 
 			// execute `select sleep(300)`
 			go func() {
@@ -3485,18 +3508,293 @@ func TestIssue57531(t *testing.T) {
 			netConn.Close()
 		})
 
-		time.Sleep(10 * time.Millisecond)
-
 		// the `select sleep(300)` is killed
 		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
-			rsCnt = 0
-			rs := dbt.MustQuery("show processlist")
-			for rs.Next() {
-				rsCnt++
-			}
-			require.Equal(t, rsCnt, 1)
+			require.Eventually(t, func() bool {
+				rs := dbt.MustQuery("show processlist")
+				cnt := 0
+				for rs.Next() {
+					cnt++
+				}
+				return cnt == 1
+			}, 5*time.Second, 50*time.Millisecond)
 		})
 	}
+}
+
+func TestClientDisconnectKillsAutocommitInsert(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	for _, prepared := range []bool{false, true} {
+		name := "query"
+		if prepared {
+			name = "prepared"
+		}
+		for _, insertCase := range []struct {
+			name     string
+			buildSQL func(tableName string) string
+		}{
+			{
+				name: "single_row",
+				buildSQL: func(tableName string) string {
+					return fmt.Sprintf("insert into %s values (1, sleep(300))", tableName)
+				},
+			},
+			{
+				name: "multi_rows",
+				buildSQL: func(tableName string) string {
+					return fmt.Sprintf("insert into %s values (1, 1), (2, sleep(300)), (3, 3), (4, 4), (5, 5)", tableName)
+				},
+			},
+		} {
+			t.Run(name+"/"+insertCase.name, func(t *testing.T) {
+				ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+					tableName := "issue57531_insert_" + name + "_" + insertCase.name
+					dbt.MustExec("drop table if exists " + tableName)
+					dbt.MustExec("create table " + tableName + " (a int primary key, b int)")
+					runClientDisconnectAutocommitInsert(t, dbt, tableName, insertCase.buildSQL(tableName), prepared)
+				})
+			})
+		}
+	}
+}
+
+func runClientDisconnectAutocommitInsert(t *testing.T, dbt *testkit.DBTestKit, tableName, insertSQL string, prepared bool) {
+	conn, err := dbt.GetDB().Conn(context.Background())
+	require.NoError(t, err)
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	var stmt *sql.Stmt
+	if prepared {
+		stmt, err = conn.PrepareContext(context.Background(), insertSQL)
+		require.NoError(t, err)
+		defer func() {
+			_ = stmt.Close()
+		}()
+	}
+	netConn := getRawNetConn(t, conn)
+
+	done := make(chan error, 1)
+	go func() {
+		var execErr error
+		if prepared {
+			_, execErr = stmt.ExecContext(context.Background())
+		} else {
+			_, execErr = conn.ExecContext(context.Background(), insertSQL)
+		}
+		done <- execErr
+	}()
+
+	pattern := fmt.Sprintf("insert into %s%%", tableName)
+	require.Eventually(t, func() bool {
+		return processlistCountByInfo(t, dbt, pattern) == 1
+	}, 5*time.Second, 50*time.Millisecond)
+	processID, ok := processlistIDByInfo(t, dbt, pattern)
+	require.True(t, ok)
+	cleanupProcessByID(t, dbt.GetDB(), processID)
+
+	require.NoError(t, netConn.Close())
+
+	var execErr error
+	require.Eventually(t, func() bool {
+		select {
+		case execErr = <-done:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 50*time.Millisecond)
+	require.Error(t, execErr)
+
+	require.Eventually(t, func() bool {
+		return processlistCountByInfo(t, dbt, pattern) == 0
+	}, 5*time.Second, 50*time.Millisecond)
+
+	var cnt int
+	err = dbt.GetDB().QueryRowContext(context.Background(), "select count(*) from "+tableName).Scan(&cnt)
+	require.NoError(t, err)
+	require.Equal(t, 0, cnt)
+}
+
+func TestClientDisconnectKillsExplicitTxn(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	for _, txnSetup := range []string{"autocommit_off", "begin"} {
+		for _, prepared := range []bool{false, true} {
+			protocol := "query"
+			if prepared {
+				protocol = "prepared"
+			}
+			name := txnSetup + "/" + protocol
+			t.Run(name, func(t *testing.T) {
+				ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+					tableName := "issue68682_" + txnSetup + "_" + protocol
+					dbt.MustExec("drop table if exists " + tableName)
+					dbt.MustExec("create table " + tableName + " (id int primary key, v int)")
+					dbt.MustExec("insert into " + tableName + " values (1, 0), (2, 0)")
+					runClientDisconnectExplicitTxn(t, dbt, tableName, txnSetup, prepared)
+				})
+			})
+		}
+	}
+}
+
+func runClientDisconnectExplicitTxn(t *testing.T, dbt *testkit.DBTestKit, tableName, txnSetup string, prepared bool) {
+	conn, err := dbt.GetDB().Conn(context.Background())
+	require.NoError(t, err)
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	blockedSQL := fmt.Sprintf("update %s set v = 2 where id = 2", tableName)
+	var stmt *sql.Stmt
+	if prepared {
+		stmt, err = conn.PrepareContext(context.Background(), blockedSQL)
+		require.NoError(t, err)
+		defer func() {
+			_ = stmt.Close()
+		}()
+	}
+
+	_, err = conn.ExecContext(context.Background(), "set tidb_txn_mode = 'pessimistic'")
+	require.NoError(t, err)
+	if txnSetup == "autocommit_off" {
+		_, err = conn.ExecContext(context.Background(), "set autocommit = 0")
+	} else {
+		_, err = conn.ExecContext(context.Background(), "begin pessimistic")
+	}
+	require.NoError(t, err)
+	_, err = conn.ExecContext(context.Background(), "update "+tableName+" set v = 1 where id = 1")
+	require.NoError(t, err)
+
+	blocker, err := dbt.GetDB().Conn(context.Background())
+	require.NoError(t, err)
+	defer func() {
+		_, _ = blocker.ExecContext(context.Background(), "rollback")
+		_ = blocker.Close()
+	}()
+	_, err = blocker.ExecContext(context.Background(), "begin pessimistic")
+	require.NoError(t, err)
+	_, err = blocker.ExecContext(context.Background(), "update "+tableName+" set v = 3 where id = 2")
+	require.NoError(t, err)
+
+	netConn := getRawNetConn(t, conn)
+	done := make(chan error, 1)
+	go func() {
+		var execErr error
+		if prepared {
+			_, execErr = stmt.ExecContext(context.Background())
+		} else {
+			_, execErr = conn.ExecContext(context.Background(), blockedSQL)
+		}
+		done <- execErr
+	}()
+
+	pattern := fmt.Sprintf("update %s%%", tableName)
+	require.Eventually(t, func() bool {
+		return processlistCountByInfo(t, dbt, pattern) == 1
+	}, 5*time.Second, 50*time.Millisecond)
+	processID, ok := processlistIDByInfo(t, dbt, pattern)
+	require.True(t, ok)
+	cleanupProcessByID(t, dbt.GetDB(), processID)
+
+	require.NoError(t, netConn.Close())
+
+	var execErr error
+	require.Eventually(t, func() bool {
+		select {
+		case execErr = <-done:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 50*time.Millisecond)
+	require.Error(t, execErr)
+	require.Eventually(t, func() bool {
+		return processlistCountByInfo(t, dbt, pattern) == 0
+	}, 5*time.Second, 50*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = dbt.GetDB().ExecContext(ctx, "update "+tableName+" set v = 2 where id = 1")
+	require.NoError(t, err)
+
+	var row1, row2 int
+	err = dbt.GetDB().QueryRowContext(context.Background(), "select sum(if(id = 1, v, 0)), sum(if(id = 2, v, 0)) from "+tableName).Scan(&row1, &row2)
+	require.NoError(t, err)
+	require.Equal(t, 2, row1)
+	require.Equal(t, 0, row2)
+}
+
+func getRawNetConn(t *testing.T, conn *sql.Conn) net.Conn {
+	var netConn net.Conn
+	err := conn.Raw(func(driverConn any) error {
+		v := reflect.ValueOf(driverConn)
+		if v.Kind() == reflect.Ptr {
+			v = v.Elem()
+		}
+		f := v.FieldByName("netConn")
+		if f.IsValid() && f.Type().Implements(reflect.TypeOf((*net.Conn)(nil)).Elem()) {
+			netConn = *(*net.Conn)(unsafe.Pointer(f.UnsafeAddr()))
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.NotNil(t, netConn)
+	return netConn
+}
+
+func processlistCountByInfo(t *testing.T, dbt *testkit.DBTestKit, pattern string) int {
+	var cnt int
+	err := dbt.GetDB().QueryRowContext(
+		context.Background(),
+		"select count(*) from information_schema.processlist where info like ?",
+		pattern,
+	).Scan(&cnt)
+	require.NoError(t, err)
+	return cnt
+}
+
+func processlistIDByInfo(t *testing.T, dbt *testkit.DBTestKit, pattern string) (uint64, bool) {
+	var id uint64
+	err := dbt.GetDB().QueryRowContext(
+		context.Background(),
+		"select id from information_schema.processlist where info like ? limit 1",
+		pattern,
+	).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, false
+	}
+	require.NoError(t, err)
+	return id, true
+}
+
+func cleanupProcessByID(t *testing.T, db *sql.DB, processID uint64) {
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		conn, err := db.Conn(ctx)
+		if err != nil {
+			return
+		}
+		defer func() {
+			_ = conn.Close()
+		}()
+
+		var cnt int
+		err = conn.QueryRowContext(
+			ctx,
+			"select count(*) from information_schema.processlist where id = ?",
+			processID,
+		).Scan(&cnt)
+		if err != nil || cnt == 0 {
+			return
+		}
+		_, _ = conn.ExecContext(ctx, fmt.Sprintf("kill query %d", processID))
+	})
 }
 
 func TestCloseConnForUndeterminedError(t *testing.T) {
@@ -3663,6 +3961,23 @@ func TestAuditPluginRetrying(t *testing.T) {
 		retrying bool
 	}
 	testResults := make([]normalTest, 0)
+	var testResultsMu sync.Mutex
+	resetTestResults := func() {
+		testResultsMu.Lock()
+		testResults = testResults[:0]
+		testResultsMu.Unlock()
+	}
+	getTestResults := func() []normalTest {
+		testResultsMu.Lock()
+		res := slices.Clone(testResults)
+		testResultsMu.Unlock()
+		return res
+	}
+	appendTestResult := func(res normalTest) {
+		testResultsMu.Lock()
+		testResults = append(testResults, res)
+		testResultsMu.Unlock()
+	}
 
 	onGeneralEvent := func(ctx context.Context, sctx *variable.SessionVars, event plugin.GeneralEvent, cmd string) {
 		// Only consider the Completed event
@@ -3675,7 +3990,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 			audit.retrying = retrying.(bool)
 		}
 		audit.sql = sctx.StmtCtx.OriginalSQL
-		testResults = append(testResults, audit)
+		appendTestResult(audit)
 	}
 	plugin.LoadPluginForTest(t, onGeneralEvent)
 	defer plugin.Shutdown(context.Background())
@@ -3684,41 +3999,29 @@ func TestAuditPluginRetrying(t *testing.T) {
 	// 1. Auto-commit retry
 	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		db := dbt.GetDB()
-
-		_, err := db.Exec("DROP TABLE IF EXISTS auto_retry_test")
+		ctx := context.Background()
+		conn, err := db.Conn(ctx)
 		require.NoError(t, err)
-		_, err = db.Exec("CREATE TABLE auto_retry_test (id INT PRIMARY KEY, val INT)")
+		defer conn.Close()
+
+		_, err = conn.ExecContext(ctx, "SET @@session.tidb_txn_mode = 'optimistic'")
 		require.NoError(t, err)
-		_, err = db.Exec("INSERT INTO auto_retry_test VALUES (1, 0)")
+		_, err = conn.ExecContext(ctx, "DROP TABLE IF EXISTS auto_retry_test")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "CREATE TABLE auto_retry_test (id INT PRIMARY KEY, val INT)")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "INSERT INTO auto_retry_test VALUES (1, 0)")
 		require.NoError(t, err)
 
-		// a big enough concurrency to trigger retries
-		concurrency := 500
-		// Usually the following retry-loop will succeed in the first try. However, if we are lucky
-		// enough, it might need more times to trigger the retry.
-		require.Eventually(t, func() bool {
-			testResults = testResults[:0]
-			var wg sync.WaitGroup
-			for range concurrency {
-				conn, err := db.Conn(context.Background())
-				require.NoError(t, err)
-				wg.Go(func() {
-					_, err := conn.QueryContext(context.Background(), "UPDATE auto_retry_test SET val = val + 1 WHERE id = 1")
-					require.NoError(t, err)
-				})
-			}
-			wg.Wait()
-
-			return len(testResults) > concurrency
-		}, time.Second*10, time.Millisecond*100)
-
-		nonRetryingCount := 0
-		for _, res := range testResults {
-			if !res.retrying {
-				nonRetryingCount++
-			}
-		}
-		require.Equal(t, concurrency, nonRetryingCount)
+		updateSQL := "UPDATE auto_retry_test SET val = val + 1 WHERE id = 1"
+		resetTestResults()
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitError8942", `1*return(true)->return(false)`))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitError8942"))
+		}()
+		_, err = conn.ExecContext(ctx, updateSQL)
+		require.NoError(t, err)
+		require.Equal(t, []normalTest{{sql: updateSQL, retrying: false}, {sql: updateSQL, retrying: true}}, getTestResults())
 	})
 
 	runExplicitTransactionRetry := func(db *sql.DB, isOptimistic bool) {
@@ -3746,14 +4049,14 @@ func TestAuditPluginRetrying(t *testing.T) {
 			return conn
 		}
 
-		testResults = testResults[:0]
+		resetTestResults()
 		var wg sync.WaitGroup
 		// Transaction 1
 		wg.Go(func() {
 			conn := connect()
 			defer conn.Close()
 
-			_, err = conn.ExecContext(context.Background(), "BEGIN")
+			_, err := conn.ExecContext(context.Background(), "BEGIN")
 			require.NoError(t, err)
 			close(step1T1Started)
 			<-step2T2Committed
@@ -3768,7 +4071,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 			conn := connect()
 			defer conn.Close()
 
-			_, err = conn.ExecContext(context.Background(), "BEGIN")
+			_, err := conn.ExecContext(context.Background(), "BEGIN")
 			require.NoError(t, err)
 			_, err = conn.ExecContext(context.Background(), "UPDATE retry_test SET val = val + 20 WHERE id = 1")
 			require.NoError(t, err)
@@ -3779,6 +4082,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 		})
 		wg.Wait()
 
+		testResults := getTestResults()
 		retryingCount := 0
 		nonRetryingCount := 0
 		for _, res := range testResults {
@@ -3789,12 +4093,12 @@ func TestAuditPluginRetrying(t *testing.T) {
 			}
 		}
 
-		require.Greater(t, retryingCount, 0)
 		// (BEGIN + UPDATE + COMMIT) * 2 transactions = 6
 		expectedSQLCount := 6
 		if isOptimistic {
 			expectedSQLCount += 2 // extra `SET` variable SQL
 		}
+		require.Greater(t, retryingCount, 0)
 		require.Equal(t, expectedSQLCount, nonRetryingCount)
 	}
 
@@ -3811,7 +4115,195 @@ func TestAuditPluginRetrying(t *testing.T) {
 	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		db := dbt.GetDB()
 
-		testResults = testResults[:0]
+		resetTestResults()
 		runExplicitTransactionRetry(db, true)
+	})
+}
+
+func TestIssue62673(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTests(t, func(c *mysql.Config) {
+		c.AllowAllFiles = true
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		// Generate a big local file
+		filePath := filepath.Join(t.TempDir(), "big_file.txt")
+		mysql.RegisterLocalFile(filePath)
+		for i := range 1000 {
+			err := os.WriteFile(filePath, fmt.Appendf(nil, "%d\n", i), os.ModePerm)
+			require.NoError(t, err)
+		}
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+
+		testserverclient.MustExec(ctx, t, conn, "create table t (a int)")
+
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/CommitWorkError", "return(1)")
+
+		testStart := time.Now()
+		testDuration := time.Second
+		for time.Since(testStart) < testDuration {
+			_, err = conn.ExecContext(ctx, fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t", filePath))
+			require.Error(t, err)
+
+			testserverclient.MustQuery(ctx, t, ts.TestServerClient, conn, "SELECT COUNT(*) FROM t")
+		}
+	})
+}
+
+// TestLoadDataLocalRetryDesync reproduces a protocol desync bug where TiDB's
+// optimistic transaction retry re-executes LOAD DATA LOCAL INFILE from
+// StmtHistory, sending a second 0xfb LOCAL_INFILE_REQUEST to a client that
+// is waiting for OK/ERR. This corrupts the MySQL protocol framing.
+//
+// Root cause: LOAD DATA LOCAL is incorrectly added to StmtHistory (in
+// finishStmt) because it is not excluded from the CouldRetry path. File
+// data is a one-shot network resource and cannot be replayed.
+func TestLoadDataLocalRetryDesync(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTests(t, func(c *mysql.Config) {
+		c.AllowAllFiles = true
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		filePath := filepath.Join(t.TempDir(), "retry_desync.csv")
+		mysql.RegisterLocalFile(filePath)
+		err := os.WriteFile(filePath, []byte("1\n2\n3\n"), os.ModePerm)
+		require.NoError(t, err)
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+
+		testserverclient.MustExec(ctx, t, conn, "create table t_retry_desync (a int)")
+
+		// Must use optimistic txn mode — pessimistic skips the retry path.
+		testserverclient.MustExec(ctx, t, conn, "SET tidb_txn_mode = 'optimistic'")
+
+		// Inject kv.ErrTxnRetryable during txn commit to trigger optimistic
+		// transaction retry. Fire once so the retry's commit can succeed.
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/mockCommitError8942",
+			`1*return(true)->return(false)`)
+
+		// Execute LOAD DATA LOCAL INFILE.
+		// Before fix: session.retry() re-executes the statement from StmtHistory,
+		// calling LoadDataExec.Open() again which sends a second 0xfb
+		// LOCAL_INFILE_REQUEST → client gets ErrMalformPkt → protocol desync.
+		// After fix: CouldRetry is set to false for LOAD DATA LOCAL, so the
+		// commit error is returned to the client without retry attempt.
+		_, loadErr := conn.ExecContext(ctx, fmt.Sprintf(
+			"LOAD DATA LOCAL INFILE '%s' INTO TABLE t_retry_desync", filePath))
+		// The commit error should propagate to the client.
+		require.Error(t, loadErr, "LOAD DATA should return commit error instead of retrying")
+		t.Logf("LOAD DATA result: %v", loadErr)
+
+		// The connection must remain usable — no protocol desync.
+		var val int
+		err = conn.QueryRowContext(ctx, "SELECT 1").Scan(&val)
+		require.NoError(t, err, "connection should be usable after LOAD DATA commit error")
+		require.Equal(t, 1, val)
+	})
+}
+
+// TestLoadDataLocalRetryDesyncExplicitTxn is the explicit-transaction variant
+// of TestLoadDataLocalRetryDesync. It verifies that in a multi-statement
+// optimistic transaction (BEGIN; INSERT; LOAD DATA LOCAL; COMMIT), the
+// CouldRetry=false set by LOAD DATA LOCAL correctly prevents retry and that
+// neither the INSERT nor the LOAD DATA rows are committed.
+func TestLoadDataLocalRetryDesyncExplicitTxn(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTests(t, func(c *mysql.Config) {
+		c.AllowAllFiles = true
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		filePath := filepath.Join(t.TempDir(), "retry_desync_txn.csv")
+		mysql.RegisterLocalFile(filePath)
+		err := os.WriteFile(filePath, []byte("10\n20\n30\n"), os.ModePerm)
+		require.NoError(t, err)
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+
+		testserverclient.MustExec(ctx, t, conn, "create table t_retry_txn (a int)")
+		testserverclient.MustExec(ctx, t, conn, "SET tidb_txn_mode = 'optimistic'")
+		// Enable retry for explicit transactions.
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectOptimisticTxnRetryable", "return(true)")
+		// Inject one retryable commit error.
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/mockCommitError8942",
+			`1*return(true)->return(false)`)
+
+		// Explicit transaction: INSERT then LOAD DATA LOCAL.
+		testserverclient.MustExec(ctx, t, conn, "BEGIN")
+		testserverclient.MustExec(ctx, t, conn, "INSERT INTO t_retry_txn VALUES (1)")
+		_, loadErr := conn.ExecContext(ctx, fmt.Sprintf(
+			"LOAD DATA LOCAL INFILE '%s' INTO TABLE t_retry_txn", filePath))
+		require.NoError(t, loadErr, "LOAD DATA should succeed within the transaction")
+
+		// COMMIT should fail because CouldRetry=false prevents retry.
+		_, commitErr := conn.ExecContext(ctx, "COMMIT")
+		require.Error(t, commitErr, "COMMIT should return error since retry is disabled for LOAD DATA LOCAL")
+		require.Contains(t, commitErr.Error(), "8022", "should be kv.ErrTxnRetryable (error code 8022)")
+		t.Logf("COMMIT result: %v", commitErr)
+
+		// Neither INSERT nor LOAD DATA rows should be committed.
+		var count int
+		err = conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM t_retry_txn").Scan(&count)
+		require.NoError(t, err)
+		require.Equal(t, 0, count, "no rows should be committed after failed transaction")
+
+		// Connection must remain usable.
+		var val int
+		err = conn.QueryRowContext(ctx, "SELECT 1").Scan(&val)
+		require.NoError(t, err, "connection should be usable after failed explicit txn")
+		require.Equal(t, 1, val)
+	})
+}
+
+// TestLoadDataLocalPessimisticRetryDesync verifies that a retryable
+// single-statement deadlock does not re-execute LOAD DATA LOCAL INFILE.
+// The client file stream is a one-shot resource, so reopening LoadDataExec
+// would send a second LOCAL_INFILE_REQUEST and desynchronize the connection.
+func TestLoadDataLocalPessimisticRetryDesync(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTests(t, func(c *mysql.Config) {
+		c.AllowAllFiles = true
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		filePath := filepath.Join(t.TempDir(), "pessimistic_retry_desync.csv")
+		mysql.RegisterLocalFile(filePath)
+		err := os.WriteFile(filePath, []byte("1,one\n"), os.ModePerm)
+		require.NoError(t, err)
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+
+		testserverclient.MustExec(ctx, t, conn, "CREATE TABLE t_pessimistic_retry (id INT PRIMARY KEY, v VARCHAR(16))")
+		testserverclient.MustExec(ctx, t, conn, "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+		testserverclient.MustExec(ctx, t, conn, "BEGIN PESSIMISTIC")
+
+		// Return a retryable single-statement deadlock for the first LockKeys
+		// request after the local file has been consumed.
+		testfailpoint.Enable(t,
+			"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnDeadlock",
+			`1*return(true)->return(false)`)
+
+		loadCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		_, loadErr := conn.ExecContext(loadCtx, fmt.Sprintf(
+			"LOAD DATA LOCAL INFILE '%s' REPLACE INTO TABLE t_pessimistic_retry FIELDS TERMINATED BY ','",
+			filePath))
+		require.Error(t, loadErr)
+		var mysqlErr *mysql.MySQLError
+		require.ErrorAs(t, loadErr, &mysqlErr, "the original deadlock should be returned")
+		require.Equal(t, uint16(tmysql.ErrLockDeadlock), mysqlErr.Number)
+
+		// No row is committed and the connection protocol remains synchronized.
+		var count int
+		err = conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM t_pessimistic_retry").Scan(&count)
+		require.NoError(t, err, "connection should be usable after the deadlock")
+		require.Equal(t, 0, count)
 	})
 }

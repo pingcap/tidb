@@ -17,9 +17,12 @@ package priorityqueue_test
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -86,6 +89,15 @@ func TestAnalyzeNonPartitionedTable(t *testing.T) {
 	require.NoError(t, err)
 	tblStats = handle.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	require.Equal(t, int64(3), tblStats.RealtimeCount)
+
+	// Auto Analyze samples NDV above tidb_analyze_sampled_ndv_threshold like a
+	// manual ANALYZE, at about the threshold number of rows. The saved
+	// SAMPLERATE keeps TopN and histograms of this tiny table from taking every
+	// row, which would raise the NDV rate to 1.
+	tk.MustExec("analyze table t with 0.3 samplerate")
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1")
+	require.NoError(t, job.Analyze(handle, dom.SysProcTracker()))
+	tk.MustQuery("select job_info from mysql.analyze_jobs where table_name = 't' order by id desc limit 1").CheckContain("0.3333333333333333 ndvrate")
 }
 
 func TestAnalyzeNonPartitionedIndexes(t *testing.T) {
@@ -132,7 +144,7 @@ func TestAnalyzeNonPartitionedIndexes(t *testing.T) {
 func TestNonPartitionedTableValidateAndPrepare(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(session.CreateAnalyzeJobsTable)
+	tk.MustExec(metadef.CreateAnalyzeJobsTable)
 	tk.MustExec("create schema example_schema")
 	tk.MustExec("use example_schema")
 	tk.MustExec("create table example_table1 (a int, b int, index idx(a))")
@@ -176,7 +188,7 @@ func TestNonPartitionedTableValidateAndPrepare(t *testing.T) {
 func TestValidateAndPrepareWhenOnlyHasFailedAnalysisRecords(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(session.CreateAnalyzeJobsTable)
+	tk.MustExec(metadef.CreateAnalyzeJobsTable)
 	tk.MustExec("create schema example_schema")
 	tk.MustExec("use example_schema")
 	tk.MustExec("create table example_table1 (a int, b int, index idx(a))")
@@ -204,4 +216,72 @@ func TestValidateAndPrepareWhenOnlyHasFailedAnalysisRecords(t *testing.T) {
 	valid, failReason = job.ValidateAndPrepare(sctx)
 	require.False(t, valid)
 	require.Equal(t, "last failed analysis duration is less than 30m0s", failReason)
+}
+
+func TestNonPartitionedTableValidateAndPrepareRetriesNotReadyMV(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable=on")
+	tk.MustExec(metadef.CreateAnalyzeJobsTable)
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+
+	const pauseBuildFailpoint = "github.com/pingcap/tidb/pkg/ddl/pauseCreateMaterializedViewBuild"
+	require.NoError(t, failpoint.Enable(pauseBuildFailpoint, "pause"))
+	enabled := true
+	defer func() {
+		if enabled {
+			require.NoError(t, failpoint.Disable(pauseBuildFailpoint))
+		}
+	}()
+
+	ddlDone := make(chan error, 1)
+	go func() {
+		tkDDL := testkit.NewTestKit(t, store)
+		tkDDL.MustExec("use test")
+		tkDDL.MustExec("set tidb_mview_enable=on")
+		ddlDone <- tkDDL.ExecToErr("create materialized view mv_not_ready (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
+	}()
+
+	require.Eventually(t, func() bool {
+		is := dom.InfoSchema()
+		mvTable, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv_not_ready"))
+		if err != nil {
+			return false
+		}
+		return mvTable.Meta().MaterializedView != nil &&
+			mvTable.Meta().MaterializedView.GetInitBuildState() == model.MViewInitBuildBuilding
+	}, 30*time.Second, 100*time.Millisecond)
+
+	mvTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv_not_ready"))
+	require.NoError(t, err)
+	job := &priorityqueue.NonPartitionedTableAnalysisJob{
+		TableID: mvTable.Meta().ID,
+		Weight:  1,
+	}
+	var (
+		failureHookCalled bool
+		needRetry         bool
+	)
+	job.RegisterFailureHook(func(_ priorityqueue.AnalysisJob, boolRetry bool) {
+		failureHookCalled = true
+		needRetry = boolRetry
+	})
+
+	valid, failReason := job.ValidateAndPrepare(tk.Session().(sessionctx.Context))
+	require.False(t, valid)
+	require.True(t, failureHookCalled)
+	require.True(t, needRetry)
+	require.Contains(t, failReason, "initial build is in progress")
+
+	require.NoError(t, failpoint.Disable(pauseBuildFailpoint))
+	enabled = false
+	select {
+	case err := <-ddlDone:
+		require.NoError(t, err)
+	case <-time.After(60 * time.Second):
+		t.Fatal("timed out waiting CREATE MATERIALIZED VIEW to finish")
+	}
 }

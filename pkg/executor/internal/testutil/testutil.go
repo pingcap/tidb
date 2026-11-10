@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
-// MockDataSourceParameters mpcks data source parameters
+// MockDataSourceParameters mocks data source parameters
 type MockDataSourceParameters struct {
 	Ctx         sessionctx.Context
 	DataSchema  *expression.Schema

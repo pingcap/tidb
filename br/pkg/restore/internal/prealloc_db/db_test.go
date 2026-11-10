@@ -41,6 +41,59 @@ func (t *testAllocator) AdvanceGlobalIDs(n int) (int64, error) {
 	return old, nil
 }
 
+func TestCreateDoesNotMutateInputMetadata(t *testing.T) {
+	ctx := context.Background()
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	db, supportPolicy, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "")
+	require.NoError(t, err)
+	require.False(t, supportPolicy)
+	defer db.Close()
+
+	dbInfo := &model.DBInfo{
+		ID:                 100,
+		Name:               ast.NewCIStr("immutable_metadata"),
+		Charset:            "utf8mb4",
+		Collate:            "utf8mb4_bin",
+		PlacementPolicyRef: &model.PolicyRefInfo{Name: ast.NewCIStr("missing_policy")},
+	}
+	exists, err := db.CreateDatabase(ctx, dbInfo, supportPolicy, nil)
+	require.NoError(t, err)
+	require.False(t, exists)
+	require.NotNil(t, dbInfo.PlacementPolicyRef)
+
+	fieldType := types.NewFieldType(mysql.TypeTimestamp)
+	table := &metautil.Table{
+		DB: dbInfo,
+		Info: &model.TableInfo{
+			ID:   101,
+			Name: ast.NewCIStr("t"),
+			Columns: []*model.ColumnInfo{{
+				ID:        1,
+				Name:      ast.NewCIStr("id"),
+				FieldType: *fieldType,
+				State:     model.StatePublic,
+			}},
+			Charset:            "utf8mb4",
+			Collate:            "utf8mb4_bin",
+			PlacementPolicyRef: &model.PolicyRefInfo{Name: ast.NewCIStr("missing_policy")},
+			TTLInfo: &model.TTLInfo{
+				ColumnName:       ast.NewCIStr("id"),
+				IntervalExprStr:  "1",
+				IntervalTimeUnit: int(ast.TimeUnitDay),
+				Enable:           true,
+			},
+		},
+	}
+	allocator := testAllocator(1000)
+	ids, err := prealloctableid.NewAndPrealloc([]*metautil.Table{table}, &allocator)
+	require.NoError(t, err)
+	db.RegisterPreallocatedIDs(ids)
+	require.NoError(t, db.CreateTable(ctx, table, nil, supportPolicy, nil))
+
+	require.NotNil(t, table.Info.PlacementPolicyRef)
+	require.True(t, table.Info.TTLInfo.Enable)
+}
+
 func TestRestoreAutoIncID(t *testing.T) {
 	allocator := testAllocator(0)
 	s := utiltest.CreateRestoreSchemaSuite(t)
@@ -81,14 +134,16 @@ func TestRestoreAutoIncID(t *testing.T) {
 	// Test empty collate value
 	table.DB.Charset = "utf8mb4"
 	table.DB.Collate = ""
-	err = db.CreateDatabase(context.Background(), table.DB, false, nil)
+	exists, err = db.CreateDatabase(context.Background(), table.DB, false, nil)
 	require.NoErrorf(t, err, "Error create empty collate db: %s %s", err, s.Mock.DSN)
+	require.False(t, exists)
 	tk.MustExec("drop database if exists test;")
 	// Test empty charset value
 	table.DB.Charset = ""
 	table.DB.Collate = "utf8mb4_bin"
-	err = db.CreateDatabase(context.Background(), table.DB, false, nil)
+	exists, err = db.CreateDatabase(context.Background(), table.DB, false, nil)
 	require.NoErrorf(t, err, "Error create empty charset db: %s %s", err, s.Mock.DSN)
+	require.False(t, exists)
 	uniqueMap := make(map[restore.UniqueTableName]bool)
 
 	preallocId := func(tables []*metautil.Table) {
@@ -345,7 +400,7 @@ func TestPolicyMode(t *testing.T) {
 	policyMap = &sync.Map{}
 	fakepolicy1 = fakePolicyInfo(1)
 	policyMap.Store(fakepolicy1.Name.L, fakepolicy1)
-	err = db.CreateDatabase(ctx, &model.DBInfo{
+	exists, err := db.CreateDatabase(ctx, &model.DBInfo{
 		ID:      20000,
 		Name:    ast.NewCIStr("test_db"),
 		Charset: "utf8mb4",
@@ -357,6 +412,7 @@ func TestPolicyMode(t *testing.T) {
 		},
 	}, true, policyMap)
 	require.NoError(t, err)
+	require.False(t, exists)
 }
 
 func TestCreateTablesInDb(t *testing.T) {

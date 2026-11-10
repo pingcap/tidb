@@ -26,6 +26,8 @@ import (
 type LogicalLock struct {
 	BaseLogicalPlan `hash64-equals:"true"`
 
+	// Lock points to AST lock metadata. Preprocess may normalize the AST before planning,
+	// but after LogicalLock is built this field is treated as read-only.
 	Lock         *ast.SelectLockInfo `hash64-equals:"true"`
 	TblID2Handle map[int64][]util.HandleCols
 
@@ -129,8 +131,6 @@ func (p *LogicalLock) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.Logica
 // ExtractFD inherits BaseLogicalPlan.LogicalPlan.<22nd> implementation.
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
-
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************
 // isSelectForUpdateLockType checks if the select lock type is the supported for update type.

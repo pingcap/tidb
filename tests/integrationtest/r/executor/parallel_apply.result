@@ -107,8 +107,8 @@ Delete	N/A	root		N/A
   └─Apply	10000.00	root		CARTESIAN inner join
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-    └─Selection(Probe)	8000.00	root		gt(mul(Column#7, 2), 1)
-      └─StreamAgg	10000.00	root		funcs:min(executor__parallel_apply.t2.a)->Column#7
+    └─Selection(Probe)	8000.00	root		gt(mul(Column#9, 2), 1)
+      └─StreamAgg	10000.00	root		funcs:min(executor__parallel_apply.t2.a)->Column#9
         └─TopN	10000.00	root		executor__parallel_apply.t2.a, offset:0, count:1
           └─TableReader	10000.00	root		data:TopN
             └─TopN	10000.00	cop[tikv]		executor__parallel_apply.t2.a, offset:0, count:1

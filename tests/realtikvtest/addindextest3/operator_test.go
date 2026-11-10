@@ -30,9 +30,9 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -54,6 +54,7 @@ func init() {
 }
 
 func getRealAddIndexJob(t *testing.T, tk *testkit.TestKit) *model.Job {
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t (a int);")
 	var realJob *model.Job
