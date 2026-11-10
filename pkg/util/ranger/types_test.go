@@ -661,7 +661,7 @@ func TestIntersectSortedRanges(t *testing.T) {
 				}
 				bound := func(d types.Datum) []types.Datum { return []types.Datum{types.NewIntDatum(1), d} }
 				wide := ranger.Ranges{{LowVal: bound(types.MinNotNullDatum()), HighVal: bound(bit(512)), HighExclude: true, Collators: collate.GetBinaryCollatorSlice(2)}}
-				points := ranger.Ranges{}
+				points := make(ranger.Ranges, 0, 4)
 				for _, value := range []uint64{255, 256, 511, 512} {
 					points = append(points, &ranger.Range{LowVal: bound(bit(value)), HighVal: bound(bit(value)), Collators: collate.GetBinaryCollatorSlice(2)})
 				}
