@@ -1,0 +1,43 @@
+Q create table t (a int, b int, c int, key(a))
+Q create table s (a int, b int)
+Q explain format='brief' select a from t where b > (select max(a) from s where tan(b) > 1)
+P TableDual 0.00 root  rows:0
+P ScalarSubQuery N/A root  Output: ScalarQueryCol#11
+P └─MaxOneRow 1.00 root  
+P   └─StreamAgg 1.00 root  funcs:max(test.s.a)->Column#10
+P     └─TopN 1.00 root  test.s.a:desc, offset:0, count:1
+P       └─Selection 7992.00 root  gt(tan(cast(test.s.b, double BINARY)), 1)
+P         └─TableReader 9990.00 root  data:Selection
+P           └─Selection 9990.00 cop[tikv]  not(isnull(test.s.a))
+P             └─TableFullScan 10000.00 cop[tikv] table:s keep order:false, stats:pseudo
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to storage layer now.
+Q select a from t where b > (select max(a) from s where tan(b) > 1)
+Q explain format='brief' select a, (select count(*) from s where tan(b) > 1) from t
+P Projection 10000.00 root  test.t.a, ScalarQueryCol#15(0)->Column#16
+P └─IndexReader 10000.00 root  index:IndexFullScan
+P   └─IndexFullScan 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo
+P ScalarSubQuery N/A root  Output: ScalarQueryCol#15
+P └─MaxOneRow 1.00 root  
+P   └─HashAgg 1.00 root  funcs:count(1)->Column#14
+P     └─Selection 8000.00 root  gt(tan(cast(test.s.b, double BINARY)), 1)
+P       └─TableReader 10000.00 root  data:TableFullScan
+P         └─TableFullScan 10000.00 cop[tikv] table:s keep order:false, stats:pseudo
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to storage layer now.
+Q explain format='brief' select a from t where b in (select a from s where tan(b) > 1)
+P HashJoin 7992.00 root  inner join, equal:[eq(test.t.b, test.s.a)]
+P ├─HashAgg(Build) 6393.60 root  group by:test.s.a, funcs:firstrow(test.s.a)->test.s.a
+P │ └─Selection 7992.00 root  gt(tan(cast(test.s.b, double BINARY)), 1)
+P │   └─TableReader 9990.00 root  data:Selection
+P │     └─Selection 9990.00 cop[tikv]  not(isnull(test.s.a))
+P │       └─TableFullScan 10000.00 cop[tikv] table:s keep order:false, stats:pseudo
+P └─TableReader(Probe) 9990.00 root  data:Selection
+P   └─Selection 9990.00 cop[tikv]  not(isnull(test.t.b))
+P     └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to storage layer now.
+Q explain format='brief' select a from t where exists (select 1 from s where tan(b) > 1)
+P TableDual 0.00 root  rows:0
+P ScalarSubQuery N/A root  Output: ScalarQueryCol#11, ScalarQueryCol#12, ScalarQueryCol#13, ScalarQueryCol#14
+P └─Selection 8000.00 root  gt(tan(cast(test.s.b, double BINARY)), 1)
+P   └─TableReader 10000.00 root  data:TableFullScan
+P     └─TableFullScan 10000.00 cop[tikv] table:s keep order:false, stats:pseudo
+  W Scalar function 'tan'(signature: Tan, return type: double) is not supported to push down to storage layer now.

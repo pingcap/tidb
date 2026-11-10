@@ -727,9 +727,31 @@ fn tiflash_selection_sends_integer_builtin_types_as_go() {
 /// `testdata/push_down_refusal_warnings.txt` are a Go tidb-server's.
 #[test]
 fn index_merge_and_window_push_down_refusals_warn_as_go() {
+    let explains = explains_and_warnings_match(
+        437,
+        include_str!("../../../../../testdata/push_down_refusal_warnings.txt"),
+    );
+    assert_eq!(explains, 10);
+}
+
+/// A scalar, IN or EXISTS subquery's refusal is reported once: its plan is
+/// built once, as Go's. `testdata/scalar_subquery_push_down_warnings.txt` is
+/// Go's testkit output.
+#[test]
+fn subquery_push_down_refusals_warn_as_go() {
+    let explains = explains_and_warnings_match(
+        438,
+        include_str!("../../../../../testdata/scalar_subquery_push_down_warnings.txt"),
+    );
+    assert_eq!(explains, 4);
+}
+
+/// Runs a fixture's `Q` statements and compares each EXPLAIN's `P` plan rows
+/// and `W` warnings; the number of EXPLAINs compared.
+fn explains_and_warnings_match(connection: u64, fixture: &str) -> usize {
     let (stack, _users) = cop_backed_stack();
-    let mut session = stack.factory.open_session(session_context(437)).expect("session opens");
-    let fixture = include_str!("../../../../../testdata/push_down_refusal_warnings.txt");
+    let mut session = stack.factory.open_session(session_context(connection)).expect("session opens");
+    rows(&mut session, "use test");
     let mut statements: Vec<(&str, Vec<&str>)> = Vec::new();
     for line in fixture.lines() {
         match line.strip_prefix("Q ") {
@@ -737,10 +759,10 @@ fn index_merge_and_window_push_down_refusals_warn_as_go() {
             None => statements.last_mut().expect("a statement precedes its output").1.push(line),
         }
     }
-    assert_eq!(statements.iter().filter(|(_, want)| !want.is_empty()).count(), 10);
+    let mut explains = 0;
     for (sql, want) in statements {
         if sql.starts_with("create table") || sql.starts_with("alter table") {
-            let sql = sql.replace("table t ", "table test.t ");
+            let sql = sql.replace("table t ", "table test.t ").replace("table s ", "table test.s ");
             session.node_conn().execute_write(&sql).expect(&sql);
             continue;
         }
@@ -755,5 +777,7 @@ fn index_merge_and_window_push_down_refusals_warn_as_go() {
                 .map(|row| format!("  W {}", row[2])),
         );
         assert_eq!(got, want, "{sql}");
+        explains += 1;
     }
+    explains
 }
