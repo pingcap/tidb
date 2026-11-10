@@ -20,6 +20,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,11 +35,14 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
 )
 
@@ -46,6 +50,11 @@ const (
 	// rowLimit is the row count from which a statement goes to DXF, because a task adds
 	// seconds of scheduling. It is a conservative round number, not a measured break-even.
 	rowLimit = 1_000_000
+	// cancelRetryInterval is how long to wait before trying to cancel a task again.
+	cancelRetryInterval = time.Second
+	// cancelWaitTimeout limits the wait of a killed statement for its task, which stops within
+	// seconds. The wait must end even if this node cannot reach the storage to read the task.
+	cancelWaitTimeout = 10 * time.Second
 )
 
 // Register registers the auto-analyze task type to DXF, and the dispatcher that the stats
@@ -69,7 +78,7 @@ func Register() {
 func dispatch(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	_ sysproctrack.Tracker,
+	sysProcTracker sysproctrack.Tracker,
 	needVersionRewriteWarn bool,
 	table exec.AnalyzedTable,
 	sql string,
@@ -84,7 +93,7 @@ func dispatch(
 	if !ok || !reachesRowLimit(statsHandle, tblInfo, table.PartitionNames) {
 		return false, nil
 	}
-	return true, runAsTask(sctx, statsHandle, taskMeta)
+	return true, runAsTask(sctx, statsHandle, sysProcTracker, taskMeta)
 }
 
 // reachesRowLimit reports whether the stats cache of this node has at least
@@ -121,11 +130,12 @@ func analyzedPhysicalIDs(tblInfo *model.TableInfo, partitionNames []string) []in
 	return physicalIDs
 }
 
-// runAsTask runs the statement as a DXF task and waits for it, so the slot of
-// tidb_auto_analyze_concurrency stays taken.
+// runAsTask runs the statement as a DXF task and waits for it as an auto-analyze process,
+// so that the slot of tidb_auto_analyze_concurrency stays taken and a kill reaches the task.
 func runAsTask(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
+	sysProcTracker sysproctrack.Tracker,
 	taskMeta *TaskMeta,
 ) error {
 	taskMgr, err := storage.GetDXFSvcTaskMgr()
@@ -137,6 +147,23 @@ func runAsTask(
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	sessVars := sctx.GetSessionVars()
+	procID := statsHandle.AutoAnalyzeProcID()
+	defer statsHandle.ReleaseAutoAnalyzeProcID(procID)
+	// It runs before the session shows as a process, so nothing of the last
+	// statement shows even for a moment.
+	forgetLastStatement(sctx)
+	tracker := statsutil.NewAutoAnalyzeTracker(sysProcTracker.Track, sysProcTracker.UnTrack)
+	if err := tracker.Track(procID, sctx); err != nil {
+		return errors.Trace(err)
+	}
+	// Untracking also resets the killer, so no kill signal is left to the next
+	// user of the session.
+	defer tracker.UnTrack(procID)
+	// Tracking resets the killer, so the channel must be taken after it.
+	killed := sessVars.SQLKiller.GetKillEventChan()
+	defer showAsRunning(sctx, taskMeta)()
 
 	keyspace := sctx.GetStore().GetKeyspace()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
@@ -153,19 +180,26 @@ func runAsTask(
 	failpoint.InjectCall("afterFindActiveTask")
 	adopted := task != nil
 	if adopted {
-		adopted = waitTask(ctx, task) == nil
+		adopted = waitTask(ctx, task, killed) == nil
 	}
 	if !adopted {
+		// A kill up to here ends the statement before it has a task of its own.
+		if killErr := sessVars.SQLKiller.HandleSignal(); killErr != nil {
+			return killErr
+		}
 		task, err = submitTask(ctx, keyPrefix+uuid.NewString(), keyspace, meta)
 		if err != nil {
 			return err
 		}
-		err = waitTask(ctx, task)
+		err = waitTask(ctx, task, killed)
 	}
 	if err == nil {
 		// A statement that runs here ends with loading the new stats into the cache of this
 		// node. Without them the priority queue sees the old stats and queues the table again.
 		err = loadTableStats(ctx, sctx, statsHandle, taskMeta.TableID)
+	}
+	if killErr := sessVars.SQLKiller.HandleSignal(); killErr != nil {
+		err = killErr
 	}
 	statslogutil.StatsLogger().Info("auto analyze dispatched through DXF",
 		zap.Int64("taskID", task.ID), zap.String("taskKey", task.Key), zap.Bool("adopted", adopted),
@@ -190,6 +224,41 @@ func loadTableStats(ctx context.Context, sctx sessionctx.Context, statsHandle st
 		}
 	}
 	return errors.Trace(statsHandle.Update(ctx, is, ids...))
+}
+
+// processInfoSetter is implemented by the sessions that show what they run.
+type processInfoSetter interface {
+	SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64)
+	ClearProcessInfo()
+}
+
+// forgetLastStatement drops the statement context and the process info of the last statement
+// of the session: the runaway checker in them would kill the process that waits for a task.
+func forgetLastStatement(sctx sessionctx.Context) {
+	sessVars := sctx.GetSessionVars()
+	sessVars.StmtCtx = sessVars.InitStatementContext()
+	if setter, ok := sctx.(processInfoSetter); ok {
+		setter.ClearProcessInfo()
+	}
+}
+
+// showAsRunning shows the statement as the running query of the session until done
+// is called, so it is visible here and tidb_max_auto_analyze_time applies to it.
+func showAsRunning(sctx sessionctx.Context, meta *TaskMeta) (done func()) {
+	setter, ok := sctx.(processInfoSetter)
+	if !ok {
+		return func() {}
+	}
+	sql, err := sqlescape.EscapeSQL(meta.SQL, meta.args()...)
+	if err != nil {
+		sql = meta.SQL
+	}
+	// An internal session has no command, so its statements show as ComSleep. Another command
+	// would show the start TS of the last transaction of the session, and hold back GC.
+	setter.SetProcessInfo(sql, time.Now(), mysql.ComSleep, 0)
+	return func() {
+		setter.SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
+	}
 }
 
 // newTaskMeta builds the task meta of the statement. The meta holds identifiers only, so it
@@ -261,9 +330,28 @@ func targetScope() string {
 	return ""
 }
 
-// waitTask waits until the task succeeds.
-func waitTask(ctx context.Context, task *proto.TaskBase) error {
-	found, err := handle.WaitTaskDoneOrPausedWithResult(ctx, task.ID)
+// waitTask waits until the task succeeds. A kill also cancels the task and waits for its end,
+// at most cancelWaitTimeout.
+func waitTask(ctx context.Context, task *proto.TaskBase, killed <-chan struct{}) error {
+	waitCtx, stopWaiting := context.WithCancel(ctx)
+	defer stopWaiting()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		select {
+		case <-killed:
+		case <-waitCtx.Done():
+			return
+		}
+		timer := time.AfterFunc(cancelWaitTimeout, stopWaiting)
+		defer timer.Stop()
+		cancelTask(waitCtx, task.Key)
+		<-waitCtx.Done()
+	}()
+	found, err := handle.WaitTaskDoneOrPausedWithResult(waitCtx, task.ID)
+	stopWaiting()
+	wg.Wait()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -271,4 +359,20 @@ func waitTask(ctx context.Context, task *proto.TaskBase) error {
 		return errors.Errorf("auto analyze task %d stopped with state %s", task.ID, found.State)
 	}
 	return nil
+}
+
+// cancelTask cancels the task, and tries again on failure until ctx is done.
+func cancelTask(ctx context.Context, taskKey string) {
+	for {
+		err := handle.CancelTask(ctx, taskKey)
+		if err == nil {
+			return
+		}
+		statslogutil.StatsLogger().Warn("cancel auto analyze task failed", zap.String("taskKey", taskKey), zap.Error(err))
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(cancelRetryInterval):
+		}
+	}
 }
