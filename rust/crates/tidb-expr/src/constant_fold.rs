@@ -559,27 +559,6 @@ pub(crate) fn folds_to_constant(expr: &Expression) -> bool {
     }
 }
 
-/// The `*Constant`'s VALUE that Go's dispatch reads off a folded subtree --
-/// `unaryMinusFunctionClass.handleIntOverflow` is the one rule here that needs
-/// the value and not merely the fact of constancy (`arg.Value.GetInt64()`).
-///
-/// `None` for anything [`folds_to_constant`] rejects, and for a fold whose
-/// evaluation fails -- which is Go's own `err != nil` arm, where the subtree
-/// stays unfolded and the type switch therefore misses it. The evaluation runs
-/// against no columns because a foldable subtree reads none; that is exactly
-/// the `chunk.Row{}` Go's `foldConstant` passes.
-pub(crate) fn folded_value(expr: &Expression) -> Option<Datum> {
-    if let Expression::Constant(constant) = expr {
-        return constant.literal_value().cloned();
-    }
-    if !folds_to_constant(expr) {
-        return None;
-    }
-    let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
-    chunk.set_num_virtual_rows(1);
-    expr.eval(&tidb_exprctx::context::NoColumns, chunk.get_row(0)).ok()
-}
-
 /// Go `unFoldableFunctions` (`pkg/expression/function_traits.go`): the
 /// functions whose result is not a property of their arguments -- a clock, a
 /// counter, a random source, a session variable, or a side effect.

@@ -12,326 +12,435 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `pkg/expression/builtin_op.go`: the logic/bit/unary operators' result-type
-//! derivation (`getFunction` on the `logicAnd/logicOr/logicXor`,
-//! `bitAnd/bitOr/bitXor`, `leftShift/rightShift`, `unaryNot`, `unaryMinus` and
-//! `bitNeg` function classes), transcreated as [`infer_op_type`] (binary) and
-//! [`infer_unary_op_type`] (unary).
-//!
-//! What Go does per class:
-//! - logic `and`/`or`/`xor`: base ETInt return type, then `SetFlen(1)`; the
-//!   names are in the `booleanFunctions` map, so `mysql.IsBooleanFlag` is
-//!   added by `newReturnFieldTypeForBaseBuiltinFunc`.
-//! - `bitand`/`bitor`/`bitxor`/`leftshift`/`rightshift`: base ETInt return
-//!   type plus `AddFlag(mysql.UnsignedFlag)`; not boolean functions.
-//! - `not` (`unaryNotFunctionClass`): base ETInt, `SetFlen(1)`, boolean.
-//! - `bitneg` (`bitNegFunctionClass`): base ETInt plus `UnsignedFlag`.
-//! - `unaryminus`: its own type logic (see [`infer_unary_op_type`]).
-//!
-//! DEFERRED (documented): `wrapWithIsTrue` on logic and/or arguments mutates
-//! the *args* (istrue_with_null wrappers), not the result type, and is not
-//! ported.
+//! `pkg/expression/builtin_op.go`: the logic, bit, truth-test, unary and
+//! `IS NULL` function classes, and `wrapWithIsTrue` (`expression.go`).
 
-use crate::builtin_arithmetic::new_return_field_type_for_base_builtin_func;
+use crate::builtin::{
+    new_base_builtin_func_with_tp, BaseBuiltinFunc, BuildContext, FunctionClass,
+};
+use crate::expr_util::traits::is_logical_op;
 use crate::expression::Expression;
-use tidb_datatype::{EvalType, FieldType, FieldTypeFlags};
+use crate::wrap_cast::type_of;
+use crate::EvalError;
+use tidb_datatype::{Datum, EvalType, FieldTypeCode, FieldTypeFlags};
+use tidb_proto::tipb::ScalarFuncSig;
 
-/// The result `FieldType` Go's logic/bit function classes derive in
-/// `getFunction`, for the binary operator scalar-function `name`
-/// (`and`/`or`/`xor`, `bitand`/`bitor`/`bitxor`, `leftshift`/`rightshift`).
-/// Returns `None` for any other function name.
-#[must_use]
-pub fn infer_op_type(name: &str) -> Option<FieldType> {
-    match name {
-        "and" | "or" | "xor" => {
-            let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Int);
-            // logicAnd/logicOr/logicXor getFunction: SetFlen(1).
-            ret.set_flen(1);
-            // ast.LogicAnd/LogicOr/LogicXor are in Go's booleanFunctions map.
-            ret.add_flags(FieldTypeFlags::IS_BOOLEAN);
-            Some(ret)
+/// Go `wrapWithIsTrue`: `arg` wrapped in `istrue` unless it is an integer.
+/// `keep_null` selects `istrue_with_null`, which answers NULL for a NULL
+/// `arg`; `wrap_for_int` wraps an integer that is not a logical operator's
+/// result as well.
+pub(crate) fn wrap_with_is_true(
+    ctx: &dyn BuildContext,
+    keep_null: bool,
+    arg: Expression,
+    wrap_for_int: bool,
+) -> Result<Expression, EvalError> {
+    if type_of(&arg).eval_type() == EvalType::Int {
+        if !wrap_for_int {
+            return Ok(arg);
         }
-        "bitand" | "bitor" | "bitxor" | "leftshift" | "rightshift" => {
-            let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Int);
-            // bitAnd/bitOr/bitXor/leftShift/rightShift getFunction:
-            // AddFlag(mysql.UnsignedFlag).
-            ret.add_flags(FieldTypeFlags::UNSIGNED);
-            Some(ret)
+        if let Expression::ScalarFunction(child) = &arg {
+            if is_logical_op(child.func_name.lowercase()) {
+                return Ok(arg);
+            }
         }
-        _ => None,
     }
-}
-
-/// Go `unaryMinusFunctionClass.handleIntOverflow`
-/// (`pkg/expression/builtin_op.go:980-997`), asked only where `typeInfer` asks
-/// it: of an ETInt argument that Go's constant folding has turned into a
-/// `*Constant`.
-///
-/// ```go
-/// if mysql.HasUnsignedFlag(arg.GetType(ctx).GetFlag()) {
-///     uval := arg.Value.GetUint64()
-///     if uval > uint64(-math.MinInt64) { return true }
-/// } else {
-///     val := arg.Value.GetInt64()
-///     if val == math.MinInt64 { return true }
-/// }
-/// ```
-fn int_negation_overflows(arg: &Expression, arg_ft: &FieldType) -> bool {
-    let Some(value) = crate::constant_fold::folded_value(arg) else {
-        return false;
-    };
-    if arg_ft.is_unsigned() {
-        matches!(value, tidb_datatype::Datum::UInt(bits) if bits > 1_u64 << 63)
+    let fc = if keep_null {
+        &IS_TRUTH_WITH_NULL
     } else {
-        matches!(value, tidb_datatype::Datum::Int(i64::MIN))
+        &IS_TRUTH_WITHOUT_NULL
+    };
+    let f = fc.get_function(ctx, vec![arg])?;
+    let mut sf = Expression::ScalarFunction(crate::new_function::scalar_function_of(
+        fc.func_name,
+        tidb_datatype::FieldType::new(FieldTypeCode::Unspecified),
+        f,
+    ));
+    ctx.fold_constant(&mut sf);
+    Ok(sf)
+}
+
+/// Go `logic{And,Or,Xor}FunctionClass.getFunction`: both arguments read as
+/// truth values, the result one digit wide.
+fn logic_function(
+    ctx: &dyn BuildContext,
+    func_name: &str,
+    args: Vec<Expression>,
+    pb_code: ScalarFuncSig,
+) -> Result<BaseBuiltinFunc, EvalError> {
+    let args = args
+        .into_iter()
+        .map(|arg| wrap_with_is_true(ctx, true, arg, false))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut bf = new_base_builtin_func_with_tp(
+        ctx,
+        func_name,
+        args,
+        EvalType::Int,
+        &[EvalType::Int, EvalType::Int],
+    )?;
+    bf.pb_code = pb_code;
+    bf.tp.set_flen(1);
+    Ok(bf)
+}
+
+/// Go `logicAndFunctionClass`.
+pub(crate) struct LogicAndFunctionClass;
+
+impl FunctionClass for LogicAndFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        logic_function(ctx, "and", args, ScalarFuncSig::LogicalAnd)
     }
 }
 
-/// The result `FieldType` Go's unary operator function classes derive in
-/// `getFunction`, for the unary scalar-function `name`
-/// (`not`/`bitneg`/`unaryminus`).
-///
-/// `unaryminus`: an ETInt argument keeps ETInt with decimal 0 UNLESS Go's
-/// `typeInfer` promotes it (see [`int_negation_overflows`]), an ETReal
-/// argument keeps ETReal, and a decimal or temporal argument keeps the decimal
-/// domain with the argument's own scale. The flen reserves one extra display
-/// digit except over a column whose declared width already covers the sign.
-///
-/// Returns `None` for any other function name (including `unaryplus`, whose Go
-/// class returns the argument unchanged rather than building a function).
-#[must_use]
-pub fn infer_unary_op_type(name: &str, arg: &Expression) -> Option<FieldType> {
-    match name {
-        "not" => {
-            let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Int);
-            // unaryNotFunctionClass getFunction: SetFlen(1).
-            ret.set_flen(1);
-            // ast.UnaryNot is in Go's booleanFunctions map.
-            ret.add_flags(FieldTypeFlags::IS_BOOLEAN);
-            Some(ret)
-        }
-        "bitneg" => {
-            let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Int);
-            // bitNegFunctionClass getFunction: AddFlag(mysql.UnsignedFlag).
-            ret.add_flags(FieldTypeFlags::UNSIGNED);
-            Some(ret)
-        }
-        "unaryminus" => {
-            let arg_ft = arg.static_type()?;
-            let eval_type = arg_ft.eval_type();
-            let int_overflow = eval_type == EvalType::Int && int_negation_overflows(arg, arg_ft);
-            let mut ret = match eval_type {
-                // Go's `typeInfer` REPLACES the Int signature with the decimal
-                // one when a CONSTANT argument's negation leaves `BIGINT`, so
-                // `SELECT --9223372036854775808` is the decimal
-                // 9223372036854775808 and not a clamped `BIGINT`.
-                EvalType::Int if int_overflow => {
-                    let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Decimal);
-                    // `bf.tp.SetDecimal(0)` runs for BOTH arms of Go's
-                    // `case types.ETInt`.
-                    ret.set_decimal(0);
-                    ret
-                }
-                EvalType::Int => {
-                    let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Int);
-                    ret.set_decimal(0);
-                    ret
-                }
-                EvalType::Real => new_return_field_type_for_base_builtin_func(EvalType::Real),
-                // Go's default arm: a decimal argument -- and a temporal one,
-                // which it converts through decimal -- keeps the decimal
-                // domain with the argument's own scale; everything else
-                // (a string, JSON) negates as a real.
-                other => {
-                    let as_decimal = other == EvalType::Decimal
-                        || matches!(
-                            arg_ft.code(),
-                            tidb_datatype::FieldTypeCode::Date
-                                | tidb_datatype::FieldTypeCode::NewDate
-                                | tidb_datatype::FieldTypeCode::Datetime
-                                | tidb_datatype::FieldTypeCode::Timestamp
-                                | tidb_datatype::FieldTypeCode::Duration
-                        );
-                    if as_decimal {
-                        let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Decimal);
-                        ret.set_decimal_under_limit(arg_ft.decimal());
-                        ret
-                    } else {
-                        new_return_field_type_for_base_builtin_func(EvalType::Real)
-                    }
-                }
-            };
-            // Go reserves a digit for the sign, except over a column whose
-            // declared width already covers it.
-            let is_column = matches!(arg, Expression::Column(_) | Expression::CorrelatedColumn(_));
-            let column_keeps_width = is_column
-                && (eval_type == EvalType::Decimal
-                    || (eval_type == EvalType::Int
-                        && !int_overflow
-                        && arg_ft.flags() & FieldTypeFlags::UNSIGNED == 0));
-            if column_keeps_width {
-                ret.set_flen_under_limit(arg_ft.flen());
-            } else {
-                ret.set_flen_under_limit(arg_ft.flen() + 1);
-            }
-            Some(ret)
-        }
-        _ => None,
+/// Go `logicOrFunctionClass`.
+pub(crate) struct LogicOrFunctionClass;
+
+impl FunctionClass for LogicOrFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        logic_function(ctx, "or", args, ScalarFuncSig::LogicalOr)
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::column::Column;
-    use crate::constant::Constant;
-    use tidb_datatype::{Datum, Decimal, FieldTypeBuilder, FieldTypeCode, UNSPECIFIED_LENGTH};
+/// Go `logicXorFunctionClass`.
+pub(crate) struct LogicXorFunctionClass;
 
-    fn int_expr(v: i64) -> Expression {
-        Expression::Constant(Constant::new(
-            Datum::Int(v),
-            FieldTypeBuilder::new()
-                .with_code(FieldTypeCode::LongLong)
-                .flen_set(20)
-                .decimal_set(0)
-                .build(),
-        ))
+impl FunctionClass for LogicXorFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        logic_function(ctx, "xor", args, ScalarFuncSig::LogicalXor)
     }
+}
 
-    fn real_expr(v: f64) -> Expression {
-        Expression::Constant(Constant::new(
-            Datum::Real(v),
-            FieldTypeBuilder::new()
-                .with_code(FieldTypeCode::Double)
-                .flen_set(23)
-                .decimal_set(UNSPECIFIED_LENGTH)
-                .build(),
-        ))
+/// Go `bit{And,Or,Xor}FunctionClass` and `{left,right}ShiftFunctionClass`:
+/// two integers to an unsigned integer.
+pub(crate) struct BitOpFunctionClass {
+    func_name: &'static str,
+    pb_code: ScalarFuncSig,
+}
+
+/// Go `bitAndFunctionClass`.
+pub(crate) static BIT_AND: BitOpFunctionClass = BitOpFunctionClass {
+    func_name: "bitand",
+    pb_code: ScalarFuncSig::BitAndSig,
+};
+/// Go `bitOrFunctionClass`.
+pub(crate) static BIT_OR: BitOpFunctionClass = BitOpFunctionClass {
+    func_name: "bitor",
+    pb_code: ScalarFuncSig::BitOrSig,
+};
+/// Go `bitXorFunctionClass`.
+pub(crate) static BIT_XOR: BitOpFunctionClass = BitOpFunctionClass {
+    func_name: "bitxor",
+    pb_code: ScalarFuncSig::BitXorSig,
+};
+/// Go `leftShiftFunctionClass`.
+pub(crate) static LEFT_SHIFT: BitOpFunctionClass = BitOpFunctionClass {
+    func_name: "leftshift",
+    pb_code: ScalarFuncSig::LeftShift,
+};
+/// Go `rightShiftFunctionClass`.
+pub(crate) static RIGHT_SHIFT: BitOpFunctionClass = BitOpFunctionClass {
+    func_name: "rightshift",
+    pb_code: ScalarFuncSig::RightShift,
+};
+
+impl FunctionClass for BitOpFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        let mut bf = new_base_builtin_func_with_tp(
+            ctx,
+            self.func_name,
+            args,
+            EvalType::Int,
+            &[EvalType::Int, EvalType::Int],
+        )?;
+        bf.pb_code = self.pb_code;
+        bf.tp.add_flags(FieldTypeFlags::UNSIGNED);
+        Ok(bf)
     }
+}
 
-    #[test]
-    fn logic_ops_are_boolean_flen1() {
-        for name in ["and", "or", "xor"] {
-            let ret = infer_op_type(name).unwrap();
-            assert_eq!(ret.code(), FieldTypeCode::LongLong, "{name}");
-            assert_eq!(ret.flen(), 1, "{name}");
-            assert!(!ret.is_unsigned(), "{name}");
-            assert_ne!(ret.flags() & FieldTypeFlags::IS_BOOLEAN, 0, "{name}");
+/// Go `isTrueOrFalseFunctionClass`.
+pub(crate) struct IsTrueOrFalseFunctionClass {
+    func_name: &'static str,
+    /// Go `op == opcode.IsFalsity`.
+    falsity: bool,
+    /// Go `keepNull`: a NULL argument answers NULL, not 0.
+    keep_null: bool,
+}
+
+/// Go `funcs[ast.IsTruthWithoutNull]`.
+pub(crate) static IS_TRUTH_WITHOUT_NULL: IsTrueOrFalseFunctionClass = IsTrueOrFalseFunctionClass {
+    func_name: "istrue",
+    falsity: false,
+    keep_null: false,
+};
+/// Go `funcs[ast.IsTruthWithNull]`.
+pub(crate) static IS_TRUTH_WITH_NULL: IsTrueOrFalseFunctionClass = IsTrueOrFalseFunctionClass {
+    func_name: "istrue_with_null",
+    falsity: false,
+    keep_null: true,
+};
+/// Go `funcs[ast.IsFalsity]`.
+pub(crate) static IS_FALSITY: IsTrueOrFalseFunctionClass = IsTrueOrFalseFunctionClass {
+    func_name: "isfalse",
+    falsity: true,
+    keep_null: false,
+};
+
+impl FunctionClass for IsTrueOrFalseFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        let mut arg_tp = type_of(&args[0]).eval_type();
+        if matches!(
+            arg_tp,
+            EvalType::Timestamp
+                | EvalType::Datetime
+                | EvalType::Duration
+                | EvalType::Json
+                | EvalType::String
+        ) {
+            arg_tp = EvalType::Real;
         }
-    }
-
-    #[test]
-    fn bit_ops_are_unsigned_longlong() {
-        for name in ["bitand", "bitor", "bitxor", "leftshift", "rightshift"] {
-            let ret = infer_op_type(name).unwrap();
-            assert_eq!(ret.code(), FieldTypeCode::LongLong, "{name}");
-            assert!(ret.is_unsigned(), "{name}");
-            // Base ETInt flen (MaxIntWidth) is kept; no SetFlen(1).
-            assert_eq!(ret.flen(), 20, "{name}");
-            assert_eq!(ret.flags() & FieldTypeFlags::IS_BOOLEAN, 0, "{name}");
-        }
-    }
-
-    #[test]
-    fn unary_not_is_boolean_flen1() {
-        let ret = infer_unary_op_type("not", &int_expr(1)).unwrap();
-        assert_eq!(ret.code(), FieldTypeCode::LongLong);
-        assert_eq!(ret.flen(), 1);
-        assert_ne!(ret.flags() & FieldTypeFlags::IS_BOOLEAN, 0);
-    }
-
-    #[test]
-    fn bitneg_is_unsigned() {
-        let ret = infer_unary_op_type("bitneg", &int_expr(1)).unwrap();
-        assert_eq!(ret.code(), FieldTypeCode::LongLong);
-        assert!(ret.is_unsigned());
-    }
-
-    #[test]
-    fn unary_minus_int_and_real_paths() {
-        let int_ret = infer_unary_op_type("unaryminus", &int_expr(1)).unwrap();
-        assert_eq!(int_ret.code(), FieldTypeCode::LongLong);
-        assert_eq!(int_ret.decimal(), 0);
-        // Sign digit reserved: arg flen 20 + 1.
-        assert_eq!(int_ret.flen(), 21);
-
-        let real_ret = infer_unary_op_type("unaryminus", &real_expr(1.5)).unwrap();
-        assert_eq!(real_ret.code(), FieldTypeCode::Double);
-        assert_eq!(real_ret.flen(), 24);
-    }
-
-    /// Go `TestUnaryMinusDecimalRetTypeFlen`: a literal reserves a new sign
-    /// position, while a declared column width already includes it.
-    #[test]
-    fn test_unary_minus_decimal_ret_type_flen() {
-        let decimal_type = || {
-            FieldTypeBuilder::new()
-                .with_code(FieldTypeCode::NewDecimal)
-                .flen_set(10)
-                .decimal_set(2)
-                .build()
-        };
-        let literal = Expression::Constant(Constant::new(
-            Datum::new_decimal(Decimal::from_literal("123.45")),
-            decimal_type(),
-        ));
-        let literal_ret = infer_unary_op_type("unaryminus", &literal).unwrap();
-        assert_eq!(literal_ret.flen(), 11);
-        assert_eq!(literal_ret.decimal(), 2);
-
-        let column = Expression::Column(Column::new(1, decimal_type()));
-        let column_ret = infer_unary_op_type("unaryminus", &column).unwrap();
-        assert_eq!(column_ret.flen(), 10);
-        assert_eq!(column_ret.decimal(), 2);
-    }
-
-    /// Go `TestUnaryMinusIntRetTypeFlen`: signed and unsigned literals both
-    /// reserve a sign position; only a signed column keeps its declared width.
-    #[test]
-    fn test_unary_minus_int_ret_type_flen() {
-        let int_type = |flen, unsigned| {
-            let mut field_type = FieldTypeBuilder::new()
-                .with_code(FieldTypeCode::LongLong)
-                .flen_set(flen)
-                .decimal_set(0)
-                .build();
-            if unsigned {
-                field_type.add_flags(FieldTypeFlags::UNSIGNED);
+        let mut bf =
+            new_base_builtin_func_with_tp(ctx, self.func_name, args, EvalType::Int, &[arg_tp])?;
+        bf.tp.set_flen(1);
+        use ScalarFuncSig::*;
+        bf.pb_code = match (self.falsity, arg_tp, self.keep_null) {
+            (false, EvalType::Real, true) => RealIsTrueWithNull,
+            (false, EvalType::Real, false) => RealIsTrue,
+            (false, EvalType::Decimal, true) => DecimalIsTrueWithNull,
+            (false, EvalType::Decimal, false) => DecimalIsTrue,
+            (false, EvalType::Int, true) => IntIsTrueWithNull,
+            (false, EvalType::Int, false) => IntIsTrue,
+            (true, EvalType::Real, true) => RealIsFalseWithNull,
+            (true, EvalType::Real, false) => RealIsFalse,
+            (true, EvalType::Decimal, true) => DecimalIsFalseWithNull,
+            (true, EvalType::Decimal, false) => DecimalIsFalse,
+            (true, EvalType::Int, true) => IntIsFalseWithNull,
+            (true, EvalType::Int, false) => IntIsFalse,
+            // `builtinVectorFloat32Is{True,False}Sig` set no pb code.
+            (_, EvalType::VectorFloat32, _) => Unspecified,
+            (_, other, _) => {
+                return Err(EvalError::Raw(format!(
+                    "unexpected types.EvalType {}",
+                    other.as_str()
+                )))
             }
-            field_type
         };
+        Ok(bf)
+    }
+}
 
-        let signed_literal =
-            Expression::Constant(Constant::new(Datum::Int(123), int_type(11, false)));
-        assert_eq!(
-            infer_unary_op_type("unaryminus", &signed_literal)
-                .unwrap()
-                .flen(),
-            12
-        );
+/// Go `bitNegFunctionClass`.
+pub(crate) struct BitNegFunctionClass;
 
-        let signed_column = Expression::Column(Column::new(1, int_type(11, false)));
-        assert_eq!(
-            infer_unary_op_type("unaryminus", &signed_column)
-                .unwrap()
-                .flen(),
-            11
-        );
+impl FunctionClass for BitNegFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        let mut bf =
+            new_base_builtin_func_with_tp(ctx, "bitneg", args, EvalType::Int, &[EvalType::Int])?;
+        bf.tp.add_flags(FieldTypeFlags::UNSIGNED);
+        bf.pb_code = ScalarFuncSig::BitNegSig;
+        Ok(bf)
+    }
+}
 
-        let unsigned_literal =
-            Expression::Constant(Constant::new(Datum::UInt(123), int_type(10, true)));
-        assert_eq!(
-            infer_unary_op_type("unaryminus", &unsigned_literal)
-                .unwrap()
-                .flen(),
-            11
-        );
+/// Go `unaryNotFunctionClass`.
+pub(crate) struct UnaryNotFunctionClass;
+
+impl FunctionClass for UnaryNotFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        let mut arg_tp = type_of(&args[0]).eval_type();
+        if matches!(arg_tp, EvalType::Timestamp | EvalType::Datetime | EvalType::Duration) {
+            arg_tp = EvalType::Int;
+        } else if arg_tp == EvalType::String {
+            arg_tp = EvalType::Real;
+        }
+        let mut bf = new_base_builtin_func_with_tp(ctx, "not", args, EvalType::Int, &[arg_tp])?;
+        bf.tp.set_flen(1);
+        bf.pb_code = match arg_tp {
+            EvalType::Real => ScalarFuncSig::UnaryNotReal,
+            EvalType::Decimal => ScalarFuncSig::UnaryNotDecimal,
+            EvalType::Int => ScalarFuncSig::UnaryNotInt,
+            EvalType::Json => {
+                ctx.append_warning(&crate::expression_errors::ERR_JSON_IN_BOOLEAN_CONTEXT);
+                ScalarFuncSig::UnaryNotJson
+            }
+            other => {
+                return Err(EvalError::Raw(format!(
+                    "{} is not supported for unary not operator",
+                    other.as_str()
+                )))
+            }
+        };
+        Ok(bf)
+    }
+}
+
+/// Go `unaryMinusFunctionClass`.
+pub(crate) struct UnaryMinusFunctionClass;
+
+impl UnaryMinusFunctionClass {
+    /// Go `handleIntOverflow`: whether negating the integer constant leaves
+    /// `BIGINT`.
+    fn handle_int_overflow(arg: &crate::constant::Constant, unsigned: bool) -> bool {
+        // Go reads the datum's integer bits by the type's sign.
+        let bits = match arg.value {
+            Datum::Int(value) => value,
+            Datum::UInt(value) => value.cast_signed(),
+            _ => return false,
+        };
+        if unsigned {
+            // -math.MinInt64 is 9223372036854775808; a larger value has no
+            // negation in BIGINT.
+            bits.cast_unsigned() > 1_u64 << 63
+        } else {
+            bits == i64::MIN
+        }
     }
 
-    #[test]
-    fn non_op_names_are_none() {
-        assert!(infer_op_type("eq").is_none());
-        assert!(infer_op_type("plus").is_none());
-        assert!(infer_unary_op_type("unaryplus", &int_expr(1)).is_none());
+    /// Go `typeInfer`'s overflow answer: an integer constant whose negation
+    /// overflows is negated as a decimal.
+    fn type_infer_overflow(arg_expr: &Expression) -> bool {
+        let tp = type_of(arg_expr);
+        match arg_expr {
+            Expression::Constant(arg) if tp.eval_type() == EvalType::Int => {
+                Self::handle_int_overflow(arg, tp.is_unsigned())
+            }
+            _ => false,
+        }
+    }
+}
+
+impl FunctionClass for UnaryMinusFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        const FUNC_NAME: &str = "unaryminus";
+        let arg_expr_tp = type_of(&args[0]);
+        let int_overflow = Self::type_infer_overflow(&args[0]);
+        let is_column = matches!(
+            args[0],
+            Expression::Column(_) | Expression::CorrelatedColumn(_)
+        );
+        let build = |args, tp: EvalType| new_base_builtin_func_with_tp(ctx, FUNC_NAME, args, tp, &[tp]);
+
+        let eval_type = arg_expr_tp.eval_type();
+        let mut bf = match eval_type {
+            EvalType::Int => {
+                let mut bf = if int_overflow {
+                    let mut bf = build(args, EvalType::Decimal)?;
+                    bf.pb_code = ScalarFuncSig::UnaryMinusDecimal;
+                    bf
+                } else {
+                    let mut bf = build(args, EvalType::Int)?;
+                    bf.pb_code = ScalarFuncSig::UnaryMinusInt;
+                    bf
+                };
+                bf.tp.set_decimal(0);
+                bf
+            }
+            EvalType::Real => {
+                let mut bf = build(args, EvalType::Real)?;
+                bf.pb_code = ScalarFuncSig::UnaryMinusReal;
+                bf
+            }
+            _ => {
+                let as_decimal = eval_type == EvalType::Decimal
+                    || matches!(
+                        arg_expr_tp.code(),
+                        FieldTypeCode::Date
+                            | FieldTypeCode::NewDate
+                            | FieldTypeCode::Datetime
+                            | FieldTypeCode::Timestamp
+                            | FieldTypeCode::Duration
+                    );
+                if as_decimal {
+                    let mut bf = build(args, EvalType::Decimal)?;
+                    bf.tp.set_decimal_under_limit(arg_expr_tp.decimal());
+                    bf.pb_code = ScalarFuncSig::UnaryMinusDecimal;
+                    bf
+                } else {
+                    let mut bf = build(args, EvalType::Real)?;
+                    bf.pb_code = ScalarFuncSig::UnaryMinusReal;
+                    bf
+                }
+            }
+        };
+        if is_column
+            && (eval_type == EvalType::Decimal
+                || (eval_type == EvalType::Int && !int_overflow && !arg_expr_tp.is_unsigned()))
+        {
+            // Column types already reserve their signed display width, so
+            // unary minus does not widen them.
+            bf.tp.set_flen_under_limit(arg_expr_tp.flen());
+        } else {
+            bf.tp.set_flen_under_limit(arg_expr_tp.flen() + 1);
+        }
+        Ok(bf)
+    }
+}
+
+/// Go `isNullFunctionClass`.
+pub(crate) struct IsNullFunctionClass;
+
+impl FunctionClass for IsNullFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        let mut arg_tp = type_of(&args[0]).eval_type();
+        if arg_tp == EvalType::Timestamp {
+            arg_tp = EvalType::Datetime;
+        } else if arg_tp == EvalType::Json {
+            arg_tp = EvalType::String;
+        }
+        let mut bf = new_base_builtin_func_with_tp(ctx, "isnull", args, EvalType::Int, &[arg_tp])?;
+        bf.tp.set_flen(1);
+        bf.pb_code = match arg_tp {
+            EvalType::Int => ScalarFuncSig::IntIsNull,
+            EvalType::Decimal => ScalarFuncSig::DecimalIsNull,
+            EvalType::Real => ScalarFuncSig::RealIsNull,
+            EvalType::Datetime => ScalarFuncSig::TimeIsNull,
+            EvalType::Duration => ScalarFuncSig::DurationIsNull,
+            EvalType::String => ScalarFuncSig::StringIsNull,
+            EvalType::VectorFloat32 => ScalarFuncSig::VectorFloat32IsNull,
+            other => {
+                return Err(EvalError::Raw(format!(
+                    "{} is not supported for ISNULL()",
+                    other.as_str()
+                )))
+            }
+        };
+        Ok(bf)
     }
 }

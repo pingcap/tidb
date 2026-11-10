@@ -57,6 +57,11 @@ impl tidb_exprctx::Columns for MockContext {
     fn now(&self) -> Option<(i64, u32, i32)> {
         Some((1_700_000_000, 0, 0))
     }
+    /// Go `mock.NewContext`'s statement context keeps
+    /// `types.DefaultStmtFlags`, under which a truncation is an error.
+    fn truncate_level(&self) -> tidb_exprctx::ErrorLevel {
+        tidb_exprctx::ErrorLevel::Error
+    }
 }
 
 /// Go `typeText` of the probe.

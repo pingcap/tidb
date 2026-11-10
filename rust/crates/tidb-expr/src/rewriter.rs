@@ -923,45 +923,21 @@ fn scalar(name: &str, args: Vec<Expression>) -> Expression {
     ))
 }
 
-/// Go `wrapWithIsTrue(ctx, true, arg, false)`: an integer argument passes
-/// through, anything else is wrapped in `istrue_with_null`, whose
-/// `getFunction` reads a string, time or JSON argument as a double (the cast
-/// is built, and folded over a constant, like any `WrapWithCastAsReal`).
-fn wrap_with_is_true_with_null(
-    argument: Expression,
+/// Go `er.newFunction` for a name `funcs` lists: `class` builds the node,
+/// which the caller folds.
+fn class_function(
+    class: &dyn crate::builtin::FunctionClass,
+    name: &str,
+    mut args: Vec<Expression>,
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
-    let eval_type = argument
-        .static_type()
-        .map_or(EvalType::Int, FieldType::eval_type);
-    if eval_type == EvalType::Int {
-        return Ok(argument);
-    }
-    let wrapped = if matches!(
-        eval_type,
-        EvalType::String
-            | EvalType::Timestamp
-            | EvalType::Datetime
-            | EvalType::Duration
-            | EvalType::Json
-    ) {
-        // GO folds the wrap-time cast bottom-up (WrapWithCastAsReal evaluates
-        // a constant argument eagerly), so `istrue_with_null(cast(', ',
-        // double))` collapses to `0`. Fold the cast first: the wrapper fold
-        // requires all-constant arguments.
-        let mut cast = crate::wrap_cast::wrap_with_cast_as_real(argument)?;
-        resolver.fold_constant(&mut cast, ConstantFoldMode::Normal);
-        cast
-    } else {
-        argument
-    };
-    let mut call = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("istrue_with_null"),
-        crate::expr_util::builder::tiny_int_type(),
-        vec![wrapped],
-    ));
-    resolver.fold_constant(&mut call, ConstantFoldMode::Normal);
-    Ok(call)
+    crate::new_function::type_infer_for_null(&mut args);
+    let f = class.get_function(&crate::builtin::ResolverBuildContext(resolver), args)?;
+    Ok(Expression::ScalarFunction(crate::new_function::scalar_function_of(
+        name,
+        FieldType::new(FieldTypeCode::Unspecified),
+        f,
+    )))
 }
 
 /// Whether the node is a cast scalar function that GO's BuildCastFunction
@@ -1032,49 +1008,12 @@ fn binary_expression(
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
     let name = binary_op_name(op);
-    // Go `er.newFunction` is `NewFunction`: a class `funcs` lists builds its
-    // own node, which the caller folds.
     if let Some(class) = crate::builtin::funcs(name) {
-        let mut args = vec![left, right];
-        crate::new_function::type_infer_for_null(&mut args);
-        let f = class.get_function(&crate::builtin::ResolverBuildContext(resolver), args)?;
-        return Ok(Expression::ScalarFunction(crate::new_function::scalar_function_of(
-            name,
-            FieldType::new(FieldTypeCode::Unspecified),
-            f,
-        )));
+        return class_function(class, name, vec![left, right], resolver);
     }
-    let ret_type = crate::builtin_compare::infer_compare_type(name)
-        .or_else(|| crate::builtin_op::infer_op_type(name));
-    match ret_type {
+    match crate::builtin_compare::infer_compare_type(name) {
         Some(mut ret_type) => {
             let mut args = vec![left, right];
-            if matches!(
-                name,
-                "bitand" | "bitor" | "bitxor" | "leftshift" | "rightshift"
-            ) {
-                args = signature_args::wrap_builtin_arguments(
-                    name,
-                    args,
-                    resolver.connection_charset_info(),
-                    &|argument| resolver.fold_constant(argument, ConstantFoldMode::Normal),
-                    Some(&ret_type),
-                )?;
-            }
-            // GO `logicAnd/logicOr/logicXorFunctionClass.getFunction`
-            // (builtin_op.go:65/128/191): every argument runs through
-            // `wrapWithIsTrue(ctx, true, arg, false)` — an ETInt argument
-            // passes through unwrapped (wrapForInt=false); anything else is
-            // wrapped in `istrue_with_null`, whose getFunction prices a
-            // string/time/json argument through ETReal — the base builder
-            // emits `cast(arg, double BINARY)` (q84's `||` chains render
-            // `or(istrue_with_null(cast(coalesce(..), double BINARY)), 0)`).
-            if matches!(name, "and" | "or" | "xor") {
-                for argument in &mut args {
-                    let operand = std::mem::replace(argument, Expression::Constant(Constant::new_null()));
-                    *argument = wrap_with_is_true_with_null(operand, resolver)?;
-                }
-            }
             // Go `adjustNullFlagForReturnType` runs on the arguments AFTER the
             // implicit casts wrapped them.
             result_type::stamp_builtin_return_flags(name, &args, &mut ret_type);
@@ -2653,13 +2592,8 @@ fn rewrite_leaf_compound(
                 derive_tree_collation_with_connection(bound, resolver.connection_charset_info())?;
                 resolver.fold_constant(bound, resolver.fold_mode());
             }
-            // The joining `AND`/`OR` is a `booleanFunctions` name, so the whole
-            // `BETWEEN` result is boolean-flagged: `JSON_ARRAY(x BETWEEN l AND h)`
-            // is `[true]`/`[false]`, not `[1]`/`[0]`.
-            let args = vec![lower, upper];
-            let ret_type =
-                builtin_return_type(joiner, &args).expect("AND and OR have a fixed result type");
-            Ok(Expression::ScalarFunction(ScalarFunction::new(CiString::new(joiner), ret_type, args)))
+            let class = crate::builtin::funcs(joiner).expect("builtin_op.go registers AND and OR");
+            class_function(class, joiner, vec![lower, upper], resolver)
         }
         // Go builds `like(expr, pattern, escape)`, whose third argument is
         // the escape byte as an integer; `NOT LIKE` wraps it in a unary NOT.
@@ -2754,7 +2688,12 @@ fn rewrite_leaf_compound(
                 };
                 // Go `caseWhenFunctionClass.getFunction`: every WHEN
                 // condition runs through `wrapWithIsTrue(ctx, true, arg, false)`.
-                args.push(wrap_with_is_true_with_null(condition, &child_resolver)?);
+                args.push(crate::builtin_op::wrap_with_is_true(
+                    &crate::builtin::ResolverBuildContext(&child_resolver),
+                    true,
+                    condition,
+                    false,
+                )?);
                 args.push(rewrite_expr_resolved(result, &child_resolver)?);
             }
             if let Some(else_clause) = else_clause {
@@ -2829,36 +2768,17 @@ fn rewrite_leaf_compound(
                 IsTarget::True => "istrue",
                 IsTarget::False => "isfalse",
             };
-            // Go's result is a one-digit integer (`flen` 1, boolean-flagged):
-            // `ast.IsNull`, `ast.IsTruthWithNull` and `ast.IsFalsity` are all in
-            // the `booleanFunctions` map, so a `JSON_ARRAY(x IS NULL)` element is
-            // JSON `true`/`false`.
-            let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
-            ret_type.set_flen(1);
-            ret_type.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
-            let mut call = signature_args::build_call(
-                name,
-                ret_type.clone(),
-                vec![arg],
-                resolver.connection_charset_info(),
-                &|expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
-            )?;
+            let class = crate::builtin::funcs(name).expect("builtin_op.go registers the IS classes");
+            let mut call = class_function(class, name, vec![arg], resolver)?;
             if *not {
                 // Go's `notToExpression` builds the operator through
                 // `newFunction` first, which folds it BEFORE the `not` is
                 // built over it -- so `a IS NOT NULL` over a NOT NULL column
                 // is `not(0)`, a folded constant that is itself NOT NULL.
-                if let Expression::ScalarFunction(function) = &mut call {
-                    if let Some(ret_type) = function.ret_type.as_mut() {
-                        result_type::stamp_builtin_return_flags(name, &function.args, ret_type);
-                    }
-                }
                 resolver.fold_constant(&mut call, resolver.fold_mode());
-                return Ok(Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new(unary_op_name(UnaryOp::Not)),
-                    ret_type,
-                    vec![call],
-                )));
+                let name = unary_op_name(UnaryOp::Not);
+                let class = crate::builtin::funcs(name).expect("builtin_op.go registers NOT");
+                return class_function(class, name, vec![call], resolver);
             }
             Ok(call)
         }
@@ -2874,19 +2794,8 @@ fn rewrite_leaf_compound(
             // Go `unaryOpToExpression`.
             ensure_single_column(&[&arg])?;
             let name = unary_op_name(*op);
-            // not/bitneg/unaryminus result types come from the transcreated
-            // builtin_op function classes; anything uncovered (the deferred
-            // unaryminus arms) keeps the LongLong placeholder.
-            if let Some(ret_type) = crate::builtin_op::infer_unary_op_type(name, &arg) {
-                return signature_args::build_call(
-                    name,
-                    ret_type,
-                    vec![arg],
-                    resolver.connection_charset_info(),
-                    &|expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
-                );
-            }
-            Ok(scalar(name, vec![arg]))
+            let class = crate::builtin::funcs(name).expect("builtin_op.go registers the unary operators");
+            class_function(class, name, vec![arg], resolver)
         }
         _ => unreachable!("dispatched by rewrite_leaf"),
     }
@@ -2937,6 +2846,9 @@ fn finish_function_call(
         ));
         return finish_function_call("if", vec![condition, null, value], resolver);
     }
+    if let Some(class) = crate::builtin::funcs(&lowered) {
+        return class_function(class, &lowered, rewritten, resolver);
+    }
     // Go `newFunctionImpl`: an untyped NULL argument takes the last
     // typed argument's type before the function class sees it
     // (control functions and ROW infer their own).
@@ -2967,7 +2879,12 @@ fn finish_function_call(
                 if index < first_value {
                     // Go `ifFunctionClass.getFunction`:
                     // `wrapWithIsTrue(ctx, true, args[0], false)`.
-                    return wrap_with_is_true_with_null(arg, resolver);
+                    return crate::builtin_op::wrap_with_is_true(
+                        &crate::builtin::ResolverBuildContext(resolver),
+                        true,
+                        arg,
+                        false,
+                    );
                 }
                 let (mut wrapped, built) = wrap_case_branch(arg, &ret_type, connection)?;
                 if let (true, Some(context)) = (built, resolver.comparison_context()) {

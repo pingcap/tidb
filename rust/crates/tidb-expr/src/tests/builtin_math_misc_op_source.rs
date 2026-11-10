@@ -19,7 +19,6 @@ use std::cell::RefCell;
 use super::*;
 use crate::builtin_ext::compare2::dispatch as compare2_dispatch;
 use crate::builtin_ext::misc::dispatch_in as misc_dispatch_in;
-use crate::builtin_op::infer_unary_op_type;
 use crate::builtin_registry::verify_args_by_count;
 use crate::expression::Expression;
 use crate::math_fn::{conv_valid_prefix, dispatch_values as math_dispatch_values};
@@ -69,12 +68,6 @@ fn real_ft() -> FieldType {
 
 fn text_ft() -> FieldType {
     FieldType::new(C::VarString)
-}
-
-fn decimal_zero_ft() -> FieldType {
-    let mut ft = FieldType::new(C::NewDecimal);
-    ft.set_decimal(0);
-    ft
 }
 
 fn uint_result() -> FieldType {
@@ -943,28 +936,36 @@ fn sleep_row(arg: Datum, ctx: &impl Columns) -> Result<Datum, EvalError> {
 /// IntMin, and negating the signed minimum promotes positively.
 #[test]
 fn unary_minus_source_table() {
+    // Go `newFunctionForTest(ctx, ast.UnaryMinus, arg)` then `Eval`.
+    let negate = |arg: Datum| {
+        let f = unary_minus_function(const_arg(arg)).expect("unary minus builds");
+        crate::new_function::scalar_function_of("unaryminus", FieldType::new(C::Unspecified), f)
+            .eval(&tidb_exprctx::context::NoColumns, empty_row())
+            .expect("unary minus evaluates")
+    };
     for (bits, want_label) in [
         (9_223_372_036_854_775_809_u64, "-9223372036854775809"),
         (9_223_372_036_854_775_810, "-9223372036854775810"),
     ] {
-        let got = eval_default("unaryminus", vec![Datum::UInt(bits)], decimal_zero_ft())
-            .unwrap_or_else(|err| panic!("unary minus overflow promotes: {err:?}"));
-        assert_eq!(got.label(), format!("DEC:{want_label}"), "{bits}");
+        assert_eq!(negate(Datum::UInt(bits)).label(), format!("DEC:{want_label}"), "{bits}");
     }
-    let got = eval_default(
-        "unaryminus",
-        vec![Datum::UInt(9_223_372_036_854_775_808)],
-        int_ft(),
-    )
-    .unwrap();
-    assert_eq!(got, Datum::Int(i64::MIN));
+    assert_eq!(negate(Datum::UInt(9_223_372_036_854_775_808)), Datum::Int(i64::MIN));
     // --9223372036854775808: negating the SIGNED minimum constant.
-    let got = eval_default("unaryminus", vec![Datum::Int(i64::MIN)], decimal_zero_ft()).unwrap();
-    assert_eq!(got.label(), "DEC:9223372036854775808");
+    assert_eq!(negate(Datum::Int(i64::MIN)).label(), "DEC:9223372036854775808");
 
     // Building the one-constant signature succeeds (Go:
     // `funcs[ast.UnaryMinus].getFunction(ctx, []Expression{NewZero()})`).
-    assert!(infer_unary_op_type("unaryminus", &const_arg(Datum::Int(0))).is_some());
+    assert!(unary_minus_function(const_arg(Datum::Int(0))).is_ok());
+}
+
+/// Go `funcs[ast.UnaryMinus].getFunction(ctx, []Expression{arg})`.
+fn unary_minus_function(arg: Expression) -> Result<crate::builtin::BaseBuiltinFunc, EvalError> {
+    crate::builtin::funcs("unaryminus")
+        .expect("builtin_op.go registers unaryminus")
+        .get_function(
+            &crate::builtin::ColumnsBuildContext(&tidb_exprctx::context::NoColumns),
+            vec![arg],
+        )
 }
 
 /// Go `pkg/expression/builtin_op_test.go:70 TestUnaryMinusDecimalRetTypeFlen`
@@ -981,13 +982,13 @@ fn unary_minus_ret_type_flen_follows_go_sign_reservation() {
         Datum::Decimal(crate::Decimal::from_literal("123.45")),
         dec_ft.clone(),
     ));
-    let ret = infer_unary_op_type("unaryminus", &arg).expect("decimal infer");
+    let ret = unary_minus_function(arg).unwrap().get_ret_tp();
     assert_eq!(ret.flen(), 11);
     assert_eq!(ret.decimal(), 2);
 
     // Decimal COLUMN of declared width 10 keeps 10 (scale untouched).
     let col = Expression::Column(crate::column::Column::new(1, dec_ft));
-    let ret = infer_unary_op_type("unaryminus", &col).expect("decimal col infer");
+    let ret = unary_minus_function(col).unwrap().get_ret_tp();
     assert_eq!(ret.flen(), 10);
     assert_eq!(ret.decimal(), 2);
 
@@ -998,19 +999,19 @@ fn unary_minus_ret_type_flen_follows_go_sign_reservation() {
         Datum::Int(123),
         int_ft11.clone(),
     ));
-    let ret = infer_unary_op_type("unaryminus", &arg).expect("int infer");
+    let ret = unary_minus_function(arg).unwrap().get_ret_tp();
     assert_eq!(ret.flen(), 12);
 
     // Signed Int COLUMN flen 11 keeps 11.
     let col = Expression::Column(crate::column::Column::new(2, int_ft11));
-    let ret = infer_unary_op_type("unaryminus", &col).expect("signed col infer");
+    let ret = unary_minus_function(col).unwrap().get_ret_tp();
     assert_eq!(ret.flen(), 11);
 
     // Unsigned Int CONSTANT flen 10 -> 11.
     let mut u_ft10 = uint_ft();
     u_ft10.set_flen(10);
     let arg = Expression::Constant(crate::constant::Constant::new(Datum::UInt(123), u_ft10));
-    let ret = infer_unary_op_type("unaryminus", &arg).expect("unsigned infer");
+    let ret = unary_minus_function(arg).unwrap().get_ret_tp();
     assert_eq!(ret.flen(), 11);
 }
 

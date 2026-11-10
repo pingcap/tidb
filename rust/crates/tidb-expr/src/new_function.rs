@@ -310,15 +310,7 @@ pub fn new_function_impl(
     // == TypeUnspecified { retType = builtinRetTp }`. See the module header's
     // `getFunction` narrowing for why the inference table stands in for
     // `f.getRetTp()`.
-    // The unary operators' classes (`unaryNotFunctionClass`,
-    // `bitNegFunctionClass`, `unaryMinusFunctionClass`) type their result
-    // from their argument, as the AST rewriter's `Expr::Unary` arm does.
-    let unary_type = match func_args.as_slice() {
-        [arg] => crate::builtin_op::infer_unary_op_type(func_name, arg),
-        _ => None,
-    };
-    let ret_type = unary_type
-        .or_else(|| crate::rewriter::result_type::builtin_return_type(func_name, &func_args))
+    let ret_type = crate::rewriter::result_type::builtin_return_type(func_name, &func_args)
         .filter(|inferred| {
             inferred.code() != FieldTypeCode::Unspecified
                 || ret_type.code() == FieldTypeCode::Unspecified

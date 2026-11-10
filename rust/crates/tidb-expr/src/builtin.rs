@@ -30,6 +30,7 @@ use tidb_datatype::{
     Datum, EvalType, FieldType, FieldTypeBuilder, FieldTypeCode, FieldTypeFlags, UNSPECIFIED_LENGTH,
 };
 use tidb_proto::tipb::ScalarFuncSig;
+use tidb_terror::TerrorError;
 
 /// Go `mysql.MaxIntWidth`.
 const MAX_INT_WIDTH: i64 = 20;
@@ -54,6 +55,8 @@ pub(crate) trait BuildContext {
     fn fold_constant(&self, expression: &mut Expression);
     /// Go `expression.Eval(ctx.GetEvalCtx(), chunk.Row{})`.
     fn eval_constant(&self, expression: &Expression) -> Result<Datum, EvalError>;
+    /// Go `ctx.GetEvalCtx().AppendWarning(err)`.
+    fn append_warning(&self, error: &TerrorError);
 }
 
 /// The [`BuildContext`] of a function built through `NewFunction`.
@@ -78,6 +81,10 @@ impl BuildContext for ColumnsBuildContext<'_> {
 
     fn eval_constant(&self, expression: &Expression) -> Result<Datum, EvalError> {
         expression.eval(self.0, Row::empty())
+    }
+
+    fn append_warning(&self, error: &TerrorError) {
+        self.0.append_error_warning(&error.to_sql_error());
     }
 }
 
@@ -104,6 +111,19 @@ impl<R: ColumnResolver> BuildContext for ResolverBuildContext<'_, R> {
     fn eval_constant(&self, expression: &Expression) -> Result<Datum, EvalError> {
         self.0.eval_constant(expression)
     }
+
+    /// The statement's warnings are reset once it is planned, so a warning
+    /// of the build is kept where the fold's are, to be reported after the
+    /// statement ran.
+    fn append_warning(&self, error: &TerrorError) {
+        let error = error.to_sql_error();
+        tidb_context::fold_warnings::record_fold_sql_warn(tidb_context::SqlWarn::from_error(
+            tidb_context::WarningLevel::Warning,
+            error.code,
+            error.message,
+            error.identity,
+        ));
+    }
 }
 
 /// Go `functionClass`.
@@ -125,7 +145,27 @@ pub(crate) fn funcs(name: &str) -> Option<&'static dyn FunctionClass> {
         ArithmeticMinusFunctionClass, ArithmeticModFunctionClass,
         ArithmeticMultiplyFunctionClass, ArithmeticPlusFunctionClass,
     };
+    use crate::builtin_op::{
+        BitNegFunctionClass, IsNullFunctionClass, LogicAndFunctionClass, LogicOrFunctionClass,
+        LogicXorFunctionClass, UnaryMinusFunctionClass, UnaryNotFunctionClass, BIT_AND, BIT_OR,
+        BIT_XOR, IS_FALSITY, IS_TRUTH_WITHOUT_NULL, IS_TRUTH_WITH_NULL, LEFT_SHIFT, RIGHT_SHIFT,
+    };
     Some(match name {
+        "isnull" => &IsNullFunctionClass,
+        "and" => &LogicAndFunctionClass,
+        "or" => &LogicOrFunctionClass,
+        "xor" => &LogicXorFunctionClass,
+        "not" => &UnaryNotFunctionClass,
+        "bitneg" => &BitNegFunctionClass,
+        "bitand" => &BIT_AND,
+        "bitor" => &BIT_OR,
+        "bitxor" => &BIT_XOR,
+        "leftshift" => &LEFT_SHIFT,
+        "rightshift" => &RIGHT_SHIFT,
+        "unaryminus" => &UnaryMinusFunctionClass,
+        "istrue_with_null" => &IS_TRUTH_WITH_NULL,
+        "istrue" => &IS_TRUTH_WITHOUT_NULL,
+        "isfalse" => &IS_FALSITY,
         "plus" => &ArithmeticPlusFunctionClass,
         "minus" => &ArithmeticMinusFunctionClass,
         "mul" => &ArithmeticMultiplyFunctionClass,

@@ -724,11 +724,6 @@ mod tests {
     }
 
     #[test]
-    fn prepared_constants_never_supply_a_context_free_folded_value() {
-        assert!(crate::constant_fold::folded_value(&parameter(0)).is_none());
-    }
-
-    #[test]
     fn prepared_deferred_constant_converts_current_value_without_mutation() {
         let mut constant = Constant::new(Datum::Real(100.0), FieldType::new(FieldTypeCode::Double));
         constant.deferred_expr = Some(Box::new(scalar("plus", vec![parameter(0), int(1)])));

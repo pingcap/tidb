@@ -4,6 +4,7 @@
 
 mod advisory_locks;
 mod aggregates;
+mod builtin_op;
 mod builtins;
 mod ddl;
 mod dml;

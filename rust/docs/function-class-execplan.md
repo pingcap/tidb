@@ -44,7 +44,13 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
 - [x] (2026-11-10) Milestone 1: `builtin_arithmetic.go` (6 classes). The six
   names evaluate through the signature's kernel; `prepare_numeric_arguments`
   and `wrap_arithmetic_operands` are deleted.
-- [ ] Milestone 2: `builtin_op.go` (13 classes).
+- [x] (2026-11-10) Milestone 2: `builtin_op.go` (13 classes, 15 names).
+  The rewriter's operator, `IS`, unary, function-call and `BETWEEN` paths
+  build through the classes; `wrapWithIsTrue` is one function for the
+  logic classes, `CASE WHEN` and `IF`. Left: `compose_cnf_condition` /
+  `compose_dnf_condition` have no build context at their 75 call sites and
+  still construct `and` / `or` nodes directly, and the catalog's resolve
+  rows for the operator names stay for such nodes.
 - [ ] Milestone 3: `builtin_fts.go` (2), `builtin_like.go` (1),
   `builtin_ilike.go` (1), `builtin_grouping.go` (1).
 - [ ] Milestone 4: `builtin_compare.go` (5), `builtin_control.go` (3).
@@ -118,6 +124,27 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   and a string constant in a warning goes through `TruncatedStringify`.
   The by-name texts they replace differed for nested functions.
 
+- Observation: Go `mock.NewContext` keeps `types.DefaultStmtFlags`, under
+  which a truncation is an error, so a class's cast of the constant `'1.5'`
+  to an integer fails to fold and stays on the tree (`bitand qi` has a `c`
+  slot without a value). A SELECT folds it with a warning.
+  Evidence: the fixture's 61 bit-operator rows with `q`; the Rust test's
+  `MockContext` answers `truncate_level() == Error`.
+- Observation: a testkit probe prints an integer cast's display width
+  (`cast(test.t.dt, bigint(19) BINARY)`); a server deprecates it and prints
+  `bigint BINARY`, as all 22 such casts in `tests/integrationtest/r` do.
+  Plan text pinned from a probe has to be read with that in mind.
+- Observation: Go's rewriter reaches a class from every spelling. The
+  function-call form (`isnull(j)`), the `AND` / `OR` joining a `BETWEEN`
+  and the `NOT` of `IS NOT TRUE` went around the operator typing here and
+  now build through `class_function`.
+  Evidence: `op_classes_print_gos_plans` (`isnull(cast(test.t.j,
+  var_string(4294967295)))` from both spellings).
+- Observation: `unaryNotFunctionClass` appends warning 3986 while it
+  builds, once per `NOT` over JSON, so `select not j, !j` carries two and an
+  EXPLAIN carries it too.
+  Evidence: `op_classes_wrap_and_evaluate_like_go`.
+
 ## Decision Log
 
 - Decision: port one whole Go file per milestone, never one function at a
@@ -169,6 +196,20 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   file's rows.
   Date/Author: 2026-11-10, agent.
 
+- Decision: `BuildContext` gains `append_warning` (Go
+  `ctx.GetEvalCtx().AppendWarning`). The rewriter's adapter records it with
+  the fold's warnings, which join the statement's list where planning ends.
+  Rationale: a statement's warnings are reset once it is planned; a
+  build-time warning has to survive that exactly as a fold's does.
+  Date/Author: 2026-11-10, agent.
+- Decision: `compose_condition_with_binary_op` keeps building its `and` /
+  `or` node directly, with the class's result type written out.
+  Rationale: Go calls `NewFunctionInternal(ctx, ...)` there; the Rust
+  function has no context and 75 callers. Its arguments are conditions
+  already, so the class would wrap nothing; threading a context through is
+  its own change.
+  Date/Author: 2026-11-10, agent.
+
 ## Outcomes & Retrospective
 
 Milestones 0 and 1 (2026-11-10): the six arithmetic names are built by
@@ -176,6 +217,16 @@ their Go classes from both `new_function` and the AST rewriter. All 1,176
 fixture rows (signature, return field type, coercibility, repertoire and
 every argument after its cast, constants included) equal Go's. Integer
 division carries real casts on the tree.
+
+Milestone 2 (2026-11-10): the fifteen names of `builtin_op.go` are built by
+their classes; the fixture grows to 2,828 rows over 21 names. The casts
+`NOT`, `IS TRUE`, the bit operators and unary minus need are on the tree
+(`not(istrue_with_null(cast(test.t.dt, bigint BINARY)))`), `NOT` over a
+vector raises Go's "VectorFloat32 is not supported for unary not operator"
+from the class, and `-?` over a parameter holding `-9223372036854775808`
+answers the decimal Go answers. `infer_op_type`, `infer_unary_op_type`,
+`wrap_with_is_true_with_null`, `folded_value` and the operator rows of
+`result_type.rs` and `signature_args.rs` are gone.
 
 ## Context and Orientation
 
@@ -225,9 +276,7 @@ decimals, flags), constructs the signature struct and calls `setPbCode`.
 What Rust has. `new_function.rs` `new_function_impl` follows Go up to
 `verify_args_by_count` and `builtin_registry::get_function_refusal`, then
 runs a legacy body that stands for `getFunction`: the return type from
-`builtin_arithmetic::infer_arithmetic_type_with_context` (arithmetic),
-`builtin_op::infer_unary_op_type` (unary operators) or
-`rewriter::result_type::builtin_return_type` (everything else);
+`rewriter::result_type::builtin_return_type`;
 `stamp_builtin_return_flags`; `builtin_compare::refine_comparison_dyn`;
 `collation_derive::derive_collation_with_connection`;
 `rewriter::signature_args::wrap_builtin_arguments`;
@@ -411,6 +460,7 @@ In `rust/crates/tidb-expr/src/builtin.rs` (Go `builtin.go`):
         fn div_precision_increment(&self) -> i64;
         fn fold_constant(&self, expression: &mut Expression);
         fn eval_constant(&self, expression: &Expression) -> Result<Datum, EvalError>;
+        fn append_warning(&self, error: &TerrorError);
     }
     pub(crate) struct ColumnsBuildContext<'a>(pub(crate) &'a dyn Columns);
     pub(crate) struct ResolverBuildContext<'a, R: ColumnResolver>(pub(crate) &'a R);

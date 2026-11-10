@@ -327,56 +327,11 @@ fn argument_kinds(
         "vec_l1_distance" | "vec_l2_distance" | "vec_negative_inner_product"
         | "vec_cosine_distance" => vec![Vector, Vector],
         "vec_from_text" | "tidb_encode_sql_digest" => vec![Text],
-        "bitand" | "bitor" | "bitxor" | "leftshift" | "rightshift" => vec![Int, Int],
-        "bitneg" => vec![Int],
         // Go `arithmeticIntDivideFunctionClass`: two integers divide as
         // integers, everything else is divided as decimals.
         "intdiv" => {
             let all_int = args.iter().all(|arg| eval_type(arg) == Some(EvalType::Int));
             vec![if all_int { Int } else { Decimal }; count]
-        }
-        // Go `unaryNotFunctionClass`: time types read as integers, strings
-        // as doubles.
-        "not" => vec![match eval_type(first?) {
-            Some(EvalType::Timestamp | EvalType::Datetime | EvalType::Duration) => Int,
-            Some(EvalType::String) => Real,
-            Some(EvalType::Decimal) => Decimal,
-            Some(EvalType::Real) => Real,
-            Some(EvalType::Json) => Document,
-            Some(EvalType::VectorFloat32) => Vector,
-            _ => Int,
-        }],
-        // Go `isTrueOrFalseFunctionClass`: string, time and JSON arguments
-        // read as doubles, a vector as itself.
-        "istrue" | "istrue_with_null" | "isfalse" | "isfalse_with_null" => {
-            vec![match eval_type(first?) {
-                Some(
-                    EvalType::Timestamp
-                    | EvalType::Datetime
-                    | EvalType::Duration
-                    | EvalType::Json
-                    | EvalType::String,
-                ) => Real,
-                Some(EvalType::Decimal) => Decimal,
-                Some(EvalType::Real) => Real,
-                Some(EvalType::VectorFloat32) => Vector,
-                _ => Int,
-            }]
-        }
-        // Go `unaryMinusFunctionClass`: integers stay integers, decimal and
-        // temporal arguments are negated as decimals, the rest as doubles.
-        "unaryminus" => {
-            let arg = first?;
-            let temporal = arg.static_type().is_some_and(|tp| {
-                tp.code().is_type_temporal() || tp.code() == FieldTypeCode::Duration
-            });
-            vec![match eval_type(arg) {
-                Some(EvalType::Int) => Int,
-                Some(EvalType::Real) => Real,
-                Some(EvalType::Decimal) => Decimal,
-                _ if temporal => Decimal,
-                _ => Real,
-            }]
         }
         // Go `greatestFunctionClass`/`leastFunctionClass`: every argument is
         // cast to the merged result type, or to a string when temporal and
@@ -493,9 +448,6 @@ fn argument_kinds(
         }
         "json_overlaps" | "json_schema_valid" => vec![Document, Document],
         "json_unquote" | "json_quote" => vec![Text],
-        // Go `isNullFunctionClass.getFunction`: a JSON argument is tested as
-        // its string form (`argTp = types.ETString`).
-        "isnull" if eval_type(first?) == Some(EvalType::Json) => vec![Text],
         _ => return None,
     })
 }
@@ -579,13 +531,6 @@ pub(crate) fn wrap_builtin_arguments(
         // A malformed call (wrong argument count) is rejected by the class's
         // own check; leave its arguments as they are.
         return Ok(args);
-    }
-    // Go `unaryNotFunctionClass.getFunction`: the argument types it has a
-    // signature for are int, real, decimal and JSON.
-    if name == "not" && matches!(kinds.as_slice(), [ArgKind::Vector]) {
-        return Err(EvalError::Raw(
-            "VectorFloat32 is not supported for unary not operator".into(),
-        ));
     }
     args.into_iter()
         .zip(kinds)

@@ -60,8 +60,8 @@
 //!   [`crate::simple_expr::compose_dnf_condition`]
 //!
 //! `constant_fold.rs` already holds the rewriter-tier fold (`foldConstant`'s
-//! bottom-up walk as the AST rewriter needs it, plus `folds_to_constant` /
-//! `folded_value`). [`fold::fold_constant`] here is the PUBLIC `FoldConstant`
+//! bottom-up walk as the AST rewriter needs it, plus `folds_to_constant`).
+//! [`fold::fold_constant`] here is the PUBLIC `FoldConstant`
 //! entry point over a built `Expression` tree, which that file does not
 //! expose; it does not re-derive the walk, it drives the same predicates.
 //!

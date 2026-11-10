@@ -1218,38 +1218,15 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
     // Longlong flagged `IsBooleanFlag`, exactly like ISNULL/LIKE above.
     if matches!(
         name,
-        "and" | "or" | "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "in" | "istrue" | "isfalse"
+        "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "in"
     ) {
         let mut ft = FieldType::new(FieldTypeCode::LongLong);
         ft.set_flen(1);
         ft.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
         return Some(ft);
     }
-    // The bit families return a Longlong flagged UNSIGNED in EVERY call
-    // form: go's bitAnd/bitOr/bitXor/leftShift/rightShiftFunctionClass
-    // getFunction bodies all run `bf.tp.AddFlag(mysql.UnsignedFlag)`, and
-    // the operator spellings (`a & b`) build through the same `funcs`
-    // entries. Without the flag the function form renders the same
-    // two's-complement bit pattern as signed (`bitor(1.25, -3.75)` as -3
-    // instead of the operator form's 18446744073709551613).
-    // `bitneg` carries the same flag (its comment below); `intdiv`/`div`
-    // stay plain — go's intDivideFunctionClass adds the flag only when an
-    // ARGUMENT is unsigned, which the arithmetic inference handles.
-    if matches!(
-        name,
-        "bitand" | "bitor" | "bitxor" | "leftshift" | "rightshift"
-    ) {
-        let mut ft = FieldType::new(FieldTypeCode::LongLong);
-        ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
-        return Some(ft);
-    }
     if matches!(name, "intdiv" | "div") {
         return Some(FieldType::new(FieldTypeCode::LongLong));
-    }
-    if name == "bitneg" {
-        let mut ft = FieldType::new(FieldTypeCode::LongLong);
-        ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
-        return Some(ft);
     }
     if matches!(name, "minus" | "mod") {
         let any_decimal = args.iter().any(|arg| {
@@ -1824,17 +1801,6 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
         "bit_count" if args.len() == 1 => {
             let mut ft = int();
             ft.set_flen(2);
-            ft
-        }
-        // Go `isNullFunctionClass` (`pkg/expression/builtin_op.go`): the
-        // one-digit boolean shape. This is the FUNCTION spelling `ISNULL(x)`;
-        // the `x IS NULL` operator is rewritten onto the same name by the
-        // `Expr::Is` arm below, so both spellings share this type.
-        "isnull" if args.len() == 1 => {
-            let mut ft = int();
-            ft.set_flen(1);
-            // `ast.IsNull` is in Go's `booleanFunctions` map.
-            ft.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
             ft
         }
         // The hash family (`pkg/expression/builtin_encryption.go`). Each

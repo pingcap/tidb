@@ -889,8 +889,16 @@ fn compose_condition_with_binary_op(
             let right = conditions.split_off(length / 2);
             let left = compose_condition_with_binary_op(conditions, func_name)?;
             let right = compose_condition_with_binary_op(right, func_name)?;
-            let ret_type = crate::builtin_op::infer_op_type(func_name)
-                .expect("`and`/`or` are in the logical-op result-type table");
+            // Go builds the node with `NewFunctionInternal`, whose `and`/`or`
+            // class wraps an argument that is no integer in
+            // `istrue_with_null`. No build context reaches this function, so
+            // the conditions stay as they are under the class's result type.
+            let mut ret_type =
+                crate::builtin_arithmetic::new_return_field_type_for_base_builtin_func(
+                    tidb_datatype::EvalType::Int,
+                );
+            ret_type.set_flen(1);
+            ret_type.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
             Some(Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new(func_name),
                 ret_type,

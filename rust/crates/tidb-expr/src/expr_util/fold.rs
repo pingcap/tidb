@@ -19,8 +19,8 @@
 //!
 //! `constant_fold.rs` in this crate already holds the AST-REWRITER tier's view
 //! of folding: `derive_constant_null_flag` and `fold_constant_in_mode`, which
-//! fold a tree the rewriter has just built, plus the `folds_to_constant` /
-//! `folded_value` predicates its dispatch keys on. What it does NOT have is
+//! fold a tree the rewriter has just built, plus the `folds_to_constant`
+//! predicate its dispatch keys on. What it does NOT have is
 //! Go's public `FoldConstant(ctx, expr)` over an already-built `Expression`
 //! tree, with the special handlers. That is what this module adds; the shared
 //! unfoldable-function table is reused, not re-declared.
