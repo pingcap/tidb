@@ -853,7 +853,7 @@ func TestKillBlockReadOnlyDDLTxn(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tk2 := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk1.MustExec("use test")
-	tk1.MustExec("set global tidb_enable_metadata_lock=1")
+	tk1.MustQuery("select @@global.tidb_enable_metadata_lock").Check(testkit.Rows("1"))
 	tk1.MustExec("create table t(a int);")
 	tk1.MustExec("insert into t values(1);")
 	tk1.MustExec("begin")
