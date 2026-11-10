@@ -25,9 +25,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // GlobalPDHelper is the global variable for PDHelper.
@@ -120,7 +122,17 @@ func getApproximateTableCountFromStorage(
 		sqlescape.MustFormatSQL(sql, " partition(%n)", partitionName)
 	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
-	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql.String())
+	var opts []sqlexec.OptionFuncAlias
+	// The ANALYZE on a DXF service node has an info schema of its own, without a snapshot read.
+	// The internal session sees the table only through it.
+	if vars := sctx.GetSessionVars(); vars.SnapshotInfoschema != nil && vars.SnapshotTS == 0 {
+		is := vars.SnapshotInfoschema
+		opts = append(opts, sqlexec.ExecOptionWithSessionVarsSetup(func(internal *variable.SessionVars) func() {
+			internal.SnapshotInfoschema = is
+			return func() { internal.SnapshotInfoschema = nil }
+		}))
+	}
+	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, opts, sql.String())
 	if err != nil {
 		return 0, false
 	}

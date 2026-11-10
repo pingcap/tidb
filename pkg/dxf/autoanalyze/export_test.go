@@ -14,7 +14,20 @@
 
 package autoanalyze
 
+import "github.com/pingcap/tidb/pkg/session/syssession"
+
+// WaitIdle exports waitIdle for test.
+func (p *statementPool) WaitIdle() {
+	p.waitIdle()
+}
+
 var (
+	// RunOnServiceNode exports runOnServiceNode for test.
+	RunOnServiceNode = runOnServiceNode
+	// NewStatementPool creates a statementPool for test.
+	NewStatementPool = func(p *syssession.AdvancedSessionPool) *statementPool {
+		return &statementPool{AdvancedSessionPool: p}
+	}
 	// OrderByUsedSlots exports orderByUsedSlots for test.
 	OrderByUsedSlots = orderByUsedSlots
 	// PlaceTask places a task the way the schedulers of this process do, for test.

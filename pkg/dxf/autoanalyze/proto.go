@@ -14,6 +14,9 @@
 
 // Package autoanalyze runs the auto-analyze statements as DXF tasks, each on the least used
 // node. The stats owner keeps the priority queue and the concurrency control.
+//
+// The node is a normal TiDB node on the classic kernel. On the next-gen kernel it is a DXF service
+// node of the SYSTEM keyspace, where a runtime serves the task keyspace, see service_exec.go.
 package autoanalyze
 
 import (
@@ -27,7 +30,8 @@ type TaskMeta struct {
 	SQL string `json:"sql"`
 	// Params are the identifiers to fill into SQL.
 	Params []string `json:"params"`
-	// DBID and TableID identify the table that the statement analyzes.
+	// DBID and TableID identify the table that the statement analyzes. On a DXF service node, the
+	// statement session gets an info schema with only this table.
 	DBID    int64 `json:"db_id"`
 	TableID int64 `json:"table_id"`
 }
