@@ -906,6 +906,20 @@ pub fn parse_duration_with_flags<TZ: chrono::TimeZone>(
     flags: ConversionFlags,
     timezone: &TZ,
 ) -> Result<Converted<MySqlDuration>, crate::DurationValueError> {
+    parse_duration_in_context(input, fsp, flags, timezone, |_| {})
+}
+
+/// Go `types.ParseDuration(ctx, str, fsp)` with the warning its datetime
+/// fallback appends through `ctx`: `ParseDatetime` reports the text it had to
+/// drop as "Truncated incorrect datetime value" and the duration still
+/// parses. `append_warning` receives that message.
+pub fn parse_duration_in_context<TZ: chrono::TimeZone>(
+    input: &str,
+    fsp: i64,
+    flags: ConversionFlags,
+    timezone: &TZ,
+    append_warning: impl FnOnce(&str),
+) -> Result<Converted<MySqlDuration>, crate::DurationValueError> {
     let parsed = parse_mysql_duration(
         input,
         fsp,
@@ -913,13 +927,17 @@ pub fn parse_duration_with_flags<TZ: chrono::TimeZone>(
         flags.ignore_zero_in_date_err(),
         flags.ignore_invalid_date_err(),
     )?;
+    if parsed.datetime_truncated() {
+        append_warning(&format!(
+            "Truncated incorrect datetime value: '{}'",
+            input.trim()
+        ));
+    }
     let value = MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp())
         .map_err(crate::DurationParseError::InvalidFsp)
         .map_err(crate::DurationValueError::Duration)?;
     Ok(Converted {
         value,
-        // ParseDuration uses ErrTruncatedWrongVal for both malformed suffixes
-        // and saturated TIME values, not the numeric ErrOverflow.
         event: parsed.event().map(|_| ScalarConversionEvent::Truncated),
     })
 }

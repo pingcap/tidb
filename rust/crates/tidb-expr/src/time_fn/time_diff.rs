@@ -22,7 +22,7 @@
 //! for most text and a DATETIME only for a twelve-digit-or-longer value, and
 //! the call is NULL when the two sides land on different kinds.
 
-use tidb_datatype::{Datum, DurationOrTime, EvalType, FieldType, MySqlDuration, Time, MAX_FSP};
+use tidb_datatype::{Datum, DurationOrTime, MySqlDuration, Time, MAX_FSP};
 
 use crate::{Columns, EvalError};
 
@@ -32,21 +32,6 @@ pub(crate) enum TimeDiffArg {
     Duration,
     Time,
     String,
-}
-
-/// The kind Go's `getArgEvalTp` gives an argument of static type `field`.
-/// Without a static type the datum's own kind stands in for it.
-pub(crate) fn get_arg_eval_tp(field: Option<&FieldType>, value: &Datum) -> TimeDiffArg {
-    match field.map(FieldType::eval_type) {
-        Some(EvalType::Duration) => TimeDiffArg::Duration,
-        Some(EvalType::Datetime | EvalType::Timestamp) => TimeDiffArg::Time,
-        Some(_) => TimeDiffArg::String,
-        None => match value {
-            Datum::Duration(_) => TimeDiffArg::Duration,
-            Datum::Time(_) => TimeDiffArg::Time,
-            _ => TimeDiffArg::String,
-        },
-    }
 }
 
 /// One side after its signature read it.
@@ -104,31 +89,6 @@ pub(crate) fn time_diff(
         difference.nanoseconds(),
         if fsp >= 0 { fsp } else { difference.fsp() },
     )))
-}
-
-/// `TIMEDIFF` for a tier without static argument types: the kinds come from
-/// the datums, and the precision from each value the way `getExpressionFsp`
-/// reads a constant (`types.GetFsp` of its string form).
-pub(crate) fn time_diff_untyped(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
-    let [left, right] = vals else {
-        return Err(EvalError::Unsupported("bad function arity"));
-    };
-    let fsp = value_fsp(left)?.max(value_fsp(right)?);
-    time_diff(
-        vals,
-        [get_arg_eval_tp(None, left), get_arg_eval_tp(None, right)],
-        fsp,
-        cols,
-    )
-}
-
-fn value_fsp(value: &Datum) -> Result<i64, EvalError> {
-    Ok(match value {
-        Datum::Duration(duration) => duration.fsp().clamp(0, MAX_FSP),
-        Datum::Time(time) => i64::from(time.fsp()),
-        _ => crate::coerce::coerce_str(value)?
-            .map_or(0, |text| i64::from(tidb_datatype::get_fsp(&text))),
-    })
 }
 
 /// Reads one side as its signature does: `EvalDuration` / `EvalTime` for a

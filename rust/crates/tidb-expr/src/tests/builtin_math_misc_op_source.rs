@@ -17,11 +17,9 @@
 use std::cell::RefCell;
 
 use super::*;
-use crate::builtin_ext::compare2::dispatch as compare2_dispatch;
-use crate::builtin_ext::misc::dispatch_in as misc_dispatch_in;
 use crate::builtin_registry::verify_args_by_count;
 use crate::expression::Expression;
-use crate::math_fn::{conv_valid_prefix, dispatch_values as math_dispatch_values};
+use crate::math_fn::conv_valid_prefix;
 use crate::rewriter::result_type::builtin_return_type;
 use crate::scalar_function::ScalarFunction;
 use tidb_ast::{CiString, QueryStmt, SelectField, Stmt};
@@ -196,8 +194,8 @@ fn bin_str(bytes: &[u8]) -> Datum {
 /// dispatcher preserves warnings but the comparison/misc leaf level of these
 /// tests is warning-free by construction.
 fn call(name: &str, vals: &[Datum]) -> Datum {
-    compare2_dispatch(name, vals, &tidb_exprctx::context::NoColumns)
-        .or_else(|| misc_dispatch_in(name, vals, &tidb_exprctx::context::NoColumns))
+    eval_builtin_func(name, vals, &tidb_exprctx::context::NoColumns)
+        .or_else(|| eval_builtin_func(name, vals, &tidb_exprctx::context::NoColumns))
         .unwrap_or_else(|| panic!("{name} must belong to a ported family"))
         .unwrap_or_else(|err| panic!("{name}({vals:?}): {err:?}"))
 }
@@ -342,7 +340,7 @@ fn conv_source_table_type_and_valid_prefix_rows() {
     // Building the three-zero call succeeds (Go:
     // `funcs[ast.Conv].getFunction(ctx, []Expression{NewZero() x3})`).
     let zeros = [Datum::Int(0), Datum::Int(0), Datum::Int(0)];
-    assert!(math_dispatch_values("CONV", &zeros, &WarnCountCtx::new()).is_some());
+    assert!(eval_builtin_func("CONV", &zeros, &WarnCountCtx::new()).is_some());
 }
 
 /// Go `pkg/expression/builtin_math_test.go:677 TestDegrees`,
@@ -365,7 +363,7 @@ fn math_string_coercion_raises_one_truncate_warning_each() {
     ] {
         for text in invalid_texts {
             let ctx = WarnCountCtx::new();
-            let got = math_dispatch_values(name, &[Datum::new_string_datum(text.to_owned())], &ctx)
+            let got = eval_builtin_func(name, &[Datum::new_string_datum(text.to_owned())], &ctx)
                 .unwrap_or_else(|| panic!("{name} belongs to the math family"));
             assert!(matches!(&got, Ok(_)), "{name}({text:?}) must evaluate");
             // These cases ARE the getWarning branch: success + one warning.
@@ -376,7 +374,7 @@ fn math_string_coercion_raises_one_truncate_warning_each() {
         // Degrees' own `""` which coerces silently to 0).
         let clean = if name == "DEGREES" { "" } else { "0.000" };
         let ctx = WarnCountCtx::new();
-        let got = math_dispatch_values(name, &[Datum::new_string_datum(clean.to_owned())], &ctx)
+        let got = eval_builtin_func(name, &[Datum::new_string_datum(clean.to_owned())], &ctx)
             .unwrap_or_else(|| panic!("{name} belongs to the math family"));
         assert!(
             matches!(&got, Ok(Datum::Real(_))),
@@ -401,7 +399,7 @@ fn cot_zero_overflows_as_double_error() {
         "DataOutOfRange { value: \"DOUBLE\", expression: \"cot(0)\" }"
     );
     let ctx = WarnCountCtx::new();
-    let got = math_dispatch_values("COT", &[Datum::Real(0.0)], &ctx).unwrap();
+    let got = eval_builtin_func("COT", &[Datum::Real(0.0)], &ctx).unwrap();
     // The kernel itself words the overflow with the evaluated argument
     // (Go formats it as `FormatFloat(val, 'f', -1, 64)`).
     assert!(matches!(
@@ -436,7 +434,7 @@ fn math_overflow_errors_render_the_source_expression() {
 /// exact double constant rather than a rounded decimal literal.
 #[test]
 fn pi_is_the_exact_f64_constant() {
-    let got = math_dispatch_values("PI", &[], &WarnCountCtx::new())
+    let got = eval_builtin_func("PI", &[], &WarnCountCtx::new())
         .expect("PI dispatches")
         .expect("PI evaluates");
     assert_eq!(got, Datum::Real(std::f64::consts::PI));
@@ -635,14 +633,14 @@ fn vectorized_builtin_math_func_for_rand() {
 #[test]
 fn uuid_generation_v1_v4_v7_shapes() {
     for (name, version_digit) in [("UUID", '1'), ("UUID_V4", '4'), ("UUID_V7", '7')] {
-        let first = misc_dispatch_in(name, &[], &tidb_exprctx::context::NoColumns)
+        let first = eval_builtin_func(name, &[], &tidb_exprctx::context::NoColumns)
             .unwrap_or_else(|| panic!("{name} belongs to the misc family"))
             .unwrap_or_else(|err| panic!("{name}: {err:?}"));
         let text = uuid_spelling_of(&first, name);
         check_shape_and_version(name, &text, version_digit);
         // Generators accept ZERO constants (Go:
         // `funcs[tf.funcName].getFunction(ctx, datumsToConstants(nil))`).
-        assert!(misc_dispatch_in(name, &[], &tidb_exprctx::context::NoColumns).is_some());
+        assert!(eval_builtin_func(name, &[], &tidb_exprctx::context::NoColumns).is_some());
     }
 }
 
@@ -732,7 +730,7 @@ fn vectorized_builtin_miscellaneous_eval_one_vec() {
     // pinned by compare2::inet_aton_go_vectors).
     for text in [".122", ".123.123"] {
         // Only reachability is exercised; the arm has no output pin.
-        let _ = compare2_dispatch("INET_ATON", &[s(text)], &tidb_exprctx::context::NoColumns)
+        let _ = eval_builtin_func("INET_ATON", &[s(text)], &tidb_exprctx::context::NoColumns)
             .expect("InetAton owns INET_ATON");
     }
     // IsIPv4Mapped / IsIPv4Compat byte-generator shapes: a mapped address's
@@ -757,7 +755,7 @@ fn vectorized_builtin_miscellaneous_eval_one_vec() {
         json.clone(),
     ] {
         assert_eq!(
-            misc_dispatch_in(
+            eval_builtin_func(
                 "ANY_VALUE",
                 std::slice::from_ref(&value),
                 &tidb_exprctx::context::NoColumns
@@ -769,7 +767,7 @@ fn vectorized_builtin_miscellaneous_eval_one_vec() {
     }
     // NameConst arms echo the value argument unchanged per ET-family pair.
     assert_eq!(
-        misc_dispatch_in(
+        eval_builtin_func(
             "NAME_CONST",
             &[s("label"), Datum::Int(5)],
             &tidb_exprctx::context::NoColumns
@@ -778,7 +776,7 @@ fn vectorized_builtin_miscellaneous_eval_one_vec() {
         .unwrap(),
         Datum::Int(5)
     );
-    let echoed = misc_dispatch_in(
+    let echoed = eval_builtin_func(
         "NAME_CONST",
         &[s("label"), json.clone()],
         &tidb_exprctx::context::NoColumns,
@@ -787,7 +785,7 @@ fn vectorized_builtin_miscellaneous_eval_one_vec() {
     .unwrap();
     assert_eq!(echoed, json);
     assert_eq!(
-        misc_dispatch_in(
+        eval_builtin_func(
             "NAME_CONST",
             &[s("label"), Datum::Null],
             &tidb_exprctx::context::NoColumns
@@ -836,7 +834,7 @@ fn vectorized_builtin_miscellaneous_func() {
         s("baba1026-780c-6ccd-9564-5b8c656024db")
     );
     // Too-short byte strings refuse to parse rather than truncating.
-    assert!(misc_dispatch_in(
+    assert!(eval_builtin_func(
         "BIN_TO_UUID",
         &[Datum::new_bytes_datum(normal[..15].to_vec())],
         &tidb_exprctx::context::NoColumns

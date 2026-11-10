@@ -3657,7 +3657,7 @@ const fn cast_signature(from: EvalType, to: EvalType) -> Option<Option<ScalarFun
 }
 
 /// All coercions the protobuf encoder can insert around catalog arguments.
-/// Keep decoding tied to the same cast selection table as encoding.
+#[cfg(test)]
 pub(crate) fn implicit_cast_signatures() -> impl Iterator<Item = ScalarFuncSig> {
     const TYPES: [EvalType; 9] = [
         EvalType::Int,

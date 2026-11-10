@@ -126,7 +126,7 @@ pub use convert::{
     convert_uint_to_int, convert_uint_to_uint, float_string_to_integer_string, float_warning_input,
     integer_signed_lower_bound, integer_signed_upper_bound, integer_unsigned_upper_bound,
     json_to_decimal, json_to_float, json_to_int, json_to_int64, number_to_duration,
-    parse_duration_with_flags, round_integer_string, scalar_to_string, str_to_datetime,
+    parse_duration_in_context, parse_duration_with_flags, round_integer_string, scalar_to_string, str_to_datetime,
     str_to_duration, str_to_float, str_to_int, str_to_uint, valid_float_prefix,
     valid_integer_prefix, warning_subject_byte_cap, Converted, DurationOrTime, NumericPrefix,
     ScalarConversionError, ScalarConversionEvent, ScalarStringValue,

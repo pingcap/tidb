@@ -186,8 +186,12 @@ pub(super) fn json_pretty(
 
 #[cfg(test)]
 mod tests {
-    use super::super::dispatch;
     use crate::Datum;
+
+    /// Go's builtin test door over a context-free session.
+    fn eval_builtin_func(name: &str, vals: &[Datum]) -> Option<Result<Datum, crate::EvalError>> {
+        crate::tests::eval_builtin_func(name, vals, &crate::NoColumns)
+    }
 
     fn document(text: &str) -> Datum {
         Datum::new_string_datum(text.to_string())
@@ -228,7 +232,7 @@ mod tests {
         ];
         for (input, want) in cases {
             assert_eq!(
-                dispatch("JSON_DEPTH", &[document(input)])
+                eval_builtin_func("JSON_DEPTH", &[document(input)])
                     .expect("JSON_DEPTH must dispatch")
                     .expect("valid JSON must evaluate"),
                 Datum::Int(want),
@@ -236,19 +240,19 @@ mod tests {
             );
         }
         assert_eq!(
-            dispatch("JSON_DEPTH", &[Datum::Null])
+            eval_builtin_func("JSON_DEPTH", &[Datum::Null])
                 .expect("JSON_DEPTH must dispatch")
                 .expect("NULL must evaluate"),
             Datum::Null
         );
-        assert!(dispatch("JSON_DEPTH", &[document("a")])
+        assert!(eval_builtin_func("JSON_DEPTH", &[document("a")])
             .expect("JSON_DEPTH must dispatch")
             .is_err());
         // go's implicit scalar→document cast: `JSON_DEPTH(1)` is 1 on the
         // oracle (the numeric scalar coerces to the JSON number 1), not an
         // error.
         assert_eq!(
-            dispatch("JSON_DEPTH", &[Datum::Int(1)])
+            eval_builtin_func("JSON_DEPTH", &[Datum::Int(1)])
                 .expect("JSON_DEPTH must dispatch")
                 .expect("scalar depth evaluates"),
             Datum::Int(1)
@@ -269,7 +273,7 @@ mod tests {
             r#"{"a": 1000, "b": "wxyz", "c": "[1, 3, 5, 7]"}"#,
         ] {
             assert_eq!(
-                dispatch("JSON_STORAGE_FREE", &[document(input)])
+                eval_builtin_func("JSON_STORAGE_FREE", &[document(input)])
                     .expect("JSON_STORAGE_FREE must dispatch")
                     .expect("valid JSON must evaluate"),
                 Datum::Int(0),
@@ -277,13 +281,13 @@ mod tests {
             );
         }
         assert_eq!(
-            dispatch("JSON_STORAGE_FREE", &[Datum::Null])
+            eval_builtin_func("JSON_STORAGE_FREE", &[Datum::Null])
                 .expect("JSON_STORAGE_FREE must dispatch")
                 .expect("NULL must evaluate"),
             Datum::Null
         );
         for input in [r#"[{"a":1]"#, r#"[{a":1]"#] {
-            assert!(dispatch("JSON_STORAGE_FREE", &[document(input)])
+            assert!(eval_builtin_func("JSON_STORAGE_FREE", &[document(input)])
                 .expect("JSON_STORAGE_FREE must dispatch")
                 .is_err());
         }
@@ -303,7 +307,7 @@ mod tests {
             (r#"{"a": 1000, "b": "wxyz", "c": "[1, 3, 5, 7]"}"#, 71),
         ] {
             assert_eq!(
-                dispatch("JSON_STORAGE_SIZE", &[document(input)])
+                eval_builtin_func("JSON_STORAGE_SIZE", &[document(input)])
                     .expect("JSON_STORAGE_SIZE must dispatch")
                     .expect("valid JSON must evaluate"),
                 Datum::Int(want),
@@ -311,16 +315,16 @@ mod tests {
             );
         }
         assert_eq!(
-            dispatch("JSON_STORAGE_SIZE", &[Datum::Null])
+            eval_builtin_func("JSON_STORAGE_SIZE", &[Datum::Null])
                 .expect("JSON_STORAGE_SIZE must dispatch")
                 .expect("NULL must evaluate"),
             Datum::Null
         );
         for input in [r#"[{"a":1]"#, r#"[{a":1]"#] {
-            assert!(dispatch("JSON_STORAGE_SIZE", &[document(input)])
+            assert!(eval_builtin_func("JSON_STORAGE_SIZE", &[document(input)])
                 .expect("JSON_STORAGE_SIZE must dispatch")
                 .is_err());
         }
-        assert!(dispatch("JSON_STORAGE_SIZE", &[]).is_none());
+        assert!(eval_builtin_func("JSON_STORAGE_SIZE", &[]).is_none());
     }
 }

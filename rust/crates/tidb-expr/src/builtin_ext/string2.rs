@@ -14,32 +14,12 @@
 //! `string2` family builtins. Every builtin here is transcreated from its
 //! implementation in `pkg/expression/builtin_*.go`, cited per function.
 
-use tidb_charset::Collation;
 
 use crate::coerce::{coerce_str, coerce_str_bytes};
-use crate::string_fn::{format_num_locale, substring};
-use crate::string_signature::{is_binary_str, StrUnits};
+use crate::string_fn::format_num_locale;
+use crate::string_signature::is_binary_str;
 use crate::{Datum, EvalError};
 use std::collections::HashMap;
-
-/// Dispatches this family's builtins; `None` if `name` isn't one of them.
-pub(crate) fn dispatch(
-    name: &str,
-    vals: &[Datum],
-    ctx: &dyn crate::Columns,
-) -> Option<Result<Datum, EvalError>> {
-    match (name, vals.len()) {
-        ("SUBSTRING" | "SUBSTR" | "MID", 2) => Some(substring(vals, &crate::NoColumns)),
-        ("LOCATE", 3) => Some(locate3(vals)),
-        ("FORMAT", 3) => Some(format_with_locale(vals, ctx)),
-        ("FIND_IN_SET", 2) => Some(find_in_set(vals)),
-        ("EXPORT_SET", 3..=5) => Some(export_set(vals)),
-        ("LTRIM", 1) => Some(ltrim(&vals[0])),
-        ("RTRIM", 1) => Some(rtrim(&vals[0])),
-        ("TRANSLATE", 3) => Some(translate(vals)),
-        _ => None,
-    }
-}
 
 /// `TRANSLATE(str, from_str, to_str)`, ported from `builtinTranslateUTF8Sig`
 /// (`buildTranslateMap4UTF8`) in `pkg/expression/builtin_string.go` — the
@@ -202,42 +182,6 @@ fn trimmed(value: &Datum, strip: fn(&[u8]) -> Vec<u8>) -> Result<Datum, EvalErro
     })
 }
 
-/// `LOCATE(substr, str, pos)`, ported from `builtinLocate3ArgsSig` and
-/// `builtinLocate3ArgsUTF8Sig` in `pkg/expression/builtin_string.go`. Those
-/// two bodies are the same search over a different unit — bytes when the
-/// derived collation is `binary`, characters otherwise — so [`StrUnits`]
-/// carries the difference and the scan is written once. Case-insensitive
-/// collations, which the UTF-8 signature folds through its own collator, are
-/// not represented in this value-only dispatch.
-fn locate3(vals: &[Datum]) -> Result<Datum, EvalError> {
-    let binary = crate::string_fn::locate_collation(&vals[0], &vals[1]) == Collation::Binary;
-    // The start position is Go's third `types.ETInt` argument, cast by
-    // `crate::arg_eval_type` before this body runs.
-    let (Some(needle), Some(haystack), Some(position)) = (
-        StrUnits::of_with_signature(&vals[0], binary)?,
-        StrUnits::of_with_signature(&vals[1], binary)?,
-        crate::arg_eval_type::eval_int(&vals[2])?,
-    ) else {
-        return Ok(Datum::Null);
-    };
-    let position = position.wrapping_sub(1);
-    if needle.len() > haystack.len()
-        || position < 0
-        || position as usize > haystack.len() - needle.len()
-    {
-        return Ok(Datum::Int(0));
-    }
-    if needle.len() == 0 {
-        return Ok(Datum::Int(position + 1));
-    }
-    for start in position as usize..=haystack.len() - needle.len() {
-        if haystack.slice(start, start + needle.len()) == needle.bytes() {
-            return Ok(Datum::Int(start as i64 + 1));
-        }
-    }
-    Ok(Datum::Int(0))
-}
-
 /// `FORMAT(x, d, locale)`, ported from `builtinFormatWithLocaleSig` in
 /// `pkg/expression/builtin_string.go`. A `NULL` locale warns 1649 naming the
 /// literal text `NULL` and then falls back to `en_US`; an unrecognized one
@@ -245,23 +189,6 @@ fn locate3(vals: &[Datum]) -> Result<Datum, EvalError> {
 pub(crate) fn format_with_locale(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     let locale = coerce_str(&vals[2])?;
     format_num_locale(vals, locale.as_deref(), ctx)
-}
-
-/// `FIND_IN_SET(str, strlist)`, ported from `builtinFindInSetSig.evalInt` in
-/// `pkg/expression/builtin_string.go`. The values-only entry point retains a
-/// non-default collation already carried by a datum; plain literals use
-/// the connection default.
-fn find_in_set(vals: &[Datum]) -> Result<Datum, EvalError> {
-    // A values-only call has no separately derived function type, so retain
-    // the explicit collation stamped on a COLLATE operand. Plain literals
-    // carry the connection default (`utf8mb4_bin`) and therefore do not
-    // override an explicit non-default operand collation.
-    let collation = vals
-        .iter()
-        .filter_map(Datum::collation)
-        .find(|collation| *collation != tidb_charset::Collation::DEFAULT)
-        .unwrap_or(crate::ops::DERIVATION_FREE_COLLATION);
-    find_in_set_with_collation(vals, collation)
 }
 
 /// [`find_in_set`] under the collation the expression derivation aggregated
@@ -357,59 +284,10 @@ pub(crate) fn find_in_set_with_collation(
     ))
 }
 
-/// `EXPORT_SET(bits, on, off[, separator[, number_of_bits]])`, ported from
-/// `builtinExportSet{3,4,5}ArgSig` and `exportSet` in
-/// `pkg/expression/builtin_string.go`.
-///
-/// `bits` and `number_of_bits` are both `EvalInt` arguments in Go, so every
-/// argument domain that has an integer reading reaches them -- notably
-/// `Datum::UInt`, which is what `1|4` produces here (`ops.rs`'s bitwise
-/// operators return the unsigned domain, exactly as TiDB's do) and what
-/// `CAST(5 AS UNSIGNED)` produces. `EvalInt` on an unsigned source keeps the
-/// same 64 bits and reads them as `int64`, which is `crate::cast::to_i64_signed`.
-/// Matching on `Datum::Int` alone made the idiomatic `EXPORT_SET(1|4, ...)`
-/// spelling return NULL.
-fn export_set(vals: &[Datum]) -> Result<Datum, EvalError> {
-    if vals[0].is_null() {
-        return Ok(Datum::Null);
-    }
-    let bits = crate::cast::to_i64_signed(&vals[0]);
-    let (Some(on), Some(off)) = (coerce_str(&vals[1])?, coerce_str(&vals[2])?) else {
-        return Ok(Datum::Null);
-    };
-    let separator = if vals.len() >= 4 {
-        let Some(separator) = coerce_str(&vals[3])? else {
-            return Ok(Datum::Null);
-        };
-        separator
-    } else {
-        ",".to_string()
-    };
-    let mut count = if vals.len() == 5 {
-        if vals[4].is_null() {
-            return Ok(Datum::Null);
-        }
-        crate::cast::to_i64_signed(&vals[4])
-    } else {
-        64
-    };
-    if !(0..=64).contains(&count) {
-        count = 64;
-    }
-    let mut parts = Vec::with_capacity(count as usize);
-    for bit in 0..count {
-        parts.push(if bits & (1_i64 << bit) > 0 {
-            on.as_str()
-        } else {
-            off.as_str()
-        });
-    }
-    Ok(Datum::new_string_datum(parts.join(&separator)))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{build_find_in_set_lookup, dispatch, find_in_set_lookup, locate3};
+    use super::{build_find_in_set_lookup, find_in_set_lookup};
+    use crate::tests::eval_builtin_func;
     use crate::coerce::coerce_str;
     use crate::string_fn::{
         char_func, format_num, format_num_locale, position_with_collation, substring,
@@ -428,7 +306,7 @@ use tidb_charset::Collation;
     }
 
     fn call(name: &str, vals: &[Datum]) -> Datum {
-        dispatch(name, vals, &crate::NoColumns)
+        eval_builtin_func(name, vals, &crate::NoColumns)
             .expect("string2 name/arity should dispatch")
             .expect("Go-derived vector should evaluate")
     }
@@ -532,7 +410,7 @@ use tidb_charset::Collation;
             call("TRANSLATE", &[string("x"), string("y"), Datum::Null]),
             Datum::Null
         );
-        assert!(dispatch("TRANSLATE", &[string("x"), string("y")], &crate::NoColumns).is_none());
+        assert!(eval_builtin_func("TRANSLATE", &[string("x"), string("y")], &crate::NoColumns).is_none());
     }
 
     #[test]
@@ -847,7 +725,7 @@ use tidb_charset::Collation;
             (Datum::new_string_datum("en_US".to_owned()), vec![]),
         ] {
             let sink = Sink::default();
-            dispatch(
+            eval_builtin_func(
                 "FORMAT",
                 &[number.clone(), two.clone(), locale.clone()],
                 &sink,
@@ -1128,7 +1006,7 @@ use tidb_charset::Collation;
         ];
         for (needle, haystack, start, want) in locate3_cases {
             assert_eq!(
-                locate3(&[string(needle), string(haystack), Datum::Int(start)]).unwrap(),
+                crate::tests::builtin("locate", &[string(needle), string(haystack), Datum::Int(start)]).unwrap(),
                 Datum::Int(want),
                 "LOCATE({needle:?}, {haystack:?}, {start})"
             );
@@ -1140,7 +1018,7 @@ use tidb_charset::Collation;
             vec![Datum::Null, string("bar"), Datum::Int(0)],
             vec![string("bar"), Datum::Null, Datum::Int(-1)],
         ] {
-            assert_eq!(locate3(&args).unwrap(), Datum::Null);
+            assert_eq!(crate::tests::builtin("locate", &args).unwrap(), Datum::Null);
         }
 
         let binary = [
@@ -1215,7 +1093,7 @@ use tidb_charset::Collation;
                 vec![crate::cast::cast_arg_as_string(&Datum::Int(123), None, &crate::NoColumns)
                     .unwrap()];
             assert_eq!(call(name, &cast), string("123"));
-            assert!(dispatch(name, &[], &crate::NoColumns).is_none());
+            assert!(eval_builtin_func(name, &[], &crate::NoColumns).is_none());
         }
     }
 

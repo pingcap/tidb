@@ -51,7 +51,7 @@ use modify::{
     json_modify_with_paths, json_remove, JsonModifyMode,
 };
 use predicate::{json_contains, json_contains_path, json_member_of, json_overlaps};
-use report::{json_schema_valid, json_valid};
+use report::json_valid;
 use search::json_search;
 
 use crate::{Datum, EvalError};
@@ -154,57 +154,6 @@ pub(crate) fn verify_json_schema_valid_constants(
 pub(crate) use report::JsonSchemaCache;
 pub(crate) use value::{cast_as_json, cast_as_json_typed, cast_as_json_value_typed};
 
-/// Dispatches the JSON family.  The match and arities are ports of the
-/// function classes in `pkg/expression/builtin_json.go`:
-/// `builtinJSON{Type,Extract,Unquote,Quote,Array,Object,Length,Valid,
-/// ArrayAppend,ArrayInsert,SUMCRC32}Sig`.
-pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
-    match (name, vals.len()) {
-        ("JSON_VALID", 1) => Some(json_valid(&vals[0])),
-        ("JSON_SCHEMA_VALID", 2) => Some(json_schema_valid(vals)),
-        ("JSON_TYPE", 1) => Some(json_type(vals, &no_arg_types(1))),
-        ("JSON_QUOTE", 1) => Some(json_quote(&vals[0])),
-        ("JSON_UNQUOTE", 1) => Some(json_unquote(&vals[0])),
-        ("JSON_ARRAY", 0..) => Some(json_array(vals, &no_arg_types(vals.len()))),
-        ("JSON_OBJECT", 0..) => Some(json_object(vals, &no_arg_types(vals.len()))),
-        ("JSON_LENGTH", 1 | 2) => Some(json_length(vals, &no_arg_types(vals.len()))),
-        ("JSON_EXTRACT", 2..) => Some(json_extract(vals, &no_arg_types(vals.len()))),
-        ("JSON_MEMBER_OF", 2) => Some(json_member_of(vals, &no_arg_types(2))),
-        ("JSON_CONTAINS", 2 | 3) => Some(json_contains(vals, &no_arg_types(vals.len()))),
-        ("JSON_CONTAINS_PATH", 3..) => Some(json_contains_path(vals, &no_arg_types(vals.len()))),
-        ("JSON_KEYS", 1 | 2) => Some(json_keys(vals, &no_arg_types(vals.len()))),
-        ("JSON_REMOVE", 2..) => Some(json_remove(vals, &no_arg_types(vals.len()))),
-        ("JSON_ARRAY_APPEND", 3..) => Some(json_array_append(vals, &no_arg_types(vals.len()))),
-        ("JSON_ARRAY_INSERT", 3..) => Some(json_array_insert(vals, &no_arg_types(vals.len()))),
-        ("JSON_SET", 3..) => Some(json_modify(
-            vals,
-            &no_arg_types(vals.len()),
-            JsonModifyMode::Set,
-        )),
-        ("JSON_INSERT", 3..) => Some(json_modify(
-            vals,
-            &no_arg_types(vals.len()),
-            JsonModifyMode::Insert,
-        )),
-        ("JSON_REPLACE", 3..) => Some(json_modify(
-            vals,
-            &no_arg_types(vals.len()),
-            JsonModifyMode::Replace,
-        )),
-        ("JSON_MERGE" | "JSON_MERGE_PRESERVE", 2..) => {
-            Some(json_merge(vals, &no_arg_types(vals.len())))
-        }
-        ("JSON_MERGE_PATCH", 2..) => Some(json_merge_patch(vals, &no_arg_types(vals.len()))),
-        ("JSON_SEARCH", 3..) => Some(json_search(vals, &no_arg_types(vals.len()))),
-        ("JSON_PRETTY", 1) => Some(json_pretty(vals, &no_arg_types(1))),
-        ("JSON_DEPTH", 1) => Some(json_depth(&vals[0], None)),
-        ("JSON_STORAGE_FREE", 1) => Some(json_storage_free(&vals[0], None)),
-        ("JSON_STORAGE_SIZE", 1) => Some(json_storage_size(&vals[0], None)),
-        ("JSON_OVERLAPS", 2) => Some(json_overlaps(vals, &no_arg_types(2))),
-        _ => None,
-    }
-}
-
 /// The typed sibling of [`dispatch`] for the function class whose value
 /// arguments Go builds through an implicit `CAST(... AS JSON)` with
 /// `ParseToJSONFlag` disabled (`newBaseBuiltinFuncWithTp(ctx, ..., ETJson,
@@ -275,51 +224,6 @@ pub(crate) fn dispatch_typed_with_paths(
         ("JSON_SEARCH", 3..) => Some(json_search(vals, arg_types)),
         _ => None,
     }
-}
-
-/// Typed JSON dispatch for a cached path list and an already parsed document.
-/// This preserves Go's document-first NULL/error boundary while avoiding a
-/// second document parse on the cached path hot path.
-pub(crate) fn dispatch_typed_with_paths_and_document(
-    name: &str,
-    vals: &[Datum],
-    arg_types: &[Option<FieldType>],
-    paths: &[tidb_datatype::JSONPathExpression],
-    document: tidb_datatype::BinaryJSON,
-) -> Option<Result<Datum, EvalError>> {
-    debug_assert_eq!(vals.len(), arg_types.len());
-    match (name, vals.len()) {
-        ("JSON_SET", 3..) => Some(json_modify_with_document(
-            document,
-            vals,
-            arg_types,
-            JsonModifyMode::Set,
-            paths,
-        )),
-        ("JSON_INSERT", 3..) => Some(json_modify_with_document(
-            document,
-            vals,
-            arg_types,
-            JsonModifyMode::Insert,
-            paths,
-        )),
-        ("JSON_REPLACE", 3..) => Some(json_modify_with_document(
-            document,
-            vals,
-            arg_types,
-            JsonModifyMode::Replace,
-            paths,
-        )),
-        _ => None,
-    }
-}
-
-/// An all-`None` `arg_types` slice for [`dispatch`]'s untyped callers, so
-/// [`json_array`]/[`json_object`]/[`json_modify`]/[`json_array_append`]/
-/// [`json_array_insert`] share one implementation with [`dispatch_typed`]
-/// instead of duplicating the plain-text path.
-fn no_arg_types(len: usize) -> Vec<Option<FieldType>> {
-    vec![None; len]
 }
 
 #[cfg(test)]

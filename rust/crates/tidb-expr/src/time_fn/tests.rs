@@ -1253,7 +1253,7 @@ fn time_diff_source_vectors() {
         ),
     ] {
         let got =
-            time_diff::time_diff_untyped(&[string_datum(left), string_datum(right)], &ctx).unwrap();
+            crate::tests::builtin_in("timediff", &[string_datum(left), string_datum(right)], &ctx).unwrap();
         let Datum::Duration(duration) = got else {
             panic!("TIMEDIFF({left:?}, {right:?}) = {got:?}");
         };
@@ -1267,13 +1267,13 @@ fn time_diff_source_vectors() {
         ("2016-12-00 12:00:00", ""),
     ] {
         assert_eq!(
-            time_diff::time_diff_untyped(&[string_datum(left), string_datum(right)], &ctx).unwrap(),
+            crate::tests::builtin_in("timediff", &[string_datum(left), string_datum(right)], &ctx).unwrap(),
             Datum::Null,
             "TIMEDIFF({left:?}, {right:?})"
         );
     }
     assert_eq!(
-        time_diff::time_diff_untyped(&[Datum::Null, string_datum("00:00:00")], &ctx).unwrap(),
+        crate::tests::builtin_in("timediff", &[Datum::Null, string_datum("00:00:00")], &ctx).unwrap(),
         Datum::Null
     );
 }
@@ -1335,7 +1335,7 @@ fn test_week_without_mode_sig() {
         ("2008-02-20", 0, 7),
     ] {
         assert_eq!(
-            dispatch("WEEK", &datetime_str_arg(date), &Mode(mode))
+            crate::tests::eval_builtin_func("WEEK", &datetime_str_arg(date), &Mode(mode))
                 .expect("WEEK must dispatch")
                 .expect("source row must evaluate"),
             Datum::Int(expected),

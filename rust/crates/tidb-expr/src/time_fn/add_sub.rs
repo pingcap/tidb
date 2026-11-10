@@ -51,7 +51,7 @@
 //! `NOW` returns the one statement timestamp. `tidb_sysdate_is_now` changes
 //! `SYSDATE` into the latter before evaluation.
 
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, FieldType};
 
 use super::duration_parse::{
     get_fsp_4_time_add_sub, get_fsp, is_duration, parse_datetime, parse_duration, GoDateTime,
@@ -72,25 +72,6 @@ pub(crate) enum TemporalKind {
     Duration,
     /// Go's `default`: a string, a number, anything else.
     Other,
-}
-
-/// The argument branch, taken from the static `FieldType` where the caller
-/// has one and from the DATUM otherwise. A plain string value lands on
-/// `Other` -- which is the arm Go itself selects for a string constant.
-pub(crate) fn kind_of(field_type: Option<&FieldType>, value: &Datum) -> TemporalKind {
-    if let Some(ft) = field_type {
-        return match ft.code() {
-            FieldTypeCode::Datetime | FieldTypeCode::Timestamp => TemporalKind::Datetime,
-            FieldTypeCode::Date | FieldTypeCode::NewDate => TemporalKind::Date,
-            FieldTypeCode::Duration => TemporalKind::Duration,
-            _ => TemporalKind::Other,
-        };
-    }
-    match value {
-        Datum::Time(_) => TemporalKind::Datetime,
-        Datum::Duration(_) => TemporalKind::Duration,
-        _ => TemporalKind::Other,
-    }
 }
 
 /// The two kinds Go's `addTimeFunctionClass.getFunction` /
@@ -128,27 +109,6 @@ fn truncated_time_warning(cols: &dyn Columns, value: &str) -> Datum {
         ),
     );
     Datum::Null
-}
-
-/// `ADDTIME`/`SUBTIME` where no static argument type is available: the AST
-/// tier, and the chunk tier's fallback. Both arguments take Go's `default`
-/// branch unless the DATUM itself is temporal, and the ROW body applies --
-/// which is the body Go's constant folding runs for a literal call.
-pub(crate) fn add_sub_untyped(
-    name: &str,
-    vals: &[Datum],
-    cols: &dyn Columns,
-) -> Result<Datum, EvalError> {
-    if vals.len() != 2 {
-        return Err(EvalError::Unsupported("bad function arity"));
-    }
-    let kinds = [kind_of(None, &vals[0]), kind_of(None, &vals[1])];
-    let sign = if name.eq_ignore_ascii_case("SUBTIME") {
-        -1
-    } else {
-        1
-    };
-    add_sub_time(vals, kinds, sign, true, cols)
 }
 
 pub(crate) fn date_add_duration(

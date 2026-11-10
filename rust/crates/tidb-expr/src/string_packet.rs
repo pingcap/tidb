@@ -29,21 +29,6 @@
 use crate::coerce::{coerce_str, coerce_str_bytes};
 use crate::{Datum, EvalError};
 
-/// `REPEAT(str, count)`: `str` concatenated `count` times (empty for
-/// `count <= 0`); `NULL` if either argument is `NULL`.
-///
-/// TiDB selects an `ETString, ETInt` signature, so the count follows the
-/// same signed-integer coercion boundary as `EvalInt` (including string
-/// numeric prefixes, decimal rounding, and float ties-to-even).  Go strings
-/// are byte sequences rather than guaranteed UTF-8; retaining the evaluated
-/// string bytes keeps binary input lossless here.  `builtinRepeatSig` checks
-/// `byteLength*num` against the session `max_allowed_packet` and answers NULL
-/// with warning 1301; the multiplication overflow arm takes the same exit,
-/// since a product too large for `usize` is by construction over any limit.
-pub(crate) fn repeat(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
-    repeat_in_mode(vals, None, ctx)
-}
-
 /// [`repeat`] with Go's body choice: `vec_flen` is `Some(bf.tp.GetFlen())`
 /// for `builtinRepeatSig.vecEvalString`, which after the packet check also
 /// answers a silent NULL when `byteLength > flen/num` -- a check
@@ -374,7 +359,7 @@ pub(crate) fn to_base64(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datu
 }
 #[cfg(test)]
 mod space_tests {
-    use super::{pad, repeat, space, to_base64};
+    use super::{pad, space, to_base64};
     use crate::{Columns, Datum, Decimal, EvalError, NoColumns};
 
     /// A session whose `max_allowed_packet` is `limit` and that records the
@@ -453,7 +438,8 @@ mod space_tests {
         over("space", space(&[Datum::Int(1_001)], &ctx).unwrap(), &ctx);
 
         let ctx = Packet::new(1_000);
-        let repeated = repeat(
+        let repeated = crate::tests::builtin_in(
+            "repeat",
             &[Datum::new_string_datum("a".to_string()), Datum::Int(1_001)],
             &ctx,
         );

@@ -35,98 +35,6 @@ use self::calendar::{civil_from_days, days_from_civil, parse_date_ymd, week_core
 use crate::coerce::coerce_str;
 use crate::{Columns, Datum, EvalError};
 
-/// Dispatches this family's builtins; `None` if `name` isn't one of them.
-pub(crate) fn dispatch(
-    name: &str,
-    vals: &[Datum],
-    cols: &dyn Columns,
-) -> Option<Result<Datum, EvalError>> {
-    Some(match name {
-        // `pkg/expression/builtin.go:722-725` binds all four names to the SAME
-        // `nowFunctionClass`, so LOCALTIME and LOCALTIMESTAMP are NOW down to
-        // the optional fsp argument and the statement-timestamp clock. Go's
-        // capture: `select localtime(), localtimestamp(), localtime,
-        // localtimestamp, now()` prints one value five times, and
-        // `localtime() = now()` is 1.
-        "NOW" | "CURRENT_TIMESTAMP" | "LOCALTIME" | "LOCALTIMESTAMP" => now(vals, cols),
-        "UTC_TIMESTAMP" => utc_timestamp(vals, cols),
-        "CURDATE" | "CURRENT_DATE" => current_date(vals, cols),
-        "UTC_DATE" => utc_date(vals, cols),
-        "CURTIME" => current_time(vals, "curtime", cols),
-        "CURRENT_TIME" => current_time(vals, "current_time", cols),
-        "UTC_TIME" => utc_time(vals, cols),
-        "DATE" => date(vals, cols),
-        "MICROSECOND" => microsecond(vals),
-        "TIME" => time(vals, cols),
-        "MONTH" => month(vals),
-        "DAY" | "DAYOFMONTH" => day_of_month(vals),
-        "DAYOFWEEK" => day_of_week(vals, cols),
-        "DAYOFYEAR" => day_of_year(vals, cols),
-        "WEEKDAY" => weekday(vals, cols),
-        "QUARTER" => quarter(vals),
-        "WEEK" => week(vals, cols.default_week_format(), cols),
-        "WEEKOFYEAR" => week_of_year_builtin(vals, cols),
-        "TIDB_PARSE_TSO_LOGICAL" => tidb_parse_tso_logical(vals),
-        "TIDB_BOUNDED_STALENESS" => tidb_bounded_staleness(vals, cols),
-        "TIDB_CURRENT_TSO" => current_tso(vals, cols),
-        "GET_FORMAT" => get_format_value(vals),
-        "YEARWEEK" => yearweek(vals, cols),
-        "MONTHNAME" => monthname(vals, cols),
-        "DAYNAME" => dayname(vals, cols),
-        "LAST_DAY" => last_day(vals, cols),
-        "TIME_TO_SEC" => time_to_sec(vals),
-        "SEC_TO_TIME" => sec_to_time(vals, cols),
-        "MAKEDATE" => makedate(vals),
-        "MAKETIME" => maketime(vals, cols),
-        "PERIOD_ADD" => period_add(vals),
-        "PERIOD_DIFF" => period_diff(vals),
-        "TIME_FORMAT" => time_format(vals),
-        "STR_TO_DATE" => calendar::str_to_date(vals, cols),
-        "FROM_DAYS" => calendar::from_days(vals),
-        "TIMEDIFF" => time_diff::time_diff_untyped(vals, cols),
-        "CONVERT_TZ" => convert_tz::convert_tz(vals),
-        "FROM_UNIXTIME" => session_tz::from_unixtime(vals, cols),
-        "UNIX_TIMESTAMP" => session_tz::unix_timestamp(vals, cols),
-        "TIDB_PARSE_TSO" => session_tz::tidb_parse_tso(vals, cols),
-        "TIMESTAMPDIFF" => calendar::timestamp_diff(vals),
-        // `ADDTIME`/`SUBTIME` reach here with no static argument types, so
-        // every argument takes Go's `default` branch -- which is the branch
-        // Go itself selects for a string constant. The chunk tier, which
-        // does have the types, enters through [`add_sub::add_sub_time`]
-        // directly; see that module's doc for the row/vec split this
-        // `row_path = true` selects.
-        "ADDTIME" | "SUBTIME" => add_sub::add_sub_untyped(name, vals, cols),
-        // No static argument type reaches here; the value's kind is what
-        // `timestampFunctionClass` reads `isFloat` off for a constant.
-        "TIMESTAMP" => {
-            let is_float = matches!(
-                vals.first(),
-                Some(
-                    Datum::Int(_)
-                        | Datum::UInt(_)
-                        | Datum::Decimal(_)
-                        | Datum::Real(_)
-                        | Datum::Float32(_)
-                )
-            );
-            add_sub::timestamp(vals, is_float, cols)
-        }
-        "TIMESTAMPADD" => add_sub::timestamp_add(vals, cols),
-        "SYSDATE" => add_sub::sysdate(vals, cols),
-        "TO_DAYS" => calendar::to_days(vals, cols),
-        "TO_SECONDS" => calendar::to_seconds(vals, cols),
-        // `EXTRACT(<composite unit> FROM value)`, e.g. `HOUR_MINUTE`,
-        // `DAY_SECOND`, `YEAR_MONTH` — see `calendar::extract_composite`'s
-        // own doc.
-        "YEAR_MONTH" | "DAY_HOUR" | "DAY_MINUTE" | "DAY_SECOND" | "DAY_MICROSECOND"
-        | "HOUR_MINUTE" | "HOUR_SECOND" | "HOUR_MICROSECOND" | "MINUTE_SECOND"
-        | "MINUTE_MICROSECOND" | "SECOND_MICROSECOND" => {
-            calendar::extract_composite(name, vals, cols)
-        }
-        _ => return None,
-    })
-}
-
 /// `TIDB_CURRENT_TSO()`: the active transaction's start timestamp, or zero
 /// when the session is not inside a transaction.
 pub(crate) fn current_tso(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
@@ -340,9 +248,13 @@ pub(crate) fn microsecond(vals: &[Datum]) -> Result<Datum, EvalError> {
     })
 }
 
-/// `builtinTimeSig.evalDuration`: parse the string as a TiDB duration while
-/// preserving its written FSP. `ErrTruncatedWrongVal` is a statement warning
-/// for a SELECT and leaves Go's zero-value duration as the result.
+/// Go `builtinTimeSig.evalDuration`: `types.ParseDuration` at the text's
+/// written FSP. `ErrTruncatedWrongVal` goes through `tc.HandleTruncate` and
+/// the result stays whatever `ParseDuration` answered with it: the value
+/// `matchDuration` read (`TIME('12abc')` is `00:00:12`, an out-of-range
+/// number the clamped `838:59:59`), or `ZeroDuration` when nothing parsed.
+/// Text shaped like a datetime is parsed as one and answers its clock;
+/// `ParseDatetime` appends its own warning for what it had to drop.
 pub(crate) fn time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("bad function arity"));
@@ -351,34 +263,17 @@ pub(crate) fn time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalErro
         return Ok(Datum::Null);
     };
     let fsp = duration_parse::get_fsp(&value);
-    if let Ok(duration) = duration_parse::parse_duration(&value, fsp) {
-        return Ok(Datum::new_string_datum(duration.format()));
-    }
-    // Go `builtinTimeSig.evalDuration`: when the text cannot be a datetime
-    // `ParseDuration` still answers the value `matchDuration` managed to read,
-    // together with `ErrTruncatedWrongVal`, which `tc.HandleTruncate` turns
-    // into a warning: `TIME('12abc')` is `00:00:12` and an out-of-range number
-    // is the clamped `838:59:59`. Text that could be a datetime, but is not
-    // one, is the zero duration.
-    let partial = if duration_parse::can_fallback_to_date_time(value.trim()) {
-        None
-    } else {
-        tidb_datatype::parse_duration_with_flags(
-            &value,
-            i64::from(fsp),
-            cols.type_flags(),
-            &cols.time_zone(),
-        )
-        .ok()
-        .map(|parsed| parsed.value.to_string())
+    let (duration, truncated) = match crate::cast::parse_duration(cols, &value, i64::from(fsp)) {
+        Ok(parsed) => (parsed.value, parsed.event.is_some()),
+        Err(_) => (tidb_datatype::MySqlDuration::from_raw_parts(0, 0), true),
     };
-    crate::expression_errors::handle_truncate(cols, &format!(
-        "Truncated incorrect time value: '{}'",
-        tidb_datatype::warning_subject_byte_cap(&value)
-    ))?;
-    Ok(Datum::new_string_datum(
-        partial.unwrap_or_else(|| "00:00:00".to_owned()),
-    ))
+    if truncated {
+        crate::expression_errors::handle_truncate(cols, &format!(
+            "Truncated incorrect time value: '{}'",
+            tidb_datatype::warning_subject_byte_cap(&value)
+        ))?;
+    }
+    Ok(Datum::Duration(duration))
 }
 
 fn no_clock_err() -> EvalError {
@@ -1374,8 +1269,7 @@ mod clock_source_tests {
     }
 
     fn source_eval(name: &str, args: &[Datum], ctx: &WarningContext) -> Result<Datum, EvalError> {
-        crate::func::eval_func_values_in(name, args, ctx)
-            .or_else(|| dispatch(name, args, ctx))
+        crate::tests::eval_builtin_func(name, args, ctx)
             .expect("TestClock builtin must be dispatched")
     }
 
@@ -1437,7 +1331,10 @@ mod clock_source_tests {
                 source_eval("MICROSECOND", &args, &ctx).unwrap(),
                 Datum::Int(micros)
             );
-            assert_eq!(source_eval("TIME", &args, &ctx).unwrap(), string(time));
+            assert_eq!(
+                source_eval("TIME", &args, &ctx).unwrap().sql_string().unwrap(),
+                time
+            );
         }
 
         for name in ["HOUR", "MINUTE", "SECOND", "MICROSECOND", "TIME"] {
@@ -1447,21 +1344,33 @@ mod clock_source_tests {
             );
         }
 
+        // `ParseDuration` falls back to `ParseDatetime`, which keeps the
+        // clock and appends its own truncation warning (real TiDB:
+        // `10|10|10|120000` and `10:10:10.12`).
         let malformed = [string("2011-11-11 10:10:10.11.12")];
-        for name in ["HOUR", "MINUTE", "SECOND", "MICROSECOND"] {
-            assert_eq!(source_eval(name, &malformed, &ctx).unwrap(), Datum::Null);
+        for (name, want) in [("HOUR", 10), ("MINUTE", 10), ("SECOND", 10), ("MICROSECOND", 120_000)] {
+            let warning_count = ctx.warnings.borrow().len();
+            assert_eq!(source_eval(name, &malformed, &ctx).unwrap(), Datum::Int(want));
+            // The argument's duration cast reports the same fallback.
+            assert_eq!(
+                ctx.warnings.borrow()[warning_count..],
+                [(
+                    1292,
+                    "Truncated incorrect datetime value: '2011-11-11 10:10:10.11.12'".to_owned()
+                )]
+            );
         }
         let warning_count = ctx.warnings.borrow().len();
         assert_eq!(
-            source_eval("TIME", &malformed, &ctx).unwrap(),
-            string("00:00:00")
+            source_eval("TIME", &malformed, &ctx).unwrap().sql_string().unwrap(),
+            "10:10:10.12000"
         );
         assert_eq!(ctx.warnings.borrow().len(), warning_count + 1);
         assert_eq!(
             ctx.warnings.borrow().last(),
             Some(&(
                 1292,
-                "Truncated incorrect time value: '2011-11-11 10:10:10.11.12'".to_owned()
+                "Truncated incorrect datetime value: '2011-11-11 10:10:10.11.12'".to_owned()
             ))
         );
     }

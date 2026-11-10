@@ -21,7 +21,6 @@
 
 use super::*;
 use tidb_datatype::SessionTimeZone;
-use crate::time_fn::dispatch;
 use std::cell::RefCell;
 use tidb_datatype::{Time, TimeType};
 
@@ -50,8 +49,19 @@ impl Columns for UtcClock {
 /// Evaluates one builtin through the time family's dispatch seam and unwraps
 /// both the dispatch hit and the evaluation result.
 fn dispatched(name: &str, vals: &[Datum], cols: &dyn Columns) -> Datum {
-    dispatch(name, vals, cols)
+    eval_builtin_func(name, vals, cols)
         .expect("the name belongs to the time family")
+        .expect("source row must evaluate")
+}
+
+/// Go `TestUnixTimestamp`'s door: `expr := datumsToConstants(input)` and
+/// `expr[0].GetType(ctx).SetDecimal(test.inputDecimal)`.
+fn unix_timestamp_with_decimal(arg: &Datum, decimal: i64, cols: &dyn Columns) -> Datum {
+    let mut tp = crate::tests::kind_to_field_type(arg);
+    tp.set_decimal(decimal);
+    let arg = crate::expression::Expression::Constant(crate::constant::Constant::new(arg.clone(), tp));
+    crate::tests::eval_builtin_func_over("unix_timestamp", vec![arg], cols)
+        .expect("unix_timestamp takes one argument")
         .expect("source row must evaluate")
 }
 
@@ -69,8 +79,8 @@ fn utc_date_answers_the_utc_statement_date() {
         sysdate_is_now: false,
     };
     assert_eq!(
-        dispatched("UTC_DATE", &[], &clock),
-        Datum::new_string_datum("2021-03-01")
+        dispatched("UTC_DATE", &[], &clock).sql_string().unwrap(),
+        "2021-03-01"
     );
     // Midnight crossing picks up the new UTC day; nothing about a session
     // zone can shift it.
@@ -79,8 +89,8 @@ fn utc_date_answers_the_utc_statement_date() {
         sysdate_is_now: false,
     };
     assert_eq!(
-        dispatched("UTC_DATE", &[], &clock),
-        Datum::new_string_datum("2021-03-02")
+        dispatched("UTC_DATE", &[], &clock).sql_string().unwrap(),
+        "2021-03-02"
     );
 }
 
@@ -170,7 +180,7 @@ fn unix_timestamp_value_table_under_utc() {
         (s("1969-12-31 23:59:59.999999"), "zero-decimal"),
         (s("3001-01-19 00:00:00.000000"), "zero-decimal"),
     ] {
-        let got = dispatched("UNIX_TIMESTAMP", &[arg.clone()], &utc);
+        let got = unix_timestamp_with_decimal(&arg, 0, &utc);
         if want_label == "zero-decimal" {
             match &got {
                 Datum::Decimal(value) => {
@@ -206,14 +216,18 @@ fn unix_timestamp_compact_numeric_and_zero_date_rows_match_master() {
     ] {
         assert_eq!(chunk_e_with(sql, &utc), want, "{sql}");
     }
-    for (arg, want) in [
-        (Datum::Real(151113102019.0), "INT:1447410019"),
+    // Go's rows carry `inputDecimal`.
+    for (decimal, arg, want) in [
+        (0, Datum::Real(151113102019.0), "INT:1447410019"),
+        (2, Datum::Real(151113102019.12), "DEC:1447410019.12"),
+        (0, Datum::Decimal(crate::Decimal::from_literal("151113102019")), "INT:1447410019"),
         (
+            7,
             Datum::Decimal(crate::Decimal::from_literal("151113102019.1234567")),
             "DEC:1447410019.123457",
         ),
     ] {
-        assert_eq!(dispatched("UNIX_TIMESTAMP", &[arg], &utc).label(), want);
+        assert_eq!(unix_timestamp_with_decimal(&arg, decimal, &utc).label(), want);
     }
 }
 
@@ -705,7 +719,7 @@ fn period_invalid_period_reject_the_call() {
         ("PERIOD_DIFF", vec![Datum::Int(12_509), Datum::Int(12_323)]),
     ] {
         let (name, args) = name_args;
-        let error = dispatch(name, &args, &NoColumns)
+        let error = eval_builtin_func(name, &args, &NoColumns)
             .expect("period function must dispatch")
             .expect_err("invalid period must fail");
         let expected = match name {
@@ -803,22 +817,22 @@ fn with_time_zone_clock_builtins_render_the_session_zone() {
 
     // SYSDATE(2): timezone-local, fsp-2 truncation.
     assert_eq!(
-        dispatched("SYSDATE", &[Datum::Int(2)], &ctx),
-        Datum::new_string_datum("2021-03-01 17:01:09.00"),
+        dispatched("SYSDATE", &[Datum::Int(2)], &ctx).sql_string().unwrap(),
+        "2021-03-01 17:01:09.00",
         "SYSDATE(2) in Asia/Tokyo"
     );
     assert_eq!(
-        dispatched("CURDATE", &[], &ctx),
-        Datum::new_string_datum("2021-03-01")
+        dispatched("CURDATE", &[], &ctx).sql_string().unwrap(),
+        "2021-03-01"
     );
     // CURRENT_TIME(2) renders a Duration at fsp 2; CURTIME() stays default.
     assert_eq!(
-        dispatched("CURRENT_TIME", &[Datum::Int(2)], &ctx),
-        Datum::new_string_datum("17:01:09.00")
+        dispatched("CURRENT_TIME", &[Datum::Int(2)], &ctx).sql_string().unwrap(),
+        "17:01:09.00"
     );
     assert_eq!(
-        dispatched("CURTIME", &[], &ctx),
-        Datum::new_string_datum("17:01:09")
+        dispatched("CURTIME", &[], &ctx).sql_string().unwrap(),
+        "17:01:09"
     );
 }
 
@@ -1018,7 +1032,7 @@ fn str_datetime_add_duration_warns_once_with_frozen_arg_text() {
 
     let sink = WarnSink(RefCell::new(Vec::new()));
     let zero_duration = v("'00:00:00'");
-    let result = dispatch("ADDTIME", &[Datum::new_string_datum("abc"), zero_duration], &sink)
+    let result = eval_builtin_func("ADDTIME", &[Datum::new_string_datum("abc"), zero_duration], &sink)
         .unwrap()
         .unwrap();
     assert!(result.is_null());

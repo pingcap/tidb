@@ -41,6 +41,7 @@ use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike, Utc};
 use super::calendar::date_format;
 use crate::coerce::coerce_str;
 use tidb_datatype::SessionTimeZone;
+use crate::scalar_function::ScalarFunction;
 use crate::{Columns, Datum, Decimal, EvalError};
 use tidb_datatype::{Time, TimeType};
 
@@ -152,11 +153,6 @@ fn unix_arg_nanos(value: &Datum, cols: &dyn Columns) -> Result<Option<(i128, usi
     )))
 }
 
-/// `FROM_UNIXTIME(unix[, format])`.
-pub(crate) fn from_unixtime(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
-    from_unixtime_with_precision(vals, cols, None)
-}
-
 /// Go evalFromUnixTime rounds once at the builtin's result precision. The
 /// untyped entry retains its inferred precision for value-only callers.
 pub(crate) fn from_unixtime_with_precision(
@@ -196,26 +192,35 @@ pub(crate) fn from_unixtime_with_precision(
     Ok(Datum::new_string_datum(formatted))
 }
 
-/// `UNIX_TIMESTAMP([datetime])`.
-pub(crate) fn unix_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
-    match vals.len() {
-        0 => {
-            // The statement clock; absent outside a session.
-            let Some((utc_secs, nanos, _)) = cols.now() else {
-                return Err(EvalError::Unsupported("session clock"));
-            };
-            let micros = i64::from(nanos / 1000) + utc_secs * 1_000_000;
-            return Ok(unix_result(micros, 0));
-        }
-        1 => {}
-        _ => return Err(EvalError::Unsupported("bad function arity")),
-    }
+/// Go `builtinUnixTimestampCurrentSig.evalInt`: the statement clock.
+pub(crate) fn unix_timestamp_current(_: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+    // The statement clock; absent outside a session.
+    let Some((utc_secs, nanos, _)) = cols.now() else {
+        return Err(EvalError::Unsupported("session clock"));
+    };
+    let micros = i64::from(nanos / 1000) + utc_secs * 1_000_000;
+    Ok(unix_result(micros, 0))
+}
 
+/// Go `builtinUnixTimestampIntSig.evalInt` / `builtinUnixTimestampDecSig
+/// .evalDecimal`: `goTimeToMysqlUnixTimestamp(t, b.tp.GetDecimal())`, whose
+/// scale is the one `unixTimestampFunctionClass.getFunction` gave the
+/// signature -- never the argument value's own.
+pub(crate) fn unix_timestamp(
+    function: &ScalarFunction,
+    vals: &[Datum],
+    cols: &dyn Columns,
+) -> Result<Datum, EvalError> {
+    let fsp = function
+        .ret_type
+        .as_ref()
+        .expect("getFunction types the signature")
+        .decimal() as usize;
     // A temporal argument reaches Go's `GoTime` uncast, and a zero date
     // fails it: the answer is 0.
     if let Datum::Time(time) = &vals[0] {
         if time.is_zero() {
-            return Ok(unix_result(0, time.fsp() as usize));
+            return Ok(unix_result(0, fsp));
         }
     }
     let Some(text) = coerce_str(&vals[0])? else {
@@ -249,7 +254,6 @@ pub(crate) fn unix_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum
         return Ok(Datum::Null);
     };
     let core = parsed.time.core_time();
-    let fsp = parsed.time.fsp() as usize;
     // Go's IgnoreZeroInDate mode lets month/day-zero values through parsing,
     // but `GoTime` cannot represent them and the unix conversion returns the
     // out-of-range zero sentinel rather than attempting calendar arithmetic.
@@ -461,6 +465,9 @@ mod tests {
     /// Every vector is goeval output under its pinned UTC+11 session zone.
     #[test]
     fn from_unixtime_goeval_vectors() {
+        let from_unixtime = |args: &[Datum]| {
+            crate::tests::from_unixtime(args, &tidb_exprctx::context::NoColumns).unwrap()
+        };
         let cases: &[(Datum, &str)] = &[
             (Datum::Int(0), "1970-01-01 11:00:00"),
             (Datum::Int(1), "1970-01-01 11:00:01"),
@@ -469,7 +476,9 @@ mod tests {
             (dec("1447430881.999999"), "2015-11-14 03:08:01.999999"),
             // Literal scale 7 rounds half-up into fsp 6.
             (dec("1447430881.1234567"), "2015-11-14 03:08:01.123457"),
-            (dec("1447430881.12"), "2015-11-14 03:08:01.12"),
+            // `datumsToConstants` leaves a decimal constant's scale
+            // unspecified, so the class types the result at MaxFsp.
+            (dec("1447430881.12"), "2015-11-14 03:08:01.120000"),
             (Datum::Int(MAX_UNIX_SECS), "3001-01-19 10:59:59"),
             // A string argument carries MaxFsp.
             (s("1447430881.5"), "2015-11-14 03:08:01.500000"),
@@ -477,23 +486,29 @@ mod tests {
         ];
         for (arg, want) in cases {
             assert_eq!(
-                call(from_unixtime, std::slice::from_ref(arg)),
-                s(want),
+                from_unixtime(std::slice::from_ref(arg)).sql_string().unwrap(),
+                *want,
                 "FROM_UNIXTIME({arg:?})"
             );
         }
-        assert_eq!(call(from_unixtime, &[Datum::Int(-1)]), Datum::Null);
-        assert_eq!(call(from_unixtime, &[dec("-0.5")]), Datum::Null);
-        assert_eq!(call(from_unixtime, &[dec("-0.0000000001")]), Datum::Null);
+        assert_eq!(from_unixtime(&[Datum::Int(-1)]), Datum::Null);
+        assert_eq!(from_unixtime(&[dec("-0.5")]), Datum::Null);
+        assert_eq!(from_unixtime(&[dec("-0.0000000001")]), Datum::Null);
         assert_eq!(
-            call(from_unixtime, &[Datum::Int(MAX_UNIX_SECS + 1)]),
+            from_unixtime(&[Datum::Int(MAX_UNIX_SECS + 1)]),
             Datum::Null
         );
-        assert_eq!(call(from_unixtime, &[Datum::Null]), Datum::Null);
+        assert_eq!(from_unixtime(&[Datum::Null]), Datum::Null);
+
+        // A decimal literal carries its own scale.
+        assert_eq!(
+            crate::tests::v("from_unixtime(1447430881.12)").sql_string().unwrap(),
+            "2015-11-14 03:08:01.12"
+        );
 
         // Two-argument form composes with DATE_FORMAT.
         assert_eq!(
-            call(from_unixtime, &[Datum::Int(1_447_430_881), s("%H")]),
+            from_unixtime(&[Datum::Int(1_447_430_881), s("%H")]),
             s("03")
         );
     }
@@ -510,19 +525,19 @@ mod tests {
         ];
         for (arg, want) in cases {
             assert_eq!(
-                call(unix_timestamp, &[s(arg)]),
+                crate::tests::builtin("unix_timestamp", &[s(arg)]).unwrap(),
                 *want,
                 "UNIX_TIMESTAMP({arg})"
             );
         }
         assert_eq!(
-            call(unix_timestamp, &[s("0000-00-00 00:00:00")]),
+            crate::tests::builtin("unix_timestamp", &[s("0000-00-00 00:00:00")]).unwrap(),
             Datum::Null
         );
-        assert_eq!(call(unix_timestamp, &[s("not-a-date")]), Datum::Null);
-        assert_eq!(call(unix_timestamp, &[Datum::Null]), Datum::Null);
+        assert_eq!(crate::tests::builtin("unix_timestamp", &[s("not-a-date")]).unwrap(), Datum::Null);
+        assert_eq!(crate::tests::builtin("unix_timestamp", &[Datum::Null]).unwrap(), Datum::Null);
         // The zero-argument form needs the statement clock.
-        assert!(unix_timestamp(&[], &NoColumns).is_err());
+        assert!(crate::tests::builtin("unix_timestamp", &[]).is_err());
     }
 
     /// A session in a NAMED zone. `NoColumns` reports a fixed offset, where a
@@ -559,7 +574,7 @@ mod tests {
             ("2025-10-26 02:30:00", 1_761_442_200),
         ] {
             assert_eq!(
-                unix_timestamp(&[s(arg)], &ParisSession).unwrap(),
+                crate::tests::builtin_in("unix_timestamp", &[s(arg)], &ParisSession).unwrap(),
                 Datum::Int(want),
                 "UNIX_TIMESTAMP({arg}) in Europe/Paris"
             );

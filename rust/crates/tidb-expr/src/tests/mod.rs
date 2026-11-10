@@ -69,8 +69,120 @@ mod util_filter_condition_source;
 mod vectorizable_and_chunk_eval_source;
 mod vector_float32_class_kernels_source;
 
+/// The type Go `datumsToConstants` (`evaluator_test.go:79`) gives a datum
+/// through `kindToFieldType` (`:33`). It starts as Go's zero `FieldType` --
+/// no charset, no collation -- takes the datum's collation when it is a
+/// non-binary string type, and leaves flen and decimal unspecified.
+pub(crate) fn kind_to_field_type(d: &Datum) -> tidb_datatype::FieldType {
+    use tidb_datatype::{FieldType, FieldTypeCode as C, FieldTypeFlags, UNSPECIFIED_LENGTH};
+    let code = match d {
+        Datum::Null => C::Null,
+        Datum::Int(_) | Datum::UInt(_) | Datum::MinNotNull | Datum::MaxValue => C::LongLong,
+        Datum::Float32(_) | Datum::Real(_) => C::Double,
+        Datum::String(_) | Datum::Bytes(_) | Datum::BinaryLiteral(_) => C::VarString,
+        Datum::Enum(_, _) => C::Enum,
+        Datum::Set(_, _) => C::Set,
+        Datum::Decimal(_) => C::NewDecimal,
+        Datum::Duration(_) => C::Duration,
+        Datum::Time(_) => C::Datetime,
+        Datum::Bit(_) => C::Bit,
+        Datum::Json(_) => C::Json,
+        // Go's vector tests type their constants themselves.
+        Datum::VectorFloat32(_) => C::VectorFloat32,
+        other => panic!("kindToFieldType has no mapping for {other:?}"),
+    };
+    let mut ft = FieldType::new(code);
+    ft.set_charset_name("");
+    ft.set_collation_name("");
+    match d {
+        Datum::UInt(_) => ft.add_flags(FieldTypeFlags::UNSIGNED),
+        Datum::BinaryLiteral(_) => {
+            ft.set_charset_name("binary");
+            ft.set_collation_name("binary");
+        }
+        // `types.IsNonBinaryStr(&ft)`: `ft.SetCollate(d.Collation())`.
+        Datum::String(value) => ft.set_collation_name(value.collation().name()),
+        Datum::Bytes(_) => ft.set_collation_name("binary"),
+        _ => {}
+    }
+    ft.set_flen(UNSPECIFIED_LENGTH);
+    ft.set_decimal(UNSPECIFIED_LENGTH);
+    ft
+}
+
+/// Go `datumsToConstants` (`evaluator_test.go:79`): one constant per datum,
+/// typed by [`kind_to_field_type`].
+pub(crate) fn datums_to_constants(datums: &[Datum]) -> Vec<crate::expression::Expression> {
+    datums
+        .iter()
+        .map(|d| {
+            crate::expression::Expression::Constant(crate::constant::Constant::new(
+                d.clone(),
+                kind_to_field_type(d),
+            ))
+        })
+        .collect()
+}
+
+/// Go `TestFromUnixTime`'s door: `datumsToConstants(args)` and
+/// `constants[0].GetType(ctx).SetDecimal(0)` on an integer timestamp.
+pub(crate) fn from_unixtime(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+    let mut args = datums_to_constants(vals);
+    if let Datum::Int(_) = &vals[0] {
+        let mut tp = kind_to_field_type(&vals[0]);
+        tp.set_decimal(0);
+        args[0] = crate::expression::Expression::Constant(crate::constant::Constant::new(vals[0].clone(), tp));
+    }
+    eval_builtin_func_over("from_unixtime", args, cols).expect("the class accepts the argument count")
+}
+
+/// The door Go's builtin tests use: `funcs[name].getFunction(ctx,
+/// datumsToConstants(args))` followed by `evalBuiltinFunc` over an empty
+/// row. `None` when the class refuses the argument count.
+pub(crate) fn eval_builtin_func(
+    name: &str,
+    vals: &[Datum],
+    cols: &dyn Columns,
+) -> Option<Result<Datum, EvalError>> {
+    let name = name.to_ascii_lowercase();
+    eval_builtin_func_over(&name, datums_to_constants(vals), cols)
+}
+
+/// [`eval_builtin_func`] over constants the test typed itself, as a Go test
+/// that adjusts `datumsToConstants`' types before `getFunction` does.
+pub(crate) fn eval_builtin_func_over(
+    name: &str,
+    args: Vec<crate::expression::Expression>,
+    cols: &dyn Columns,
+) -> Option<Result<Datum, EvalError>> {
+    let (registered_name, _) = crate::builtin_registry::function_class(name)?;
+    crate::builtin_registry::verify_args_by_count(name, args.len()).ok()?;
+    let class = crate::builtin::funcs(name)?;
+    let f = match class.get_function(&crate::builtin::ColumnsBuildContext(cols), args) {
+        Ok(f) => f,
+        Err(error) => return Some(Err(error)),
+    };
+    let function = crate::new_function::scalar_function_of(
+        registered_name,
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Unspecified),
+        f,
+    );
+    let empty = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[], 1);
+    Some(function.eval(cols, empty.get_row(0)))
+}
+
+/// [`eval_builtin_func`] for an argument count the class accepts.
+pub(crate) fn builtin_in(name: &str, vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+    eval_builtin_func(name, vals, cols).expect("the class accepts the argument count")
+}
+
+/// [`builtin_in`] outside a session.
+pub(crate) fn builtin(name: &str, vals: &[Datum]) -> Result<Datum, EvalError> {
+    builtin_in(name, vals, &NoColumns)
+}
+
 /// Parses and evaluates a constant expression to its label.
-pub(super) fn e(expr: &str) -> String {
+pub(crate) fn e(expr: &str) -> String {
     e_with(expr, &NoColumns)
 }
 
@@ -94,7 +206,7 @@ fn e_with(expr: &str, cols: &dyn Columns) -> String {
 /// Parses a constant expression, rewrites it WITHOUT constant folding and
 /// evaluates the built tree over a chunk row -- the per-row path live SQL
 /// takes, where [`e`] folds the constant at build time.
-pub(super) fn chunk_e(expr: &str) -> String {
+pub(crate) fn chunk_e(expr: &str) -> String {
     chunk_e_with(expr, &NoColumns)
 }
 
@@ -122,7 +234,7 @@ pub(super) fn chunk_e_with(expr: &str, ctx: &impl Columns) -> String {
 }
 
 /// Parses and evaluates a constant expression to its raw `Datum`.
-pub(super) fn v(expr: &str) -> Datum {
+pub(crate) fn v(expr: &str) -> Datum {
     let stmt = tidb_parser::parse(&format!("select {expr}")).expect("parse");
     let Stmt::Query(query) = stmt else {
         panic!("not query")
@@ -256,11 +368,11 @@ fn ord_source_vectors_preserve_utf8_and_binary_bytes() {
         assert_eq!(e(expr), want, "{expr}");
     }
     assert_eq!(
-        string_fn::ord(&[Datum::new_bytes_datum(vec![0xe4, 0xbd, 0xa0])]).unwrap(),
+        builtin("ord", &[Datum::new_bytes_datum(vec![0xe4, 0xbd, 0xa0])]).unwrap(),
         Datum::Int(0xe4)
     );
     assert_eq!(
-        string_fn::ord(&[Datum::new_collation_string_datum(
+        builtin("ord", &[Datum::new_collation_string_datum(
             vec![0xe4, 0xbd, 0xa0],
             tidb_charset::Collation::Binary,
         )])
@@ -268,7 +380,7 @@ fn ord_source_vectors_preserve_utf8_and_binary_bytes() {
         Datum::Int(0xe4)
     );
     assert_eq!(
-        string_fn::ord(&[Datum::new_bytes_datum(vec![0xff])]).unwrap(),
+        builtin("ord", &[Datum::new_bytes_datum(vec![0xff])]).unwrap(),
         Datum::Int(0xff)
     );
     for charset in ["ascii", "latin1"] {
@@ -280,10 +392,6 @@ fn ord_source_vectors_preserve_utf8_and_binary_bytes() {
             "{charset}",
         );
     }
-    assert_eq!(
-        string_fn::ord(&[]),
-        Err(EvalError::Unsupported("bad ORD arity"))
-    );
 }
 
 /// Source scalar rows from `pkg/expression/builtin_string_test.go:1436
@@ -963,14 +1071,13 @@ fn lower_upper_source_vectors_preserve_case_and_binary_boundaries() {
         assert_eq!(e(expr), want, "{expr}");
     }
     assert_eq!(
-        string_fn::case_convert(&[Datum::new_bytes_datum(vec![b'A', 0xff])], false).unwrap(),
+        builtin("lower", &[Datum::new_bytes_datum(vec![b'A', 0xff])]).unwrap(),
         Datum::new_bytes_datum(vec![b'A', 0xff])
     );
     assert_eq!(
-        string_fn::case_convert(&[Datum::new_bytes_datum(vec![b'a', 0xff])], true).unwrap(),
+        builtin("upper", &[Datum::new_bytes_datum(vec![b'a', 0xff])]).unwrap(),
         Datum::new_bytes_datum(vec![b'a', 0xff])
     );
-    assert!(string_fn::case_convert(&[], false).is_err());
 }
 
 /// Complete representable rows from `TestStrcmp` in
@@ -1002,11 +1109,11 @@ fn strcmp_source_vectors_preserve_coercion_and_nulls() {
         assert_eq!(e(expr), want, "{expr}");
     }
     assert_eq!(
-        string_fn::strcmp(&[Datum::new_bytes_datum(vec![0xff]), Datum::new_bytes_datum(vec![0x00]),]).unwrap(),
+        builtin("strcmp", &[Datum::new_bytes_datum(vec![0xff]), Datum::new_bytes_datum(vec![0x00]),]).unwrap(),
         Datum::Int(1)
     );
     assert_eq!(
-        string_fn::strcmp(&[
+        builtin("strcmp", &[
             Datum::new_bytes_datum(b"a".to_vec()),
             Datum::new_bytes_datum(b"a ".to_vec()),
         ])
@@ -1014,16 +1121,12 @@ fn strcmp_source_vectors_preserve_coercion_and_nulls() {
         Datum::Int(-1)
     );
     assert_eq!(
-        string_fn::strcmp(&[
+        builtin("strcmp", &[
             Datum::new_string_datum("a ".to_string()),
             Datum::new_bytes_datum(b"a".to_vec()),
         ])
         .unwrap(),
         Datum::Int(1)
-    );
-    assert_eq!(
-        string_fn::strcmp(&[Datum::new_string_datum("a".to_string())]),
-        Err(EvalError::Unsupported("bad STRCMP arity"))
     );
 }
 

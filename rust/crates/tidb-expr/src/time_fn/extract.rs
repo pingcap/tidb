@@ -15,7 +15,7 @@
 //! Go extractFunctionClass and its datetime/duration signatures.
 
 use crate::{Columns, Datum, EvalError};
-use tidb_datatype::{FieldType, FieldTypeCode};
+use tidb_datatype::FieldType;
 
 fn number(result: Result<i64, tidb_datatype::TimeError>, unit: &str) -> Result<Datum, EvalError> {
     result.map(Datum::Int).map_err(|_| {
@@ -24,31 +24,6 @@ fn number(result: Result<i64, tidb_datatype::TimeError>, unit: &str) -> Result<D
             format!("invalid unit {unit}"),
         ))
     })
-}
-
-/// Go `extractFunctionClass.getFunction`: the signature the unit and the
-/// value's type select.
-pub(crate) fn extract(
-    unit: &str,
-    value: &Datum,
-    source: Option<&FieldType>,
-    ctx: &dyn Columns,
-) -> Result<Datum, EvalError> {
-    let clock = tidb_datatype::is_clock_unit(unit);
-    let date = tidb_datatype::is_date_unit(unit);
-    let datetime = source.is_some_and(|ty| {
-        matches!(
-            ty.code(),
-            FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp
-        )
-    }) || matches!(value, Datum::Time(_));
-    if !clock || (date && datetime) {
-        return extract_datetime(unit, value, source, ctx);
-    }
-    if date && !matches!(value, Datum::Duration(_)) {
-        return extract_datetime_from_string(unit, value, source, ctx);
-    }
-    extract_duration(unit, value, source, ctx)
 }
 
 /// Go `builtinExtractDatetimeSig.evalInt`.

@@ -178,23 +178,6 @@ pub(crate) fn eval_binary_with_div_precision(
     )
 }
 
-/// [`eval_binary`] for a caller that HAS the statement context, so a
-/// string-versus-number comparison can raise its own 1292.
-///
-/// The nested comparisons in `IN`, `BETWEEN` and `CASE ... WHEN` reach the
-/// same `getBaseCmpType` ETReal coercion as a top-level `=`, and TiDB warns
-/// there too (captured: `SELECT 1 IN ('12abc')` records 1292). Routing them
-/// through [`eval_binary`], whose resolver is `NoColumns`, silently dropped
-/// those warnings.
-pub(crate) fn eval_binary_in(
-    op: BinaryOp,
-    l: Datum,
-    r: Datum,
-    ctx: &dyn tidb_exprctx::context::Columns,
-) -> Result<Datum, EvalError> {
-    eval_binary_with_div_precision(op, l, r, ctx.div_precision_increment(), ctx)
-}
-
 /// The collation an evaluation with no expression-level derivation behind it
 /// runs under: `utf8mb4_bin`, this tier's connection collation.
 ///
@@ -886,68 +869,6 @@ pub(crate) fn eval_binary_full(
         _ => return Err(EvalError::UnsupportedOperandPair(l.kind(), r.kind())),
     };
     integer_binary(op, a, b, ctx)
-}
-
-/// The typed fast path [`crate::scalar_function::ScalarFunction::eval`] takes
-/// for a binary operator whose arguments Go's class dispatch fixed at
-/// `types.ETInt`.
-///
-/// Go compiles each scalar function to one signature struct at PLAN time
-/// (`getFunction`), so its per-row work is a virtual call into typed integer
-/// code. The generic ladder this port runs instead --
-/// [`eval_binary_full`] -- re-derives that static knowledge on every row:
-/// string promotion tables, Float-over-Decimal hierarchy, vector dispatch,
-/// JSON intercepts, before landing on [`integer_binary`] at the tail. For a
-/// call site where the operator name and both arguments' static field types
-/// already say ETInt, every one of those branches is statically dead, so this
-/// entry runs the exact tail directly: binary-literal operand casting, NULL
-/// propagation, unsigned reinterpretation off the ARGUMENT field types (Go's
-/// `HasUnsignedFlag(args[i].GetType(ctx).GetFlag())`), then
-/// [`integer_binary`] with its overflow rules and NO_UNSIGNED_SUBTRACTION.
-///
-/// `Ok(None)` means the runtime values are outside what an ETInt signature
-/// can produce (a sentinel or an exotic integral kind); the caller falls back
-/// to the ordinary ladder, which answers those shapes today.
-pub(crate) fn integer_binary_typed(
-    op: BinaryOp,
-    l: Datum,
-    r: Datum,
-    signed_operands: [bool; 2],
-    ctx: &dyn tidb_exprctx::context::Columns,
-) -> Result<Option<Datum>, EvalError> {
-    debug_assert!(matches!(
-        op,
-        BinaryOp::Plus
-            | BinaryOp::Minus
-            | BinaryOp::Mul
-            | BinaryOp::Eq
-            | BinaryOp::Ne
-            | BinaryOp::Lt
-            | BinaryOp::Le
-            | BinaryOp::Gt
-            | BinaryOp::Ge
-    ));
-    // Go's operator dispatch reads `args[i].GetType(ctx)` and the
-    // `args[i].(*Constant)` type switch to pick a signature, and a `Datum`
-    // records neither -- see `ops::operand`. A CONSTANT binary literal
-    // (`0x1234`, `b'11'`) carries its signedness in its own `FieldType`, so
-    // the same conversion the generic entry applies runs here first.
-    let (l, r) = crate::binary_literal::cast_signed_literal_operands(op, l, r, signed_operands);
-    if l == Datum::Null || r == Datum::Null {
-        return Ok(Some(Datum::Null));
-    }
-    let reinterpret = |value: Datum, operand_signed: bool| match value {
-        Datum::Int(bits) if !operand_signed => Datum::UInt(bits as u64),
-        other => other,
-    };
-    let l = reinterpret(l, signed_operands[0]);
-    let r = reinterpret(r, signed_operands[1]);
-    let (a, b) = match (integer_of(&l), integer_of(&r)) {
-        (Ok(Some(a)), Ok(Some(b))) => (a, b),
-        (Err(error), _) | (_, Err(error)) => return Err(error),
-        _ => return Ok(None),
-    };
-    integer_binary(op, a, b, ctx).map(Some)
 }
 
 /// Evaluates a context-free binary operation with TiDB's default
@@ -1784,7 +1705,7 @@ mod tests {
         // One warning per coercion, never deduplicated: both arguments of a
         // two-argument builtin raise their own.
         assert_eq!(
-            crate::math_fn::dispatch_values("POW", &[s("2abc"), s("3xyz")], &log)
+            crate::tests::eval_builtin_func("POW", &[s("2abc"), s("3xyz")], &log)
                 .expect("dispatches"),
             Ok(Datum::Real(8.0))
         );
@@ -1792,18 +1713,18 @@ mod tests {
 
         // The same sink serves every family that coerces, not just math:
         // FIELD, FORMAT, INTERVAL and FORMAT_BYTES each raise their own.
-        assert!(crate::string_fn::field(&[Datum::Int(1), s("12abc")], &log).is_ok());
+        assert!(crate::tests::builtin_in("field", &[Datum::Int(1), s("12abc")], &log).is_ok());
         assert_eq!(log.taken(), vec![truncated("12abc")]);
         assert!(crate::string_fn::format_num(&[s("12abc"), Datum::Int(2)], &log).is_ok());
         assert_eq!(log.taken(), vec![truncated("12abc")]);
         assert!(
-            crate::builtin_ext::dispatch("INTERVAL", &[Datum::Int(1), s("12abc")], &log)
+            crate::tests::eval_builtin_func("INTERVAL", &[Datum::Int(1), s("12abc")], &log)
                 .expect("dispatches")
                 .is_ok()
         );
         assert_eq!(log.taken(), vec![truncated("12abc")]);
         assert!(
-            crate::builtin_ext::dispatch("FORMAT_BYTES", &[s("12abc")], &log)
+            crate::tests::eval_builtin_func("FORMAT_BYTES", &[s("12abc")], &log)
                 .expect("dispatches")
                 .is_ok()
         );
@@ -1973,13 +1894,13 @@ use tidb_charset::Collation;
 
         for name in ["SQRT", "EXP", "LN", "SIN", "CEIL", "FLOOR"] {
             assert!(
-                crate::math_fn::dispatch_values(name, &[vector()], &crate::NoColumns)
+                crate::tests::eval_builtin_func(name, &[vector()], &crate::NoColumns)
                     .expect("dispatches")
                     .is_err(),
                 "{name}(vector)"
             );
         }
-        assert!(crate::string_fn::field(&[Datum::Int(1), vector()], &crate::NoColumns).is_err());
+        assert!(crate::tests::builtin_in("field", &[Datum::Int(1), vector()], &crate::NoColumns).is_err());
         assert!(
             crate::string_fn::format_num(&[vector(), Datum::Int(2)], &crate::NoColumns).is_err()
         );
@@ -1989,11 +1910,11 @@ use tidb_charset::Collation;
         )
         .is_err());
         assert!(
-            crate::builtin_ext::dispatch("FORMAT_BYTES", &[vector()], &crate::NoColumns)
+            crate::tests::eval_builtin_func("FORMAT_BYTES", &[vector()], &crate::NoColumns)
                 .expect("dispatches")
                 .is_err()
         );
-        assert!(crate::builtin_ext::dispatch(
+        assert!(crate::tests::eval_builtin_func(
             "INTERVAL",
             &[Datum::Int(1), vector()],
             &crate::NoColumns
@@ -2007,12 +1928,12 @@ use tidb_charset::Collation;
         let e = || Datum::Enum(MysqlEnum::new("8", 2), Collation::Utf8Mb4Bin);
         assert_eq!(to_f64_with_mysql_string(&e(), &crate::NoColumns), Ok(2.0));
         assert_eq!(
-            crate::math_fn::dispatch_values("SQRT", &[e()], &crate::NoColumns).expect("dispatches"),
+            crate::tests::eval_builtin_func("SQRT", &[e()], &crate::NoColumns).expect("dispatches"),
             Ok(Datum::Real(2.0f64.sqrt()))
         );
         // `FORMAT_BYTES(e)` is `2 bytes`, not `0 bytes`.
         assert_eq!(
-            crate::builtin_ext::dispatch("FORMAT_BYTES", &[e()], &crate::NoColumns)
+            crate::tests::eval_builtin_func("FORMAT_BYTES", &[e()], &crate::NoColumns)
                 .expect("dispatches")
                 .map(|value| value.sql_string().unwrap()),
             Ok("2 bytes".to_owned())

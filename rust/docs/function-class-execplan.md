@@ -169,6 +169,16 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
       `cast_arg_as_*` value helpers still convert through `cast::eval_cast`
       (the AST-typed conversion), which goes when their callers bind their
       signatures.
+    - [x] Every signature `getSignatureByPB` decodes has its own kernel
+      (`Kernel::Values` over the argument values, `Kernel::Method` with the
+      node's collation or types, `Kernel::Row` for one that reads its
+      arguments itself); `Kernel::Named` is deleted and a decoded node is
+      named `sig_<signature>` as Go's `newDistSQLFunctionBySig` names it.
+    - [ ] The signatures only a class builds (`Kernel::Function`, about 130
+      with a `pbCode` plus every `Unspecified` one) still evaluate through
+      `eval_by_signature` by name. Each class hands its signature's
+      evaluation to `BaseBuiltinFunc` (a `RowKernel`), one Go file at a
+      time; `Kernel::Function` and `eval_by_signature` go with the last.
   - [ ] 11b-2c: `pushdown_catalog`'s second description of a call
     (`PbScalar`, `BuiltinSignature`, `resolve`) is deleted; `ExprToPB`
     reads the node's signature.

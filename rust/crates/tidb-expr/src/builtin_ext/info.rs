@@ -18,22 +18,6 @@
 use crate::ops::to_f64_with_mysql_string;
 use crate::{Datum, EvalError};
 
-/// Dispatches this family's builtins; `None` if `name` isn't one of them.
-pub(crate) fn dispatch(
-    name: &str,
-    vals: &[Datum],
-    ctx: &dyn crate::Columns,
-) -> Option<Result<Datum, EvalError>> {
-    match (name, vals) {
-        ("FORMAT_BYTES", [value]) => Some(format_bytes(value, ctx)),
-        ("FORMAT_NANO_TIME", [value]) => Some(format_nano_time(value, ctx)),
-        ("TIDB_DECODE_PLAN", [value]) => Some(decode_plan(value)),
-        ("TIDB_DECODE_BINARY_PLAN", [value]) => Some(decode_binary_plan(value, ctx)),
-        ("TIDB_ENCODE_SQL_DIGEST", [value]) => Some(encode_sql_digest(value)),
-        _ => None,
-    }
-}
-
 /// `TIDB_ENCODE_SQL_DIGEST(sql)`: the digest of the parser-normalized SQL,
 /// using the same normalizer and SHA-256 representation as `parser.DigestHash`.
 pub(crate) fn encode_sql_digest(value: &Datum) -> Result<Datum, EvalError> {
@@ -174,14 +158,14 @@ fn scientific(value: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::dispatch;
+    use crate::tests::eval_builtin_func;
     use crate::{Columns, Datum};
     use prost::Message;
     use std::cell::RefCell;
     use tidb_proto::tipb::{ExplainData, ExplainOperator, TaskType};
 
     fn call(name: &str, value: Datum) -> Datum {
-        dispatch(name, &[value], &crate::NoColumns)
+        eval_builtin_func(name, &[value], &crate::NoColumns)
             .expect("name/arity should dispatch")
             .expect("formatting must be total over finite ETReal values")
     }
@@ -287,7 +271,7 @@ mod tests {
             &mut raw,
         );
         let encoded = tidb_plancodec::compress(raw.as_bytes());
-        let decoded = dispatch(
+        let decoded = eval_builtin_func(
             "TIDB_DECODE_PLAN",
             &[Datum::new_string_datum(encoded)],
             &crate::NoColumns,
@@ -299,7 +283,7 @@ mod tests {
         assert!(decoded.contains("Selection"));
 
         let encoded = tidb_plancodec::compress(b"0\t1\t0\t1\t\xff\n");
-        let decoded = dispatch(
+        let decoded = eval_builtin_func(
             "TIDB_DECODE_PLAN",
             &[Datum::new_string_datum(encoded)],
             &crate::NoColumns,
@@ -312,7 +296,7 @@ mod tests {
         );
 
         let encoded = tidb_plancodec::compress(b"0\t2147483648\t0\tinfo\n");
-        let decoded = dispatch(
+        let decoded = eval_builtin_func(
             "TIDB_DECODE_PLAN",
             &[Datum::new_string_datum(encoded)],
             &crate::NoColumns,
@@ -325,7 +309,7 @@ mod tests {
             .contains("UnknownPlanID2147483648"));
 
         assert_eq!(
-            dispatch(
+            eval_builtin_func(
                 "TIDB_DECODE_PLAN",
                 &[Datum::new_string_datum("malformed")],
                 &crate::NoColumns,
@@ -344,7 +328,7 @@ mod tests {
             ("EUBzb21lIHJhbmRvbSBieXRlcw==", "proto: illegal wireType 7"),
         ] {
             assert_eq!(
-                dispatch(
+                eval_builtin_func(
                     "TIDB_DECODE_BINARY_PLAN",
                     &[Datum::new_string_datum(input)],
                     &warnings,
@@ -361,7 +345,7 @@ mod tests {
             );
         }
         assert_eq!(
-            dispatch(
+            eval_builtin_func(
                 "TIDB_DECODE_BINARY_PLAN",
                 &[Datum::new_string_datum(
                     tidb_plancodec::BINARY_PLAN_DISCARDED_ENCODED.as_str(),
@@ -388,7 +372,7 @@ mod tests {
             }
             .encode_to_vec(),
         );
-        let decoded = dispatch(
+        let decoded = eval_builtin_func(
             "TIDB_DECODE_BINARY_PLAN",
             &[Datum::new_string_datum(encoded)],
             &warnings,
@@ -400,13 +384,13 @@ mod tests {
         assert!(decoded.contains("| -1 "));
 
         assert_eq!(
-            dispatch("TIDB_DECODE_PLAN", &[Datum::Null], &warnings)
+            eval_builtin_func("TIDB_DECODE_PLAN", &[Datum::Null], &warnings)
                 .unwrap()
                 .unwrap(),
             Datum::Null
         );
         assert_eq!(
-            dispatch(
+            eval_builtin_func(
                 "TIDB_DECODE_PLAN",
                 &[Datum::new_string_datum(vec![0xff])],
                 &warnings,
@@ -416,7 +400,7 @@ mod tests {
             Datum::new_string_datum(vec![0xff])
         );
         assert_eq!(
-            dispatch(
+            eval_builtin_func(
                 "TIDB_DECODE_BINARY_PLAN",
                 &[Datum::new_string_datum(vec![0xff])],
                 &warnings,

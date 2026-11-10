@@ -19,7 +19,7 @@
 
 use std::cmp::Ordering;
 
-use tidb_datatype::{BinaryLiteralIntOutcome, Datum, Decimal, StringDatum};
+use tidb_datatype::{BinaryLiteralIntOutcome, Datum, Decimal};
 
 use tidb_exprctx::context::EvalError;
 
@@ -184,13 +184,6 @@ pub fn truthy_in(value: &Datum, ctx: &dyn crate::Columns) -> Result<Option<bool>
         }
     }
     truthy_of(value)
-}
-
-/// Returns a string datum's UTF-8 text without replacement.
-pub(crate) fn string_text(value: &StringDatum) -> Result<&str, EvalError> {
-    value
-        .as_utf8()
-        .map_err(|_| EvalError::Unsupported("invalid UTF-8 string datum"))
 }
 
 /// Coerces a scalar to text, preserving NULL. Go strings are byte strings:

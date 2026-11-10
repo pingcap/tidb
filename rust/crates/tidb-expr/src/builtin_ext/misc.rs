@@ -21,50 +21,6 @@ use crate::coerce::coerce_str;
 use crate::{Datum, Decimal, EvalError};
 use tidb_vitess::hash_uint64;
 
-/// Dispatches this family's builtins; `None` if `name` isn't one of them.
-#[cfg(test)]
-pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
-    dispatch_in(name, vals, &crate::NoColumns)
-}
-
-/// Dispatches this family while preserving warnings from implicit casts.
-pub(crate) fn dispatch_in(
-    name: &str,
-    vals: &[Datum],
-    ctx: &dyn crate::Columns,
-) -> Option<Result<Datum, EvalError>> {
-    match (name, vals) {
-        ("UUID", []) => Some(uuid_v1()),
-        ("UUID_V4", []) => Some(uuid_v4()),
-        ("UUID_V7", []) => Some(uuid_v7()),
-        ("ANY_VALUE", [value]) => Some(Ok(value.clone())),
-        // Go's nameConstFunctionClass selects a typed signature from the
-        // second argument and every builtinNameConst*Sig evaluator returns
-        // that argument directly.  The first argument is column-label
-        // metadata, not part of the scalar value.  This value-only leaf can
-        // therefore preserve every representable Datum without converting
-        // it through a text or numeric signature.  ETDatetime, ETDuration,
-        // ETJson, and ETVectorFloat32 remain explicit boundaries because the
-        // seed Datum domain intentionally has no corresponding variants.
-        ("NAME_CONST", [_, value]) => Some(Ok(value.clone())),
-        ("IS_UUID", [value]) => Some(is_uuid(value)),
-        ("UUID_VERSION", [value]) => Some(uuid_version(value)),
-        ("UUID_TIMESTAMP", [value]) => Some(uuid_timestamp(value)),
-        ("UUID_TO_BIN", [value]) => Some(uuid_to_bin(value, None)),
-        ("UUID_TO_BIN", [value, flag]) => Some(uuid_to_bin(value, Some(flag))),
-        ("BIN_TO_UUID", [value]) => Some(bin_to_uuid(ctx, value, None)),
-        ("BIN_TO_UUID", [value, flag]) => Some(bin_to_uuid(ctx, value, Some(flag))),
-        ("TIDB_SHARD", [value]) => Some(tidb_shard(value, ctx)),
-        ("TIDB_DECODE_KEY", [value]) => Some(tidb_decode_key(value, ctx)),
-        ("TIDB_DECODE_SQL_DIGESTS", [digests]) => Some(tidb_decode_sql_digests(digests, None, ctx)),
-        ("TIDB_DECODE_SQL_DIGESTS", [digests, truncate_length]) => {
-            Some(tidb_decode_sql_digests(digests, Some(truncate_length), ctx))
-        }
-        ("VITESS_HASH", [value]) => Some(vitess_hash(value, ctx)),
-        _ => None,
-    }
-}
-
 pub(crate) fn tidb_decode_key(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     if value.is_null() {
         return Ok(Datum::Null);
@@ -653,8 +609,13 @@ fn hex_nibble(byte: u8) -> Option<u8> {
 mod tests {
     use std::cell::RefCell;
 
-    use super::{dispatch, dispatch_in, hash_uint64};
+    use super::hash_uint64;
     use crate::Datum;
+
+    /// Go's builtin test door over a context-free session.
+    fn eval_builtin_func(name: &str, vals: &[Datum]) -> Option<Result<Datum, crate::EvalError>> {
+        crate::tests::eval_builtin_func(name, vals, &crate::NoColumns)
+    }
     use tidb_datatype::{BinaryLiteral, MysqlEnum, MysqlSet};
 use tidb_charset::Collation;
 
@@ -691,7 +652,7 @@ use tidb_charset::Collation;
         ];
         for (argument, want) in cases {
             assert_eq!(
-                dispatch("ANY_VALUE", std::slice::from_ref(&argument))
+                eval_builtin_func("ANY_VALUE", std::slice::from_ref(&argument))
                     .expect("ANY_VALUE must dispatch")
                     .expect("ANY_VALUE must evaluate"),
                 want
@@ -723,7 +684,7 @@ use tidb_charset::Collation;
         ];
 
         for (argument, expected_string) in cases {
-            let result = dispatch("ANY_VALUE", std::slice::from_ref(&argument))
+            let result = eval_builtin_func("ANY_VALUE", std::slice::from_ref(&argument))
                 .expect("ANY_VALUE must dispatch")
                 .expect("hybrid source row must evaluate");
             assert_eq!(result, argument, "the hybrid datum must be preserved");
@@ -738,12 +699,12 @@ use tidb_charset::Collation;
 
     #[test]
     fn dispatch_declines_wrong_arity_and_foreign_functions() {
-        assert!(dispatch("ANY_VALUE", &[]).is_none());
-        assert!(dispatch("ANY_VALUE", &[Datum::Int(1), Datum::Int(2)]).is_none());
-        assert!(dispatch("NAME_CONST", &[]).is_none());
-        assert!(dispatch("NAME_CONST", &[Datum::new_string_datum("name".to_string())]).is_none());
-        assert!(dispatch("NAME_CONST", &[Datum::Int(1)]).is_none());
-        assert!(dispatch("NAME_CONST", &[Datum::Int(1), Datum::Int(2), Datum::Int(3)]).is_none());
+        assert!(eval_builtin_func("ANY_VALUE", &[]).is_none());
+        assert!(eval_builtin_func("ANY_VALUE", &[Datum::Int(1), Datum::Int(2)]).is_none());
+        assert!(eval_builtin_func("NAME_CONST", &[]).is_none());
+        assert!(eval_builtin_func("NAME_CONST", &[Datum::new_string_datum("name".to_string())]).is_none());
+        assert!(eval_builtin_func("NAME_CONST", &[Datum::Int(1)]).is_none());
+        assert!(eval_builtin_func("NAME_CONST", &[Datum::Int(1), Datum::Int(2), Datum::Int(3)]).is_none());
     }
 
     /// Exact scalar vectors from `TestNameConst` in
@@ -776,7 +737,7 @@ use tidb_charset::Collation;
             (Datum::Null, Datum::Int(-7)),
         ];
         for (name, value) in cases {
-            let got = dispatch("NAME_CONST", &[name, value.clone()])
+            let got = eval_builtin_func("NAME_CONST", &[name, value.clone()])
                 .expect("NAME_CONST must dispatch for two arguments")
                 .expect("NAME_CONST must preserve the scalar value");
             assert_eq!(got, value);
@@ -802,7 +763,7 @@ use tidb_charset::Collation;
         ];
         for (text, want) in cases {
             assert_eq!(
-                dispatch("UUID_VERSION", &[Datum::new_string_datum(text.to_string())])
+                eval_builtin_func("UUID_VERSION", &[Datum::new_string_datum(text.to_string())])
                     .expect("UUID_VERSION must dispatch")
                     .expect("well-formed UUID must evaluate"),
                 Datum::Int(want),
@@ -810,13 +771,13 @@ use tidb_charset::Collation;
             );
         }
         assert_eq!(
-            dispatch("UUID_VERSION", &[Datum::Null])
+            eval_builtin_func("UUID_VERSION", &[Datum::Null])
                 .expect("UUID_VERSION must dispatch")
                 .expect("NULL must evaluate"),
             Datum::Null
         );
         assert!(
-            dispatch("UUID_VERSION", &[Datum::new_string_datum("abc".to_string())])
+            eval_builtin_func("UUID_VERSION", &[Datum::new_string_datum("abc".to_string())])
                 .expect("UUID_VERSION must dispatch")
                 .is_err()
         );
@@ -844,7 +805,7 @@ use tidb_charset::Collation;
         ];
         for (text, want) in cases {
             assert_eq!(
-                dispatch("IS_UUID", &[Datum::new_string_datum(text.to_string())])
+                eval_builtin_func("IS_UUID", &[Datum::new_string_datum(text.to_string())])
                     .expect("IS_UUID must dispatch")
                     .expect("IS_UUID must evaluate"),
                 Datum::Int(want),
@@ -852,7 +813,7 @@ use tidb_charset::Collation;
             );
         }
         assert_eq!(
-            dispatch("IS_UUID", &[Datum::Null])
+            eval_builtin_func("IS_UUID", &[Datum::Null])
                 .expect("IS_UUID must dispatch")
                 .expect("IS_UUID must evaluate"),
             Datum::Null
@@ -865,7 +826,7 @@ use tidb_charset::Collation;
         // scalar values are text-coerced before the parser runs.
         for value in [Datum::Int(1), Datum::Real(1.0)] {
             assert_eq!(
-                dispatch("IS_UUID", &[value])
+                eval_builtin_func("IS_UUID", &[value])
                     .expect("IS_UUID must dispatch")
                     .expect("IS_UUID must evaluate"),
                 Datum::Int(0)
@@ -881,7 +842,7 @@ use tidb_charset::Collation;
             Datum::BinaryLiteral(BinaryLiteral::from(vec![0xff])),
         ] {
             assert_eq!(
-                dispatch("IS_UUID", &[value])
+                eval_builtin_func("IS_UUID", &[value])
                     .expect("IS_UUID must dispatch")
                     .expect("invalid bytes are a non-UUID value, not an evaluation error"),
                 Datum::Int(0)
@@ -891,7 +852,7 @@ use tidb_charset::Collation;
         let mut invalid_wrapper = vec![0xff];
         invalid_wrapper.extend_from_slice(b"99a9ad03-5298-11ec-8f5c-00ff90147ac3*");
         assert_eq!(
-            dispatch("IS_UUID", &[Datum::Bytes(invalid_wrapper)])
+            eval_builtin_func("IS_UUID", &[Datum::Bytes(invalid_wrapper)])
                 .expect("IS_UUID must dispatch")
                 .expect("Go's 38-byte UUID parse ignores the invalid wrapper bytes"),
             Datum::Int(1)
@@ -901,7 +862,7 @@ use tidb_charset::Collation;
         leading_space.extend_from_slice(b"99a9ad03-5298-11ec-8f5c-00ff90147ac3");
         leading_space.push(0xff);
         assert_eq!(
-            dispatch("IS_UUID", &[Datum::Bytes(leading_space)])
+            eval_builtin_func("IS_UUID", &[Datum::Bytes(leading_space)])
                 .expect("IS_UUID must dispatch")
                 .expect("Go checks surrounding whitespace before its UUID parse"),
             Datum::Int(0)
@@ -926,7 +887,7 @@ use tidb_charset::Collation;
                 crate::Decimal::from_literal(want)
             };
             assert_eq!(
-                dispatch("UUID_TIMESTAMP", &[Datum::new_string_datum(text.to_string())])
+                eval_builtin_func("UUID_TIMESTAMP", &[Datum::new_string_datum(text.to_string())])
                     .expect("UUID_TIMESTAMP must dispatch")
                     .expect("timestamp UUID must evaluate"),
                 Datum::Decimal(expected),
@@ -941,7 +902,7 @@ use tidb_charset::Collation;
             "ffffffff-ffff-ffff-ffff-ffffffffffff",
         ] {
             assert_eq!(
-                dispatch("UUID_TIMESTAMP", &[Datum::new_string_datum(text.to_string())])
+                eval_builtin_func("UUID_TIMESTAMP", &[Datum::new_string_datum(text.to_string())])
                     .expect("UUID_TIMESTAMP must dispatch")
                     .expect("valid non-timestamp UUID must evaluate"),
                 Datum::Null,
@@ -949,13 +910,13 @@ use tidb_charset::Collation;
             );
         }
         assert_eq!(
-            dispatch("UUID_TIMESTAMP", &[Datum::Null])
+            eval_builtin_func("UUID_TIMESTAMP", &[Datum::Null])
                 .expect("UUID_TIMESTAMP must dispatch")
                 .expect("NULL must evaluate"),
             Datum::Null
         );
         assert!(
-            dispatch("UUID_TIMESTAMP", &[Datum::new_string_datum("abc".to_string())])
+            eval_builtin_func("UUID_TIMESTAMP", &[Datum::new_string_datum("abc".to_string())])
                 .expect("UUID_TIMESTAMP must dispatch")
                 .is_err()
         );
@@ -987,7 +948,7 @@ use tidb_charset::Collation;
             "{6ccd780c-baba-1026-9564-5b8c656024db}",
         ] {
             assert_eq!(
-                dispatch("UUID_TO_BIN", &[Datum::new_string_datum(spelling)])
+                eval_builtin_func("UUID_TO_BIN", &[Datum::new_string_datum(spelling)])
                     .expect("UUID_TO_BIN must dispatch")
                     .expect("valid UUID must evaluate"),
                 Datum::Bytes(normal.clone()),
@@ -995,7 +956,7 @@ use tidb_charset::Collation;
             );
         }
         assert_eq!(
-            dispatch(
+            eval_builtin_func(
                 "UUID_TO_BIN",
                 &[Datum::new_string_datum(canonical), Datum::Int(1)],
             )
@@ -1004,7 +965,7 @@ use tidb_charset::Collation;
             Datum::Bytes(swapped.clone())
         );
         assert_eq!(
-            dispatch("UUID_TO_BIN", &[Datum::new_string_datum(canonical), Datum::Null],)
+            eval_builtin_func("UUID_TO_BIN", &[Datum::new_string_datum(canonical), Datum::Null],)
                 .expect("UUID_TO_BIN must dispatch")
                 .expect("NULL swap flag defaults to zero"),
             Datum::Bytes(normal.clone())
@@ -1013,7 +974,7 @@ use tidb_charset::Collation;
         // ETInt value is zero; the warning channel is outside this seed while
         // the value-domain result remains pinned here.
         assert_eq!(
-            dispatch(
+            eval_builtin_func(
                 "UUID_TO_BIN",
                 &[Datum::new_string_datum(canonical), Datum::new_string_datum("a")],
             )
@@ -1022,7 +983,7 @@ use tidb_charset::Collation;
             Datum::Bytes(normal.clone())
         );
         assert_eq!(
-            dispatch("UUID_TO_BIN", &[Datum::Null])
+            eval_builtin_func("UUID_TO_BIN", &[Datum::Null])
                 .expect("UUID_TO_BIN must dispatch")
                 .expect("NULL UUID must evaluate"),
             Datum::Null
@@ -1034,7 +995,7 @@ use tidb_charset::Collation;
             " 6ccd780c-baba-1026-9564-5b8c656024db ",
         ] {
             assert!(
-                dispatch("UUID_TO_BIN", &[Datum::new_string_datum(invalid)])
+                eval_builtin_func("UUID_TO_BIN", &[Datum::new_string_datum(invalid)])
                     .expect("UUID_TO_BIN must dispatch")
                     .is_err(),
                 "invalid UUID_TO_BIN input {invalid:?}"
@@ -1042,13 +1003,13 @@ use tidb_charset::Collation;
         }
 
         assert_eq!(
-            dispatch("BIN_TO_UUID", &[Datum::Bytes(normal.clone())])
+            eval_builtin_func("BIN_TO_UUID", &[Datum::Bytes(normal.clone())])
                 .expect("BIN_TO_UUID must dispatch")
                 .expect("binary UUID must evaluate"),
             Datum::new_string_datum(canonical)
         );
         assert_eq!(
-            dispatch(
+            eval_builtin_func(
                 "BIN_TO_UUID",
                 &[Datum::Bytes(normal.clone()), Datum::Int(1)],
             )
@@ -1057,7 +1018,7 @@ use tidb_charset::Collation;
             Datum::new_string_datum("baba1026-780c-6ccd-9564-5b8c656024db")
         );
         assert_eq!(
-            dispatch(
+            eval_builtin_func(
                 "BIN_TO_UUID",
                 &[Datum::Bytes(normal.clone()), Datum::new_string_datum("a")],
             )
@@ -1067,30 +1028,30 @@ use tidb_charset::Collation;
         );
         // A raw binary UUID is valid even though the payload is not UTF-8.
         assert_eq!(
-            dispatch("BIN_TO_UUID", &[Datum::Bytes(swapped)])
+            eval_builtin_func("BIN_TO_UUID", &[Datum::Bytes(swapped)])
                 .expect("BIN_TO_UUID must dispatch")
                 .expect("raw bytes must evaluate"),
             Datum::new_string_datum("1026baba-6ccd-780c-9564-5b8c656024db")
         );
         assert_eq!(
-            dispatch("BIN_TO_UUID", &[Datum::Null])
+            eval_builtin_func("BIN_TO_UUID", &[Datum::Null])
                 .expect("BIN_TO_UUID must dispatch")
                 .expect("NULL binary UUID must evaluate"),
             Datum::Null
         );
         assert!(
-            dispatch("BIN_TO_UUID", &[Datum::Bytes(normal[..15].to_vec())])
+            eval_builtin_func("BIN_TO_UUID", &[Datum::Bytes(normal[..15].to_vec())])
                 .expect("BIN_TO_UUID must dispatch")
                 .is_err()
         );
-        assert!(dispatch("UUID_TO_BIN", &[]).is_none());
-        assert!(dispatch(
+        assert!(eval_builtin_func("UUID_TO_BIN", &[]).is_none());
+        assert!(eval_builtin_func(
             "UUID_TO_BIN",
             &[Datum::Int(1), Datum::Int(2), Datum::Int(3)]
         )
         .is_none());
-        assert!(dispatch("BIN_TO_UUID", &[]).is_none());
-        assert!(dispatch(
+        assert!(eval_builtin_func("BIN_TO_UUID", &[]).is_none());
+        assert!(eval_builtin_func(
             "BIN_TO_UUID",
             &[Datum::Int(1), Datum::Int(2), Datum::Int(3)]
         )
@@ -1115,7 +1076,7 @@ use tidb_charset::Collation;
         ];
         for (value, want) in integer_cases {
             assert_eq!(
-                dispatch("TIDB_SHARD", &[value])
+                eval_builtin_func("TIDB_SHARD", &[value])
                     .expect("TIDB_SHARD must dispatch")
                     .expect("integer TIDB_SHARD must evaluate"),
                 Datum::UInt(want),
@@ -1131,7 +1092,7 @@ use tidb_charset::Collation;
             ("1.9", 214),
         ] {
             assert_eq!(
-                dispatch("TIDB_SHARD", &[Datum::new_string_datum(text.to_string())])
+                eval_builtin_func("TIDB_SHARD", &[Datum::new_string_datum(text.to_string())])
                     .expect("TIDB_SHARD must dispatch")
                     .expect("string TIDB_SHARD must evaluate"),
                 Datum::UInt(want),
@@ -1140,13 +1101,13 @@ use tidb_charset::Collation;
         }
 
         assert_eq!(
-            dispatch("TIDB_SHARD", &[Datum::Real(1.9)])
+            eval_builtin_func("TIDB_SHARD", &[Datum::Real(1.9)])
                 .expect("TIDB_SHARD must dispatch")
                 .expect("real TIDB_SHARD must evaluate"),
             Datum::UInt(143),
         );
         assert_eq!(
-            dispatch(
+            eval_builtin_func(
                 "TIDB_SHARD",
                 &[Datum::Decimal(crate::Decimal::from_literal("1.9"))],
             )
@@ -1155,7 +1116,7 @@ use tidb_charset::Collation;
             Datum::UInt(143),
         );
         assert_eq!(
-            dispatch("TIDB_SHARD", &[Datum::Null])
+            eval_builtin_func("TIDB_SHARD", &[Datum::Null])
                 .expect("TIDB_SHARD must dispatch")
                 .expect("NULL TIDB_SHARD must evaluate"),
             Datum::Null,
@@ -1163,9 +1124,9 @@ use tidb_charset::Collation;
 
         // The Go function class rejects every arity other than one before
         // evaluation; this family dispatch has the same boundary.
-        assert!(dispatch("TIDB_SHARD", &[]).is_none());
-        assert!(dispatch("TIDB_SHARD", &[Datum::Int(1), Datum::Int(2)]).is_none());
-        assert!(dispatch("UNKNOWN", &[Datum::Int(1)]).is_none());
+        assert!(eval_builtin_func("TIDB_SHARD", &[]).is_none());
+        assert!(eval_builtin_func("TIDB_SHARD", &[Datum::Int(1), Datum::Int(2)]).is_none());
+        assert!(eval_builtin_func("UNKNOWN", &[Datum::Int(1)]).is_none());
     }
 
     #[test]
@@ -1178,7 +1139,7 @@ use tidb_charset::Collation;
             ),
         ] {
             let ctx = WarningContext::default();
-            let value = dispatch_in(
+            let value = crate::tests::eval_builtin_func(
                 name,
                 &[Datum::new_string_datum("18446744073709551614".to_owned())],
                 &ctx,
@@ -1197,7 +1158,7 @@ use tidb_charset::Collation;
         }
 
         let ctx = WarningContext::default();
-        let value = dispatch_in(
+        let value = crate::tests::eval_builtin_func(
             "VITESS_HASH",
             &[Datum::new_string_datum("18446744073709551616".to_owned())],
             &ctx,
@@ -1232,18 +1193,18 @@ use tidb_charset::Collation;
         ];
         for (value, want) in cases {
             assert_eq!(
-                dispatch("VITESS_HASH", &[value])
+                eval_builtin_func("VITESS_HASH", &[value])
                     .expect("VITESS_HASH must dispatch")
                     .expect("VITESS_HASH must evaluate"),
                 Datum::UInt(want),
             );
         }
         assert_eq!(
-            dispatch("VITESS_HASH", &[Datum::Null])
+            eval_builtin_func("VITESS_HASH", &[Datum::Null])
                 .expect("VITESS_HASH must dispatch")
                 .expect("NULL VITESS_HASH must evaluate"),
             Datum::Null,
         );
-        assert!(dispatch("VITESS_HASH", &[]).is_none());
+        assert!(eval_builtin_func("VITESS_HASH", &[]).is_none());
     }
 }

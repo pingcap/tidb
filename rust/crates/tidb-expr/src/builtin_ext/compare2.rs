@@ -25,57 +25,6 @@ use crate::coerce::{coerce_str, integer_cmp, integer_of};
 use crate::ops::{to_decimal, to_f64};
 use crate::{eval_binary, Datum, EvalError};
 
-/// Dispatches this family's builtins; `None` if `name` isn't one of them.
-pub(crate) fn dispatch(
-    name: &str,
-    vals: &[Datum],
-    ctx: &dyn crate::Columns,
-) -> Option<Result<Datum, EvalError>> {
-    match (name, vals.len()) {
-        ("LEAST", _) => Some(extremum(vals, Ordering::Less, ctx)),
-        ("GREATEST", _) => Some(extremum(vals, Ordering::Greater, ctx)),
-        ("INTERVAL", n) if n >= 2 => Some(interval(vals, ctx)),
-        ("ISNULL", 1) => Some(Ok(Datum::Int(i64::from(matches!(vals[0], Datum::Null))))),
-        ("INET_ATON", 1) => Some(inet_aton(&vals[0])),
-        ("INET_NTOA", 1) => Some(inet_ntoa(&vals[0], ctx)),
-        ("INET6_ATON", 1) => Some(inet6_aton(&vals[0])),
-        ("INET6_NTOA", 1) => Some(inet6_ntoa(&vals[0])),
-        ("IS_IPV4", 1) => Some(is_ipv4_value(&vals[0])),
-        ("IS_IPV4_MAPPED", 1) => Some(is_ipv4_mapped_value(&vals[0])),
-        ("IS_IPV4_COMPAT", 1) => Some(is_ipv4_compat_value(&vals[0])),
-        ("IS_IPV6", 1) => Some(is_ipv6_value(&vals[0])),
-        _ => None,
-    }
-}
-
-/// LEAST/GREATEST: `NULL` if any argument is `NULL`, else the extreme value
-/// by `want` (`Less` for LEAST, `Greater` for GREATEST) — a MIXED
-/// Int/Decimal/Float argument list promotes through `eval_binary`'s own
-/// comparison (confirmed via goeval: `GREATEST(1.5e2, 3.14, 2)` — Float,
-/// Decimal, Int all in one call — is `FLOAT:150`, not an error), so no
-/// per-type-pair matching is hand-rolled here. When a string is present,
-/// Go's FieldType aggregation selects the string signature and stringifies
-/// every argument before comparing it; the byte-preserving scalar path below
-/// keeps that source boundary without inventing a numeric coercion. Port of
-/// the signatures built by `leastFunctionClass` and
-/// `greatestFunctionClass` in `pkg/expression/builtin_compare.go`.
-fn extremum(vals: &[Datum], want: Ordering, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
-    // A values-only call has no argument `FieldType`s, so it can name
-    // neither Go's signature nor a derived collation
-    // ([`extremum_with_signature`]'s other caller,
-    // `ScalarFunction::eval_by_signature`, has both) -- it asks for the
-    // value-derived signature and the connection default collation.
-    extremum_with_signature(
-        vals,
-        want,
-        None,
-        &[],
-        false,
-        crate::ops::DERIVATION_FREE_COLLATION,
-        ctx,
-    )
-}
-
 /// Go `GLCmpStringMode` (`pkg/expression/builtin_compare.go`): which of the
 /// three ETString GREATEST/LEAST signatures `resolveType4Extremum` selected.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -705,73 +654,6 @@ fn time_conversion_for_gl(
     }
 }
 
-/// `INTERVAL(n, n1, n2, ...)`: return the zero-based position of the first
-/// boundary greater than `n`, or the number of boundaries when none is
-/// greater. Port of `builtinIntervalIntSig.evalInt` and
-/// `builtinIntervalRealSig.evalInt` in `pkg/expression/builtin_compare.go`.
-///
-/// Like TiDB, an integer-only call uses its exact integer signature; the
-/// presence of any decimal, float, or string selects the lossy real
-/// signature. A NULL target is `-1`; NULL boundaries participate only in the
-/// nullable signature and are skipped. The binary search intentionally keeps
-/// TiDB's documented precondition that non-NULL boundaries are sorted.
-fn interval(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
-    if vals.iter().any(Datum::is_range_sentinel) {
-        return Err(EvalError::Unsupported("range sentinel INTERVAL argument"));
-    }
-    if vals[0] == Datum::Null {
-        return Ok(Datum::Int(-1));
-    }
-    let nullable = vals.iter().any(|v| matches!(v, Datum::Null));
-    if vals
-        .iter()
-        .all(|v| matches!(v, Datum::Int(_) | Datum::UInt(_) | Datum::Null))
-    {
-        let target = match integer_of(&vals[0])? {
-            Some(value) => value,
-            None => unreachable!("all-int guard"),
-        };
-        let index = if nullable {
-            vals[1..]
-                .iter()
-                .position(|v| {
-                    integer_of(v)
-                        .expect("range sentinels rejected above")
-                        .is_some_and(|boundary| integer_cmp(target, boundary).is_lt())
-                })
-                .unwrap_or(vals.len() - 1)
-        } else {
-            vals[1..].partition_point(|v| {
-                integer_of(v)
-                    .expect("range sentinels rejected above")
-                    .is_some_and(|boundary| integer_cmp(boundary, target).is_le())
-            })
-        };
-        return Ok(Datum::Int(index as i64));
-    }
-
-    let target = interval_real(&vals[0], ctx)?;
-    // Every boundary is converted UP FRONT: a boundary with no ETReal
-    // reading is an error in TiDB, and an error cannot leave
-    // `partition_point`'s comparator.
-    let boundaries = vals[1..]
-        .iter()
-        .map(|boundary| match boundary {
-            Datum::Null => Ok(None),
-            other => interval_real(other, ctx).map(Some),
-        })
-        .collect::<Result<Vec<_>, EvalError>>()?;
-    let index = if nullable {
-        boundaries
-            .iter()
-            .position(|boundary| boundary.is_some_and(|value| target < value))
-            .unwrap_or(vals.len() - 1)
-    } else {
-        boundaries.partition_point(|boundary| boundary.is_some_and(|value| value <= target))
-    };
-    Ok(Datum::Int(index as i64))
-}
-
 /// Evaluates `INTERVAL` directly from its argument expressions.
 ///
 /// Go's integer and real signatures evaluate only the boundaries visited by
@@ -1141,13 +1023,13 @@ pub(crate) fn is_ipv6_value(value: &Datum) -> Result<Datum, EvalError> {
 
 #[cfg(test)]
 mod tests {
-    use super::dispatch;
+    use crate::tests::eval_builtin_func;
     use crate::Datum;
     use crate::Decimal;
     use tidb_datatype::VectorFloat32;
 
     fn call(name: &str, vals: &[Datum]) -> Datum {
-        dispatch(name, vals, &crate::NoColumns)
+        eval_builtin_func(name, vals, &crate::NoColumns)
             .expect("name/arity should dispatch to compare2")
             .expect("Go vector should evaluate")
     }
@@ -1283,7 +1165,7 @@ mod tests {
         // answers `errWrongValueForType`.
         for invalid in ["", "0.0.0.256", "127,256", "123.2.1.", "127.0.0.1.1"] {
             assert_eq!(
-                dispatch("INET_ATON", &[s(invalid)], &crate::NoColumns).unwrap(),
+                eval_builtin_func("INET_ATON", &[s(invalid)], &crate::NoColumns).unwrap(),
                 Err(crate::EvalError::WrongValueForType {
                     value_class: "string",
                     value: invalid.to_owned(),
@@ -1293,7 +1175,7 @@ mod tests {
             );
             let _vec_eval = crate::chunk_executor::enter_vec_eval(true);
             assert_eq!(
-                dispatch("INET_ATON", &[s(invalid)], &crate::NoColumns).unwrap(),
+                eval_builtin_func("INET_ATON", &[s(invalid)], &crate::NoColumns).unwrap(),
                 Ok(Datum::Null),
                 "INET_ATON({invalid:?})"
             );
@@ -1361,7 +1243,7 @@ mod tests {
                 // `evalString` answers `errWrongValueForType`.
                 Datum::Null => {
                     assert_eq!(
-                        dispatch("INET6_ATON", &[s(text)], &crate::NoColumns).unwrap(),
+                        eval_builtin_func("INET6_ATON", &[s(text)], &crate::NoColumns).unwrap(),
                         Err(crate::EvalError::WrongValueForType {
                             value_class: "string",
                             value: text.to_owned(),
@@ -1370,7 +1252,7 @@ mod tests {
                     );
                     let _vec_eval = crate::chunk_executor::enter_vec_eval(true);
                     assert_eq!(
-                        dispatch("INET6_ATON", &[s(text)], &crate::NoColumns).unwrap(),
+                        eval_builtin_func("INET6_ATON", &[s(text)], &crate::NoColumns).unwrap(),
                         Ok(Datum::Null)
                     );
                 }
@@ -1518,35 +1400,30 @@ mod tests {
     /// Every expectation is a verbatim capture from real TiDB.
     #[test]
     fn extremum_decimal_carries_the_aggregated_scale() {
-        let d = |text: &str| Datum::Decimal(Decimal::from_literal(text));
         let text = |value: Datum| value.sql_string().expect("a decimal renders");
-        for (name, args, expected) in [
+        for (sql, expected) in [
             // The winner is the INT and still carries the fraction.
-            ("LEAST", vec![Datum::Int(1), d("2.5")], "1.0"),
-            ("LEAST", vec![d("2.5"), Datum::Int(1)], "1.0"),
-            ("LEAST", vec![Datum::Int(1), d("2.555")], "1.000"),
-            ("LEAST", vec![Datum::Int(1), d("2.50")], "1.00"),
-            ("LEAST", vec![Datum::Int(-1), d("2.5")], "-1.0"),
-            ("GREATEST", vec![Datum::Int(3), d("2.5")], "3.0"),
-            ("GREATEST", vec![Datum::Int(1), d("2.0")], "2.0"),
+            ("LEAST(1, 2.5)", "1.0"),
+            ("LEAST(2.5, 1)", "1.0"),
+            ("LEAST(1, 2.555)", "1.000"),
+            ("LEAST(1, 2.50)", "1.00"),
+            ("LEAST(-1, 2.5)", "-1.0"),
+            ("GREATEST(3, 2.5)", "3.0"),
+            ("GREATEST(1, 2.0)", "2.0"),
             // The MAX scale over ALL arguments, not the winner's.
-            ("LEAST", vec![Datum::Int(1), d("2.5"), d("3.25")], "1.00"),
-            (
-                "GREATEST",
-                vec![Datum::Int(3), d("2.55"), Datum::Int(1)],
-                "3.00",
-            ),
-            ("GREATEST", vec![d("2.5"), d("1.234")], "2.500"),
-            ("LEAST", vec![d("2.5"), d("1.234")], "1.234"),
-            ("GREATEST", vec![d("2.5"), d("1.2")], "2.5"),
+            ("LEAST(1, 2.5, 3.25)", "1.00"),
+            ("GREATEST(3, 2.55, 1)", "3.00"),
+            ("GREATEST(2.5, 1.234)", "2.500"),
+            ("LEAST(2.5, 1.234)", "1.234"),
+            ("GREATEST(2.5, 1.2)", "2.5"),
             // No decimal argument at all keeps the integer domain.
-            ("LEAST", vec![Datum::Int(1), Datum::Int(2)], "1"),
+            ("LEAST(1, 2)", "1"),
             // A signed/unsigned mix promotes to DECIMAL but to scale 0,
             // because neither argument carries a fraction.
-            ("LEAST", vec![Datum::Int(1), Datum::UInt(2)], "1"),
-            ("GREATEST", vec![Datum::Int(1), Datum::UInt(2)], "2"),
+            ("LEAST(1, cast(2 as unsigned))", "1"),
+            ("GREATEST(1, cast(2 as unsigned))", "2"),
         ] {
-            assert_eq!(text(call(name, &args)), expected, "{name}({args:?})");
+            assert_eq!(text(crate::tests::v(sql)), expected, "{sql}");
         }
     }
 
@@ -1558,7 +1435,8 @@ mod tests {
                 "GREATEST",
                 &[vector(vec![1.0, 2.0]), Datum::new_string_datum("[1,3]")]
             ),
-            vector(vec![1.0, 3.0])
+            // Go `mergeFieldType`: a vector and a string aggregate to VARCHAR.
+            Datum::new_string_datum("[1,3]")
         );
         assert_eq!(
             call("LEAST", &[vector(vec![1.0, 3.0]), vector(vec![1.0, 2.0])]),

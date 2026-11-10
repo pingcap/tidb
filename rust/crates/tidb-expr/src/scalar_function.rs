@@ -74,23 +74,6 @@ fn advisory_lock_name(value: Datum) -> Result<String, EvalError> {
     Ok(normalized)
 }
 
-/// Maps a Go binary-operator scalar-function name (`pkg/parser/ast`) to a
-/// [`BinaryOp`]. Returns `None` for any function that is not a binary operator.
-/// go `ToBool`'s string path parses the leading float and warns
-/// `Truncated incorrect DOUBLE value` when the text is not fully numeric;
-/// the logical operators' truthiness is that float != 0.
-fn logic_truthy(value: &Datum, ctx: &dyn Columns) -> Result<Option<bool>, EvalError> {
-    if matches!(value, Datum::Null) {
-        return Ok(None);
-    }
-    match value {
-        Datum::String(_) | Datum::Bytes(_) => {
-            Ok(crate::math_fn::numeric_arg(value, ctx)?.map(|float| float != 0.0))
-        }
-        _ => crate::truthy_of(value),
-    }
-}
-
 fn binary_op_for_name(name: &str) -> Option<BinaryOp> {
     Some(match name {
         "plus" => BinaryOp::Plus,
@@ -185,18 +168,6 @@ fn same_eval_family(value: &Datum, ret_type: &tidb_datatype::FieldType) -> bool 
     datum_eval_type(value).is_some_and(|got| normalize(got) == normalize(ret_type.eval_type()))
 }
 
-/// Maps a Go unary-operator scalar-function name (`pkg/parser/ast`) to a
-/// [`UnaryOp`]. Returns `None` for any function that is not a unary operator.
-fn unary_op_for_name(name: &str) -> Option<UnaryOp> {
-    Some(match name {
-        "unaryplus" => UnaryOp::Plus,
-        "unaryminus" => UnaryOp::Minus,
-        "bitneg" => UnaryOp::BitNeg,
-        "not" => UnaryOp::Not,
-        _ => return None,
-    })
-}
-
 /// Go `unFoldableFunctions`: calls whose result cannot be frozen during
 /// constant folding even when every argument is a strict literal.
 #[must_use]
@@ -286,40 +257,6 @@ pub fn into_coprocessor_form(expr: &mut Expression) {
         function.cannot_convert_string_as_warning = false;
         function.args.iter_mut().for_each(into_coprocessor_form);
     }
-}
-
-/// `fromUnixTimeFunctionClass`'s ETDecimal argument for a string source:
-/// `WrapWithCastAsDecimal` takes the column's width and scale, and a scale of
-/// 0 is then widened to 6 (`#35184`), so the cast keeps microseconds and an
-/// over-wide number overflows the `DECIMAL(flen + 6, 6)` instead of reading as
-/// the epoch.
-fn from_unixtime_string_argument(
-    value: &Datum,
-    source: &FieldType,
-    ctx: &dyn Columns,
-) -> Result<Datum, EvalError> {
-    use tidb_datatype::{EvalType, FieldTypeCode};
-    const MAX_DECIMAL_WIDTH: i64 = 65;
-    const MAX_DECIMAL_SCALE: i64 = 30;
-    if value.is_null() || source.eval_type() != EvalType::String || !source.is_string() {
-        return Ok(value.clone());
-    }
-    let mut target = FieldType::new(FieldTypeCode::NewDecimal);
-    target.set_flen(source.flen().min(MAX_DECIMAL_WIDTH));
-    target.set_decimal(source.decimal().min(MAX_DECIMAL_SCALE));
-    if target.decimal() == 0 {
-        target.set_decimal(6);
-        target.set_flen((target.flen() + 6).min(MAX_DECIMAL_WIDTH));
-    }
-    crate::cast::eval_numeric_cast_with_type(
-        value.clone(),
-        EvalType::String,
-        None,
-        Some(source),
-        &target,
-        false,
-        ctx,
-    )
 }
 
 /// Go `ScalarFunction`: the application of a built-in function to arguments.
@@ -634,6 +571,14 @@ impl ScalarFunction {
         ret_type: FieldType,
         array_type: FieldType,
     ) -> Self {
+        // Go `builtinJSONSumCRC32Sig.evalInt`, which reads the signature's `tp`.
+        let f = f.evaluated_by(Kernel::Method(|function, values, _| {
+            let array_type = function
+                .json_sum_crc32_type
+                .as_ref()
+                .expect("a json_sum_crc32 node carries its ARRAY type");
+            crate::cast::eval_json_sum_crc32(values[0].clone(), array_type)
+        }));
         let mut function = Self::from_builtin_func(CiString::new("json_sum_crc32"), ret_type, f);
         function.json_sum_crc32_type = Some(array_type);
         function
@@ -1416,42 +1361,6 @@ impl ScalarFunction {
     /// DIV returns Int but consumes Decimal unless both arguments are Int.
     fn numeric_operand_domain(&self) -> Option<EvalType> {
         self.pb_builtin?.numeric_domain()
-    }
-
-    /// [`can_implicit_eval_int`] for one operand of a binary operator: Go
-    /// casts a bit operator's operands to INT, a comparison of a string with
-    /// a number compares as REAL (`getBaseCmpType`), and a logical operator
-    /// tests truth through `EvalBool`.
-    fn implicit_numeric_operand(&self, op: BinaryOp, index: usize, value: Datum) -> Datum {
-        let numeric = |expression: &Expression| {
-            expression.static_type().is_some_and(|field| {
-                matches!(
-                    field.eval_type(),
-                    EvalType::Int | EvalType::Real | EvalType::Decimal
-                )
-            })
-        };
-        let target = match op {
-            BinaryOp::BitAnd
-            | BinaryOp::BitOr
-            | BinaryOp::BitXor
-            | BinaryOp::LeftShift
-            | BinaryOp::RightShift => EvalType::Int,
-            BinaryOp::LogicAnd | BinaryOp::LogicOr | BinaryOp::LogicXor => EvalType::Real,
-            BinaryOp::Eq
-            | BinaryOp::NullEq
-            | BinaryOp::Ne
-            | BinaryOp::Lt
-            | BinaryOp::Le
-            | BinaryOp::Gt
-            | BinaryOp::Ge
-                if self.args.get(1 - index).is_some_and(numeric) =>
-            {
-                EvalType::Real
-            }
-            _ => return value,
-        };
-        can_implicit_eval_int(&self.args[index], &value, target).unwrap_or(value)
     }
 
     fn eval_binary_values(
@@ -2252,18 +2161,6 @@ fn numeric_argument_source(expression: &Expression, target: EvalType) -> Option<
 
 fn is_numeric_binary_literal(expression: &Expression) -> bool {
     matches!(expression, Expression::Constant(c) if matches!(c.value, Datum::BinaryLiteral(_)))
-}
-
-fn numeric_argument_domain(source: EvalType, target: EvalType) -> bool {
-    source == target
-        || (matches!(source, EvalType::String | EvalType::Json)
-            && matches!(target, EvalType::Real | EvalType::Decimal))
-        || (matches!(
-            source,
-            EvalType::Datetime | EvalType::Timestamp | EvalType::Duration
-        ) && matches!(target, EvalType::Int | EvalType::Real | EvalType::Decimal))
-        || (target == EvalType::Real && matches!(source, EvalType::Int | EvalType::Decimal))
-        || (target == EvalType::Decimal && matches!(source, EvalType::Int | EvalType::Real))
 }
 
 // Go's builder inserts numeric argument casts. Native arithmetic retains
@@ -3777,7 +3674,7 @@ mod tests {
 
         ctx.warnings.borrow_mut().clear();
         assert_eq!(
-            crate::func::eval_func_values_in(
+            crate::tests::eval_builtin_func(
                 "CONCAT",
                 &[Datum::new_string_datum("abcd"), Datum::new_string_datum("x")],
                 &ctx,

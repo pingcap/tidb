@@ -538,7 +538,7 @@ mod info_source_tests {
                 published: Cell::new(None),
             };
             assert_eq!(
-                crate::func::eval_func_values_in("LAST_INSERT_ID", &args, &ctx)
+                crate::tests::eval_builtin_func("LAST_INSERT_ID", &args, &ctx)
                     .expect("LAST_INSERT_ID must be dispatched")
                     .expect("source row must evaluate"),
                 Datum::UInt(expected)

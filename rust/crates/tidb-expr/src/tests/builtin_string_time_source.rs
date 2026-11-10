@@ -645,7 +645,7 @@ fn test_from_base64_sig() {
         (long_input, 69_u64, None),
     ] {
         let ctx = PacketWarnCtx::new(max_packet);
-        let result = crate::func::eval_func_values_in(
+        let result = crate::tests::eval_builtin_func(
             "FROM_BASE64",
             &[Datum::new_string_datum(input.to_owned())],
             &ctx,
@@ -1905,15 +1905,16 @@ fn test_clock_parts_and_invalid_time_warning() {
         assert_eq!(e(&format!("{func}({broken})")), want);
     }
     let clock = UtcClockCtx::new(0);
-    let got = time_fn::dispatch(
+    let got = crate::tests::eval_builtin_func(
         "TIME",
         &[Datum::new_string_datum("2011-11-11 10:10:10.11.12")],
         &clock,
     )
     .unwrap()
     .unwrap();
-    // The source leaves the zero value standing under truncate-as-warning.
-    assert_eq!(got_text(&got), "00:00:00");
+    // `ParseDuration` falls back to `ParseDatetime`, which keeps the clock,
+    // appends its own truncation warning, and rounds at the text's FSP (5).
+    assert_eq!(got_text(&got), "10:10:10.12000");
     let drained = clock.drain();
     assert_eq!(
         drained.len(),
@@ -2030,32 +2031,32 @@ fn test_date_format_zero_year_x_token() {
 fn test_now_utc_timestamp_fixed_clock() {
     let ctx = UtcClockCtx::new(1234);
     // NOW(): truncation semantics, fractional seconds absent at default fsp.
-    let now = time_fn::dispatch("NOW", &[], &ctx).unwrap().unwrap();
+    let now = crate::tests::eval_builtin_func("NOW", &[], &ctx).unwrap().unwrap();
     assert_eq!(got_text(&now), "1970-01-01 00:20:34");
     assert!(
         !got_text(&now).contains('.'),
         "default fsp must not show a fraction"
     );
     let half = UtcClockCtx::with_nanos(1234, 500_000_000);
-    let now6 = time_fn::dispatch("NOW", &[Datum::Int(6)], &half)
+    let now6 = crate::tests::eval_builtin_func("NOW", &[Datum::Int(6)], &half)
         .unwrap()
         .unwrap();
     assert_eq!(got_text(&now6), "1970-01-01 00:20:34.500000");
     assert!(got_text(&now6).contains('.'));
 
     // UTC_TIMESTAMP(): same bounds, half-up rounding instead of truncation.
-    let utc0 = time_fn::dispatch("UTC_TIMESTAMP", &[Datum::Int(0)], &half)
+    let utc0 = crate::tests::eval_builtin_func("UTC_TIMESTAMP", &[Datum::Int(0)], &half)
         .unwrap()
         .unwrap();
     assert_eq!(got_text(&utc0), "1970-01-01 00:20:35");
-    let utc6 = time_fn::dispatch("UTC_TIMESTAMP", &[Datum::Int(6)], &half)
+    let utc6 = crate::tests::eval_builtin_func("UTC_TIMESTAMP", &[Datum::Int(6)], &half)
         .unwrap()
         .unwrap();
     assert_eq!(got_text(&utc6), "1970-01-01 00:20:34.500000");
 
     for name in ["NOW", "UTC_TIMESTAMP"] {
         // A negative fsp is Go's `types.ErrSyntax` (types:1064)...
-        let err = time_fn::dispatch(name, &[Datum::Int(-2)], &ctx)
+        let err = crate::tests::eval_builtin_func(name, &[Datum::Int(-2)], &ctx)
             .unwrap()
             .unwrap_err();
         assert!(
@@ -2064,14 +2065,14 @@ fn test_now_utc_timestamp_fixed_clock() {
         );
         // ...while above `MaxFsp` the coded `types.ErrTooBigPrecision`
         // (1426) is raised (`builtin_time.go:2730`/:2600).
-        let err = time_fn::dispatch(name, &[Datum::Int(8)], &ctx)
+        let err = crate::tests::eval_builtin_func(name, &[Datum::Int(8)], &ctx)
             .unwrap()
             .unwrap_err();
         assert!(
             matches!(&err, EvalError::TooBigFsp { fsp: 8, function } if function.eq_ignore_ascii_case(name)),
             "{err:?}"
         );
-        let null_fsp = time_fn::dispatch(name, &[Datum::Null], &ctx)
+        let null_fsp = crate::tests::eval_builtin_func(name, &[Datum::Null], &ctx)
             .unwrap()
             .unwrap();
         assert_eq!(got_text(&null_fsp), "1970-01-01 00:20:34");
@@ -2476,9 +2477,7 @@ fn test_add_sub_time_issue_56861_typed_tables() {
 fn test_from_unixtime_utc_fixed() {
     let utc = UtcClockCtx::new(0);
     let call = |args: Vec<Datum>| {
-        time_fn::dispatch("FROM_UNIXTIME", &args, &utc)
-            .expect("FROM_UNIXTIME belongs to this family")
-            .map(|d| got_text(&d))
+        crate::tests::from_unixtime(&args, &utc).map(|d| got_text(&d))
     };
     assert_eq!(
         call(vec![Datum::Int(1_451_606_400)]),
@@ -2511,9 +2510,7 @@ fn test_from_unixtime_utc_fixed() {
     let fmt = "%Y %D %M %h:%i:%s %x";
     let two_arg = |arg: Datum| {
         got_text(
-            &time_fn::dispatch("FROM_UNIXTIME", &[arg, Datum::new_string_datum(fmt)], &utc)
-                .unwrap()
-                .unwrap(),
+            &crate::tests::from_unixtime(&[arg, Datum::new_string_datum(fmt)], &utc).unwrap(),
         )
     };
     let oracle = |text: &str| {
@@ -2544,7 +2541,7 @@ fn test_from_unixtime_utc_fixed() {
 #[test]
 fn test_from_unixtime_real_uses_go_shortest_decimal_before_rounding() {
     let utc = UtcClockCtx::new(0);
-    let result = time_fn::dispatch("FROM_UNIXTIME", &[Datum::Real(1_451_606_400.0363455)], &utc)
+    let result = crate::tests::eval_builtin_func("FROM_UNIXTIME", &[Datum::Real(1_451_606_400.0363455)], &utc)
         .unwrap()
         .unwrap();
     assert_eq!(got_text(&result), "2016-01-01 00:00:00.036346");
@@ -2563,7 +2560,7 @@ fn test_current_date_current_time_utc_time_clocks() {
     let half = UtcClockCtx::with_nanos(1_234, 500_000_000);
 
     assert_eq!(
-        got_text(&time_fn::dispatch("CURDATE", &[], &ctx).unwrap().unwrap()),
+        got_text(&crate::tests::eval_builtin_func("CURDATE", &[], &ctx).unwrap().unwrap()),
         "1970-01-01"
     );
 
@@ -2571,7 +2568,7 @@ fn test_current_date_current_time_utc_time_clocks() {
     // 8-character seconds-only string.
     assert_eq!(
         got_text(
-            &time_fn::dispatch("CURRENT_TIME", &[Datum::Null], &half)
+            &crate::tests::eval_builtin_func("CURRENT_TIME", &[Datum::Null], &half)
                 .unwrap()
                 .unwrap()
         ),
@@ -2585,7 +2582,7 @@ fn test_current_date_current_time_utc_time_clocks() {
     ] {
         let ctx_local = UtcClockCtx::with_nanos(1_234, 500_000_000);
         let text = got_text(
-            &time_fn::dispatch("CURRENT_TIME", &vals, &ctx_local)
+            &crate::tests::eval_builtin_func("CURRENT_TIME", &vals, &ctx_local)
                 .unwrap()
                 .unwrap(),
         );
@@ -2595,14 +2592,14 @@ fn test_current_date_current_time_utc_time_clocks() {
     // A negative fsp is Go's `types.ErrSyntax` (types:1064); above `MaxFsp`
     // the coded `types.ErrTooBigPrecision` (1426) is raised
     // (`builtin_time.go:7219`).
-    let err = time_fn::dispatch("CURRENT_TIME", &[Datum::Int(-1)], &ctx)
+    let err = crate::tests::eval_builtin_func("CURRENT_TIME", &[Datum::Int(-1)], &ctx)
         .unwrap()
         .unwrap_err();
     assert!(
         matches!(&err, EvalError::Conversion(error) if error.rfc_code() == "types:1064"),
         "{err:?}"
     );
-    let err = time_fn::dispatch("CURRENT_TIME", &[Datum::Int(7)], &ctx)
+    let err = crate::tests::eval_builtin_func("CURRENT_TIME", &[Datum::Int(7)], &ctx)
         .unwrap()
         .unwrap_err();
     assert!(
@@ -2615,7 +2612,7 @@ fn test_current_date_current_time_utc_time_clocks() {
         ),
         "{err:?}"
     );
-    let err = time_fn::dispatch("UTC_TIME", &[Datum::Int(7)], &ctx)
+    let err = crate::tests::eval_builtin_func("UTC_TIME", &[Datum::Int(7)], &ctx)
         .unwrap()
         .unwrap_err();
     assert!(
@@ -2637,7 +2634,7 @@ fn test_current_date_current_time_utc_time_clocks() {
         (vec![Datum::Int(6)], 15),
     ] {
         let text = got_text(
-            &time_fn::dispatch("UTC_TIME", &vals, &half)
+            &crate::tests::eval_builtin_func("UTC_TIME", &vals, &half)
                 .unwrap()
                 .unwrap(),
         );

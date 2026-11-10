@@ -16,13 +16,17 @@
 //! doc comment is unchanged from its prior home inside `mod tests` there.
 
 use crate::ToTerror;
-use super::dispatch;
 use super::modify::parse_json_path as parse_path;
 use crate::Datum;
 use serde_json::json;
 
+/// Go's builtin test door over a context-free session.
+fn eval_builtin_func(name: &str, vals: &[Datum]) -> Option<Result<Datum, crate::EvalError>> {
+    crate::tests::eval_builtin_func(name, vals, &crate::NoColumns)
+}
+
 fn call(name: &str, vals: &[Datum]) -> Datum {
-    dispatch(name, vals)
+    eval_builtin_func(name, vals)
         .expect("JSON family should own name/arity")
         .expect("Go-derived valid vector should evaluate")
 }
@@ -50,7 +54,7 @@ fn rendered(datum: Datum) -> String {
 }
 
 fn call_result(name: &str, vals: &[Datum]) -> Result<Datum, crate::EvalError> {
-    dispatch(name, vals).expect("JSON family should own name/arity")
+    eval_builtin_func(name, vals).expect("JSON family should own name/arity")
 }
 
 /// Vectors from `TestJSONType` and `TestJSONQuote` in
@@ -77,12 +81,13 @@ fn json_scalar_source_wave_boundaries() {
     // boundaries explicit without pretending this value domain carries
     // typed BinaryJSON or charset/session warning state.
     // Go refuses a non-JSON, non-string document while building the
-    // function (`verifyJSONArgsType`, see `verify_json_function_args`); one
-    // reaching the evaluator untyped takes the document cast, as Go's
-    // `WrapWithCastAsJSON` would.
-    assert_eq!(call("JSON_TYPE", &[Datum::Int(3)]), s("INTEGER"));
+    // function (`verifyJSONArgsType`, see `verify_json_function_args`).
+    assert!(matches!(
+        call_result("JSON_TYPE", &[Datum::Int(3)]),
+        Err(crate::EvalError::Json(crate::JsonError::InvalidTypeForJson { argument: 1, .. }))
+    ));
     assert!(call_result("JSON_TYPE", &[s("a")]).is_err());
-    assert!(dispatch("JSON_TYPE", &[]).is_none());
+    assert!(eval_builtin_func("JSON_TYPE", &[]).is_none());
 
     assert_eq!(call("JSON_QUOTE", &[Datum::Null]), Datum::Null);
     // Go's encoder reads an invalid UTF-8 byte as U+FFFD (captured:
@@ -130,13 +135,12 @@ fn json_array_object_go_vectors() {
         )
     );
     assert_eq!(call("JSON_ARRAY", &[Datum::Real(1.5)]), j("[1.5]"));
-    // A `Datum::Bytes` is the chunk rewriter's spelling of the SAME SQL
-    // string literal the row evaluator spells `Datum::String`, so it is
-    // the JSON string "x" -- see [`json_sql_string`] for the named
-    // binary-charset boundary this collapses.
+    // Go's test door types a `KindBytes` datum as a binary string, which
+    // `castStringAsJSON` keeps an opaque value (zzprobe door:
+    // `json_array(NewBytesDatum("x"))` is `["base64:type253:eA=="]`).
     assert_eq!(
-        call("JSON_ARRAY", &[Datum::new_bytes_datum(b"x".to_vec())]),
-        j(r#"["x"]"#)
+        rendered(call("JSON_ARRAY", &[Datum::new_bytes_datum(b"x".to_vec())])),
+        r#"["base64:type253:eA=="]"#
     );
 
     assert_eq!(call("JSON_OBJECT", &[]), j("{}"));
@@ -278,9 +282,16 @@ fn json_schema_valid_go_vectors() {
         })
     ));
 
+    // The document is a constant, so Go parses it while building the
+    // function: 3141 names the argument (zzprobe door).
     assert!(matches!(
         call_result("JSON_SCHEMA_VALID", &[s("{}"), s("")]),
-        Err(crate::EvalError::Json(crate::JsonError::EmptyText))
+        Err(crate::EvalError::Json(crate::JsonError::InvalidTextInParam {
+            argument: 2,
+            function: "json_schema_valid",
+            reason: "The document is empty.",
+            position: 0,
+        }))
     ));
 }
 
@@ -408,7 +419,7 @@ fn quote_and_unquote_go_vectors() {
         assert_eq!(call("JSON_UNQUOTE", &[s(input)]), s(want));
     }
     assert_eq!(call("JSON_UNQUOTE", &[Datum::Null]), Datum::Null);
-    assert!(dispatch("JSON_UNQUOTE", &[s("\"\"a\"\"")])
+    assert!(eval_builtin_func("JSON_UNQUOTE", &[s("\"\"a\"\"")])
         .expect("JSON_UNQUOTE is owned")
         .is_err());
 }
@@ -498,7 +509,7 @@ fn json_member_of_go_vectors() {
         (r#"{"a":1}"#, r#"["{\"a\":1}",1]"#, 1),
     ] {
         assert_eq!(
-            call("JSON_MEMBER_OF", &[s(candidate), s(document)],),
+            call("json_memberof", &[s(candidate), s(document)],),
             Datum::Int(want),
             "JSON_MEMBER_OF({candidate:?}, {document:?})"
         );
@@ -511,18 +522,18 @@ fn json_member_of_go_vectors() {
         ("[[1]]", 0),
     ] {
         assert_eq!(
-            call("JSON_MEMBER_OF", &[Datum::Int(1), s(document)]),
+            call("json_memberof", &[Datum::Int(1), s(document)]),
             Datum::Int(want),
             "JSON_MEMBER_OF(1, {document:?})"
         );
     }
     assert_eq!(
-        call("JSON_MEMBER_OF", &[Datum::Null, s("[1]")]),
+        call("json_memberof", &[Datum::Null, s("[1]")]),
         Datum::Null
     );
-    assert!(call_result("JSON_MEMBER_OF", &[s("1"), s("a:1")]).is_err());
+    assert!(call_result("json_memberof", &[s("1"), s("a:1")]).is_err());
     assert_eq!(
-        call("JSON_MEMBER_OF", &[Datum::Int(1), s("[1]")]),
+        call("json_memberof", &[Datum::Int(1), s("[1]")]),
         Datum::Int(1)
     );
 }
@@ -964,7 +975,7 @@ fn json_array_append_go_vectors() {
     ] {
         assert!(call_result("JSON_ARRAY_APPEND", &args).is_err());
     }
-    assert!(dispatch("JSON_ARRAY_APPEND", &[s(r#"{"a":1}"#), s("$")]).is_none());
+    assert!(eval_builtin_func("JSON_ARRAY_APPEND", &[s(r#"{"a":1}"#), s("$")]).is_none());
     assert!(call_result(
         "JSON_ARRAY_APPEND",
         &[s(r#"{"a":1}"#), s("$"), s("x"), s("$.a")]
@@ -1075,7 +1086,7 @@ fn json_array_insert_go_vectors() {
         ]
     )
     .is_err());
-    assert!(dispatch("JSON_ARRAY_INSERT", &[s(r#"{"a":1}"#), s("$")]).is_none());
+    assert!(eval_builtin_func("JSON_ARRAY_INSERT", &[s(r#"{"a":1}"#), s("$")]).is_none());
     assert!(call_result(
         "JSON_ARRAY_INSERT",
         &[s(r#"{"a":1}"#), s("$[0]"), s("x"), s("$.a")]
@@ -1359,10 +1370,10 @@ fn json_set_insert_replace_go_vectors() {
         call("JSON_SET", &[s("1"), s("$[0]"), Datum::Int(2)]),
         j("2")
     );
-    assert!(dispatch("JSON_SET", &[s("{}"), s("$.a")]).is_none());
+    assert!(eval_builtin_func("JSON_SET", &[s("{}"), s("$.a")]).is_none());
     assert!(call_result("JSON_SET", &[s("{}"), s("$InvalidPath"), Datum::Int(3)]).is_err());
     assert!(call_result("JSON_SET", &[s("{}"), s("$.*"), Datum::Int(3)]).is_err());
-    assert!(dispatch("JSON_SET", &[]).is_none());
+    assert!(eval_builtin_func("JSON_SET", &[]).is_none());
 }
 
 /// Source-shaped tables from `TestJSONMerge` and `TestJSONMergePreserve`
@@ -1393,17 +1404,20 @@ fn json_merge_go_vectors() {
             j(r#"[{}, 3, "4"]"#)
         );
         assert!(call_result(name, &[s("{}"), s("not-json")]).is_err());
-        assert!(dispatch(name, &[s("{}")]).is_none());
+        assert!(eval_builtin_func(name, &[s("{}")]).is_none());
     }
     // A non-string, non-JSON argument is 3146 while Go builds the function
     // (`verifyJSONArgsType`; asserted at the SQL level in `tidb-session`'s
-    // `json_argument_types_are_verified_like_go`). One reaching the
-    // evaluator untyped takes the document cast, as Go's `WrapWithCastAsJSON`
-    // would: 3 is the JSON number 3.
-    for name in ["JSON_MERGE", "JSON_MERGE_PRESERVE"] {
-        assert_eq!(call(name, &[s("[1]"), Datum::Int(3)]), j("[1, 3]"));
+    // `json_argument_types_are_verified_like_go`).
+    for name in ["JSON_MERGE", "JSON_MERGE_PRESERVE", "JSON_MERGE_PATCH"] {
+        assert!(
+            matches!(
+                call_result(name, &[s("[1]"), Datum::Int(3)]),
+                Err(crate::EvalError::Json(crate::JsonError::InvalidTypeForJson { argument: 2, .. }))
+            ),
+            "{name}"
+        );
     }
-    assert_eq!(call("JSON_MERGE_PATCH", &[s("[1]"), Datum::Int(3)]), j("3"));
 }
 
 /// The `json`-class codes the mutation family reports for a path it
@@ -1565,8 +1579,8 @@ fn json_pretty_go_vectors() {
     for document in [r#"{1}"#, r#"[1,3,4,5]]"#] {
         assert!(call_result("JSON_PRETTY", &[s(document)]).is_err());
     }
-    assert!(dispatch("JSON_PRETTY", &[]).is_none());
-    assert!(dispatch("JSON_PRETTY", &[s("{}"), s("extra")]).is_none());
+    assert!(eval_builtin_func("JSON_PRETTY", &[]).is_none());
+    assert!(eval_builtin_func("JSON_PRETTY", &[s("{}"), s("extra")]).is_none());
 }
 
 /// Go `TestJSONSumCrc32` (`pkg/expression/builtin_json_test.go:127`): each
@@ -1606,9 +1620,23 @@ fn json_sum_crc32_go_vectors() {
         }
         !crc
     }
-    let eval = |document: &str, array_type: &FieldType| {
-        crate::cast::eval_json_sum_crc32(j(document), array_type)
+    // Go `BuildJSONSumCrc32FunctionWithCheck`'s node over a constant.
+    let node = |document: Datum, array_type: &FieldType| {
+        let f = crate::builtin::new_base_builtin_func(
+            &crate::builtin::ColumnsBuildContext(&crate::NoColumns),
+            "json_sum_crc32",
+            crate::tests::datums_to_constants(&[document]),
+            array_type.clone(),
+        )?;
+        let function = crate::scalar_function::ScalarFunction::new_json_sum_crc32(
+            f,
+            FieldType::new(FieldTypeCode::LongLong),
+            array_type.clone(),
+        );
+        let empty = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[], 1);
+        function.eval(&crate::NoColumns, empty.get_row(0))
     };
+    let eval = |document: &str, array_type: &FieldType| node(j(document), array_type);
     let bigint = array_of(FieldTypeCode::LongLong, false);
     let unsigned = array_of(FieldTypeCode::LongLong, true);
     let string = array_of(FieldTypeCode::VarString, false);
@@ -1638,7 +1666,7 @@ fn json_sum_crc32_go_vectors() {
     assert!(eval(r#"[1.1, "1.1", 3.3]"#, &double).is_err());
     assert_eq!(eval("[]", &bigint), Ok(Datum::Int(0)));
     assert_eq!(
-        crate::cast::eval_json_sum_crc32(Datum::Null, &bigint),
+        node(Datum::Null, &bigint),
         Ok(Datum::Null)
     );
     // A non-array document is `ErrInvalidTypeForJSON`.
@@ -1861,32 +1889,27 @@ fn json_errors_carry_go_codes() {
     );
 }
 
-/// A SQL string reaches this family as `Datum::String` from the row
-/// evaluator and as `Datum::Bytes` from the chunk rewriter's `Expr::String`
-/// arm. Both are the same `ETString` argument to Go, so every signature
-/// must answer identically -- see [`json_sql_string`].
+/// A SQL string literal is the same `ETString` argument whether the
+/// statement is folded by the row evaluator or evaluated over a chunk row.
 #[test]
-fn string_and_bytes_arguments_agree() {
-    let bytes = |value: &str| Datum::new_bytes_datum(value.as_bytes().to_vec());
-    for (name, text, path) in [
-        ("JSON_TYPE", r#"{"a":1}"#, None),
-        ("JSON_VALID", r#"{"a":1}"#, None),
-        ("JSON_KEYS", r#"{"b":1,"a":2}"#, None),
-        ("JSON_QUOTE", "a\"b", None),
-        ("JSON_UNQUOTE", r#""a""#, None),
-        ("JSON_EXTRACT", r#"{"a":1}"#, Some("$.a")),
-        ("JSON_LENGTH", r#"{"a":1,"b":2}"#, Some("$")),
+fn string_literals_agree_between_the_row_and_chunk_evaluators() {
+    for sql in [
+        r#"JSON_TYPE('{"a":1}')"#,
+        r#"JSON_VALID('{"a":1}')"#,
+        r#"JSON_KEYS('{"b":1,"a":2}')"#,
+        r#"JSON_QUOTE('a"b')"#,
+        r#"JSON_UNQUOTE('"a"')"#,
+        r#"JSON_EXTRACT('{"a":1}', '$.a')"#,
+        r#"JSON_LENGTH('{"a":1,"b":2}', '$')"#,
     ] {
-        let (string_args, byte_args) = match path {
-            Some(path) => (vec![s(text), s(path)], vec![bytes(text), bytes(path)]),
-            None => (vec![s(text)], vec![bytes(text)]),
-        };
-        assert_eq!(
-            call_result(name, &string_args),
-            call_result(name, &byte_args),
-            "{name} disagreed between its string and bytes spellings"
-        );
+        assert_eq!(crate::tests::e(sql), crate::tests::chunk_e(sql), "{sql}");
     }
+    // Go's test door types a `KindBytes` datum as a binary string, which is
+    // an opaque JSON value (zzprobe door: `json_type(NewBytesDatum(..))`).
+    assert_eq!(
+        call("JSON_TYPE", &[Datum::new_bytes_datum(br#"{"a":1}"#.to_vec())]),
+        s("BLOB")
+    );
 }
 
 /// `dispatch_typed`'s BINARY-charset value rendering. Every expected

@@ -1034,7 +1034,7 @@ impl PbBuiltin {
                 )
             }),
             UnixTimestampInt | UnixTimestampDec => {
-                Kernel::Values(crate::time_fn::session_tz::unix_timestamp)
+                Kernel::Method(crate::time_fn::session_tz::unix_timestamp)
             }
             FromUnixTime1Arg | FromUnixTime2Arg => Kernel::FromUnixTime,
             RegexpLikeSig => Kernel::Regexp,
@@ -1248,7 +1248,7 @@ impl PbBuiltin {
             ConvertTz => Kernel::Row(convert_tz_row),
             Time => Kernel::Values(crate::time_fn::time),
             YearWeekWithMode | YearWeekWithoutMode => Kernel::Values(crate::time_fn::yearweek),
-            UnixTimestampCurrent => Kernel::Values(crate::time_fn::session_tz::unix_timestamp),
+            UnixTimestampCurrent => Kernel::Values(crate::time_fn::session_tz::unix_timestamp_current),
             TimestampAdd => Kernel::Values(crate::time_fn::add_sub::timestamp_add),
             _ => return None,
         })

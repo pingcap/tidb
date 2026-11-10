@@ -548,97 +548,6 @@ pub fn convert_json_2_tp(
     }
 }
 
-/// Go `builtinJSONSumCRC32Sig.evalInt`: the sum of the IEEE CRC32 of every
-/// element of a JSON array, each converted to the ARRAY type's element type
-/// (`convertJSON2Tp`, under Go's strict `fakeSctx`) and printed as Go's
-/// `%v`. A conversion that does not apply to the element is Go's
-/// `Invalid JSON value for CAST to type <type>`.
-pub(crate) fn eval_json_sum_crc32(
-    value: Datum,
-    array_type: &FieldType,
-) -> Result<Datum, EvalError> {
-    let json = match value {
-        Datum::Null => return Ok(Datum::Null),
-        Datum::Json(json) => json,
-        _ => {
-            return Err(EvalError::Unsupported(
-                "JSON_SUM_CRC32 received a non-JSON argument",
-            ))
-        }
-    };
-    if json.type_code() != tidb_datatype::JSON_TYPE_CODE_ARRAY {
-        return Err(EvalError::Json(crate::JsonError::InvalidTypeForJson {
-            argument: 1,
-            function: "JSON_SUM_CRC32",
-        }));
-    }
-    let element = array_type.array_type();
-    // Go resolves `convertJSON2Tp` before reading any element.
-    if !matches!(
-        element.eval_type(),
-        EvalType::String | EvalType::Int | EvalType::Real | EvalType::Datetime | EvalType::Duration
-    ) {
-        return Err(EvalError::NotImplemented(
-            format!("calculating sum of {}", element.source_string()).into(),
-        ));
-    }
-    let count = json.element_count().map_err(json_eval_error)?;
-    let mut sum = 0_i64;
-    for position in 0..count {
-        let item = json
-            .array_get(position)
-            .map_err(json_eval_error)?
-            .ok_or(EvalError::Unsupported("a JSON array element is missing"))?;
-        let converted = convert_json_2_tp(&item, &element).map_err(|error| {
-            if is_invalid_json_for_func_index(&error) {
-                EvalError::Conversion(tidb_terror::TerrorError::compatible(
-                    tidb_terror::TerrorCode::new(1105),
-                    format!(
-                        "Invalid JSON value for CAST to type {}",
-                        element.compact_str(tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH)
-                    ),
-                ))
-            } else {
-                error
-            }
-        })?;
-        // Go `sum += int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", item)))`.
-        sum = sum.wrapping_add(i64::from(crc32_ieee(&go_value_text(&converted))));
-    }
-    Ok(Datum::Int(sum))
-}
-
-/// Go `fmt`'s `%v` of the value `convertJSON2Tp` returned.
-fn go_value_text(value: &Datum) -> Vec<u8> {
-    match value {
-        Datum::String(text) => text.bytes().to_vec(),
-        Datum::Int(value) => value.to_string().into_bytes(),
-        Datum::UInt(value) => value.to_string().into_bytes(),
-        Datum::Real(value) => tidb_datatype::format_float_g_shortest(*value).into_bytes(),
-        Datum::Time(time) => time.to_string().into_bytes(),
-        Datum::Duration(duration) => duration.to_string().into_bytes(),
-        other => format!("{other:?}").into_bytes(),
-    }
-}
-
-/// Go `hash/crc32.ChecksumIEEE`.
-fn crc32_ieee(bytes: &[u8]) -> u32 {
-    let mut crc = 0xFFFF_FFFF_u32;
-    for &byte in bytes {
-        crc ^= u32::from(byte);
-        for _ in 0..8 {
-            let mask = (crc & 1).wrapping_neg();
-            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
-        }
-    }
-    !crc
-}
-
-/// Whether `error` is Go's `ErrInvalidJSONForFuncIndex` (3903).
-fn is_invalid_json_for_func_index(error: &EvalError) -> bool {
-    matches!(error, EvalError::Conversion(terror) if terror.code() == tidb_terror::TerrorCode::new(3903))
-}
-
 /// `CreateBinaryJSON` over the Go value `convertJSON2Tp` returned.
 fn array_element_json(value: Datum) -> Result<tidb_datatype::BinaryJSONValue, EvalError> {
     use tidb_datatype::BinaryJSONValue;
@@ -902,12 +811,7 @@ pub(crate) fn cast_to_duration(
                 let text = value
                     .unquote()
                     .map_err(|_| EvalError::Unsupported("JSON string payload"))?;
-                let parsed = tidb_datatype::parse_duration_with_flags(
-                    &text,
-                    fsp,
-                    ctx.type_flags(),
-                    &ctx.time_zone(),
-                );
+                let parsed = parse_duration(ctx, &text, fsp);
                 let value = match parsed {
                     Ok(parsed) if parsed.event.is_none() => {
                         return Ok(Datum::Duration(parsed.value))
@@ -966,7 +870,7 @@ pub(crate) fn cast_to_duration(
         // The conversion's error is the truncation this cast reports itself.
         .map(|converted| (converted.value, converted.error.map(|_| ScalarConversionEvent::Truncated)))
     } else {
-        tidb_datatype::parse_duration_with_flags(&input, fsp, ctx.type_flags(), &ctx.time_zone())
+        parse_duration(ctx, &input, fsp)
             .map(|converted| (Datum::Duration(converted.value), converted.event))
             .map_err(|error| DatumValueError::Comparison(error.to_string()))
     };
@@ -1486,53 +1390,6 @@ fn report_negative_string_unsigned(v: &Datum, ctx: &dyn crate::Columns) {
     );
 }
 
-/// Maps `MyDecimal.FromString`'s non-overflow parse dispositions to the
-/// warning emitted by Go's string-to-decimal cast signature. The parsed value
-/// is still retained (including a valid prefix); only a completely invalid or
-/// truncated suffix contributes this statement warning.
-pub(crate) fn report_decimal_input_truncation(v: &Datum, ctx: &dyn crate::Columns) {
-    let text = match v {
-        Datum::String(value) => value.as_utf8().ok(),
-        Datum::Bytes(value) => std::str::from_utf8(value).ok(),
-        _ => None,
-    };
-    let Some(text) = text else {
-        return;
-    };
-    let trimmed = text.trim();
-    let (_, parse_error) = Decimal::parse_mysql(trimmed);
-    if matches!(
-        parse_error,
-        Some(tidb_datatype::DecimalParseError::Overflow)
-    ) {
-        // go's string-to-decimal sig hands the parse's ErrOverflow straight
-        // to `ec.HandleError` without format args, so the appended row keeps
-        // the raw "%s value is out of range in '%s'" template (oracle:
-        // CAST('1e300' AS DECIMAL)). The value is still retained (saturated);
-        // the production clamp below reports its own formatted row.
-        ctx.append_go_warning(
-            &tidb_datatype::types_errors::ERR_OVERFLOW,
-            "%s value is out of range in '%s'",
-        );
-    }
-    if matches!(
-        parse_error,
-        Some(
-            tidb_datatype::DecimalParseError::Truncated
-                | tidb_datatype::DecimalParseError::BadNumber
-                | tidb_datatype::DecimalParseError::TruncatedWrongValue
-        )
-    ) {
-        ctx.append_go_warning(
-            &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL,
-            &format!(
-                "Truncated incorrect DECIMAL value: '{}'",
-                tidb_datatype::warning_subject_byte_cap(trimmed)
-            ),
-        );
-    }
-}
-
 fn signed_string_integer_parse_overflows(text: &str) -> bool {
     if !int_prefix_consumed_all(text) {
         return false;
@@ -1705,6 +1562,22 @@ pub(crate) fn to_f64_for_cast(v: &Datum) -> f64 {
 }
 
 /// `CAST(... AS DATE)` and `CAST(... AS DATETIME)`: Go
+/// Go `types.ParseDuration(typeCtx(ctx), str, fsp)`: the datetime fallback's
+/// own truncation warning lands on the statement.
+pub(crate) fn parse_duration(
+    ctx: &dyn crate::Columns,
+    input: &str,
+    fsp: i64,
+) -> Result<tidb_datatype::Converted<tidb_datatype::MySqlDuration>, tidb_datatype::DurationValueError> {
+    tidb_datatype::parse_duration_in_context(
+        input,
+        fsp,
+        ctx.type_flags(),
+        &ctx.time_zone(),
+        |message| ctx.append_warning(tidb_errno::errcode::ErrTruncatedWrongValue, message),
+    )
+}
+
 /// `builtinCastStringAsTimeSig.evalTime`.
 ///
 /// The whole body is Go's, in order: `types.ParseTime` under the STATEMENT's
@@ -2422,10 +2295,11 @@ fn parse_time_by_source(
 }
 
 /// REAL/FLOAT source shared by `Real` and `Float32`: Go
-/// `builtinCastRealAsTimeSig` reads the float's packed-number form. `0.0` is
-/// the zero time rather than a failure (Go's `#11203` guard); the float parser
-/// already returns the zero time for a `0` integer part, so no special case is
-/// needed here.
+/// `builtinCastRealAsTimeSig.evalTime` parses the float's shortest decimal
+/// text (`strconv.FormatFloat(val, 'f', -1, 64)`) through
+/// `ParseTimeFromFloatString`, so the fraction is the printed one -- never
+/// the binary remainder. `0` and `0.0...` are the zero time rather than a
+/// failure (Go's `#11203` guards).
 fn real_to_time(
     value: f64,
     kind: tidb_datatype::TimeType,
@@ -2433,20 +2307,25 @@ fn real_to_time(
     flags: ConversionFlags,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<tidb_datatype::Time, ()> {
-    // Go parses the float's decimal text, `-0.00..1` included, and a leading
-    // minus sign is never a date: only an exact `-0.0` reads as zero.
-    if value < 0.0 && value > -1.0 {
-        return Err(());
+    let fv = value.to_string();
+    let zero = |kind| tidb_datatype::Time::new(tidb_datatype::CoreTime::default(), kind, 0).map_err(|_| ());
+    if fv == "0" {
+        return zero(tidb_datatype::TimeType::DateTime);
     }
-    let mut time = tidb_datatype::parse_time_from_float64(
-        value,
+    if fv.starts_with("0.0") {
+        return zero(kind);
+    }
+    tidb_datatype::parse_time(
+        &fv,
+        kind,
+        fsp,
+        true,
         flags.ignore_zero_in_date_err(),
         flags.ignore_invalid_date_err(),
         zone,
     )
-    .map_err(|_| ())?;
-    time.set_kind(kind);
-    time.round_frac(fsp, zone).map_err(|_| ())
+    .map(|parsed| parsed.time)
+    .map_err(|_| ())
 }
 
 /// Go `handleInvalidTimeError` on the read path: `ErrWrongValue` (1292)
@@ -2585,6 +2464,145 @@ fn cast_to_year(v: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError>
         }
     }
     Ok(Datum::Int(to_i64_signed_with_warnings(v, ctx)?))
+}
+
+
+/// Go `builtinJSONSumCRC32Sig.evalInt`: the sum of the IEEE CRC32 of every
+/// element of a JSON array, each converted to the ARRAY type's element type
+/// (`convertJSON2Tp`, under Go's strict `fakeSctx`) and printed as Go's
+/// `%v`. A conversion that does not apply to the element is Go's
+/// `Invalid JSON value for CAST to type <type>`.
+pub(crate) fn eval_json_sum_crc32(
+    value: Datum,
+    array_type: &FieldType,
+) -> Result<Datum, EvalError> {
+    let json = match value {
+        Datum::Null => return Ok(Datum::Null),
+        Datum::Json(json) => json,
+        _ => {
+            return Err(EvalError::Unsupported(
+                "JSON_SUM_CRC32 received a non-JSON argument",
+            ))
+        }
+    };
+    if json.type_code() != tidb_datatype::JSON_TYPE_CODE_ARRAY {
+        return Err(EvalError::Json(crate::JsonError::InvalidTypeForJson {
+            argument: 1,
+            function: "JSON_SUM_CRC32",
+        }));
+    }
+    let element = array_type.array_type();
+    // Go resolves `convertJSON2Tp` before reading any element.
+    if !matches!(
+        element.eval_type(),
+        EvalType::String | EvalType::Int | EvalType::Real | EvalType::Datetime | EvalType::Duration
+    ) {
+        return Err(EvalError::NotImplemented(
+            format!("calculating sum of {}", element.source_string()).into(),
+        ));
+    }
+    let count = json.element_count().map_err(json_eval_error)?;
+    let mut sum = 0_i64;
+    for position in 0..count {
+        let item = json
+            .array_get(position)
+            .map_err(json_eval_error)?
+            .ok_or(EvalError::Unsupported("a JSON array element is missing"))?;
+        let converted = convert_json_2_tp(&item, &element).map_err(|error| {
+            if is_invalid_json_for_func_index(&error) {
+                EvalError::Conversion(tidb_terror::TerrorError::compatible(
+                    tidb_terror::TerrorCode::new(1105),
+                    format!(
+                        "Invalid JSON value for CAST to type {}",
+                        element.compact_str(tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH)
+                    ),
+                ))
+            } else {
+                error
+            }
+        })?;
+        // Go `sum += int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", item)))`.
+        sum = sum.wrapping_add(i64::from(crc32_ieee(&go_value_text(&converted))));
+    }
+    Ok(Datum::Int(sum))
+}
+
+/// Go `fmt`'s `%v` of the value `convertJSON2Tp` returned.
+fn go_value_text(value: &Datum) -> Vec<u8> {
+    match value {
+        Datum::String(text) => text.bytes().to_vec(),
+        Datum::Int(value) => value.to_string().into_bytes(),
+        Datum::UInt(value) => value.to_string().into_bytes(),
+        Datum::Real(value) => tidb_datatype::format_float_g_shortest(*value).into_bytes(),
+        Datum::Time(time) => time.to_string().into_bytes(),
+        Datum::Duration(duration) => duration.to_string().into_bytes(),
+        other => format!("{other:?}").into_bytes(),
+    }
+}
+
+/// Go `hash/crc32.ChecksumIEEE`.
+fn crc32_ieee(bytes: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFF_u32;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
+
+/// Whether `error` is Go's `ErrInvalidJSONForFuncIndex` (3903).
+fn is_invalid_json_for_func_index(error: &EvalError) -> bool {
+    matches!(error, EvalError::Conversion(terror) if terror.code() == tidb_terror::TerrorCode::new(3903))
+}
+
+/// Maps `MyDecimal.FromString`'s non-overflow parse dispositions to the
+/// warning emitted by Go's string-to-decimal cast signature. The parsed value
+/// is still retained (including a valid prefix); only a completely invalid or
+/// truncated suffix contributes this statement warning.
+pub(crate) fn report_decimal_input_truncation(v: &Datum, ctx: &dyn crate::Columns) {
+    let text = match v {
+        Datum::String(value) => value.as_utf8().ok(),
+        Datum::Bytes(value) => std::str::from_utf8(value).ok(),
+        _ => None,
+    };
+    let Some(text) = text else {
+        return;
+    };
+    let trimmed = text.trim();
+    let (_, parse_error) = Decimal::parse_mysql(trimmed);
+    if matches!(
+        parse_error,
+        Some(tidb_datatype::DecimalParseError::Overflow)
+    ) {
+        // go's string-to-decimal sig hands the parse's ErrOverflow straight
+        // to `ec.HandleError` without format args, so the appended row keeps
+        // the raw "%s value is out of range in '%s'" template (oracle:
+        // CAST('1e300' AS DECIMAL)). The value is still retained (saturated);
+        // the production clamp below reports its own formatted row.
+        ctx.append_go_warning(
+            &tidb_datatype::types_errors::ERR_OVERFLOW,
+            "%s value is out of range in '%s'",
+        );
+    }
+    if matches!(
+        parse_error,
+        Some(
+            tidb_datatype::DecimalParseError::Truncated
+                | tidb_datatype::DecimalParseError::BadNumber
+                | tidb_datatype::DecimalParseError::TruncatedWrongValue
+        )
+    ) {
+        ctx.append_go_warning(
+            &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL,
+            &format!(
+                "Truncated incorrect DECIMAL value: '{}'",
+                tidb_datatype::warning_subject_byte_cap(trimmed)
+            ),
+        );
+    }
 }
 
 #[cfg(test)]
@@ -3087,7 +3105,8 @@ mod tests {
     fn render_time(v: &Datum) -> String {
         match v {
             Datum::Time(time) => time.to_string(),
-            Datum::String(text) => crate::coerce::string_text(text)
+            Datum::String(text) => text
+                .as_utf8()
                 .expect("temporal CAST text is valid UTF-8")
                 .to_owned(),
             Datum::Null => "NULL".to_owned(),

@@ -18,28 +18,6 @@ use tidb_datatype::{FieldType, FieldTypeCode, VectorFloat32};
 
 use crate::{Datum, EvalError};
 
-pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
-    match (name, vals) {
-        ("VEC_DIMS", [value]) => Some(dims(value)),
-        ("VEC_L1_DISTANCE", [left, right]) => {
-            Some(distance(left, right, VectorFloat32::l1_distance))
-        }
-        ("VEC_L2_DISTANCE", [left, right]) => {
-            Some(distance(left, right, VectorFloat32::l2_distance))
-        }
-        ("VEC_NEGATIVE_INNER_PRODUCT", [left, right]) => {
-            Some(distance(left, right, VectorFloat32::negative_inner_product))
-        }
-        ("VEC_COSINE_DISTANCE", [left, right]) => {
-            Some(distance(left, right, VectorFloat32::cosine_distance))
-        }
-        ("VEC_L2_NORM", [value]) => Some(l2_norm(value)),
-        ("VEC_FROM_TEXT", [value]) => Some(from_text(value)),
-        ("VEC_AS_TEXT", [value]) => Some(as_text(value)),
-        _ => None,
-    }
-}
-
 fn vector(value: &Datum) -> Result<Option<VectorFloat32>, EvalError> {
     if matches!(value, Datum::Null) {
         return Ok(None);
@@ -111,6 +89,11 @@ pub(crate) fn as_text(value: &Datum) -> Result<Datum, EvalError> {
 mod tests {
     use super::*;
 
+    /// Go's builtin test door over a context-free session.
+    fn eval_builtin_func(name: &str, vals: &[Datum]) -> Option<Result<Datum, crate::EvalError>> {
+        crate::tests::eval_builtin_func(name, vals, &crate::NoColumns)
+    }
+
     fn vector(values: Vec<f32>) -> Datum {
         Datum::new_vector_float32(VectorFloat32::must_create(values))
     }
@@ -118,56 +101,56 @@ mod tests {
     #[test]
     fn vector_functions_follow_the_scalar_go_signatures() {
         assert_eq!(
-            dispatch("VEC_DIMS", &[vector(vec![1.0, 2.0])]),
+            eval_builtin_func("VEC_DIMS", &[vector(vec![1.0, 2.0])]),
             Some(Ok(Datum::Int(2)))
         );
         assert_eq!(
-            dispatch(
+            eval_builtin_func(
                 "VEC_L1_DISTANCE",
                 &[vector(vec![1.0, 2.0]), vector(vec![3.0, 5.0])]
             ),
             Some(Ok(Datum::Real(5.0)))
         );
         assert_eq!(
-            dispatch(
+            eval_builtin_func(
                 "VEC_L2_DISTANCE",
                 &[vector(vec![0.0, 0.0]), vector(vec![3.0, 4.0])]
             ),
             Some(Ok(Datum::Real(5.0)))
         );
         assert_eq!(
-            dispatch(
+            eval_builtin_func(
                 "VEC_NEGATIVE_INNER_PRODUCT",
                 &[vector(vec![1.0, 2.0]), vector(vec![3.0, 4.0])]
             ),
             Some(Ok(Datum::Real(-11.0)))
         );
         assert_eq!(
-            dispatch("VEC_L2_NORM", &[vector(vec![3.0, 4.0])]),
+            eval_builtin_func("VEC_L2_NORM", &[vector(vec![3.0, 4.0])]),
             Some(Ok(Datum::Real(5.0)))
         );
         assert_eq!(
-            dispatch("VEC_AS_TEXT", &[vector(vec![1.0, 2.0])]),
+            eval_builtin_func("VEC_AS_TEXT", &[vector(vec![1.0, 2.0])]),
             Some(Ok(Datum::new_string_datum("[1,2]")))
         );
         assert_eq!(
-            dispatch("VEC_FROM_TEXT", &[Datum::new_string_datum("[1,2]")]),
+            eval_builtin_func("VEC_FROM_TEXT", &[Datum::new_string_datum("[1,2]")]),
             Some(Ok(vector(vec![1.0, 2.0])))
         );
     }
 
     #[test]
     fn vector_functions_propagate_null_and_source_domain_errors() {
-        assert_eq!(dispatch("VEC_DIMS", &[Datum::Null]), Some(Ok(Datum::Null)));
+        assert_eq!(eval_builtin_func("VEC_DIMS", &[Datum::Null]), Some(Ok(Datum::Null)));
         assert_eq!(
-            dispatch(
+            eval_builtin_func(
                 "VEC_COSINE_DISTANCE",
                 &[vector(vec![0.0]), vector(vec![1.0])]
             ),
             Some(Ok(Datum::Null))
         );
         assert!(matches!(
-            dispatch("VEC_L2_DISTANCE", &[vector(vec![1.0]), vector(vec![1.0, 2.0])]),
+            eval_builtin_func("VEC_L2_DISTANCE", &[vector(vec![1.0]), vector(vec![1.0, 2.0])]),
             Some(Err(EvalError::Vector(message))) if message == "vectors have different dimensions: 1 and 2"
         ));
     }

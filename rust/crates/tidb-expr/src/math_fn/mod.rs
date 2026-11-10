@@ -31,53 +31,6 @@ use crate::{Columns, Datum, EvalError, MysqlRng};
 
 
 
-/// The values-only subset of [`dispatch`]: every math builtin whose result is
-/// a function of its already-evaluated arguments alone. Shared by the
-/// AST-level `eval_func` path and `crate::func::eval_func_values` (the
-/// `ScalarFunction`/chunk-row bridge).
-///
-/// `ctx` is NOT a second source of values -- it is the statement warning sink
-/// (`crate::Columns::append_warning`). The RESULT still depends only on
-/// `vals`; what the context adds is the 1292 truncation warning Go raises
-/// while coercing a string argument into the ETReal domain, which is a side
-/// effect this dispatch used to have no way to produce.
-pub(crate) fn dispatch_values(
-    name: &str,
-    vals: &[Datum],
-    ctx: &dyn Columns,
-) -> Option<Result<Datum, EvalError>> {
-    let result = match name {
-        "ABS" => abs(vals, ctx),
-        "SIGN" => sign(vals, ctx),
-        "CEIL" | "CEILING" => ceil_floor(vals, true, ctx),
-        "FLOOR" => ceil_floor(vals, false, ctx),
-        "ROUND" => round_or_truncate(vals, true, ctx),
-        "TRUNCATE" => round_or_truncate(vals, false, ctx),
-        "SQRT" => sqrt(vals, ctx),
-        "POW" | "POWER" => pow(vals, ctx),
-        "EXP" => exp(vals, ctx),
-        "LN" => ln(vals, ctx),
-        "LOG" => log(vals, ctx),
-        "LOG2" => log2(vals, ctx),
-        "LOG10" => log10(vals, ctx),
-        "PI" => pi(vals),
-        "SIN" => sin(vals, ctx),
-        "COS" => cos(vals, ctx),
-        "TAN" => tan(vals, ctx),
-        "ASIN" => asin(vals, ctx),
-        "ACOS" => acos(vals, ctx),
-        "ATAN" => atan(vals, ctx),
-        "ATAN2" => atan2(vals, ctx),
-        "COT" => cot(vals, ctx),
-        "RADIANS" => radians(vals, ctx),
-        "DEGREES" => degrees(vals, ctx),
-        "CONV" if vals.len() == 3 => conv(vals),
-        "CRC32" if vals.len() == 1 => crc32(vals),
-        _ => return None,
-    };
-    Some(result)
-}
-
 /// `CONV(n, from_base, to_base)`: reinterprets `n`'s digits in `from_base`
 /// and re-emits them (uppercase) in `to_base`. Ported from `builtinConvSig`
 /// in `pkg/expression/builtin_math.go`: a NEGATIVE base means signed
@@ -690,20 +643,6 @@ fn rand_string_seed(text: &str, datum: &Datum, cols: &dyn Columns) -> Result<i64
     Ok(seed)
 }
 
-/// CEIL/CEILING (`ceiling: true`) or FLOOR (`false`): `Int` is unchanged;
-/// `Decimal` computes the EXACT ceiling/floor ([`Decimal::ceil_floor`]).
-/// TiDB's builder keeps a decimal result when the argument's declared
-/// integer width exceeds `mysql.MaxIntWidth - 2` (18 digits), even when the
-/// exact rounded value happens to fit `i64`; this preserves the source
-/// `getEvalTp4FloorAndCeil` type boundary rather than inferring the return
-/// domain from the runtime magnitude. Narrower decimals collapse to `Int`.
-/// `Float`
-/// stays `Float` — the OPPOSITE convention from `Decimal`'s own
-/// int-collapsing rule, also confirmed via `goeval`, not assumed.
-fn ceil_floor(vals: &[Datum], ceiling: bool, ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    ceil_floor_with_result_domain(vals, ceiling, None, ctx)
-}
-
 /// Typed scalar evaluation for `CEIL`/`FLOOR`.
 ///
 /// `decimal_result` is Go's build-time `retTp == ETDecimal` decision. The
@@ -776,34 +715,6 @@ fn sign_of_real(value: f64) -> i64 {
         Some(Ordering::Less) => -1,
         _ => 0,
     }
-}
-
-/// `ROUND(x)`/`ROUND(x, d)` (`round: true`) or `TRUNCATE(x, d)` (`false`,
-/// always 2 arguments — confirmed via `goeval`: unlike `ROUND`, `TRUNCATE`
-/// has no 1-arg form). `NULL` if any argument is `NULL`. Per-type rule,
-/// each confirmed via `goeval` then cross-checked against the real
-/// `pkg/expression/builtin_math.go`/`pkg/types/helper.go` sources (not
-/// assumed to match `CEIL`/`FLOOR`'s rule, which is different):
-/// - `Int` stays `Int` for the 1-arg `ROUND` form (a plain passthrough,
-///   matching `builtinRoundIntSig`). The 2-arg forms round-trip through
-///   `f64` exactly like real TiDB does (`int64(types.Round(float64(x),
-///   d))`/the analogous truncating-division path for `TRUNCATE`) — exact
-///   for any `x` within `f64`'s 53-bit exact-integer range, and losing
-///   precision near `i64::MAX`/`MIN` the SAME way the reference
-///   implementation does (both are IEEE-754 `f64`), rather than being
-///   invented to be more precise than the system being modeled.
-/// - `Decimal` NEVER collapses to `Int` (unlike `CEIL`/`FLOOR` — confirmed
-///   `ROUND(3.14159)` is `DEC:3`, not `INT:3`) and rounds ties AWAY from
-///   zero (`ModeHalfUp`/`ModeTruncate`), clamped to MySQL's `DECIMAL` max
-///   scale (30) for a positive `d`.
-/// - `Float` rounds/truncates via Go's `types.Round`/`types.Truncate`
-///   ported bit-for-bit (see [`go_round_float`]/[`go_truncate_float`]):
-///   `ROUND` ties TO EVEN — the OPPOSITE tie-breaking rule from `Decimal`
-///   (matching the bitwise-conversion precedent), not a "more correct"
-///   decimal-aware rounding, since the reference implementation is
-///   deliberately this simple and occasionally imprecise.
-fn round_or_truncate(vals: &[Datum], round: bool, ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    round_or_truncate_with_result_decimal(vals, round, None, ctx)
 }
 
 /// The typed scalar path for decimal `ROUND`/`TRUNCATE`.

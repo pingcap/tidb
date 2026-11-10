@@ -34,18 +34,6 @@ const INVALID_RETURN_OPTION: &str =
     "Incorrect arguments to regexp_instr: return_option must be 1 or 0";
 const INVALID_SUBSTITUTION: &str = "Substitution number is out of range";
 
-/// Dispatches this family's scalar builtins; `None` means another family may
-/// own the name or the caller should return the normal unsupported-function
-/// error.
-pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
-    match (name, vals.len()) {
-        ("REGEXP_SUBSTR", 2..=5) => Some(regexp_substr(vals)),
-        ("REGEXP_INSTR", 2..=6) => Some(regexp_instr(vals)),
-        ("REGEXP_REPLACE", 3..=6) => Some(regexp_replace(vals)),
-        _ => None,
-    }
-}
-
 /// Values-only regexp dispatch with Go's statement-context memoization. The
 /// caller supplies the build-time constness decisions because this tier has
 /// already evaluated the argument expressions.
@@ -146,10 +134,6 @@ fn required_string(value: &Datum) -> Result<Option<String>, EvalError> {
     optional_string(value)
 }
 
-fn regexp_substr(vals: &[Datum]) -> Result<Datum, EvalError> {
-    regexp_substr_with_compiler(vals, compile_regexp)
-}
-
 fn regexp_substr_with_compiler(
     vals: &[Datum],
     compile: impl FnOnce(&str, &str) -> Result<Regex, EvalError>,
@@ -190,10 +174,6 @@ fn regexp_substr_with_compiler(
         .nth((occurrence - 1) as usize)
         .map(|matched| matched.as_str().to_owned());
     Ok(matched.map_or(Datum::Null, Datum::new_string_datum))
-}
-
-fn regexp_instr(vals: &[Datum]) -> Result<Datum, EvalError> {
-    regexp_instr_with_compiler(vals, compile_regexp)
 }
 
 fn regexp_instr_with_compiler(
@@ -349,12 +329,6 @@ fn replace_matches(
     Ok(output)
 }
 
-fn regexp_replace(vals: &[Datum]) -> Result<Datum, EvalError> {
-    regexp_replace_with_compiler(vals, compile_regexp, |replacement| {
-        Ok(replacement_parts(replacement))
-    })
-}
-
 fn regexp_replace_with_compiler(
     vals: &[Datum],
     compile: impl FnOnce(&str, &str) -> Result<Regex, EvalError>,
@@ -408,15 +382,19 @@ fn regexp_replace_with_compiler(
 
 #[cfg(test)]
 mod tests {
-    use super::{dispatch, regexp_instr, regexp_replace, regexp_substr};
     use crate::{Datum, EvalError};
+
+    /// Go's builtin test door over a context-free session.
+    fn eval_builtin_func(name: &str, vals: &[Datum]) -> Option<Result<Datum, crate::EvalError>> {
+        crate::tests::eval_builtin_func(name, vals, &crate::NoColumns)
+    }
 
     fn string(value: &str) -> Datum {
         Datum::new_string_datum(value.to_owned())
     }
 
     fn call(name: &str, values: &[Datum]) -> Result<Datum, EvalError> {
-        dispatch(name, values).expect("regexp name/arity should dispatch")
+        eval_builtin_func(name, values).expect("regexp name/arity should dispatch")
     }
 
     fn assert_string(name: &str, values: &[Datum], expected: Option<&str>) {
@@ -870,11 +848,11 @@ mod tests {
     #[test]
     fn regexp_source_helpers_keep_capture_replacement_contract() {
         assert!(matches!(
-            regexp_substr(&[string("a"), string("(")]),
+            crate::tests::builtin("regexp_substr", &[string("a"), string("(")]),
             Err(EvalError::Conversion(_))
         ));
         assert!(matches!(
-            regexp_instr(&[
+            crate::tests::builtin("regexp_instr", &[
                 string("a"),
                 string("a"),
                 Datum::Int(1),
@@ -886,7 +864,7 @@ mod tests {
             ))
         ));
         assert!(matches!(
-            regexp_replace(&[string("abc"), string("(a)"), string(r"\2"),]),
+            crate::tests::builtin("regexp_replace", &[string("abc"), string("(a)"), string(r"\2"),]),
             Err(EvalError::Unsupported(
                 "Substitution number is out of range"
             ))

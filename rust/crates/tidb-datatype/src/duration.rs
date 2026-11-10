@@ -350,6 +350,7 @@ pub struct ParsedDuration {
     fsp: i64,
     overflow: Option<DurationOverflow>,
     truncated: bool,
+    datetime_truncated: bool,
 }
 
 impl ParsedDuration {
@@ -371,6 +372,12 @@ impl ParsedDuration {
     /// Returns whether the source reported `ErrTruncatedWrongVal`.
     pub const fn truncated(self) -> bool {
         self.truncated
+    }
+
+    /// Returns whether the datetime fallback's `ParseDatetime` appended its
+    /// own "Truncated incorrect datetime value" warning.
+    pub const fn datetime_truncated(self) -> bool {
+        self.datetime_truncated
     }
 
     /// Returns the pure source-side event for this parsed duration.
@@ -708,11 +715,10 @@ pub fn parse_mysql_duration<TZ: TimeZone>(
             // Go ParseDuration parses at the input's precision, extracts the
             // clock, then rounds TIME. Rounding the calendar first loses a
             // carry such as 23:59:59.999999 -> 24:00:00.
-            let time =
+            let datetime =
                 crate::parse_datetime(input, timezone, allow_zero_in_date, allow_invalid_date)
-                    .map_err(DurationValueError::Time)?
-                    .time;
-            let duration = time.to_duration().map_err(DurationValueError::Time)?;
+                    .map_err(DurationValueError::Time)?;
+            let duration = datetime.time.to_duration().map_err(DurationValueError::Time)?;
             let duration = duration.round_frac(target_fsp).map_err(|error| {
                 DurationValueError::Duration(match error {
                     DurationRoundError::InvalidFsp(error) => DurationParseError::InvalidFsp(error),
@@ -724,6 +730,7 @@ pub fn parse_mysql_duration<TZ: TimeZone>(
                 fsp: duration.fsp(),
                 overflow: None,
                 truncated: false,
+                datetime_truncated: datetime.truncated,
             })
         }
         // Source `ParseDuration` has exactly two malformed-input outcomes:
@@ -866,6 +873,7 @@ fn parsed_duration_from_parts(
         fsp,
         overflow: range.overflow,
         truncated: false,
+        datetime_truncated: false,
     })
 }
 

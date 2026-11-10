@@ -30,7 +30,6 @@ use crate::constant::Constant;
 use crate::evaluator::{vectorizable, EvaluatorSuite};
 use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;
-use crate::time_fn::dispatch;
 use std::cell::RefCell;
 use tidb_ast::CiString;
 use tidb_chunk::chunk::Chunk;
@@ -39,7 +38,7 @@ use tidb_datatype::{CoreTime, FieldType, FieldTypeCode, MySqlDuration, Time, Tim
 /// Evaluates one builtin through the time family's dispatch seam and unwraps
 /// both the dispatch hit and the evaluation result.
 fn dispatched(name: &str, vals: &[Datum], cols: &dyn Columns) -> Datum {
-    dispatch(name, vals, cols)
+    eval_builtin_func(name, vals, cols)
         .expect("the name belongs to the time family")
         .expect("source row must evaluate")
 }
@@ -125,7 +124,7 @@ fn vectorized_time_harness_representative_cases_match_scalar_answers() {
     // carries MaxFsp, hence the six-digit fractions (`time_fn::tests::sec_to_time_source_vectors`).
     assert_eq!(
         unary_vec(&["3863999", "-3863999", "<NULL>"], "SEC_TO_TIME"),
-        ["STR:838:59:59.000000", "STR:-838:59:59.000000", "NULL"]
+        ["DUR:838:59:59.000000", "DUR:-838:59:59.000000", "NULL"]
     );
 
     // ast.DateDiff (calendar::date_diff; DATEDIFF is not in the time-family
@@ -144,7 +143,7 @@ fn vectorized_time_harness_representative_cases_match_scalar_answers() {
     // ast.TimeDiff pairs, including the INVALID pair that is NULL.
     assert_eq!(
         binary_vec(
-            |args| dispatch("TIMEDIFF", args, &NoColumns).unwrap(),
+            |args| eval_builtin_func("TIMEDIFF", args, &NoColumns).unwrap(),
             &[
                 ("2008-12-31 23:59:59.000001", "2008-12-30 01:01:01.000002",),
                 ("2016-12-00 12:00:00", "2016-12-01 12:00:00"),
@@ -405,7 +404,7 @@ fn vectorized_builtin_vec_families_match_master_shapes() {
     ];
     for (name, args, want) in rows {
         assert_eq!(
-            crate::builtin_ext::vec::dispatch(name, &args)
+            crate::tests::eval_builtin_func(name, &args, &NoColumns)
                 .expect("a VEC_ family name")
                 .expect("vector shapes evaluate")
                 .label(),

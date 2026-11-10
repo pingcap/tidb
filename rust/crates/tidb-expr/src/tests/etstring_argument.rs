@@ -146,7 +146,7 @@ fn an_etstring_argument_is_read_as_bytes_not_as_utf8() {
 
         let trimmed = vec![cast.clone()];
         assert_eq!(
-            crate::builtin_ext::string2::dispatch("LTRIM", &trimmed, &NoColumns)
+            crate::tests::eval_builtin_func("LTRIM", &trimmed, &NoColumns)
                 .unwrap()
                 .unwrap(),
             Datum::new_bytes_datum(vec![0xFF]),
@@ -186,7 +186,7 @@ fn the_space_scan_is_one_sided_and_byte_exact() {
     for (name, input, want) in cases {
         let vals = vec![Datum::new_string_datum(input)];
         assert_eq!(
-            crate::builtin_ext::string2::dispatch(name, &vals, &NoColumns)
+            crate::tests::eval_builtin_func(name, &vals, &NoColumns)
                 .unwrap()
                 .unwrap(),
             Datum::new_string_datum(want),
@@ -229,7 +229,7 @@ fn the_field_mode_arms_are_measured_above_the_double_boundary() {
     ];
     for (vals, want) in cases {
         assert_eq!(
-            crate::string_fn::field(&vals, &NoColumns).unwrap(),
+            crate::tests::builtin("field", &vals).unwrap(),
             Datum::Int(want),
             "field({vals:?})"
         );
@@ -311,7 +311,7 @@ fn field_reads_a_hybrid_by_its_own_eval_type() {
     ];
     for (vals, want) in cases {
         assert_eq!(
-            crate::string_fn::field(&vals, &NoColumns).unwrap(),
+            crate::tests::builtin("field", &vals).unwrap(),
             Datum::Int(want),
             "field({vals:?})"
         );

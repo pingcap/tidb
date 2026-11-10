@@ -16,12 +16,10 @@
 //! `origin/master`, sorted by file path then line). Each test re-derives its
 //! intent from the Go source it exercises.
 
-use super::{chunk_e, e};
-use crate::builtin_ext::json::dispatch as json_dispatch;
+use super::{chunk_e, e, eval_builtin_func};
 use crate::constant::{Constant, ParamMarker};
 use crate::expression::Expression;
 use crate::like::like_match_with_collation;
-use crate::math_fn::dispatch_values;
 use crate::regexp::{regexp_like, regexp_match};
 use crate::rewriter::result_type::builtin_return_type;
 use crate::rewriter::rewrite_expr;
@@ -106,7 +104,7 @@ fn eval_as(name: &str, args: Vec<Datum>, ret_type: FieldType, ctx: &impl Columns
 }
 
 fn json_call(name: &str, vals: &[Datum]) -> Result<Datum, EvalError> {
-    json_dispatch(name, vals).expect("JSON family should own name/arity")
+    eval_builtin_func(name, vals, &NoColumns).expect("JSON family should own name/arity")
 }
 
 fn json_s(value: &str) -> Datum {
@@ -132,7 +130,7 @@ fn json_eq(left: &Datum, right: &str) {
 }
 
 fn math_call(name: &str, vals: &[Datum]) -> Result<Datum, EvalError> {
-    dispatch_values(name, vals, &NoColumns).expect("math family should own name/arity")
+    eval_builtin_func(name, vals, &NoColumns).expect("math family should own name/arity")
 }
 
 /// Session columns for `pkg/expression/builtin_info_test.go` information
@@ -379,7 +377,7 @@ fn last_insert_id() {
             ..InfoColumns::default()
         };
         assert_eq!(
-            crate::func::eval_func_values_in("LAST_INSERT_ID", &args, &ctx)
+            eval_builtin_func("LAST_INSERT_ID", &args, &ctx)
                 .expect("LAST_INSERT_ID must be dispatched")
                 .expect("source row must evaluate"),
             Datum::UInt(expected)
@@ -420,7 +418,7 @@ fn format_bytes() {
         ),
     ] {
         assert_eq!(
-            crate::builtin_ext::info::dispatch("FORMAT_BYTES", &[arg.clone()], &ctx)
+            eval_builtin_func("FORMAT_BYTES", &[arg.clone()], &ctx)
                 .expect("FORMAT_BYTES must dispatch")
                 .expect("finite ETReal must format"),
             want,
@@ -458,7 +456,7 @@ fn format_nano_time() {
         (Datum::Real(-9_999_999_991.0), Datum::new_string_datum("-10.00 s")),
     ] {
         assert_eq!(
-            crate::builtin_ext::info::dispatch("FORMAT_NANO_TIME", &[arg.clone()], &ctx)
+            eval_builtin_func("FORMAT_NANO_TIME", &[arg.clone()], &ctx)
                 .expect("FORMAT_NANO_TIME must dispatch")
                 .expect("finite ETReal must format"),
             want,
@@ -817,25 +815,25 @@ fn json_remove() {
 /// Go `pkg/expression/builtin_json_test.go:498 TestJSONMemberOf`.
 #[test]
 fn json_member_of() {
-    assert!(json_call("JSON_MEMBER_OF", &[json_s("1"), json_s("a:1")]).is_err());
+    assert!(json_call("json_memberof", &[json_s("1"), json_s("a:1")]).is_err());
     for (document, want) in [("[1, 2]", 1), ("[1]", 1), ("[0]", 0), ("[[1]]", 0)] {
         assert_eq!(
-            json_call("JSON_MEMBER_OF", &[Datum::Int(1), json_s(document)]).unwrap(),
+            json_call("json_memberof", &[Datum::Int(1), json_s(document)]).unwrap(),
             Datum::Int(want),
             "1 MEMBER OF {document}"
         );
     }
     assert_eq!(
-        json_call("JSON_MEMBER_OF", &[json_s("1"), json_s("[1]")]).unwrap(),
+        json_call("json_memberof", &[json_s("1"), json_s("[1]")]).unwrap(),
         Datum::Int(0)
     );
     assert_eq!(
-        json_call("JSON_MEMBER_OF", &[json_s("1"), json_s(r#"["1"]"#)]).unwrap(),
+        json_call("json_memberof", &[json_s("1"), json_s(r#"["1"]"#)]).unwrap(),
         Datum::Int(1)
     );
     assert_eq!(
         json_call(
-            "JSON_MEMBER_OF",
+            "json_memberof",
             &[json_s(r#"{"a":1}"#), json_s(r#"{"a":1}"#)]
         )
         .unwrap(),
@@ -843,7 +841,7 @@ fn json_member_of() {
     );
     assert_eq!(
         json_call(
-            "JSON_MEMBER_OF",
+            "json_memberof",
             &[json_s(r#"{"a":1}"#), json_s(r#"["{\"a\":1}"]"#)]
         )
         .unwrap(),
@@ -1145,7 +1143,7 @@ fn json_array_append() {
         &[json_s("asdf"), json_s("$"), Datum::Null]
     )
     .is_err());
-    assert!(json_dispatch("JSON_ARRAY_APPEND", &[json_s(r#"{"a": 1}"#), json_s("$.d")]).is_none());
+    assert!(eval_builtin_func("JSON_ARRAY_APPEND", &[json_s(r#"{"a": 1}"#), json_s("$.d")], &NoColumns).is_none());
     assert!(json_call(
         "JSON_ARRAY_APPEND",
         &[json_s(r#"{"a": 1}"#), json_s("$.*"), Datum::Null],
@@ -1278,7 +1276,7 @@ fn json_array_insert() {
         &[json_s(r#"{"a": 1}"#), json_s("$.a"), Datum::Null],
     )
     .is_err());
-    assert!(json_dispatch("JSON_ARRAY_INSERT", &[json_s("{}"), json_s("$.d")]).is_none());
+    assert!(eval_builtin_func("JSON_ARRAY_INSERT", &[json_s("{}"), json_s("$.d")], &NoColumns).is_none());
 }
 
 /// Go `pkg/expression/builtin_json_test.go:1176 TestJSONValid`.

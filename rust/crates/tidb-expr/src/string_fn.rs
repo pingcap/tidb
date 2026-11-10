@@ -59,17 +59,6 @@ pub(crate) fn concat_with_context(
     Ok(Datum::new_string_datum(out))
 }
 
-/// `LOWER`/`UPPER`: text signatures apply Unicode case mapping while binary
-/// signatures return the original bytes unchanged (the source selects those
-/// signatures from the argument FieldType before evaluation).  Numeric values
-/// still pass through the ordinary ETString conversion.
-pub(crate) fn case_convert(vals: &[Datum], upper: bool) -> Result<Datum, EvalError> {
-    let binary = vals
-        .first()
-        .is_some_and(crate::string_signature::is_binary_str);
-    case_convert_with_type(vals, upper, None, binary)
-}
-
 /// Go chooses the binary signature before evaluation, then the text signature
 /// selects an encoding from the argument FieldType (not the result value).
 pub(crate) fn case_convert_with_type(
@@ -98,7 +87,7 @@ pub(crate) fn case_convert_with_type(
 
 #[cfg(test)]
 mod case_convert_tests {
-    use super::case_convert;
+    use crate::tests::builtin;
     use crate::Datum;
     use tidb_datatype::MysqlEnum;
 use tidb_charset::Collation;
@@ -107,13 +96,15 @@ use tidb_charset::Collation;
     fn enum_names_follow_the_selected_binary_or_unicode_signature() {
         let binary = Datum::new_enum(MysqlEnum::new([0xff], 1), Collation::Binary);
         assert_eq!(
-            case_convert(&[binary], true),
-            Ok(Datum::new_bytes_datum(vec![0xff]))
+            builtin("upper", &[binary]),
+            // Go's door answers a string datum holding the replacement
+            // character's bytes (EF BF BD).
+            Ok(Datum::new_string_datum("\u{fffd}"))
         );
 
         let text = Datum::new_enum(MysqlEnum::new([0xe2, 0x82], 1), Collation::Utf8Mb4Bin);
         assert_eq!(
-            case_convert(&[text], true),
+            builtin("upper", &[text]),
             Ok(Datum::new_string_datum("\u{fffd}\u{fffd}"))
         );
     }
@@ -380,17 +371,6 @@ pub(crate) fn locate_with_position(
     Ok(Datum::Int(0))
 }
 
-/// The collation `LOCATE`/`INSTR` derive when no derivation pass ran: Go's
-/// aggregate is `binary` as soon as one string argument is binary.
-pub(crate) fn locate_collation(substr: &Datum, str: &Datum) -> tidb_charset::Collation {
-    if crate::string_signature::is_binary_str(substr) || crate::string_signature::is_binary_str(str)
-    {
-        tidb_charset::Collation::Binary
-    } else {
-        tidb_charset::Collation::Utf8Mb4Bin
-    }
-}
-
 /// `LOCATE`/`INSTR`/`POSITION` under an explicit collation.
 ///
 /// Go's `builtinLocate2ArgsUTF8Sig`/`builtinInstrUTF8Sig` search with the
@@ -535,26 +515,6 @@ fn string_result(source: &Datum, bytes: Vec<u8>) -> Datum {
     } else {
         Datum::new_string_datum(bytes)
     }
-}
-
-/// `STRCMP(a, b)`: `-1`/`0`/`1` under TiDB's default `utf8mb4_bin` PAD SPACE
-/// collation; a binary operand switches the source signature to the raw
-/// binary collation. `NULL` propagates from either operand.
-pub(crate) fn strcmp(vals: &[Datum]) -> Result<Datum, EvalError> {
-    let [left, right] = vals else {
-        return Err(EvalError::Unsupported("bad STRCMP arity"));
-    };
-    let (Some(a), Some(b)) = (coerce_str_bytes(left)?, coerce_str_bytes(right)?) else {
-        return Ok(Datum::Null);
-    };
-    let collation = if matches!(left, Datum::Bytes(_)) || matches!(right, Datum::Bytes(_)) {
-        tidb_charset::Collation::Binary
-    } else {
-        left.collation()
-            .or_else(|| right.collation())
-            .unwrap_or(tidb_charset::Collation::DEFAULT)
-    };
-    strcmp_under(&a, &b, collation)
 }
 
 /// `STRCMP` under the collation the expression derivation aggregated
@@ -962,21 +922,6 @@ fn radix_string_bits_bytes(value: &[u8]) -> u64 {
     } else {
         magnitude
     }
-}
-
-/// `FIELD(needle, a, b, c, ...)`: the 1-based index of the first argument
-/// equal to `needle`, or `0` if none match. A `NULL` `needle` never matches
-/// (returns `0`). The Go function class chooses ONE signature for the whole
-/// argument list before evaluation: all-string arguments use the collator,
-/// all-integer arguments use integer equality, and every mixed/decimal/real
-/// list uses `EvalReal` for every argument. Selecting that mode once is
-/// important: pairwise equality would compare a string/string pair as text
-/// even when a numeric argument later forces the source's REAL signature.
-///
-/// The collation-free entry point, for a caller with no derived collation
-/// to offer; see [`field_with_collation`].
-pub(crate) fn field(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
-    field_with_collation(vals, crate::ops::DERIVATION_FREE_COLLATION, ctx)
 }
 
 /// [`field`] under the collation the expression derivation aggregated over
@@ -1390,15 +1335,6 @@ pub(crate) fn export_set(vals: &[Datum]) -> Result<Datum, EvalError> {
     Ok(Datum::new_string_datum(result))
 }
 
-/// `FROM_BASE64(str)`: inverse of [`to_base64`], ported from
-/// `builtinFromBase64Sig.evalString` in `pkg/expression/builtin_string.go`.
-/// TiDB removes spaces/tabs before calling Go's `StdEncoding.DecodeString`,
-/// whose decoder also ignores CR/LF.  The result is binary string data, so
-/// invalid UTF-8 is preserved rather than replaced or turned into NULL.
-pub(crate) fn from_base64(vals: &[Datum]) -> Result<Datum, EvalError> {
-    from_base64_with_packet_limit(vals, None)
-}
-
 /// Evaluates `FROM_BASE64` with Go's signature-level packet bound. The Go
 /// builtin checks the decoded-size estimate before stripping spaces/tabs and
 /// invoking the decoder; keeping that check in the context-aware entry point
@@ -1480,7 +1416,7 @@ pub(crate) fn from_base64_with_packet_limit(
 
 #[cfg(test)]
 mod from_base64_tests {
-    use super::from_base64;
+    use crate::tests::builtin;
     use crate::Datum;
 
     fn s(value: &str) -> Datum {
@@ -1506,41 +1442,31 @@ mod from_base64_tests {
             ),
         ] {
             assert_eq!(
-                from_base64(&[s(input)]).unwrap(),
+                builtin("from_base64", &[s(input)]).unwrap(),
                 Datum::new_bytes_datum(expected.to_vec())
             );
         }
         assert_eq!(
-            from_base64(&[Datum::new_bytes_datum(b"/wA=".to_vec())]).unwrap(),
+            builtin("from_base64", &[Datum::new_bytes_datum(b"/wA=".to_vec())]).unwrap(),
             Datum::new_bytes_datum(vec![0xff, 0x00])
         );
-        assert_eq!(from_base64(&[Datum::Null]).unwrap(), Datum::Null);
+        assert_eq!(builtin("from_base64", &[Datum::Null]).unwrap(), Datum::Null);
     }
 
     #[test]
     fn malformed_padding_and_arity_return_null_or_error() {
         for input in ["asc", "YWJj=", "YWI", "YQ===", "YQ=A", "Y!Jj", "YR=="] {
-            assert_eq!(from_base64(&[s(input)]).unwrap(), Datum::Null, "{input:?}");
+            assert_eq!(builtin("from_base64", &[s(input)]).unwrap(), Datum::Null, "{input:?}");
         }
         assert_eq!(
-            from_base64(&[s("YQ==")]).unwrap(),
+            builtin("from_base64", &[s("YQ==")]).unwrap(),
             Datum::new_bytes_datum(b"a".to_vec())
         );
         assert_eq!(
-            from_base64(&[s("YWI=")]).unwrap(),
+            builtin("from_base64", &[s("YWI=")]).unwrap(),
             Datum::new_bytes_datum(b"ab".to_vec())
         );
-        assert!(from_base64(&[]).is_err());
-        assert!(from_base64(&[s("YWJj"), s("extra")]).is_err());
     }
-}
-
-/// `ORD(s)`: the character-code of the leftmost character — for a
-/// single-byte (ASCII) char its byte value, for a multibyte char its UTF-8
-/// bytes folded as a base-256 number (`ORD('A')` = 65, `ORD('é')` = 50089).
-/// `0` for the empty string; `NULL` propagates.
-pub(crate) fn ord(vals: &[Datum]) -> Result<Datum, EvalError> {
-    ord_with_type(vals, None)
 }
 
 /// Go `builtinOrdSig.evalInt` with the argument's declared charset. The
@@ -2427,7 +2353,7 @@ mod export_set_tests {
 
     #[test]
     fn export_set_is_reachable_through_the_values_dispatch() {
-        let result = crate::func::eval_func_values(
+        let result = crate::tests::eval_builtin_func(
             "EXPORT_SET",
             &[Datum::Int(5), d("Y"), d("N"), d(","), Datum::Int(4)],
             &tidb_exprctx::context::NoColumns,
