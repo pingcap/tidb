@@ -39,6 +39,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
+<<<<<<< HEAD
+=======
+	pderr "github.com/tikv/pd/client/errs"
+	"go.uber.org/atomic"
+>>>>>>> 08e20a9ea20 (ddl: retry transient PD TSO stream errors during reorg (#71080))
 )
 
 func TestDoneTaskKeeper(t *testing.T) {
@@ -63,6 +68,140 @@ func TestDoneTaskKeeper(t *testing.T) {
 	require.True(t, bytes.Equal(n.nextKey, kv.Key("h")))
 }
 
+<<<<<<< HEAD
+=======
+func TestBackfillRetryableErrors(t *testing.T) {
+	t.Run("index info not found is non-retryable for executor", func(t *testing.T) {
+		err := errors.Annotatef(errIndexInfoNotFound, "index info not found: %d", 1)
+		require.True(t, isIndexInfoNotFoundErr(err))
+		require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
+	})
+
+	t.Run("too many data files is non-retryable for scheduler", func(t *testing.T) {
+		err := fmt.Errorf(
+			"generate merge-sort plan failed: %w",
+			errdef.ErrTooManyDataFiles.GenWithStackByArgs(1000, 1, 250),
+		)
+		sch := &LitBackfillScheduler{}
+		require.False(t, sch.IsRetryableErr(err))
+		require.True(t, sch.IsRetryableErr(errors.New("temporary scheduler error")))
+	})
+
+	t.Run("local-sort disk probe errors are retryable", func(t *testing.T) {
+		err := errors.New("mock local sort disk probe failed")
+		require.True(t, (&backfillDistExecutor{}).IsRetryableError(err))
+	})
+
+	t.Run("confirmed insufficient local-sort disk is not retryable", func(t *testing.T) {
+		err := dbterror.ErrIngestCheckEnvFailed.FastGenByArgs("mock insufficient local sort disk space")
+		require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
+	})
+
+	t.Run("PD TSO stream errors are retryable", func(t *testing.T) {
+		errs := []error{
+			pderr.ErrClientCreateTSOStream.FastGenByArgs(pderr.RetryTimeoutErr),
+			pderr.ErrClientTSOStreamClosed.GenWithStackByArgs(),
+		}
+		for _, err := range errs {
+			require.True(t, isRetryableError(err, false))
+			require.True(t, isRetryableError(errors.Annotate(err, "wrapped"), false))
+			require.True(t, (&backfillDistExecutor{}).IsRetryableError(err))
+
+			// The local ingest path checks for duplicate keys before classifying
+			// the reorg error. PD errors must retain their identity across it.
+			convertedErr := ingest.TryConvertToKeyExistsErr(err, &model.IndexInfo{}, &model.TableInfo{})
+			require.ErrorIs(t, convertedErr, err)
+			require.True(t, isRetryableJobError(convertedErr, 0))
+			require.False(t, isRetryableJobError(convertedErr, vardef.GetDDLErrorCountLimit()-1))
+		}
+	})
+
+	t.Run("unrelated PD errors are not made retryable", func(t *testing.T) {
+		err := pderr.ErrClientProtoUnmarshal.FastGenByArgs("invalid response")
+		require.False(t, isRetryableError(err, false))
+	})
+}
+
+func TestBuildIndexConditionCheckerUsesFixedCollation(t *testing.T) {
+	origin := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(origin)
+
+	originBuildSimpleExpr := expression.BuildSimpleExpr
+	defer func() {
+		expression.BuildSimpleExpr = originBuildSimpleExpr
+	}()
+	expression.BuildSimpleExpr = func(ctx expression.BuildContext, _ ast.ExprNode, opts ...expression.BuildOption) (expression.Expression, error) {
+		var options expression.BuildOptions
+		for _, opt := range opts {
+			opt(&options)
+		}
+		if options.InputSchema == nil {
+			return expression.NewOne(), nil
+		}
+		constantTp := types.NewFieldTypeWithCollation(mysql.TypeVarchar, "utf8mb4_general_ci", 16)
+		return expression.NewFunction(
+			ctx,
+			ast.EQ,
+			types.NewFieldType(mysql.TypeTiny),
+			options.InputSchema.Columns[0],
+			&expression.Constant{Value: types.NewDatum("A"), RetType: constantTp},
+		)
+	}
+
+	colTp := types.NewFieldTypeWithCollation(mysql.TypeVarchar, "utf8mb4_general_ci", 16)
+	colInfo := &model.ColumnInfo{
+		ID:        1,
+		Offset:    0,
+		Name:      ast.NewCIStr("c0"),
+		FieldType: *colTp,
+		State:     model.StatePublic,
+	}
+	idxInfo := &model.IndexInfo{
+		ID:                  1,
+		Name:                ast.NewCIStr("idx"),
+		Columns:             []*model.IndexColumn{{Name: colInfo.Name, Offset: colInfo.Offset}},
+		State:               model.StatePublic,
+		ConditionExprString: "c0 = 'A'",
+	}
+	tblInfo := &model.TableInfo{
+		Name:    ast.NewCIStr("t"),
+		Columns: []*model.ColumnInfo{colInfo},
+		Indices: []*model.IndexInfo{idxInfo},
+	}
+
+	sctx := mock.NewContext()
+	exprCtx := sctx.ExprContext.IntoStatic()
+	copCtx, err := copr.NewCopContextSingleIndex(
+		exprCtx.Apply(exprstatic.WithNewCollationEnabled(false)),
+		sctx.GetSessionVars().StmtCtx.PushDownFlags(),
+		tblInfo,
+		idxInfo,
+		"",
+	)
+	require.NoError(t, err)
+	checker, err := buildIndexConditionChecker(copCtx, tblInfo, idxInfo)
+	require.NoError(t, err)
+	matched, err := checker(chunk.MutRowFromValues("a").ToRow())
+	require.NoError(t, err)
+	require.False(t, matched)
+
+	copCtx, err = copr.NewCopContextSingleIndex(
+		exprCtx.Apply(exprstatic.WithNewCollationEnabled(true)),
+		sctx.GetSessionVars().StmtCtx.PushDownFlags(),
+		tblInfo,
+		idxInfo,
+		"",
+	)
+	require.NoError(t, err)
+	checker, err = buildIndexConditionChecker(copCtx, tblInfo, idxInfo)
+	require.NoError(t, err)
+	matched, err = checker(chunk.MutRowFromValues("a").ToRow())
+	require.NoError(t, err)
+	require.True(t, matched)
+}
+
+>>>>>>> 08e20a9ea20 (ddl: retry transient PD TSO stream errors during reorg (#71080))
 func TestPickBackfillType(t *testing.T) {
 	ingest.LitDiskRoot = ingest.NewDiskRootImpl(t.TempDir())
 	ingest.LitMemRoot = ingest.NewMemRootImpl(math.MaxInt64)
