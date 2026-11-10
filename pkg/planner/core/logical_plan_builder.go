@@ -434,6 +434,11 @@ func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsCla
 func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSetNode, isCTE bool) (p base.LogicalPlan, err error) {
 	//If it is building the CTE queries, we will mark them.
 	b.isCTE = isCTE
+	// Mark that we are inside a result-set node so that derived-table subqueries
+	// do not apply AT RESULT masking (the outer query needs original values).
+	oldBuildingResultSetNode := b.buildingResultSetNode
+	b.buildingResultSetNode = true
+	defer func() { b.buildingResultSetNode = oldBuildingResultSetNode }()
 	switch x := node.(type) {
 	case *ast.Join:
 		return b.buildJoin(ctx, x)
@@ -1623,6 +1628,47 @@ func buildExpandFieldName(ctx expression.EvalContext, expr expression.Expression
 	return newName
 }
 
+func (b *PlanBuilder) findMaskingPolicy(_ context.Context, name *types.FieldName, col *expression.Column) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo) {
+	if b.is == nil || name == nil {
+		return nil, nil, nil
+	}
+	tblName := name.OrigTblName
+	colName := name.OrigColName
+	if tblName.L == "" {
+		tblName = name.TblName
+	}
+	if colName.L == "" {
+		colName = name.ColName
+	}
+	dbName := name.DBName
+	if dbName.L == "" {
+		dbName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	}
+	if dbName.L == "" {
+		return nil, nil, nil
+	}
+	tbl, err := b.is.TableByName(context.Background(), dbName, tblName)
+	if err != nil {
+		return nil, nil, nil
+	}
+	tblInfo := tbl.Meta()
+	if tblInfo == nil {
+		return nil, nil, nil
+	}
+	colInfo := tblInfo.FindPublicColumnByName(colName.L)
+	if colInfo == nil {
+		return nil, nil, nil
+	}
+	if colInfo.ID != col.ID {
+		return nil, nil, nil
+	}
+	policy, ok := b.is.MaskingPolicyByTableColumn(tblInfo.ID, colInfo.ID)
+	if !ok || policy == nil {
+		return nil, nil, nil
+	}
+	return policy, tblInfo, colInfo
+}
+
 // buildProjectionField builds the field object according to SelectField in projection.
 func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPlan, field *ast.SelectField, expr expression.Expression) (*expression.Column, *types.FieldName, error) {
 	var origTblName, tblName, origColName, colName, dbName ast.CIStr
@@ -2168,10 +2214,17 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *logicalop.Logi
 		resultTp.SetCharset(collation.Charset)
 		resultTp.SetCollate(collation.Collation)
 		b.setUnionFlen(resultTp, tmpExprs)
-		names = append(names, &types.FieldName{ColName: u.Children()[0].OutputNames()[i].ColName})
+		firstChildNames := u.Children()[0].OutputNames()
+		names = append(names, &types.FieldName{
+			DBName:      firstChildNames[i].DBName,
+			OrigTblName: firstChildNames[i].OrigTblName,
+			OrigColName: firstChildNames[i].OrigColName,
+			ColName:     firstChildNames[i].ColName,
+		})
 		unionCols = append(unionCols, &expression.Column{
 			RetType:  resultTp,
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ID:       col.ID,
 		})
 	}
 	u.SetSchema(expression.NewSchema(unionCols...))
@@ -2215,6 +2268,10 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 			return nil, err
 		}
 	}
+
+	// Track nesting depth so masking is applied only on the outermost set-operator result.
+	b.buildingSetOprOperands++
+	defer func() { b.buildingSetOprOperands-- }()
 
 	// Because INTERSECT has higher precedence than UNION and EXCEPT. We build it first.
 	selectPlans := make([]base.LogicalPlan, 0, len(setOpr.SelectList.Selects))
@@ -2290,8 +2347,20 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 		}
 		proj.SetOutputNames(setOprPlan.OutputNames()[:oldLen])
 		proj.SetSchema(schema)
-		return b.tryToBuildSequence(currentLayerCTEs, proj), nil
+		setOprPlan = proj
 	}
+
+	if b.buildingSetOprOperands == 1 && !b.isCTE && !b.buildingCTE && !b.buildingResultSetNode {
+		// Apply masking at the final result stage (AT RESULT semantics).
+		// This ensures set operators (UNION/INTERSECT/EXCEPT) use original values.
+		// For CTEs and derived tables, we skip masking here because they should
+		// preserve original values for correct outer filtering/joining.
+		setOprPlan, err = b.buildFinalProjectionWithMasking(ctx, setOprPlan, oldLen)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return b.tryToBuildSequence(currentLayerCTEs, setOprPlan), nil
 }
 
@@ -4707,7 +4776,19 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		}
 		proj.SetOutputNames(p.OutputNames()[:oldLen])
 		proj.SetSchema(schema)
-		return b.tryToBuildSequence(currentLayerCTEs, proj), nil
+		p = proj
+	}
+
+	// Apply masking at the final result stage (AT RESULT semantics).
+	// This ensures HAVING, ORDER BY, set operators, etc. all used original values.
+	// For CTEs, we skip masking here because:
+	// 1. CTE definitions should preserve original values for correct filtering/joining
+	// 2. Masking is applied when CTE results are materialized to the final output
+	if b.buildingSetOprOperands == 0 && !b.isCTE && !b.buildingCTE && !b.buildingResultSetNode {
+		p, err = b.buildFinalProjectionWithMasking(ctx, p, oldLen)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return b.tryToBuildSequence(currentLayerCTEs, p), nil
@@ -4993,6 +5074,16 @@ func (b *PlanBuilder) computeCTEInlineFlag(cte *cteInfo) {
 }
 
 func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.CommonTableExpression) (base.LogicalPlan, error) {
+	// Set b.isCTE to true to ensure masking is skipped during CTE definition building.
+	// This preserves original values in CTE for correct WHERE/HAVING/GROUP BY behavior.
+	// Note: we do NOT set b.buildingCTE here — that flag has a specific meaning for
+	// recursive CTE tracking and requires b.outerCTEs to be non-empty.
+	oldIsCTE := b.isCTE
+	b.isCTE = true
+	defer func() {
+		b.isCTE = oldIsCTE
+	}()
+
 	p, err := b.buildResultSetNode(ctx, cte.Query.Query, true)
 	if err != nil {
 		return nil, err
@@ -5000,6 +5091,14 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 	b.handleHelper.popMap()
 	outPutNames := p.OutputNames()
 	for _, name := range outPutNames {
+		// Preserve OrigTblName and OrigColName for masking policy lookup.
+		// If they are not set, copy from TblName and ColName before overwriting.
+		if name.OrigTblName.L == "" {
+			name.OrigTblName = name.TblName
+		}
+		if name.OrigColName.L == "" {
+			name.OrigColName = name.ColName
+		}
 		name.TblName = cte.Name
 		name.DBName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 	}
@@ -5009,6 +5108,10 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 			return nil, errors.New("CTE columns length is not consistent")
 		}
 		for i, n := range cte.ColNameList {
+			// Preserve original column name before overwriting.
+			if outPutNames[i].OrigColName.L == "" {
+				outPutNames[i].OrigColName = outPutNames[i].ColName
+			}
 			outPutNames[i].ColName = n
 		}
 	}
@@ -8084,7 +8187,12 @@ func (b *PlanBuilder) adjustCTEPlanOutputName(p base.LogicalPlan, def *ast.Commo
 		}
 		for i, n := range def.ColNameList {
 			clonedNames[i].ColName = n
-			clonedNames[i].OrigColName = n
+			// Preserve OrigColName for masking policy lookup — it points to the
+			// real source column name, which is needed for policy resolution.
+			// Only set OrigColName when it wasn't already set by the CTE merge path.
+			if clonedNames[i].OrigColName.L == "" {
+				clonedNames[i].OrigColName = n
+			}
 		}
 	}
 	p.SetOutputNames(clonedNames)

@@ -73,6 +73,47 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestMaskingPolicyResultTypes(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create table t_mask_result(id int primary key, c tinyint)")
+		dbt.MustExec("insert into t_mask_result values (1, 1), (2, 2)")
+		dbt.MustExec("create masking policy p_result on t_mask_result(c) as c + 1000 enable")
+		for _, tc := range []struct {
+			query  string
+			values []int
+		}{
+			{query: "select c from t_mask_result where id = 1", values: []int{1001}},
+			{query: "select c from t_mask_result where id in (1, 2)", values: []int{1001, 1002}},
+		} {
+			for _, prepared := range []bool{false, true} {
+				var rows *sql.Rows
+				if prepared {
+					stmt := dbt.MustPrepare(tc.query)
+					defer stmt.Close()
+					var err error
+					rows, err = stmt.Query()
+					require.NoError(t, err)
+				} else {
+					rows = dbt.MustQuery(tc.query)
+				}
+				columnTypes, err := rows.ColumnTypes()
+				require.NoError(t, err)
+				require.Equal(t, "BIGINT", columnTypes[0].DatabaseTypeName())
+				var values []int
+				for rows.Next() {
+					var got int
+					require.NoError(t, rows.Scan(&got))
+					values = append(values, got)
+				}
+				require.ElementsMatch(t, tc.values, values)
+				require.NoError(t, rows.Err())
+				require.NoError(t, rows.Close())
+			}
+		}
+	})
+}
+
 func TestVectorTypeTextProtocol(t *testing.T) {
 	// Text protocol is used in non-prepared query (COM_QUERY).
 	// See https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_text_resultset.html

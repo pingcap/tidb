@@ -80,6 +80,9 @@ var dynamicPrivs = []string{
 	"TRAFFIC_CAPTURE_ADMIN",           // Can capture traffic
 	"TRAFFIC_REPLAY_ADMIN",            // Can replay traffic
 	"APPLICATION_PASSWORD_ADMIN",      // Self-service RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD; cross-user retain/discard requires CREATE USER.
+	"CREATE MASKING POLICY",           // Can create masking policy
+	"ALTER MASKING POLICY",            // Can alter masking policy
+	"DROP MASKING POLICY",             // Can drop masking policy
 }
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute

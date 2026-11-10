@@ -1521,12 +1521,31 @@ func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.Correla
 
 func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, v *ast.SubqueryExpr) bool {
 	intest.AssertNotNil(planCtx)
+	resultField := planCtx.curClause == fieldList
 	ci := planCtx.builder.prepareCTECheckForSubQuery()
 	defer resetCTECheckForSubQuery(ci)
+	savedClause := planCtx.builder.curClause
 	np, hintFlags, err := er.buildSubquery(ctx, planCtx, v, handlingScalarSubquery)
+	planCtx.builder.curClause = savedClause
 	if err != nil {
 		er.err = err
 		return true
+	}
+	if resultField && planCtx.builder.maskingEnabled() {
+		// Scalar preprocessing may turn the raw result into a constant, losing
+		// its policy identity before the outer final projection can inspect it.
+		m := maskingResultBuilder{b: planCtx.builder, ctx: ctx, outerPlan: planCtx.plan, cache: make(map[maskingResultKey]maskingResult)}
+		for _, col := range np.Schema().Columns {
+			result, err := m.column(np, col)
+			if err != nil {
+				er.err = err
+				return true
+			}
+			if result.masked {
+				er.err = errors.New("masking policy cannot be preserved through scalar subquery")
+				return true
+			}
+		}
 	}
 	np = planCtx.builder.buildMaxOneRow(np)
 	correlatedColumn := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
