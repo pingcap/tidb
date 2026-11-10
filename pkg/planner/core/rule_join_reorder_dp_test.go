@@ -264,8 +264,9 @@ func TestInjectedJoinExprMaterializationSafety(t *testing.T) {
 		expr2 := makeRandPlusCol(baseCol)
 		require.True(t, expression.ExpressionsSemanticEqual(expr1, expr2))
 
-		plan, injected1 := solver.injectExpr(plan, expr1)
-		plan, injected2 := solver.injectExpr(plan, expr2)
+		origPlan := plan
+		plan, injected1 := solver.injectExpr(plan, origPlan, expr1)
+		plan, injected2 := solver.injectExpr(plan, origPlan, expr2)
 
 		proj, ok := plan.(*logicalop.LogicalProjection)
 		require.True(t, ok)
@@ -289,10 +290,12 @@ func TestInjectedJoinExprMaterializationSafety(t *testing.T) {
 		derivedCol := proj.AppendExpr(derivedExpr)
 
 		exprUsingProjOutput := expression.NewFunctionInternal(ctx, ast.Plus, types.NewFieldType(mysql.TypeLonglong), derivedCol, expression.NewOne())
-		newPlan, injectedCol := solver.injectExpr(proj, exprUsingProjOutput)
+		newPlan, injectedCol := solver.injectExpr(proj, proj, exprUsingProjOutput)
 
 		newProj, ok := newPlan.(*logicalop.LogicalProjection)
 		require.True(t, ok)
+		require.NotSame(t, proj, newProj)
+		require.Len(t, proj.Exprs, 2)
 		require.NotNil(t, injectedCol)
 		require.Len(t, newProj.Exprs, 3)
 

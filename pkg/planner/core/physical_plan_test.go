@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -367,6 +368,14 @@ func TestJoinHintCompatibilityWithVariable(t *testing.T) {
 		tk.MustExec("select /*+ leading(t2), hash_join(t2) */ * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.b = t3.b;")
 		res := tk.MustQuery("show warnings").Rows()
 		require.Equal(t, len(res) > 0, true)
+	})
+}
+
+func TestJoinHintRebindAfterSubqueryOptimization(t *testing.T) {
+	// Issue #65838: join-method hints on joins whose children are rebuilt by recursive
+	// join-group optimization must retain their vertex binding and warnings.
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
 		tk.MustExec("drop table if exists table_insurant, table_house, table_role_connection")
 		tk.MustExec("create table table_insurant(actualid varchar(32), serialNo varchar(32), key idx_actualid(actualid))")
 		tk.MustExec("create table table_house(actualid varchar(32), planNo varchar(32), topId varchar(32), insurantNo varchar(32), key idx_actualid(actualid), key idx_insurantNo(insurantNo))")
@@ -438,8 +447,16 @@ from
 				require.NotEmpty(t, shuffleWarns)
 				require.Equal(t, "The join can not push down to the MPP side, the shuffle_join() hint is invalid", shuffleWarns[0][2])
 
-				tk.MustHavePlan(buildSQL("merge_join(t1)"), "MergeJoin")
+				planRows := tk.MustQuery("explain format = 'plan_tree' " + buildSQL("merge_join(t1)")).Rows()
 				tk.MustQuery("show warnings").Check(testkit.Rows())
+				hasT1T2MergeJoin := slices.ContainsFunc(planRows, func(row []any) bool {
+					idCol := fmt.Sprint(row[0])
+					opInfo := fmt.Sprint(row[3])
+					return strings.Contains(idCol, "MergeJoin") &&
+						strings.Contains(opInfo, "test.table_insurant.serialno") &&
+						strings.Contains(opInfo, "test.table_house.insurantno")
+				})
+				require.True(t, hasT1T2MergeJoin, "expected MergeJoin between t1 and t2 for advReorder=%d advHint=%d, got plan: %v", advReorder, advHint, planRows)
 			}
 		}
 	})

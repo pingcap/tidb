@@ -689,6 +689,7 @@ func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode base.LogicalP
 // connect two different join-group nodes.
 func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan base.LogicalPlan) (leftNode, rightNode base.LogicalPlan, usedEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg) {
 	joinType = &joinTypeWithExtMsg{JoinType: base.InnerJoin}
+	origLeft, origRight := leftPlan, rightPlan
 	leftNode, rightNode = leftPlan, rightPlan
 	for idx, edge := range s.eqEdges {
 		lArg, rArg, lCols, rCols, ok := joinorder.GetEqEdgeArgsAndCols(edge)
@@ -714,7 +715,7 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 		joinType = s.joinTypes[idx]
 		if !swapped {
 			// Normal order: lArg from left, rArg from right.
-			newEdge := s.buildJoinEdge(edge, lExpr, rExpr, &leftPlan, &rightPlan)
+			newEdge := s.buildJoinEdge(edge, lExpr, rExpr, &leftPlan, &rightPlan, origLeft, origRight)
 			leftNode, rightNode = leftPlan, rightPlan
 			usedEdges = append(usedEdges, newEdge)
 			continue
@@ -724,14 +725,14 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 		if joinType.JoinType != base.InnerJoin {
 			// For outer joins, keep outer/inner side semantics by swapping the node positions.
 			// Note: buildJoinEdge may inject projections, so we must set leftNode/rightNode AFTER it.
-			newEdge := s.buildJoinEdge(edge, lArg, rArg, &rightPlan, &leftPlan)
+			newEdge := s.buildJoinEdge(edge, lArg, rArg, &rightPlan, &leftPlan, origRight, origLeft)
 			leftNode, rightNode = rightPlan, leftPlan
 			usedEdges = append(usedEdges, newEdge)
 			continue
 		}
 
 		// For inner joins, keep the node positions but swap the arguments (already aligned by alignJoinEdgeArgs).
-		newEdge := s.buildJoinEdge(edge, lExpr, rExpr, &leftPlan, &rightPlan)
+		newEdge := s.buildJoinEdge(edge, lExpr, rExpr, &leftPlan, &rightPlan, origLeft, origRight)
 		leftNode, rightNode = leftPlan, rightPlan
 		usedEdges = append(usedEdges, newEdge)
 	}
@@ -769,6 +770,7 @@ func (s *baseSingleGroupJoinOrderSolver) buildJoinEdge(
 	originalEdge *expression.ScalarFunction,
 	lExpr, rExpr expression.Expression,
 	leftPlan, rightPlan *base.LogicalPlan,
+	origLeft, origRight base.LogicalPlan,
 ) *expression.ScalarFunction {
 	funcName := originalEdge.FuncName.L
 
@@ -784,10 +786,10 @@ func (s *baseSingleGroupJoinOrderSolver) buildJoinEdge(
 
 	// Need to inject projections for non-column expressions
 	if !lIsCol {
-		*leftPlan, lCol = s.injectExpr(*leftPlan, lExpr)
+		*leftPlan, lCol = s.injectExpr(*leftPlan, origLeft, lExpr)
 	}
 	if !rIsCol {
-		*rightPlan, rCol = s.injectExpr(*rightPlan, rExpr)
+		*rightPlan, rCol = s.injectExpr(*rightPlan, origRight, rExpr)
 	}
 
 	// Create the final edge with column arguments
@@ -800,49 +802,14 @@ func (s *baseSingleGroupJoinOrderSolver) buildJoinEdge(
 	return newSf.(*expression.ScalarFunction)
 }
 
-func canReuseInjectedJoinExpr(expr expression.Expression) bool {
-	return !expression.IsMutableEffectsExpr(expr) && !expression.CheckNonDeterministic(expr)
-}
-
 // injectExpr materializes expr as a column on top of p so rewritten join edges can keep using
-// column arguments only.
-//
-// If p is already a projection, we append/reuse the expression there. Otherwise we wrap p in a
-// pass-through projection first, so the new derived column stays local to this branch and the
-// branch's output schema remains explicit for later join construction.
-//
-// When possible, we reuse an existing semantically equivalent deterministic expression instead of
-// appending a duplicate column. This keeps the rewritten join tree smaller and prevents repeated
-// materialization when multiple join edges need the same derived expression.
-func (s *baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
-	originalPlanID := p.ID()
-	proj, ok := p.(*logicalop.LogicalProjection)
-	if !ok {
-		// Build a pass-through projection so the injected expression has a stable output column
-		// without changing the child's original outputs.
-		proj = logicalop.LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
-		proj.SetSchema(p.Schema().Clone())
-		proj.SetChildren(p)
-		if s != nil {
-			joinorder.PropagateJoinMethodHint(s.joinMethodHintInfo, originalPlanID, proj.ID())
-		}
+// column arguments only, cloning shared candidate LogicalProjections copy-on-write when p == origPlan.
+func (s *baseSingleGroupJoinOrderSolver) injectExpr(p, origPlan base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
+	var hints map[int]*joinorder.JoinMethodHint
+	if s != nil {
+		hints = s.joinMethodHintInfo
 	}
-	// Avoid injecting duplicate expressions into the same projection.
-	// This keeps plans smaller when multiple join edges need the same deterministic expression.
-	// We substitute through the current projection first so reuse works even when proj already
-	// contains previously injected expressions or pass-through aliases.
-	substituted := expression.ColumnSubstitute(proj.SCtx().GetExprCtx(), expr, proj.Schema(), proj.Exprs)
-	if canReuseInjectedJoinExpr(substituted) {
-		for i, e := range proj.Exprs {
-			if expression.ExpressionsSemanticEqual(e, substituted) {
-				return proj, proj.Schema().Columns[i]
-			}
-		}
-	}
-	// AppendExpr substitutes against the current projection schema again, so passing
-	// the original expr is intentional here. Using the pre-substituted child-space
-	// expression would incorrectly rematerialize non-reusable projection outputs.
-	return proj, proj.AppendExpr(expr)
+	return joinorder.InjectJoinExpr(p, expr, p == origPlan, hints)
 }
 
 // makeJoin build join tree for the nodes which have equal conditions to connect them.

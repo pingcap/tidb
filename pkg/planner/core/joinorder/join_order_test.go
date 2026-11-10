@@ -195,3 +195,101 @@ func TestMakeJoinAlignEQCondsPropagatesVertexHint(t *testing.T) {
 	require.NotZero(t, joinedPlan.PreferJoinType&hint.PreferRightAsINLJInner)
 	require.Same(t, planHints, joinedPlan.HintInfo)
 }
+
+func TestMakeJoinProjectionVertexIsolationAndDedup(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	t.Cleanup(func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	})
+
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	col1 := &expression.Column{UniqueID: ctx.GetSessionVars().AllocPlanColumnID(), RetType: intTp}
+	baseCol2 := &expression.Column{UniqueID: ctx.GetSessionVars().AllocPlanColumnID(), RetType: intTp}
+	projCol2 := &expression.Column{UniqueID: ctx.GetSessionVars().AllocPlanColumnID(), RetType: intTp}
+
+	leftLeaf := logicalop.LogicalTableDual{RowCount: 10}.Init(ctx, 0)
+	leftLeaf.SetSchema(expression.NewSchema(col1))
+
+	rightChild := logicalop.LogicalTableDual{RowCount: 10}.Init(ctx, 0)
+	rightChild.SetSchema(expression.NewSchema(baseCol2))
+
+	rightProj := logicalop.LogicalProjection{
+		Exprs: []expression.Expression{baseCol2},
+	}.Init(ctx, 0)
+	rightProj.SetSchema(expression.NewSchema(projCol2))
+	rightProj.SetOutputNames(types.NameSlice{{
+		DBName:  ast.NewCIStr("test"),
+		TblName: ast.NewCIStr("dt"),
+		ColName: ast.NewCIStr("c2"),
+	}})
+	rightProj.SetChildren(rightChild)
+
+	plusExpr := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.Plus, intTp, projCol2, expression.NewOne())
+	eqCond := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), plusExpr, col1).(*expression.ScalarFunction)
+
+	origJoin := logicalop.LogicalJoin{
+		JoinType:        base.InnerJoin,
+		EqualConditions: []*expression.ScalarFunction{eqCond},
+	}.Init(ctx, 0)
+	origJoin.SetChildren(rightProj, leftLeaf)
+	origJoin.SetSchema(expression.MergeSchema(rightProj.Schema(), leftLeaf.Schema()))
+
+	group := &joinGroup{
+		root:         origJoin,
+		vertexes:     []base.LogicalPlan{rightProj, leftLeaf},
+		allInnerJoin: true,
+	}
+	detector := newConflictDetector(ctx)
+	nodes, err := detector.Build(group)
+	require.NoError(t, err)
+	require.Len(t, nodes, 2)
+
+	nodeLeft := nodes[1]
+	nodeRight := nodes[0]
+	require.Same(t, leftLeaf, nodeLeft.p)
+	require.Same(t, rightProj, nodeRight.p)
+
+	checkResult, err := detector.CheckConnection(nodeLeft, nodeRight)
+	require.NoError(t, err)
+	require.True(t, checkResult.Connected())
+
+	planHints := &hint.PlanHints{}
+	vertexHints := map[int]*JoinMethodHint{
+		rightProj.ID(): {
+			PreferJoinMethod: hint.PreferINLJ,
+			HintInfo:         planHints,
+		},
+	}
+
+	// Simulate DP / multi-start Greedy invoking MakeJoin multiple times on the shared LogicalProjection vertex.
+	joined1, err := detector.MakeJoin(checkResult, vertexHints)
+	require.NoError(t, err)
+	joined2, err := detector.MakeJoin(checkResult, vertexHints)
+	require.NoError(t, err)
+
+	// Shared LogicalProjection vertex must not have its Exprs or Schema mutated in place.
+	require.Same(t, rightProj, nodeRight.p)
+	require.Len(t, rightProj.Exprs, 1)
+	require.Equal(t, 1, rightProj.Schema().Len())
+
+	for _, joined := range []*Node{joined1, joined2} {
+		joinedPlan, ok := joined.p.(*logicalop.LogicalJoin)
+		require.True(t, ok)
+		clonedProj, ok := joinedPlan.Children()[1].(*logicalop.LogicalProjection)
+		require.True(t, ok)
+		require.NotSame(t, rightProj, clonedProj)
+		require.Len(t, clonedProj.Exprs, 2)
+		require.Equal(t, 2, clonedProj.Schema().Len())
+		require.Equal(t, "dt", clonedProj.OutputNames()[0].TblName.L)
+		require.Equal(t, hint.PreferINLJ, joinedPlan.RightPreferJoinType)
+		require.Same(t, planHints, joinedPlan.HintInfo)
+	}
+
+	// When a shared LogicalProjection already projects an equivalent deterministic expression,
+	// InjectJoinExpr should reuse that existing column without cloning or appending a duplicate.
+	alreadyProjected := cloneLogicalProjection(joined1.p.(*logicalop.LogicalJoin).Children()[1].(*logicalop.LogicalProjection))
+	reusedPlan, reusedCol := InjectJoinExpr(alreadyProjected, plusExpr, true, vertexHints)
+	require.Same(t, alreadyProjected, reusedPlan)
+	require.Equal(t, alreadyProjected.Schema().Columns[1].UniqueID, reusedCol.UniqueID)
+	require.Len(t, alreadyProjected.Exprs, 2)
+}
