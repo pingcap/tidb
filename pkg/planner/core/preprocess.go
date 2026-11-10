@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -265,6 +266,236 @@ type preprocessor struct {
 	// useInfoSchemaAsIs keeps table resolution on the infoschema selected by the
 	// caller, instead of upgrading table metadata to the latest domain schema.
 	useInfoSchemaAsIs bool
+}
+
+type tableSourceCollector struct {
+	tableName []*ast.TableName
+}
+
+func (t *tableSourceCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	if ts, ok := in.(*ast.TableSource); ok {
+		if tblName, ok := ts.Source.(*ast.TableName); ok {
+			t.tableName = append(t.tableName, tblName)
+		}
+	}
+	return in, false
+}
+
+func (*tableSourceCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}
+
+func getAllDBNames(node *ast.TableRefsClause) []ast.CIStr {
+	if node == nil {
+		return nil
+	}
+	dbNames := make([]ast.CIStr, 0)
+	collector := tableSourceCollector{
+		tableName: make([]*ast.TableName, 0),
+	}
+	node.Accept(&collector)
+
+	for _, tblName := range collector.tableName {
+		dbNames = append(dbNames, tblName.Schema)
+	}
+	return dbNames
+}
+
+// resolveUpdatableTables collects updatable table names and registers synthesized
+// alias table names in resolveCtx.
+func (p *preprocessor) resolveUpdatableTables(node *ast.TableRefsClause) []*ast.TableName {
+	if node == nil {
+		return nil
+	}
+	resolver := &updatableTableListResolver{resolveCtx: p.resolveCtx}
+	ast.Walk(node, resolver)
+	return resolver.updatableTableList
+}
+
+func (p *preprocessor) schemasForMatchingTables(
+	tables []*ast.TableName,
+	match func(*ast.TableName, *resolve.TableNameW) bool,
+) []ast.CIStr {
+	dbNames := make([]ast.CIStr, 0, 1)
+	for _, tbl := range tables {
+		tblW := p.resolveCtx.GetTableName(tbl)
+		if tblW == nil || tblW.DBInfo == nil || !match(tbl, tblW) {
+			continue
+		}
+		dbNames = append(dbNames, tblW.DBInfo.Name)
+	}
+	return dbNames
+}
+
+func updateAssignmentTargetsTable(tableInfo *model.TableInfo, columnName string) bool {
+	if columnName == model.ExtraHandleName.L {
+		// _tidb_rowid is a synthesized handle rather than a public column and is
+		// only assignable when the table uses an implicit row ID.
+		return !tableInfo.PKIsHandle && !tableInfo.IsCommonHandle
+	}
+	for _, column := range tableInfo.Columns {
+		if column.State == model.StatePublic && column.Name.L == columnName {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *preprocessor) extractUpdateSchemas(node *ast.UpdateStmt) []ast.CIStr {
+	dbNames := make([]ast.CIStr, 0, len(node.List))
+	tables := p.resolveUpdatableTables(node.TableRefs)
+	for _, assignment := range node.List {
+		column := assignment.Column
+		if column.Schema.L != "" {
+			dbNames = append(dbNames, column.Schema)
+			continue
+		}
+
+		// Check every matching schema so name-resolution ambiguity cannot bypass
+		// the read-only guard. The planner reports invalid ambiguous assignments later.
+		dbNames = append(dbNames, p.schemasForMatchingTables(tables, func(tbl *ast.TableName, tblW *resolve.TableNameW) bool {
+			if tblW.TableInfo == nil || !updateAssignmentTargetsTable(tblW.TableInfo, column.Name.L) {
+				return false
+			}
+			return column.Table.L == "" || column.Table.L == tbl.Name.L
+		})...)
+	}
+	return dbNames
+}
+
+func (p *preprocessor) extractMultiDeleteSchemas(node *ast.DeleteStmt) []ast.CIStr {
+	dbNames := make([]ast.CIStr, 0, len(node.Tables.Tables))
+	updatableList := make(map[string]bool)
+	tableNameByKey := make(map[string]*ast.TableName)
+	collectTableName(node.TableRefs.TableRefs, &updatableList, &tableNameByKey)
+	for _, target := range node.Tables.Tables {
+		tbl, canUpdate, foundMatch := resolveMultiDeleteTarget(
+			target,
+			p.sctx.GetSessionVars().CurrentDB,
+			updatableList,
+			tableNameByKey,
+		)
+		if !foundMatch || !canUpdate {
+			// The planner reports the corresponding unknown or non-updatable table error.
+			continue
+		}
+		tblW := p.resolveCtx.GetTableName(tbl)
+		if tblW != nil && tblW.DBInfo != nil {
+			dbNames = append(dbNames, tblW.DBInfo.Name)
+		}
+	}
+	return dbNames
+}
+
+// extractSchema extracts the schemas modified by the statement for database read-only checks.
+func (p *preprocessor) extractSchema(in ast.Node) []ast.CIStr {
+	dbNames := make([]ast.CIStr, 0, 1)
+
+	switch node := in.(type) {
+	case *ast.CreateTableStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.CreateViewStmt:
+		dbNames = append(dbNames, node.ViewName.Schema)
+	case *ast.DropTableStmt:
+		for _, tbl := range node.Tables {
+			dbNames = append(dbNames, tbl.Schema)
+		}
+	case *ast.RenameTableStmt:
+		for _, tbl := range node.TableToTables {
+			dbNames = append(dbNames, tbl.OldTable.Schema)
+			dbNames = append(dbNames, tbl.NewTable.Schema)
+		}
+	case *ast.AlterDatabaseStmt:
+		dbName := node.Name
+		if node.AlterDefaultDatabase {
+			// buildDDL writes the resolved CurrentDB back to Name, so a prepared
+			// AST may retain the database used by an earlier plan build.
+			dbName = ast.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
+		}
+		for _, opt := range node.Options {
+			// Allow changing READ ONLY itself so a read-only database can be
+			// switched back to writable.
+			if opt.Tp != ast.DatabaseOptionReadOnly {
+				dbNames = append(dbNames, dbName)
+			}
+		}
+	case *ast.DropDatabaseStmt:
+		dbNames = append(dbNames, node.Name)
+	case *ast.CreateIndexStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.AlterTableStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+		for _, spec := range node.Specs {
+			if spec.NewTable != nil {
+				dbNames = append(dbNames, spec.NewTable.Schema)
+			}
+		}
+	case *ast.ImportIntoStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.TruncateTableStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.DropIndexStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.LoadDataStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.CreateSequenceStmt:
+		dbNames = append(dbNames, node.Name.Schema)
+	case *ast.AlterSequenceStmt:
+		dbNames = append(dbNames, node.Name.Schema)
+	case *ast.DropSequenceStmt:
+		for _, sequence := range node.Sequences {
+			dbNames = append(dbNames, sequence.Schema)
+		}
+	case *ast.InsertStmt:
+		dbNames = append(dbNames, getAllDBNames(node.Table)...)
+	case *ast.DeleteStmt:
+		if node.Tables != nil {
+			dbNames = append(dbNames, p.extractMultiDeleteSchemas(node)...)
+		} else {
+			// single table delete statement
+			dbNames = append(dbNames, getAllDBNames(node.TableRefs)...)
+		}
+	case *ast.UpdateStmt:
+		dbNames = append(dbNames, p.extractUpdateSchemas(node)...)
+	case *ast.SelectStmt:
+		if node.LockInfo != nil {
+			if logicalop.IsSelectForUpdateLockType(node.LockInfo.LockType) ||
+				(logicalop.IsSelectForShareLockType(node.LockInfo.LockType) && p.sctx.GetSessionVars().SharedLockPromotion) {
+				dbNames = append(dbNames, getAllDBNames(node.From)...)
+			}
+		}
+	}
+	return dbNames
+}
+
+func (p *preprocessor) checkSchemaReadOnlyInStmt(in ast.Node) {
+	dbNames := p.extractSchema(in)
+	for _, dbName := range dbNames {
+		p.checkSchemaReadOnly(dbName)
+	}
+}
+
+func (p *preprocessor) checkSchemaReadOnly(dbName ast.CIStr) {
+	if p.err != nil {
+		return
+	}
+
+	dbInfo, exists := p.ensureInfoSchema().SchemaByName(dbName)
+	if exists && dbInfo.ReadOnly {
+		// Allow replication threads with RESTRICTED_REPLICA_WRITER_ADMIN to bypass.
+		// Gate on User != nil so that internal/unauthenticated sessions (including
+		// mock-store test sessions where SkipWithGrant is true) are still blocked.
+		vars := p.sctx.GetSessionVars()
+		if vars.User != nil {
+			pm := privilege.GetPrivilegeManager(p.sctx)
+			if pm != nil {
+				if pm.HasExplicitlyGrantedDynamicPrivilege(vars.ActiveRoles, privilege.ReplicaWriterAdminPriv, false) {
+					return
+				}
+			}
+		}
+		p.err = errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(dbName.O))
+	}
 }
 
 func (p *preprocessor) Enter(in ast.Node) bool {
@@ -796,6 +1027,8 @@ func (p *preprocessor) Leave(in ast.Node) bool {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
 		}
 	}
+
+	p.checkSchemaReadOnlyInStmt(in)
 
 	return p.err == nil
 }
@@ -2340,6 +2573,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
+	dbInfo, _ := is.SchemaByName(dbName)
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
@@ -2361,6 +2595,10 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		tbl, err = latestIS.TableByName(ctx, dbName, tableInfo.Name)
 		if err != nil {
 			return nil, err
+		}
+		dbInfoLatest, _ := latestIS.SchemaByName(dbName)
+		if dbInfo.ReadOnly != dbInfoLatest.ReadOnly {
+			return nil, domain.ErrInfoSchemaChanged.GenWithStack("public schema %s read only state has changed", dbInfo.Name.L)
 		}
 		if !skipLock {
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tbl.Meta().ID, domainSchemaVer)

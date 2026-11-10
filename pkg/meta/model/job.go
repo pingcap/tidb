@@ -117,7 +117,7 @@ const (
 	ActionModifyEngineAttribute                 ActionType = 74
 	ActionAlterTableMode                        ActionType = 75
 	ActionRefreshMeta                           ActionType = 76
-	ActionModifySchemaReadOnly                  ActionType = 77 // reserve for database read-only feature
+	ActionModifySchemaReadOnly                  ActionType = 77
 	ActionAlterTableAffinity                    ActionType = 78
 	ActionAlterTableSoftDeleteInfo              ActionType = 79 // reserve for soft-delete feature
 	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 80 // reserve for soft-delete and active-active feature
@@ -306,6 +306,8 @@ const (
 	StateReplicaOnly
 	// StateGlobalTxnOnly means we can only use global txn for operator on this schema element
 	StateGlobalTxnOnly
+	// StatePendingReadOnly means this database is pending to be read-only.
+	StatePendingReadOnly
 	/*
 	 *  Please add the new state at the end to keep the values consistent across versions.
 	 */

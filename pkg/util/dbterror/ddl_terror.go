@@ -535,6 +535,8 @@ var (
 	ErrInvalidTableAffinity = ClassDDL.NewStd(mysql.ErrInvalidAffinityOption)
 	// ErrForbiddenDDL is returned when a DDL operation is forbidden.
 	ErrForbiddenDDL = ClassDDL.NewStd(mysql.ErrForbiddenDDL)
+	// ErrAccessSystemDBRejected is returned when access system database is rejected.
+	ErrAccessSystemDBRejected = ClassDDL.NewStd(mysql.ErrAccessSysDBRejected)
 )
 
 // ReorgRetryableErrCodes are the error codes that are retryable for reorganization.

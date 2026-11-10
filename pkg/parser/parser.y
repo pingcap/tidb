@@ -1190,6 +1190,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	LikeOrIlikeEscapeOpt                   "like or ilike escape option"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
+	AlterDatabaseOptionList                "Alter database option list"
 	AlterJobOptionList                     "Alter job option list"
 	AlterJobOption                         "Alter job option"
 	AlterTableSpecSingleOpt                "Alter table single option"
@@ -1253,6 +1254,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	DatabaseOption                         "CREATE Database specification"
 	DatabaseOptionList                     "CREATE Database specification list"
 	DatabaseOptionListOpt                  "CREATE Database specification list opt"
+	DatabaseReadOnlyOpt                    "Database read only option"
 	DistinctOpt                            "Explicit distinct option"
 	DefaultFalseDistinctOpt                "Distinct option which defaults to false"
 	DefaultTrueDistinctOpt                 "Distinct option which defaults to true"
@@ -4838,7 +4840,7 @@ IndexKeyTypeOpt:
  * | [DEFAULT] ENCRYPTION [=] {'Y' | 'N'}
  *******************************************************************************************/
 AlterDatabaseStmt:
-	"ALTER" DatabaseSym DBName DatabaseOptionList
+	"ALTER" DatabaseSym DBName AlterDatabaseOptionList
 	{
 		$$ = &ast.AlterDatabaseStmt{
 			Name:                 ast.NewCIStr($3),
@@ -4846,12 +4848,40 @@ AlterDatabaseStmt:
 			Options:              $4.([]*ast.DatabaseOption),
 		}
 	}
-|	"ALTER" DatabaseSym DatabaseOptionList
+|	"ALTER" DatabaseSym AlterDatabaseOptionList
 	{
 		$$ = &ast.AlterDatabaseStmt{
 			Name:                 ast.NewCIStr(""),
 			AlterDefaultDatabase: true,
 			Options:              $3.([]*ast.DatabaseOption),
+		}
+	}
+
+AlterDatabaseOptionList:
+	DatabaseOptionList
+|	"READ" "ONLY" EqOpt DatabaseReadOnlyOpt
+	{
+		$$ = []*ast.DatabaseOption{{
+			Tp:    ast.DatabaseOptionReadOnly,
+			Value: $4.(string),
+		}}
+	}
+
+DatabaseReadOnlyOpt:
+	"DEFAULT"
+	{
+		$$ = "DEFAULT"
+	}
+|	NUM
+	{
+		switch getUint64FromNUM($1) {
+		case 0:
+			$$ = "0"
+		case 1:
+			$$ = "1"
+		default:
+			yylex.AppendError(ErrSyntax)
+			return 1
 		}
 	}
 

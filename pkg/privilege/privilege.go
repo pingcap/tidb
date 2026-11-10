@@ -121,6 +121,10 @@ type Manager interface {
 	GetUserResources(user, host string) (int64, error)
 }
 
+// ReplicaWriterAdminPriv is the dynamic privilege name that allows a session
+// to write to databases that are in read-only mode (e.g. replication threads).
+const ReplicaWriterAdminPriv = "RESTRICTED_REPLICA_WRITER_ADMIN"
+
 const key keyType = 0
 
 // BindPrivilegeManager binds Manager to context.

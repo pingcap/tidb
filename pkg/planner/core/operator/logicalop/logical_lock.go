@@ -133,8 +133,9 @@ func (p *LogicalLock) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.Logica
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************
-// isSelectForUpdateLockType checks if the select lock type is the supported for update type.
-func isSelectForUpdateLockType(lockType ast.SelectLockType) bool {
+
+// IsSelectForUpdateLockType checks if the select lock type is the supported for update type.
+func IsSelectForUpdateLockType(lockType ast.SelectLockType) bool {
 	if lockType == ast.SelectLockForUpdate ||
 		lockType == ast.SelectLockForUpdateNoWait ||
 		lockType == ast.SelectLockForUpdateWaitN {
@@ -143,8 +144,8 @@ func isSelectForUpdateLockType(lockType ast.SelectLockType) bool {
 	return false
 }
 
-// isSelectForShareLockType checks if the select lock type is supported for  type.
-func isSelectForShareLockType(lockType ast.SelectLockType) bool {
+// IsSelectForShareLockType checks if the select lock type is supported for share type.
+func IsSelectForShareLockType(lockType ast.SelectLockType) bool {
 	if lockType == ast.SelectLockForShare ||
 		lockType == ast.SelectLockForShareNoWait {
 		return true
@@ -154,5 +155,5 @@ func isSelectForShareLockType(lockType ast.SelectLockType) bool {
 
 // IsSupportedSelectLockType checks if the lockType is supported to acquire pessimsitic locks if necessary.
 func IsSupportedSelectLockType(lockType ast.SelectLockType) bool {
-	return isSelectForUpdateLockType(lockType) || isSelectForShareLockType(lockType)
+	return IsSelectForUpdateLockType(lockType) || IsSelectForShareLockType(lockType)
 }
