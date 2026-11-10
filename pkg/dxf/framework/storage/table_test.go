@@ -456,41 +456,6 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 	require.NoError(t, err)
 	checkAfterSwitchStep(t, startTime, task2, subtasks2, proto.StepOne)
 
-	// Resume a partially committed step after scheduling selects different nodes.
-	for _, maxNodeCount := range []int{1, 2, 0} {
-		task4, subtasks4 := prepare(fmt.Sprintf("resume-placement-%d", maxNodeCount))
-		task4.MaxNodeCount = maxNodeCount
-		first := subtasks4[0]
-		_, err = sqlexec.ExecSQL(ctx, tk.Session(), `
-			insert into mysql.tidb_background_subtask(
-				step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary)
-			values (%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')`,
-			first.Step, first.TaskID, first.ExecID, first.Meta,
-			proto.SubtaskStatePending, proto.Type2Int(first.Type), first.Concurrency, first.Ordinal)
-		require.NoError(t, err)
-		usedSlots, err := tm.GetUsedSlotsOnNodes(ctx)
-		require.NoError(t, err)
-		require.GreaterOrEqual(t, usedSlots[":4000"], first.Concurrency)
-		for i, subtask := range subtasks4 {
-			subtask.ExecID = fmt.Sprintf(":%d", 4001+i%2)
-		}
-		require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task4, proto.TaskStateRunning, proto.StepOne, subtasks4))
-		resumed, err := tm.GetAllSubtasksByStepAndState(ctx, task4.ID, proto.StepOne, proto.SubtaskStatePending)
-		require.NoError(t, err)
-		require.Len(t, resumed, 3)
-		execIDs := make(map[string]struct{})
-		for _, subtask := range resumed {
-			execIDs[subtask.ExecID] = struct{}{}
-			require.Equal(t, subtasks4[subtask.Ordinal-1].Meta, subtask.Meta)
-		}
-		require.Contains(t, execIDs, ":4000")
-		if maxNodeCount > 0 {
-			require.Len(t, execIDs, maxNodeCount)
-		} else {
-			require.Len(t, execIDs, 3)
-		}
-	}
-
 	// mock subtasks unstable
 	task3, subtasks3 := prepare("key3")
 	for i := range 2 {

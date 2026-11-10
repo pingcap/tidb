@@ -990,43 +990,17 @@ func (mgr *TaskManager) SwitchTaskStepInBatch(
 	return mgr.WithNewSession(func(se sessionctx.Context) error {
 		// some subtasks may be inserted by other schedulers, we can skip them.
 		rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
-			select exec_id, count(1) from mysql.tidb_background_subtask
-			where task_key = %? and step = %? group by exec_id order by min(ordinal)`, TaskIDToKey(task.ID), nextStep)
+			select count(1) from mysql.tidb_background_subtask
+			where task_key = %? and step = %?`, TaskIDToKey(task.ID), nextStep)
 		if err != nil {
 			return err
 		}
-		existingTaskCnt := 0
-		execIDs := make([]string, 0, len(rs))
-		for _, row := range rs {
-			existingTaskCnt += int(row.GetInt64(1))
-			execIDs = append(execIDs, row.GetString(0))
-		}
+		existingTaskCnt := int(rs[0].GetInt64(0))
 		if existingTaskCnt > len(subtasks) {
 			return errors.Annotatef(ErrUnstableSubtasks, "expected %d, got %d",
 				len(subtasks), existingTaskCnt)
 		}
-		remaining := subtasks[existingTaskCnt:]
-		if existingTaskCnt > 0 && task.MaxNodeCount > 0 {
-			// A retry can select different nodes. Persisted batches already occupy
-			// part of MaxNodeCount, so include them when placing the remaining subtasks.
-			selected := make(map[string]struct{}, len(execIDs))
-			for _, execID := range execIDs {
-				selected[execID] = struct{}{}
-			}
-			for _, subtask := range remaining {
-				if len(execIDs) >= task.MaxNodeCount {
-					break
-				}
-				if _, ok := selected[subtask.ExecID]; !ok {
-					selected[subtask.ExecID] = struct{}{}
-					execIDs = append(execIDs, subtask.ExecID)
-				}
-			}
-			for i, subtask := range remaining {
-				subtask.ExecID = execIDs[(existingTaskCnt+i)%len(execIDs)]
-			}
-		}
-		subtaskBatches := mgr.splitSubtasks(remaining)
+		subtaskBatches := mgr.splitSubtasks(subtasks[existingTaskCnt:])
 		for _, batch := range subtaskBatches {
 			if err = mgr.insertSubtasks(ctx, se, batch); err != nil {
 				return err
