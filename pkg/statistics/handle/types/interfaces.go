@@ -530,3 +530,11 @@ type ReadWriterHandle interface {
 	UpdateStatsCache(update CacheUpdate)
 	Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error
 }
+
+// GlobalStatsHandle is the part of the stats handle that merging global statistics works on.
+type GlobalStatsHandle interface {
+	SPool() syssession.Pool
+	handleutil.TableInfoGetter
+	SaveColOrIdxStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
+		cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, updateAnalyzeTime bool) (err error)
+}

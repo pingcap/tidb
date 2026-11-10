@@ -30,11 +30,11 @@ import (
 
 // statsGlobalImpl implements util.StatsGlobal
 type statsGlobalImpl struct {
-	statsHandler statstypes.StatsHandle
+	statsHandler statstypes.GlobalStatsHandle
 }
 
 // NewStatsGlobal creates a new StatsGlobal.
-func NewStatsGlobal(statsHandler statstypes.StatsHandle) statstypes.StatsGlobal {
+func NewStatsGlobal(statsHandler statstypes.GlobalStatsHandle) statstypes.StatsGlobal {
 	return &statsGlobalImpl{statsHandler: statsHandler}
 }
 
@@ -84,7 +84,7 @@ func newGlobalStats(histCount int) *GlobalStats {
 // MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableInfo.
 func MergePartitionStats2GlobalStats(
 	sc sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
+	statsHandle statstypes.GlobalStatsHandle,
 	opts map[ast.AnalyzeOptionType]uint64,
 	is infoschema.InfoSchema,
 	globalTableInfo *model.TableInfo,
@@ -102,7 +102,7 @@ func MergePartitionStats2GlobalStats(
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
 func MergePartitionStats2GlobalStatsByTableID(
 	sc sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
+	statsHandle statstypes.GlobalStatsHandle,
 	opts map[ast.AnalyzeOptionType]uint64,
 	is infoschema.InfoSchema,
 	tableID int64,
@@ -156,7 +156,7 @@ func uniqueGlobalNDV(partitionHists []*statistics.Histogram, count int64) int64 
 }
 
 // WriteGlobalStatsToStorage is to write global stats to storage
-func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *GlobalStats, info *statstypes.GlobalStatsInfo, gid int64) (err error) {
+func WriteGlobalStatsToStorage(statsHandle statstypes.GlobalStatsHandle, globalStats *GlobalStats, info *statstypes.GlobalStatsInfo, gid int64) (err error) {
 	// Dump global-level stats to kv.
 	for i := range globalStats.Num {
 		hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]

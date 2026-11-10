@@ -92,7 +92,7 @@ func toSQLIndex(isIndex bool) int {
 // └────────────────────────┘        └───────────────────────┘
 type globalStatsMerger struct {
 	is                  infoschema.InfoSchema
-	statsHandle         statstypes.StatsHandle
+	statsHandle         statstypes.GlobalStatsHandle
 	globalStats         *GlobalStats
 	cmsketch            chan mergeItem[*statistics.CMSketch]
 	fmsketch            chan mergeItem[*statistics.FMSketch]
@@ -121,7 +121,7 @@ type globalStatsMerger struct {
 }
 
 func newGlobalStatsMerger(
-	statsHandle statstypes.StatsHandle,
+	statsHandle statstypes.GlobalStatsHandle,
 	globalTableInfo *model.TableInfo,
 	histIDs []int64,
 	is infoschema.InfoSchema) *globalStatsMerger {
