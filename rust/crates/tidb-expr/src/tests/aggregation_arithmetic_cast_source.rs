@@ -342,7 +342,10 @@ fn test_arithmetic_overflow_error_message_with_column_name() {
     );
 
     // The source regression also covers a derived column. The nested
-    // expression must retain both qualified names in the outer overflow.
+    // expression must retain both qualified names in the outer overflow; Go
+    // prints it through `ScalarFunction.StringWithCtx`:
+    // `BIGINT value is out of range in '(plus(test.t5.col7, test.t5.col2) *
+    // 9223372036854775807)'`.
     let mut left = Column::new(0, int_ft());
     left.orig_name = "t5.col7".to_owned();
     let mut right = Column::new(1, int_ft());
@@ -370,7 +373,7 @@ fn test_arithmetic_overflow_error_message_with_column_name() {
         error,
         EvalError::DataOutOfRange {
             value: "BIGINT",
-            expression: "((t5.col7 + t5.col2) * 9223372036854775807)".to_string(),
+            expression: "(plus(t5.col7, t5.col2) * 9223372036854775807)".to_string(),
         }
     );
 }

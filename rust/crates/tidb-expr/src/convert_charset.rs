@@ -138,6 +138,34 @@ pub fn needs_to_binary(prop: FuncProp, arg_charset: &str, result_charset: &str) 
     }
 }
 
+/// Go `HandleBinaryLiteral` for an implicit conversion (`explicitCast`
+/// false): wraps `expr`, an argument of `func_name` whose derived collation
+/// is `ec`, with `to_binary` or `from_binary`.
+pub(crate) fn handle_binary_literal(
+    ctx: &dyn crate::builtin::BuildContext,
+    expr: crate::expression::Expression,
+    ec: &crate::expr_collation::ExprCollation,
+    func_name: &str,
+) -> crate::expression::Expression {
+    let prop = func_prop(func_name);
+    let arg_charset = crate::wrap_cast::type_of(&expr).charset_name().to_owned();
+    if needs_to_binary(prop, &arg_charset, &ec.charset) {
+        return crate::rewriter::build_to_binary(expr, &|built| ctx.fold_constant(built));
+    }
+    if prop != FuncProp::Auto {
+        return expr;
+    }
+    let mut wrapped =
+        crate::rewriter::wrap_implicit_from_binary(expr, &ec.charset, &ec.collation);
+    if matches!(&wrapped, crate::expression::Expression::ScalarFunction(function)
+        if function.func_name.lowercase() == "from_binary")
+    {
+        // Go `BuildFromBinaryFunction` folds the new node.
+        ctx.fold_constant(&mut wrapped);
+    }
+    wrapped
+}
+
 /// Go `builtinInternalToBinarySig`: UTF-8 in, the argument charset's own
 /// encoded bytes out. An unrepresentable character is an error, not a
 /// replacement -- `OpEncode` carries `opTruncateTrim`, so the caller sees

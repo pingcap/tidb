@@ -45,6 +45,7 @@ mod pb_code_matrix_source;
 mod expression_with_null_source;
 mod filter_extract_dnf_source;
 mod find_in_set_lookup_source;
+mod function_class_source;
 mod function_traits_source;
 mod go_arithmetic_values;
 mod go_control_op_math_values;

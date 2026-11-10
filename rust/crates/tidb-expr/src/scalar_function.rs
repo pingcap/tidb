@@ -390,131 +390,15 @@ fn arithmetic_symbol(op: tidb_ast::BinaryOp) -> Option<&'static str> {
     })
 }
 
-fn numeric_expression_text(
-    expression: &Expression,
-    go_float_format: bool,
-    ctx: &dyn Columns,
-) -> Option<String> {
-    match expression {
-        Expression::Constant(constant) => match constant.eval_in(ctx).ok()? {
-            Datum::Int(value) => Some(value.to_string()),
-            Datum::UInt(value) => Some(value.to_string()),
-            Datum::Float32(value) => {
-                if go_float_format {
-                    Some(tidb_datatype::format_float_g_shortest(value))
-                } else {
-                    Some(value.to_string())
-                }
-            }
-            Datum::Real(value) => {
-                if go_float_format {
-                    Some(tidb_datatype::format_float_g_shortest(value))
-                } else {
-                    Some(value.to_string())
-                }
-            }
-            Datum::Decimal(value) => Some(value.to_string()),
-            Datum::BinaryLiteral(value) => Some(value.to_int().value().to_string()),
-            Datum::Null => Some("NULL".to_owned()),
-            value @ (Datum::String(_) | Datum::Bytes(_) | Datum::Json(_)) => {
-                String::from_utf8(value.truncated_stringify().ok()?).ok()
-            }
-            _ => None,
-        },
-        Expression::Column(column) => {
-            if column.is_hidden {
-                if let Some(expression) = column.virtual_expr.as_deref() {
-                    return numeric_expression_text(expression, go_float_format, ctx);
-                }
-            }
-            Some(if column.orig_name.is_empty() {
-                format!("Column#{}", column.unique_id)
-            } else {
-                column.orig_name.clone()
-            })
-        }
-        Expression::CorrelatedColumn(column) => Some(if column.column.orig_name.is_empty() {
-            format!("Column#{}", column.column.unique_id)
-        } else {
-            column.column.orig_name.clone()
-        }),
-        // Go's promoted `Constant.StringWithCtx`.
-        Expression::ScalarSubQuery(subquery) => numeric_expression_text(
-            &Expression::Constant(subquery.embedded_constant()),
-            go_float_format,
-            ctx,
-        ),
-        Expression::ScalarFunction(function) => {
-            if function.func_name.lowercase() == "cast_json" {
-                let [argument] = function.args.as_slice() else {
-                    return None;
-                };
-                return Some(format!(
-                    "cast({}, {})",
-                    numeric_expression_text(argument, go_float_format, ctx)?,
-                    function.get_static_type()?.source_string(),
-                ));
-            }
-            let op = arithmetic_symbol(binary_op_for_name(function.func_name.lowercase())?)?;
-            let [left, right] = function.args.as_slice() else {
-                return None;
-            };
-            Some(format!(
-                "({} {op} {})",
-                numeric_expression_text(left, go_float_format, ctx)?,
-                numeric_expression_text(right, go_float_format, ctx)?
-            ))
-        }
-    }
-}
-
-// Go wraps non-decimal DIV arguments in a cast during construction. Strict
-// constants fold that cast; columns and computed arguments retain it in errors.
-fn numeric_argument_text(
-    function: &ScalarFunction,
-    expression: &Expression,
-    float: bool,
-    ctx: &dyn Columns,
-    decimal: Option<&tidb_datatype::Decimal>,
-) -> Option<String> {
-    let field = expression.static_type()?;
-    // Binary constant casts fold in Go, so diagnostics show the value in
-    // the operator's domain, including signed carriers and real rounding.
-    let text = match expression {
-        Expression::Constant(constant) if is_numeric_binary_literal(expression) => {
-            let Datum::BinaryLiteral(value) = &constant.value else {
-                unreachable!()
-            };
-            let value = value.to_int().value();
-            match function.numeric_operand_domain() {
-                Some(EvalType::Int) if !field.is_unsigned() => (value as i64).to_string(),
-                Some(EvalType::Real) => tidb_datatype::format_float_g_shortest(value as f64),
-                _ => value.to_string(),
-            }
-        }
-        _ => numeric_expression_text(expression, float, ctx)?,
-    };
-    if function.func_name.lowercase() != "intdiv"
-        || function.numeric_operand_domain() != Some(EvalType::Decimal)
-        || field.eval_type() == EvalType::Decimal
-        || matches!(expression, Expression::Constant(constant) if constant.literal_value().is_some())
-    {
-        return Some(text);
-    }
-    let mut target = numeric_decimal_cast_type(field);
-    if expression.const_level() == ConstLevel::STRICT {
-        if let Some(value) = decimal {
-            let (precision, fraction) = value.precision_and_frac();
-            target.set_flen_under_limit(i64::from(precision));
-            target.set_decimal_under_limit(i64::from(fraction));
-        }
-    }
-    Some(format!(
-        "cast({text}, decimal({},{}){} BINARY)",
-        target.flen(),
-        target.decimal().max(0),
-        if field.is_unsigned() { " UNSIGNED" } else { "" }
-    ))
+/// Go `Expression.StringWithCtx(ctx, errors.RedactLogDisable)`: the text a
+/// signature's error names its arguments with.
+fn string_with_ctx(expression: &Expression, ctx: &dyn Columns) -> Option<String> {
+    crate::explain::physical_expression_text_with_columns(
+        ctx,
+        expression,
+        &[],
+        crate::explain::ExpressionTextStyle::StringWithCtx,
+    )
 }
 
 /// Go WrapWithCastAsDecimal: retain declared precision/scale for non-integer
@@ -570,7 +454,6 @@ fn integer_division_overflow(
 fn arithmetic_overflow_expression(
     function: &ScalarFunction,
     op: tidb_ast::BinaryOp,
-    go_float_format: bool,
     ctx: &dyn Columns,
 ) -> Option<String> {
     let symbol = arithmetic_symbol(op)?;
@@ -579,8 +462,8 @@ fn arithmetic_overflow_expression(
     };
     Some(format!(
         "({} {symbol} {})",
-        numeric_argument_text(function, left, go_float_format, ctx, None)?,
-        numeric_argument_text(function, right, go_float_format, ctx, None)?
+        string_with_ctx(left, ctx)?,
+        string_with_ctx(right, ctx)?
     ))
 }
 
@@ -592,7 +475,7 @@ fn arithmetic_overflow_error(
     op: tidb_ast::BinaryOp,
     ctx: &dyn Columns,
 ) -> EvalError {
-    let Some(operands) = arithmetic_overflow_expression(function, op, false, ctx) else {
+    let Some(operands) = arithmetic_overflow_expression(function, op, ctx) else {
         return EvalError::IntOverflow;
     };
     let class = match function.get_static_type() {
@@ -612,7 +495,7 @@ fn real_arithmetic_overflow_error(
     op: tidb_ast::BinaryOp,
     ctx: &dyn Columns,
 ) -> EvalError {
-    let Some(operands) = arithmetic_overflow_expression(function, op, true, ctx) else {
+    let Some(operands) = arithmetic_overflow_expression(function, op, ctx) else {
         return EvalError::FloatOverflow;
     };
     EvalError::DataOutOfRange {
@@ -628,7 +511,7 @@ fn decimal_arithmetic_overflow_error(
     op: tidb_ast::BinaryOp,
     ctx: &dyn Columns,
 ) -> EvalError {
-    let Some(operands) = arithmetic_overflow_expression(function, op, false, ctx) else {
+    let Some(operands) = arithmetic_overflow_expression(function, op, ctx) else {
         return EvalError::DecimalOverflow;
     };
     EvalError::DataOutOfRange {
@@ -753,6 +636,24 @@ impl ScalarFunction {
         let mut function = Self::new(CiString::new("json_sum_crc32"), ret_type, vec![arg]);
         function.json_sum_crc32_type = Some(array_type);
         function
+    }
+
+    /// Go `&ScalarFunction{FuncName, RetType, Function: f}`: the node over
+    /// the builtin function a class's `getFunction` returned -- its cast
+    /// arguments, its signature and its collation.
+    pub(crate) fn from_builtin_func(
+        func_name: CiString,
+        ret_type: FieldType,
+        f: crate::builtin::BaseBuiltinFunc,
+    ) -> Self {
+        Self {
+            func_name,
+            ret_type: Some(ret_type),
+            args: f.args,
+            pb_builtin: PbBuiltin::new(f.pb_code),
+            collation: f.collation,
+            ..Default::default()
+        }
     }
 
     /// Go newDistSQLFunctionBySig: retain the wire type and implementation.
@@ -1535,123 +1436,6 @@ impl ScalarFunction {
         Some(domain)
     }
 
-    /// Go builds implicit argument casts before deriving arithmetic metadata.
-    /// Strict literal casts fold here, so their warnings occur once per build.
-    pub(crate) fn prepare_numeric_arguments(&mut self, ctx: &dyn Columns) {
-        let Some(domain) = self.numeric_operand_domain() else {
-            return;
-        };
-        if domain == EvalType::Real {
-            // Each DECIMAL argument's implicit cast is Go's
-            // `builtinCastDecimalAsRealSig`, built with
-            // `PropagateType(ETReal)`: the argument's own result scale widens,
-            // so a quotient reaches the double with its stored digits.
-            for argument in &mut self.args {
-                if argument
-                    .static_type()
-                    .is_some_and(|field| field.eval_type() == EvalType::Decimal)
-                {
-                    crate::expression::propagate_type(argument, EvalType::Real);
-                }
-            }
-        }
-        let mut probed_types = [None, None];
-        for (index, argument) in self.args.iter_mut().enumerate() {
-            if argument.const_level() != ConstLevel::STRICT {
-                continue;
-            }
-            let Some(field) = argument.static_type() else {
-                continue;
-            };
-            if field.eval_type() == domain {
-                continue;
-            }
-            let literal_ref_id = match argument {
-                Expression::Constant(constant) if constant.literal_value().is_some() => {
-                    Some(constant.subquery_ref_id)
-                }
-                _ => None,
-            };
-            let field = argument.static_type().expect("typed numeric argument");
-            let mut target = if domain == EvalType::Decimal {
-                numeric_decimal_cast_type(field)
-            } else if domain == EvalType::Int {
-                let mut target = FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-                target.set_flen(field.flen());
-                target.set_decimal(0);
-                target
-            } else {
-                crate::builtin_arithmetic::real_argument_type(field).into_owned()
-            };
-            target.add_flags(field.flags() & tidb_datatype::FieldTypeFlags::UNSIGNED);
-            target.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
-            target.set_charset_name("binary");
-            target.set_collation_name("binary");
-            let refine_decimal = |target: &mut FieldType, value: &Datum| {
-                if let Datum::Decimal(decimal) = value {
-                    let (precision, fraction) = decimal.precision_and_frac();
-                    target.set_flen_under_limit(i64::from(precision));
-                    target.set_decimal_under_limit(i64::from(fraction));
-                }
-            };
-            if let Some(subquery_ref_id) = literal_ref_id {
-                // FoldConstant retains a failed cast for runtime evaluation.
-                if let Ok(value) = eval_numeric_operand_row(argument, ctx, Row::empty(), domain) {
-                    let value = match value {
-                        Datum::Int(value) if target.is_unsigned() => Datum::UInt(value as u64),
-                        value => value,
-                    };
-                    if !value.is_null() {
-                        target.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
-                    }
-                    refine_decimal(&mut target, &value);
-                    let mut folded = crate::constant::Constant::new(value, target);
-                    folded.subquery_ref_id = subquery_ref_id;
-                    *argument = Expression::Constant(folded);
-                    continue;
-                }
-            }
-            // WrapWithCastAsDecimal probes every ConstStrict cast, including
-            // retained scalar trees and failed literal folds. Keep its warnings
-            // and precision without folding a tree Go leaves for runtime.
-            if domain == EvalType::Decimal {
-                if let Ok(value) = eval_numeric_operand_row(argument, ctx, Row::empty(), domain) {
-                    refine_decimal(&mut target, &value);
-                    probed_types[index] = Some(target);
-                }
-            }
-        }
-        // Go's function classes read the cast argument types, including
-        // fine-grained constant precision, after newBaseBuiltinFuncWithTp.
-        let argument_type = |argument: &Expression| {
-            let field = argument.static_type().expect("typed numeric argument");
-            if field.eval_type() == domain {
-                field.clone()
-            } else if domain == EvalType::Decimal {
-                numeric_decimal_cast_type(field)
-            } else {
-                crate::builtin_arithmetic::real_argument_type(field).into_owned()
-            }
-        };
-        if matches!(domain, EvalType::Real | EvalType::Decimal) {
-            let left = probed_types[0]
-                .take()
-                .unwrap_or_else(|| argument_type(&self.args[0]));
-            let right = probed_types[1]
-                .take()
-                .unwrap_or_else(|| argument_type(&self.args[1]));
-            if let Some(ret_type) = self.ret_type.as_mut() {
-                crate::builtin_arithmetic::refine_cast_arithmetic_metadata(
-                    self.func_name.lowercase(),
-                    ret_type,
-                    &left,
-                    &right,
-                    ctx.div_precision_increment(),
-                );
-            }
-        }
-    }
-
     /// [`can_implicit_eval_int`] for one operand of a binary operator: Go
     /// casts a bit operator's operands to INT, a comparison of a string with
     /// a number compares as REAL (`getBaseCmpType`), and a logical operator
@@ -1712,21 +1496,14 @@ impl ScalarFunction {
                         if !matches!(error, EvalError::IntOverflow) {
                             return error;
                         }
-                        // Retained strict cast trees have value-refined precision
-                        // in Go. Use the already evaluated decimals so rendering
-                        // never repeats casts, warnings or side effects.
-                        let text =
-                            numeric_argument_text(self, &self.args[0], false, ctx, Some(left)).zip(
-                                numeric_argument_text(self, &self.args[1], false, ctx, Some(right)),
-                            );
-                        match text {
-                            Some((left, right)) => EvalError::DataOutOfRange {
+                        match arithmetic_overflow_expression(self, op, ctx) {
+                            Some(expression) => EvalError::DataOutOfRange {
                                 value: if unsigned {
                                     "BIGINT UNSIGNED"
                                 } else {
                                     "BIGINT"
                                 },
-                                expression: format!("({left} DIV {right})"),
+                                expression,
                             },
                             None => error,
                         }
@@ -2693,13 +2470,20 @@ impl ScalarFunction {
                     let value = eval_numeric_row(&self.args[0], ctx, row, source)?;
                     return cast_json_argument_value(self, value);
                 }
-                let value = self.args[0].eval(ctx, row)?;
-                if value.is_null() {
-                    return Ok(Datum::Null);
-                }
                 let ret_type = self
                     .get_static_type()
                     .ok_or(EvalError::Unsupported("a cast with no result type"))?;
+                let value = match ret_type.eval_type() {
+                    numeric @ (EvalType::Int | EvalType::Real | EvalType::Decimal) => {
+                        let source = numeric_argument_source(&self.args[0], numeric)
+                            .ok_or(EvalError::Unsupported("a cast with no source type"))?;
+                        eval_numeric_row(&self.args[0], ctx, row, source)?
+                    }
+                    _ => self.args[0].eval(ctx, row)?,
+                };
+                if value.is_null() {
+                    return Ok(Datum::Null);
+                }
                 let value = can_implicit_eval_int(&self.args[0], &value, ret_type.eval_type())
                     .unwrap_or(value);
                 return crate::cast::eval_cast(
@@ -4080,8 +3864,11 @@ pub fn eval_numeric_row(
     })
 }
 
-// Go's hybrid cast signatures read EvalInt. Binary constants are special:
-// EvalReal/EvalDecimal reads their unsigned literal value directly.
+/// Go `castAs{Int,Real,Decimal}FunctionClass.getFunction`: the eval type the
+/// cast signature reads its argument in. A hybrid type is read as `ETInt`,
+/// and a binary literal by the same-type signature (`CastIntAsInt`,
+/// `CastRealAsReal`, `CastDecimalAsDecimal`), whose `Constant.Eval*` reads
+/// the literal's unsigned value.
 fn numeric_argument_source(expression: &Expression, target: EvalType) -> Option<EvalType> {
     let field = expression.static_type()?;
     Some(if is_numeric_binary_literal(expression) {
@@ -4255,7 +4042,7 @@ fn cast_numeric_argument_in_mode(
                 }
                 crate::expression_errors::handle_truncate(ctx, &format!(
                     "Truncated incorrect DECIMAL value: '{}'",
-                    numeric_expression_text(expression, true, ctx)
+                    string_with_ctx(expression, ctx)
                         .unwrap_or_else(|| tidb_datatype::format_float_g_shortest(*real))
                 ))?;
             }
@@ -4293,6 +4080,17 @@ fn cast_string_numeric_argument(
     if target == EvalType::Real {
         return crate::ops::bytes_to_f64(bytes, ctx).map(Datum::Real);
     }
+    cast_string_as_decimal(bytes, &numeric_decimal_cast_type(field), ctx, vectorized)
+}
+
+/// Go `builtinCastStringAsDecimalSig`: `evalDecimal`, or `vecEvalDecimal`
+/// when `vectorized`, producing the cast's own type `tp`.
+fn cast_string_as_decimal(
+    bytes: &[u8],
+    tp: &FieldType,
+    ctx: &dyn Columns,
+    vectorized: bool,
+) -> Result<Datum, EvalError> {
     let text = String::from_utf8_lossy(bytes);
     let text = text.trim();
     let (decimal, error) = tidb_datatype::MyDecimal::from_string(text.as_bytes());
@@ -4303,7 +4101,10 @@ fn cast_string_numeric_argument(
         if error == DecimalError::TruncatedWrongValue
             || (error == DecimalError::Truncated && !vectorized)
         {
-            crate::expression_errors::handle_truncate(ctx, &format!("Truncated incorrect DECIMAL value: '{text}'"))?;
+            crate::expression_errors::handle_truncate(
+                ctx,
+                &format!("Truncated incorrect DECIMAL value: '{text}'"),
+            )?;
         } else {
             let error = match error {
                 DecimalError::Truncated => tidb_datatype::types_errors::ERR_TRUNCATED.clone(),
@@ -4315,22 +4116,21 @@ fn cast_string_numeric_argument(
                 crate::ErrorLevel::Warn => {
                     let warning = error.to_sql_error();
                     ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
-            tidb_context::WarningLevel::Warning,
-            warning.code,
-            warning.message.clone(),
-            warning.identity,
-        ));
+                        tidb_context::WarningLevel::Warning,
+                        warning.code,
+                        warning.message.clone(),
+                        warning.identity,
+                    ));
                 }
                 crate::ErrorLevel::Ignore => {}
             }
         }
     }
     let value = Datum::Decimal(tidb_datatype::Decimal::from_my_decimal(&decimal));
-    let target = numeric_decimal_cast_type(field);
-    if target.decimal() < 0 {
+    if tp.decimal() < 0 {
         Ok(value)
     } else {
-        convert_numeric_datum(value, &target, ctx)
+        convert_numeric_datum(value, tp, ctx)
     }
 }
 
@@ -4470,8 +4270,7 @@ fn numeric_cast_target(function: &ScalarFunction) -> Option<&FieldType> {
     if function.args.len() != 1 {
         return None;
     }
-    let source = function.args[0].static_type()?;
-    if source.is_hybrid() || source.eval_type() == EvalType::VectorFloat32 {
+    if numeric_argument_source(&function.args[0], expected)? == EvalType::VectorFloat32 {
         return None;
     }
     function
@@ -4499,9 +4298,8 @@ fn numeric_batch_supported(expression: &Expression, target: EvalType) -> bool {
         Expression::ScalarFunction(function) => {
             if let Some(field) = numeric_cast_target(function) {
                 return field.eval_type() == target
-                    && function.args[0].static_type().is_some_and(|source| {
-                        numeric_batch_supported(&function.args[0], source.eval_type())
-                    });
+                    && numeric_argument_source(&function.args[0], target)
+                        .is_some_and(|source| numeric_batch_supported(&function.args[0], source));
             }
 
             if function.func_name.lowercase() == "cast_json" && target == EvalType::Json {
@@ -4517,13 +4315,7 @@ fn numeric_batch_supported(expression: &Expression, target: EvalType) -> bool {
             function
                 .get_static_type()
                 .is_some_and(|field| field.eval_type() == target)
-                && (function.numeric_operand_domain().is_some()
-                    || (function.func_name.lowercase() == "cast_decimal"
-                        && target == EvalType::Decimal
-                        && function.args.len() == 1
-                        && function.args[0]
-                            .static_type()
-                            .is_some_and(|field| field.eval_type() == EvalType::Int)))
+                && function.numeric_operand_domain().is_some()
                 && function.args.iter().all(|arg| {
                     numeric_batch_supported(
                         arg,
@@ -4674,11 +4466,18 @@ fn eval_numeric_batch_values(
 ) -> Result<Vec<Datum>, EvalError> {
     if let Expression::ScalarFunction(function) = expression {
         if let Some(field) = numeric_cast_target(function) {
-            let source = function.args[0]
-                .static_type()
-                .expect("numeric cast source has a type")
-                .eval_type();
+            let source = numeric_argument_source(&function.args[0], field.eval_type())
+                .expect("numeric cast source has a type");
             let values = eval_numeric_batch_values(&function.args[0], ctx, input, source)?;
+            if source == EvalType::String && field.eval_type() == EvalType::Decimal {
+                return values
+                    .into_iter()
+                    .map(|value| match crate::arg_eval_type::eval_string(&value)? {
+                        None => Ok(Datum::Null),
+                        Some(bytes) => cast_string_as_decimal(&bytes, field, ctx, true),
+                    })
+                    .collect();
+            }
             let cast = cast_type_of(
                 function
                     .func_name
@@ -4736,32 +4535,6 @@ fn eval_numeric_batch_values(
             values
                 .into_iter()
                 .map(|value| cast_json_argument_value(function, value))
-                .collect()
-        }
-        Expression::ScalarFunction(function)
-            if function.func_name.lowercase() == "cast_decimal" =>
-        {
-            let values = eval_integer_batch(&function.args[0], ctx, input)?;
-            let target = function
-                .get_static_type()
-                .expect("preflight checked decimal cast");
-            let unsigned = target.is_unsigned()
-                || function.args[0]
-                    .static_type()
-                    .is_some_and(|field| field.is_unsigned());
-            values
-                .into_iter()
-                .map(|value| {
-                    let Some(value) = value else {
-                        return Ok(Datum::Null);
-                    };
-                    let decimal = if unsigned {
-                        tidb_datatype::Decimal::from_uint(value as u64)
-                    } else {
-                        tidb_datatype::Decimal::from_int(value)
-                    };
-                    convert_numeric_datum(Datum::Decimal(decimal), target, ctx)
-                })
                 .collect()
         }
         Expression::ScalarFunction(function) => eval_arithmetic_batch(function, ctx, input),
@@ -5163,11 +4936,13 @@ mod tests {
                             Expression::Column(column)
                         })
                         .collect::<Vec<_>>();
-                    let expression = Expression::ScalarFunction(ScalarFunction::new(
-                        CiString::new("intdiv"),
+                    let expression = crate::new_function::new_function(
+                        &ctx,
+                        "intdiv",
                         FieldType::new(FieldTypeCode::LongLong),
                         args,
-                    ));
+                    )
+                    .unwrap();
                     let mut chunk = Chunk::new_chunk_with_capacity(&[field.clone(), field], 1);
                     chunk.append_datum(0, &Datum::new_string_datum(text));
                     chunk.append_datum(1, &Datum::new_string_datum("1"));
@@ -5217,7 +4992,18 @@ mod tests {
                     } else {
                         Ok(Datum::Int(if case == 2 { 1 } else { 0 }))
                     };
-                    assert_eq!(result, expected, "{text:?}/{level:?}/{vectorized}");
+                    // The SQL error a client reads: its code and message.
+                    let sql = |result: Result<Datum, EvalError>| {
+                        result.map_err(|error| {
+                            let error = crate::EvalErrorSql::to_sql_error(&error);
+                            (error.code, error.message)
+                        })
+                    };
+                    assert_eq!(
+                        sql(result),
+                        sql(expected),
+                        "{text:?}/{level:?}/{vectorized}"
+                    );
                     assert_eq!(
                         *ctx.warnings.borrow(),
                         warnings,

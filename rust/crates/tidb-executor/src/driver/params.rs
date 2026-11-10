@@ -349,10 +349,14 @@ mod tests {
         let store = crate::test_store::store();
         use tidb_datatype::{FieldTypeCode as C, FieldTypeFlags as F};
         let catalog = tidb_infoschema_perfschema::mock_catalog();
-        let sql = "SELECT POW(?,?), IFNULL(?,11), ? + 11, ? AS marker";
-        // Live Go PREPARE/EXECUTE oracle, 2026-09-08. These are logical
-        // FieldType lengths, before Go column.ConvertColumnInfo maps
-        // unspecified BIGINT/DOUBLE lengths to 20/22 and decimal to 31.
+        let sql = "SELECT POW(?,?), IFNULL(?,11), ? + 11, ? AS marker, \
+                   ? * 2, 11 - ?, ? div 3, ? % 3, ? / 2";
+        // Live Go PREPARE/EXECUTE oracle, 2026-09-08 and 2026-11-10. These
+        // are logical FieldType lengths, before Go column.ConvertColumnInfo
+        // maps unspecified BIGINT/DOUBLE lengths to 20/22 and decimal to 31.
+        // A NULL parameter keeps `TypeNull` through `typeInferForNull`
+        // (`Constant.GetType` answers for the parameter on every call), so
+        // its arithmetic is real.
         for (param, expected) in [
             (
                 Datum::Int(2),
@@ -361,6 +365,11 @@ mod tests {
                     (C::LongLong, 24, 0, F::NOT_NULL | F::BINARY),
                     (C::LongLong, 20, 0, F::NOT_NULL | F::BINARY),
                     (C::LongLong, -1, 0, F::NOT_NULL | F::BINARY),
+                    (C::LongLong, 20, 0, F::NOT_NULL | F::BINARY),
+                    (C::LongLong, 20, 0, F::NOT_NULL | F::BINARY),
+                    (C::LongLong, 20, 0, F::NOT_NULL | F::BINARY),
+                    (C::LongLong, 20, 0, F::NOT_NULL | F::BINARY),
+                    (C::NewDecimal, 25, 4, F::NOT_NULL | F::BINARY),
                 ],
             ),
             (
@@ -370,18 +379,20 @@ mod tests {
                     (C::LongLong, 2, 0, F::NOT_NULL | F::BINARY),
                     (C::Double, -1, -1, F::BINARY),
                     (C::Null, 0, 0, 0),
+                    (C::Double, -1, -1, F::BINARY),
+                    (C::Double, -1, -1, F::BINARY),
+                    (C::LongLong, 20, 0, F::BINARY),
+                    (C::Double, 1, 0, F::BINARY),
+                    (C::Double, 23, -1, F::BINARY),
                 ],
             ),
         ] {
             let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_prepared_params(
-                vec![
-                    Datum::Int(2),
-                    Datum::Int(3),
-                    param.clone(),
-                    param.clone(),
-                    param.clone(),
-                ]
-                .into(),
+                [Datum::Int(2), Datum::Int(3)]
+                    .into_iter()
+                    .chain(std::iter::repeat_n(param.clone(), 8))
+                    .collect::<Vec<_>>()
+                    .into(),
             );
             let (columns, _) = crate::run_select_meta_on(sql, &catalog, &ctx).unwrap();
             assert_eq!(columns.len(), expected.len());

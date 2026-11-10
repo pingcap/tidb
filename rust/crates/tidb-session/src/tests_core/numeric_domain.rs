@@ -1008,6 +1008,112 @@ fn computed_json_div_overflow_matches_go_scalar_and_vector_diagnostics() {
     }
 }
 
+/// An arithmetic overflow names its operands as Go's signatures do: the row
+/// evaluators and the integer and real vector ones through
+/// `Expression.StringWithCtx` (a nested function prints `plus(a, b)`, a
+/// constant prints through `Datum.TruncatedStringify`, a folded literal cast
+/// prints its value), and the vectorized decimal `DIV` through the two
+/// values. Captured from Go with `zzprobe/truncstr`.
+#[test]
+fn arithmetic_overflow_names_its_operands_like_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t5(col7 BIGINT, col2 BIGINT)")
+        .unwrap();
+    session.run("INSERT INTO t5 VALUES(2, 1)").unwrap();
+    session
+        .run("CREATE TABLE du(d DOUBLE UNSIGNED, e DECIMAL(10,2) UNSIGNED, b BIT(64), a BIGINT)")
+        .unwrap();
+    session
+        .run("INSERT INTO du VALUES(7, 7.00, 0xffffffffffffffff, 3)")
+        .unwrap();
+    for vectorized in [true, false] {
+        session
+            .run(&format!(
+                "SET tidb_enable_vectorized_expression={}",
+                u8::from(vectorized)
+            ))
+            .unwrap();
+        for (sql, vector, row) in [
+            (
+                "select (col7 + col2) * 9223372036854775807 from t5",
+                "BIGINT value is out of range in '(plus(test.t5.col7, test.t5.col2) * 9223372036854775807)'",
+                "",
+            ),
+            (
+                "select d DIV -1 from du",
+                "BIGINT UNSIGNED value is out of range in '(7 DIV -1)'",
+                "BIGINT UNSIGNED value is out of range in '(cast(test.du.d, decimal(22,0) UNSIGNED BINARY) DIV -1)'",
+            ),
+            (
+                "select e DIV -1 from du",
+                "BIGINT UNSIGNED value is out of range in '(7.00 DIV -1)'",
+                "BIGINT UNSIGNED value is out of range in '(test.du.e DIV -1)'",
+            ),
+            (
+                "select 1e300 * 1e300",
+                "DOUBLE value is out of range in '(1e+300 * 1e+300)'",
+                "",
+            ),
+            (
+                "select d * 1e308 * 1e10 from du",
+                "DOUBLE value is out of range in '(test.du.d * 1e+308)'",
+                "",
+            ),
+            (
+                "select 0xffffffffffffffff + 1e308 + 1e308 + d from du",
+                "DOUBLE value is out of range in '(1e+308 + 1e+308)'",
+                "",
+            ),
+            (
+                "select 0xffffffffffffffff * 2 * a from du",
+                "BIGINT UNSIGNED value is out of range in '(18446744073709551615 * 2)'",
+                "",
+            ),
+            (
+                "select b * 2 from du",
+                "BIGINT UNSIGNED value is out of range in '(test.du.b * 2)'",
+                "",
+            ),
+        ] {
+            let error = session.run(sql).unwrap_err().to_mysql_error();
+            let expected = if vectorized || row.is_empty() {
+                vector
+            } else {
+                row
+            };
+            assert_eq!(
+                (error.code, error.message.as_str()),
+                (1690, expected),
+                "{sql}/{vectorized}"
+            );
+        }
+        for (sql, rows, warnings) in [
+            (
+                "select '' DIV 1",
+                "0",
+                vec![(1292, "Truncated incorrect DECIMAL value: ''")],
+            ),
+            (
+                "select d DIV '' from du",
+                "NULL",
+                vec![
+                    (1292, "Truncated incorrect DECIMAL value: ''"),
+                    (1365, "Division by 0"),
+                ],
+            ),
+        ] {
+            assert_eq!(row_text(session.run(sql)), [[rows]], "{sql}/{vectorized}");
+            let actual = session
+                .warnings()
+                .iter()
+                .map(|w| (w.code(), w.message()))
+                .collect::<Vec<_>>();
+            assert_eq!(actual, warnings, "{sql}/{vectorized}");
+        }
+    }
+}
+
 #[test]
 fn json_cast_source_types_match_go_through_sql() {
     let mut session = Session::new();

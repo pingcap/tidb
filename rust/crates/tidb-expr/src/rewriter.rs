@@ -608,7 +608,7 @@ fn string_declared_args(
 /// Go `BuildToBinaryFunction`, which folds the new node before its parent
 /// inspects argument constancy. `tidbToBinaryFunctionClass` clones the
 /// argument's type into a binary VAR_STRING.
-fn build_to_binary(arg: Expression, fold: &dyn Fn(&mut Expression)) -> Expression {
+pub(crate) fn build_to_binary(arg: Expression, fold: &dyn Fn(&mut Expression)) -> Expression {
     let mut ret_type = arg
         .static_type()
         .cloned()
@@ -964,19 +964,6 @@ fn wrap_with_is_true_with_null(
     Ok(call)
 }
 
-/// A hex/bit literal keeps its raw-bytes semantics in arithmetic: Go's
-/// `numericContextResultType` reads `IsBinaryLiteral` as an integer, so the
-/// operand gets no cast and `b'1111...' + 0` must stay INT:-1. ENUM and SET
-/// columns are NOT exempt: `WrapWithCastAsReal` casts them like any other
-/// operand (`e + i` plans as `plus(cast(e, double), cast(i, double))`).
-fn is_hybrid_argument(expression: &Expression) -> bool {
-    matches!(
-        expression,
-        Expression::Constant(constant)
-            if matches!(constant.value, tidb_datatype::Datum::BinaryLiteral(_))
-    )
-}
-
 /// Whether the node is a cast scalar function that GO's BuildCastFunction
 /// would have folded at construction: only a freshly-built cast needs the
 /// construction-time fold.
@@ -1026,7 +1013,7 @@ fn wrap_declared_string_args(
 /// closed with its `FoldConstant`. Go leaves a cast whose eval type is JSON
 /// unfolded ("we may reset the flag of the field type of CastAsJson later"),
 /// so `json_contains(j, cast("1", json BINARY))` keeps the cast in a plan.
-fn is_newly_built_cast(expression: &Expression) -> bool {
+pub(crate) fn is_newly_built_cast(expression: &Expression) -> bool {
     matches!(
         expression,
         Expression::ScalarFunction(function)
@@ -1038,118 +1025,6 @@ fn is_newly_built_cast(expression: &Expression) -> bool {
     )
 }
 
-/// Go `arithmeticFunctionClass.getFunction`'s `newBaseBuiltinFuncWithTp`
-/// for `plus`, `minus`, `mul`, `div` and `mod`: every operand is cast into
-/// the domain of the result (`ret_type`), a decimal domain through
-/// `WrapWithCastAsDecimal`, a real one through `WrapWithCastAsReal`, an
-/// integer one through `WrapWithCastAsInt`. Go does this in the function
-/// class, so a function the planner builds (`NewFunctionInternal`) gets the
-/// same casts as one the AST rewriter builds; `fold` folds each new cast.
-pub(crate) fn wrap_arithmetic_operands(
-    name: &str,
-    ret_type: &FieldType,
-    args: &mut [Expression],
-    fold: &dyn Fn(&mut Expression),
-) -> Result<(), EvalError> {
-    if !matches!(name, "plus" | "minus" | "mul" | "div" | "mod") {
-        return Ok(());
-    }
-    match ret_type.eval_type() {
-        tidb_datatype::EvalType::Decimal => {
-            for argument in args.iter_mut() {
-                crate::builtin_compare::wrap_integer_operand_as_decimal(argument);
-                // Go `WrapWithCastAsDecimal` also casts a temporal
-                // or string operand: `d + dt` plans as
-                // `plus(d, cast(dt, decimal(19,0)))`.
-                if !is_hybrid_argument(argument)
-                    && argument.static_type().map(FieldType::eval_type)
-                        != Some(EvalType::Decimal)
-                {
-                    *argument =
-                        crate::wrap_cast::wrap_with_cast_as_decimal(
-                            std::mem::replace(
-                                argument,
-                                Expression::Constant(Constant::new_null()),
-                            ),
-                        )?;
-                    if is_newly_built_cast(argument) {
-                        fold(argument);
-                    }
-                }
-            }
-        }
-        // GO's arithmeticFunctionClass.getFunction coerces BOTH
-        // operands to the arithmetic domain through
-        // newBaseBuiltinFuncWithTp: either real -> [ETReal,
-        // ETReal] (q17 renders `div(Column#, cast(Column#,
-        // double BINARY))`), either decimal -> [ETDecimal,
-        // ETDecimal], else [ETInt, ETInt] -- which is why
-        // q72's `d_date + 5` renders the date operand as
-        // `cast(d_date, bigint BINARY)`.
-        tidb_datatype::EvalType::Real => {
-            for argument in args.iter_mut() {
-                // GO's WrapWithCastAsReal early-returns for a
-                // hybrid argument (hex/bit literals keep their
-                // raw-bytes semantics in arithmetic), so a hybrid
-                // operand never gets a cast node.
-                if is_hybrid_argument(argument) {
-                    continue;
-                }
-                // The placeholder is replaced by the wrap result
-                // before it can ever be read.
-                *argument = crate::wrap_cast::wrap_with_cast_as_real(
-                    std::mem::replace(
-                        argument,
-                        Expression::Constant(Constant::new_null()),
-                    ),
-                )?;
-                // GO's BuildCastFunction folds its newly-built
-                // cast over a strict constant at the same
-                // boundary; a wrap that early-returned leaves the
-                // argument untouched and needs no fold.
-                if is_newly_built_cast(argument) {
-                    fold(argument);
-                }
-            }
-        }
-        tidb_datatype::EvalType::Int => {
-            for argument in args.iter_mut() {
-                if is_hybrid_argument(argument) {
-                    continue;
-                }
-                *argument = crate::wrap_cast::wrap_with_cast_as_int(
-                    std::mem::replace(
-                        argument,
-                        Expression::Constant(Constant::new_null()),
-                    ),
-                    None,
-                )?;
-                if is_newly_built_cast(argument) {
-                    fold(argument);
-                }
-            }
-        }
-        // Go `arithmeticPlus/Minus/MultiplyFunctionClass.getFunction`'s
-        // vector arm: `newBaseBuiltinFuncWithTp(.., ETVectorFloat32,
-        // ETVectorFloat32, ETVectorFloat32)`.
-        tidb_datatype::EvalType::VectorFloat32 => {
-            for argument in args.iter_mut() {
-                *argument = crate::wrap_cast::wrap_with_cast_as_vector_float32(
-                    std::mem::replace(
-                        argument,
-                        Expression::Constant(Constant::new_null()),
-                    ),
-                )?;
-                if is_newly_built_cast(argument) {
-                    fold(argument);
-                }
-            }
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
 fn binary_expression(
     op: BinaryOp,
     left: Expression,
@@ -1157,20 +1032,23 @@ fn binary_expression(
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
     let name = binary_op_name(op);
-    let ret_type = crate::builtin_arithmetic::infer_arithmetic_type_with_context(
-        name,
-        &left,
-        &right,
-        resolver.no_unsigned_subtraction(),
-        resolver.div_precision_increment(),
-    )
-    .or_else(|| crate::builtin_compare::infer_compare_type(name))
-    .or_else(|| crate::builtin_op::infer_op_type(name));
+    // Go `er.newFunction` is `NewFunction`: a class `funcs` lists builds its
+    // own node, which the caller folds.
+    if let Some(class) = crate::builtin::funcs(name) {
+        let mut args = vec![left, right];
+        crate::new_function::type_infer_for_null(&mut args);
+        let f = class.get_function(&crate::builtin::ResolverBuildContext(resolver), args)?;
+        return Ok(Expression::ScalarFunction(crate::new_function::scalar_function_of(
+            name,
+            FieldType::new(FieldTypeCode::Unspecified),
+            f,
+        )));
+    }
+    let ret_type = crate::builtin_compare::infer_compare_type(name)
+        .or_else(|| crate::builtin_op::infer_op_type(name));
     match ret_type {
         Some(mut ret_type) => {
             let mut args = vec![left, right];
-            // `intdiv` keeps its virtual operand casts (see
-            // `numeric_operand_domain`) until its diagnostics read real ones.
             if matches!(
                 name,
                 "bitand" | "bitor" | "bitxor" | "leftshift" | "rightshift"
@@ -1183,9 +1061,6 @@ fn binary_expression(
                     Some(&ret_type),
                 )?;
             }
-            wrap_arithmetic_operands(name, &ret_type, &mut args, &|argument| {
-                resolver.fold_constant(argument, ConstantFoldMode::Normal);
-            })?;
             // GO `logicAnd/logicOr/logicXorFunctionClass.getFunction`
             // (builtin_op.go:65/128/191): every argument runs through
             // `wrapWithIsTrue(ctx, true, arg, false)` — an ETInt argument
@@ -1243,11 +1118,11 @@ fn binary_expression(
                     |argument| resolver.fold_constant(argument, ConstantFoldMode::Normal),
                 )?;
             }
-            let mut function = ScalarFunction::new(CiString::new(name), ret_type, args);
-            function.prepare_numeric_arguments(
-                resolver.comparison_context().unwrap_or(&crate::NoColumns),
-            );
-            Ok(Expression::ScalarFunction(function))
+            Ok(Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new(name),
+                ret_type,
+                args,
+            )))
         }
         None => Ok(scalar(name, vec![left, right])),
     }
@@ -4780,6 +4655,30 @@ mod builtin_type_tests {
             assert_eq!(ret_type.flen(), flen, "{sql_expr} flen");
             assert_eq!(ret_type.charset(), tidb_charset::Charset::Binary, "{sql_expr} charset");
             assert_eq!(ret_type.collation(), tidb_charset::Collation::Binary, "{sql_expr} collation");
+        }
+    }
+
+    /// Go `newFunctionImpl` runs `typeInferForNull` before the class sees
+    /// the arguments: a NULL literal computes in its sibling's domain. The
+    /// vectors are a Go testkit's result field types.
+    #[test]
+    fn a_null_literal_operand_takes_its_siblings_type() {
+        use FieldTypeCode::{LongLong, NewDecimal};
+        for (sql_expr, code, flen, decimal) in [
+            ("NULL + 11", LongLong, 20, 0),
+            ("NULL * 2", LongLong, 20, 0),
+            ("11 - NULL", LongLong, 20, 0),
+            ("NULL div 3", LongLong, 20, 0),
+            ("NULL % 3", LongLong, 20, 0),
+            ("NULL / 2", NewDecimal, 25, 4),
+        ] {
+            let built = rewrite(sql_expr);
+            let ret_type = built.static_type().expect("typed");
+            assert_eq!(
+                (ret_type.code(), ret_type.flen(), ret_type.decimal(), ret_type.flags()),
+                (code, flen, decimal, 128),
+                "{sql_expr}"
+            );
         }
     }
 

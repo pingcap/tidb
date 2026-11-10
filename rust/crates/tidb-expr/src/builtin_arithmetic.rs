@@ -26,7 +26,13 @@
 //! `newReturnFieldTypeForBaseBuiltinFunc`'s boolean flag is irrelevant because
 //! none of these six functions is boolean.
 
+use crate::builtin::{
+    new_base_builtin_func_with_tp, BaseBuiltinFunc, BuildContext, FunctionClass,
+};
 use crate::expression::Expression;
+use crate::wrap_cast::type_of;
+use crate::EvalError;
+use tidb_proto::tipb::ScalarFuncSig;
 use tidb_datatype::{
     Datum, EvalType, FieldType, FieldTypeBuilder, FieldTypeCode, FieldTypeFlags, MAX_DECIMAL_WIDTH,
     UNSPECIFIED_LENGTH,
@@ -265,30 +271,6 @@ fn set_type4_mod_real_or_decimal(
     }
 }
 
-/// Recomputes the source function-class metadata after implicit casts and
-/// constant folding, without changing the already-selected result domain.
-pub(crate) fn refine_cast_arithmetic_metadata(
-    name: &str,
-    result: &mut FieldType,
-    left: &FieldType,
-    right: &FieldType,
-    div_precision_increment: u32,
-) {
-    let real = result.eval_type() == EvalType::Real;
-    if !matches!(result.eval_type(), EvalType::Real | EvalType::Decimal) {
-        return;
-    }
-    match name {
-        "plus" | "minus" | "mul" => {
-            set_flen_decimal4_real_or_decimal(result, left, right, real, name == "mul");
-        }
-        "div" if real => set_type4_div_real(result),
-        "div" => set_type4_div_decimal(result, left, right, i64::from(div_precision_increment)),
-        // MOD captures the original argument types before inserting casts.
-        _ => {}
-    }
-}
-
 fn unsigned(ft: Option<&FieldType>) -> bool {
     ft.is_some_and(FieldType::is_unsigned)
 }
@@ -443,6 +425,356 @@ pub fn infer_arithmetic_type_with_context(
         }
         _ => return None,
     })
+}
+
+/// Go `expr.GetType(ctx).EvalType().IsVectorKind()`.
+fn is_vector_kind(expr: &Expression) -> bool {
+    type_of(expr).eval_type().is_vector_kind()
+}
+
+/// Go `mysql.HasUnsignedFlag(expr.GetType(ctx).GetFlag())`.
+fn has_unsigned_flag(expr: &Expression) -> bool {
+    type_of(expr).is_unsigned()
+}
+
+/// Go `arithmeticPlusFunctionClass`.
+pub(crate) struct ArithmeticPlusFunctionClass;
+
+impl FunctionClass for ArithmeticPlusFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        const FUNC_NAME: &str = "plus";
+        if is_vector_kind(&args[0]) || is_vector_kind(&args[1]) {
+            // `builtinArithmeticPlusVectorFloat32Sig` sets no pb code.
+            return new_base_builtin_func_with_tp(
+                ctx,
+                FUNC_NAME,
+                args,
+                EvalType::VectorFloat32,
+                &[EvalType::VectorFloat32, EvalType::VectorFloat32],
+            );
+        }
+        let (lhs_eval_tp, rhs_eval_tp) =
+            (numeric_context_result_type(&args[0]), numeric_context_result_type(&args[1]));
+        if lhs_eval_tp == EvalType::Real || rhs_eval_tp == EvalType::Real {
+            let mut bf = new_base_builtin_func_with_tp(
+                ctx,
+                FUNC_NAME,
+                args,
+                EvalType::Real,
+                &[EvalType::Real, EvalType::Real],
+            )?;
+            let (a, b) = (type_of(&bf.args[0]), type_of(&bf.args[1]));
+            set_flen_decimal4_real_or_decimal(&mut bf.tp, &a, &b, true, false);
+            bf.pb_code = ScalarFuncSig::PlusReal;
+            return Ok(bf);
+        } else if lhs_eval_tp == EvalType::Decimal || rhs_eval_tp == EvalType::Decimal {
+            let mut bf = new_base_builtin_func_with_tp(
+                ctx,
+                FUNC_NAME,
+                args,
+                EvalType::Decimal,
+                &[EvalType::Decimal, EvalType::Decimal],
+            )?;
+            let (a, b) = (type_of(&bf.args[0]), type_of(&bf.args[1]));
+            set_flen_decimal4_real_or_decimal(&mut bf.tp, &a, &b, false, false);
+            bf.pb_code = ScalarFuncSig::PlusDecimal;
+            return Ok(bf);
+        }
+        let mut bf = new_base_builtin_func_with_tp(
+            ctx,
+            FUNC_NAME,
+            args,
+            EvalType::Int,
+            &[EvalType::Int, EvalType::Int],
+        )?;
+        if has_unsigned_flag(&bf.args[0]) || has_unsigned_flag(&bf.args[1]) {
+            bf.tp.add_flags(FieldTypeFlags::UNSIGNED);
+        }
+        bf.pb_code = ScalarFuncSig::PlusInt;
+        Ok(bf)
+    }
+}
+
+/// Go `arithmeticMinusFunctionClass`.
+pub(crate) struct ArithmeticMinusFunctionClass;
+
+impl FunctionClass for ArithmeticMinusFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        const FUNC_NAME: &str = "minus";
+        if is_vector_kind(&args[0]) || is_vector_kind(&args[1]) {
+            // `builtinArithmeticMinusVectorFloat32Sig` sets no pb code.
+            return new_base_builtin_func_with_tp(
+                ctx,
+                FUNC_NAME,
+                args,
+                EvalType::VectorFloat32,
+                &[EvalType::VectorFloat32, EvalType::VectorFloat32],
+            );
+        }
+        let (lhs_eval_tp, rhs_eval_tp) =
+            (numeric_context_result_type(&args[0]), numeric_context_result_type(&args[1]));
+        if lhs_eval_tp == EvalType::Real || rhs_eval_tp == EvalType::Real {
+            let mut bf = new_base_builtin_func_with_tp(
+                ctx,
+                FUNC_NAME,
+                args,
+                EvalType::Real,
+                &[EvalType::Real, EvalType::Real],
+            )?;
+            let (a, b) = (type_of(&bf.args[0]), type_of(&bf.args[1]));
+            set_flen_decimal4_real_or_decimal(&mut bf.tp, &a, &b, true, false);
+            bf.pb_code = ScalarFuncSig::MinusReal;
+            return Ok(bf);
+        } else if lhs_eval_tp == EvalType::Decimal || rhs_eval_tp == EvalType::Decimal {
+            let mut bf = new_base_builtin_func_with_tp(
+                ctx,
+                FUNC_NAME,
+                args,
+                EvalType::Decimal,
+                &[EvalType::Decimal, EvalType::Decimal],
+            )?;
+            let (a, b) = (type_of(&bf.args[0]), type_of(&bf.args[1]));
+            set_flen_decimal4_real_or_decimal(&mut bf.tp, &a, &b, false, false);
+            bf.pb_code = ScalarFuncSig::MinusDecimal;
+            return Ok(bf);
+        }
+        let mut bf = new_base_builtin_func_with_tp(
+            ctx,
+            FUNC_NAME,
+            args,
+            EvalType::Int,
+            &[EvalType::Int, EvalType::Int],
+        )?;
+        if (has_unsigned_flag(&bf.args[0]) || has_unsigned_flag(&bf.args[1]))
+            && !ctx.no_unsigned_subtraction()
+        {
+            bf.tp.add_flags(FieldTypeFlags::UNSIGNED);
+        }
+        bf.pb_code = ScalarFuncSig::MinusInt;
+        Ok(bf)
+    }
+}
+
+/// Go `arithmeticMultiplyFunctionClass`.
+pub(crate) struct ArithmeticMultiplyFunctionClass;
+
+impl FunctionClass for ArithmeticMultiplyFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        const FUNC_NAME: &str = "mul";
+        if is_vector_kind(&args[0]) || is_vector_kind(&args[1]) {
+            // `builtinArithmeticMultiplyVectorFloat32Sig` sets no pb code.
+            return new_base_builtin_func_with_tp(
+                ctx,
+                FUNC_NAME,
+                args,
+                EvalType::VectorFloat32,
+                &[EvalType::VectorFloat32, EvalType::VectorFloat32],
+            );
+        }
+        // The types of the arguments as given, before their casts.
+        let (lhs_unsigned, rhs_unsigned) =
+            (has_unsigned_flag(&args[0]), has_unsigned_flag(&args[1]));
+        let (lhs_eval_tp, rhs_eval_tp) =
+            (numeric_context_result_type(&args[0]), numeric_context_result_type(&args[1]));
+        if lhs_eval_tp == EvalType::Real || rhs_eval_tp == EvalType::Real {
+            let mut bf = new_base_builtin_func_with_tp(
+                ctx,
+                FUNC_NAME,
+                args,
+                EvalType::Real,
+                &[EvalType::Real, EvalType::Real],
+            )?;
+            let (a, b) = (type_of(&bf.args[0]), type_of(&bf.args[1]));
+            set_flen_decimal4_real_or_decimal(&mut bf.tp, &a, &b, true, true);
+            bf.pb_code = ScalarFuncSig::MultiplyReal;
+            return Ok(bf);
+        } else if lhs_eval_tp == EvalType::Decimal || rhs_eval_tp == EvalType::Decimal {
+            let mut bf = new_base_builtin_func_with_tp(
+                ctx,
+                FUNC_NAME,
+                args,
+                EvalType::Decimal,
+                &[EvalType::Decimal, EvalType::Decimal],
+            )?;
+            let (a, b) = (type_of(&bf.args[0]), type_of(&bf.args[1]));
+            set_flen_decimal4_real_or_decimal(&mut bf.tp, &a, &b, false, true);
+            bf.pb_code = ScalarFuncSig::MultiplyDecimal;
+            return Ok(bf);
+        }
+        let mut bf = new_base_builtin_func_with_tp(
+            ctx,
+            FUNC_NAME,
+            args,
+            EvalType::Int,
+            &[EvalType::Int, EvalType::Int],
+        )?;
+        if lhs_unsigned || rhs_unsigned {
+            bf.tp.add_flags(FieldTypeFlags::UNSIGNED);
+            bf.pb_code = ScalarFuncSig::MultiplyIntUnsigned;
+            return Ok(bf);
+        }
+        bf.pb_code = ScalarFuncSig::MultiplyInt;
+        Ok(bf)
+    }
+}
+
+/// Go `arithmeticDivideFunctionClass`.
+pub(crate) struct ArithmeticDivideFunctionClass;
+
+impl FunctionClass for ArithmeticDivideFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        const FUNC_NAME: &str = "div";
+        let (lhs_eval_tp, rhs_eval_tp) =
+            (numeric_context_result_type(&args[0]), numeric_context_result_type(&args[1]));
+        if lhs_eval_tp == EvalType::Real || rhs_eval_tp == EvalType::Real {
+            let mut bf = new_base_builtin_func_with_tp(
+                ctx,
+                FUNC_NAME,
+                args,
+                EvalType::Real,
+                &[EvalType::Real, EvalType::Real],
+            )?;
+            set_type4_div_real(&mut bf.tp);
+            bf.pb_code = ScalarFuncSig::DivideReal;
+            return Ok(bf);
+        }
+        let mut bf = new_base_builtin_func_with_tp(
+            ctx,
+            FUNC_NAME,
+            args,
+            EvalType::Decimal,
+            &[EvalType::Decimal, EvalType::Decimal],
+        )?;
+        // The types of the arguments after their casts.
+        let (lhs_tp, rhs_tp) = (type_of(&bf.args[0]), type_of(&bf.args[1]));
+        set_type4_div_decimal(&mut bf.tp, &lhs_tp, &rhs_tp, ctx.div_precision_increment());
+        bf.pb_code = ScalarFuncSig::DivideDecimal;
+        Ok(bf)
+    }
+}
+
+/// Go `arithmeticIntDivideFunctionClass`.
+pub(crate) struct ArithmeticIntDivideFunctionClass;
+
+impl FunctionClass for ArithmeticIntDivideFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        const FUNC_NAME: &str = "intdiv";
+        // The types of the arguments as given, before their casts.
+        let (lhs_unsigned, rhs_unsigned) =
+            (has_unsigned_flag(&args[0]), has_unsigned_flag(&args[1]));
+        let (lhs_eval_tp, rhs_eval_tp) =
+            (numeric_context_result_type(&args[0]), numeric_context_result_type(&args[1]));
+        if lhs_eval_tp == EvalType::Int && rhs_eval_tp == EvalType::Int {
+            let mut bf = new_base_builtin_func_with_tp(
+                ctx,
+                FUNC_NAME,
+                args,
+                EvalType::Int,
+                &[EvalType::Int, EvalType::Int],
+            )?;
+            if lhs_unsigned || rhs_unsigned {
+                bf.tp.add_flags(FieldTypeFlags::UNSIGNED);
+            }
+            bf.pb_code = ScalarFuncSig::IntDivideInt;
+            return Ok(bf);
+        }
+        let mut bf = new_base_builtin_func_with_tp(
+            ctx,
+            FUNC_NAME,
+            args,
+            EvalType::Int,
+            &[EvalType::Decimal, EvalType::Decimal],
+        )?;
+        if lhs_unsigned || rhs_unsigned {
+            bf.tp.add_flags(FieldTypeFlags::UNSIGNED);
+        }
+        bf.pb_code = ScalarFuncSig::IntDivideDecimal;
+        Ok(bf)
+    }
+}
+
+/// Go `arithmeticModFunctionClass`.
+pub(crate) struct ArithmeticModFunctionClass;
+
+impl FunctionClass for ArithmeticModFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        const FUNC_NAME: &str = "mod";
+        // The types of the arguments as given, before their casts.
+        let (lhs_tp, rhs_tp) = (type_of(&args[0]), type_of(&args[1]));
+        let (lhs_eval_tp, rhs_eval_tp) =
+            (numeric_context_result_type(&args[0]), numeric_context_result_type(&args[1]));
+        if lhs_eval_tp == EvalType::Real || rhs_eval_tp == EvalType::Real {
+            let mut bf = new_base_builtin_func_with_tp(
+                ctx,
+                FUNC_NAME,
+                args,
+                EvalType::Real,
+                &[EvalType::Real, EvalType::Real],
+            )?;
+            set_type4_mod_real_or_decimal(&mut bf.tp, &lhs_tp, &rhs_tp, false);
+            if lhs_tp.is_unsigned() {
+                bf.tp.add_flags(FieldTypeFlags::UNSIGNED);
+            }
+            bf.pb_code = ScalarFuncSig::ModReal;
+            return Ok(bf);
+        } else if lhs_eval_tp == EvalType::Decimal || rhs_eval_tp == EvalType::Decimal {
+            let mut bf = new_base_builtin_func_with_tp(
+                ctx,
+                FUNC_NAME,
+                args,
+                EvalType::Decimal,
+                &[EvalType::Decimal, EvalType::Decimal],
+            )?;
+            set_type4_mod_real_or_decimal(&mut bf.tp, &lhs_tp, &rhs_tp, true);
+            if lhs_tp.is_unsigned() {
+                bf.tp.add_flags(FieldTypeFlags::UNSIGNED);
+            }
+            bf.pb_code = ScalarFuncSig::ModDecimal;
+            return Ok(bf);
+        }
+        let mut bf = new_base_builtin_func_with_tp(
+            ctx,
+            FUNC_NAME,
+            args,
+            EvalType::Int,
+            &[EvalType::Int, EvalType::Int],
+        )?;
+        if lhs_tp.is_unsigned() {
+            bf.tp.add_flags(FieldTypeFlags::UNSIGNED);
+        }
+        // The signature reads the arguments after their casts.
+        bf.pb_code = match (has_unsigned_flag(&bf.args[0]), has_unsigned_flag(&bf.args[1])) {
+            (true, true) => ScalarFuncSig::ModIntUnsignedUnsigned,
+            (true, false) => ScalarFuncSig::ModIntUnsignedSigned,
+            (false, true) => ScalarFuncSig::ModIntSignedUnsigned,
+            (false, false) => ScalarFuncSig::ModIntSignedSigned,
+        };
+        Ok(bf)
+    }
 }
 
 #[cfg(test)]

@@ -61,9 +61,8 @@ fn go_eval(name: &str, args: &[Datum]) -> Result<Datum, crate::EvalError> {
     assert_eq!(exprs.len(), 2, "binary arithmetic only");
     let ret_type = crate::builtin_arithmetic::infer_arithmetic_type(name, &exprs[0], &exprs[1])
         .unwrap_or_else(|| panic!("{name}: no inferred type"));
-    let function =
-        crate::scalar_function::ScalarFunction::new(tidb_ast::CiString::new(name), ret_type, exprs);
     let cols = tidb_exprctx::context::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
+    let function = crate::new_function::new_function_base(&cols, name, ret_type, exprs)?;
     let empty = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[], 1);
     function.eval(&cols, empty.get_row(0))
 }
@@ -351,9 +350,9 @@ fn go_test_arithmetic_mod_hybrid_operand_kinds() {
 /// Captured from the pinned Go arithmetic builder and both typed evaluators.
 #[test]
 fn hybrid_arithmetic_uses_go_typed_numeric_arguments() {
-    use crate::scalar_function::{try_eval_numeric_batch, ScalarFunction};
+    use crate::scalar_function::try_eval_numeric_batch;
+    use tidb_charset::Collation;
     use tidb_datatype::{BinaryLiteral, MysqlEnum, MysqlSet};
-use tidb_charset::Collation;
     struct Strict;
     impl crate::Columns for Strict {
         fn get(&self, _: &[String]) -> Option<Datum> {
@@ -584,11 +583,18 @@ use tidb_charset::Collation;
                 let right = column(1, integer.clone());
                 let output =
                     crate::builtin_arithmetic::infer_arithmetic_type(op, &left, &right).unwrap();
-                let expr = Expression::ScalarFunction(ScalarFunction::new(
-                    tidb_ast::CiString::new(op),
+                let expr = match crate::new_function::new_function(
+                    &Strict,
+                    op,
                     output,
                     vec![left, right],
-                ));
+                ) {
+                    Ok(expr) => expr,
+                    Err(error) => {
+                        mismatches.push(format!("{name}/{rhs}/{op}/{vectorized}: build {error:?}"));
+                        continue;
+                    }
+                };
                 let mut input = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[field, integer], 1);
                 input.append_datum(0, &value);
                 input.append_datum(1, &right_value);

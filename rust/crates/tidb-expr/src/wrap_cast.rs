@@ -181,13 +181,10 @@ pub const fn minimal_decimal_len_for_holding_integer(code: FieldTypeCode) -> i64
     }
 }
 
-/// Go `WrapWithCastAsDecimal` (`builtin_cast.go:2736`).
-pub fn wrap_with_cast_as_decimal(expr: Expression) -> Result<Expression, EvalError> {
-    let strict_constant = expr.const_level() == ConstLevel::STRICT;
+/// The cast Go `WrapWithCastAsDecimal` (`builtin_cast.go:2736`) builds over
+/// a non-DECIMAL `expr`, before `BuildCastFunction` folds it.
+pub(crate) fn build_cast_as_decimal(expr: Expression) -> Result<Expression, EvalError> {
     let source = type_of(&expr);
-    if source.eval_type() == EvalType::Decimal {
-        return Ok(expr);
-    }
     let mut tp = FieldType::new(FieldTypeCode::NewDecimal);
     tp.set_flen_under_limit(source.flen());
     tp.set_decimal_under_limit(source.decimal());
@@ -200,23 +197,39 @@ pub fn wrap_with_cast_as_decimal(expr: Expression) -> Result<Expression, EvalErr
     }
     set_bin_chs_cln_flag(&mut tp);
     tp.add_flags(source.flags() & (FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL));
-    let mut cast_expr = build_cast_function(expr, tp, false)?;
-    // Go's `ConstStrict` tail records the exact result shape on the cast node.
-    // This is observable through callers that inspect `GetType`, and it is
-    // also what lets a REAL/string wrapper retain 123.555 instead of treating
-    // the unresolved source scale as an explicit zero. The wrapper has no
-    // statement context, so the value-only `NoColumns` context is sufficient;
-    // any warning-bearing/non-constant expression is left untouched.
+    build_cast_function(expr, tp, false)
+}
+
+/// The `ConstStrict` tail of Go `WrapWithCastAsDecimal`: a constant cast
+/// takes the precision and scale of the `value` it evaluates to (Go's
+/// `!isnull && err == nil`).
+pub(crate) fn set_const_decimal_cast_precision(
+    cast_expr: &mut Expression,
+    value: Result<tidb_datatype::Datum, EvalError>,
+) {
+    let Ok(tidb_datatype::Datum::Decimal(value)) = value else {
+        return;
+    };
+    let (precision, frac) = value.precision_and_frac();
+    if let Some(field_type) = ret_type_mut(cast_expr) {
+        field_type.set_decimal_under_limit(i64::from(frac));
+        field_type.set_flen_under_limit(i64::from(precision));
+    }
+}
+
+/// Go `WrapWithCastAsDecimal` (`builtin_cast.go:2736`), for the callers that
+/// build without a `BuildContext`: the `ConstStrict` tail evaluates the cast
+/// with no statement context, so it raises no warning. A function class
+/// builds with `crate::builtin::wrap_with_cast_as_decimal`.
+pub fn wrap_with_cast_as_decimal(expr: Expression) -> Result<Expression, EvalError> {
+    if type_of(&expr).eval_type() == EvalType::Decimal {
+        return Ok(expr);
+    }
+    let strict_constant = expr.const_level() == ConstLevel::STRICT;
+    let mut cast_expr = build_cast_as_decimal(expr)?;
     if strict_constant {
-        if let Ok(tidb_datatype::Datum::Decimal(value)) =
-            cast_expr.eval(&crate::NoColumns, tidb_chunk::row::Row::empty())
-        {
-            let (precision, frac) = value.precision_and_frac();
-            if let Some(field_type) = ret_type_mut(&mut cast_expr) {
-                field_type.set_decimal_under_limit(i64::from(frac));
-                field_type.set_flen_under_limit(i64::from(precision));
-            }
-        }
+        let value = cast_expr.eval(&crate::NoColumns, tidb_chunk::row::Row::empty());
+        set_const_decimal_cast_precision(&mut cast_expr, value);
     }
     Ok(cast_expr)
 }

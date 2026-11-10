@@ -628,11 +628,6 @@ impl PbBuiltin {
         row: Row<'_>,
     ) -> Result<Datum, EvalError> {
         let args = &function.args;
-        let argument = |index: usize| {
-            args.get(index)
-                .ok_or(EvalError::Unsupported("missing protobuf builtin argument"))?
-                .eval(ctx, row)
-        };
         let typed_argument = |index: usize, domain: EvalType| {
             let arg = args
                 .get(index)
@@ -729,17 +724,14 @@ impl PbBuiltin {
                     left.checked_mul(right).map(Datum::Int)
                 };
                 result.ok_or_else(|| {
-                    let text = |index| {
-                        super::numeric_argument_text(function, &args[index], false, ctx, None)
-                    };
-                    match text(0).zip(text(1)) {
-                        Some((left, right)) => EvalError::DataOutOfRange {
+                    match super::arithmetic_overflow_expression(function, BinaryOp::Mul, ctx) {
+                        Some(expression) => EvalError::DataOutOfRange {
                             value: if unsigned {
                                 "BIGINT UNSIGNED"
                             } else {
                                 "BIGINT"
                             },
-                            expression: format!("({left} * {right})"),
+                            expression,
                         },
                         None => EvalError::IntOverflow,
                     }
@@ -749,7 +741,7 @@ impl PbBuiltin {
                 // The four Go MOD signatures bake signedness into the builtin,
                 // rather than reselecting it from each row or the SQL name.
                 let operand = |index: usize| -> Result<Datum, EvalError> {
-                    let value = argument(index)?;
+                    let value = typed_argument(index, EvalType::Int)?;
                     Ok(match crate::arg_eval_type::eval_int(&value)? {
                         None => Datum::Null,
                         Some(value) if unsigned[index] => Datum::UInt(value as u64),
@@ -773,7 +765,12 @@ impl PbBuiltin {
                     return Err(EvalError::Unsupported("protobuf binary builtin arity"));
                 }
                 let left = eval_numeric_operand_row(&args[0], ctx, row, domain)?;
-                if left.is_null() && !(op == BinaryOp::Mod && domain != EvalType::Decimal) {
+                // Go `builtinArithmeticPlusRealSig` and `builtinArithmeticModRealSig`
+                // read both operands before the NULL check; the other
+                // signatures return on a NULL left.
+                let reads_both =
+                    domain == EvalType::Real && matches!(op, BinaryOp::Plus | BinaryOp::Mod);
+                if left.is_null() && !reads_both {
                     return Ok(Datum::Null);
                 }
                 let right = eval_numeric_operand_row(&args[1], ctx, row, domain)?;

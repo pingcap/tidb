@@ -191,6 +191,12 @@ pub fn type_infer_for_null(args: &mut [Expression]) {
         let Expression::Constant(constant) = arg else {
             continue;
         };
+        // Go writes the type through `newarg.GetType(ctx)`, and a parameter's
+        // `Constant.GetType` answers with a type of its own on every call:
+        // a NULL parameter keeps `TypeNull`.
+        if constant.param_marker.is_some() {
+            continue;
+        }
         let mut inferred = ret_field_type.clone();
         inferred.del_flag(FieldTypeFlags::NOT_NULL);
         constant.ret_type = Some(inferred);
@@ -292,27 +298,18 @@ pub fn new_function_impl(
         return Err(refusal);
     }
 
+    // Go: `f, err := fc.getFunction(ctx, funcArgs)`, for the classes
+    // `crate::builtin::funcs` lists.
+    if let Some(class) = crate::builtin::funcs(func_name) {
+        let f = class.get_function(&crate::builtin::ColumnsBuildContext(ctx), func_args)?;
+        let function = scalar_function_of(registered_name, ret_type, f);
+        return check_or_init_and_fold(ctx, fold, check_or_init, function);
+    }
+
     // Go: `if builtinRetTp.GetType() != TypeUnspecified || retType.GetType()
     // == TypeUnspecified { retType = builtinRetTp }`. See the module header's
     // `getFunction` narrowing for why the inference table stands in for
     // `f.getRetTp()`.
-    // Go's function-class `getFunction` infers arithmetic result metadata
-    // before applying the caller's placeholder `retType`.  Keep that same
-    // precedence for direct `NewFunction` callers (the AST rewriter already
-    // uses this helper's arithmetic table for binary operators); otherwise a
-    // non-constant `plus` built through a `FunctionBuilder` remains
-    // `Unspecified` and comparison construction inserts a spurious
-    // `cast_signed` around it.
-    let arithmetic_type = match func_args.as_slice() {
-        [lhs, rhs] => crate::builtin_arithmetic::infer_arithmetic_type_with_context(
-            func_name,
-            lhs,
-            rhs,
-            ctx.no_unsigned_subtraction(),
-            ctx.div_precision_increment(),
-        ),
-        _ => None,
-    };
     // The unary operators' classes (`unaryNotFunctionClass`,
     // `bitNegFunctionClass`, `unaryMinusFunctionClass`) type their result
     // from their argument, as the AST rewriter's `Expr::Unary` arm does.
@@ -320,15 +317,7 @@ pub fn new_function_impl(
         [arg] => crate::builtin_op::infer_unary_op_type(func_name, arg),
         _ => None,
     };
-    // Go's arithmetic class casts every operand into its own result domain
-    // (`newBaseBuiltinFuncWithTp`) before the caller's `retType` applies.
-    if let Some(class_type) = &arithmetic_type {
-        crate::rewriter::wrap_arithmetic_operands(func_name, class_type, &mut func_args, &|argument| {
-            fold_constant_in_mode(argument, ctx, ConstantFoldMode::Normal);
-        })?;
-    }
-    let ret_type = arithmetic_type
-        .or(unary_type)
+    let ret_type = unary_type
         .or_else(|| crate::rewriter::result_type::builtin_return_type(func_name, &func_args))
         .filter(|inferred| {
             inferred.code() != FieldTypeCode::Unspecified
@@ -374,23 +363,17 @@ pub fn new_function_impl(
     // substituted through an aggregation) is wrapped again: an argument that
     // already has the type stays as it is, but a string cast to JSON keeps
     // its parse flag and is cast once more (`cast(cast(s, json), json)`).
-    // The arithmetic operators keep the rewriter's own operand handling
-    // (`prepare_numeric_arguments` below), which `intdiv`'s virtual operand
-    // casts depend on, exactly as on the AST path.
-    let mut gl_signature = None;
-    if !matches!(func_name, "plus" | "minus" | "mul" | "div" | "mod" | "intdiv") {
-        // Go `resolveType4Extremum` reads the arguments before their casts.
-        gl_signature = matches!(func_name, "greatest" | "least")
-            .then(|| crate::rewriter::result_type::gl_signature(&function.args))
-            .flatten();
-        function.args = crate::rewriter::signature_args::wrap_builtin_arguments(
-            func_name,
-            std::mem::take(&mut function.args),
-            ctx.connection_charset_info(),
-            &|expression| fold_constant_in_mode(expression, ctx, ConstantFoldMode::Normal),
-            function.ret_type.as_ref(),
-        )?;
-    }
+    // Go `resolveType4Extremum` reads the arguments before their casts.
+    let gl_signature = matches!(func_name, "greatest" | "least")
+        .then(|| crate::rewriter::result_type::gl_signature(&function.args))
+        .flatten();
+    function.args = crate::rewriter::signature_args::wrap_builtin_arguments(
+        func_name,
+        std::mem::take(&mut function.args),
+        ctx.connection_charset_info(),
+        &|expression| fold_constant_in_mode(expression, ctx, ConstantFoldMode::Normal),
+        function.ret_type.as_ref(),
+    )?;
     function.args = crate::rewriter::handle_binary_literal(
         func_name,
         &derived.charset,
@@ -399,7 +382,6 @@ pub fn new_function_impl(
         std::mem::take(&mut function.args),
         |expression| fold_constant_in_mode(expression, ctx, ConstantFoldMode::Normal),
     );
-    function.prepare_numeric_arguments(ctx);
     if gl_signature.is_some() {
         function.set_gl_signature(gl_signature);
     }
@@ -419,12 +401,44 @@ pub fn new_function_impl(
         crate::collation_derive::apply_derived_collation(&mut expr, &derived);
         crate::rewriter::restore_function_result_charset(&mut expr)?;
     }
-    if let Some(callback) = check_or_init {
-        let Expression::ScalarFunction(function) = expr else {
-            unreachable!("collation derivation preserves the function node")
-        };
-        expr = Expression::ScalarFunction(callback(function)?);
-    }
+    let Expression::ScalarFunction(function) = expr else {
+        unreachable!("collation derivation preserves the function node")
+    };
+    check_or_init_and_fold(ctx, fold, check_or_init, function)
+}
+
+/// Go `newFunctionImpl` between `getFunction` and `checkOrInit`: the node
+/// over the builtin function `f`, typed by `f.getRetTp()` unless that is
+/// unspecified and the caller's `ret_type` is not.
+pub(crate) fn scalar_function_of(
+    registered_name: &str,
+    ret_type: FieldType,
+    f: crate::builtin::BaseBuiltinFunc,
+) -> ScalarFunction {
+    let builtin_ret_tp = f.get_ret_tp();
+    let ret_type = if builtin_ret_tp.code() != FieldTypeCode::Unspecified
+        || ret_type.code() == FieldTypeCode::Unspecified
+    {
+        builtin_ret_tp
+    } else {
+        ret_type
+    };
+    ScalarFunction::from_builtin_func(CiString::new(registered_name), ret_type, f)
+}
+
+/// Go `newFunctionImpl`'s tail: `checkOrInit` over the built node, then the
+/// fold `fold` selects.
+fn check_or_init_and_fold(
+    ctx: &dyn Columns,
+    fold: ConstantFoldMode,
+    check_or_init: Option<ScalarFunctionCallBack<'_>>,
+    function: ScalarFunction,
+) -> Result<Expression, EvalError> {
+    let function = match check_or_init {
+        Some(callback) => callback(function)?,
+        None => function,
+    };
+    let mut expr = Expression::ScalarFunction(function);
     fold_constant_in_mode(&mut expr, ctx, fold);
     Ok(expr)
 }
@@ -898,6 +912,32 @@ mod tests {
             crate::eval_expression_once(&folded, &Parameters(vec![Datum::Int(11)])).unwrap(),
             Datum::Int(12)
         );
+    }
+
+    /// Go `typeInferForNull` writes the inferred type through
+    /// `newarg.GetType(ctx)`, and `Constant.GetType` answers for a parameter
+    /// with a type of its own on every call, so a NULL parameter stays
+    /// `TypeNull` and `? + 11` is real arithmetic. Live Go PREPARE/EXECUTE
+    /// oracle, 2026-11-10: `? + 11` with a NULL parameter is `double`, where
+    /// the literal `NULL + 11` is `bigint`.
+    #[test]
+    fn a_null_parameter_keeps_its_own_type_through_null_inference() {
+        let mut parameter = Constant::new(Datum::Null, FieldType::new(FieldTypeCode::Null));
+        parameter.param_marker = Some(ParamMarker { order: 0 });
+        let literal = Constant::new(Datum::Null, FieldType::new(FieldTypeCode::Null));
+        for (null, expected) in [
+            (parameter, FieldTypeCode::Double),
+            (literal, FieldTypeCode::LongLong),
+        ] {
+            let sum = new_function_base(
+                &NoColumns,
+                "plus",
+                FieldType::new(FieldTypeCode::Unspecified),
+                vec![Expression::Constant(null), int_constant(11)],
+            )
+            .expect("plus over a NULL builds");
+            assert_eq!(as_func(&sum).ret_type.as_ref().unwrap().code(), expected);
+        }
     }
 
     /// NEW COVERAGE of the arity gate, Go `ErrIncorrectParameterCount` (1582).

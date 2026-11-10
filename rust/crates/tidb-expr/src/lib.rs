@@ -326,6 +326,7 @@ pub mod wrap_cast;
 mod arg_eval_type;
 mod binary_literal;
 mod build;
+pub(crate) mod builtin;
 pub mod builtin_arithmetic;
 #[cfg(test)]
 mod builtin_cast_semantics;

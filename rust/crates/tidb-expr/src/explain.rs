@@ -161,15 +161,11 @@ fn string_with_ctx_constant(
     } else {
         &constant.value
     };
-    // Go `Constant.StringWithCtx` renders through `fmt.Sprintf("%v", ...)`,
+    // Go `Constant.StringWithCtx` renders through `Datum.TruncatedStringify`,
     // which prints a NULL value as `<nil>` (q43's case-else:
     // `case(eq(...), val, <nil>)`). The quoted "NULL" spelling belongs to
     // `Constant.Format`/`ExplainInfo` (Selection conditions), not here.
-    let value = if value.is_null() {
-        "<nil>".to_owned()
-    } else {
-        constant_value_text(value)?
-    };
+    let value = constant_value_text(value)?;
     // The reference wraps a NULL result too: `ScalarQueryCol#14(<nil>)`.
     if constant.subquery_ref_id > 0 {
         Some(format!(
@@ -181,16 +177,12 @@ fn string_with_ctx_constant(
     }
 }
 
-/// Go's `%v` of `Datum.GetValue()`: a hex or bit literal prints through
-/// `BinaryLiteral.String()` (`0x80`), whatever its bytes spell.
+/// Go `Datum.TruncatedStringify` as text.
 fn constant_value_text(value: &Datum) -> Option<String> {
-    match value {
-        Datum::BinaryLiteral(literal) | Datum::Bit(literal) => Some(literal.to_string()),
-        value => value
-            .truncated_stringify()
-            .ok()
-            .and_then(|bytes| String::from_utf8(bytes).ok()),
-    }
+    value
+        .truncated_stringify()
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
 }
 
 fn explain_constant(

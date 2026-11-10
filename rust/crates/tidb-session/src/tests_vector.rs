@@ -65,6 +65,7 @@ fn vector_expressions_fail_as_go() {
         ("select v / 2 from vt", "cannot cast from vector to double"),
         ("select v % 2 from vt", "cannot cast from vector to double"),
         ("select 2 / v from vt", "cannot cast from vector to double"),
+        ("select v div 2 from vt", "cannot cast from vector to decimal"),
         ("select -v from vt", "cannot cast from vector to double"),
         ("select v + 1 from vt", "cannot cast from bigint to vector"),
         ("select v * 2 from vt", "cannot cast from bigint to vector"),

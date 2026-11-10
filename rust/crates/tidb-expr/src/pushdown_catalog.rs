@@ -5324,6 +5324,11 @@ pub fn pb_code(expression: &Expression) -> ScalarFuncSig {
     let Expression::ScalarFunction(function) = expression else {
         return ScalarFuncSig::Unspecified;
     };
+    // The signature the function's class set (`setPbCode`), when its class
+    // built it.
+    if let Some(signature) = function.pb_signature() {
+        return signature;
+    }
     let stand_in = |field_type: FieldType| PbScalar::Column {
         offset: 0,
         field_type,

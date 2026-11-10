@@ -140,18 +140,26 @@ impl Datum {
         decode_bytes(&bytes)
     }
 
-    /// Source `Datum.TruncatedStringify` used by EXPLAIN and diagnostics.
+    /// Source `Datum.TruncatedStringify` used by EXPLAIN and diagnostics:
+    /// only a string, bytes or JSON value is truncated; every other kind
+    /// prints as Go's `%v` of `Datum.GetValue()`.
     pub fn truncated_stringify(&self) -> Result<Vec<u8>, DatumStringError> {
-        let bytes = match self {
-            Self::String(value) => value.bytes().to_vec(),
-            Self::Bytes(value) => value.clone(),
-            Self::Json(value) => value.to_string().into_bytes(),
-            Self::VectorFloat32(value) => return Ok(value.truncated_string().into_bytes()),
-            Self::Int(value) => return Ok(value.to_string().into_bytes()),
-            Self::UInt(value) => return Ok(value.to_string().into_bytes()),
+        let value = match self {
+            Self::String(value) => truncate_diagnostic_bytes(value.bytes().to_vec()),
+            Self::Bytes(value) => truncate_diagnostic_bytes(value.clone()),
+            Self::Json(value) => truncate_diagnostic_bytes(value.to_string().into_bytes()),
+            Self::VectorFloat32(value) => value.truncated_string().into_bytes(),
+            Self::Int(value) => value.to_string().into_bytes(),
+            Self::UInt(value) => value.to_string().into_bytes(),
+            Self::Real(value) => crate::go_strconv::format_float(*value, b'g', -1, 64).into_bytes(),
+            Self::Float32(value) => {
+                crate::go_strconv::format_float(f64::from(*value as f32), b'g', -1, 32).into_bytes()
+            }
+            Self::BinaryLiteral(value) | Self::Bit(value) => value.to_string().into_bytes(),
+            Self::Null | Self::MinNotNull | Self::MaxValue => b"<nil>".to_vec(),
             other => other.sql_bytes()?,
         };
-        Ok(truncate_diagnostic_bytes(bytes))
+        Ok(value)
     }
 
     /// Restores the default-field-type rows from Go parser driver's
@@ -387,6 +395,51 @@ mod tests {
             Datum::new_int(2).truncated_stringify().unwrap(),
             b"2".to_vec()
         );
+        // Go `TruncatedStringify` of each remaining kind (`zzprobe/truncstr`):
+        // nothing but a string, bytes or JSON value is truncated.
+        let duration = crate::MySqlDuration::new(12, 34, 56, 500_000, 1).unwrap();
+        for (datum, expected) in [
+            (Datum::Real(1e300), "1e+300"),
+            (Datum::Real(1_000_000.0), "1e+06"),
+            (Datum::Real(123456.5), "123456.5"),
+            (Datum::Real(-0.00001), "-1e-05"),
+            (Datum::Real(1.8446744073709552e19), "1.8446744073709552e+19"),
+            (Datum::Float32(1.5e10), "1.5e+10"),
+            (Datum::Float32(f64::from(0.1_f32)), "0.1"),
+            (
+                Datum::new_decimal(crate::Decimal::from_f64(8.1e80).unwrap()),
+                "810000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (Datum::Duration(duration), "12:34:56.5"),
+            (
+                Datum::Enum(crate::MysqlEnum::new("bb", 2), tidb_charset::Collation::Utf8Mb4Bin),
+                "bb",
+            ),
+            (
+                Datum::Set(crate::MysqlSet::new("a,bb", 3), tidb_charset::Collation::Utf8Mb4Bin),
+                "a,bb",
+            ),
+            (
+                Datum::BinaryLiteral(crate::BinaryLiteral::from(vec![0xff, 0x01])),
+                "0xff01",
+            ),
+            (Datum::Bit(crate::BinaryLiteral::from(vec![0x80])), "0x80"),
+            (Datum::BinaryLiteral(crate::BinaryLiteral::ZERO), ""),
+            (Datum::Null, "<nil>"),
+            (Datum::MinNotNull, "<nil>"),
+            (Datum::MaxValue, "<nil>"),
+            (
+                Datum::Bytes(vec![b'x'; 70]),
+                "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...(len:70)",
+            ),
+            (Datum::UInt(u64::MAX), "18446744073709551615"),
+        ] {
+            assert_eq!(
+                datum.truncated_stringify().unwrap(),
+                expected.as_bytes(),
+                "{datum:?}"
+            );
+        }
         let split_utf8 = Datum::new_string_datum(format!("{}é", "a".repeat(63)));
         assert_eq!(
             split_utf8.truncated_stringify().unwrap(),

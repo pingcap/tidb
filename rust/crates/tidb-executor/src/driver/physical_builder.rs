@@ -6894,6 +6894,10 @@ pub(crate) fn prepare_execution_plan(
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    // Go keeps ONE warning buffer in order of occurrence, and planning ends
+    // here: what the constant fold raised joins the statement's list before
+    // any executor -- on this thread or a worker's -- appends to it.
+    ctx.drain_fold_warnings();
     record_tiflash_contained(plan, ctx);
     prepare_execution_plan_node(plan, catalog, ctx, true)?;
     if ctx.mem_table_retrieval().has_pending() {
