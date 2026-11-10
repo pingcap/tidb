@@ -301,6 +301,9 @@ func (*Manager) createSessionManager(
 		return nil, errors.Trace(err)
 	}
 	infoCache := infoschema.NewCache(store, int(vardef.SchemaVersionCacheLimit.Load()))
+	// The cache only loads the system tables. A user table is loaded when a
+	// holder of the runtime allows it, see runtimeHandle.AllowUserTable.
+	onDemandTables := infoCache.EnableOnDemandTables()
 	isSyncer := issyncer.NewCrossKSSyncer(store, infoCache, vardef.GetSchemaLease(), sessPool, isValidator, ks)
 	isSyncer.InitRequiredFields(
 		func() sessmgr.InfoSchemaCoordinator {
@@ -335,6 +338,7 @@ func (*Manager) createSessionManager(
 		schemaVerSyncer:   schemaVerSyncer,
 		serverStateSyncer: serverStateSyncer,
 		infoCache:         infoCache,
+		onDemandTables:    onDemandTables,
 		isSyncer:          isSyncer,
 		sessPool:          sessPool,
 		coordinator:       coordinator,
@@ -480,6 +484,11 @@ func (h *runtimeHandle) AlterTableMode(ctx context.Context, target model.AlterTa
 	return h.entry.sessMgr.alterTableMode(ctx, target)
 }
 
+// AllowUserTable implements sqlsvrapi.UserTableAllower.
+func (h *runtimeHandle) AllowUserTable(dbID, tableID int64) (release func(), err error) {
+	return h.entry.sessMgr.onDemandTables.Allow(dbID, tableID)
+}
+
 func (h *runtimeHandle) Release() {
 	h.releaseOnce.Do(func() {
 		h.manager.release(h.targetKS, h.holderID)
@@ -505,6 +514,9 @@ type SessionManager struct {
 	isValidator       validatorapi.Validator
 	svrInfoSyncer     *serverinfo.Syncer
 	ddlClient         *ddlClient
+	// onDemandTables are the user tables that the sessions of the runtime resolve,
+	// besides the system tables that infoCache loads.
+	onDemandTables *infoschema.OnDemandTables
 }
 
 // Store returns the kv.Storage instance used by the session manager.

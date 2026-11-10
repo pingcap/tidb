@@ -5760,7 +5760,7 @@ func (s *session) GetInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 }
 
 func (s *session) GetLatestInfoSchema() infoschemactx.MetaOnlyInfoSchema {
-	is := s.infoCache.GetLatest()
+	is := s.infoCache.GetLatestWithOnDemandTables()
 	extIs := &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, extIs)
 }
