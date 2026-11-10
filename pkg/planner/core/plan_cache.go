@@ -167,6 +167,12 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// schema version like prepared plan cache key
 		stmt.PointGet.Executor = nil
 		stmt.PointGet.ColumnInfos = nil
+		// The statement is re-resolved below, so the table dependencies cached in
+		// the statement must be collected again: a rename keeps the table ID but
+		// changes the name the AST points to, and re-creating the old name
+		// introduces a new table ID.
+		vars.StmtCtx.RelatedTableIDs = make(map[int64]struct{})
+
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		// Example:
@@ -184,6 +190,11 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// session invariant that a PlanCacheStmt is never executed concurrently.
 		stmt.ResolveCtx = nodeW.GetResolveContext()
 		stmt.SchemaVersion = is.SchemaMetaVersion()
+		stmt.dbName, stmt.tbls, stmt.RelateVersion, err = collectPlanCacheTableInfo(ctx, is, vars.StmtCtx.RelatedTableIDs)
+		if err != nil {
+			return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
+		}
+
 		if !isNonPrepared {
 			refreshParamMatchModes(is, stmt)
 		}
