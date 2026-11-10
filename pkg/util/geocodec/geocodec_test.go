@@ -268,15 +268,44 @@ func TestStoredLayout(t *testing.T) {
 	require.Equal(t, mustHex(t, "01 01 01000020 00000000 000000000000F87F 000000000000F87F"),
 		mustEncode(t, "POINT EMPTY", 0))
 
-	// A value without the SRID flag, which this package never writes, reads as SRID 0.
+	// A value without the SRID flag, which this package never writes, is refused.
 	flagless := mustHex(t, "01 01 01000000 000000000000F03F 0000000000000040")
-	srid, g, err := decodeStored(flagless)
-	require.NoError(t, err)
-	require.Equal(t, uint32(0), srid)
-	require.Equal(t, "POINT(1 2)", g.AsText())
-	mysql, err := StoredToMySQL(flagless)
-	require.NoError(t, err)
-	require.Equal(t, mustHex(t, "00000000 01 01000000 000000000000F03F 0000000000000040"), mysql)
+	_, _, err := decodeStored(flagless)
+	require.ErrorIs(t, err, errStoredWithoutSRID)
+	_, err = StoredToMySQL(flagless)
+	require.ErrorIs(t, err, errStoredWithoutSRID)
+}
+
+// TestStoredWithoutSRID checks that every reader of the stored format refuses a root
+// without the SRID flag, in either byte order, as ErrInvalid.
+func TestStoredWithoutSRID(t *testing.T) {
+	for _, h := range []string{
+		"01 01 01000000 000000000000F03F 0000000000000040",
+		"01 00 00000001 3FF0000000000000 4000000000000000",
+		"01 01 07000000 00000000",
+		"01 00 00000007 00000000",
+		// A root without the flag is refused before its other faults.
+		"01 01 08000000",
+		"01 01 07000000 FFFFFFFF",
+	} {
+		b := mustHex(t, h)
+		_, _, err := decodeStored(b)
+		require.ErrorIs(t, err, errStoredWithoutSRID, h)
+		require.ErrorIs(t, err, ErrInvalid, h)
+		_, err = StoredToMySQL(b)
+		require.ErrorIs(t, err, errStoredWithoutSRID, h)
+		_, _, err = Header(b)
+		require.ErrorIs(t, err, errStoredWithoutSRID, h)
+		checkAgainstReference(t, b)
+	}
+	// With the flag, the same values are read.
+	for _, h := range []string{
+		"01 01 01000020 00000000 000000000000F03F 0000000000000040",
+		"01 00 20000001 00000000 3FF0000000000000 4000000000000000",
+	} {
+		_, _, err := decodeStored(mustHex(t, h))
+		require.NoError(t, err, h)
+	}
 }
 
 // TestEncodeRefusesUnreadable checks that encode refuses what the reader would refuse, so
@@ -315,21 +344,21 @@ func TestStoredRejects(t *testing.T) {
 		"a byte long":  append(append([]byte{}, good...), 0),
 	}
 	hexCases := map[string]string{
-		"bad byte order":           "01 02 01000000 000000000000F03F 0000000000000040",
-		"unknown type code":        "01 01 08000000",
-		"ISO type code in EWKB":    "01 01 E9030000 000000000000F03F 0000000000000040 0000000000000840",
-		"SRID flag below the root": "01 01 04000000 01000000 01 01000020 E6100000 000000000000F03F 0000000000000040",
-		"member of the wrong type": "01 01 04000000 01000000 01 02000000 00000000",
-		"member dimension differs": "01 01 04000000 01000000 01 01000080 000000000000F03F 0000000000000040 0000000000000840",
-		"hostile count":            "01 01 07000000 FFFFFFFF",
-		"hostile point count":      "01 01 02000000 FFFFFF0F",
-		"ring without points":      "01 01 03000000 01000000 00000000",
-		"partly NaN point":         "01 01 01000000 000000000000F87F 0000000000000040",
-		"infinite coordinate":      "01 01 01000000 000000000000F07F 0000000000000040",
-		"NaN in a linestring":      "01 01 02000000 01000000 000000000000F87F 000000000000F87F",
+		"bad byte order":           "01 02 01000020 00000000 000000000000F03F 0000000000000040",
+		"unknown type code":        "01 01 08000020 00000000",
+		"ISO type code in EWKB":    "01 01 E9030020 00000000 000000000000F03F 0000000000000040 0000000000000840",
+		"SRID flag below the root": "01 01 04000020 00000000 01000000 01 01000020 E6100000 000000000000F03F 0000000000000040",
+		"member of the wrong type": "01 01 04000020 00000000 01000000 01 02000000 00000000",
+		"member dimension differs": "01 01 04000020 00000000 01000000 01 01000080 000000000000F03F 0000000000000040 0000000000000840",
+		"hostile count":            "01 01 07000020 00000000 FFFFFFFF",
+		"hostile point count":      "01 01 02000020 00000000 FFFFFF0F",
+		"ring without points":      "01 01 03000020 00000000 01000000 00000000",
+		"partly NaN point":         "01 01 01000020 00000000 000000000000F87F 0000000000000040",
+		"infinite coordinate":      "01 01 01000020 00000000 000000000000F07F 0000000000000040",
+		"NaN in a linestring":      "01 01 02000020 00000000 01000000 000000000000F87F 000000000000F87F",
 		// A malformed value is ErrInvalid even when it also has no MySQL form.
-		"Z point a byte short": "01 01 01000080 000000000000F03F 0000000000000040 00000000000008",
-		"empty point then junk": "01 01 07000000 02000000 01 01000000 000000000000F87F 000000000000F87F" +
+		"Z point a byte short": "01 01 010000A0 00000000 000000000000F03F 0000000000000040 00000000000008",
+		"empty point then junk": "01 01 07000020 00000000 02000000 01 01000000 000000000000F87F 000000000000F87F" +
 			" 01 09000000",
 	}
 	for name, h := range hexCases {
@@ -338,6 +367,7 @@ func TestStoredRejects(t *testing.T) {
 	for name, b := range cases {
 		_, _, err := decodeStored(b)
 		require.ErrorIs(t, err, ErrInvalid, name)
+		require.NotErrorIs(t, err, errStoredWithoutSRID, name)
 		_, err = StoredToMySQL(b)
 		require.ErrorIs(t, err, ErrInvalid, name)
 		checkAgainstReference(t, b)
@@ -711,16 +741,15 @@ func TestHeader(t *testing.T) {
 		}
 	}
 
-	// Without the SRID flag the SRID is 0.
-	srid, typ, err := Header(mustHex(t, "01 01 05000000"))
-	require.NoError(t, err)
-	require.Equal(t, uint32(0), srid)
-	require.Equal(t, geom.TypeMultiLineString, typ)
+	// Without the SRID flag the value is refused.
+	_, _, err := Header(mustHex(t, "01 01 05000000"))
+	require.ErrorIs(t, err, errStoredWithoutSRID)
+	require.ErrorIs(t, err, ErrInvalid)
 
 	for name, h := range map[string]string{
 		"bad byte order":    "01 02 01000020 00000000",
 		"unknown type code": "01 01 08000020 00000000",
-		"ISO type code":     "01 01 E9030000",
+		"ISO type code":     "01 01 E9030020 00000000",
 	} {
 		_, _, err := Header(mustHex(t, h))
 		require.ErrorIs(t, err, ErrInvalid, name)
@@ -937,11 +966,12 @@ func TestNestedCountsAllocs(t *testing.T) {
 		b = binary.LittleEndian.AppendUint32(b, uint32((cap(b)-len(b)-4)/minGeometrySize))
 	}
 	b = append(b, make([]byte, pad)...)
-	stored := append([]byte{Version1, byteOrderLittle}, b[5:]...)
+	stored := storedFromMySQL(b)
 	_, _, _, err := MySQLToStored(b)
 	require.ErrorIs(t, err, ErrInvalid)
 	_, err = StoredToMySQL(stored)
 	require.ErrorIs(t, err, ErrInvalid)
+	require.NotErrorIs(t, err, errStoredWithoutSRID)
 	checkAgainstReference(t, stored)
 	// The reader allocates only the root's members before the second count fails, and
 	// the scan nothing, also ahead of building.

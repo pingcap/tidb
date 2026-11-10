@@ -60,6 +60,8 @@ var (
 	// errBigEndianStored is the ErrInvalid of a big-endian geometry in a stored value, which
 	// StoredToMySQL cannot copy into MySQL's little-endian format.
 	errBigEndianStored = fmt.Errorf("%w: big-endian geometry in a stored value", ErrInvalid)
+	// errStoredWithoutSRID is the ErrInvalid of a stored value whose root has no SRID flag.
+	errStoredWithoutSRID = fmt.Errorf("%w: stored geometry without the SRID flag", ErrInvalid)
 )
 
 // The decode budget. Building a collection copies everything below it, so the work is the
@@ -167,15 +169,11 @@ func StoredToMySQL(stored []byte) ([]byte, error) {
 	if s.notMySQL {
 		return nil, ErrNotMySQLExpressible
 	}
-	// The scan has checked the root header: a little-endian byte order, a type word and,
-	// if the SRID flag is set, an SRID.
+	// payloadOf and the scan have checked the root header: a little-endian byte order, a
+	// type word with the SRID flag, and the SRID.
 	word := binary.LittleEndian.Uint32(payload[1:])
-	body := payload[5:]
-	var srid uint32
-	if word&ewkbSRID != 0 {
-		srid = binary.LittleEndian.Uint32(body)
-		body = body[4:]
-	}
+	srid := binary.LittleEndian.Uint32(payload[5:])
+	body := payload[9:]
 	out := make([]byte, 0, 9+len(body))
 	out = binary.LittleEndian.AppendUint32(out, srid)
 	out = append(out, byteOrderLittle)
@@ -194,14 +192,13 @@ func Header(stored []byte) (srid uint32, typ geom.GeometryType, err error) {
 	if err != nil {
 		return 0, 0, err
 	}
-	typ, _, hasSRID, err := r.typeWord(order, true)
+	typ, _, _, err = r.typeWord(order, true)
 	if err != nil {
 		return 0, 0, err
 	}
-	if hasSRID {
-		if srid, err = r.uint32(order); err != nil {
-			return 0, 0, err
-		}
+	// payloadOf has checked the SRID flag.
+	if srid, err = r.uint32(order); err != nil {
+		return 0, 0, err
 	}
 	return srid, typ, nil
 }
@@ -217,6 +214,8 @@ func encode(g geom.Geometry, srid uint32) ([]byte, error) {
 	return w.buf, nil
 }
 
+// payloadOf returns a stored value's EWKB, whose root must carry the SRID flag every writer
+// sets. A root too short or of an unknown byte order is left to the reader to report.
 func payloadOf(stored []byte) ([]byte, error) {
 	if len(stored) == 0 {
 		return nil, ErrInvalid
@@ -224,7 +223,14 @@ func payloadOf(stored []byte) ([]byte, error) {
 	if stored[0] != Version1 {
 		return nil, ErrUnsupportedVersion
 	}
-	return stored[1:], nil
+	payload := stored[1:]
+	r := reader{buf: payload, dialect: dialectEWKB}
+	if order, err := r.byteOrder(); err == nil {
+		if word, err := r.uint32(order); err == nil && word&ewkbSRID == 0 {
+			return nil, errStoredWithoutSRID
+		}
+	}
+	return payload, nil
 }
 
 // read builds the geometry b holds in dialect d. A value longer than smallValue is first
