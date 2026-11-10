@@ -44,6 +44,7 @@ const (
 	DefTiDBLoginHistoryRetainDuration  = time.Hour * 24 * 90 // default 90 days.
 	DefStoredProgramCacheSize          = 256
 	DefTiDBEnableProcedure             = false
+	DefTiDBEnableLoadableFunction      = false
 	DefTiDBEnableSPPlanCache           = false
 	DefTiDBEnableDutySeparationMode    = false
 	DefTiDBEnableUDVSubstitute         = false
@@ -69,17 +70,18 @@ var (
 	EnableLabelSecurity = atomic.NewBool(DefTiDBEnableLabelSecurity)
 	EnableLBAC          = atomic.NewBool(DefTiDBEnableLBAC)
 
-	EnableLoginHistory         = atomic.NewBool(DefTiDBEnableLoginHistory)
-	LoginHistoryRetainDuration = atomic.NewDuration(DefTiDBLoginHistoryRetainDuration)
-	StoredProgramCacheSize     = atomic.NewInt64(DefStoredProgramCacheSize)
-	TiDBEnableSPAstReuse       = atomic.NewBool(true)
-	TiDBEnableProcedureValue   = atomic.NewBool(DefTiDBEnableProcedure)
-	AutomaticSPPrivileges      = atomic.NewBool(true)
-	EnableDutySeparationMode   = atomic.NewBool(DefTiDBEnableDutySeparationMode)
-	EnableWhitelist            = atomic.NewBool(DefPKDBEnableWhitelist)
-	EnableEAL                  = atomic.NewBool(DefPKDBEnableEAL)
-	CommentByteLengthLimit     = atomic.NewInt64(DefPKDBCommentByteLengthLimit)
-	SlowLogEscapeNewline       = atomic.NewBool(DefTiDBSlowLogEscapeNewline)
+	EnableLoginHistory              = atomic.NewBool(DefTiDBEnableLoginHistory)
+	LoginHistoryRetainDuration      = atomic.NewDuration(DefTiDBLoginHistoryRetainDuration)
+	StoredProgramCacheSize          = atomic.NewInt64(DefStoredProgramCacheSize)
+	TiDBEnableSPAstReuse            = atomic.NewBool(true)
+	TiDBEnableProcedureValue        = atomic.NewBool(DefTiDBEnableProcedure)
+	TiDBEnableLoadableFunctionValue = atomic.NewBool(DefTiDBEnableLoadableFunction)
+	AutomaticSPPrivileges           = atomic.NewBool(true)
+	EnableDutySeparationMode        = atomic.NewBool(DefTiDBEnableDutySeparationMode)
+	EnableWhitelist                 = atomic.NewBool(DefPKDBEnableWhitelist)
+	EnableEAL                       = atomic.NewBool(DefPKDBEnableEAL)
+	CommentByteLengthLimit          = atomic.NewInt64(DefPKDBCommentByteLengthLimit)
+	SlowLogEscapeNewline            = atomic.NewBool(DefTiDBSlowLogEscapeNewline)
 
 	sequenceCacheRuntimeEpoch = atomic.NewUint64(DefPKDBSequenceCacheEpoch)
 )

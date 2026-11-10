@@ -1329,6 +1329,8 @@ const (
 	TiDBLoginHistoryRetainDuration = "tidb_login_history_retain_duration"
 	// TiDBEnableProcedure if enable store procedure
 	TiDBEnableProcedure = "tidb_enable_procedure"
+	// TiDBEnableLoadableFunction indicates whether loadable functions are enabled.
+	TiDBEnableLoadableFunction = "tidb_enable_loadable_function"
 	// TiDBEnableProcedureAstCache indicates whether tidb need enable or disable ast cache.
 	TiDBEnableProcedureAstCache = "tidb_enable_sp_ast_cache"
 	//TiDBProcedureLastErrorSQL procedure last hander SQL warning/error.

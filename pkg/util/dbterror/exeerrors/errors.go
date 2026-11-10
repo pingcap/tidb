@@ -137,4 +137,5 @@ var (
 	ErrDaInvalidConditionNumber         = dbterror.ClassExecutor.NewStd(mysql.ErrDaInvalidConditionNumber)
 	ErrCantUpdateUsedTableInSfOrTrg     = dbterror.ClassExecutor.NewStd(mysql.ErrCantUpdateUsedTableInSfOrTrg)
 	ErrProcedureDisabled                = dbterror.ClassExecutor.NewStd(mysql.ErrProcedureDisabled)
+	ErrLoadableFunctionDisabled         = dbterror.ClassExecutor.NewStd(mysql.ErrLoadableFunctionDisabled)
 )

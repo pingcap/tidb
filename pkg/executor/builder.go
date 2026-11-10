@@ -1356,9 +1356,26 @@ func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
 
 func (b *executorBuilder) buildDDL(v *plannercore.DDL) exec.Executor {
 	b.setTelemetryInfo(v)
-	switch v.Statement.(type) {
-	case *ast.CreateProcedureInfo, *ast.DropProcedureStmt, *ast.AlterProcedureStmt:
+	switch stmt := v.Statement.(type) {
+	case *ast.CreateProcedureInfo:
+		if stmt.FunctionInfo.IsLoadable {
+			if !variable.TiDBEnableLoadableFunctionValue.Load() {
+				b.err = exeerrors.ErrLoadableFunctionDisabled
+				return nil
+			}
+		} else if !variable.TiDBEnableProcedureValue.Load() {
+			b.err = exeerrors.ErrProcedureDisabled
+			return nil
+		}
+	case *ast.AlterProcedureStmt:
 		if !variable.TiDBEnableProcedureValue.Load() {
+			b.err = exeerrors.ErrProcedureDisabled
+			return nil
+		}
+	case *ast.DropProcedureStmt:
+		// An unqualified DROP FUNCTION can resolve to either a stored function or
+		// a loadable function. Defer that check until the DDL executor resolves it.
+		if (!stmt.IsFunction || stmt.Name.Schema.O != "") && !variable.TiDBEnableProcedureValue.Load() {
 			b.err = exeerrors.ErrProcedureDisabled
 			return nil
 		}

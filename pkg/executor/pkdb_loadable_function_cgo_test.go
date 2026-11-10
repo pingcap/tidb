@@ -32,11 +32,10 @@ func TestLoadableFunctionMockedCreateSelectDrop(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
-	tk1.InProcedure()
+	enableLoadableFunction(tk1)
 	tk1.MustExec("use test")
 
 	tkNoCurrDB := testkit.NewTestKit(t, store)
-	tkNoCurrDB.InProcedure()
 
 	tk1.MustExec("create function udf1 returns integer soname 'udf1.so'")
 	tk1.MustQuery("select name, ret, dl, type from mysql.func where name='udf1'").Check(
@@ -70,7 +69,7 @@ func TestLoadableFunctionMockedErrorCases(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.InProcedure()
+	enableLoadableFunction(tk)
 	tk.MustExec("use test")
 
 	// soName contains path separator -> ErrUdfNoPaths (1124)
@@ -101,7 +100,7 @@ func TestLoadableFunctionPluginDirValidation(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.InProcedure()
+	enableLoadableFunction(tk)
 	tk.MustExec("use test")
 
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -127,7 +126,7 @@ func TestLoadableFunctionMockedDropPrivilegeDenied(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.InProcedure()
+	enableLoadableFunction(tk)
 
 	tk.MustExec("create function udf_priv returns integer soname 'udf1.so'")
 
@@ -147,7 +146,7 @@ func TestLoadableFunctionMockedCreatePrivilegeDenied(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.InProcedure()
+	enableLoadableFunction(tk)
 
 	// CREATE FUNCTION ... SONAME requires INSERT privilege on mysql.func.
 	tk.Session().GetSessionVars().User = &auth.UserIdentity{AuthUsername: "u1", AuthHostname: "h1"}
@@ -167,12 +166,11 @@ func TestLoadableFunctionMockedExecutePrivilegeCompatibility(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tkRoot := testkit.NewTestKit(t, store)
-	tkRoot.InProcedure()
+	enableLoadableFunction(tkRoot)
 	tkRoot.MustExec("create function udf_exec returns integer soname 'udf1.so'")
 	tkRoot.MustExec(`create user 'udf_user'@'%'`)
 
 	tkUser := testkit.NewTestKit(t, store)
-	tkUser.InProcedure()
 	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "udf_user", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
 	// Match MySQL: loadable UDF invocation is not gated by GRANT EXECUTE ON *.*.
 	tkUser.MustQuery("select udf_exec(1)").Check(testkit.Rows("2"))
@@ -184,7 +182,7 @@ func TestLoadableFunctionMockedSelectOnTable(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.InProcedure()
+	enableLoadableFunction(tk)
 	tk.MustExec("use test")
 
 	tk.MustExec("create function udf_tbl returns integer soname 'udf1.so'")
@@ -215,7 +213,7 @@ func TestLoadableFunctionMockedInitFailure(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.InProcedure()
+	enableLoadableFunction(tk)
 	tk.MustExec("use test")
 
 	// Create succeeds (no init at load time), but evaluation fails at runtime init().
@@ -231,6 +229,7 @@ func TestLoadableFunctionMockedReloadFromMySQLFunc(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.InProcedure()
+	enableLoadableFunction(tk)
 	tk.MustExec("use test")
 
 	tk.MustExec("create function udf_reload returns integer soname 'udf1.so'")
@@ -253,7 +252,7 @@ func TestLoadableFunctionMockedReconcileOnSchemaCacheHit(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.InProcedure()
+	enableLoadableFunction(tk)
 	tk.MustExec("use test")
 
 	tk.MustExec("create function udf_reconcile returns integer soname 'udf1.so'")
@@ -282,7 +281,7 @@ func TestLoadableFunctionMockedConcurrentSelect(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.InProcedure()
+	enableLoadableFunction(tk)
 	tk.MustExec("use test")
 	tk.MustExec("create function udf_conc returns integer soname 'udf1.so'")
 
@@ -294,7 +293,6 @@ func TestLoadableFunctionMockedConcurrentSelect(t *testing.T) {
 	tks := make([]*testkit.TestKit, 0, sessionN)
 	for i := 0; i < sessionN; i++ {
 		tk := testkit.NewTestKit(t, store)
-		tk.InProcedure()
 		tk.MustExec("use test")
 		tks = append(tks, tk)
 	}
@@ -342,11 +340,10 @@ func TestLoadableFunctionMockedCreateVisibleBeforeMySQLFuncRow(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tkCreate := testkit.NewTestKit(t, store)
-	tkCreate.InProcedure()
+	enableLoadableFunction(tkCreate)
 	tkCreate.MustExec("use test")
 
 	tkObserver := testkit.NewTestKit(t, store)
-	tkObserver.InProcedure()
 	tkObserver.MustExec("use test")
 
 	createDone := make(chan error, 1)
@@ -410,6 +407,7 @@ func TestLoadableFunctionMockedCreateFailureLeavesMySQLFuncResidue(t *testing.T)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.InProcedure()
+	enableLoadableFunction(tk)
 	tk.MustExec("use test")
 
 	fpFail := "github.com/pingcap/tidb/pkg/ddl/failAfterCreateLoadableFunctionInserted"

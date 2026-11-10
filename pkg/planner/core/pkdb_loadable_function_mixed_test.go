@@ -37,7 +37,7 @@ func TestLoadableAndStoredFunctionInSameSelect(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.InProcedure()
-	tk.MustExec("set global tidb_enable_procedure = ON")
+	tk.MustExec("set global tidb_enable_loadable_function = ON")
 	tk.MustExec("use test")
 	tk.MustExec("drop function if exists f1")
 	tk.MustExec("create function f1() returns int return 1")

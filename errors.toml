@@ -2216,6 +2216,11 @@ error = '''
 Stored procedures are disabled. To enable, run `SET GLOBAL tidb_enable_procedure = ON`
 '''
 
+["executor:8813"]
+error = '''
+Loadable functions are disabled. To enable, run `SET GLOBAL tidb_enable_loadable_function = ON`
+'''
+
 ["expression:1139"]
 error = '''
 Got error '%-.64s' from regexp

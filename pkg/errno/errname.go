@@ -1174,9 +1174,10 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidValueOfType: mysql.Message("Invalid %s value", nil),
 
 	// Enterprise Edit errors.
-	ErrProcedureDisabled:     mysql.Message("Stored procedures are disabled. To enable, run `SET GLOBAL tidb_enable_procedure = ON`", nil),
-	ErrInvalidTiDBRowID:      mysql.Message("Invalid TIDB_ROW_ID token", nil),
-	ErrTiDBRowIDTableBinding: mysql.Message("TIDB_ROW_ID requires one eligible base table in the current query block", nil),
+	ErrProcedureDisabled:        mysql.Message("Stored procedures are disabled. To enable, run `SET GLOBAL tidb_enable_procedure = ON`", nil),
+	ErrLoadableFunctionDisabled: mysql.Message("Loadable functions are disabled. To enable, run `SET GLOBAL tidb_enable_loadable_function = ON`", nil),
+	ErrInvalidTiDBRowID:         mysql.Message("Invalid TIDB_ROW_ID token", nil),
+	ErrTiDBRowIDTableBinding:    mysql.Message("TIDB_ROW_ID requires one eligible base table in the current query block", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout: %s", nil),

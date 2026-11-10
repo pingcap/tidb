@@ -130,9 +130,11 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -491,6 +493,9 @@ func (c *loadableFuncClass) getFunction(
 	ctx BuildContext,
 	args []Expression,
 ) (f builtinFunc, errRet error) {
+	if !variable.TiDBEnableLoadableFunctionValue.Load() {
+		return nil, exeerrors.ErrLoadableFunctionDisabled
+	}
 	if _, err := c.GetPrivilegeChecker(ctx.GetEvalCtx()); err != nil {
 		return nil, err
 	}
@@ -582,6 +587,9 @@ func (b *loadableFuncSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
 }
 
 func (b *loadableFuncSig) ensureInitialized(ctx EvalContext) error {
+	if !variable.TiDBEnableLoadableFunctionValue.Load() {
+		return exeerrors.ErrLoadableFunctionDisabled
+	}
 	if !b.runtime.initialized {
 		if err := b.initRuntime(ctx); err != nil {
 			return err

@@ -587,6 +587,9 @@ func (e *executor) DropProcedure(ctx sessionctx.Context, stmt *ast.DropProcedure
 			return err
 		}
 	}
+	if !variable.TiDBEnableProcedureValue.Load() {
+		return exeerrors.ErrProcedureDisabled
+	}
 
 	if !exists {
 		err = exeerrors.ErrSpDoesNotExist.GenWithStackByArgs(stmt.Type(), routineSchema.O+"."+routineName.O)
@@ -637,6 +640,20 @@ func (e *executor) DropProcedure(ctx sessionctx.Context, stmt *ast.DropProcedure
 }
 
 func (e *executor) dropLoadableFunction(ctx sessionctx.Context, stmt *ast.DropProcedureStmt) error {
+	if !variable.TiDBEnableLoadableFunctionValue.Load() {
+		if stmt.IfExists {
+			exists, err := loadableFunctionExists(e.ctx, ctx, stmt.Name.Name.L)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				err := exeerrors.ErrSpDoesNotExist.GenWithStackByArgs("FUNCTION (UDF)", stmt.Name.Name.O)
+				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				return nil
+			}
+		}
+		return exeerrors.ErrLoadableFunctionDisabled
+	}
 	funcName := stmt.Name.Name
 	currentUser := ctx.GetSessionVars().User
 	if currentUser != nil {
@@ -680,6 +697,22 @@ func (e *executor) dropLoadableFunction(ctx sessionctx.Context, stmt *ast.DropPr
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func loadableFunctionExists(execCtx context.Context, sctx sessionctx.Context, functionName string) (bool, error) {
+	internalCtx := kv.WithInternalSourceType(execCtx, kv.InternalTxnProcedure)
+	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
+		internalCtx,
+		nil,
+		"SELECT 1 FROM %n.%n WHERE name=%? AND type='function' LIMIT 1",
+		mysql.SystemDB,
+		"func",
+		functionName,
+	)
+	if err != nil {
+		return false, err
+	}
+	return len(rows) > 0, nil
 }
 
 func (e *executor) AlterProcedure(ctx sessionctx.Context, stmt *ast.AlterProcedureStmt) error {

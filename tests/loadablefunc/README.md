@@ -6,6 +6,9 @@ This directory contains integration tests for TiDB loadable functions (UDF) crea
 CREATE FUNCTION ... RETURNS ... SONAME 'xxx.so';
 ```
 
+The server must have the global `tidb_enable_loadable_function` variable set to
+`ON` before loadable functions can be created, invoked, or dropped.
+
 ## Layout
 
 - `run-tests.sh`: build UDF shared objects, start a standalone `tidb-server`, run SQL tests via `mysql_tester`.

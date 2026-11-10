@@ -1,4 +1,4 @@
-set global tidb_enable_procedure = ON;
+set global tidb_enable_loadable_function = ON;
 use test;
 
 drop function if exists word_count;

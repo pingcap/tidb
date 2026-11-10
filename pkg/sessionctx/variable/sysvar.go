@@ -759,6 +759,15 @@ var defaultSysVars = []*SysVar{
 			return BoolToOnOff(TiDBEnableProcedureValue.Load()), nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBEnableLoadableFunction, Value: BoolToOnOff(DefTiDBEnableLoadableFunction), Type: TypeBool,
+		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+			TiDBEnableLoadableFunctionValue.Store(TiDBOptOn(val))
+			return nil
+		},
+		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return BoolToOnOff(TiDBEnableLoadableFunctionValue.Load()), nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: AutomaticSpPrivileges, Value: BoolToOnOff(true), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		AutomaticSPPrivileges.Store(TiDBOptOn(val))
 		return nil

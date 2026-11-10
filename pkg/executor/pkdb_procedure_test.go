@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -4188,4 +4189,56 @@ func TestProcedureDDL(t *testing.T) {
 	require.Equal(t, len(tk.Res), 1)
 	tk.Res[0].Check(testkit.Rows("1 1 1", "2 2 2", "1 1 1", "2 2 2"))
 	tk.ClearProcedureRes()
+}
+
+func enableLoadableFunction(tk *testkit.TestKit) {
+	tk.MustExec("set global tidb_enable_loadable_function = ON")
+}
+
+func TestLoadableFunctionSwitch(t *testing.T) {
+	restore := expression.SetLoadUDFHookForTest(expression.MockLoadUDFForTest)
+	t.Cleanup(restore)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustQuery("show variables like 'tidb_enable_loadable_function'").Check(
+		testkit.Rows("tidb_enable_loadable_function OFF"),
+	)
+	tk.MustExec("set global tidb_enable_procedure = OFF")
+	tk.MustExec("set global tidb_enable_loadable_function = OFF")
+	tk.MustQuery("show variables like 'tidb_enable_loadable_function'").Check(
+		testkit.Rows("tidb_enable_loadable_function OFF"),
+	)
+	tk.MustGetErrCode("set tidb_enable_loadable_function = ON", 1229)
+	tk.MustGetErrMsg(
+		"create function udf_switch returns integer soname 'udf1.so'",
+		"[executor:8813]Loadable functions are disabled. To enable, run `SET GLOBAL tidb_enable_loadable_function = ON`",
+	)
+	// An absent target must not make stored-function cleanup depend on the
+	// loadable-function switch.
+	tk.MustExec("drop function if exists absent_function")
+
+	enableLoadableFunction(tk)
+	tk.MustGetErrCode("create function stored_switch() returns int return 1", 8810)
+	tk.MustExec("create function udf_switch returns integer soname 'udf1.so'")
+	tk.MustQuery("select udf_switch(1)").Check(testkit.Rows("2"))
+
+	tk.MustExec("set global tidb_enable_loadable_function = OFF")
+	tk.MustGetErrCode("select udf_switch(1)", 8813)
+	tk.MustGetErrCode("drop function udf_switch", 8813)
+	tk.MustGetErrCode("drop function if exists udf_switch", 8813)
+
+	// Enabling stored procedures must not enable loadable functions.
+	tk.MustExec("set global tidb_enable_procedure = ON")
+	tk.MustGetErrCode("select udf_switch(1)", 8813)
+	tk.MustGetErrCode("create function udf_switch_2 returns integer soname 'udf1.so'", 8813)
+	tk.MustExec("create function stored_switch() returns int return 1")
+	tk.MustQuery("select stored_switch()").Check(testkit.Rows("1"))
+	tk.MustExec("drop function stored_switch")
+
+	enableLoadableFunction(tk)
+	tk.MustExec("set global tidb_enable_procedure = OFF")
+	tk.MustExec("drop function udf_switch")
 }
