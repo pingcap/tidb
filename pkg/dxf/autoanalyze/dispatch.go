@@ -17,11 +17,14 @@ package autoanalyze
 import (
 	"context"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -89,7 +92,8 @@ func runAsTask(
 	statsCache statstypes.StatsCacheLoader,
 	taskMeta *TaskMeta,
 ) error {
-	if _, err := storage.GetDXFSvcTaskMgr(); err != nil {
+	taskMgr, err := storage.GetDXFSvcTaskMgr()
+	if err != nil {
 		// DXF is not ready on this node yet. The priority queue analyzes the table again later.
 		return errors.Trace(err)
 	}
@@ -100,15 +104,28 @@ func runAsTask(
 
 	keyspace := sctx.GetStore().GetKeyspace()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
-	// The key names the table, and ends in a UUID: DXF refuses a key that an
-	// earlier task has used.
-	taskKey := fmt.Sprintf("%s/%s/%d/%s", keyspace, proto.AutoAnalyze, taskMeta.TableID, uuid.NewString())
+	// The task keys of a table share a prefix, by which activeTask finds them,
+	// and end in a UUID: DXF refuses a key that an earlier task has used.
+	keyPrefix := fmt.Sprintf("%s/%s/%d/", keyspace, proto.AutoAnalyze, taskMeta.TableID)
 	start := time.Now()
-	task, err := submitTask(ctx, taskKey, keyspace, meta)
+	// A stats owner that shut down or failed can have left a task that runs
+	// this statement. If that task succeeds, the statement is done.
+	task, err := activeTask(ctx, taskMgr, keyPrefix, taskMeta)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
-	err = waitTask(ctx, task)
+	failpoint.InjectCall("afterFindActiveTask")
+	adopted := task != nil
+	if adopted {
+		adopted = waitTask(ctx, task) == nil
+	}
+	if !adopted {
+		task, err = submitTask(ctx, keyPrefix+uuid.NewString(), keyspace, meta)
+		if err != nil {
+			return err
+		}
+		err = waitTask(ctx, task)
+	}
 	if err == nil {
 		// Refresh the dispatching node's cache before returning success. The priority
 		// queue removes the running-job entry when the auto-analyze job completes.
@@ -117,7 +134,7 @@ func runAsTask(
 		err = loadTableStats(ctx, sctx, statsCache, taskMeta.TableID)
 	}
 	statslogutil.StatsLogger().Info("auto analyze dispatched through DXF",
-		zap.Int64("taskID", task.ID), zap.String("taskKey", task.Key),
+		zap.Int64("taskID", task.ID), zap.String("taskKey", task.Key), zap.Bool("adopted", adopted),
 		zap.String("sql", taskMeta.SQL), zap.Strings("params", taskMeta.Params),
 		zap.Duration("cost", time.Since(start)), zap.Error(err))
 	return err
@@ -156,6 +173,32 @@ func newTaskMeta(tblInfo *model.TableInfo, sql string, params []any) (*TaskMeta,
 		meta.Params = append(meta.Params, s)
 	}
 	return meta, nil
+}
+
+// activeTask returns a pending or running task that runs the statement of meta, or nil. It
+// compares the statements, because the tasks of a table can run different ones at a time.
+func activeTask(ctx context.Context, taskMgr *storage.TaskManager, keyPrefix string, meta *TaskMeta) (*proto.TaskBase, error) {
+	candidates, err := taskMgr.GetTaskBasesInStates(ctx, proto.TaskStatePending, proto.TaskStateRunning)
+	if err != nil {
+		return nil, err
+	}
+	for _, candidate := range candidates {
+		if !strings.HasPrefix(candidate.Key, keyPrefix) {
+			continue
+		}
+		task, err := taskMgr.GetTaskByID(ctx, candidate.ID)
+		if goerrors.Is(err, storage.ErrTaskNotFound) {
+			// The task is done meanwhile, and has moved to the history.
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if meta.sameStatement(task.Meta) {
+			return candidate, nil
+		}
+	}
+	return nil, nil
 }
 
 // submitTask submits the statement as a task that runs on one node.
