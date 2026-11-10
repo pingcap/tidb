@@ -395,9 +395,10 @@ func TestMergeJSONNonTransitiveOrder(t *testing.T) {
 	// One TopN entry per partition, in the order a, b, c, a: every
 	// adjacent pair is already in order, so a sort can leave the two a
 	// entries apart.
-	var topNs []*statistics.TopN
-	var hists []*statistics.Histogram
-	for _, key := range [][]byte{a, b, c, a} {
+	keys := [][]byte{a, b, c, a}
+	topNs := make([]*statistics.TopN, 0, len(keys))
+	hists := make([]*statistics.Histogram, 0, len(keys))
+	for _, key := range keys {
 		topN := statistics.NewTopN(1)
 		topN.AppendTopN(key, 10)
 		topNs = append(topNs, topN)
