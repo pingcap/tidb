@@ -585,6 +585,12 @@ func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
 		// metadata, even if compensation failed or the owner changed.
 		if err := reconcileCancelledResourceGroupAlter(jobCtx, job); err != nil {
 			w.sess.Rollback()
+			// This completion path bypasses the normal job-step retry delay.
+			// Release the transaction before waiting, and stop promptly on owner loss.
+			select {
+			case <-time.After(GetWaitTimeWhenErrorOccurred()):
+			case <-w.workCtx.Done():
+			}
 			return err
 		}
 	}

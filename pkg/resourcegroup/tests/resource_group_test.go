@@ -359,9 +359,29 @@ func TestResourceGroupBasic(t *testing.T) {
 		require.NoError(t, err)
 
 		var restoreAttempts atomic.Int32
+		var inCancelledCleanup atomic.Bool
+		var cleanupAttempts atomic.Int32
+		cleanupTimes := make(chan time.Time, 3)
+		retryWait := ddl.GetWaitTimeWhenErrorOccurred()
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", func(jobW *model.JobW) {
+			job := jobW.Job
+			if job.Type == model.ActionAlterResourceGroup && job.SchemaName == "retry_cancel_rg" && job.IsCancelled() {
+				inCancelledCleanup.Store(true)
+			}
+		})
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/infosync/beforeModifyResourceGroup", func(group *rmpb.ResourceGroup, err *error) {
 			if group.Name == "retry_cancel_rg" && group.GetRUSettings().GetRU().GetSettings().GetFillRate() == 1000 {
-				if restoreAttempts.Add(1) <= 2 {
+				restoreAttempts.Add(1)
+				if !inCancelledCleanup.Load() {
+					// Fail eager compensation too, but do not treat it as durable cleanup.
+					*err = fmt.Errorf("mock PD unavailable during resource-group restore")
+					return
+				}
+				attempt := cleanupAttempts.Add(1)
+				if attempt <= 3 {
+					cleanupTimes <- time.Now()
+				}
+				if attempt <= 2 {
 					*err = fmt.Errorf("mock PD unavailable during resource-group restore")
 				}
 			}
@@ -377,6 +397,10 @@ func TestResourceGroupBasic(t *testing.T) {
 		})
 		tk.MustGetErrCode("alter resource group retry_cancel_rg RU_PER_SEC=1 PRIORITY=HIGH", mysql.ErrCancelledDDLJob)
 		require.GreaterOrEqual(t, restoreAttempts.Load(), int32(3))
+		require.GreaterOrEqual(t, cleanupAttempts.Load(), int32(3))
+		firstCleanup, secondCleanup, thirdCleanup := <-cleanupTimes, <-cleanupTimes, <-cleanupTimes
+		require.GreaterOrEqual(t, secondCleanup.Sub(firstCleanup), retryWait)
+		require.GreaterOrEqual(t, thirdCleanup.Sub(secondCleanup), retryWait)
 		historyJob, err := ddl.GetHistoryJobByID(tk.Session(), jobID.Load())
 		require.NoError(t, err)
 		require.True(t, historyJob.IsCancelled())
