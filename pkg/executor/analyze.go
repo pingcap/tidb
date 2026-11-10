@@ -70,6 +70,9 @@ type AnalyzeExec struct {
 	gp         *gp.Pool
 	// errExitCh is used to notice the worker that the whole analyze task is finished when to meet error.
 	errExitCh chan struct{}
+	// sampledNDVThreshold is tidb_analyze_sampled_ndv_threshold of the session
+	// keyspace, read one time, so that all tasks of the statement use one value.
+	sampledNDVThreshold int64
 }
 
 var (
@@ -324,7 +327,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		return err
 	}
 	warnLockedTableMsg(sessionVars, needAnalyzeTableCnt, skippedTables)
-	warnUnusedNDVRate(sessionVars, tasks)
+	warnUnusedNDVRate(sessionVars, tasks, e.sampledNDVThreshold)
 
 	if len(tasks) == 0 {
 		return nil
@@ -580,10 +583,9 @@ func warnLockedTableMsg(sessionVars *variable.SessionVars, needAnalyzeTableCnt u
 
 // warnUnusedNDVRate warns when the tables and partitions to analyze ask for an
 // NDVRATE below 1, in the statement or in saved options, but none samples rows
-// because none has more than tidb_analyze_sampled_ndv_threshold rows.
-func warnUnusedNDVRate(sessionVars *variable.SessionVars, tasks []*analyzeTask) {
+// because none has more than threshold rows.
+func warnUnusedNDVRate(sessionVars *variable.SessionVars, tasks []*analyzeTask, threshold int64) {
 	// Zero turns sampled NDV off, so skip the warning.
-	threshold := vardef.AnalyzeSampledNDVThreshold.Load()
 	if threshold == 0 {
 		return
 	}
@@ -644,8 +646,12 @@ func writeSavedAnalyzeOption(sql *strings.Builder, rawOpts map[ast.AnalyzeOption
 }
 
 func (e *AnalyzeExec) saveAnalyzeOptions() error {
-	if !vardef.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
+	if len(e.OptionsMap) == 0 {
 		return nil
+	}
+	persist, err := core.PersistAnalyzeOptions(e.Ctx().GetPlanCtx())
+	if err != nil || !persist {
+		return err
 	}
 	// only to save table options if dynamic prune mode
 	dynamicPrune := variable.PartitionPruneMode(e.Ctx().GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
@@ -692,7 +698,7 @@ func (e *AnalyzeExec) saveAnalyzeOptions() error {
 	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	exec := e.Ctx().GetRestrictedSQLExecutor()
-	_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
+	_, _, err = exec.ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {
 		return err
 	}
