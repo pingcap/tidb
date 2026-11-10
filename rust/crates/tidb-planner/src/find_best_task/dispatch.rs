@@ -2329,13 +2329,7 @@ pub(super) fn add_selection_condition_for_global_index(
     } else {
         args.extend(ids.into_iter().map(constant));
     }
-    Some(Expression::ScalarFunction(
-        tidb_expr::scalar_function::ScalarFunction::new(
-            tidb_ast::CiString::new("in"),
-            long_long,
-            args,
-        ),
-    ))
+    tidb_expr::new_function_internal(&tidb_exprctx::NoColumns, "in", long_long, args)
 }
 
 /// Go `matchPartialOrderProperty` (`find_best_task.go:1260`). A prefix index

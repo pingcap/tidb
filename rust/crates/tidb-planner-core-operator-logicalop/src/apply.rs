@@ -55,7 +55,6 @@
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_expr::column::{Column, CorrelatedColumn};
 use tidb_expr::expression::Expression;
-use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
 
 use tidb_planner_core_base::LogicalJoinType;
@@ -349,14 +348,6 @@ impl LogicalApply {
     /// resolve — Go's `if _, ok := ret.(*expression.CorrelatedColumn); ok`
     /// escape, which fires when `Decorrelate` handed the column straight back.
     ///
-    /// # Narrowing
-    ///
-    /// Go builds the result with
-    /// `expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), ret, col)`,
-    /// which folds constants and infers the type through an `ExprContext`.
-    /// There is none here, so the node is built directly with the same `Tiny`
-    /// result type Go asks for; no folding happens, which can only leave the
-    /// expression less simplified, never differently shaped.
     #[must_use]
     pub fn de_cor_col_from_eq_expr(
         &self,
@@ -379,11 +370,12 @@ impl LogicalApply {
         if matches!(decorrelated, Expression::CorrelatedColumn(_)) {
             return None;
         }
-        Some(Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("eq"),
+        tidb_expr::new_function_internal(
+            &tidb_exprctx::NoColumns,
+            "eq",
             FieldType::new(FieldTypeCode::Tiny),
             vec![decorrelated, Expression::Column(column.clone())],
-        )))
+        )
     }
 
     /// This operator's own fields with NO children; see

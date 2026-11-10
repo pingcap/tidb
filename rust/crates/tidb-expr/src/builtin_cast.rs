@@ -351,6 +351,51 @@ impl FunctionClass for CastAsJsonFunctionClass {
     }
 }
 
+/// Go `castAsArrayFunctionClass`.
+pub(crate) struct CastAsArrayFunctionClass {
+    pub(crate) tp: FieldType,
+}
+
+impl FunctionClass for CastAsArrayFunctionClass {
+    fn get_function(
+        &self,
+        ctx: &dyn BuildContext,
+        args: Vec<Expression>,
+    ) -> Result<BaseBuiltinFunc, EvalError> {
+        // `verifyArgs`.
+        if type_of(&args[0]).eval_type() != EvalType::Json {
+            return Err(EvalError::Json(crate::JsonError::InvalidTypeForJson {
+                argument: 1,
+                function: "cast_as_array",
+            }));
+        }
+        let array_type = self.tp.array_type();
+        if matches!(
+            array_type.code(),
+            FieldTypeCode::Year | FieldTypeCode::Json | FieldTypeCode::Float | FieldTypeCode::NewDecimal
+        ) {
+            return Err(EvalError::NotImplemented(
+                format!("CAST-ing data to array of {}", array_type.source_string()).into(),
+            ));
+        }
+        if array_type.eval_type() == EvalType::String
+            && !matches!(array_type.charset_name(), "utf8mb4" | CHARSET_BIN)
+        {
+            return Err(EvalError::NotImplemented(
+                "specifying charset for multi-valued index".into(),
+            ));
+        }
+        if array_type.eval_type() == EvalType::String
+            && array_type.flen() == tidb_datatype::UNSPECIFIED_LENGTH
+        {
+            return Err(EvalError::NotImplemented(
+                "CAST-ing data to array of char/binary BLOBs with unspecified length".into(),
+            ));
+        }
+        new_base_builtin_func(ctx, "cast", args, self.tp.clone())
+    }
+}
+
 /// Go `castAsVectorFloat32FunctionClass`.
 pub(crate) struct CastAsVectorFloat32FunctionClass {
     pub(crate) tp: FieldType,
@@ -378,6 +423,9 @@ fn legacy_cast_name(
     source_eval_type: EvalType,
 ) -> Result<&'static str, EvalError> {
     let unsigned = target.flags() & FieldTypeFlags::UNSIGNED != 0;
+    if target.is_array() {
+        return Ok("cast_array");
+    }
     Ok(match target.code() {
         FieldTypeCode::Year => "cast_year",
         FieldTypeCode::Date | FieldTypeCode::NewDate => "cast_date",
@@ -470,6 +518,9 @@ pub fn build_cast_function_with_check(
             CastAsTimeFunctionClass { tp }.get_function(ctx, vec![expr])?
         }
         EvalType::Duration => CastAsDurationFunctionClass { tp }.get_function(ctx, vec![expr])?,
+        EvalType::Json if tp.is_array() => {
+            CastAsArrayFunctionClass { tp }.get_function(ctx, vec![expr])?
+        }
         EvalType::Json => CastAsJsonFunctionClass { tp }.get_function(ctx, vec![expr])?,
         EvalType::VectorFloat32 => {
             CastAsVectorFloat32FunctionClass { tp }.get_function(ctx, vec![expr])?

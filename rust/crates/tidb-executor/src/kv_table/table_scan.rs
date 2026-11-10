@@ -2883,11 +2883,10 @@ impl KvTableReader for TableCommon {
             } else {
                 args.extend(ids.iter().copied().map(constant));
             }
-            predicates.push(Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
-                tidb_ast::CiString::new("in"),
-                long_long,
-                args,
-            )));
+            predicates.push(
+                tidb_expr::new_function(&tidb_exprctx::NoColumns, "in", long_long, args)
+                    .map_err(|error| KvTableError::Encode(format!("{error:?}")))?,
+            );
         }
         let handle_indices = if self.common_handle_offsets().is_empty() {
             vec![table_offsets

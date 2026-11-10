@@ -27,7 +27,7 @@ use tidb_exprctx::context::JsonError;
 use crate::expression::{Expression, ScalarFunction};
 use crate::scalar_function::{binary_op_name, unary_op_name};
 use crate::EvalError;
-use tidb_ast::{BinaryOp, CiString, Expr, GetFormatSelector, IsTarget, UnaryOp};
+use tidb_ast::{BinaryOp, Expr, GetFormatSelector, IsTarget, UnaryOp};
 use tidb_datatype::{
     Datum, EvalType, FieldType, FieldTypeCode,
 };
@@ -597,14 +597,14 @@ fn keyword_constant(keyword: &str) -> Expression {
     constant(Datum::new_string_datum(keyword.to_owned()), FieldTypeCode::Varchar)
 }
 
-fn scalar(name: &str, args: Vec<Expression>) -> Expression {
-    // The result type is a placeholder: operator evaluation dispatches on the
-    // operand datum kinds, not on this type. Faithful type inference is deferred.
-    Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new(name),
-        FieldType::new(FieldTypeCode::LongLong),
-        args,
-    ))
+/// Go `expressionRewriter.newFunction`: `name`'s function class over `args`.
+fn new_function(
+    name: &str,
+    args: Vec<Expression>,
+    resolver: &impl ColumnResolver,
+) -> Result<Expression, EvalError> {
+    let class = crate::builtin::funcs(name).expect("builtin.go registers the operator");
+    class_function(class, name, args, resolver)
 }
 
 /// Go `er.newFunction` for a name `funcs` lists: `class` builds the node
@@ -695,11 +695,7 @@ fn binary_expression(
     right: Expression,
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
-    let name = binary_op_name(op);
-    if let Some(class) = crate::builtin::funcs(name) {
-        return class_function(class, name, vec![left, right], resolver);
-    }
-    Ok(scalar(name, vec![left, right]))
+    new_function(binary_op_name(op), vec![left, right], resolver)
 }
 
 /// Go `ResolveType4Between` (`pkg/expression/builtin_compare.go:395`), which
@@ -1094,56 +1090,6 @@ fn resolved_cast_target(
         }
     }
     Ok((name, ret_type))
-}
-
-/// Go `castAsArrayFunctionClass` (`builtin_cast.go`), reached through the
-/// rewriter's `allowBuildCastArray` gate: `CAST(json AS <type> ARRAY)` builds
-/// a JSON array of `<type>` values, the key part of a multi-valued index.
-fn rewrite_cast_array(
-    cast: &tidb_ast::CastExpr,
-    resolver: &impl ColumnResolver,
-) -> Result<Expression, EvalError> {
-    if !resolver.allow_build_cast_array() {
-        return Err(EvalError::NotImplemented(
-            "Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions"
-                .into(),
-        ));
-    }
-    check_func_cast_expr(cast)?;
-    let (_, element) = resolved_cast_target(cast, resolver)?;
-    let arg = rewrite_expr_resolved(&cast.expr, resolver)?;
-    // `verifyArgs`: "args[0].GetType(ctx).EvalType() != types.ETJson".
-    if arg.static_type().map(FieldType::eval_type) != Some(tidb_datatype::EvalType::Json) {
-        return Err(EvalError::Json(JsonError::InvalidTypeForJson {
-            argument: 1,
-            function: "cast_as_array",
-        }));
-    }
-    if matches!(
-        element.code(),
-        FieldTypeCode::Year | FieldTypeCode::Json | FieldTypeCode::Float | FieldTypeCode::NewDecimal
-    ) {
-        return Err(EvalError::NotImplemented(
-            format!("CAST-ing data to array of {}", element.source_string()).into(),
-        ));
-    }
-    if element.eval_type() == tidb_datatype::EvalType::String {
-        if !matches!(element.charset_name(), "utf8mb4" | "binary") {
-            return Err(EvalError::NotImplemented(
-                "specifying charset for multi-valued index".into(),
-            ));
-        }
-        if element.flen() == tidb_datatype::UNSPECIFIED_LENGTH {
-            return Err(EvalError::NotImplemented(
-                "CAST-ing data to array of char/binary BLOBs with unspecified length".into(),
-            ));
-        }
-    }
-    Ok(Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("cast_array"),
-        element.with_array(true),
-        vec![arg],
-    )))
 }
 
 /// Go `BuildJSONSumCrc32FunctionWithCheck` (`builtin_json.go`), the
@@ -1772,15 +1718,7 @@ fn rewrite_leaf_compound(
                     binary_expression(BinaryOp::LogicOr, condition, comparison?, resolver)
                 })?;
                 if *not {
-                    let ret_type = call
-                        .static_type()
-                        .cloned()
-                        .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
-                    return Ok(Expression::ScalarFunction(ScalarFunction::new(
-                        CiString::new(unary_op_name(UnaryOp::Not)),
-                        ret_type,
-                        vec![call],
-                    )));
+                    return new_function(unary_op_name(UnaryOp::Not), vec![call], resolver);
                 }
                 return Ok(call);
             }
@@ -1859,13 +1797,7 @@ fn rewrite_leaf_compound(
                     EvalError::Unsupported("an IN expression with no candidates"),
                 )?;
                 return if *not {
-                    Ok(Expression::ScalarFunction(ScalarFunction::new(
-                        CiString::new(unary_op_name(UnaryOp::Not)),
-                        call.static_type()
-                            .cloned()
-                            .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong)),
-                        vec![call],
-                    )))
+                    new_function(unary_op_name(UnaryOp::Not), vec![call], resolver)
                 } else {
                     Ok(call)
                 };
@@ -2474,11 +2406,15 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             if cast.style == tidb_ast::CastStyle::JsonSumCrc32 {
                 return rewrite_json_sum_crc32(cast, resolver);
             }
-            if cast.array {
-                return rewrite_cast_array(cast, resolver);
+            if cast.array && !resolver.allow_build_cast_array() {
+                return Err(EvalError::NotImplemented(
+                    "Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions"
+                        .into(),
+                ));
             }
             check_func_cast_expr(cast)?;
             let (_, target_tp) = resolved_cast_target(cast, resolver)?;
+            let target_tp = target_tp.with_array(cast.array);
             let arg = rewrite_expr_resolved(&cast.expr, resolver)?;
             // Go `Leave(*ast.FuncCastExpr)`.
             ensure_single_column(&[&arg])?;
@@ -2579,18 +2515,9 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 .iter()
                 .map(|item| rewrite_expr_resolved(item, resolver))
                 .collect::<Result<Vec<_>, _>>()?;
-            // Go rowToScalarFunc uses the first element's type. The planner
-            // expands this row constructor when comparing subquery operands.
-            let ret_type = args
-                .first()
-                .and_then(Expression::static_type)
-                .cloned()
-                .unwrap_or_else(|| FieldType::new(FieldTypeCode::Null));
-            Ok(Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("row"),
-                ret_type,
-                args,
-            )))
+            // Go `rowToScalarFunc`. The planner expands this row constructor
+            // when comparing subquery operands.
+            new_function("row", args, resolver)
         }
         // Go `expressionRewriter.Enter`: an aggregate that the plan's
         // aggregation did not map (nested in another aggregate's argument)

@@ -134,10 +134,29 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   deleted. `eval_in` is Go `EvalSimpleAst`: a rewrite through
   `rewriter::ContextResolver` (builds and folds in the evaluation context)
   and one evaluation of the built tree.
-- [ ] Milestone 11b-2: evaluation dispatches on the signature object alone
-  (`scalar_function.rs` by-name kernel, `func::eval_func_values`), the
-  catalog's second description of a call and the collation post-pass are
-  deleted; X01 leaves the register.
+- [ ] Milestone 11b-2: evaluation dispatches on the signature object alone;
+  X01 leaves the register. Four parts, in order:
+  - [ ] 11b-2a: every node is built by its function class.
+    `ScalarFunction::new` (a node with a name and no signature) is deleted.
+    Done: the rewriter (`row`, the negated row `IN`, the operator fallback),
+    `compose_condition_with_binary_op`, the null-reject fold, the
+    partition-id `IN` filters, `de_cor_col_from_eq_expr`, `CAST(.. AS ..
+    ARRAY)` (Go `castAsArrayFunctionClass` inside
+    `BuildCastFunctionWithCheck`). Open: the driver's
+    `join_equality_with_collation` (the index join takes its matching from
+    equality expressions where Go's takes hash keys and their types),
+    `pushdown_catalog`'s `metadata_expression` (goes with 11b-2c), then the
+    test call sites and the test-only `PreservingFunctionBuilder` (they go
+    when 11b-2b makes the bound evaluation mandatory).
+  - [ ] 11b-2b: the class's `getFunction` binds the signature's evaluation
+    (Go's `builtinXxxSig.evalT`), one Go file at a time, until
+    `ScalarFunction::eval_by_signature` and `func::eval_func_values` are
+    empty; the PB decoder (`getSignatureByPB`) binds the same functions.
+  - [ ] 11b-2c: `pushdown_catalog`'s second description of a call
+    (`PbScalar`, `BuiltinSignature`, `resolve`) is deleted; `ExprToPB`
+    reads the node's signature.
+  - [ ] 11b-2d: the collation post-pass (`derive_tree_collation`,
+    `restore_function_result_charset`, `returns_binary_string`) is deleted.
 
 ## Surprises & Discoveries
 

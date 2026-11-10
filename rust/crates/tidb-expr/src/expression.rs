@@ -523,11 +523,13 @@ fn try_fold_nullified_function(
     {
         return Some(Constant::new(Datum::Null, result_type));
     }
-    let folded = Expression::ScalarFunction(ScalarFunction::new(
-        function.func_name.clone(),
+    let folded = crate::new_function(
+        &crate::NoColumns,
+        name,
         result_type.clone(),
         arguments.into_iter().map(Expression::Constant).collect(),
-    ));
+    )
+    .ok()?;
     let value = crate::eval_expression_once(&folded, &crate::NoColumns).ok()?;
     Some(Constant::new(value, result_type))
 }

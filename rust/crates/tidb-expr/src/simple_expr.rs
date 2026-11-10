@@ -113,7 +113,7 @@ use tidb_datatype::{
 use crate::column::{Column, CorrelatedColumn};
 use crate::constant_fold::ConstantFoldMode;
 use tidb_exprctx::PlanColumnIdAllocator;
-use crate::expression::{Expression, ScalarFunction};
+use crate::expression::Expression;
 use crate::field_name::{find_field_name, NonUniqueFieldName};
 use crate::rewriter::{rewrite_expr_resolved, ColumnResolver};
 use crate::schema::Schema;
@@ -588,21 +588,12 @@ fn compose_condition_with_binary_op(
             let right = conditions.split_off(length / 2);
             let left = compose_condition_with_binary_op(conditions, func_name)?;
             let right = compose_condition_with_binary_op(right, func_name)?;
-            // Go builds the node with `NewFunctionInternal`, whose `and`/`or`
-            // class wraps an argument that is no integer in
-            // `istrue_with_null`. No build context reaches this function, so
-            // the conditions stay as they are under the class's result type.
-            let mut ret_type =
-                crate::builtin_arithmetic::new_return_field_type_for_base_builtin_func(
-                    tidb_datatype::EvalType::Int,
-                );
-            ret_type.set_flen(1);
-            ret_type.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
-            Some(Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new(func_name),
-                ret_type,
+            crate::new_function_internal(
+                &crate::NoColumns,
+                func_name,
+                FieldType::new(FieldTypeCode::Tiny),
                 vec![left, right],
-            )))
+            )
         }
     }
 }
@@ -817,6 +808,7 @@ mod tests {
     use tidb_exprctx::SimplePlanColumnIdAllocator;
     use crate::expression::Constant;
     use crate::rewriter::NoResolver;
+    use crate::scalar_function::ScalarFunction;
     use tidb_chunk::chunk::Chunk;
     use tidb_datatype::{Datum, FieldTypeFlags};
 
