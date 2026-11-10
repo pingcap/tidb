@@ -717,7 +717,7 @@ pub(crate) fn new_base_builtin_func_with_tp(
                     ctx,
                     wrap_with_cast_as_string(given, ctx.connection_charset_info())?,
                 );
-                crate::convert_charset::handle_binary_literal(ctx, wrapped, &ec, func_name)
+                crate::convert_charset::handle_binary_literal(ctx, wrapped, &ec, func_name, false)
             }
             EvalType::Datetime => fold_built_cast(
                 ctx,
@@ -776,7 +776,7 @@ pub(crate) fn new_base_builtin_func_with_field_types(
                     ctx,
                     wrap_with_cast_as_string(given, ctx.connection_charset_info())?,
                 );
-                crate::convert_charset::handle_binary_literal(ctx, wrapped, &ec, func_name)
+                crate::convert_charset::handle_binary_literal(ctx, wrapped, &ec, func_name, false)
             }
             EvalType::Json => fold_built_cast(ctx, wrap_with_cast_as_json(given)?),
             EvalType::Decimal | EvalType::Datetime | EvalType::Timestamp | EvalType::Duration => {
@@ -793,6 +793,72 @@ pub(crate) fn new_base_builtin_func_with_field_types(
         };
     }
     Ok(base_builtin_func_of(func_name, args, ret_type, &ec))
+}
+
+/// Go `newBaseBuiltinFunc`: the builtin function over `args` as given,
+/// returning `tp`. Go's own caveat applies: the charset and collation of
+/// `tp` are left as the caller set them.
+pub(crate) fn new_base_builtin_func(
+    ctx: &dyn BuildContext,
+    func_name: &str,
+    args: Vec<Expression>,
+    mut tp: FieldType,
+) -> Result<BaseBuiltinFunc, EvalError> {
+    let ret_type = tp.eval_type();
+    let ec = derive_collation_with_arg_tps(
+        func_name,
+        &args,
+        ret_type,
+        &[ret_type],
+        ctx.connection_charset_info(),
+    )?;
+    let mut collation = CollationInfo::default();
+    collation.set_charset_and_collation(&ec.charset, &ec.collation);
+    collation.set_coercibility(ec.coer);
+    collation.set_repertoire(ec.repe);
+    adjust_null_flag_for_return_type(func_name, &args, &mut tp);
+    Ok(BaseBuiltinFunc {
+        args,
+        tp,
+        pb_code: ScalarFuncSig::Unspecified,
+        collation,
+    })
+}
+
+/// Go `IsBinaryLiteral`.
+pub(crate) fn is_binary_literal(expr: &Expression) -> bool {
+    matches!(expr, Expression::Constant(constant) if matches!(constant.value, Datum::BinaryLiteral(_)))
+}
+
+/// The [`BuildContext`] of a cast built where no statement context reaches:
+/// the default connection charset, and the cast left as built for the
+/// caller to fold.
+pub(crate) struct UnfoldedBuildContext;
+
+impl BuildContext for UnfoldedBuildContext {
+    fn connection_charset_info(&self) -> (&str, &str) {
+        crate::collation_derive::connection_charset_info()
+    }
+
+    fn no_unsigned_subtraction(&self) -> bool {
+        false
+    }
+
+    fn div_precision_increment(&self) -> i64 {
+        4
+    }
+
+    fn fold_constant(&self, _: &mut Expression) {}
+
+    fn eval_constant(&self, expression: &Expression) -> Result<Datum, EvalError> {
+        expression.eval(&tidb_exprctx::NoColumns, Row::empty())
+    }
+
+    fn append_warning(&self, _: &TerrorError) {}
+
+    fn columns(&self) -> Option<&dyn Columns> {
+        None
+    }
 }
 
 /// The tail `newBaseBuiltinFuncWithTp` and `newBaseBuiltinFuncWithFieldTypes`

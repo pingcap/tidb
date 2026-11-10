@@ -48,7 +48,7 @@ use crate::wrap_cast::type_of;
 
 const MATRIX: &str = include_str!("../../testdata/function_class_matrix.txt");
 
-struct MockContext;
+pub(super) struct MockContext;
 
 impl tidb_exprctx::Columns for MockContext {
     fn get(&self, _: &[String]) -> Option<Datum> {
@@ -65,7 +65,7 @@ impl tidb_exprctx::Columns for MockContext {
 }
 
 /// Go `typeText` of the probe.
-fn type_text(tp: &FieldType) -> String {
+pub(super) fn type_text(tp: &FieldType) -> String {
     format!(
         "{},{},{},{},{},{}",
         tp.code().mysql_type(),
@@ -77,7 +77,7 @@ fn type_text(tp: &FieldType) -> String {
     )
 }
 
-fn type_from_text(text: &str) -> FieldType {
+pub(super) fn type_from_text(text: &str) -> FieldType {
     let cells: Vec<&str> = text.split(',').collect();
     let number = |cell: &str| cell.parse::<i64>().expect("number");
     let mut tp = FieldType::new(FieldTypeCode::from_mysql_type(number(cells[0]) as u8));
@@ -104,7 +104,7 @@ fn constant_value(label: char) -> Option<Datum> {
     })
 }
 
-fn argument(index: usize, label: char, tp: FieldType) -> Expression {
+pub(super) fn argument(index: usize, label: char, tp: FieldType) -> Expression {
     match constant_value(label) {
         Some(value) => Expression::Constant(Constant::new(value, tp)),
         None => {
@@ -119,7 +119,7 @@ fn argument(index: usize, label: char, tp: FieldType) -> Expression {
 }
 
 /// The probe's `value`: a datum's kind and Go `Datum.ToString` in hex.
-fn value_text(value: &Datum) -> String {
+pub(super) fn value_text(value: &Datum) -> String {
     let (kind, text) = match value {
         Datum::Null => return "null".to_owned(),
         Datum::Int(value) => ("int", value.to_string()),
@@ -129,7 +129,10 @@ fn value_text(value: &Datum) -> String {
         Datum::String(value) => ("string", String::from_utf8_lossy(value.bytes()).into_owned()),
         // Go `types.KindMysqlDuration`, which the probe has no name for.
         Datum::Duration(value) => ("kind9", value.to_string()),
-        value => panic!("constant {value:?}"),
+        // Rust's `Bytes` is Go's `KindString` datum under the binary
+        // collation, which the result type beside it already records.
+        Datum::Bytes(value) => ("string", String::from_utf8_lossy(value).into_owned()),
+        value => return format!("{value:?}"),
     };
     let hex: String = text.bytes().map(|byte| format!("{byte:02x}")).collect();
     format!("{kind}:{hex}")
@@ -325,4 +328,26 @@ fn a_like_escape_is_as_wide_as_its_digits() {
         let escape = type_of(&like.args[2]);
         assert_eq!(type_text(&escape), format!("8,129,{flen},0,binary,binary"), "{text}");
     }
+}
+
+/// `fromUnixTimeFunctionClass.getFunction` (#35184): the cast of a string
+/// argument with no fraction keeps microseconds, as the recorded
+/// `from_unixtime(cast(t.name, decimal(65,6) BINARY), %Y-%m-%d)` of
+/// `planner/core/casetest/pushdown/push_down` shows for a `char(128)`.
+#[test]
+fn from_unixtime_widens_the_cast_of_a_string_argument() {
+    let name = argument(0, 's', type_from_text("254,0,128,0,utf8mb4,utf8mb4_bin"));
+    let format = argument(1, 's', type_from_text("253,0,10,-1,utf8mb4,utf8mb4_bin"));
+    let built = new_function(
+        &MockContext,
+        "from_unixtime",
+        FieldType::new(FieldTypeCode::Unspecified),
+        vec![name, format],
+    )
+    .expect("build");
+    let Expression::ScalarFunction(function) = &built else {
+        panic!("{built:?}");
+    };
+    let cast = type_of(&function.args[0]);
+    assert_eq!((cast.code(), cast.flen(), cast.decimal()), (FieldTypeCode::NewDecimal, 65, 6));
 }

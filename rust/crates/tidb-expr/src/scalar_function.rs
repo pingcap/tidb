@@ -660,6 +660,20 @@ impl ScalarFunction {
         }
     }
 
+    /// The node over the builtin function a cast class's `getFunction`
+    /// returned. The evaluator still dispatches a cast under its name, so
+    /// the signature is carried for `PbCode()` alone.
+    pub(crate) fn from_cast_func(func_name: CiString, f: crate::builtin::BaseBuiltinFunc) -> Self {
+        Self {
+            func_name,
+            ret_type: Some(f.tp),
+            args: f.args,
+            pb_builtin: Some(PbBuiltin::of_function(f.pb_code)),
+            collation: f.collation,
+            ..Default::default()
+        }
+    }
+
     /// Go newDistSQLFunctionBySig: retain the wire type and implementation.
     pub(crate) fn from_pb(
         builtin: PbBuiltin,

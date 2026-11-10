@@ -559,7 +559,7 @@ pub(crate) fn handle_binary_literal(
                 return build_to_binary(arg, &fold);
             }
             if declared_string.get(position).copied().unwrap_or(false) {
-                let mut wrapped = wrap_implicit_from_binary(arg, result_charset, result_collation);
+                let mut wrapped = wrap_from_binary(arg, result_charset, result_collation, false);
                 if matches!(&wrapped, Expression::ScalarFunction(function)
                     if function.func_name.lowercase() == "from_binary")
                 {
@@ -639,13 +639,15 @@ pub(crate) fn build_to_binary(arg: Expression, fold: &dyn Fn(&mut Expression)) -
     wrapped
 }
 
-/// `HandleBinaryLiteral`'s `from_binary` arm for an IMPLICIT conversion: a
-/// binary-charset argument of a function whose derived charset is not binary
-/// decodes into it, and an undecodable value is an error, not a warning.
-pub(crate) fn wrap_implicit_from_binary(
+/// `HandleBinaryLiteral`'s `from_binary` arm: a binary-charset argument of
+/// a function whose derived charset is not binary decodes into it, and an
+/// undecodable value is an error unless the conversion is an
+/// `explicit_cast`, which warns.
+pub(crate) fn wrap_from_binary(
     arg: Expression,
     result_charset: &str,
     result_collation: &str,
+    explicit_cast: bool,
 ) -> Expression {
     let Some(arg_type) = arg.static_type() else {
         return arg;
@@ -667,7 +669,7 @@ pub(crate) fn wrap_implicit_from_binary(
         crate::collation_derive::repertoire_of(&arg),
     );
     let mut wrapped =
-        Expression::ScalarFunction(ScalarFunction::build_from_binary_function(arg, ret_type, false));
+        Expression::ScalarFunction(ScalarFunction::build_from_binary_function(arg, ret_type, explicit_cast));
     pin_result_collation(&mut wrapped, coer, repe);
     wrapped
 }

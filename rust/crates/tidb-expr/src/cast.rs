@@ -642,21 +642,18 @@ pub(crate) fn eval_cast(
             i64::from(*scale)
         });
     }
-    // Go's binary-literal real/decimal signatures return the argument's
-    // numeric evaluation directly, without destination width production.
-    if matches!(v, Datum::BinaryLiteral(_))
-        && matches!(target.eval_type(), EvalType::Real | EvalType::Decimal)
-    {
-        let Datum::BinaryLiteral(value) = v else {
-            unreachable!()
-        };
-        let integer = binary_literal_eval_int(&value, ctx)?;
-        return Ok(if target.eval_type() == EvalType::Real {
-            Datum::Real(integer as f64)
-        } else {
-            Datum::Decimal(Decimal::from_uint(integer))
-        });
-    }
+    // Go casts a binary literal through `CastRealAsReal`, which returns the
+    // argument's `EvalReal` as it is, and `CastDecimalAsDecimal`, which fits
+    // the argument's `EvalDecimal` to the target (`ProduceDecWithSpecifiedTp`).
+    let v = match v {
+        Datum::BinaryLiteral(value) if target.eval_type() == EvalType::Real => {
+            return Ok(Datum::Real(binary_literal_eval_int(&value, ctx)? as f64));
+        }
+        Datum::BinaryLiteral(value) if target.eval_type() == EvalType::Decimal => {
+            Datum::Decimal(Decimal::from_uint(binary_literal_eval_int(&value, ctx)?))
+        }
+        v => v,
+    };
     // AST callers may already have applied UNION's negative-to-zero rule.
     // Go selects numeric signatures for hybrid types and binary literals.
     let inferred = tidb_datatype::infer_param_type_from_datum(&v);
@@ -2543,7 +2540,7 @@ fn cast_to_year(v: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError>
             return Ok(Datum::Int(y));
         }
     }
-    Ok(Datum::Int(to_i64_signed(v)))
+    Ok(Datum::Int(to_i64_signed_with_warnings(v, ctx)?))
 }
 
 #[cfg(test)]
@@ -2566,13 +2563,14 @@ mod tests {
     }
 
     #[test]
-    fn numeric_production_batch_binary_decimal_skips_target_fitting() {
+    fn a_binary_literal_cast_to_decimal_is_fitted_to_the_target() {
+        // `select cast(0xffff as decimal(1,0))` is 9 with warning 1690 in Go.
         let ctx = WarningContext(RefCell::new(Vec::new()));
         let value = Datum::BinaryLiteral(tidb_datatype::BinaryLiteral::from(vec![0xff, 0xff]));
         let result =
             eval_cast(&CastType::Decimal { flen: 1, scale: 0 }, value, None, &ctx).unwrap();
-        assert_eq!(result.sql_string().unwrap(), "65535");
-        assert!(ctx.0.borrow().is_empty());
+        assert_eq!(result.sql_string().unwrap(), "9");
+        assert_eq!(ctx.0.borrow().iter().map(|(code, _)| *code).collect::<Vec<_>>(), [1690]);
     }
 
     #[test]

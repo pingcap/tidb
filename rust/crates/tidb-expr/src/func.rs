@@ -648,7 +648,18 @@ pub(crate) fn eval_func_values(
                 }
                 text.parse::<f64>().unwrap_or(0.0)
             }
-            _ => 0.0,
+            // Go's string and binary-literal sources reach the clamp
+            // through their own `evalReal` first.
+            other => match crate::cast::eval_cast(
+                &tidb_ast::CastType::Double,
+                other.clone(),
+                None,
+                ctx,
+            ) {
+                Ok(Datum::Real(f)) => f,
+                Ok(_) => 0.0,
+                Err(error) => return Some(Err(error)),
+            },
         };
         return Some(Ok(Datum::Real(if res < 0.0 { 0.0 } else { res })));
     }

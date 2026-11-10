@@ -671,6 +671,14 @@ impl PbBuiltin {
         })
     }
 
+    /// A signature the evaluator dispatches by the node's name.
+    pub(crate) fn of_function(signature: ScalarFuncSig) -> Self {
+        Self {
+            signature,
+            kernel: Kernel::Function,
+        }
+    }
+
     pub(super) fn numeric_domain(self) -> Option<EvalType> {
         match self.kernel {
             Kernel::Binary(_, domain) => Some(domain),

@@ -593,144 +593,20 @@ fn wrap_cast_for_hybrid_push(
     build_cast_function(expr, tp, false)
 }
 
+/// Go `BuildCastFunctionWithCheck` where no build context reaches: the cast
+/// is left unfolded for the caller.
 pub fn build_cast_function(
-    mut expr: Expression,
-    mut target: FieldType,
+    expr: Expression,
+    target: FieldType,
     in_union: bool,
 ) -> Result<Expression, EvalError> {
-    // Go's BuildCastFunctionWithCheck mutates only its DeepCopy of the target:
-    // a nullable source makes the cast result nullable even when the caller's
-    // requested target carries NotNullFlag. Keep the option-owned target
-    // untouched while matching the source nullability in the built node.
-    if expr
-        .static_type()
-        .is_some_and(|source| !source.has_flag(FieldTypeFlags::NOT_NULL))
-    {
-        target.del_flag(FieldTypeFlags::NOT_NULL);
-    }
-    // Go `castAsStringFunctionClass.getFunction`: a BIT source is first cast
-    // to a binary string, and a binary source decodes into the target charset
-    // through `from_binary`.
-    if target.eval_type() == tidb_datatype::EvalType::String {
-        crate::rewriter::size_string_cast_for_bit_source(&mut target, &expr);
-        expr = crate::rewriter::wrap_cast_as_string_arg(expr, &target, &|_| {})?;
-    }
-    // Go `castAsStringFunctionClass.getFunction` → `adjustRetFtForCastString`:
-    // an unspecified-width CHAR target takes the produced value's width (and
-    // a JSON source widens the code to LongBlob).
-    if target.code() == FieldTypeCode::VarString {
-        if let Some(arg_ft) = expr.static_type() {
-            crate::rewriter::adjust_ret_ft_for_cast_string(&mut target, arg_ft);
-        }
-    }
-    expr = try_push_cast_into_control_function_for_hybrid_type(
+    crate::builtin_cast::build_cast_function_with_check(
+        &crate::builtin::UnfoldedBuildContext,
         expr,
-        &target,
-        crate::collation_derive::connection_charset_info(),
-    );
-    let unsigned = target.flags() & FieldTypeFlags::UNSIGNED != 0;
-    let source_eval_type = expr.static_type().map(FieldType::eval_type);
-    // Go `castAsRealFunctionClass.getFunction` builds
-    // `builtinCastDecimalAsRealSig` with `PropagateType(ETReal, args...)`:
-    // the DECIMAL argument's own result scale widens (to 30), so a quotient
-    // keeps its stored digits for the double instead of its display scale
-    // (`cast(1/3 as double)` is 0.333333333).
-    if target.eval_type() == tidb_datatype::EvalType::Real
-        && source_eval_type == Some(tidb_datatype::EvalType::Decimal)
-    {
-        crate::expression::propagate_type(&mut expr, tidb_datatype::EvalType::Real);
-    }
-    // Go `castAsJSONFunctionClass.getFunction`: a string source picks
-    // `builtinCastStringAsJSONSig` and marks its result ParseToJSON, so the
-    // text is parsed as a JSON document (`'[1, 2]'` is an array, not a JSON
-    // string) unless a caller later clears it (DisableParseJSONFlag4Expr).
-    if target.code() == FieldTypeCode::Json
-        && source_eval_type == Some(tidb_datatype::EvalType::String)
-    {
-        target.add_flags(FieldTypeFlags::PARSE_TO_JSON);
-    }
-    let name = match target.code() {
-        FieldTypeCode::Year => "cast_year",
-        FieldTypeCode::Date | FieldTypeCode::NewDate => "cast_date",
-        FieldTypeCode::Datetime | FieldTypeCode::Timestamp => "cast_datetime",
-        FieldTypeCode::Duration => "cast_time",
-        FieldTypeCode::NewDecimal if in_union => match source_eval_type {
-            // Go's decimal target has source-specific inUnion signatures.
-            // REAL and integer sources clamp a negative signed value before
-            // ProduceDecWithSpecifiedTp; string/decimal sources take that
-            // branch only when the merged target is UNSIGNED.
-            Some(tidb_datatype::EvalType::Real) => "cast_real_to_decimal_in_union",
-            Some(tidb_datatype::EvalType::Int) if unsigned => "cast_int_to_decimal_in_union",
-            Some(tidb_datatype::EvalType::String) if unsigned => "cast_string_to_decimal_in_union",
-            Some(tidb_datatype::EvalType::Decimal) if unsigned => "cast_decimal_in_union",
-            _ => "cast_decimal",
-        },
-        FieldTypeCode::NewDecimal => "cast_decimal",
-        FieldTypeCode::Float => {
-            if in_union && target.flags() & FieldTypeFlags::UNSIGNED != 0 {
-                // Go `builtinCastRealAsRealSig.evalReal`
-                // (`builtin_cast.go:1346-1352`): an in-union unsigned-target
-                // cast clamps a negative to 0.
-                "cast_real_in_union"
-            } else {
-                // A FLOAT target is its OWN signature: go's float32 cast
-                // overflows differently from the double one (captured:
-                // `CAST('1e300' AS FLOAT)` errors 1690
-                // "constant 1e+300 overflows float" while the DOUBLE cast
-                // answers 1e+300).
-                "cast_float"
-            }
-        }
-        FieldTypeCode::Double => {
-            if in_union && target.flags() & FieldTypeFlags::UNSIGNED != 0 {
-                "cast_real_in_union"
-            } else {
-                "cast_double"
-            }
-        }
-        FieldTypeCode::Json => "cast_json",
-        FieldTypeCode::VectorFloat32 => "cast_vector",
-        FieldTypeCode::Tiny
-        | FieldTypeCode::Short
-        | FieldTypeCode::Int24
-        | FieldTypeCode::Long
-        | FieldTypeCode::LongLong
-        | FieldTypeCode::Bit => {
-            if unsigned {
-                if in_union {
-                    "cast_unsigned_in_union"
-                } else {
-                    "cast_unsigned"
-                }
-            } else {
-                "cast_signed"
-            }
-        }
-        FieldTypeCode::Varchar
-        | FieldTypeCode::VarString
-        | FieldTypeCode::String
-        | FieldTypeCode::Blob
-        | FieldTypeCode::TinyBlob
-        | FieldTypeCode::MediumBlob
-        | FieldTypeCode::LongBlob
-        | FieldTypeCode::Enum
-        | FieldTypeCode::Set
-        // Go's `TypeNull` is `ETString`, so `castAsStringFunctionClass`
-        // builds its cast (`castCollationForIn` over an `IN (NULL)` member).
-        | FieldTypeCode::Null => {
-            if target.charset_name() == "binary" {
-                "cast_binary"
-            } else {
-                "cast_char"
-            }
-        }
-        _ => return Err(EvalError::Unsupported("this cast target is not ported")),
-    };
-    Ok(Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new(name),
         target,
-        vec![expr],
-    )))
+        in_union,
+        false,
+    )
 }
 
 /// Go `TryPushCastIntoControlFunctionForHybridType` (builtin_cast.go:2898):

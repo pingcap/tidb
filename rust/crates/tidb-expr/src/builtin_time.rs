@@ -141,11 +141,6 @@ fn field_string(field_type: FieldTypeCode) -> bool {
     )
 }
 
-/// Go `IsBinaryLiteral`.
-fn is_binary_literal(expr: &Expression) -> bool {
-    matches!(expr, Expression::Constant(constant) if matches!(constant.value, Datum::BinaryLiteral(_)))
-}
-
 function_class!(
     /// Go `dateFunctionClass`.
     DateFunctionClass, Datetime, [Datetime], Date, |bf, _ctx| {
@@ -382,7 +377,7 @@ string_class!(
             // Improve string cast Unix Time precision
             if let Expression::ScalarFunction(x) = &mut bf.args[0] {
                 // used to adjust FromUnixTime precision #Fixbug35184
-                if x.func_name.lowercase() == "cast" {
+                if x.func_name.lowercase() == "cast_decimal" {
                     if let Some(ret_type) = x.ret_type.as_mut() {
                         if ret_type.decimal() == 0 && ret_type.code() == FieldTypeCode::NewDecimal
                         {
@@ -1058,7 +1053,7 @@ string_class!(
     SecToTimeFunctionClass, |func_name, ctx, args| {
         let arg_type = type_of(&args[0]);
         // to match MySQL behavior more check issue #59428
-        let mut ret_fsp = if is_binary_literal(&args[0]) {
+        let mut ret_fsp = if crate::builtin::is_binary_literal(&args[0]) {
             MIN_FSP
         } else if arg_type.eval_type() == EvalType::String {
             UNSPECIFIED_LENGTH

@@ -138,14 +138,15 @@ pub fn needs_to_binary(prop: FuncProp, arg_charset: &str, result_charset: &str) 
     }
 }
 
-/// Go `HandleBinaryLiteral` for an implicit conversion (`explicitCast`
-/// false): wraps `expr`, an argument of `func_name` whose derived collation
-/// is `ec`, with `to_binary` or `from_binary`.
+/// Go `HandleBinaryLiteral`: wraps `expr`, an argument of `func_name` whose
+/// derived collation is `ec`, with `to_binary` or `from_binary`. Under an
+/// `explicit_cast` a value `from_binary` cannot decode is a warning.
 pub(crate) fn handle_binary_literal(
     ctx: &dyn crate::builtin::BuildContext,
     expr: crate::expression::Expression,
     ec: &crate::expr_collation::ExprCollation,
     func_name: &str,
+    explicit_cast: bool,
 ) -> crate::expression::Expression {
     let prop = func_prop(func_name);
     let arg_charset = crate::wrap_cast::type_of(&expr).charset_name().to_owned();
@@ -156,7 +157,7 @@ pub(crate) fn handle_binary_literal(
         return expr;
     }
     let mut wrapped =
-        crate::rewriter::wrap_implicit_from_binary(expr, &ec.charset, &ec.collation);
+        crate::rewriter::wrap_from_binary(expr, &ec.charset, &ec.collation, explicit_cast);
     if matches!(&wrapped, crate::expression::Expression::ScalarFunction(function)
         if function.func_name.lowercase() == "from_binary")
     {
