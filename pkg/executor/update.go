@@ -140,7 +140,7 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 // since _tidb_rowid is only unique within a partition after EXCHANGE PARTITION.
 // A single-table UPDATE matches each row once, so it returns nil there to leave the row
 // untracked instead of locating its partition.
-func (e *UpdateExec) partitionRowKey(content physicalop.TblColPosInfo, handle kv.Handle, row []types.Datum) kv.Handle {
+func (e *UpdateExec) partitionRowKey(content plannercore.TblColPosInfo, handle kv.Handle, row []types.Datum) kv.Handle {
 	pt, ok := e.tblID2table[content.TblID].(table.PartitionedTable)
 	if !ok || pt.Meta().HasClusteredIndex() {
 		return handle
