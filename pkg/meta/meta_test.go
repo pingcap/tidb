@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/stretchr/testify/require"
 )
 
@@ -966,6 +967,37 @@ func TestTableNameExtract(t *testing.T) {
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, `"\"啊"`, meta.Unescape(nameLMatch[1]))
+}
+
+func TestIsJobMatch(t *testing.T) {
+	job := &model.Job{SchemaName: "db1", TableName: "t1"}
+	data, err := job.Encode(true)
+	require.NoError(t, err)
+
+	testCases := []struct {
+		name        string
+		schemaNames []string
+		tableNames  []string
+		wantMatch   bool
+	}{
+		{"no filters", nil, nil, true},
+		{"schema matches", []string{"db1"}, nil, true},
+		{"schema differs", []string{"db2"}, nil, false},
+		{"table matches", nil, []string{"t1"}, true},
+		{"table differs", nil, []string{"t2"}, false},
+		{"both match", []string{"db1"}, []string{"t1"}, true},
+		{"same table in another schema", []string{"db2"}, []string{"t1"}, false},
+		{"same schema with another table", []string{"db1"}, []string{"t2"}, false},
+		{"both differ", []string{"db2"}, []string{"t2"}, false},
+		{"multiple schemas and tables", []string{"db2", "db1"}, []string{"t2", "t1"}, true},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			match, err := meta.IsJobMatch(data, set.NewStringSet(tc.schemaNames...), set.NewStringSet(tc.tableNames...))
+			require.NoError(t, err)
+			require.Equal(t, tc.wantMatch, match)
+		})
+	}
 }
 
 func TestNameExtractFromJob(t *testing.T) {
