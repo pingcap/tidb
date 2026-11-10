@@ -157,9 +157,11 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
       per-target `cast_*` node names and the `*_in_union` name arms are gone.
       The signatures with no `pbCode` (JSON as array, the vector
       unsupported pair, string as vector) are `SigFields` the classes set;
-      a cast is sent with its `InUnionMetadata`. Left: the datetime,
-      duration and vector targets of the kernel and the user-variable cast
-      still convert through `cast::eval_cast` (the AST-typed conversion).
+      a cast is sent with its `InUnionMetadata`; every target of the kernel
+      converts by its field type. Left: the user-variable cast and the
+      `cast_arg_as_*` value helpers still convert through `cast::eval_cast`
+      (the AST-typed conversion), which goes when their callers bind their
+      signatures.
   - [ ] 11b-2c: `pushdown_catalog`'s second description of a call
     (`PbScalar`, `BuiltinSignature`, `resolve`) is deleted; `ExprToPB`
     reads the node's signature.

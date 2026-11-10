@@ -668,9 +668,10 @@ fn json_eval_error(_: tidb_datatype::BinaryJSONError) -> EvalError {
     EvalError::Unsupported("a malformed JSON value reached CAST(... AS ... ARRAY)")
 }
 
-/// Go `builtinCastStringAsVectorFloat32Sig.evalVectorFloat32`:
-/// `ParseVectorFloat32`, then `CheckDimsFitColumn` of the target's length.
-pub(crate) fn cast_string_as_vector_float32(
+/// Go `builtinCastStringAsVectorFloat32Sig.evalVectorFloat32`
+/// (`ParseVectorFloat32`) and `builtinCastVectorFloat32AsVectorFloat32Sig`:
+/// the vector, then `CheckDimsFitColumn` of the target's length.
+pub(crate) fn cast_as_vector_float32(
     v: Datum,
     target: &FieldType,
 ) -> Result<Datum, EvalError> {
@@ -867,7 +868,7 @@ fn eval_cast_value(
 /// calendar string. The source type selects the Go signature: numeric inputs
 /// turn a truncation/overflow into `NULL`, while string inputs retain the
 /// parser's best-effort duration after reporting the truncation event.
-fn cast_to_duration(
+pub(crate) fn cast_to_duration(
     v: &Datum,
     source: Option<&tidb_datatype::FieldType>,
     ctx: &dyn crate::Columns,
@@ -1732,7 +1733,7 @@ pub(crate) fn to_f64_for_cast(v: &Datum) -> f64 {
 /// `ALLOW_INVALID_DATES` alone. With `TruncateAsWarning` also set, a bad
 /// value is a warning plus NULL, never a statement failure: READS NEVER FAIL,
 /// in any sql_mode.
-fn cast_to_time(
+pub(crate) fn cast_to_time(
     v: &Datum,
     source: Option<&tidb_datatype::FieldType>,
     ctx: &dyn crate::Columns,

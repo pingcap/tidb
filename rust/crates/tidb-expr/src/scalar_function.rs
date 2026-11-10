@@ -2464,7 +2464,7 @@ impl ScalarFunction {
                     if value.is_null() {
                         return Ok(Datum::Null);
                     }
-                    crate::cast::cast_string_as_vector_float32(value, ret_type)
+                    crate::cast::cast_as_vector_float32(value, ret_type)
                 }
                 _ => Err(EvalError::Unsupported("a cast signature with no implementation")),
             };

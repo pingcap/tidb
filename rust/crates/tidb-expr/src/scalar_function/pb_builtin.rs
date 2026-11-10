@@ -989,21 +989,21 @@ impl PbBuiltin {
                         ctx,
                     );
                 }
-                use tidb_ast::CastType;
-                let len = u32::try_from(field.flen()).ok();
-                let fsp = u32::try_from(field.decimal()).ok();
-                let cast = match target {
-                    EvalType::Datetime | EvalType::Timestamp
-                        if field.code() == tidb_datatype::FieldTypeCode::Date =>
-                    {
-                        CastType::Date
+                let fsp = field.decimal().max(0);
+                match target {
+                    EvalType::Datetime | EvalType::Timestamp => {
+                        let (tp, fsp) = match field.code() {
+                            tidb_datatype::FieldTypeCode::Date => (tidb_datatype::TimeType::Date, 0),
+                            _ => (tidb_datatype::TimeType::DateTime, fsp),
+                        };
+                        crate::cast::cast_to_time(&value, args[0].static_type(), ctx, tp, fsp)
                     }
-                    EvalType::Datetime | EvalType::Timestamp => CastType::DateTime { fsp },
-                    EvalType::Duration => CastType::Time { fsp },
-                    EvalType::VectorFloat32 => CastType::Vector { dimensions: len },
-                    _ => return Err(EvalError::Unsupported("protobuf cast target")),
-                };
-                crate::cast::eval_cast(&cast, value, args[0].static_type(), ctx)
+                    EvalType::Duration => {
+                        crate::cast::cast_to_duration(&value, args[0].static_type(), ctx, fsp)
+                    }
+                    EvalType::VectorFloat32 => crate::cast::cast_as_vector_float32(value, field),
+                    _ => Err(EvalError::Unsupported("protobuf cast target")),
+                }
             }
             Kernel::Regexp => function.eval_regexp_like(ctx, row),
             kernel => {
