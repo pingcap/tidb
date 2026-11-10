@@ -236,6 +236,57 @@ func (is *infoSchema) TableByName(ctx stdctx.Context, schema, table pmodel.CIStr
 	return nil, ErrTableNotExists.FastGenByArgs(schema, table)
 }
 
+// TableInfosByNames returns existing table metadata without refilling the shared
+// cache. Result order is unspecified; session table overrides take precedence.
+func TableInfosByNames(ctx stdctx.Context, is InfoSchema, schema ast.CIStr, names []ast.CIStr) ([]*model.TableInfo, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	switch v := is.(type) {
+	case *infoschemaV2:
+		if !IsSpecialDB(schema.L) {
+			return v.tableInfosByNames(ctx, schema, names)
+		}
+	case *SessionExtendedInfoSchema:
+		var tables []*model.TableInfo
+		remaining := make([]ast.CIStr, 0, len(names))
+		for _, name := range names {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if tbl, ok := v.sessionTableByName(ctx, schema, name); ok {
+				tables = append(tables, tbl.Meta())
+				continue
+			}
+			remaining = append(remaining, name)
+		}
+		loaded, err := TableInfosByNames(ctx, v.InfoSchema, schema, remaining)
+		if err != nil {
+			return nil, err
+		}
+		return append(tables, loaded...), nil
+	}
+	ctx = WithRefillOption(ctx, false)
+	tables := make([]*model.TableInfo, 0, len(names))
+	for _, name := range names {
+		// TableByName does not check cancellation for InfoSchema v1 or special
+		// databases. Without this check, the loop may keep running after the query
+		// is canceled.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		tbl, err := is.TableByName(ctx, schema, name)
+		if err != nil {
+			if terror.ErrorEqual(err, ErrTableNotExists) {
+				continue
+			}
+			return nil, errors.Trace(err)
+		}
+		tables = append(tables, tbl.Meta())
+	}
+	return tables, nil
+}
+
 // TableInfoByName implements InfoSchema.TableInfoByName
 func (is *infoSchema) TableInfoByName(schema, table pmodel.CIStr) (*model.TableInfo, error) {
 	tbl, err := is.TableByName(stdctx.Background(), schema, table)
@@ -819,20 +870,31 @@ type SessionExtendedInfoSchema struct {
 }
 
 // TableByName implements InfoSchema.TableByName
+<<<<<<< HEAD
 func (ts *SessionExtendedInfoSchema) TableByName(ctx stdctx.Context, schema, table pmodel.CIStr) (table.Table, error) {
+=======
+func (ts *SessionExtendedInfoSchema) TableByName(ctx stdctx.Context, schema, table ast.CIStr) (table.Table, error) {
+	if tbl, ok := ts.sessionTableByName(ctx, schema, table); ok {
+		return tbl, nil
+	}
+	return ts.InfoSchema.TableByName(ctx, schema, table)
+}
+
+func (ts *SessionExtendedInfoSchema) sessionTableByName(ctx stdctx.Context, schema, table ast.CIStr) (table.Table, bool) {
+>>>>>>> 193e3a5a1fc (infoschema: batch metadata reads for table-name predicates (#72631))
 	if ts.LocalTemporaryTables != nil {
 		if tbl, ok := ts.LocalTemporaryTables.TableByName(ctx, schema, table); ok {
-			return tbl, nil
+			return tbl, true
 		}
 	}
 
 	if ts.MdlTables != nil {
 		if tbl, ok := ts.MdlTables.TableByName(ctx, schema, table); ok {
-			return tbl, nil
+			return tbl, true
 		}
 	}
 
-	return ts.InfoSchema.TableByName(ctx, schema, table)
+	return nil, false
 }
 
 // TableInfoByName implements InfoSchema.TableInfoByName

@@ -6,14 +6,27 @@ go_test(
     srcs = [
         "main_test.go",
         "memtable_infoschema_extractor_test.go",
+        "table_name_batch_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 4,
+=======
+    shard_count = 6,
+>>>>>>> 193e3a5a1fc (infoschema: batch metadata reads for table-name predicates (#72631))
     deps = [
+        "//pkg/domain",
         "//pkg/infoschema",
+        "//pkg/meta",
+        "//pkg/parser/ast",
         "//pkg/planner/core",
+        "//pkg/store/mockstore",
+        "//pkg/structure",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//tikvrpc",
         "@org_uber_go_goleak//:goleak",
     ],
 )

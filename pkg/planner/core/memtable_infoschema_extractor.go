@@ -28,8 +28,12 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+<<<<<<< HEAD
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+=======
+	"github.com/pingcap/tidb/pkg/parser/ast"
+>>>>>>> 193e3a5a1fc (infoschema: batch metadata reads for table-name predicates (#72631))
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -681,17 +685,12 @@ func findTableAndSchemaByName(
 		table  *model.TableInfo
 	}
 	schemaAndTbls := make([]schemaAndTable, 0, len(tableNames))
-	ctx = infoschema.WithRefillOption(ctx, false)
-	for _, n := range tableNames {
-		for _, s := range schemas {
-			tbl, err := is.TableByName(ctx, s, n)
-			if err != nil {
-				if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
-					continue
-				}
-				return nil, nil, errors.Trace(err)
-			}
-			tblInfo := tbl.Meta()
+	for _, s := range schemas {
+		tables, err := infoschema.TableInfosByNames(ctx, is, s, tableNames)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		for _, tblInfo := range tables {
 			if tblInfo.TempTableType == model.TempTableLocal {
 				continue
 			}
