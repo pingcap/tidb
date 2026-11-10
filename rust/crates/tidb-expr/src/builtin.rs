@@ -170,6 +170,7 @@ pub(crate) fn funcs(name: &str) -> Option<&'static dyn FunctionClass> {
     };
     use crate::builtin_encryption as enc;
     use crate::builtin_info as i;
+    use crate::builtin_json as json;
     use crate::builtin_miscellaneous as misc;
     Some(match name {
         "sleep" => &misc::SleepFunctionClass { func_name: "sleep" },
@@ -243,6 +244,34 @@ pub(crate) fn funcs(name: &str) -> Option<&'static dyn FunctionClass> {
         "uncompress" => &enc::UncompressFunctionClass { func_name: "uncompress" },
         "uncompressed_length" => &enc::UncompressedLengthFunctionClass { func_name: "uncompressed_length" },
         "validate_password_strength" => &enc::ValidatePasswordStrengthFunctionClass { func_name: "validate_password_strength" },
+        "json_type" => &json::JsonTypeFunctionClass,
+        "json_extract" => &json::JsonExtractFunctionClass,
+        "json_unquote" => &json::JsonUnquoteFunctionClass,
+        "json_set" => &json::JsonSetFunctionClass,
+        "json_insert" => &json::JsonInsertFunctionClass,
+        "json_replace" => &json::JsonReplaceFunctionClass,
+        "json_array_append" => &json::JsonArrayAppendFunctionClass,
+        "json_array_insert" => &json::JsonArrayInsertFunctionClass,
+        "json_remove" => &json::JsonRemoveFunctionClass,
+        "json_merge" => &json::JsonMergeFunctionClass,
+        "json_merge_patch" => &json::JsonMergePatchFunctionClass,
+        "json_merge_preserve" => &json::JsonMergePreserveFunctionClass,
+        "json_object" => &json::JsonObjectFunctionClass,
+        "json_array" => &json::JsonArrayFunctionClass,
+        "json_contains_path" => &json::JsonContainsPathFunctionClass,
+        "json_memberof" => &json::JsonMemberOfFunctionClass,
+        "json_contains" => &json::JsonContainsFunctionClass,
+        "json_overlaps" => &json::JsonOverlapsFunctionClass,
+        "json_valid" => &json::JsonValidFunctionClass,
+        "json_pretty" => &json::JsonPrettyFunctionClass,
+        "json_quote" => &json::JsonQuoteFunctionClass,
+        "json_search" => &json::JsonSearchFunctionClass,
+        "json_storage_free" => &json::JsonStorageFreeFunctionClass,
+        "json_storage_size" => &json::JsonStorageSizeFunctionClass,
+        "json_depth" => &json::JsonDepthFunctionClass,
+        "json_keys" => &json::JsonKeysFunctionClass,
+        "json_length" => &json::JsonLengthFunctionClass,
+        "json_schema_valid" => &json::JsonSchemaValidFunctionClass,
         "lt" => &CompareFunctionClass { func_name: "lt" },
         "le" => &CompareFunctionClass { func_name: "le" },
         "gt" => &CompareFunctionClass { func_name: "gt" },

@@ -2685,17 +2685,13 @@ fn rewrite_leaf_compound(
                 rewrite_expr_resolved(expr, resolver)?,
                 rewrite_expr_resolved(array, resolver)?,
             ];
-            crate::builtin_ext::json::verify_json_function_args("json_memberof", &args)?;
             // Go's function name is `ast.JSONMemberOf` = "json_memberof",
             // which EXPLAIN prints and TiKV push-down recognises.
-            let ret_type =
-                builtin_return_type("json_memberof", &args).expect("JSON_MEMBEROF is registered");
-            signature_args::build_call(
+            class_function(
+                &crate::builtin_json::JsonMemberOfFunctionClass,
                 "json_memberof",
-                ret_type,
                 args,
-                resolver.connection_charset_info(),
-                &|expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
+                resolver,
             )
         }
         // Go rewrites `x IS <target>` into the isnull/istrue/isfalse builtin,
@@ -2789,10 +2785,6 @@ fn finish_function_call(
     let rewritten = wrap_power_arguments(&lowered, rewritten, resolver)?;
     let rewritten = wrap_time_format_arguments(&lowered, rewritten, resolver)?;
     let rewritten = wrap_clock_fsp_argument(&lowered, rewritten, resolver)?;
-    // Go's JSON function classes check their arguments' TYPES in
-    // `verifyArgs`; a malformed constant path is only an evaluation
-    // error (`EXPLAIN` succeeds, an unevaluated call never fails).
-    crate::builtin_ext::json::verify_json_function_args(&lowered, &rewritten)?;
     let mut ret_type = builtin_return_type(&lowered, &rewritten).ok_or_else(|| {
         crate::builtin_registry::unresolved_error(&lowered, resolver.current_database())
     })?;
@@ -4518,9 +4510,11 @@ mod builtin_type_tests {
             ("json_quote('abc')", FieldTypeCode::VarString, 20),
             ("json_unquote('\"x\"')", FieldTypeCode::VarString, 3),
             (
+                // Go `newBaseBuiltinFuncWithTp`: an ETJson result is
+                // `mysql.MaxBlobWidth` wide, and so is its string cast.
                 "json_unquote(json_array(1))",
                 FieldTypeCode::LongBlob,
-                4_294_967_295,
+                16_777_216,
             ),
             ("json_pretty('{}')", FieldTypeCode::LongBlob, 67_108_864),
         ] {

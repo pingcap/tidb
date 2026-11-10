@@ -335,6 +335,7 @@ pub mod builtin_compare;
 mod builtin_control;
 mod builtin_encryption;
 mod builtin_ext;
+mod builtin_json;
 mod builtin_fts;
 mod builtin_grouping;
 mod builtin_ilike;

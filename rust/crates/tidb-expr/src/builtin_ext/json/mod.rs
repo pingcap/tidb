@@ -66,7 +66,7 @@ pub(crate) use modify::{json_document, parse_json_modify_paths};
 /// `ErrInvalidJSONCharset` (3144); any other type with
 /// `ErrInvalidTypeForJSON` (3146), or `ErrIncorrectType` (3064) when
 /// `use_json_err` is false.
-fn verify_json_args_type(
+pub(crate) fn verify_json_args_type(
     function: &'static str,
     use_json_err: bool,
     args: &[crate::expression::Expression],
@@ -106,89 +106,12 @@ fn verify_json_args_type(
     Ok(())
 }
 
-/// The build-time argument checks of Go's JSON function classes: each
-/// class's `verifyArgs` that calls [`verify_json_args_type`], and
-/// `jsonObjectFunctionClass.getFunction`'s refusal of a binary-charset key.
-/// Every other JSON function accepts any argument type (an integer document
-/// is cast to a JSON number).
-pub(crate) fn verify_json_function_args(
-    name: &str,
-    args: &[crate::expression::Expression],
-) -> Result<(), EvalError> {
-    // Go's modifying classes also check the argument parity in `getFunction`
-    // (`json_set(j, p)` has an even count): `ErrIncorrectParameterCount`.
-    let parity_name: Option<(&'static str, bool)> = match name {
-        "json_set" => Some(("json_set", true)),
-        "json_insert" => Some(("json_insert", true)),
-        "json_replace" => Some(("json_replace", true)),
-        "json_array_append" => Some(("json_array_append", true)),
-        "json_array_insert" => Some(("json_array_insert", true)),
-        "json_object" => Some(("json_object", false)),
-        _ => None,
-    };
-    if let Some((function, odd)) = parity_name {
-        if (args.len() % 2 == 1) != odd {
-            return Err(EvalError::WrongParameterCount(function));
-        }
-    }
-    let (function, use_json_err, indexes): (&'static str, bool, Option<&[usize]>) = match name {
-        "json_type" => ("json_type", true, Some(&[0])),
-        "json_extract" => ("json_extract", true, Some(&[0])),
-        "json_unquote" => ("json_unquote", false, Some(&[0])),
-        "json_merge" => ("json_merge", true, None),
-        "json_merge_preserve" => ("json_merge_preserve", true, None),
-        "json_merge_patch" => ("json_merge_patch", true, None),
-        "json_contains_path" => ("json_contains_path", true, Some(&[0])),
-        "json_memberof" => ("member of", true, Some(&[1])),
-        "json_contains" => ("json_contains", true, Some(&[0, 1])),
-        "json_overlaps" => ("json_overlaps", true, Some(&[0, 1])),
-        "json_search" => ("json_search", true, Some(&[0])),
-        "json_keys" => ("json_keys", true, Some(&[0])),
-        "json_schema_valid" => ("json_schema_valid", true, Some(&[0, 1])),
-        // `jsonQuoteFunctionClass.verifyArgs`: any non-string argument,
-        // binary strings included, is accepted only as ETString.
-        "json_quote" => {
-            if args
-                .first()
-                .and_then(|arg| arg.static_type())
-                .is_some_and(|field_type| {
-                    field_type.code() != tidb_datatype::FieldTypeCode::Null
-                        && field_type.eval_type() != tidb_datatype::EvalType::String
-                })
-            {
-                return Err(EvalError::Json(tidb_exprctx::context::JsonError::IncorrectType {
-                    argument: 1,
-                    function: "json_quote",
-                }));
-            }
-            return Ok(());
-        }
-        "json_object" => {
-            for key in args.iter().step_by(2).take(args.len() / 2) {
-                if key.static_type().is_some_and(|field_type| {
-                    field_type.eval_type() == tidb_datatype::EvalType::String
-                        && field_type.charset_name() == "binary"
-                }) {
-                    return Err(EvalError::Json(tidb_exprctx::context::JsonError::InvalidCharset));
-                }
-            }
-            return Ok(());
-        }
-        _ => return Ok(()),
-    };
-    verify_json_args_type(function, use_json_err, args, indexes)?;
-    if name == "json_schema_valid" {
-        verify_json_schema_valid_constants(args)?;
-    }
-    Ok(())
-}
-
 /// `jsonSchemaValidFunctionClass.verifyArgs`: a non-NULL constant first
 /// argument with no bytes is `ErrInvalidJSONTextInParam` for argument 1, and
 /// only then is the second argument checked the same way
 /// (`JSON_SCHEMA_VALID(NULL, '')` is NULL, `JSON_SCHEMA_VALID('', NULL)` is
 /// the error).
-fn verify_json_schema_valid_constants(
+pub(crate) fn verify_json_schema_valid_constants(
     args: &[crate::expression::Expression],
 ) -> Result<(), EvalError> {
     fn constant_value(arg: Option<&crate::expression::Expression>) -> Option<&Datum> {
