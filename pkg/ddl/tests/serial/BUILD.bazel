@@ -5,6 +5,7 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+        "pkdb_serial_test.go",
         "serial_test.go",
     ],
     flaky = True,

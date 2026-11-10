@@ -1775,9 +1775,6 @@ func checkReferInfoForTemporaryTable(tableMetaInfo *model.TableInfo) error {
 	if tableMetaInfo.ShardRowIDBits != 0 {
 		return plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
 	}
-	if tableMetaInfo.PlacementPolicyRef != nil {
-		return plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("placement")
-	}
 
 	return nil
 }

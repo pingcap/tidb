@@ -1287,9 +1287,10 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
 	tblInfo.TableCacheStatusType = model.TableCacheStatusDisable
-	// Ignore TiFlash replicas for temporary tables.
+	// Ignore TiFlash replicas and placement policies for temporary tables.
 	if s.TemporaryKeyword != ast.TemporaryNone {
 		tblInfo.TiFlashReplica = nil
+		tblInfo.PlacementPolicyRef = nil
 	} else if tblInfo.TiFlashReplica != nil {
 		replica := *tblInfo.TiFlashReplica
 		// Keep the tiflash replica setting, remove the replica available status.

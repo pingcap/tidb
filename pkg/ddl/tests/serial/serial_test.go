@@ -405,10 +405,9 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec("create table placement_table1(id int) placement policy p1")
 	defer tk.MustExec("drop table if exists placement_table1")
 
-	err = tk.ExecToErr("create global temporary table g_tmp_placement1 like placement_table1 on commit delete rows")
-	require.Equal(t, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error(), err.Error())
-	err = tk.ExecToErr("create temporary table l_tmp_placement1 like placement_table1")
-	require.Equal(t, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error(), err.Error())
+	tk.MustExec("create global temporary table g_tmp_placement1 like placement_table1 on commit delete rows")
+	tk.MustExec("create temporary table l_tmp_placement1 like placement_table1")
+	defer tk.MustExec("drop table g_tmp_placement1, l_tmp_placement1")
 }
 
 func createMockStore(t *testing.T) (store kv.Storage) {
