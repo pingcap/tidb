@@ -126,11 +126,12 @@ fn const_arg(datum: Datum, field_type: FieldType) -> Expression {
 /// (`pkg/expression/builtin_other.go:984`). The store records what the call
 /// assigned, exactly like Go's test reads back through `GetUserVarVal`.
 fn eval_setvar(value: Datum, value_ft: FieldType, store: &VarStore) -> Result<Datum, EvalError> {
-    let function = ScalarFunction::new(
-        CiString::new("setvar"),
+    let function = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "setvar",
         value_ft.clone(),
         vec![var_name("f"), const_arg(value, value_ft)],
-    );
+    ).unwrap().into_scalar_function().unwrap();
     let empty = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     function.eval(store, empty.get_row(0))
 }
@@ -155,27 +156,29 @@ fn setvar_stores_session_value_and_returns_it() {
     assert_eq!(store.get("f"), Some(text("12")));
 
     // Rename to exercise independent keys: same shape, different key.
-    let renamed = ScalarFunction::new(
-        CiString::new("setvar"),
+    let renamed = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "setvar",
         FieldType::new(C::VarString),
         vec![
             var_name("g"),
             const_arg(text("34"), FieldType::new(C::VarString)),
         ],
-    );
+    ).unwrap().into_scalar_function().unwrap();
     let empty = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     assert_eq!(renamed.eval(&store, empty.get_row(0)).unwrap(), text("34"));
     assert_eq!(store.get("g"), Some(text("34")));
 
     // {c, nil}: NULL assignment propagates and must NOT create the variable.
-    let null_call = ScalarFunction::new(
-        CiString::new("setvar"),
+    let null_call = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "setvar",
         FieldType::new(C::Null),
         vec![
             var_name("h"),
             const_arg(Datum::Null, FieldType::new(C::Null)),
         ],
-    );
+    ).unwrap().into_scalar_function().unwrap();
     assert_eq!(
         null_call.eval(&store, empty.get_row(0)).unwrap(),
         Datum::Null
@@ -183,36 +186,39 @@ fn setvar_stores_session_value_and_returns_it() {
     assert_eq!(store.get("h"), None);
 
     // {c, "ABC"} then {c, "dEf"}: the second assignment overwrites in place.
-    let abc = ScalarFunction::new(
-        CiString::new("setvar"),
+    let abc = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "setvar",
         FieldType::new(C::VarString),
         vec![
             var_name("h"),
             const_arg(text("ABC"), FieldType::new(C::VarString)),
         ],
-    );
+    ).unwrap().into_scalar_function().unwrap();
     assert_eq!(abc.eval(&store, empty.get_row(0)).unwrap(), text("ABC"));
     assert_eq!(store.get("h"), Some(text("ABC")));
-    let def = ScalarFunction::new(
-        CiString::new("setvar"),
+    let def = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "setvar",
         FieldType::new(C::VarString),
         vec![
             var_name("h"),
             const_arg(text("dEf"), FieldType::new(C::VarString)),
         ],
-    );
+    ).unwrap().into_scalar_function().unwrap();
     assert_eq!(def.eval(&store, empty.get_row(0)).unwrap(), text("dEf"));
     assert_eq!(store.get("h"), Some(text("dEf")));
 
     // {d, int64(3)}: the int sig stores an Int datum.
-    let int_sig = ScalarFunction::new(
-        CiString::new("setvar"),
+    let int_sig = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "setvar",
         FieldType::new(C::LongLong),
         vec![
             var_name("i"),
             const_arg(Datum::Int(3), FieldType::new(C::LongLong)),
         ],
-    );
+    ).unwrap().into_scalar_function().unwrap();
     assert_eq!(
         int_sig.eval(&store, empty.get_row(0)).unwrap(),
         Datum::Int(3)
@@ -220,14 +226,15 @@ fn setvar_stores_session_value_and_returns_it() {
     assert_eq!(store.get("i"), Some(Datum::Int(3)));
 
     // {e, float64(2.5)}: the real sig stores a Real datum.
-    let real_sig = ScalarFunction::new(
-        CiString::new("setvar"),
+    let real_sig = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "setvar",
         FieldType::new(C::Double),
         vec![
             var_name("j"),
             const_arg(Datum::Real(2.5), FieldType::new(C::Double)),
         ],
-    );
+    ).unwrap().into_scalar_function().unwrap();
     assert_eq!(
         real_sig.eval(&store, empty.get_row(0)).unwrap(),
         Datum::Real(2.5)
@@ -236,14 +243,15 @@ fn setvar_stores_session_value_and_returns_it() {
 
     // {f, NewDecFromInt(5)}: the decimal sig stores a Decimal datum.
     let dec = tidb_datatype::Decimal::from_int(5);
-    let decimal_sig = ScalarFunction::new(
-        CiString::new("setvar"),
+    let decimal_sig = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "setvar",
         FieldType::new(C::NewDecimal),
         vec![
             var_name("k"),
             const_arg(Datum::Decimal(dec.clone()), FieldType::new(C::NewDecimal)),
         ],
-    );
+    ).unwrap().into_scalar_function().unwrap();
     assert_eq!(
         decimal_sig.eval(&store, empty.get_row(0)).unwrap(),
         Datum::Decimal(dec.clone())
@@ -391,11 +399,12 @@ fn setvar_from_column_snapshots_the_row_value() {
     let mut column = crate::column::Column::new(1, string_ft());
     column.index = 0;
 
-    let assign = ScalarFunction::new(
-        CiString::new("setvar"),
+    let assign = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "setvar",
         string_ft(),
         vec![var_name("a"), Expression::Column(column)],
-    );
+    ).unwrap().into_scalar_function().unwrap();
 
     let build_chunk = |value: &str| {
         let mut chunk =
@@ -478,18 +487,6 @@ fn values_function_reads_the_current_insert_row() {
         function.eval(&store, empty.get_row(0)).unwrap(),
         Datum::Null
     );
-
-    // The constructor's signature is zero-argument. A manually malformed
-    // node with an argument gets Go's native-function parameter-count error.
-    let malformed = ScalarFunction::new(
-        CiString::new("values"),
-        string_type,
-        vec![const_arg(Datum::Int(1), FieldType::new(C::LongLong))],
-    );
-    assert!(matches!(
-        malformed.eval(&store, empty.get_row(0)),
-        Err(EvalError::WrongParameterCount("values"))
-    ));
 }
 
 /// GO PORT of `pkg/expression/builtin_other_test.go:348 TestGetParam` and
@@ -508,22 +505,24 @@ fn getparam_function_evaluation_matches_plan_cache_values() {
     };
     let empty = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     for (index, expected) in [(0, "123"), (1, "abc")] {
-        let function = ScalarFunction::new(
-            CiString::new("getparam"),
+        let function = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "getparam",
             FieldType::new(C::VarString),
             vec![const_arg(Datum::Int(index), FieldType::new(C::LongLong))],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         assert_eq!(
             function.eval(&ctx, empty.get_row(0)).unwrap(),
             Datum::new_string_datum(expected.to_owned())
         );
     }
 
-    let out_of_range = ScalarFunction::new(
-        CiString::new("getparam"),
+    let out_of_range = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "getparam",
         FieldType::new(C::VarString),
         vec![const_arg(Datum::Int(2), FieldType::new(C::LongLong))],
-    );
+    ).unwrap().into_scalar_function().unwrap();
     assert_eq!(
         out_of_range.eval(&ctx, empty.get_row(0)),
         Err(EvalError::ParamIndexExceedParamCounts)
@@ -561,11 +560,12 @@ fn vectorized_builtin_other_func_representable_arms() {
             FieldType::new(C::NewDecimal),
         ),
     ] {
-        let sig = ScalarFunction::new(
-            CiString::new("setvar"),
+        let sig = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "setvar",
             ft.clone(),
             vec![var_name(name), const_arg(value.clone(), ft)],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         assert_eq!(sig.eval(&store, empty.get_row(0)).unwrap(), value, "{name}");
         assert_eq!(store.get(name), Some(value), "{name}");
     }

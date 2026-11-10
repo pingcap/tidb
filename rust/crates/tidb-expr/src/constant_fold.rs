@@ -190,7 +190,7 @@ fn fold_current_value_in(
     ctx: &dyn crate::Columns,
     preserve_warning_casts: bool,
 ) -> Option<Folded> {
-    if preserve_warning_casts && (has_runtime_warning_cast(expr) || has_runtime_warning_in(expr)) {
+    if preserve_warning_casts && has_runtime_warning_cast(expr) {
         return None;
     }
     // Go foldConstant's ordinary scalar arm inspects the already-built args;
@@ -468,39 +468,6 @@ fn has_runtime_warning_cast(expr: &Expression) -> bool {
         return false;
     }
     true
-}
-
-/// A numeric `IN` signature casts every list member to the first argument's
-/// eval type. Go performs those casts while building the signature with the
-/// live statement context, so a string such as `'abc'` still contributes its
-/// 1292 warning even when an earlier candidate already matched. A planner
-/// `NoColumns` fold cannot retain that warning; keep this mixed-domain shape
-/// executable for the real statement context instead.
-fn has_runtime_warning_in(expr: &Expression) -> bool {
-    let Expression::ScalarFunction(function) = expr else {
-        return false;
-    };
-    if function.func_name.lowercase() != "in" || function.args.len() < 2 {
-        return false;
-    }
-    let Some(first_type) = function.args[0].static_type().map(|ty| ty.eval_type()) else {
-        return false;
-    };
-    if !matches!(
-        first_type,
-        tidb_datatype::EvalType::Int
-            | tidb_datatype::EvalType::Real
-            | tidb_datatype::EvalType::Decimal
-    ) {
-        return false;
-    }
-    function.args[1..].iter().any(|argument| {
-        matches!(
-            argument,
-            Expression::Constant(constant)
-                if matches!(constant.value, Datum::String(_) | Datum::Bytes(_))
-        )
-    })
 }
 
 /// One node of Go's `foldConstant`: folds bottom up, returning the constant
@@ -784,8 +751,9 @@ mod deferred_function_tests {
     fn interval_scope_does_not_raise_child_warnings_during_fold() {
         // INTERVAL(1, 0, <cast that warns 1292>): the cast child must not be
         // folded, so the fold itself must not append the 1292 warning.
-        let mut expr = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("interval"),
+        let mut expr = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "interval",
             FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
             vec![
                 Expression::Constant(crate::constant::Constant::new(
@@ -796,8 +764,9 @@ mod deferred_function_tests {
                     Datum::Int(0),
                     FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
                 )),
-                Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new("intdiv"),
+                crate::new_function::new_function_base(
+                    &crate::NoColumns,
+                    "intdiv",
                     FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
                     vec![
                         Expression::Constant(crate::constant::Constant::new(
@@ -809,9 +778,9 @@ mod deferred_function_tests {
                             FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
                         )),
                     ],
-                )),
+                ).unwrap(),
             ],
-        ));
+        ).unwrap();
         let warnings = WarningCollector(std::cell::RefCell::new(Vec::new()));
         fold_constant_in_mode(&mut expr, &warnings, ConstantFoldMode::Normal);
         assert!(
@@ -826,11 +795,12 @@ mod deferred_function_tests {
     /// leave that reader runtime-bound rather than freezing NULL.
     #[test]
     fn last_insert_id_requires_runtime_session_state() {
-        let mut expr = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("last_insert_id"),
+        let mut expr = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "last_insert_id",
             FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
             vec![],
-        ));
+        ).unwrap();
         fold_constant_in_mode(&mut expr, &NoColumns, ConstantFoldMode::Normal);
         assert!(matches!(expr, Expression::ScalarFunction(_)));
     }
@@ -854,14 +824,15 @@ mod deferred_function_tests {
         }
 
         let int_type = FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-        let mut expr = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("last_insert_id"),
+        let mut expr = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "last_insert_id",
             int_type.clone(),
             vec![Expression::Constant(crate::constant::Constant::new(
                 Datum::Int(42),
                 int_type,
             ))],
-        ));
+        ).unwrap();
         let context = RecordingColumns(std::cell::Cell::new(None));
         fold_constant_in_mode(&mut expr, &context, ConstantFoldMode::Normal);
 
@@ -889,11 +860,12 @@ mod deferred_function_tests {
             "version",
             "tidb_version",
         ] {
-            let mut expr = Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new(name),
+            let mut expr = crate::new_function::new_function_base(
+                &crate::NoColumns,
+                name,
                 FieldType::new(tidb_datatype::FieldTypeCode::VarString),
                 vec![],
-            ));
+            ).unwrap();
             fold_constant_in_mode(&mut expr, &NoColumns, ConstantFoldMode::Normal);
             assert!(
                 matches!(expr, Expression::ScalarFunction(_)),
@@ -902,46 +874,13 @@ mod deferred_function_tests {
         }
     }
 
-    /// Go's numeric `IN` signatures cast every string/byte candidate against
-    /// the first argument and report conversion warnings for all candidates,
-    /// including those after an earlier match. A planner `NoColumns` fold
-    /// cannot own that statement warning, so mixed-domain lists stay deferred.
-    #[test]
-    fn mixed_numeric_in_literals_stay_runtime_bound_for_warning_preservation() {
-        let int_type = FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-        let string_type = FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-        let mut expr = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("in"),
-            int_type.clone(),
-            vec![
-                Expression::Constant(crate::constant::Constant::new(Datum::Int(0), int_type)),
-                Expression::Constant(crate::constant::Constant::new(
-                    Datum::new_string_datum("0"),
-                    string_type.clone(),
-                )),
-                Expression::Constant(crate::constant::Constant::new(
-                    Datum::new_string_datum("abc"),
-                    string_type,
-                )),
-            ],
-        ));
-        fold_constant_in_mode_preserving_warning_casts(
-            &mut expr,
-            &NoColumns,
-            ConstantFoldMode::Normal,
-        );
-        assert!(
-            matches!(expr, Expression::ScalarFunction(_)),
-            "mixed-domain IN was folded before runtime warning ownership"
-        );
-    }
-
     #[test]
     fn benchmark_scope_keeps_its_subtree_unfolded() {
         // BENCHMARK(1, CAST('x' AS SIGNED)): the inner cast folds only if the
         // walk descends into the unfoldable parent's children.
-        let inner = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("plus"),
+        let inner = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "plus",
             FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
             vec![
                 Expression::Constant(crate::constant::Constant::new(
@@ -953,9 +892,10 @@ mod deferred_function_tests {
                     FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
                 )),
             ],
-        ));
-        let mut expr = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("benchmark"),
+        ).unwrap();
+        let mut expr = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "benchmark",
             FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
             vec![
                 Expression::Constant(crate::constant::Constant::new(
@@ -964,7 +904,7 @@ mod deferred_function_tests {
                 )),
                 inner,
             ],
-        ));
+        ).unwrap();
         fold_constant_in_mode(&mut expr, &NoColumns, ConstantFoldMode::Normal);
 
         // The benchmark's cast argument must still be a scalar function.
@@ -979,11 +919,12 @@ mod deferred_function_tests {
 
     #[test]
     fn deferred_function_fold_re_evaluates_per_execution() {
-        let now_node = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("now"),
+        let now_node = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "now",
             FieldType::new(tidb_datatype::FieldTypeCode::Datetime),
             vec![],
-        ));
+        ).unwrap();
 
         // Fold once under clock 1000.
         let mut expr = now_node.clone();

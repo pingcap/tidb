@@ -183,11 +183,12 @@ mod tests {
         let left = Column::new(1, long());
         let right = Column::new(2, long());
         let args_usage = left.memory_usage() + right.memory_usage();
-        let function = ScalarFunction::new(
-            CiString::new("eq"),
+        let function = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "eq",
             long(),
             vec![Expression::Column(left), Expression::Column(right)],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         let usage = function.memory_usage();
         assert!(
             usage > args_usage + GO_EMPTY_SCALAR_FUNCTION_SIZE + GO_EMPTY_BASE_BUILTIN_FUNC_SIZE

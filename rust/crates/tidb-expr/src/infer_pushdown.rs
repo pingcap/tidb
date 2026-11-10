@@ -1348,11 +1348,12 @@ mod push_down_admission_tests {
     #[test]
     fn a_dedicated_cast_name_answers_like_go_cast() {
         let col = Expression::Column(Column::new(1, FieldType::new(FieldTypeCode::NewDecimal)));
-        let cast = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("cast"),
+        let cast = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "cast",
             FieldType::new(FieldTypeCode::NewDecimal),
             vec![col.clone()],
-        ));
+        ).unwrap();
         assert!(can_exprs_push_down_tikv(std::slice::from_ref(&cast)));
         assert!(can_exprs_push_down_tikv(&[func(
             "not",

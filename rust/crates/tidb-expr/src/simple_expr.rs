@@ -1360,11 +1360,12 @@ mod tests {
 
         // ROW_COUNT(): the context's count, or NULL when the context has
         // none (the trait default).
-        let node = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("row_count"),
+        let node = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "row_count",
             row_count_type.clone(),
             empty_args.clone(),
-        ));
+        ).unwrap();
         let chunk = tidb_chunk::chunk::Chunk::new(&[], 1, 1);
         let row = chunk.get_row(0);
         let value = node
@@ -1392,11 +1393,12 @@ mod tests {
 
         // LAST_INSERT_ID(): the context's generated id, or NULL when unset.
         let last_insert_id_type = FieldType::new(FieldTypeCode::LongLong);
-        let node = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("last_insert_id"),
+        let node = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "last_insert_id",
             last_insert_id_type.clone(),
             empty_args,
-        ));
+        ).unwrap();
         let value = node
             .eval(
                 &CountingContext {
@@ -1426,18 +1428,19 @@ mod tests {
             crate::Datum::Int(42),
             FieldType::new(FieldTypeCode::LongLong),
         ));
-        let node = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("last_insert_id"),
+        let node = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "last_insert_id",
             last_insert_id_type,
             vec![argument],
-        ));
+        ).unwrap();
         let context = CountingContext {
             row_count: None,
             last_insert_id: None,
             recorded: std::cell::RefCell::new(Vec::new()),
         };
         let value = node.eval(&context, row).unwrap();
-        assert_eq!(value, crate::Datum::Int(42));
+        assert_eq!(value, crate::Datum::UInt(42));
         assert_eq!(context.recorded.borrow().as_slice(), &[42]);
     }
 
@@ -1512,14 +1515,18 @@ mod tests {
         ];
         let text_type = FieldType::new(FieldTypeCode::VarString);
         for (name, argument, expected) in cases {
-            let node = Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new(*name),
+            let node = crate::new_function::new_function_base(
+                &crate::NoColumns,
+                *name,
                 text_type.clone(),
                 vec![Expression::Constant(Constant::new(
                     argument.clone(),
-                    FieldType::new(FieldTypeCode::LongLong),
+                    FieldType::new(match argument {
+                        crate::Datum::Real(_) => FieldTypeCode::Double,
+                        _ => FieldTypeCode::LongLong,
+                    }),
                 ))],
-            ));
+            ).unwrap();
             let chunk = tidb_chunk::chunk::Chunk::new(&[], 1, 1);
             let row = chunk.get_row(0);
             let value = node
@@ -1530,14 +1537,15 @@ mod tests {
         }
 
         // NULL propagates.
-        let node = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("format_bytes"),
+        let node = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "format_bytes",
             text_type,
             vec![Expression::Constant(Constant::new(
                 crate::Datum::Null,
                 FieldType::new(FieldTypeCode::LongLong),
             ))],
-        ));
+        ).unwrap();
         let chunk = tidb_chunk::chunk::Chunk::new(&[], 1, 1);
         let row = chunk.get_row(0);
         assert!(node
@@ -1600,11 +1608,12 @@ mod tests {
     }
 
     fn eq(left: Expression, right: Expression) -> Expression {
-        Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("eq"),
+        crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "eq",
             FieldType::new(FieldTypeCode::LongLong),
             vec![left, right],
-        ))
+        ).unwrap()
     }
 
     /// Source: `pkg/expression/util_test.go::BenchmarkExtractColumns`'s
@@ -1620,11 +1629,12 @@ mod tests {
             eq(int_column(1), int_column(2)),
             eq(int_column(2), int_column(3)),
             eq(int_column(3), one.clone()),
-            Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("or"),
+            crate::new_function::new_function_base(
+                &crate::NoColumns,
+                "or",
                 long_long(),
                 vec![one, int_column(0)],
-            )),
+            ).unwrap(),
         ];
         let expr = compose_cnf_condition(conditions).expect("five conditions compose");
 

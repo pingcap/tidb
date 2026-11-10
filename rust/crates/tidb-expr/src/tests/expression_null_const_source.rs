@@ -91,13 +91,15 @@ fn test_constant_decorrelate_and_propagate_type_fragments() {
 #[test]
 fn test_scalar_function_decorrelate_rebuilds_arguments() {
     let column = Column::new(42, int_type());
-    let expression = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("plus"),
+    let expression = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "plus",
         int_type(),
-        vec![Expression::CorrelatedColumn(CorrelatedColumn::new(
-            column.clone(),
-        ))],
-    ));
+        vec![
+            Expression::CorrelatedColumn(CorrelatedColumn::new(column.clone())),
+            Expression::Column(column.clone()),
+        ],
+    ).unwrap();
     assert!(expression.is_correlated());
 
     let schema = Schema::new(vec![column]);
@@ -106,7 +108,10 @@ fn test_scalar_function_decorrelate_rebuilds_arguments() {
     let Expression::ScalarFunction(function) = decorrelated else {
         panic!("decorrelation must preserve the scalar-function node");
     };
-    assert!(matches!(function.args.as_slice(), [Expression::Column(_)]));
+    assert!(matches!(
+        function.args.as_slice(),
+        [Expression::Column(_), Expression::Column(_)]
+    ));
     assert!(expression.is_correlated());
 }
 
@@ -201,7 +206,7 @@ fn test_const_level_case_table() {
     /// A node built without construction-time inference -- what survives when
     /// the real builder is not consulted (the deferred-carrying rows).
     fn raw(name: &str, args: Vec<Expression>) -> Expression {
-        Expression::ScalarFunction(ScalarFunction::new(CiString::new(name), int_type(), args))
+        crate::new_function::new_function_base(&crate::NoColumns, name, int_type(), args).unwrap()
     }
 
     let build = |name: &str, args: Vec<Expression>| -> Expression {

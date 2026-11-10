@@ -261,11 +261,12 @@ mod round_truncate_type_source_tests {
                 &Datum::Decimal(tidb_datatype::Decimal::from_literal("1.23")),
             );
             chunk.append_int64(1, 5);
-            let function = ScalarFunction::new(
-                tidb_ast::CiString::new(name),
+            let function = crate::new_function::new_function_base(
+                &crate::NoColumns,
+                name,
                 result,
                 vec![value.clone(), scale.clone()],
-            );
+            ).unwrap().into_scalar_function().unwrap();
             let Datum::Decimal(answer) = function
                 .eval(&tidb_exprctx::context::NoColumns, chunk.get_row(0))
                 .unwrap()
@@ -345,7 +346,7 @@ mod ceil_floor_type_source_tests {
                     &Datum::Decimal(tidb_datatype::Decimal::from_literal("-1.23")),
                 );
                 let result =
-                    ScalarFunction::new(tidb_ast::CiString::new(name), result_type, vec![argument])
+                    crate::new_function::new_function_base(&crate::NoColumns, name, result_type, vec![argument]).unwrap().into_scalar_function().unwrap()
                         .eval(&tidb_exprctx::context::NoColumns, chunk.get_row(0))
                         .unwrap();
                 let expected = if name == "floor" { -2 } else { -1 };

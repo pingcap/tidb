@@ -164,7 +164,7 @@ fn test_arithmetic_plus() {
     let cols = ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
     let lhs = const_typed(Datum::Int(12), int_ft());
     let rhs = const_typed(Datum::Int(1), int_ft());
-    let sf = ScalarFunction::new(CiString::new("plus"), int_ft(), vec![lhs, rhs]);
+    let sf = crate::new_function::new_function_base(&crate::NoColumns, "plus", int_ft(), vec![lhs, rhs]).unwrap().into_scalar_function().unwrap();
     assert_eq!(
         sf.eval(&cols, tidb_chunk::row::Row::empty()).unwrap(),
         Datum::Int(13)
@@ -172,14 +172,15 @@ fn test_arithmetic_plus() {
 
     // cases 2–4: REAL signature; any NULL operand yields NULL with 0 value.
     let reals = |a: f64, b: f64| {
-        let sf = ScalarFunction::new(
-            CiString::new("plus"),
+        let sf = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "plus",
             real_ft(),
             vec![
                 const_typed(real(a), real_ft()),
                 const_typed(real(b), real_ft()),
             ],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         sf.eval(&cols, tidb_chunk::row::Row::empty())
     };
     fn real(v: f64) -> Datum {
@@ -191,27 +192,29 @@ fn test_arithmetic_plus() {
     }
     let null_real = [Datum::Null];
     assert_eq!(
-        ScalarFunction::new(
-            CiString::new("plus"),
+        crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "plus",
             real_ft(),
             vec![
                 const_typed(null_real[0].clone(), FieldType::new(C::Null)),
                 const_typed(real(-0.11101), real_ft()),
             ],
-        )
+        ).unwrap().into_scalar_function().unwrap()
         .eval(&cols, tidb_chunk::row::Row::empty())
         .unwrap(),
         Datum::Null
     );
     assert_eq!(
-        ScalarFunction::new(
-            CiString::new("plus"),
+        crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "plus",
             real_ft(),
             vec![
                 const_typed(Datum::Null, FieldType::new(C::Null)),
                 const_typed(Datum::Null, FieldType::new(C::Null)),
             ],
-        )
+        ).unwrap().into_scalar_function().unwrap()
         .eval(&cols, tidb_chunk::row::Row::empty())
         .unwrap(),
         Datum::Null
@@ -229,14 +232,15 @@ fn test_arithmetic_plus() {
         ft
     };
     let hex = tidb_datatype::parse_hex_str("0x20000000000000").expect("hex literal");
-    let sf = ScalarFunction::new(
-        CiString::new("plus"),
+    let sf = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "plus",
         int_ft(),
         vec![
             const_typed(Datum::BinaryLiteral(hex.clone()), literal_ft()),
             const_typed(Datum::Int(1), int_ft()),
         ],
-    );
+    ).unwrap().into_scalar_function().unwrap();
     assert_eq!(
         sf.eval(&cols, tidb_chunk::row::Row::empty()).unwrap(),
         Datum::Int(9007199254740993)
@@ -246,14 +250,15 @@ fn test_arithmetic_plus() {
         .expect("bit literal")
         .as_binary_literal()
         .clone();
-    let sf = ScalarFunction::new(
-        CiString::new("plus"),
+    let sf = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "plus",
         int_ft(),
         vec![
             const_typed(Datum::BinaryLiteral(bit), literal_ft()),
             const_typed(Datum::Int(1), int_ft()),
         ],
-    );
+    ).unwrap().into_scalar_function().unwrap();
     assert_eq!(
         sf.eval(&cols, tidb_chunk::row::Row::empty()).unwrap(),
         Datum::Int(4)
@@ -279,14 +284,15 @@ fn test_decimal_err_overflow() {
         ("mul", big.clone()),
         ("div", tenth),
     ] {
-        let sf = ScalarFunction::new(
-            CiString::new(name),
+        let sf = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            name,
             dec_ft(),
             vec![
                 const_typed(Datum::Decimal(big.clone()), dec_ft()),
                 const_typed(Datum::Decimal(b.clone()), dec_ft()),
             ],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         let error = sf
             .eval(&cols, tidb_chunk::row::Row::empty())
             .expect_err("decimal arithmetic must overflow");
@@ -319,14 +325,15 @@ fn test_arithmetic_overflow_error_message_with_column_name() {
     // of "Column#1". Reproduce by evaluating mul(col, constant) over a row.
     let mut column = Column::new(0, int_ft());
     column.orig_name = "test.t.col1".to_owned();
-    let function = ScalarFunction::new(
-        CiString::new("mul"),
+    let function = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "mul",
         int_ft(),
         vec![
             Expression::Column(column),
             const_typed(Datum::Int(-1), int_ft()),
         ],
-    );
+    ).unwrap().into_scalar_function().unwrap();
     let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[int_ft()], 1);
     chunk.append_datum(0, &Datum::Int(i64::MIN));
 
@@ -350,19 +357,21 @@ fn test_arithmetic_overflow_error_message_with_column_name() {
     left.orig_name = "t5.col7".to_owned();
     let mut right = Column::new(1, int_ft());
     right.orig_name = "t5.col2".to_owned();
-    let add = ScalarFunction::new(
-        CiString::new("plus"),
+    let add = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "plus",
         int_ft(),
         vec![Expression::Column(left), Expression::Column(right)],
-    );
-    let multiply = ScalarFunction::new(
-        CiString::new("mul"),
+    ).unwrap().into_scalar_function().unwrap();
+    let multiply = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "mul",
         int_ft(),
         vec![
             Expression::ScalarFunction(add),
             const_typed(Datum::Int(i64::MAX), int_ft()),
         ],
-    );
+    ).unwrap().into_scalar_function().unwrap();
     let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[int_ft(), int_ft()], 1);
     chunk.append_datum(0, &Datum::Int(2));
     chunk.append_datum(1, &Datum::Int(1));
@@ -384,14 +393,15 @@ fn test_real_arithmetic_overflow_error_message() {
     // the DOUBLE overflow, rather than returning only a generic overflow
     // class. Both the scalar-function and AST paths now use the source-shaped
     // renderer; the direct values-only math helper remains carrier-only.
-    let function = ScalarFunction::new(
-        CiString::new("mul"),
+    let function = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "mul",
         real_ft(),
         vec![
             const_typed(Datum::Real(1e300), real_ft()),
             const_typed(Datum::Real(1e300), real_ft()),
         ],
-    );
+    ).unwrap().into_scalar_function().unwrap();
     let chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     let error = function
         .eval(&NoColumns, chunk.get_row(0))
@@ -431,25 +441,27 @@ fn test_vectorized_builtin_arithmetic_func() {
         ft
     };
     let eval = |name: &str, l: Datum, r: Datum| {
-        ScalarFunction::new(
-            CiString::new(name),
+        crate::new_function::new_function_base(
+            &crate::NoColumns,
+            name,
             num_ft(&l),
             vec![
                 const_typed(l.clone(), num_ft(&l)),
                 const_typed(r.clone(), num_ft(&r)),
             ],
-        )
+        ).unwrap().into_scalar_function().unwrap()
         .eval(&zoned, tidb_chunk::row::Row::empty())
     };
     let eval_unsigned_decimal_rhs = |name: &str, l: Datum, r: Decimal| {
-        ScalarFunction::new(
-            CiString::new(name),
+        crate::new_function::new_function_base(
+            &crate::NoColumns,
+            name,
             int_ft(),
             vec![
                 const_typed(l, dec_ft()),
                 const_typed(Datum::Decimal(r), unsigned_dec()),
             ],
-        )
+        ).unwrap().into_scalar_function().unwrap()
         .eval(&zoned, tidb_chunk::row::Row::empty())
     };
 
@@ -2315,11 +2327,12 @@ fn json_numeric_batch_arithmetic_uses_json_source_not_serialized_document() {
             Datum::Json(BinaryJSON::parse(input).unwrap()),
             FieldType::new(C::Json),
         );
-        let function = ScalarFunction::new(
-            CiString::new("bitand"),
+        let function = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "bitand",
             uint_ft(),
             vec![arg, const_typed(Datum::Int(3), int_ft())],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         let result = function.eval(&ctx, tidb_chunk::row::Row::empty()).unwrap();
         assert_eq!(text(&result), expected.to_string(), "{input}");
         assert!(ctx.0.borrow().is_empty(), "{:?}", ctx.0.borrow());

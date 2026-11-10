@@ -44,22 +44,24 @@ fn eval_string_sig(name: &str, args: Vec<Datum>) -> Result<Datum, crate::EvalErr
     // Go's string signatures declare MaxFlen-scale results; the packet
     // boundary checks read the declared length (e.g. SPACE/REPEAT's 1000).
     ret.set_flen(1_000_000);
-    let function = ScalarFunction::new(
-        CiString::new(name),
+    let function = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        name,
         ret,
         args.into_iter().map(const_arg).collect(),
-    );
+    ).unwrap().into_scalar_function().unwrap();
     let cols = tidb_exprctx::context::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
     let empty = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[], 1);
     function.eval(&cols, empty.get_row(0))
 }
 
 fn eval_int_sig(name: &str, args: Vec<Datum>) -> Result<Datum, crate::EvalError> {
-    let function = ScalarFunction::new(
-        CiString::new(name),
+    let function = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        name,
         FieldType::new(C::LongLong),
         args.into_iter().map(const_arg).collect(),
-    );
+    ).unwrap().into_scalar_function().unwrap();
     let cols = tidb_exprctx::context::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
     let empty = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[], 1);
     function.eval(&cols, empty.get_row(0))
@@ -168,11 +170,12 @@ fn go_test_repeat() {
                 1000
             }
         }
-        let function = ScalarFunction::new(
-            CiString::new("repeat"),
+        let function = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "repeat",
             FieldType::new(C::VarString),
             vec![const_arg(s("a")), const_arg(i(10_001))],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         let empty = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[], 1);
         let value = function
             .eval(&SmallPacket, empty.get_row(0))

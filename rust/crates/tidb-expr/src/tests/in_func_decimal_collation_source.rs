@@ -78,11 +78,12 @@ fn in_decimal_across_scales_compares_numerically() {
         input.append_datum(1, high);
     }
 
-    let in_func = ScalarFunction::new(
-        CiString::new("in"),
+    let in_func = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "in",
         FieldType::new(C::LongLong),
         vec![lhs.clone(), rhs.clone()],
-    );
+    ).unwrap().into_scalar_function().unwrap();
 
     for (index, (_low, high)) in left.iter().zip(right.iter()).enumerate() {
         let row = input.get_row(index);

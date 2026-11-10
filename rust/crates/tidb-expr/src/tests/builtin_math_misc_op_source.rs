@@ -87,11 +87,12 @@ fn eval_as(
     ret_type: FieldType,
     ctx: &impl Columns,
 ) -> Result<Datum, EvalError> {
-    let function = ScalarFunction::new(
-        CiString::new(name),
+    let function = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        name,
         ret_type,
         args.into_iter().map(const_arg).collect(),
-    );
+    ).unwrap().into_scalar_function().unwrap();
     function.eval(ctx, empty_row())
 }
 
@@ -278,7 +279,7 @@ fn crc32_gbk_charset_connection_rows() {
 fn conv_digit_overflow_above_u64_errors_with_the_digits() {
     // u64::MAX + 1, unsigned source base.
     let error = eval_as(
-        "CONV",
+        "conv",
         vec![
             Datum::new_string_datum("18446744073709551616".to_owned()),
             Datum::Int(10),
@@ -414,9 +415,9 @@ fn cot_zero_overflows_as_double_error() {
 #[test]
 fn math_overflow_errors_render_the_source_expression() {
     for (name, args, expression) in [
-        ("EXP", vec![Datum::Int(100_000)], "exp(100000)"),
-        ("POW", vec![Datum::Int(10), Datum::Int(700)], "pow(10, 700)"),
-        ("COT", vec![Datum::Real(0.0)], "cot(0)"),
+        ("exp", vec![Datum::Int(100_000)], "exp(100000)"),
+        ("pow", vec![Datum::Int(10), Datum::Int(700)], "pow(10, 700)"),
+        ("cot", vec![Datum::Real(0.0)], "cot(0)"),
     ] {
         let error = eval_as(name, args, real_ft(), &WarnCountCtx::new())
             .expect_err("math overflow must return an error");
@@ -925,7 +926,7 @@ fn sleep_vectorized_incorrect_argument_levels() {
 /// One SLEEP row through the scalar-function tier, exactly what `vecEvalType`
 /// collapses to per virtual row: result value or the failing error.
 fn sleep_row(arg: Datum, ctx: &impl Columns) -> Result<Datum, EvalError> {
-    ScalarFunction::new(CiString::new("sleep"), int_ft(), vec![const_arg(arg)])
+    crate::new_function::new_function_base(&crate::NoColumns, "sleep", int_ft(), vec![const_arg(arg)]).unwrap().into_scalar_function().unwrap()
         .eval(ctx, empty_row())
 }
 
@@ -1245,9 +1246,8 @@ fn unary_not_every_input_domain() {
 /// DATETIME/TIMESTAMP rows to `go_test_is_true_or_false`'s subset.
 #[test]
 fn is_true_or_false_full_signature_table() {
-    // Go NewDuration(0,0,0,1000,3): one MICROSECOND (Go's argument is
-    // nanoseconds; this tier's constructor takes microseconds), fsp 3.
-    let micro = MySqlDuration::new(0, 0, 0, 1, 3).unwrap();
+    // Go NewDuration(0,0,0,1000,3): 1000 microseconds, fsp 3.
+    let micro = MySqlDuration::new(0, 0, 0, 1000, 3).unwrap();
     let zero_dur = MySqlDuration::new(0, 0, 0, 0, 3).unwrap();
     // Go NewTime(FromDate(0,...)+1000us under TypeDatetime fsp 3) is built
     // through CoreTime's exact bit layout, which `Time::new` accepts without

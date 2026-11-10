@@ -540,11 +540,12 @@ mod tests {
     #[test]
     fn scalar_funcs_to_exprs_preserves_each_function() {
         let make = |value: i64| {
-            ScalarFunction::new(
-                CiString::new("lt"),
+            crate::new_function::new_function_base(
+                &crate::NoColumns,
+                "lt",
                 FieldType::new(FieldTypeCode::LongLong),
                 vec![not_null_double_column(), int_constant(value)],
-            )
+            ).unwrap().into_scalar_function().unwrap()
         };
         let funcs = vec![make(0), make(1)];
         let expected = funcs.clone();
@@ -1048,11 +1049,12 @@ mod tests {
         // The callback may also replace the node; the replacement is what
         // gets folded and returned.
         let rename = |func: ScalarFunction| {
-            Ok(ScalarFunction::new(
-                CiString::new("minus"),
+            Ok(crate::new_function::new_function_base(
+                &crate::NoColumns,
+                "minus",
                 FieldType::new(FieldTypeCode::LongLong),
                 func.args,
-            ))
+            ).unwrap().into_scalar_function().unwrap())
         };
         let replaced = new_function_with_init(
             &NoColumns,

@@ -673,11 +673,12 @@ fn hybrid_arithmetic_preserves_null_and_selection_order() {
                 let right = column(1);
                 let output =
                     crate::builtin_arithmetic::infer_arithmetic_type(op, &left, &right).unwrap();
-                let expression = Expression::ScalarFunction(ScalarFunction::new(
-                    tidb_ast::CiString::new(op),
+                let expression = crate::new_function::new_function_base(
+                    &crate::NoColumns,
+                    op,
                     output,
                     vec![left, right],
-                ));
+                ).unwrap();
                 let mut input =
                     tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[field.clone(), field.clone()], 2);
                 input.append_null(0);
@@ -761,11 +762,12 @@ fn temporal_json_arithmetic_uses_go_numeric_casts() {
                     let output =
                         crate::builtin_arithmetic::infer_arithmetic_type(op, &left, &right)
                             .unwrap();
-                    let expr = Expression::ScalarFunction(ScalarFunction::new(
-                        tidb_ast::CiString::new(op),
+                    let expr = crate::new_function::new_function_base(
+                        &crate::NoColumns,
+                        op,
                         output,
                         vec![left, right],
-                    ));
+                    ).unwrap();
                     let mut input =
                         tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[field.clone(), integer], 1);
                     input.append_datum(0, &value);
@@ -1255,29 +1257,32 @@ fn strict_scalar_decimal_precision_probes_preserve_runtime_evaluation() {
             for (op, value) in ["intdiv", "div", "plus"].into_iter().zip(values) {
                 let context = Context(Default::default(), strict);
                 let left = match name {
-                    "real_expr" => ScalarFunction::new(
-                        tidb_ast::CiString::new("plus"),
+                    "real_expr" => crate::new_function::new_function_base(
+                        &crate::NoColumns,
+                        "plus",
                         FieldType::new(C::Double),
                         vec![
                             literal(Datum::Real(1.25), FieldType::new(C::Double)),
                             literal(Datum::Real(0.0), FieldType::new(C::Double)),
                         ],
-                    ),
-                    "string_expr" => ScalarFunction::new(
-                        tidb_ast::CiString::new("concat"),
+                    ).unwrap().into_scalar_function().unwrap(),
+                    "string_expr" => crate::new_function::new_function_base(
+                        &crate::NoColumns,
+                        "concat",
                         FieldType::new(C::VarString),
                         vec![
                             literal(Datum::new_string_datum("2tail"), FieldType::new(C::VarString)),
                             literal(Datum::new_string_datum(""), FieldType::new(C::VarString)),
                         ],
-                    ),
+                    ).unwrap().into_scalar_function().unwrap(),
                     "datetime_expr" => {
                         let (field, value) = temporal_json_arithmetic_fixture("datetime6");
-                        ScalarFunction::new(
-                            tidb_ast::CiString::new("ifnull"),
+                        crate::new_function::new_function_base(
+                            &crate::NoColumns,
+                            "ifnull",
                             field.clone(),
                             vec![literal(value, field.clone()), literal(Datum::Null, field)],
-                        )
+                        ).unwrap().into_scalar_function().unwrap()
                     }
                     _ => {
                         let text = match name {

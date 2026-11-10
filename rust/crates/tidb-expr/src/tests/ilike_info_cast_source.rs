@@ -136,7 +136,7 @@ fn test_ilike() {
                     int_type,
                 )),
             ];
-            let sf = ScalarFunction::new(CiString::new("ilike"), bool_type, args);
+            let sf = crate::new_function::new_function_base(&crate::NoColumns, "ilike", bool_type, args).unwrap().into_scalar_function().unwrap();
             let result = sf
                 .eval(&super::NoColumns, tidb_chunk::row::Row::empty())
                 .unwrap_or_else(|err| panic!("{input}/{pattern}/{escape}@{collation}: {err:?}"));
@@ -258,7 +258,7 @@ fn eval_zero_arg(name: &str, ctx: &InfoSession) -> Datum {
         ret = FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
         ret.add_flags(FieldTypeFlags::UNSIGNED);
     }
-    crate::scalar_function::ScalarFunction::new(tidb_ast::CiString::new(name), ret, vec![])
+    crate::new_function::new_function_base(&crate::NoColumns, name, ret, vec![]).unwrap().into_scalar_function().unwrap()
         .eval(ctx, tidb_chunk::row::Row::empty())
         .expect("zero-argument information builtin must evaluate")
 }

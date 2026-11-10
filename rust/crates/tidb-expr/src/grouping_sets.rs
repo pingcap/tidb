@@ -404,11 +404,12 @@ mod tests {
     }
 
     fn plus(left: Expression, right: Expression) -> Expression {
-        Expression::ScalarFunction(crate::expression::ScalarFunction::new(
-            CiString::new("plus"),
+        crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "plus",
             FieldType::new(FieldTypeCode::LongLong),
             vec![left, right],
-        ))
+        ).unwrap()
     }
 
     fn longlong(value: i64) -> Expression {

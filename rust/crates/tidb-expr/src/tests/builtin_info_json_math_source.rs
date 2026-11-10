@@ -95,11 +95,12 @@ fn const_arg(datum: Datum) -> Expression {
 }
 
 fn eval_as(name: &str, args: Vec<Datum>, ret_type: FieldType, ctx: &impl Columns) -> Datum {
-    ScalarFunction::new(
-        CiString::new(name),
+    crate::new_function::new_function_base(
+        &crate::NoColumns,
+        name,
         ret_type,
         args.into_iter().map(const_arg).collect(),
-    )
+    ).unwrap().into_scalar_function().unwrap()
     .eval(ctx, tidb_chunk::row::Row::empty())
     .expect("source row must evaluate")
 }
@@ -194,7 +195,7 @@ impl Columns for InfoColumns {
 }
 
 fn eval_info(name: &str, result_type: FieldType, ctx: &InfoColumns) -> Datum {
-    ScalarFunction::new(CiString::new(name), result_type, vec![])
+    crate::new_function::new_function_base(&crate::NoColumns, name, result_type, vec![]).unwrap().into_scalar_function().unwrap()
         .eval(ctx, tidb_chunk::row::Row::empty())
         .expect("session information builtin must evaluate")
 }
@@ -1480,7 +1481,7 @@ fn json_schema_valid() {
 #[test]
 fn json_schema_valid_cache() {
     let args = vec![const_arg(json_s("{}")), const_arg(json_s("{}"))];
-    let function = ScalarFunction::new(CiString::new("json_schema_valid"), int_ft(), args);
+    let function = crate::new_function::new_function_base(&crate::NoColumns, "json_schema_valid", int_ft(), args).unwrap().into_scalar_function().unwrap();
     let empty = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[], 1);
     assert_eq!(
         function.eval(&NoColumns, empty.get_row(0)).unwrap(),
@@ -1522,11 +1523,12 @@ fn json_schema_valid_cache_replaces_context_only_schema() {
 
     let mut schema = Constant::new(json_s(r#"{"type":"object"}"#), text_ft());
     schema.param_marker = Some(ParamMarker { order: 0 });
-    let function = ScalarFunction::new(
-        CiString::new("json_schema_valid"),
+    let function = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "json_schema_valid",
         int_ft(),
         vec![Expression::Constant(schema), const_arg(json_s("[]"))],
-    );
+    ).unwrap().into_scalar_function().unwrap();
     let row = tidb_chunk::row::Row::empty();
     assert_eq!(
         function
@@ -1594,18 +1596,19 @@ fn json_modify_path_cache_replaces_context_only_paths() {
 
     let mut path = Constant::new(json_s("$.a"), text_ft());
     path.param_marker = Some(ParamMarker { order: 0 });
-    let function = ScalarFunction::new(
-        CiString::new("json_set"),
+    let function = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "json_set",
         text_ft(),
         vec![
             const_arg(json_s("{}")),
             Expression::Constant(path),
             const_arg(Datum::Int(1)),
         ],
-    );
+    ).unwrap().into_scalar_function().unwrap();
     let row = tidb_chunk::row::Row::empty();
-    assert_eq!(
-        function
+    json_eq(
+        &function
             .eval(
                 &PathContext {
                     context_id: 11,
@@ -1614,10 +1617,10 @@ fn json_modify_path_cache_replaces_context_only_paths() {
                 row,
             )
             .unwrap(),
-        json_s(r#"{"a": 1}"#)
+        r#"{"a": 1}"#,
     );
-    assert_eq!(
-        function
+    json_eq(
+        &function
             .eval(
                 &PathContext {
                     context_id: 11,
@@ -1626,10 +1629,10 @@ fn json_modify_path_cache_replaces_context_only_paths() {
                 row,
             )
             .unwrap(),
-        json_s(r#"{"a": 1}"#)
+        r#"{"a": 1}"#,
     );
-    assert_eq!(
-        function
+    json_eq(
+        &function
             .eval(
                 &PathContext {
                     context_id: 12,
@@ -1638,7 +1641,7 @@ fn json_modify_path_cache_replaces_context_only_paths() {
                 row,
             )
             .unwrap(),
-        json_s(r#"{"b": 1}"#)
+        r#"{"b": 1}"#,
     );
 }
 

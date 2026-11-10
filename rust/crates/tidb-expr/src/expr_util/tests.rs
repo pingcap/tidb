@@ -50,6 +50,12 @@ fn col(id: i64) -> Expression {
     Expression::Column(column)
 }
 
+fn json_col(id: i64) -> Expression {
+    let mut column = Column::new(id, FieldType::new(FieldTypeCode::Json));
+    column.index = id;
+    Expression::Column(column)
+}
+
 fn cor_col(id: i64, data: Option<Datum>) -> Expression {
     let mut column = Column::new(id, int_type());
     column.index = id;
@@ -75,7 +81,7 @@ fn str_const(v: &str) -> Expression {
 /// Go `newFunctionWithMockCtx(name, args...)`, minus the type inference the
 /// real `NewFunction` performs -- see this module's header.
 fn func(name: &str, args: Vec<Expression>) -> Expression {
-    Expression::ScalarFunction(ScalarFunction::new(CiString::new(name), int_type(), args))
+    crate::new_function::new_function_base(&crate::NoColumns, name, int_type(), args).unwrap()
 }
 
 fn shape(expr: &Expression) -> Vec<u8> {
@@ -284,11 +290,12 @@ fn go_disable_parse_json_flag_4_expr() {
     // A scalar function loses it.
     let mut ret_type = int_type();
     ret_type.add_flags(FieldTypeFlags::PARSE_TO_JSON);
-    let mut expr = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("abs"),
+    let mut expr = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "abs",
         ret_type,
         vec![col(1)],
-    ));
+    ).unwrap();
     disable_parse_json_flag_4_expr(&mut expr);
     assert!(expr.static_type().expect("a type").flags() & FieldTypeFlags::PARSE_TO_JSON == 0);
 }
@@ -366,31 +373,34 @@ fn go_projection_benefits_from_pushed_down() {
     // The JSON functions TiKV evaluates well.
     let json_exprs = vec![
         col(0),
-        func("json_extract", vec![col(1), str_const("$.a")]),
-        func("json_depth", vec![col(1)]),
-        func("json_length", vec![col(1)]),
-        func("json_type", vec![col(1)]),
-        func("json_valid", vec![col(1)]),
-        func("json_contains", vec![col(1), str_const("1")]),
-        func("json_contains_path", vec![col(1), str_const("one")]),
-        func("json_keys", vec![col(1)]),
-        func("json_search", vec![col(1), str_const("one")]),
-        func("json_memberof", vec![str_const("1"), col(1)]),
-        func("json_overlaps", vec![col(1), col(2)]),
+        func("json_extract", vec![json_col(1), str_const("$.a")]),
+        func("json_depth", vec![json_col(1)]),
+        func("json_length", vec![json_col(1)]),
+        func("json_type", vec![json_col(1)]),
+        func("json_valid", vec![json_col(1)]),
+        func("json_contains", vec![json_col(1), json_col(2)]),
+        func("json_contains_path", vec![json_col(1), str_const("one"), str_const("$.a")]),
+        func("json_keys", vec![json_col(1)]),
+        func("json_search", vec![json_col(1), str_const("one"), str_const("a")]),
+        func("json_memberof", vec![json_col(2), json_col(1)]),
+        func("json_overlaps", vec![json_col(1), json_col(2)]),
     ];
     assert!(projection_benefits_from_pushed_down(&json_exprs, 3));
 
     // A bare JSON_UNQUOTE does not benefit...
-    let bare_unquote = vec![func("json_unquote", vec![col(1)])];
+    let bare_unquote = vec![func("json_unquote", vec![json_col(1)])];
     assert!(!projection_benefits_from_pushed_down(&bare_unquote, 3));
 
     // ...but the `->>` spelling does.
     let arrow = vec![func(
         "json_unquote",
-        vec![func(
+        vec![crate::new_function::new_function_base(
+            &crate::NoColumns,
             "cast",
-            vec![func("json_extract", vec![col(1), str_const("$.a")])],
-        )],
+            string_type(),
+            vec![func("json_extract", vec![json_col(1), str_const("$.a")])],
+        )
+        .unwrap()],
     )];
     assert!(projection_benefits_from_pushed_down(&arrow, 3));
 }
@@ -413,7 +423,7 @@ fn is_col_op_col_needs_two_columns() {
     }))
     .is_err());
 
-    let Expression::ScalarFunction(one) = func("eq", vec![col(1)]) else {
+    let Expression::ScalarFunction(one) = func("isnull", vec![col(1)]) else {
         panic!("expected a scalar function")
     };
     assert!(extract_columns_from_col_op_col(&one).is_none());
@@ -475,11 +485,12 @@ fn normalized_cast_prints_go_s_name_and_target_type() {
     let mut decimal = FieldType::new(FieldTypeCode::NewDecimal);
     decimal.set_flen(10);
     decimal.set_decimal(0);
-    let cast = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("cast"),
+    let cast = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "cast",
         decimal,
         vec![col(1)],
-    ));
+    ).unwrap();
     assert_eq!(explain_normalized_info(&cast), "cast(t.c1, decimal(10,0))");
     assert_eq!(
         explain_normalized_info_4_in_list(&cast),

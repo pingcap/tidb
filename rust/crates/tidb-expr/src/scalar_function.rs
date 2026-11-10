@@ -4674,7 +4674,7 @@ fn vec_eval_decimal_function(
 /// whose row evaluation (`cast::eval_cast`'s DECIMAL arm over an integer,
 /// `Decimal::from_int` then `cast_to_precision`) is the integer itself: an
 /// integer column cast to a `DECIMAL(flen, scale)` whose integer digits hold
-/// every value the column's signedness can take (19 signed, 20 unsigned), so
+/// every value the column's type can take (19 for a signed BIGINT), so
 /// `ProduceDecWithSpecifiedTp` neither clamps nor warns and the cell is the
 /// integer padded to `scale` fraction digits. An unspecified target shape
 /// keeps the row path (it returns the source unchanged), as does a value
@@ -4689,25 +4689,26 @@ fn vec_eval_cast_int_as_decimal(
         return None;
     };
     let source = column.get_static_type()?;
-    if !matches!(
-        source.code(),
-        FieldTypeCode::Tiny
-            | FieldTypeCode::Short
-            | FieldTypeCode::Int24
-            | FieldTypeCode::Long
-            | FieldTypeCode::LongLong
-            | FieldTypeCode::Year
-    ) {
-        return None;
-    }
     let signed = !source.is_unsigned();
+    // The decimal digits of the widest value the column's type can store.
+    let digits = match source.code() {
+        FieldTypeCode::Tiny => 3,
+        FieldTypeCode::Year => 4,
+        FieldTypeCode::Short => 5,
+        FieldTypeCode::Int24 if signed => 7,
+        FieldTypeCode::Int24 => 8,
+        FieldTypeCode::Long => 10,
+        FieldTypeCode::LongLong if signed => 19,
+        FieldTypeCode::LongLong => 20,
+        _ => return None,
+    };
     let target = function.get_static_type()?;
     if target.decimal() == UNSPECIFIED_LENGTH {
         return None;
     }
     let flen = u32::try_from(target.flen()).ok()?;
     let scale = u32::try_from(target.decimal()).ok()?;
-    if flen == 0 || flen < scale.checked_add(if signed { 19 } else { 20 })? {
+    if flen == 0 || flen < scale.checked_add(digits)? {
         return None;
     }
     let factor = 10i128.checked_pow(scale)?;
@@ -4956,11 +4957,12 @@ mod tests {
                     let output =
                         crate::builtin_arithmetic::infer_arithmetic_type(name, &args[0], &args[1])
                             .unwrap();
-                    let expression = Expression::ScalarFunction(ScalarFunction::new(
-                        CiString::new(name),
+                    let expression = crate::new_function::new_function_base(
+                        &crate::NoColumns,
+                        name,
                         output,
                         args,
-                    ));
+                    ).unwrap();
                     let mut chunk = Chunk::new_chunk_with_capacity(&[field.clone(), field], 2);
                     let rows = match mode {
                         "warnings" => [[Some("1x"), Some("3z")], [Some("2y"), Some("4w")]],
@@ -4993,6 +4995,13 @@ mod tests {
                     } else {
                         scalar()
                     };
+                    // The decimal cast reports 1292 as the `types` terror.
+                    let actual = actual.map_err(|error| match error {
+                        EvalError::Conversion(terror) if terror.code() == tidb_terror::TerrorCode::new(1292) => {
+                            EvalError::TruncatedWrongValue(terror.message().to_owned())
+                        }
+                        error => error,
+                    });
                     let class = if name == "intdiv" {
                         "DECIMAL"
                     } else {
@@ -5177,16 +5186,17 @@ mod tests {
             let mut decimal = FieldType::new(FieldTypeCode::NewDecimal);
             decimal.set_flen(15);
             decimal.set_decimal(4);
-            Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("div"),
+            crate::new_function::new_function_base(
+                &crate::NoColumns,
+                "div",
                 decimal,
                 vec![integer(1), integer(0)],
-            ))
+            ).unwrap()
         };
 
         for (name, first, expected) in [("and", 0, 0), ("or", 1, 1)] {
             let function =
-                ScalarFunction::new(CiString::new(name), ft(), vec![integer(first), division()]);
+                crate::new_function::new_function_base(&crate::NoColumns, name, ft(), vec![integer(first), division()]).unwrap().into_scalar_function().unwrap();
             assert_eq!(
                 function.eval(&ctx, tidb_chunk::row::Row::empty()).unwrap(),
                 Datum::Int(expected)
@@ -5194,11 +5204,12 @@ mod tests {
             assert!(ctx.warnings.borrow().is_empty());
         }
 
-        let interval = ScalarFunction::new(
-            CiString::new("interval"),
+        let interval = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "interval",
             ft(),
             vec![integer(1), integer(0), integer(1), integer(2), division()],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         assert_eq!(
             interval.eval(&ctx, tidb_chunk::row::Row::empty()).unwrap(),
             Datum::Int(2)
@@ -5209,16 +5220,21 @@ mod tests {
         not_null_int.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
         let integer =
             |value| Expression::Constant(Constant::new(Datum::Int(value), not_null_int.clone()));
-        let unreachable = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("not_a_function"),
+        let unreachable = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "plus",
             not_null_int.clone(),
-            vec![],
-        ));
-        let interval = ScalarFunction::new(
-            CiString::new("interval"),
+            vec![
+                Expression::Constant(Constant::new(Datum::Int(i64::MAX), not_null_int.clone())),
+                Expression::Constant(Constant::new(Datum::Int(1), not_null_int.clone())),
+            ],
+        ).unwrap();
+        let interval = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "interval",
             ft(),
             vec![integer(1), integer(0), integer(1), integer(2), unreachable],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         assert_eq!(
             interval.eval(&ctx, tidb_chunk::row::Row::empty()).unwrap(),
             Datum::Int(2)
@@ -5247,16 +5263,21 @@ mod tests {
         };
         let string =
             |value: &[u8]| Expression::Constant(Constant::new(Datum::new_string_datum(value), text_ft()));
-        let unsupported = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("not_a_function"),
+        let unsupported = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "plus",
             text_ft(),
-            vec![],
-        ));
-        let concat = ScalarFunction::new(
-            CiString::new("concat"),
+            vec![
+                Expression::Constant(Constant::new(Datum::Int(i64::MAX), text_ft())),
+                Expression::Constant(Constant::new(Datum::Int(1), text_ft())),
+            ],
+        ).unwrap();
+        let concat = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "concat",
             text_ft(),
             vec![string(b"abcd"), unsupported],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         assert_eq!(
             concat.eval(&ctx, tidb_chunk::row::Row::empty()).unwrap(),
             Datum::Null
@@ -5265,11 +5286,12 @@ mod tests {
         assert!(ctx.warnings.borrow()[0].1.contains("concat()"));
 
         ctx.warnings.borrow_mut().clear();
-        let concat_ws = ScalarFunction::new(
-            CiString::new("concat_ws"),
+        let concat_ws = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "concat_ws",
             text_ft(),
             vec![string(b"--"), string(b"a"), string(b"b")],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         assert_eq!(
             concat_ws.eval(&ctx, tidb_chunk::row::Row::empty()).unwrap(),
             Datum::Null
@@ -5305,23 +5327,26 @@ mod tests {
         let scale = || Expression::Constant(Constant::new(Datum::Int(5), ft()));
 
         for name in ["round", "truncate"] {
-            let function = ScalarFunction::new(
-                CiString::new(name),
+            let function = crate::new_function::new_function_base(
+                &crate::NoColumns,
+                name,
                 decimal_type.clone(),
                 vec![decimal(), scale()],
-            );
+            ).unwrap().into_scalar_function().unwrap();
             let value = function
                 .eval(&tidb_exprctx::context::NoColumns, tidb_chunk::row::Row::empty())
                 .expect("decimal ROUND/TRUNCATE must evaluate");
             let Datum::Decimal(value) = value else {
                 panic!("{name} returned a non-decimal value")
             };
-            assert_eq!(value.to_string(), "1.23", "{name}");
+            // Go `calculateDecimal4RoundAndTruncate`: a constant scale is the
+            // result's scale.
+            assert_eq!(value.to_string(), "1.23000", "{name}");
         }
     }
 
     fn plus(args: Vec<Expression>) -> ScalarFunction {
-        ScalarFunction::new(CiString::new("plus"), ft(), args)
+        crate::new_function::new_function_base(&crate::NoColumns, "plus", ft(), args).unwrap().into_scalar_function().unwrap()
     }
 
     #[test]
@@ -5343,7 +5368,7 @@ mod tests {
             constant.param_marker = Some(crate::constant::ParamMarker { order: 0 });
             Expression::Constant(constant)
         };
-        let call = |name: &str, args| ScalarFunction::new(CiString::new(name), ft(), args);
+        let call = |name: &str, args| crate::new_function::new_function_base(&crate::NoColumns, name, ft(), args).unwrap().into_scalar_function().unwrap();
 
         assert_eq!(
             call("abs", vec![literal()]).const_level(),
@@ -5357,45 +5382,50 @@ mod tests {
             plus(vec![literal(), Expression::Column(Column::new(1, ft()))]).const_level(),
             ConstLevel::NONE
         );
-        for name in [
-            "sysdate",
-            "found_rows",
-            "rand",
-            "uuid",
-            "uuid_v4",
-            "uuid_v7",
-            "sleep",
-            "row",
-            "values",
-            "setvar",
-            "getvar",
-            "getparam",
-            "benchmark",
-            "dayname",
-            "nextval",
-            "lastval",
-            "setval",
-            "any_value",
+        let name_literal =
+            || Expression::Constant(Constant::new(Datum::new_string_datum("v"), text_ft()));
+        for (name, args) in [
+            ("sysdate", vec![]),
+            ("found_rows", vec![]),
+            ("rand", vec![]),
+            ("uuid", vec![]),
+            ("uuid_v4", vec![]),
+            ("uuid_v7", vec![]),
+            ("sleep", vec![literal()]),
+            ("row", vec![literal(), literal()]),
+            ("setvar", vec![name_literal(), literal()]),
+            ("getvar", vec![name_literal()]),
+            ("getparam", vec![literal()]),
+            ("benchmark", vec![literal(), literal()]),
+            ("dayname", vec![literal()]),
+            ("nextval", vec![name_literal()]),
+            ("lastval", vec![name_literal()]),
+            ("setval", vec![name_literal(), literal()]),
+            ("any_value", vec![literal()]),
         ] {
-            assert_eq!(
-                call(name, vec![literal()]).const_level(),
-                ConstLevel::NONE,
-                "{name}"
-            );
+            assert_eq!(call(name, args).const_level(), ConstLevel::NONE, "{name}");
         }
+        assert_eq!(
+            crate::builtin_other::new_values_func(&crate::builtin::ColumnsBuildContext(&crate::NoColumns), 0, ft())
+                .unwrap()
+                .const_level(),
+            ConstLevel::NONE
+        );
     }
 
     #[test]
     fn is_correlated_follows_args() {
-        let plain = plus(vec![Expression::Column(Column::new(1, ft()))]);
+        let literal = || Expression::Constant(Constant::new(Datum::Int(1), ft()));
+        let plain = plus(vec![Expression::Column(Column::new(1, ft())), literal()]);
         assert!(!plain.is_correlated());
 
-        let corr = plus(vec![Expression::CorrelatedColumn(
-            crate::column::CorrelatedColumn {
+        let corr = plus(vec![
+            Expression::CorrelatedColumn(crate::column::CorrelatedColumn {
                 column: Column::new(1, ft()),
                 data: Default::default(),
-            },
-        )]);
+            }),
+            literal(),
+        ]);
         assert!(corr.is_correlated());
     }
 
@@ -5437,15 +5467,19 @@ mod tests {
         let konst = |d: Datum| Expression::Constant(Constant::new(d, ft()));
 
         // ABS(-5) = 5 via math_fn's shared values-only dispatch.
-        let abs = ScalarFunction::new(CiString::new("abs"), ft(), vec![konst(Datum::Int(-5))]);
+        let abs = crate::new_function::new_function_base(&crate::NoColumns, "abs", ft(), vec![konst(Datum::Int(-5))]).unwrap().into_scalar_function().unwrap();
         assert_eq!(abs.eval(&NoColumns, row).unwrap(), Datum::Int(5));
 
         // CONCAT('a', 'b') = 'ab' via the shared string arm.
-        let concat = ScalarFunction::new(
-            CiString::new("concat"),
+        let concat = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "concat",
             text_ft(),
-            vec![konst(Datum::new_string_datum("a")), konst(Datum::new_string_datum("b"))],
-        );
+            vec![
+                Expression::Constant(Constant::new(Datum::new_string_datum("a"), text_ft())),
+                Expression::Constant(Constant::new(Datum::new_string_datum("b"), text_ft())),
+            ],
+        ).unwrap().into_scalar_function().unwrap();
         assert_eq!(
             concat.eval(&NoColumns, row).unwrap(),
             Datum::new_string_datum("ab")
@@ -5453,11 +5487,12 @@ mod tests {
 
         // COALESCE(NULL, 7) = 7 (eager over values, matching the old
         // AST-level evaluator).
-        let coalesce = ScalarFunction::new(
-            CiString::new("coalesce"),
+        let coalesce = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "coalesce",
             ft(),
             vec![konst(Datum::Null), konst(Datum::Int(7))],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         assert_eq!(coalesce.eval(&NoColumns, row).unwrap(), Datum::Int(7));
 
         // `InferType4ControlFuncs` widens the result metadata to the widest
@@ -5467,11 +5502,15 @@ mod tests {
         let mut decimal_four = FieldType::new(FieldTypeCode::NewDecimal);
         decimal_four.set_flen(15);
         decimal_four.set_decimal(4);
-        let decimal_coalesce = ScalarFunction::new(
-            CiString::new("coalesce"),
-            decimal_four,
-            vec![konst(Datum::Int(1)), konst(Datum::Null)],
-        );
+        let decimal_coalesce = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "coalesce",
+            decimal_four.clone(),
+            vec![
+                konst(Datum::Int(1)),
+                Expression::Constant(Constant::new(Datum::Null, decimal_four.clone())),
+            ],
+        ).unwrap().into_scalar_function().unwrap();
         assert_eq!(
             decimal_coalesce.eval(&NoColumns, row).unwrap(),
             Datum::Decimal(tidb_datatype::Decimal::from_literal("1.0000"))
@@ -5483,7 +5522,7 @@ mod tests {
         let mut chk2 = Chunk::new_chunk_with_capacity(std::slice::from_ref(&ft()), 1);
         chk2.append_int64(0, -9);
         let abs_col =
-            ScalarFunction::new(CiString::new("abs"), ft(), vec![Expression::Column(col)]);
+            crate::new_function::new_function_base(&crate::NoColumns, "abs", ft(), vec![Expression::Column(col)]).unwrap().into_scalar_function().unwrap();
         assert_eq!(
             abs_col.eval(&NoColumns, chk2.get_row(0)).unwrap(),
             Datum::Int(9)
@@ -5492,27 +5531,17 @@ mod tests {
         // `IF` is a lazy control form now, so it evaluates here: the
         // condition picks the branch (this used to be the example of a
         // function outside the values-only entry).
-        let iff = ScalarFunction::new(
-            CiString::new("if"),
+        let iff = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "if",
             ft(),
             vec![
                 konst(Datum::Int(1)),
                 konst(Datum::Int(2)),
                 konst(Datum::Int(3)),
             ],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         assert_eq!(iff.eval(&NoColumns, row).unwrap(), Datum::Int(2));
-
-        // A function with no ported builtin at all still is unsupported.
-        let unknown = ScalarFunction::new(
-            CiString::new("no_such_builtin"),
-            ft(),
-            vec![konst(Datum::Int(1))],
-        );
-        assert!(matches!(
-            unknown.eval(&NoColumns, row),
-            Err(EvalError::Unsupported(_))
-        ));
     }
 
     /// `JSON_ARRAY`/`CAST(... AS JSON)` over a column whose static `FieldType`
@@ -5539,15 +5568,16 @@ use tidb_charset::Collation;
         let mut col = Column::new(1, varbinary_type);
         col.index = 0;
 
-        let json_array = ScalarFunction::new(
-            CiString::new("json_array"),
+        let json_array = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "json_array",
             json_text_type,
             vec![Expression::Column(col.clone())],
-        );
-        assert_eq!(
-            json_array.eval(&NoColumns, row).unwrap(),
-            Datum::new_string_datum(r#"["base64:type15:YWI="]"#.to_string())
-        );
+        ).unwrap().into_scalar_function().unwrap();
+        let Datum::Json(json) = json_array.eval(&NoColumns, row).unwrap() else {
+            panic!("JSON_ARRAY returns JSON")
+        };
+        assert_eq!(json.to_string(), r#"["base64:type15:YWI="]"#);
 
         let cast_json = crate::builtin_cast::cast_function_for_test(Expression::Column(col), FieldType::new(FieldTypeCode::Json));
         let Datum::Json(got) = cast_json.eval(&NoColumns, row).unwrap() else {
@@ -5586,7 +5616,7 @@ use tidb_charset::Collation;
         let row = chk.get_row(0);
         let konst = |d: Datum| Expression::Constant(Constant::new(d, ft()));
         let rand_five =
-            ScalarFunction::new(CiString::new("rand"), real_ft(), vec![konst(Datum::Int(5))]);
+            crate::new_function::new_function_base(&crate::NoColumns, "rand", real_ft(), vec![konst(Datum::Int(5))]).unwrap().into_scalar_function().unwrap();
         let columns = RandColumns {
             keys: Cell::new(Vec::new()),
         };
@@ -5601,7 +5631,7 @@ use tidb_charset::Collation;
         // A DIFFERENT node (a different RAND(5) call site) gets a different
         // key, because each owns its own generator.
         let rand_five_again =
-            ScalarFunction::new(CiString::new("rand"), real_ft(), vec![konst(Datum::Int(5))]);
+            crate::new_function::new_function_base(&crate::NoColumns, "rand", real_ft(), vec![konst(Datum::Int(5))]).unwrap().into_scalar_function().unwrap();
         let columns2 = RandColumns {
             keys: Cell::new(Vec::new()),
         };
@@ -5627,7 +5657,7 @@ use tidb_charset::Collation;
 
         let chk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&ft()), 1);
         let row = chk.get_row(0);
-        let rand = ScalarFunction::new(CiString::new("rand"), real_ft(), vec![]);
+        let rand = crate::new_function::new_function_base(&crate::NoColumns, "rand", real_ft(), vec![]).unwrap().into_scalar_function().unwrap();
         let columns = SeqColumns {
             next: std::cell::Cell::new(0.75),
         };
@@ -5636,12 +5666,14 @@ use tidb_charset::Collation;
 
     #[test]
     fn different_functions_hash_differently() {
-        let mut a = plus(vec![Expression::Column(Column::new(1, ft()))]);
-        let mut b = ScalarFunction::new(
-            CiString::new("minus"),
+        let column = || Expression::Column(Column::new(1, ft()));
+        let mut a = plus(vec![column(), column()]);
+        let mut b = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "minus",
             ft(),
-            vec![Expression::Column(Column::new(1, ft()))],
-        );
+            vec![column(), column()],
+        ).unwrap().into_scalar_function().unwrap();
         assert_ne!(a.hash_code(), b.hash_code());
     }
 
@@ -5649,17 +5681,19 @@ use tidb_charset::Collation;
     fn string_in_prepares_collation_keys_for_strict_literals() {
         use tidb_chunk::chunk::Chunk;
 
-        let mut result_type = ft();
-        result_type.set_collation_name("utf8mb4_general_ci");
-        let string_type = text_ft();
+        let result_type = ft();
+        let mut string_type = text_ft();
+        string_type.set_charset_name("utf8mb4");
+        string_type.set_collation_name("utf8mb4_general_ci");
         let string = |value: &str| {
             Expression::Constant(Constant::new(Datum::new_string_datum(value), string_type.clone()))
         };
-        let mut function = ScalarFunction::new(
-            CiString::new("in"),
+        let mut function = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "in",
             result_type,
             vec![string("a"), string("A"), string("b")],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         function.prepare_in_string_hash_set();
 
         assert_eq!(function.in_string_hash_set.as_ref().unwrap().len(), 2);
@@ -5676,8 +5710,10 @@ use tidb_charset::Collation;
         use tidb_chunk::chunk::Chunk;
         use tidb_charset::Collation;
 
-        let string =
-            |value: &str| Expression::Constant(Constant::new(Datum::new_string_datum(value), text_ft()));
+        let typed = |value: &str, field: &FieldType| {
+            Expression::Constant(Constant::new(Datum::new_string_datum(value), field.clone()))
+        };
+        let string = |value: &str| typed(value, &text_ft());
         let chunk = Chunk::new_chunk_with_capacity(&[], 1);
 
         // Go's `builtinInStringSig.buildHashMapForConstArgs` stores the
@@ -5685,29 +5721,31 @@ use tidb_charset::Collation;
         // derived-binary collators return the source bytes directly, so the
         // Rust probe may borrow them without changing membership behavior.
         let binary_type = text_ft().with_collation(Collation::Binary);
-        let mut binary = ScalarFunction::new(
-            CiString::new("in"),
-            binary_type,
-            vec![string("a"), string("a")],
-        );
+        let mut binary = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "in",
+            ft(),
+            vec![typed("a", &binary_type), typed("a", &binary_type)],
+        ).unwrap().into_scalar_function().unwrap();
         binary.prepare_in_string_hash_set();
         assert_eq!(
             binary.eval(&crate::NoColumns, chunk.get_row(0)).unwrap(),
-            Datum::Bytes(b"1".to_vec())
+            Datum::Int(1)
         );
 
         // PAD SPACE collations still allocate a trimmed sort key. This is
         // the source behavior for `utf8mb4_bin`: `a` and `a ` compare equal.
         let pad_type = text_ft().with_collation(Collation::Utf8Mb4Bin);
-        let mut pad = ScalarFunction::new(
-            CiString::new("in"),
-            pad_type,
-            vec![string("a "), string("a")],
-        );
+        let mut pad = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "in",
+            ft(),
+            vec![typed("a ", &pad_type), typed("a", &pad_type)],
+        ).unwrap().into_scalar_function().unwrap();
         pad.prepare_in_string_hash_set();
         assert_eq!(
             pad.eval(&crate::NoColumns, chunk.get_row(0)).unwrap(),
-            Datum::new_string_datum("1")
+            Datum::Int(1)
         );
 
         // The Go map is built once for the immutable literal list. Reserving
@@ -5718,7 +5756,7 @@ use tidb_charset::Collation;
         for value in 0..1000 {
             many.push(string(&format!("maker-{value}")));
         }
-        let mut large = ScalarFunction::new(CiString::new("in"), text_ft(), many);
+        let mut large = crate::new_function::new_function_base(&crate::NoColumns, "in", ft(), many).unwrap().into_scalar_function().unwrap();
         large.prepare_in_string_hash_set();
         assert!(large.in_string_hash_set.as_ref().unwrap().capacity() >= 1000);
     }
@@ -5747,16 +5785,18 @@ use tidb_charset::Collation;
         // Joined row: ol_o_id = 100, d_next_o_id = 105 -> minus(...) = 85 ->
         // 100 >= 85 is true. One below the join boundary: ol_o_id = 84 ->
         // 84 >= 85 is false.
-        let inner = ScalarFunction::new(
-            CiString::new("minus"),
+        let inner = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "minus",
             ft(),
             vec![build_col(), konst(Datum::Int(20))],
-        );
-        let ge = ScalarFunction::new(
-            CiString::new("ge"),
+        ).unwrap().into_scalar_function().unwrap();
+        let ge = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "ge",
             ft(),
             vec![probe_col(), Expression::ScalarFunction(inner)],
-        );
+        ).unwrap().into_scalar_function().unwrap();
 
         let mut above = Chunk::new_chunk_with_capacity(&[ft(), ft()], 1);
         above.append_int64(0, 100);
@@ -5790,21 +5830,23 @@ use tidb_charset::Collation;
         let konst = |d: Datum, t: &FieldType| Expression::Constant(Constant::new(d, t.clone()));
 
         for name in ["plus", "minus", "mul", "eq", "ne", "lt", "le", "gt", "ge"] {
-            let function = ScalarFunction::new(
-                CiString::new(name),
+            let function = crate::new_function::new_function_base(
+                &crate::NoColumns,
+                name,
                 ft(),
                 vec![konst(Datum::Null, &ft()), konst(Datum::Int(3), &ft())],
-            );
+            ).unwrap().into_scalar_function().unwrap();
             assert_eq!(
                 function.eval(&NoColumns, row).unwrap(),
                 Datum::Null,
                 "{name} NULL lhs"
             );
-            let function = ScalarFunction::new(
-                CiString::new(name),
+            let function = crate::new_function::new_function_base(
+                &crate::NoColumns,
+                name,
                 ft(),
                 vec![konst(Datum::Int(3), &ft()), konst(Datum::Null, &ft())],
-            );
+            ).unwrap().into_scalar_function().unwrap();
             assert_eq!(
                 function.eval(&NoColumns, row).unwrap(),
                 Datum::Null,
@@ -5863,11 +5905,12 @@ use tidb_charset::Collation;
             ("eq", "eq", 0),
             ("ne", "ne", 1),
         ] {
-            let function = ScalarFunction::new(
-                CiString::new(op_name),
+            let function = crate::new_function::new_function_base(
+                &crate::NoColumns,
+                op_name,
                 ft(),
                 vec![signed_col(), unsigned_col()],
-            );
+            ).unwrap().into_scalar_function().unwrap();
             assert_eq!(
                 function.eval(&NoColumns, joined_row).unwrap(),
                 Datum::Int(want as i64),
@@ -5892,14 +5935,15 @@ use tidb_charset::Collation;
         col.index = 0;
         let konst = |d: Datum, t: &FieldType| Expression::Constant(Constant::new(d, t.clone()));
 
-        let function = ScalarFunction::new(
-            CiString::new("minus"),
+        let function = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "minus",
             unsigned_type.clone(),
             vec![
                 Expression::Column(col),
                 konst(Datum::Int(2), &unsigned_type),
             ],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         let error = function
             .eval(&NoColumns, row)
             .expect_err("1u - 2 must overflow");
@@ -5926,11 +5970,12 @@ use tidb_charset::Collation;
         let row = chk.get_row(0);
         let konst = |d: Datum| Expression::Constant(Constant::new(d, string_type.clone()));
 
-        let function = ScalarFunction::new(
-            CiString::new("ge"),
+        let function = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "ge",
             ft(),
             vec![konst(Datum::new_string_datum("a")), konst(Datum::new_string_datum("b"))],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         assert_eq!(function.eval(&NoColumns, row).unwrap(), Datum::Int(0));
     }
 
@@ -5955,11 +6000,12 @@ use tidb_charset::Collation;
         col_i.index = 0;
         let mut col_d = crate::column::Column::new(2, dec_ft.clone());
         col_d.index = 1;
-        let least = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("least"),
+        let least = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "least",
             ret_ft.clone(),
             vec![Expression::Column(col_i), Expression::Column(col_d)],
-        ));
+        ).unwrap();
 
         let mut chunk =
             tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[int_ft.clone(), dec_ft.clone()], 1);
@@ -5980,14 +6026,15 @@ use tidb_charset::Collation;
         // Mixed constant + column: `least(1, d)` is `1` (frac 0), not `1.000`.
         let mut col_d = crate::column::Column::new(2, dec_ft.clone());
         col_d.index = 0;
-        let least_mixed = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("least"),
+        let least_mixed = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "least",
             ret_ft,
             vec![
                 Expression::Constant(Constant::new(Datum::Int(1), int_ft.clone())),
                 Expression::Column(col_d),
             ],
-        ));
+        ).unwrap();
         let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[dec_ft], 1);
         chunk.append_datum(
             0,
@@ -6019,11 +6066,12 @@ use tidb_charset::Collation;
     /// argument is 1582, the same refusal the other zero-arg builtins raise.
     #[test]
     fn tidb_is_ddl_owner_reports_the_missing_provider_like_go() {
-        let function = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("tidb_is_ddl_owner"),
+        let function = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "tidb_is_ddl_owner",
             FieldType::new(FieldTypeCode::LongLong),
             vec![],
-        ));
+        ).unwrap();
         let error = function
             .eval(&tidb_exprctx::context::NoColumns, empty_row())
             .unwrap_err();
@@ -6038,17 +6086,18 @@ use tidb_charset::Collation;
             "{error:?}"
         );
 
-        let function = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("tidb_is_ddl_owner"),
+        let function = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "tidb_is_ddl_owner",
             FieldType::new(FieldTypeCode::LongLong),
             vec![Expression::Constant(Constant::new(
                 Datum::Int(1),
                 FieldType::new(FieldTypeCode::LongLong),
             ))],
-        ));
+        );
         assert_eq!(
-            function.eval(&tidb_exprctx::context::NoColumns, empty_row()),
-            Err(EvalError::WrongParameterCount("tidb_is_ddl_owner"))
+            function.err(),
+            Some(EvalError::WrongParameterCount("tidb_is_ddl_owner"))
         );
     }
 }

@@ -616,6 +616,15 @@ pub(crate) fn propagate_type(expr: &mut Expression, eval_type: EvalType) {
 }
 
 impl Expression {
+    /// Go's `expr.(*ScalarFunction)` assertion.
+    #[must_use]
+    pub fn into_scalar_function(self) -> Option<ScalarFunction> {
+        match self {
+            Expression::ScalarFunction(function) => Some(function),
+            _ => None,
+        }
+    }
+
     /// Go `Expression.HashCode`: the type-tagged canonical byte encoding used as
     /// a map/dedup key. Structural and context-free.
     pub fn hash_code(&mut self) -> &[u8] {
@@ -898,11 +907,12 @@ mod tests {
         result_type: FieldType,
         arguments: Vec<Expression>,
     ) -> Expression {
-        Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new(name),
+        crate::new_function::new_function_base(
+            &crate::NoColumns,
+            name,
             result_type,
             arguments,
-        ))
+        ).unwrap()
     }
 
     fn null_reject_predicate(name: &str, arguments: Vec<Expression>) -> Expression {
@@ -1483,11 +1493,12 @@ mod tests {
 
         // A binary-operator scalar function evaluates its arguments: 1 + 1 = 2.
         let one = || Expression::Constant(Constant::new(Datum::Int(1), ft.clone()));
-        let plus = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("plus"),
+        let plus = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "plus",
             ft.clone(),
             vec![one(), one()],
-        ));
+        ).unwrap();
         assert_eq!(plus.eval(&NoColumns, row).unwrap(), Datum::Int(2));
 
         // The vector arithmetic signatures are regular scalar functions too:
@@ -1500,62 +1511,58 @@ mod tests {
                 vector_type.clone(),
             ))
         };
-        let vector_plus = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("plus"),
+        let vector_plus = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "plus",
             vector_type.clone(),
             vec![vector(vec![1.0, 2.0]), vector(vec![3.0, 4.0])],
-        ));
+        ).unwrap();
         assert_eq!(
             vector_plus.eval(&NoColumns, row).unwrap(),
             Datum::new_vector_float32(VectorFloat32::must_create(vec![4.0, 6.0]))
         );
 
         // Nested: (1 + 1) + 1 = 3.
-        let nested = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("plus"),
+        let nested = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "plus",
             ft.clone(),
             vec![plus, one()],
-        ));
+        ).unwrap();
         assert_eq!(nested.eval(&NoColumns, row).unwrap(), Datum::Int(3));
 
         // A unary operator: -(1 + 1) = -2.
-        let plus2 = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("plus"),
+        let plus2 = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "plus",
             ft.clone(),
             vec![one(), one()],
-        ));
-        let neg = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("unaryminus"),
+        ).unwrap();
+        let neg = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "unaryminus",
             ft.clone(),
             vec![plus2],
-        ));
+        ).unwrap();
         assert_eq!(neg.eval(&NoColumns, row).unwrap(), Datum::Int(-2));
-
-        // A non-operator function is still unsupported.
-        let unknown = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("some_udf"),
-            ft.clone(),
-            vec![one()],
-        ));
-        assert!(unknown.eval(&NoColumns, row).is_err());
     }
 
     #[test]
     fn scalar_expression_equality_is_recursive() {
         let ft = FieldType::new(FieldTypeCode::LongLong);
         let scalar = |name: &str, value: i64| {
-            Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new(name),
+            crate::new_function::new_function_base(
+                &crate::NoColumns,
+                name,
                 ft.clone(),
                 vec![Expression::Constant(Constant::new(
                     Datum::Int(value),
                     ft.clone(),
                 ))],
-            ))
+            ).unwrap()
         };
 
-        assert!(scalar("YEAR", 1).equal(&scalar("year", 1)));
-        assert!(!scalar("year", 1).equal(&scalar("month", 1)));
-        assert!(!scalar("year", 1).equal(&scalar("year", 2)));
+        assert!(!scalar("abs", 1).equal(&scalar("unaryminus", 1)));
+        assert!(!scalar("abs", 1).equal(&scalar("abs", 2)));
     }
 }

@@ -60,11 +60,12 @@ fn static_type_reads_share_metadata_and_keep_null_defaults() {
             column: Column::new(2, field_type.clone()),
             data: Default::default(),
         }),
-        Expression::ScalarFunction(crate::scalar_function::ScalarFunction::new(
-            tidb_ast::CiString::new("concat"),
-            field_type,
-            Vec::new(),
-        )),
+        crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "concat",
+            field_type.clone(),
+            vec![Expression::Column(Column::new(3, field_type))],
+        ).unwrap(),
     ];
     for mut expression in expressions {
         {

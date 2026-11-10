@@ -54,11 +54,12 @@ fn int_const(v: i64) -> Expression {
 
 /// `newFunctionWithMockCtx` shape: no inference, direct name + args.
 fn f(name: &str, args: Vec<Expression>) -> Expression {
-    Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new(name),
+    crate::new_function::new_function_base(
+        &crate::NoColumns,
+        name,
         FieldType::new(FieldTypeCode::LongLong),
         args,
-    ))
+    ).unwrap()
 }
 
 fn eq(column: &Expression, v: i64) -> Expression {
@@ -73,12 +74,18 @@ fn lt(column: &Expression, v: i64) -> Expression {
     f("lt", vec![column.clone(), int_const(v)])
 }
 
+/// The parser's left-associative binary chain.
 fn and(args: Vec<Expression>) -> Expression {
-    f("and", args)
+    args.into_iter()
+        .reduce(|left, right| f("and", vec![left, right]))
+        .unwrap()
 }
 
+/// The parser's left-associative binary chain.
 fn or(args: Vec<Expression>) -> Expression {
-    f("or", args)
+    args.into_iter()
+        .reduce(|left, right| f("or", vec![left, right]))
+        .unwrap()
 }
 
 /// Local stand-in for `StringifyExpressionsWithCtx`

@@ -170,7 +170,9 @@ fn eval_scalar<C: Columns>(
     args: Vec<Expression>,
     ctx: &C,
 ) -> Result<Datum, EvalError> {
-    ScalarFunction::new(CiString::new(name), ret_type, args)
+    // `BuildCastFunction` folds a constant argument's cast while building,
+    // so the statement's context is the one that builds.
+    crate::new_function::new_function_base(ctx, name, ret_type, args)?
         .eval(ctx, tidb_chunk::row::Row::empty())
 }
 
@@ -292,7 +294,7 @@ fn test_rpad_sig() {
 
     assert_eq!(
         eval_scalar(
-            "RPAD",
+            "rpad",
             varchar().with_flen(1000),
             vec![
                 const_arg_typed(Datum::new_string_datum("abc"), varchar()),
@@ -308,7 +310,7 @@ fn test_rpad_sig() {
 
     assert_eq!(
         eval_scalar(
-            "RPAD",
+            "rpad",
             varchar().with_flen(1000),
             vec![
                 const_arg_typed(Datum::new_string_datum("abc"), varchar()),
@@ -346,7 +348,7 @@ fn test_insert_binary_sig() {
             FieldTypeCode::VarString,
         ];
         eval_scalar(
-            "INSERT_FUNC",
+            "insert_func",
             FieldType::new(FieldTypeCode::VarString).with_flen(3),
             codes
                 .into_iter()
@@ -699,7 +701,7 @@ fn test_ord_charset_table() {
         let mut ft = FieldType::new(FieldTypeCode::VarString);
         ft.set_charset_name(charset.to_string());
         eval_scalar(
-            "ORD",
+            "ord",
             FieldType::new(FieldTypeCode::LongLong),
             vec![const_arg_typed(text, ft)],
             &NoColumns,
@@ -719,7 +721,7 @@ fn test_ord_charset_table() {
     // An INT argument into the ORD sig also verifies NewZero()-style arity
     // parity: construction succeeds against the integer constant.
     assert!(eval_scalar(
-        "ORD",
+        "ord",
         FieldType::new(FieldTypeCode::LongLong),
         vec![const_arg_typed(
             Datum::Int(0),
@@ -797,7 +799,7 @@ fn test_quote() {
     ];
     for (_label, payload) in cases {
         let got = eval_scalar(
-            "QUOTE",
+            "quote",
             FieldType::new(FieldTypeCode::VarString),
             vec![const_arg_typed(
                 Datum::new_bytes_datum(payload.clone()),
@@ -815,7 +817,7 @@ fn test_quote() {
     // The NULL arm returns the STRING "NULL" (not SQL NULL).
     assert_eq!(
         eval_scalar(
-            "QUOTE",
+            "quote",
             FieldType::new(FieldTypeCode::VarString),
             vec![const_arg_typed(
                 Datum::Null,
@@ -933,7 +935,7 @@ fn test_to_base64_sig_packet_boundaries() {
     for (payload, packet, is_null) in rows {
         let ctx = PacketWarnCtx::new(packet);
         let got = eval_scalar(
-            "TO_BASE64",
+            "to_base64",
             FieldType::new(FieldTypeCode::VarString),
             vec![const_arg_typed(
                 Datum::new_bytes_datum(payload.clone()),
@@ -1246,7 +1248,7 @@ fn test_format_values_and_number_side_truncate_warnings() {
         ("", "1", Some("0.0")),
     ] {
         let got = eval_scalar(
-            "FORMAT",
+            "format",
             FieldType::new(FieldTypeCode::VarString),
             vec![
                 const_arg_typed(
@@ -1268,7 +1270,7 @@ fn test_format_values_and_number_side_truncate_warnings() {
     // (1292) warning apiece; clean rows raise none.
     let warnings_of = |number: &str, precision: &str| {
         let _ = eval_scalar(
-            "FORMAT",
+            "format",
             FieldType::new(FieldTypeCode::VarString),
             vec![
                 const_arg_typed(
@@ -1334,7 +1336,7 @@ fn test_format_precision_side_truncate_warning_counts() {
     for (number, precision, expected_messages) in rows {
         let ctx = PacketWarnCtx::new(64 << 20);
         let got = eval_scalar(
-            "FORMAT",
+            "format",
             FieldType::new(FieldTypeCode::VarString),
             vec![
                 const_arg_typed(
@@ -1571,7 +1573,7 @@ fn test_is_null_func() {
     // The typed-int signature answers through the same dispatcher.
     assert_eq!(
         eval_scalar(
-            "ISNULL",
+            "isnull",
             FieldType::new(FieldTypeCode::LongLong),
             vec![const_arg_typed(
                 Datum::Int(1),
@@ -1584,7 +1586,7 @@ fn test_is_null_func() {
     );
     assert_eq!(
         eval_scalar(
-            "ISNULL",
+            "isnull",
             FieldType::new(FieldTypeCode::LongLong),
             vec![const_arg_typed(
                 Datum::Null,
@@ -2136,7 +2138,7 @@ fn test_add_time_sig_value_tables() {
     let int_add = |l: i64, r: i64| {
         got_text(
             &eval_scalar(
-                "ADDTIME",
+                "addtime",
                 FieldType::new(FieldTypeCode::VarString),
                 vec![
                     const_arg_typed(Datum::Int(l), FieldType::new(FieldTypeCode::LongLong)),
@@ -2157,7 +2159,7 @@ fn test_add_time_sig_value_tables() {
     let null_at = |left: Datum, right: Datum| {
         let local = UtcClockCtx::new(1234);
         let got = eval_scalar(
-            "ADDTIME",
+            "addtime",
             FieldType::new(FieldTypeCode::VarString),
             vec![
                 const_arg_typed(left, FieldType::new(FieldTypeCode::VarString)),
@@ -2227,7 +2229,7 @@ fn test_add_time_duration_operand_tables() {
         ),
     ] {
         let got = eval_scalar(
-            "ADDTIME",
+            "addtime",
             FieldType::new(FieldTypeCode::Duration),
             vec![
                 const_arg_typed(
@@ -2263,7 +2265,7 @@ fn test_sub_time_duration_operand_tables() {
         ),
     ] {
         let got = eval_scalar(
-            "SUBTIME",
+            "subtime",
             FieldType::new(FieldTypeCode::Duration),
             vec![
                 const_arg_typed(
@@ -2320,7 +2322,7 @@ fn test_sub_time_sig_value_tables() {
     let int_sub = |l: i64, r: i64| {
         got_text(
             &eval_scalar(
-                "SUBTIME",
+                "subtime",
                 FieldType::new(FieldTypeCode::VarString),
                 vec![
                     const_arg_typed(Datum::Int(l), FieldType::new(FieldTypeCode::LongLong)),
@@ -2345,7 +2347,7 @@ fn test_sub_time_sig_value_tables() {
 fn test_add_sub_time_issue_56861_typed_tables() {
     let datetime = datetime_of(2024, 11, 1, 0, 0, 0);
     let got = eval_scalar(
-        "ADDTIME",
+        "addtime",
         FieldType::new(FieldTypeCode::Datetime),
         vec![
             const_arg_typed(datetime.clone(), FieldType::new(FieldTypeCode::Datetime)),
@@ -2360,7 +2362,7 @@ fn test_add_sub_time_issue_56861_typed_tables() {
     assert_eq!(got_text(&got), "2024-11-01 12:00:01.341300");
 
     let got = eval_scalar(
-        "ADDTIME",
+        "addtime",
         FieldType::new(FieldTypeCode::Datetime),
         vec![
             const_arg_typed(datetime.clone(), FieldType::new(FieldTypeCode::Datetime)),
@@ -2375,7 +2377,7 @@ fn test_add_sub_time_issue_56861_typed_tables() {
     assert_eq!(got_text(&got), "<null>");
 
     let got = eval_scalar(
-        "SUBTIME",
+        "subtime",
         FieldType::new(FieldTypeCode::Datetime),
         vec![
             const_arg_typed(datetime.clone(), FieldType::new(FieldTypeCode::Datetime)),
@@ -2390,7 +2392,7 @@ fn test_add_sub_time_issue_56861_typed_tables() {
     assert_eq!(got_text(&got), "2024-10-31 11:59:58.658700");
 
     let got = eval_scalar(
-        "ADDTIME",
+        "addtime",
         FieldType::new(FieldTypeCode::String),
         vec![
             const_arg_typed(date_of(2024, 11, 1), FieldType::new(FieldTypeCode::Date)),
@@ -2405,7 +2407,7 @@ fn test_add_sub_time_issue_56861_typed_tables() {
     assert_eq!(got_text(&got), "2024-11-01 12:00:01.341300");
 
     let got = eval_scalar(
-        "ADDTIME",
+        "addtime",
         FieldType::new(FieldTypeCode::String),
         vec![
             const_arg_typed(date_of(2024, 11, 1), FieldType::new(FieldTypeCode::Date)),
@@ -2420,7 +2422,7 @@ fn test_add_sub_time_issue_56861_typed_tables() {
     assert_eq!(got_text(&got), "2024-11-01 12:00:01");
 
     let got = eval_scalar(
-        "SUBTIME",
+        "subtime",
         FieldType::new(FieldTypeCode::String),
         vec![
             const_arg_typed(date_of(2024, 11, 1), FieldType::new(FieldTypeCode::Date)),
@@ -2658,7 +2660,7 @@ fn locate_with_position_matches_go_three_args_signature() {
     let int = FieldType::new(FieldTypeCode::LongLong);
     let eval = |substr: &str, hay: &str, pos: i64| {
         eval_scalar(
-            "LOCATE",
+            "locate",
             FieldType::new(FieldTypeCode::LongLong),
             vec![
                 Expression::Constant(crate::constant::Constant::new(
@@ -2697,7 +2699,7 @@ fn locate_with_position_matches_go_three_args_signature() {
     // case-insensitive rule is separately pinned by the 2-arg sibling
     // capture `INSTR('ABC' COLLATE utf8mb4_general_ci, 'b')` = 2.)
     let exact = eval_scalar(
-        "LOCATE",
+        "locate",
         FieldType::new(FieldTypeCode::LongLong),
         vec![
             Expression::Constant(crate::constant::Constant::new(

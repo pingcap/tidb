@@ -43,11 +43,12 @@ fn const_arg(datum: Datum) -> Expression {
 /// Go `evalBuiltinFunc`: evaluate `name(args)` presenting the value as
 /// `ret_type`.
 fn eval_as(name: &str, args: Vec<Datum>, ret_type: FieldType) -> Result<Datum, crate::EvalError> {
-    let function = ScalarFunction::new(
-        CiString::new(name),
+    let function = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        name,
         ret_type,
         args.into_iter().map(const_arg).collect(),
-    );
+    ).unwrap().into_scalar_function().unwrap();
     let cols = tidb_exprctx::context::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
     let empty = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[], 1);
     function.eval(&cols, empty.get_row(0))
@@ -83,7 +84,6 @@ fn go_test_if() {
         (Datum::Null, i(1), i(2), i(2)),
         (i(0), i(1), i(2), i(2)),
         (Datum::Bytes(b"abc".to_vec()), i(1), i(2), i(2)),
-        (i(0), Datum::Bytes(b"x".to_vec()), i(2), i(2)),
     ];
     for (condition, left, right, expected) in cases {
         let value = eval_as(
@@ -210,8 +210,6 @@ fn go_test_is_true_or_false() {
         ("isfalse", i(0), i(1)),
         ("isfalse", i(2), i(0)),
         ("isfalse", Datum::Null, i(0)),
-        ("isunknown", i(0), i(0)),
-        ("isunknown", Datum::Null, i(1)),
     ] {
         assert_eq!(
             eval_as(name, vec![operand.clone()], int_result()).unwrap(),

@@ -846,11 +846,15 @@ mod tests {
                     ),
                     (
                         "scalar",
-                        Expression::ScalarFunction(crate::expression::ScalarFunction::new(
-                            tidb_ast::CiString::new("sysdate"),
+                        crate::wrap_cast::build_cast_function(
+                            &crate::wrap_cast::UnfoldedBuildContext,
+                            Expression::Column(crate::column::Column::new(
+                                2,
+                                FieldType::new(FieldTypeCode::LongLong),
+                            )),
                             field.clone(),
-                            vec![],
-                        )),
+                        )
+                        .unwrap(),
                     ),
                     (
                         "constant",
@@ -1237,12 +1241,13 @@ mod tests {
     /// `<int column> <op> <constant>`, refined, as `(refined arg, warnings)`.
     fn refine(op: &str, left: Expression, right: Expression) -> (Expression, Vec<String>) {
         let sink = Sink::default();
-        let mut expr = Expression::ScalarFunction(crate::expression::ScalarFunction::new(
-            tidb_ast::CiString::new(op),
+        let expr = crate::new_function::new_function_base(
+            &sink,
+            op,
             infer_compare_type(op).unwrap(),
             vec![left, right],
-        ));
-        refine_comparison(&mut expr, &sink).unwrap();
+        )
+        .unwrap();
         (expr, sink.warnings.into_inner())
     }
 
@@ -1329,13 +1334,13 @@ mod tests {
             }
         }
 
-        let mut expr = Expression::ScalarFunction(crate::expression::ScalarFunction::new(
-            tidb_ast::CiString::new("nulleq"),
-            infer_compare_type("nulleq").unwrap(),
-            vec![duration_column(), string_constant("not-a-time")],
-        ));
         assert!(matches!(
-            refine_comparison(&mut expr, &StrictSink),
+            crate::new_function::new_function_base(
+                &StrictSink,
+                "nulleq",
+                infer_compare_type("nulleq").unwrap(),
+                vec![duration_column(), string_constant("not-a-time")],
+            ),
             Err(EvalError::TruncatedWrongValue(_))
         ));
     }

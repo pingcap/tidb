@@ -122,19 +122,16 @@ fn test_get_lock_call_semantics_table() {
     // count). At the Rust eval surface the same arity violation surfaces as
     // EvalError::WrongParameterCount (context.rs:72 documents the mapping).
     {
-        let function = crate::scalar_function::ScalarFunction::new(
-            tidb_ast::CiString::new("get_lock"),
+        let err = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "get_lock",
             FieldType::new(FieldTypeCode::LongLong),
             vec![Expression::Constant(Constant::new(
                 Datum::new_string_datum("testlock".to_owned()),
                 FieldType::new(FieldTypeCode::VarString),
             ))],
-        );
-        let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
-        chunk.set_num_virtual_rows(1);
-        let err = function
-            .eval(&session, chunk.get_row(0))
-            .expect_err("one-argument get_lock must fail");
+        )
+        .expect_err("one-argument get_lock must fail");
         match err {
             EvalError::WrongParameterCount(_) => {}
             other => panic!("expected 1582 wrong-parameter-count, got {other:?}"),

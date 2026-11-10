@@ -46,11 +46,12 @@ use tidb_ast::CiString;
 #[test]
 fn test_vectorizable_over_go_expression_table() {
     fn raw(name: &str, args: Vec<Expression>) -> Expression {
-        Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new(name),
+        crate::new_function::new_function_base(
+            &crate::NoColumns,
+            name,
             FieldType::new(FieldTypeCode::LongLong),
             args,
-        ))
+        ).unwrap()
     }
     fn column(unique_id: i64, code: FieldTypeCode) -> Expression {
         Expression::Column(Column::new(unique_id, FieldType::new(code)))

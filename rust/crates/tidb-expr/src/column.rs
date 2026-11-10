@@ -645,11 +645,12 @@ mod tests {
     fn resolve_indices_by_virtual_expr_prefers_exact_unique_id() {
         let string_type = FieldType::new(FieldTypeCode::Varchar);
         let base = Column::new(10, string_type.clone());
-        let virtual_expr = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("lower"),
+        let virtual_expr = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "lower",
             string_type.clone(),
             vec![Expression::Column(base.clone())],
-        ));
+        ).unwrap();
 
         let expr_only = Column {
             unique_id: 12,
@@ -753,18 +754,20 @@ mod tests {
         assert!(!gc_column_expr_is_tidb_shard(None));
         assert!(!gc_column_expr_is_tidb_shard(Some(&column)));
 
-        let eq = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("eq"),
+        let eq = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "eq",
             field_type.clone(),
-            vec![column.clone()],
-        ));
+            vec![column.clone(), column.clone()],
+        ).unwrap();
         assert!(!gc_column_expr_is_tidb_shard(Some(&eq)));
 
-        let shard = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("TiDB_ShArD"),
+        let shard = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "tidb_shard",
             field_type,
             vec![column],
-        ));
+        ).unwrap();
         assert!(gc_column_expr_is_tidb_shard(Some(&shard)));
     }
 

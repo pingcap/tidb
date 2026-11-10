@@ -201,11 +201,12 @@ fn null_reject_conditions_survive_both_fold_modes() {
     let mut concat_ws_ft = varchar_type();
     concat_ws_ft.set_charset_name("binary");
     let concat_ws = |args: Vec<Expression>| -> Expression {
-        Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("concat_ws"),
+        crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "concat_ws",
             concat_ws_ft.clone(),
             args,
-        ))
+        ).unwrap()
     };
 
     for in_null_reject_check in [false, true] {
@@ -239,11 +240,12 @@ fn null_reject_conditions_survive_both_fold_modes() {
     ];
     let mut field_ft = longlong_type();
     field_ft.set_charset_name("binary");
-    let field_expr = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("field"),
+    let field_expr = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "field",
         field_ft,
         field_args,
-    ));
+    ).unwrap();
     let opts = FoldOptions {
         builder: &PreservingFunctionBuilder,
         use_plan_cache: false,
@@ -281,11 +283,12 @@ fn internal_binary_call(name: &str, target_charset: Option<&str>, arg: Expressio
         ret_type.set_charset_name("binary");
         ret_type.set_collation_name("binary");
     }
-    Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new(name),
+    crate::new_function::new_function_base(
+        &crate::NoColumns,
+        name,
         ret_type,
         vec![arg],
-    ))
+    ).unwrap()
 }
 
 /// A BINARY-tagged string constant holding arbitrary bytes -- the shape a
@@ -370,11 +373,12 @@ fn constant_folding_sees_through_internal_charset_transcodes() {
         ret_type.set_flen(-1);
         ret_type.set_charset_name("gbk");
         ret_type.set_collation_name("gbk_bin");
-        construct_folded(Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("from_binary"),
+        construct_folded(crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "from_binary",
             ret_type,
             vec![raw_binary_const(&[0xd2, 0xbb])],
-        )))
+        ).unwrap())
     };
     let leading_gbk = build(
         "concat",

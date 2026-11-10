@@ -36,11 +36,12 @@ fn const_arg(datum: Datum) -> Expression {
 }
 
 fn eval_named(name: &str, args: Vec<Datum>) -> Result<Datum, crate::EvalError> {
-    let function = ScalarFunction::new(
-        CiString::new(name),
+    let function = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        name,
         FieldType::new(C::VarString),
         args.into_iter().map(const_arg).collect(),
-    );
+    ).unwrap().into_scalar_function().unwrap();
     let cols = tidb_exprctx::context::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
     let empty = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[], 1);
     function.eval(&cols, empty.get_row(0))
@@ -136,10 +137,10 @@ fn go_test_maketime() {
             eval_named("maketime", args.clone()).unwrap_or_else(|e| panic!("{args:?}: {e:?}"));
         match expected {
             Some(text) => {
-                // The label prefixes the kind ("STR:"); strip it for the
+                // The label prefixes the kind ("DUR:"); strip it for the
                 // source-shaped comparison.
                 let label = value.label();
-                let rendered = label.strip_prefix("STR:").unwrap_or(&label);
+                let rendered = label.strip_prefix("DUR:").unwrap_or(&label);
                 assert_eq!(rendered, *text, "{args:?}")
             }
             None => assert!(value.is_null(), "{args:?}: {value:?}"),
@@ -164,7 +165,7 @@ fn go_test_maketime_float_seconds_and_unsigned_hour() {
             eval_named("maketime", args.clone()).unwrap_or_else(|e| panic!("{args:?}: {e:?}"));
         let label = value.label();
         assert_eq!(
-            label.strip_prefix("STR:").unwrap_or(&label),
+            label.strip_prefix("DUR:").unwrap_or(&label),
             expected,
             "{args:?}"
         );
@@ -173,5 +174,5 @@ fn go_test_maketime_float_seconds_and_unsigned_hour() {
     let value = eval_named("maketime", vec![Datum::UInt(u64::MAX), i(0), i(0)])
         .expect("unsigned hour must evaluate");
     let label = value.label();
-    assert_eq!(label.strip_prefix("STR:").unwrap_or(&label), "838:59:59");
+    assert_eq!(label.strip_prefix("DUR:").unwrap_or(&label), "838:59:59");
 }

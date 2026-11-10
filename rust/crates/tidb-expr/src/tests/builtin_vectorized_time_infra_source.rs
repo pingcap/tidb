@@ -257,11 +257,12 @@ fn elementwise_plus_over_columns_matches_the_mock_contract() {
         column.index = index;
         Expression::Column(column)
     };
-    let plus = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("plus"),
+    let plus = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "plus",
         long_long(),
         vec![side(0), side(1)],
-    ));
+    ).unwrap();
 
     for repeat in 0..2 {
         let suite = EvaluatorSuite::new(vec![plus.clone()], false);
@@ -372,14 +373,15 @@ fn vectorized_check_predicates_over_constants_columns_and_correlated() {
     });
     assert!(vectorizable(std::slice::from_ref(&correlated_expression)));
 
-    let raw_setvar = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("setvar"),
+    let raw_setvar = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "setvar",
         FieldType::new(FieldTypeCode::LongLong),
         vec![
             Expression::Column(Column::new(1, FieldType::new(FieldTypeCode::VarString))),
             Expression::Column(Column::new(2, FieldType::new(FieldTypeCode::VarString))),
         ],
-    ));
+    ).unwrap();
     assert!(!vectorizable(std::slice::from_ref(&raw_setvar)));
 }
 

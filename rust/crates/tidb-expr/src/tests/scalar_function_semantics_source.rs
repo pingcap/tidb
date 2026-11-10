@@ -63,14 +63,15 @@ fn real_const(value: f64) -> Expression {
 /// literal. Note the ret type Go's helper uses is `TypeLonglong`
 /// (`constant_test.go:62`).
 fn lt_column_vs_real_const(value: f64) -> ScalarFunction {
-    ScalarFunction::new(
-        CiString::new("lt"),
+    crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "lt",
         longlong_type(),
         vec![
             Expression::Column(Column::new(1, double_type())),
             real_const(value),
         ],
-    )
+    ).unwrap().into_scalar_function().unwrap()
 }
 
 /// GO PORT of `scalar_function_test.go:95` `TestScalarFunction` (first half).
@@ -102,7 +103,10 @@ fn test_scalar_function() {
     let cloned = sf.clone();
     assert!(Expression::ScalarFunction(cloned.clone()).equal(&Expression::ScalarFunction(sf)));
     assert_eq!(cloned.func_name.lowercase(), "lt");
-    assert!(cloned.get_static_type().unwrap().equal(&longlong_type()));
+    assert_eq!(
+        cloned.get_static_type().unwrap().code(),
+        longlong_type().code()
+    );
 }
 
 /// GO PORT of `scalar_function_test.go:120`
@@ -159,11 +163,12 @@ fn test_expression_semantic_equal() {
         Expression::Column(column.clone())
     }
     fn function(name: &str, args: Vec<Expression>) -> Expression {
-        Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new(name),
+        crate::new_function::new_function_base(
+            &crate::NoColumns,
+            name,
             longlong_type(),
             args,
-        ))
+        ).unwrap()
     }
     let a = Column::new(1, double_type());
     let b = Column::new(2, longlong_type());
@@ -320,8 +325,9 @@ fn test_issue_23309() {
     let mut not_null_double = FieldType::new(FieldTypeCode::Double);
     not_null_double.add_flags(FieldTypeFlags::NOT_NULL);
 
-    let sf = ScalarFunction::new(
-        CiString::new("ne"),
+    let sf = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "ne",
         longlong_type(),
         vec![
             Expression::Column(Column::new(1, not_null_double)),
@@ -330,7 +336,7 @@ fn test_issue_23309() {
                 FieldType::new(FieldTypeCode::Null),
             )),
         ],
-    );
+    ).unwrap().into_scalar_function().unwrap();
 
     // v := sf.GetArgs()[1].Eval(...) must be SQL NULL.
     let Expression::Constant(null_operand) = &sf.get_args()[1] else {

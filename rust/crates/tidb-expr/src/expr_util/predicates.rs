@@ -588,11 +588,12 @@ mod mutable_constant_tests {
 
     #[test]
     fn remove_mutable_const_preserves_go_error_value_and_traversal() {
-        let overflow = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("plus"),
+        let overflow = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "plus",
             FieldType::new(FieldTypeCode::LongLong),
             vec![literal(Datum::Int(i64::MAX)), literal(Datum::Int(1))],
-        ));
+        ).unwrap();
         let mut nested_overflow = constant(&deferred(overflow.clone())).clone();
         nested_overflow.param_marker = None;
         let mut conversion = constant(&deferred(literal(Datum::new_string_datum("12ab")))).clone();
@@ -603,11 +604,12 @@ mod mutable_constant_tests {
             (Expression::Constant(conversion), Datum::new_string_datum("12ab")),
         ] {
             let mut root = [
-                Expression::ScalarFunction(ScalarFunction::new(
-                    tidb_ast::CiString::new("plus"),
+                crate::new_function::new_function_base(
+                    &crate::NoColumns,
+                    "plus",
                     FieldType::new(FieldTypeCode::LongLong),
                     vec![deferred(literal(Datum::Int(7))), deferred(source)],
-                )),
+                ).unwrap(),
                 deferred(literal(Datum::Int(8))),
             ];
             let error = remove_mutable_const(&mut root, &Strict).unwrap_err();

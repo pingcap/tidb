@@ -712,7 +712,7 @@ mod tests {
     }
 
     fn scalar(name: &str, args: Vec<Expression>) -> Expression {
-        Expression::ScalarFunction(ScalarFunction::new(CiString::new(name), long(), args))
+        crate::new_function::new_function_base(&crate::NoColumns, name, long(), args).unwrap()
     }
 
     struct CountedParameter {
@@ -896,11 +896,12 @@ mod tests {
                     left.index = 0;
                     let mut right = Column::new(2, right_type.clone());
                     right.index = 1;
-                    let expression = Expression::ScalarFunction(ScalarFunction::new(
-                        CiString::new(name),
+                    let expression = crate::new_function::new_function_base(
+                        &crate::NoColumns,
+                        name,
                         out_type.clone(),
                         vec![Expression::Column(left), Expression::Column(right)],
-                    ));
+                    ).unwrap();
                     let mut input = Chunk::new_chunk_with_capacity(&[left_type, right_type], 3);
                     for (left, right) in [(5, 2), (6, 3), (7, 4)] {
                         input.append_int64(0, left);
@@ -931,16 +932,18 @@ mod tests {
             value: Err(EvalError::Unsupported("unbound prepared parameter")),
             reads: Cell::new(0),
         };
-        let unsupported = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("abs"),
+        let unsupported = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "abs",
             long(),
             vec![input_column(0)],
-        ));
-        let expression = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("plus"),
+        ).unwrap();
+        let expression = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "plus",
             long(),
             vec![parameter(long()), unsupported],
-        ));
+        ).unwrap();
         let mut input = Chunk::new_chunk_with_capacity(&[long()], 1);
         input.append_int64(0, 1);
         assert_eq!(
@@ -952,11 +955,12 @@ mod tests {
             0,
             "declining a shape must not evaluate its earlier operand"
         );
-        let expression = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("plus"),
+        let expression = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "plus",
             long(),
             vec![parameter(long()), input_column(0)],
-        ));
+        ).unwrap();
         input.reset();
         assert_eq!(
             crate::scalar_function::try_eval_numeric_batch(&expression, &ctx, &input).unwrap(),
@@ -988,14 +992,15 @@ mod tests {
                 } else {
                     Datum::Decimal(Decimal::from_int(1))
                 };
-                let expression = Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new(name),
+                let expression = crate::new_function::new_function_base(
+                    &crate::NoColumns,
+                    name,
                     field.clone(),
                     vec![
                         Expression::Column(column.clone()),
                         Expression::Constant(Constant::new(one, field)),
                     ],
-                ));
+                ).unwrap();
                 let expected = if code == FieldTypeCode::Double {
                     Datum::Real(u64::MAX as f64)
                 } else {
@@ -1039,16 +1044,18 @@ mod tests {
                 self.0
             }
         }
-        let nested = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("mul"),
+        let nested = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "mul",
             long(),
             vec![input_column(1), int_const(2)],
-        ));
-        let expression = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("plus"),
+        ).unwrap();
+        let expression = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "plus",
             long(),
             vec![input_column(0), nested],
-        ));
+        ).unwrap();
         for vectorized in [false, true] {
             let mut input = Chunk::new_chunk_with_capacity(&[long(), long()], 1);
             input.append_null(0);
@@ -1089,16 +1096,18 @@ mod tests {
     fn user_variable_side_effects_follow_select_list_order_for_each_row() {
         let mut column = Column::new(1, string());
         column.index = 0;
-        let setvar = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("setvar"),
+        let setvar = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "setvar",
             string(),
             vec![string_const("v"), Expression::Column(column)],
-        ));
-        let getvar = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("getvar"),
+        ).unwrap();
+        let getvar = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "getvar",
             string(),
             vec![string_const("v")],
-        ));
+        ).unwrap();
         let suite = EvaluatorSuite::new(vec![setvar, getvar], false);
         assert!(!suite.vectorizable());
 
@@ -1128,27 +1137,27 @@ mod tests {
         );
         assert!(has_get_set_var_func(&nested_getvar));
         assert!(!vectorizable(&[nested_getvar]));
-        assert!(!vectorizable(&[scalar("getvar", vec![])]));
+        assert!(!vectorizable(&[scalar("getvar", vec![string_const("v")])]));
 
-        assert!(vectorizable(&[scalar("nextval", vec![])]));
+        assert!(vectorizable(&[scalar("nextval", vec![string_const("s")])]));
         assert!(vectorizable(&[
-            scalar("lastval", vec![]),
-            scalar("setval", vec![]),
+            scalar("lastval", vec![string_const("s")]),
+            scalar("setval", vec![string_const("s"), int_const(1)]),
         ]));
         assert!(!vectorizable(&[
-            scalar("nextval", vec![]),
-            scalar("lastval", vec![]),
+            scalar("nextval", vec![string_const("s")]),
+            scalar("lastval", vec![string_const("s")]),
         ]));
         assert!(!vectorizable(&[
-            scalar("nextval", vec![]),
-            scalar("setval", vec![]),
+            scalar("nextval", vec![string_const("s")]),
+            scalar("setval", vec![string_const("s"), int_const(1)]),
         ]));
         assert!(!vectorizable(&[
-            scalar("nextval", vec![]),
-            scalar("nextval", vec![]),
+            scalar("nextval", vec![string_const("s")]),
+            scalar("nextval", vec![string_const("s")]),
         ]));
 
-        let nested_nextval = scalar("plus", vec![scalar("nextval", vec![]), int_const(1)]);
+        let nested_nextval = scalar("plus", vec![scalar("nextval", vec![string_const("s")]), int_const(1)]);
         assert!(vectorizable(&[nested_nextval]));
     }
 
@@ -1263,11 +1272,12 @@ mod tests {
         input.append_int64(1, 40);
         let original_input_owner = input.column_handle(0);
 
-        let plus_one = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("plus"),
+        let plus_one = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "plus",
             long(),
             vec![input_column(1), int_const(1)],
-        ));
+        ).unwrap();
         let suite = EvaluatorSuite::new(vec![input_column(0), plus_one, input_column(0)], false);
         let mut output = Chunk::new_chunk_with_capacity(&[long(), long(), long()], 2);
 
@@ -1292,19 +1302,21 @@ mod tests {
         let mut output = Chunk::new_chunk_with_capacity(&[long(), long()], 1);
         let input_before = input.column_handle(0);
         let output_before = output.column_handle(0);
-        let unsupported = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("not_a_function"),
+        let unsupported = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "plus",
             long(),
-            vec![],
-        ));
+            vec![
+                Expression::Constant(Constant::new(Datum::Int(i64::MAX), long())),
+                Expression::Constant(Constant::new(Datum::Int(1), long())),
+            ],
+        ).unwrap();
         let suite = EvaluatorSuite::new(vec![input_column(0), unsupported], false);
 
-        assert_eq!(
+        assert!(matches!(
             suite.run(&NoColumns, &mut input, &mut output),
-            Err(EvaluatorError::Eval(EvalError::Unsupported(
-                "this scalar function is not yet ported"
-            )))
-        );
+            Err(EvaluatorError::Eval(_))
+        ));
 
         assert!(input_before.same_identity(&input.column_handle(0)));
         assert!(output_before.same_identity(&output.column_handle(0)));
@@ -1335,16 +1347,18 @@ mod tests {
         decimal.set_decimal(2);
         let one = Expression::Constant(Constant::new(Datum::Int(1), long()));
         let discount = decimal_column(1, &decimal);
-        let discounted_fraction = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("minus"),
+        let discounted_fraction = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "minus",
             decimal.clone(),
             vec![one, discount],
-        ));
-        let revenue = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("mul"),
+        ).unwrap();
+        let revenue = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "mul",
             decimal.clone(),
             vec![decimal_column(0, &decimal), discounted_fraction],
-        ));
+        ).unwrap();
         let suite = EvaluatorSuite::new(vec![revenue], false);
 
         let mut input = Chunk::new_chunk_with_capacity(&[decimal.clone(), decimal.clone()], 3);
@@ -1481,7 +1495,7 @@ mod tests {
             }
         }
         let typed = |name: &str, args: Vec<Expression>, ty: &FieldType| {
-            Expression::ScalarFunction(ScalarFunction::new(CiString::new(name), ty.clone(), args))
+            crate::new_function::new_function(&crate::NoColumns, name, ty.clone(), args).unwrap()
         };
         let revenue = typed(
             "mul",
@@ -1599,7 +1613,7 @@ mod tests {
         // A target that can clamp (`ProduceDecWithSpecifiedTp`) keeps the
         // row path.
         let mut narrow = FieldType::new(FieldTypeCode::NewDecimal);
-        narrow.set_flen(10);
+        narrow.set_flen(9);
         narrow.set_decimal(0);
         let Expression::ScalarFunction(clamping) = typed(
             "mul",

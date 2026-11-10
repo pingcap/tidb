@@ -679,11 +679,12 @@ mod tests {
     }
 
     fn scalar(name: &str, args: Vec<Expression>) -> Expression {
-        Expression::ScalarFunction(crate::expression::ScalarFunction::new(
-            tidb_ast::CiString::new(name),
+        crate::new_function::new_function_base(
+            &crate::NoColumns,
+            name,
             ft(),
             args,
-        ))
+        ).unwrap()
     }
 
     fn int(value: i64) -> Expression {
@@ -769,15 +770,16 @@ mod tests {
 
     #[test]
     fn prepared_folding_preserves_parameter_dependencies_in_lazy_functions() {
-        let mut expression = Expression::ScalarFunction(crate::expression::ScalarFunction::new(
-            tidb_ast::CiString::new("if"),
+        let mut expression = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "if",
             ft(),
             vec![
                 parameter(0),
                 Expression::Constant(Constant::new(Datum::Int(7), ft())),
                 Expression::Constant(Constant::new(Datum::Int(11), ft())),
             ],
-        ));
+        ).unwrap();
         crate::fold_constant_in_mode(
             &mut expression,
             &Parameters(vec![Datum::Int(1)]),
@@ -878,16 +880,18 @@ mod tests {
         };
         let mut marker = Constant::new(Datum::Int(1), ft());
         marker.param_marker = Some(ParamMarker { order: 0 });
-        let minus = Expression::ScalarFunction(crate::expression::ScalarFunction::new(
-            tidb_ast::CiString::new("minus"),
+        let minus = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "minus",
             decimal.clone(),
             vec![Expression::Constant(marker), column(1)],
-        ));
-        let expression = Expression::ScalarFunction(crate::expression::ScalarFunction::new(
-            tidb_ast::CiString::new("mul"),
+        ).unwrap();
+        let expression = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            "mul",
             decimal.clone(),
             vec![column(0), minus],
-        ));
+        ).unwrap();
         let suite = crate::evaluator::EvaluatorSuite::new(vec![expression.clone()], false);
         for (value, coefficient) in [
             (Datum::Int(2), Some(175000)),
