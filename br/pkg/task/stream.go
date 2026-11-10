@@ -1556,6 +1556,9 @@ func restoreStream(
 	if err := client.CheckpointMaterializedViewRepair(ctx); err != nil {
 		return err
 	}
+	failpoint.Inject("failed-before-materialized-view-repair", func(_ failpoint.Value) {
+		failpoint.Return(errors.New("failpoint: before materialized view repair"))
+	})
 	if err := finishRestore(); err != nil {
 		return err
 	}
