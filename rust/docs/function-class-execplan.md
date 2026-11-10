@@ -184,8 +184,11 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
     `pb_predicate.rs` are deleted, and a request's conditions, aggregate
     arguments, group and sort keys are converted by `PbConverter` -- all of
     a Selection's conditions or none.
-  - [ ] 11b-2d: the collation post-pass (`derive_tree_collation`,
+  - [x] 11b-2d: the collation post-pass (`derive_tree_collation`,
     `restore_function_result_charset`, `returns_binary_string`) is deleted.
+    Every node already carried its class's derivation: a logging run of the
+    tidb-expr, tidb-session, tidb-ranger and tidb-executor suites never
+    entered the walk's body.
 
 ## Surprises & Discoveries
 

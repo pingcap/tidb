@@ -30,43 +30,6 @@ use super::Expression;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 use crate::builtin_ext::{GlCmpStringMode, GlSignature};
-use crate::scalar_function::ScalarFunction;
-use crate::EvalError;
-
-mod crypto;
-pub(super) use crypto::returns_binary_string;
-
-pub(super) fn restore_char_result_charset(func: &mut ScalarFunction) -> Result<(), EvalError> {
-    if func.func_name.lowercase() != "char_func" {
-        return Ok(());
-    }
-    let charset = match func.args.last() {
-        Some(Expression::Constant(constant)) if constant.value == Datum::Null => None,
-        Some(Expression::Constant(constant)) => constant.value.sql_string().ok(),
-        _ => return Err(EvalError::Unsupported("CHAR charset argument")),
-    };
-    let Some(ft) = func.ret_type.as_mut() else {
-        return Ok(());
-    };
-    if let Some(charset) = charset {
-        // go's charFunctionClass.getFunction does NOT validate the charset:
-        // an unknown name reaches `GetCharsetInfo` at EXEC time and answers
-        // the bare 1105 `Unknown charset <name>` there -- with the argument
-        // coercion's truncation warnings already in the statement buffer.
-        // Failing here at plan time lost that ordering (and answered the
-        // wrong message). An unknown name just keeps the default charset;
-        // the error belongs to the eval below.
-        if let Ok(collation) = tidb_charset::get_default_collation(&charset) {
-            ft.set_charset_name(charset);
-            ft.set_collation_name(collation);
-        } else {
-            super::set_binary_charset(ft);
-        }
-    } else {
-        super::set_binary_charset(ft);
-    }
-    Ok(())
-}
 
 /// Go `types.SetBinChsClnFlag`: stamp binary charset, collation and flag.
 pub(super) fn set_binary_charset(ft: &mut FieldType) {

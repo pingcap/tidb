@@ -46,7 +46,7 @@ use fold_mode::FoldModeResolver;
 pub(crate) use result_type::adjust_ret_ft_for_cast_string;
 use result_type::{
     binary_literal_type, cast_target, decimal_literal_type, int_literal_type,
-    returns_binary_string, set_binary_charset, check_func_cast_expr, validate_name_const_args,
+    set_binary_charset, check_func_cast_expr, validate_name_const_args,
 };
 
 /// What Go's `ast.Grouping` rewrite takes from `planCtx.rollExpand`: the
@@ -570,20 +570,6 @@ fn constant_string(text: &str) -> Expression {
     Expression::Constant(Constant::new(datum, field_type))
 }
 
-/// Reapplies the result-charset rules whose Go function classes override the
-/// generic collation derivation after `newBaseBuiltinFuncWithTp` returns.
-pub(crate) fn restore_function_result_charset(expr: &mut Expression) -> Result<(), EvalError> {
-    let Expression::ScalarFunction(func) = expr else {
-        return Ok(());
-    };
-    if returns_binary_string(func.func_name.lowercase()) {
-        if let Some(field_type) = func.ret_type.as_mut() {
-            set_binary_charset(field_type);
-        }
-    }
-    result_type::restore_char_result_charset(func)
-}
-
 fn constant(datum: Datum, code: FieldTypeCode) -> Expression {
     Expression::Constant(Constant::new(datum, FieldType::new(code)))
 }
@@ -1039,7 +1025,6 @@ fn rewrite_expr_resolved_inner(
         });
     }
     let mut built = rewrite_leaf(expr, resolver)?;
-    derive_tree_collation_with_connection(&mut built, resolver.connection_charset_info())?;
     // Go FuncCastExpr calls BuildCastFunctionWithCheck directly, outside
     // newFunctionWithInit's try/disabled-fold counters. JSON casts alone
     // stay unfolded because their evaluation flags can still change.
@@ -1177,49 +1162,6 @@ fn prepare_in_string_hash_sets(expr: &mut Expression) {
         prepare_in_string_hash_sets(argument);
     }
     function.prepare_in_string_hash_set();
-}
-
-/// Runs Go's collation derivation over a freshly built expression tree,
-/// bottom up (`pkg/expression/collation.go` `deriveCollation`, applied by
-/// `newBaseBuiltinFuncWithTp` as each function is constructed).
-///
-/// Go derives while BUILDING, which is naturally bottom-up; this rewriter
-/// builds several nested functions inside a single arm (`NOT IN` is a `not`
-/// over an `in`, `NOT LIKE` a `not` over a `like`), so the derivation is a
-/// walk instead of a per-construction-site call. A node that already carries a
-/// derived coercibility is left alone, which makes the walk idempotent -- the
-/// recursion in [`rewrite_expr_resolved`] runs it once per level, and only the
-/// first visit does work.
-pub fn derive_tree_collation(expr: &mut Expression) -> Result<(), EvalError> {
-    derive_tree_collation_with_connection(expr, crate::collation_derive::connection_charset_info())
-}
-
-fn derive_tree_collation_with_connection(
-    expr: &mut Expression,
-    connection: (&str, &str),
-) -> Result<(), EvalError> {
-    let Expression::ScalarFunction(func) = expr else {
-        return Ok(());
-    };
-    for arg in &mut func.args {
-        derive_tree_collation_with_connection(arg, connection)?;
-    }
-    if func.collation.has_coercibility() {
-        return Ok(());
-    }
-    let ret_type = func
-        .ret_type
-        .as_ref()
-        .map_or(tidb_datatype::EvalType::Int, FieldType::eval_type);
-    let name = func.func_name.lowercase().to_owned();
-    let ec = crate::collation_derive::derive_collation_with_connection(
-        &name, &func.args, ret_type, connection,
-    )?;
-    crate::collation_derive::apply_derived_collation(expr, &ec);
-    // Some getFunction implementations overwrite generic derivation with a
-    // fixed result charset. Reapply those source-owned result rules last.
-    restore_function_result_charset(expr)?;
-    Ok(())
 }
 
 /// The dispatcher over `Expr`'s shapes, holding only the two that a NESTED
@@ -1880,7 +1822,6 @@ fn rewrite_leaf_compound(
             // over two constants, so `'a' BETWEEN 'g' AND 'f'` is a constant
             // false and the scan becomes a TableDual.
             for bound in [&mut lower, &mut upper] {
-                derive_tree_collation_with_connection(bound, resolver.connection_charset_info())?;
                 resolver.fold_constant(bound, resolver.fold_mode());
             }
             let class = crate::builtin::funcs(joiner).expect("builtin_op.go registers AND and OR");

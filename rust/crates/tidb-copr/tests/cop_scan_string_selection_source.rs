@@ -450,21 +450,18 @@ fn the_multibyte_row_is_selected_by_the_collator_and_not_by_its_bytes() {
     assert_eq!(rows, expected("utf8mb4_bin", &[1, 2, 4]));
 }
 
-/// The BEFORE half, still reachable: a string comparison this lowering refuses
-/// drags the whole relation across the wire and filters locally.
+/// The BEFORE half, still reachable: a comparison Go refuses to push drags
+/// the whole relation across the wire and filters locally.
 ///
-/// `latin1_bin` is refused because Go's `inferCollation` applies repertoire
-/// rules to a non-`utf8mb4` charset that this lowering does not implement. The
-/// ANSWER is unchanged -- the scan source applies every pushed conjunct to
-/// every row it emits anyway -- so only the receipt can see the difference,
-/// which is the whole reason the count is asserted beside the rows. This is
-/// also the shape the first mutation probe produces: neutering the lowering
-/// makes every accepted case look like this one.
+/// `QUOTE` is not in Go `scalarExprSupportedByTiKV`. The ANSWER is unchanged
+/// -- the root Selection filters every row -- so only the receipt can see the
+/// difference, which is the whole reason the count is asserted beside the
+/// rows.
 #[test]
 fn a_refused_string_comparison_still_answers_right_and_sends_the_whole_relation() {
-    let (catalog, region, storage) = fixture("latin1_bin");
+    let (catalog, region, storage) = fixture("utf8mb4_bin");
     let rows = run_select_on(
-        "SELECT id, s FROM t WHERE s = 'a'",
+        "SELECT id, s FROM t WHERE quote(s) = '''a'''",
         &catalog,
         &StmtContext::for_query().with_txn_store(Box::new(storage.clone())),
     )
@@ -481,7 +478,7 @@ fn a_refused_string_comparison_still_answers_right_and_sends_the_whole_relation(
     );
     assert_eq!(
         rows,
-        expected("latin1_bin", &[2]),
+        expected("utf8mb4_bin", &[2]),
         "and the answer is right regardless, which is why rows alone cannot \
          see a push-down"
     );

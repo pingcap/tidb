@@ -337,13 +337,10 @@ fn column(name: &str, id: i64, unsigned: bool) -> tidb_table::column::Column {
 
 /// `t(id BIGINT, tag BIGINT UNSIGNED)` read through the real coprocessor reader.
 ///
-/// The query below compares `tag` with the *string* `'7'`. That is the point:
-/// the coprocessor can describe the column, so the scan is served remotely,
-/// and the driver pushes the conjunct -- but the Selection lowering refuses a
-/// non-integer constant, because Go rewrites one through
-/// `RefineComparedConstant` rather than sending it as written. So `tag = '7'`
-/// stays behind while `id > 0` travels. That is the partial lowering the cap
-/// must not accompany.
+/// The query below filters on `quote(tag)`. That is the point: `QUOTE` is not
+/// in Go `scalarExprSupportedByTiKV`, so that conjunct stays behind while
+/// `id > 0` could travel. That is the partial lowering the cap must not
+/// accompany.
 fn fixture() -> (SessionExtendedInfoSchema, Arc<FakeRegion>, ClusterTableStorage) {
     let region = Arc::new(FakeRegion::default());
     let factory = Arc::new(FakeFactory {
@@ -387,13 +384,13 @@ fn simple_scan_limit_preserves_request_builder_concurrency_and_limit_size() {
 
 /// A `LIMIT` over a predicate only half of which reached TiKV must still
 /// return the rows the query asked for. With the cap travelling regardless,
-/// TiKV counted five rows against `id > 0` alone, the local `tag = 7` pass
+/// TiKV counted five rows against `id > 0` alone, the local `quote(tag)` pass
 /// removed four of them, and the statement answered one row.
 #[test]
 fn a_limit_over_a_partly_lowered_predicate_returns_every_qualifying_row() {
     let (catalog, region, storage) = fixture();
     let rows = run_select_on(
-        "SELECT id FROM t WHERE id > 0 AND tag = '7' LIMIT 5",
+        "SELECT id FROM t WHERE id > 0 AND quote(tag) = '''7''' LIMIT 5",
         &catalog,
         &StmtContext::for_query().with_txn_store(Box::new(storage.clone())),
     )
@@ -416,9 +413,9 @@ fn a_limit_over_a_partly_lowered_predicate_returns_every_qualifying_row() {
         panic!("exactly one coprocessor request: {observations:?}");
     };
     assert_eq!(
-        observation.conditions, 0,
-        "`tag = '7'` cannot lower, so the Selection stays whole at the root \
-         and none of it travels"
+        observation.conditions, 1,
+        "Go `PushDownExprs`: the conjunct that lowers travels and \
+         `quote(tag) = '7'` stays in the root Selection"
     );
     assert_eq!(
         observation.remote_limit, None,
@@ -459,7 +456,7 @@ fn coprocessor_response_is_pulled_by_query_worker() {
 }
 
 /// The same invariant with a **pushed builtin call** as the conjunct that did
-/// travel: `ROUND(id)` lowers through the push-down catalog, `tag = '7'` still
+/// travel: `ROUND(id)` lowers through Go's push-down list, `quote(tag) = '7'` still
 /// does not, so the predicate is again only half lowered and the cap must again
 /// stay behind.
 ///
@@ -470,7 +467,7 @@ fn coprocessor_response_is_pulled_by_query_worker() {
 fn a_limit_over_a_partly_lowered_builtin_predicate_returns_every_qualifying_row() {
     let (catalog, region, storage) = fixture();
     let rows = run_select_on(
-        "SELECT id FROM t WHERE round(id) AND tag = '7' LIMIT 5",
+        "SELECT id FROM t WHERE round(id) AND quote(tag) = '''7''' LIMIT 5",
         &catalog,
         &StmtContext::for_query().with_txn_store(Box::new(storage.clone())),
     )
@@ -484,7 +481,7 @@ fn a_limit_over_a_partly_lowered_builtin_predicate_returns_every_qualifying_row(
             vec![Datum::Int(16)],
             vec![Datum::Int(20)],
         ],
-        "every row `ROUND(id) AND tag = 7` selects, up to the cap"
+        "every row `ROUND(id) AND QUOTE(tag) = '7'` selects, up to the cap"
     );
 
     let observations = region.observations.lock().unwrap();
@@ -492,9 +489,9 @@ fn a_limit_over_a_partly_lowered_builtin_predicate_returns_every_qualifying_row(
         panic!("exactly one coprocessor request: {observations:?}");
     };
     assert_eq!(
-        observation.conditions, 0,
-        "`tag = '7'` cannot lower, so the Selection stays whole at the root \
-         and none of it travels"
+        observation.conditions, 1,
+        "Go `PushDownExprs`: the conjunct that lowers travels and \
+         `quote(tag) = '7'` stays in the root Selection"
     );
     assert_eq!(
         observation.remote_limit, None,

@@ -34,14 +34,11 @@
 //!
 //! Go's `addCollateAndCharsetAndFlagFromArgs` runs inside
 //! `InferType4ControlFuncs`, between `setDecimalFromArgs` and
-//! `setFlenFromArgs`. In this crate the charset/collation half of every
-//! builtin is one bottom-up walk instead
-//! ([`super::derive_tree_collation`] -> `collation_derive::derive_collation`,
-//! whose `if`/`ifnull`/`coalesce` arms are Go's own
-//! `CheckAndDeriveCollationFromExprs` calls), so re-deriving it here would be
-//! a second copy of a rule that already has an owner. This module owns the
-//! CODE, the FLAGS, the SCALE and the WIDTH; that walk owns the charset and
-//! the collation.
+//! `setFlenFromArgs`. The function classes derive the charset and collation
+//! as they build (`collation_derive::derive_collation`, whose
+//! `if`/`ifnull`/`coalesce` arms are Go's own
+//! `CheckAndDeriveCollationFromExprs` calls). This module owns the CODE, the
+//! FLAGS, the SCALE and the WIDTH.
 
 use tidb_datatype::{
     agg_field_type, aggregate_eval_type, EvalType, FieldType, FieldTypeCode, FieldTypeFlags,

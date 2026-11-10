@@ -1573,19 +1573,11 @@ fn index_ranges_match_go() {
                 .map_err(|error| format!("rewrite: {error:?}"))?;
             let ctx = tidb_exprctx::NoColumns;
             let builder = RealFunctionBuilder::new(&ctx);
-            // Go's PushDownNot builds through NewFunction, which DERIVES
-            // collation; this crate's `new_function` deliberately defers
-            // that, so the rewriter's tree walk runs here instead.
             let conds: Vec<Expression> = split_cnf_items(&rewritten)
                 .iter()
                 .map(planner_rewriter_stage)
                 .map(|cond| push_down_not(&cond, &builder))
-                .map(|mut cond| {
-                    tidb_expr::rewriter::derive_tree_collation(&mut cond)
-                        .map(|()| cond)
-                        .map_err(|error| format!("collation: {error:?}"))
-                })
-                .collect::<Result<Vec<_>, String>>()?;
+                .collect();
             let (cols, lengths) = table.index(*index_pos);
             let result =
                 super::detacher::detach_cond_and_build_range_for_index(&conds, &cols, &lengths, 0)
@@ -1756,13 +1748,7 @@ fn issue_40997_dnf_ranges_match_go() {
         .iter()
         .map(planner_rewriter_stage)
         .map(|cond| push_down_not(&cond, &builder))
-        .map(|mut cond| {
-            tidb_expr::rewriter::derive_tree_collation(&mut cond)
-                .map(|()| cond)
-                .map_err(|error| format!("collation: {error:?}"))
-        })
-        .collect::<Result<Vec<_>, String>>()
-        .expect("rewrites conditions");
+        .collect();
     let lengths = vec![super::checker::UNSPECIFIED_LENGTH; 3];
     let result =
         super::detacher::detach_cond_and_build_range_for_index(&conds, &table.columns, &lengths, 0)
@@ -2669,12 +2655,7 @@ fn prefix_index_null_ranges_match_go() {
                 .iter()
                 .map(planner_rewriter_stage)
                 .map(|cond| push_down_not(&cond, &builder))
-                .map(|mut cond| {
-                    tidb_expr::rewriter::derive_tree_collation(&mut cond)
-                        .map(|()| cond)
-                        .map_err(|error| format!("collation: {error:?}"))
-                })
-                .collect::<Result<Vec<_>, String>>()?;
+                .collect();
             let (cols, lengths) = table.index(*index_pos);
             let result =
                 super::detacher::detach_cond_and_build_range_for_index(&conds, &cols, &lengths, 0)
