@@ -1683,6 +1683,9 @@ type SessionVars struct {
 	// duplicate task in plan replayer continues capture
 	PlanReplayerFinishedTaskKey map[replayer.PlanReplayerTaskKey]struct{}
 
+	// AnalyzeStoreBatchSize is the child-task limit for Analyze store batches; zero disables batching.
+	AnalyzeStoreBatchSize int
+
 	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
 
@@ -2393,6 +2396,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableAsyncCommit:             DefTiDBEnableAsyncCommit,
 		Enable1PC:                     DefTiDBEnable1PC,
 		GuaranteeLinearizability:      DefTiDBGuaranteeLinearizability,
+		AnalyzeStoreBatchSize:         DefTiDBAnalyzeStoreBatchSize,
 		AnalyzeVersion:                DefTiDBAnalyzeVersion,
 		EnableIndexMergeJoin:          DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:           make(map[kv.StoreType]struct{}),

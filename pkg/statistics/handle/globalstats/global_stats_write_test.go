@@ -39,6 +39,7 @@ func (h *saveResultStatsHandle) SaveColOrIdxStatsToStorage(
 	_ *statistics.Histogram,
 	_ *statistics.CMSketch,
 	_ *statistics.TopN,
+	_ *statistics.FMSketch,
 	_ int,
 	_ int64,
 	_ bool,

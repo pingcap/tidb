@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -91,7 +92,11 @@ func (e *AnalyzeColumnsExec) open(ctx context.Context, ranges []*ranger.Range) e
 	e.memTracker = memory.NewTracker(int(e.ctx.GetSessionVars().PlanID.Load()), -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.resultHandler = &tableResultHandler{}
-	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(ranges, true, false, !hasPkHist(e.handleCols))
+	// Full-sampling analyze restores handle order after collecting samples,
+	// so it can scan both sides of the unsigned integer boundary in one request.
+	// The legacy collector still needs ordered, separate requests.
+	fullSampling := e.analyzePB.Tp == tipb.AnalyzeType_TypeFullSampling
+	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(ranges, !fullSampling, false, !hasPkHist(e.handleCols))
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
 		return err
@@ -103,7 +108,7 @@ func (e *AnalyzeColumnsExec) open(ctx context.Context, ranges []*ranger.Range) e
 	var secondResult distsql.SelectResult
 	secondResult, err = e.buildResp(ctx, secondPartRanges)
 	if err != nil {
-		return err
+		return errors.Join(err, firstResult.Close())
 	}
 	e.resultHandler.open(firstResult, secondResult)
 
@@ -120,13 +125,22 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 		startTS = e.snapshot
 		isoLevel = kv.SI
 	}
-	// Always set KeepOrder of the request to be true, in order to compute
-	// correct `correlation` of columns.
+	// Full-sampling analyze sorts collected samples by handle before computing
+	// correlation. The legacy collector still requires ordered results.
+	fullSampling := e.analyzePB.Tp == tipb.AnalyzeType_TypeFullSampling
+	storeBatchSize := 0
+	if fullSampling {
+		storeBatchSize = e.ctx.GetSessionVars().AnalyzeStoreBatchSize
+	}
+	enableStoreBatch := storeBatchSize > 0
 	kvReq, err := reqBuilder.
 		SetAnalyzeRequest(e.analyzePB, isoLevel).
 		SetStartTS(startTS).
-		SetKeepOrder(true).
+		SetKeepOrder(!fullSampling).
 		SetConcurrency(e.concurrency).
+		SetStoreBatchSize(storeBatchSize).
+		SetAllowBatchTaskDataMerge(enableStoreBatch).
+		SetExecuteBatchTasksSerially(enableStoreBatch).
 		SetMemTracker(e.memTracker).
 		SetResourceGroupName(e.ctx.GetSessionVars().StmtCtx.ResourceGroupName).
 		SetExplicitRequestSourceType(e.ctx.GetSessionVars().ExplicitRequestSourceType).
@@ -134,6 +148,7 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 	if err != nil {
 		return nil, err
 	}
+	failpoint.InjectCall("analyzeColumnsRequestBuilt", kvReq)
 	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
 	if err != nil {
 		return nil, err
@@ -517,6 +532,9 @@ func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec) {
 			needComma = true
 		}
 		b.WriteString(fmt.Sprintf("%v samplerate", sampleRate))
+	}
+	if rate := e.analyzePB.ColReq.NdvRate; rate != nil {
+		fmt.Fprintf(&b, ", %g ndvrate", *rate)
 	}
 	e.job.JobInfo = b.String()
 }

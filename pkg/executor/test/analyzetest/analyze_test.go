@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -45,6 +46,7 @@ import (
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -59,6 +61,78 @@ func (sm *killQuerySessionManager) Kill(connID uint64, query bool, maxExecutionT
 	if sess := sm.Conn[connID]; sess != nil {
 		sess.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}
+}
+
+func TestAnalyzeBuildsSingleBatchableRequest(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set @@tidb_analyze_distsql_scan_concurrency = 6")
+	tk.MustExec("set @@tidb_store_batch_size = 8")
+	tk.MustExec("set @@tidb_analyze_store_batch_size = 4")
+
+	var requestCount atomic.Int64
+	var lastRequest atomic.Pointer[kv.Request]
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeColumnsRequestBuilt", func(req *kv.Request) {
+		// BuildCopIterator clears StoreBatchSize, so keep the request as built.
+		snapshot := *req
+		lastRequest.Store(&snapshot)
+		requestCount.Add(1)
+	})
+
+	// Values at MaxInt64 and MaxInt64+1 exercise the unsigned-handle boundary.
+	// Full-sampling Analyze should cover them with one unordered request.
+	tk.MustExec("create table tu(a bigint unsigned primary key)")
+	tk.MustExec("insert into tu values (9223372036854775807), (9223372036854775808)")
+	tk.MustExec("analyze table tu with 1 samplerate, 0 topn, 2 buckets")
+	require.Equal(t, int64(1), requestCount.Load())
+	require.False(t, lastRequest.Load().KeepOrder)
+	require.Equal(t, 6, lastRequest.Load().Concurrency)
+	require.Equal(t, 4, lastRequest.Load().StoreBatchSize)
+	require.True(t, lastRequest.Load().AllowBatchTaskDataMerge)
+	require.True(t, lastRequest.Load().ExecuteBatchTasksSerially)
+
+	bucketRows := tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 'tu' and column_name = 'a' and is_index = 0").Rows()
+	bounds := make(map[string]struct{}, 2*len(bucketRows))
+	for _, row := range bucketRows {
+		bounds[row[8].(string)] = struct{}{}
+		bounds[row[9].(string)] = struct{}{}
+	}
+	require.Contains(t, bounds, "9223372036854775807")
+	require.Contains(t, bounds, "9223372036854775808")
+
+	// An empty unsigned half must not stop the request before its signed range.
+	// Disabling Analyze batching must override the generic store batch size.
+	tk.MustExec("set @@tidb_analyze_store_batch_size = 0")
+	tk.MustExec("truncate table tu")
+	tk.MustExec("insert into tu values (1)")
+	tk.MustExec("analyze table tu with 1 samplerate, 0 topn, 2 buckets")
+	require.Equal(t, int64(2), requestCount.Load())
+	require.False(t, lastRequest.Load().KeepOrder)
+	require.Zero(t, lastRequest.Load().StoreBatchSize)
+	require.False(t, lastRequest.Load().AllowBatchTaskDataMerge)
+	require.False(t, lastRequest.Load().ExecuteBatchTasksSerially)
+	metaRows := tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 'tu'").Rows()
+	require.Len(t, metaRows, 1)
+	require.Equal(t, "1", metaRows[0][5])
+
+	// Unlike upstream, this branch still supports V1. It must keep its ordered,
+	// split requests even when Analyze store batching is enabled.
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("set @@tidb_analyze_store_batch_size = 4")
+	tk.MustExec("create table tv1(a bigint unsigned primary key)")
+	tk.MustExec("insert into tv1 values (9223372036854775807), (9223372036854775808)")
+	requestCount.Store(0)
+	tk.MustExec("analyze table tv1 with 0 topn, 2 buckets")
+	require.Equal(t, int64(2), requestCount.Load())
+	require.True(t, lastRequest.Load().KeepOrder)
+	require.Zero(t, lastRequest.Load().StoreBatchSize)
+	require.False(t, lastRequest.Load().AllowBatchTaskDataMerge)
+	require.False(t, lastRequest.Load().ExecuteBatchTasksSerially)
+	v1MetaRows := tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 'tv1'").Rows()
+	require.Len(t, v1MetaRows, 1)
+	require.Equal(t, "2", v1MetaRows[0][5])
 }
 
 func TestAnalyzePartition(t *testing.T) {
@@ -854,11 +928,18 @@ func TestAnalyzeClusteredIndexPrimary(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("analyze table t0")
 	tk.MustExec("analyze table t1")
-	tk.MustQuery("show stats_topn").Sort().Check(testkit.Rows(""+
-		"test t0  PRIMARY 1 1111 1",
-		"test t0  a 0 1111 1",
-		"test t1  PRIMARY 1 1111 1",
-		"test t1  a 0 1111 1"))
+	// Single-column unique indexes and their columns use histograms instead of TopN.
+	tk.MustQuery("show stats_topn").Check(testkit.Rows())
+	tk.MustQuery("show stats_buckets").Sort().Check(testkit.Rows(
+		"test t0  PRIMARY 1 0 1 1 1111 1111 0",
+		"test t0  a 0 0 1 1 1111 1111 0",
+		"test t1  PRIMARY 1 0 1 1 1111 1111 0",
+		"test t1  a 0 0 1 1 1111 1111 0"))
+	tk.MustQuery("select is_index, distinct_count, stats_ver from mysql.stats_histograms").Sort().Check(testkit.Rows(
+		"0 1 2",
+		"0 1 2",
+		"1 1 2",
+		"1 1 2"))
 }
 
 func TestAnalyzeSamplingWorkPanic(t *testing.T) {
@@ -1084,7 +1165,7 @@ PARTITION BY RANGE ( a ) (
 	require.Less(t, p1.GetCol(tableInfo.Columns[2].ID).LastUpdateVersion, p1.GetCol(tableInfo.Columns[0].ID).LastUpdateVersion)
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
-	require.Equal(t, "0", rs.Rows()[0][0])
+	require.Equal(t, "-1", rs.Rows()[0][0])
 	require.Equal(t, "2", rs.Rows()[0][1])
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "LIST", rs.Rows()[0][3])
@@ -1092,14 +1173,14 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, colIDStrsAB, rs.Rows()[0][4])
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
-	require.Equal(t, "0", rs.Rows()[0][0])
+	require.Equal(t, "-1", rs.Rows()[0][0])
 	require.Equal(t, "2", rs.Rows()[0][1])
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "LIST", rs.Rows()[0][3])
 	require.Equal(t, colIDStrsAB, rs.Rows()[0][4])
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(p1.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
-	require.Equal(t, "0", rs.Rows()[0][0])
+	require.Equal(t, "-1", rs.Rows()[0][0])
 	require.Equal(t, "2", rs.Rows()[0][1])
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "LIST", rs.Rows()[0][3])
@@ -1151,7 +1232,7 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
-	require.Equal(t, "0", rs.Rows()[0][0])
+	require.Equal(t, "-1", rs.Rows()[0][0])
 	require.Equal(t, "3", rs.Rows()[0][1])
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "LIST", rs.Rows()[0][3])
@@ -1170,14 +1251,14 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, 2, len(p2.GetCol(tableInfo.Columns[0].ID).Buckets))
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(p2.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
-	require.Equal(t, "0", rs.Rows()[0][0])
+	require.Equal(t, "-1", rs.Rows()[0][0])
 	require.Equal(t, "2", rs.Rows()[0][1])
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "LIST", rs.Rows()[0][3])
 	require.Equal(t, colIDStrsAB, rs.Rows()[0][4])
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
-	require.Equal(t, "0", rs.Rows()[0][0])
+	require.Equal(t, "-1", rs.Rows()[0][0])
 	require.Equal(t, "2", rs.Rows()[0][1])
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "LIST", rs.Rows()[0][3])
@@ -2116,6 +2197,29 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 			))
 		}(val)
 	}
+
+	// NDVRATE must be in (0, 1], and TiKV draws TopN and histogram rows from the
+	// rows selected for NDV, so it must cover SAMPLERATE.
+	for _, rate := range []string{"0", "1.01"} {
+		require.Error(t, tk.ExecToErr("analyze table t with "+rate+" NDVRATE"))
+	}
+	require.ErrorContains(t, tk.ExecToErr("analyze table t with 0.1 NDVRATE, 0.2 SAMPLERATE"), "0.1 NDVRATE must not be smaller than 0.2 SAMPLERATE")
+	// A zero tidb_analyze_sampled_ndv_threshold rejects NDVRATE. Otherwise
+	// NDVRATE replaces only the rate, so without a table above the threshold
+	// ANALYZE reads every row and says so.
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 0")
+	require.ErrorContains(t, tk.ExecToErr("analyze table t with 0.1 NDVRATE"), "tidb_analyze_sampled_ndv_threshold")
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 2")
+	tk.MustExec("analyze table t with 0.1 NDVRATE")
+	tk.MustQuery("show warnings").CheckContain("NDVRATE is not used because no table or partition has more rows than tidb_analyze_sampled_ndv_threshold(2)")
+	// Locked partitions are left out first, so the warning also shows when
+	// only a locked partition has more rows than the threshold.
+	tk.MustExec("create table ndv_locked (a int) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
+	tk.MustExec("insert into ndv_locked values (1),(2),(3),(11)")
+	tk.MustExec("analyze table ndv_locked")
+	tk.MustExec("lock stats ndv_locked partition p0")
+	tk.MustExec("analyze table ndv_locked with 0.1 NDVRATE")
+	tk.MustQuery("show warnings").CheckContain("NDVRATE is not used because no table or partition has more rows than tidb_analyze_sampled_ndv_threshold(2)")
 }
 
 func checkAnalyzeStatus(t *testing.T, tk *testkit.TestKit, jobInfo, status, failReason, comment string) {
@@ -2784,7 +2888,7 @@ PARTITION BY RANGE ( a ) (
 	))
 
 	// analyze partition with existing table-level options and existing partition stats under dynamic
-	tk.MustExec("insert into mysql.analyze_options values (?,?,?,?,?,?,?)", tableInfo.ID, 0, 0, 2, 2, "DEFAULT", "")
+	tk.MustExec("insert into mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) values (?,?,?,?,?,?,?)", tableInfo.ID, 0, 0, 2, 2, "DEFAULT", "")
 	tk.MustExec("set global tidb_persist_analyze_options = true")
 	tk.MustExec("analyze table t partition p1 columns a,b,d with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
@@ -2794,7 +2898,7 @@ PARTITION BY RANGE ( a ) (
 	))
 
 	// analyze partition with existing table-level & partition-level options and existing partition stats under dynamic
-	tk.MustExec("insert into mysql.analyze_options values (?,?,?,?,?,?,?)", pi.Definitions[1].ID, 0, 0, 1, 1, "DEFAULT", "")
+	tk.MustExec("insert into mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) values (?,?,?,?,?,?,?)", pi.Definitions[1].ID, 0, 0, 1, 1, "DEFAULT", "")
 	tk.MustExec("analyze table t partition p1 columns a,b,d with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1, reason to use this rate is \"use min(1, 110000/5) as the sample-rate=1\"",
@@ -3597,4 +3701,317 @@ func TestAnalyzeTableWithVarcharShardIndex(t *testing.T) {
 	require.NotNil(t, tblStats)
 	require.True(t, tblStats.IsAnalyzed())
 	require.True(t, tblStats.GetIdx(tbl.Meta().Indices[0].ID).IsAnalyzed())
+}
+
+// TestAnalyzeWithDefaultResetsSavedOptions tests ANALYZE ... WITH DEFAULT <option>,
+// which resets a persisted analyze option so that it follows the system default
+// again, both for the current run and for later analyzes.
+// See https://github.com/pingcap/tidb/issues/69853
+func TestAnalyzeWithDefaultResetsSavedOptions(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	originalVal1 := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal1))
+	}()
+	tk.MustExec("set global tidb_persist_analyze_options = true")
+	originalVal2 := tk.MustQuery("select @@tidb_analyze_default_num_buckets").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_analyze_default_num_buckets = %v", originalVal2))
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	tk.MustExec("insert into t values (1,1,1),(2,1,2),(3,1,3),(4,2,4),(5,2,5),(6,2,6),(7,3,7),(8,3,8),(9,3,9),(10,10,10),(11,11,11),(12,12,12)")
+
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	optsQuery := fmt.Sprintf("select sample_num,sample_rate,buckets,topn,column_choice from mysql.analyze_options where table_id = %d", tableInfo.ID)
+	loadStats := func() *statistics.Table {
+		tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
+		require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+		return h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	}
+	hasAdaptiveSampleRateNote := func() bool {
+		for _, row := range tk.MustQuery("show warnings").Rows() {
+			if strings.Contains(fmt.Sprintf("%v", row[2]), "auto adjusted sample rate") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Pin all four persisted numeric options. 100000 samples covers all rows, so
+	// the sample set is deterministic.
+	tk.MustExec("analyze table t all columns with 2 buckets, 1 topn, 100000 samples")
+	require.False(t, hasAdaptiveSampleRateNote())
+	tk.MustQuery(optsQuery).Check(testkit.Rows("100000 -1 2 1 ALL"))
+	tbl := loadStats()
+	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
+	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[1].ID).TopN.TopN))
+
+	// WITH DEFAULT BUCKETS resets only the bucket option: the current run uses
+	// the system default and the persisted field is cleared, other options are kept.
+	tk.MustExec("analyze table t with default buckets")
+	tk.MustQuery(optsQuery).Check(testkit.Rows("100000 -1 0 1 ALL"))
+	tbl = loadStats()
+	require.Greater(t, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets), 2)
+
+	// After the reset, later analyzes follow tidb_analyze_default_num_buckets again.
+	tk.MustExec("set global tidb_analyze_default_num_buckets = 3")
+	tk.MustExec("analyze table t")
+	tk.MustQuery(optsQuery).Check(testkit.Rows("100000 -1 0 1 ALL"))
+	tbl = loadStats()
+	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
+
+	// TOPN 0 is a pinned value that disables TopN collection, not a reset: it
+	// persists as 0, which is distinct from the -1 that means unset. This is why
+	// no literal can express a reset for TOPN and DEFAULT is needed.
+	tk.MustExec("analyze table t with 0 topn")
+	tk.MustQuery(optsQuery).Check(testkit.Rows("100000 -1 0 0 ALL"))
+	tbl = loadStats()
+	require.Nil(t, tbl.GetCol(tableInfo.Columns[1].ID).TopN)
+
+	// A later plain analyze keeps following the pinned 0 rather than the default.
+	tk.MustExec("analyze table t")
+	tk.MustQuery(optsQuery).Check(testkit.Rows("100000 -1 0 0 ALL"))
+	tbl = loadStats()
+	require.Nil(t, tbl.GetCol(tableInfo.Columns[1].ID).TopN)
+
+	// WITH DEFAULT TOPN clears the persisted topn (-1 means unset).
+	tk.MustExec("analyze table t with default topn")
+	tk.MustQuery(optsQuery).Check(testkit.Rows("100000 -1 0 -1 ALL"))
+	tbl = loadStats()
+	require.Greater(t, len(tbl.GetCol(tableInfo.Columns[1].ID).TopN.TopN), 1)
+
+	// Switch from a fixed sample num back to a sample rate, the motivating
+	// example from the issue.
+	tk.MustExec("analyze table t with default samples, 1 samplerate")
+	require.False(t, hasAdaptiveSampleRateNote())
+	tk.MustQuery(optsQuery).Check(testkit.Rows("0 1 0 -1 ALL"))
+
+	// WITH DEFAULT SAMPLERATE returns to adaptive sampling: the run logs the
+	// auto adjusted sample rate note and the persisted field is cleared.
+	tk.MustExec("analyze table t with default samplerate")
+	require.True(t, hasAdaptiveSampleRateNote())
+	tk.MustQuery(optsQuery).Check(testkit.Rows("0 -1 0 -1 ALL"))
+
+	// A plain analyze keeps everything unset and still follows the defaults.
+	tk.MustExec("analyze table t")
+	require.True(t, hasAdaptiveSampleRateNote())
+	tk.MustQuery(optsQuery).Check(testkit.Rows("0 -1 0 -1 ALL"))
+
+	// NDVRATE persists like SAMPLERATE. A zero threshold makes a run read every
+	// row but keeps the saved rate; 1 pins full input and DEFAULT clears it. The
+	// saved SAMPLERATE keeps TopN and histograms of this tiny table from taking
+	// every row, which would raise the NDV rate to 1.
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1")
+	ndvQuery := fmt.Sprintf("select ndv_rate from mysql.analyze_options where table_id = %d", tableInfo.ID)
+	lastRunSampled := "select job_info like '%0.5 ndvrate%' from mysql.analyze_jobs where table_name = 't' order by id desc limit 1"
+	tk.MustExec("analyze table t with 0.5 NDVRATE, 0.5 SAMPLERATE")
+	tk.MustQuery(ndvQuery).Check(testkit.Rows("0.5"))
+	tk.MustExec("analyze table t")
+	tk.MustQuery(lastRunSampled).Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 0")
+	tk.MustExec("analyze table t")
+	tk.MustQuery(lastRunSampled).Check(testkit.Rows("0"))
+	tk.MustQuery(ndvQuery).Check(testkit.Rows("0.5"))
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1")
+	tk.MustExec("analyze table t with 1 NDVRATE")
+	tk.MustQuery(ndvQuery).Check(testkit.Rows("1"))
+	tk.MustExec("analyze table t with default NDVRATE, default SAMPLERATE")
+	tk.MustQuery(ndvQuery).Check(testkit.Rows("-1"))
+
+	// With persistence off there is no saved value to reset, so DEFAULT only
+	// means "use the system default for this run": it is accepted, the run
+	// follows tidb_analyze_default_num_buckets, and the persisted row that an
+	// earlier analyze wrote is left untouched rather than cleared.
+	tk.MustExec("analyze table t all columns with 2 buckets")
+	tk.MustQuery(optsQuery).Check(testkit.Rows("0 -1 2 -1 ALL"))
+	tk.MustExec("set global tidb_persist_analyze_options = false")
+	// The default TopN can hold all 12 values; leave them in the histogram to
+	// check the default bucket count independently of TopN collection.
+	tk.MustExec("analyze table t all columns with default buckets, 0 topn")
+	tk.MustQuery(optsQuery).Check(testkit.Rows("0 -1 2 -1 ALL"))
+	tbl = loadStats()
+	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
+}
+
+// TestAnalyzeWithDefaultResetsPartitionOptions tests the partition semantics of
+// ANALYZE ... WITH DEFAULT <option>: a partition-level reset drops only that
+// partition's own persisted value, so the partition immediately follows the
+// table-level saved value again if one exists, otherwise the system default.
+// A whole-table reset clears the table row and all partition rows. In dynamic
+// prune mode a partition-level DEFAULT is ignored like other options.
+// See https://github.com/pingcap/tidb/issues/69853
+func TestAnalyzeWithDefaultResetsPartitionOptions(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	originalVal := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal))
+	}()
+	tk.MustExec("set global tidb_persist_analyze_options = true")
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	tk.MustExec(`create table t (a int, b int, primary key(a), key idx(b))
+partition by range (a) (
+	partition p0 values less than (10),
+	partition p1 values less than (20)
+)`)
+	tk.MustExec("insert into t values (1,1),(2,1),(3,1),(4,2),(5,2),(6,2),(7,7),(8,8),(9,9),(10,10),(11,11),(12,12),(13,13),(14,14)")
+
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	require.NotNil(t, pi)
+	p0ID := pi.Definitions[0].ID
+	p1ID := pi.Definitions[1].ID
+	optsFor := func(id int64) *testkit.Result {
+		return tk.MustQuery(fmt.Sprintf("select buckets,topn from mysql.analyze_options where table_id = %d", id))
+	}
+	p0Buckets := func() int {
+		p0 := h.GetPhysicalTableStats(p0ID, tableInfo)
+		return len(p0.GetCol(tableInfo.Columns[0].ID).Buckets)
+	}
+
+	// Pin table-level options: the table row and both partition rows are saved.
+	tk.MustExec("analyze table t with 2 buckets, 1 topn")
+	optsFor(tableInfo.ID).Check(testkit.Rows("2 1"))
+	optsFor(p0ID).Check(testkit.Rows("2 1"))
+	optsFor(p1ID).Check(testkit.Rows("2 1"))
+	require.Equal(t, 2, p0Buckets())
+
+	// Pin a partition-level override on p0.
+	tk.MustExec("analyze table t partition p0 with 3 buckets")
+	optsFor(tableInfo.ID).Check(testkit.Rows("2 1"))
+	optsFor(p0ID).Check(testkit.Rows("3 1"))
+	require.Equal(t, 3, p0Buckets())
+
+	// A partition-level reset drops only p0's override: the run immediately
+	// follows the table-level saved value again, which is re-materialized into
+	// p0's row; the table row and other partitions are untouched.
+	tk.MustExec("analyze table t partition p0 with default buckets")
+	optsFor(tableInfo.ID).Check(testkit.Rows("2 1"))
+	optsFor(p0ID).Check(testkit.Rows("2 1"))
+	optsFor(p1ID).Check(testkit.Rows("2 1"))
+	require.Equal(t, 2, p0Buckets())
+
+	// A whole-table reset clears the field on the table row and all partition rows.
+	tk.MustExec("analyze table t with default buckets")
+	optsFor(tableInfo.ID).Check(testkit.Rows("0 1"))
+	optsFor(p0ID).Check(testkit.Rows("0 1"))
+	optsFor(p1ID).Check(testkit.Rows("0 1"))
+	require.Greater(t, p0Buckets(), 3)
+
+	// With no table-level saved value, a partition-level reset falls back to
+	// the system default.
+	tk.MustExec("analyze table t partition p0 with 3 buckets")
+	optsFor(p0ID).Check(testkit.Rows("3 1"))
+	require.Equal(t, 3, p0Buckets())
+	tk.MustExec("analyze table t partition p0 with default buckets")
+	optsFor(tableInfo.ID).Check(testkit.Rows("0 1"))
+	optsFor(p0ID).Check(testkit.Rows("0 1"))
+	require.Greater(t, p0Buckets(), 3)
+
+	// In dynamic prune mode a partition-level DEFAULT is ignored with the same
+	// warning as other options, and nothing is cleared.
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("analyze table t partition p0 with default topn")
+	ignoreWarningFound := false
+	for _, row := range tk.MustQuery("show warnings").Rows() {
+		if strings.Contains(fmt.Sprintf("%v", row[2]), "Ignore columns and options when analyze partition in dynamic mode") {
+			ignoreWarningFound = true
+		}
+	}
+	require.True(t, ignoreWarningFound)
+	optsFor(tableInfo.ID).Check(testkit.Rows("0 1"))
+
+	// A whole-table DEFAULT in dynamic mode must clear old partition overrides
+	// too. Otherwise they become effective again after switching back to static
+	// pruning.
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	tk.MustExec("analyze table t partition p0 with 3 buckets")
+	optsFor(p0ID).Check(testkit.Rows("3 1"))
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("analyze table t with default buckets")
+	optsFor(tableInfo.ID).Check(testkit.Rows("0 1"))
+	optsFor(p0ID).Check(testkit.Rows("0 1"))
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	tk.MustExec("analyze table t partition p0")
+	require.Greater(t, p0Buckets(), 3)
+}
+
+func TestAnalyzeNDVRate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ndv (a int primary key, b int, key idx(b)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
+	tk.MustExec("insert into ndv values (1,1),(2,2),(11,1),(12,2)")
+	lastRate := func(partition string) string {
+		return fmt.Sprintf("select job_info from mysql.analyze_jobs where table_name='ndv' and partition_name='%s' order by id desc limit 1", partition)
+	}
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1")
+	// The mock server is a legacy peer: a sampled request may get full-input
+	// results. The saved SAMPLERATE keeps TopN and histograms of these tiny
+	// partitions from taking every row, which would raise the NDV rate to 1.
+	tk.MustExec("analyze table ndv with 0.1 NDVRATE, 0.1 SAMPLERATE")
+	tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name='ndv' and job_info like '%0.1 ndvrate%'").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch where left(value,1)=x'00'").Check(testkit.Rows("0"))
+	// Clear the NDVRATE saved above, so the partitions below use the rule.
+	tk.MustExec("analyze table ndv with default NDVRATE")
+	// Partitions choose their rates independently, and a statement that names
+	// partitions ignores NDVRATE in dynamic mode, like the other options.
+	tk.MustExec("insert into ndv values (3,3),(4,4)")
+	tk.MustExec("analyze table ndv partition p0, p1 with 0.2 NDVRATE")
+	tk.MustQuery(lastRate("p0")).CheckContain("0.25 ndvrate")
+	tk.MustQuery(lastRate("p1")).CheckContain("0.5 ndvrate")
+	// The rate falls with the row count until it reaches 0.05 at 20 times the
+	// threshold. The injected count does not change the adjusted SAMPLERATE of
+	// this one-row table, so a saved SAMPLERATE keeps it from raising the rate.
+	tk.MustExec("create table ndv_large (a int)")
+	tk.MustExec("insert into ndv_large values (1)")
+	tk.MustExec("analyze table ndv_large with 0.01 samplerate")
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 500000000")
+	for _, tc := range []struct{ rows, rate string }{{"500000000", ""}, {"2000000000", "0.25 ndvrate"}, {"40000000000", "0.05 ndvrate"}} {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/injectBaseCount", "return("+tc.rows+")")
+		tk.MustExec("analyze table ndv_large")
+		job := tk.MustQuery("select job_info from mysql.analyze_jobs where table_name='ndv_large' order by id desc limit 1")
+		if tc.rate == "" {
+			job.CheckNotContain("ndvrate")
+		} else {
+			job.CheckContain(tc.rate)
+		}
+	}
+	// The NDV rate covers the rows that TopN and histograms sample: the saved
+	// SAMPLERATE, the adjusted SAMPLERATE of 1 of this one-row table, and 5000000
+	// samples of 4e10 rows. A rate raised to 1 still shows in the job.
+	lastJob := "select job_info from mysql.analyze_jobs where table_name='ndv_large' order by id desc limit 1"
+	tk.MustExec("analyze table ndv_large with 0.001 NDVRATE")
+	tk.MustQuery("show warnings").CheckContain("Analyze raised the NDV rate from 0.001 to 0.01 for table test.ndv_large")
+	tk.MustQuery(lastJob).CheckContain("0.01 samplerate, 0.01 ndvrate")
+	tk.MustExec("analyze table ndv_large with default SAMPLERATE")
+	warnings := tk.MustQuery("show warnings")
+	warnings.CheckContain("Analyze raised the NDV rate from 0.001 to 1 for table test.ndv_large")
+	warnings.CheckNotContain("NDVRATE is not used")
+	tk.MustQuery(lastJob).CheckContain(", 1 ndvrate")
+	tk.MustExec("analyze table ndv_large with 0.0001 NDVRATE, 5000000 SAMPLES")
+	tk.MustQuery("show warnings").CheckContain("Analyze raised the NDV rate from 0.0001 to 0.000125 for table test.ndv_large")
+	tk.MustQuery(lastJob).CheckContain("0.000125 ndvrate")
+	// A rate of 1 already covers 5000000 samples of 2e6 rows, so nothing is raised.
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1000000")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/injectBaseCount", "return(2000000)")
+	tk.MustExec("analyze table ndv_large with 1 NDVRATE, 5000000 SAMPLES")
+	tk.MustQuery("show warnings").CheckNotContain("raised the NDV rate")
+	tk.MustQuery(lastJob).CheckNotContain("ndvrate")
 }

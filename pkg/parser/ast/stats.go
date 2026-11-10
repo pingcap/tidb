@@ -56,6 +56,7 @@ const (
 	AnalyzeOptCMSketchWidth
 	AnalyzeOptNumSamples
 	AnalyzeOptSampleRate
+	AnalyzeOptNDVRate
 )
 
 // AnalyzeOptionString stores the string form of analyze options.
@@ -66,6 +67,7 @@ var AnalyzeOptionString = map[AnalyzeOptionType]string{
 	AnalyzeOptCMSketchDepth: "CMSKETCH DEPTH",
 	AnalyzeOptNumSamples:    "SAMPLES",
 	AnalyzeOptSampleRate:    "SAMPLERATE",
+	AnalyzeOptNDVRate:       "NDVRATE",
 }
 
 // HistogramOperationType is the type for histogram operation.
@@ -91,6 +93,15 @@ func (hot HistogramOperationType) String() string {
 }
 
 // AnalyzeOpt stores the analyze option type and value.
+// A nil Value means the option was specified as DEFAULT: the persisted value
+// for the analyzed target is cleared and the analyze behaves as if the option
+// had never been persisted for it. A partition then falls back to the
+// table-level saved value if one exists, otherwise the system default applies.
+// The DEFAULT keyword is deliberately the only way to express a reset; no
+// literal "magic" value is reserved for it, because that cannot work uniformly
+// (0 TOPN is already a valid pinned value that disables TopN collection, and
+// the BUCKETS/TOPN defaults are system variables that a literal would pin
+// rather than follow).
 type AnalyzeOpt struct {
 	Type  AnalyzeOptionType
 	Value ValueExpr
@@ -169,7 +180,11 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			ctx.WritePlainf(" %v ", opt.Value.GetValue())
+			if opt.Value == nil {
+				ctx.WriteKeyWord(" DEFAULT ")
+			} else {
+				ctx.WritePlainf(" %v ", opt.Value.GetValue())
+			}
 			ctx.WritePlain(AnalyzeOptionString[opt.Type])
 		}
 	}

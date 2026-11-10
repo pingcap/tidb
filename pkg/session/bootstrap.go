@@ -423,6 +423,7 @@ const (
 		topn BIGINT(64) NOT NULL DEFAULT -1,
 		column_choice enum('DEFAULT','ALL','PREDICATE','LIST') NOT NULL DEFAULT 'DEFAULT',
 		column_ids TEXT(19372),
+		ndv_rate DOUBLE NOT NULL DEFAULT -1,
 		PRIMARY KEY (table_id) CLUSTERED
 	);`
 	// CreateStatsHistory stores the historical stats.
@@ -1521,11 +1522,13 @@ const (
 	version240 = 240
 	// version 241 backfills analyze default bucket and TopN global variables.
 	version241 = 241
+	// version242 adds the sampled NDV analyze option and upgrade backfill.
+	version242 = 242
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version241
+var currentBootstrapVersion int64 = version242
 
 // currentEEBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
@@ -1720,6 +1723,7 @@ var (
 		upgradeToVer239,
 		upgradeToVer240,
 		upgradeToVer241,
+		upgradeToVer242,
 	}
 )
 
@@ -3831,6 +3835,17 @@ func upgradeToVer241(s sessiontypes.Session, ver int64) {
 	// Backfill only absent rows so @@global reads use defaults while preserving user-set values.
 	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeDefaultNumBuckets, variable.DefTiDBAnalyzeDefaultNumBuckets)
 	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeDefaultNumTopN, variable.DefTiDBAnalyzeDefaultNumTopN)
+}
+
+func upgradeToVer242(s sessiontypes.Session, ver int64) {
+	if ver >= version242 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.analyze_options ADD COLUMN IF NOT EXISTS ndv_rate DOUBLE NOT NULL DEFAULT -1")
+	// Old TiDB cannot read sampled sketches. Upgrades keep sampling disabled
+	// until every TiDB and TiKV node supports the protocol.
+	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeSampledNDVThreshold, 0)
 }
 
 func upgradeEEToVer2(s sessiontypes.Session, ver int64) {

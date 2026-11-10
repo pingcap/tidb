@@ -382,7 +382,7 @@ replace (
 // PingKai cross-repository dependency overrides.
 replace github.com/pingcap/kvproto => git.pingcap.cn/pingkai/kvproto v0.0.0-20261104055907-8973a031f605
 
-replace github.com/pingcap/tipb => git.pingcap.cn/pingkai/tipb v0.0.0-20260725025521-4a06b885d1a1
+replace github.com/pingcap/tipb => git.pingcap.cn/pingkai/tipb v0.0.0-20261103115826-66aadd8c9a36
 
 replace github.com/tikv/client-go/v2 => git.pingcap.cn/pingkai/client-go/v2 v2.0.0-20261104063944-a9f43015e198
 

@@ -737,6 +737,7 @@ var Keywords = []KeywordsType{
 	{"MAXIMUM_AVAILABILITY", false, "tidb"},
 	{"MAXIMUM_PERFORMANCE", false, "tidb"},
 	{"MAXIMUM_PROTECTION", false, "tidb"},
+	{"NDVRATE", false, "tidb"},
 	{"NODE_ID", false, "tidb"},
 	{"NODE_STATE", false, "tidb"},
 	{"OPTIMISTIC", false, "tidb"},

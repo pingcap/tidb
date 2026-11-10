@@ -1236,3 +1236,36 @@ func TestAutoAnalyzeConcurrencyDefaultOnlyAffectsFreshBootstrap(t *testing.T) {
 
 	testkit.NewTestKit(t, store).MustQuery("select variable_value from mysql.global_variables where variable_name='tidb_auto_analyze_concurrency'").Check(testkit.Rows("8"))
 }
+
+// TestUpgradeAddsSampledNDVOption verifies the different bootstrap and upgrade
+// defaults and preservation of previously saved analyze options.
+func TestUpgradeAddsSampledNDVOption(t *testing.T) {
+	ctx := context.Background()
+	originalThreshold := variable.AnalyzeSampledNDVThreshold.Load()
+	t.Cleanup(func() { variable.AnalyzeSampledNDVThreshold.Store(originalThreshold) })
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	se := session.CreateSessionAndSetID(t, store)
+	res := session.MustExecToRecodeSet(t, se, "select variable_value from mysql.global_variables where variable_name='tidb_analyze_sampled_ndv_threshold'")
+	chk := res.NewChunk(nil)
+	require.NoError(t, res.Next(ctx, chk))
+	require.Equal(t, "100000000", chk.GetRow(0).GetString(0))
+	require.NoError(t, res.Close())
+	session.MustExec(t, se, "alter table mysql.analyze_options drop column ndv_rate")
+	session.MustExec(t, se, "insert into mysql.analyze_options (table_id,buckets) values (1,123)")
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(241))
+	require.NoError(t, txn.Commit(ctx))
+	revertVersionAndVariables(t, se, 241)
+	session.MustExec(t, se, "delete from mysql.global_variables where variable_name='tidb_analyze_sampled_ndv_threshold'")
+	session.MustExec(t, se, "commit")
+	session.UnsetStoreBootstrapped(store.UUID())
+	dom.Close()
+	currentDom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer currentDom.Close()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@global.tidb_analyze_sampled_ndv_threshold").Check(testkit.Rows("0"))
+	tk.MustQuery("select buckets,ndv_rate from mysql.analyze_options where table_id=1").Check(testkit.Rows("123 -1"))
+}

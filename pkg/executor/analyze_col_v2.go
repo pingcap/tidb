@@ -58,6 +58,7 @@ type AnalyzeColumnsExecV2 struct {
 func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(ctx context.Context, gp *gp.Pool) *statistics.AnalyzeResults {
 	intest.Assert(e.samplingStatsConcurrency > 0,
 		"samplingStatsConcurrency must be resolved by AnalyzeExec.Next before workers fan out")
+	intest.Assert(e.tableInfo != nil, "tableInfo must be set by the executor builder")
 	var ranges []*ranger.Range
 	if hc := e.handleCols; hc != nil {
 		if hc.IsInt() {
@@ -890,7 +891,13 @@ workLoop:
 					e.releaseSamplingCollectorMemory(collector)
 				}
 			}
-			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn, e.memTracker, e.ctx.GetSessionVars().EnableExtendedStats)
+			numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
+			if statistics.UniqueBySchema(e.tableInfo, !task.isColumn, task.id) {
+				// Schema uniqueness makes the non-NULL row count the NDV.
+				numTopN = 0
+				collector.Unique = true
+			}
+			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, task.id, collector, task.tp, task.isColumn, e.memTracker, e.ctx.GetSessionVars().EnableExtendedStats)
 			if err != nil {
 				resultCh <- err
 				releaseCollectorMemory()
