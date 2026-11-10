@@ -70,6 +70,7 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_expression_aggregation::{AggFuncDesc, AggFunctionMode};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
+#[cfg(test)]
 use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
 use tidb_hack::GoCaseCompare;
@@ -3368,18 +3369,21 @@ fn join_equality_with_collation(
     null_safe: bool,
     collation: Option<tidb_charset::Collation>,
 ) -> Result<Expression, DriverError> {
-    let mut ret_type = FieldType::new(FieldTypeCode::Tiny);
-    if let Some(collation) = collation {
-        ret_type.set_collation(collation);
-    }
-    let expression = Expression::ScalarFunction(ScalarFunction::new(
-        tidb_ast::CiString::new(if null_safe { "nulleq" } else { "eq" }),
-        ret_type,
+    let mut expression = tidb_expr::new_function(
+        &tidb_exprctx::NoColumns,
+        if null_safe { "nulleq" } else { "eq" },
+        FieldType::new(FieldTypeCode::Tiny),
         vec![
             Expression::Column(left.clone()),
             Expression::Column(right.clone()),
         ],
-    ));
+    )
+    .map_err(|error| DriverError::from(crate::ExecError::Eval(error)))?;
+    if let (Some(collation), Expression::ScalarFunction(function)) = (collation, &mut expression) {
+        function
+            .collation
+            .set_charset_and_collation(collation.charset().name(), collation.name());
+    }
     resolve_expression(expression, schema)
 }
 
