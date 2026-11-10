@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -56,4 +57,57 @@ func TestResourceGroupHintInTxn(t *testing.T) {
 	// for final prewrite/commit the resource group should be rg2
 	tk.MustExec("update /*+ RESOURCE_GROUP(unknown_2) */ t set val = val + 1 where id = 5;")
 	tk.MustExec("COMMIT;")
+}
+
+func TestSessionFallsBackFromDroppedResourceGroup(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	root.MustExec("use test")
+	root.MustExec("create table t (id int primary key)")
+	root.MustExec("create resource group rg1 ru_per_sec=1000")
+	root.MustExec("create resource group rg2 ru_per_sec=1000")
+	root.MustExec("create user u1 resource group rg1")
+	root.MustExec("grant all on test.* to u1")
+
+	// A session logged in before its user moves to another group falls back
+	// to the user's current group once the old group is dropped.
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil, nil))
+	tk.MustQuery("select current_resource_group()").Check(testkit.Rows("rg1"))
+	root.MustExec("alter user u1 resource group rg2")
+	tk.MustQuery("select current_resource_group()").Check(testkit.Rows("rg1"))
+	root.MustExec("drop resource group rg1")
+	tk.MustQuery("select current_resource_group()").Check(testkit.Rows("rg2"))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 resource group rg1 no longer exists, the session now uses resource group rg2"))
+	tk.MustQuery("select current_resource_group()").Check(testkit.Rows("rg2"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	// A group set by SET RESOURCE GROUP falls back to default when the user
+	// has no group. A transaction started before the drop sends its later
+	// requests and its commit in the new group.
+	root.MustExec("create resource group rg3 ru_per_sec=1000")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("set resource group rg3")
+	// The checker is attached to the transaction when it starts, so enable it
+	// only around the start: DDL run later is not checked. The reads before the
+	// drop send no lock, prewrite or commit request.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/kv/TxnResourceGroupChecker", `return("default")`))
+	tk2.MustExec("begin pessimistic")
+	tk2.MustQuery("select * from t").Check(testkit.Rows())
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/kv/TxnResourceGroupChecker"))
+	root.MustExec("drop resource group rg3")
+	tk2.MustExec("insert into t values (1)")
+	tk2.MustQuery("select current_resource_group()").Check(testkit.Rows("default"))
+	tk2.MustExec("commit")
+
+	// A group dropped and created again before the next statement is kept.
+	root.MustExec("create resource group rg4 ru_per_sec=1000")
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("set resource group rg4")
+	root.MustExec("drop resource group rg4")
+	root.MustExec("create resource group rg4 ru_per_sec=2000")
+	tk3.MustQuery("select current_resource_group()").Check(testkit.Rows("rg4"))
+	tk3.MustQuery("show warnings").Check(testkit.Rows())
 }
