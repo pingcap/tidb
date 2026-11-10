@@ -210,6 +210,10 @@ func TestVectorizable(t *testing.T) {
 	sf = newFunctionWithMockCtx(ast.SetVar, column0, column1)
 	exprs = append(exprs, sf)
 	require.False(t, Vectorizable(exprs))
+	require.False(t, Vectorizable([]Expression{
+		newFunctionWithMockCtx(ast.SetVal, column1, column2),
+		newFunctionWithMockCtx(ast.SetVal, column1, column2),
+	}))
 
 	exprs = exprs[:0]
 	sf = newFunctionWithMockCtx(ast.GetVar, column0)
@@ -243,6 +247,54 @@ func TestVectorizable(t *testing.T) {
 	}
 	require.False(t, Vectorizable([]Expression{loadableFunc}))
 	require.False(t, Vectorizable([]Expression{newFunctionWithMockCtx(ast.Abs, loadableFunc)}))
+	require.True(t, ParallelizableWithSerialLoadableFunctions([]Expression{loadableFunc, NewOne()}))
+
+	// Sequence functions nested below a loadable UDF still participate in the
+	// ordering dependency check. Otherwise NEXTVAL can run on the serial UDF
+	// lane after a sibling LASTVAL or SETVAL has already run on a worker.
+	nestedNextVal := newFunctionWithMockCtx(ast.NextVal, column0)
+	loadableFuncWithNextVal := &ScalarFunction{
+		FuncName: pmodel.NewCIStr("test_loadable_func_with_nextval"),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		Function: &loadableFuncSig{baseBuiltinFunc: baseBuiltinFunc{
+			args: []Expression{nestedNextVal},
+		}},
+	}
+	require.False(t, ParallelizableWithSerialLoadableFunctions([]Expression{
+		loadableFuncWithNextVal,
+		newFunctionWithMockCtx(ast.LastVal, column0),
+	}))
+	require.False(t, ParallelizableWithSerialLoadableFunctions([]Expression{
+		loadableFuncWithNextVal,
+		newFunctionWithMockCtx(ast.SetVal, column1, column2),
+	}))
+	require.False(t, ParallelizableWithSerialLoadableFunctions([]Expression{
+		loadableFuncWithNextVal,
+		newFunctionWithMockCtx(ast.Abs, newFunctionWithMockCtx(ast.NextVal, column0)),
+	}))
+	nestedSetVal := newFunctionWithMockCtx(ast.SetVal, column1, column2)
+	loadableFuncWithSetVal := &ScalarFunction{
+		FuncName: pmodel.NewCIStr("test_loadable_func_with_setval"),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		Function: &loadableFuncSig{baseBuiltinFunc: baseBuiltinFunc{
+			args: []Expression{nestedSetVal},
+		}},
+	}
+	require.False(t, ParallelizableWithSerialLoadableFunctions([]Expression{
+		loadableFuncWithSetVal,
+		newFunctionWithMockCtx(ast.SetVal, column1, column2),
+	}))
+
+	suite := NewEvaluatorSuite([]Expression{loadableFunc, NewOne(), column}, false)
+	require.True(t, suite.CanRunLoadableFunctionsSerially())
+	serial, parallel := suite.SplitLoadableFunctions()
+	require.Len(t, serial.defaultEvaluator.exprs, 1)
+	require.Same(t, loadableFunc, serial.defaultEvaluator.exprs[0])
+	require.Len(t, parallel.defaultEvaluator.exprs, 1)
+	require.Equal(t, NewOne().Value.GetValue(), parallel.defaultEvaluator.exprs[0].(*Constant).Value.GetValue())
+	require.NotNil(t, suite.ColumnSwapHelper)
+	require.Nil(t, serial.ColumnSwapHelper)
+	require.Nil(t, parallel.ColumnSwapHelper)
 }
 
 type testTableBuilder struct {

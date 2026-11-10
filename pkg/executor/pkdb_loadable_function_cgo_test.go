@@ -205,6 +205,142 @@ func TestLoadableFunctionMockedSelectOnTable(t *testing.T) {
 		require.Contains(t, row[5], "Concurrency:OFF")
 	}
 	require.True(t, projectionFound)
+
+	// A Projection with independent regular expressions can keep those
+	// expressions on its workers while the loadable UDF itself remains on the
+	// ordered single-threaded Next path.
+	var values strings.Builder
+	values.WriteString("insert into t_udf_tbl values ")
+	for i := 4; i <= 2048; i++ {
+		if i > 4 {
+			values.WriteByte(',')
+		}
+		fmt.Fprintf(&values, "(%d)", i)
+	}
+	tk.MustExec(values.String())
+	result := tk.MustQuery("select sum(udf_tbl(id)), sum(length(format_bytes(id))) from t_udf_tbl")
+	require.Equal(t, "2100224", result.Rows()[0][0])
+
+	rows = tk.MustQuery("explain analyze select sum(udf_tbl(id)), sum(length(format_bytes(id))) from t_udf_tbl").Rows()
+	projectionFound = false
+	for _, row := range rows {
+		if !strings.Contains(row[0].(string), "Projection") {
+			continue
+		}
+		projectionFound = true
+		require.Contains(t, row[5], "Concurrency:4")
+		require.Contains(t, row[5], "LoadableUDFConcurrency:1")
+	}
+	require.True(t, projectionFound)
+}
+
+func TestLoadableFunctionOrderedSerialProjectionLane(t *testing.T) {
+	restore := expression.SetLoadUDFHookForTest(expression.MockLoadUDFForTest)
+	t.Cleanup(restore)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	enableLoadableFunction(tk)
+	tk.MustExec("use test")
+	tk.MustExec("create function udf_stateful returns integer soname 'udf1.so'")
+	tk.MustExec("create table t_udf_serial_lane (id int primary key)")
+
+	var values strings.Builder
+	values.WriteString("insert into t_udf_serial_lane values ")
+	for i := 1; i <= 2048; i++ {
+		if i > 1 {
+			values.WriteByte(',')
+		}
+		fmt.Fprintf(&values, "(%d)", i)
+	}
+	tk.MustExec(values.String())
+	tk.Session().GetSessionVars().SetProjectionConcurrency(4)
+	tk.MustExec("set @@tidb_max_chunk_size = 32")
+
+	// The mock UDF keeps its counter in UDF_INIT.ptr. Even though independent
+	// expressions run on four workers, the UDF must observe one ordered runtime
+	// and LIMIT must not cause speculative calls for rows the parent never reads.
+	expression.ResetMockUDFCountersForTest()
+	const query = "select id, udf_stateful(id), length(sha2(repeat(format_bytes(id), 10), 512)) from t_udf_serial_lane limit 64"
+	rows := tk.MustQuery(query).Rows()
+	require.Len(t, rows, 64)
+	for i, row := range rows {
+		require.Equal(t, fmt.Sprintf("%d", i+1), row[1])
+		require.Equal(t, "128", row[2])
+	}
+	initCalls, deinitCalls, callCalls := expression.MockUDFCountersForTest()
+	require.GreaterOrEqual(t, initCalls, 1)
+	require.Equal(t, initCalls, deinitCalls)
+	require.Equal(t, 64, callCalls)
+
+	expression.ResetMockUDFCountersForTest()
+	rows = tk.MustQuery("explain analyze " + query).Rows()
+	projectionFound := false
+	for _, row := range rows {
+		if !strings.Contains(row[0].(string), "Projection") {
+			continue
+		}
+		projectionFound = true
+		require.Contains(t, row[5], "Concurrency:4")
+		require.Contains(t, row[5], "LoadableUDFConcurrency:1")
+	}
+	require.True(t, projectionFound)
+	_, _, callCalls = expression.MockUDFCountersForTest()
+	require.Equal(t, 64, callCalls)
+}
+
+func TestLoadableFunctionNestedSequenceOrder(t *testing.T) {
+	restore := expression.SetLoadUDFHookForTest(expression.MockLoadUDFForTest)
+	t.Cleanup(restore)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	enableLoadableFunction(tk)
+	tk.MustExec("use test")
+	tk.MustExec("create function udf_review_seq returns integer soname 'udf1.so'")
+	tk.MustExec("create sequence review_seq")
+	tk.MustExec("create table review_seq_rows (id int primary key)")
+	tk.MustExec("insert into review_seq_rows values (1)")
+	for range 6 {
+		tk.MustExec("insert into review_seq_rows select id + (select max(id) from review_seq_rows) from review_seq_rows")
+	}
+	tk.MustExec("set tidb_max_chunk_size = 32")
+	tk.Session().GetSessionVars().SetProjectionConcurrency(4)
+
+	rows := tk.MustQuery("select udf_review_seq(nextval(review_seq)), lastval(review_seq) from review_seq_rows").Rows()
+	require.Len(t, rows, 64)
+	for i, row := range rows {
+		require.Equal(t, fmt.Sprintf("%d", i+2), row[0])
+		require.Equal(t, fmt.Sprintf("%d", i+1), row[1], "row %d", i)
+	}
+}
+
+func TestLoadableFunctionSetValOrder(t *testing.T) {
+	restore := expression.SetLoadUDFHookForTest(expression.MockLoadUDFForTest)
+	t.Cleanup(restore)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	enableLoadableFunction(tk)
+	tk.MustExec("use test")
+	tk.MustExec("create function udf_review_setval returns integer soname 'udf1.so'")
+	tk.MustExec("create sequence review_setval_seq")
+	tk.MustExec("create table review_setval_rows (id int primary key)")
+	tk.MustExec("insert into review_setval_rows values (1)")
+	for range 6 {
+		tk.MustExec("insert into review_setval_rows select id + (select max(id) from review_setval_rows) from review_setval_rows")
+	}
+	tk.MustExec("set tidb_max_chunk_size = 32")
+	tk.Session().GetSessionVars().SetProjectionConcurrency(4)
+
+	rows := tk.MustQuery("select udf_review_setval(setval(review_setval_seq, 10)), setval(review_setval_seq, 20) from review_setval_rows").Rows()
+	require.Len(t, rows, 64)
+	require.Equal(t, "11", rows[0][0])
+	require.Equal(t, "20", rows[0][1])
+	for i, row := range rows[1:] {
+		require.Equal(t, "<nil>", row[0], "UDF result at row %d", i+1)
+		require.Equal(t, "<nil>", row[1], "SETVAL result at row %d", i+1)
+	}
 }
 
 func TestLoadableFunctionMockedInitFailure(t *testing.T) {

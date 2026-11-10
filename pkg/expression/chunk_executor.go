@@ -28,10 +28,15 @@ import (
 
 // Vectorizable checks whether a list of expressions can employ vectorized execution.
 func Vectorizable(exprs []Expression) bool {
-	for _, expr := range exprs {
-		if HasGetSetVarFunc(expr) {
-			return false
-		}
+	return vectorizable(exprs, true)
+}
+
+// vectorizable checks the expression restrictions shared by the normal and
+// split-UDF projection paths. When rejectLoadable is false, loadable UDFs are
+// allowed because the caller evaluates them in a serial lane instead.
+func vectorizable(exprs []Expression, rejectLoadable bool) bool {
+	if slices.ContainsFunc(exprs, HasGetSetVarFunc) {
+		return false
 	}
 	// Stored functions reuse session-scoped routine / transaction state while evaluating rows,
 	// so they must not be driven by parallel projection workers.
@@ -39,15 +44,26 @@ func Vectorizable(exprs []Expression) bool {
 		return false
 	}
 	// Loadable functions keep mutable C runtime state in the expression and the
-	// same expression is shared by parallel projection workers.
-	if slices.ContainsFunc(exprs, HasLoadableFunc) {
+	// same expression is shared by parallel projection workers. The split-UDF
+	// path evaluates them on the ordered serial lane instead.
+	if rejectLoadable && slices.ContainsFunc(exprs, HasLoadableFunc) {
 		return false
 	}
 	return checkSequenceFunction(exprs)
 }
 
+// ParallelizableWithSerialLoadableFunctions reports whether a Projection may
+// keep its regular expressions on parallel workers while evaluating every
+// top-level expression containing a loadable UDF on the ordered Next path.
+// Loadable UDFs are deliberately omitted from the rejection list: they are
+// never evaluated by the parallel workers in this mode.
+func ParallelizableWithSerialLoadableFunctions(exprs []Expression) bool {
+	return vectorizable(exprs, false)
+}
+
 // checkSequenceFunction indicates whether the exprs can be evaluated as a vector.
-// When two or more of this three(nextval, lastval, setval) exists in exprs list and one of them is nextval, it should be eval row by row.
+// Sequence functions that can observe or change each other's state must be
+// evaluated row by row to preserve the expression order.
 func checkSequenceFunction(exprs []Expression) bool {
 	var (
 		nextval int
@@ -55,25 +71,33 @@ func checkSequenceFunction(exprs []Expression) bool {
 		setval  int
 	)
 	for _, expr := range exprs {
-		scalaFunc, ok := expr.(*ScalarFunction)
-		if !ok {
-			continue
-		}
-		switch scalaFunc.FuncName.L {
-		case ast.NextVal:
-			nextval++
-		case ast.LastVal:
-			lastval++
-		case ast.SetVal:
-			setval++
-		}
+		countSequenceFunctions(expr, &nextval, &lastval, &setval)
 	}
 	// case1: nextval && other sequence function.
 	// case2: more than one nextval.
-	if (nextval > 0 && (lastval > 0 || setval > 0)) || (nextval > 1) {
+	// case3: more than one setval.
+	if (nextval > 0 && (lastval > 0 || setval > 0)) || nextval > 1 || setval > 1 {
 		return false
 	}
 	return true
+}
+
+func countSequenceFunctions(expr Expression, nextval, lastval, setval *int) {
+	scalarFunc, ok := expr.(*ScalarFunction)
+	if !ok {
+		return
+	}
+	switch scalarFunc.FuncName.L {
+	case ast.NextVal:
+		(*nextval)++
+	case ast.LastVal:
+		(*lastval)++
+	case ast.SetVal:
+		(*setval)++
+	}
+	for _, arg := range scalarFunc.GetArgs() {
+		countSequenceFunctions(arg, nextval, lastval, setval)
+	}
 }
 
 // HasGetSetVarFunc checks whether an expression contains SetVar/GetVar function.

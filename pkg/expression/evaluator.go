@@ -15,6 +15,8 @@
 package expression
 
 import (
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -121,6 +123,51 @@ func NewEvaluatorSuite(exprs []Expression, avoidColumnEvaluator bool) *Evaluator
 // Vectorizable checks whether this EvaluatorSuite can use vectorizd execution mode.
 func (e *EvaluatorSuite) Vectorizable() bool {
 	return e.defaultEvaluator == nil || e.defaultEvaluator.vectorizable
+}
+
+// SplitLoadableFunctions separates top-level expressions containing loadable
+// UDFs from expressions that may continue to run on Projection workers. Column
+// swaps are intentionally left on the original suite: they mutate the input
+// Chunk and therefore must run after the ordered serial UDF stage has consumed
+// that input.
+func (e *EvaluatorSuite) SplitLoadableFunctions() (serial, parallel *EvaluatorSuite) {
+	serial = &EvaluatorSuite{}
+	parallel = &EvaluatorSuite{}
+	if e.defaultEvaluator == nil {
+		return serial, parallel
+	}
+	for i, expr := range e.defaultEvaluator.exprs {
+		target := parallel
+		if HasLoadableFunc(expr) {
+			target = serial
+		}
+		if target.defaultEvaluator == nil {
+			target.defaultEvaluator = &defaultEvaluator{}
+		}
+		target.defaultEvaluator.exprs = append(target.defaultEvaluator.exprs, expr)
+		target.defaultEvaluator.outputIdxes = append(target.defaultEvaluator.outputIdxes, e.defaultEvaluator.outputIdxes[i])
+	}
+	if serial.defaultEvaluator != nil {
+		serial.defaultEvaluator.vectorizable = Vectorizable(serial.defaultEvaluator.exprs)
+	}
+	if parallel.defaultEvaluator != nil {
+		parallel.defaultEvaluator.vectorizable = Vectorizable(parallel.defaultEvaluator.exprs)
+	}
+	return serial, parallel
+}
+
+// CanRunLoadableFunctionsSerially reports whether the suite can be split into
+// an ordered loadable-UDF stage and a regular parallel stage.
+func (e *EvaluatorSuite) CanRunLoadableFunctionsSerially() bool {
+	if e.defaultEvaluator == nil || !slices.ContainsFunc(e.defaultEvaluator.exprs, HasLoadableFunc) {
+		return false
+	}
+	return ParallelizableWithSerialLoadableFunctions(e.defaultEvaluator.exprs)
+}
+
+// HasDefaultEvaluator reports whether this suite has non-column expressions.
+func (e *EvaluatorSuite) HasDefaultEvaluator() bool {
+	return e.defaultEvaluator != nil
 }
 
 // Run evaluates all the expressions hold by this EvaluatorSuite.

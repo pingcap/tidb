@@ -51,8 +51,9 @@ type projectionInput struct {
 }
 
 type projectionOutput struct {
-	chk  *chunk.Chunk
-	done chan error
+	chk   *chunk.Chunk
+	done  chan error
+	input *projectionInput
 }
 
 // projectionExecutorContext is the execution context for the `ProjectionExec`
@@ -79,6 +80,12 @@ type ProjectionExec struct {
 	exec.BaseExecutorV2
 
 	evaluatorSuit *expression.EvaluatorSuite
+	// serialEvaluatorSuit contains only top-level expressions that use a
+	// loadable UDF. parallelEvaluatorSuit contains the remaining non-column
+	// expressions. In this mode workers retain their input until Next evaluates
+	// the serial suite in output order and performs the deferred column swaps.
+	serialEvaluatorSuit   *expression.EvaluatorSuite
+	parallelEvaluatorSuit *expression.EvaluatorSuite
 
 	finishCh    chan struct{}
 	outputCh    chan *projectionOutput
@@ -117,6 +124,8 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 func (e *ProjectionExec) open(_ context.Context) error {
 	e.prepared = false
 	e.parentReqRows = int64(e.MaxChunkSize())
+	e.serialEvaluatorSuit = nil
+	e.parallelEvaluatorSuit = nil
 
 	if e.memTracker != nil {
 		e.memTracker.Reset()
@@ -129,7 +138,20 @@ func (e *ProjectionExec) open(_ context.Context) error {
 	// contains "SetVar" or "GetVar" functions, in this scenario this
 	// Projection can not be executed parallelly.
 	if e.numWorkers > 0 && !e.evaluatorSuit.Vectorizable() {
-		e.numWorkers = 0
+		if e.evaluatorSuit.CanRunLoadableFunctionsSerially() {
+			serial, parallel := e.evaluatorSuit.SplitLoadableFunctions()
+			// A worker pipeline is only useful if there is actual non-UDF
+			// expression work to run concurrently. Column swaps alone are cheap
+			// and must stay after the UDF stage because they mutate the input.
+			if parallel.HasDefaultEvaluator() {
+				e.serialEvaluatorSuit = serial
+				e.parallelEvaluatorSuit = parallel
+			} else {
+				e.numWorkers = 0
+			}
+		} else {
+			e.numWorkers = 0
+		}
 	}
 
 	if e.isUnparallelExec() {
@@ -241,8 +263,26 @@ func (e *ProjectionExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) 
 	}
 
 	err := <-output.done
+	input := output.input
+	output.input = nil
 	if err != nil {
+		if input != nil {
+			e.fetcher.inputCh <- input
+		}
 		return err
+	}
+	if input != nil {
+		mSize := output.chk.MemoryUsage() + input.chk.MemoryUsage()
+		err = e.serialEvaluatorSuit.Run(e.evalCtx, e.enableVectorizedExpression, input.chk, output.chk)
+		if err == nil && e.evaluatorSuit.ColumnSwapHelper != nil {
+			err = e.evaluatorSuit.ColumnSwapHelper.SwapColumns(input.chk, output.chk)
+		}
+		failpoint.Inject("ConsumeRandomPanic", nil)
+		e.memTracker.Consume(output.chk.MemoryUsage() + input.chk.MemoryUsage() - mSize)
+		e.fetcher.inputCh <- input
+		if err != nil {
+			return err
+		}
 	}
 	mSize := output.chk.MemoryUsage()
 	chk.SwapColumns(output.chk)
@@ -269,10 +309,17 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 	// Initialize projectionWorker.
 	e.workers = make([]*projectionWorker, 0, e.numWorkers)
 	for i := int64(0); i < e.numWorkers; i++ {
+		evaluatorSuit := e.evaluatorSuit
+		retainInput := false
+		if e.parallelEvaluatorSuit != nil {
+			evaluatorSuit = e.parallelEvaluatorSuit
+			retainInput = true
+		}
 		e.workers = append(e.workers, &projectionWorker{
 			proj:            e,
 			ctx:             e.projectionExecutorContext,
-			evaluatorSuit:   e.evaluatorSuit,
+			evaluatorSuit:   evaluatorSuit,
+			retainInput:     retainInput,
 			globalFinishCh:  e.finishCh,
 			inputGiveBackCh: e.fetcher.inputCh,
 			inputCh:         make(chan *projectionInput, 1),
@@ -333,6 +380,22 @@ func (e *ProjectionExec) Close() error {
 	if e.prepared {
 		close(e.finishCh)
 		e.wg.Wait() // Wait for fetcher and workers to finish and exit.
+		// In split-UDF mode a completed worker deliberately retains its input
+		// on the ordered output until Next runs the serial UDF stage. A parent
+		// such as LIMIT may stop early, so release inputs on outputs it did not
+		// consume before draining the regular resource channels.
+		if e.serialEvaluatorSuit != nil {
+			for output := range e.outputCh {
+				if output.chk != nil {
+					e.memTracker.Consume(-output.chk.MemoryUsage())
+					output.chk = nil
+				}
+				if output.input != nil {
+					e.memTracker.Consume(-output.input.chk.MemoryUsage())
+					output.input = nil
+				}
+			}
+		}
 
 		// clear fetcher
 		e.drainInputCh(e.fetcher.inputCh)
@@ -348,6 +411,11 @@ func (e *ProjectionExec) Close() error {
 		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}
 		if e.isUnparallelExec() {
 			runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", 0))
+		} else if e.serialEvaluatorSuit != nil {
+			runtimeStats.SetConcurrencyInfo(
+				execdetails.NewConcurrencyInfo("Concurrency", int(e.numWorkers)),
+				execdetails.NewConcurrencyInfo("LoadableUDFConcurrency", 1),
+			)
 		} else {
 			runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", int(e.numWorkers)))
 		}
@@ -425,6 +493,7 @@ type projectionWorker struct {
 	proj            *ProjectionExec
 	ctx             projectionExecutorContext
 	evaluatorSuit   *expression.EvaluatorSuite
+	retainInput     bool
 	globalFinishCh  <-chan struct{}
 	inputGiveBackCh chan<- *projectionInput
 
@@ -471,13 +540,18 @@ func (w *projectionWorker) run(ctx context.Context) {
 		err := w.evaluatorSuit.Run(w.ctx.evalCtx, w.ctx.enableVectorizedExpression, input.chk, output.chk)
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		w.proj.memTracker.Consume(output.chk.MemoryUsage() + input.chk.MemoryUsage() - mSize)
+		if w.retainInput {
+			output.input = input
+		}
 		output.done <- err
 
 		if err != nil {
 			return
 		}
 
-		w.inputGiveBackCh <- input
+		if !w.retainInput {
+			w.inputGiveBackCh <- input
+		}
 	}
 }
 

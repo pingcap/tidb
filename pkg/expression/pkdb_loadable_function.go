@@ -88,6 +88,34 @@ long long mock_udf_ll(UDF_INIT *initid, UDF_ARGS *args, unsigned char *is_null, 
   return *((long long*)args->args[0]) + 1;
 }
 
+bool mock_udf_stateful_init(UDF_INIT *initid, UDF_ARGS *args, char *message) {
+  __sync_add_and_fetch(&mock_udf_ll_init_calls, 1);
+  (void)args;
+  if (message != NULL) {
+    message[0] = 0;
+  }
+  initid->ptr = calloc(1, sizeof(long long));
+  return initid->ptr == NULL;
+}
+
+void mock_udf_stateful_deinit(UDF_INIT *initid) {
+  __sync_add_and_fetch(&mock_udf_ll_deinit_calls, 1);
+  free(initid->ptr);
+  initid->ptr = NULL;
+}
+
+long long mock_udf_stateful(UDF_INIT *initid, UDF_ARGS *args, unsigned char *is_null, unsigned char *error) {
+  __sync_add_and_fetch(&mock_udf_ll_calls, 1);
+  (void)args;
+  if (is_null != NULL) {
+    *is_null = 0;
+  }
+  if (error != NULL) {
+    *error = 0;
+  }
+  return ++(*((long long*)initid->ptr));
+}
+
 bool mock_udf_init_fail(UDF_INIT *initid, UDF_ARGS *args, char *message) {
   (void)initid;
   (void)args;
@@ -102,6 +130,9 @@ bool mock_udf_init_fail(UDF_INIT *initid, UDF_ARGS *args, char *message) {
 void* mock_udf_ll_ptr() { return (void*)mock_udf_ll; }
 void* mock_udf_ll_init_ptr() { return (void*)mock_udf_ll_init; }
 void* mock_udf_ll_deinit_ptr() { return (void*)mock_udf_ll_deinit; }
+void* mock_udf_stateful_ptr() { return (void*)mock_udf_stateful; }
+void* mock_udf_stateful_init_ptr() { return (void*)mock_udf_stateful_init; }
+void* mock_udf_stateful_deinit_ptr() { return (void*)mock_udf_stateful_deinit; }
 void* mock_udf_init_fail_ptr() { return (void*)mock_udf_init_fail; }
 
 void mock_udf_reset_counts() {
@@ -137,6 +168,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
 
@@ -149,7 +181,13 @@ var (
 	ErrNativeFctNameCollision = dbterror.ClassExpression.NewStd(mysql.ErrNativeFctNameCollision)
 )
 
-const udfInitMessageSize = 256
+const (
+	udfInitMessageSize = 256
+	// Keep the common case allocation-free without retaining an unexpectedly
+	// large value for the rest of the statement. Arguments above this threshold
+	// use temporary storage that is released immediately after the UDF call.
+	maxReusableUDFArgBufferSize = mysql.MaxFieldVarCharLength + 1
+)
 
 // udfDlclose is a wrapper around C.dlclose to allow mocking in tests.
 var udfDlclose = func(handle unsafe.Pointer) {
@@ -287,16 +325,26 @@ func MockLoadUDFForTest(soName, funcName string, funcRetType types.EvalType) (*L
 	}
 	switch funcRetType {
 	case types.ETInt:
-		def.fn = C.mock_udf_ll_ptr()
+		if strings.Contains(funcName, "stateful") {
+			def.fn = C.mock_udf_stateful_ptr()
+			def.fnInit = C.mock_udf_stateful_init_ptr()
+			def.fnDeinit = C.mock_udf_stateful_deinit_ptr()
+		} else {
+			def.fn = C.mock_udf_ll_ptr()
+		}
 	default:
 		return nil, errors.Errorf("unsupported mock UDF return type: %v", funcRetType)
 	}
-	if strings.Contains(funcName, "init_fail") {
-		def.fnInit = C.mock_udf_init_fail_ptr()
-	} else {
-		def.fnInit = C.mock_udf_ll_init_ptr()
+	if def.fnInit == nil {
+		if strings.Contains(funcName, "init_fail") {
+			def.fnInit = C.mock_udf_init_fail_ptr()
+		} else {
+			def.fnInit = C.mock_udf_ll_init_ptr()
+		}
 	}
-	def.fnDeinit = C.mock_udf_ll_deinit_ptr()
+	if def.fnDeinit == nil {
+		def.fnDeinit = C.mock_udf_ll_deinit_ptr()
+	}
 	return def, nil
 }
 
@@ -543,6 +591,7 @@ func (c *loadableFuncClass) getFunction(
 type loadableFuncSig struct {
 	baseBuiltinFunc
 	expropt.StmtCleanupPropReader
+	expropt.SessionVarsPropReader
 
 	def     *LoadableFunctionDef
 	runtime udfRuntime
@@ -556,12 +605,49 @@ type udfConstArg struct {
 	length  C.ulong
 }
 
+// udfArgBuffer owns C memory used to marshal one non-constant argument.
+// The standard UDF ABI is row-oriented, but the backing storage does not have
+// to be allocated for every row. Keeping it in the statement runtime removes
+// two cgo calls (malloc/free) per non-NULL argument and row.
+type udfArgBuffer struct {
+	ptr       unsafe.Pointer
+	capacity  int
+	temporary unsafe.Pointer
+	tempSize  int
+	tracker   *memory.Tracker
+}
+
+func (b *udfArgBuffer) free() {
+	b.releaseTemporary()
+	if b.ptr != nil {
+		C.free(b.ptr)
+		b.ptr = nil
+		if b.tracker != nil {
+			b.tracker.Consume(-int64(b.capacity))
+		}
+	}
+	b.capacity = 0
+}
+
+func (b *udfArgBuffer) releaseTemporary() {
+	if b.temporary != nil {
+		C.free(b.temporary)
+		b.temporary = nil
+		if b.tracker != nil {
+			b.tracker.Consume(-int64(b.tempSize))
+		}
+		b.tempSize = 0
+	}
+}
+
 type udfRuntime struct {
 	ptrUDFInit        *C.UDF_INIT
 	ptrUDFArgs        *C.UDF_ARGS
 	soHandle          unsafe.Pointer
 	argTypes          []types.EvalType
 	constArgs         []udfConstArg
+	argBuffers        []udfArgBuffer
+	hasTemporaryArgs  bool
 	resultBuf         unsafe.Pointer
 	resultBufLen      C.ulong
 	freeUDFInit       func()
@@ -583,7 +669,8 @@ func (b *loadableFuncSig) Clone() builtinFunc {
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
 func (b *loadableFuncSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.StmtCleanupPropReader.RequiredOptionalEvalProps()
+	return b.StmtCleanupPropReader.RequiredOptionalEvalProps() |
+		b.SessionVarsPropReader.RequiredOptionalEvalProps()
 }
 
 func (b *loadableFuncSig) ensureInitialized(ctx EvalContext) error {
@@ -677,6 +764,25 @@ func (b *loadableFuncSig) initRuntime(ctx EvalContext) (errRet error) {
 		b.freeConstArgs()
 		return err
 	}
+	b.runtime.argBuffers = make([]udfArgBuffer, argCount)
+	if sessionVars, err := b.SessionVarsPropReader.GetSessionVars(ctx); err == nil {
+		tracker := sessionVars.StmtCtx.MemTracker
+		if tracker != nil {
+			for i := range b.runtime.argBuffers {
+				b.runtime.argBuffers[i].tracker = tracker
+			}
+		} else {
+			logutil.BgLogger().Warn("loadable UDF memory accounting unavailable",
+				zap.String("function", b.def.name), zap.String("reason", "statement memory tracker is nil"))
+		}
+	} else {
+		// Some non-session evaluation paths can execute expressions without the
+		// optional session-vars provider. Keep execution working, but make the
+		// loss of statement memory accounting observable instead of silently
+		// dropping it.
+		logutil.BgLogger().Warn("loadable UDF memory accounting unavailable",
+			zap.String("function", b.def.name), zap.Error(err))
+	}
 
 	b.applyInitToReturnType()
 	b.runtime.initialized = true
@@ -705,6 +811,9 @@ func (b *loadableFuncSig) cleanupRuntime() {
 			b.runtime.constArgs[i].ptr = nil
 		}
 	}
+	for i := range b.runtime.argBuffers {
+		b.runtime.argBuffers[i].free()
+	}
 	if b.runtime.resultBuf != nil {
 		C.free(b.runtime.resultBuf)
 		b.runtime.resultBuf = nil
@@ -721,6 +830,8 @@ func (b *loadableFuncSig) cleanupRuntime() {
 	b.runtime.ptrUDFInit = nil
 	b.runtime.argTypes = nil
 	b.runtime.constArgs = nil
+	b.runtime.argBuffers = nil
+	b.runtime.hasTemporaryArgs = false
 	b.runtime.resultBufLen = 0
 	b.runtime.initialized = false
 	b.runtime.initCalled = false
@@ -826,14 +937,14 @@ func (b *loadableFuncSig) applyInitToReturnType() {
 	}
 }
 
-func (b *loadableFuncSig) setUDFArgs(ctx EvalContext, row chunk.Row) (cleanup func(), err error) {
+func (b *loadableFuncSig) setUDFArgs(ctx EvalContext, row chunk.Row) error {
 	argCount := len(b.args)
 	if argCount == 0 {
-		return func() {}, nil
+		return nil
 	}
+	b.runtime.hasTemporaryArgs = false
 	argsBuf := (*[1 << 30]*C.char)(unsafe.Pointer((*b.runtime.ptrUDFArgs).args))[:argCount:argCount]
 	lengthsBuf := (*[1 << 30]C.ulong)(unsafe.Pointer((*b.runtime.ptrUDFArgs).lengths))[:argCount:argCount]
-	toFree := make([]unsafe.Pointer, 0, argCount)
 	for i, arg := range b.args {
 		if i < len(b.runtime.constArgs) && b.runtime.constArgs[i].isConst {
 			argsBuf[i] = (*C.char)(b.runtime.constArgs[i].ptr)
@@ -842,29 +953,19 @@ func (b *loadableFuncSig) setUDFArgs(ctx EvalContext, row chunk.Row) (cleanup fu
 		}
 		val, evalErr := arg.Eval(ctx, row)
 		if evalErr != nil {
-			for _, ptr := range toFree {
-				C.free(ptr)
-			}
-			return nil, evalErr
+			b.runtime.releaseTemporaryArgBuffers()
+			return evalErr
 		}
-		ptr, length, convErr := datumToUDFArg(ctx, val, b.runtime.argTypes[i])
+		ptr, length, convErr := b.runtime.argBuffers[i].writeDatum(ctx, val, b.runtime.argTypes[i])
 		if convErr != nil {
-			for _, ptr := range toFree {
-				C.free(ptr)
-			}
-			return nil, convErr
+			b.runtime.releaseTemporaryArgBuffers()
+			return convErr
 		}
 		argsBuf[i] = (*C.char)(ptr)
 		lengthsBuf[i] = length
-		if ptr != nil {
-			toFree = append(toFree, ptr)
-		}
+		b.runtime.hasTemporaryArgs = b.runtime.hasTemporaryArgs || b.runtime.argBuffers[i].temporary != nil
 	}
-	return func() {
-		for _, ptr := range toFree {
-			C.free(ptr)
-		}
-	}, nil
+	return nil
 }
 
 func (b *loadableFuncSig) ensureResultBuffer() error {
@@ -914,6 +1015,85 @@ func readUDFArgTypes(ptrUDFArgs *C.UDF_ARGS, argCount int) []types.EvalType {
 }
 
 func datumToUDFArg(ctx EvalContext, datum types.Datum, evalTp types.EvalType) (unsafe.Pointer, C.ulong, error) {
+	// Constant arguments use the same conversion path but transfer ownership to
+	// udfConstArg, which frees the allocation at statement cleanup.
+	var buffer udfArgBuffer
+	ptr, length, err := buffer.writeDatum(ctx, datum, evalTp)
+	if err != nil {
+		buffer.free()
+		return nil, 0, err
+	}
+	buffer.ptr = nil
+	buffer.capacity = 0
+	buffer.temporary = nil
+	buffer.tempSize = 0
+	return ptr, length, nil
+}
+
+func (r *udfRuntime) releaseTemporaryArgBuffers() {
+	if !r.hasTemporaryArgs {
+		return
+	}
+	for i := range r.argBuffers {
+		r.argBuffers[i].releaseTemporary()
+	}
+	r.hasTemporaryArgs = false
+}
+
+func (b *udfArgBuffer) ensureCapacity(size int) error {
+	if size <= b.capacity {
+		return nil
+	}
+	newCapacity := max(size, 8)
+	if b.capacity > 0 && b.capacity <= math.MaxInt/2 {
+		newCapacity = max(newCapacity, b.capacity*2)
+	}
+	if size <= maxReusableUDFArgBufferSize {
+		newCapacity = min(newCapacity, maxReusableUDFArgBufferSize)
+	}
+	ptr := C.realloc(b.ptr, C.size_t(newCapacity))
+	if ptr == nil {
+		return errors.New("failed to allocate reusable UDF argument buffer")
+	}
+	oldCapacity := b.capacity
+	b.ptr = ptr
+	b.capacity = newCapacity
+	if b.tracker != nil {
+		b.tracker.Consume(int64(newCapacity - oldCapacity))
+	}
+	return nil
+}
+
+func (b *udfArgBuffer) writeBytes(value []byte) (unsafe.Pointer, C.ulong, error) {
+	if len(value) == math.MaxInt {
+		return nil, 0, errors.New("UDF argument is too large")
+	}
+	size := len(value) + 1
+	if size > maxReusableUDFArgBufferSize {
+		b.temporary = C.malloc(C.size_t(size))
+		if b.temporary == nil {
+			return nil, 0, errors.New("failed to allocate temporary UDF argument buffer")
+		}
+		b.tempSize = size
+		if b.tracker != nil {
+			b.tracker.Consume(int64(size))
+		}
+		buf := unsafe.Slice((*byte)(b.temporary), size)
+		copy(buf, value)
+		buf[len(value)] = 0
+		return b.temporary, C.ulong(len(value)), nil
+	}
+	if err := b.ensureCapacity(size); err != nil {
+		return nil, 0, err
+	}
+	buf := unsafe.Slice((*byte)(b.ptr), size)
+	copy(buf, value)
+	buf[len(value)] = 0
+	return b.ptr, C.ulong(len(value)), nil
+}
+
+func (b *udfArgBuffer) writeDatum(ctx EvalContext, datum types.Datum, evalTp types.EvalType) (unsafe.Pointer, C.ulong, error) {
+	b.releaseTemporary()
 	if datum.IsNull() {
 		return nil, 0, nil
 	}
@@ -927,55 +1107,39 @@ func datumToUDFArg(ctx EvalContext, datum types.Datum, evalTp types.EvalType) (u
 		if err != nil {
 			return nil, 0, err
 		}
-		ptr := C.malloc(C.sizeof_longlong)
-		if ptr == nil {
-			return nil, 0, errors.New("failed to allocate UDF int argument")
+		if err := b.ensureCapacity(C.sizeof_longlong); err != nil {
+			return nil, 0, err
 		}
-		*(*C.longlong)(ptr) = C.longlong(val)
-		return ptr, 0, nil
+		*(*C.longlong)(b.ptr) = C.longlong(val)
+		return b.ptr, 0, nil
 	case types.ETReal:
 		val, err := datum.ToFloat64(typeCtx)
 		if err != nil {
 			return nil, 0, err
 		}
-		ptr := C.malloc(C.sizeof_double)
-		if ptr == nil {
-			return nil, 0, errors.New("failed to allocate UDF real argument")
+		if err := b.ensureCapacity(C.sizeof_double); err != nil {
+			return nil, 0, err
 		}
-		*(*C.double)(ptr) = C.double(val)
-		return ptr, 0, nil
+		*(*C.double)(b.ptr) = C.double(val)
+		return b.ptr, 0, nil
 	case types.ETDecimal:
 		dec, err := datum.ToDecimal(typeCtx)
 		if err != nil {
 			return nil, 0, err
 		}
-		return allocUDFBytes([]byte(dec.String()))
+		return b.writeBytes([]byte(dec.String()))
 	case types.ETString:
 		if datum.Kind() == types.KindString || datum.Kind() == types.KindBytes {
-			return allocUDFBytes(datum.GetBytes())
+			return b.writeBytes(datum.GetBytes())
 		}
 		str, err := datum.ToString()
 		if err != nil {
 			return nil, 0, err
 		}
-		return allocUDFBytes([]byte(str))
+		return b.writeBytes([]byte(str))
 	default:
 		return nil, 0, errors.Errorf("unsupported UDF argument type: %v", evalTp)
 	}
-}
-
-func allocUDFBytes(b []byte) (unsafe.Pointer, C.ulong, error) {
-	size := len(b) + 1
-	ptr := C.malloc(C.size_t(size))
-	if ptr == nil {
-		return nil, 0, errors.New("failed to allocate UDF string argument")
-	}
-	buf := (*[1 << 30]byte)(ptr)[:size:size]
-	if len(b) > 0 {
-		copy(buf[:len(b):len(b)], b)
-	}
-	buf[len(b)] = 0
-	return ptr, C.ulong(len(b)), nil
 }
 
 func (b *loadableFuncSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
@@ -996,11 +1160,10 @@ func (b *loadableFuncSig) evalIntUDF(ctx EvalContext, row chunk.Row) (int64, boo
 	if err := b.ensureInitialized(ctx); err != nil {
 		return 0, false, err
 	}
-	cleanup, err := b.setUDFArgs(ctx, row)
-	if err != nil {
+	if err := b.setUDFArgs(ctx, row); err != nil {
 		return 0, false, err
 	}
-	defer cleanup()
+	defer b.runtime.releaseTemporaryArgBuffers()
 
 	var isNull C.uchar
 	var errFlag C.uchar
@@ -1025,11 +1188,10 @@ func (b *loadableFuncSig) evalRealUDF(ctx EvalContext, row chunk.Row) (float64, 
 	if err := b.ensureInitialized(ctx); err != nil {
 		return 0, false, err
 	}
-	cleanup, err := b.setUDFArgs(ctx, row)
-	if err != nil {
+	if err := b.setUDFArgs(ctx, row); err != nil {
 		return 0, false, err
 	}
-	defer cleanup()
+	defer b.runtime.releaseTemporaryArgBuffers()
 
 	var isNull C.uchar
 	var errFlag C.uchar
@@ -1050,11 +1212,10 @@ func (b *loadableFuncSig) evalStringUDF(ctx EvalContext, row chunk.Row) (string,
 	if err := b.ensureResultBuffer(); err != nil {
 		return "", false, err
 	}
-	cleanup, err := b.setUDFArgs(ctx, row)
-	if err != nil {
+	if err := b.setUDFArgs(ctx, row); err != nil {
 		return "", false, err
 	}
-	defer cleanup()
+	defer b.runtime.releaseTemporaryArgBuffers()
 
 	var isNull C.uchar
 	var errFlag C.uchar
