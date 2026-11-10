@@ -1936,6 +1936,38 @@ func TestPlanCacheDirtyTables(t *testing.T) {
 			tk.MustExec(`drop table t1, t2`)
 		}
 	}
+
+	t.Run("rename_table", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set session transaction_isolation = 'REPEATABLE-READ'")
+		tk.MustExec("set session tidb_enable_prepared_plan_cache = 1")
+		tk.MustExec("create table t (a int)")
+		tk.MustExec("create table t_new (a int)")
+		tk.MustExec("insert into t values (1)")
+		tk.MustExec("insert into t_new values (2)")
+		tk.MustExec("prepare s from 'select a from t where a < ? order by a'")
+		tk.MustExec("set @a = 10")
+		tk.MustQuery("execute s using @a").Check(testkit.Rows("1"))
+		tk.MustQuery("execute s using @a").Check(testkit.Rows("1"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+		tkDDL := testkit.NewTestKit(t, store)
+		tkDDL.MustExec("use test")
+		tkDDL.MustExec("rename table t to t_old")
+		tkDDL.MustExec("rename table t_new to t")
+
+		tk.MustExec("begin")
+		tk.MustQuery("execute s using @a").Check(testkit.Rows("2"))
+		tk.MustQuery("execute s using @a").Check(testkit.Rows("2"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		tk.MustExec("insert into t values (3)")
+		tk.MustQuery("execute s using @a").Check(testkit.Rows("2", "3"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		tk.MustQuery("execute s using @a").Check(testkit.Rows("2", "3"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		tk.MustExec("rollback")
+	})
 }
 
 func TestInstancePlanCacheAcrossSession(t *testing.T) {

@@ -121,33 +121,30 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 
 	// step 3: add metadata lock and check each table's schema version
 	schemaNotMatch := false
+	// Rebuild the map so table ID swaps do not remove another table's new entry.
+	relateVersion := make(map[int64]uint64, len(stmt.tbls))
 	for i := range stmt.dbName {
-		tbl, ok := is.TableByID(ctx, stmt.tbls[i].Meta().ID)
-		if !ok {
-			tblByName, err := is.TableByName(context.Background(), stmt.dbName[i], stmt.tbls[i].Meta().Name)
-			if err != nil {
-				return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
-			}
-			// Table ID is changed, for example, drop & create table, truncate table.
-			delete(stmt.RelateVersion, stmt.tbls[i].Meta().ID)
-			tbl = tblByName
+		tbl, err := is.TableByName(ctx, stmt.dbName[i], stmt.tblName[i])
+		if err != nil {
+			return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
 		// newTbl is the 'should be used' table info for this execution.
 		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(ctx, sctx.GetPlanCtx(), stmt.dbName[i], tbl, is)
 		if err != nil {
 			logutil.BgLogger().Warn("meet error during tryLockMDLAndUpdateSchemaIfNecessary", zap.String("table name", tbl.Meta().Name.String()), zap.Error(err))
 			// Invalid the cache key related fields to avoid using plan cache.
-			stmt.RelateVersion[tbl.Meta().ID] = math.MaxUint64
+			relateVersion[tbl.Meta().ID] = math.MaxUint64
 			schemaNotMatch = true
 			continue
 		}
-		if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision {
+		if stmt.tbls[i].Meta().ID != newTbl.Meta().ID || stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision {
 			schemaNotMatch = true
 		}
 		// Update the cache key related fields.
 		stmt.tbls[i] = newTbl
-		stmt.RelateVersion[newTbl.Meta().ID] = newTbl.Meta().Revision
+		relateVersion[newTbl.Meta().ID] = newTbl.Meta().Revision
 	}
+	stmt.RelateVersion = relateVersion
 
 	// step 4: check schema version
 	if schemaNotMatch || stmt.SchemaVersion != is.SchemaMetaVersion() {
