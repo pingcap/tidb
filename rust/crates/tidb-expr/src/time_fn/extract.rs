@@ -26,6 +26,8 @@ fn number(result: Result<i64, tidb_datatype::TimeError>, unit: &str) -> Result<D
     })
 }
 
+/// Go `extractFunctionClass.getFunction`: the signature the unit and the
+/// value's type select.
 pub(crate) fn extract(
     unit: &str,
     value: &Datum,
@@ -41,58 +43,35 @@ pub(crate) fn extract(
         )
     }) || matches!(value, Datum::Time(_));
     if !clock || (date && datetime) {
-        return match crate::cast::cast_arg_as_datetime(value, source, ctx)? {
-            Datum::Null => Ok(Datum::Null),
-            Datum::Time(time) => number(tidb_datatype::extract_datetime_num(time, unit), unit),
-            _ => unreachable!("datetime argument cast returns a time or NULL"),
-        };
+        return extract_datetime(unit, value, source, ctx);
     }
-    // Go's mixed DAY_* string signature first parses duration, then prefers
-    // datetime only when the clock fields agree and the year is positive.
     if date && !matches!(value, Datum::Duration(_)) {
-        let text = crate::cast::cast_arg_as_string(value, source, ctx)?;
-        let Some(text) = crate::coerce::coerce_str(&text)? else {
-            return Ok(Datum::Null);
-        };
-        let invalid = || {
-            EvalError::Conversion(
-                tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE
-                    .generate(format!("Truncated incorrect time value: '{text}'")),
-            )
-        };
-        let parsed_duration = tidb_datatype::parse_mysql_duration(
-            &text,
-            i64::from(tidb_datatype::get_fsp(&text)),
-            &chrono::Utc,
-            true,
-            ctx.date_modes().allow_invalid_dates,
-        )
-        .map_err(|_| invalid())?;
-        if parsed_duration.overflow().is_some() || parsed_duration.truncated() {
-            return Err(invalid());
-        }
-        let duration = tidb_datatype::MySqlDuration::from_nanoseconds(
-            parsed_duration.nanoseconds(),
-            parsed_duration.fsp(),
-        )
-        .map_err(|_| invalid())?;
-        if let Ok(parsed) = tidb_datatype::parse_datetime(
-            &text,
-            &chrono::Utc,
-            true,
-            ctx.date_modes().allow_invalid_dates,
-        ) {
-            let core = parsed.time.core_time();
-            if core.year() > 0
-                && i64::from(core.hour()) == duration.hour()
-                && i64::from(core.minute()) == duration.minute()
-                && i64::from(core.second()) == duration.second()
-            {
-                return number(tidb_datatype::extract_datetime_num(parsed.time, unit), unit);
-            }
-        }
-        return number(tidb_datatype::extract_duration_num(duration, unit), unit);
+        return extract_datetime_from_string(unit, value, source, ctx);
     }
+    extract_duration(unit, value, source, ctx)
+}
+
+/// Go `builtinExtractDatetimeSig.evalInt`.
+pub(crate) fn extract_datetime(
+    unit: &str,
+    value: &Datum,
+    source: Option<&FieldType>,
+    ctx: &dyn Columns,
+) -> Result<Datum, EvalError> {
+    match crate::cast::cast_arg_as_datetime(value, source, ctx)? {
+        Datum::Null => Ok(Datum::Null),
+        Datum::Time(time) => number(tidb_datatype::extract_datetime_num(time, unit), unit),
+        _ => unreachable!("datetime argument cast returns a time or NULL"),
+    }
+}
+
+/// Go `builtinExtractDurationSig.evalInt`.
+pub(crate) fn extract_duration(
+    unit: &str,
+    value: &Datum,
+    source: Option<&FieldType>,
+    ctx: &dyn Columns,
+) -> Result<Datum, EvalError> {
     match crate::cast::cast_arg_as_duration(value, source, ctx)? {
         Datum::Null => Ok(Datum::Null),
         Datum::Duration(duration) => {
@@ -100,4 +79,74 @@ pub(crate) fn extract(
         }
         _ => unreachable!("duration argument cast returns a duration or NULL"),
     }
+}
+
+/// Go `builtinExtractDatetimeFromStringSig.evalInt`, whose units are the
+/// ones that are both clock and date units: it first parses a duration, then
+/// prefers the datetime only when the clock fields agree and the year is
+/// positive.
+pub(crate) fn extract_datetime_from_string(
+    unit: &str,
+    value: &Datum,
+    source: Option<&FieldType>,
+    ctx: &dyn Columns,
+) -> Result<Datum, EvalError> {
+    let text = crate::cast::cast_arg_as_string(value, source, ctx)?;
+    let Some(text) = crate::coerce::coerce_str(&text)? else {
+        return Ok(Datum::Null);
+    };
+    let invalid = || {
+        EvalError::Conversion(
+            tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE
+                .generate(format!("Truncated incorrect time value: '{text}'")),
+        )
+    };
+    let parsed_duration = tidb_datatype::parse_mysql_duration(
+        &text,
+        i64::from(tidb_datatype::get_fsp(&text)),
+        &chrono::Utc,
+        true,
+        ctx.date_modes().allow_invalid_dates,
+    )
+    .map_err(|_| invalid())?;
+    if parsed_duration.overflow().is_some() || parsed_duration.truncated() {
+        return Err(invalid());
+    }
+    let duration = tidb_datatype::MySqlDuration::from_nanoseconds(
+        parsed_duration.nanoseconds(),
+        parsed_duration.fsp(),
+    )
+    .map_err(|_| invalid())?;
+    if let Ok(parsed) = tidb_datatype::parse_datetime(
+        &text,
+        &chrono::Utc,
+        true,
+        ctx.date_modes().allow_invalid_dates,
+    ) {
+        let core = parsed.time.core_time();
+        if core.year() > 0
+            && i64::from(core.hour()) == duration.hour()
+            && i64::from(core.minute()) == duration.minute()
+            && i64::from(core.second()) == duration.second()
+        {
+            return number(tidb_datatype::extract_datetime_num(parsed.time, unit), unit);
+        }
+    }
+    number(tidb_datatype::extract_duration_num(duration, unit), unit)
+}
+
+/// One of the signatures above over a pushed-down call's values: the unit
+/// constant, then the value.
+pub(crate) fn extract_values(
+    values: &[Datum],
+    ctx: &dyn Columns,
+    signature: fn(&str, &Datum, Option<&FieldType>, &dyn Columns) -> Result<Datum, EvalError>,
+) -> Result<Datum, EvalError> {
+    let [unit, value] = values else {
+        return Err(EvalError::WrongParameterCount("extract"));
+    };
+    let Some(unit) = crate::coerce::coerce_str(unit)? else {
+        return Ok(Datum::Null);
+    };
+    signature(&unit, value, None, ctx)
 }

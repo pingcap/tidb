@@ -715,6 +715,58 @@ mod tests {
             assert!(supports_signature(signature), "missing {signature:?}");
         }
     }
+    /// Go `getSignatureByPB` decodes the three extract signatures, each
+    /// reading its value in its own domain. The vectors are Go
+    /// `TestExtractDatetimeNum`, `TestExtractDurationNum` and the DAY_HOUR
+    /// row of `TestExtract`.
+    #[test]
+    fn protobuf_extract_signatures_read_the_value_in_their_own_domain() {
+        use tipb::ScalarFuncSig::*;
+        let datetime = tidb_datatype::parse_datetime("2019-04-12 14:00:00", &chrono::Utc, true, false)
+            .unwrap()
+            .time;
+        let datetime = constant(Datum::Time(datetime), FieldType::new(FieldTypeCode::Datetime));
+        let duration = constant(
+            Datum::Duration(
+                tidb_datatype::MySqlDuration::from_nanoseconds(-39_541_000_000_000, 0).unwrap(),
+            ),
+            FieldType::new(FieldTypeCode::Duration),
+        );
+        let value = |expression: &Expression| {
+            crate::pushdown_catalog::expression_to_pb(expression, &|_| None).unwrap()
+        };
+        let result = tipb::FieldType {
+            tp: Some(8),
+            ..Default::default()
+        };
+        let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(&[]);
+        for (signature, unit, value, expect) in [
+            (ExtractDatetime, "DAY_HOUR", value(&datetime), 1214),
+            (ExtractDatetime, "YEAR_MONTH", value(&datetime), 201_904),
+            (ExtractDatetime, "week", value(&datetime), 14),
+            (ExtractDuration, "DAY_HOUR", value(&duration), -10),
+            (ExtractDuration, "HOUR_MINUTE", value(&duration), -1059),
+            (ExtractDuration, "MINUTE_SECOND", value(&duration), -5901),
+            (
+                ExtractDatetimeFromString,
+                "DAY_HOUR",
+                text("2011-11-11 10:10:10.123456"),
+                1110,
+            ),
+            (ExtractDatetimeFromString, "DAY_MINUTE", text("10:59:01"), 1059),
+        ] {
+            let pb = call(signature, vec![text(unit), value], result.clone());
+            assert_eq!(
+                pb_to_expr(&pb, &[])
+                    .unwrap()
+                    .eval(&crate::NoColumns, row.to_row())
+                    .unwrap(),
+                Datum::Int(expect),
+                "{signature:?} {unit}"
+            );
+        }
+    }
+
     #[test]
     fn protobuf_signature_survives_display_name_changes() {
         let pb = call(

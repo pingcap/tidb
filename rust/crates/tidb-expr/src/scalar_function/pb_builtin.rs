@@ -492,6 +492,27 @@ impl PbBuiltin {
             TimestampDiff => {
                 Kernel::Values(|values, _| crate::time_fn::calendar::timestamp_diff(values))
             }
+            ExtractDatetimeFromString => Kernel::Values(|values, ctx| {
+                crate::time_fn::extract::extract_values(
+                    values,
+                    ctx,
+                    crate::time_fn::extract::extract_datetime_from_string,
+                )
+            }),
+            ExtractDatetime => Kernel::Values(|values, ctx| {
+                crate::time_fn::extract::extract_values(
+                    values,
+                    ctx,
+                    crate::time_fn::extract::extract_datetime,
+                )
+            }),
+            ExtractDuration => Kernel::Values(|values, ctx| {
+                crate::time_fn::extract::extract_values(
+                    values,
+                    ctx,
+                    crate::time_fn::extract::extract_duration,
+                )
+            }),
             UnixTimestampInt | UnixTimestampDec => {
                 Kernel::Values(crate::time_fn::session_tz::unix_timestamp)
             }

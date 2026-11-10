@@ -906,6 +906,13 @@ fn constant(datum: Datum, code: FieldTypeCode) -> Expression {
     Expression::Constant(Constant::new(datum, FieldType::new(code)))
 }
 
+/// Go's rewriter, `case *ast.TimeUnitExpr` and `case
+/// *ast.GetFormatSelectorExpr`: the keyword as a string constant of
+/// `types.NewFieldType(mysql.TypeVarchar)`.
+fn keyword_constant(keyword: &str) -> Expression {
+    constant(Datum::new_string_datum(keyword.to_owned()), FieldTypeCode::Varchar)
+}
+
 fn scalar(name: &str, args: Vec<Expression>) -> Expression {
     // The result type is a placeholder: operator evaluation dispatches on the
     // operand datum kinds, not on this type. Faithful type inference is deferred.
@@ -2650,12 +2657,12 @@ fn rewrite_leaf_compound(
                 coerced.push(coerced_argument);
             }
             let args = coerced;
-            let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
-            ret_type.set_flen(1);
-            // `ast.In` is in Go's `booleanFunctions` map, so the result carries
-            // `IsBooleanFlag`; a `JSON_ARRAY(x IN (...))` element is JSON
-            // `true`/`false`, not `1`/`0`. The `NOT IN` wrapper reuses this type.
-            ret_type.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
+            // Go `newBaseBuiltinFuncWithTp(ctx, "in", args, types.ETInt, ...)`:
+            // a binary Longlong, one digit wide. `ast.In` is in Go's
+            // `booleanFunctions` map, so the result carries `IsBooleanFlag`; a
+            // `JSON_ARRAY(x IN (...))` element is JSON `true`/`false`, not
+            // `1`/`0`. The `NOT IN` wrapper reuses this type.
+            let ret_type = builtin_return_type("in", &args).expect("IN has a fixed result type");
             let call = Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new("in"),
                 ret_type.clone(),
@@ -2758,14 +2765,10 @@ fn rewrite_leaf_compound(
             // The joining `AND`/`OR` is a `booleanFunctions` name, so the whole
             // `BETWEEN` result is boolean-flagged: `JSON_ARRAY(x BETWEEN l AND h)`
             // is `[true]`/`[false]`, not `[1]`/`[0]`.
-            let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
-            ret_type.set_flen(1);
-            ret_type.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
-            Ok(Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new(joiner),
-                ret_type,
-                vec![lower, upper],
-            )))
+            let args = vec![lower, upper];
+            let ret_type =
+                builtin_return_type(joiner, &args).expect("AND and OR have a fixed result type");
+            Ok(Expression::ScalarFunction(ScalarFunction::new(CiString::new(joiner), ret_type, args)))
         }
         // Go builds `like(expr, pattern, escape)`, whose third argument is
         // the escape byte as an integer; `NOT LIKE` wraps it in a unary NOT.
@@ -3200,7 +3203,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
         // EXTRACT's evaluator selects the value's datetime/duration signature
         // from this unit and the second argument's static type.
         Expr::Extract { unit, value } => {
-            let unit = constant(Datum::new_string_datum(unit.clone()), FieldTypeCode::VarString);
+            let unit = keyword_constant(unit);
             let value = rewrite_expr_resolved(value, resolver)?;
             Ok(scalar("extract", vec![unit, value]))
         }
@@ -3214,7 +3217,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 GetFormatSelector::Datetime => "DATETIME",
             };
             let args = vec![
-                constant_string(selector),
+                keyword_constant(selector),
                 rewrite_expr_resolved(expr, resolver)?,
             ];
             let ret_type = builtin_return_type("get_format", &args).ok_or(
@@ -3255,7 +3258,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             expr,
         } => {
             let args = vec![
-                constant_string(unit),
+                keyword_constant(unit),
                 rewrite_expr_resolved(interval, resolver)?,
                 rewrite_expr_resolved(expr, resolver)?,
             ];
@@ -3270,7 +3273,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
         }
         Expr::TimestampDiff { unit, expr1, expr2 } => {
             let args = vec![
-                constant_string(unit),
+                keyword_constant(unit),
                 rewrite_expr_resolved(expr1, resolver)?,
                 rewrite_expr_resolved(expr2, resolver)?,
             ];
@@ -3406,7 +3409,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                     let args = vec![
                         rewrite_expr_resolved(date, &child_resolver)?,
                         rewrite_expr_resolved(value, &child_resolver)?,
-                        constant(Datum::new_string_datum(unit), FieldTypeCode::Varchar),
+                        keyword_constant(&unit),
                     ];
                     let ret_type =
                         builtin_return_type(&lowered, &args).ok_or(EvalError::Unsupported(
@@ -4700,6 +4703,10 @@ mod builtin_type_tests {
     use super::*;
 
     fn rewrite(sql_expr: &str) -> Expression {
+        rewrite_with(sql_expr, &NoResolver)
+    }
+
+    fn rewrite_with(sql_expr: &str, resolver: &impl ColumnResolver) -> Expression {
         let stmt = tidb_parser::parse(&format!("SELECT {sql_expr}")).expect("parses");
         let tidb_ast::Stmt::Query(query) = stmt else {
             panic!("expected a query")
@@ -4710,7 +4717,91 @@ mod builtin_type_tests {
         let tidb_ast::SelectField::Expr { expr, .. } = &select.fields.fields()[0] else {
             panic!("expected an expression field")
         };
-        rewrite_expr_resolved(expr, &NoResolver).expect("rewrites")
+        rewrite_expr_resolved(expr, resolver).expect("rewrites")
+    }
+
+    /// Go `newBaseBuiltinFuncWithTp(..., types.ETInt, ...)` makes every
+    /// integer builtin a binary Longlong, whichever grammar builds the call.
+    /// The vectors are a Go testkit's result field types over
+    /// `t(a tinyint, b int not null, d datetime, s varchar(10))`.
+    #[test]
+    fn integer_builtins_carry_the_base_builders_binary_flag() {
+        struct TableResolver;
+
+        impl ColumnResolver for TableResolver {
+            fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+                let (offset, mut field_type) = match path.last()?.as_str() {
+                    "a" => (0, FieldType::new(FieldTypeCode::Tiny)),
+                    "b" => (1, FieldType::new(FieldTypeCode::Long)),
+                    "d" => (2, FieldType::new(FieldTypeCode::Datetime)),
+                    "s" => (3, FieldType::new(FieldTypeCode::Varchar)),
+                    _ => return None,
+                };
+                match offset {
+                    0 => field_type.set_flen(4),
+                    1 => {
+                        field_type.set_flen(11);
+                        field_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+                    }
+                    3 => field_type.set_flen(10),
+                    _ => {}
+                }
+                Some((offset, field_type, offset as i64 + 1))
+            }
+
+            fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+                tidb_datatype::SessionTimeZone::utc()
+            }
+        }
+
+        for (sql_expr, flag, flen) in [
+            ("a in (1,2)", 524_416, 1),
+            ("a not in (1,2)", 524_416, 1),
+            ("a between 1 and 2", 524_416, 1),
+            ("a not between 1 and 2", 524_416, 1),
+            ("timestampdiff(day, d, d)", 128, 20),
+            ("extract(year from d)", 128, 20),
+            ("a is null", 524_417, 1),
+            ("a is true", 524_416, 1),
+            ("b = 1", 524_416, 1),
+            ("-b", 128, 11),
+            ("s in ('x')", 524_416, 1),
+            ("a in (1.5, 2)", 524_416, 1),
+        ] {
+            let Expression::ScalarFunction(function) = rewrite_with(sql_expr, &TableResolver) else {
+                panic!("expected a scalar function for {sql_expr}")
+            };
+            let ret_type = function.ret_type.expect("a builtin call has a result type");
+            assert_eq!(ret_type.code(), FieldTypeCode::LongLong, "{sql_expr}");
+            assert_eq!(ret_type.flags(), flag, "{sql_expr} flag");
+            assert_eq!(ret_type.flen(), flen, "{sql_expr} flen");
+            assert_eq!(ret_type.charset(), tidb_charset::Charset::Binary, "{sql_expr} charset");
+            assert_eq!(ret_type.collation(), tidb_charset::Collation::Binary, "{sql_expr} collation");
+        }
+    }
+
+    /// Go's rewriter, `case *ast.TimeUnitExpr` and `case
+    /// *ast.GetFormatSelectorExpr`: `types.NewFieldType(mysql.TypeVarchar)`,
+    /// an unsized VARCHAR whatever the keyword's length.
+    #[test]
+    fn keyword_arguments_are_unsized_varchar_constants() {
+        for (sql_expr, keyword_at) in [
+            ("extract(year from '2020-01-01')", 0),
+            ("timestampdiff(day, '2020-01-01', '2020-01-02')", 0),
+            ("timestampadd(day, 1, '2020-01-01')", 0),
+            ("get_format(date, 'USA')", 0),
+            ("date_add('2020-01-01', interval 1 day)", 2),
+        ] {
+            let Expression::ScalarFunction(function) = rewrite(sql_expr) else {
+                panic!("expected a scalar function for {sql_expr}")
+            };
+            let keyword = function.args[keyword_at].static_type().expect("a constant is typed");
+            assert_eq!(keyword.code(), FieldTypeCode::Varchar, "{sql_expr}");
+            assert_eq!(keyword.flen(), tidb_datatype::UNSPECIFIED_LENGTH, "{sql_expr} flen");
+            assert_eq!(keyword.decimal(), tidb_datatype::UNSPECIFIED_LENGTH, "{sql_expr} decimal");
+            assert_eq!(keyword.charset(), tidb_charset::Charset::Utf8Mb4, "{sql_expr} charset");
+            assert_eq!(keyword.collation(), tidb_charset::Collation::Utf8Mb4Bin, "{sql_expr} collation");
+        }
     }
 
     fn ret_type(sql_expr: &str) -> FieldType {

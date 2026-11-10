@@ -227,7 +227,7 @@ fn temporal_and_json_builtins_lower_through_wide_selection() {
         value: b"YEAR".to_vec(),
         field_type: FieldType::new(FieldTypeCode::Varchar),
     };
-    let date_add = build_call("date_add", vec![datetime, PbScalar::IntLiteral(1), unit])
+    let date_add = build_call("date_add", vec![datetime, PbScalar::int_literal(1), unit])
         .expect("Go's DATE_ADD overload resolves");
     let json = PbScalar::Column {
         offset: 1,
@@ -857,8 +857,8 @@ fn string_expression_in_lowers_with_the_tested_collation() {
                 offset: 0,
                 field_type: phone_type,
             },
-            PbScalar::IntLiteral(1),
-            PbScalar::IntLiteral(2),
+            PbScalar::int_literal(1),
+            PbScalar::int_literal(2),
         ],
     )
     .unwrap();

@@ -658,20 +658,62 @@ fn tiflash_late_materialization_explains_costs_and_to_pbs_as_go() {
     let got = table_plan.to_pb(&ctx, tidb_kv::store_type::StoreType::TiFlash).expect("ToPB");
     let mut want = tipb::Executor::decode(decode_hex("0809521145786368616e676553656e6465725f313362e30a080022bc0a080b520c50726f6a656374696f6e5f356aa30a0a3108c9011208800000000000000020002a1e08081083201814200028c1ffffffffffffffff01320662696e617279400038001aed09080222d4090ae90108904e1abd0108904e1a3008c9011208800000000000000320002a1d080110011804200028c1ffffffffffffffff01320662696e617279400038001a2f080112087fffffffffffffff20002a1d080110011804200028c1ffffffffffffffff01320662696e617279400038001a2f08011208800000000000000020002a1d080110011804200028c1ffffffffffffffff01320662696e6172794000380020a11f2a1f0808108081201801200028c1ffffffffffffffff01320662696e6172794000380020a0182a1f0808108081201801200028c1ffffffffffffffff01320662696e617279400038000a8d0108904e1a3008c9011208800000000000000420002a1d08031001180b200028c1ffffffffffffffff01320662696e617279400038001a30080112088000000066ee8f7620002a1e0808108101180a200028c1ffffffffffffffff01320662696e617279400038002082012a1f0808108081201801200028c1ffffffffffffffff01320662696e617279400038000a8c0108904e1a3008c9011208800000000000000420002a1d08031001180b200028c1ffffffffffffffff01320662696e617279400038001a30080112088000000066ee8fb720002a1e0808108101180a200028c1ffffffffffffffff01320662696e61727940003800206e2a1f0808108081201801200028c1ffffffffffffffff01320662696e617279400038000ad90208904e1a950108904e1a3208c9011208800000000000000120002a1f080f1089201820200028d2ffffffffffffffff013207757466386d6234400038001a36080512043131323320002a2808fd011001180420ffffffffffffffffff0128d2ffffffffffffffff013207757466386d623440003800208f012a1f0808108081201801200028d2ffffffffffffffff01320662696e617279400038001a950108904e1a3208c9011208800000000000000220002a1f080f1089201820200028d2ffffffffffffffff013207757466386d6234400038001a36080512043131323320002a2808fd011001180420ffffffffffffffffff0128d2ffffffffffffffff013207757466386d623440003800208f012a1f0808108081201801200028d2ffffffffffffffff01320662696e61727940003800209e182a1f0808108081201801200028c1ffffffffffffffff01320662696e617279400038001aea02080012cd020875121c0801100818c1ffffffffffffffff0120142800308320a80100b00100121c0802100f18d2ffffffffffffffff0120202800308920a80100b00100121c0803100f18d2ffffffffffffffff0120202800308920a80100b00100121b0804100118c1ffffffffffffffff01200428003001a80100b00100121b0805100318c1ffffffffffffffff01200b28003001a80100b00100121b0806100318c1ffffffffffffffff01200b28003001a80100b001001800280040004800528d0108904e1a3008c9011208800000000000000520002a1d08031001180b200028c1ffffffffffffffff01320662696e617279400038001a3008011208800000000000000020002a1e08081081011801200028c1ffffffffffffffff01320662696e61727940003800208c012a1f0808108081201801200028c1ffffffffffffffff01320662696e61727940003800600052105461626c6546756c6c5363616e5f3131880100900100520c53656c656374696f6e5f3132880100900100880100900100321e08081083201814200028c1ffffffffffffffff01320662696e6172794000380088010090018040").as_slice()).unwrap();
     set_table_ids(&mut want, &[(117, t)]);
-    // The scan with its `PushedDownFilterConditions`. (The Selection's
-    // `in(test.t.a, -1, 0)` differs: Go sends the IN constants refined to the
-    // column's tinyint and `InInt` with `BinaryFlag`; register X01.)
-    fn scan_of(executor: &tipb::Executor) -> &tipb::Executor {
-        let child = executor
-            .exchange_sender
-            .as_ref()
-            .and_then(|sender| sender.child.as_deref())
-            .or_else(|| executor.projection.as_ref().and_then(|projection| projection.child.as_deref()))
-            .or_else(|| executor.selection.as_ref().and_then(|selection| selection.child.as_deref()));
-        child.map_or(executor, scan_of)
-    }
-    let (got, want) = (scan_of(&got), scan_of(&want));
-    assert_eq!(got.tbl_scan.as_ref().map(|scan| scan.pushed_down_filter_conditions.len()), Some(1));
+    // The Selection's `in(test.t.a, -1, 0)` sends its constants refined to
+    // the column's tinyint (`inToExpression`) and `InInt` as a binary
+    // Longlong.
     let hex = |executor: &tipb::Executor| executor.encode_to_vec().iter().map(|b| format!("{b:02x}")).collect::<String>();
-    assert_eq!(hex(got), hex(want), "\ngot:  {got:?}\nwant: {want:?}");
+    assert_eq!(hex(&got), hex(&want), "\ngot:  {got:?}\nwant: {want:?}");
+}
+
+/// Every integer builtin a Selection sends carries the type Go's base builder
+/// gave it (`newBaseBuiltinFuncWithTp` with `ETInt`: a binary Longlong): the
+/// `or` a `NOT BETWEEN` joins its bounds with, `extract` and `timestampdiff`.
+/// `unaryminus` is not a TiFlash function, so its filter stays at the root
+/// (Go testkit probe `zzprobe/intflagspb`; t is Go's table 117).
+#[test]
+fn tiflash_selection_sends_integer_builtin_types_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(436)).expect("session opens");
+    for sql in [
+        "CREATE TABLE test.t (`i` bigint(20) NOT NULL, `a` tinyint(4) NOT NULL DEFAULT '0', `m` int(11) NOT NULL DEFAULT '0', `d` datetime NOT NULL, `e` datetime NOT NULL, PRIMARY KEY (`i`) /*T![clustered_index] NONCLUSTERED */)",
+        "ALTER TABLE test.t SET HYPO TIFLASH REPLICA 1",
+    ] {
+        session.node_conn().execute_write(sql).expect(sql);
+    }
+    rows(&mut session, "use test");
+    let t: i64 = displayed(rows(
+        &mut session,
+        "select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 't'",
+    ))[0][0]
+        .parse()
+        .unwrap();
+    let sql = "explain format='verbose' SELECT /*+ read_from_storage(tiflash[t]) */ i FROM t WHERE a NOT BETWEEN 1 AND 2 AND extract(year from d) = 2020 AND timestampdiff(day, d, e) = 1 AND -m = 3";
+    assert_eq!(
+        displayed(rows(&mut session, sql)).into_iter().map(|row| row.join("|")).collect::<Vec<_>>(),
+        [
+            "Projection_4|5325.33|431222.37|root||test.t.i",
+            "└─Selection_11|4260.27|430797.20|root||eq(unaryminus(test.t.m), 3)",
+            "  └─TableReader_10|5325.33|165063.07|root||MppVersion: 3, data:ExchangeSender_9",
+            "    └─ExchangeSender_9|5325.33|1538687.32|mpp[tiflash]||ExchangeType: PassThrough",
+            "      └─Selection_8|5325.33|1538687.32|mpp[tiflash]||eq(extract(\"YEAR\", test.t.d), 2020), eq(timestampdiff(\"DAY\", test.t.d, test.t.e), 1), or(lt(test.t.a, 1), gt(test.t.a, 2))",
+            "        └─TableFullScan_7|10000.00|1466687.32|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+        ]
+    );
+    let plan = session.published_plan().expect("the explain publishes its plan");
+    let reader = find_reader(&plan).expect("a TableReader");
+    let table_plan = reader.table_plan.as_deref().expect("the reader has a table plan");
+    let eval_ctx = tidb_exprctx::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
+    let ctx = BuildPbContext {
+        expr_ctx: &eval_ctx,
+        tiflash_fast_scan: false,
+        tiflash_fine_grained_shuffle_batch_size: 8192,
+        group_concat_max_len: 1024,
+        in_explain_stmt: true,
+        use_dynamic_partition_prune: true,
+    };
+    let got = table_plan.to_pb(&ctx, tidb_kv::store_type::StoreType::TiFlash).expect("ToPB");
+    let mut want = tipb::Executor::decode(decode_hex("0809521045786368616e676553656e6465725f3962f009080022cb08080222b3080ac70208904e1a8c0108904e1a3008c9011208800000000000000120002a1d080110011804200028c1ffffffffffffffff01320662696e617279400038001a3008011208800000000000000120002a1e08081081011801200028c1ffffffffffffffff01320662696e6172794000380020642a1f0808108081201801200028c1ffffffffffffffff01320662696e617279400038001a8c0108904e1a3008c9011208800000000000000120002a1d080110011804200028c1ffffffffffffffff01320662696e617279400038001a3008011208800000000000000220002a1e08081081011801200028c1ffffffffffffffff01320662696e6172794000380020782a1f0808108081201801200028c1ffffffffffffffff01320662696e61727940003800209e182a1f0808108081201801200028c1ffffffffffffffff01320662696e617279400038000af90108904e1a9b0108904e1a3e080512045945415220002a30080f100018ffffffffffffffffff0120ffffffffffffffffff0128d2ffffffffffffffff013207757466386d6234400038001a3108c9011208800000000000000320002a1e080c1081211813200028c1ffffffffffffffff01320662696e6172794000380020ca2f2a1e08081080011814200028c1ffffffffffffffff01320662696e617279400038001a300801120880000000000007e420002a1e08081081011804200028c1ffffffffffffffff01320662696e61727940003800208c012a1f0808108081201801200028c1ffffffffffffffff01320662696e617279400038000aab0208904e1acd0108904e1a3d0805120344415920002a30080f100018ffffffffffffffffff0120ffffffffffffffffff0128d2ffffffffffffffff013207757466386d6234400038001a3108c9011208800000000000000320002a1e080c1081211813200028c1ffffffffffffffff01320662696e617279400038001a3108c9011208800000000000000420002a1e080c1081211813200028c1ffffffffffffffff01320662696e6172794000380020dc2f2a1e08081080011814200028c1ffffffffffffffff01320662696e617279400038001a3008011208800000000000000120002a1e08081081011801200028c1ffffffffffffffff01320662696e61727940003800208c012a1f0808108081201801200028c1ffffffffffffffff01320662696e617279400038001abc01080012a0010875121c0801100818c1ffffffffffffffff0120142800308320a80100b00100121b0802100118c1ffffffffffffffff01200428003001a80100b00100121b0803100318c1ffffffffffffffff01200b28003001a80100b00100121c0804100c18c1ffffffffffffffff0120132800308121a80100b00100121c0805100c18c1ffffffffffffffff0120132800308121a80100b0010018002800400048006000520f5461626c6546756c6c5363616e5f37880100900100520b53656c656374696f6e5f38880100900100321e08081083201814200028c1ffffffffffffffff01320662696e6172794000321d080110011804200028c1ffffffffffffffff01320662696e6172794000321d08031001180b200028c1ffffffffffffffff01320662696e6172794000321e080c1081211813200028c1ffffffffffffffff01320662696e6172794000321e080c1081211813200028c1ffffffffffffffff01320662696e6172794000380088010090018040").as_slice()).unwrap();
+    set_table_ids(&mut want, &[(117, t)]);
+    let hex = |executor: &tipb::Executor| executor.encode_to_vec().iter().map(|b| format!("{b:02x}")).collect::<String>();
+    assert_eq!(hex(&got), hex(&want), "\ngot:  {got:?}\nwant: {want:?}");
 }

@@ -1425,7 +1425,7 @@ fn lower_aggregate_function(
         )?],
         None if kind == PushdownAggregateKind::Count => {
             vec![tidb_expr::pushdown_catalog::to_pb(
-                &tidb_expr::pushdown_catalog::PbScalar::IntLiteral(1),
+                &tidb_expr::pushdown_catalog::PbScalar::int_literal(1),
                 &|_| None,
             )?]
         }

@@ -945,6 +945,32 @@ fn resolve_unix_timestamp(args: &[PbScalar]) -> Option<&'static BuiltinSignature
     })
 }
 
+/// Go `extractFunctionClass.getFunction`: a unit that is both a clock and a
+/// date unit (`DAY_HOUR` and its kin) reads a datetime or timestamp value as
+/// a datetime and a time value as a time; a clock unit reads the value as a
+/// time, a date unit as a datetime. `ExtractDatetimeFromString`, which the
+/// two-sided units give any other value, no store evaluates.
+fn resolve_extract(args: &[PbScalar]) -> Option<&'static BuiltinSignature> {
+    let [PbScalar::StringLiteral { value: unit, .. }, value] = args else {
+        return None;
+    };
+    let unit = std::str::from_utf8(unit).ok()?;
+    let is_clock_unit = tidb_datatype::is_clock_unit(unit);
+    let is_date_unit = tidb_datatype::is_date_unit(unit);
+    let signature = if is_clock_unit && is_date_unit {
+        match value.eval_type() {
+            EvalType::Datetime | EvalType::Timestamp => ScalarFuncSig::ExtractDatetime,
+            EvalType::Duration => ScalarFuncSig::ExtractDuration,
+            _ => return None,
+        }
+    } else if is_clock_unit {
+        ScalarFuncSig::ExtractDuration
+    } else {
+        ScalarFuncSig::ExtractDatetime
+    };
+    CATALOG.iter().find(|candidate| candidate.name == "extract" && candidate.sig == signature)
+}
+
 const STR: ArgPattern = ArgPattern::eval(EvalType::String);
 const INT: ArgPattern = ArgPattern::eval(EvalType::Int);
 const REGEXP_LIKE_SELECTOR_2: &[ArgPattern] = &[STR, STR];
@@ -3013,6 +3039,24 @@ pub const CATALOG: &[BuiltinSignature] = &[
         ScalarFuncSig::TimestampDiff,
         false,
     ),
+    // Go `extractFunctionClass.getFunction` picks between these two by the
+    // unit and the value's type (`resolve_extract`).
+    signature(
+        "extract",
+        &[ArgPattern::ANY, ArgPattern::ANY],
+        &[EvalType::String, EvalType::Datetime],
+        EvalType::Int,
+        ScalarFuncSig::ExtractDatetime,
+        false,
+    ),
+    signature(
+        "extract",
+        &[ArgPattern::ANY, ArgPattern::ANY],
+        &[EvalType::String, EvalType::Duration],
+        EvalType::Int,
+        ScalarFuncSig::ExtractDuration,
+        false,
+    ),
     signature(
         "unix_timestamp",
         &[ArgPattern::ANY],
@@ -3481,8 +3525,14 @@ pub enum PbScalar {
         /// Planner-inferred type carried on the TiPB leaf.
         field_type: FieldType,
     },
-    /// A signed integer constant, already folded.
-    IntLiteral(i64),
+    /// A signed integer constant, already folded, with the constant's own
+    /// type (Go `Constant.GetType`).
+    IntLiteral {
+        /// The value.
+        value: i64,
+        /// The constant's type.
+        field_type: FieldType,
+    },
     /// An unsigned integer constant, already folded. Go uses a distinct
     /// `ExprType_Uint64` leaf so values above `math.MaxInt64` do not wrap.
     UIntLiteral {
@@ -3600,14 +3650,28 @@ pub enum PbScalar {
 }
 
 impl PbScalar {
+    /// An integer literal of the literal's own type (Go
+    /// `types.DefaultTypeForValue`).
+    #[must_use]
+    pub fn int_literal(value: i64) -> Self {
+        Self::IntLiteral {
+            value,
+            field_type: FieldType::new(FieldTypeCode::LongLong)
+                .with_flen(value.to_string().len() as i64)
+                .with_decimal(0)
+                .with_flags(NOT_NULL_FLAG | BINARY_FLAG),
+        }
+    }
+}
+
+impl PbScalar {
     /// Returns the declared field metadata carried by a leaf. Calls derive
-    /// their result type from the catalog, while the legacy signed integer
-    /// literal uses Go's fixed BIGINT representation and therefore has no
-    /// separate source `FieldType` here.
+    /// their result type from the catalog.
     fn static_field_type(&self) -> Option<&FieldType> {
         match self {
             Self::Column { field_type, .. }
             | Self::NullLiteral { field_type }
+            | Self::IntLiteral { field_type, .. }
             | Self::UIntLiteral { field_type, .. }
             | Self::DecimalLiteral { field_type, .. }
             | Self::RealLiteral { field_type, .. }
@@ -3625,7 +3689,7 @@ impl PbScalar {
                 ..
             } => Some(&control.field_type),
             Self::Cast { field_type, .. } => Some(field_type),
-            Self::IntLiteral(_) | Self::Call { .. } => None,
+            Self::Call { .. } => None,
         }
     }
 
@@ -3635,7 +3699,7 @@ impl PbScalar {
         match self {
             Self::Column { field_type, .. } => field_type.eval_type(),
             Self::NullLiteral { field_type } => field_type.eval_type(),
-            Self::IntLiteral(_) => EvalType::Int,
+            Self::IntLiteral { .. } => EvalType::Int,
             Self::UIntLiteral { field_type, .. } => field_type.eval_type(),
             Self::DecimalLiteral { .. } => EvalType::Decimal,
             Self::RealLiteral { .. } | Self::Float32Literal { .. } => EvalType::Real,
@@ -3663,7 +3727,7 @@ impl PbScalar {
         match self {
             Self::Column { field_type, .. } => field_type.is_unsigned(),
             Self::NullLiteral { field_type } => field_type.is_unsigned(),
-            Self::IntLiteral(_) => false,
+            Self::IntLiteral { .. } => false,
             Self::UIntLiteral { field_type, .. }
             | Self::DecimalLiteral { field_type, .. }
             | Self::RealLiteral { field_type, .. }
@@ -3710,7 +3774,7 @@ impl PbScalar {
         match self {
             Self::Column { field_type, .. } => field_type.is_binary_string(),
             Self::NullLiteral { .. } => false,
-            Self::IntLiteral(_) => false,
+            Self::IntLiteral { .. } => false,
             Self::UIntLiteral { .. }
             | Self::DecimalLiteral { .. }
             | Self::RealLiteral { .. }
@@ -3822,15 +3886,7 @@ fn metadata_expression(scalar: &PbScalar) -> Option<Expression> {
             crate::collation_derive::apply_derived_collation(&mut expression, &collation);
             return Some(expression);
         }
-        PbScalar::IntLiteral(value) => {
-            return Some(Expression::Constant(Constant::new(
-                Datum::Int(*value),
-                FieldType::new(FieldTypeCode::LongLong)
-                    .with_flen(value.to_string().len() as i64)
-                    .with_decimal(0)
-                    .with_flags(NOT_NULL_FLAG | BINARY_FLAG),
-            )))
-        }
+        PbScalar::IntLiteral { value, .. } => Datum::Int(*value),
         PbScalar::NullLiteral { .. } => Datum::Null,
         PbScalar::UIntLiteral { value, .. } => Datum::UInt(*value),
         PbScalar::DecimalLiteral { value, .. } => Datum::Decimal(value.clone()),
@@ -3970,6 +4026,9 @@ pub fn resolve(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignatur
     }
     if name == "unix_timestamp" {
         return resolve_unix_timestamp(args);
+    }
+    if name == "extract" {
+        return resolve_extract(args);
     }
     if name == "in" {
         return resolve_in(args);
@@ -4528,7 +4587,13 @@ fn describe_literal(value: Datum, field_type: Option<&FieldType>) -> Option<PbSc
         Datum::Null => Some(PbScalar::NullLiteral {
             field_type: field_type?.clone(),
         }),
-        Datum::Int(value) => Some(PbScalar::IntLiteral(*value)),
+        Datum::Int(value) => Some(match field_type {
+            Some(field_type) => PbScalar::IntLiteral {
+                value: *value,
+                field_type: field_type.clone(),
+            },
+            None => PbScalar::int_literal(*value),
+        }),
         Datum::UInt(value) => Some(PbScalar::UIntLiteral {
             value: *value,
             field_type: field_type?.clone(),
@@ -4808,15 +4873,10 @@ pub fn to_pb_in(
             agg_func_mode: None,
             ..Default::default()
         }),
-        PbScalar::IntLiteral(value) => Some(leaf(
+        PbScalar::IntLiteral { value, field_type } => Some(leaf(
             ExprType::Int64,
             encode_signed(*value),
-            int_field_type(
-                FieldTypeCode::LongLong.mysql_type().into(),
-                NOT_NULL_FLAG | BINARY_FLAG,
-                i32::try_from(value.to_string().len()).expect("an i64 display width fits i32"),
-                0,
-            ),
+            to_pb_field_type(field_type)?,
         )),
         PbScalar::UIntLiteral { value, field_type } => {
             let mut encoded = Vec::new();
@@ -4979,7 +5039,7 @@ fn coerced_to_pb(
 ) -> Option<Expr> {
     // Go folds a deterministic cast over a constant and sends the target
     // literal family, not a ScalarFunc cast node.
-    if let PbScalar::IntLiteral(value) = argument {
+    if let PbScalar::IntLiteral { value, .. } = argument {
         if required == EvalType::Int {
             return to_pb_in(argument, columns, zone);
         }
@@ -5311,7 +5371,7 @@ mod tests {
             ] {
                 let mut args = branches;
                 if name != "ifnull" {
-                    args.insert(0, PbScalar::IntLiteral(1));
+                    args.insert(0, PbScalar::int_literal(1));
                 }
                 let call = build_call(name, args)
                     .expect("Go derives string control metadata from all value branches");
@@ -5333,14 +5393,14 @@ mod tests {
         }
         for name in ["if", "case", "ifnull"] {
             let mut args = vec![
-                PbScalar::IntLiteral(1),
+                PbScalar::int_literal(1),
                 PbScalar::RealLiteral {
                     value: 1.5,
                     field_type: FieldType::new(FieldTypeCode::Double),
                 },
             ];
             if name != "ifnull" {
-                args.insert(0, PbScalar::IntLiteral(0));
+                args.insert(0, PbScalar::int_literal(0));
             }
             let call = build_call(name, args).unwrap();
             assert_eq!(call.eval_type(), EvalType::Real);
@@ -5372,7 +5432,7 @@ mod tests {
         let call = build_call(
             "if",
             vec![
-                PbScalar::IntLiteral(1),
+                PbScalar::int_literal(1),
                 decimal("1.2", 2, 1),
                 decimal("1.234", 4, 3),
             ],
@@ -5393,7 +5453,7 @@ mod tests {
         };
         let call = build_call(
             "if",
-            vec![PbScalar::IntLiteral(1), PbScalar::IntLiteral(42), text],
+            vec![PbScalar::int_literal(1), PbScalar::int_literal(42), text],
         )
         .unwrap();
         let pb = lower(&call).unwrap();
@@ -5420,8 +5480,8 @@ mod tests {
                     name,
                     vec![
                         column(code),
-                        PbScalar::IntLiteral(1),
-                        PbScalar::IntLiteral(0),
+                        PbScalar::int_literal(1),
+                        PbScalar::int_literal(0),
                     ],
                 )
                 .unwrap();
@@ -5453,8 +5513,8 @@ mod tests {
                 name,
                 vec![
                     column(FieldTypeCode::LongLong),
-                    PbScalar::IntLiteral(1),
-                    PbScalar::IntLiteral(0),
+                    PbScalar::int_literal(1),
+                    PbScalar::int_literal(0),
                 ],
             )
             .unwrap();
@@ -5463,7 +5523,7 @@ mod tests {
         for name in ["and", "or"] {
             let call = build_call(
                 name,
-                vec![column(FieldTypeCode::Double), PbScalar::IntLiteral(1)],
+                vec![column(FieldTypeCode::Double), PbScalar::int_literal(1)],
             )
             .unwrap();
             let pb = lower(&call).unwrap();
@@ -5601,7 +5661,7 @@ mod tests {
         assert!(build_call("isnull", Vec::new()).is_none());
         assert!(build_call(
             "isnull",
-            vec![PbScalar::IntLiteral(1), PbScalar::IntLiteral(2)]
+            vec![PbScalar::int_literal(1), PbScalar::int_literal(2)]
         )
         .is_none());
     }
@@ -5650,7 +5710,7 @@ mod tests {
                     array: field_type.is_array(),
                 },
             )),
-            PbScalar::IntLiteral(_)
+            PbScalar::IntLiteral { .. }
             | PbScalar::NullLiteral { .. }
             | PbScalar::UIntLiteral { .. }
             | PbScalar::DecimalLiteral { .. }
@@ -5701,12 +5761,12 @@ mod tests {
             ),
             (
                 column(FieldTypeCode::LongLong),
-                PbScalar::IntLiteral(7),
+                PbScalar::int_literal(7),
                 ScalarFuncSig::ModIntSignedSigned,
             ),
             (
                 unsigned_column(FieldTypeCode::LongLong),
-                PbScalar::IntLiteral(7),
+                PbScalar::int_literal(7),
                 ScalarFuncSig::ModIntUnsignedSigned,
             ),
             (
@@ -5752,7 +5812,7 @@ mod tests {
         assert!(
             resolve(
                 "round",
-                &[column(FieldTypeCode::Double), PbScalar::IntLiteral(2)]
+                &[column(FieldTypeCode::Double), PbScalar::int_literal(2)]
             )
             .is_none(),
             "ROUND with a frac argument is one of the signatures \
@@ -5835,7 +5895,7 @@ mod tests {
     fn a_constant_that_needs_a_cast_is_folded_before_lowering() {
         let call = build_call(
             "atan2",
-            vec![column(FieldTypeCode::Double), PbScalar::IntLiteral(1)],
+            vec![column(FieldTypeCode::Double), PbScalar::int_literal(1)],
         )
         .unwrap();
         let pb = lower(&call).expect("the folded Float64 literal lowers");
@@ -5844,14 +5904,14 @@ mod tests {
         // The same constant in an Int slot needs no cast and lowers.
         let call = build_call(
             "mod",
-            vec![column(FieldTypeCode::LongLong), PbScalar::IntLiteral(7)],
+            vec![column(FieldTypeCode::LongLong), PbScalar::int_literal(7)],
         )
         .unwrap();
         assert!(lower(&call).is_some());
 
         let call = build_call(
             "minus",
-            vec![PbScalar::IntLiteral(1), column(FieldTypeCode::NewDecimal)],
+            vec![PbScalar::int_literal(1), column(FieldTypeCode::NewDecimal)],
         )
         .unwrap();
         let pb = lower(&call).expect("the folded MysqlDecimal literal lowers");
@@ -5877,7 +5937,7 @@ mod tests {
                     "date_add",
                     vec![
                         column(FieldTypeCode::Datetime),
-                        PbScalar::IntLiteral(1),
+                        PbScalar::int_literal(1),
                         unit("YEAR"),
                     ],
                 )
@@ -5889,7 +5949,7 @@ mod tests {
                     "date_add",
                     vec![
                         column(FieldTypeCode::VarString),
-                        PbScalar::IntLiteral(1),
+                        PbScalar::int_literal(1),
                         unit("SECOND"),
                     ],
                 )
@@ -5965,6 +6025,39 @@ mod tests {
         .unwrap();
         let pb = lower(&unix).expect("UNIX_TIMESTAMP(datetime) lowers");
         assert_eq!(pb.sig, Some(ScalarFuncSig::UnixTimestampInt as i32));
+    }
+
+    /// Go `extractFunctionClass.getFunction` (`builtin_time.go`): a clock
+    /// unit reads a time and a date unit a datetime, whatever the value; a
+    /// unit that is both follows the value, and a value that is neither gets
+    /// `ExtractDatetimeFromString`, which is on no store's list.
+    #[test]
+    fn extract_resolves_its_signature_from_the_unit_and_the_value() {
+        for (unit, value, want) in [
+            ("YEAR", FieldTypeCode::Datetime, Some(ScalarFuncSig::ExtractDatetime)),
+            ("YEAR", FieldTypeCode::Duration, Some(ScalarFuncSig::ExtractDatetime)),
+            ("YEAR_MONTH", FieldTypeCode::VarString, Some(ScalarFuncSig::ExtractDatetime)),
+            ("HOUR", FieldTypeCode::Datetime, Some(ScalarFuncSig::ExtractDuration)),
+            ("HOUR_MICROSECOND", FieldTypeCode::VarString, Some(ScalarFuncSig::ExtractDuration)),
+            ("DAY_HOUR", FieldTypeCode::Datetime, Some(ScalarFuncSig::ExtractDatetime)),
+            ("DAY_HOUR", FieldTypeCode::Date, Some(ScalarFuncSig::ExtractDatetime)),
+            ("DAY_SECOND", FieldTypeCode::Timestamp, Some(ScalarFuncSig::ExtractDatetime)),
+            ("DAY_MINUTE", FieldTypeCode::Duration, Some(ScalarFuncSig::ExtractDuration)),
+            ("DAY_MICROSECOND", FieldTypeCode::VarString, None),
+            ("DAY_HOUR", FieldTypeCode::LongLong, None),
+        ] {
+            let args = [
+                PbScalar::StringLiteral {
+                    value: unit.as_bytes().to_vec(),
+                    field_type: FieldType::new(FieldTypeCode::Varchar),
+                },
+                column(value),
+            ];
+            let got = resolve("extract", &args).map(|signature| signature.sig);
+            assert_eq!(got, want, "extract({unit} from {value:?})");
+        }
+        // The unit is the grammar's keyword, never a column.
+        assert!(resolve("extract", &[column(FieldTypeCode::Varchar), column(FieldTypeCode::Datetime)]).is_none());
     }
 
     #[test]
@@ -6086,7 +6179,7 @@ mod tests {
             "mod",
             vec![
                 unsigned_column(FieldTypeCode::LongLong),
-                PbScalar::IntLiteral(7),
+                PbScalar::int_literal(7),
             ],
         )
         .unwrap();
@@ -6154,7 +6247,7 @@ mod tests {
                 for code in [FieldTypeCode::VarString, FieldTypeCode::String] {
                     let mut args = vec![string_column(code, collation)];
                     args.extend((1..arity).map(|position| {
-                        PbScalar::IntLiteral(i64::try_from(position).expect("small"))
+                        PbScalar::int_literal(i64::try_from(position).expect("small"))
                     }));
                     let resolved = resolve(name, &args).unwrap_or_else(|| {
                         panic!("{name}/{arity} over {collation} {code:?} resolves")
@@ -6179,8 +6272,8 @@ mod tests {
                 "conv",
                 vec![
                     string_column(FieldTypeCode::VarString, collation),
-                    PbScalar::IntLiteral(10),
-                    PbScalar::IntLiteral(2),
+                    PbScalar::int_literal(10),
+                    PbScalar::int_literal(2),
                 ],
             )
             .unwrap_or_else(|| panic!("conv over {collation} resolves"));
@@ -6213,7 +6306,7 @@ mod tests {
                         .with_flen(40),
                 }];
                 if name == "substr" {
-                    args.push(PbScalar::IntLiteral(2));
+                    args.push(PbScalar::int_literal(2));
                 }
                 let call = build_call(name, args).unwrap();
                 let pb = lower(&call).unwrap();
@@ -6284,8 +6377,8 @@ mod tests {
         for name in ["char_length", "upper", "lower", "conv"] {
             let mut args = vec![column(FieldTypeCode::LongLong)];
             if name == "conv" {
-                args.push(PbScalar::IntLiteral(10));
-                args.push(PbScalar::IntLiteral(2));
+                args.push(PbScalar::int_literal(10));
+                args.push(PbScalar::int_literal(2));
             }
             assert!(
                 resolve(name, &args).is_none(),
@@ -6337,7 +6430,7 @@ mod tests {
             value: b"x".to_vec(),
             field_type: FieldType::new(FieldTypeCode::VarString),
         };
-        let int = || PbScalar::IntLiteral(1);
+        let int = || PbScalar::int_literal(1);
         let cases: &[(&str, Vec<PbScalar>, ScalarFuncSig)] = &[
             ("regexp_like", vec![string(), string()], ScalarFuncSig::RegexpLikeSig),
             (
