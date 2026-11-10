@@ -5714,12 +5714,6 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	default:
 		return dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(indexOption.Tp)
 	}
-	if columnarIndexType == model.ColumnarIndexTypeFulltext {
-		if err := checkFullTextSupportedInStarter(); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
 	if err := checkTableTypeForColumnarIndexWithReplicaOption(tblInfo, indexOption.AddColumnarReplicaOnDemand > 0); err != nil {
 		return errors.Trace(err)
 	}

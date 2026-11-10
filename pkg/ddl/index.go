@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -611,22 +610,12 @@ func buildInvertedInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecific
 	return model.FieldTypeToInvertedIndexInfo(colInfo.FieldType, colInfo.ID), nil
 }
 
-func checkFullTextSupportedInStarter() error {
-	if !deploymode.IsStarter() {
-		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index is only supported in starter deployment mode")
-	}
-	return nil
-}
-
 func buildFullTextInfoWithCheck(
 	fullTextIndexPartSpecifications []*ast.FullTextIndexPartSpecification,
 	indexPartSpecifications []*ast.IndexPartSpecification,
 	indexOption *ast.IndexOption,
 	tblInfo *model.TableInfo,
 ) (*ast.FullTextIndexInfo, error) {
-	if err := checkFullTextSupportedInStarter(); err != nil {
-		return nil, err
-	}
 	if indexOption != nil {
 		indexOption.NormalizeLegacyFullTextParserName()
 	}
