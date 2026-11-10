@@ -1286,7 +1286,7 @@ fn strict_scalar_decimal_precision_probes_preserve_runtime_evaluation() {
                             _ => "9007199254740993",
                         };
                         ScalarFunction::new(
-                            tidb_ast::CiString::new("cast_json"),
+                            tidb_ast::CiString::new("cast"),
                             FieldType::new(C::Json).with_added_flags(FieldTypeFlags::PARSE_TO_JSON),
                             vec![literal(
                                 Datum::new_string_datum(text),
@@ -1424,7 +1424,7 @@ fn json_cast_arithmetic_batches_preserve_go_operand_passes() {
                         let mut column = crate::column::Column::new(index + 1, string.clone());
                         column.index = index;
                         Expression::ScalarFunction(ScalarFunction::new(
-                            tidb_ast::CiString::new("cast_json"),
+                            tidb_ast::CiString::new("cast"),
                             FieldType::new(C::Json).with_added_flags(FieldTypeFlags::PARSE_TO_JSON),
                             vec![Expression::Column(column)],
                         ))
@@ -1550,7 +1550,7 @@ fn json_cast_arithmetic_batches_preserve_go_operand_passes() {
                         json.add_flags(FieldTypeFlags::PARSE_TO_JSON);
                     }
                     let cast = Expression::ScalarFunction(ScalarFunction::new(
-                        tidb_ast::CiString::new("cast_json"),
+                        tidb_ast::CiString::new("cast"),
                         json,
                         vec![Expression::Column(column)],
                     ));
@@ -1720,7 +1720,7 @@ use tidb_charset::Collation;
                     let mut column = crate::column::Column::new(1, field.clone());
                     column.index = 0;
                     let expression = Expression::ScalarFunction(ScalarFunction::new(
-                        tidb_ast::CiString::new("cast_json"),
+                        tidb_ast::CiString::new("cast"),
                         FieldType::new(C::Json).with_added_flags(if parse_document {
                             FieldTypeFlags::PARSE_TO_JSON
                         } else {
@@ -1781,7 +1781,7 @@ use tidb_charset::Collation;
     let mut column = crate::column::Column::new(1, vector.clone());
     column.index = 0;
     let expression = Expression::ScalarFunction(ScalarFunction::new(
-        tidb_ast::CiString::new("cast_json"),
+        tidb_ast::CiString::new("cast"),
         FieldType::new(C::Json),
         vec![Expression::Column(column)],
     ));

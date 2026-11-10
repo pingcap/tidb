@@ -451,7 +451,7 @@ fn real_function_builder_casts_comparison_arguments() {
     };
     assert!(equality.args.iter().all(|argument| matches!(
         argument,
-        Expression::ScalarFunction(cast) if cast.func_name.lowercase() == "cast_double"
+        Expression::ScalarFunction(cast) if cast.func_name.lowercase() == "cast"
     )));
 }
 
@@ -476,7 +476,7 @@ fn normalized_cast_prints_go_s_name_and_target_type() {
     decimal.set_flen(10);
     decimal.set_decimal(0);
     let cast = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("cast_decimal"),
+        CiString::new("cast"),
         decimal,
         vec![col(1)],
     ));

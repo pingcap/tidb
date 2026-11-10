@@ -50,10 +50,8 @@ fn projection_cast(projection: &LogicalProjection, output: &Column) -> Option<Pr
     let Expression::ScalarFunction(cast) = projection.exprs.get(offset)? else {
         return None;
     };
-    if !matches!(
-        cast.func_name.lowercase(),
-        "cast" | "cast_real" | "cast_float" | "cast_double"
-    ) || cast.ret_type.as_ref()?.eval_type() != EvalType::Real
+    if !cast.is_cast()
+        || cast.ret_type.as_ref()?.eval_type() != EvalType::Real
         || cast.args.len() != 1
     {
         return None;

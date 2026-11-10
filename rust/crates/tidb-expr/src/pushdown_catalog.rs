@@ -1981,50 +1981,6 @@ pub const CATALOG: &[BuiltinSignature] = &[
         ScalarFuncSig::UnaryNotInt,
         false,
     ),
-    // The internal cast nodes the planner emits around columns whose type a
-    // Real/Decimal slot does not accept (Go wraps the same operands with
-    // `WrapWithCastAsReal`/`WrapWithCastAsDecimal`). The result copies the
-    // first argument's UNSIGNED flag, exactly as Go's cast signatures do.
-    signature(
-        "cast_double",
-        &[ArgPattern::eval(EvalType::Int)],
-        &[EvalType::Int],
-        EvalType::Real,
-        ScalarFuncSig::CastIntAsReal,
-        true,
-    ),
-    signature(
-        "cast_double",
-        &[ArgPattern::eval(EvalType::Decimal)],
-        &[EvalType::Decimal],
-        EvalType::Real,
-        ScalarFuncSig::CastDecimalAsReal,
-        true,
-    ),
-    signature(
-        "cast_double",
-        &[ArgPattern::eval(EvalType::String)],
-        &[EvalType::String],
-        EvalType::Real,
-        ScalarFuncSig::CastStringAsReal,
-        true,
-    ),
-    signature(
-        "cast_decimal",
-        &[ArgPattern::eval(EvalType::Int)],
-        &[EvalType::Int],
-        EvalType::Decimal,
-        ScalarFuncSig::CastIntAsDecimal,
-        true,
-    ),
-    signature(
-        "cast_decimal",
-        &[ArgPattern::eval(EvalType::String)],
-        &[EvalType::String],
-        EvalType::Decimal,
-        ScalarFuncSig::CastStringAsDecimal,
-        true,
-    ),
     // The integer arithmetic family, and the comparisons that compose it.
     // Go `arithmeticPlusFunctionClass.getFunction`: two ints are PlusInt with
     // the result unsigned when either operand is unsigned; the four
@@ -5244,7 +5200,7 @@ fn describe_function(
     mut args: Vec<PbScalar>,
 ) -> Option<PbScalar> {
     let name = function.func_name.lowercase();
-    if name.starts_with("cast_") && !name.ends_with("_in_union") && args.len() == 1 {
+    if function.is_cast() && !function.cast_in_union() && args.len() == 1 {
         let field = expression.static_type()?;
         let signature = cast_node_signature(args[0].eval_type(), field.eval_type())?;
         return Some(PbScalar::Cast {

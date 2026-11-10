@@ -152,6 +152,13 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
     (Go's `builtinXxxSig.evalT`), one Go file at a time, until
     `ScalarFunction::eval_by_signature` and `func::eval_func_values` are
     empty; the PB decoder (`getSignatureByPB`) binds the same functions.
+    - [x] `builtin_cast.go`: a cast node is named `cast` (Go `ast.Cast`) and
+      evaluates by its signature kernel, which carries Go's `inUnion`; the
+      per-target `cast_*` node names and the `*_in_union` name arms are gone.
+      Left: the batch paths and the vector-unsupported signatures still go
+      through `cast_type_of` + `cast::eval_cast` (the AST-typed conversion),
+      keyed by `builtin_cast::cast_target_name`; an in-union cast is not
+      pushed down (Go encodes `InUnionMetadata{true}`; goes with 11b-2c).
   - [ ] 11b-2c: `pushdown_catalog`'s second description of a call
     (`PbScalar`, `BuiltinSignature`, `resolve`) is deleted; `ExprToPB`
     reads the node's signature.

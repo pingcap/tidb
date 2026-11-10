@@ -87,10 +87,8 @@ pub fn physical_expression_text_with_columns(
                 return Some(format!("in({}, dual)", arguments[0]));
             }
             match function.func_name.lowercase() {
-                // Go names every cast `cast` and renders it as
-                // `cast(arg, RetType.String())`; this port keeps one name per
-                // cast signature.
-                name if (name == "cast" || name.starts_with("cast_")) && arguments.len() == 1 => {
+                // Go renders a cast as `cast(arg, RetType.String())`.
+                "cast" if arguments.len() == 1 => {
                     let result_type = function.ret_type.as_ref()?;
                     Some(format!("cast({}, {})", arguments[0], result_type.source_string()))
                 }

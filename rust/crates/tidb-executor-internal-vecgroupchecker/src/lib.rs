@@ -1907,7 +1907,7 @@ use tidb_exprctx::ErrorLevel;
         }
         let field = FieldType::new(FieldTypeCode::Varchar);
         let expr = Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
-            tidb_ast::CiString::new("cast_signed"),
+            tidb_ast::CiString::new("cast"),
             FieldType::new(FieldTypeCode::LongLong),
             vec![column(0, field.clone())],
         ));

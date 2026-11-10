@@ -177,7 +177,7 @@ fn test_compare_function_with_refine() {
         ("a <=> '1.1'", "Const:INT:0"),
         (
             "a != '1.1'",
-            "ne(cast_double(col(Some(Long))), Const:FLOAT:1.1)",
+            "ne(cast(col(Some(Long))), Const:FLOAT:1.1)",
         ),
         // Mirrored rows through `symmetricOp`.
         ("'1' < a", "lt(Const:INT:1, col(Some(Long)))"),
@@ -195,7 +195,7 @@ fn test_compare_function_with_refine() {
         ("'1.1' <=> a", "Const:INT:0"),
         (
             "'1.1' != a",
-            "ne(Const:FLOAT:1.1, cast_double(col(Some(Long))))",
+            "ne(Const:FLOAT:1.1, cast(col(Some(Long))))",
         ),
         ("'123456789123456711111189' = a", "Const:INT:0"),
         ("123456789123456789.12345 = a", "Const:INT:0"),
@@ -352,7 +352,7 @@ fn test_compare() {
         shape(&built),
         // The int constant keeps its INT label inside the structural cast;
         // Go's re-type to JSON happens in the selected signature.
-        "lt(col(Some(Json)), cast_json(Const:INT:1))"
+        "lt(col(Some(Json)), cast(Const:INT:1))"
     );
 
     // Callers overriding a comparison's derived collation after construction

@@ -1254,16 +1254,16 @@ mod tests {
         let rows = [
             (
                 FieldTypeCode::LongLong,
-                "cast_signed",
-                "cast_char",
+                "cast",
+                "cast",
                 FieldTypeCode::VarString,
                 20,
                 crate::Datum::Int(0),
             ),
             (
                 FieldTypeCode::Double,
-                "cast_double",
-                "cast_double",
+                "cast",
+                "cast",
                 FieldTypeCode::Double,
                 23,
                 crate::Datum::Real(2.0),

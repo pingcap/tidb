@@ -66,8 +66,7 @@ fn conv_bit_literal(
 ) -> Result<Option<Datum>, EvalError> {
     match arg {
         Expression::Constant(constant) => Ok(is_binary_literal(arg).then(|| constant.value.clone())),
-        // Go's one `ast.Cast` name is `cast_<target>` here.
-        Expression::ScalarFunction(cast) if cast.func_name.lowercase().starts_with("cast_") => {
+        Expression::ScalarFunction(cast) if cast.is_cast() => {
             let Some(arg0) = cast.args.first() else {
                 return Ok(None);
             };
@@ -144,6 +143,8 @@ enum Kernel {
     Cast {
         source: EvalType,
         target: EvalType,
+        /// Go `baseBuiltinCastFunc.inUnion`.
+        in_union: bool,
     },
     String {
         operation: StringOp,
@@ -656,7 +657,7 @@ impl PbBuiltin {
             | SubDateStringString => Kernel::DateArithmetic { subtract: true },
             _ => {
                 let (source, target) = cast_types(signature)?;
-                Kernel::Cast { source, target }
+                Kernel::Cast { source, target, in_union: false }
             }
         };
         Some(Self { signature, kernel })
@@ -671,12 +672,18 @@ impl PbBuiltin {
         })
     }
 
-    /// A signature the evaluator dispatches by the node's name.
-    pub(crate) fn of_function(signature: ScalarFuncSig) -> Self {
-        Self {
-            signature,
-            kernel: Kernel::Function,
+    /// Go `newBaseBuiltinCastFunc(bf, inUnion)` of the signature a cast
+    /// class's `getFunction` set.
+    pub(crate) fn of_cast_func(signature: ScalarFuncSig, in_union: bool) -> Self {
+        let mut builtin = Self::of_builtin_func(signature);
+        if let Kernel::Cast { source, target, .. } = builtin.kernel {
+            builtin.kernel = Kernel::Cast { source, target, in_union };
         }
+        builtin
+    }
+
+    pub(super) fn cast_in_union(self) -> bool {
+        matches!(self.kernel, Kernel::Cast { in_union: true, .. })
     }
 
     pub(super) fn numeric_domain(self) -> Option<EvalType> {
@@ -932,7 +939,7 @@ impl PbBuiltin {
                     .map_err(|_| EvalError::Unsupported("invalid date interval unit"))?;
                 function.eval_date_arithmetic(unit, subtract, ctx, row)
             }
-            Kernel::Cast { source, target } => {
+            Kernel::Cast { source, target, in_union } => {
                 if args.len() != 1 {
                     return Err(EvalError::Unsupported("protobuf cast arity"));
                 }
@@ -942,7 +949,13 @@ impl PbBuiltin {
                 {
                     return eval_numeric_row(&args[0], ctx, row, target);
                 }
-                let value = eval_numeric_row(&args[0], ctx, row, source)?;
+                // Go `builtinCastStringAsStringSig.evalString`: `EvalString`
+                // of an ENUM or SET is its name, whatever `EnumSetAsIntFlag`.
+                let value = if function.pb_signature() == Some(ScalarFuncSig::CastStringAsString) {
+                    args[0].eval_string(ctx, row)?
+                } else {
+                    eval_numeric_row(&args[0], ctx, row, source)?
+                };
                 if value.is_null() {
                     return Ok(Datum::Null);
                 }
@@ -958,6 +971,7 @@ impl PbBuiltin {
                         source,
                         args[0].static_type(),
                         field,
+                        in_union,
                         ctx,
                     );
                 }

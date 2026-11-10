@@ -34,14 +34,191 @@ mod tests {
         }
     }
 
+    /// Go `BuildCastFunction4Union` over a constant, evaluated under strict
+    /// flags: every `inUnion` branch of the int, real and decimal cast
+    /// signatures (`builtin_cast.go`), as a Go probe printed them.
+    #[test]
+    fn in_union_casts_answer_like_go() {
+        struct Strict;
+        impl crate::Columns for Strict {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn truncate_level(&self) -> crate::ErrorLevel {
+                crate::ErrorLevel::Error
+            }
+        }
+        enum Want {
+            I(i64),
+            U(u64),
+            R(f64),
+            D(&'static str),
+            E,
+        }
+        use Want::{D, E, I, R, U};
+        let rows = [
+            ("int", "-1", "bigint_u", U(0)),
+            ("int", "-1", "bigint", I(-1)),
+            ("int", "-1", "double_u", R(0.0)),
+            ("int", "-1", "double", R(-1.0)),
+            ("int", "-1", "dec_u", D("0.00")),
+            ("int", "-1", "dec", D("-1.00")),
+            ("int", "7", "bigint_u", U(7)),
+            ("int", "7", "bigint", I(7)),
+            ("int", "7", "double_u", R(7.0)),
+            ("int", "7", "double", R(7.0)),
+            ("int", "7", "dec_u", D("7.00")),
+            ("int", "7", "dec", D("7.00")),
+            ("uint", "max", "bigint_u", U(0)),
+            ("uint", "max", "bigint", I(-1)),
+            ("uint", "max", "double_u", R(1.8446744073709552e+19)),
+            ("uint", "max", "double", R(1.8446744073709552e+19)),
+            ("uint", "max", "dec_u", E),
+            ("uint", "max", "dec", E),
+            ("real", "-2.5", "bigint_u", U(0)),
+            ("real", "-2.5", "bigint", I(-2)),
+            ("real", "-2.5", "double_u", R(0.0)),
+            ("real", "-2.5", "double", R(-2.5)),
+            ("real", "-2.5", "dec_u", D("0.00")),
+            ("real", "-2.5", "dec", D("0.00")),
+            ("real", "2.5", "bigint_u", U(2)),
+            ("real", "2.5", "bigint", I(2)),
+            ("real", "2.5", "double_u", R(2.5)),
+            ("real", "2.5", "double", R(2.5)),
+            ("real", "2.5", "dec_u", D("2.50")),
+            ("real", "2.5", "dec", D("2.50")),
+            ("dec", "-2.5", "bigint_u", U(0)),
+            ("dec", "-2.5", "bigint", I(-3)),
+            ("dec", "-2.5", "double_u", R(0.0)),
+            ("dec", "-2.5", "double", R(-2.5)),
+            ("dec", "-2.5", "dec_u", D("0.00")),
+            ("dec", "-2.5", "dec", D("-2.50")),
+            ("dec", "-0.4", "bigint_u", U(0)),
+            ("dec", "-0.4", "bigint", I(0)),
+            ("dec", "-0.4", "double_u", R(0.0)),
+            ("dec", "-0.4", "double", R(-0.4)),
+            ("dec", "-0.4", "dec_u", D("0.00")),
+            ("dec", "-0.4", "dec", D("-0.40")),
+            ("dec", "2.5", "bigint_u", U(3)),
+            ("dec", "2.5", "bigint", I(3)),
+            ("dec", "2.5", "double_u", R(2.5)),
+            ("dec", "2.5", "double", R(2.5)),
+            ("dec", "2.5", "dec_u", D("2.50")),
+            ("dec", "2.5", "dec", D("2.50")),
+            ("str", "-2.5", "bigint_u", U(0)),
+            ("str", "-2.5", "bigint", E),
+            ("str", "-2.5", "double_u", R(0.0)),
+            ("str", "-2.5", "double", R(-2.5)),
+            ("str", "-2.5", "dec_u", D("0.00")),
+            ("str", "-2.5", "dec", D("-2.50")),
+            ("str", " -7 ", "bigint_u", U(0)),
+            ("str", " -7 ", "bigint", I(-7)),
+            ("str", " -7 ", "double_u", R(0.0)),
+            ("str", " -7 ", "double", R(-7.0)),
+            ("str", " -7 ", "dec_u", D("0.00")),
+            ("str", " -7 ", "dec", D("-7.00")),
+            ("str", "-abc", "bigint_u", U(0)),
+            ("str", "-abc", "bigint", E),
+            ("str", "-abc", "double_u", E),
+            ("str", "-abc", "double", E),
+            ("str", "-abc", "dec_u", D("0.00")),
+            ("str", "-abc", "dec", E),
+            ("str", "3.7", "bigint_u", E),
+            ("str", "3.7", "bigint", E),
+            ("str", "3.7", "double_u", R(3.7)),
+            ("str", "3.7", "double", R(3.7)),
+            ("str", "3.7", "dec_u", D("3.70")),
+            ("str", "3.7", "dec", D("3.70")),
+            ("str", "-0", "bigint_u", U(0)),
+            ("str", "-0", "bigint", I(0)),
+            ("str", "-0", "double_u", R(-0.0)),
+            ("str", "-0", "double", R(-0.0)),
+            ("str", "-0", "dec_u", D("0.00")),
+            ("str", "-0", "dec", D("0.00")),
+            ("str", "-", "bigint_u", E),
+            ("str", "-", "bigint", E),
+            ("str", "-", "double_u", E),
+            ("str", "-", "double", E),
+            ("str", "-", "dec_u", E),
+            ("str", "-", "dec", E),
+            ("str", "abc", "bigint_u", E),
+            ("str", "abc", "bigint", E),
+            ("str", "abc", "double_u", E),
+            ("str", "abc", "double", E),
+            ("str", "abc", "dec_u", E),
+            ("str", "abc", "dec", E),
+        ];
+        for (kind, value, target, want) in rows {
+            let (datum, mut source_type) = match kind {
+                "int" => (
+                    Datum::Int(value.parse().expect("int")),
+                    FieldType::new(FieldTypeCode::LongLong),
+                ),
+                "uint" => (
+                    Datum::UInt(u64::MAX),
+                    FieldType::new(FieldTypeCode::LongLong)
+                        .with_added_flags(FieldTypeFlags::UNSIGNED),
+                ),
+                "real" => (
+                    Datum::Real(value.parse().expect("real")),
+                    FieldType::new(FieldTypeCode::Double),
+                ),
+                "dec" => {
+                    let mut tp = FieldType::new(FieldTypeCode::NewDecimal);
+                    tp.set_flen(10);
+                    tp.set_decimal(1);
+                    (Datum::Decimal(tidb_datatype::Decimal::from_literal(value)), tp)
+                }
+                _ => {
+                    let mut tp = FieldType::new(FieldTypeCode::VarString);
+                    tp.set_charset_name("utf8mb4");
+                    tp.set_collation_name("utf8mb4_bin");
+                    (Datum::new_string_datum(value), tp)
+                }
+            };
+            source_type.add_flags(FieldTypeFlags::NOT_NULL);
+            let source = crate::expression::Expression::Constant(
+                crate::constant::Constant::new(datum, source_type),
+            );
+            let (code, unsigned) = match target {
+                "bigint_u" => (FieldTypeCode::LongLong, true),
+                "bigint" => (FieldTypeCode::LongLong, false),
+                "double_u" => (FieldTypeCode::Double, true),
+                "double" => (FieldTypeCode::Double, false),
+                "dec_u" => (FieldTypeCode::NewDecimal, true),
+                _ => (FieldTypeCode::NewDecimal, false),
+            };
+            let mut tp = FieldType::new(code);
+            if code == FieldTypeCode::NewDecimal {
+                tp.set_flen(10);
+                tp.set_decimal(2);
+            }
+            if unsigned {
+                tp.add_flags(FieldTypeFlags::UNSIGNED);
+            }
+            let cast = crate::wrap_cast::build_cast_function_4_union(
+                &crate::builtin::UnfoldedBuildContext,
+                source,
+                tp,
+            )
+            .expect("UNION cast builds");
+            let got = cast.eval(&Strict, tidb_chunk::row::Row::empty());
+            let label = format!("{kind}:{value} -> {target}: {got:?}");
+            match (want, got) {
+                (I(want), Ok(Datum::Int(got))) => assert_eq!(got, want, "{label}"),
+                (U(want), Ok(Datum::UInt(got))) => assert_eq!(got, want, "{label}"),
+                (R(want), Ok(Datum::Real(got))) => {
+                    assert_eq!(got.to_bits(), want.to_bits(), "{label}");
+                }
+                (D(want), Ok(Datum::Decimal(got))) => assert_eq!(got.to_string(), want, "{label}"),
+                (E, Err(_)) => {}
+                _ => panic!("{label}"),
+            }
+        }
+    }
+
     #[test]
     fn union_unsigned_integer_cast_clamps_negative_values() {
-        let (name, result_type) =
-            crate::rewriter::builtin_cast_result_type(&tidb_ast::CastType::UnsignedInUnion)
-                .expect("internal UNION cast target");
-        assert_eq!(name, "cast_unsigned_in_union");
-        assert!(result_type.is_unsigned());
-
         let mut source_type = FieldType::new(FieldTypeCode::LongLong);
         source_type.add_flags(FieldTypeFlags::NOT_NULL);
         let source = crate::expression::Expression::Constant(crate::constant::Constant::new(
@@ -56,7 +233,7 @@ mod tests {
         let crate::expression::Expression::ScalarFunction(ordinary) = ordinary else {
             panic!("ordinary cast should be a scalar function");
         };
-        assert_eq!(ordinary.func_name.original(), "cast_unsigned");
+        assert_eq!(ordinary.func_name.original(), "cast");
         assert_eq!(
             ordinary
                 .eval(&WarningContext::default(), tidb_chunk::row::Row::empty())
@@ -69,7 +246,7 @@ mod tests {
         let crate::expression::Expression::ScalarFunction(in_union) = in_union else {
             panic!("UNION cast should be a scalar function");
         };
-        assert_eq!(in_union.func_name.original(), "cast_unsigned_in_union");
+        assert_eq!(in_union.func_name.original(), "cast");
         assert_eq!(
             in_union
                 .eval(&WarningContext::default(), tidb_chunk::row::Row::empty())
@@ -123,7 +300,7 @@ mod tests {
         };
         assert_eq!(
             negative_fn.func_name.original(),
-            "cast_string_to_decimal_in_union"
+            "cast"
         );
         let warnings = WarningContext::default();
         assert_eq!(
@@ -161,7 +338,7 @@ mod tests {
         let crate::expression::Expression::ScalarFunction(function) = &wrapped else {
             panic!("UNION decimal cast should be a scalar function");
         };
-        assert_eq!(function.func_name.original(), "cast_decimal");
+        assert_eq!(function.func_name.original(), "cast");
         assert_eq!(
             wrapped
                 .eval(&WarningContext::default(), tidb_chunk::row::Row::empty())
@@ -193,20 +370,20 @@ mod tests {
                 0,
             ),
         ] {
-            let (_, field_type) = crate::rewriter::builtin_cast_result_type(&cast).expect("target");
+            let field_type = crate::rewriter::builtin_cast_result_type(&cast).expect("target");
             assert_eq!(field_type.code(), code);
             if decimal >= 0 {
                 assert_eq!(field_type.decimal(), decimal);
             }
         }
 
-        let (_, time) =
+        let time =
             crate::rewriter::builtin_cast_result_type(&tidb_ast::CastType::Time { fsp: Some(3) })
                 .expect("TIME target");
         assert_eq!(time.flen(), 14);
         assert!(time.has_flag(tidb_datatype::FieldTypeFlags::BINARY));
 
-        let (_, vector) = crate::rewriter::builtin_cast_result_type(&tidb_ast::CastType::Vector {
+        let vector = crate::rewriter::builtin_cast_result_type(&tidb_ast::CastType::Vector {
             dimensions: Some(3),
         })
         .expect("VECTOR target");

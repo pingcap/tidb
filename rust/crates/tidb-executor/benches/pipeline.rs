@@ -664,7 +664,7 @@ use tidb_exprctx::NoColumns;
         json.set_decimal(0);
         json.add_flags(tidb_datatype::FieldTypeFlags::PARSE_TO_JSON);
         let cast = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("cast_json"),
+            CiString::new("cast"),
             json,
             vec![column(0, &string)],
         ));

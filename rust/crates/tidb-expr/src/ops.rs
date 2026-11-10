@@ -364,6 +364,7 @@ pub(crate) fn eval_binary_full(
                         None,
                         &tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
                             .with_unsigned(unsigned),
+                        false,
                         ctx,
                     )
                 } else {

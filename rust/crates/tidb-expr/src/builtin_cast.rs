@@ -24,7 +24,6 @@ use crate::rewriter::adjust_ret_ft_for_cast_string;
 use crate::scalar_function::ScalarFunction;
 use crate::wrap_cast::type_of;
 use crate::EvalError;
-use tidb_ast::CiString;
 use tidb_datatype::{EvalType, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_proto::tipb::ScalarFuncSig;
 
@@ -415,56 +414,38 @@ impl FunctionClass for CastAsVectorFloat32FunctionClass {
     }
 }
 
-/// The name the evaluator still dispatches a cast under: the target type,
-/// and for a UNION branch the clamp its source's signature applies.
-fn legacy_cast_name(
-    target: &FieldType,
-    in_union: bool,
-    source_eval_type: EvalType,
-) -> Result<&'static str, EvalError> {
+/// The conversion the evaluator's row and batch paths run for a cast to
+/// `target`, by the name its conversion table is keyed with.
+pub(crate) fn cast_target_name(target: &FieldType) -> Result<&'static str, EvalError> {
     let unsigned = target.flags() & FieldTypeFlags::UNSIGNED != 0;
     if target.is_array() {
-        return Ok("cast_array");
+        return Ok("array");
     }
     Ok(match target.code() {
-        FieldTypeCode::Year => "cast_year",
-        FieldTypeCode::Date | FieldTypeCode::NewDate => "cast_date",
-        FieldTypeCode::Datetime | FieldTypeCode::Timestamp => "cast_datetime",
-        FieldTypeCode::Duration => "cast_time",
-        FieldTypeCode::NewDecimal if in_union => match source_eval_type {
-            // Go's decimal target has source-specific inUnion signatures.
-            // REAL and integer sources clamp a negative signed value before
-            // ProduceDecWithSpecifiedTp; string/decimal sources take that
-            // branch only when the merged target is UNSIGNED.
-            EvalType::Real => "cast_real_to_decimal_in_union",
-            EvalType::Int if unsigned => "cast_int_to_decimal_in_union",
-            EvalType::String if unsigned => "cast_string_to_decimal_in_union",
-            EvalType::Decimal if unsigned => "cast_decimal_in_union",
-            _ => "cast_decimal",
-        },
-        FieldTypeCode::NewDecimal => "cast_decimal",
-        // Go `builtinCastRealAsRealSig.evalReal`: an in-union unsigned-target
-        // cast clamps a negative to 0.
-        FieldTypeCode::Float | FieldTypeCode::Double if in_union && unsigned => {
-            "cast_real_in_union"
-        }
+        FieldTypeCode::Year => "year",
+        FieldTypeCode::Date | FieldTypeCode::NewDate => "date",
+        FieldTypeCode::Datetime | FieldTypeCode::Timestamp => "datetime",
+        FieldTypeCode::Duration => "time",
+        FieldTypeCode::NewDecimal => "decimal",
         // A FLOAT target is its own signature: Go's float32 cast overflows
         // differently from the double one (`CAST('1e300' AS FLOAT)` errors
         // 1690 where the DOUBLE cast answers 1e+300).
-        FieldTypeCode::Float => "cast_float",
-        FieldTypeCode::Double => "cast_double",
-        FieldTypeCode::Json => "cast_json",
-        FieldTypeCode::VectorFloat32 => "cast_vector",
+        FieldTypeCode::Float => "float",
+        FieldTypeCode::Double => "double",
+        FieldTypeCode::Json => "json",
+        FieldTypeCode::VectorFloat32 => "vector",
         FieldTypeCode::Tiny
         | FieldTypeCode::Short
         | FieldTypeCode::Int24
         | FieldTypeCode::Long
         | FieldTypeCode::LongLong
-        | FieldTypeCode::Bit => match (unsigned, in_union) {
-            (true, true) => "cast_unsigned_in_union",
-            (true, false) => "cast_unsigned",
-            (false, _) => "cast_signed",
-        },
+        | FieldTypeCode::Bit => {
+            if unsigned {
+                "unsigned"
+            } else {
+                "signed"
+            }
+        }
         FieldTypeCode::Varchar
         | FieldTypeCode::VarString
         | FieldTypeCode::String
@@ -478,9 +459,9 @@ fn legacy_cast_name(
         // builds its cast (`castCollationForIn` over an `IN (NULL)` member).
         | FieldTypeCode::Null => {
             if target.charset_name() == CHARSET_BIN {
-                "cast_binary"
+                "binary"
             } else {
-                "cast_char"
+                "char"
             }
         }
         _ => return Err(EvalError::Unsupported("this cast target is not ported")),
@@ -537,19 +518,9 @@ pub fn build_cast_function_with_check(
             .get_function(ctx, vec![expr])?
         }
     };
-    // Go casts a binary literal to a number through the target's own
-    // signature (`CastIntAsInt`, `CastRealAsReal`, `CastDecimalAsDecimal`).
-    let target_eval_type = f.tp.eval_type();
-    let source_eval_type = if is_binary_literal(&f.args[0])
-        && matches!(target_eval_type, EvalType::Int | EvalType::Real | EvalType::Decimal)
-    {
-        target_eval_type
-    } else {
-        type_of(&f.args[0]).eval_type()
-    };
-    let name = legacy_cast_name(&f.tp, in_union, source_eval_type)?;
+    cast_target_name(&f.tp)?;
     let is_json = f.tp.eval_type() == EvalType::Json;
-    let mut res = Expression::ScalarFunction(ScalarFunction::from_cast_func(CiString::new(name), f));
+    let mut res = Expression::ScalarFunction(ScalarFunction::from_cast_func(f, in_union));
     // We do not fold CAST if the eval type of this scalar function is
     // ETJson since we may reset the flag of the field type of CastAsJson
     // later which would affect the evaluation of it.

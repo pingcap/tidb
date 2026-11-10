@@ -1358,7 +1358,7 @@ mod tests {
         let Expression::ScalarFunction(cast) = &comparison.args[1] else {
             panic!("BIGINT operand was not cast: {:?}", comparison.args[1]);
         };
-        assert_eq!(cast.func_name.lowercase(), "cast_decimal");
+        assert_eq!(cast.func_name.lowercase(), "cast");
         let target = cast.ret_type.as_ref().unwrap();
         assert_eq!(target.code(), FieldTypeCode::NewDecimal);
         assert_eq!(target.flen(), 20);
@@ -1440,7 +1440,7 @@ mod tests {
             let cast = crate::wrap_cast::wrap_with_cast_as_decimal(&crate::builtin::UnfoldedBuildContext, Expression::Constant(parameter))
                 .unwrap();
             assert!(
-                matches!(&cast, Expression::ScalarFunction(function) if function.func_name.lowercase() == "cast_decimal")
+                matches!(&cast, Expression::ScalarFunction(function) if function.func_name.lowercase() == "cast")
             );
             for value in [Datum::Int(2), Datum::Int(-2), Datum::Null] {
                 let expected = match value {

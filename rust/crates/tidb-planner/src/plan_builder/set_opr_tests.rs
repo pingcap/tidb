@@ -756,7 +756,7 @@ fn union_unsigned_widening_uses_the_in_union_cast_signature() {
     let [tidb_expr::expression::Expression::ScalarFunction(cast)] = first.exprs.as_slice() else {
         panic!("the narrow unsigned branch should be widened by a cast");
     };
-    assert_eq!(cast.func_name.original(), "cast_unsigned_in_union");
+    assert_eq!(cast.func_name.original(), "cast");
     assert!(cast.get_static_type().is_some_and(FieldType::is_unsigned));
     assert_eq!(cast.get_static_type().unwrap().flen(), 20);
     let [tidb_expr::expression::Expression::Column(source)] = cast.get_args() else {

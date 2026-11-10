@@ -411,16 +411,29 @@ fn has_runtime_warning_cast(expr: &Expression) -> bool {
     };
     let name = function.func_name.lowercase();
     let indexes: &[usize] = match name {
-        "cast_signed"
-        | "cast_unsigned"
-        | "cast_unsigned_in_union"
-        | "cast_real"
-        | "cast_decimal"
-        | "cast_datetime"
-        | "cast_timestamp"
-        | "cast_date"
-        | "cast_duration"
-        | "vitess_hash"
+        "cast"
+            if function.get_static_type().is_some_and(|field| {
+                use tidb_datatype::FieldTypeCode;
+                !field.is_array()
+                    && matches!(
+                        field.code(),
+                        FieldTypeCode::Tiny
+                            | FieldTypeCode::Short
+                            | FieldTypeCode::Int24
+                            | FieldTypeCode::Long
+                            | FieldTypeCode::LongLong
+                            | FieldTypeCode::Bit
+                            | FieldTypeCode::NewDecimal
+                            | FieldTypeCode::Date
+                            | FieldTypeCode::NewDate
+                            | FieldTypeCode::Datetime
+                            | FieldTypeCode::Timestamp
+                    )
+            }) =>
+        {
+            &[0]
+        }
+        "vitess_hash"
         | "tidb_shard" => &[0],
         // `FORMAT(number, decimals)` wraps its second argument to ETInt.
         "format" => &[1],

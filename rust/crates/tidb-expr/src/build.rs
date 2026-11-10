@@ -135,7 +135,6 @@ impl BuildContext {
                 CastType::Char { .. } => self.character_string_type(),
                 CastType::Signed
                 | CastType::Unsigned
-                | CastType::UnsignedInUnion
                 | CastType::Year => FieldType::new(FieldTypeCode::LongLong),
                 CastType::Decimal { .. } => FieldType::new(FieldTypeCode::NewDecimal),
                 CastType::Double | CastType::Float => FieldType::new(FieldTypeCode::Double),

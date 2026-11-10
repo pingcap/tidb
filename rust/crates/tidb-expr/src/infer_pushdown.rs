@@ -863,8 +863,7 @@ fn can_expr_push_down_reported(
     }
     let name = function.func_name.lowercase();
     let can_enum_push = expr.static_type().is_some_and(|ret_type| {
-        // Dedicated Rust casts represent Go's single ast.Cast function family.
-        can_enum_pushdown_preliminarily(if name.starts_with("cast_") { "cast" } else { name }, ret_type)
+        can_enum_pushdown_preliminarily(name, ret_type)
     });
     function
         .args
@@ -885,12 +884,7 @@ pub(crate) fn scalar_function_can_be_pushed(
     use tidb_proto::tipb::ScalarFuncSig;
 
     let name = function.func_name.lowercase();
-    // Dedicated Rust casts represent Go's single ast.Cast function family.
-    let policy_name = if name.starts_with("cast_") {
-        "cast"
-    } else {
-        name.as_ref()
-    };
+    let policy_name: &str = name.as_ref();
     // Go `canScalarFuncPushDown`: `pbCode <= tipb.ScalarFuncSig_Unspecified`
     // refuses on every store, whatever the name lists say.
     if signature == ScalarFuncSig::Unspecified {
@@ -1348,16 +1342,14 @@ mod push_down_admission_tests {
 
     /// Go builds every cast under the single name `ast.Cast`, which
     /// `scalarExprSupportedByTiKV` admits unconditionally
-    /// (`pkg/expression/infer_pushdown.go:246`). Rust's dedicated-cast
-    /// transcreation names each target type, so `cast_decimal` must answer
-    /// like `cast`; otherwise a derived `not(isnull(cast(col)))` filter is
-    /// left above the projection that defines the cast instead of inside the
-    /// cop reader.
+    /// (`pkg/expression/infer_pushdown.go:246`); otherwise a derived
+    /// `not(isnull(cast(col)))` filter is left above the projection that
+    /// defines the cast instead of inside the cop reader.
     #[test]
     fn a_dedicated_cast_name_answers_like_go_cast() {
         let col = Expression::Column(Column::new(1, FieldType::new(FieldTypeCode::NewDecimal)));
         let cast = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("cast_decimal"),
+            tidb_ast::CiString::new("cast"),
             FieldType::new(FieldTypeCode::NewDecimal),
             vec![col.clone()],
         ));

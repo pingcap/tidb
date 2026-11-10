@@ -301,7 +301,7 @@ fn builtin_vec_result(function: &ScalarFunction) -> Option<VecResult> {
             Int | Real | Decimal | String => Allocate,
             _ => return None,
         },
-        name if name.starts_with("cast_") => cast_vec_result(function.args.first()?, eval_type)?,
+        "cast" => cast_vec_result(function.args.first()?, eval_type)?,
         _ => return None,
     })
 }

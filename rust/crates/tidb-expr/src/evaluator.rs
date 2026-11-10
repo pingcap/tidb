@@ -1573,7 +1573,7 @@ mod tests {
                 "mul",
                 vec![
                     decimal_column(0, &price_type),
-                    typed("cast_decimal", vec![input_column(2)], target),
+                    typed("cast", vec![input_column(2)], target),
                 ],
                 &result_type,
             );
@@ -1605,7 +1605,7 @@ mod tests {
             "mul",
             vec![
                 decimal_column(0, &price_type),
-                typed("cast_decimal", vec![input_column(2)], &narrow),
+                typed("cast", vec![input_column(2)], &narrow),
             ],
             &result_type,
         ) else {

@@ -184,15 +184,7 @@ pub fn no_precision_loss_cast_compatible(cast: &FieldType, arg_col: &FieldType) 
 // These are the native signatures for the integer and VARCHAR families
 // admitted by noPrecisionLossCastCompatible; Go names each one ast.Cast.
 fn is_lossless_cast_candidate(function: &ScalarFunction) -> bool {
-    matches!(
-        function.func_name.lowercase(),
-        "cast"
-            | "cast_signed"
-            | "cast_unsigned"
-            | "cast_unsigned_in_union"
-            | "cast_char"
-            | "cast_binary"
-    )
+    function.is_cast()
 }
 
 /// Go `unwrapCast` (`util.go:957`): removes a `CAST` from one side of a

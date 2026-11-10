@@ -92,11 +92,14 @@ pub(crate) fn eval_string_cast_with_type(
 
 /// Evaluate numeric cast signatures without reducing their wire FieldType to
 /// an AST type. Go's source conversion and result production are separate steps.
+/// `in_union` is Go's `baseBuiltinCastFunc.inUnion`: a negative value cast to
+/// an UNSIGNED target in a `UNION` is 0.
 pub(crate) fn eval_numeric_cast_with_type(
     value: Datum,
     source: EvalType,
     source_field: Option<&FieldType>,
     target: &FieldType,
+    in_union: bool,
     ctx: &dyn crate::Columns,
 ) -> Result<Datum, EvalError> {
     use tidb_datatype::{DecimalError, MyDecimal};
@@ -112,13 +115,30 @@ pub(crate) fn eval_numeric_cast_with_type(
             .handle_truncate(error)
             .map_or(Ok(()), |error| Err(EvalError::Conversion(error)))
     };
+    let in_union_unsigned = in_union && target.is_unsigned();
     let value = match value {
+        // Go `builtinCastIntAs{Real,Decimal}Sig`: `b.inUnion &&
+        // !unsignedArgs0 && val < 0` is 0.
+        Datum::Int(value)
+            if source == EvalType::Int
+                && matches!(target.eval_type(), EvalType::Real | EvalType::Decimal)
+                && in_union_unsigned
+                && !source_field.is_some_and(FieldType::is_unsigned)
+                && value < 0 =>
+        {
+            Datum::Int(0)
+        }
         Datum::Int(value)
             if source == EvalType::Int
                 && matches!(target.eval_type(), EvalType::Real | EvalType::Decimal)
                 && (target.is_unsigned() || source_field.is_some_and(FieldType::is_unsigned)) =>
         {
             Datum::UInt(value as u64)
+        }
+        // Go `builtinCastDecimalAs{Decimal,Real,Int}Sig`: a negative decimal
+        // in a UNION's unsigned target is the zero decimal.
+        Datum::Decimal(value) if in_union_unsigned && value.is_negative() => {
+            Datum::Decimal(Decimal::from_int(0))
         }
         value => value,
     };
@@ -146,6 +166,13 @@ pub(crate) fn eval_numeric_cast_with_type(
                     .ok_or(EvalError::Unsupported("decimal cast string"))?;
                 let text = String::from_utf8_lossy(bytes);
                 let text = text.trim();
+                // Go `builtinCastStringAsDecimalSig`: the negative text is
+                // not parsed, so it reports no truncation.
+                let text = if in_union_unsigned && text.len() > 1 && text.starts_with('-') {
+                    "0"
+                } else {
+                    text
+                };
                 let (decimal, error) = MyDecimal::from_string(text.as_bytes());
                 let error = error.map(|error| match error {
                     DecimalError::Truncated => tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE
@@ -158,6 +185,9 @@ pub(crate) fn eval_numeric_cast_with_type(
                 handle(error)?;
                 Decimal::from_my_decimal(&decimal)
             } else if let Datum::Real(value) | Datum::Float32(value) = value {
+                // Go `builtinCastRealAsDecimalSig`: `!b.inUnion || val >= 0`
+                // reads the float, whatever the target's sign.
+                let value = if in_union && value < 0.0 { 0.0 } else { value };
                 let (decimal, error) = MyDecimal::from_float64(value);
                 match error {
                     // The cast signature explicitly ignores fraction loss.
@@ -196,6 +226,7 @@ pub(crate) fn eval_numeric_cast_with_type(
                                 EvalType::Real => {
                                 if source == EvalType::String {
                                 let result = str_to_real_for_cast(&value, ctx)?;
+                                let result = if in_union_unsigned && result < 0.0 { 0.0 } else { result };
                                 let result =
                                 tidb_datatype::produce_float_with_type_in_context(result, target, &context);
                                 return result
@@ -221,6 +252,10 @@ pub(crate) fn eval_numeric_cast_with_type(
                                 ),
                                 )))?;
                                 }
+                                // Go `builtinCastRealAsRealSig`.
+                                if in_union_unsigned && source == EvalType::Real && converted.value < 0.0 {
+                                return Ok(Datum::Real(0.0));
+                                }
                                 Ok(Datum::Real(converted.value))
                                 }
                                 EvalType::Int => {
@@ -233,8 +268,32 @@ pub(crate) fn eval_numeric_cast_with_type(
                                 }
                                 };
                                 match value {
+                                // Go `builtinCastIntAsIntSig`: the int64 the
+                                // argument evaluates to, negative, is 0.
+                                Datum::Int(value) if in_union_unsigned && value < 0 => Ok(integer(0)),
+                                Datum::UInt(value) if in_union_unsigned && (value as i64) < 0 => {
+                                Ok(integer(0))
+                                }
                                 Datum::Int(value) => Ok(integer(value)),
                                 Datum::UInt(value) => Ok(integer(value as i64)),
+                                // Go `builtinCastRealAsIntSig`.
+                                Datum::Real(value) | Datum::Float32(value)
+                                if in_union_unsigned && value < 0.0 =>
+                                {
+                                Ok(integer(0))
+                                }
+                                // Go `builtinCastStringAsIntSig`.
+                                Datum::String(_) | Datum::Bytes(_)
+                                if in_union_unsigned
+                                && source == EvalType::String
+                                && value.as_raw_bytes().is_some_and(|bytes| {
+                                let text = String::from_utf8_lossy(bytes);
+                                let text = text.trim();
+                                text.len() > 1 && text.starts_with('-')
+                                }) =>
+                                {
+                                Ok(integer(0))
+                                }
                                 Datum::Real(value) | Datum::Float32(value) => {
                                 let result = if unsigned {
                                 tidb_datatype::convert_float_to_uint(
@@ -624,9 +683,6 @@ pub(crate) fn eval_cast(
 ) -> Result<Datum, EvalError> {
     let mut target = match cast_type {
         CastType::Signed | CastType::Unsigned => FieldType::new(FieldTypeCode::LongLong),
-        CastType::UnsignedInUnion if matches!(v, Datum::Json(_)) => {
-            FieldType::new(FieldTypeCode::LongLong)
-        }
         CastType::Double => FieldType::new(FieldTypeCode::Double),
         // Go's real cast signatures keep the float64 they evaluate;
         // `ProduceFloatWithSpecifiedTp` only clamps a STRING source to the
@@ -636,7 +692,7 @@ pub(crate) fn eval_cast(
         CastType::Decimal { .. } => FieldType::new(FieldTypeCode::NewDecimal),
         _ => return eval_cast_value(cast_type, v, source, ctx),
     };
-    if matches!(cast_type, CastType::Unsigned | CastType::UnsignedInUnion) {
+    if matches!(cast_type, CastType::Unsigned) {
         target.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
     }
     if let CastType::Decimal { flen, scale } = cast_type {
@@ -671,7 +727,7 @@ pub(crate) fn eval_cast(
         Datum::Enum(..) | Datum::Set(..) => EvalType::Int,
         _ => inferred.eval_type(),
     };
-    eval_numeric_cast_with_type(v, domain, Some(source.unwrap_or(&inferred)), &target, ctx)
+    eval_numeric_cast_with_type(v, domain, Some(source.unwrap_or(&inferred)), &target, false, ctx)
 }
 
 fn eval_cast_value(
@@ -714,21 +770,6 @@ fn eval_cast_value(
             report_int_truncation(&v, ctx)?;
             report_negative_string_unsigned(&v, ctx);
             Ok(Datum::UInt(to_u64_unsigned(&v, ctx)))
-        }
-        CastType::UnsignedInUnion => {
-            // Every numeric/string `castAsInt` signature has an `inUnion`
-            // negative-to-zero branch in Go. Temporal signatures do not: a
-            // TIME/DATETIME value is first rendered as an integer and then
-            // reinterpreted by the ordinary unsigned path. Check the source
-            // eval family, not just the datum shape, before applying the
-            // branch so string warnings are not emitted for a value Go drops.
-            if union_unsigned_clamps_negative(&v, source) {
-                Ok(Datum::UInt(0))
-            } else {
-                report_int_truncation(&v, ctx)?;
-                report_negative_string_unsigned(&v, ctx);
-                Ok(Datum::UInt(to_u64_unsigned(&v, ctx)))
-            }
         }
         CastType::Char { len, charset } => {
             let (connection_charset, connection_collation) = ctx.connection_charset_info();
@@ -797,37 +838,6 @@ fn eval_cast_value(
         }
         CastType::Time { fsp } => cast_to_duration(&v, source, ctx, i64::from(fsp.unwrap_or(0))),
         CastType::Json => crate::builtin_ext::cast_as_json(&v),
-    }
-}
-
-fn union_unsigned_clamps_negative(
-    value: &Datum,
-    source: Option<&tidb_datatype::FieldType>,
-) -> bool {
-    let source_eval_type = source.map(FieldType::eval_type);
-    match source_eval_type {
-        Some(EvalType::Int) => matches!(value, Datum::Int(number) if *number < 0),
-        Some(EvalType::Real) => {
-            matches!(value, Datum::Real(number) if *number < 0.0)
-                || matches!(value, Datum::Float32(number) if *number < 0.0)
-        }
-        Some(EvalType::Decimal) => {
-            matches!(value, Datum::Decimal(decimal) if decimal.round_to_i64_saturating() < 0)
-        }
-        Some(EvalType::String) | None => match value {
-            Datum::String(text) => text
-                .as_utf8()
-                .is_ok_and(|text| text.trim().len() > 1 && text.trim().starts_with('-')),
-            Datum::Bytes(bytes) => std::str::from_utf8(bytes)
-                .is_ok_and(|text| text.trim().len() > 1 && text.trim().starts_with('-')),
-            Datum::Int(number) => *number < 0,
-            Datum::Real(number) => *number < 0.0,
-            Datum::Float32(number) => *number < 0.0,
-            Datum::Decimal(decimal) => decimal.round_to_i64_saturating() < 0,
-            _ => false,
-        },
-        Some(EvalType::Datetime | EvalType::Timestamp | EvalType::Duration)
-        | Some(EvalType::VectorFloat32 | EvalType::Json) => false,
     }
 }
 
@@ -1103,6 +1113,7 @@ pub(crate) fn to_i64_signed_with_warnings(
             EvalType::Json,
             None,
             &FieldType::new(FieldTypeCode::LongLong),
+            false,
             ctx,
         )? {
             Datum::Int(value) => Ok(value),

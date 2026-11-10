@@ -68,11 +68,10 @@ fn const_typed(datum: Datum, field_type: FieldType) -> Expression {
     Expression::Constant(crate::constant::Constant::new(datum, field_type))
 }
 
-/// Evaluates one internal cast signature (`cast_signed`, `cast_decimal`,
-/// ...) over a single argument of static type `source`, answering Go's
-/// per-signature `evalBuiltinFunc(sig, ctx, row)` door: the rewriter records
-/// which signature a CAST target selects in the function name, and the width
-/// arguments the CHAR/BINARY/DECIMAL casts need come from the result type.
+/// Evaluates one cast over a single argument of static type `source`,
+/// answering Go's per-signature `evalBuiltinFunc(sig, ctx, row)` door: the
+/// result type selects the conversion, and carries the width arguments the
+/// CHAR/BINARY/DECIMAL casts need.
 fn cast_eval(
     target: &str,
     arg: Expression,
@@ -532,7 +531,7 @@ fn test_cast_functions_char_and_binary() {
     // cast("你好world" as char(5)): keeps the first five RUNES.
     let ctx = WarningCtx::default();
     let out = cast_eval(
-        "cast_char",
+        "cast",
         const_typed(Datum::new_string_datum(you_world.to_string()), source.clone()),
         char5.clone(),
         &ctx,
@@ -548,7 +547,7 @@ fn test_cast_functions_char_and_binary() {
     // cast("a" as char(5)): nothing to cut, no event at all.
     let ctx = WarningCtx::default();
     let out = cast_eval(
-        "cast_char",
+        "cast",
         const_typed(Datum::new_string_datum("a".to_string()), source.clone()),
         char5,
         &ctx,
@@ -568,7 +567,7 @@ fn test_cast_functions_char_and_binary() {
     // cast("你好world" as binary(5)): first five BYTES (invalid UTF-8 kept).
     let ctx = WarningCtx::default();
     let out = cast_eval(
-        "cast_binary",
+        "cast",
         const_typed(Datum::new_string_datum(you_world.to_string()), source.clone()),
         bin5.clone(),
         &ctx,
@@ -580,7 +579,7 @@ fn test_cast_functions_char_and_binary() {
     // cast("a" as binary(5)): zero-padded to five bytes, no truncation.
     let ctx = WarningCtx::default();
     let out = cast_eval(
-        "cast_binary",
+        "cast",
         const_typed(Datum::new_string_datum("a".to_string()), source.clone()),
         bin5.clone(),
         &ctx,
@@ -595,7 +594,7 @@ fn test_cast_functions_char_and_binary() {
     let mut huge = bin5;
     huge.set_flen(4294967295);
     let out = cast_eval(
-        "cast_binary",
+        "cast",
         const_typed(Datum::new_string_datum("a".to_string()), source),
         huge,
         &ctx,
@@ -621,7 +620,7 @@ fn test_cast_functions_string_to_unsigned_and_signed() {
     // '18446744073709551616' as unsigned → u64::MAX + ErrTruncatedWrongVal.
     let ctx = WarningCtx::default();
     let out = cast_eval(
-        "cast_unsigned",
+        "cast",
         string_const(long),
         int_binary_target(true),
         &ctx,
@@ -636,7 +635,7 @@ fn test_cast_functions_string_to_unsigned_and_signed() {
     // '-1' as unsigned → low bits wrap; Go ALSO warns ErrCastNegIntAsUnsigned.
     let ctx = WarningCtx::default();
     let out = cast_eval(
-        "cast_unsigned",
+        "cast",
         string_const("-1"),
         int_binary_target(true),
         &ctx,
@@ -655,7 +654,7 @@ fn test_cast_functions_string_to_unsigned_and_signed() {
     let negative_low = "-18446744073709551616";
     let ctx = WarningCtx::default();
     let out = cast_eval(
-        "cast_unsigned",
+        "cast",
         string_const(negative_low),
         int_binary_target(true),
         &ctx,
@@ -675,7 +674,7 @@ fn test_cast_functions_string_to_unsigned_and_signed() {
     for (input, want) in [("125e342.83", 125u64), ("1e9223372036854775807", 1)] {
         let ctx = WarningCtx::default();
         let out = cast_eval(
-            "cast_unsigned",
+            "cast",
             string_const(input),
             int_binary_target(true),
             &ctx,
@@ -694,7 +693,7 @@ fn test_cast_functions_string_to_unsigned_and_signed() {
     // as signed: complement semantics carry Go's own errno identities.
     let ctx = WarningCtx::default();
     let out = cast_eval(
-        "cast_signed",
+        "cast",
         string_const(long),
         int_binary_target(false),
         &ctx,
@@ -708,7 +707,7 @@ fn test_cast_functions_string_to_unsigned_and_signed() {
 
     let ctx = WarningCtx::default();
     let out = cast_eval(
-        "cast_signed",
+        "cast",
         string_const(near),
         int_binary_target(false),
         &ctx,
@@ -728,7 +727,7 @@ fn test_cast_functions_string_to_unsigned_and_signed() {
     for (input, want) in [("125e342.83", 125i64), ("1e9223372036854775807", 1)] {
         let ctx = WarningCtx::default();
         let out = cast_eval(
-            "cast_signed",
+            "cast",
             string_const(input),
             int_binary_target(false),
             &ctx,
@@ -765,7 +764,7 @@ fn int_binary_target(unsigned: bool) -> FieldType {
 fn test_cast_functions_neg_int_as_unsigned_warns_8031() {
     let ctx = WarningCtx::default();
     let out = cast_eval(
-        "cast_unsigned",
+        "cast",
         string_const("-1"),
         int_binary_target(true),
         &ctx,
@@ -800,7 +799,7 @@ fn test_cast_functions_time_to_decimal_saturates() {
     };
     let source_ft = FieldType::new(C::Datetime);
     let out = cast_eval(
-        "cast_decimal",
+        "cast",
         const_typed(Datum::Time(time), source_ft),
         target,
         &ctx,
@@ -825,7 +824,7 @@ fn test_cast_functions_uint_to_wide_decimal() {
     let mut rt = int_ft();
     rt.add_flags(FieldTypeFlags::BINARY | FieldTypeFlags::UNSIGNED);
     let out = cast_eval(
-        "cast_decimal",
+        "cast",
         const_typed(Datum::UInt(u64::MAX), rt),
         target,
         &ctx,
@@ -844,7 +843,7 @@ fn test_cast_functions_bad_string_as_decimal_reads_zero_silently() {
     // Go's ErrTruncatedWrongVal warning.
     for s in ["hello", ""] {
         let ctx = WarningCtx::default();
-        let out = cast_eval("cast_decimal", string_const(s), dec_ft(), &ctx);
+        let out = cast_eval("cast", string_const(s), dec_ft(), &ctx);
         assert!(out.is_ok(), "{s}");
     }
 }
@@ -853,7 +852,7 @@ fn test_cast_functions_bad_string_as_decimal_reads_zero_silently() {
 fn test_cast_functions_bad_string_as_decimal_warns_1292() {
     for s in ["hello", ""] {
         let ctx = WarningCtx::default();
-        let out = cast_eval("cast_decimal", string_const(s), dec_ft(), &ctx)
+        let out = cast_eval("cast", string_const(s), dec_ft(), &ctx)
             .expect("truncated decimal conversion remains a warning");
         assert_eq!(out, Datum::Decimal(Decimal::from_int(0)), "{s}");
         assert_eq!(
@@ -871,7 +870,7 @@ fn test_cast_functions_int_as_char_zero_width() {
     target.set_charset_name("utf8");
     target.set_flen(0);
     let out = cast_eval(
-        "cast_char",
+        "cast",
         const_typed(Datum::Int(1234), source),
         target,
         &ctx,
@@ -918,7 +917,7 @@ fn test_cast_func_sig_as_decimal() {
         ),
     ];
     for (arg, want) in sources.into_iter().zip(wants) {
-        match cast_eval("cast_decimal", arg, dec_ft(), &ctx).unwrap() {
+        match cast_eval("cast", arg, dec_ft(), &ctx).unwrap() {
             Datum::Decimal(got) => {
                 assert_eq!(norm_dec(&got), want.to_string(), "decimal table one");
             }
@@ -967,7 +966,7 @@ fn test_cast_func_sig_as_decimal() {
         ),
     ];
     for (arg, flen, scale, want) in shaped_cases {
-        let out = cast_eval("cast_decimal", arg, shaped(flen, scale), &ctx).unwrap();
+        let out = cast_eval("cast", arg, shaped(flen, scale), &ctx).unwrap();
         match out {
             Datum::Decimal(dec) => {
                 assert_eq!(dec.storage_string(), *want, "{want}");
@@ -1016,7 +1015,7 @@ fn test_cast_func_sig_as_int() {
         ),
     ];
     for (arg, target_code, want) in cases {
-        let out = cast_eval("cast_signed", arg, FieldType::new(target_code), &ctx).unwrap();
+        let out = cast_eval("cast", arg, FieldType::new(target_code), &ctx).unwrap();
         assert_eq!(out, Datum::Int(want));
     }
 }
@@ -1032,7 +1031,7 @@ fn test_cast_signed_to_bit_returns_zero_padded_bytes() {
     let mut bit20 = FieldType::new(C::Bit);
     bit20.set_flen(20);
     let out = cast_eval(
-        "cast_signed",
+        "cast",
         const_typed(Datum::Int(15), FieldType::new(C::LongLong)),
         bit20,
         &ctx,
@@ -1049,7 +1048,7 @@ fn test_cast_signed_to_bit_returns_zero_padded_bytes() {
     let mut bit1 = FieldType::new(C::Bit);
     bit1.set_flen(1);
     let out = cast_eval(
-        "cast_signed",
+        "cast",
         const_typed(Datum::UInt(1), FieldType::new(C::LongLong)),
         bit1,
         &ctx,
@@ -1092,7 +1091,7 @@ fn test_cast_func_sig_as_real() {
         ),
     ];
     for (arg, want) in cases {
-        let out = cast_eval("cast_double", arg, real_ft(), &ctx).unwrap();
+        let out = cast_eval("cast", arg, real_ft(), &ctx).unwrap();
         match out {
             Datum::Real(value) => assert!((value - want).abs() < 1e-6, "{want}"),
             other => panic!("expected real, got {other:?}"),
@@ -1165,7 +1164,7 @@ fn test_cast_func_sig_as_string() {
         ),
     ];
     for (arg, want) in cases {
-        let out = cast_eval("cast_char", arg, binary_varstring.clone(), &ctx).unwrap();
+        let out = cast_eval("cast", arg, binary_varstring.clone(), &ctx).unwrap();
         assert_eq!(text(&out), want);
     }
     assert!((*ctx.0.borrow()).is_empty());
@@ -1213,7 +1212,7 @@ fn test_cast_func_sig_as_string_truncates_at_flen() {
         let mut target = FieldType::new(C::VarString);
         target.set_flen(flen);
         target.set_charset_name("utf8mb4");
-        let out = cast_eval("cast_char", arg, target, &ctx).unwrap();
+        let out = cast_eval("cast", arg, target, &ctx).unwrap();
         assert_eq!(text(&out), want);
     }
 }
@@ -1273,7 +1272,7 @@ fn test_cast_func_sig_as_time() {
         ),
     ];
     for (arg, want) in rows {
-        match cast_eval("cast_datetime", arg, datetime_target(0), &ctx) {
+        match cast_eval("cast", arg, datetime_target(0), &ctx) {
             Ok(Datum::Time(time)) => assert_eq!(time.core_time(), want.core_time()),
             other => panic!("expected time, got {other:?}"),
         }
@@ -1295,7 +1294,7 @@ fn test_cast_func_sig_as_time() {
         };
         let expected_clock = matches!(source, Datum::Duration(_));
         let out = cast_eval(
-            "cast_date",
+            "cast",
             const_typed(source.clone(), ft),
             FieldType::new(C::Date),
             &ctx,
@@ -1327,7 +1326,7 @@ fn test_cast_func_sig_as_time() {
     let mut fsp6 = datetime_target(6);
     fsp6.set_flen(26);
     let out = cast_eval(
-        "cast_datetime",
+        "cast",
         const_typed(Datum::Int(20201010101010), int_ft()),
         fsp6,
         &ctx,
@@ -1371,7 +1370,7 @@ fn test_cast_func_sig_as_duration() {
         ),
     ];
     for (arg, want) in rows {
-        match cast_eval("cast_time", arg, duration_ft(0), &ctx) {
+        match cast_eval("cast", arg, duration_ft(0), &ctx) {
             Ok(Datum::Duration(got)) => {
                 assert_eq!(norm_dur(&got.to_string()), norm_dur(&want.to_string()))
             }
@@ -1398,7 +1397,7 @@ fn test_cast_func_sig_as_duration() {
                 _ => duration_ft(0),
             };
             let out = cast_eval(
-                "cast_time",
+                "cast",
                 const_typed(source.clone(), ft),
                 duration_ft(fsp),
                 &ctx,
@@ -1420,7 +1419,7 @@ fn test_cast_func_sig_null_and_hybrid() {
     // NULL passes through the string cast still NULL.
     let ctx = WarningCtx::default();
     let out = cast_eval(
-        "cast_char",
+        "cast",
         const_typed(Datum::Null, real_ft()),
         str_ft(),
         &ctx,
@@ -1431,7 +1430,7 @@ fn test_cast_func_sig_null_and_hybrid() {
     // Hybrid ENUM constant rides the string-as-int signature to its numeric
     // value (Go enum{Name:"a", Value:0} → 0).
     let out = cast_eval(
-        "cast_signed",
+        "cast",
         const_typed(
             Datum::Enum(MysqlEnum::new("a", 0), Collation::Utf8Mb4Bin),
             FieldType::new(C::Enum),
@@ -1471,7 +1470,7 @@ fn test_cast_json_as_decimal_sig() {
     for (input, want) in cases {
         let doc = BinaryJSON::parse(input).expect("{input}");
         let out = cast_eval(
-            "cast_decimal",
+            "cast",
             const_typed(Datum::Json(doc), FieldType::new(C::Json)),
             target.clone(),
             &ctx,
@@ -1981,7 +1980,7 @@ fn test_cast_binary_string_as_json_sig() {
         let mut target = FieldType::new(C::Json);
         target.set_decimal(0);
         let out = cast_eval(
-            "cast_json",
+            "cast",
             const_typed(
                 Datum::new_collation_string_datum(input.as_bytes().to_vec(), Collation::Binary),
                 source,
@@ -2330,16 +2329,16 @@ fn json_numeric_batch_arithmetic_uses_json_source_not_serialized_document() {
 fn json_numeric_batch_scalar_and_vector_casts_share_warnings_and_nulls() {
     use crate::scalar_function::try_eval_numeric_batch;
     for (name, target, expected) in [
-        ("cast_signed", int_ft(), "4"),
-        ("cast_unsigned", uint_ft(), "4"),
-        ("cast_double", real_ft(), "3.5"),
-        ("cast_decimal", dec_ft(), "3.5"),
+        ("signed", int_ft(), "4"),
+        ("unsigned", uint_ft(), "4"),
+        ("double", real_ft(), "3.5"),
+        ("decimal", dec_ft(), "3.5"),
     ] {
         let field = FieldType::new(C::Json);
         let mut col = Column::new(1, field.clone());
         col.index = 0;
         let expression = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new(name),
+            CiString::new("cast"),
             target,
             vec![Expression::Column(col)],
         ));
@@ -2364,7 +2363,7 @@ fn json_numeric_batch_scalar_and_vector_casts_share_warnings_and_nulls() {
             assert_eq!(warnings.len(), 1, "{name}/{vectorized}: {warnings:?}");
             assert_eq!(
                 warnings[0].0,
-                if name == "cast_decimal" { 1265 } else { 1292 }
+                if name == "decimal" { 1265 } else { 1292 }
             );
         }
     }

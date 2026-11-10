@@ -68,21 +68,10 @@ pub fn explain_normalized_info(expr: &Expression) -> String {
     }
 }
 
-/// Go's `ScalarFunction.FuncName.L`: every cast is named `cast`, while this
-/// port keeps one name per cast signature (`cast_decimal`, `cast_char`, ...).
-fn go_function_name(function: &ScalarFunction) -> &str {
-    let name = function.func_name.lowercase();
-    if name == "cast" || name.starts_with("cast_") {
-        "cast"
-    } else {
-        name
-    }
-}
-
 /// Go `ScalarFunction.explainInfo(nil, true)` (`explain.go:37`).
 #[must_use]
 pub fn scalar_func_explain_normalized_info(function: &ScalarFunction) -> String {
-    let name = go_function_name(function);
+    let name = function.func_name.lowercase();
     let args = function.get_args();
     let mut buffer = format!("{name}(");
 
@@ -146,7 +135,7 @@ pub fn explain_normalized_info_4_in_list(expr: &Expression) -> String {
 /// Go `ScalarFunction.ExplainNormalizedInfo4InList` (`explain.go:85`).
 #[must_use]
 pub fn explain_normalized_info4_in_list(function: &ScalarFunction) -> String {
-    let name = go_function_name(function);
+    let name = function.func_name.lowercase();
     let args = function.get_args();
     let mut buffer = format!("{name}(");
     match name {

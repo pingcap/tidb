@@ -151,28 +151,8 @@ pub(super) fn validate_name_const_args(args: &[tidb_ast::Expr]) -> Result<(), cr
     }
 }
 
-pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldType)> {
+pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<FieldType> {
     use tidb_ast::CastType;
-    let name = match cast_type {
-        CastType::Signed => "cast_signed",
-        CastType::Unsigned => "cast_unsigned",
-        CastType::UnsignedInUnion => "cast_unsigned_in_union",
-        CastType::Char { .. } => "cast_char",
-        CastType::Binary { .. } => "cast_binary",
-        CastType::Decimal { .. } => "cast_decimal",
-        CastType::Date => "cast_date",
-        CastType::DateTime { .. } => "cast_datetime",
-        CastType::Time { .. } => "cast_time",
-        CastType::Year => "cast_year",
-        CastType::Double => "cast_double",
-        // go's FLOAT(p<=24) cast is its OWN signature (`builtinCastRealAsFloatSig`-shape):
-        // its out-of-range behavior differs from DOUBLE -- a TEXT source raises
-        // 1690 `constant 1e+300 overflows float` while a REAL source answers 0 --
-        // so it cannot share the cast_double node, whose DOUBLE arm clamps.
-        CastType::Float => "cast_float",
-        CastType::Json => "cast_json",
-        CastType::Vector { .. } => "cast_vector",
-    };
     let ft = match cast_type {
         // parser.y `"SIGNED" OptInteger`: TypeLonglong + CharsetBin/
         // CollationBin/BinaryFlag.
@@ -182,10 +162,8 @@ pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static st
             ft
         }
         // parser.y `"UNSIGNED" OptInteger`: TypeLonglong +
-        // UnsignedFlag|BinaryFlag + the binary charset. (`UnsignedInUnion`
-        // is this crate's internal union-projection carrier, not a parser
-        // target; it keeps the same shape as `Unsigned`.)
-        CastType::Unsigned | CastType::UnsignedInUnion => {
+        // UnsignedFlag|BinaryFlag + the binary charset.
+        CastType::Unsigned => {
             let mut ft = FieldType::new(FieldTypeCode::LongLong);
             ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
             set_binary_charset(&mut ft);
@@ -312,7 +290,7 @@ pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static st
             ft
         }
     };
-    Some((name, ft))
+    Some(ft)
 }
 
 /// Go `adjustRetFtForCastString` (`builtin_cast.go`): a `CAST(... AS CHAR)`

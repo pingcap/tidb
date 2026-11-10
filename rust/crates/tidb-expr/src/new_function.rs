@@ -723,7 +723,7 @@ mod tests {
     /// caller supplies an unspecified placeholder.  A correctly typed
     /// `plus(Column, constant)` must stay in the integer comparison domain;
     /// leaving it unspecified makes `lt(Column, plus(...))` acquire a
-    /// Rust-only `cast_signed` wrapper during comparison refinement.
+    /// cast to SIGNED Go never builds during comparison refinement.
     #[test]
     fn arithmetic_builder_infers_result_type_before_comparison_refinement() {
         let builder = RealFunctionBuilder::new(&NoColumns);
@@ -908,7 +908,7 @@ mod tests {
         let Expression::ScalarFunction(function) = &built else {
             panic!("a cast node, got {built:?}");
         };
-        assert_eq!(function.func_name.lowercase(), "cast_char");
+        assert_eq!(function.func_name.lowercase(), "cast");
         let direct =
             crate::builtin_cast::build_cast_function(
                 &crate::builtin::UnfoldedBuildContext,

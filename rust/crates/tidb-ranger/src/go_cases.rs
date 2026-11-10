@@ -703,7 +703,7 @@ fn planner_rewriter_stage(expr: &Expression) -> Expression {
 /// mixed integer/string comparison to DOUBLE. `rewrite_expr_resolved` has the
 /// opposite construction order today, so this ranger fixture stage restores
 /// the source planner's input: an exact integral string becomes the integer
-/// column's own datum type and the implicit `cast_double(column)` disappears.
+/// column's own datum type and the implicit `cast(column as double)` disappears.
 fn refine_integer_string_comparison(args: &mut [Expression]) {
     if args.len() != 2 {
         return;
@@ -713,7 +713,7 @@ fn refine_integer_string_comparison(args: &mut [Expression]) {
         let Expression::ScalarFunction(cast) = &args[column_index] else {
             continue;
         };
-        if cast.func_name.lowercase() != "cast_double" || cast.args.len() != 1 {
+        if cast.func_name.lowercase() != "cast" || cast.args.len() != 1 {
             continue;
         }
         let Expression::Column(column) = &cast.args[0] else {

@@ -315,6 +315,7 @@ fn from_unixtime_string_argument(
         EvalType::String,
         Some(source),
         &target,
+        false,
         ctx,
     )
 }
@@ -651,14 +652,13 @@ impl ScalarFunction {
     }
 
     /// The node over the builtin function a cast class's `getFunction`
-    /// returned. The evaluator still dispatches a cast under its name, so
-    /// the signature is carried for `PbCode()` alone.
-    pub(crate) fn from_cast_func(func_name: CiString, f: crate::builtin::BaseBuiltinFunc) -> Self {
+    /// returned, evaluated by its signature.
+    pub(crate) fn from_cast_func(f: crate::builtin::BaseBuiltinFunc, in_union: bool) -> Self {
         Self {
-            func_name,
+            func_name: CiString::new("cast"),
             ret_type: Some(f.tp),
             args: f.args,
-            pb_builtin: Some(PbBuiltin::of_function(f.pb_code)),
+            pb_builtin: Some(PbBuiltin::of_cast_func(f.pb_code, in_union)),
             collation: f.collation,
             ..Default::default()
         }
@@ -694,6 +694,24 @@ impl ScalarFunction {
     #[must_use]
     pub fn pb_signature(&self) -> Option<tidb_proto::tipb::ScalarFuncSig> {
         self.pb_builtin.map(PbBuiltin::signature)
+    }
+
+    /// Go `FuncName.L == ast.Cast`.
+    pub fn is_cast(&self) -> bool {
+        self.func_name.lowercase() == "cast"
+    }
+
+    /// Go `baseBuiltinCastFunc.inUnion`.
+    pub fn cast_in_union(&self) -> bool {
+        self.pb_builtin.is_some_and(PbBuiltin::cast_in_union)
+    }
+
+    /// A cast to JSON, as opposed to one to a typed array.
+    fn is_cast_as_json(&self) -> bool {
+        self.is_cast()
+            && self
+                .get_static_type()
+                .is_some_and(|field| field.code() == tidb_datatype::FieldTypeCode::Json && !field.is_array())
     }
 
     /// Go `builtinValues*Sig.offset`.
@@ -2409,65 +2427,22 @@ impl ScalarFunction {
         // Go picks one cast signature per target type; the rewriter records
         // that choice in the name, and the width/scale arguments the CHAR,
         // BINARY and DECIMAL casts need come from the result type.
-        // Go `BuildCastFunction4Union`'s in-union cast-to-unsigned CLAMPS a
-        // negative result to 0 instead of the unsigned wrap
-        // (`builtin_cast.go:998`).
-        if name == "cast_unsigned_in_union" {
-            let value = self.args[0].eval(ctx, row)?;
-            if value.is_null() {
-                return Ok(Datum::Null);
-            }
-            let res = crate::cast::to_i64_signed_with_warnings(&value, ctx)?;
-            return Ok(Datum::UInt(if res < 0 { 0 } else { res as u64 }));
-        }
-        // Source-specific UNION cast signatures carry behavior that cannot be
-        // recovered from the target type alone (notably negative
-        // string/REAL/DECIMAL-to-DECIMAL conversions).  Route their names
-        // through the shared values dispatcher before the generic `cast_*`
-        // target parser, which intentionally knows only ordinary AST casts.
-        if name.ends_with("_in_union") && self.args.len() == 1 {
-            let value = self.args[0].eval(ctx, row)?;
-            if value.is_null() {
-                return Ok(Datum::Null);
-            }
-            if let Some(result) = crate::func::eval_func_values_in(name, &[value], ctx) {
-                let result = result?;
-                // The values dispatcher models only the source-specific
-                // inUnion decision.  Apply the merged target's DECIMAL
-                // precision/scale afterward, exactly as Go's signature calls
-                // `ProduceDecWithSpecifiedTp` after choosing its source
-                // branch.
-                if self.get_static_type().is_some_and(|field_type| {
-                    field_type.code() == tidb_datatype::FieldTypeCode::NewDecimal
-                }) {
-                    let ret_type = self
-                        .get_static_type()
-                        .ok_or(EvalError::Unsupported("a cast with no result type"))?;
-                    return crate::cast::eval_cast(
-                        &cast_type_of("decimal", ret_type)?,
-                        result,
-                        self.args[0].static_type(),
-                        ctx,
-                    );
-                }
-                return Ok(result);
-            }
-        }
         if name == "json_sum_crc32" && self.args.len() == 1 {
             if let Some(array_type) = &self.json_sum_crc32_type {
                 let value = self.args[0].eval(ctx, row)?;
                 return crate::cast::eval_json_sum_crc32(value, array_type);
             }
         }
-        if name == "cast_array" && self.args.len() == 1 {
-            let value = self.args[0].eval(ctx, row)?;
+        if name == "cast" && self.args.len() == 1 {
             let ret_type = self
                 .get_static_type()
                 .ok_or(EvalError::Unsupported("a cast with no result type"))?;
-            return crate::cast::eval_json(value, ret_type);
-        }
-        if let Some(target) = name.strip_prefix("cast_") {
-            if self.args.len() == 1 {
+            let target = crate::builtin_cast::cast_target_name(ret_type)?;
+            if target == "array" {
+                let value = self.args[0].eval(ctx, row)?;
+                return crate::cast::eval_json(value, ret_type);
+            }
+            {
                 // Go `builtinCastVectorFloat32AsUnsupportedSig` and
                 // `builtinCastUnsupportedAsVectorFloat32Sig`: a vector casts
                 // to a string or a vector, and a string or a vector to a
@@ -3418,7 +3393,6 @@ fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType
     Ok(match target {
         "signed" => CastType::Signed,
         "unsigned" => CastType::Unsigned,
-        "unsigned_in_union" => CastType::UnsignedInUnion,
         "char" => CastType::Char {
             len: len(),
             // A binary-charset CHAR target truncates in BYTES
@@ -4007,6 +3981,7 @@ fn cast_numeric_argument_in_mode(
             EvalType::Json,
             Some(field),
             &target_field,
+            false,
             ctx,
         );
     }
@@ -4273,21 +4248,22 @@ fn cast_json_argument_value(function: &ScalarFunction, value: Datum) -> Result<D
 /// row by row (so a string column's truncation warnings come in row order,
 /// before the next operand's). Hybrid and vector sources keep the row path.
 fn numeric_cast_target(function: &ScalarFunction) -> Option<&FieldType> {
-    let expected = match function.func_name.lowercase() {
-        "cast_signed" | "cast_unsigned" => EvalType::Int,
-        "cast_double" => EvalType::Real,
-        "cast_decimal" => EvalType::Decimal,
-        _ => return None,
-    };
-    if function.args.len() != 1 {
+    use tidb_datatype::FieldTypeCode;
+    if !function.is_cast() || function.cast_in_union() || function.args.len() != 1 {
+        return None;
+    }
+    let field = function.get_static_type()?;
+    if matches!(field.code(), FieldTypeCode::Year | FieldTypeCode::Float) || field.is_array() {
+        return None;
+    }
+    let expected = field.eval_type();
+    if !matches!(expected, EvalType::Int | EvalType::Real | EvalType::Decimal) {
         return None;
     }
     if numeric_argument_source(&function.args[0], expected)? == EvalType::VectorFloat32 {
         return None;
     }
-    function
-        .get_static_type()
-        .filter(|field| field.eval_type() == expected)
+    Some(field)
 }
 
 fn numeric_batch_supported(expression: &Expression, target: EvalType) -> bool {
@@ -4314,7 +4290,7 @@ fn numeric_batch_supported(expression: &Expression, target: EvalType) -> bool {
                         .is_some_and(|source| numeric_batch_supported(&function.args[0], source));
             }
 
-            if function.func_name.lowercase() == "cast_json" && target == EvalType::Json {
+            if function.is_cast_as_json() && target == EvalType::Json {
                 return function
                     .get_static_type()
                     .is_some_and(|field| field.eval_type() == target)
@@ -4490,14 +4466,7 @@ fn eval_numeric_batch_values(
                     })
                     .collect();
             }
-            let cast = cast_type_of(
-                function
-                    .func_name
-                    .lowercase()
-                    .strip_prefix("cast_")
-                    .unwrap(),
-                field,
-            )?;
+            let cast = cast_type_of(crate::builtin_cast::cast_target_name(field)?, field)?;
             return values
                 .into_iter()
                 .map(|value| {
@@ -4537,7 +4506,7 @@ fn eval_numeric_batch_values(
         Expression::Column(_) => (0..input.num_rows())
             .map(|index| eval_numeric_row(expression, ctx, input.get_row(index), target))
             .collect(),
-        Expression::ScalarFunction(function) if function.func_name.lowercase() == "cast_json" => {
+        Expression::ScalarFunction(function) if function.is_cast_as_json() => {
             // Go completes the source-typed batch before JSON conversion.
             let source = function.args[0]
                 .static_type()
@@ -4740,7 +4709,12 @@ fn vec_eval_decimal_function(
     physical: &[usize],
 ) -> Option<Vec<Option<DecimalValue>>> {
     use tidb_datatype::FieldTypeCode;
-    if function.func_name.lowercase() == "cast_decimal" {
+    if function.is_cast()
+        && !function.cast_in_union()
+        && function
+            .get_static_type()
+            .is_some_and(|field| field.code() == FieldTypeCode::NewDecimal)
+    {
         return vec_eval_cast_int_as_decimal(function, input, physical);
     }
     {
@@ -5664,7 +5638,7 @@ use tidb_charset::Collation;
         );
 
         let cast_json = ScalarFunction::new(
-            CiString::new("cast_json"),
+            CiString::new("cast"),
             FieldType::new(FieldTypeCode::Json),
             vec![Expression::Column(col)],
         );

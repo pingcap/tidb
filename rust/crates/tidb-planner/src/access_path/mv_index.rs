@@ -96,14 +96,12 @@ pub(crate) fn unwrap_array_column(mut column: Column) -> Column {
     column
 }
 
-/// Go `unwrapJSONCast`: the operand of a cast with a JSON result. Go names
-/// every cast `cast`; this port names the node by its target, and
-/// `CAST(... AS ... ARRAY)` (a JSON-typed array) is `cast_array`.
+/// Go `unwrapJSONCast`: the operand of a cast with a JSON result.
 fn unwrap_json_cast(expr: &Expression) -> Option<&Expression> {
     let Expression::ScalarFunction(function) = expr else {
         return None;
     };
-    if !matches!(function.func_name.lowercase(), "cast_json" | "cast_array")
+    if !function.is_cast()
         || function.get_static_type()?.eval_type() != EvalType::Json
     {
         return None;

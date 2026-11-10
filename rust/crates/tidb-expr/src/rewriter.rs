@@ -543,9 +543,7 @@ fn literal_text(expr: &Expr, resolver: &impl ColumnResolver) -> Result<String, E
 }
 
 #[cfg(test)]
-pub(crate) fn builtin_cast_result_type(
-    cast_type: &tidb_ast::CastType,
-) -> Option<(&'static str, FieldType)> {
+pub(crate) fn builtin_cast_result_type(cast_type: &tidb_ast::CastType) -> Option<FieldType> {
     cast_target(cast_type)
 }
 
@@ -1062,8 +1060,8 @@ fn rewrite_expr_resolved_inner(
 fn resolved_cast_target(
     cast: &tidb_ast::CastExpr,
     resolver: &impl ColumnResolver,
-) -> Result<(&'static str, FieldType), EvalError> {
-    let (name, mut ret_type) = cast_target(&cast.cast_type).ok_or(EvalError::Unsupported(
+) -> Result<FieldType, EvalError> {
+    let mut ret_type = cast_target(&cast.cast_type).ok_or(EvalError::Unsupported(
         "this CAST target type has no value domain yet",
     ))?;
     // `BINARY expr` (Go `expr_prefix_parser.go`) casts to `TypeString` with
@@ -1089,7 +1087,7 @@ fn resolved_cast_target(
             }
         }
     }
-    Ok((name, ret_type))
+    Ok(ret_type)
 }
 
 /// Go `BuildJSONSumCrc32FunctionWithCheck` (`builtin_json.go`), the
@@ -1102,7 +1100,7 @@ fn rewrite_json_sum_crc32(
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
     check_func_cast_expr(cast)?;
-    let (_, element) = resolved_cast_target(cast, resolver)?;
+    let element = resolved_cast_target(cast, resolver)?;
     let arg = rewrite_expr_resolved(&cast.expr, resolver)?;
     let mut array_type = element.clone().with_array(true);
     // "If source argument's nullable, then target type should be nullable".
@@ -2413,7 +2411,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 ));
             }
             check_func_cast_expr(cast)?;
-            let (_, target_tp) = resolved_cast_target(cast, resolver)?;
+            let target_tp = resolved_cast_target(cast, resolver)?;
             let target_tp = target_tp.with_array(cast.array);
             let arg = rewrite_expr_resolved(&cast.expr, resolver)?;
             // Go `Leave(*ast.FuncCastExpr)`.
@@ -2621,7 +2619,7 @@ mod tests {
             )
             .unwrap();
             assert!(
-                matches!(json, Expression::ScalarFunction(ref function) if function.func_name.lowercase() == "cast_json"),
+                matches!(json, Expression::ScalarFunction(ref function) if function.func_name.lowercase() == "cast"),
                 "{mode:?}: {json:?}"
             );
         }
@@ -3182,7 +3180,7 @@ mod tests {
         let Expression::ScalarFunction(cast) = &multiply.args[1] else {
             panic!("integer multiplication operand was not cast to DECIMAL");
         };
-        assert_eq!(cast.func_name.lowercase(), "cast_decimal");
+        assert_eq!(cast.func_name.lowercase(), "cast");
         let target = cast.ret_type.as_ref().unwrap();
         assert_eq!(target.code(), FieldTypeCode::NewDecimal);
         assert_eq!(target.flen(), 10);
@@ -3216,7 +3214,7 @@ mod tests {
             let Expression::ScalarFunction(cast) = arg else {
                 panic!("POWER's integer argument was not cast to real");
             };
-            assert_eq!(cast.func_name.lowercase(), "cast_double");
+            assert_eq!(cast.func_name.lowercase(), "cast");
         }
         assert_eq!(eval_const(&power), Datum::Real(4.0));
     }

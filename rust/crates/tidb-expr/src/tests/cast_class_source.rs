@@ -41,15 +41,6 @@ use crate::wrap_cast::type_of;
 
 const MATRIX: &str = include_str!("../../testdata/cast_class_matrix.txt");
 
-/// Go's one `cast` name, which the evaluator still splits by target.
-fn func_name(name: &str) -> &str {
-    if name.starts_with("cast_") {
-        "cast"
-    } else {
-        name
-    }
-}
-
 #[test]
 fn build_cast_function_matches_go_for_every_target_and_argument() {
     let mut types: BTreeMap<&str, &str> = BTreeMap::new();
@@ -93,7 +84,7 @@ fn build_cast_function_matches_go_for_every_target_and_argument() {
                     Expression::ScalarFunction(inner) if !kept => {
                         slot += &format!(
                             ":{}:{}",
-                            func_name(inner.func_name.lowercase()),
+                            inner.func_name.lowercase(),
                             pb_code(arg).as_str_name()
                         );
                     }
@@ -104,7 +95,7 @@ fn build_cast_function_matches_go_for_every_target_and_argument() {
                 }
                 format!(
                     "{}:{}\t{}\t{},{}\t{slot}",
-                    func_name(f.func_name.lowercase()),
+                    f.func_name.lowercase(),
                     pb_code(built.as_ref().expect("built")).as_str_name(),
                     type_text(f.ret_type.as_ref().expect("typed")),
                     f.collation.coercibility().0,

@@ -2175,7 +2175,7 @@ mod tests {
         decimal_result.set_flen(1);
         decimal_result.set_decimal(0);
         let wrapped_negative = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("cast_decimal"),
+            tidb_ast::CiString::new("cast"),
             decimal_result,
             vec![func_expr("unaryminus", vec![int_const_expr(1)])],
         ));

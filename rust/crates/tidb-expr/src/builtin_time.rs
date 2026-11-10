@@ -377,7 +377,7 @@ string_class!(
             // Improve string cast Unix Time precision
             if let Expression::ScalarFunction(x) = &mut bf.args[0] {
                 // used to adjust FromUnixTime precision #Fixbug35184
-                if x.func_name.lowercase() == "cast_decimal" {
+                if x.is_cast() {
                     if let Some(ret_type) = x.ret_type.as_mut() {
                         if ret_type.decimal() == 0 && ret_type.code() == FieldTypeCode::NewDecimal
                         {
