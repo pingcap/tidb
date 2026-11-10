@@ -246,6 +246,7 @@ func TestSchedulerScheduleSubtasksToNodesWithEnoughSlots(t *testing.T) {
 			return nil
 		})
 	require.NoError(t, sch.Switch2NextStep())
+	// Only n3 has all three required slots free; its subtasks run serially.
 	require.Equal(t, []string{"n3", "n3"}, execIDs)
 	require.True(t, ctrl.Satisfied())
 }
