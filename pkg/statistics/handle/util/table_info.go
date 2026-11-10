@@ -115,6 +115,7 @@ func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
 	return mapper
 }
 
+<<<<<<< HEAD
 // TableItemByID returns the lightweight table meta specified by the physicalID.
 func (*tableInfoGetterImpl) TableItemByID(is infoschema.InfoSchema, id int64) (infoschema.TableItem, bool) {
 	tableItem, ok := is.TableItemByID(id)
@@ -122,4 +123,65 @@ func (*tableInfoGetterImpl) TableItemByID(is infoschema.InfoSchema, id int64) (i
 		return tableItem, true
 	}
 	return is.TableItemByPartitionID(id)
+=======
+// SnapshotTableInfoGetter gets the table of a physical ID in one InfoSchema snapshot.
+// On InfoSchema V1, each partition lookup scans all tables, so it builds a partition map
+// on the first call of ParentTableID. It is safe for concurrent use. Create one for each
+// snapshot instead of sharing a cache, because callers on different schema versions would
+// rebuild a shared map.
+type SnapshotTableInfoGetter struct {
+	is infoschema.InfoSchema
+	// pid2tid is nil until pid2tidOnce builds it. After that, it is read-only.
+	pid2tid     map[int64]int64
+	pid2tidOnce sync.Once
+	isV2        bool
+}
+
+// NewSnapshotTableInfoGetter creates a SnapshotTableInfoGetter for the InfoSchema snapshot.
+func NewSnapshotTableInfoGetter(is infoschema.InfoSchema) *SnapshotTableInfoGetter {
+	// Session contexts wrap the InfoSchema, and IsV2 does not see through the wrapper.
+	// Without the unwrap, V2 would build the partition map instead of using its own index.
+	raw := is
+	if ext, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
+		raw = ext.InfoSchema
+	}
+	isV2, _ := infoschema.IsV2(raw)
+	return &SnapshotTableInfoGetter{is: is, isV2: isV2}
+}
+
+// ParentTableID returns the parent table ID if the physicalID is a partition.
+func (g *SnapshotTableInfoGetter) ParentTableID(physicalID int64) (tableID int64, isPartition bool) {
+	if g.isV2 {
+		return g.is.TableIDByPartitionID(physicalID)
+	}
+	// Do not build the map in the constructor. TableInfoByID and TableItemByID call this only
+	// when the ID is not a table ID, so a caller that gives them only table IDs skips the scan.
+	g.pid2tidOnce.Do(func() { g.pid2tid = buildPartitionID2TableID(g.is) })
+	tableID, isPartition = g.pid2tid[physicalID]
+	return tableID, isPartition
+}
+
+// TableInfoByID returns the table of the physicalID.
+// If the physicalID is a partition, it returns the parent table.
+func (g *SnapshotTableInfoGetter) TableInfoByID(physicalID int64) (table.Table, bool) {
+	if tbl, ok := g.is.TableByID(context.Background(), physicalID); ok {
+		return tbl, true
+	}
+	if tableID, ok := g.ParentTableID(physicalID); ok {
+		return g.is.TableByID(context.Background(), tableID)
+	}
+	return nil, false
+}
+
+// TableItemByID returns the table item of the physicalID.
+// If the physicalID is a partition, it returns the item of the parent table.
+func (g *SnapshotTableInfoGetter) TableItemByID(physicalID int64) (infoschema.TableItem, bool) {
+	if item, ok := g.is.TableItemByID(physicalID); ok {
+		return item, true
+	}
+	if tableID, ok := g.ParentTableID(physicalID); ok {
+		return g.is.TableItemByID(tableID)
+	}
+	return infoschema.TableItem{}, false
+>>>>>>> 71a1f5b4734 (statistics: build the InfoSchema V1 partition map on first use (#72940))
 }

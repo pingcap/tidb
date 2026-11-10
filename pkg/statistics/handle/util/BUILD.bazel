@@ -48,6 +48,13 @@ go_test(
     deps = [
         ":util",
         "//pkg/domain/infosync",
+<<<<<<< HEAD
+=======
+        "//pkg/infoschema",
+        "//pkg/infoschema/context",
+        "//pkg/meta/model",
+        "//pkg/session/syssession",
+>>>>>>> 71a1f5b4734 (statistics: build the InfoSchema V1 partition map on first use (#72940))
         "//pkg/sessionctx",
         "//pkg/testkit",
         "@com_github_pingcap_errors//:errors",
