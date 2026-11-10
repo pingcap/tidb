@@ -121,8 +121,10 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 
 	// step 3: add metadata lock and check each table's schema version
 	schemaNotMatch := false
-	// Rebuild the map so table ID swaps do not remove another table's new entry.
-	relateVersion := make(map[int64]uint64, len(stmt.tbls))
+	// Clear the statement-owned map before rebuilding it to handle table ID swaps
+	// and avoid allocating a new map for every execution.
+	relateVersion := stmt.RelateVersion
+	clear(relateVersion)
 	for i := range stmt.dbName {
 		tbl, err := is.TableByName(ctx, stmt.dbName[i], stmt.tblName[i])
 		if err != nil {
@@ -145,8 +147,6 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		stmt.tbls[i] = newTbl
 		relateVersion[newTbl.Meta().ID] = newTbl.Meta().Revision
 	}
-	stmt.RelateVersion = relateVersion
-
 	// step 4: check schema version
 	if schemaNotMatch || stmt.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
