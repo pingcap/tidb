@@ -1592,8 +1592,10 @@ func TestGetLock(t *testing.T) {
 	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0")) // never had the lock
 	// release it
 	tk2.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("1")) // works
+	// ReleaseAdvisoryLock drops the lock only after Close returns its session to
+	// the pool. That pointer can be checked out again before this line runs, so
+	// ContainsInternalSession(lockSession) is not proof the lock still holds it.
 	require.Nil(t, session.AdvisoryLockInternalSession4Test(tk2.Session(), "mygloballock"))
-	require.False(t, sessionManager.ContainsInternalSession(lockSession))
 
 	// Confirm all locks are released
 	tk2.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
