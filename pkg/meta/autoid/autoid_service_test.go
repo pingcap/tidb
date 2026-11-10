@@ -121,13 +121,7 @@ func TestBackoffCtxAware(t *testing.T) {
 	start := time.Now()
 	err := bo.Backoff()
 	require.NoError(t, err)
-<<<<<<< HEAD
-	elapsed := time.Since(start)
-	require.GreaterOrEqual(t, elapsed, 2*backoffMin)
-	require.Less(t, elapsed, 2*backoffMin+300*time.Millisecond)
-=======
 	require.GreaterOrEqual(t, time.Since(start), 2*backoffMin)
->>>>>>> 42024d2f62f (test: stabilize flaky TestBackoffCtxAware (#69340))
 
 	// With a canceled ctx, Backoff should return immediately.
 	bo.Reset()
