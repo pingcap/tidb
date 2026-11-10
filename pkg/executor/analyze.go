@@ -29,7 +29,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -229,9 +228,9 @@ func canBroadcastAnalyzeStatsDeltaForTest(ctx context.Context) (bool, error) {
 	}
 	rpcAddrs := make([]string, 0, len(servers))
 	for _, server := range servers {
-		// Keep the same skip behavior as buildTiDBMemCopTasks for placeholder
-		// nodes that should not receive TiDB-type coprocessor requests.
-		if server.IP == config.UnavailableIP {
+		// Skip processes that register server info but cannot receive TiDB RPC,
+		// such as standalone BR.
+		if server.IsDisableRPC() {
 			continue
 		}
 		// In-process test domains can register server info without starting a
@@ -321,6 +320,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		return err
 	}
 	warnLockedTableMsg(sessionVars, needAnalyzeTableCnt, skippedTables)
+	warnUnusedNDVRate(sessionVars, tasks)
 
 	if len(tasks) == 0 {
 		return nil
@@ -412,6 +412,12 @@ TASKLOOP:
 		}
 		for i := sentTasks; i < len(tasks); i++ {
 			finishJobWithLog(statsHandle, tasks[i].job, err)
+		}
+		// The result handler returns early on a kill signal or a panic, so it may
+		// leave results it never read. waitFinish has closed resultsCh by now.
+		for result := range resultsCh {
+			finishJobWithLog(statsHandle, result.Job, err)
+			result.DestroyAndPutToPool()
 		}
 		return err
 	}
@@ -568,6 +574,37 @@ func warnLockedTableMsg(sessionVars *variable.SessionVars, needAnalyzeTableCnt u
 	}
 }
 
+// warnUnusedNDVRate warns when the tables and partitions to analyze ask for an
+// NDVRATE below 1, in the statement or in saved options, but none samples rows
+// because none has more than tidb_analyze_sampled_ndv_threshold rows.
+func warnUnusedNDVRate(sessionVars *variable.SessionVars, tasks []*analyzeTask) {
+	// Zero turns sampled NDV off, so skip the warning.
+	threshold := vardef.AnalyzeSampledNDVThreshold.Load()
+	if threshold == 0 {
+		return
+	}
+	requested, used := false, false
+	for _, task := range tasks {
+		// Multi-valued and special global index tasks never sample.
+		if task.taskType != colTask {
+			continue
+		}
+		// The builder sends NdvRate only above the threshold. Reuse its decision so
+		// a statement that samples any table or partition gets no false warning.
+		if task.colExec.analyzePB.ColReq.NdvRate != nil {
+			used = true
+		}
+		if rate := math.Float64frombits(task.colExec.opts[ast.AnalyzeOptNDVRate]); rate > 0 && rate < 1 {
+			requested = true
+		}
+	}
+	if requested && !used {
+		sessionVars.StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+			"NDVRATE is not used because no table or partition has more rows than %s(%d)",
+			vardef.TiDBAnalyzeSampledNDVThreshold, threshold))
+	}
+}
+
 func getTableIDFromTask(task *analyzeTask) statistics.AnalyzeTableID {
 	switch task.taskType {
 	case colTask:
@@ -585,7 +622,8 @@ func getTableIDFromTask(task *analyzeTask) statistics.AnalyzeTableID {
 // default in the table definition is the source of truth for how "unset" is
 // persisted and this writer cannot drift from it across releases.
 // The reader keeps its own sentinels: getSavedAnalyzeOpts treats sample_num,
-// sample_rate and buckets as unset when not positive, and topn when negative.
+// sample_rate, buckets and ndv_rate as unset when not positive, and topn when
+// negative.
 // Those must stay consistent with the column defaults; changing a default here
 // without changing the reader would turn "unset" into a pinned value.
 func writeSavedAnalyzeOption(sql *strings.Builder, rawOpts map[ast.AnalyzeOptionType]uint64, optType ast.AnalyzeOptionType) {
@@ -594,7 +632,7 @@ func writeSavedAnalyzeOption(sql *strings.Builder, rawOpts map[ast.AnalyzeOption
 		sql.WriteString("DEFAULT")
 		return
 	}
-	if optType == ast.AnalyzeOptSampleRate {
+	if optType == ast.AnalyzeOptSampleRate || optType == ast.AnalyzeOptNDVRate {
 		sqlescape.MustFormatSQL(sql, "%?", math.Float64frombits(val))
 		return
 	}
@@ -623,7 +661,7 @@ func (e *AnalyzeExec) saveAnalyzeOptions() error {
 		}
 	}
 	sql := new(strings.Builder)
-	sqlescape.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES ")
+	sqlescape.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids,ndv_rate) VALUES ")
 	idx := 0
 	for _, opts := range toSaveMap {
 		colChoice := opts.ColChoice.String()
@@ -640,7 +678,9 @@ func (e *AnalyzeExec) saveAnalyzeOptions() error {
 		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNumBuckets)
 		sql.WriteString(",")
 		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNumTopN)
-		sqlescape.MustFormatSQL(sql, ",%?,%?)", colChoice, colIDStrs)
+		sqlescape.MustFormatSQL(sql, ",%?,%?,", colChoice, colIDStrs)
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNDVRate)
+		sql.WriteString(")")
 		if idx < len(toSaveMap)-1 {
 			sqlescape.MustFormatSQL(sql, ",")
 		}
@@ -673,6 +713,7 @@ func resetAnalyzeOptionsForPartitions(ctx context.Context, exec sqlexec.Restrict
 		{ast.AnalyzeOptSampleRate, "sample_rate"},
 		{ast.AnalyzeOptNumBuckets, "buckets"},
 		{ast.AnalyzeOptNumTopN, "topn"},
+		{ast.AnalyzeOptNDVRate, "ndv_rate"},
 	}
 	sql := new(strings.Builder)
 	sql.WriteString("UPDATE mysql.analyze_options SET ")
@@ -874,6 +915,7 @@ func analyzeWorkerExitErr(ctx context.Context, errExitCh <-chan struct{}) error 
 func (e *AnalyzeExec) trySendAnalyzeResult(ctx context.Context, statsHandle *handle.Handle, resultsCh chan<- *statistics.AnalyzeResults, result *statistics.AnalyzeResults) {
 	select {
 	case resultsCh <- result:
+		failpoint.InjectCall("analyzeResultSent")
 		return
 	case <-ctx.Done():
 	case <-e.errExitCh:

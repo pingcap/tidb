@@ -319,8 +319,10 @@ func (mgr *TaskManager) ModifiedTask(ctx context.Context, task *proto.Task) erro
 	})
 }
 
-// SucceedTask update task state from running to succeed.
-func (mgr *TaskManager) SucceedTask(ctx context.Context, taskID int64) error {
+// SucceedTask update task state from running to succeed and persists the task
+// meta, so schedulers may store workload summaries collected when the task
+// finishes.
+func (mgr *TaskManager) SucceedTask(ctx context.Context, task *proto.Task) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
@@ -329,10 +331,11 @@ func (mgr *TaskManager) SucceedTask(ctx context.Context, taskID int64) error {
 			update mysql.tidb_global_task
 			set state = %?,
 			    step = %?,
+			    meta = %?,
 			    state_update_time = CURRENT_TIMESTAMP(),
 			    end_time = CURRENT_TIMESTAMP()
 			where id = %? and state = %?`,
-			proto.TaskStateSucceed, proto.StepDone, taskID, proto.TaskStateRunning,
+			proto.TaskStateSucceed, proto.StepDone, task.Meta, task.ID, proto.TaskStateRunning,
 		)
 		return err
 	})

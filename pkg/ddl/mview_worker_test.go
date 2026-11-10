@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -25,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	parser_types "github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -37,21 +40,91 @@ func TestInitCreateMaterializedViewBuildSessionAppliesDefinitionDivPrecisionIncr
 	sessVars.CurrentDB = "before"
 	job := &model.Job{
 		ReorgMeta: &model.DDLReorgMeta{
-			Location: &model.TimeZoneLocation{Name: "UTC"},
+			SQLMode:           mysql.ModePadCharToFullLength,
+			Location:          &model.TimeZoneLocation{Name: "UTC"},
+			ResourceGroupName: "rg1",
 		},
 	}
 	mviewTableInfo := &model.TableInfo{
-		MaterializedView: &model.MaterializedViewInfo{DefinitionDivPrecisionIncrement: 9},
+		MaterializedView: &model.MaterializedViewInfo{
+			DefinitionDivPrecisionIncrement: 9,
+			DefinitionSQLMode:               job.ReorgMeta.SQLMode,
+			DefinitionTimeZone:              job.ReorgMeta.Location.Clone(),
+		},
 	}
+	// The submitter has loaded the global variables that track and spill the
+	// memory of aggregations, while the internal session has not.
+	submitter := mock.NewContext().GetSessionVars()
+	submitter.TrackAggregateMemoryUsage, submitter.EnableParallelHashaggSpill = true, true
+	AddMViewExecutionSessionVarsToJob(job, submitter)
+	sessVars.TrackAggregateMemoryUsage, sessVars.EnableParallelHashaggSpill = false, false
+	sessionVar := func(name string) string {
+		value, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), name)
+		require.NoError(t, err)
+		return value
+	}
+
+	names := []string{vardef.DivPrecisionIncrement, vardef.SQLModeVar, vardef.TimeZone}
+	before := make(map[string]string, len(names))
+	for _, name := range names {
+		before[name] = sessionVar(name)
+	}
+	sqlMode := sessVars.SQLMode
+	originalInMViewMaintenance := sessVars.InMViewMaintenance
 
 	restore, err := initCreateMaterializedViewBuildSession(sessCtx, job, mviewTableInfo, "test")
 	require.NoError(t, err)
+	require.True(t, sessVars.InMViewMaintenance)
 	require.Equal(t, 9, sessVars.DivPrecisionIncrement)
 	require.Equal(t, "test", sessVars.CurrentDB)
+	require.Equal(t, "9", sessionVar(vardef.DivPrecisionIncrement))
+	require.Equal(t, "PAD_CHAR_TO_FULL_LENGTH", sessionVar(vardef.SQLModeVar))
+	require.Equal(t, "UTC", sessionVar(vardef.TimeZone))
+	require.Equal(t, "rg1", sessVars.ResourceGroupName)
+	require.True(t, sessVars.TrackAggregateMemoryUsage)
+	require.True(t, sessVars.EnableParallelHashaggSpill)
+	require.Equal(t, vardef.On, sessionVar(vardef.TiDBTrackAggregateMemoryUsage))
+	require.Equal(t, vardef.On, sessionVar(vardef.TiDBEnableParallelHashaggSpill))
 
 	restore()
+	require.Equal(t, originalInMViewMaintenance, sessVars.InMViewMaintenance)
 	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
 	require.Equal(t, "before", sessVars.CurrentDB)
+	require.Equal(t, sqlMode, sessVars.SQLMode)
+	require.Equal(t, "default", sessVars.ResourceGroupName)
+	require.False(t, sessVars.TrackAggregateMemoryUsage)
+	require.False(t, sessVars.EnableParallelHashaggSpill)
+	// Restore the original cached values independently of the session fields.
+	for _, name := range names {
+		require.Equal(t, before[name], sessionVar(name))
+	}
+
+	// Synchronize the cached value even when the field already matches the definition.
+	sessCtx = mock.NewContext()
+	sessVars = sessCtx.GetSessionVars()
+	require.NoError(t, sessVars.SetSystemVar(vardef.DivPrecisionIncrement, "4"))
+	sessVars.DivPrecisionIncrement = 9
+	restore, err = initCreateMaterializedViewBuildSession(sessCtx, &model.Job{ReorgMeta: job.ReorgMeta}, mviewTableInfo, "test")
+	require.NoError(t, err)
+	require.Equal(t, "9", sessionVar(vardef.DivPrecisionIncrement))
+	restore()
+	require.Equal(t, 9, sessVars.DivPrecisionIncrement)
+	require.Equal(t, "4", sessionVar(vardef.DivPrecisionIncrement))
+
+	// The variables are restored even if the session has not read them before.
+	sessCtx = mock.NewContext()
+	sessVars = sessCtx.GetSessionVars()
+	restore, err = initCreateMaterializedViewBuildSession(sessCtx, job, mviewTableInfo, "test")
+	require.NoError(t, err)
+	restore()
+	defaultVars := mock.NewContext().GetSessionVars()
+	for _, name := range names {
+		value, err := defaultVars.GetSessionOrGlobalSystemVar(context.Background(), name)
+		require.NoError(t, err)
+		require.Equal(t, value, sessionVar(name))
+	}
+	require.Equal(t, defaultVars.SQLMode, sessVars.SQLMode)
+	require.Equal(t, defaultVars.DivPrecisionIncrement, sessVars.DivPrecisionIncrement)
 }
 
 func TestAnalyzeMVColumnUsageGroupByAlias(t *testing.T) {
@@ -129,6 +202,35 @@ func TestUpdateMaterializedViewBaseInfoOnCreateMissingBaseTable(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestGetTableInfoAndCancelNonExistJob(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+	err = kv.RunInNewTxn(context.Background(), store, true, func(_ context.Context, txn kv.Transaction) error {
+		metaMut := meta.NewMutator(txn)
+		require.NoError(t, metaMut.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}))
+
+		for _, tc := range []struct {
+			name     string
+			tableID  int64
+			schemaID int64
+		}{
+			{name: "missing table", tableID: 2, schemaID: 1},
+			{name: "missing database", tableID: 2, schemaID: 2},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				job := &model.Job{State: model.JobStateRunning}
+				_, err := getTableInfoAndCancelNonExistJob(metaMut, job, tc.tableID, tc.schemaID)
+				require.Error(t, err)
+				require.Equal(t, model.JobStateCancelled, job.State)
+			})
+		}
+		return nil
+	})
+	require.NoError(t, err)
+}
+
 func TestUpdateMaterializedViewBaseInfoOnDropPropagatesGetTableError(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -160,6 +262,67 @@ func TestUpdateMaterializedViewBaseInfoOnDropWithoutBaseTables(t *testing.T) {
 	extraInfos, err := updateMaterializedViewBaseInfoOnDrop(&jobContext{}, &model.Job{TableID: droppingTable.ID}, droppingTable)
 	require.NoError(t, err)
 	require.Empty(t, extraInfos)
+}
+
+func TestBuildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(t *testing.T) {
+	base := &model.TableInfo{
+		ID:   1,
+		Name: ast.NewCIStr("base"),
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{
+			MLogID:   2,
+			MViewIDs: []int64{3},
+		},
+	}
+	mlog := &model.TableInfo{
+		ID:   2,
+		Name: ast.NewCIStr("$mlog$base"),
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID:       base.ID,
+			DependentMViewIDs: []int64{3},
+		},
+	}
+	oldMView := &model.TableInfo{
+		ID:   3,
+		Name: ast.NewCIStr("mv"),
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{base.ID},
+		},
+	}
+	shadow := &model.TableInfo{
+		ID:   4,
+		Name: ast.NewCIStr("__mv_shadow"),
+		MaterializedViewShadow: &model.MaterializedViewShadowInfo{
+			SourceMViewID: oldMView.ID,
+		},
+	}
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, oldMView, shadow})
+
+	involving, err := buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
+		context.Background(), is, ast.NewCIStr("test"), oldMView.ID, shadow.ID,
+	)
+	require.NoError(t, err)
+	require.Equal(t, []model.InvolvingSchemaInfo{
+		{Database: "test", Table: "mv", Mode: model.ExclusiveInvolving},
+		{Database: "test", Table: "base", Mode: model.ExclusiveInvolving},
+		{Database: "test", Table: "__mv_shadow", Mode: model.ExclusiveInvolving},
+		{Database: "test", Table: "$mlog$base", Mode: model.ExclusiveInvolving},
+	}, involving)
+
+	// A MLog that does not list the old MV is unrelated to this cutover and is
+	// intentionally omitted from the involving-schema lock set.
+	mlog.MaterializedViewLog.DependentMViewIDs = nil
+	involving, err = buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
+		context.Background(), is, ast.NewCIStr("test"), oldMView.ID, shadow.ID,
+	)
+	require.NoError(t, err)
+	require.Len(t, involving, 3)
+	require.NotContains(t, involving, model.InvolvingSchemaInfo{Database: "test", Table: "$mlog$base", Mode: model.ExclusiveInvolving})
+
+	oldMView.MaterializedView.BaseTableIDs = []int64{base.ID, shadow.ID}
+	_, err = buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
+		context.Background(), is, ast.NewCIStr("test"), oldMView.ID, shadow.ID,
+	)
+	require.ErrorContains(t, err, "materialized view must reference exactly one base table")
 }
 
 func TestBuildDropTableInvolvingSchemaInfo(t *testing.T) {
@@ -312,4 +475,66 @@ func TestUpdateMaterializedViewBaseInfoOnDropMLogDependency(t *testing.T) {
 	t.Run("mlog with wrong base table does not retry a started drop", func(t *testing.T) {
 		runCase(t, true, true, true, true)
 	})
+}
+
+func TestInitMViewSession(t *testing.T) {
+	sessVars := variable.NewSessionVars(nil)
+	original := map[string]string{vardef.SQLModeVar: "", vardef.TimeZone: "+00:00", vardef.DivPrecisionIncrement: "2"}
+	for name, value := range original {
+		require.NoError(t, sessVars.SetSystemVar(name, value))
+	}
+	sessVars.StmtCtx.SetTimeZone(time.UTC)
+	sessVars.CurrentDB = "before"
+	sessVars.RowEncoder.Enable = false
+	sessVars.ResourceGroupName = "before_group"
+	sessVars.StmtCtx.ResourceGroupName = "before_statement_group"
+	restore, err := InitMViewSession(sessVars, &model.MaterializedViewInfo{
+		DefinitionSQLMode:               mysql.ModeNoBackslashEscapes,
+		DefinitionDivPrecisionIncrement: 9,
+		DefinitionTimeZone:              model.TimeZoneLocation{Name: "Asia/Shanghai"},
+	}, "mv_db", "mv_group")
+	require.NoError(t, err)
+	require.True(t, sessVars.EnableMView)
+	require.Equal(t, "mv_db", sessVars.CurrentDB)
+	require.False(t, sessVars.RowEncoder.Enable)
+	require.Equal(t, "mv_group", sessVars.ResourceGroupName)
+	require.Equal(t, "mv_group", sessVars.StmtCtx.ResourceGroupName)
+	require.Equal(t, 9, sessVars.DivPrecisionIncrement)
+	require.True(t, sessVars.HasStatusFlag(mysql.ServerStatusNoBackslashEscaped))
+	workerVars := variable.NewSessionVars(nil)
+	for name, expected := range map[string]string{vardef.SQLModeVar: "NO_BACKSLASH_ESCAPES", vardef.TimeZone: "Asia/Shanghai", vardef.DivPrecisionIncrement: "9"} {
+		value, keep, err := sessVars.GetSessionStatesSystemVar(name)
+		require.NoError(t, err)
+		require.True(t, keep)
+		require.Equal(t, expected, value, name)
+		require.NoError(t, workerVars.SetSystemVar(name, value))
+	}
+	require.Equal(t, sessVars.SQLMode, workerVars.SQLMode)
+	require.Equal(t, sessVars.Location(), workerVars.Location())
+	require.Equal(t, sessVars.DivPrecisionIncrement, workerVars.DivPrecisionIncrement)
+	restore()
+	require.False(t, sessVars.EnableMView)
+	require.Equal(t, "before", sessVars.CurrentDB)
+	require.False(t, sessVars.RowEncoder.Enable)
+	require.Equal(t, "before_group", sessVars.ResourceGroupName)
+	require.Equal(t, "before_statement_group", sessVars.StmtCtx.ResourceGroupName)
+	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
+	require.False(t, sessVars.HasStatusFlag(mysql.ServerStatusNoBackslashEscaped))
+	require.Equal(t, time.UTC, sessVars.StmtCtx.TimeZone())
+	for name, expected := range original {
+		value, keep, err := sessVars.GetSessionStatesSystemVar(name)
+		require.NoError(t, err)
+		require.True(t, keep)
+		require.Equal(t, expected, value, name)
+	}
+}
+
+func TestFormatSQLMode(t *testing.T) {
+	for _, s := range []string{"", mysql.DefaultSQLMode, "ANSI", "TRADITIONAL", "PAD_CHAR_TO_FULL_LENGTH,NO_BACKSLASH_ESCAPES"} {
+		mode, err := mysql.GetSQLMode(mysql.FormatSQLModeStr(s))
+		require.NoError(t, err)
+		got, err := mysql.GetSQLMode(formatSQLMode(mode))
+		require.NoError(t, err)
+		require.Equal(t, mode, got, s)
+	}
 }

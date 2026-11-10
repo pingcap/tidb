@@ -92,6 +92,10 @@ type Manager interface {
 	// MatchUserResourceGroupName matches a user with specified resource group name
 	MatchUserResourceGroupName(exec sqlexec.RestrictedSQLExecutor, resourceGroupName string) (string, bool)
 
+	// GetUserResourceGroup returns the resource group bound to the account, or "" if it has none.
+	// Requires exact match on user name and host name.
+	GetUserResourceGroup(user, host string) string
+
 	// DBIsVisible returns true is the database is visible to current user.
 	DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool
 

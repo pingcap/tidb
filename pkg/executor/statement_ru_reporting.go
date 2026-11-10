@@ -33,6 +33,9 @@ const (
 
 var statementRUEngineNames = [...]string{"tidb", "tikv", "tiflash"}
 
+// Temporary multiplier for TiFlash RU experiments.
+const statementRUTiFlashMultiplier = 10
+
 // Operator work follows its execution engine. A TiDB Reader additionally owns
 // remote scan evidence, which is attributed to the corresponding storage engine.
 type statementRUComputeUnits struct {
@@ -174,10 +177,15 @@ func (calculator statementRUCalculator) engineResult(weights ruv2.StmtWeights) s
 		TiKV: weights.CPUWork*tikv.cpuWork + weights.HashStateRow*tikv.hashStateRows +
 			weights.OperatorNum*tikv.operatorNum + weights.ScanByte*(units.ScanBytes-tiflash.scanBytes) +
 			weights.NetByte*(units.NetBytes-tiflash.netBytes) + weights.WriteKey*units.WriteKeys + weights.WriteByte*units.WriteBytes,
-		TiFlash: weights.CPUWork*tiflash.cpuWork + weights.HashStateRow*tiflash.hashStateRows +
-			weights.OperatorNum*tiflash.operatorNum + weights.JoinOutputRow*tiflash.joinOutputRows +
-			weights.ScanByte*tiflash.scanBytes + weights.NetByte*tiflash.netBytes + weights.CrossAZNetByte*tiflash.crossAZNetBytes,
+		TiFlash: calculator.tiFlashRU(weights),
 	}
+}
+
+func (calculator statementRUCalculator) tiFlashRU(weights ruv2.StmtWeights) float64 {
+	tiflash := calculator.compute[statementRUTiFlash]
+	return weights.CPUWork*tiflash.cpuWork + weights.HashStateRow*tiflash.hashStateRows +
+		weights.OperatorNum*tiflash.operatorNum + weights.JoinOutputRow*tiflash.joinOutputRows +
+		weights.ScanByte*tiflash.scanBytes + weights.NetByte*tiflash.netBytes + weights.CrossAZNetByte*tiflash.crossAZNetBytes
 }
 
 // addStatementUnits accounts for evidence outside individual operators once.

@@ -16,7 +16,6 @@ package domain
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net"
 	"path/filepath"
@@ -519,7 +518,7 @@ func (h *planReplayerTaskDumpHandle) DrainTask() *PlanReplayerDumpTask {
 
 func checkUnHandledReplayerTask(ctx context.Context, sctx sessionctx.Context, task replayer.PlanReplayerTaskKey) (bool, error) {
 	exec := sctx.GetSQLExecutor()
-	rs, err := exec.ExecuteInternal(ctx, fmt.Sprintf("select * from mysql.plan_replayer_status where sql_digest = '%v' and plan_digest = '%v' and fail_reason is null", task.SQLDigest, task.PlanDigest))
+	rs, err := exec.ExecuteInternal(ctx, "select * from mysql.plan_replayer_status where sql_digest = %? and plan_digest = %? and fail_reason is null", task.SQLDigest, task.PlanDigest)
 	if err != nil {
 		return false, err
 	}
@@ -540,8 +539,8 @@ func checkUnHandledReplayerTask(ctx context.Context, sctx sessionctx.Context, ta
 // CheckPlanReplayerTaskExists checks whether plan replayer capture task exists already
 func CheckPlanReplayerTaskExists(ctx context.Context, sctx sessionctx.Context, sqlDigest, planDigest string) (bool, error) {
 	exec := sctx.GetSQLExecutor()
-	rs, err := exec.ExecuteInternal(ctx, fmt.Sprintf("select * from mysql.plan_replayer_task where sql_digest = '%v' and plan_digest = '%v'",
-		sqlDigest, planDigest))
+	rs, err := exec.ExecuteInternal(ctx, "select * from mysql.plan_replayer_task where sql_digest = %? and plan_digest = %?",
+		sqlDigest, planDigest)
 	if err != nil {
 		return false, err
 	}

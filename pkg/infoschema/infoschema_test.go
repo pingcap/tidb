@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -236,6 +237,39 @@ func TestBasic(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 
+	tb, err = is.TableByName(context.Background(), ast.NewCIStr("information_schema"), ast.NewCIStr(infoschema.TableTiDBMLogs))
+	require.NoError(t, err)
+	col := tb.Meta().FindPublicColumnByName("base_table_id")
+	require.NotNil(t, col)
+	require.Equal(t, mysql.TypeLonglong, col.GetType())
+	for _, colName := range []string{
+		"table_catalog", "table_schema", "mlog_id", "mlog_name", "mlog_columns",
+		"base_table_catalog", "base_table_schema", "base_table_id", "base_table_name",
+	} {
+		col = tb.Meta().FindPublicColumnByName(colName)
+		require.NotNil(t, col)
+		require.True(t, mysql.HasNotNullFlag(col.GetFlag()), colName)
+	}
+	for _, colName := range []string{"purge_method", "purge_start", "purge_next"} {
+		col = tb.Meta().FindPublicColumnByName(colName)
+		require.NotNil(t, col)
+		require.False(t, mysql.HasNotNullFlag(col.GetFlag()), colName)
+	}
+	tb, err = is.TableByName(context.Background(), ast.NewCIStr("information_schema"), ast.NewCIStr(infoschema.TableTiDBTableMViewDependencies))
+	require.NoError(t, err)
+	col = tb.Meta().FindPublicColumnByName("mview_id")
+	require.NotNil(t, col)
+	require.Equal(t, mysql.TypeLonglong, col.GetType())
+	for _, colName := range []string{
+		"table_catalog", "table_schema", "table_id", "table_name",
+		"mlog_id", "mlog_name",
+		"mview_catalog", "mview_schema", "mview_id", "mview_name",
+	} {
+		col = tb.Meta().FindPublicColumnByName(colName)
+		require.NotNil(t, col)
+		require.True(t, mysql.HasNotNullFlag(col.GetFlag()), colName)
+	}
+
 	require.NoError(t, err)
 	txn, err = re.Store().Begin()
 	require.NoError(t, err)
@@ -380,6 +414,64 @@ func TestInfoTables(t *testing.T) {
 		tb, err1 := is.TableByName(context.Background(), metadef.InformationSchemaName, ast.NewCIStr(tbl))
 		require.Nil(t, err1)
 		require.NotNil(t, tb)
+	}
+}
+
+func TestStorageClassTransitionsVisibility(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	re := internal.CreateAutoIDRequirement(t)
+	t.Cleanup(func() { require.NoError(t, re.Store().Close()) })
+	ctx := context.Background()
+	tableName := ast.NewCIStr(infoschema.TableStorageClassTransitions)
+
+	for _, useV2 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("v2=%t", useV2), func(t *testing.T) {
+			var tableID int64
+			// Rebuilding after a disabled instance must not lose the global table metadata.
+			for step, enabled := range []bool{true, false, true, false} {
+				t.Run(fmt.Sprintf("%d/enabled=%t", step, enabled), func(t *testing.T) {
+					config.UpdateGlobal(func(conf *config.Config) { conf.EnableStorageClass = enabled })
+					builder := infoschema.NewBuilder(re, vardef.SchemaCacheSize.Load(), nil, infoschema.NewData(), useV2)
+					require.NoError(t, builder.InitWithDBInfos(nil, nil, nil, nil, 0))
+					is := builder.Build(math.MaxUint64)
+					isV2, _ := infoschema.IsV2(is)
+					require.Equal(t, useV2, isV2)
+
+					tbl, err := is.TableByName(ctx, metadef.InformationSchemaName, tableName)
+					if enabled {
+						require.NoError(t, err)
+						require.NotNil(t, tbl)
+						tableID = tbl.Meta().ID
+					} else {
+						require.True(t, infoschema.ErrTableNotExists.Equal(err))
+						require.Nil(t, tbl)
+					}
+					require.NotZero(t, tableID)
+					tbl, exists := is.TableByID(ctx, tableID)
+					require.Equal(t, enabled, exists)
+					if !enabled {
+						require.Nil(t, tbl)
+					}
+
+					tables, err := is.SchemaTableInfos(ctx, metadef.InformationSchemaName)
+					require.NoError(t, err)
+					var found bool
+					for _, tbl := range tables {
+						found = found || tbl.Name == tableName
+					}
+					require.Equal(t, enabled, found)
+					simpleTables, err := is.SchemaSimpleTableInfos(ctx, metadef.InformationSchemaName)
+					require.NoError(t, err)
+					found = false
+					for _, tbl := range simpleTables {
+						found = found || tbl.Name == tableName
+					}
+					require.Equal(t, enabled, found)
+					_, err = is.TableByName(ctx, metadef.InformationSchemaName, ast.NewCIStr("TABLES"))
+					require.NoError(t, err)
+				})
+			}
+		})
 	}
 }
 

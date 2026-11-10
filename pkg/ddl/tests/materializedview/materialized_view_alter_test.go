@@ -171,17 +171,62 @@ func TestMaterializedViewDDLProtectsMinMaxSupportingBaseTableIndexes(t *testing.
 	err := tk.ExecToErr("drop index idx_ab on t_drop_idx")
 	require.ErrorContains(t, err, "required by materialized view mv_drop_idx")
 	require.ErrorContains(t, err, "MIN/MAX fast refresh")
+	err = tk.ExecToErr("alter table t_drop_idx drop index idx_ab")
+	require.ErrorContains(t, err, "required by materialized view mv_drop_idx")
+	require.ErrorContains(t, err, "MIN/MAX fast refresh")
 
 	createMinMaxMV("t_invisible_idx", "mv_invisible_idx", ", index idx_ab(a, b)")
 	err = tk.ExecToErr("alter table t_invisible_idx alter index idx_ab invisible")
 	require.ErrorContains(t, err, "required by materialized view mv_invisible_idx")
+	require.ErrorContains(t, err, "MIN/MAX fast refresh")
+
+	tk.MustExec("create table t_create_invisible_idx (a int not null, b int not null, c int not null, index idx_ab(a, b))")
+	tk.MustExec("create materialized view log on t_create_invisible_idx (a, b, c)")
+	tk.MustExec("alter table t_create_invisible_idx alter index idx_ab invisible")
+	err = tk.ExecToErr("create materialized view mv_create_invisible_idx (a, b, minc, cnt) refresh fast next now() as select a, b, min(c), count(1) from t_create_invisible_idx group by a, b")
+	require.ErrorContains(t, err, "requires base table index whose leading columns cover all GROUP BY columns")
+
+	tk.MustExec("create table t_drop_pk (a int not null primary key nonclustered, c int not null)")
+	tk.MustExec("create materialized view log on t_drop_pk (a, c)")
+	tk.MustExec("create materialized view mv_drop_pk (a, minc, cnt) refresh fast next now() as select a, min(c), count(1) from t_drop_pk group by a")
+	err = tk.ExecToErr("alter table t_drop_pk drop primary key")
+	require.ErrorContains(t, err, "required by materialized view mv_drop_pk")
+	require.ErrorContains(t, err, "MIN/MAX fast refresh")
+
+	createMinMaxMV("t_alt_idx", "mv_alt_idx", ", index idx_ab(a, b), index idx_ba(b, a)")
+	tk.MustExec("drop index idx_ab on t_alt_idx")
+	tk.MustExec("insert into t_alt_idx values (1, 2, 10), (1, 2, 5)")
+	tk.MustExec("refresh materialized view mv_alt_idx fast")
+	tk.MustQuery("select a, b, minc, cnt from mv_alt_idx").Check(testkit.Rows("1 2 5 2"))
+
+	createMinMaxMVWithWhere := func(baseTable, mvName string) {
+		tk.MustExec(fmt.Sprintf("create table %s (a int not null, b int not null, c int not null, index idx_ab(a, b), index idx_ba(b, a))", baseTable))
+		tk.MustExec(fmt.Sprintf("create materialized view log on %s (a, b, c)", baseTable))
+		tk.MustExec(fmt.Sprintf("create materialized view %s (a, b, minc, cnt) refresh fast next now() as select a, b, min(c), count(1) from %s where c > 0 group by a, b", mvName, baseTable))
+	}
+
+	createMinMaxMVWithWhere("t_where_drop_idx", "mv_where_drop_idx")
+	tk.MustExec("drop index idx_ab on t_where_drop_idx")
+	err = tk.ExecToErr("drop index idx_ba on t_where_drop_idx")
+	require.ErrorContains(t, err, "required by materialized view mv_where_drop_idx")
+	require.ErrorContains(t, err, "MIN/MAX fast refresh")
+
+	createMinMaxMVWithWhere("t_where_invisible_idx", "mv_where_invisible_idx")
+	tk.MustExec("alter table t_where_invisible_idx alter index idx_ab invisible")
+	err = tk.ExecToErr("alter table t_where_invisible_idx alter index idx_ba invisible")
+	require.ErrorContains(t, err, "required by materialized view mv_where_invisible_idx")
+	require.ErrorContains(t, err, "MIN/MAX fast refresh")
 
 	createMinMaxMV("t_multi_schema_replace_idx", "mv_multi_schema_replace_idx", ", index idx_ab(a, b)")
 	tk.MustExec("alter table t_multi_schema_replace_idx drop index idx_ab, add index idx_ba(b, a)")
+	tk.MustExec("insert into t_multi_schema_replace_idx values (1, 2, 10), (1, 2, 5)")
+	tk.MustExec("refresh materialized view mv_multi_schema_replace_idx fast")
+	tk.MustQuery("select a, b, minc, cnt from mv_multi_schema_replace_idx").Check(testkit.Rows("1 2 5 2"))
 
 	createMinMaxMV("t_multi_schema_bad_idx", "mv_multi_schema_bad_idx", ", index idx_ab(a, b)")
 	err = tk.ExecToErr("alter table t_multi_schema_bad_idx drop index idx_ab, add index idx_c(c)")
 	require.ErrorContains(t, err, "required by materialized view mv_multi_schema_bad_idx")
+	require.ErrorContains(t, err, "MIN/MAX fast refresh")
 }
 
 func TestMaterializedViewDDLProtectsMinMaxSupportingBaseTableIndexesAgainstConcurrentDrop(t *testing.T) {
@@ -254,6 +299,10 @@ func TestMaterializedViewDDLProtectsMinMaxSupportingBaseTableIndexesAgainstConcu
 	require.NoError(t, err1)
 	require.ErrorContains(t, err2, "required by materialized view mv_concurrent_drop_idx")
 	require.ErrorContains(t, err2, "MIN/MAX fast refresh")
+
+	tk.MustExec("insert into t_concurrent_drop_idx values (1, 2, 10), (1, 2, 5)")
+	tk.MustExec("refresh materialized view mv_concurrent_drop_idx fast")
+	tk.MustQuery("select a, b, minc, cnt from mv_concurrent_drop_idx").Check(testkit.Rows("1 2 5 2"))
 }
 
 func TestAlterMaterializedViewRefreshDisableScheduleUpdatesAlert(t *testing.T) {
@@ -297,7 +346,7 @@ func TestAlterMaterializedViewRefreshDisableScheduleUpdatesAlert(t *testing.T) {
 	}
 }
 
-func TestAlterMaterializedViewRefreshScheduleTimeZone(t *testing.T) {
+func TestAlterMaterializedViewRefreshScheduleUTC(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
@@ -315,21 +364,25 @@ func TestAlterMaterializedViewRefreshScheduleTimeZone(t *testing.T) {
 	}
 
 	mvTable, info := getMView()
-	initialTimeZoneName := info.RefreshScheduleTimeZone.Name
-	initialTimeZoneOffset := info.RefreshScheduleTimeZone.Offset
-	require.Equal(t, 0, initialTimeZoneOffset)
+	initialSQLMode := info.DefinitionSQLMode
+	initialRefreshScheduleSQLMode := info.RefreshScheduleSQLMode
 
 	tk.MustExec("set time_zone = '+08:00'")
 	tk.MustExec("alter materialized view mv refresh")
 	_, info = getMView()
-	require.Equal(t, initialTimeZoneName, info.RefreshScheduleTimeZone.Name)
-	require.Equal(t, initialTimeZoneOffset, info.RefreshScheduleTimeZone.Offset)
+	require.Equal(t, initialRefreshScheduleSQLMode, info.RefreshScheduleSQLMode)
 	require.Empty(t, info.RefreshNext)
 
-	tk.MustExec("alter materialized view mv refresh next cast('2030-01-02 10:00:00' as datetime)")
+	tk.MustExec("set sql_mode = 'PIPES_AS_CONCAT'")
+	tk.MustExec("alter materialized view mv refresh next cast(date_add('2030-01-01', interval (1 || 2) day) as datetime)")
 	_, info = getMView()
-	require.Equal(t, 8*60*60, info.RefreshScheduleTimeZone.Offset)
-	tk.MustQuery("select NEXT_REFRESH_UNIX_SECONDS = 1893549600 from mysql.tidb_mview_refresh_info where MVIEW_ID = " + strconv.FormatInt(mvTable.ID, 10)).Check(testkit.Rows("1"))
+	require.Equal(t, initialSQLMode, info.DefinitionSQLMode)
+	require.Equal(t, tk.Session().GetSessionVars().SQLMode, info.RefreshScheduleSQLMode)
+	tk.MustQuery("select NEXT_REFRESH_UNIX_SECONDS = TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', '2030-01-13 00:00:00') from mysql.tidb_mview_refresh_info where MVIEW_ID = " + strconv.FormatInt(mvTable.ID, 10)).Check(testkit.Rows("1"))
+
+	tk.MustExec("set time_zone = 'America/Los_Angeles'")
+	tk.MustExec("alter materialized view mv refresh next cast('2021-03-14 02:30:00' as datetime)")
+	tk.MustQuery("select NEXT_REFRESH_UNIX_SECONDS = 1615689000 from mysql.tidb_mview_refresh_info where MVIEW_ID = " + strconv.FormatInt(mvTable.ID, 10)).Check(testkit.Rows("1"))
 }
 
 func TestAlterTableWithMaterializedViewDependencies(t *testing.T) {
@@ -341,17 +394,64 @@ func TestAlterTableWithMaterializedViewDependencies(t *testing.T) {
 	tk.MustExec("create materialized view log on t (a, b)")
 	tk.MustExec("create materialized view mv (a, cnt) as select a, count(1) from t group by a")
 	tk.MustExec("create materialized view mv_where (a, cnt) as select a, count(1) from t where b > 0 group by a")
+	tk.MustExec("create materialized view mv_out_alias (k, cnt) as select a as k, count(1) from t group by a")
+	tk.MustExec("create materialized view mv_sum (a, s, cnt) as select a, sum(b), count(1) from t group by a")
 
 	tk.MustExec("alter table t modify column a bigint not null")
-	showCreate := tk.MustQuery("show create table `$mlog$t`").Rows()[0][1].(string)
+	jobs := tk.MustQuery("admin show ddl jobs where JOB_TYPE='modify column'").Rows()
+	require.NotEmpty(t, jobs)
+	jobID, err := strconv.ParseInt(fmt.Sprint(jobs[0][0]), 10, 64)
+	require.NoError(t, err)
+	historyJob, err := ddl.GetHistoryJobByID(tk.Session(), jobID)
+	require.NoError(t, err)
+	involving := make(map[string]struct{})
+	for _, info := range historyJob.GetInvolvingSchemaInfo() {
+		involving[info.Database+"\x00"+info.Table] = struct{}{}
+	}
+	require.Equal(t, map[string]struct{}{
+		"test\x00t":            {},
+		"test\x00$mlog$t":      {},
+		"test\x00mv":           {},
+		"test\x00mv_where":     {},
+		"test\x00mv_out_alias": {},
+		"test\x00mv_sum":       {},
+	}, involving)
+
+	showCreate := tk.MustQuery("show create table t").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`a` bigint")
+	showCreate = tk.MustQuery("show create table `$mlog$t`").Rows()[0][1].(string)
 	require.Contains(t, showCreate, "`a` bigint")
 	showCreate = tk.MustQuery("show create table mv").Rows()[0][1].(string)
 	require.Contains(t, showCreate, "`a` bigint")
+	showCreate = tk.MustQuery("show create table mv_where").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`a` bigint")
+	showCreate = tk.MustQuery("show create table mv_out_alias").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`k` bigint")
+	showCreate = tk.MustQuery("show create table mv_sum").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`a` bigint")
+	tk.MustQuery("select a, cnt from mv order by a").Check(testkit.Rows("1 1", "2 1"))
+	tk.MustQuery("select a, cnt from mv_where order by a").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select k, cnt from mv_out_alias order by k").Check(testkit.Rows("1 1", "2 1"))
+	tk.MustQuery("select a, s, cnt from mv_sum order by a").Check(testkit.Rows("1 10 1", "2 -1 1"))
 
-	err := tk.ExecToErr("alter table t modify column b bigint not null")
+	err = tk.ExecToErr("alter table t modify column b bigint not null")
 	require.ErrorContains(t, err, "does not support modifying columns used in WHERE clause")
 	err = tk.ExecToErr("alter table t change column a a2 bigint")
 	require.ErrorContains(t, err, "does not support renaming")
 	err = tk.ExecToErr("alter table t modify column b smallint")
 	require.ErrorContains(t, err, "only supports no-reorg compatible type changes")
+	tk.MustExec("drop materialized view mv_where")
+	err = tk.ExecToErr("alter table t modify column b bigint not null")
+	require.ErrorContains(t, err, "does not support modifying columns used in non-direct SELECT expressions")
+
+	tk.MustExec("create table t_change_ok (a int not null, b int not null)")
+	tk.MustExec("insert into t_change_ok values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_change_ok (a, b)")
+	tk.MustExec("create materialized view mv_change_ok (a, cnt) as select a, count(1) from t_change_ok group by a")
+	tk.MustExec("alter table t_change_ok change column a a bigint not null")
+	for _, tableName := range []string{"t_change_ok", "$mlog$t_change_ok", "mv_change_ok"} {
+		showCreate := tk.MustQuery(fmt.Sprintf("show create table `%s`", tableName)).Rows()[0][1].(string)
+		require.Contains(t, showCreate, "`a` bigint", tableName)
+	}
+	tk.MustQuery("select a, cnt from mv_change_ok order by a").Check(testkit.Rows("1 1", "2 1"))
 }

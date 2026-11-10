@@ -1,0 +1,252 @@
+# Every geospatial function name in the parser's ast package, one statement each: the ones
+# MySQL 9.7.2 has, TiDB's EWKB pair and the geospatial index functions. A function TiDB
+# does not have raises 1305, as any unknown function does. The arguments are NULL, at least
+# as many as MySQL requires.
+
+# === Constructors ===
+--error 1305
+select Point(NULL, NULL);
+--error 1305
+select LineString(NULL);
+--error 1305
+select Polygon(NULL);
+--error 1305
+select MultiPoint(NULL);
+--error 1305
+select MultiLineString(NULL);
+--error 1305
+select MultiPolygon(NULL);
+--error 1305
+select GeometryCollection(NULL);
+--error 1305
+select GeomCollection(NULL);
+
+# === Readers and writers ===
+--error 1305
+select ST_GeomFromText(NULL);
+--error 1305
+select ST_GeometryFromText(NULL);
+--error 1305
+select ST_PointFromText(NULL);
+--error 1305
+select ST_LineFromText(NULL);
+--error 1305
+select ST_LineStringFromText(NULL);
+--error 1305
+select ST_PolyFromText(NULL);
+--error 1305
+select ST_PolygonFromText(NULL);
+--error 1305
+select ST_MPointFromText(NULL);
+--error 1305
+select ST_MultiPointFromText(NULL);
+--error 1305
+select ST_MLineFromText(NULL);
+--error 1305
+select ST_MultiLineStringFromText(NULL);
+--error 1305
+select ST_MPolyFromText(NULL);
+--error 1305
+select ST_MultiPolygonFromText(NULL);
+--error 1305
+select ST_GeomCollFromText(NULL);
+--error 1305
+select ST_GeomCollFromTxt(NULL);
+--error 1305
+select ST_GeometryCollectionFromText(NULL);
+--error 1305
+select ST_GeomFromWKB(NULL);
+--error 1305
+select ST_GeometryFromWKB(NULL);
+--error 1305
+select ST_PointFromWKB(NULL);
+--error 1305
+select ST_LineFromWKB(NULL);
+--error 1305
+select ST_LineStringFromWKB(NULL);
+--error 1305
+select ST_PolyFromWKB(NULL);
+--error 1305
+select ST_PolygonFromWKB(NULL);
+--error 1305
+select ST_MPointFromWKB(NULL);
+--error 1305
+select ST_MultiPointFromWKB(NULL);
+--error 1305
+select ST_MLineFromWKB(NULL);
+--error 1305
+select ST_MultiLineStringFromWKB(NULL);
+--error 1305
+select ST_MPolyFromWKB(NULL);
+--error 1305
+select ST_MultiPolygonFromWKB(NULL);
+--error 1305
+select ST_GeomCollFromWKB(NULL);
+--error 1305
+select ST_GeometryCollectionFromWKB(NULL);
+--error 1305
+select ST_GeomFromGeoJSON(NULL);
+--error 1305
+select ST_AsText(NULL);
+--error 1305
+select ST_AsWKT(NULL);
+--error 1305
+select ST_AsBinary(NULL);
+--error 1305
+select ST_AsWKB(NULL);
+--error 1305
+select ST_AsGeoJSON(NULL);
+
+# === Accessors ===
+--error 1305
+select ST_SRID(NULL);
+--error 1305
+select ST_X(NULL);
+--error 1305
+select ST_Y(NULL);
+--error 1305
+select ST_Latitude(NULL);
+--error 1305
+select ST_Longitude(NULL);
+--error 1305
+select ST_GeometryType(NULL);
+--error 1305
+select ST_Dimension(NULL);
+--error 1305
+select ST_Envelope(NULL);
+--error 1305
+select ST_IsEmpty(NULL);
+--error 1305
+select ST_IsValid(NULL);
+--error 1305
+select ST_IsSimple(NULL);
+--error 1305
+select ST_IsClosed(NULL);
+--error 1305
+select ST_StartPoint(NULL);
+--error 1305
+select ST_EndPoint(NULL);
+--error 1305
+select ST_PointN(NULL, NULL);
+--error 1305
+select ST_NumPoints(NULL);
+--error 1305
+select ST_ExteriorRing(NULL);
+--error 1305
+select ST_InteriorRingN(NULL, NULL);
+--error 1305
+select ST_NumInteriorRings(NULL);
+--error 1305
+select ST_NumInteriorRing(NULL);
+--error 1305
+select ST_GeometryN(NULL, NULL);
+--error 1305
+select ST_NumGeometries(NULL);
+--error 1305
+select ST_Centroid(NULL);
+
+# === Measurement ===
+--error 1305
+select ST_Area(NULL);
+--error 1305
+select ST_Length(NULL);
+--error 1305
+select ST_Distance(NULL, NULL);
+--error 1305
+select ST_Distance_Sphere(NULL, NULL);
+--error 1305
+select ST_FrechetDistance(NULL, NULL);
+--error 1305
+select ST_HausdorffDistance(NULL, NULL);
+
+# === Predicates ===
+--error 1305
+select ST_Contains(NULL, NULL);
+--error 1305
+select ST_Crosses(NULL, NULL);
+--error 1305
+select ST_Disjoint(NULL, NULL);
+--error 1305
+select ST_Equals(NULL, NULL);
+--error 1305
+select ST_Intersects(NULL, NULL);
+--error 1305
+select ST_Overlaps(NULL, NULL);
+--error 1305
+select ST_Touches(NULL, NULL);
+--error 1305
+select ST_Within(NULL, NULL);
+--error 1305
+select MBRContains(NULL, NULL);
+--error 1305
+select MBRCoveredBy(NULL, NULL);
+--error 1305
+select MBRCovers(NULL, NULL);
+--error 1305
+select MBRDisjoint(NULL, NULL);
+--error 1305
+select MBREquals(NULL, NULL);
+--error 1305
+select MBRIntersects(NULL, NULL);
+--error 1305
+select MBROverlaps(NULL, NULL);
+--error 1305
+select MBRTouches(NULL, NULL);
+--error 1305
+select MBRWithin(NULL, NULL);
+
+# === Processing ===
+--error 1305
+select ST_Buffer(NULL, NULL);
+--error 1305
+select ST_Buffer_Strategy(NULL);
+--error 1305
+select ST_Collect(NULL);
+--error 1305
+select ST_ConvexHull(NULL);
+--error 1305
+select ST_Difference(NULL, NULL);
+--error 1305
+select ST_Intersection(NULL, NULL);
+--error 1305
+select ST_LineInterpolatePoint(NULL, NULL);
+--error 1305
+select ST_LineInterpolatePoints(NULL, NULL);
+--error 1305
+select ST_MakeEnvelope(NULL, NULL);
+--error 1305
+select ST_PointAtDistance(NULL, NULL);
+--error 1305
+select ST_Simplify(NULL, NULL);
+--error 1305
+select ST_SwapXY(NULL);
+--error 1305
+select ST_SymDifference(NULL, NULL);
+--error 1305
+select ST_Transform(NULL, NULL);
+--error 1305
+select ST_Union(NULL, NULL);
+--error 1305
+select ST_Validate(NULL);
+
+# === Geohash ===
+--error 1305
+select ST_GeoHash(NULL, NULL);
+--error 1305
+select ST_LatFromGeoHash(NULL);
+--error 1305
+select ST_LongFromGeoHash(NULL);
+--error 1305
+select ST_PointFromGeoHash(NULL, NULL);
+
+# === TiDB only: EWKB, and the functions behind a geospatial index's hidden columns ===
+--error 1305
+select ST_AsEWKB(NULL);
+--error 1305
+select ST_GeomFromEWKB(NULL);
+--error 1305
+select tidb_spatial_key(NULL);
+--error 1305
+select tidb_spatial_keys(NULL);
+--error 1305
+select tidb_spatial_bbox(NULL);

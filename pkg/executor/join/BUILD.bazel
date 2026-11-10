@@ -120,6 +120,7 @@ go_test(
         "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/codec",
+        "//pkg/util/dbterror/exeerrors",
         "//pkg/util/disk",
         "//pkg/util/execdetails",
         "//pkg/util/memory",

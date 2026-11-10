@@ -19,6 +19,7 @@ import (
 	"maps"
 	"sync"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -160,6 +161,7 @@ func (msm *MockSessionManager) DeleteInternalSession(s any) {
 	msm.mu.Lock()
 	delete(msm.internalSessions, s)
 	msm.mu.Unlock()
+	failpoint.InjectCall("afterDeleteInternalSession", s)
 }
 
 // GetInternalSessionStartTSList is to get all startTS of every transaction running in the current internal sessions
