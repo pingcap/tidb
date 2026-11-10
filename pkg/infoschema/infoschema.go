@@ -301,6 +301,9 @@ func TableInfosByNames(ctx stdctx.Context, is InfoSchema, schema ast.CIStr, name
 	ctx = WithRefillOption(ctx, false)
 	tables := make([]*model.TableInfo, 0, len(names))
 	for _, name := range names {
+		// TableByName does not check cancellation for InfoSchema v1 or special
+		// databases. Without this check, the loop may keep running after the query
+		// is canceled.
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
