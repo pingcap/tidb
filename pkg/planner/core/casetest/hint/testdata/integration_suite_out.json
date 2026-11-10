@@ -532,19 +532,20 @@
       {
         "SQL": "explain format = 'plan_tree' select /*+ qb_name(qb_v1, v1), merge_join(@qb_v1 v) */ * from v1;",
         "Plan": [
-          "HashJoin root  inner join, equal:[eq(test.t3.a, test.t.a)]",
+          "MergeJoin root  inner join, left key:test.t3.a, right key:test.t.a",
           "├─MergeJoin(Build) root  inner join, left key:test.t.a, right key:test.t1.a",
           "│ ├─IndexReader(Build) root  index:IndexFullScan",
           "│ │ └─IndexFullScan cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo",
           "│ └─IndexReader(Probe) root  index:IndexFullScan",
           "│   └─IndexFullScan cop[tikv] table:t, index:idx_a(a) keep order:true, stats:pseudo",
-          "└─HashJoin(Probe) root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
-          "  ├─TableReader(Build) root  data:Selection",
-          "  │ └─Selection cop[tikv]  not(isnull(test.t3.a)), not(isnull(test.t3.b))",
-          "  │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) root  data:Selection",
-          "    └─Selection cop[tikv]  not(isnull(test.t2.b))",
-          "      └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "└─Sort(Probe) root  test.t3.a",
+          "  └─HashJoin root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
+          "    ├─TableReader(Build) root  data:Selection",
+          "    │ └─Selection cop[tikv]  not(isnull(test.t3.a)), not(isnull(test.t3.b))",
+          "    │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) root  data:Selection",
+          "      └─Selection cop[tikv]  not(isnull(test.t2.b))",
+          "        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },

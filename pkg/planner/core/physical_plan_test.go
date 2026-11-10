@@ -382,11 +382,12 @@ func TestJoinHintCompatibilityWithVariable(t *testing.T) {
 			('a1', '3561703379345', '14535'),
 			('h1', '3561703379345', '14550')`)
 
-		sql := `explain select
+		buildSQL := func(hintStr string) string {
+			return fmt.Sprintf(`select
   count(*)
 from
   (
-    select /*+ inl_join(t1) */
+    select /*+ %s */
       t2.actualId,
       t2.planNo,
       t2.topId,
@@ -414,16 +415,33 @@ from
       ) t2
     where t1.serialNo = t2.insurantNo
       and t2.insurantNo = '2'
-  ) s`
-		expectedWarn := "Warning 1815 Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable"
+  ) s`, hintStr)
+		}
 
-		tk.MustExec("set @@session.tidb_opt_advanced_join_hint=0")
-		tk.MustQuery(sql).Rows()
-		tk.MustQuery("show warnings").Check(testkit.Rows(expectedWarn))
+		defer func() {
+			tk.MustExec("set @@session.tidb_opt_enable_advanced_join_reorder=DEFAULT")
+			tk.MustExec("set @@session.tidb_opt_advanced_join_hint=DEFAULT")
+		}()
 
-		tk.MustExec("set @@session.tidb_opt_advanced_join_hint=1")
-		tk.MustQuery(sql).Rows()
-		tk.MustQuery("show warnings").Check(testkit.Rows(expectedWarn))
+		inljWarn := "Warning 1815 Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable"
+
+		for _, advReorder := range []int{1, 0} {
+			tk.MustExec(fmt.Sprintf("set @@session.tidb_opt_enable_advanced_join_reorder=%d", advReorder))
+			for _, advHint := range []int{0, 1} {
+				tk.MustExec(fmt.Sprintf("set @@session.tidb_opt_advanced_join_hint=%d", advHint))
+
+				tk.MustQuery("explain " + buildSQL("inl_join(t1)")).Rows()
+				tk.MustQuery("show warnings").Check(testkit.Rows(inljWarn))
+
+				tk.MustQuery("explain " + buildSQL("shuffle_join(t1)")).Rows()
+				shuffleWarns := tk.MustQuery("show warnings").Rows()
+				require.NotEmpty(t, shuffleWarns)
+				require.Equal(t, "The join can not push down to the MPP side, the shuffle_join() hint is invalid", shuffleWarns[0][2])
+
+				tk.MustHavePlan(buildSQL("merge_join(t1)"), "MergeJoin")
+				tk.MustQuery("show warnings").Check(testkit.Rows())
+			}
+		}
 	})
 }
 

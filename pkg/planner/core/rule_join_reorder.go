@@ -348,16 +348,21 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 		result = extractJoinGroup(p)
 		curJoinGroup, joinTypes, joinOrderHintInfo, hasOuterJoin := result.group, result.joinTypes, result.joinOrderHintInfo, result.hasOuterJoin
 		if len(curJoinGroup) > 1 {
-			optimizedVertexMap := make(map[int]base.LogicalPlan, len(curJoinGroup))
+			var optimizedVertexMap map[int]base.LogicalPlan
+			if len(result.joinMethodHintInfo) > 0 {
+				optimizedVertexMap = make(map[int]base.LogicalPlan, len(curJoinGroup))
+			}
 			for i := range curJoinGroup {
 				oldID := curJoinGroup[i].ID()
 				curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i])
 				if err != nil {
 					return nil, err
 				}
-				optimizedVertexMap[oldID] = curJoinGroup[i]
+				if optimizedVertexMap != nil {
+					optimizedVertexMap[oldID] = curJoinGroup[i]
+				}
 			}
-			if len(result.joinMethodHintInfo) > 0 {
+			if optimizedVertexMap != nil {
 				result.joinMethodHintInfo = joinorder.RebindJoinMethodHints(result.joinMethodHintInfo, optimizedVertexMap)
 			}
 			origJoinRoot := p
@@ -818,7 +823,9 @@ func (s *baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr exp
 		proj = logicalop.LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
 		proj.SetSchema(p.Schema().Clone())
 		proj.SetChildren(p)
-		s.propagateJoinMethodHint(originalPlanID, proj.ID())
+		if s != nil {
+			joinorder.PropagateJoinMethodHint(s.joinMethodHintInfo, originalPlanID, proj.ID())
+		}
 	}
 	// Avoid injecting duplicate expressions into the same projection.
 	// This keeps plans smaller when multiple join edges need the same deterministic expression.
@@ -836,20 +843,6 @@ func (s *baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr exp
 	// the original expr is intentional here. Using the pre-substituted child-space
 	// expression would incorrectly rematerialize non-reusable projection outputs.
 	return proj, proj.AppendExpr(expr)
-}
-
-func (s *baseSingleGroupJoinOrderSolver) propagateJoinMethodHint(oldPlanID, newPlanID int) {
-	if s == nil || oldPlanID == newPlanID || len(s.joinMethodHintInfo) == 0 {
-		return
-	}
-	if _, exists := s.joinMethodHintInfo[newPlanID]; exists {
-		return
-	}
-	if hintInfo, ok := s.joinMethodHintInfo[oldPlanID]; ok {
-		// Keep the original vertex entry for alternative join trees that still use the
-		// unwrapped child, and add an alias for the injected projection wrapper.
-		s.joinMethodHintInfo[newPlanID] = hintInfo
-	}
 }
 
 // makeJoin build join tree for the nodes which have equal conditions to connect them.

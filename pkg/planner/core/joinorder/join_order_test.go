@@ -15,11 +15,18 @@
 package joinorder
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -82,4 +89,109 @@ func TestCloneNodesForGreedyStartIsolation(t *testing.T) {
 	cloned[0].p = logicalop.LogicalTableDual{RowCount: 1}.Init(ctx, 0)
 	require.Nil(t, original[0].p)
 	require.NotNil(t, cloned[0].p)
+}
+
+func TestRebindJoinMethodHintsAllHints(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	t.Cleanup(func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	})
+
+	oldShuffle := logicalop.LogicalTableDual{RowCount: 1}.Init(ctx, 0)
+	newShuffle := logicalop.LogicalTableDual{RowCount: 1}.Init(ctx, 0)
+	oldMerge := logicalop.LogicalTableDual{RowCount: 1}.Init(ctx, 0)
+	newMerge := logicalop.LogicalTableDual{RowCount: 1}.Init(ctx, 0)
+
+	hints := map[int]*JoinMethodHint{
+		oldShuffle.ID(): {PreferJoinMethod: hint.PreferShuffleJoin},
+		oldMerge.ID():   {PreferJoinMethod: hint.PreferMergeJoin},
+	}
+	vertexMap := map[int]base.LogicalPlan{
+		oldShuffle.ID(): newShuffle,
+		oldMerge.ID():   newMerge,
+	}
+
+	rebound := RebindJoinMethodHints(hints, vertexMap)
+	require.Contains(t, rebound, newShuffle.ID())
+	require.Contains(t, rebound, newMerge.ID())
+	require.Equal(t, hint.PreferShuffleJoin, rebound[newShuffle.ID()].PreferJoinMethod)
+	require.Equal(t, hint.PreferMergeJoin, rebound[newMerge.ID()].PreferJoinMethod)
+
+	// When no hinted vertex changed ID, RebindJoinMethodHints should return the input map directly.
+	sameVertexMap := map[int]base.LogicalPlan{
+		newShuffle.ID(): newShuffle,
+		newMerge.ID():   newMerge,
+	}
+	unchanged := RebindJoinMethodHints(rebound, sameVertexMap)
+	require.Equal(t, reflect.ValueOf(rebound).Pointer(), reflect.ValueOf(unchanged).Pointer())
+}
+
+func TestMakeJoinAlignEQCondsPropagatesVertexHint(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	t.Cleanup(func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	})
+
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	col1 := &expression.Column{UniqueID: ctx.GetSessionVars().AllocPlanColumnID(), RetType: intTp}
+	col2 := &expression.Column{UniqueID: ctx.GetSessionVars().AllocPlanColumnID(), RetType: intTp}
+
+	leftLeaf := logicalop.LogicalTableDual{RowCount: 10}.Init(ctx, 0)
+	leftLeaf.SetSchema(expression.NewSchema(col1))
+	rightLeaf := logicalop.LogicalTableDual{RowCount: 10}.Init(ctx, 0)
+	rightLeaf.SetSchema(expression.NewSchema(col2))
+
+	plusExpr := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.Plus, intTp, col2, expression.NewOne())
+	eqCond := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), plusExpr, col1).(*expression.ScalarFunction)
+
+	origJoin := logicalop.LogicalJoin{
+		JoinType:        base.InnerJoin,
+		EqualConditions: []*expression.ScalarFunction{eqCond},
+	}.Init(ctx, 0)
+	origJoin.SetChildren(rightLeaf, leftLeaf)
+	origJoin.SetSchema(expression.MergeSchema(rightLeaf.Schema(), leftLeaf.Schema()))
+
+	group := &joinGroup{
+		root:         origJoin,
+		vertexes:     []base.LogicalPlan{rightLeaf, leftLeaf},
+		allInnerJoin: true,
+	}
+	detector := newConflictDetector(ctx)
+	nodes, err := detector.Build(group)
+	require.NoError(t, err)
+	require.Len(t, nodes, 2)
+
+	// Connect (leftLeaf, rightLeaf) in swapped order so alignEQConds injects a LogicalProjection above rightLeaf.
+	nodeLeft := nodes[1]
+	nodeRight := nodes[0]
+	require.Same(t, leftLeaf, nodeLeft.p)
+	require.Same(t, rightLeaf, nodeRight.p)
+
+	checkResult, err := detector.CheckConnection(nodeLeft, nodeRight)
+	require.NoError(t, err)
+	require.True(t, checkResult.Connected())
+
+	planHints := &hint.PlanHints{}
+	vertexHints := map[int]*JoinMethodHint{
+		rightLeaf.ID(): {
+			PreferJoinMethod: hint.PreferINLJ,
+			HintInfo:         planHints,
+		},
+	}
+
+	joinedNode, err := detector.MakeJoin(checkResult, vertexHints)
+	require.NoError(t, err)
+	require.NotNil(t, joinedNode)
+
+	// MakeJoin must not mutate shared candidate nodes in place.
+	require.Same(t, leftLeaf, nodeLeft.p)
+	require.Same(t, rightLeaf, nodeRight.p)
+
+	joinedPlan, ok := joinedNode.p.(*logicalop.LogicalJoin)
+	require.True(t, ok)
+	_, rightWrappedInProj := joinedPlan.Children()[1].(*logicalop.LogicalProjection)
+	require.True(t, rightWrappedInProj)
+	require.Equal(t, hint.PreferINLJ, joinedPlan.RightPreferJoinType)
+	require.NotZero(t, joinedPlan.PreferJoinType&hint.PreferRightAsINLJInner)
+	require.Same(t, planHints, joinedPlan.HintInfo)
 }
