@@ -166,6 +166,20 @@ func testMVIndexCompare(t *testing.T) {
 		require.Error(t, err)
 	})
 
+	t.Run("mv index/epsilon only match", func(t *testing.T) {
+		// CAST(... AS DOUBLE ARRAY) stores a float64 index value for every element, even
+		// for ones the JSON kept as integers, so mixed int/float comparisons are the norm.
+		// Their absolute epsilon makes the int element 0 equal to the indexed float64(0)
+		// below, while no element compares equal under the exact float-to-float path.
+		// This is the shape the miss fallback exists for: CompareBinaryJSON is not a
+		// strict weak ordering on such values, so the binary search can miss the only
+		// match, and the per-element scan is what keeps the verdict consistent.
+		row := newJSONRow(`[0, -9e-9, -5e-9, 5e-9, 1]`)
+		err := checkMVIndexWithAndWithoutCache(t, tc, cols, indexInfo, tableInfo,
+			[]types.Datum{types.NewFloat64Datum(0)}, row)
+		require.NoError(t, err)
+	})
+
 	t.Run("mv index/null element", func(t *testing.T) {
 		// The write path never stores an array containing JSON null (the array cast rejects null
 		// elements), but if one ever appears, it is just the smallest element to the sorter and
