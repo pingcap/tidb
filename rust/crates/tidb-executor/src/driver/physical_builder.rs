@@ -10514,8 +10514,9 @@ use super::*;
         let schema = two_long_schema();
         let mut value = schema.columns[1].clone();
         value.index = 1;
-        let condition = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("gt"),
+        let condition = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "gt",
             FieldType::new(FieldTypeCode::Tiny),
             vec![
                 Expression::Column(value),
@@ -10524,7 +10525,7 @@ use super::*;
                     FieldType::new(FieldTypeCode::LongLong),
                 )),
             ],
-        ));
+        ).unwrap();
         let mut base = BasePhysicalPlan::with_id(id, "Selection", 0);
         base.base.set_schema(Some(schema));
         base.set_children(vec![child]);

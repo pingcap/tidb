@@ -669,11 +669,12 @@ mod tests {
     }
 
     fn plus(a: i64, b: i64) -> Expression {
-        Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("plus"),
+        tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "plus",
             FieldType::new(FieldTypeCode::LongLong),
             vec![col_expr(a), col_expr(b)],
-        ))
+        ).unwrap()
     }
 
     fn dual(allocator: &PlanIdAllocator, schema_columns: Vec<Column>) -> PhysicalPlan {

@@ -78,14 +78,20 @@ fn hash_join(id: i32, left: PhysicalPlan, right: PhysicalPlan) -> PhysicalPlan {
     })
 }
 
+/// The values the templates are built under; each rebuild supplies its own.
+fn build_parameters() -> [Datum; 4] {
+    std::array::from_fn(|_| Datum::Int(0))
+}
+
 fn parameter_condition(name: &str, column: Column, order: i64) -> Expression {
     let mut parameter = Constant::new(Datum::Int(0), FieldType::new(FieldTypeCode::LongLong));
     parameter.param_marker = Some(ParamMarker { order });
-    Expression::ScalarFunction(ScalarFunction::new(
-        tidb_ast::CiString::new(name),
+    tidb_expr::new_function_base(
+        &tidb_exprctx::PlanCacheParams(&build_parameters()),
+        name,
         FieldType::new(FieldTypeCode::Tiny),
         vec![Expression::Column(column), Expression::Constant(parameter)],
-    ))
+    ).unwrap()
 }
 
 fn parameter_value(order: i64) -> Expression {
@@ -98,11 +104,12 @@ fn parameter_in_condition(column: Column, orders: &[i64]) -> Expression {
     let mut arguments = Vec::with_capacity(orders.len() + 1);
     arguments.push(Expression::Column(column));
     arguments.extend(orders.iter().copied().map(parameter_value));
-    Expression::ScalarFunction(ScalarFunction::new(
-        tidb_ast::CiString::new("in"),
+    tidb_expr::new_function_base(
+        &tidb_exprctx::PlanCacheParams(&build_parameters()),
+        "in",
         FieldType::new(FieldTypeCode::Tiny),
         arguments,
-    ))
+    ).unwrap()
 }
 
 fn point_range(value: i64) -> tidb_ranger::types::Range {
@@ -546,14 +553,15 @@ fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
         string_type.clone(),
     );
     parameter.param_marker = Some(ParamMarker { order: 0 });
-    let mut eq = ScalarFunction::new(
-        tidb_ast::CiString::new("eq"),
+    let mut eq = tidb_expr::new_function_base(
+        &tidb_exprctx::PlanCacheParams(&[parameter.value.clone()]),
+        "eq",
         FieldType::new(FieldTypeCode::Tiny),
         vec![
             Expression::Column(column.clone()),
             Expression::Constant(parameter),
         ],
-    );
+    ).unwrap().into_scalar_function().unwrap();
     eq.collation
         .set_charset_and_collation("utf8mb4", "utf8mb4_general_ci");
     let template_range = tidb_ranger::types::Range {
@@ -616,20 +624,22 @@ fn cached_batch_point_plan_rebuilds_dnf_equalities_as_unioned_points() {
     let first = Column::new(3, int_type.clone());
     let second = Column::new(4, int_type);
     let conjunction = |orders: [i64; 2]| {
-        Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("and"),
+        tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "and",
             FieldType::new(FieldTypeCode::Tiny),
             vec![
                 parameter_condition("eq", first.clone(), orders[0]),
                 parameter_condition("eq", second.clone(), orders[1]),
             ],
-        ))
+        ).unwrap()
     };
-    let dnf = Expression::ScalarFunction(ScalarFunction::new(
-        tidb_ast::CiString::new("or"),
+    let dnf = tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "or",
         FieldType::new(FieldTypeCode::Tiny),
         vec![conjunction([0, 1]), conjunction([2, 3])],
-    ));
+    ).unwrap();
     let template_range = tidb_ranger::types::Range {
         low_val: vec![Datum::Int(0), Datum::Int(0)],
         high_val: vec![Datum::Int(0), Datum::Int(0)],
@@ -1657,11 +1667,12 @@ fn published_blacklist_prevents_remote_candidate_enumeration() {
     use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalProjection, LogicalSelection};
     let allocator = PlanIdAllocator::new();
     let col = Column::new(1, FieldType::new(FieldTypeCode::LongLong));
-    let expression = Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
-        tidb_ast::CiString::new("gt"),
+    let expression = tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "gt",
         FieldType::new(FieldTypeCode::LongLong),
         vec![Expression::Column(col.clone()), Expression::Column(col)],
-    ));
+    ).unwrap();
     let mut base = BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 0);
     base.set_has_tiflash(true);
     let selection = LogicalSelection::new(base, vec![expression.clone()]);
@@ -1798,8 +1809,9 @@ fn a_physical_sort_retains_scalar_by_items_like_go() {
     let allocator = PlanIdAllocator::new();
     let field_type = FieldType::new(FieldTypeCode::LongLong);
     let column = Column::new(1, field_type.clone());
-    let expression = Expression::ScalarFunction(ScalarFunction::new(
-        tidb_ast::CiString::new("plus"),
+    let expression = tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "plus",
         field_type,
         vec![
             Expression::Column(column),
@@ -1808,7 +1820,7 @@ fn a_physical_sort_retains_scalar_by_items_like_go() {
                 FieldType::new(FieldTypeCode::LongLong),
             )),
         ],
-    ));
+    ).unwrap();
     let base = BaseLogicalPlan::new(&allocator, LogicalSort::TYPE, 0);
     let sort = LogicalSort::new(base, vec![ByItems::new(expression.clone(), true)]);
 

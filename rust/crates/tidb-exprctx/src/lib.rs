@@ -17,7 +17,7 @@
 pub mod context;
 pub mod optional;
 
-pub use context::{BlockEncryptionMode, Columns, CurrentTso, DecodeKeyFromString, ErrorLevel, EvalError, JsonError, NoColumns, SequenceEvalError, ZonedNoColumns};
+pub use context::{BlockEncryptionMode, Columns, CurrentTso, DecodeKeyFromString, ErrorLevel, EvalError, JsonError, NoColumns, PlanCacheParams, SequenceEvalError, ZonedNoColumns};
 pub use optional::{
     optional_property_desc_list, EmptyParamValues, OptionalEvalPropDesc, OptionalEvalPropKey,
     OptionalEvalPropKeySet, OptionalEvalPropProvider, ParamIndexExceedParamCounts, ParamValues,

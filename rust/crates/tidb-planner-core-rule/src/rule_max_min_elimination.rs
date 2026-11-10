@@ -469,8 +469,9 @@ mod tests {
         let index = AccessPath::index_path(source.table_indices()[0].clone());
         source.all_possible_access_paths = vec![index.clone()];
         let condition =
-            Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
-                tidb_ast::CiString::new("eq"),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "eq",
                 FieldType::new(FieldTypeCode::Tiny),
                 vec![
                     Expression::Column(other),
@@ -479,7 +480,7 @@ mod tests {
                         FieldType::new(FieldTypeCode::Long),
                     )),
                 ],
-            ));
+            ).unwrap();
         assert!(check_column_can_use_index(
             &test_context(&allocator),
             &LogicalPlan::DataSource(source.clone()),

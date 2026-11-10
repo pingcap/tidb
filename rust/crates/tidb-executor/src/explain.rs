@@ -4735,14 +4735,15 @@ mod tests {
             |id| tidb_expr::column::Column::new(id, FieldType::new(FieldTypeCode::LongLong));
         let condition = |name: &str, left: i64, right: i64| {
             tidb_expr::expression::Expression::ScalarFunction(
-                tidb_expr::scalar_function::ScalarFunction::new(
-                    tidb_ast::CiString::new(name),
+                tidb_expr::new_function_base(
+                    &tidb_exprctx::NoColumns,
+                    name,
                     FieldType::new(FieldTypeCode::LongLong),
                     vec![
                         tidb_expr::expression::Expression::Column(column(left)),
                         tidb_expr::expression::Expression::Column(column(right)),
                     ],
-                ),
+                ).unwrap().into_scalar_function().unwrap(),
             )
         };
         let mut merge = tidb_planner_core_operator_physicalop::PhysicalMergeJoin::default();

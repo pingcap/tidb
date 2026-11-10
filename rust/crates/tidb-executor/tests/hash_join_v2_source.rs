@@ -557,8 +557,9 @@ fn native_hash_join_recursive_restore_source() {
                                 probe_filter: if residual {
                                     let mut column = Column::new(1, int.clone());
                                     column.index = 1;
-                                    vec![Expression::ScalarFunction(ScalarFunction::new(
-                                        tidb_ast::CiString::new("lt"),
+                                    vec![tidb_expr::new_function_base(
+                                        &tidb_exprctx::NoColumns,
+                                        "lt",
                                         int.clone(),
                                         vec![
                                             Expression::Column(column),
@@ -567,15 +568,16 @@ fn native_hash_join_recursive_restore_source() {
                                                 int.clone(),
                                             )),
                                         ],
-                                    ))]
+                                    ).unwrap()]
                                 } else {
                                     vec![]
                                 },
                                 other_condition: if residual {
                                     let mut column = Column::new(1, int.clone());
                                     column.index = 1;
-                                    vec![Expression::ScalarFunction(ScalarFunction::new(
-                                        tidb_ast::CiString::new("lt"),
+                                    vec![tidb_expr::new_function_base(
+                                        &tidb_exprctx::NoColumns,
+                                        "lt",
                                         int.clone(),
                                         vec![
                                             Expression::Column(column),
@@ -584,7 +586,7 @@ fn native_hash_join_recursive_restore_source() {
                                                 int.clone(),
                                             )),
                                         ],
-                                    ))]
+                                    ).unwrap()]
                                 } else {
                                     vec![]
                                 },
@@ -2249,7 +2251,7 @@ fn check_semi_family(
     };
     let constant = |value| Expression::Constant(Constant::new(Datum::Int(value), int.clone()));
     let function = |name, args| {
-        Expression::ScalarFunction(ScalarFunction::new(CiString::new(name), int.clone(), args))
+        tidb_expr::new_function_base(&tidb_exprctx::NoColumns, name, int.clone(), args).unwrap()
     };
     let left_values: Vec<_> = [
         (Some(10001), Some(5)),
@@ -2653,11 +2655,12 @@ fn native_hash_join_executor_lifecycle_source() {
                     let constant =
                         |value| Expression::Constant(Constant::new(Datum::Int(value), int.clone()));
                     let function = |name, args| {
-                        Expression::ScalarFunction(ScalarFunction::new(
-                            tidb_ast::CiString::new(name),
+                        tidb_expr::new_function_base(
+                            &tidb_exprctx::NoColumns,
+                            name,
                             int.clone(),
                             args,
-                        ))
+                        ).unwrap()
                     };
                     let mut plan = HashJoinV2Plan {
                         concurrency,
@@ -2970,8 +2973,9 @@ fn native_probe_stage_next_close_and_error_source() {
                         let filter = tidb_executor_join::base_join_probe::JoinFilter::new(
                             tidb_exprctx::NoColumns,
                             vec![tidb_expr::expression::Expression::ScalarFunction(
-                                tidb_expr::expression::ScalarFunction::new(
-                                    tidb_ast::CiString::new("getparam"),
+                                tidb_expr::new_function_base(
+                                    &tidb_exprctx::NoColumns,
+                                    "getparam",
                                     FieldType::new(FieldTypeCode::LongLong),
                                     vec![tidb_expr::expression::Expression::Constant(
                                         tidb_expr::constant::Constant::new(
@@ -2979,7 +2983,7 @@ fn native_probe_stage_next_close_and_error_source() {
                                             FieldType::new(FieldTypeCode::LongLong),
                                         ),
                                     )],
-                                ),
+                                ).unwrap().into_scalar_function().unwrap(),
                             )],
                             true,
                         );
@@ -3249,17 +3253,19 @@ fn check_join_other_condition(join_type: JoinType, residual: bool, filtered: boo
         column.index = index as i64;
         Expression::Column(column)
     };
-    let predicate = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("gt"),
+    let predicate = tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "gt",
         FieldType::new(FieldTypeCode::Tiny),
         vec![make_column(1), make_column(left_types.len() + 3)],
-    ));
+    ).unwrap();
     // Go createSimpleFilter: column 0 > 10000, on the preserved outer
     // side (left for inner). Rejected preserved rows must still be emitted.
     let side_filter = tidb_executor_join::base_join_probe::JoinFilter::new(
         NoColumns,
-        vec![Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("gt"),
+        vec![tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "gt",
             int.clone(),
             vec![
                 make_column(0),
@@ -3268,7 +3274,7 @@ fn check_join_other_condition(join_type: JoinType, residual: bool, filtered: boo
                     int.clone(),
                 )),
             ],
-        ))],
+        ).unwrap()],
         true,
     );
     let filter_right = join_type == JoinType::RightOuter;
@@ -3497,14 +3503,15 @@ fn check_join_other_condition(join_type: JoinType, residual: bool, filtered: boo
             if residual {
                 // An evaluator failure is returned intact before any candidate rows
                 // are copied into the caller's result chunk.
-                let failure = Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new("getparam"),
+                let failure = tidb_expr::new_function_base(
+                    &tidb_exprctx::NoColumns,
+                    "getparam",
                     int.clone(),
                     vec![Expression::Constant(tidb_expr::constant::Constant::new(
                         Datum::Int(-1),
                         int.clone(),
                     ))],
-                ));
+                ).unwrap();
                 let condition = JoinOtherCondition::new(
                     NoColumns,
                     vec![failure.clone()],

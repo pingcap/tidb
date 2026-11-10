@@ -32,14 +32,15 @@ fn column(unique_id: i64) -> Column {
 }
 
 fn plus(column: &Column) -> Expression {
-    Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("plus"),
+    tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "plus",
         FieldType::new(FieldTypeCode::LongLong),
         vec![
             Expression::Column(column.clone()),
             Expression::Column(column.clone()),
         ],
-    ))
+    ).unwrap()
 }
 
 fn argument_ids(expression: &Expression) -> [i64; 2] {

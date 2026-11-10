@@ -1568,14 +1568,15 @@ mod tests {
             tidb_planner_core_joinorder::new_cartesian_join(context, LogicalJoinType::Inner, left, right)
                 .unwrap();
         if let Some((left, right)) = equality {
-            join.equal_conditions.push(ScalarFunction::new(
-                CiString::new("eq"),
+            join.equal_conditions.push(tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "eq",
                 FieldType::new(FieldTypeCode::Tiny),
                 vec![
                     Expression::Column(column(left)),
                     Expression::Column(column(right)),
                 ],
-            ));
+            ).unwrap().into_scalar_function().unwrap());
         }
         LogicalPlan::Join(join)
     }
@@ -1628,21 +1629,23 @@ mod tests {
         base.set_children(vec![child]);
         let mut projection = LogicalProjection::new(
             base,
-            vec![Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("plus"),
+            vec![tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "plus",
                 FieldType::new(FieldTypeCode::LongLong),
                 vec![Expression::Column(column(1)), Expression::Column(column(1))],
-            ))],
+            ).unwrap()],
         );
         let result = try_inline_projection(&context, &mut projection).unwrap();
         assert_eq!(result.group.len(), 2);
         assert!(result.column_expressions.contains_key(&10));
 
-        projection.exprs[0] = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("plus"),
+        projection.exprs[0] = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "plus",
             FieldType::new(FieldTypeCode::LongLong),
             vec![Expression::Column(column(1)), Expression::Column(column(2))],
-        ));
+        ).unwrap();
         assert!(try_inline_projection(&context, &mut projection).is_none());
     }
 
@@ -1665,8 +1668,9 @@ mod tests {
         let context = crate::rule::rule_tests::test_context(&allocator);
         let mut solver = LegacyGroupSolver::new(&context, BasicJoinGroupInfo::default(), true);
         let plan = data_source(&allocator, 1, "t", 1.0);
-        let deterministic = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("plus"),
+        let deterministic = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "plus",
             FieldType::new(FieldTypeCode::LongLong),
             vec![
                 Expression::Column(column(1)),
@@ -1675,7 +1679,7 @@ mod tests {
                     FieldType::new(FieldTypeCode::LongLong),
                 )),
             ],
-        ));
+        ).unwrap();
         let (plan, first) = solver
             .inject_expression(plan, deterministic.clone())
             .unwrap();
@@ -1687,18 +1691,18 @@ mod tests {
         assert_eq!(projection.exprs.len(), 2);
 
         let random = || {
-            Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("plus"),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "plus",
                 FieldType::new(FieldTypeCode::Double),
                 vec![
-                    Expression::ScalarFunction(ScalarFunction::new(
-                        CiString::new("rand"),
+                    tidb_expr::new_function_base(&tidb_exprctx::NoColumns, "rand",
                         FieldType::new(FieldTypeCode::Double),
                         Vec::new(),
-                    )),
+                    ).unwrap(),
                     Expression::Column(column(1)),
                 ],
-            ))
+            ).unwrap()
         };
         let (plan, first_random) = solver.inject_expression(plan, random()).unwrap();
         let (plan, second_random) = solver.inject_expression(plan, random()).unwrap();

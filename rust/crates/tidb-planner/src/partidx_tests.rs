@@ -40,11 +40,12 @@ fn integer(value: i64) -> Expression {
 }
 
 fn call(name: &str, arguments: Vec<Expression>) -> Expression {
-    Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new(name),
+    tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        name,
         FieldType::new(FieldTypeCode::Tiny),
         arguments,
-    ))
+    ).unwrap()
 }
 
 fn compare(name: &str, left: Expression, right: Expression) -> Expression {

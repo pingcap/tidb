@@ -1416,11 +1416,12 @@ mod tests {
         left.index = 0;
         let mut right = Column::new(2, field.clone());
         right.index = 1;
-        let equality = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("eq"),
+        let equality = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "eq",
             field.clone(),
             vec![Expression::Column(left), Expression::Column(right)],
-        ));
+        ).unwrap();
         let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
         let mut lookup = IndexJoinLookupExec::new_with_context(
             ExecutorMeta::new(schema(2), 0, 32, 1024),

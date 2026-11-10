@@ -987,6 +987,29 @@ impl Columns for NoColumns {
     }
 }
 
+/// [`NoColumns`] of a statement that uses the plan cache: it carries the
+/// execution's parameter values, so a parameter marker stays mutable in the
+/// expression built under it (Go `MaybeOverOptimized4PlanCache`).
+#[derive(Clone, Copy)]
+pub struct PlanCacheParams<'a>(pub &'a [Datum]);
+
+impl Columns for PlanCacheParams<'_> {
+    fn get(&self, _: &[String]) -> Option<Datum> {
+        None
+    }
+
+    fn use_plan_cache(&self) -> bool {
+        true
+    }
+
+    fn param_value(&self, order: usize) -> Result<Datum, EvalError> {
+        self.0
+            .get(order)
+            .cloned()
+            .ok_or(EvalError::Unsupported("unbound prepared parameter"))
+    }
+}
+
 /// [`NoColumns`] carrying the session's `time_zone`.
 ///
 /// The eval-time twin of `tidb_expr::rewriter::ZonedNoResolver`, and it exists

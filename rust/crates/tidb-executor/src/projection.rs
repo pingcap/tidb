@@ -584,11 +584,12 @@ mod tests {
 
     #[test]
     fn prepared_program_is_shared_but_parameter_contexts_are_isolated() {
-        let mut deferred = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("plus"),
+        let mut deferred = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "plus",
             long(),
             vec![parameter(0), int_const(0)],
-        ));
+        ).unwrap();
         let planning =
             crate::StmtContext::for_query().with_prepared_params(vec![Datum::Int(1)].into());
         tidb_expr::fold_constant_in_mode(
@@ -685,16 +686,18 @@ mod tests {
 
     #[test]
     fn prepared_lazy_folding_keeps_warnings_execution_local() {
-        let division = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("intdiv"),
+        let division = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "intdiv",
             long(),
             vec![int_const(1), parameter(1)],
-        ));
-        let original = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("if"),
+        ).unwrap();
+        let original = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "if",
             long(),
             vec![parameter(0), int_const(7), division],
-        ));
+        ).unwrap();
         let planning = crate::StmtContext::for_query()
             .with_prepared_params(vec![Datum::Int(1), Datum::Int(0)].into());
         let mut expression = original.clone();
@@ -733,11 +736,12 @@ mod tests {
         // Projection output schema: a single Long column.
         let out_col = Column::new(1, long());
         let proj_schema = Schema::new(vec![out_col]);
-        let plus = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("plus"),
+        let plus = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "plus",
             long(),
             vec![int_const(1), int_const(1)],
-        ));
+        ).unwrap();
         let mut proj = ProjectionExec::new(
             ExecutorMeta::new(proj_schema, 1, 1, 1024),
             vec![plus],
@@ -838,14 +842,15 @@ mod tests {
         first.index = 0;
         let mut second = Column::new(2, long());
         second.index = 1;
-        let plus = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("plus"),
+        let plus = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "plus",
             long(),
             vec![
                 Expression::Column(first),
                 Expression::Column(second.clone()),
             ],
-        ));
+        ).unwrap();
         let mut projection = ProjectionExec::new(
             ExecutorMeta::new(
                 Schema::new(vec![Column::new(3, long()), Column::new(4, long())]),
@@ -1189,11 +1194,12 @@ mod tests {
 
         let mut col = Column::new(7, long());
         col.index = 0;
-        let expr = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("plus"),
+        let expr = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "plus",
             long(),
             vec![Expression::Column(col), int_const(1)],
-        ));
+        ).unwrap();
         // Evaluate directly (the projection's inner loop) to confirm column reads.
         let row = input.get_row(0);
         let out = expr.eval(&NoColumns, row).unwrap();

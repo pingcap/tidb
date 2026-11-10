@@ -235,11 +235,12 @@ fn a_correlated_exists_must_build_an_apply() {
 /// `select ... from s where s.b = t.a`, whose filter reads the OUTER column.
 fn correlated_inner(f: &Fixture) -> LogicalPlan {
     let base = BaseLogicalPlan::new(&f.plan_ids, LogicalSelection::TYPE, 0);
-    let cond = tidb_expr::scalar_function::ScalarFunction::new(
-        tidb_ast::CiString::new("eq"),
+    let cond = tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "eq",
         FieldType::new(FieldTypeCode::Tiny),
         vec![Expression::Column(col(2)), correlated(1)],
-    );
+    ).unwrap().into_scalar_function().unwrap();
     let mut plan = LogicalPlan::Selection(LogicalSelection::new(
         base,
         vec![Expression::ScalarFunction(cond)],
@@ -933,11 +934,12 @@ fn a_semi_joins_on_clause_is_decorrelated_against_the_outer_schema() {
 
 #[test]
 fn a_reference_the_outer_schema_does_not_supply_stays_correlated() {
-    let cond = Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
-        tidb_ast::CiString::new("eq"),
+    let cond = tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "eq",
         FieldType::new(FieldTypeCode::Tiny),
         vec![Expression::Column(col(2)), correlated(99)],
-    ));
+    ).unwrap();
     let decorrelated = decorrelate_expr(&cond, &Schema::new(vec![col(1)]));
     let Expression::ScalarFunction(func) = &decorrelated else {
         panic!("expected a function");

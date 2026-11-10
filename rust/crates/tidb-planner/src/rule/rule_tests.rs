@@ -140,50 +140,55 @@ fn schema_of(ids: &[i64]) -> Schema {
 
 /// `col(id) = <constant>`, the shape `extractOnCondition` files onto one side.
 fn eq_const(id: i64, value: i64) -> Expression {
-    Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("eq"),
+    tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "eq",
         int_type(),
         vec![
             col_expr(id),
             Expression::Constant(Constant::new(Datum::Int(value), int_type())),
         ],
-    ))
+    ).unwrap()
 }
 
 fn not_ne_const(id: i64, value: i64) -> Expression {
-    let not_equal = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("ne"),
+    let not_equal = tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "ne",
         int_type(),
         vec![
             col_expr(id),
             Expression::Constant(Constant::new(Datum::Int(value), int_type())),
         ],
-    ));
-    Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("not"),
+    ).unwrap();
+    tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "not",
         int_type(),
         vec![not_equal],
-    ))
+    ).unwrap()
 }
 
 /// `col(left) = col(right)`, the shape that becomes an `EqualCondition`.
 fn eq_cols(left: i64, right: i64) -> Expression {
-    Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("eq"),
+    tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "eq",
         int_type(),
         vec![col_expr(left), col_expr(right)],
-    ))
+    ).unwrap()
 }
 
 fn gt_const(id: i64, value: i64) -> Expression {
-    Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("gt"),
+    tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "gt",
         int_type(),
         vec![
             col_expr(id),
             Expression::Constant(Constant::new(Datum::Int(value), int_type())),
         ],
-    ))
+    ).unwrap()
 }
 
 fn const_true() -> Expression {
@@ -684,11 +689,12 @@ fn convert_outer_to_inner_join_preserves_a_non_null_rejecting_outer_join() {
         data_source(&allocator, &[1]),
         data_source(&allocator, &[2]),
     ]);
-    let is_null = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("isnull"),
+    let is_null = tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "isnull",
         int_type(),
         vec![col_expr(2)],
-    ));
+    ).unwrap();
     let mut selection = LogicalPlan::Selection(LogicalSelection::new(
         base(&allocator, "Selection", Some(schema_of(&[1, 2]))),
         vec![is_null],
@@ -1027,16 +1033,18 @@ fn predicate_push_down_drops_not_is_null_for_a_not_null_child_column() {
         LogicalJoinType::Inner,
     ));
     join.set_children(vec![left, right]);
-    let is_null = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("isnull"),
+    let is_null = tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "isnull",
         int_type(),
         vec![Expression::Column(left_column)],
-    ));
-    let not_is_null = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("not"),
+    ).unwrap();
+    let not_is_null = tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "not",
         int_type(),
         vec![is_null],
-    ));
+    ).unwrap();
     let root = selection_over(&allocator, vec![not_is_null], join);
 
     let out = push(&ctx, root);
@@ -1390,7 +1398,7 @@ fn predicate_push_down_keeps_an_aggregate_filter_above_a_non_group_by_column() {
 }
 
 fn logical_fn(name: &str, args: Vec<Expression>) -> Expression {
-    Expression::ScalarFunction(ScalarFunction::new(CiString::new(name), int_type(), args))
+    tidb_expr::new_function_base(&tidb_exprctx::NoColumns, name, int_type(), args).unwrap()
 }
 
 /// An aggregation over a two-column source whose outputs are `first_row(a)`

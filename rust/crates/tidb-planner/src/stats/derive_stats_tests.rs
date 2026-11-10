@@ -164,14 +164,15 @@ fn derive_with_group_ndv_skew_ratio(
 /// `col(left) = col(right)` as the `ScalarFunction` an `EqualCondition`
 /// holds.
 fn eq_condition(left: i64, right: i64) -> ScalarFunction {
-    ScalarFunction::new(
-        CiString::new("eq"),
+    tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "eq",
         FieldType::new(FieldTypeCode::Long),
         vec![
             Expression::Column(column(left)),
             Expression::Column(column(right)),
         ],
-    )
+    ).unwrap().into_scalar_function().unwrap()
 }
 
 #[test]
@@ -610,8 +611,9 @@ fn eq_condition_to_constant(col: i64, value: i64) -> ScalarFunction {
 }
 
 fn comparison_condition_to_constant(name: &str, col: i64, value: i64) -> ScalarFunction {
-    ScalarFunction::new(
-        CiString::new(name),
+    tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        name,
         FieldType::new(FieldTypeCode::Long),
         vec![
             Expression::Column(column(col)),
@@ -620,7 +622,7 @@ fn comparison_condition_to_constant(name: &str, col: i64, value: i64) -> ScalarF
                 FieldType::new(FieldTypeCode::Long),
             )),
         ],
-    )
+    ).unwrap().into_scalar_function().unwrap()
 }
 
 #[test]
@@ -689,20 +691,22 @@ fn partial_dnf_index_range_preserves_logical_statistics_cover() {
         ..tidb_model::IndexInfo::default()
     })]);
     let branch = |value| {
-        Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("and"),
+        tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "and",
             FieldType::new(FieldTypeCode::Long),
             vec![
                 Expression::ScalarFunction(eq_condition_to_constant(1, value)),
                 Expression::ScalarFunction(eq_condition(2, 1)),
             ],
-        ))
+        ).unwrap()
     };
-    op.pushed_down_conds = vec![Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("or"),
+    op.pushed_down_conds = vec![tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "or",
         FieldType::new(FieldTypeCode::Long),
         vec![branch(1), branch(3)],
-    ))];
+    ).unwrap()];
     attach_pseudo_collection(op);
     for (factor, expected) in [(0.8, 16.0), (0.25, 5.0)] {
         let mut plan = source.clone();

@@ -612,11 +612,12 @@ mod analyzed_filter_selectivity_tests {
             tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 100, 0, [(7, std::sync::Arc::unwrap_or_clone(column_stats.clone())), (8, std::sync::Arc::unwrap_or_clone(column_stats))], []),
         );
         let scalar = |name: &str, args| {
-            Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new(name),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::PlanCacheParams(&[tidb_datatype::Datum::Int(0), tidb_datatype::Datum::Int(0)]),
+                name,
                 FieldType::new(FieldTypeCode::Tiny),
                 args,
-            ))
+            ).unwrap()
         };
         // Table columns carry their `ColumnInfo.ID`, which `Selectivity`
         // sorts and deduplicates on.
@@ -718,15 +719,16 @@ mod analyzed_filter_selectivity_tests {
         );
         let varchar = FieldType::new(FieldTypeCode::Varchar);
         let escape_type = FieldType::new(FieldTypeCode::LongLong);
-        let like = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("like"),
+        let like = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "like",
             FieldType::new(FieldTypeCode::Tiny),
             vec![
                 Expression::Column(Column::new(1, varchar.clone())),
                 Expression::Constant(Constant::new(Datum::Bytes(b"%R%".to_vec()), varchar)),
                 Expression::Constant(Constant::new(Datum::Int(i64::from(b'\\')), escape_type)),
             ],
-        ));
+        ).unwrap();
 
         let selectivity = analyzed_filter_selectivity(&stats, &[like]).unwrap();
         assert!((selectivity - 2.0 / 3.0).abs() < 1e-12);
@@ -741,8 +743,9 @@ mod analyzed_filter_selectivity_tests {
         let stats = StatsInfo::new(rows as f64, [(7, 1_500_000.0)]).with_hist_coll(
             info_only_hist_coll(rows, 7, "l_orderkey"),
         );
-        let condition = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("lt"),
+        let condition = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "lt",
             FieldType::new(FieldTypeCode::Tiny),
             vec![
                 Expression::Column(Column::new(7, FieldType::new(FieldTypeCode::LongLong))),
@@ -751,7 +754,7 @@ mod analyzed_filter_selectivity_tests {
                     FieldType::new(FieldTypeCode::LongLong),
                 )),
             ],
-        ));
+        ).unwrap();
         let selectivity = analyzed_filter_selectivity(&stats, &[condition]).unwrap();
         let expected = (rows as f64 / 3.0 - rows as f64 / 1_000.0) / rows as f64;
         assert_eq!(
@@ -786,14 +789,15 @@ mod analyzed_filter_selectivity_tests {
         let table_stats = StatsInfo::new(1_000.0, [(unique_id, 10.0)]).with_hist_coll(hist_coll);
         let long = || FieldType::new(FieldTypeCode::LongLong);
         let compare = |name: &str, value| {
-            Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new(name),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                name,
                 long(),
                 vec![
                     Expression::Column(Column::new(unique_id, long())),
                     Expression::Constant(Constant::new(Datum::Int(value), long())),
                 ],
-            ))
+            ).unwrap()
         };
         let conditions = [compare("gt", 12), compare("lt", 15)];
         let baseline = analyzed_filter_selectivity_with_options(
@@ -857,14 +861,15 @@ mod analyzed_filter_selectivity_tests {
         let table_stats = StatsInfo::new(300_000.0, [(unique_id, 10.0)]).with_hist_coll(hist_coll);
 
         let long = || FieldType::new(FieldTypeCode::LongLong);
-        let condition = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("eq"),
+        let condition = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "eq",
             long(),
             vec![
                 Expression::Column(Column::new(unique_id, long())),
                 Expression::Constant(Constant::new(Datum::Int(1), long())),
             ],
-        ));
+        ).unwrap();
         let selectivity = analyzed_filter_selectivity(&table_stats, &[condition])
             .expect("an analyzed profile keeps the equality");
 
@@ -926,14 +931,15 @@ mod analyzed_filter_selectivity_tests {
         let table_stats = StatsInfo::new(1_000.0, [(unique_id, 10.0)]).with_hist_coll(hist_coll);
         let long = || FieldType::new(FieldTypeCode::LongLong);
         let compare = |name: &str, value: i64| {
-            Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new(name),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                name,
                 long(),
                 vec![
                     Expression::Column(Column::new(unique_id, long())),
                     Expression::Constant(Constant::new(Datum::Int(value), long())),
                 ],
-            ))
+            ).unwrap()
         };
         let joint =
             analyzed_filter_selectivity(&table_stats, &[compare("ge", 2), compare("lt", 3)])
@@ -1032,14 +1038,15 @@ mod analyzed_filter_selectivity_tests {
             StatsInfo::new(6_001_215.0, [(unique_id, 2_526.0)]).with_hist_coll(hist_coll);
         let date_type = || FieldType::new(FieldTypeCode::Date);
         let compare = |name: &str, value: Datum| {
-            Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new(name),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                name,
                 date_type(),
                 vec![
                     Expression::Column(Column::new(unique_id, date_type())),
                     Expression::Constant(Constant::new(value, date_type())),
                 ],
-            ))
+            ).unwrap()
         };
         let joint = analyzed_filter_selectivity(
             &table_stats,
@@ -1135,20 +1142,22 @@ mod analyzed_filter_selectivity_tests {
         let table_stats = StatsInfo::new(1_000.0, [(unique_id, 10.0)]).with_hist_coll(hist_coll);
         let long = || FieldType::new(FieldTypeCode::LongLong);
         let eq = |value: i64| {
-            Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new("eq"),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "eq",
                 long(),
                 vec![
                     Expression::Column(Column::new(unique_id, long())),
                     Expression::Constant(Constant::new(Datum::Int(value), long())),
                 ],
-            ))
+            ).unwrap()
         };
-        let dnf = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("or"),
+        let dnf = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "or",
             FieldType::new(FieldTypeCode::Tiny),
             vec![eq(1), eq(2)],
-        ));
+        ).unwrap();
         let selectivity =
             analyzed_filter_selectivity(&table_stats, &[dnf]).expect("an analyzed profile");
         assert!(

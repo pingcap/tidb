@@ -717,14 +717,15 @@ mod tests {
     }
 
     fn eq(left: i64, right: i64) -> ScalarFunction {
-        ScalarFunction::new(
-            CiString::new("eq"),
+        tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "eq",
             FieldType::new(FieldTypeCode::Tiny),
             vec![
                 Expression::Column(column(left)),
                 Expression::Column(column(right)),
             ],
-        )
+        ).unwrap().into_scalar_function().unwrap()
     }
 
     fn source(plan_id: i32, table_id: i64, columns: &[(i64, i64)]) -> LogicalPlan {
@@ -1031,11 +1032,12 @@ mod tests {
             tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone()),
             tidb_planner_util::path::AccessPath::index_path(source.table_indices()[1].clone()),
         ];
-        source.pushed_down_conds = vec![Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("eq"),
+        source.pushed_down_conds = vec![tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "eq",
             FieldType::new(FieldTypeCode::Tiny),
             vec![Expression::Column(first.clone()), Expression::Column(first)],
-        ))];
+        ).unwrap()];
 
         let (returned, changed) = CollectPredicateColumnsPoint
             .optimize(&context, plan)

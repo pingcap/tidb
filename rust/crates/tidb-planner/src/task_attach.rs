@@ -2410,14 +2410,15 @@ mod attach_tests {
             Datum::new_vector_float32(VectorFloat32::must_create(vec![1.0, 2.0])),
             FieldType::new(FieldTypeCode::VectorFloat32),
         );
-        let heavy = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("vec_l2_distance"),
+        let heavy = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "vec_l2_distance",
             FieldType::new(FieldTypeCode::Double),
             vec![
                 Expression::Column(vector),
                 Expression::Constant(query_vector),
             ],
-        ));
+        ).unwrap();
         let topn_schema = Schema::new(vec![id.clone(), score.clone()]);
         let mut topn_base = op_with_stats("TopN", 10.0);
         topn_base.base.set_schema(Some(topn_schema));
@@ -2956,14 +2957,15 @@ mod attach_tests {
         let outer_keys = vec![column(1), column(2)];
         let inner_keys = vec![column(11), column(12)];
         let equality = |left: &Column, right: &Column| {
-            ScalarFunction::new(
-                tidb_ast::CiString::new("eq"),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "eq",
                 FieldType::new(FieldTypeCode::Tiny),
                 vec![
                     Expression::Column(left.clone()),
                     Expression::Column(right.clone()),
                 ],
-            )
+            ).unwrap().into_scalar_function().unwrap()
         };
         let child = |columns: Vec<Column>| {
             let mut base = op_with_stats("TableDual", 1.0);
@@ -3069,14 +3071,15 @@ mod attach_tests {
         let outer_keys = vec![column(1)];
         let inner_keys = vec![column(11)];
         let ty = FieldType::new(FieldTypeCode::LongLong);
-        let equality_against_constant = ScalarFunction::new(
-            tidb_ast::CiString::new("eq"),
+        let equality_against_constant = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "eq",
             FieldType::new(FieldTypeCode::Tiny),
             vec![
                 Expression::Column(outer_keys[0].clone()),
                 Expression::Constant(Constant::new(Datum::Int(5), ty)),
             ],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         let child = |columns: Vec<Column>| {
             let mut base = op_with_stats("TableDual", 1.0);
             base.base.set_schema(Some(Schema::new(columns)));
@@ -3681,14 +3684,15 @@ mod task_tests {
         let mut parameter = Constant::new(Datum::Null, ty.clone());
         parameter.param_marker = Some(ParamMarker { order: 0 });
         let condition =
-            Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
-                tidb_ast::CiString::new("eq"),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::PlanCacheParams(&[tidb_datatype::Datum::Int(0), tidb_datatype::Datum::Int(0)]),
+                "eq",
                 ty.clone(),
                 vec![
                     Expression::Column(tidb_expr::column::Column::new(1, ty)),
                     Expression::Constant(parameter),
                 ],
-            ));
+            ).unwrap();
         let histogram = std::sync::Arc::new(tidb_stats::column::Column {
             histogram: tidb_stats::Histogram {
                 ndv: 10,
@@ -4519,14 +4523,15 @@ mod task_tests {
 
         let compare = |name: &str, value| {
             let long = FieldType::new(FieldTypeCode::LongLong);
-            Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new(name),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                name,
                 long.clone(),
                 vec![
                     Expression::Column(column_with_id(unique_id)),
                     Expression::Constant(Constant::new(Datum::Int(value), long)),
                 ],
-            ))
+            ).unwrap()
         };
         let task = Task::Cop(CopTask {
             table_plan: Some(Box::new(scan)),
@@ -4636,14 +4641,15 @@ mod task_tests {
         let table_stats = StatsInfo::new(1_000.0, [(unique_id, 10.0)]).with_hist_coll(hist_coll);
         let compare = |name: &str, value| {
             let long = FieldType::new(FieldTypeCode::LongLong);
-            Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new(name),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                name,
                 long.clone(),
                 vec![
                     Expression::Column(column_with_id(unique_id)),
                     Expression::Constant(Constant::new(Datum::Int(value), long)),
                 ],
-            ))
+            ).unwrap()
         };
         let conditions = vec![compare("gt", 12), compare("lt", 15)];
         let estimate = |estimator_options, input_rows: f64| {

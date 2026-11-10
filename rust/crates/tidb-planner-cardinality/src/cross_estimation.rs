@@ -422,14 +422,15 @@ use tidb_charset::Collation;
     fn correlated_fixture() -> (Arc<HistColl>, Column, Vec<Expression>) {
         let field_type = FieldType::new(FieldTypeCode::LongLong);
         let column = Column::new(7, field_type.clone());
-        let filter = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("eq"),
+        let filter = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "eq",
             FieldType::new(FieldTypeCode::LongLong),
             vec![
                 Expression::Column(column.clone()),
                 Expression::Constant(Constant::new(Datum::Int(50), field_type)),
             ],
-        ));
+        ).unwrap();
         let stats = loaded_hist_coll_for_test(false, 100, 0, [(
             7,
             tidb_stats::column::Column {
@@ -495,8 +496,9 @@ use tidb_charset::Collation;
     fn table_cross_estimate_scales_for_filters_left_after_column_detachment() {
         let (stats, column, mut filters) = correlated_fixture();
         let other = Column::new(8, tidb_datatype::FieldType::new(FieldTypeCode::LongLong));
-        filters.push(Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("eq"),
+        filters.push(tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "eq",
             FieldType::new(FieldTypeCode::LongLong),
             vec![
                 Expression::Column(other),
@@ -505,7 +507,7 @@ use tidb_charset::Collation;
                     FieldType::new(FieldTypeCode::LongLong),
                 )),
             ],
-        )));
+        ).unwrap());
         let without_residual = cross_estimate_row_count(
             &stats,
             &stats,

@@ -774,11 +774,12 @@ use tidb_exprctx::Columns;
             Expression::Column(column)
         };
         let comparison = |name, args| {
-            Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new(name),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                name,
                 long(),
                 args,
-            ))
+            ).unwrap()
         };
         let child_filter = comparison(
             "lt",

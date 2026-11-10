@@ -486,11 +486,12 @@ use tidb_exprctx::NoColumns;
             input.append_datum(0, &value((row % 100) as i64));
         }
         let right = if nested {
-            Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("mul"),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "mul",
                 field.clone(),
                 vec![column(0, &field), literal(2)],
-            ))
+            ).unwrap()
         } else {
             literal(2)
         };
@@ -501,11 +502,12 @@ use tidb_exprctx::NoColumns;
         } else {
             field.clone()
         };
-        let expression = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new(op),
+        let expression = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            op,
             output_field.clone(),
             vec![column(0, &field), right],
-        ));
+        ).unwrap();
         let suite = EvaluatorSuite::new(vec![expression], false);
         let mut output = Chunk::new_chunk_with_capacity(&[output_field], CHUNK);
         let mut pass = || {
@@ -669,8 +671,9 @@ use tidb_exprctx::NoColumns;
         )
         .unwrap();
         let output_field = FieldType::new(output_code);
-        let expression = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new(op),
+        let expression = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            op,
             output_field.clone(),
             vec![
                 cast,
@@ -679,7 +682,7 @@ use tidb_exprctx::NoColumns;
                     FieldType::new(FieldTypeCode::LongLong),
                 )),
             ],
-        ));
+        ).unwrap();
         let suite = EvaluatorSuite::new(vec![expression], false);
         let mut output = Chunk::new_chunk_with_capacity(&[output_field], CHUNK);
         let mut pass = || {
@@ -916,11 +919,12 @@ fn eq_on_typed(lhs: usize, rhs: usize, left_width: usize, code: FieldTypeCode) -
         column.index = index as i64;
         Expression::Column(column)
     };
-    Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("eq"),
+    tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "eq",
         long.clone(),
         vec![column(lhs), column(left_width + rhs)],
-    ))
+    ).unwrap()
 }
 
 /// Go `BenchmarkHashJoinExec` (rows 100000, keyIdx [0,1]): build `rows`

@@ -530,8 +530,9 @@ fn selection_required_rows() {
                 // (pkg/executor/executor_required_rows_test.go:482-490).
                 let mut column = Column::new(2, long());
                 column.index = 1;
-                let filter = Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new("eq"),
+                let filter = tidb_expr::new_function_base(
+                    &tidb_exprctx::NoColumns,
+                    "eq",
                     long(),
                     vec![
                         Expression::Column(column),
@@ -540,7 +541,7 @@ fn selection_required_rows() {
                             FieldType::new(FieldTypeCode::Tiny),
                         )),
                     ],
-                ));
+                ).unwrap();
                 (ds as Box<dyn Executor>, vec![filter])
             }
         };

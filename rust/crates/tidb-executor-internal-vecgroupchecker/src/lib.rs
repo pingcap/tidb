@@ -685,14 +685,15 @@ use tidb_exprctx::NoColumns;
                         }
                         _ => Datum::Int(i64::MAX),
                     };
-                    let right = Expression::ScalarFunction(ScalarFunction::new(
-                        tidb_ast::CiString::new("mul"),
+                    let right = tidb_expr::new_function_base(
+                        &tidb_exprctx::NoColumns,
+                        "mul",
                         field.clone(),
                         vec![
                             column(1, field.clone()),
                             Expression::Constant(Constant::new(value(2), field.clone())),
                         ],
-                    ));
+                    ).unwrap();
                     let result_type = match name {
                         "intdiv" => FieldType::new(FieldTypeCode::LongLong),
                         "div" if code == FieldTypeCode::LongLong => {
@@ -700,11 +701,12 @@ use tidb_exprctx::NoColumns;
                         }
                         _ => field.clone(),
                     };
-                    let expression = Expression::ScalarFunction(ScalarFunction::new(
-                        tidb_ast::CiString::new(name),
+                    let expression = tidb_expr::new_function_base(
+                        &tidb_exprctx::NoColumns,
+                        name,
                         result_type,
                         vec![column(0, field.clone()), right],
-                    ));
+                    ).unwrap();
                     let integer = FieldType::new(FieldTypeCode::LongLong);
                     let mut chunk =
                         Chunk::new_chunk_with_capacity(&[field.clone(), field, integer.clone()], 3);
@@ -894,8 +896,9 @@ use tidb_exprctx::NoColumns;
         for name in ["plus", "minus", "mul"] {
             for vectorized in [false, true] {
                 let field = FieldType::new(FieldTypeCode::LongLong);
-                let expression = Expression::ScalarFunction(ScalarFunction::new(
-                    tidb_ast::CiString::new(name),
+                let expression = tidb_expr::new_function_base(
+                    &tidb_exprctx::NoColumns,
+                    name,
                     field.clone(),
                     vec![
                         column(0, field.clone()),
@@ -904,7 +907,7 @@ use tidb_exprctx::NoColumns;
                             field.clone(),
                         )),
                     ],
-                ));
+                ).unwrap();
                 let ctx = tidb_sessionctx::StmtContext::default()
                     .with_enable_vectorized_expression(vectorized)
                     .with_truncate_level(tidb_exprctx::ErrorLevel::Warn);

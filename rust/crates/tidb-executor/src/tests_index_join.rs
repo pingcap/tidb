@@ -204,11 +204,12 @@ fn equality(outer_key: usize, inner_key: usize, outer_width: usize) -> Expressio
         column.index = index as i64;
         Expression::Column(column)
     };
-    Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("eq"),
+    tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "eq",
         long(),
         vec![column(outer_key), column(outer_width + inner_key)],
-    ))
+    ).unwrap()
 }
 
 fn drain(exec: &mut dyn Executor, types: &[FieldType]) -> Vec<Vec<Datum>> {
@@ -517,11 +518,12 @@ fn a_go_index_join_keeps_a_null_semi_verdict() {
         column.in_operand = true;
         Expression::Column(column)
     };
-    let lt = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("eq"),
+    let lt = tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "eq",
         long(),
         vec![column(2), column(0)],
-    ));
+    ).unwrap();
     let types: Vec<FieldType> = std::iter::repeat_n(long(), 3).collect();
     for hash in [None, Some(true), Some(false)] {
         let memory = crate::StmtContext::for_query().statement_memory();

@@ -197,11 +197,12 @@ fn type_infer_4_avg_sum_follows_a_division_argument_through() {
     assert_eq!(div_ret.decimal(), 4);
 
     // AVG over exactly that argument adds one more increment: 29 / 8.
-    let div_node = Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
-        tidb_ast::CiString::new("/"),
+    let div_node = tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "div",
         div_ret.clone(),
         vec![div_arg(20), div_arg(5)],
-    ));
+    ).unwrap();
     let mut avg = BaseFuncDesc::new(&NoColumns, names::AVG, vec![div_node]).unwrap();
     assert_eq!(avg.ret_type.flen(), 29);
     assert_eq!(avg.ret_type.decimal(), 8);
@@ -690,11 +691,12 @@ fn max_min_and_first_row_rewrite_enum_only_for_the_window_kinds() {
 fn max_of_a_float_scalar_function_is_cast_to_double() {
     let mut float_ret = FieldType::new(FieldTypeCode::Float);
     float_ret.set_flen(12);
-    let inner = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("plus"),
+    let inner = tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "ifnull",
         float_ret,
         vec![col(0, FieldTypeCode::Float), col(1, FieldTypeCode::Float)],
-    ));
+    ).unwrap();
     let d = desc(names::MAX, vec![inner]);
     assert_eq!(d.ret_type().code(), FieldTypeCode::Double);
     assert_eq!(d.ret_type().flen(), 23);

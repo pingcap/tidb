@@ -245,8 +245,9 @@ fn lowered_conjunct() -> Expression {
 fn greater_than(value: i64) -> Expression {
     let mut column = tidb_expr::column::Column::new(1, bigint());
     column.index = 0;
-    Expression::ScalarFunction(ScalarFunction::new(
-        tidb_ast::CiString::new("gt"),
+    tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "gt",
         bigint(),
         vec![
             Expression::Column(column),
@@ -255,7 +256,7 @@ fn greater_than(value: i64) -> Expression {
                 bigint(),
             )),
         ],
-    ))
+    ).unwrap()
 }
 
 fn client(region: &Arc<FakeRegion>) -> CopClient<FakeFactory> {

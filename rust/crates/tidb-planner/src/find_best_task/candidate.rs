@@ -389,11 +389,12 @@ mod skyline_tests {
         let a = Column::new(1, ty.clone());
         let c = Column::new(3, ty.clone());
         let func = |name: &str, args| {
-            Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new(name),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                name,
                 ty.clone(),
                 args,
-            ))
+            ).unwrap()
         };
         let eq = |column: &Column| {
             func(

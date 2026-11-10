@@ -636,8 +636,9 @@ mod tests {
         }
         source.initialize_index_columns();
         source.interesting_columns = vec![column(1), column(3)];
-        source.pushed_down_conds = vec![Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("eq"),
+        source.pushed_down_conds = vec![tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "eq",
             FieldType::new(FieldTypeCode::Tiny),
             vec![
                 Expression::Column(column(3)),
@@ -646,7 +647,7 @@ mod tests {
                     FieldType::new(FieldTypeCode::LongLong),
                 )),
             ],
-        ))];
+        ).unwrap()];
         let interesting = HashSet::from([1, 3]);
         let discounted = discounted_handle_prefix(&source, &interesting);
         assert_eq!(discounted, HashSet::from([3]));

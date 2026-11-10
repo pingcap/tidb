@@ -3056,8 +3056,9 @@ mod cross_estimate_dispatch_tests {
         handle_type.set_flag(handle_type.flags() | tidb_datatype::FieldTypeFlags::PRI_KEY);
         let handle = Column::new(1, handle_type);
         let filtered = Column::new(2, FieldType::new(FieldTypeCode::LongLong));
-        let filter = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("eq"),
+        let filter = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "eq",
             FieldType::new(FieldTypeCode::LongLong),
             vec![
                 Expression::Column(filtered.clone()),
@@ -3066,7 +3067,7 @@ mod cross_estimate_dispatch_tests {
                     FieldType::new(FieldTypeCode::LongLong),
                 )),
             ],
-        ));
+        ).unwrap();
         let histogram = Arc::new(tidb_stats::column::Column {
             histogram: Histogram {
                 id: 2,
@@ -6174,14 +6175,15 @@ mod tests {
                 equal_cond_out_cnt: 0.8,
                 left_properties: vec![vec![left.clone()]],
                 right_properties: vec![vec![right.clone()]],
-                equal_conditions: vec![ScalarFunction::new(
-                    tidb_ast::CiString::new("eq"),
+                equal_conditions: vec![tidb_expr::new_function_base(
+                    &tidb_exprctx::NoColumns,
+                    "eq",
                     FieldType::new(FieldTypeCode::Tiny),
                     vec![
                         Expression::Column(left.clone()),
                         Expression::Column(right.clone()),
                     ],
-                )],
+                ).unwrap().into_scalar_function().unwrap()],
                 ..LogicalJoin::default()
             });
             let (candidates, _) =
@@ -6372,8 +6374,9 @@ mod tests {
         });
         let b = Column::new(12, FieldType::new(FieldTypeCode::LongLong));
         let cmp = |name: &str, col: &Column, v: i64| {
-            Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new(name),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                name,
                 FieldType::new(FieldTypeCode::LongLong),
                 vec![
                     Expression::Column(col.clone()),
@@ -6382,7 +6385,7 @@ mod tests {
                         FieldType::new(FieldTypeCode::LongLong),
                     )),
                 ],
-            ))
+            ).unwrap()
         };
         let build = |conds: Vec<Expression>, paths: Vec<AccessPath>| {
             let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
@@ -6591,8 +6594,9 @@ mod tests {
         let column = |unique_id| Column::new(unique_id, FieldType::new(FieldTypeCode::LongLong));
         let (a, b, c) = (column(11), column(12), column(13));
         let cmp = |name: &str, left: &Column, value: i64| {
-            Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new(name),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                name,
                 FieldType::new(FieldTypeCode::LongLong),
                 vec![
                     Expression::Column(left.clone()),
@@ -6601,7 +6605,7 @@ mod tests {
                         FieldType::new(FieldTypeCode::LongLong),
                     )),
                 ],
-            ))
+            ).unwrap()
         };
         let and = |items: Vec<Expression>| {
             tidb_expr::simple_expr::compose_cnf_condition(items).expect("non-empty CNF")
@@ -6749,11 +6753,12 @@ mod tests {
             ..tidb_model::IndexInfo::default()
         });
         let call = |name: &str, args| {
-            Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new(name),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                name,
                 FieldType::new(FieldTypeCode::LongLong),
                 args,
-            ))
+            ).unwrap()
         };
         let null = call("isnull", vec![Expression::Column(a.clone())]);
         assert!(
@@ -7213,8 +7218,9 @@ mod tests {
         // Go returns an empty-range dual before matching order or marking
         // forced paths. An impossible predicate needs no index ordering.
         let filter_column = source.base.base.schema().unwrap().columns[0].clone();
-        let mut equality = tidb_expr::scalar_function::ScalarFunction::new(
-            tidb_ast::CiString::new("eq"),
+        let mut equality = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "eq",
             FieldType::new(FieldTypeCode::LongLong),
             vec![
                 tidb_expr::expression::Expression::Column(filter_column.clone()),
@@ -7223,7 +7229,7 @@ mod tests {
                     FieldType::new(FieldTypeCode::Varchar),
                 )),
             ],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         equality.collation.set_charset_and_collation(
             "utf8mb4",
             filter_column.ret_type.as_ref().unwrap().collation_name(),
@@ -7297,8 +7303,9 @@ mod tests {
                         info
                     }),
             ],
-            pushed_down_conds: vec![Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new("eq"),
+            pushed_down_conds: vec![tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "eq",
                 FieldType::new(FieldTypeCode::LongLong),
                 vec![
                     Expression::Column(a),
@@ -7307,7 +7314,7 @@ mod tests {
                         FieldType::new(FieldTypeCode::LongLong),
                     )),
                 ],
-            ))],
+            ).unwrap()],
             ..DataSource::default()
         };
         let order_by_b = PhysicalProperty::new(TaskType::Root, &[12], false, f64::MAX, false);
@@ -7332,8 +7339,9 @@ mod tests {
             .set_schema(Some(Schema::new(vec![warehouse.clone(), district.clone()])));
         let source = DataSource {
             base,
-            pushed_down_conds: vec![Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new("eq"),
+            pushed_down_conds: vec![tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "eq",
                 FieldType::new(FieldTypeCode::LongLong),
                 vec![
                     Expression::Column(warehouse.clone()),
@@ -7342,7 +7350,7 @@ mod tests {
                         FieldType::new(FieldTypeCode::LongLong),
                     )),
                 ],
-            ))],
+            ).unwrap()],
             common_handle_cols: vec![warehouse, district],
             common_handle_lens: vec![UNSPECIFIED_LENGTH; 2],
             ..DataSource::default()
@@ -7887,11 +7895,12 @@ mod tests {
         let mut expression_agg = matching_agg.clone();
         if let LogicalPlan::Aggregation(agg) = &mut expression_agg {
             agg.group_by_items = vec![Expression::ScalarFunction(
-                tidb_expr::scalar_function::ScalarFunction::new(
-                    tidb_ast::CiString::new("mod"),
+                tidb_expr::new_function_base(
+                    &tidb_exprctx::NoColumns,
+                    "mod",
                     FieldType::new(FieldTypeCode::LongLong),
                     vec![Expression::Column(col(1)), Expression::Column(col(2))],
-                ),
+                ).unwrap().into_scalar_function().unwrap(),
             )];
         }
         assert!(

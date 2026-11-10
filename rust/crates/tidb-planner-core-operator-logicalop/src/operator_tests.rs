@@ -88,6 +88,10 @@ fn col_expr(unique_id: i64) -> Expression {
     Expression::Column(column(unique_id))
 }
 
+fn string_col_expr(unique_id: i64) -> Expression {
+    Expression::Column(Column::new(unique_id, FieldType::new(FieldTypeCode::VarString)))
+}
+
 fn schema(ids: &[i64]) -> Schema {
     Schema::new(ids.iter().copied().map(column).collect())
 }
@@ -97,7 +101,7 @@ fn tiny() -> FieldType {
 }
 
 fn call(name: &str, args: Vec<Expression>) -> ScalarFunction {
-    ScalarFunction::new(tidb_ast::CiString::new(name), tiny(), args)
+    tidb_expr::new_function_base(&tidb_exprctx::NoColumns, name, tiny(), args).unwrap().into_scalar_function().unwrap()
 }
 
 fn eq(left: Expression, right: Expression) -> Expression {
@@ -1452,7 +1456,7 @@ fn possible_property_stops_at_the_first_non_column_item() {
         by(col_expr(1), false),
         by(col_expr(2), true),
         by(
-            Expression::ScalarFunction(call("plus", vec![col_expr(3)])),
+            Expression::ScalarFunction(call("plus", vec![col_expr(3), one()])),
             false,
         ),
         by(col_expr(4), false),
@@ -3901,21 +3905,21 @@ fn show_extracts_eq_in_and_or_filters_on_a_named_column() {
     assert!(find_show_column_ids(&show_schema, &names, "missing").is_empty());
 
     // `db_name = 'X'`, either way round.
-    let values = extract_stats_meta_filter_values(&eq(col_expr(1), string_const("X")), &ids);
+    let values = extract_stats_meta_filter_values(&eq(string_col_expr(1), string_const("X")), &ids);
     assert_eq!(values, Some(vec!["X".to_owned()]));
     assert_eq!(
-        extract_stats_meta_filter_values(&eq(string_const("X"), col_expr(1)), &ids),
+        extract_stats_meta_filter_values(&eq(string_const("X"), string_col_expr(1)), &ids),
         Some(vec!["X".to_owned()])
     );
     // A predicate on some other column is not extractable.
     assert_eq!(
-        extract_stats_meta_filter_values(&eq(col_expr(2), string_const("X")), &ids),
+        extract_stats_meta_filter_values(&eq(string_col_expr(2), string_const("X")), &ids),
         None
     );
     // `db_name IN ('a', 'b')`, with the column FIRST.
     let in_expr = Expression::ScalarFunction(call(
         "in",
-        vec![col_expr(1), string_const("a"), string_const("b")],
+        vec![string_col_expr(1), string_const("a"), string_const("b")],
     ));
     assert_eq!(
         extract_stats_meta_filter_values(&in_expr, &ids),
@@ -3925,8 +3929,8 @@ fn show_extracts_eq_in_and_or_filters_on_a_named_column() {
     let good_or = Expression::ScalarFunction(call(
         "or",
         vec![
-            eq(col_expr(1), string_const("a")),
-            eq(col_expr(1), string_const("b")),
+            eq(string_col_expr(1), string_const("a")),
+            eq(string_col_expr(1), string_const("b")),
         ],
     ));
     assert_eq!(
@@ -3935,11 +3939,11 @@ fn show_extracts_eq_in_and_or_filters_on_a_named_column() {
     );
     let bad_or = Expression::ScalarFunction(call(
         "or",
-        vec![eq(col_expr(1), string_const("a")), eq(col_expr(2), one())],
+        vec![eq(string_col_expr(1), string_const("a")), eq(string_col_expr(2), one())],
     ));
     assert_eq!(extract_stats_meta_filter_values(&bad_or, &ids), None);
     // A constant with no usable value refuses.
-    assert_eq!(get_string_value_from_constant(&col_expr(1)), None);
+    assert_eq!(get_string_value_from_constant(&string_col_expr(1)), None);
 }
 
 /// Go `extractStatsMetaFilters` (`logical_show.go:210`): the INTERSECTION of
@@ -3950,8 +3954,8 @@ fn show_intersects_filters_and_keeps_contradictions_as_predicates() {
     let show_schema = schema(&[1, 2]);
     let names = [field_name("db_name"), field_name("table_name")];
     let predicates = vec![
-        eq(col_expr(1), string_const("MyDB")),
-        eq(col_expr(2), string_const("t")),
+        eq(string_col_expr(1), string_const("MyDB")),
+        eq(string_col_expr(2), string_const("t")),
     ];
     let (remained, filters) =
         extract_stats_meta_filters(&show_schema, &names, predicates.clone(), "db_name", true);
@@ -3972,8 +3976,8 @@ fn show_intersects_filters_and_keeps_contradictions_as_predicates() {
     // Two contradictory filters intersect to nothing, which Go keeps as
     // ordinary predicates rather than handing over an empty filter set.
     let contradiction = vec![
-        eq(col_expr(1), string_const("a")),
-        eq(col_expr(1), string_const("b")),
+        eq(string_col_expr(1), string_const("a")),
+        eq(string_col_expr(1), string_const("b")),
     ];
     let (remained, filters) =
         extract_stats_meta_filters(&show_schema, &names, contradiction, "db_name", true);
@@ -3999,7 +4003,7 @@ fn show_installs_an_extractor_only_when_it_claimed_a_predicate() {
     let remained = not_stats_meta.predicate_push_down(
         &show_schema,
         &names,
-        vec![eq(col_expr(1), string_const("d"))],
+        vec![eq(string_col_expr(1), string_const("d"))],
     );
     assert_eq!(remained.len(), 1);
     assert!(not_stats_meta.extractor.is_none());
@@ -4009,8 +4013,8 @@ fn show_installs_an_extractor_only_when_it_claimed_a_predicate() {
         &show_schema,
         &names,
         vec![
-            eq(col_expr(1), string_const("D")),
-            eq(col_expr(2), string_const("t")),
+            eq(string_col_expr(1), string_const("D")),
+            eq(string_col_expr(2), string_const("t")),
         ],
     );
     assert!(remained.is_empty());
@@ -4028,7 +4032,7 @@ fn show_installs_an_extractor_only_when_it_claimed_a_predicate() {
     let mut unclaimed = show(true);
     let remained =
         // Column-to-column: nothing constant to claim.
-        unclaimed.predicate_push_down(&show_schema, &names, vec![eq(col_expr(1), col_expr(2))]);
+        unclaimed.predicate_push_down(&show_schema, &names, vec![eq(string_col_expr(1), string_col_expr(2))]);
     assert_eq!(remained.len(), 1);
     assert!(unclaimed.extractor.is_none());
 }

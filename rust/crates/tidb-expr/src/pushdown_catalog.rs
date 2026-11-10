@@ -6305,19 +6305,19 @@ mod tests {
             ("floor", decimal(10, 2), long.clone(), ScalarFuncSig::FloorDecToInt),
             ("floor", decimal(30, 2), decimal(29, 0), ScalarFuncSig::FloorDecToDec),
             ("floor", double.clone(), double.clone(), ScalarFuncSig::FloorReal),
-            // Go `unaryMinusFunctionClass`: the signature follows the result
-            // type it picks; an unsigned BIGINT negates to DECIMAL.
+            // Go `unaryMinusFunctionClass`: the signature follows the
+            // argument's evaluation type; only an overflowing integer
+            // CONSTANT negates as DECIMAL (`typeInfer`).
             ("unaryminus", long.clone(), long.clone(), ScalarFuncSig::UnaryMinusInt),
-            ("unaryminus", unsigned.clone(), decimal(20, 0), ScalarFuncSig::UnaryMinusDecimal),
+            ("unaryminus", unsigned.clone(), long.clone(), ScalarFuncSig::UnaryMinusInt),
             ("unaryminus", double.clone(), double.clone(), ScalarFuncSig::UnaryMinusReal),
         ] {
             let mut column = crate::column::Column::new(1, arg);
             column.index = 0;
-            let expression = Expression::ScalarFunction(crate::scalar_function::ScalarFunction::new(
-                tidb_ast::CiString::new(name),
+            let expression = crate::new_function_base(&crate::NoColumns, name,
                 ret,
                 vec![Expression::Column(column)],
-            ));
+            ).unwrap();
             let Some(PbScalar::Call { signature, .. }) = from_expression(&expression) else {
                 panic!("{name} does not lower");
             };

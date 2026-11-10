@@ -43,11 +43,12 @@ fn col_expr(unique_id: i64, index: i64) -> Expression {
 /// Go `expression.NewFunction(ctx, ast.EQ, TypeLonglong, lhs, rhs)` as a bare
 /// scalar function.
 fn eq(lhs: Column, rhs: Column) -> ScalarFunction {
-    ScalarFunction::new(
-        tidb_ast::CiString::new("eq"),
+    tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "eq",
         FieldType::new(FieldTypeCode::LongLong),
         vec![Expression::Column(lhs), Expression::Column(rhs)],
-    )
+    ).unwrap().into_scalar_function().unwrap()
 }
 
 /// GO PORT of

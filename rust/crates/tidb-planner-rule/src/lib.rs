@@ -1208,11 +1208,12 @@ mod tests {
         if flipped {
             args.reverse();
         }
-        Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
-            tidb_ast::CiString::new(name),
+        tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            name,
             tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
             args,
-        ))
+        ).unwrap()
     }
 
     fn cond(name: &str, column: &tidb_expr::column::Column, value: i64) -> tidb_expr::expression::Expression {
@@ -1221,21 +1222,23 @@ mod tests {
 
     fn is_null(column: &tidb_expr::column::Column) -> tidb_expr::expression::Expression {
         tidb_expr::expression::Expression::ScalarFunction(
-            tidb_expr::scalar_function::ScalarFunction::new(
-                tidb_ast::CiString::new("isnull"),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "isnull",
                 tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
                 vec![tidb_expr::expression::Expression::Column(column.clone())],
-            ),
+            ).unwrap().into_scalar_function().unwrap(),
         )
     }
 
     fn logic(name: &str, args: Vec<tidb_expr::expression::Expression>) -> tidb_expr::expression::Expression {
         tidb_expr::expression::Expression::ScalarFunction(
-            tidb_expr::scalar_function::ScalarFunction::new(
-                tidb_ast::CiString::new(name),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                name,
                 tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
                 args,
-            ),
+            ).unwrap().into_scalar_function().unwrap(),
         )
     }
 
@@ -1314,14 +1317,15 @@ mod tests {
         let mut spec = range_table();
         let field_type = FieldType::new(FieldTypeCode::LongLong);
         let a = part_column(FieldTypeCode::LongLong);
-        spec.expr = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("plus"),
+        spec.expr = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "plus",
             field_type.clone(),
             vec![
                 Expression::Column(a.clone()),
                 Expression::Constant(Constant::new(Datum::Int(1), field_type.clone())),
             ],
-        ));
+        ).unwrap();
         assert_eq!(
             range_pruned(&spec, &a, &[cond("eq", &a, 9)]),
             Some(vec![102]),
@@ -1333,14 +1337,15 @@ mod tests {
             "Go evaluates each bound through a strictly monotone partition function"
         );
 
-        spec.expr = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("mod"),
+        spec.expr = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "mod",
             field_type.clone(),
             vec![
                 Expression::Column(a.clone()),
                 Expression::Constant(Constant::new(Datum::Int(2), field_type)),
             ],
-        ));
+        ).unwrap();
         assert_eq!(
             range_pruned(&spec, &a, &[cond("eq", &a, 21)]),
             Some(vec![101]),
@@ -1361,11 +1366,12 @@ mod tests {
             ],
             unsigned: false,
         };
-        spec.expr = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("year"),
+        spec.expr = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "year",
             FieldType::new(FieldTypeCode::LongLong),
             vec![Expression::Column(datetime.clone())],
-        ));
+        ).unwrap();
         let march_2007 = Datum::Time(
             tidb_datatype::Time::new(
                 tidb_datatype::CoreTime::from_date(2007, 3, 8, 0, 0, 0, 0),
@@ -1395,11 +1401,12 @@ mod tests {
         let mut datetime_spec =
             range_table_with_bounds(vec![RangeBound::Value(733_108), RangeBound::Value(733_132)]);
         datetime_spec.pi.expr = "to_days(`d`)".to_owned();
-        datetime_spec.expr = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("to_days"),
+        datetime_spec.expr = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "to_days",
             FieldType::new(FieldTypeCode::LongLong),
             vec![Expression::Column(datetime_column.clone())],
-        ));
+        ).unwrap();
         datetime_spec.dependencies = vec!["d".to_owned()];
         let datetime = |year, month, day| {
             Datum::Time(
@@ -1428,7 +1435,10 @@ mod tests {
             Some(Vec::new())
         );
 
-        let timestamp_column = part_column(FieldTypeCode::Timestamp);
+        let mut timestamp_type = FieldType::new(FieldTypeCode::Timestamp);
+        timestamp_type.set_decimal(0);
+        let mut timestamp_column = part_column(FieldTypeCode::Timestamp);
+        timestamp_column.ret_type = Some(timestamp_type);
         let mut timestamp_spec = range_table_with_bounds(vec![
             RangeBound::Value(1_199_145_600),
             RangeBound::Value(1_207_008_000),
@@ -1436,11 +1446,12 @@ mod tests {
             RangeBound::MaxValue,
         ]);
         timestamp_spec.pi.expr = "unix_timestamp(`report_updated`)".to_owned();
-        timestamp_spec.expr = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("unix_timestamp"),
+        timestamp_spec.expr = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "unix_timestamp",
             FieldType::new(FieldTypeCode::LongLong),
             vec![Expression::Column(timestamp_column.clone())],
-        ));
+        ).unwrap();
         timestamp_spec.dependencies = vec!["report_updated".to_owned()];
         let may_2008 = Datum::Time(
             Time::new(
@@ -1707,14 +1718,15 @@ use tidb_charset::Collation;
         let field_type = FieldType::new(FieldTypeCode::LongLong);
         let mut column = Column::new(1, field_type.clone());
         column.index = 0;
-        spec.expr = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("plus"),
+        spec.expr = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "plus",
             field_type.clone(),
             vec![
                 Expression::Column(column),
                 Expression::Constant(Constant::new(Datum::Int(1), field_type)),
             ],
-        ));
+        ).unwrap();
 
         assert_eq!(
             pruned_ids(
@@ -1836,14 +1848,15 @@ use tidb_charset::Collation;
         let field_type = FieldType::new(FieldTypeCode::LongLong);
         let mut column = Column::new(1, field_type.clone());
         column.index = 0;
-        spec.expr = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("plus"),
+        spec.expr = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "plus",
             field_type.clone(),
             vec![
                 Expression::Column(column),
                 Expression::Constant(Constant::new(Datum::Int(1), field_type)),
             ],
-        ));
+        ).unwrap();
 
         assert_eq!(
             pruned_ids(
@@ -2269,11 +2282,12 @@ where
                 ret_type.set_collation_name(column_type.collation_name());
             }
             let function = tidb_expr::expression::Expression::ScalarFunction(
-                tidb_expr::scalar_function::ScalarFunction::new(
-                    tidb_ast::CiString::new(op),
+                tidb_expr::new_function_base(
+                    &tidb_exprctx::NoColumns,
+                    op,
                     ret_type,
                     vec![bound, tidb_expr::expression::Expression::Constant(constant.clone())],
-                ),
+                ).unwrap().into_scalar_function().unwrap(),
             );
             match tidb_expr::eval_expression_once(&function, self.ctx) {
                 Ok(Datum::Null) => {

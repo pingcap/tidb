@@ -1260,14 +1260,15 @@ mod tests {
     }
 
     fn scalar_plus_col_expr(idx: usize) -> Expression {
-        Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("plus"),
+        tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "plus",
             long(),
             vec![
                 col_expr(idx),
                 Expression::Constant(Constant::new(Datum::Int(1), long())),
             ],
-        ))
+        ).unwrap()
     }
 
     pub fn source(

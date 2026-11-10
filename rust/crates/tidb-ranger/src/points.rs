@@ -2011,11 +2011,12 @@ mod tests {
     }
 
     fn func_expr(name: &str, args: Vec<Expression>) -> Expression {
-        Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new(name),
+        tidb_expr::new_function_base(
+            &tidb_exprctx::PlanCacheParams(&[tidb_datatype::Datum::Int(0), tidb_datatype::Datum::Int(0)]),
+            name,
             FieldType::new(FieldTypeCode::LongLong),
             args,
-        ))
+        ).unwrap()
     }
 
     fn build_points(expr: &Expression) -> Vec<Point> {
@@ -2310,11 +2311,12 @@ mod tests {
             str_ft.clone(),
         ));
         let escape = int_const_expr(i64::from(b'\\'));
-        let mut like = ScalarFunction::new(
-            tidb_ast::CiString::new("like"),
+        let mut like = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "like",
             FieldType::new(FieldTypeCode::LongLong),
             vec![col, pattern, escape],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         like.collation
             .set_charset_and_collation("utf8mb4", "utf8mb4_bin");
         let mut builder = Builder::default();
@@ -2385,15 +2387,16 @@ mod tests {
             FieldType::new(FieldTypeCode::LongLong),
         );
         escape.param_marker = Some(tidb_expr::constant::ParamMarker { order: 1 });
-        let mut function = ScalarFunction::new(
-            tidb_ast::CiString::new("like"),
+        let mut function = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "like",
             FieldType::new(FieldTypeCode::LongLong),
             vec![
                 Expression::Column(tidb_expr::column::Column::new(1, str_ft.clone())),
                 Expression::Constant(pattern),
                 Expression::Constant(escape),
             ],
-        );
+        ).unwrap().into_scalar_function().unwrap();
         function
             .collation
             .set_charset_and_collation("utf8mb4", "utf8mb4_bin");

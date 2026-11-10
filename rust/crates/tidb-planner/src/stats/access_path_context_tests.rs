@@ -53,14 +53,15 @@ fn logical_range_derivation_uses_current_statement_parameters() {
     let bound = |name: &str, order: i64| {
         let mut value = Constant::new(Datum::Int(99), ty.clone());
         value.param_marker = Some(ParamMarker { order });
-        Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new(name),
+        tidb_expr::new_function_base(
+            &tidb_exprctx::PlanCacheParams(&[tidb_datatype::Datum::Int(0), tidb_datatype::Datum::Int(0)]),
+            name,
             ty.clone(),
             vec![
                 Expression::Column(column.clone()),
                 Expression::Constant(value),
             ],
-        ))
+        ).unwrap()
     };
     let mut source = tidb_planner_core_operator_logicalop::data_source::DataSource {
         handle_is_int: true,
@@ -144,11 +145,14 @@ fn analyzed_derivation_evaluates_parameters_like_literal_predicates() {
         tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 100, 0, [(1, std::sync::Arc::unwrap_or_clone(histogram.clone())), (2, std::sync::Arc::unwrap_or_clone(histogram))], []),
     );
     let scalar = |name: &str, args| {
-        Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new(name),
+        tidb_expr::new_function_base(
+            // The third marker is bound while the template is built and
+            // absent from the execution below.
+            &tidb_exprctx::PlanCacheParams(&[Datum::Int(0), Datum::Int(0), Datum::Int(0)]),
+            name,
             ty.clone(),
             args,
-        ))
+        ).unwrap()
     };
     let predicates = |mode: u8| {
         let value = |order: i64| {

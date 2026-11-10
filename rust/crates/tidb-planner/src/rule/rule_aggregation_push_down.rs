@@ -1190,11 +1190,12 @@ mod tests {
         base.base.set_schema(Some(schema));
         let mut join = LogicalJoin::new(base, join_type);
         if let Some((l, r)) = equality {
-            join.equal_conditions.push(ScalarFunction::new(
-                CiString::new("eq"),
+            join.equal_conditions.push(tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "eq",
                 FieldType::new(FieldTypeCode::Tiny),
                 vec![Expression::Column(column(l)), Expression::Column(column(r))],
-            ));
+            ).unwrap().into_scalar_function().unwrap());
         }
         join.base.set_children(vec![left, right]);
         LogicalPlan::Join(join)
@@ -1497,11 +1498,12 @@ mod tests {
         let source = data_source(&allocator, 1, "a", 10.0);
         let projection = projection_node(
             &allocator,
-            Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("plus"),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "plus",
                 FieldType::new(FieldTypeCode::LongLong),
                 vec![Expression::Column(column(1)), Expression::Column(column(1))],
-            )),
+            ).unwrap(),
             source,
         );
         let plan = aggregation_node(
@@ -1530,11 +1532,12 @@ mod tests {
         let source = data_source(&allocator, 1, "a", 10.0);
         let projection = projection_node(
             &allocator,
-            Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("sleep"),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "sleep",
                 FieldType::new(FieldTypeCode::LongLong),
                 vec![Expression::Column(column(1))],
-            )),
+            ).unwrap(),
             source,
         );
         let plan = aggregation_node(

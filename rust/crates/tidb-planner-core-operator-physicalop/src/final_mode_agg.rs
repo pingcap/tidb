@@ -1738,10 +1738,11 @@ mod tests {
         let blacklist = HashMap::from([("sum".into(), blacklist_store_mask("tiflash"))]);
         assert!(check_agg_can_push_cop_tikv(std::slice::from_ref(&sum), &[], &blacklist, &|_| {}));
         assert!(!check_can_push_down_to_mpp(std::slice::from_ref(&sum), &[], &blacklist, &|_| {}));
-        let expr = Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
-            tidb_ast::CiString::new("gt"), FieldType::new(FieldTypeCode::LongLong),
+        let expr = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "gt", FieldType::new(FieldTypeCode::LongLong),
             vec![Expression::Column(a.clone()), Expression::Column(a.clone())],
-        ));
+        ).unwrap();
         let count = AggFuncDesc::new(&ctx(), names::COUNT, vec![expr.clone()], false).unwrap();
         let blacklist = HashMap::from([("gt.gtint".into(), blacklist_store_mask("tikv,tiflash,tidb"))]);
         for check in [check_agg_can_push_cop_tikv, check_can_push_down_to_mpp] {

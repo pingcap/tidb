@@ -41,20 +41,22 @@ mod tests {
             ))
         };
         let mut deferred = Constant::new(Datum::Int(-1), FieldType::new(FieldTypeCode::LongLong));
-        deferred.deferred_expr = Some(Box::new(Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("plus"),
+        deferred.deferred_expr = Some(Box::new(tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "plus",
             FieldType::new(FieldTypeCode::LongLong),
             vec![integer(40), integer(2)],
-        ))));
+        ).unwrap()));
         deferred.subquery_ref_id = 7;
         let mut missing = parameter.clone();
         missing.param_marker = Some(ParamMarker { order: 1 });
         let mut overflow = Constant::new(Datum::Int(-1), FieldType::new(FieldTypeCode::LongLong));
-        overflow.deferred_expr = Some(Box::new(Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("plus"),
+        overflow.deferred_expr = Some(Box::new(tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "plus",
             FieldType::new(FieldTypeCode::LongLong),
             vec![integer(i64::MAX), integer(1)],
-        ))));
+        ).unwrap()));
         overflow.subquery_ref_id = 8;
         let mut converted = Constant::new(
             Datum::new_string_datum("stale"),

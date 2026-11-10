@@ -709,11 +709,12 @@ mod tests {
     }
 
     fn scalar(name: &str, args: Vec<Expression>) -> ScalarFunction {
-        ScalarFunction::new(
-            CiString::new(name),
+        tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            name,
             FieldType::new(FieldTypeCode::LongLong),
             args,
-        )
+        ).unwrap().into_scalar_function().unwrap()
     }
 
     fn aggregate(name: &str, args: Vec<Expression>) -> AggFuncDesc {
@@ -837,14 +838,15 @@ mod tests {
         let mut join = LogicalJoin::new(BaseLogicalPlan::default(), LogicalJoinType::Inner);
         join.base.set_children(vec![left, right]);
         join.base.base.set_schema(Some(schema(&[1, 2, 10, 11])));
-        join.equal_conditions.push(ScalarFunction::new(
-            CiString::new("eq"),
+        join.equal_conditions.push(tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "eq",
             FieldType::new(FieldTypeCode::Tiny),
             vec![
                 Expression::Column(column(1)),
                 Expression::Column(column(10)),
             ],
-        ));
+        ).unwrap().into_scalar_function().unwrap());
 
         let fd = LogicalPlan::Join(join).extract_fd();
         assert!(fd.closure_of_equivalence(&FastIntSet::new([1])).has(10));

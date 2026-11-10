@@ -1161,14 +1161,15 @@ mod tests {
         let mut base = BaseLogicalPlan::with_id(1, "DataSource", 0);
         base.base.set_schema(Some(Schema::new(vec![a.clone()])));
         let eq = |value| {
-            Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new("eq"),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "eq",
                 ty.clone(),
                 vec![
                     Expression::Column(a.clone()),
                     Expression::Constant(Constant::new(Datum::Int(value), ty.clone())),
                 ],
-            ))
+            ).unwrap()
         };
         let ds = DataSource {
             table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { is_common_handle: true, indices: tidb_model::GoSharedPointerSlice::from_handles((vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
@@ -1205,11 +1206,12 @@ mod tests {
                 })],
             index_merge_hints: vec![Default::default()],
             common_handle_cols: vec![a.clone()],
-            pushed_down_conds: vec![Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new("or"),
+            pushed_down_conds: vec![tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "or",
                 ty.clone(),
                 vec![eq(1), eq(2)],
-            ))],
+            ).unwrap()],
             ..Default::default()
         };
         // Go's `AllConds` contains every pushed condition.
@@ -1280,17 +1282,19 @@ mod tests {
             .base
             .set_schema(Some(Schema::new(choices.table_columns.clone())));
         let mut multiple_or = choices.clone();
-        let eq_b = |value| Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("eq"), ty.clone(), vec![Expression::Column(b.clone()),
+        let eq_b = |value| tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "eq", ty.clone(), vec![Expression::Column(b.clone()),
                 Expression::Constant(Constant::new(Datum::Int(value), ty.clone()))],
-        ));
+        ).unwrap();
         // Go `buildIntoAccessPath` needs two access objects: with no index
         // led by `b`, an OR over `b` builds no merge.
         let only_b = {
             let mut only_b = choices.clone();
-            only_b.pushed_down_conds = vec![Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new("or"), ty.clone(), vec![eq_b(1), eq_b(2)],
-            ))];
+            only_b.pushed_down_conds = vec![tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "or", ty.clone(), vec![eq_b(1), eq_b(2)],
+            ).unwrap()];
             only_b.all_conds = only_b.pushed_down_conds.clone();
             only_b
         };
@@ -1317,9 +1321,10 @@ mod tests {
                 .all_possible_access_paths
                 .push(tidb_planner_util::path::AccessPath::index_path(multiple_or.table_indices().last().unwrap().clone()));
         }
-        multiple_or.pushed_down_conds.push(Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("or"), ty.clone(), vec![eq_b(1), eq_b(2)],
-        )));
+        multiple_or.pushed_down_conds.push(tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "or", ty.clone(), vec![eq_b(1), eq_b(2)],
+        ).unwrap());
         multiple_or.all_conds = multiple_or.pushed_down_conds.clone();
         let candidates = crate::access_path::index_merge::prepare_union_index_merge_paths(&multiple_or, &derivation, false).unwrap();
         assert_eq!(candidates.len(), 2, "each top-level OR retains its own candidate");

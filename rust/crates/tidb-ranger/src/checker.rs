@@ -338,11 +338,12 @@ use tidb_charset::Collation;
     }
 
     fn func(name: &str, collation: &str, args: Vec<Expression>) -> Expression {
-        let mut scalar = ScalarFunction::new(
-            CiString::new(name),
+        let mut scalar = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            name,
             FieldType::new(FieldTypeCode::LongLong),
             args,
-        );
+        ).unwrap().into_scalar_function().unwrap();
         scalar
             .collation
             .set_charset_and_collation("utf8mb4", collation);

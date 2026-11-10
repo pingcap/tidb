@@ -6471,11 +6471,12 @@ impl IndexJoinLookupExec {
                     value.clone(),
                     target_type.clone(),
                 ));
-                Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
-                    tidb_ast::CiString::new(op.name()),
+                tidb_expr::new_function_base(
+                    &tidb_exprctx::NoColumns,
+                    op.name(),
                     FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
                     vec![target.clone(), constant],
-                ))
+                ).unwrap()
             })
             .collect::<Vec<_>>();
         let col_length = self
@@ -8004,8 +8005,9 @@ use std::collections::HashMap;
                         let mut physical = tidb_expr::column::Column::new(3, long());
                         physical.index = physical_slot as i64;
                         let condition =
-                            Expression::ScalarFunction(tidb_expr::expression::ScalarFunction::new(
-                                tidb_ast::CiString::new("gt"),
+                            tidb_expr::new_function_base(
+                                &tidb_exprctx::NoColumns,
+                                "gt",
                                 long(),
                                 vec![
                                     Expression::Column(physical),
@@ -8014,7 +8016,7 @@ use std::collections::HashMap;
                                         long(),
                                     )),
                                 ],
-                            ));
+                            ).unwrap();
                         source.filter = Some(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::new(
                             tidb_executor_internal_exec::predicate_pushdown::PushedScanFilter::from_physical_conditions(
                                 vec![condition],
@@ -8458,14 +8460,15 @@ use std::collections::HashMap;
         source.covering = false;
         source.set_filters(Vec::new(), crate::StmtContext::for_query());
         source.set_index_filters(vec![Expression::ScalarFunction(
-            tidb_expr::expression::ScalarFunction::new(
-                tidb_ast::CiString::new("gt"),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "gt",
                 long(),
                 vec![
                     Expression::Column(b),
                     Expression::Constant(tidb_expr::constant::Constant::new(Datum::Int(2), long())),
                 ],
-            ),
+            ).unwrap().into_scalar_function().unwrap(),
         )]);
         source.set_column_projection(Some(vec![0]), []);
         source.open().unwrap();
@@ -8659,14 +8662,15 @@ use std::collections::HashMap;
             };
             let mut b = tidb_expr::column::Column::new(2, long());
             b.index = 1;
-            let filter = Expression::ScalarFunction(tidb_expr::expression::ScalarFunction::new(
-                tidb_ast::CiString::new("gt"),
+            let filter = tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "gt",
                 long(),
                 vec![
                     Expression::Column(b.clone()),
                     Expression::Constant(tidb_expr::constant::Constant::new(Datum::Int(2), long())),
                 ],
-            ));
+            ).unwrap();
             b.index = 0;
             let mut source = IndexJoinLookupExec::new_with_context(
                 ExecutorMeta::new(Schema::new(vec![b]), 0, 1, 1),
@@ -8832,14 +8836,15 @@ use std::collections::HashMap;
         check_close.store(true, Ordering::SeqCst);
         let mut b = tidb_expr::column::Column::new(2, long());
         b.index = 1;
-        let condition = Expression::ScalarFunction(tidb_expr::expression::ScalarFunction::new(
-            tidb_ast::CiString::new("gt"),
+        let condition = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "gt",
             long(),
             vec![
                 Expression::Column(b),
                 Expression::Constant(tidb_expr::constant::Constant::new(Datum::Int(6), long())),
             ],
-        ));
+        ).unwrap();
         let ctx = crate::StmtContext::for_query();
         source.set_index_conditions(vec![condition.clone()], &ctx);
         source.limit = Some(1);

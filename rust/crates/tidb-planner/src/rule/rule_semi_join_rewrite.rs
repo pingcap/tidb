@@ -253,14 +253,15 @@ mod tests {
     }
 
     fn equal(left: i64, right: i64) -> ScalarFunction {
-        ScalarFunction::new(
-            CiString::new("eq"),
+        tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "eq",
             FieldType::new(FieldTypeCode::Tiny),
             vec![
                 Expression::Column(column(left)),
                 Expression::Column(column(right)),
             ],
-        )
+        ).unwrap().into_scalar_function().unwrap()
     }
 
     fn join(

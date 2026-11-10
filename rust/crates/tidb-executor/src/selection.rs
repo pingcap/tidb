@@ -562,15 +562,15 @@ mod tests {
                 self.inner.new_chunk()
             }
         }
-        let not_null = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("not"),
+        let not_null = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "not",
             long(),
-            vec![Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("isnull"),
+            vec![tidb_expr::new_function_base(&tidb_exprctx::NoColumns, "isnull",
                 long(),
                 vec![Expression::Column(one_long_col_schema().columns[0].clone())],
-            ))],
-        ));
+            ).unwrap()],
+        ).unwrap();
         let mut data = Chunk::new_chunk_with_capacity(&[long()], 1);
         data.append_int64(0, 1);
         let nexts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -606,29 +606,32 @@ mod tests {
         for fast_first in [false, true] {
             for is_null in [false, true] {
                 let column = Expression::Column(one_long_col_schema().columns[0].clone());
-                let assignment = Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new("setvar"),
+                let assignment = tidb_expr::new_function_base(
+                    &tidb_exprctx::NoColumns,
+                    "setvar",
                     long(),
                     vec![
                         Expression::Constant(Constant::new(Datum::Bytes(b"v".to_vec()), string())),
                         Expression::Constant(Constant::new(Datum::Int(1), long())),
                     ],
-                ));
-                let null_test = Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new("isnull"),
+                ).unwrap();
+                let null_test = tidb_expr::new_function_base(
+                    &tidb_exprctx::NoColumns,
+                    "isnull",
                     long(),
                     vec![column],
-                ));
+                ).unwrap();
                 let args = if fast_first {
                     vec![null_test, assignment]
                 } else {
                     vec![assignment, null_test]
                 };
-                let filter = Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new("and"),
+                let filter = tidb_expr::new_function_base(
+                    &tidb_exprctx::NoColumns,
+                    "and",
                     long(),
                     args,
-                ));
+                ).unwrap();
                 let mut data = Chunk::new_chunk_with_capacity(&[long()], 1);
                 if is_null {
                     data.append_null(0);
@@ -665,26 +668,29 @@ mod tests {
         let integer = |value| Expression::Constant(Constant::new(Datum::Int(value), long()));
         for (name, left, right) in [("intdiv", 1, 0), ("plus", i64::MAX, 1)] {
             for fast_first in [false, true] {
-                let diagnostic = Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new(name),
+                let diagnostic = tidb_expr::new_function_base(
+                    &tidb_exprctx::NoColumns,
+                    name,
                     long(),
                     vec![integer(left), integer(right)],
-                ));
-                let null_test = Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new("isnull"),
+                ).unwrap();
+                let null_test = tidb_expr::new_function_base(
+                    &tidb_exprctx::NoColumns,
+                    "isnull",
                     long(),
                     vec![Expression::Column(one_long_col_schema().columns[0].clone())],
-                ));
+                ).unwrap();
                 let args = if fast_first {
                     vec![null_test, diagnostic]
                 } else {
                     vec![diagnostic, null_test]
                 };
-                let filter = Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new("and"),
+                let filter = tidb_expr::new_function_base(
+                    &tidb_exprctx::NoColumns,
+                    "and",
                     long(),
                     args,
-                ));
+                ).unwrap();
                 let mut data = Chunk::new_chunk_with_capacity(&[long()], 1);
                 data.append_int64(0, 1);
                 let source = OneChunkSource {
@@ -739,14 +745,15 @@ mod tests {
         // Filter: col0 > 1 (gt(col0, 1)).
         let mut col = Column::new(1, long());
         col.index = 0;
-        let filter = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("gt"),
+        let filter = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "gt",
             long(),
             vec![
                 Expression::Column(col),
                 Expression::Constant(Constant::new(Datum::Int(1), long())),
             ],
-        ));
+        ).unwrap();
 
         let mut sel = SelectionExec::new(
             ExecutorMeta::new(one_long_col_schema(), 1, 3, 1024),
@@ -781,14 +788,15 @@ mod tests {
         let mut col = Column::new(1, long());
         col.index = 0;
         // col0 > 10  -> false for 5, NULL for the null row: both rejected.
-        let filter = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("gt"),
+        let filter = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "gt",
             long(),
             vec![
                 Expression::Column(col),
                 Expression::Constant(Constant::new(Datum::Int(10), long())),
             ],
-        ));
+        ).unwrap();
         let mut sel = SelectionExec::new(
             ExecutorMeta::new(one_long_col_schema(), 1, 2, 1024),
             vec![filter],
@@ -814,14 +822,15 @@ mod tests {
         };
         let mut column = Column::new(1, long());
         column.index = 0;
-        let filter = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("gt"),
+        let filter = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "gt",
             long(),
             vec![
                 Expression::Column(column),
                 Expression::Constant(Constant::new(Datum::Int(0), long())),
             ],
-        ));
+        ).unwrap();
         let mut selection = SelectionExec::new(
             ExecutorMeta::new(one_long_col_schema(), 1, 3, 3),
             vec![filter],
@@ -864,14 +873,15 @@ mod tests {
         };
         let mut column = Column::new(1, long());
         column.index = 0;
-        let filter = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("gt"),
+        let filter = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "gt",
             long(),
             vec![
                 Expression::Column(column),
                 Expression::Constant(Constant::new(Datum::Int(-1), long())),
             ],
-        ));
+        ).unwrap();
         let memory = StatementMemory::new(200, OomAction::Cancel, 71);
         let mut selection = SelectionExec::new(
             ExecutorMeta::new(one_long_col_schema(), 1, 0, 64),
@@ -905,11 +915,12 @@ mod tests {
         column.index = 0;
         let variable_name =
             Expression::Constant(Constant::new(Datum::Bytes(b"v".to_vec()), string()));
-        let filter = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("setvar"),
+        let filter = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "setvar",
             long(),
             vec![variable_name, Expression::Column(column)],
-        ));
+        ).unwrap();
         let mut selection = SelectionExec::new(
             ExecutorMeta::new(one_long_col_schema(), 1, 3, 3),
             vec![filter],

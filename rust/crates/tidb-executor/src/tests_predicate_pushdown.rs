@@ -44,11 +44,12 @@ pub(crate) mod fixtures {
 
     /// A call of the builtin `name`.
     pub(crate) fn call(name: &str, args: Vec<Expression>) -> Expression {
-        Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new(name),
+        tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            name,
             FieldType::new(FieldTypeCode::LongLong),
             args,
-        ))
+        ).unwrap()
     }
 
     /// `column OP literal` (or `literal OP column`), `name` one of `eq`,
@@ -175,8 +176,9 @@ mod tests {
         let gt = |column_id: i64, index: i64, value: i64| {
             let mut column = tidb_expr::column::Column::new(column_id, long());
             column.index = index;
-            Expression::ScalarFunction(tidb_expr::expression::ScalarFunction::new(
-                tidb_ast::CiString::new("gt"),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "gt",
                 long(),
                 vec![
                     Expression::Column(column),
@@ -185,7 +187,7 @@ mod tests {
                         long(),
                     )),
                 ],
-            ))
+            ).unwrap()
         };
         let mut blacklist = tidb_expr::infer_pushdown::ExprPushDownBlacklist::new();
         blacklist.insert(

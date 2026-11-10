@@ -759,11 +759,12 @@ mod tests {
     }
 
     fn function(name: &str, args: Vec<Expression>) -> Expression {
-        Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new(name),
+        tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            name,
             FieldType::new(FieldTypeCode::Tiny),
             args,
-        ))
+        ).unwrap()
     }
 
     struct WarningContext {
@@ -1048,8 +1049,10 @@ mod tests {
         let mut ctx = test_context(&allocator);
         ctx.eval_context = &context;
         for (operator, value) in [("and", "1garbage"), ("or", "0garbage")] {
-            let original = function(
+            let original = tidb_expr::new_function_base(
+                &context,
                 operator,
+                FieldType::new(FieldTypeCode::Tiny),
                 vec![
                     column(1),
                     Expression::Constant(Constant::new(
@@ -1057,7 +1060,8 @@ mod tests {
                         FieldType::new(FieldTypeCode::VarString),
                     )),
                 ],
-            );
+            )
+            .unwrap();
             let (result, _, changed) = process_logical(&ctx, original.clone());
             assert!(
                 result.equal(&original),

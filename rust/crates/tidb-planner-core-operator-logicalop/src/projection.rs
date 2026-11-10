@@ -577,11 +577,12 @@ mod statistics_tests {
 
         // A computed output cannot carry a group that requires its input.
         projection.exprs[1] =
-            Expression::ScalarFunction(tidb_expr::expression::ScalarFunction::new(
-                tidb_ast::CiString::new("plus"),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "plus",
                 tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
                 vec![Expression::Column(column(2)), Expression::Column(column(2))],
-            ));
+            ).unwrap();
         let (stats, _) = projection.derive_stats(&[child], &schema, &[true]).unwrap();
         assert!(stats.group_ndvs().is_empty());
     }

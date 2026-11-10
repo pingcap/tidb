@@ -174,11 +174,12 @@ pub(super) fn eq_on(lhs: usize, rhs: usize, left_width: usize) -> Expression {
         column.index = index as i64;
         Expression::Column(column)
     };
-    Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("eq"),
+    tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "eq",
         long(),
         vec![column(lhs), column(left_width + rhs)],
-    ))
+    ).unwrap()
 }
 
 pub(super) fn join_of(
@@ -279,13 +280,13 @@ fn decimal_residual_uses_the_general_join_evaluator() {
         column.index = index as i64;
         Expression::Column(column)
     };
-    let residual = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("lt"),
+    let residual = tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "lt",
         long(),
         vec![
             column(1, decimal_type.clone()),
-            Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("mul"),
+            tidb_expr::new_function_base(&tidb_exprctx::NoColumns, "mul",
                 decimal_type.clone(),
                 vec![
                     Expression::Constant(Constant::new(
@@ -294,9 +295,9 @@ fn decimal_residual_uses_the_general_join_evaluator() {
                     )),
                     column(3, decimal_type.clone()),
                 ],
-            )),
+            ).unwrap(),
         ],
-    ));
+    ).unwrap();
     let conditions = vec![eq_on(0, 0, 2), residual];
     let left = vec![
         vec![Datum::Int(1), Datum::Decimal(decimal("3.00"))],
@@ -327,13 +328,13 @@ fn decimal_residual_unique_integer_join_uses_parallel_probe_window() {
         column.index = index as i64;
         Expression::Column(column)
     };
-    let residual = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("lt"),
+    let residual = tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "lt",
         long(),
         vec![
             column(1, decimal_type.clone()),
-            Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("mul"),
+            tidb_expr::new_function_base(&tidb_exprctx::NoColumns, "mul",
                 decimal_type.clone(),
                 vec![
                     Expression::Constant(Constant::new(
@@ -342,9 +343,9 @@ fn decimal_residual_unique_integer_join_uses_parallel_probe_window() {
                     )),
                     column(3, decimal_type.clone()),
                 ],
-            )),
+            ).unwrap(),
         ],
-    ));
+    ).unwrap();
     let left = (0..10_000)
         .map(|row| {
             vec![
@@ -371,11 +372,12 @@ fn general_residual_unique_integer_join_uses_parallel_probe_window() {
         column.index = index as i64;
         Expression::Column(column)
     };
-    let residual = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("lt"),
+    let residual = tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "lt",
         long(),
         vec![column(1), column(3)],
-    ));
+    ).unwrap();
     let left = (0..10_000)
         .map(|row| vec![Datum::Int(1), Datum::Int(if row % 2 == 0 { 3 } else { 12 })])
         .collect();
@@ -667,11 +669,12 @@ fn residual_hash_join_resumes_candidates_after_a_full_output_chunk() {
         column.index = index as i64;
         Expression::Column(column)
     };
-    let residual = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("lt"),
+    let residual = tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "lt",
         long(),
         vec![column(3), column(1)],
-    ));
+    ).unwrap();
     let left = vec![vec![Datum::Int(1), Datum::Int(2)]];
     let right = vec![vec![Datum::Int(1), Datum::Int(1)]; CHUNK + 1];
     let mut join = join_of(
@@ -703,27 +706,29 @@ fn naaj_residual_condition_gets_no_has_null_forgiveness() {
     na_key_left.in_operand = true;
     let mut na_key_right = Column::new(102, long());
     na_key_right.index = 2;
-    let na_key = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("eq"),
+    let na_key = tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "eq",
         long(),
         vec![
             Expression::Column(na_key_left),
             Expression::Column(na_key_right),
         ],
-    ));
+    ).unwrap();
     let mut leftover_left = Column::new(103, long());
     leftover_left.index = 1;
     leftover_left.in_operand = true;
     let mut leftover_right = Column::new(104, long());
     leftover_right.index = 3;
-    let leftover_residual = Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("eq"),
+    let leftover_residual = tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "eq",
         long(),
         vec![
             Expression::Column(leftover_left),
             Expression::Column(leftover_right),
         ],
-    ));
+    ).unwrap();
     // Same-key bucket match on column 0 (1 = 1); the leftover residual then
     // compares the probe's NULL value column against the build row's,
     // which Go's own NAAJ joiner treats as a plain non-match, never a
@@ -779,19 +784,21 @@ fn nested_loop_emission_order_matches_gos_chain_direction() {
             column.index = index;
             Expression::Column(column)
         };
-        let plus = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("plus"),
+        let plus = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "plus",
             long(),
             vec![
                 column(0),
                 Expression::Constant(Constant::new(Datum::Int(0), long())),
             ],
-        ));
-        Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("eq"),
+        ).unwrap();
+        tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "eq",
             long(),
             vec![plus, column(2)],
-        ))
+        ).unwrap()
     };
     let right = vec![
         vec![Datum::Int(1), Datum::Int(70)],
@@ -966,11 +973,12 @@ pub(super) fn in_eq_residual(lhs: usize, rhs: usize, left_width: usize) -> Expre
     left.in_operand = true;
     let mut right = Column::new((left_width + rhs) as i64 + 1, long());
     right.index = (left_width + rhs) as i64;
-    Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("eq"),
+    tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "eq",
         long(),
         vec![Expression::Column(left), Expression::Column(right)],
-    ))
+    ).unwrap()
 }
 
 /// An ordinary predicate on the same columns, for the control cases.
@@ -979,11 +987,12 @@ fn gt_residual(lhs: usize, rhs: usize, left_width: usize) -> Expression {
     left.index = lhs as i64;
     let mut right = Column::new((left_width + rhs) as i64 + 1, long());
     right.index = (left_width + rhs) as i64;
-    Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("gt"),
+    tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "gt",
         long(),
         vec![Expression::Column(right), Expression::Column(left)],
-    ))
+    ).unwrap()
 }
 
 /// Go `leftOuterSemiJoiner.TryToMatchInners` accumulates `hasNull` across

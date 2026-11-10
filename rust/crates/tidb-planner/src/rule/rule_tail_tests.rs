@@ -164,14 +164,15 @@ fn cte(allocator: &PlanIdAllocator) -> LogicalPlan {
 
 /// `col(id) <= value`, the shape `expression.FindUpperBound` recognises.
 fn le_const(id: i64, value: i64) -> Expression {
-    Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("le"),
+    tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "le",
         int_type(),
         vec![
             Expression::Column(column(id)),
             Expression::Constant(Constant::new(Datum::Int(value), int_type())),
         ],
-    ))
+    ).unwrap()
 }
 
 /// A unary chain of `depth` projections above `leaf`, built ITERATIVELY.
@@ -1010,11 +1011,12 @@ fn a_max_min_aggregation_without_a_child_panics_like_gos_direct_index() {
 // ***************************************************************************
 
 fn is_null_const(id: i64) -> Expression {
-    Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("isnull"),
+    tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "isnull",
         int_type(),
         vec![Expression::Column(column(id))],
-    ))
+    ).unwrap()
 }
 
 fn bare_dual(allocator: &PlanIdAllocator, row_count: usize) -> LogicalPlan {
@@ -1067,11 +1069,12 @@ fn a_selection_over_a_childless_outer_join_panics_when_converting_like_go() {
     );
     // Go's early gate requires a non-empty condition set before it indexes
     // the join children.
-    join.equal_conditions = vec![ScalarFunction::new(
-        CiString::new("eq"),
+    join.equal_conditions = vec![tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "eq",
         int_type(),
         vec![Expression::Column(column(1)), Expression::Column(column(2))],
-    )];
+    ).unwrap().into_scalar_function().unwrap()];
     let plan = selection(&allocator, vec![is_null_const(1)], LogicalPlan::Join(join));
 
     // Go `canConvertAntiJoin` indexes `p.Children()[outerChildIdx]`.

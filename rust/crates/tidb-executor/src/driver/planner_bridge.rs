@@ -659,22 +659,24 @@ mod list_columns_pruning_tests {
     }
 
     fn equals(column: &Column, value: i64) -> Expression {
-        Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("eq"),
+        tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "eq",
             FieldType::new(FieldTypeCode::Tiny),
             vec![
                 Expression::Column(column.clone()),
                 Expression::Constant(Constant::new(Datum::Int(value), integer_type())),
             ],
-        ))
+        ).unwrap()
     }
 
     fn or(arguments: Vec<Expression>) -> Expression {
-        Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("or"),
+        tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "or",
             FieldType::new(FieldTypeCode::Tiny),
             arguments,
-        ))
+        ).unwrap()
     }
 
     fn list_columns_spec() -> PartitionExpr {
@@ -4132,21 +4134,23 @@ mod statistics_initialization_tests {
         source.all_possible_access_paths = vec![tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())];
         let mut parameter = Constant::new(Datum::Int(1), field_type);
         parameter.param_marker = Some(ParamMarker { order: 0 });
-        let comparison = Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new("eq"),
+        let comparison = tidb_expr::new_function_base(
+            &tidb_exprctx::PlanCacheParams(&[tidb_datatype::Datum::Int(0), tidb_datatype::Datum::Int(0)]),
+            "eq",
             FieldType::new(FieldTypeCode::Tiny),
             vec![
                 Expression::Column(column.clone()),
                 Expression::Constant(parameter.clone()),
             ],
-        ));
+        ).unwrap();
         let conditions = [
             Expression::Constant(parameter.clone()),
-            Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new("in"),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::PlanCacheParams(&[tidb_datatype::Datum::Int(0), tidb_datatype::Datum::Int(0)]),
+                "in",
                 FieldType::new(FieldTypeCode::Tiny),
                 vec![Expression::Column(column), Expression::Constant(parameter)],
-            )),
+            ).unwrap(),
         ];
         for condition in conditions {
             source.pushed_down_conds = vec![condition];

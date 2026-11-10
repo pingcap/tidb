@@ -288,8 +288,9 @@ fn set_chunk_for_probe_zeroes_headers_for_filtered_and_null_key_rows() {
     let mut column = tidb_expr::column::Column::new(1, int_fields(1)[0].clone());
     column.index = 0;
     let predicate = tidb_expr::expression::Expression::ScalarFunction(
-        tidb_expr::expression::ScalarFunction::new(
-            tidb_ast::CiString::new("lt"),
+        tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "lt",
             int_fields(1)[0].clone(),
             vec![
                 tidb_expr::expression::Expression::Column(column),
@@ -298,7 +299,7 @@ fn set_chunk_for_probe_zeroes_headers_for_filtered_and_null_key_rows() {
                     int_fields(1)[0].clone(),
                 )),
             ],
-        ),
+        ).unwrap().into_scalar_function().unwrap(),
     );
     let filter =
         tidb_executor_join::base_join_probe::JoinFilter::new(tidb_exprctx::NoColumns, vec![predicate], true);
@@ -323,11 +324,12 @@ fn set_chunk_for_probe_zeroes_headers_for_filtered_and_null_key_rows() {
     let failing_filter = tidb_executor_join::base_join_probe::JoinFilter::new(
         tidb_exprctx::NoColumns,
         vec![tidb_expr::expression::Expression::ScalarFunction(
-            tidb_expr::expression::ScalarFunction::new(
-                tidb_ast::CiString::new("getparam"),
+            tidb_expr::new_function_base(
+                &tidb_exprctx::NoColumns,
+                "getparam",
                 int_fields(1)[0].clone(),
                 vec![tidb_expr::expression::Expression::Constant(parameter)],
-            ),
+            ).unwrap().into_scalar_function().unwrap(),
         )],
         true,
     );

@@ -1553,11 +1553,12 @@ mod tests {
     use tidb_stats::histogram::{Bucket, Histogram};
 
     fn call(name: &str, arguments: Vec<Expression>) -> Expression {
-        Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new(name),
+        tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            name,
             FieldType::new(FieldTypeCode::LongLong),
             arguments,
-        ))
+        ).unwrap()
     }
 
     fn profile(row_count: f64, null_count: i64) -> StatsInfo {

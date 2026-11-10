@@ -127,7 +127,7 @@ mod tests {
     /// Go's rewriter names every operator as a builtin; the proof reads the
     /// name and the arguments, exactly as Go's does.
     fn call(name: &str, args: Vec<Expression>) -> Expression {
-        Expression::ScalarFunction(ScalarFunction::new(CiString::new(name), int_type(), args))
+        tidb_expr::new_function_base(&tidb_exprctx::NoColumns, name, int_type(), args).unwrap()
     }
 
     /// Does the predicate prove `a` NOT NULL?

@@ -831,11 +831,12 @@ mod tests {
     }
 
     fn func(name: &str, args: Vec<Expression>) -> Expression {
-        Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new(name),
+        tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            name,
             FieldType::new(FieldTypeCode::LongLong),
             args,
-        ))
+        ).unwrap()
     }
 
     fn shown(result: &ColumnRangeResult) -> Vec<String> {

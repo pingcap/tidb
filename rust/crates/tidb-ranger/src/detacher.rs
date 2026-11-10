@@ -2073,11 +2073,12 @@ mod tests {
     }
 
     fn func(name: &str, args: Vec<Expression>) -> Expression {
-        Expression::ScalarFunction(ScalarFunction::new(
-            tidb_ast::CiString::new(name),
+        tidb_expr::new_function_base(
+            &tidb_exprctx::PlanCacheParams(&[tidb_datatype::Datum::Int(0), tidb_datatype::Datum::Int(0)]),
+            name,
             FieldType::new(FieldTypeCode::LongLong),
             args,
-        ))
+        ).unwrap()
     }
 
     /// The CNF walk: conditions over the checked column become access

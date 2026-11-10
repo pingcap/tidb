@@ -122,11 +122,12 @@ mod tests {
     }
 
     fn call(name: &str, arguments: Vec<Expression>) -> Expression {
-        Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new(name),
+        tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            name,
             FieldType::new(FieldTypeCode::Tiny),
             arguments,
-        ))
+        ).unwrap()
     }
 
     fn not_is_null(column: Column) -> Expression {
