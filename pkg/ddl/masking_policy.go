@@ -249,6 +249,7 @@ const (
 )
 
 func (w *worker) queryMaskingPoliciesFromSysTable(ctx context.Context, query string, args ...any) ([]*model.MaskingPolicyInfo, error) {
+	w.maskingPolicyTxn = true
 	failpoint.Inject("mockMissingMaskingPolicySysTable", func() {
 		failpoint.Return(nil, infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_masking_policy"))
 	})
@@ -504,6 +505,11 @@ func (w *worker) insertMaskingPolicyIntoSysTable(jobCtx *jobContext, policy *mod
 }
 
 func (w *worker) updateMaskingPolicyInSysTable(jobCtx *jobContext, policy *model.MaskingPolicyInfo) error {
+	failpoint.Inject("mockMaskingPolicyUpdateError", func(val failpoint.Value) {
+		if val == true {
+			failpoint.Return(errors.New("mock masking policy update error"))
+		}
+	})
 	const updateSQL = `UPDATE mysql.tidb_masking_policy
 		SET policy_name = %?, db_name = %?, table_name = %?, table_id = %?, column_name = %?, column_id = %?, expression = %?,
 			status = %?, masking_type = %?, restrict_on = %?, updated_at = %?
@@ -568,6 +574,7 @@ func (w *worker) dropMaskingPoliciesOnTable(jobCtx *jobContext, tableID int64) e
 // dropMaskingPoliciesByDBName deletes all masking policies for a given database
 // in a single SQL statement using the db_name column.
 func (w *worker) dropMaskingPoliciesByDBName(jobCtx *jobContext, dbName string) error {
+	w.maskingPolicyTxn = true
 	const deleteSQL = "DELETE FROM mysql.tidb_masking_policy WHERE db_name = %?"
 	_, err := w.sess.Execute(jobCtx.stepCtx, deleteSQL, "drop-masking-policies-by-db", dbName)
 	if err != nil {
@@ -594,6 +601,11 @@ func (w *worker) updateMaskingPolicyTableIDAfterTruncate(jobCtx *jobContext, old
 		WHERE policy_id = %?`
 	now := time.Now()
 	for _, policy := range policies {
+		failpoint.Inject("mockMaskingPolicyUpdateError", func(val failpoint.Value) {
+			if val == true {
+				failpoint.Return(errors.New("mock masking policy update error"))
+			}
+		})
 		_, err := w.sess.Execute(jobCtx.stepCtx, updateSQL, "update-masking-policy-table-id",
 			newTableID, now, policy.ID,
 		)
@@ -648,6 +660,11 @@ func (w *worker) updateMaskingPolicyNamesAfterRename(
 
 // updateMaskingPolicyNamesInSysTable updates only the db_name and table_name fields.
 func (w *worker) updateMaskingPolicyNamesInSysTable(ctx context.Context, policy *model.MaskingPolicyInfo) error {
+	failpoint.Inject("mockMaskingPolicyUpdateError", func(val failpoint.Value) {
+		if val == true {
+			failpoint.Return(errors.New("mock masking policy update error"))
+		}
+	})
 	const updateSQL = `UPDATE mysql.tidb_masking_policy
 		SET db_name = %?, table_name = %?, updated_at = %?
 		WHERE policy_id = %?`

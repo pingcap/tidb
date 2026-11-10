@@ -16,20 +16,19 @@ package core
 
 import (
 	"context"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
@@ -37,8 +36,9 @@ func (b *PlanBuilder) checkMaskingPolicyRestrictOnSelectPlan(ctx context.Context
 	if b.is == nil || p == nil || op == ast.MaskingPolicyRestrictOpNone {
 		return nil
 	}
-	if len(b.is.AllMaskingPolicies()) == 0 {
-		return nil
+	hasPolicies, err := b.is.HasMaskingPolicies()
+	if err != nil || !hasPolicies {
+		return err
 	}
 	cols := p.Schema().Columns
 	if len(cols) == 0 {
@@ -50,7 +50,10 @@ func (b *PlanBuilder) checkMaskingPolicyRestrictOnSelectPlan(ctx context.Context
 	checkedPolicyIDs := make(map[int64]struct{})
 	for i := range cols {
 		for _, candidate := range b.extractMaskingPolicyCandidateNamesFromOutputColumn(p, i) {
-			policy, tblInfo, colInfo := b.findMaskingPolicyByFieldName(ctx, candidate)
+			policy, tblInfo, colInfo, err := b.findMaskingPolicyByFieldName(ctx, candidate)
+			if err != nil {
+				return err
+			}
 			if policy == nil || tblInfo == nil || colInfo == nil || policy.Status != model.MaskingPolicyStatusEnable {
 				continue
 			}
@@ -60,13 +63,15 @@ func (b *PlanBuilder) checkMaskingPolicyRestrictOnSelectPlan(ctx context.Context
 			if _, ok := checkedPolicyIDs[policy.ID]; ok {
 				continue
 			}
-			allowed, err := b.canCurrentSessionReadUnmaskedColumn(sv, schemaVersion, policy, tblInfo, colInfo)
+			allowed, err := canCurrentSessionReadUnmaskedColumn(b.ctx.GetExprCtx(), sv, schemaVersion, policy, tblInfo, colInfo)
 			if err != nil {
 				return err
 			}
 			if !allowed {
 				return plannererrors.ErrAccessDeniedToMaskedColumn.GenWithStackByArgs(colInfo.Name.O)
 			}
+			sv.StmtCtx.MaskingPolicyChecks = append(sv.StmtCtx.MaskingPolicyChecks,
+				stmtctx.MaskingPolicyCheck{PolicyID: policy.ID, TableID: tblInfo.ID, ColumnID: colInfo.ID, Operation: op})
 			checkedPolicyIDs[policy.ID] = struct{}{}
 		}
 	}
@@ -149,55 +154,62 @@ func (*PlanBuilder) extractMaskingPolicyCandidateNamesFromOutputColumn(
 	return candidates
 }
 
-func (b *PlanBuilder) findMaskingPolicyByFieldName(ctx context.Context, name *types.FieldName) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo) {
+func (b *PlanBuilder) findMaskingPolicyByFieldName(ctx context.Context, name *types.FieldName) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo, error) {
 	if name == nil || name.Hidden {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	tblName := name.OrigTblName
 	if tblName.L == "" {
 		tblName = name.TblName
 	}
 	if tblName.L == "" {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	colName := name.OrigColName
 	if colName.L == "" {
 		colName = name.ColName
 	}
 	if colName.L == "" {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	dbName := name.DBName
 	if dbName.L == "" {
 		dbName = pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 	}
 	if dbName.L == "" {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	tbl, err := b.is.TableByName(ctx, dbName, tblName)
 	if err != nil {
-		return nil, nil, nil
+		if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
+			return nil, nil, nil, nil
+		}
+		return nil, nil, nil, err
 	}
 	tblInfo := tbl.Meta()
 	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 	if colInfo == nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
-	policy, ok := b.is.MaskingPolicyByTableColumn(tblInfo.ID, colInfo.ID)
+	policy, ok, err := b.is.MaskingPolicyByTableColumn(tblInfo.ID, colInfo.ID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	if !ok {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
-	return policy, tblInfo, colInfo
+	return policy, tblInfo, colInfo, nil
 }
 
-func (b *PlanBuilder) canCurrentSessionReadUnmaskedColumn(
+func canCurrentSessionReadUnmaskedColumn(
+	ctx expression.BuildContext,
 	sv *variable.SessionVars,
 	schemaVersion int64,
 	policy *model.MaskingPolicyInfo,
 	tblInfo *model.TableInfo,
 	colInfo *model.ColumnInfo,
 ) (bool, error) {
-	expr, placeholder, err := getMaskingPolicyExpr(b.ctx.GetExprCtx(), sv, schemaVersion, policy, tblInfo, colInfo)
+	expr, placeholder, err := getMaskingPolicyExpr(ctx, sv, schemaVersion, policy, tblInfo, colInfo)
 	if err != nil {
 		return false, err
 	}
@@ -205,105 +217,70 @@ func (b *PlanBuilder) canCurrentSessionReadUnmaskedColumn(
 		return false, nil
 	}
 
-	// Use multiple test values to reduce false positive risk
-	// If the expression returns different values for different inputs,
-	// it's actually doing transformation (not just returning the input)
-	// Only return true (can read unmasked) when EVERY sampled input
-	// round-trips unchanged to avoid bypass on policies that preserve
-	// one probe value or emit a fixed constant.
-	sentinels := maskingPolicySentinelDatums(colInfo)
-	evalCtx := b.ctx.GetExprCtx().GetEvalCtx()
-	allRoundTrip := len(sentinels) > 0
-
-	for _, sentinel := range sentinels {
-		// The masking expression placeholder keeps the original column offset.
-		// Build a row with enough columns and place the sentinel at that offset.
-		colIdx := placeholder.Index
-		if colIdx < 0 {
-			colIdx = 0
-		}
-		rowDatums := make([]types.Datum, colIdx+1)
-		rowDatums[colIdx] = sentinel
-		row := chunk.MutRowFromDatums(rowDatums).ToRow()
-		val, err := expr.Eval(evalCtx, row)
-		if err != nil {
-			return false, err
-		}
-		if val.IsNull() {
-			return false, nil
-		}
-		// Compare with sentinel to check if expression returned input unchanged
-		cmp, err := val.Compare(evalCtx.TypeCtx(), &sentinel, collate.GetBinaryCollator())
-		if err != nil {
-			return false, err
-		}
-		// If any sentinel does NOT round-trip unchanged, the expression
-		// is actually masking (not just preserving specific values)
-		if cmp != 0 {
-			allRoundTrip = false
-		}
+	// Evaluate only session-stable deferred constants on this private clone.
+	// The cached expression and physical plan retain their runtime identity checks.
+	expr, err = foldMaskingPolicySessionConstants(ctx, expr)
+	if err != nil {
+		return false, err
 	}
-
-	return allRoundTrip, nil
+	column, ok := expr.(*expression.Column)
+	return ok && column.Equal(ctx.GetEvalCtx(), placeholder), nil
 }
 
-// maskingPolicySentinelDatums returns multiple test values for checking if a masking
-// expression properly transforms values. Using multiple values reduces the risk of
-// false positives where an expression happens to return one of the test values.
-func maskingPolicySentinelDatums(colInfo *model.ColumnInfo) []types.Datum {
-	switch colInfo.GetType() {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		return []types.Datum{
-			types.NewIntDatum(2099),
-			types.NewIntDatum(1999),
-			types.NewIntDatum(2000),
+func foldMaskingPolicySessionConstants(ctx expression.BuildContext, expr expression.Expression) (expression.Expression, error) {
+	switch x := expr.(type) {
+	case *expression.Column:
+		x.RetType = x.RetType.Clone()
+	case *expression.Constant:
+		if x.DeferredExpr != nil && isMaskingPolicyExprCacheable(x.DeferredExpr) {
+			value, err := x.DeferredExpr.Eval(ctx.GetEvalCtx(), chunk.Row{})
+			if err != nil {
+				return nil, err
+			}
+			return &expression.Constant{Value: value, RetType: x.RetType}, nil
 		}
-	case mysql.TypeYear:
-		return []types.Datum{
-			types.NewIntDatum(2099),
-			types.NewIntDatum(2000),
-			types.NewIntDatum(2024),
+	case *expression.ScalarFunction:
+		x.RetType = x.RetType.Clone()
+		for i, arg := range x.GetArgs() {
+			folded, err := foldMaskingPolicySessionConstants(ctx, arg)
+			if err != nil {
+				return nil, err
+			}
+			x.GetArgs()[i] = folded
 		}
-	case mysql.TypeDuration:
-		fsp := colInfo.GetDecimal()
-		if fsp == types.UnspecifiedFsp {
-			fsp = types.DefaultFsp
-		}
-		return []types.Datum{
-			types.NewDatum(types.Duration{Duration: 12*time.Hour + 34*time.Minute + 56*time.Second, Fsp: fsp}),
-			types.NewDatum(types.Duration{Duration: 10*time.Hour + 20*time.Minute + 30*time.Second, Fsp: fsp}),
-			types.NewDatum(types.Duration{Duration: 5*time.Hour + 15*time.Minute + 45*time.Second, Fsp: fsp}),
-		}
-	case mysql.TypeDate:
-		return []types.Datum{
-			types.NewDatum(types.NewTime(types.FromDate(2099, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0)),
-			types.NewDatum(types.NewTime(types.FromDate(2000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0)),
-			types.NewDatum(types.NewTime(types.FromDate(2024, 6, 15, 0, 0, 0, 0), mysql.TypeDate, 0)),
-		}
-	case mysql.TypeDatetime, mysql.TypeTimestamp:
-		fsp := colInfo.GetDecimal()
-		if fsp == types.UnspecifiedFsp {
-			fsp = 0
-		}
-		return []types.Datum{
-			types.NewDatum(types.NewTime(types.FromDate(2099, 12, 31, 23, 59, 58, 0), colInfo.GetType(), fsp)),
-			types.NewDatum(types.NewTime(types.FromDate(2000, 1, 1, 0, 0, 0, 0), colInfo.GetType(), fsp)),
-			types.NewDatum(types.NewTime(types.FromDate(2024, 6, 15, 12, 30, 45, 0), colInfo.GetType(), fsp)),
-		}
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
-		return []types.Datum{
-			types.NewStringDatum("TIDB_MASKING_SENTINEL_1"),
-			types.NewStringDatum("TIDB_MASKING_SENTINEL_2"),
-			types.NewStringDatum("TIDB_MASKING_SENTINEL_3"),
-		}
-	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		return []types.Datum{
-			types.NewBytesDatum([]byte("TIDB_MASKING_SENTINEL_1")),
-			types.NewBytesDatum([]byte("TIDB_MASKING_SENTINEL_2")),
-			types.NewBytesDatum([]byte("TIDB_MASKING_SENTINEL_3")),
-		}
-	default:
-		zero := table.GetZeroValue(colInfo)
-		return []types.Datum{zero}
+		x.CleanHashCode()
+		return expression.FoldConstant(ctx, x), nil
 	}
+	return expr, nil
+}
+
+func checkCachedMaskingPolicyAccess(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, checks []stmtctx.MaskingPolicyCheck) error {
+	for _, check := range checks {
+		policy, ok, err := is.MaskingPolicyByTableColumn(check.TableID, check.ColumnID)
+		if err != nil {
+			return err
+		}
+		if !ok || policy.ID != check.PolicyID {
+			return plannererrors.ErrSchemaChanged.GenWithStack("masking policy binding changed")
+		}
+		if policy.Status != model.MaskingPolicyStatusEnable || policy.RestrictOps&check.Operation == 0 {
+			continue
+		}
+		tbl, ok := is.TableByID(ctx, check.TableID)
+		if !ok {
+			return plannererrors.ErrSchemaChanged.GenWithStack("masking policy table changed")
+		}
+		col := model.FindColumnInfoByID(tbl.Meta().Columns, check.ColumnID)
+		if col == nil {
+			return plannererrors.ErrSchemaChanged.GenWithStack("masking policy column changed")
+		}
+		allowed, err := canCurrentSessionReadUnmaskedColumn(sctx.GetExprCtx(), sctx.GetSessionVars(), is.SchemaMetaVersion(), policy, tbl.Meta(), col)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return plannererrors.ErrAccessDeniedToMaskedColumn.GenWithStackByArgs(col.Name.O)
+		}
+	}
+	return nil
 }

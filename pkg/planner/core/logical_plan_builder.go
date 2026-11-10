@@ -1586,9 +1586,9 @@ func buildExpandFieldName(ctx expression.EvalContext, expr expression.Expression
 	return newName
 }
 
-func (b *PlanBuilder) findMaskingPolicy(_ context.Context, name *types.FieldName, col *expression.Column) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo) {
+func (b *PlanBuilder) findMaskingPolicy(_ context.Context, name *types.FieldName, col *expression.Column) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo, error) {
 	if b.is == nil || name == nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	tblName := name.OrigTblName
 	colName := name.OrigColName
@@ -1603,28 +1603,31 @@ func (b *PlanBuilder) findMaskingPolicy(_ context.Context, name *types.FieldName
 		dbName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 	}
 	if dbName.L == "" {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	tbl, err := b.is.TableByName(context.Background(), dbName, tblName)
 	if err != nil {
-		return nil, nil, nil
+		return nil, nil, nil, err
 	}
 	tblInfo := tbl.Meta()
 	if tblInfo == nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	colInfo := tblInfo.FindPublicColumnByName(colName.L)
 	if colInfo == nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	if colInfo.ID != col.ID {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
-	policy, ok := b.is.MaskingPolicyByTableColumn(tblInfo.ID, colInfo.ID)
+	policy, ok, err := b.is.MaskingPolicyByTableColumn(tblInfo.ID, colInfo.ID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	if !ok || policy == nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
-	return policy, tblInfo, colInfo
+	return policy, tblInfo, colInfo, nil
 }
 
 // buildProjectionField builds the field object according to SelectField in projection.

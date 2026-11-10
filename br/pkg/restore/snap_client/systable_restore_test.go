@@ -432,6 +432,7 @@ VALUES
 		"__TiDB_BR_Temporary_mysql",
 		true,
 		allowAllFilter,
+		true,
 		execSQL,
 	)
 	require.NoError(t, err)
@@ -443,7 +444,7 @@ VALUES
 		Check(testkit.Rows("0"))
 }
 
-func TestRestoreMaskingPoliciesFromTemporaryTableSkipWhenTempTableNotExists(t *testing.T) {
+func TestRestoreMaskingPoliciesFromTemporaryTableRejectMissingTempTable(t *testing.T) {
 	cluster := mc
 	ctx := context.Background()
 	tk := testkit.NewTestKit(t, cluster.Storage)
@@ -465,9 +466,10 @@ func TestRestoreMaskingPoliciesFromTemporaryTableSkipWhenTempTableNotExists(t *t
 		"__TiDB_BR_Temporary_mysql",
 		true,
 		allowAllFilter,
+		true,
 		execSQL,
 	)
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "cannot read masking policy staging table")
 	require.Equal(t, 0, execCount)
 }
 

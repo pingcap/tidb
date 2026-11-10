@@ -18,25 +18,47 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 )
 
-func TestSkipRestoreMaskingPoliciesWhenTargetTableNotExist(t *testing.T) {
-	rc := &SnapClient{}
-	db := &database{
-		ExistingTables: map[string]*model.TableInfo{},
-		Name:           pmodel.NewCIStr(mysql.SystemDB),
-		TemporaryName:  utils.TemporaryDBName(mysql.SystemDB),
-	}
-	ti := &model.TableInfo{Name: pmodel.NewCIStr(sysMaskingPolicyTableName)}
-	tableFilter, err := filter.Parse([]string{"*.*"})
-	require.NoError(t, err)
+type maskingPolicyRestoreExecutor struct {
+	sqlexec.RestrictedSQLExecutor
+	rows []chunk.Row
+}
 
-	err = rc.replaceTemporaryTableToSystable(context.Background(), ti, db, tableFilter)
+func (e maskingPolicyRestoreExecutor) ExecRestrictedSQL(context.Context, []sqlexec.OptionFuncAlias, string, ...any) ([]chunk.Row, []*resolve.ResultField, error) {
+	return e.rows, nil, nil
+}
+
+func TestRestoreMaskingPoliciesRequiresTargetSupport(t *testing.T) {
+	tableFilter, err := filter.Parse([]string{"test.*"})
 	require.NoError(t, err)
+	row := chunk.MutRowFromValues("p", "test", "t", "c", "mask_full(c)", "ENABLED", "NONE").ToRow()
+	unrelated := chunk.MutRowFromValues("p", "other", "t", "c", "mask_full(c)", "ENABLED", "NONE").ToRow()
+	for _, tc := range []struct {
+		rows                 []chunk.Row
+		supported, wantError bool
+	}{
+		{[]chunk.Row{row}, false, true},
+		{[]chunk.Row{row}, true, false},
+		{[]chunk.Row{unrelated}, false, false},
+		{nil, false, false},
+	} {
+		calls := 0
+		err := restoreMaskingPoliciesFromTemporaryTable(context.Background(), maskingPolicyRestoreExecutor{rows: tc.rows}, "tmp_mysql", true, tableFilter, tc.supported,
+			func(context.Context, string) error { calls++; return nil })
+		if tc.wantError {
+			require.Error(t, err)
+			require.Zero(t, calls)
+		} else {
+			require.NoError(t, err)
+		}
+		if tc.supported && len(tc.rows) > 0 {
+			require.Equal(t, 1, calls)
+		}
+	}
 }

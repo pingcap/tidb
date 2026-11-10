@@ -2197,7 +2197,7 @@ func fallbackStatsTables(tables []*metautil.Table) []*metautil.Table {
 }
 
 func shouldForceRestoreMaskingPolicySchema(cfg *RestoreConfig, dbName string) bool {
-	return cfg.WithSysTable && !cfg.NoSchema && strings.EqualFold(dbName, utils.TemporaryDBName(mysql.SystemDB).O)
+	return cfg.WithSysTable && strings.EqualFold(dbName, utils.TemporaryDBName(mysql.SystemDB).O)
 }
 
 func shouldForceRestoreMaskingPolicyTable(cfg *RestoreConfig, dbName, tableName string) bool {

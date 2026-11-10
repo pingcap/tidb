@@ -19,7 +19,7 @@ func TestShouldForceRestoreMaskingPolicySchema(t *testing.T) {
 	require.True(t, shouldForceRestoreMaskingPolicySchema(&RestoreConfig{
 		RestoreCommonConfig: RestoreCommonConfig{WithSysTable: true},
 	}, tempSysDB))
-	require.False(t, shouldForceRestoreMaskingPolicySchema(&RestoreConfig{
+	require.True(t, shouldForceRestoreMaskingPolicySchema(&RestoreConfig{
 		RestoreCommonConfig: RestoreCommonConfig{WithSysTable: true},
 		NoSchema:            true,
 	}, tempSysDB))

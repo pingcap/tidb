@@ -23,6 +23,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -36,6 +37,9 @@ import (
 func LoadMaskingPolicies(
 	factory func() (pools.Resource, error),
 ) ([]*model.MaskingPolicyInfo, error) {
+	failpoint.Inject("mockLoadMaskingPoliciesError", func() {
+		failpoint.Return(nil, errors.New("mock masking policy load error"))
+	})
 	return loadMaskingPoliciesWithTableIDs(factory, nil)
 }
 

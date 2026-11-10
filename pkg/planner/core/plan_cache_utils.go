@@ -431,12 +431,13 @@ func bool2Byte(flag bool) byte {
 
 // PlanCacheValue stores the cached Statement and StmtNode.
 type PlanCacheValue struct {
-	Plan          base.Plan          // not-read-only, session might update it before reusing
-	OutputColumns types.NameSlice    // read-only
-	memoryUsage   int64              // read-only
-	testKey       int64              // test-only
-	paramTypes    []*types.FieldType // read-only, all parameters' types, different parameters may share same plan
-	stmtHints     *hint.StmtHints    // read-only, hints which set session variables
+	Plan                base.Plan                    // not-read-only, session might update it before reusing
+	OutputColumns       types.NameSlice              // read-only
+	memoryUsage         int64                        // read-only
+	testKey             int64                        // test-only
+	paramTypes          []*types.FieldType           // read-only, all parameters' types, different parameters may share same plan
+	stmtHints           *hint.StmtHints              // read-only, hints which set session variables
+	maskingPolicyChecks []stmtctx.MaskingPolicyCheck // immutable source-column authorization checks
 }
 
 // CloneForInstancePlanCache clones a PlanCacheValue for instance plan cache.
@@ -491,6 +492,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 		}
 	}
 
+	sum += size.SizeOfSlice + int64(cap(v.maskingPolicyChecks))*(size.SizeOfInt64*4)
 	for _, name := range v.OutputColumns {
 		sum += name.MemoryUsage()
 	}

@@ -102,7 +102,6 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 			return ver, errors.Trace(err)
 		}
 		if err = w.dropMaskingPoliciesOnTable(jobCtx, tblInfo.ID); err != nil {
-			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		metaMut := jobCtx.metaMut

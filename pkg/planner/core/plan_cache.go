@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"math"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -270,6 +271,9 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context, cachedVal *P
 	if err := checkPreparedPriv(ctx, sctx, stmt, is); err != nil {
 		return nil, nil, false, err
 	}
+	if err := checkCachedMaskingPolicyAccess(ctx, sctx, is, cachedVal.maskingPolicyChecks); err != nil {
+		return nil, nil, false, err
+	}
 	if !RebuildPlan4CachedPlan(cachedVal.Plan) {
 		return nil, nil, false, nil
 	}
@@ -314,6 +318,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	// put this plan into the plan cache.
 	if stmtCtx.UseCache() {
 		cached := NewPlanCacheValue(p, names, paramTypes, &stmtCtx.StmtHints)
+		cached.maskingPolicyChecks = slices.Clone(stmtCtx.MaskingPolicyChecks)
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)

@@ -48,16 +48,23 @@ type maskingResultBuilder struct {
 	cache     map[maskingResultKey]maskingResult
 }
 
-func (b *PlanBuilder) maskingEnabled() bool {
-	return b.is != nil && !b.ctx.GetSessionVars().InRestrictedSQL && len(b.is.AllMaskingPolicies()) > 0
+func (b *PlanBuilder) maskingEnabled() (bool, error) {
+	if b.is == nil || b.ctx.GetSessionVars().InRestrictedSQL {
+		return false, nil
+	}
+	return b.is.HasMaskingPolicies()
 }
 
 // buildFinalProjectionWithMasking keeps all relational expressions on raw
 // values. Only the final projection evaluates masking, using raw dependencies
 // carried through intermediate projections and DISTINCT as auxiliary columns.
 func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p base.LogicalPlan, oldLen int) (base.LogicalPlan, error) {
-	if p == nil || !b.maskingEnabled() {
+	if p == nil {
 		return p, nil
+	}
+	enabled, err := b.maskingEnabled()
+	if err != nil || !enabled {
+		return p, err
 	}
 	m := maskingResultBuilder{b: b, ctx: ctx, cache: make(map[maskingResultKey]maskingResult)}
 	cols := append([]*expression.Column(nil), p.Schema().Columns[:oldLen]...)
@@ -126,7 +133,10 @@ func (m *maskingResultBuilder) buildColumn(p base.LogicalPlan, col *expression.C
 	case *logicalop.LogicalCTE:
 		return m.cte(x, idx)
 	case *logicalop.DataSource:
-		policy, tblInfo, colInfo := m.b.findMaskingPolicy(m.ctx, p.OutputNames()[idx], col)
+		policy, tblInfo, colInfo, err := m.b.findMaskingPolicy(m.ctx, p.OutputNames()[idx], col)
+		if err != nil {
+			return plain, err
+		}
 		if policy == nil || policy.Status != model.MaskingPolicyStatusEnable {
 			return plain, nil
 		}

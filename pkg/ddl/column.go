@@ -207,7 +207,6 @@ func (w *worker) onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
 		if err = w.dropMaskingPoliciesOnColumn(jobCtx, tblInfo.ID, colInfo.ID); err != nil {
-			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)

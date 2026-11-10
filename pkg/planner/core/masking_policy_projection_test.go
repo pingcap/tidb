@@ -15,10 +15,17 @@
 package core_test
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	core "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -311,4 +318,260 @@ func TestMaskingPolicyFastPathRepresentations(t *testing.T) {
 		}
 		tk.MustQuery(sql).Check(rows)
 	}
+}
+
+func TestMaskingPolicyMultiSchemaRename(t *testing.T) {
+	for _, size := range []uint64{0, variable.DefTiDBSchemaCacheSize} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			originalSize := variable.SchemaCacheSize.Load()
+			t.Cleanup(func() { variable.SchemaCacheSize.Store(originalSize) })
+			variable.SchemaCacheSize.Store(size)
+			require.NoError(t, dom.Reload())
+			tk.MustExec("use test")
+			tk.MustExec("create table t_multi(c varchar(64))")
+			tk.MustExec("insert into t_multi values ('secret')")
+			tk.MustExec("create masking policy p on t_multi(c) as mask_full(c) enable")
+			tk.MustQuery("select c from t_multi").Check(testkit.Rows("XXXXXX"))
+			tk.MustExec("alter table t_multi change column c d varchar(64), add column x int")
+			tk.MustQuery("select d from t_multi").Check(testkit.Rows("XXXXXX"))
+			tk.MustExec("alter table t_multi modify masking policy p set expression = mask_partial(d, 1, 1, '*')")
+			tk.MustQuery("select d from t_multi").Check(testkit.Rows("s****t"))
+		})
+	}
+}
+
+func TestMaskingPolicyIdentityPlanCache(t *testing.T) {
+	for _, instance := range []bool{false, true} {
+		t.Run(fmt.Sprint("instance=", instance), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			root := testkit.NewTestKit(t, store)
+			require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+			root.MustExec("use test")
+			root.MustExec("create table t_identity(id int primary key,c varchar(64))")
+			root.MustExec("insert into t_identity values (1,'secret'),(2,'secret')")
+			root.MustExec("create user 'u_identity'@'%'")
+			root.MustExec("grant select on test.* to 'u_identity'@'%'")
+			ctx := context.Background()
+			if instance {
+				ctx = context.WithValue(ctx, core.PlanCacheKeyEnableInstancePlanCache{}, true)
+			}
+			for _, fn := range []string{"mask_full", "user", "session_user", "system_user"} {
+				policyExpr := "mask_full(c)"
+				if fn != "mask_full" {
+					policyExpr = fmt.Sprintf("case when current_user()='u_identity@%%' and %s()='u_identity@192.0.2.1' then c else mask_full(c) end", fn)
+				}
+				root.MustExec("create or replace masking policy p on t_identity(c) as " + policyExpr)
+				for _, query := range []struct {
+					sql, params string
+					rows        int
+				}{
+					{"select c from t_identity where id = ?", "@a", 1},
+					{"select c from t_identity where id in (?, ?)", "@a,@b", 2},
+					{"select c from t_identity where id >= ? order by id", "@a", 2},
+				} {
+					for sessionIdx, host := range []string{"192.0.2.1", "192.0.2.2"} {
+						tk := testkit.NewTestKit(t, store)
+						require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u_identity", Hostname: host}, nil, nil, nil))
+						tk.MustExec("use test")
+						tk.MustExecWithContext(ctx, "prepare st from '"+query.sql+"'")
+						tk.MustExecWithContext(ctx, "set @a=1,@b=2")
+						value := "XXXXXX"
+						if fn != "mask_full" && sessionIdx == 0 {
+							value = "secret"
+						}
+						expected := make([]string, query.rows)
+						for i := range expected {
+							expected[i] = value
+						}
+						for attempt := range 2 {
+							tk.MustQueryWithContext(ctx, "execute st using "+query.params).Check(testkit.Rows(expected...))
+							hit := "0"
+							if attempt > 0 || (instance && sessionIdx > 0) {
+								hit = "1"
+							}
+							tk.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows(hit))
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestMaskingPolicyRoleResultPlanCache(t *testing.T) {
+	for _, instance := range []bool{false, true} {
+		t.Run(fmt.Sprint(instance), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			root := testkit.NewTestKit(t, store)
+			root.MustExec("create user role_cache_user")
+			root.MustExec("create role role_cache_unmask")
+			root.MustExec("grant role_cache_unmask to role_cache_user")
+			root.MustExec("grant select on test.* to role_cache_user")
+			root.MustExec("create table test.role_cache_result(id int primary key,c varchar(64))")
+			root.MustExec("insert into test.role_cache_result values (1,'secret')")
+			root.MustExec("create masking policy p on test.role_cache_result(c) as case when current_role() != 'NONE' then c else mask_full(c) end")
+			tk := testkit.NewTestKit(t, store)
+			require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "role_cache_user", Hostname: "%"}, nil, nil, nil))
+			ctx := context.Background()
+			if instance {
+				ctx = context.WithValue(ctx, core.PlanCacheKeyEnableInstancePlanCache{}, true)
+			}
+			tk.MustExecWithContext(ctx, "prepare st from 'select c from test.role_cache_result where id=?'")
+			tk.MustExec("set @a=1")
+			for i, role := range []string{"all", "none", "all"} {
+				tk.MustExec("set role " + role)
+				value := "secret"
+				if role == "none" {
+					value = "XXXXXX"
+				}
+				tk.MustQueryWithContext(ctx, "execute st using @a").Check(testkit.Rows(value))
+				hit := "1"
+				if i == 0 {
+					hit = "0"
+				}
+				tk.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows(hit))
+			}
+		})
+	}
+}
+
+func TestMaskingPolicyNonPreparedPlanCache(t *testing.T) {
+	for _, instance := range []bool{false, true} {
+		t.Run(fmt.Sprint(instance), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			root := testkit.NewTestKit(t, store)
+			root.MustExec("create user np_mask_user")
+			root.MustExec("create role np_mask_role")
+			root.MustExec("grant np_mask_role to np_mask_user")
+			root.MustExec("grant select on test.* to np_mask_user")
+			root.MustExec("create table test.np_mask(id int primary key,c varchar(64))")
+			root.MustExec("insert into test.np_mask values (1,'secret')")
+			root.MustExec("create masking policy p on test.np_mask(c) as case when current_user()='np_mask_user@%' and user()='np_mask_user@192.0.2.1' and current_role()!='NONE' then c else mask_full(c) end")
+			ctx := context.Background()
+			if instance {
+				ctx = context.WithValue(ctx, core.PlanCacheKeyEnableInstancePlanCache{}, true)
+			}
+			for sessionIdx, host := range []string{"192.0.2.1", "192.0.2.2"} {
+				tk := testkit.NewTestKit(t, store)
+				require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "np_mask_user", Hostname: host}, nil, nil, nil))
+				tk.MustExec("use test")
+				tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+				for roleIdx, role := range []string{"all", "none", "all"} {
+					tk.MustExec("set role " + role)
+					value := "XXXXXX"
+					if sessionIdx == 0 && role != "none" {
+						value = "secret"
+					}
+					for attempt := range 2 {
+						tk.MustQueryWithContext(ctx, "select c from test.np_mask where id>=1").Check(testkit.Rows(value))
+						hit := "1"
+						if attempt == 0 && roleIdx == 0 && (!instance || sessionIdx == 0) {
+							hit = "0"
+						}
+						tk.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows(hit))
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestMaskingPolicyUnsafeFunctionSkipsPlanCache(t *testing.T) {
+	for _, instance := range []bool{false, true} {
+		t.Run(fmt.Sprint(instance), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table unsafe_mask(id int primary key,c varchar(64))")
+			tk.MustExec("insert into unsafe_mask values (1,'secret')")
+			ctx := context.Background()
+			if instance {
+				ctx = context.WithValue(ctx, core.PlanCacheKeyEnableInstancePlanCache{}, true)
+			}
+			for _, policy := range []struct{ expr, setup1, setup2 string }{
+				{"case when connection_id()=10 then c else mask_full(c) end", "", ""},
+				// AES captures block_encryption_mode while its signature is built.
+				{"case when length(aes_encrypt('x','key','0123456789abcdef'))=16 then c else mask_full(c) end", "set block_encryption_mode='aes-128-ecb'", "set block_encryption_mode='aes-128-ofb'"},
+			} {
+				tk.MustExec("create or replace masking policy p on unsafe_mask(c) as " + policy.expr)
+				tk.MustExecWithContext(ctx, "prepare st from 'select c from unsafe_mask where id=?'")
+				tk.MustExec("set @a=1")
+				for i, setup := range []string{policy.setup1, policy.setup2} {
+					tk.Session().GetSessionVars().ConnectionID = uint64(10 + i*10)
+					if setup != "" {
+						tk.MustExec(setup)
+					}
+					value := "secret"
+					if i == 1 {
+						value = "XXXXXX"
+					}
+					tk.MustQueryWithContext(ctx, "execute st using @a").Check(testkit.Rows(value))
+					tk.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("0"))
+				}
+				tk.MustExec("deallocate prepare st")
+			}
+		})
+	}
+}
+
+func TestMaskingPolicyUserVariableNotCached(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table var_mask(id int primary key,c varchar(64))")
+	tk.MustExec("insert into var_mask values (1,'secret')")
+	tk.MustExec("set @unmask=1")
+	tk.MustExec("create masking policy p on var_mask(c) as case when @unmask=1 then c else mask_full(c) end")
+	// The outer query marks @unmask as readonly for this statement. The policy
+	// must keep its dependency rather than cache that statement's value.
+	tk.MustQuery("select c from var_mask where id=@unmask").Check(testkit.Rows("secret"))
+	tk.MustExec("set @unmask=0")
+	tk.MustQuery("select c from var_mask where id=1").Check(testkit.Rows("XXXXXX"))
+	tk.MustExec("prepare st from 'select c from var_mask where id=?'")
+	tk.MustExec("set @a=1")
+	for range 2 {
+		tk.MustQuery("execute st using @a").Check(testkit.Rows("XXXXXX"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+}
+
+func TestMaskingPolicyExprCacheSQLMode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("create table mode_mask(id int primary key,c bigint unsigned)")
+	tk.MustExec("insert into mode_mask values (1,1)")
+	tk.MustExec("create masking policy p on mode_mask(c) as c-2")
+	tk.MustExec("prepare st from 'select c from mode_mask where id=?'")
+	tk.MustExec("set @a=1")
+	err := tk.QueryToErr("execute st using @a")
+	require.ErrorContains(t, err, "out of range")
+	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'")
+	for range 2 {
+		tk.MustQuery("execute st using @a").Check(testkit.Rows("-1"))
+	}
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestMaskingPolicyLoadFailureBlocksQueries(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_load(id int primary key, c varchar(64))")
+	tk.MustExec("insert into t_load values (1, 'secret')")
+	tk.MustExec("create masking policy p on t_load(c) as mask_full(c) enable")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockLoadMaskingPoliciesError", "return(true)")
+	for _, sql := range []string{"select c from t_load where id=1", "select c from t_load order by id", "show masking policies for t_load", "show create table t_load", "alter table t_load modify column c varchar(100)"} {
+		rs, err := tk.Exec(sql)
+		if err == nil && rs != nil {
+			_, err = session.GetRows4Test(context.Background(), tk.Session(), rs)
+			require.NoError(t, rs.Close())
+		}
+		require.ErrorContains(t, err, "mock masking policy load error", sql)
+	}
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/infoschema/mockLoadMaskingPoliciesError")
+	tk.MustQuery("select c from t_load where id=1").Check(testkit.Rows("XXXXXX"))
 }

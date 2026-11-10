@@ -617,7 +617,7 @@ func (b *Builder) applyTableUpdate(m meta.Reader, diff *model.SchemaDiff) ([]int
 			return nil, errors.Trace(err)
 		}
 	}
-	if needRefreshMaskingPoliciesForTableDiff(diff.Type) {
+	if needRefreshMaskingPoliciesForTableDiff(diff) {
 		if err := refreshMaskingPoliciesForTableIDs(b, oldTableID, newTableID); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -625,7 +625,19 @@ func (b *Builder) applyTableUpdate(m meta.Reader, diff *model.SchemaDiff) ([]int
 	return tblIDs, nil
 }
 
-func needRefreshMaskingPoliciesForTableDiff(tp model.ActionType) bool {
+func needRefreshMaskingPoliciesForTableDiff(diff *model.SchemaDiff) bool {
+	if maskingPolicyTableAction(diff.Type) {
+		return true
+	}
+	for _, tp := range diff.SubActionTypes {
+		if maskingPolicyTableAction(tp) {
+			return true
+		}
+	}
+	return false
+}
+
+func maskingPolicyTableAction(tp model.ActionType) bool {
 	switch tp {
 	case model.ActionCreateMaskingPolicy,
 		model.ActionAlterMaskingPolicy,

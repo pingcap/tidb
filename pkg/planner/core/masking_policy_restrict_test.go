@@ -15,10 +15,14 @@
 package core_test
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	core "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -111,4 +115,133 @@ func TestMaskingPolicyRestrictOnInsertSelectStar(t *testing.T) {
 	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "u_star", Hostname: "%"}, nil, nil, nil))
 	tkUser.MustExec("use test")
 	tkUser.MustGetErrCode("insert into payment_details_copy select * from payment_details", errno.ErrAccessDeniedToMaskedColumn)
+}
+
+func TestMaskingPolicyRestrictRequiresIdentity(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	root.MustExec("use test")
+	root.MustExec("create user 'u_restrict'@'%'")
+	root.MustExec("grant select, insert, update, delete on test.* to 'u_restrict'@'%'")
+	user := testkit.NewTestKit(t, store)
+	require.NoError(t, user.Session().Auth(&auth.UserIdentity{Username: "u_restrict", Hostname: "%"}, nil, nil, nil))
+	user.MustExec("use test")
+	cases := []struct{ tp, value, masked string }{
+		{"decimal(10,2)", "123.45", "mask_full(c)"},
+		{"float", "123.45", "mask_full(c)"},
+		{"double", "123.45", "mask_full(c)"},
+		{"varchar(64)", "'secret'", "case when c like 'TIDB_MASKING_SENTINEL_%' then c else mask_full(c) end"},
+	}
+	for i, tc := range cases {
+		src, dst := fmt.Sprintf("restrict_src_%d", i), fmt.Sprintf("restrict_dst_%d", i)
+		root.MustExec(fmt.Sprintf("create table %s(c %s)", src, tc.tp))
+		root.MustExec(fmt.Sprintf("create table %s(c %s)", dst, tc.tp))
+		root.MustExec(fmt.Sprintf("insert into %s values (%s)", src, tc.value))
+		root.MustExec(fmt.Sprintf("create masking policy p on %s(c) as case when current_user() = 'root@%%' then c else %s end restrict on (insert_into_select, update_select, delete_select) enable", src, tc.masked))
+		user.MustGetErrCode(fmt.Sprintf("insert into %s select c from %s", dst, src), errno.ErrAccessDeniedToMaskedColumn)
+		user.MustGetErrCode(fmt.Sprintf("update %s set c = (select c from %s limit 1)", dst, src), errno.ErrAccessDeniedToMaskedColumn)
+		user.MustGetErrCode(fmt.Sprintf("delete from %s where c = (select c from %s limit 1)", dst, src), errno.ErrAccessDeniedToMaskedColumn)
+		root.MustExec(fmt.Sprintf("insert into %s select c from %s", dst, src))
+	}
+}
+
+func TestMaskingPolicyRestrictRoleBranches(t *testing.T) {
+	for _, instance := range []bool{false, true} {
+		t.Run(fmt.Sprint(instance), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			root := testkit.NewTestKit(t, store)
+			root.MustExec("create user restrict_role_user")
+			root.MustExec("create role restrict_unmask_role")
+			root.MustExec("grant restrict_unmask_role to restrict_role_user")
+			root.MustExec("grant select,insert,update,delete on test.* to restrict_role_user")
+			root.MustExec("create table test.role_src(c varchar(20))")
+			root.MustExec("create table test.role_dst(c varchar(20))")
+			root.MustExec("insert into test.role_src values ('secret')")
+			root.MustExec("create masking policy p on test.role_src(c) as case when current_role() != 'NONE' then c else mask_full(c) end restrict on (insert_into_select,update_select,delete_select)")
+			user := testkit.NewTestKit(t, store)
+			require.NoError(t, user.Session().Auth(&auth.UserIdentity{Username: "restrict_role_user", Hostname: "%"}, nil, nil, nil))
+			user.MustExec("set tidb_enable_plan_cache_for_subquery=1")
+			ctx := context.Background()
+			if instance {
+				ctx = context.WithValue(ctx, core.PlanCacheKeyEnableInstancePlanCache{}, true)
+			}
+			for _, sql := range []string{
+				"insert into test.role_dst select c from test.role_src",
+				"update test.role_dst set c=c where c in (select c from test.role_src)",
+				"delete from test.role_dst where c in (select c from test.role_src)",
+			} {
+				user.MustExec("set role all")
+				user.MustExecWithContext(ctx, "prepare st from '"+sql+"'")
+				for range 2 {
+					user.MustExecWithContext(ctx, "execute st")
+				}
+				user.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("1"))
+				user.MustExec("set role none")
+				_, err := user.ExecWithContext(ctx, "execute st")
+				require.Error(t, err)
+				require.ErrorContains(t, err, "Access denied to masked column")
+				user.MustExec("set role all")
+				user.MustExecWithContext(ctx, "execute st")
+				user.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("1"))
+				user.MustExec("deallocate prepare st")
+			}
+		})
+	}
+}
+
+func TestMaskingPolicyRestrictInstancePlanCache(t *testing.T) {
+	for _, prepared := range []bool{false, true} {
+		t.Run(fmt.Sprint("prepared=", prepared), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			root := testkit.NewTestKit(t, store)
+			root.MustExec("create user 'restrict_host_user'@'%'")
+			root.MustExec("create role restrict_host_role")
+			root.MustExec("grant restrict_host_role to 'restrict_host_user'@'%'")
+			root.MustExec("grant select,insert on test.* to 'restrict_host_user'@'%'")
+			root.MustExec("create table test.host_src(c varchar(64))")
+			root.MustExec("create table test.host_dst(c varchar(64))")
+			root.MustExec("insert into test.host_src values ('secret')")
+			root.MustExec("create masking policy p on test.host_src(c) as case when user()='restrict_host_user@192.0.2.1' or current_role()!='NONE' then c else mask_full(c) end restrict on (insert_into_select)")
+			ctx := context.WithValue(context.Background(), core.PlanCacheKeyEnableInstancePlanCache{}, true)
+			sql := "insert into test.host_dst select c from test.host_src"
+			for sessionIdx, host := range []string{"192.0.2.1", "192.0.2.2", "192.0.2.1"} {
+				tk := testkit.NewTestKit(t, store)
+				require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "restrict_host_user", Hostname: host}, nil, nil, nil))
+				executeSQL := sql
+				tk.MustExec("set role all")
+				if prepared {
+					tk.MustExecWithContext(ctx, "prepare st from '"+sql+"'")
+					executeSQL = "execute st"
+				} else {
+					tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+					tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=1")
+					if sessionIdx == 1 {
+						// Build the session-local statement descriptor before revoking access.
+						tk.MustExecWithContext(ctx, executeSQL)
+						tk.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("1"))
+					}
+				}
+				tk.MustExec("set role none")
+				cloned := false
+				execCtx := context.WithValue(ctx, core.PlanCacheKeyTestClone{}, func(base.Plan, base.Plan) { cloned = true })
+				if sessionIdx == 1 {
+					_, err := tk.ExecWithContext(execCtx, executeSQL)
+					require.ErrorContains(t, err, "Access denied to masked column")
+					require.True(t, cloned, "authorization must run after looking up the other session's cached plan")
+					continue
+				}
+				for range 2 {
+					tk.MustExecWithContext(execCtx, executeSQL)
+				}
+				require.True(t, cloned)
+				tk.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("1"))
+			}
+			rows := testkit.Rows("secret", "secret", "secret", "secret")
+			if !prepared {
+				rows = append(rows, []any{"secret"})
+			}
+			root.MustQuery("select c from test.host_dst").Check(rows)
+		})
+	}
 }

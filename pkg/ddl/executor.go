@@ -6587,13 +6587,16 @@ func (e *executor) getMaskingPolicyByNameForDDL(
 	tableID int64,
 	columns []*model.ColumnInfo,
 	policyName ast.CIStr,
-) (*model.MaskingPolicyInfo, bool) {
+) (*model.MaskingPolicyInfo, bool, error) {
 	// Fast path: check infoSchema cache.
 	is := e.infoCache.GetLatest()
 	for _, col := range columns {
-		policy, ok := is.MaskingPolicyByTableColumn(tableID, col.ID)
+		policy, ok, err := is.MaskingPolicyByTableColumn(tableID, col.ID)
+		if err != nil {
+			return nil, false, err
+		}
 		if ok && policy != nil && policy.Name.L == policyName.L {
-			return policy, true
+			return policy, true, nil
 		}
 	}
 	// Slow path: query system table directly. This handles cases where the
@@ -6609,14 +6612,17 @@ LIMIT 1`,
 		tableID,
 		policyName.L,
 	)
-	if err != nil || len(rows) == 0 {
-		return nil, false
+	if err != nil {
+		return nil, false, err
+	}
+	if len(rows) == 0 {
+		return nil, false, nil
 	}
 	policy, err := maskingPolicyFromSysTableRow(rows[0])
 	if err != nil {
-		return nil, false
+		return nil, false, err
 	}
-	return policy, true
+	return policy, true, nil
 }
 
 func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, enabled bool) error {
@@ -6628,7 +6634,10 @@ func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident as
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, ok := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	policy, ok, err := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return dbterror.ErrMaskingPolicyNotExists.GenWithStackByArgs(policyName.O)
 	}
@@ -6677,7 +6686,10 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, ok := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	policy, ok, err := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return dbterror.ErrMaskingPolicyNotExists.GenWithStackByArgs(policyName.O)
 	}
@@ -6719,7 +6731,10 @@ func (e *executor) ModifyMaskingPolicyExpression(ctx sessionctx.Context, ident a
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, ok := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	policy, ok, err := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return dbterror.ErrMaskingPolicyNotExists.GenWithStackByArgs(policyName.O)
 	}
@@ -6729,7 +6744,11 @@ func (e *executor) ModifyMaskingPolicyExpression(ctx sessionctx.Context, ident a
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err := validateMaskingPolicyExpression(ctx, tbl.Meta(), table.FindCol(tbl.Cols(), policy.ColumnName.L).ColumnInfo, exprStr); err != nil {
+	targetCol := model.FindColumnInfoByID(tbl.Meta().Columns, policy.ColumnID)
+	if targetCol == nil {
+		return infoschema.ErrColumnNotExists.GenWithStackByArgs(policy.ColumnName, tbl.Meta().Name)
+	}
+	if err := validateMaskingPolicyExpression(ctx, tbl.Meta(), targetCol, exprStr); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -6775,7 +6794,10 @@ func (e *executor) ModifyMaskingPolicyRestrictOn(ctx sessionctx.Context, ident a
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, ok := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	policy, ok, err := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return dbterror.ErrMaskingPolicyNotExists.GenWithStackByArgs(policyName.O)
 	}
@@ -6831,7 +6853,11 @@ func (e *executor) createMaskingPolicyWithInfo(
 	onExist OnExist,
 ) error {
 	is := e.infoCache.GetLatest()
-	if existPolicy, ok := e.getMaskingPolicyByNameForDDL(ctx, tableID, cols, policy.Name); ok {
+	existPolicy, ok, err := e.getMaskingPolicyByNameForDDL(ctx, tableID, cols, policy.Name)
+	if err != nil {
+		return err
+	}
+	if ok {
 		if existPolicy.ColumnID != policy.ColumnID {
 			return dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
 		}
@@ -6844,7 +6870,11 @@ func (e *executor) createMaskingPolicyWithInfo(
 			return err
 		}
 	}
-	if existPolicy, ok := is.MaskingPolicyByTableColumn(policy.TableID, policy.ColumnID); ok && existPolicy.Name.L != policy.Name.L {
+	existPolicy, ok, err = is.MaskingPolicyByTableColumn(policy.TableID, policy.ColumnID)
+	if err != nil {
+		return err
+	}
+	if ok && existPolicy.Name.L != policy.Name.L {
 		return dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
 	}
 
@@ -6871,7 +6901,7 @@ func (e *executor) createMaskingPolicyWithInfo(
 		Policy:         policy,
 		ReplaceOnExist: onExist == OnExistReplace,
 	}
-	err := e.doDDLJob2(ctx, job, args)
+	err = e.doDDLJob2(ctx, job, args)
 	if onExist == OnExistIgnore && meta.ErrMaskingPolicyExists.Equal(err) {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil

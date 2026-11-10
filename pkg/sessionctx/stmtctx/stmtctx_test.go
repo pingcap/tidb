@@ -235,8 +235,10 @@ func TestLogicalPlanBuildStateRestore(t *testing.T) {
 	sc.SetCacheType(contextutil.SessionNonPrepared)
 	sc.EnablePlanCache()
 
+	sc.MaskingPolicyChecks = []stmtctx.MaskingPolicyCheck{{PolicyID: 1, TableID: 42, ColumnID: 3}}
 	state := sc.SaveLogicalPlanBuildState()
 
+	sc.MaskingPolicyChecks[0].PolicyID = 2
 	sc.AppendWarning(errors.New("candidate warning"))
 	sc.AppendExtraWarning(errors.New("candidate extra warning"))
 	sc.Tables = []stmtctx.TableEntry{{DB: "candidate", Table: "t2"}}
@@ -249,6 +251,7 @@ func TestLogicalPlanBuildStateRestore(t *testing.T) {
 
 	sc.RestoreLogicalPlanBuildState(state)
 
+	require.Equal(t, int64(1), sc.MaskingPolicyChecks[0].PolicyID)
 	warnings := sc.GetWarnings()
 	require.Len(t, warnings, 1)
 	require.Equal(t, "baseline warning", warnings[0].Err.Error())

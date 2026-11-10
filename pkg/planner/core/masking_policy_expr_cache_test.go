@@ -60,7 +60,7 @@ func TestMaskingPolicyExprCache(t *testing.T) {
 
 	// Changing the policy expression while on the same schema version
 	// should still return the cached entry.
-	policy.Expression = "concat(c, 'x')"
+	policy.Expression = "upper(c)"
 	_, _, err = getMaskingPolicyExpr(ctx, sv, 1, policy, tblInfo, colInfo)
 	require.NoError(t, err)
 	require.Same(t, entry, cache.entries[policy.ID])
@@ -71,6 +71,12 @@ func TestMaskingPolicyExprCache(t *testing.T) {
 	newCache := getMaskingPolicyExprCache(sv, 2)
 	require.NotSame(t, cache, newCache)
 	require.Len(t, newCache.entries, 1)
+
+	// Functions capturing session settings also bypass this expression cache.
+	policy.Expression = "concat(c, 'x')"
+	_, _, err = getMaskingPolicyExpr(ctx, sv, 3, policy, tblInfo, colInfo)
+	require.NoError(t, err)
+	require.Empty(t, getMaskingPolicyExprCache(sv, 3).entries)
 }
 
 func TestMaskingPolicyExprCacheRecursion(t *testing.T) {

@@ -51,11 +51,11 @@ func TestLoadMaskingPoliciesRetryOnGenericError(t *testing.T) {
 		return nil, errors.New("temporary load failure")
 	}
 
-	is.loadMaskingPoliciesIfNeeded()
+	require.Error(t, is.loadMaskingPoliciesIfNeeded())
 	require.False(t, is.maskingPoliciesLoaded)
 	require.Equal(t, 1, calls)
 
-	is.loadMaskingPoliciesIfNeeded()
+	require.Error(t, is.loadMaskingPoliciesIfNeeded())
 	require.False(t, is.maskingPoliciesLoaded)
 	require.Equal(t, 2, calls)
 }
@@ -65,14 +65,14 @@ func TestLoadMaskingPoliciesNoRetryWhenTableNotReady(t *testing.T) {
 	calls := 0
 	is.factory = func() (pools.Resource, error) {
 		calls++
-		return nil, errors.New("Table 'mysql.tidb_masking_policy' doesn't exist")
+		return nil, ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_masking_policy")
 	}
 
-	is.loadMaskingPoliciesIfNeeded()
+	require.NoError(t, is.loadMaskingPoliciesIfNeeded())
 	require.True(t, is.maskingPoliciesLoaded)
 	require.Equal(t, 1, calls)
 
-	is.loadMaskingPoliciesIfNeeded()
+	require.NoError(t, is.loadMaskingPoliciesIfNeeded())
 	require.Equal(t, 1, calls)
 }
 
@@ -144,7 +144,8 @@ func TestMaskingPolicyByNameAmbiguous(t *testing.T) {
 		},
 	}
 
-	policy, ok := is.MaskingPolicyByName(pmodel.NewCIStr("dup"))
+	policy, ok, err := is.MaskingPolicyByName(pmodel.NewCIStr("dup"))
+	require.NoError(t, err)
 	require.False(t, ok)
 	require.Nil(t, policy)
 }
@@ -161,4 +162,20 @@ func TestNormalizeMaskingPolicyTableIDs(t *testing.T) {
 	ids, hasFilter = normalizeMaskingPolicyTableIDs([]int64{0, -1})
 	require.True(t, hasFilter)
 	require.Empty(t, ids)
+}
+
+func TestMaskingPolicyLoadErrorsAreReturned(t *testing.T) {
+	for _, loadErr := range []error{errors.New("temporary load failure"), errors.New("key not exist"), ErrDatabaseNotExists.GenWithStackByArgs("missing")} {
+		is := newInfoSchema(nil)
+		is.factory = func() (pools.Resource, error) { return nil, loadErr }
+		_, _, err := is.MaskingPolicyByName(pmodel.NewCIStr("p"))
+		require.ErrorIs(t, err, loadErr)
+		_, _, err = is.MaskingPolicyByTableColumn(1, 1)
+		require.ErrorIs(t, err, loadErr)
+		_, err = is.AllMaskingPolicies()
+		require.ErrorIs(t, err, loadErr)
+		_, err = is.HasMaskingPolicies()
+		require.ErrorIs(t, err, loadErr)
+		require.False(t, is.maskingPoliciesLoaded)
+	}
 }

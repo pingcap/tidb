@@ -15,12 +15,21 @@
 package ddl_test
 
 import (
+	"context"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -708,4 +717,118 @@ func TestMaskingPolicyInvalidNameCharacters(t *testing.T) {
 
 	tk.MustExec("alter table t add masking policy another_valid_name on (c) as c")
 	tk.MustExec("alter table t drop masking policy another_valid_name")
+}
+
+func TestMaskingPolicyDropCleanupRetries(t *testing.T) {
+	for _, sql := range []string{"alter table t_cleanup drop column c", "drop table t_cleanup"} {
+		t.Run(sql, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t_cleanup(id int, c varchar(20))")
+			tk.MustExec("create masking policy p on t_cleanup(c) as mask_full(c)")
+			var retried atomic.Bool
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMissingMaskingPolicySysTable", "return(true)")
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
+				if job.ErrorCount > 0 && (job.Type == model.ActionDropColumn || job.Type == model.ActionDropTable) {
+					require.False(t, job.IsCancelled())
+					retried.Store(true)
+					require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockMissingMaskingPolicySysTable"))
+				}
+			})
+			tk.MustExec(sql)
+			require.True(t, retried.Load())
+			tk.MustQuery("select count(*) from mysql.tidb_masking_policy where table_name='t_cleanup'").Check(testkit.Rows("0"))
+		})
+	}
+}
+
+func TestMaskingPolicyTruncateRollbackIsAtomic(t *testing.T) {
+	for _, tc := range []struct {
+		name, expr string
+		cancelled  bool
+	}{
+		{"error", "1*off->1*return(true)->off", false},
+		{"panic", `1*off->1*panic("policy update panic")->off`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t_atomic(a varchar(20), b varchar(20))")
+			tk.MustExec("insert into t_atomic values ('secret','secret')")
+			tk.MustExec("create masking policy p1 on t_atomic(a) as mask_full(a)")
+			tk.MustExec("create masking policy p2 on t_atomic(b) as mask_full(b)")
+			tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t_atomic"))
+			require.NoError(t, err)
+			oldID := tbl.Meta().ID
+			var observed atomic.Bool
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMaskingPolicyUpdateError", tc.expr)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", func(job *model.JobW) {
+				if job.Job.Type == model.ActionTruncateTable && job.Job.ErrorCount > 0 && !observed.Swap(true) {
+					txn, err := store.Begin()
+					require.NoError(t, err)
+					metaTable, err := meta.NewReader(txn).GetTable(job.Job.SchemaID, oldID)
+					require.NoError(t, err)
+					require.NotNil(t, metaTable)
+					require.NoError(t, txn.Rollback())
+					tkCheck := testkit.NewTestKit(t, store)
+					tkCheck.MustQuery("select count(*) from mysql.tidb_masking_policy where table_id=" + fmt.Sprint(oldID)).Check(testkit.Rows("2"))
+					tkCheck.MustQuery("select a,b from test.t_atomic").Check(testkit.Rows("XXXXXX XXXXXX"))
+				}
+			})
+			err = tk.ExecToErr("truncate table t_atomic")
+			if tc.cancelled {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.True(t, observed.Load())
+			if tc.cancelled {
+				tk.MustQuery("select count(*) from mysql.tidb_masking_policy where table_id=" + fmt.Sprint(oldID)).Check(testkit.Rows("2"))
+				tk.MustQuery("select a,b from t_atomic").Check(testkit.Rows("XXXXXX XXXXXX"))
+				return
+			}
+			tk.MustQuery("select count(*) from mysql.tidb_masking_policy where table_id=" + fmt.Sprint(oldID)).Check(testkit.Rows("0"))
+			tk.MustExec("insert into t_atomic values ('secret','secret')")
+			tk.MustQuery("select a,b from t_atomic").Check(testkit.Rows("XXXXXX XXXXXX"))
+		})
+	}
+}
+
+func TestMaskingPolicyRenameRollbackIsAtomic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create database rename_target")
+	tk.MustExec("create table t_rename(a varchar(20), b varchar(20))")
+	tk.MustExec("insert into t_rename values ('secret','secret')")
+	tk.MustExec("create masking policy p1 on t_rename(a) as mask_full(a)")
+	tk.MustExec("create masking policy p2 on t_rename(b) as mask_full(b)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMaskingPolicyUpdateError", "1*off->1*return(true)->off")
+	require.Error(t, tk.ExecToErr("rename table test.t_rename to rename_target.t_renamed"))
+	tk.MustQuery("select db_name,table_name from mysql.tidb_masking_policy where table_name like 't_rename%' order by policy_id").Check(testkit.Rows("test t_rename", "test t_rename"))
+	tk.MustQuery("select a,b from t_rename").Check(testkit.Rows("XXXXXX XXXXXX"))
+	tk.MustExec("rename table test.t_rename to rename_target.t_renamed")
+	tk.MustQuery("select a,b from rename_target.t_renamed").Check(testkit.Rows("XXXXXX XXXXXX"))
+}
+
+func TestMaskingPolicyModifyColumnPublication(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	root.MustExec("use test")
+	root.MustExec("create table t_publish(c decimal(10,2))")
+	root.MustExec("insert into t_publish values (123.45)")
+	root.MustExec("create masking policy p on t_publish(c) as mask_full(c)")
+	var checked atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+		if job.Type == model.ActionModifyColumn && job.SchemaState == model.StatePublic && !checked.Swap(true) {
+			user := testkit.NewTestKit(t, store)
+			user.MustQuery("select c from test.t_publish").Check(testkit.Rows("0"))
+		}
+	})
+	root.MustExec("alter table t_publish modify column c decimal(10,2) unsigned")
+	require.True(t, checked.Load())
+	root.MustQuery("select c from t_publish").Check(testkit.Rows("0"))
 }

@@ -1057,6 +1057,9 @@ func (w *worker) doModifyColumnTypeWithData(
 			// because we will allocate new indexID for previous temp index.
 			reorderChangingIdx(oldIdxInfos, changingIdxInfos)
 
+			if err := w.syncMaskingPolicyForModifiedColumn(jobCtx, tblInfo, oldCol, targetCol); err != nil {
+				return ver, err
+			}
 			updateObjectState(oldCol, oldIdxInfos, model.StateWriteOnly)
 			updateObjectState(changingCol, changingIdxInfos, model.StatePublic)
 			markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, colName)
@@ -1568,7 +1571,11 @@ func GetModifiableColumnJob(
 		return nil, errors.Trace(err)
 	}
 	if is != nil {
-		if _, ok := is.MaskingPolicyByTableColumn(t.Meta().ID, col.ID); ok && isMaskedColumnTypeLengthOrPrecisionChanged(col.ColumnInfo, newCol.ColumnInfo) {
+		_, masked, err := is.MaskingPolicyByTableColumn(t.Meta().ID, col.ID)
+		if err != nil {
+			return nil, err
+		}
+		if masked && isMaskedColumnTypeLengthOrPrecisionChanged(col.ColumnInfo, newCol.ColumnInfo) {
 			return nil, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("masked column type/length/precision change is forbidden"))
 		}
 	}

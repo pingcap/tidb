@@ -88,7 +88,8 @@ func assertTemporaryTableNoNetwork(t *testing.T, createTable func(*testkit.TestK
 	createTable(tk)
 
 	// Load policy metadata before this test blocks all TiKV requests.
-	_ = domain.GetDomain(tk.Session()).InfoSchema().AllMaskingPolicies()
+	_, err := domain.GetDomain(tk.Session()).InfoSchema().AllMaskingPolicies()
+	require.NoError(t, err)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcServerBusy", "return(true)"))
 	defer func() {

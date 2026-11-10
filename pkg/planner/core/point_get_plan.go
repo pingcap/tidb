@@ -2520,8 +2520,9 @@ func buildMaskingExprsForPointGet(
 	if sv != nil && sv.InRestrictedSQL {
 		return nil, nil
 	}
-	if len(is.AllMaskingPolicies()) == 0 {
-		return nil, nil
+	hasPolicies, err := is.HasMaskingPolicies()
+	if err != nil || !hasPolicies {
+		return nil, err
 	}
 	cols := schema.Columns
 	if len(cols) == 0 || len(cols) != len(names) {
@@ -2534,7 +2535,10 @@ func buildMaskingExprsForPointGet(
 	schemaVersion := is.SchemaMetaVersion()
 	hasMask := false
 	for i, col := range cols {
-		policy, colInfo := findMaskingPolicyForColumn(is, tbl, names[i])
+		policy, colInfo, err := findMaskingPolicyForColumn(is, tbl, names[i])
+		if err != nil {
+			return nil, err
+		}
 		if policy == nil || colInfo == nil {
 			continue
 		}
@@ -2584,9 +2588,9 @@ func maybeApplyPointGetMasking(ctx base.PlanContext, p *PointGetPlan, isSelect b
 	return p
 }
 
-func findMaskingPolicyForColumn(is infoschema.InfoSchema, tbl *model.TableInfo, name *types.FieldName) (*model.MaskingPolicyInfo, *model.ColumnInfo) {
+func findMaskingPolicyForColumn(is infoschema.InfoSchema, tbl *model.TableInfo, name *types.FieldName) (*model.MaskingPolicyInfo, *model.ColumnInfo, error) {
 	if tbl == nil || name == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	colName := name.OrigColName
 	if colName.L == "" {
@@ -2594,11 +2598,14 @@ func findMaskingPolicyForColumn(is infoschema.InfoSchema, tbl *model.TableInfo, 
 	}
 	colInfo := tbl.FindPublicColumnByName(colName.L)
 	if colInfo == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	policy, ok := is.MaskingPolicyByTableColumn(tbl.ID, colInfo.ID)
+	policy, ok, err := is.MaskingPolicyByTableColumn(tbl.ID, colInfo.ID)
+	if err != nil {
+		return nil, nil, err
+	}
 	if !ok || policy == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return policy, colInfo
+	return policy, colInfo, nil
 }

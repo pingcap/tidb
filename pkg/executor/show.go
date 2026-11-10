@@ -834,7 +834,10 @@ func (e *ShowExec) fetchShowMaskingPolicies() error {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
-	policies := e.is.AllMaskingPolicies()
+	policies, err := e.is.AllMaskingPolicies()
+	if err != nil {
+		return err
+	}
 	rows := make([]*model.MaskingPolicyInfo, 0, len(policies))
 	for _, policy := range policies {
 		if policy.TableID == tb.Meta().ID {
@@ -1148,26 +1151,20 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 	}
 
 	var maskingPolicies map[int64]*model.MaskingPolicyInfo
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				maskingPolicies = nil
+	if ctx != nil {
+		if is, ok := ctx.GetInfoSchema().(infoschema.InfoSchema); ok {
+			allPolicies, loadErr := is.AllMaskingPolicies()
+			if loadErr != nil {
+				return loadErr
 			}
-		}()
-		if ctx != nil {
-			if is, ok := ctx.GetInfoSchema().(infoschema.InfoSchema); ok {
-				allPolicies := is.AllMaskingPolicies()
-				if len(allPolicies) > 0 {
-					maskingPolicies = make(map[int64]*model.MaskingPolicyInfo)
-					for _, policy := range allPolicies {
-						if policy.TableID == tableInfo.ID {
-							maskingPolicies[policy.ColumnID] = policy
-						}
-					}
+			maskingPolicies = make(map[int64]*model.MaskingPolicyInfo)
+			for _, policy := range allPolicies {
+				if policy.TableID == tableInfo.ID {
+					maskingPolicies[policy.ColumnID] = policy
 				}
 			}
 		}
-	}()
+	}
 
 	tblCharset := tableInfo.Charset
 	if len(tblCharset) == 0 {

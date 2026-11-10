@@ -379,6 +379,7 @@ func restoreMaskingPoliciesFromTemporaryTable(
 	tempDBName string,
 	withSysTable bool,
 	tableFilter filter.Filter,
+	targetSupportsMasking bool,
 	execSQL func(context.Context, string) error,
 ) error {
 	tempTable := utils.EncloseDBAndTable(tempDBName, sysMaskingPolicyTableName)
@@ -400,14 +401,7 @@ ORDER BY p.table_id, p.column_id, p.policy_id`,
 		readPoliciesSQL,
 	)
 	if err != nil {
-		if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
-			log.Info("skip restoring masking policies because temporary table doesn't exist",
-				zap.String("table", tempTable),
-				logutil.ShortError(err),
-			)
-			return nil
-		}
-		return errors.Trace(err)
+		return errors.Annotate(err, "cannot read masking policy staging table")
 	}
 
 	for _, row := range rows {
@@ -417,6 +411,9 @@ ORDER BY p.table_id, p.column_id, p.policy_id`,
 		// masking metadata table ingestion from temporary mysql.
 		if !utils.MatchTable(tableFilter, dbName, tableName, withSysTable) {
 			continue
+		}
+		if !targetSupportsMasking {
+			return errors.Annotate(berrors.ErrRestoreIncompatibleSys, "target lacks mysql.tidb_masking_policy for selected masking policies")
 		}
 		ddl := buildCreateMaskingPolicySQL(
 			row.GetString(0),
@@ -655,21 +652,13 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 		}
 	}
 	if dbName == mysql.SystemDB && tableName == sysMaskingPolicyTableName {
-		// Skip when target cluster doesn't have mysql.tidb_masking_policy
-		// (for example, restoring to an older TiDB without masking policy feature).
-		if db.ExistingTables[tableName] == nil {
-			log.Info("skip restoring masking policies because target cluster doesn't support masking policy table",
-				zap.String("table", tableName),
-				zap.Stringer("database", db.Name),
-			)
-			return nil
-		}
 		if err := restoreMaskingPoliciesFromTemporaryTable(
 			ctx,
 			rc.db.Session().GetSessionCtx().GetRestrictedSQLExecutor(),
 			db.TemporaryName.L,
 			rc.withSysTable,
 			tableFilter,
+			db.ExistingTables[tableName] != nil,
 			execSQL,
 		); err != nil {
 			return err

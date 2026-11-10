@@ -100,7 +100,7 @@ This section describes how the feature is expected to be wired in code, so imple
 
 1. Build plan with current statement `InfoSchema` (or stale/snapshot `InfoSchema` when applicable).
 2. Resolve masking binding by `(table_id, column_id)`.
-3. Rewrite result projection with masking expression (AT RESULT behavior).
+3. Rewrite result projection with masking expression (AT RESULT behavior). Plans with safely reusable masking expressions remain eligible for session and instance plan caches. Identity and role functions are deferred to the executing session, and cache hits revalidate `RESTRICT ON` checks for their source columns. Expressions with dependencies that cannot be safely reused bypass both plan caches and the session-local expression cache.
 4. For restricted operations (`INSERT ... SELECT`, `UPDATE ... (SELECT ...)`, `DELETE ... (SELECT ...)`, `CTAS`), run restriction check against masked source columns before execution.
 
 #### Metadata maintenance path
@@ -221,7 +221,7 @@ RESTRICT ON (INSERT_INTO_SELECT, DELETE_SELECT)
 ```
 
 At execution time, restricted operations are validated against source masked columns.
-The check is semantic: TiDB evaluates whether the current session is effectively allowed to read unmasked source data under the bound policy expression.
+The check simplifies session-constant identity and role conditions and allows the operation only when the selected policy expression is the original column. Data-dependent conditions or other expressions whose identity cannot be established are rejected; sampled column values are never used to authorize access.
 If not allowed, the statement is rejected with masking access-denied error.
 
 ### Expression semantics

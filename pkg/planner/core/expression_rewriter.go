@@ -149,9 +149,13 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 		names:               options.InputNames,
 		sourceTable:         options.SourceTable,
 		allowBuildCastArray: options.AllowCastArray,
+		deferredFunctions:   options.DeferredFunctions,
 		asScalar:            true,
 	}
 
+	if options.DisableFold {
+		rewriter.disableFoldCounter++
+	}
 	if tbl := options.SourceTable; tbl != nil && rewriter.schema == nil {
 		cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, options.SourceTableDB, tbl.Name, tbl.Cols(), tbl)
 		if err != nil {
@@ -376,6 +380,7 @@ type expressionRewriter struct {
 	// NOTE: This value can be changed during expression rewritten.
 	disableFoldCounter int
 	tryFoldCounter     int
+	deferredFunctions  map[string]struct{}
 
 	planCtx *exprRewriterPlanCtx
 }
@@ -1383,7 +1388,12 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 		er.err = err
 		return v, true
 	}
-	if resultField && planCtx.builder.maskingEnabled() {
+	maskingEnabled, err := planCtx.builder.maskingEnabled()
+	if err != nil {
+		er.err = err
+		return v, true
+	}
+	if resultField && maskingEnabled {
 		// Scalar preprocessing may turn the raw result into a constant, losing
 		// its policy identity before the outer final projection can inspect it.
 		m := maskingResultBuilder{b: planCtx.builder, ctx: ctx, outerPlan: planCtx.plan, cache: make(map[maskingResultKey]maskingResult)}
@@ -2510,7 +2520,8 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 
 	var function expression.Expression
 	er.ctxStackPop(len(v.Args))
-	if ok := expression.IsDeferredFunctions(er.sctx, v.FnName.L); er.useCache() && ok {
+	_, forceDeferred := er.deferredFunctions[v.FnName.L]
+	if forceDeferred || (er.useCache() && expression.IsDeferredFunctions(er.sctx, v.FnName.L)) {
 		// When the expression is unix_timestamp and the number of argument is not zero,
 		// we deal with it as normal expression.
 		if v.FnName.L == ast.UnixTimestamp && len(v.Args) != 0 {
@@ -2518,6 +2529,9 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 			er.ctxStackAppend(function, types.EmptyName)
 		} else {
 			function, er.err = expression.NewFunctionBase(er.sctx, v.FnName.L, &v.Type, args...)
+			if er.err != nil {
+				return
+			}
 			c := &expression.Constant{Value: types.NewDatum(nil), RetType: function.GetType(er.sctx.GetEvalCtx()).Clone(), DeferredExpr: function}
 			er.ctxStackAppend(c, types.EmptyName)
 		}

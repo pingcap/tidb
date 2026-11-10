@@ -18,6 +18,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
@@ -28,19 +30,27 @@ type maskingPolicyExprCacheEntry struct {
 
 type maskingPolicyExprCache struct {
 	schemaVersion int64
+	sqlMode       mysql.SQLMode
+	charset       string
+	collation     string
 	entries       map[int64]*maskingPolicyExprCacheEntry
 	building      map[int64]struct{}
 }
 
 func getMaskingPolicyExprCache(sv *variable.SessionVars, schemaVersion int64) *maskingPolicyExprCache {
 	cacheObj, cacheVer := sv.GetMaskingPolicyExprCache()
+	charset, collation := sv.GetCharsetInfo()
 	if cacheObj != nil {
-		if cache, ok := cacheObj.(*maskingPolicyExprCache); ok && cacheVer == schemaVersion {
+		if cache, ok := cacheObj.(*maskingPolicyExprCache); ok && cacheVer == schemaVersion && cache.sqlMode == sv.SQLMode &&
+			cache.charset == charset && cache.collation == collation {
 			return cache
 		}
 	}
 	cache := &maskingPolicyExprCache{
 		schemaVersion: schemaVersion,
+		sqlMode:       sv.SQLMode,
+		charset:       charset,
+		collation:     collation,
 		entries:       make(map[int64]*maskingPolicyExprCacheEntry),
 		building:      make(map[int64]struct{}),
 	}
@@ -69,6 +79,10 @@ func getMaskingPolicyExpr(
 	if err != nil {
 		return nil, nil, err
 	}
+	if !isMaskingPolicyExprCacheable(expr) {
+		ctx.SetSkipPlanCache("masking policy contains a function that cannot be safely cached")
+		return expr, placeholder, nil
+	}
 	cache.entries[policy.ID] = &maskingPolicyExprCacheEntry{
 		expr:   expr,
 		column: placeholder,
@@ -90,7 +104,9 @@ func buildMaskingPolicyExpr(
 		return nil, nil, err
 	}
 	schema := expression.NewSchema(cols...)
-	expr, err := expression.ParseSimpleExpr(ctx, policy.Expression, expression.WithInputSchemaAndNames(schema, names, tblInfo))
+	expr, err := expression.ParseSimpleExpr(maskingPolicyBuildContext{ctx}, policy.Expression,
+		expression.WithInputSchemaAndNames(schema, names, tblInfo),
+		expression.WithDisableConstantFolding(), expression.WithDeferredFunctions(maskingPolicyIdentityFunctions))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -98,4 +114,60 @@ func buildMaskingPolicyExpr(
 		return nil, nil, errors.New("masking policy expression expects one input column")
 	}
 	return expr, cols[0], nil
+}
+
+// Keep lazy branches intact even when building the session-local expression cache
+// outside a prepared execution. Returned expressions are cloned before optimization.
+type maskingPolicyBuildContext struct{ expression.BuildContext }
+
+func (maskingPolicyBuildContext) IsUseCache() bool { return true }
+
+// User variables in policy SQL are absent from the outer AST cache checker.
+// Preserve them so the cacheability check below can reject the dependency.
+func (maskingPolicyBuildContext) IsReadonlyUserVar(string) bool { return false }
+
+var maskingPolicyIdentityFunctions = map[string]struct{}{
+	ast.CurrentUser: {}, ast.CurrentRole: {}, ast.User: {}, ast.SessionUser: {}, ast.SystemUser: {},
+}
+
+func isMaskingPolicyExprCacheable(expr expression.Expression) bool {
+	switch x := expr.(type) {
+	case *expression.Column:
+		return true
+	case *expression.Constant:
+		if x.ParamMarker != nil {
+			return false
+		}
+		return x.DeferredExpr == nil || isMaskingPolicyExprCacheable(x.DeferredExpr)
+	case *expression.ScalarFunction:
+		if _, ok := maskingPolicyIdentityFunctions[x.FuncName.L]; ok {
+			return true
+		}
+		// The ordinary AST cache checker cannot inspect policy SQL. Keep an
+		// explicit set of functions whose build-time dependencies are covered by
+		// the plan-cache key and the expression-cache settings above. Other
+		// functions may capture settings such as max_allowed_packet or the
+		// decimal division precision, so rebuild them conservatively.
+		switch x.FuncName.L {
+		case ast.MaskFull, ast.MaskPartial, ast.MaskNull, ast.MaskDate,
+			ast.Case, ast.If, ast.Ifnull, ast.Cast,
+			ast.EQ, ast.NE, ast.LT, ast.LE, ast.GT, ast.GE, ast.NullEQ, ast.In,
+			ast.LogicAnd, ast.LogicOr, ast.LogicXor, ast.UnaryNot,
+			ast.IsNull, ast.IsTruthWithoutNull, ast.IsTruthWithNull, ast.IsFalsity,
+			ast.Plus, ast.Minus, ast.Mul, ast.Mod, ast.UnaryMinus,
+			ast.Abs, ast.Ceil, ast.Floor,
+			ast.Lower, ast.Upper, ast.Length, ast.CharLength, ast.Substring,
+			ast.Left, ast.Right, ast.Trim, ast.LTrim, ast.RTrim:
+		default:
+			return false
+		}
+		for _, arg := range x.GetArgs() {
+			if !isMaskingPolicyExprCacheable(arg) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
