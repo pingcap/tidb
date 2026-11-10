@@ -27,7 +27,8 @@ type TaskMeta struct {
 	SQL string `json:"sql"`
 	// Params are the identifiers to fill into SQL.
 	Params []string `json:"params"`
-	// TableID identifies the table the statement analyzes.
+	// DBID and TableID identify the table that the statement analyzes.
+	DBID    int64 `json:"db_id"`
 	TableID int64 `json:"table_id"`
 }
 

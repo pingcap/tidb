@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -146,6 +147,13 @@ func runAsTask(
 
 	keyspace := sctx.GetStore().GetKeyspace()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	if kv.IsUserKS(sctx.GetStore()) {
+		// A DXF service node cannot ask the nodes of this keyspace to flush their
+		// stats deltas, so flush them before submitting, as ANALYZE does.
+		if err := flushStatsDelta(sctx, taskMeta); err != nil {
+			return errors.Annotate(err, "flush stats delta before dispatching auto analyze")
+		}
+	}
 	// The task keys of a table share a prefix, by which activeTask finds them,
 	// and end in a UUID: DXF refuses a key that an earlier task has used.
 	keyPrefix := fmt.Sprintf("%s/%s/%d/", keyspace, proto.AutoAnalyze, taskMeta.TableID)
@@ -187,6 +195,17 @@ func runAsTask(
 		zap.String("sql", taskMeta.SQL), zap.Strings("params", taskMeta.Params),
 		zap.Duration("cost", time.Since(start)), zap.Error(err))
 	return err
+}
+
+// flushStatsDelta makes the TiDB nodes of this keyspace flush their stats deltas of the table.
+func flushStatsDelta(sctx sessionctx.Context, meta *TaskMeta) error {
+	is := sctx.GetLatestInfoSchema()
+	dbInfo, dbExists := is.SchemaByID(meta.DBID)
+	tblInfo, tblExists := is.TableInfoByID(meta.TableID)
+	if !dbExists || !tblExists {
+		return errors.Errorf("table %d does not exist", meta.TableID)
+	}
+	return executor.FlushTableStatsDeltaForAnalyze(statsutil.StatsCtx, sctx, dbInfo.Name, tblInfo)
 }
 
 // loadTableStats loads the stats of the table and its partitions from the
@@ -247,6 +266,7 @@ func newTaskMeta(tblInfo *model.TableInfo, sql string, params []any) (*TaskMeta,
 	meta := &TaskMeta{
 		SQL:     sql,
 		Params:  make([]string, 0, len(params)),
+		DBID:    tblInfo.DBID,
 		TableID: tblInfo.ID,
 	}
 	for _, p := range params {

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -105,7 +106,34 @@ func runningUnderGoTest() bool {
 // tasks will capture base count / modify_count from mysql.stats_meta. Without this, a stale
 // pre-analyze delta can be applied later and double count rows or modifications.
 func flushStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, plan *core.Analyze) error {
-	flushObjects := collectStatsDeltaFlushObjectsForAnalyze(plan)
+	return flushStatsDelta(ctx, sctx, collectStatsDeltaFlushObjectsForAnalyze(plan), func() []int64 {
+		return collectAnalyzeStatsDeltaTargetIDsForTest(plan)
+	})
+}
+
+// FlushTableStatsDeltaForAnalyze flushes the pending stats deltas of the table and its partitions on
+// the TiDB servers of the session's keyspace, the same way ANALYZE does before it builds its tasks.
+// It is for a node that asks a node of another keyspace to analyze the table.
+func FlushTableStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, dbName ast.CIStr, tblInfo *model.TableInfo) error {
+	flushObjects := []*ast.StatsObject{{
+		StatsObjectScope: ast.StatsObjectScopeTable,
+		DBName:           dbName,
+		TableName:        tblInfo.Name,
+	}}
+	return flushStatsDelta(ctx, sctx, flushObjects, func() []int64 {
+		ids := []int64{tblInfo.ID}
+		if pi := tblInfo.GetPartitionInfo(); pi != nil {
+			for _, def := range pi.Definitions {
+				ids = append(ids, def.ID)
+			}
+		}
+		return ids
+	})
+}
+
+// flushStatsDelta flushes the pending stats deltas of flushObjects on the TiDB servers. In a test
+// binary that cannot broadcast, it dumps the deltas of the IDs from targetIDs locally instead.
+func flushStatsDelta(ctx context.Context, sctx sessionctx.Context, flushObjects []*ast.StatsObject, targetIDs func() []int64) error {
 	if len(flushObjects) == 0 {
 		return nil
 	}
@@ -115,7 +143,7 @@ func flushStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, pla
 
 	// HACK: test binaries have no real RPC peer to broadcast to; dump locally instead.
 	if runningUnderGoTest() {
-		flushedLocally, err := flushAnalyzeStatsDeltaForTest(ctx, sctx, plan)
+		flushedLocally, err := flushAnalyzeStatsDeltaForTest(ctx, sctx, targetIDs)
 		if err != nil {
 			return err
 		}
@@ -204,7 +232,7 @@ func collectStatsDeltaFlushObjectsForAnalyze(plan *core.Analyze) []*ast.StatsObj
 	return flushObjects
 }
 
-func flushAnalyzeStatsDeltaForTest(ctx context.Context, sctx sessionctx.Context, plan *core.Analyze) (bool, error) {
+func flushAnalyzeStatsDeltaForTest(ctx context.Context, sctx sessionctx.Context, targetIDs func() []int64) (bool, error) {
 	canBroadcast, err := canBroadcastAnalyzeStatsDeltaForTest(ctx)
 	if err != nil {
 		return false, err
@@ -214,11 +242,11 @@ func flushAnalyzeStatsDeltaForTest(ctx context.Context, sctx sessionctx.Context,
 	if canBroadcast {
 		return false, nil
 	}
-	targetIDs := collectAnalyzeStatsDeltaTargetIDsForTest(plan)
-	if len(targetIDs) == 0 {
+	ids := targetIDs()
+	if len(ids) == 0 {
 		return false, nil
 	}
-	return true, domain.GetDomain(sctx).StatsHandle().Usage().DumpStatsDeltaToKV(true, targetIDs...)
+	return true, domain.GetDomain(sctx).StatsHandle().Usage().DumpStatsDeltaToKV(true, ids...)
 }
 
 func canBroadcastAnalyzeStatsDeltaForTest(ctx context.Context) (bool, error) {

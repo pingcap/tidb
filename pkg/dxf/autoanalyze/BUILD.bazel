@@ -19,6 +19,7 @@ go_library(
         "//pkg/dxf/framework/storage",
         "//pkg/dxf/framework/taskexecutor",
         "//pkg/dxf/framework/taskexecutor/execute",
+        "//pkg/executor",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta/model",
