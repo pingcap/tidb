@@ -254,9 +254,12 @@ fn builtin_vec_result(function: &ScalarFunction) -> Option<VecResult> {
         // `*Null` signatures), and the DATE and string ones resize.
         "convert_tz" => Arg(0),
         "addtime" | "subtime" => {
-            let code = |index: usize| function.args.get(index)?.static_type().map(|field_type| field_type.code());
-            let temporal = |code| matches!(code, Some(FieldTypeCode::Datetime | FieldTypeCode::Timestamp));
-            if (temporal(code(0)) || code(0) == Some(FieldTypeCode::Duration)) && !temporal(code(1)) {
+            use crate::time_fn::add_sub::{kinds_of_signature, TemporalKind};
+            let kinds = function.pb_signature().and_then(kinds_of_signature);
+            if kinds.is_some_and(|[first, second]| {
+                matches!(first, TemporalKind::Datetime | TemporalKind::Duration)
+                    && second != TemporalKind::Datetime
+            }) {
                 Arg(0)
             } else {
                 Allocate

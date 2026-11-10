@@ -96,9 +96,14 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   USING cs)` and `CHAR(... USING cs)` build through their classes.
   `weight_string` carries its padding in the signature and waits for
   Milestone 11; `insert_func` and `convert` have no matrix rows.
-- [ ] Milestone 9: `builtin_time.go` (58). The three literal classes
-  (`dateliteral`, `timeliteral`, `timestampliteral`) carry the parsed value
-  in the signature and wait for Milestone 11.
+- [x] (2026-11-10) Milestone 9: `builtin_time.go` (63 names). `EXTRACT`,
+  `GET_FORMAT`, `TIMESTAMPADD`, `TIMESTAMPDIFF` and the `DATE_ADD` family
+  build through their classes. `Constant.EvalInt` reads a non-integer
+  datum's carrier as Go's `GetInt64` does (`sysdate(1.5)` is fsp 0). The
+  three literal classes (`dateliteral`, `timeliteral`, `timestampliteral`)
+  and `timestamp` (its signature carries `isFloat`, and its evaluator lacks
+  Go's `handleInvalidTimeError`) carry state in the signature and wait for
+  Milestone 11.
 - [ ] Milestone 10: `builtin_cast.go` (9) and `BuildCastFunction`.
 - [ ] Milestone 11: the legacy paths deleted; evaluation dispatches on the
   signature object alone; X01 leaves the register.

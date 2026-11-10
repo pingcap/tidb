@@ -81,6 +81,7 @@ macro_rules! string_class {
         }
     };
 }
+pub(crate) use string_class;
 
 function_class!(
     /// Go `lengthFunctionClass`.

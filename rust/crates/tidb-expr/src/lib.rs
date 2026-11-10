@@ -339,6 +339,7 @@ mod builtin_json;
 mod builtin_other;
 mod builtin_regexp;
 mod builtin_string;
+mod builtin_time;
 mod builtin_fts;
 mod builtin_grouping;
 mod builtin_ilike;

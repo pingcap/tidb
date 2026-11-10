@@ -94,6 +94,32 @@ pub(crate) fn kind_of(field_type: Option<&FieldType>, value: &Datum) -> Temporal
     }
 }
 
+/// The two kinds Go's `addTimeFunctionClass.getFunction` /
+/// `subTimeFunctionClass.getFunction` switched on, read back from the
+/// signature they chose: `getBf4TimeAddSub` casts a DATETIME second argument
+/// to a duration, so the built argument no longer shows it. A `...Null`
+/// signature is a DATETIME/TIMESTAMP second argument.
+pub(crate) fn kinds_of_signature(
+    signature: tidb_proto::tipb::ScalarFuncSig,
+) -> Option<[TemporalKind; 2]> {
+    use tidb_proto::tipb::ScalarFuncSig as Sig;
+    use TemporalKind::{Date, Datetime, Duration, Other};
+    Some(match signature {
+        Sig::AddDatetimeAndDuration | Sig::SubDatetimeAndDuration => [Datetime, Duration],
+        Sig::AddTimeDateTimeNull | Sig::SubTimeDateTimeNull => [Datetime, Datetime],
+        Sig::AddDatetimeAndString | Sig::SubDatetimeAndString => [Datetime, Other],
+        Sig::AddDateAndDuration | Sig::SubDateAndDuration => [Date, Duration],
+        Sig::AddTimeStringNull | Sig::SubTimeStringNull => [Other, Datetime],
+        Sig::AddDateAndString | Sig::SubDateAndString => [Date, Other],
+        Sig::AddDurationAndDuration | Sig::SubDurationAndDuration => [Duration, Duration],
+        Sig::AddTimeDurationNull | Sig::SubTimeDurationNull => [Duration, Datetime],
+        Sig::AddDurationAndString | Sig::SubDurationAndString => [Duration, Other],
+        Sig::AddStringAndDuration | Sig::SubStringAndDuration => [Other, Duration],
+        Sig::AddStringAndString | Sig::SubStringAndString => [Other, Other],
+        _ => return None,
+    })
+}
+
 fn truncated_time_warning(cols: &dyn Columns, value: &str) -> Datum {
     cols.append_go_warning(
         &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL,

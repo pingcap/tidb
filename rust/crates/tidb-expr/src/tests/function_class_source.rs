@@ -127,6 +127,8 @@ fn value_text(value: &Datum) -> String {
         Datum::Real(value) => ("real", value.to_string()),
         Datum::Decimal(value) => ("decimal", value.to_string()),
         Datum::String(value) => ("string", String::from_utf8_lossy(value.bytes()).into_owned()),
+        // Go `types.KindMysqlDuration`, which the probe has no name for.
+        Datum::Duration(value) => ("kind9", value.to_string()),
         value => panic!("constant {value:?}"),
     };
     let hex: String = text.bytes().map(|byte| format!("{byte:02x}")).collect();

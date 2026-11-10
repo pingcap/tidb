@@ -42,6 +42,12 @@ const MAX_DATETIME_WIDTH_WITH_FSP: i64 = 26;
 const MAX_DURATION_WIDTH_WITH_FSP: i64 = 17;
 /// Go `types.MaxFsp`.
 const MAX_FSP: i64 = 6;
+/// Go `mysql.MaxDateWidth`.
+const MAX_DATE_WIDTH: i64 = 10;
+/// Go `mysql.MaxDatetimeWidthNoFsp`.
+const MAX_DATETIME_WIDTH_NO_FSP: i64 = 19;
+/// Go `mysql.MaxDurationWidthNoFsp`.
+const MAX_DURATION_WIDTH_NO_FSP: i64 = 10;
 
 /// What Go's `getFunction` reads from its `BuildContext`.
 pub(crate) trait BuildContext {
@@ -163,6 +169,7 @@ pub(crate) fn funcs(name: &str) -> Option<&'static dyn FunctionClass> {
     use crate::builtin_control::{CaseWhenFunctionClass, IfFunctionClass, IfNullFunctionClass};
     use crate::builtin_like::LikeFunctionClass;
     use crate::builtin_math as m;
+    use crate::builtin_time as t;
     use crate::builtin_op::{
         BitNegFunctionClass, IsNullFunctionClass, LogicAndFunctionClass, LogicOrFunctionClass,
         LogicXorFunctionClass, UnaryMinusFunctionClass, UnaryNotFunctionClass, BIT_AND, BIT_OR,
@@ -335,6 +342,69 @@ pub(crate) fn funcs(name: &str) -> Option<&'static dyn FunctionClass> {
         "upper" => &s::UpperFunctionClass { func_name: "upper" },
         "ucase" => &s::UpperFunctionClass { func_name: "ucase" },
         "unhex" => &s::UnhexFunctionClass { func_name: "unhex" },
+        "adddate" => &t::AddSubDateFunctionClass { func_name: "adddate", set_pb_code_op: t::set_add },
+        "date_add" => &t::AddSubDateFunctionClass { func_name: "date_add", set_pb_code_op: t::set_add },
+        "subdate" => &t::AddSubDateFunctionClass { func_name: "subdate", set_pb_code_op: t::set_sub },
+        "date_sub" => &t::AddSubDateFunctionClass { func_name: "date_sub", set_pb_code_op: t::set_sub },
+        "addtime" => &t::AddTimeFunctionClass { func_name: "addtime" },
+        "convert_tz" => &t::ConvertTzFunctionClass { func_name: "convert_tz" },
+        "curdate" => &t::CurrentDateFunctionClass { func_name: "curdate" },
+        "current_date" => &t::CurrentDateFunctionClass { func_name: "current_date" },
+        "current_time" => &t::CurrentTimeFunctionClass { func_name: "current_time" },
+        "current_timestamp" => &t::NowFunctionClass { func_name: "current_timestamp" },
+        "curtime" => &t::CurrentTimeFunctionClass { func_name: "curtime" },
+        "date" => &t::DateFunctionClass { func_name: "date" },
+        "date_format" => &t::DateFormatFunctionClass { func_name: "date_format" },
+        "datediff" => &t::DateDiffFunctionClass { func_name: "datediff" },
+        "day" => &t::DayOfMonthFunctionClass { func_name: "day" },
+        "dayname" => &t::DayNameFunctionClass { func_name: "dayname" },
+        "dayofmonth" => &t::DayOfMonthFunctionClass { func_name: "dayofmonth" },
+        "dayofweek" => &t::DayOfWeekFunctionClass { func_name: "dayofweek" },
+        "dayofyear" => &t::DayOfYearFunctionClass { func_name: "dayofyear" },
+        "extract" => &t::ExtractFunctionClass { func_name: "extract" },
+        "from_days" => &t::FromDaysFunctionClass { func_name: "from_days" },
+        "from_unixtime" => &t::FromUnixTimeFunctionClass { func_name: "from_unixtime" },
+        "get_format" => &t::GetFormatFunctionClass { func_name: "get_format" },
+        "hour" => &t::HourFunctionClass { func_name: "hour" },
+        "localtime" => &t::NowFunctionClass { func_name: "localtime" },
+        "localtimestamp" => &t::NowFunctionClass { func_name: "localtimestamp" },
+        "makedate" => &t::MakeDateFunctionClass { func_name: "makedate" },
+        "maketime" => &t::MakeTimeFunctionClass { func_name: "maketime" },
+        "microsecond" => &t::MicroSecondFunctionClass { func_name: "microsecond" },
+        "minute" => &t::MinuteFunctionClass { func_name: "minute" },
+        "month" => &t::MonthFunctionClass { func_name: "month" },
+        "monthname" => &t::MonthNameFunctionClass { func_name: "monthname" },
+        "now" => &t::NowFunctionClass { func_name: "now" },
+        "period_add" => &t::PeriodAddFunctionClass { func_name: "period_add" },
+        "period_diff" => &t::PeriodDiffFunctionClass { func_name: "period_diff" },
+        "quarter" => &t::QuarterFunctionClass { func_name: "quarter" },
+        "sec_to_time" => &t::SecToTimeFunctionClass { func_name: "sec_to_time" },
+        "second" => &t::SecondFunctionClass { func_name: "second" },
+        "str_to_date" => &t::StrToDateFunctionClass { func_name: "str_to_date" },
+        "subtime" => &t::SubTimeFunctionClass { func_name: "subtime" },
+        "sysdate" => &t::SysDateFunctionClass { func_name: "sysdate" },
+        "time" => &t::TimeFunctionClass { func_name: "time" },
+        "time_format" => &t::TimeFormatFunctionClass { func_name: "time_format" },
+        "time_to_sec" => &t::TimeToSecFunctionClass { func_name: "time_to_sec" },
+        "timediff" => &t::TimeDiffFunctionClass { func_name: "timediff" },
+        "timestampadd" => &t::TimestampAddFunctionClass { func_name: "timestampadd" },
+        "timestampdiff" => &t::TimestampDiffFunctionClass { func_name: "timestampdiff" },
+        "to_days" => &t::ToDaysFunctionClass { func_name: "to_days" },
+        "to_seconds" => &t::ToSecondsFunctionClass { func_name: "to_seconds" },
+        "unix_timestamp" => &t::UnixTimestampFunctionClass { func_name: "unix_timestamp" },
+        "utc_date" => &t::UTCDateFunctionClass { func_name: "utc_date" },
+        "utc_time" => &t::UTCTimeFunctionClass { func_name: "utc_time" },
+        "utc_timestamp" => &t::UTCTimestampFunctionClass { func_name: "utc_timestamp" },
+        "week" => &t::WeekFunctionClass { func_name: "week" },
+        "weekday" => &t::WeekDayFunctionClass { func_name: "weekday" },
+        "weekofyear" => &t::WeekOfYearFunctionClass { func_name: "weekofyear" },
+        "year" => &t::YearFunctionClass { func_name: "year" },
+        "yearweek" => &t::YearWeekFunctionClass { func_name: "yearweek" },
+        "last_day" => &t::LastDayFunctionClass { func_name: "last_day" },
+        "tidb_bounded_staleness" => &t::TidbBoundedStalenessFunctionClass { func_name: "tidb_bounded_staleness" },
+        "tidb_parse_tso" => &t::TidbParseTsoFunctionClass { func_name: "tidb_parse_tso" },
+        "tidb_parse_tso_logical" => &t::TidbParseTsoLogicalFunctionClass { func_name: "tidb_parse_tso_logical" },
+        "tidb_current_tso" => &t::TidbCurrentTsoFunctionClass { func_name: "tidb_current_tso" },
         "lt" => &CompareFunctionClass { func_name: "lt" },
         "le" => &CompareFunctionClass { func_name: "le" },
         "gt" => &CompareFunctionClass { func_name: "gt" },
@@ -440,6 +510,33 @@ impl BaseBuiltinFunc {
             }
         }
         tp
+    }
+
+    /// Go `setDecimalAndFlenForDatetime`.
+    pub(crate) fn set_decimal_and_flen_for_datetime(&mut self, fsp: i64) {
+        self.tp.set_decimal_under_limit(fsp);
+        self.tp.set_flen_under_limit(MAX_DATETIME_WIDTH_NO_FSP + fsp);
+        if fsp > 0 {
+            // Add the length for `.`.
+            self.tp.set_flen_under_limit(self.tp.flen() + 1);
+        }
+    }
+
+    /// Go `setDecimalAndFlenForDate`.
+    pub(crate) fn set_decimal_and_flen_for_date(&mut self) {
+        self.tp.set_decimal(0);
+        self.tp.set_flen(MAX_DATE_WIDTH);
+        self.tp.set_code(FieldTypeCode::Date);
+    }
+
+    /// Go `setDecimalAndFlenForTime`.
+    pub(crate) fn set_decimal_and_flen_for_time(&mut self, fsp: i64) {
+        self.tp.set_decimal_under_limit(fsp);
+        self.tp.set_flen_under_limit(MAX_DURATION_WIDTH_NO_FSP + fsp);
+        if fsp > 0 {
+            // Add the length for `.`.
+            self.tp.set_flen_under_limit(self.tp.flen() + 1);
+        }
     }
 }
 

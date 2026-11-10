@@ -201,11 +201,7 @@ impl Constant {
                 value if field.is_hybrid() || matches!(value, Datum::String(_)) => {
                     convert(&value, FieldTypeCode::LongLong)
                 }
-                Datum::Int(value) => Ok(Datum::Int(value)),
-                Datum::UInt(value) => Ok(Datum::Int(value as i64)),
-                _ => Err(EvalError::Unsupported(
-                    "constant is not in its integer domain",
-                )),
+                value => Ok(Datum::Int(value.get_int64())),
             },
             EvalType::Real => match value {
                 Datum::BinaryLiteral(value) => {

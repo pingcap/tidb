@@ -698,16 +698,13 @@ pub(crate) fn derive_collation_with_arg_tps(
             Ok(ec)
         }
         "date_format" | "time_format" if args.len() == 2 => {
-            let mut ec = check_and_derive_collation_from_exprs_with_connection(
-                func_name,
-                ret_type,
-                &args[1..2],
-                connection,
-            )?;
             let (charset, collation) = connection;
-            ec.charset = charset.to_owned();
-            ec.collation = collation.to_owned();
-            Ok(ec)
+            Ok(ExprCollation {
+                coer: coercibility_of(&args[1]),
+                repe: repertoire_of(&args[1]),
+                charset: charset.to_owned(),
+                collation: collation.to_owned(),
+            })
         }
         "cast" if args.len() == 1 => {
             // Go preserves the argument's coercibility and repertoire here;

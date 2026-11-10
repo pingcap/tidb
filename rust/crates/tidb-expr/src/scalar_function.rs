@@ -3224,11 +3224,16 @@ impl ScalarFunction {
             return time_diff(&vals, kinds, fsp, ctx);
         }
         if matches!(upper.as_str(), "ADDTIME" | "SUBTIME") && vals.len() == 2 {
-            use crate::time_fn::add_sub::{add_sub_time, kind_of, TemporalKind};
-            let kinds: [TemporalKind; 2] = [
-                kind_of(arg_types[0].as_ref(), &vals[0]),
-                kind_of(arg_types[1].as_ref(), &vals[1]),
-            ];
+            use crate::time_fn::add_sub::{add_sub_time, kind_of, kinds_of_signature};
+            let kinds = self
+                .pb_signature()
+                .and_then(kinds_of_signature)
+                .unwrap_or_else(|| {
+                    [
+                        kind_of(arg_types[0].as_ref(), &vals[0]),
+                        kind_of(arg_types[1].as_ref(), &vals[1]),
+                    ]
+                });
             let row_path = !self.runs_vectorized_body();
             let sign = if upper == "SUBTIME" { -1 } else { 1 };
             let result = add_sub_time(&vals, kinds, sign, row_path, ctx)?;

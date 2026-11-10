@@ -113,7 +113,7 @@ pub fn type_of(expr: &Expression) -> FieldType {
 
 /// Replaces the expression's own result type in place, which is how Go
 /// mutates `expr.GetType(ctx).AddFlag(...)`.
-fn ret_type_mut(expr: &mut Expression) -> Option<&mut FieldType> {
+pub(crate) fn ret_type_mut(expr: &mut Expression) -> Option<&mut FieldType> {
     match expr {
         Expression::Column(c) => c.ret_type.as_mut(),
         Expression::Constant(c) => c.ret_type.as_mut(),

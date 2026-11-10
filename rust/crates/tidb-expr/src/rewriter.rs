@@ -790,83 +790,6 @@ pub(crate) fn restore_function_result_charset(expr: &mut Expression) -> Result<(
     result_type::restore_char_result_charset(func)
 }
 
-/// Applies the two `ETReal` argument declarations of Go's
-/// `powFunctionClass.getFunction` while building the expression tree.
-/// Go `timeFormatFunctionClass.getFunction` builds through
-/// `newBaseBuiltinFuncWithTp(..., types.ETString, types.ETDuration,
-/// types.ETString)`: the time argument is cast to TIME
-/// (`WrapWithCastAsDuration`), so a number that is no valid time warns
-/// through that cast and reaches the function as NULL.
-fn wrap_time_format_arguments(
-    name: &str,
-    args: Vec<Expression>,
-    resolver: &impl ColumnResolver,
-) -> Result<Vec<Expression>, EvalError> {
-    if name != "time_format" {
-        return Ok(args);
-    }
-    let mut args = args.into_iter();
-    let Some(first) = args.next() else {
-        return Ok(Vec::new());
-    };
-    let is_duration = first
-        .static_type()
-        .is_some_and(|field_type| field_type.code() == FieldTypeCode::Duration);
-    let mut first = wrap_with_cast_as_duration(first)?;
-    if !is_duration {
-        // `BuildCastFunction` folds the cast it built.
-        derive_tree_collation_with_connection(&mut first, resolver.connection_charset_info())?;
-        resolver.fold_constant(&mut first, ConstantFoldMode::Normal);
-    }
-    Ok(std::iter::once(first).chain(args).collect())
-}
-
-/// Go's clock function classes (`nowFunctionClass`, `sysDateFunctionClass`,
-/// `currentTimeFunctionClass`, `utcTimeFunctionClass`,
-/// `utcTimestampFunctionClass`) declare the optional precision `ETInt` and
-/// read it back with `getFspByIntArg` while BUILDING: a constant precision is
-/// cast to INT, folded, and range-checked before anything is evaluated.
-fn wrap_clock_fsp_argument(
-    name: &str,
-    args: Vec<Expression>,
-    resolver: &impl ColumnResolver,
-) -> Result<Vec<Expression>, EvalError> {
-    if !matches!(
-        name,
-        "now"
-            | "current_timestamp"
-            | "localtime"
-            | "localtimestamp"
-            | "sysdate"
-            | "curtime"
-            | "current_time"
-            | "utc_time"
-            | "utc_timestamp"
-    ) {
-        return Ok(args);
-    }
-    let args = args
-        .into_iter()
-        .map(|arg| {
-            let is_int = arg
-                .static_type()
-                .is_some_and(|field_type| field_type.eval_type() == EvalType::Int);
-            let mut arg = wrap_with_cast_as_int(arg, None)?;
-            if !is_int {
-                // `BuildCastFunction` folds the cast it built.
-                derive_tree_collation_with_connection(
-                    &mut arg,
-                    resolver.connection_charset_info(),
-                )?;
-                resolver.fold_constant(&mut arg, ConstantFoldMode::Normal);
-            }
-            Ok(arg)
-        })
-        .collect::<Result<Vec<_>, EvalError>>()?;
-    result_type::get_fsp_by_int_arg(&args, name)?;
-    Ok(args)
-}
-
 fn wrap_power_arguments(
     name: &str,
     args: Vec<Expression>,
@@ -2530,8 +2453,6 @@ fn finish_function_call(
         crate::new_function::type_infer_for_null(&mut rewritten);
     }
     let rewritten = wrap_power_arguments(&lowered, rewritten, resolver)?;
-    let rewritten = wrap_time_format_arguments(&lowered, rewritten, resolver)?;
-    let rewritten = wrap_clock_fsp_argument(&lowered, rewritten, resolver)?;
     let mut ret_type = builtin_return_type(&lowered, &rewritten).ok_or_else(|| {
         crate::builtin_registry::unresolved_error(&lowered, resolver.current_database())
     })?;
@@ -2591,7 +2512,8 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
         Expr::Extract { unit, value } => {
             let unit = keyword_constant(unit);
             let value = rewrite_expr_resolved(value, resolver)?;
-            Ok(scalar("extract", vec![unit, value]))
+            let class = crate::builtin::funcs("extract").expect("builtin_time.go registers EXTRACT");
+            class_function(class, "extract", vec![unit, value], resolver)
         }
         // The first GET_FORMAT argument is grammar, not an expression. Go's
         // parser turns it into the signature's first ETString constant and
@@ -2606,14 +2528,9 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 keyword_constant(selector),
                 rewrite_expr_resolved(expr, resolver)?,
             ];
-            let ret_type = builtin_return_type("get_format", &args).ok_or(
-                EvalError::Unsupported("this builtin is not yet built for chunk evaluation"),
-            )?;
-            Ok(Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("get_format"),
-                ret_type,
-                args,
-            )))
+            let class =
+                crate::builtin::funcs("get_format").expect("builtin_time.go registers GET_FORMAT");
+            class_function(class, "get_format", args, resolver)
         }
         // Go parses POSITION with its own `substr IN str` grammar into an
         // ordinary `position(substr, str)` call (`parsePositionFunc`), which
@@ -2648,14 +2565,9 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 rewrite_expr_resolved(interval, resolver)?,
                 rewrite_expr_resolved(expr, resolver)?,
             ];
-            let ret_type = builtin_return_type("timestampadd", &args).ok_or(
-                EvalError::Unsupported("this builtin is not yet built for chunk evaluation"),
-            )?;
-            Ok(Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("timestampadd"),
-                ret_type,
-                args,
-            )))
+            let class = crate::builtin::funcs("timestampadd")
+                .expect("builtin_time.go registers TIMESTAMPADD");
+            class_function(class, "timestampadd", args, resolver)
         }
         Expr::TimestampDiff { unit, expr1, expr2 } => {
             let args = vec![
@@ -2663,11 +2575,9 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 rewrite_expr_resolved(expr1, resolver)?,
                 rewrite_expr_resolved(expr2, resolver)?,
             ];
-            Ok(Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("timestampdiff"),
-                FieldType::new(FieldTypeCode::LongLong),
-                args,
-            )))
+            let class = crate::builtin::funcs("timestampdiff")
+                .expect("builtin_time.go registers TIMESTAMPDIFF");
+            class_function(class, "timestampdiff", args, resolver)
         }
         // An ordinary builtin call: every argument is evaluated eagerly and
         // the shared `eval_func_values` implementation runs it.
@@ -2815,15 +2725,9 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                         rewrite_expr_resolved(value, &child_resolver)?,
                         keyword_constant(&unit),
                     ];
-                    let ret_type =
-                        builtin_return_type(&lowered, &args).ok_or(EvalError::Unsupported(
-                            "this builtin is not yet built for chunk evaluation",
-                        ))?;
-                    return Ok(Expression::ScalarFunction(ScalarFunction::new(
-                        CiString::new(&lowered),
-                        ret_type,
-                        args,
-                    )));
+                    let class = crate::builtin::funcs(&lowered)
+                        .expect("builtin_time.go registers the DATE_ADD family");
+                    return class_function(class, &lowered, args, resolver);
                 }
             }
             // The parser keeps CHAR(... USING charset)'s validated charset as
