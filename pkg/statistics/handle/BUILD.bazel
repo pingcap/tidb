@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "handle",
     srcs = [
+        "analyze_handle.go",
         "bootstrap.go",
         "handle.go",
     ],
@@ -14,6 +15,7 @@ go_library(
         "//pkg/kv",
         "//pkg/meta/autoid",
         "//pkg/meta/model",
+        "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/session/syssession",
@@ -44,6 +46,7 @@ go_library(
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_tiancaiamao_gp//:gp",
         "@org_uber_go_zap//:zap",
     ],
 )

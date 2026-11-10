@@ -98,6 +98,7 @@ func (sa *statsAnalyze) FinishAnalyzeJob(job *statistics.AnalyzeJob, failReason 
 }
 
 // InsertAnalyzeJob inserts the analyze job to the storage with a session of pool.
+// These helpers also serve handle.AnalyzeHandle, which has no statsAnalyze.
 func InsertAnalyzeJob(pool syssession.Pool, job *statistics.AnalyzeJob, instance string, procID uint64) error {
 	return statsutil.CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		return insertAnalyzeJob(sctx, job, instance, procID)

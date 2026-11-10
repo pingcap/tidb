@@ -59,7 +59,8 @@ func (u *statsUsageImpl) GetPredicateColumns(tableID int64) (columnIDs []int64, 
 	return GetPredicateColumns(u.statsHandle.SPool(), tableID)
 }
 
-// GetPredicateColumns is statsUsageImpl.GetPredicateColumns with a session of pool.
+// GetPredicateColumns is statsUsageImpl.GetPredicateColumns with a session of
+// pool. It also serves handle.AnalyzeHandle, which has no statsUsageImpl.
 func GetPredicateColumns(pool syssession.Pool, tableID int64) (columnIDs []int64, err error) {
 	err = utilstats.CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		columnIDs, err = predicatecolumn.GetPredicateColumns(sctx, tableID)

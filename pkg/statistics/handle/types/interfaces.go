@@ -498,6 +498,7 @@ type StatsHandle interface {
 }
 
 // AnalyzeStatsHandle is the part of the stats handle that an ANALYZE statement uses.
+// A session without a domain gets one that has no cache, see handle.AnalyzeHandle.
 type AnalyzeStatsHandle interface {
 	GPool() *gp.Pool
 
