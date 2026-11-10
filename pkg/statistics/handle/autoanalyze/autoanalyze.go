@@ -478,7 +478,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 				}
 
 				sql := "analyze table %n.%n"
-				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
+				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, exec.AnalyzedTable{ID: tblInfo.ID}, sql, db, tblInfo.Name.O)
 				if analyzed {
 					// analyze one table at a time to let it get the freshest parameters.
 					// others will be analyzed next round which is just 3s later.
@@ -513,7 +513,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 			for _, def := range partitionDefs {
 				sql := "analyze table %n.%n partition %n"
 				statsTbl := partitionStats[def.ID]
-				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
+				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, exec.AnalyzedTable{ID: tblInfo.ID}, sql, db, tblInfo.Name.O, def.Name.O)
 				if analyzed {
 					return true
 				}
@@ -560,6 +560,7 @@ func tryAutoAnalyzeTable(
 	tblInfo *model.TableInfo,
 	statsTbl *statistics.Table,
 	ratio float64,
+	table exec.AnalyzedTable,
 	sql string,
 	params ...any,
 ) bool {
@@ -588,7 +589,7 @@ func tryAutoAnalyzeTable(
 			zap.String("reason", reason),
 		)
 
-		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, sql, params...)
+		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, table, sql, params...)
 
 		return true
 	}
@@ -611,7 +612,7 @@ func tryAutoAnalyzeTable(
 				"auto analyze for unanalyzed indexes",
 				zap.String("sql", escaped),
 			)
-			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, sqlWithIdx, paramsWithIdx...)
+			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, table, sqlWithIdx, paramsWithIdx...)
 			return true
 		}
 	}
@@ -724,7 +725,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				zap.String("table", tblInfo.Name.String()),
 				zap.Any("partitions", needAnalyzePartitionNames[start:end]),
 			)
-			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, sql, params...)
+			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, exec.AnalyzedTable{ID: tblInfo.ID}, sql, params...)
 		}
 
 		return true
@@ -765,7 +766,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 					zap.String("index", idx.Name.String()),
 					zap.Any("partitions", needAnalyzePartitionNames[start:end]),
 				)
-				exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, sql, params...)
+				exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, exec.AnalyzedTable{ID: tblInfo.ID}, sql, params...)
 			}
 
 			return true

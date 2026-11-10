@@ -18,6 +18,7 @@ import (
 	"context"
 	"math"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -55,6 +56,30 @@ func execOptionForAnalyzeVersion(statsVer int, needVersionRewriteWarn bool, sql 
 	return sqlexec.ExecOptionAnalyzeVer2
 }
 
+// AnalyzedTable is the table that an auto-analyze statement analyzes.
+type AnalyzedTable struct {
+	ID int64
+}
+
+// Dispatcher runs an auto-analyze statement on some TiDB node and waits for the result. sctx is an
+// idle session of the statement's keyspace.
+type Dispatcher func(
+	sctx sessionctx.Context,
+	statsHandle statstypes.StatsHandle,
+	sysProcTracker sysproctrack.Tracker,
+	needVersionRewriteWarn bool,
+	table AnalyzedTable,
+	sql string,
+	params ...any,
+) error
+
+var dispatcher atomic.Pointer[Dispatcher]
+
+// SetDispatcher sets the dispatcher used when tidb_enable_dist_auto_analyze is ON.
+func SetDispatcher(d Dispatcher) {
+	dispatcher.Store(&d)
+}
+
 // AutoAnalyze executes the auto analyze task.
 func AutoAnalyze(
 	sctx sessionctx.Context,
@@ -62,11 +87,17 @@ func AutoAnalyze(
 	sysProcTracker sysproctrack.Tracker,
 	statsVer int,
 	needVersionRewriteWarn bool,
+	table AnalyzedTable,
 	sql string,
 	params ...any,
 ) bool {
 	startTime := time.Now()
-	_, _, err := RunAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, needVersionRewriteWarn, sql, params...)
+	var err error
+	if d := dispatcher.Load(); d != nil && vardef.EnableDistAutoAnalyze.Load() {
+		err = (*d)(sctx, statsHandle, sysProcTracker, needVersionRewriteWarn, table, sql, params...)
+	} else {
+		_, _, err = RunAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, needVersionRewriteWarn, sql, params...)
+	}
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {

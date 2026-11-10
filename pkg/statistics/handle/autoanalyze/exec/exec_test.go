@@ -48,7 +48,7 @@ func TestExecAutoAnalyzes(t *testing.T) {
 		sctx,
 		handle,
 		dom.SysProcTracker(),
-		2, false, "analyze table %n", "t",
+		2, false, exec.AnalyzedTable{}, "analyze table %n", "t",
 	)
 
 	// Check the result of analyze.
@@ -83,6 +83,7 @@ func TestExecAutoAnalyzeRewritesLegacyStatsVersionToV2(t *testing.T) {
 			dom.SysProcTracker(),
 			statistics.Version2,
 			true,
+			exec.AnalyzedTable{},
 			"analyze table %n",
 			"t",
 		)
@@ -131,6 +132,7 @@ partition by range (a) (
 			dom.SysProcTracker(),
 			statistics.Version2,
 			true,
+			exec.AnalyzedTable{},
 			"analyze table %n partition %n",
 			"pt",
 			"p0",

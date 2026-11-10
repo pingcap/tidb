@@ -231,7 +231,7 @@ func (j *NonPartitionedTableAnalysisJob) analyzeTable(
 	sysProcTracker sysproctrack.Tracker,
 ) bool {
 	sql, params := j.GenSQLForAnalyzeTable()
-	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
+	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, exec.AnalyzedTable{ID: j.TableID}, sql, params...)
 }
 
 // GenSQLForAnalyzeTable generates the SQL for analyzing the specified table.
@@ -254,7 +254,7 @@ func (j *NonPartitionedTableAnalysisJob) analyzeIndexes(
 	// Therefore, to avoid redundancy, only analyze the first index.
 	firstIndex := j.IndexNames[0]
 	sql, params := j.GenSQLForAnalyzeIndex(firstIndex)
-	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
+	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, exec.AnalyzedTable{ID: j.TableID}, sql, params...)
 }
 
 // GenSQLForAnalyzeIndex generates the SQL for analyzing the specified index.
