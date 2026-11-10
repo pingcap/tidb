@@ -2752,7 +2752,8 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 
 		memPriority := memory.ArbitrationPriorityMedium
 
-		if sg, ok := domain.GetDomain(s).InfoSchema().ResourceGroupByName(ast.NewCIStr(sessVars.StmtCtx.ResourceGroupName)); ok {
+		// A cross keyspace session has no domain, use its own info schema.
+		if sg, ok := s.infoCache.GetLatest().ResourceGroupByName(ast.NewCIStr(sessVars.StmtCtx.ResourceGroupName)); ok {
 			switch sg.Priority {
 			case ast.LowPriorityValue:
 				memPriority = memory.ArbitrationPriorityLow
