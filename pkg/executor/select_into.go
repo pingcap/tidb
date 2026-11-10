@@ -24,9 +24,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -35,7 +35,7 @@ import (
 type SelectIntoExec struct {
 	exec.BaseExecutor
 	intoOpt *ast.SelectIntoOption
-	core.LineFieldsInfo
+	importdef.LineFieldsInfo
 
 	lineBuf   []byte
 	realBuf   []byte

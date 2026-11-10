@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -157,4 +159,25 @@ func buildImportQueryExecutor(
 		return nil, b.err
 	}
 	return e, nil
+}
+
+// PlanImportQueryForTest plans the SELECT of the IMPORT INTO statement sql in
+// sctx like the statement does, so that CaptureQuerySource can capture it.
+func PlanImportQueryForTest(sctx sessionctx.Context, sql string) error {
+	stmt, node, err := importer.ParseImportQuery(sctx, sql)
+	if err != nil {
+		return err
+	}
+	// Each statement starts with no related tables.
+	clear(sctx.GetSessionVars().StmtCtx.RelatedTableIDs)
+	// Preprocess the IMPORT INTO statement as it is, then plan its SELECT.
+	stmtW := resolve.NewNodeW(stmt)
+	ret := &plannercore.PreprocessorReturn{}
+	if err := plannercore.Preprocess(context.Background(), sctx, stmtW,
+		plannercore.WithPreprocessorReturn(ret), plannercore.InitTxnContextProvider); err != nil {
+		return err
+	}
+	_, err = plannercore.BuildLogicalPlanForTest(context.Background(), sctx,
+		resolve.NewNodeWWithCtx(node, stmtW.GetResolveContext()), ret.InfoSchema)
+	return err
 }

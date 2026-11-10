@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
@@ -388,7 +389,7 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 	if path == "" {
 		selectPlan = &physicalop.PhysicalSelection{}
 	}
-	plan, err := importer.NewImportPlan(ctx, tk.Session(), &plannercore.ImportInto{
+	plan, err := executor.NewImportPlan(ctx, tk.Session(), &plannercore.ImportInto{
 		Path:   path,
 		Format: &format,
 		Table: &resolve.TableNameW{
