@@ -486,7 +486,7 @@ execute stmt;
 a
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt;
 a
 select @@last_plan_from_cache;

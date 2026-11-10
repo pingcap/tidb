@@ -418,6 +418,10 @@ func newPlanCacheKeyWithMatchedBinding(
 	hashLen := len(userName) + len(hostName) + len(stmtDB) + len(stmt.StmtText)
 	// schemaVersion + relateVersion + pruneMode
 	hashLen += 8 + len(stmt.RelateVersion)*16 + len(pruneMode)
+	if stmt.snapshotVersion != nil {
+		// Number of snapshot tables and their IDs and revisions.
+		hashLen += 8 + len(stmt.snapshotVersion)*16
+	}
 	// latestSchemaVersion + sqlMode + enableNoBackslashEscapesInLike + timeZoneOffset + isolationReadEngines + selectLimit
 	hashLen += 8 + 8 + 1 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
 	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks
@@ -443,8 +447,17 @@ func newPlanCacheKeyWithMatchedBinding(
 	hash = append(hash, hostName...)
 	hash = append(hash, stmtDB...)
 	hash = append(hash, stmt.StmtText...)
-	hash = codec.EncodeInt(hash, stmt.SchemaVersion)
+	if stmt.snapshotVersion != nil {
+		// Zero distinguishes this key from keys that use a global schema version.
+		hash = codec.EncodeInt(hash, 0)
+	} else {
+		hash = codec.EncodeInt(hash, stmt.SchemaVersion)
+	}
 	hash = hashInt64Uint64Map(hash, stmt.RelateVersion)
+	if stmt.snapshotVersion != nil {
+		hash = codec.EncodeInt(hash, int64(len(stmt.snapshotVersion)))
+		hash = hashInt64Uint64Map(hash, stmt.snapshotVersion)
+	}
 	hash = append(hash, pruneMode...)
 	// Only be set in rc or for update read and leave it default otherwise.
 	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
@@ -797,6 +810,9 @@ type PlanCacheStmt struct {
 
 	// RelateVersion stores the true cache plan table schema version, since each table schema can be updated separately in transaction.
 	RelateVersion map[int64]uint64
+	// snapshotVersion contains table revisions before MDL overrides, or nil when
+	// the cache key must retain the global schema version.
+	snapshotVersion map[int64]uint64
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
