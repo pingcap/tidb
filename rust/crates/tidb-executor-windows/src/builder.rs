@@ -124,8 +124,8 @@ fn build_window<C: Columns + Send + 'static>(
                 let mut end = frame_bound(frame.end, BoundType::Following);
                 let is_range_frame = frame.frame_type == FrameType::Ranges;
                 if is_range_frame {
-                    start.update_compare_cols(&order_by_cols)?;
-                    end.update_compare_cols(&order_by_cols)?;
+                    start.update_compare_cols(&ctx, &order_by_cols)?;
+                    end.update_compare_cols(&ctx, &order_by_cols)?;
                 }
                 (start, end, is_range_frame)
             }
@@ -177,8 +177,8 @@ fn build_window<C: Columns + Send + 'static>(
         Some(frame) => {
             let mut start = frame_bound(frame.start, BoundType::Preceding);
             let mut end = frame_bound(frame.end, BoundType::Following);
-            start.update_compare_cols(&order_by_cols)?;
-            end.update_compare_cols(&order_by_cols)?;
+            start.update_compare_cols(&ctx, &order_by_cols)?;
+            end.update_compare_cols(&ctx, &order_by_cols)?;
             Box::new(RangeFrameWindowProcessor {
                 window_funcs,
                 partial_results,

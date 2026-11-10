@@ -131,7 +131,7 @@ pub struct FrameBound {
 
 impl FrameBound {
     /// Go FrameBound.UpdateCompareCols, called by the window executor builder.
-    pub fn update_compare_cols(&mut self, order_by: &[Column]) -> Result<(), tidb_exprctx::EvalError> {
+    pub fn update_compare_cols(&mut self, ctx: &dyn tidb_exprctx::Columns, order_by: &[Column]) -> Result<(), tidb_exprctx::EvalError> {
         let Some(calc) = self.calc_funcs.first() else {
             return Ok(());
         };
@@ -143,7 +143,7 @@ impl FrameBound {
         {
             if calc_type.eval_type() != column_type.eval_type() {
                 self.compare_cols[0] = tidb_expr::wrap_cast::build_cast_to(
-                    &tidb_expr::wrap_cast::UnfoldedBuildContext,
+                    &tidb_expr::wrap_cast::ColumnsBuildContext(ctx),
                     Expression::Column(first.clone()),
                     calc_type.clone(),
                 )?;

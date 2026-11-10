@@ -571,7 +571,7 @@ pub fn physical_optimize<C: OptimizeContext>(
     // The projection re-injection restores the purposeful projections
     // (scalar aggregate arguments, scalar order-by items, expression
     // nominal sorts) that the elimination pass removed.
-    let mut physical = crate::inject_extra_projection::inject_extra_projection(physical, plan_ids, column_ids);
+    let mut physical = crate::inject_extra_projection::inject_extra_projection(ctx, physical, plan_ids, column_ids);
     // Go postOptimize: mergeContinuousSelections.
     crate::post_optimize::merge_continuous_selections(&mut physical);
     // Go postOptimize: eliminateUnionScanAndLock (the UnionScan half).

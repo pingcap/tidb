@@ -19,15 +19,7 @@
 //!
 //! # Which Go machinery each stage maps onto
 //!
-//! - Construction/rebuild: [`MasterFunctionBuilder`] composes this workspace's
-//!   two ported halves of Go's `NewFunction`: the registry/typing layer
-//!   ([`crate::new_function::new_function`]) followed by the public
-//!   `FoldConstant` port ([`crate::expr_util::fold_constant_with`], carrying
-//!   Go's `specialFoldHandler` set -- `Ifnull`/`If`/`Case`/`IsNull`).
-//!   Composition is needed because `new_function` itself drives only the
-//!   rewriter-tier constant fold, which folds all-constant calls but omits the
-//!   special handlers master applies inside every `NewFunction`
-//!   (`scalar_function.go:357` -> `FoldConstant`, whose handler dispatch sits at `constant_fold.go:172`).
+//! - Construction/rebuild: [`RealFunctionBuilder`], Go's `NewFunction`.
 //! - The null walk itself: [`crate::expr_util::evaluate_expr_with_null`],
 //!   `expression.go:947`.
 //!
@@ -40,68 +32,11 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 use crate::column::Column;
 use tidb_exprctx::context::NoColumns;
 use crate::expr_util::{
-    evaluate_expr_with_null, fold_constant_with, FoldOptions, FunctionBuildError, FunctionBuilder,
-    RealFunctionBuilder, SubstituteOptions,
+    evaluate_expr_with_null, FunctionBuilder, RealFunctionBuilder, SubstituteOptions,
 };
 use crate::expression::Expression;
 use crate::schema::Schema;
 use tidb_ast::CiString;
-
-/// A [`FunctionBuilder`] reproducing master's `NewFunction` contract by
-/// chaining the two ported halves described in the module header.
-///
-/// Comparison results are typed through
-/// [`crate::builtin_compare::infer_compare_type`] when the caller hands an
-/// `Unspecified`/absent return type, standing in for
-/// `compareFunctionClass.getFunction`'s own result-type inference.
-pub struct MasterFunctionBuilder<'a, C: tidb_exprctx::context::Columns> {
-    ctx: &'a C,
-    delegate: RealFunctionBuilder<'a, C>,
-}
-
-impl<'a, C: tidb_exprctx::context::Columns> MasterFunctionBuilder<'a, C> {
-    /// Binds the evaluation context both halves read.
-    pub fn new(ctx: &'a C) -> Self {
-        Self {
-            ctx,
-            delegate: RealFunctionBuilder::new(ctx),
-        }
-    }
-}
-
-impl<C: tidb_exprctx::context::Columns> FunctionBuilder for MasterFunctionBuilder<'_, C> {
-    fn new_function(
-        &self,
-        func_name: &str,
-        ret_type: Option<FieldType>,
-        args: Vec<Expression>,
-    ) -> Result<Expression, FunctionBuildError> {
-        let mut built = self
-            .delegate
-            .new_function(func_name, ret_type.clone(), args)?;
-        // Infer comparison result types exactly where Go's class inference
-        // fills them in (`compareFunctionClass.getFunction`); this workspace's
-        // `builtin_return_type` leaves comparisons Unspecified today.
-        if let Expression::ScalarFunction(function) = &mut built {
-            let name = function.func_name.lowercase();
-            let needs_inference = function
-                .ret_type
-                .as_ref()
-                .is_some_and(|t| t.code() == FieldTypeCode::Unspecified)
-                || ret_type.is_none();
-            if needs_inference {
-                if let Some(inferred) = crate::builtin_compare::infer_compare_type(name) {
-                    function.ret_type = Some(inferred);
-                }
-            }
-        }
-        Ok(fold_constant_with(
-            &built,
-            self.ctx,
-            &FoldOptions::new(self),
-        ))
-    }
-}
 
 fn longlong() -> FieldType {
     FieldType::new(FieldTypeCode::LongLong)
@@ -135,7 +70,7 @@ fn evaluate_expr_with_null_neutralizes_only_schema_columns() {
         Expression::Column(column)
     }
     let ctx = NoColumns;
-    let builder = MasterFunctionBuilder::new(&ctx);
+    let builder = RealFunctionBuilder::new(&ctx);
     let options = SubstituteOptions::new(&builder);
 
     let col0 = test_column(0, 1);
@@ -203,11 +138,10 @@ fn evaluate_expr_with_null_neutralizes_only_schema_columns() {
 #[test]
 fn evaluate_expr_with_null_meets_rebuild_error() {
     let ctx = NoColumns;
-    let builder = MasterFunctionBuilder::new(&ctx);
+    let builder = RealFunctionBuilder::new(&ctx);
     let options = SubstituteOptions::new(&builder);
 
     let mut inner = builder
-        .clone_builder()
         .new_function(
             "ifnull",
             None,
@@ -231,14 +165,6 @@ fn evaluate_expr_with_null_meets_rebuild_error() {
     assert!(evaluate_expr_with_null(&outer, &schema, false, &ctx, &options).is_err());
     // Null-reject-check walk: same failure.
     assert!(evaluate_expr_with_null(&outer, &schema, true, &ctx, &options).is_err());
-}
-
-impl<C: tidb_exprctx::context::Columns> MasterFunctionBuilder<'_, C> {
-    /// Reuses the typing delegate without going through the composed fold --
-    /// the MeetError port only needs a well-typed ifnull wrapper.
-    fn clone_builder(&self) -> RealFunctionBuilder<'_, C> {
-        RealFunctionBuilder::new(self.ctx)
-    }
 }
 
 /// GO PORT of `pkg/expression/expression_test.go:85
@@ -267,7 +193,7 @@ impl<C: tidb_exprctx::context::Columns> MasterFunctionBuilder<'_, C> {
 #[test]
 fn evaluate_expr_with_null_folds_a_column_against_a_literal() {
     let ctx = NoColumns;
-    let builder = MasterFunctionBuilder::new(&ctx);
+    let builder = RealFunctionBuilder::new(&ctx);
     let options = SubstituteOptions::new(&builder);
 
     let col0 = Expression::Column(Column::new(0, longlong()));

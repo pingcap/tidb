@@ -315,20 +315,10 @@ fn merge_adjacent_projections(
         // planning and execution, so -- exactly like every construction-time
         // fold -- the delta re-homes into the thread stash the record set
         // drains post-execution.
-        let mut folded = match builder.fold_context() {
-            Some(context) => {
-                let bookmark = context.warning_count();
-                let folded =
-                    tidb_expr::expr_util::fold::fold_constant(&replaced, context, &options);
-                tidb_expr::constant_fold::move_live_warnings_to_stash(context, bookmark);
-                folded
-            }
-            None => tidb_expr::expr_util::fold::fold_constant(
-                &replaced,
-                &tidb_exprctx::NoColumns,
-                &options,
-            ),
-        };
+        let context = builder.fold_context();
+        let bookmark = context.warning_count();
+        let mut folded = tidb_expr::expr_util::fold::fold_constant(&replaced, context, &options);
+        tidb_expr::constant_fold::move_live_warnings_to_stash(context, bookmark);
         preserve_not_null_flag(&replaced, &mut folded);
         *expression = folded;
     }

@@ -53,18 +53,6 @@ impl std::fmt::Display for FunctionBuildError {
 
 impl std::error::Error for FunctionBuildError {}
 
-/// Go `BuildCastFunctionWithCheck`. No statement context reaches this
-/// builder, so the cast is left unfolded.
-fn dedicated_cast(arg: Expression, target: FieldType) -> Result<Expression, FunctionBuildError> {
-    crate::builtin_cast::build_cast_function(&crate::builtin::UnfoldedBuildContext, arg, target).map_err(|error| {
-        FunctionBuildError {
-            func_name: "cast".to_owned(),
-            reason: format!("{error:?}"),
-            error: Some(error),
-        }
-    })
-}
-
 /// Native cast signatures share Go's single ast.Cast rewrite contract.
 pub(crate) fn is_cast_name(name: &str) -> bool {
     name == "cast"
@@ -106,24 +94,15 @@ pub trait FunctionBuilder {
         arg: Expression,
         ret_type: Option<FieldType>,
         is_explicit_charset: bool,
-    ) -> Result<Expression, FunctionBuildError> {
-        let _ = is_explicit_charset;
-        match ret_type {
-            Some(target) => dedicated_cast(arg, target),
-            None => self.new_function("cast", None, vec![arg]),
-        }
-    }
+    ) -> Result<Expression, FunctionBuildError>;
 
-    /// The live evaluation context Go folds built constants against, when
-    /// this builder carries one. Rule-side constant folds (projection
+    /// The live evaluation context Go folds built constants against. Rule-side constant folds (projection
     /// elimination's merged-expression fold) must evaluate with it and
     /// re-home the diagnostics like every construction-time fold -- a dry
     /// `NoColumns` fold silently drops go's 1292 rows (oracle:
     /// `SELECT CAST(j AS SIGNED) FROM (SELECT CAST('{}' AS JSON) AS j) t`
     /// warns `Truncated incorrect INTEGER value: '{}'`).
-    fn fold_context(&self) -> Option<&dyn tidb_exprctx::context::Columns> {
-        None
-    }
+    fn fold_context(&self) -> &dyn tidb_exprctx::context::Columns;
 
     /// Go `wrapWithIsTrue(ctx, keepNull=true, expr, wrapForInt=true)`, the one
     /// call `pushNotAcrossExpr` makes before descending through a `NOT`.
@@ -191,8 +170,8 @@ impl<'a, C: tidb_exprctx::context::Columns> RealFunctionBuilder<'a, C> {
 }
 
 impl<C: tidb_exprctx::context::Columns> FunctionBuilder for RealFunctionBuilder<'_, C> {
-    fn fold_context(&self) -> Option<&dyn tidb_exprctx::context::Columns> {
-        Some(self.ctx)
+    fn fold_context(&self) -> &dyn tidb_exprctx::context::Columns {
+        self.ctx
     }
 
     fn new_function(

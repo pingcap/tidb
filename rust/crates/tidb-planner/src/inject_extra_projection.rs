@@ -56,6 +56,8 @@ use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 
 /// The allocators and stats context Go reaches through `plan.SCtx()`.
 pub struct InjectContext<'a> {
+    /// Go `SCtx().GetExprCtx()`.
+    pub expr_ctx: &'a dyn tidb_exprctx::Columns,
     /// Go `SCtx().GetSessionVars().GetPlanID()` — the plan id allocator.
     pub plan_ids: &'a PlanIdAllocator,
     /// Go `SCtx().GetSessionVars().AllocPlanColumnID()`.
@@ -76,11 +78,13 @@ pub struct InjectContext<'a> {
 /// `skew_ratio = 1.0` the wired search context uses.
 #[must_use]
 pub fn inject_extra_projection(
+    expr_ctx: &dyn tidb_exprctx::Columns,
     plan: PhysicalPlan,
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
 ) -> PhysicalPlan {
     let ctx = InjectContext {
+        expr_ctx,
         plan_ids,
         column_ids,
         skew_ratio: 1.0,
@@ -146,7 +150,7 @@ fn inject_proj_below_union(
                 if !src_type.equal(dst_type) || not_null(dst_type) != not_null(src_type) {
                     // Go's `BuildCastFunction4Union` cannot fail.
                     exprs.push(
-                        tidb_expr::wrap_cast::build_cast_function_4_union(&tidb_expr::wrap_cast::UnfoldedBuildContext, Expression::Column(src_col), dst_type.clone())
+                        tidb_expr::wrap_cast::build_cast_function_4_union(&tidb_expr::wrap_cast::ColumnsBuildContext(ctx.expr_ctx), Expression::Column(src_col), dst_type.clone())
                             .expect("BuildCastFunction4Union builds the cast"),
                     );
                     need_change = true;
@@ -771,6 +775,7 @@ mod tests {
         column_ids: &'a ColumnIdAllocator,
     ) -> InjectContext<'a> {
         InjectContext {
+            expr_ctx: &NoColumns,
             plan_ids,
             column_ids,
             skew_ratio: 1.0,

@@ -109,20 +109,6 @@ fn unwrap_json_cast(expr: &Expression) -> Option<&Expression> {
     function.args.first()
 }
 
-/// Go `unwrapJSONCast` over a JSON function's argument. Go wraps a non-JSON
-/// argument (or a JSON one marked parse-to-JSON) in the implicit cast that
-/// `unwrapJSONCast` then strips; that argument is therefore the value itself.
-fn unwrap_json_argument(expr: &Expression) -> Option<&Expression> {
-    let wrapped_by_go = expr.static_type().is_none_or(|field| {
-        field.code() != FieldTypeCode::Json
-            || field.has_flag(tidb_datatype::FieldTypeFlags::PARSE_TO_JSON)
-    });
-    if wrapped_by_go {
-        return Some(expr);
-    }
-    unwrap_json_cast(expr)
-}
-
 /// Go `jsonArrayExpr2Exprs`: `cast('[1, 2, 3]' as JSON)` as the constants
 /// `1, 2, 3` of `target_type`; a scalar is one constant. `None` when the
 /// argument is not an immutable JSON value or an element does not convert.
@@ -131,14 +117,12 @@ fn json_array_expr_to_exprs(
     expr: &Expression,
     target_type: &FieldType,
 ) -> Option<Vec<Expression>> {
-    // The argument as Go's tree holds it: wrapped in its implicit JSON cast.
-    let wrapped = tidb_expr::wrap_cast::wrap_with_cast_as_json(&tidb_expr::wrap_cast::UnfoldedBuildContext, expr.clone()).ok()?;
-    if !tidb_expr::expr_util::predicates::is_immutable_func(&wrapped)
-        || wrapped.static_type()?.eval_type() != EvalType::Json
+    if !tidb_expr::expr_util::predicates::is_immutable_func(expr)
+        || expr.static_type()?.eval_type() != EvalType::Json
     {
         return None;
     }
-    let Ok(Datum::Json(json)) = evaluate.eval(&wrapped) else {
+    let Ok(Datum::Json(json)) = evaluate.eval(expr) else {
         return None;
     };
     if json.type_code() != tidb_datatype::JSON_TYPE_CODE_ARRAY {
@@ -185,7 +169,7 @@ fn mv_column_values(
             if !target_json_path.equal(function.args.get(1)?) {
                 return None;
             }
-            let value = unwrap_json_argument(function.args.first()?)?;
+            let value = unwrap_json_cast(function.args.first()?)?;
             Some((vec![value.clone()], AccessFilterType::SingleValueOnMvCol))
         }
         // json_contains(a, '1')
