@@ -106,7 +106,7 @@ use std::collections::BTreeMap;
 
 use tidb_ast::{CiString, Expr, SelectField, Stmt};
 use tidb_datatype::{
-    FieldName, FieldNameMetadata, FieldType, FieldTypeCode, FieldTypeFlags, IdentifierMetadata,
+    FieldName, FieldNameMetadata, FieldType, FieldTypeCode, IdentifierMetadata,
     QualifiedColumnName,
 };
 
@@ -525,175 +525,13 @@ pub fn build_simple_expr(
 
     let expr = rewrite_expr_resolved(node, &resolver)?;
     match &options.target_field_type {
-        Some(target) => Ok(build_cast_function(expr, target.clone(), false)?),
+        Some(target) => Ok(crate::builtin_cast::build_cast_function(
+            &crate::builtin::ResolverBuildContext(&resolver),
+            expr,
+            target.clone(),
+        )?),
         None => Ok(expr),
     }
-}
-
-/// Go `WrapWithCastAsInt`/`WrapWithCastAsReal` as the hybrid push uses them
-/// (`builtin_cast.go:2909-2923`): the wrapped branch becomes
-/// ETInt/ETReal-typed so the rebuilt control function infers a numeric
-/// result. The enum `ENUM_SET_AS_INT` stamp is unnecessary in this shape:
-/// the built cast node evaluates the ordinal through `cast_arg_as_int`'s
-/// hybrid short-circuit.
-fn wrap_cast_for_hybrid_push(
-    expr: Expression,
-    real: bool,
-    target_unsigned: bool,
-) -> Result<Expression, EvalError> {
-    if let Some(ft) = expr.static_type() {
-        let wanted = if real {
-            tidb_datatype::EvalType::Real
-        } else {
-            tidb_datatype::EvalType::Int
-        };
-        if ft.eval_type() == wanted {
-            return Ok(expr);
-        }
-    }
-    let source_flen = expr.static_type().map_or(0, FieldType::flen);
-    let not_null = expr
-        .static_type()
-        .is_some_and(|ft| ft.has_flag(FieldTypeFlags::NOT_NULL));
-    let source_unsigned = expr
-        .static_type()
-        .is_some_and(|ft| ft.has_flag(FieldTypeFlags::UNSIGNED));
-    let mut tp = if real {
-        // Go WrapWithCastAsReal: Double + MaxRealWidth + unspecified decimal,
-        // flags inheriting UnsignedFlag|NotNullFlag from the source.
-        let mut tp = FieldType::new(FieldTypeCode::Double);
-        tp.set_flen(22);
-        tp.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
-        tp
-    } else {
-        // Go WrapWithCastAsInt: LongLong + source flen + decimal 0, flags
-        // inheriting NotNullFlag from the source and UnsignedFlag from the
-        // TARGET.
-        let mut tp = FieldType::new(FieldTypeCode::LongLong);
-        tp.set_flen(source_flen);
-        tp.set_decimal(0);
-        tp
-    };
-    tp.set_charset_name("binary");
-    tp.set_collation_name("binary");
-    tp.add_flags(FieldTypeFlags::BINARY);
-    let mut inherited = if not_null {
-        FieldTypeFlags::NOT_NULL
-    } else {
-        0
-    };
-    if real {
-        if source_unsigned {
-            inherited |= FieldTypeFlags::UNSIGNED;
-        }
-    } else if target_unsigned {
-        inherited |= FieldTypeFlags::UNSIGNED;
-    }
-    tp.add_flags(inherited);
-    build_cast_function(expr, tp, false)
-}
-
-/// Go `BuildCastFunctionWithCheck` where no build context reaches: the cast
-/// is left unfolded for the caller.
-pub fn build_cast_function(
-    expr: Expression,
-    target: FieldType,
-    in_union: bool,
-) -> Result<Expression, EvalError> {
-    crate::builtin_cast::build_cast_function_with_check(
-        &crate::builtin::UnfoldedBuildContext,
-        expr,
-        target,
-        in_union,
-        false,
-    )
-}
-
-/// Go `TryPushCastIntoControlFunctionForHybridType` (builtin_cast.go:2898):
-/// for an INT or REAL `target`, an IF/CASE/ELT with a hybrid (ENUM/SET -- not
-/// BIT, issue 24725) branch is rebuilt over branches cast to `target`, so a
-/// branch's ENUM ordinal flows forward where the unpushed shape would route
-/// the ENUM name through the string result. Go's `buildSelection` applies it
-/// to each string-typed WHERE conjunct with a DOUBLE target and no outer cast;
-/// `BuildCastFunction` applies it under the cast it builds. Anything else, or
-/// a rebuild that fails, is returned unchanged. ELT's rebuild re-declares its
-/// value arguments as strings (`eltFunctionClass` wraps them again in a
-/// string cast under the connection charset).
-#[must_use]
-pub fn try_push_cast_into_control_function_for_hybrid_type(
-    expr: Expression,
-    target: &FieldType,
-    connection: (&str, &str),
-) -> Expression {
-    if !matches!(
-        target.eval_type(),
-        tidb_datatype::EvalType::Int | tidb_datatype::EvalType::Real
-    ) {
-        return expr;
-    }
-    let Expression::ScalarFunction(control) = &expr else {
-        return expr;
-    };
-    let name = control.func_name.lowercase();
-    if !matches!(name, "if" | "case" | "elt") {
-        return expr;
-    }
-    let is_hybrid = |e: &Expression| {
-        e.static_type()
-            .is_some_and(|ft| ft.is_hybrid() && ft.code() != FieldTypeCode::Bit)
-    };
-    let len = control.args.len();
-    let branch_indexes: Vec<usize> = match name {
-        "if" => vec![1, 2],
-        "case" => {
-            let mut indexes: Vec<usize> = (1..len).step_by(2).collect();
-            if len % 2 == 1 {
-                indexes.push(len - 1);
-            }
-            indexes
-        }
-        _ => (1..len).collect(),
-    };
-    if !branch_indexes.iter().any(|&i| is_hybrid(&control.args[i])) {
-        return expr;
-    }
-    let unsigned_flag = target.flags() & FieldTypeFlags::UNSIGNED != 0;
-    let real = target.eval_type() == tidb_datatype::EvalType::Real;
-    let mut args = control.args.clone();
-    for &i in &branch_indexes {
-        let Ok(wrapped) = wrap_cast_for_hybrid_push(args[i].clone(), real, unsigned_flag) else {
-            return expr;
-        };
-        args[i] = wrapped;
-    }
-    // Go rebuilds the control function over the wrapped args and adopts the
-    // rebuilt signature's ret type.
-    let inferred = match name {
-        "case" => crate::rewriter::builtin_return_type("case", &args),
-        "elt" => {
-            for arg in &mut args[1..] {
-                let Ok(wrapped) = crate::wrap_cast::wrap_with_cast_as_string(
-                    arg.clone(),
-                    connection,
-                ) else {
-                    return expr;
-                };
-                *arg = wrapped;
-            }
-            crate::rewriter::builtin_return_type("elt", &args)
-        }
-        _ => crate::rewriter::infer_type_4_control_funcs("if", &args),
-    };
-    // Inference failure keeps the unpushed node, which is Go's own
-    // `return expr` on error.
-    let Some(ret_type) = inferred else {
-        return expr;
-    };
-    Expression::ScalarFunction(ScalarFunction::new(
-        control.func_name.clone(),
-        ret_type,
-        args,
-    ))
 }
 
 /// Go `BuildCastCollationFunction` (`builtin_cast.go:2577`): a string
@@ -704,14 +542,11 @@ pub fn try_push_cast_into_control_function_for_hybrid_type(
 ///
 /// A character string cast to the binary charset becomes a VARSTRING, not a
 /// fixed-length BINARY: zero padding would change what it compares equal to.
-///
-/// `fold` is Go `BuildCastFunction`'s closing `FoldConstant`, which the
-/// caller supplies with its statement context.
 pub(crate) fn build_cast_collation_function(
+    ctx: &dyn crate::builtin::BuildContext,
     expr: &Expression,
     ec: &crate::expr_collation::ExprCollation,
     enum_or_set_real_type_is_str: bool,
-    fold: &dyn Fn(&mut Expression),
 ) -> Result<Option<Expression>, EvalError> {
     let Some(source) = expr.static_type() else {
         return Ok(None);
@@ -732,19 +567,7 @@ pub(crate) fn build_cast_collation_function(
     }
     target.set_charset_name(ec.charset.clone());
     target.set_collation_name(ec.collation.clone());
-    let mut cast = build_cast_function(expr.clone(), target, false)?;
-    // Go's `ast.Cast` arm of `deriveCollation`: the cast keeps its operand's
-    // coercibility and repertoire; the collation is the target's.
-    crate::collation_derive::apply_derived_collation(
-        &mut cast,
-        &crate::expr_collation::ExprCollation {
-            coer: crate::collation_derive::coercibility_of(expr),
-            repe: crate::collation_derive::repertoire_of(expr),
-            charset: ec.charset.clone(),
-            collation: ec.collation.clone(),
-        },
-    );
-    fold(&mut cast);
+    let cast = crate::builtin_cast::build_cast_function(ctx, expr.clone(), target)?;
     Ok(Some(cast))
 }
 
@@ -995,7 +818,7 @@ mod tests {
     use crate::expression::Constant;
     use crate::rewriter::NoResolver;
     use tidb_chunk::chunk::Chunk;
-    use tidb_datatype::Datum;
+    use tidb_datatype::{Datum, FieldTypeFlags};
 
     /// The `model.ColumnInfo` slice shape the Go tests build inline.
     struct TestColumnInfo {
@@ -1410,13 +1233,17 @@ mod tests {
         }
     }
 
-    /// Go `TryPushCastIntoControlFunctionForHybridType`
-    /// (builtin_cast.go:2898): `CAST(IF(1, e, 'a') AS SIGNED)` over
-    /// `e enum('x','y','z')` pushes the cast INTO the branches, so the
-    /// rebuilt IF carries cast-wrapped branches and the enum's ORDINAL (2)
-    /// is the answer instead of the enum NAME flowing through the string
-    /// result. The chunk row must carry the enum datum: the built column
-    /// node reads its cell from the ROW by offset.
+    /// Go `TryPushCastIntoControlFunctionForHybridType` over
+    /// `e enum('x','y','z')`, as a real TiDB plans and answers it for the
+    /// row `'y'`:
+    ///
+    /// - `CAST(IF(a, e, 'a') AS DOUBLE)` is
+    ///   `cast(if(a, cast(e, double BINARY), 0), double BINARY)` and answers
+    ///   the ordinal, 2.
+    /// - `CAST(IF(a, e, 'a') AS SIGNED)` is
+    ///   `cast(if(a, cast(e, var_string(20)), 0), bigint(22) BINARY)` and
+    ///   answers 0: `WrapWithCastAsInt` only flags the ENUM as an integer,
+    ///   and the rebuilt IF, still a string, casts that branch to a string.
     #[test]
     fn cast_over_if_pushes_into_hybrid_branches_like_go() {
         let enum_field = {
@@ -1432,50 +1259,68 @@ mod tests {
             hidden: false,
             virtual_generated: None,
         }];
-        let ids = SimplePlanColumnIdAllocator::new(0);
-        let options = BuildOptions::new()
-            .with_table_info(&NoResolver, &ids, "", &CiString::new("t"), &table)
-            .expect("table options")
-            .with_cast_expr_to({
-                let mut target = FieldType::new(FieldTypeCode::LongLong);
-                target.add_flags(FieldTypeFlags::NOT_NULL);
-                target
-            });
-        let built = parse_simple_expr(&NoResolver, "if(1, e, 'a')", &options).expect("builds");
-
-        // Shape: the outer cast wraps a REBUILT IF whose hybrid branch is a
-        // cast node (LongLong) rather than the raw leaf.
-        let Expression::ScalarFunction(outer) = &built else {
-            panic!("expected a cast function")
-        };
-        assert_eq!(outer.func_name.lowercase(), "cast_signed");
-        let Expression::ScalarFunction(inner_if) = &outer.args[0] else {
-            panic!("expected the IF inside the cast")
-        };
-        assert_eq!(inner_if.func_name.lowercase(), "if");
-        assert!(
-            inner_if.args[1]
-                .static_type()
-                .is_some_and(|ft| ft.code() == FieldTypeCode::LongLong),
-            "the hybrid branch is cast-wrapped: {:?}",
-            inner_if.args[1]
-        );
-
-        // Value: the chunk row carries the enum cell; the ordinal 2 of 'y'
-        // is the answer.
-        let mut chunk = tidb_chunk::chunk::Chunk::new(std::slice::from_ref(&enum_field), 1, 1);
-        chunk.append_datum(
-            0,
-            &crate::Datum::Enum(
-                tidb_datatype::MysqlEnum::new("y", 2),
-                tidb_charset::Collation::Utf8Mb4Bin,
+        let rows = [
+            (
+                FieldTypeCode::LongLong,
+                "cast_signed",
+                "cast_char",
+                FieldTypeCode::VarString,
+                20,
+                crate::Datum::Int(0),
             ),
-        );
-        let row = chunk.get_row(0);
-        let value = built
-            .eval(&NoColumns, row)
-            .expect("the pushed shape evaluates");
-        assert_eq!(value, crate::Datum::Int(2));
+            (
+                FieldTypeCode::Double,
+                "cast_double",
+                "cast_double",
+                FieldTypeCode::Double,
+                23,
+                crate::Datum::Real(2.0),
+            ),
+        ];
+        for (target, outer_name, branch_name, branch_code, branch_flen, want) in rows {
+            let ids = SimplePlanColumnIdAllocator::new(0);
+            let options = BuildOptions::new()
+                .with_table_info(&NoResolver, &ids, "", &CiString::new("t"), &table)
+                .expect("table options")
+                .with_cast_expr_to({
+                    let mut target = FieldType::new(target);
+                    target.add_flags(FieldTypeFlags::NOT_NULL);
+                    target
+                });
+            let built = parse_simple_expr(&NoResolver, "if(1, e, 'a')", &options).expect("builds");
+
+            let Expression::ScalarFunction(outer) = &built else {
+                panic!("expected a cast function")
+            };
+            assert_eq!(outer.func_name.lowercase(), outer_name);
+            let Expression::ScalarFunction(inner_if) = &outer.args[0] else {
+                panic!("expected the IF inside the cast")
+            };
+            assert_eq!(inner_if.func_name.lowercase(), "if");
+            let Expression::ScalarFunction(branch) = &inner_if.args[1] else {
+                panic!("expected a cast branch, got {:?}", inner_if.args[1])
+            };
+            assert_eq!(branch.func_name.lowercase(), branch_name);
+            let branch_type = branch.ret_type.as_ref().expect("cast type");
+            assert_eq!(branch_type.code(), branch_code);
+            assert_eq!(branch_type.flen(), branch_flen);
+
+            // The chunk row carries the enum cell: the built column node
+            // reads it from the row by offset.
+            let mut chunk =
+                tidb_chunk::chunk::Chunk::new(std::slice::from_ref(&enum_field), 1, 1);
+            chunk.append_datum(
+                0,
+                &crate::Datum::Enum(
+                    tidb_datatype::MysqlEnum::new("y", 2),
+                    tidb_charset::Collation::Utf8Mb4Bin,
+                ),
+            );
+            let value = built
+                .eval(&NoColumns, chunk.get_row(0))
+                .expect("the pushed shape evaluates");
+            assert_eq!(value, want, "{target:?}");
+        }
     }
 
     /// Go `builtinRowCountSig`/`builtinLastInsertIDSig`/

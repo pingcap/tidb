@@ -860,22 +860,6 @@ fn match_against_to_builtin(
     Ok(Expression::ScalarFunction(function))
 }
 
-/// Whether `expression` is a cast `BuildCastFunctionWithCheck` just built and
-/// closed with its `FoldConstant`. Go leaves a cast whose eval type is JSON
-/// unfolded ("we may reset the flag of the field type of CastAsJson later"),
-/// so `json_contains(j, cast("1", json BINARY))` keeps the cast in a plan.
-pub(crate) fn is_newly_built_cast(expression: &Expression) -> bool {
-    matches!(
-        expression,
-        Expression::ScalarFunction(function)
-            if function.func_name.lowercase().starts_with("cast_")
-                && function
-                    .ret_type
-                    .as_ref()
-                    .is_none_or(|tp| tp.eval_type() != EvalType::Json)
-    )
-}
-
 fn binary_expression(
     op: BinaryOp,
     left: Expression,
@@ -950,43 +934,43 @@ fn resolve_type4_between(args: [&Expression; 3]) -> EvalType {
 /// type is deliberately chosen once, rather than allowing the lower and upper
 /// comparisons to infer independently from their two arms.
 fn wrap_between_arguments(
+    ctx: &dyn crate::builtin::BuildContext,
     args: [&Expression; 3],
     cmp_type: EvalType,
-    connection: (&str, &str),
 ) -> Result<[Expression; 3], EvalError> {
     let [expr, low, high] = args;
     match cmp_type {
         EvalType::Int => Ok([
-            wrap_with_cast_as_int(expr.clone(), None)?,
-            wrap_with_cast_as_int(low.clone(), None)?,
-            wrap_with_cast_as_int(high.clone(), None)?,
+            wrap_with_cast_as_int(ctx, expr.clone(), None)?,
+            wrap_with_cast_as_int(ctx, low.clone(), None)?,
+            wrap_with_cast_as_int(ctx, high.clone(), None)?,
         ]),
         EvalType::Real => Ok([
-            wrap_with_cast_as_real(expr.clone())?,
-            wrap_with_cast_as_real(low.clone())?,
-            wrap_with_cast_as_real(high.clone())?,
+            wrap_with_cast_as_real(ctx, expr.clone())?,
+            wrap_with_cast_as_real(ctx, low.clone())?,
+            wrap_with_cast_as_real(ctx, high.clone())?,
         ]),
         EvalType::Decimal => Ok([
-            wrap_with_cast_as_decimal(expr.clone())?,
-            wrap_with_cast_as_decimal(low.clone())?,
-            wrap_with_cast_as_decimal(high.clone())?,
+            wrap_with_cast_as_decimal(ctx, expr.clone())?,
+            wrap_with_cast_as_decimal(ctx, low.clone())?,
+            wrap_with_cast_as_decimal(ctx, high.clone())?,
         ]),
         EvalType::String => Ok([
-            wrap_with_cast_as_string(expr.clone(), connection)?,
-            wrap_with_cast_as_string(low.clone(), connection)?,
-            wrap_with_cast_as_string(high.clone(), connection)?,
+            wrap_with_cast_as_string(ctx, expr.clone())?,
+            wrap_with_cast_as_string(ctx, low.clone())?,
+            wrap_with_cast_as_string(ctx, high.clone())?,
         ]),
         EvalType::Duration => Ok([
-            wrap_with_cast_as_duration(expr.clone())?,
-            wrap_with_cast_as_duration(low.clone())?,
-            wrap_with_cast_as_duration(high.clone())?,
+            wrap_with_cast_as_duration(ctx, expr.clone())?,
+            wrap_with_cast_as_duration(ctx, low.clone())?,
+            wrap_with_cast_as_duration(ctx, high.clone())?,
         ]),
         EvalType::Datetime => {
             let target = FieldType::new(FieldTypeCode::Datetime);
             Ok([
-                wrap_with_cast_as_time(expr.clone(), target.clone())?,
-                wrap_with_cast_as_time(low.clone(), target.clone())?,
-                wrap_with_cast_as_time(high.clone(), target)?,
+                wrap_with_cast_as_time(ctx, expr.clone(), target.clone())?,
+                wrap_with_cast_as_time(ctx, low.clone(), target.clone())?,
+                wrap_with_cast_as_time(ctx, high.clone(), target)?,
             ])
         }
         // ResolveType4Between returns one of the six cases above for all
@@ -1926,7 +1910,11 @@ fn rewrite_leaf_literal(
                         .unwrap_or_else(|| FieldType::new(FieldTypeCode::VarString))
                 };
                 expr_type.set_collation_name(collation.name());
-                arg = crate::simple_expr::build_cast_function(arg, expr_type, false)?;
+                arg = crate::builtin_cast::build_cast_function(
+                    &crate::builtin::ResolverBuildContext(resolver),
+                    arg,
+                    expr_type,
+                )?;
             }
             crate::collation_derive::set_explicit_collation(&mut arg, collation);
             Ok(arg)
@@ -2068,12 +2056,10 @@ fn rewrite_leaf_compound(
                             operand(&args[index]),
                         ) == EvalType::String;
                         if let Some(mut cast) = crate::simple_expr::build_cast_collation_function(
+                            &crate::builtin::ResolverBuildContext(resolver),
                             &args[index],
                             &derived,
                             compares_as_string,
-                            &|expression| {
-                                resolver.fold_constant(expression, ConstantFoldMode::Normal);
-                            },
                         )? {
                             crate::collation_derive::set_coercibility(
                                 &mut cast,
@@ -2122,20 +2108,11 @@ fn rewrite_leaf_compound(
             let value = rewrite_expr_resolved(expr, resolver)?;
             let low = rewrite_expr_resolved(low, resolver)?;
             let high = rewrite_expr_resolved(high, resolver)?;
-            let was_cast = [&value, &low, &high].map(is_newly_built_cast);
-            let [mut value, mut low, mut high] = wrap_between_arguments(
+            let [value, low, high] = wrap_between_arguments(
+                &crate::builtin::ResolverBuildContext(resolver),
                 [&value, &low, &high],
                 resolve_type4_between([&value, &low, &high]),
-                resolver.connection_charset_info(),
             )?;
-            // Go `BuildCastFunction` folds the cast it just built, so a
-            // constant operand is converted (and warns) once, not once per
-            // bound comparison that shares it.
-            for (operand, was_cast) in [&mut value, &mut low, &mut high].into_iter().zip(was_cast) {
-                if is_newly_built_cast(operand) && !was_cast {
-                    resolver.fold_constant(operand, ConstantFoldMode::Normal);
-                }
-            }
             // Go `betweenToExpression`: one collation over all three
             // operands, each cast to it, so `a BETWEEN binary_col AND
             // ci_col` compares both bounds as binary instead of picking a
@@ -2169,12 +2146,10 @@ fn rewrite_leaf_compound(
                 accurate(&value, &low) != EvalType::Int && accurate(&value, &high) != EvalType::Int;
             let cast = |operand: Expression| -> Result<Expression, EvalError> {
                 Ok(crate::simple_expr::build_cast_collation_function(
+                    &crate::builtin::ResolverBuildContext(resolver),
                     &operand,
                     &derived,
                     enum_or_set_real_type_is_str,
-                    &|expression| {
-                        resolver.fold_constant(expression, ConstantFoldMode::Normal);
-                    },
                 )?
                 .unwrap_or(operand))
             };
@@ -2404,8 +2379,7 @@ fn finish_function_call(
         &lowered,
         ret_type,
         rewritten,
-        resolver.connection_charset_info(),
-        &|expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
+        &crate::builtin::ResolverBuildContext(resolver),
     )
 }
 

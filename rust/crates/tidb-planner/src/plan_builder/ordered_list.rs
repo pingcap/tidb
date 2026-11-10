@@ -60,12 +60,11 @@ pub fn cast_point_update_assignment(
     {
         cast_to.add_flags(tidb_datatype::FieldTypeFlags::ENUM_SET_AS_INT);
     }
-    let json = cast_to.eval_type() == tidb_datatype::EvalType::Json;
-    let mut cast = tidb_expr::simple_expr::build_cast_function(expression, cast_to, false)?;
-    if !json {
-        tidb_expr::fold_constant_in_mode(&mut cast, ctx, tidb_expr::ConstantFoldMode::Normal);
-    }
-    Ok(cast)
+    Ok(tidb_expr::wrap_cast::build_cast_function(
+        &tidb_expr::wrap_cast::ColumnsBuildContext(ctx),
+        expression,
+        cast_to,
+    )?)
 }
 
 impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {

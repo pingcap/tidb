@@ -210,14 +210,16 @@ fn a_cast_of_a_vector_has_gos_signature() {
         (FieldTypeCode::Json, "Unspecified"),
         (FieldTypeCode::Datetime, "Unspecified"),
     ] {
-        let cast = crate::simple_expr::build_cast_function(column(0, 'v'), FieldType::new(target), false)
+        let cast = crate::builtin_cast::build_cast_function_with_check(&crate::builtin::UnfoldedBuildContext, column(0, 'v'), FieldType::new(target), false, false)
             .expect("the cast builds");
         assert_eq!(crate::pushdown_catalog::pb_code(&cast).as_str_name(), want, "{target:?}");
     }
     for source in "irdsbthj".chars() {
-        let cast = crate::simple_expr::build_cast_function(
+        let cast = crate::builtin_cast::build_cast_function_with_check(
+            &crate::builtin::UnfoldedBuildContext,
             column(0, source),
             FieldType::new(FieldTypeCode::VectorFloat32),
+            false,
             false,
         )
         .expect("the cast builds");

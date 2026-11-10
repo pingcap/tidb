@@ -891,6 +891,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 // evaluation marker.
                 exprs.push(
                     tidb_expr::wrap_cast::build_cast_function_4_union(
+                        &tidb_expr::wrap_cast::ColumnsBuildContext(self.ctx),
                         tidb_expr::expression::Expression::Column(column.clone()),
                         target,
                     )

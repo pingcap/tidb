@@ -12,10 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! SEED of `pkg/expression/builtin_cast.go`'s `WrapWithCastAs*` family
-//! (`:2666`-`:2886`), the one piece of that file
-//! [`tidb_expression_aggregation::BaseFuncDesc::wrap_cast_for_agg_args`], `typeInfer4BitFuncs` and
-//! `typeInfer4JsonObjectAgg` cannot be written without.
+//! `pkg/expression/builtin_cast.go`'s `WrapWithCastAs*` family
+//! (`:2666`-`:2886`). Each takes Go's build context and builds its cast
+//! through [`build_cast_function`], which folds the cast it built.
 //!
 //! | Go symbol | line | Rust |
 //! | --- | --- | --- |
@@ -29,19 +28,8 @@
 //! | `WrapWithCastAsJSON` | 2873 | [`wrap_with_cast_as_json`] |
 //! | `WrapWithCastAsVectorFloat32` | 2883 | [`wrap_with_cast_as_vector_float32`] |
 //!
-//! This module claims NOTHING else in `builtin_cast.go`. When that file is
-//! ported as a unit these functions move there and this module becomes a
-//! re-export.
-//!
 //! # Narrowings, each named
 //!
-//! - **`BuildCastFunction` is [`crate::simple_expr::build_cast_function`].**
-//!   That is this crate's node builder for a cast: it picks the signature
-//!   name from the TARGET type's code, which is the same discrimination Go's
-//!   `castAs*` selection performs. It returns an error for a target type
-//!   whose cast signature is not ported; every wrapper below propagates that
-//!   error rather than silently returning the unwrapped expression, because
-//!   an unwrapped argument would make the aggregate read the WRONG eval type.
 //! - **`WrapWithCastAsDecimal`'s constant-refinement tail**
 //!   (`:2755`-`:2763`) evaluates a freshly built strict constant and narrows
 //!   the node's flen/decimal to the value's natural precision. Rust can run
@@ -64,7 +52,11 @@
 
 use tidb_exprctx::context::{Columns, EvalError};
 use crate::expression::{ConstLevel, Expression};
-use crate::simple_expr::build_cast_function;
+pub use crate::builtin_cast::{
+    build_cast_function, build_cast_function_with_check,
+    try_push_cast_into_control_function_for_hybrid_type,
+};
+pub use crate::builtin::{BuildContext, ColumnsBuildContext, UnfoldedBuildContext};
 use tidb_datatype::{
     EvalType, FieldType, FieldTypeCode, FieldTypeFlags, MAX_DECIMAL_WIDTH, UNSPECIFIED_LENGTH,
 };
@@ -128,6 +120,7 @@ pub(crate) fn ret_type_mut(expr: &mut Expression) -> Option<&mut FieldType> {
 /// `target_type` is Go's nullable `targetType`: `None` inherits the source's
 /// UNSIGNED flag, `Some` takes the target's.
 pub fn wrap_with_cast_as_int(
+    ctx: &dyn BuildContext,
     mut expr: Expression,
     target_type: Option<&FieldType>,
 ) -> Result<Expression, EvalError> {
@@ -151,11 +144,14 @@ pub fn wrap_with_cast_as_int(
         None => tp.add_flags(source.flags() & FieldTypeFlags::UNSIGNED),
         Some(target) => tp.add_flags(target.flags() & FieldTypeFlags::UNSIGNED),
     }
-    build_cast_function(expr, tp, false)
+    build_cast_function(ctx, expr, tp)
 }
 
 /// Go `WrapWithCastAsReal` (`builtin_cast.go:2703`).
-pub fn wrap_with_cast_as_real(expr: Expression) -> Result<Expression, EvalError> {
+pub fn wrap_with_cast_as_real(
+    ctx: &dyn BuildContext,
+    expr: Expression,
+) -> Result<Expression, EvalError> {
     let source = type_of(&expr);
     if source.eval_type() == EvalType::Real {
         return Ok(expr);
@@ -165,7 +161,7 @@ pub fn wrap_with_cast_as_real(expr: Expression) -> Result<Expression, EvalError>
     tp.set_decimal(UNSPECIFIED_LENGTH);
     set_bin_chs_cln_flag(&mut tp);
     tp.add_flags(source.flags() & (FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL));
-    build_cast_function(expr, tp, false)
+    build_cast_function(ctx, expr, tp)
 }
 
 /// Go `minimalDecimalLenForHoldingInteger` (`builtin_cast.go:2713`).
@@ -181,10 +177,17 @@ pub const fn minimal_decimal_len_for_holding_integer(code: FieldTypeCode) -> i64
     }
 }
 
-/// The cast Go `WrapWithCastAsDecimal` (`builtin_cast.go:2736`) builds over
-/// a non-DECIMAL `expr`, before `BuildCastFunction` folds it.
-pub(crate) fn build_cast_as_decimal(expr: Expression) -> Result<Expression, EvalError> {
+/// Go `WrapWithCastAsDecimal` (`builtin_cast.go:2736`): a cast that is
+/// `ConstStrict` is evaluated in the build context for the precision and
+/// scale of its value.
+pub fn wrap_with_cast_as_decimal(
+    ctx: &dyn BuildContext,
+    expr: Expression,
+) -> Result<Expression, EvalError> {
     let source = type_of(&expr);
+    if source.eval_type() == EvalType::Decimal {
+        return Ok(expr);
+    }
     let mut tp = FieldType::new(FieldTypeCode::NewDecimal);
     tp.set_flen_under_limit(source.flen());
     tp.set_decimal_under_limit(source.decimal());
@@ -197,49 +200,23 @@ pub(crate) fn build_cast_as_decimal(expr: Expression) -> Result<Expression, Eval
     }
     set_bin_chs_cln_flag(&mut tp);
     tp.add_flags(source.flags() & (FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL));
-    build_cast_function(expr, tp, false)
-}
-
-/// The `ConstStrict` tail of Go `WrapWithCastAsDecimal`: a constant cast
-/// takes the precision and scale of the `value` it evaluates to (Go's
-/// `!isnull && err == nil`).
-pub(crate) fn set_const_decimal_cast_precision(
-    cast_expr: &mut Expression,
-    value: Result<tidb_datatype::Datum, EvalError>,
-) {
-    let Ok(tidb_datatype::Datum::Decimal(value)) = value else {
-        return;
-    };
-    let (precision, frac) = value.precision_and_frac();
-    if let Some(field_type) = ret_type_mut(cast_expr) {
-        field_type.set_decimal_under_limit(i64::from(frac));
-        field_type.set_flen_under_limit(i64::from(precision));
-    }
-}
-
-/// Go `WrapWithCastAsDecimal` (`builtin_cast.go:2736`), for the callers that
-/// build without a `BuildContext`: the `ConstStrict` tail evaluates the cast
-/// with no statement context, so it raises no warning. A function class
-/// builds with `crate::builtin::wrap_with_cast_as_decimal`.
-pub fn wrap_with_cast_as_decimal(expr: Expression) -> Result<Expression, EvalError> {
-    if type_of(&expr).eval_type() == EvalType::Decimal {
-        return Ok(expr);
-    }
-    let strict_constant = expr.const_level() == ConstLevel::STRICT;
-    let mut cast_expr = build_cast_as_decimal(expr)?;
-    if strict_constant {
-        let value = cast_expr.eval(&crate::NoColumns, tidb_chunk::row::Row::empty());
-        set_const_decimal_cast_precision(&mut cast_expr, value);
+    let mut cast_expr = build_cast_function(ctx, expr, tp)?;
+    if cast_expr.const_level() == ConstLevel::STRICT {
+        if let Ok(tidb_datatype::Datum::Decimal(value)) = ctx.eval_constant(&cast_expr) {
+            let (precision, frac) = value.precision_and_frac();
+            if let Some(field_type) = ret_type_mut(&mut cast_expr) {
+                field_type.set_decimal_under_limit(i64::from(frac));
+                field_type.set_flen_under_limit(i64::from(precision));
+            }
+        }
     }
     Ok(cast_expr)
 }
 
 /// Go `WrapWithCastAsString` (`builtin_cast.go:2769`).
-///
-/// `connection` is `ctx.GetCharsetInfo()`.
 pub fn wrap_with_cast_as_string(
+    ctx: &dyn BuildContext,
     expr: Expression,
-    connection: (&str, &str),
 ) -> Result<Expression, EvalError> {
     let source = type_of(&expr);
     if source.eval_type() == EvalType::String {
@@ -273,12 +250,13 @@ pub fn wrap_with_cast_as_string(
         tp.set_charset_name("binary");
         tp.set_collation_name("binary");
     } else {
-        tp.set_charset_name(connection.0);
-        tp.set_collation_name(connection.1);
+        let (charset, collation) = ctx.connection_charset_info();
+        tp.set_charset_name(charset);
+        tp.set_collation_name(collation);
     }
     tp.set_flen(arg_len);
     tp.set_decimal(UNSPECIFIED_LENGTH);
-    build_cast_function(expr, tp, false)
+    build_cast_function(ctx, expr, tp)
 }
 
 /// Go `WrapWithCastAsTime` (`builtin_cast.go:2817`).
@@ -286,6 +264,7 @@ pub fn wrap_with_cast_as_string(
 /// Go mutates the caller's `*types.FieldType`; Rust takes it by value and
 /// returns the wrapped expression, so the mutation is not observable outside.
 pub fn wrap_with_cast_as_time(
+    ctx: &dyn BuildContext,
     expr: Expression,
     mut tp: FieldType,
 ) -> Result<Expression, EvalError> {
@@ -324,11 +303,14 @@ pub fn wrap_with_cast_as_time(
         _ => {}
     }
     set_bin_chs_cln_flag(&mut tp);
-    build_cast_function(expr, tp, false)
+    build_cast_function(ctx, expr, tp)
 }
 
 /// Go `WrapWithCastAsDuration` (`builtin_cast.go:2853`).
-pub fn wrap_with_cast_as_duration(expr: Expression) -> Result<Expression, EvalError> {
+pub fn wrap_with_cast_as_duration(
+    ctx: &dyn BuildContext,
+    expr: Expression,
+) -> Result<Expression, EvalError> {
     let source = type_of(&expr);
     if source.code() == FieldTypeCode::Duration {
         return Ok(expr);
@@ -344,11 +326,14 @@ pub fn wrap_with_cast_as_duration(expr: Expression) -> Result<Expression, EvalEr
     if tp.decimal() > 0 {
         tp.set_flen(tp.flen() + 1 + tp.decimal());
     }
-    build_cast_function(expr, tp, false)
+    build_cast_function(ctx, expr, tp)
 }
 
 /// Go `WrapWithCastAsJSON` (`builtin_cast.go:2873`).
-pub fn wrap_with_cast_as_json(expr: Expression) -> Result<Expression, EvalError> {
+pub fn wrap_with_cast_as_json(
+    ctx: &dyn BuildContext,
+    expr: Expression,
+) -> Result<Expression, EvalError> {
     let source = type_of(&expr);
     if source.code() == FieldTypeCode::Json && source.flags() & FieldTypeFlags::PARSE_TO_JSON == 0 {
         return Ok(expr);
@@ -360,22 +345,27 @@ pub fn wrap_with_cast_as_json(expr: Expression) -> Result<Expression, EvalError>
     tp.set_decimal(0);
     tp.set_charset_name("utf8mb4");
     tp.set_collation_name("utf8mb4_bin");
-    build_cast_function(expr, tp, false)
+    build_cast_function(ctx, expr, tp)
 }
 
 /// Go `WrapWithCastAsVectorFloat32` (`builtin_cast.go:2883`).
-pub fn wrap_with_cast_as_vector_float32(expr: Expression) -> Result<Expression, EvalError> {
+pub fn wrap_with_cast_as_vector_float32(
+    ctx: &dyn BuildContext,
+    expr: Expression,
+) -> Result<Expression, EvalError> {
     if type_of(&expr).code() == FieldTypeCode::VectorFloat32 {
         return Ok(expr);
     }
-    build_cast_function(expr, FieldType::new(FieldTypeCode::VectorFloat32), false)
+    build_cast_function(ctx, expr, FieldType::new(FieldTypeCode::VectorFloat32))
 }
 
-/// Go `expression.BuildCastFunction(ctx, expr, tp)` for a target the caller
-/// already fully described. Exposed so `typeInfer4GroupConcat` can reproduce
-/// its literal `BuildCastFunction(ctx, a.Args[i], tp)` call.
-pub fn build_cast_to(expr: Expression, target: FieldType) -> Result<Expression, EvalError> {
-    build_cast_function(expr, target, false)
+/// Go `BuildCastFunction` (`builtin_cast.go:2579`).
+pub fn build_cast_to(
+    ctx: &dyn BuildContext,
+    expr: Expression,
+    target: FieldType,
+) -> Result<Expression, EvalError> {
+    build_cast_function(ctx, expr, target)
 }
 
 /// Go `BuildCastFunction4Union` (`builtin_cast.go:2568`): the union
@@ -383,10 +373,11 @@ pub fn build_cast_to(expr: Expression, target: FieldType) -> Result<Expression, 
 /// result to 0 for unsigned targets instead of the unsigned wrap
 /// (`builtin_cast.go:998`).
 pub fn build_cast_function_4_union(
+    ctx: &dyn BuildContext,
     expr: Expression,
     target: FieldType,
 ) -> Result<Expression, EvalError> {
-    build_cast_function(expr, target, true)
+    build_cast_function_with_check(ctx, expr, target, true, false)
 }
 
 /// The connection charset/collation pair a `BuildContext` supplies, defaulted

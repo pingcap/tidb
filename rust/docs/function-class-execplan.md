@@ -109,10 +109,16 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   `cast_class_matrix.txt` is Go's answer for 21 targets, 3 modes (plain,
   in a UNION, explicit charset) and 22 arguments (1,386 rows). The
   rewriter's `CAST` and the plan builder's cast build through it.
-- [ ] Milestone 10b: the `wrap_with_cast_as_*` helpers and
-  `simple_expr::build_cast_function` take the build context (about 130
-  callers, which today build unfolded under the default connection charset
-  and are folded by their caller); `castAsArrayFunctionClass`.
+- [x] (2026-11-10) Milestone 10b: the `wrap_with_cast_as_*` helpers,
+  `build_cast_function` and `try_push_cast_into_control_function_for_hybrid_type`
+  take the build context and fold only the cast they build, as Go's do; the
+  class base no longer folds a cast it was handed (`fold_built_cast` is
+  gone). A cast pushed into `IF` / `CASE` / `ELT` over an ENUM/SET branch is
+  Go's tree (`cast(e, var_string(20))` for an integer target, read by
+  `CastStringAsString` as the ENUM's name). Left: five callers with no
+  context at hand pass `UnfoldedBuildContext` (`window.rs`
+  `update_compare_cols`, `inject_extra_projection.rs`, `task_attach.rs`,
+  `mv_index.rs`, `expr_util/builder.rs`); `castAsArrayFunctionClass`.
 - [ ] Milestone 11: the legacy paths deleted; evaluation dispatches on the
   signature object alone; X01 leaves the register.
 

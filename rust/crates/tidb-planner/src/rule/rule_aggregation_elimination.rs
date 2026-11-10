@@ -135,7 +135,11 @@ fn rewrite_bit_function(
     argument: Expression,
     target: &FieldType,
 ) -> Result<Expression, PlanError> {
-    let signed = tidb_expr::wrap_cast::wrap_with_cast_as_int(argument, None)
+    let signed = tidb_expr::wrap_cast::wrap_with_cast_as_int(
+        &tidb_expr::wrap_cast::ColumnsBuildContext(ctx.eval_context),
+        argument,
+        None,
+    )
         .map_err(|error| PlanError::internal(format!("cannot build integer cast: {error:?}")))?;
     let cast = wrap_cast(ctx, signed, target)?;
     let fallback = if function_name == names::BIT_AND {

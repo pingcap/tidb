@@ -143,6 +143,7 @@ impl FrameBound {
         {
             if calc_type.eval_type() != column_type.eval_type() {
                 self.compare_cols[0] = tidb_expr::wrap_cast::build_cast_to(
+                    &tidb_expr::wrap_cast::UnfoldedBuildContext,
                     Expression::Column(first.clone()),
                     calc_type.clone(),
                 )?;

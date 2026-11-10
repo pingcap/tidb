@@ -4065,7 +4065,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // conjunct whose IF/CASE/ELT returns an ENUM/SET branch is rebuilt
         // over DOUBLE-cast branches, so `WHERE elt(1, e)` tests the ENUM's
         // ordinal rather than its name.
-        let connection = self.ctx.connection_charset_info();
+        let build = tidb_expr::wrap_cast::ColumnsBuildContext(self.ctx);
         let kept = kept
             .into_iter()
             .map(|item| {
@@ -4083,8 +4083,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 target.set_charset_name("binary");
                 target.set_collation_name("binary");
                 target.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
-                tidb_expr::simple_expr::try_push_cast_into_control_function_for_hybrid_type(
-                    item, &target, connection,
+                tidb_expr::wrap_cast::try_push_cast_into_control_function_for_hybrid_type(
+                    &build, item, &target,
                 )
             })
             .collect::<Vec<_>>();
@@ -4984,10 +4984,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                             tidb_expr::collation_derive::charset_of_collation(collation),
                         );
                         expr_type.set_collation_name(collation.name());
-                        built = tidb_expr::simple_expr::build_cast_function(
+                        built = tidb_expr::wrap_cast::build_cast_function(
+                            &tidb_expr::wrap_cast::ColumnsBuildContext(self.ctx),
                             built,
                             expr_type,
-                            false,
                         )?;
                         // go sets CoercibilityExplicit plus the cast's own
                         // charset/collation on the casted node.

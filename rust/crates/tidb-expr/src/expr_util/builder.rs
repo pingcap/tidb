@@ -62,10 +62,10 @@ impl std::error::Error for FunctionBuildError {}
 /// The generic name `cast` is one of the four `NewFunction` explicitly
 /// refuses, and the executor has no `cast` arm, so a placeholder node left
 /// under that name fails at run time with "this scalar function is not yet
-/// ported". `crate::simple_expr::build_cast_function` is the port of Go's
-/// dedicated builder.
+/// ported". No statement context reaches this builder, so the cast is left
+/// unfolded.
 fn dedicated_cast(arg: Expression, target: FieldType) -> Result<Expression, FunctionBuildError> {
-    crate::simple_expr::build_cast_function(arg, target, false).map_err(|error| {
+    crate::builtin_cast::build_cast_function(&crate::builtin::UnfoldedBuildContext, arg, target).map_err(|error| {
         FunctionBuildError {
             func_name: "cast".to_owned(),
             reason: format!("{error:?}"),

@@ -1110,7 +1110,7 @@ fn cast_decimal_as_real_propagates_child_metadata() {
     source_type.set_flen(5);
     source_type.set_decimal(2);
     let source = const_typed(Datum::Decimal(Decimal::from_literal("0.99")), source_type);
-    let wrapped = crate::wrap_cast::wrap_with_cast_as_real(source).unwrap();
+    let wrapped = crate::wrap_cast::wrap_with_cast_as_real(&crate::builtin::UnfoldedBuildContext, source).unwrap();
     let Expression::ScalarFunction(function) = wrapped else {
         panic!("expected a cast scalar function")
     };
@@ -1505,24 +1505,23 @@ fn wrap_and_eval(expr: Expression, ctx: &WarningCtx) -> (i64, f64, Decimal, Stri
         wrap_with_cast_as_decimal, wrap_with_cast_as_int, wrap_with_cast_as_real,
         wrap_with_cast_as_string,
     };
-    let connection = tidb_exprctx::context::NoColumns.connection_charset_info();
-    let int_expr = wrap_with_cast_as_int(expr.clone(), None).unwrap();
+    let int_expr = wrap_with_cast_as_int(&crate::builtin::UnfoldedBuildContext, expr.clone(), None).unwrap();
     let int_res = match int_expr.eval(ctx, tidb_chunk::row::Row::empty()).unwrap() {
         Datum::Int(v) => v,
         Datum::UInt(v) => v as i64,
         other => panic!("int wrap: {other:?}"),
     };
-    let real_expr = wrap_with_cast_as_real(expr.clone()).unwrap();
+    let real_expr = wrap_with_cast_as_real(&crate::builtin::UnfoldedBuildContext, expr.clone()).unwrap();
     let real_res = match real_expr.eval(ctx, tidb_chunk::row::Row::empty()).unwrap() {
         Datum::Real(v) => v,
         other => panic!("real wrap: {other:?}"),
     };
-    let dec_expr = wrap_with_cast_as_decimal(expr.clone()).unwrap();
+    let dec_expr = wrap_with_cast_as_decimal(&crate::builtin::UnfoldedBuildContext, expr.clone()).unwrap();
     let dec_res = match dec_expr.eval(ctx, tidb_chunk::row::Row::empty()).unwrap() {
         Datum::Decimal(v) => v,
         other => panic!("dec wrap: {other:?}"),
     };
-    let str_expr = wrap_with_cast_as_string(expr.clone(), connection).unwrap();
+    let str_expr = wrap_with_cast_as_string(&crate::builtin::UnfoldedBuildContext, expr.clone()).unwrap();
     let str_res = match str_expr.eval(ctx, tidb_chunk::row::Row::empty()).unwrap() {
         Datum::String(v) => v.as_utf8().expect("utf8").to_owned(),
         other => panic!("str wrap: {other:?}"),
@@ -1576,7 +1575,7 @@ fn test_wrap_with_cast_as_types_classes_numeric_rows() {
 #[test]
 fn test_wrap_with_cast_as_types_classes_real_to_decimal_keeps_fraction() {
     let expr = const_typed(Datum::Real(123.555), real_ft());
-    let wrapped = crate::wrap_cast::wrap_with_cast_as_decimal(expr).unwrap();
+    let wrapped = crate::wrap_cast::wrap_with_cast_as_decimal(&crate::builtin::UnfoldedBuildContext, expr).unwrap();
     let value = wrapped
         .eval(&WarningCtx::default(), tidb_chunk::row::Row::empty())
         .unwrap();
@@ -1601,7 +1600,7 @@ fn test_wrap_with_cast_as_types_classes_enum_row() {
         Datum::Enum(MysqlEnum::new("a", 123), Collation::Utf8Mb4Bin),
         enum_type,
     );
-    let wrapped = wrap_with_cast_as_int(enum_value, None).unwrap();
+    let wrapped = wrap_with_cast_as_int(&crate::builtin::UnfoldedBuildContext, enum_value, None).unwrap();
     assert_eq!(
         wrapped
             .eval(&WarningCtx::default(), tidb_chunk::row::Row::empty())
@@ -1628,7 +1627,7 @@ fn test_wrap_with_cast_as_string_binary_literal_warns_invalid_utf8() {
     );
     let target = FieldType::new(C::VarString);
     let ctx = WarningCtx::default();
-    let wrapped = crate::simple_expr::build_cast_function(invalid, target, false).unwrap();
+    let wrapped = crate::builtin_cast::build_cast_function_with_check(&crate::builtin::UnfoldedBuildContext, invalid, target, false, false).unwrap();
     let out = wrapped
         .eval(&ctx, tidb_chunk::row::Row::empty())
         .expect("CAST AS CHAR warns rather than errors");
@@ -1643,7 +1642,7 @@ fn test_wrap_with_cast_as_string_binary_literal_warns_invalid_utf8() {
     );
     let ctx = WarningCtx::default();
     let wrapped =
-        crate::simple_expr::build_cast_function(valid, FieldType::new(C::VarString), false)
+        crate::builtin_cast::build_cast_function_with_check(&crate::builtin::UnfoldedBuildContext, valid, FieldType::new(C::VarString), false, false)
             .unwrap();
     let out = wrapped
         .eval(&ctx, tidb_chunk::row::Row::empty())
@@ -1687,14 +1686,13 @@ fn test_wrap_with_cast_as_types_classes_temporal_rows() {
 fn test_wrap_with_cast_as_types_classes_unsigned_extras() {
     let ctx = WarningCtx::default();
     use crate::wrap_cast::{wrap_with_cast_as_decimal, wrap_with_cast_as_string};
-    let connection = tidb_exprctx::context::NoColumns.connection_charset_info();
     let mut unsigned_col_ft = int_ft();
     unsigned_col_ft.add_flags(FieldTypeFlags::UNSIGNED);
     unsigned_col_ft.set_flen(20);
     let unsigned = |v: u64| const_typed(Datum::UInt(v), unsigned_col_ft.clone());
 
     // Unsigned int as string prints the plain magnitude.
-    let str_expr = wrap_with_cast_as_string(unsigned(u64::MAX), connection).unwrap();
+    let str_expr = wrap_with_cast_as_string(&crate::builtin::UnfoldedBuildContext, unsigned(u64::MAX)).unwrap();
     assert_eq!(
         str_expr
             .eval(&ctx, tidb_chunk::row::Row::empty())
@@ -1702,7 +1700,7 @@ fn test_wrap_with_cast_as_types_classes_unsigned_extras() {
             .label(),
         "STR:18446744073709551615"
     );
-    let str_expr = wrap_with_cast_as_string(unsigned(1234), connection).unwrap();
+    let str_expr = wrap_with_cast_as_string(&crate::builtin::UnfoldedBuildContext, unsigned(1234)).unwrap();
     assert_eq!(
         str_expr
             .eval(&ctx, tidb_chunk::row::Row::empty())
@@ -1712,7 +1710,7 @@ fn test_wrap_with_cast_as_types_classes_unsigned_extras() {
     );
 
     // Unsigned int as decimal keeps the full range.
-    let dec_expr = wrap_with_cast_as_decimal(unsigned(1234)).unwrap();
+    let dec_expr = wrap_with_cast_as_decimal(&crate::builtin::UnfoldedBuildContext, unsigned(1234)).unwrap();
     assert_eq!(
         dec_expr.eval(&ctx, tidb_chunk::row::Row::empty()).unwrap(),
         Datum::Decimal(Decimal::from_int(1234))
@@ -1728,7 +1726,7 @@ fn test_wrap_with_cast_as_types_classes_uint_as_time() {
     unsigned_col_ft.add_flags(FieldTypeFlags::UNSIGNED);
     unsigned_col_ft.set_flen(20);
     let expr = const_typed(Datum::UInt(20201010101010), unsigned_col_ft);
-    let wrapped = wrap_with_cast_as_time(expr, FieldType::new(C::Datetime)).unwrap();
+    let wrapped = wrap_with_cast_as_time(&crate::builtin::UnfoldedBuildContext, expr, FieldType::new(C::Datetime)).unwrap();
     match wrapped.eval(&ctx, tidb_chunk::row::Row::empty()).unwrap() {
         Datum::Time(time) => {
             assert_eq!(time.kind(), TimeType::DateTime);
@@ -1788,7 +1786,7 @@ fn test_wrap_with_cast_as_time() {
         ),
     ];
     for (expr, target, want) in cases {
-        let wrapped = wrap_with_cast_as_time(expr, target.clone()).unwrap();
+        let wrapped = wrap_with_cast_as_time(&crate::builtin::UnfoldedBuildContext, expr, target.clone()).unwrap();
         match wrapped.eval(&ctx, tidb_chunk::row::Row::empty()).unwrap() {
             Datum::Time(time) => {
                 assert_eq!(time.kind(), want.kind(), "target {:?}", target.code());
@@ -1848,7 +1846,7 @@ fn test_wrap_with_cast_as_duration() {
         ),
     ];
     for (expr, expect) in cases {
-        let wrapped = wrap_with_cast_as_duration(expr).unwrap();
+        let wrapped = wrap_with_cast_as_duration(&crate::builtin::UnfoldedBuildContext, expr).unwrap();
         match wrapped.eval(&ctx, tidb_chunk::row::Row::empty()).unwrap() {
             Datum::Duration(got) => {
                 assert_eq!(norm_dur(&got.to_string()), norm_dur(&expect.to_string()))
@@ -1892,7 +1890,6 @@ fn test_cast_duration_as_year_honors_concat_mode() {
 #[test]
 fn test_wrap_with_cast_as_string() {
     use crate::wrap_cast::wrap_with_cast_as_string;
-    let connection = tidb_exprctx::context::NoColumns.connection_charset_info();
     let int_ft_collation_bin = |code: C| {
         let mut ft = FieldType::new(code);
         ft.set_collation_name("binary");
@@ -1910,7 +1907,7 @@ fn test_wrap_with_cast_as_string() {
     ] {
         let ctx = WarningCtx::default();
         let expr = const_typed(datum.clone(), int_ft_collation_bin(code));
-        let wrapped = wrap_with_cast_as_string(expr, connection).unwrap();
+        let wrapped = wrap_with_cast_as_string(&crate::builtin::UnfoldedBuildContext, expr).unwrap();
         let out = wrapped.eval(&ctx, tidb_chunk::row::Row::empty()).unwrap();
         assert_eq!(text(&out), want, "{datum:?}");
     }
@@ -1921,7 +1918,7 @@ fn test_wrap_with_cast_as_string() {
         Datum::Enum(MysqlEnum::new("a", 0), Collation::Utf8Mb4Bin),
         FieldType::new(C::Enum),
     );
-    let wrapped = wrap_with_cast_as_string(enum_expr, connection).unwrap();
+    let wrapped = wrap_with_cast_as_string(&crate::builtin::UnfoldedBuildContext, enum_expr).unwrap();
     if let Expression::ScalarFunction(sf) = &wrapped {
         assert_ne!(sf.func_name.lowercase(), "to_binary");
     }
@@ -1945,7 +1942,7 @@ fn test_wrap_with_cast_as_json_passes_json_columns_through() {
         .unwrap()
         .set_flag(FieldTypeFlags::NOT_NULL);
     let original = Expression::Column(json_col.clone());
-    let wrapped = wrap_with_cast_as_json(original.clone()).unwrap();
+    let wrapped = wrap_with_cast_as_json(&crate::builtin::UnfoldedBuildContext, original.clone()).unwrap();
     match wrapped {
         Expression::Column(col) => assert_eq!(col.unique_id, json_col.unique_id),
         other => panic!("expected pass-through column, got {other:?}"),
@@ -2125,7 +2122,7 @@ fn test_cast_const_as_decimal_field_type() {
         "complete Go TestCastConstAsDecimalFieldType table"
     );
     for (index, (input, want_flen, want_decimal)) in cases.into_iter().enumerate() {
-        let wrapped = crate::wrap_cast::wrap_with_cast_as_decimal(input)
+        let wrapped = crate::wrap_cast::wrap_with_cast_as_decimal(&crate::builtin::UnfoldedBuildContext, input)
             .expect("constant decimal wrapper builds");
         let result_type = wrapped.static_type().expect("wrapper result type");
         assert_eq!(result_type.flen(), want_flen, "case {index} flen");
@@ -2275,7 +2272,7 @@ fn test_cast_as_char_field_type() {
         target.set_flen(-1);
         target.set_charset_name("utf8mb4");
         target.set_collation_name("utf8mb4_bin");
-        let wrapped = crate::simple_expr::build_cast_function(input, target, false)
+        let wrapped = crate::builtin_cast::build_cast_function_with_check(&crate::builtin::UnfoldedBuildContext, input, target, false, false)
             .expect("cast-as-char wrapper builds");
         assert_eq!(
             wrapped.static_type().expect("wrapper result type").flen(),
@@ -2294,7 +2291,7 @@ fn test_cast_string_as_decimal_sig_with_unsigned_flag_in_union() {
     target.add_flags(FieldTypeFlags::UNSIGNED);
     for (text, want) in [("1", "1"), ("-1", "0")] {
         let source = const_typed(Datum::new_string_datum(text.to_owned()), source_type.clone());
-        let wrapped = crate::wrap_cast::build_cast_function_4_union(source, target.clone())
+        let wrapped = crate::wrap_cast::build_cast_function_4_union(&crate::builtin::UnfoldedBuildContext, source, target.clone())
             .expect("string UNION decimal cast builds");
         let ctx = WarningCtx::default();
         assert_eq!(

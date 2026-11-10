@@ -761,7 +761,19 @@ impl Expression {
         ctx: &dyn tidb_exprctx::context::Columns,
         row: tidb_chunk::row::Row<'_>,
     ) -> Result<tidb_datatype::Datum, tidb_exprctx::context::EvalError> {
-        let value = match self {
+        let value = self.eval_string(ctx, row)?;
+        Ok(self.apply_enum_set_as_int(value))
+    }
+
+    /// Go `Expression.EvalString` of an ENUM or SET: its name, which
+    /// `EnumSetAsIntFlag` does not change. `builtinCastStringAsStringSig`
+    /// reads a hybrid argument this way.
+    pub(crate) fn eval_string(
+        &self,
+        ctx: &dyn tidb_exprctx::context::Columns,
+        row: tidb_chunk::row::Row<'_>,
+    ) -> Result<tidb_datatype::Datum, tidb_exprctx::context::EvalError> {
+        match self {
             Expression::Column(c) => c.eval(row),
             Expression::Constant(c) => c
                 .eval_on_row_with_error_value(ctx, row)
@@ -769,8 +781,7 @@ impl Expression {
             Expression::CorrelatedColumn(c) => Ok(c.eval()),
             Expression::ScalarFunction(c) => c.eval(ctx, row),
             Expression::ScalarSubQuery(c) => c.eval(),
-        }?;
-        Ok(self.apply_enum_set_as_int(value))
+        }
     }
 
     /// Preserve Go's Datum/error pair for rewrites that assign the Datum even

@@ -264,7 +264,11 @@ pub fn new_function_impl(
     // Go: `case ast.Cast: return BuildCastFunction(ctx, args[0], retType), nil`.
     if func_name == "cast" {
         let mut args = args;
-        return crate::simple_expr::build_cast_function(args.swap_remove(0), ret_type, false);
+        return crate::builtin_cast::build_cast_function(
+            &crate::builtin::ColumnsBuildContext(ctx),
+            args.swap_remove(0),
+            ret_type,
+        );
     }
     // Go: `case ast.Sysdate: if ctx.GetSysdateIsNow() { funcName = ast.Now }`.
     let func_name = if func_name == "sysdate" && ctx.sysdate_is_now() {
@@ -355,8 +359,7 @@ pub fn new_function_impl(
     function.args = crate::rewriter::signature_args::wrap_builtin_arguments(
         func_name,
         std::mem::take(&mut function.args),
-        ctx.connection_charset_info(),
-        &|expression| fold_constant_in_mode(expression, ctx, ConstantFoldMode::Normal),
+        &crate::builtin::ColumnsBuildContext(ctx),
         function.ret_type.as_ref(),
     )?;
     function.args = crate::rewriter::handle_binary_literal(
@@ -1028,7 +1031,12 @@ mod tests {
         };
         assert_eq!(function.func_name.lowercase(), "cast_char");
         let direct =
-            crate::simple_expr::build_cast_function(not_null_double_column(), target, false).unwrap();
+            crate::builtin_cast::build_cast_function(
+                &crate::builtin::UnfoldedBuildContext,
+                not_null_double_column(),
+                target,
+            )
+            .unwrap();
         assert_eq!(format!("{built:?}"), format!("{direct:?}"));
     }
 

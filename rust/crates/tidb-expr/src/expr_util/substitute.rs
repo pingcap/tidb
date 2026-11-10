@@ -802,9 +802,11 @@ mod native_cast_tests {
                     target.set_charset_name("utf8mb4");
                     target.set_collation_name("utf8mb4_bin");
                 }
-                let mut original = crate::simple_expr::build_cast_function(
+                let mut original = crate::builtin_cast::build_cast_function_with_check(
+                    &crate::builtin::UnfoldedBuildContext,
                     Expression::Column(column.clone()),
                     target,
+                    false,
                     false,
                 )
                 .unwrap();
@@ -856,9 +858,11 @@ mod native_cast_tests {
         target.set_flen(20);
         target.set_charset_name("ascii");
         target.set_collation_name("ascii_bin");
-        let mut original = crate::simple_expr::build_cast_function(
+        let mut original = crate::builtin_cast::build_cast_function_with_check(
+                    &crate::builtin::UnfoldedBuildContext,
             Expression::Column(column.clone()),
             target,
+            false,
             false,
         )
         .unwrap();

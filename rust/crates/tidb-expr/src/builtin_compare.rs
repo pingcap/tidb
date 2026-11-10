@@ -1437,7 +1437,7 @@ mod tests {
                 parameter.param_marker = None;
                 parameter.deferred_expr = Some(Box::new(child));
             }
-            let cast = crate::wrap_cast::wrap_with_cast_as_decimal(Expression::Constant(parameter))
+            let cast = crate::wrap_cast::wrap_with_cast_as_decimal(&crate::builtin::UnfoldedBuildContext, Expression::Constant(parameter))
                 .unwrap();
             assert!(
                 matches!(&cast, Expression::ScalarFunction(function) if function.func_name.lowercase() == "cast_decimal")

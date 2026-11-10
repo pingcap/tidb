@@ -74,6 +74,10 @@ impl ColumnResolver for IntColA {
     fn time_zone(&self) -> SessionTimeZone {
         SessionTimeZone::utc()
     }
+
+    fn fold_constant(&self, expression: &mut Expression, mode: crate::ConstantFoldMode) {
+        crate::fold_constant_in_mode(expression, &Ctx::default(), mode);
+    }
 }
 
 /// A `TypeNewDecimal` column named `d`, for `TestCompare`'s column-vs-
@@ -91,6 +95,10 @@ impl ColumnResolver for DecColD {
     fn time_zone(&self) -> SessionTimeZone {
         SessionTimeZone::utc()
     }
+
+    fn fold_constant(&self, expression: &mut Expression, mode: crate::ConstantFoldMode) {
+        crate::fold_constant_in_mode(expression, &Ctx::default(), mode);
+    }
 }
 
 /// One typed column named `b`, parameterized per tail row.
@@ -106,6 +114,10 @@ impl ColumnResolver for TypedColB {
 
     fn time_zone(&self) -> SessionTimeZone {
         SessionTimeZone::utc()
+    }
+
+    fn fold_constant(&self, expression: &mut Expression, mode: crate::ConstantFoldMode) {
+        crate::fold_constant_in_mode(expression, &Ctx::default(), mode);
     }
 }
 
@@ -143,13 +155,8 @@ pub(crate) fn shape(expr: &Expression) -> String {
 /// GO PORT of `pkg/expression/builtin_compare_test.go:29
 /// TestCompareFunctionWithRefine` over its 35-row table.
 ///
-/// Rows whose Go output is a comment rather than a `==>` translation pin the
-/// structural comparison this tier retains where Go folds or re-types:
-/// the `isExceptional` arm now emits Go's zero/one argument pairs for
-/// constants already exposed to refinement. Constant comparison casts
-/// now fold at construction, including the NE-against-DOUBLE arguments.
-/// The remaining optimization and warning-count differences are recorded in
-/// [`refine_exceptional_folds_are_not_modeled`].
+/// The resolver folds as Go's `ParseSimpleExpr` does, so every row is Go's
+/// own string in this tier's `shape` spelling.
 #[test]
 fn test_compare_function_with_refine() {
     let rows: [(&str, &str); 35] = [
@@ -166,16 +173,8 @@ fn test_compare_function_with_refine() {
         // NOTE: this row's constant is an unquoted DECIMAL literal.
         ("a > 1.1", "gt(col(Some(Long)), Const:INT:1)"),
         ("a >= '1.1'", "ge(col(Some(Long)), Const:INT:2)"),
-        // Go refineArgs emits eq(0,1), which its function builder folds to 0.
-        (
-            "a = '1.1'",
-            "eq(Const:INT:0, Const:INT:1)",
-        ),
-        (
-            "a <=> '1.1'",
-            "nulleq(Const:INT:0, Const:INT:1)",
-        ),
-        // Go folds the constant cast while retaining the column cast.
+        ("a = '1.1'", "Const:INT:0"),
+        ("a <=> '1.1'", "Const:INT:0"),
         (
             "a != '1.1'",
             "ne(cast_double(col(Some(Long))), Const:FLOAT:1.1)",
@@ -192,47 +191,18 @@ fn test_compare_function_with_refine() {
         ("'1.1' <= a", "le(Const:INT:2, col(Some(Long)))"),
         ("'1.1' > a", "gt(Const:INT:2, col(Some(Long)))"),
         ("'1.1' >= a", "ge(Const:INT:1, col(Some(Long)))"),
-        (
-            "'1.1' = a",
-            "eq(Const:INT:0, Const:INT:1)",
-        ),
-        (
-            "'1.1' <=> a",
-            "nulleq(Const:INT:0, Const:INT:1)",
-        ),
-        // Go: ne(1.1, cast(a, double BINARY)).
+        ("'1.1' = a", "Const:INT:0"),
+        ("'1.1' <=> a", "Const:INT:0"),
         (
             "'1.1' != a",
             "ne(Const:FLOAT:1.1, cast_double(col(Some(Long))))",
         ),
-        // Go folds it ("0": the conversion overflows and EQ is exceptional).
-        (
-            "'123456789123456711111189' = a",
-            "eq(Const:INT:0, Const:INT:1)",
-        ),
-        // Go folds it ("0", the ETDecimal EQ branch). The DECIMAL column wrap
-        // this tier produces matches Go's own cast arm of generateCmpSigs.
-        (
-            "123456789123456789.12345 = a",
-            "eq(Const:INT:0, Const:INT:1)",
-        ),
-        // These four fold to "1"/"0"/"0"/"1" through the +-inf overflow arms.
-        (
-            "123456789123456789123456789.12345 > a",
-            "gt(Const:INT:1, Const:INT:0)",
-        ),
-        (
-            "-123456789123456789123456789.12345 > a",
-            "gt(unaryminus(Const:DEC:123456789123456789123456789.12345), cast_decimal(col(Some(Long))))",
-        ),
-        (
-            "123456789123456789123456789.12345 < a",
-            "lt(Const:INT:1, Const:INT:0)",
-        ),
-        (
-            "-123456789123456789123456789.12345 < a",
-            "lt(unaryminus(Const:DEC:123456789123456789123456789.12345), cast_decimal(col(Some(Long))))",
-        ),
+        ("'123456789123456711111189' = a", "Const:INT:0"),
+        ("123456789123456789.12345 = a", "Const:INT:0"),
+        ("123456789123456789123456789.12345 > a", "Const:INT:1"),
+        ("-123456789123456789123456789.12345 > a", "Const:INT:0"),
+        ("123456789123456789123456789.12345 < a", "Const:INT:0"),
+        ("-123456789123456789123456789.12345 < a", "Const:INT:1"),
         // Garbage string converted-with-truncation to INT 0 and kept -- Go
         // prints eq(0, a). Both conversion warnings surface here as well.
         ("'aaaa'=a", "eq(Const:INT:0, col(Some(Long)))"),
@@ -363,7 +333,7 @@ fn test_compare() {
         let built = rewritten("d < '123'", &DecColD);
         assert_eq!(
             shape(&built),
-            "lt(col(Some(NewDecimal)), cast_decimal(Const:STR:123))"
+            "lt(col(Some(NewDecimal)), Const:DEC:123)"
         );
     }
     // - `<datetime column> <cmp> <const>`: the comparison builder folds the
@@ -781,6 +751,10 @@ fn test_refine_args_with_cast_enum() {
 
         fn time_zone(&self) -> SessionTimeZone {
             SessionTimeZone::utc()
+        }
+
+        fn fold_constant(&self, expression: &mut Expression, mode: crate::ConstantFoldMode) {
+            crate::fold_constant_in_mode(expression, &Ctx::default(), mode);
         }
     }
 

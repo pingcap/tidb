@@ -146,7 +146,7 @@ fn inject_proj_below_union(
                 if !src_type.equal(dst_type) || not_null(dst_type) != not_null(src_type) {
                     // Go's `BuildCastFunction4Union` cannot fail.
                     exprs.push(
-                        tidb_expr::wrap_cast::build_cast_function_4_union(Expression::Column(src_col), dst_type.clone())
+                        tidb_expr::wrap_cast::build_cast_function_4_union(&tidb_expr::wrap_cast::UnfoldedBuildContext, Expression::Column(src_col), dst_type.clone())
                             .expect("BuildCastFunction4Union builds the cast"),
                     );
                     need_change = true;

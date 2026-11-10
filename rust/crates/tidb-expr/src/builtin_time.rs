@@ -69,7 +69,7 @@ fn get_expression_fsp(ctx: &dyn BuildContext, expression: &Expression) -> Result
         return Ok(eval_string(ctx, expression)?.map_or(0, |value| i64::from(get_fsp(&value))));
     }
     let wrapped =
-        wrap_with_cast_as_time(expression.clone(), FieldType::new(FieldTypeCode::Datetime))?;
+        wrap_with_cast_as_time(ctx, expression.clone(), FieldType::new(FieldTypeCode::Datetime))?;
     Ok(type_of(&wrapped).decimal().min(MAX_FSP))
 }
 
@@ -419,7 +419,7 @@ fn str_to_date_ret_tp(ctx: &dyn BuildContext, arg: &Expression) -> (FieldTypeCod
     if !matches!(arg, Expression::Constant(_)) {
         return (tp, MAX_FSP);
     }
-    let format = wrap_with_cast_as_string(arg.clone(), ctx.connection_charset_info())
+    let format = wrap_with_cast_as_string(ctx, arg.clone())
         .and_then(|str_arg| eval_string(ctx, &str_arg));
     let Ok(Some(format)) = format else {
         return (tp, 0);
@@ -589,7 +589,7 @@ string_class!(
     ExtractFunctionClass, |func_name, ctx, args| {
         let mut args = args.into_iter();
         let unit_arg = args.next().expect("EXTRACT takes two arguments");
-        let unit_arg = wrap_with_cast_as_string(unit_arg, ctx.connection_charset_info())?;
+        let unit_arg = wrap_with_cast_as_string(ctx, unit_arg)?;
         let args: Vec<Expression> = std::iter::once(unit_arg).chain(args).collect();
         let unit = eval_string(ctx, &args[0])?.unwrap_or_default();
         let is_clock_unit = is_clock_unit(&unit);

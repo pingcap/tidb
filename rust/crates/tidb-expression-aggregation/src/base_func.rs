@@ -205,13 +205,13 @@ impl BaseFuncDesc {
             | names::FIRST_ROW
             | names::FIRST_VALUE
             | names::LAST_VALUE
-            | names::NTH_VALUE => self.type_infer_4_max_min()?,
-            names::BIT_AND | names::BIT_OR | names::BIT_XOR => self.type_infer_4_bit_funcs()?,
+            | names::NTH_VALUE => self.type_infer_4_max_min(ctx)?,
+            names::BIT_AND | names::BIT_OR | names::BIT_XOR => self.type_infer_4_bit_funcs(ctx)?,
             names::ROW_NUMBER | names::RANK | names::DENSE_RANK => self.type_infer_4_number_funcs(),
             names::CUME_DIST => self.type_infer_4_cume_dist(),
             names::NTILE => self.type_infer_4_ntile(),
             names::PERCENT_RANK => self.type_infer_4_percent_rank(),
-            names::LEAD | names::LAG => self.type_infer_4_lead_lag()?,
+            names::LEAD | names::LAG => self.type_infer_4_lead_lag(ctx)?,
             names::VAR_POP | names::STDDEV_POP | names::VAR_SAMP | names::STDDEV_SAMP => {
                 self.type_infer_4_pop_or_samp();
             }
@@ -475,7 +475,7 @@ impl BaseFuncDesc {
                     &mut self.args[i],
                     Expression::Constant(tidb_expr::constant::Constant::default()),
                 );
-                self.args[i] = wrap_cast::build_cast_to(arg, tp)?;
+                self.args[i] = wrap_cast::build_cast_to(&wrap_cast::ColumnsBuildContext(ctx), arg, tp)?;
             }
         }
         Ok(())
@@ -484,7 +484,7 @@ impl BaseFuncDesc {
     /// Go `typeInfer4MaxMin` (`base_func.go:345`), shared by `MAX`/`MIN`/
     /// `FIRST_ROW`/`FIRST_VALUE`/`LAST_VALUE`/`NTH_VALUE` and reached again
     /// from `typeInfer4LeadLag`.
-    fn type_infer_4_max_min(&mut self) -> Result<(), AggDescError> {
+    fn type_infer_4_max_min(&mut self, ctx: &impl Columns) -> Result<(), AggDescError> {
         let arg = self.arg0_type("max/min")?;
         // A scalar function's FLOAT result is stored in the Datum's float64
         // field, so extracting the argument into a Projection would break
@@ -500,7 +500,7 @@ impl BaseFuncDesc {
                 &mut self.args[0],
                 Expression::Constant(tidb_expr::constant::Constant::default()),
             );
-            self.args[0] = wrap_cast::build_cast_to(old, tp)?;
+            self.args[0] = wrap_cast::build_cast_to(&wrap_cast::ColumnsBuildContext(ctx), old, tp)?;
         }
         let arg = self.arg0_type("max/min")?;
         self.ret_type = arg;
@@ -527,7 +527,7 @@ impl BaseFuncDesc {
     }
 
     /// Go `typeInfer4BitFuncs` (`base_func.go:369`).
-    fn type_infer_4_bit_funcs(&mut self) -> Result<(), AggDescError> {
+    fn type_infer_4_bit_funcs(&mut self, ctx: &impl Columns) -> Result<(), AggDescError> {
         let mut ret = FieldType::new(FieldTypeCode::LongLong);
         ret.set_flen(21);
         set_bin_chs_cln_flag(&mut ret);
@@ -540,7 +540,7 @@ impl BaseFuncDesc {
             &mut self.args[0],
             Expression::Constant(tidb_expr::constant::Constant::default()),
         );
-        self.args[0] = wrap_cast::wrap_with_cast_as_int(old, None)?;
+        self.args[0] = wrap_cast::wrap_with_cast_as_int(&wrap_cast::ColumnsBuildContext(ctx), old, None)?;
         Ok(())
     }
 
@@ -559,12 +559,12 @@ impl BaseFuncDesc {
         if self.args.is_empty() {
             return Err(AggDescError::MissingArgument(names::JSON_OBJECTAGG));
         }
-        let connection = wrap_cast::connection_charset(ctx);
         let old = std::mem::replace(
             &mut self.args[0],
             Expression::Constant(tidb_expr::constant::Constant::default()),
         );
-        self.args[0] = wrap_cast::wrap_with_cast_as_string(old, (&connection.0, &connection.1))?;
+        self.args[0] =
+            wrap_cast::wrap_with_cast_as_string(&wrap_cast::ColumnsBuildContext(ctx), old)?;
         Ok(())
     }
 
@@ -613,9 +613,9 @@ impl BaseFuncDesc {
     }
 
     /// Go `typeInfer4LeadLag` (`base_func.go:413`).
-    fn type_infer_4_lead_lag(&mut self) -> Result<(), AggDescError> {
+    fn type_infer_4_lead_lag(&mut self, ctx: &impl Columns) -> Result<(), AggDescError> {
         if self.args.len() < 3 {
-            return self.type_infer_4_max_min();
+            return self.type_infer_4_max_min(ctx);
         }
         // Merge the type of the first and third argument.
         let merged = tidb_expr::rewriter::infer_type_4_control_funcs(
@@ -679,7 +679,7 @@ impl BaseFuncDesc {
             return Ok(());
         }
         let mut ret_tp = self.ret_type.clone();
-        let connection = wrap_cast::connection_charset(ctx);
+        let build = wrap_cast::ColumnsBuildContext(ctx);
         for i in 0..self.args.len() {
             // These functions' second argument is a plain non-negative count,
             // not a value in the aggregate's domain.
@@ -699,18 +699,16 @@ impl BaseFuncDesc {
                 Expression::Constant(tidb_expr::constant::Constant::default()),
             );
             self.args[i] = match ret_tp.eval_type() {
-                EvalType::Int => wrap_cast::wrap_with_cast_as_int(old, Some(&ret_tp))?,
-                EvalType::Real => wrap_cast::wrap_with_cast_as_real(old)?,
-                EvalType::String => {
-                    wrap_cast::wrap_with_cast_as_string(old, (&connection.0, &connection.1))?
-                }
-                EvalType::Decimal => wrap_cast::wrap_with_cast_as_decimal(old)?,
+                EvalType::Int => wrap_cast::wrap_with_cast_as_int(&build, old, Some(&ret_tp))?,
+                EvalType::Real => wrap_cast::wrap_with_cast_as_real(&build, old)?,
+                EvalType::String => wrap_cast::wrap_with_cast_as_string(&build, old)?,
+                EvalType::Decimal => wrap_cast::wrap_with_cast_as_decimal(&build, old)?,
                 EvalType::Datetime | EvalType::Timestamp => {
                     let source = type_of(&old).code();
                     let shortcut = source == ret_tp.code()
                         || (matches!(source, FieldTypeCode::Date | FieldTypeCode::Timestamp)
                             && ret_tp.code() == FieldTypeCode::Datetime);
-                    let wrapped = wrap_cast::wrap_with_cast_as_time(old, ret_tp.clone())?;
+                    let wrapped = wrap_cast::wrap_with_cast_as_time(&build, old, ret_tp.clone())?;
                     // Go passes a.RetTp by pointer. A real cast updates its
                     // precision/width; shortcut operands leave it untouched.
                     if !shortcut {
@@ -719,19 +717,10 @@ impl BaseFuncDesc {
                     }
                     wrapped
                 }
-                EvalType::Duration => wrap_cast::wrap_with_cast_as_duration(old)?,
-                EvalType::Json => wrap_cast::wrap_with_cast_as_json(old)?,
-                EvalType::VectorFloat32 => wrap_cast::wrap_with_cast_as_vector_float32(old)?,
+                EvalType::Duration => wrap_cast::wrap_with_cast_as_duration(&build, old)?,
+                EvalType::Json => wrap_cast::wrap_with_cast_as_json(&build, old)?,
+                EvalType::VectorFloat32 => wrap_cast::wrap_with_cast_as_vector_float32(&build, old)?,
             };
-            // Go BuildCastFunction folds non-JSON casts with the live build
-            // context. Preserve constants for buildLeadLag's default conversion.
-            if type_of(&self.args[i]).eval_type() != EvalType::Json {
-                tidb_expr::fold_constant_in_mode(
-                    &mut self.args[i],
-                    ctx,
-                    tidb_expr::ConstantFoldMode::Normal,
-                );
-            }
         }
         Ok(())
     }

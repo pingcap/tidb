@@ -2517,6 +2517,11 @@ impl ScalarFunction {
                             .ok_or(EvalError::Unsupported("a cast with no source type"))?;
                         eval_numeric_row(&self.args[0], ctx, row, source)?
                     }
+                    _ if self.pb_signature()
+                        == Some(tidb_proto::tipb::ScalarFuncSig::CastStringAsString) =>
+                    {
+                        self.args[0].eval_string(ctx, row)?
+                    }
                     _ => self.args[0].eval(ctx, row)?,
                 };
                 if value.is_null() {

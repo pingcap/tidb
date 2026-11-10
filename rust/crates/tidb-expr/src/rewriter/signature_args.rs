@@ -41,7 +41,7 @@ use crate::scalar_function::ScalarFunction;
 use crate::EvalError;
 use tidb_ast::CiString;
 
-use super::{derive_tree_collation_with_connection, is_newly_built_cast};
+use super::derive_tree_collation_with_connection;
 
 /// One entry of a Go class's `argTps`.
 #[derive(Clone, Copy)]
@@ -461,8 +461,7 @@ pub(super) fn build_call(
     name: &str,
     ret_type: FieldType,
     args: Vec<Expression>,
-    connection: (&str, &str),
-    fold: &dyn Fn(&mut Expression),
+    ctx: &dyn crate::builtin::BuildContext,
 ) -> Result<Expression, EvalError> {
     let wraps = argument_kinds(name, &args, Some(&ret_type)).is_some();
     let mut call =
@@ -470,7 +469,7 @@ pub(super) fn build_call(
     if !wraps {
         return Ok(call);
     }
-    derive_tree_collation_with_connection(&mut call, connection)?;
+    derive_tree_collation_with_connection(&mut call, ctx.connection_charset_info())?;
     if let Expression::ScalarFunction(function) = &mut call {
         let ret = function.ret_type.clone();
         let args = std::mem::take(&mut function.args);
@@ -494,7 +493,7 @@ pub(super) fn build_call(
         let gl_signature = matches!(name, "greatest" | "least")
             .then(|| crate::rewriter::result_type::gl_signature(&args))
             .flatten();
-        function.args = wrap_builtin_arguments(name, args, connection, fold, ret.as_ref())?;
+        function.args = wrap_builtin_arguments(name, args, ctx, ret.as_ref())?;
         if gl_signature.is_some() {
             function.set_gl_signature(gl_signature);
         }
@@ -515,13 +514,11 @@ pub(super) fn build_call(
 }
 
 /// Wraps `args` the way Go's `newBaseBuiltinFuncWithTp` does for the builtin
-/// `name`. `fold` is `BuildCastFunction`'s closing `FoldConstant`, which Go
-/// skips for a cast whose result is JSON.
+/// `name`.
 pub(crate) fn wrap_builtin_arguments(
     name: &str,
     args: Vec<Expression>,
-    connection: (&str, &str),
-    fold: &dyn Fn(&mut Expression),
+    ctx: &dyn crate::builtin::BuildContext,
     ret_type: Option<&FieldType>,
 ) -> Result<Vec<Expression>, EvalError> {
     let Some(kinds) = argument_kinds(name, &args, ret_type) else {
@@ -534,34 +531,26 @@ pub(crate) fn wrap_builtin_arguments(
     }
     args.into_iter()
         .zip(kinds)
-        .map(|(arg, kind)| {
-            let was_cast = is_newly_built_cast(&arg);
-            let mut wrapped = match kind {
-                ArgKind::Skip => return Ok(arg),
-                ArgKind::Int => wrap_with_cast_as_int(arg, None)?,
-                ArgKind::Real => wrap_with_cast_as_real(arg)?,
-                ArgKind::Decimal => wrap_with_cast_as_decimal(arg)?,
-                ArgKind::Text => wrap_with_cast_as_string(arg, connection)?,
-                ArgKind::Datetime => {
-                    wrap_with_cast_as_time(arg, FieldType::new(FieldTypeCode::Datetime))?
-                }
-                ArgKind::Timestamp => {
-                    wrap_with_cast_as_time(arg, FieldType::new(FieldTypeCode::Timestamp))?
-                }
-                ArgKind::Duration => wrap_with_cast_as_duration(arg)?,
-                ArgKind::Vector => wrap_with_cast_as_vector_float32(arg)?,
-                ArgKind::Document => return wrap_with_cast_as_json(arg),
-                ArgKind::Value => {
-                    let mut wrapped = wrap_with_cast_as_json(arg)?;
-                    disable_parse_json_flag_4_expr(&mut wrapped);
-                    return Ok(wrapped);
-                }
-            };
-            if is_newly_built_cast(&wrapped) && !was_cast {
-                derive_tree_collation_with_connection(&mut wrapped, connection)?;
-                fold(&mut wrapped);
+        .map(|(arg, kind)| match kind {
+            ArgKind::Skip => Ok(arg),
+            ArgKind::Int => wrap_with_cast_as_int(ctx, arg, None),
+            ArgKind::Real => wrap_with_cast_as_real(ctx, arg),
+            ArgKind::Decimal => wrap_with_cast_as_decimal(ctx, arg),
+            ArgKind::Text => wrap_with_cast_as_string(ctx, arg),
+            ArgKind::Datetime => {
+                wrap_with_cast_as_time(ctx, arg, FieldType::new(FieldTypeCode::Datetime))
             }
-            Ok(wrapped)
+            ArgKind::Timestamp => {
+                wrap_with_cast_as_time(ctx, arg, FieldType::new(FieldTypeCode::Timestamp))
+            }
+            ArgKind::Duration => wrap_with_cast_as_duration(ctx, arg),
+            ArgKind::Vector => wrap_with_cast_as_vector_float32(ctx, arg),
+            ArgKind::Document => wrap_with_cast_as_json(ctx, arg),
+            ArgKind::Value => {
+                let mut wrapped = wrap_with_cast_as_json(ctx, arg)?;
+                disable_parse_json_flag_4_expr(&mut wrapped);
+                Ok(wrapped)
+            }
         })
         .collect()
 }

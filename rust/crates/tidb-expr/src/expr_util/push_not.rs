@@ -413,7 +413,7 @@ mod native_cast_tests {
                 target.add_flags(FieldTypeFlags::UNSIGNED);
             }
             let cast = crate::wrap_cast::build_cast_function_4_union(
-                Expression::Column(Column::new(1, source)),
+                &crate::builtin::UnfoldedBuildContext, Expression::Column(Column::new(1, source)),
                 target,
             )
             .unwrap();
@@ -451,7 +451,7 @@ mod native_cast_tests {
             target.set_flen(target_width);
             target.set_collation_name(target_collation);
             let cast = crate::wrap_cast::build_cast_function_4_union(
-                Expression::Column(Column::new(1, source)),
+                &crate::builtin::UnfoldedBuildContext, Expression::Column(Column::new(1, source)),
                 target.clone(),
             )
             .unwrap();

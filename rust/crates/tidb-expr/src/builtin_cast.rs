@@ -22,7 +22,6 @@ use crate::expr_collation::{Coercibility, ExprCollation, Repertoire};
 use crate::expression::{propagate_type, Expression};
 use crate::rewriter::adjust_ret_ft_for_cast_string;
 use crate::scalar_function::ScalarFunction;
-use crate::simple_expr::try_push_cast_into_control_function_for_hybrid_type;
 use crate::wrap_cast::type_of;
 use crate::EvalError;
 use tidb_ast::CiString;
@@ -440,7 +439,7 @@ fn legacy_cast_name(
 }
 
 /// Go `BuildCastFunction`.
-pub(crate) fn build_cast_function(
+pub fn build_cast_function(
     ctx: &dyn BuildContext,
     expr: Expression,
     tp: FieldType,
@@ -450,7 +449,7 @@ pub(crate) fn build_cast_function(
 
 /// Go `BuildCastFunctionWithCheck`: the cast of `expr` to `tp`, folded
 /// unless it is a cast to JSON, whose flags may still be reset.
-pub(crate) fn build_cast_function_with_check(
+pub fn build_cast_function_with_check(
     ctx: &dyn BuildContext,
     expr: Expression,
     mut tp: FieldType,
@@ -461,7 +460,7 @@ pub(crate) fn build_cast_function_with_check(
         tp.del_flag(FieldTypeFlags::NOT_NULL);
     }
     let expr =
-        try_push_cast_into_control_function_for_hybrid_type(expr, &tp, ctx.connection_charset_info());
+        try_push_cast_into_control_function_for_hybrid_type(ctx, expr, &tp);
     let f = match tp.eval_type() {
         EvalType::Int => CastAsIntFunctionClass { tp }.get_function(ctx, vec![expr])?,
         EvalType::Decimal => CastAsDecimalFunctionClass { tp }.get_function(ctx, vec![expr])?,
@@ -506,4 +505,62 @@ pub(crate) fn build_cast_function_with_check(
         ctx.fold_constant(&mut res);
     }
     Ok(res)
+}
+
+/// Go `TryPushCastIntoControlFunctionForHybridType`: an IF, CASE or ELT with
+/// an ENUM or SET branch is rebuilt over its branches cast to the INT or
+/// REAL `tp`, so the branch's number is read where the unpushed function
+/// would return its name.
+#[must_use]
+pub fn try_push_cast_into_control_function_for_hybrid_type(
+    ctx: &dyn BuildContext,
+    expr: Expression,
+    tp: &FieldType,
+) -> Expression {
+    let Expression::ScalarFunction(sf) = &expr else {
+        return expr;
+    };
+    let wrap_cast_func: &dyn Fn(Expression) -> Result<Expression, EvalError> =
+        match tp.eval_type() {
+            EvalType::Int => &|expr| crate::wrap_cast::wrap_with_cast_as_int(ctx, expr, Some(tp)),
+            EvalType::Real => &|expr| crate::wrap_cast::wrap_with_cast_as_real(ctx, expr),
+            _ => return expr,
+        };
+    // todo: compatible with mysql control function using bit type. issue 24725
+    let is_hybrid = |expr: &Expression| {
+        let ft = type_of(expr);
+        ft.is_hybrid() && ft.code() != FieldTypeCode::Bit
+    };
+    let name = sf.func_name.lowercase();
+    let len = sf.args.len();
+    let branches: Vec<usize> = match name {
+        "if" => vec![1, 2],
+        "case" => {
+            let mut branches: Vec<usize> = (1..len).step_by(2).collect();
+            if len % 2 == 1 {
+                branches.push(len - 1);
+            }
+            branches
+        }
+        "elt" => (1..len).collect(),
+        _ => return expr,
+    };
+    if !branches.iter().any(|&i| is_hybrid(&sf.args[i])) {
+        return expr;
+    }
+    let mut args = sf.args.clone();
+    for i in branches {
+        let Ok(wrapped) = wrap_cast_func(args[i].clone()) else {
+            return expr;
+        };
+        args[i] = wrapped;
+    }
+    let Some(class) = crate::builtin::funcs(name) else {
+        return expr;
+    };
+    let Ok(f) = class.get_function(ctx, args) else {
+        return expr;
+    };
+    let ret_type = f.get_ret_tp();
+    Expression::ScalarFunction(crate::new_function::scalar_function_of(name, ret_type, f))
 }

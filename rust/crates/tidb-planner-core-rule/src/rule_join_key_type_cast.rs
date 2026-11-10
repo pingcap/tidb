@@ -190,8 +190,10 @@ fn rewrite_join(ctx: &RuleContext<'_>, plan: &mut LogicalPlan) -> Result<bool, P
             integer_cast.original.ret_type.clone().ok_or_else(|| {
                 PlanError::internal("join-key type-cast integer column has no type")
             })?;
+        let build = tidb_expr::wrap_cast::ColumnsBuildContext(ctx.eval_context);
         let integer_output = Column::new(integer_cast.original.unique_id, integer_type.clone());
         let string_as_int = wrap_with_cast_as_int(
+            &build,
             Expression::Column(string_cast.original.clone()),
             Some(&integer_type),
         )
@@ -204,14 +206,16 @@ fn rewrite_join(ctx: &RuleContext<'_>, plan: &mut LogicalPlan) -> Result<bool, P
                 .ok_or_else(|| PlanError::internal("join-key type-cast result has no type"))?,
         );
         let guard_left = wrap_with_cast_as_real(
+            &build,
             wrap_with_cast_as_int(
+                &build,
                 Expression::Column(string_cast.original.clone()),
                 Some(&integer_type),
             )
             .map_err(|error| PlanError::internal(format!("{error:?}")))?,
         )
         .map_err(|error| PlanError::internal(format!("{error:?}")))?;
-        let guard_right = wrap_with_cast_as_real(Expression::Column(string_cast.original))
+        let guard_right = wrap_with_cast_as_real(&build, Expression::Column(string_cast.original))
             .map_err(|error| PlanError::internal(format!("{error:?}")))?;
         let guard = ctx
             .builder

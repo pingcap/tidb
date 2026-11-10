@@ -348,6 +348,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     // through the internal cast name.
                     exprs.push(
                         tidb_expr::wrap_cast::build_cast_function_4_union(
+                            &tidb_expr::wrap_cast::ColumnsBuildContext(self.ctx),
                             Expression::Column(src_col.clone()),
                             dst_type,
                         )

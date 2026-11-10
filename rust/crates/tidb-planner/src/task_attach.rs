@@ -5026,7 +5026,7 @@ fn convert_mpp_join_partition_keys_if_need(
             let mut target = target.clone();
             target.set_flag(key.col.get_static_type().map(tidb_datatype::FieldType::flags).unwrap_or_default());
             let cast_expr =
-                tidb_expr::simple_expr::build_cast_function(Expression::Column(key.col.clone()), target.clone(), false)
+                tidb_expr::wrap_cast::build_cast_function(&tidb_expr::wrap_cast::UnfoldedBuildContext, Expression::Column(key.col.clone()), target.clone())
                     .map_err(|error| PlanError::internal(format!("{error:?}")))?;
             // Go `appendExpr`.
             let mut column = tidb_expr::column::Column::new(

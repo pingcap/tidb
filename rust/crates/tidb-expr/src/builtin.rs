@@ -16,11 +16,10 @@ use crate::collation_derive::derive_collation_with_arg_tps;
 use crate::constant::Constant;
 use crate::constant_fold::{fold_constant_in_mode, ConstantFoldMode};
 use crate::expr_collation::{CollationInfo, ExprCollation};
-use crate::expression::{ConstLevel, Expression};
+use crate::expression::Expression;
 use crate::rewriter::ColumnResolver;
 use crate::wrap_cast::{
-    build_cast_as_decimal, set_const_decimal_cast_precision, type_of,
-    wrap_with_cast_as_duration, wrap_with_cast_as_int,
+    type_of, wrap_with_cast_as_decimal, wrap_with_cast_as_duration, wrap_with_cast_as_int,
     wrap_with_cast_as_json, wrap_with_cast_as_real, wrap_with_cast_as_string,
     wrap_with_cast_as_time, wrap_with_cast_as_vector_float32, MAX_BLOB_WIDTH,
 };
@@ -50,7 +49,7 @@ const MAX_DATETIME_WIDTH_NO_FSP: i64 = 19;
 const MAX_DURATION_WIDTH_NO_FSP: i64 = 10;
 
 /// What Go's `getFunction` reads from its `BuildContext`.
-pub(crate) trait BuildContext {
+pub trait BuildContext {
     /// Go `ctx.GetCharsetInfo()`.
     fn connection_charset_info(&self) -> (&str, &str);
     /// Go `ctx.GetEvalCtx().SQLMode().HasNoUnsignedSubtractionMode()`.
@@ -69,7 +68,7 @@ pub(crate) trait BuildContext {
 }
 
 /// The [`BuildContext`] of a function built through `NewFunction`.
-pub(crate) struct ColumnsBuildContext<'a>(pub(crate) &'a dyn Columns);
+pub struct ColumnsBuildContext<'a>(pub &'a dyn Columns);
 
 impl BuildContext for ColumnsBuildContext<'_> {
     fn connection_charset_info(&self) -> (&str, &str) {
@@ -102,7 +101,7 @@ impl BuildContext for ColumnsBuildContext<'_> {
 }
 
 /// The [`BuildContext`] of a function the AST rewriter builds.
-pub(crate) struct ResolverBuildContext<'a, R: ColumnResolver>(pub(crate) &'a R);
+pub struct ResolverBuildContext<'a, R: ColumnResolver>(pub &'a R);
 
 impl<R: ColumnResolver> BuildContext for ResolverBuildContext<'_, R> {
     fn connection_charset_info(&self) -> (&str, &str) {
@@ -652,34 +651,6 @@ fn new_return_field_type_for_base_builtin_func(
     field_type
 }
 
-/// Go `BuildCastFunction` closes the cast it builds with `FoldConstant`. The
-/// `wrap_with_cast_as_*` helpers return theirs unfolded, so the fold runs
-/// here, on a cast the helper built or was given.
-fn fold_built_cast(ctx: &dyn BuildContext, mut wrapped: Expression) -> Expression {
-    if crate::rewriter::is_newly_built_cast(&wrapped) {
-        ctx.fold_constant(&mut wrapped);
-    }
-    wrapped
-}
-
-/// Go `WrapWithCastAsDecimal` (`builtin_cast.go:2736`): `BuildCastFunction`
-/// folds the cast it builds, and a cast that is `ConstStrict` is evaluated
-/// in the build context for the precision and scale of its value.
-fn wrap_with_cast_as_decimal(
-    ctx: &dyn BuildContext,
-    expr: Expression,
-) -> Result<Expression, EvalError> {
-    if type_of(&expr).eval_type() == EvalType::Decimal {
-        return Ok(expr);
-    }
-    let mut cast_expr = fold_built_cast(ctx, build_cast_as_decimal(expr)?);
-    if cast_expr.const_level() == ConstLevel::STRICT {
-        let value = ctx.eval_constant(&cast_expr);
-        set_const_decimal_cast_precision(&mut cast_expr, value);
-    }
-    Ok(cast_expr)
-}
-
 /// Go `newBaseBuiltinFuncWithTp`: the builtin function over `args` cast to
 /// `arg_tps`, returning `ret_type`.
 ///
@@ -709,28 +680,23 @@ pub(crate) fn new_base_builtin_func_with_tp(
     for (arg, arg_tp) in args.iter_mut().zip(arg_tps) {
         let given = std::mem::replace(arg, Expression::Constant(Constant::new_null()));
         *arg = match arg_tp {
-            EvalType::Int => fold_built_cast(ctx, wrap_with_cast_as_int(given, None)?),
-            EvalType::Real => fold_built_cast(ctx, wrap_with_cast_as_real(given)?),
+            EvalType::Int => wrap_with_cast_as_int(ctx, given, None)?,
+            EvalType::Real => wrap_with_cast_as_real(ctx, given)?,
             EvalType::Decimal => wrap_with_cast_as_decimal(ctx, given)?,
             EvalType::String => {
-                let wrapped = fold_built_cast(
-                    ctx,
-                    wrap_with_cast_as_string(given, ctx.connection_charset_info())?,
-                );
+                let wrapped = wrap_with_cast_as_string(ctx, given)?;
                 crate::convert_charset::handle_binary_literal(ctx, wrapped, &ec, func_name, false)
             }
-            EvalType::Datetime => fold_built_cast(
-                ctx,
-                wrap_with_cast_as_time(given, FieldType::new(FieldTypeCode::Datetime))?,
-            ),
-            EvalType::Timestamp => fold_built_cast(
-                ctx,
-                wrap_with_cast_as_time(given, FieldType::new(FieldTypeCode::Timestamp))?,
-            ),
-            EvalType::Duration => fold_built_cast(ctx, wrap_with_cast_as_duration(given)?),
-            EvalType::Json => fold_built_cast(ctx, wrap_with_cast_as_json(given)?),
+            EvalType::Datetime => {
+                wrap_with_cast_as_time(ctx, given, FieldType::new(FieldTypeCode::Datetime))?
+            }
+            EvalType::Timestamp => {
+                wrap_with_cast_as_time(ctx, given, FieldType::new(FieldTypeCode::Timestamp))?
+            }
+            EvalType::Duration => wrap_with_cast_as_duration(ctx, given)?,
+            EvalType::Json => wrap_with_cast_as_json(ctx, given)?,
             EvalType::VectorFloat32 => {
-                fold_built_cast(ctx, wrap_with_cast_as_vector_float32(given)?)
+                wrap_with_cast_as_vector_float32(ctx, given)?
             }
         };
     }
@@ -769,24 +735,18 @@ pub(crate) fn new_base_builtin_func_with_field_types(
     for (arg, arg_tp) in args.iter_mut().zip(arg_tps) {
         let given = std::mem::replace(arg, Expression::Constant(Constant::new_null()));
         *arg = match arg_tp.eval_type() {
-            EvalType::Int => fold_built_cast(ctx, wrap_with_cast_as_int(given, Some(arg_tp))?),
-            EvalType::Real => fold_built_cast(ctx, wrap_with_cast_as_real(given)?),
+            EvalType::Int => wrap_with_cast_as_int(ctx, given, Some(arg_tp))?,
+            EvalType::Real => wrap_with_cast_as_real(ctx, given)?,
             EvalType::String => {
-                let wrapped = fold_built_cast(
-                    ctx,
-                    wrap_with_cast_as_string(given, ctx.connection_charset_info())?,
-                );
+                let wrapped = wrap_with_cast_as_string(ctx, given)?;
                 crate::convert_charset::handle_binary_literal(ctx, wrapped, &ec, func_name, false)
             }
-            EvalType::Json => fold_built_cast(ctx, wrap_with_cast_as_json(given)?),
+            EvalType::Json => wrap_with_cast_as_json(ctx, given)?,
             EvalType::Decimal | EvalType::Datetime | EvalType::Timestamp | EvalType::Duration => {
                 if type_of(&given).equal(arg_tp) {
                     given
                 } else {
-                    fold_built_cast(
-                        ctx,
-                        crate::simple_expr::build_cast_function(given, arg_tp.clone(), false)?,
-                    )
+                    crate::builtin_cast::build_cast_function(ctx, given, arg_tp.clone())?
                 }
             }
             EvalType::VectorFloat32 => given,
@@ -833,7 +793,7 @@ pub(crate) fn is_binary_literal(expr: &Expression) -> bool {
 /// The [`BuildContext`] of a cast built where no statement context reaches:
 /// the default connection charset, and the cast left as built for the
 /// caller to fold.
-pub(crate) struct UnfoldedBuildContext;
+pub struct UnfoldedBuildContext;
 
 impl BuildContext for UnfoldedBuildContext {
     fn connection_charset_info(&self) -> (&str, &str) {
