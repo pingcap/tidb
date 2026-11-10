@@ -49,6 +49,7 @@ go_test(
         ":util",
         "//pkg/domain/infosync",
         "//pkg/infoschema",
+        "//pkg/infoschema/context",
         "//pkg/meta/model",
         "//pkg/sessionctx",
         "//pkg/testkit",
