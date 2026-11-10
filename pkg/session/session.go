@@ -1876,6 +1876,12 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	s.processInfo.Store(&pi)
 }
 
+// ClearProcessInfo removes the process info of the session. SetProcessInfo
+// otherwise keeps the plan of the last statement in the next process info.
+func (s *session) ClearProcessInfo() {
+	s.processInfo.Store(nil)
+}
+
 // UpdateProcessInfo updates the session's process info for the running statement.
 func (s *session) UpdateProcessInfo() {
 	pi := s.ShowProcess()

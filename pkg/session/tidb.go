@@ -43,11 +43,13 @@ import (
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	autoanalyzeexec "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -70,8 +72,12 @@ type domainMap struct {
 
 // newAutoAnalyzeDispatcher creates the dispatcher that runs the auto-analyze statements of a
 // stats handle as DXF tasks.
-func newAutoAnalyzeDispatcher(statsCache statstypes.StatsCacheLoader) autoanalyzeexec.Dispatcher {
-	return dxfautoanalyze.NewDispatcher(statsCache)
+func newAutoAnalyzeDispatcher(
+	statsCache statstypes.StatsCacheLoader,
+	procIDs statsutil.AutoAnalyzeProcIDGenerator,
+	sysProcTracker sysproctrack.Tracker,
+) autoanalyzeexec.Dispatcher {
+	return dxfautoanalyze.NewDispatcher(statsCache, procIDs, sysProcTracker)
 }
 
 type domainCreateOptions struct {

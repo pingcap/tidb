@@ -71,8 +71,12 @@ type Dispatcher interface {
 }
 
 // NewDispatcherFunc creates the Dispatcher of a stats handle from the parts of the handle that the
-// dispatcher shares: the stats cache.
-type NewDispatcherFunc func(statsCache statstypes.StatsCacheLoader) Dispatcher
+// dispatcher shares: the stats cache, and the process IDs and the tracker of auto-analyze.
+type NewDispatcherFunc func(
+	statsCache statstypes.StatsCacheLoader,
+	procIDs statsutil.AutoAnalyzeProcIDGenerator,
+	sysProcTracker sysproctrack.Tracker,
+) Dispatcher
 
 // Runner runs the auto-analyze statements of this node.
 type Runner struct {

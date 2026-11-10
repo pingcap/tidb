@@ -186,7 +186,7 @@ func (h *Handle) GetSystemDBIDCacheLenForTest() int {
 }
 
 // NewHandle creates a Handle for update stats. A non-nil newDispatcher creates the dispatcher of the
-// auto-analyze statements from the stats cache of the handle.
+// auto-analyze statements from the parts of the handle.
 func NewHandle(
 	ctx context.Context,
 	lease time.Duration,
@@ -210,7 +210,7 @@ func NewHandle(
 	readWriter := storage.NewReadWriter(statsPool, leaseHolder, tables, statsCache)
 	var dispatcher exec.Dispatcher
 	if newDispatcher != nil {
-		dispatcher = newDispatcher(statsCache)
+		dispatcher = newDispatcher(statsCache, procIDs, tracker)
 	}
 	autoAnalyze := autoanalyze.NewAnalyzer(ctx, statsPool, procIDs, tables, statsCache, tableStats, tracker, ddlNotifier, dispatcher)
 	globalStats := globalstats.NewMerger(statsPool, tables, readWriter)

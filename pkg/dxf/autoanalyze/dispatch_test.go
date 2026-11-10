@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -65,7 +67,7 @@ func TestAutoAnalyzeThroughDXF(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	// autoAnalyze runs the statement the way the priority queue does.
-	runner := exec.NewRunner(h.ProcIDs(), dom.SysProcTracker(), autoanalyze.NewDispatcher(h.Cache()))
+	runner := exec.NewRunner(h.ProcIDs(), dom.SysProcTracker(), autoanalyze.NewDispatcher(h.Cache(), h.ProcIDs(), dom.SysProcTracker()))
 	autoAnalyze := func(table exec.AnalyzedTable, sql string, params ...any) bool {
 		var ok bool
 		require.NoError(t, statsutil.CallWithSCtx(h.Pool().SPool(), func(sctx sessionctx.Context) error {
@@ -158,4 +160,117 @@ func TestAutoAnalyzeThroughDXF(t *testing.T) {
 		}
 		tk.MustQuery(allTasks).Check(testkit.Rows(slices.Repeat([]string{succeededTask}, tasks+newTasks)...))
 	}
+}
+
+// TestKillDispatchedAutoAnalyze kills the auto-analyze process of the stats
+// owner while the statement runs as a DXF task. A kill must cancel the task.
+func TestKillDispatchedAutoAnalyze(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, index idx(a)) partition by range (a) " +
+		"(partition p0 values less than (2), partition p1 values less than (10))")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+	tk.MustExec("set global tidb_enable_dist_auto_analyze = ON")
+	defer tk.MustExec("set global tidb_enable_dist_auto_analyze = OFF")
+	ctx := context.Background()
+	h := dom.StatsHandle()
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
+	tk.MustExec("flush stats_delta *.*")
+	tbl, err := dom.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NoError(t, h.Cache().Update(ctx, dom.InfoSchema()))
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+	const allTasks = "select type, state from mysql.tidb_global_task union all " +
+		"select type, state from mysql.tidb_global_task_history"
+	const statement = "analyze table `test`.`t` partition `p0`, `p1`"
+	runner := exec.NewRunner(h.ProcIDs(), dom.SysProcTracker(), autoanalyze.NewDispatcher(h.Cache(), h.ProcIDs(), dom.SysProcTracker()))
+	analyze := func(sctx sessionctx.Context) bool {
+		return runner.AutoAnalyze(sctx, statistics.Version2, false,
+			exec.AnalyzedTable{ID: tbl.Meta().ID},
+			"analyze table %n.%n partition %n, %n", "test", "t", "p0", "p1")
+	}
+
+	// The process that waits for a task shows nothing of the last statement of its session: the
+	// runaway checker would get the process killed, and the start TS would hold back GC.
+	const afterFindActiveTask = "github.com/pingcap/tidb/pkg/dxf/autoanalyze/afterFindActiveTask"
+	require.NoError(t, statsutil.CallWithSCtx(h.Pool().SPool(), func(sctx sessionctx.Context) error {
+		// The last statement of the session had a plan, a start TS and a runaway checker.
+		_, _, err := statsutil.ExecRows(sctx, "select count from mysql.stats_meta where table_id = %?", tbl.Meta().ID)
+		require.NoError(t, err)
+		sctx.GetSessionVars().StmtCtx.RunawayChecker = &runaway.Checker{}
+		require.NotNil(t, sctx.ShowProcess().Plan)
+		require.NotZero(t, sctx.GetSessionVars().TxnCtx.StartTS)
+		testfailpoint.EnableCall(t, afterFindActiveTask, func() {
+			processes := dom.SysProcTracker().GetSysProcessList()
+			require.Len(t, processes, 1)
+			for id, info := range processes {
+				require.Equal(t, statement, info.Info)
+				require.Nil(t, info.RunawayChecker)
+				require.Nil(t, info.Plan)
+				require.Zero(t, info.CurTxnStartTS)
+				dom.SysProcTracker().KillSysProcess(id)
+			}
+		})
+		// The kill comes between the lookup of an active task and the submit: there is no task.
+		require.False(t, analyze(sctx))
+		return nil
+	}))
+	tk.MustQuery(allTasks).Check(testkit.Rows())
+	require.Empty(t, dom.SysProcTracker().GetSysProcessList())
+
+	// The process that waits for a task is the only auto-analyze process when it
+	// has looked for an active task: no task runs its statement yet.
+	var waiting atomic.Uint64
+	testfailpoint.EnableCall(t, afterFindActiveTask, func() {
+		for id := range dom.SysProcTracker().GetSysProcessList() {
+			waiting.Store(id)
+		}
+	})
+	// waitForStatement waits until the statement runs: a second auto-analyze
+	// process shows the statement of the waiting one. It returns the waiting one.
+	waitForStatement := func() uint64 {
+		require.Eventually(t, func() bool {
+			processes := dom.SysProcTracker().GetSysProcessList()
+			waitingInfo, ok := processes[waiting.Load()]
+			if !ok || len(processes) != 2 {
+				return false
+			}
+			for _, info := range processes {
+				if info.Info != waitingInfo.Info {
+					return false
+				}
+			}
+			return true
+		}, 30*time.Second, 50*time.Millisecond)
+		return waiting.Load()
+	}
+
+	// The statement blocks until it is killed.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockSlowAnalyzeV2", "return")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.AutoAnalyze().HandleAutoAnalyze()
+	}()
+	waitingID := waitForStatement()
+	// The task has one slot, which does not limit the statement: it analyzes both
+	// partitions at once, as tidb_auto_build_stats_concurrency allows.
+	const runningTask = "select concurrency from mysql.tidb_global_task where state = 'running'"
+	tk.MustQuery(runningTask).Check(testkit.Rows("1"))
+	require.Eventually(t, func() bool {
+		return tk.MustQuery("select count(*) from mysql.analyze_jobs where state = 'running'").Rows()[0][0] == "2"
+	}, 30*time.Second, 50*time.Millisecond)
+	dom.SysProcTracker().KillSysProcess(waitingID)
+
+	select {
+	case <-done:
+	case <-time.After(60 * time.Second):
+		require.FailNow(t, "the auto analyze did not stop after it was killed")
+	}
+	require.Empty(t, dom.SysProcTracker().GetSysProcessList())
+	tk.MustQuery(allTasks).Check(testkit.Rows("AutoAnalyze reverted"))
 }
