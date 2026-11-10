@@ -194,6 +194,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	// Collect information for metadata lock.
 	dbName := make([]model.CIStr, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
+	tblName := make([]model.CIStr, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
 	tbls := make([]table.Table, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
 	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.MDLRelatedTableIDs))
 	for id := range vars.StmtCtx.MDLRelatedTableIDs {
@@ -208,6 +209,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 			return nil, nil, 0, errors.New("database not found in info schema")
 		}
 		dbName = append(dbName, db.Name)
+		tblName = append(tblName, tbl.Meta().Name)
 		tbls = append(tbls, tbl)
 		relateVersion[id] = tbl.Meta().Revision
 	}
@@ -226,6 +228,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		UncacheableReason:   reason,
 		BindingInfo:         bindingInfo,
 		dbName:              dbName,
+		tblName:             tblName,
 		tbls:                tbls,
 		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
 		RelateVersion:       relateVersion,
@@ -590,9 +593,10 @@ type PlanCacheStmt struct {
 	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
 	StmtText string
 
-	// dbName and tbls are used to add metadata lock.
-	dbName []model.CIStr
-	tbls   []table.Table
+	// dbName and tblName retain the table names used to resolve tbls.
+	dbName  []model.CIStr
+	tblName []model.CIStr
+	tbls    []table.Table
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.
