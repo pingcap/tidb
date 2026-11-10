@@ -99,7 +99,6 @@ fn static_type_reads_share_metadata_and_keep_null_defaults() {
         Expression::Column(Column::default()),
         Expression::Constant(Constant::default()),
         Expression::CorrelatedColumn(crate::column::CorrelatedColumn::default()),
-        Expression::ScalarFunction(crate::scalar_function::ScalarFunction::default()),
     ] {
         assert!(expression.static_type().is_none());
         let read = super::ret_type_of(&expression);

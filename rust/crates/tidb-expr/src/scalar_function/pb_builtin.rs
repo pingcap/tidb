@@ -162,14 +162,14 @@ pub(super) fn temporal_of_ret_type(function: &ScalarFunction, result: Datum, ctx
 /// picks from its arguments' eval types.
 fn time_diff_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     use crate::time_fn::time_diff::TimeDiffArg::{Duration, String, Time};
-    let kinds = match function.pb_signature() {
-        Some(ScalarFuncSig::DurationDurationTimeDiff) => [Duration, Duration],
-        Some(ScalarFuncSig::DurationStringTimeDiff) => [Duration, String],
-        Some(ScalarFuncSig::StringDurationTimeDiff) => [String, Duration],
-        Some(ScalarFuncSig::StringStringTimeDiff) => [String, String],
-        Some(ScalarFuncSig::StringTimeTimeDiff) => [String, Time],
-        Some(ScalarFuncSig::TimeStringTimeDiff) => [Time, String],
-        Some(ScalarFuncSig::TimeTimeTimeDiff) => [Time, Time],
+    let kinds = match function.pb_code() {
+        ScalarFuncSig::DurationDurationTimeDiff => [Duration, Duration],
+        ScalarFuncSig::DurationStringTimeDiff => [Duration, String],
+        ScalarFuncSig::StringDurationTimeDiff => [String, Duration],
+        ScalarFuncSig::StringStringTimeDiff => [String, String],
+        ScalarFuncSig::StringTimeTimeDiff => [String, Time],
+        ScalarFuncSig::TimeStringTimeDiff => [Time, String],
+        ScalarFuncSig::TimeTimeTimeDiff => [Time, Time],
         // `builtinNullTimeDiffSig` answers NULL without reading either side.
         _ => return Ok(Datum::Null),
     };
@@ -183,9 +183,7 @@ fn time_diff_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Colum
 /// signature carries the two kinds its class switched on.
 fn add_sub_time_of(function: &ScalarFunction, values: &[Datum], sign: i64, ctx: &dyn Columns) -> Result<Datum, EvalError> {
     use tidb_datatype::{FieldTypeCode, TimeType};
-    let kinds = function
-        .pb_signature()
-        .and_then(crate::time_fn::add_sub::kinds_of_signature)
+    let kinds = crate::time_fn::add_sub::kinds_of_signature(function.pb_code())
         .ok_or(EvalError::Unsupported("not an ADDTIME/SUBTIME signature"))?;
     let row_path = !function.runs_vectorized_body();
     let result = crate::time_fn::add_sub::add_sub_time(values, kinds, sign, row_path, ctx)?;
@@ -249,7 +247,7 @@ fn sec_to_time_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Col
 /// signature is the zero date with that time, which NO_ZERO_DATE refuses.
 fn str_to_date_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let mut result = crate::time_fn::calendar::str_to_date(values, ctx)?;
-    if function.pb_signature() == Some(ScalarFuncSig::StrToDateDatetime) {
+    if function.pb_code() == ScalarFuncSig::StrToDateDatetime {
         if let Ok(text) = result.sql_string() {
             if text.contains(':') && !text.contains('-') {
                 if ctx.date_modes().no_zero_date {
@@ -297,26 +295,26 @@ fn interval_row(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> R
     crate::builtin_ext::interval_lazy(&arg_types, |index| function.args[index].eval(ctx, row), ctx)
 }
 
-/// Go `builtinAesEncryptSig` / `builtinAesEncryptIVSig`.
-fn aes_encrypt_row(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
-    crate::builtin_ext::eval_aes_lazy(
-        "aes_encrypt",
-        function.args.len(),
-        |index| function.args[index].eval(ctx, row),
-        ctx,
-    )
-    .expect("aes_encrypt is an AES function")
+/// Go `builtinAesEncryptSig.evalString` / `builtinAesDecryptSig.evalString`.
+fn aes_row(
+    function: &ScalarFunction,
+    ctx: &dyn Columns,
+    row: Row<'_>,
+    name: &'static str,
+) -> Result<Datum, EvalError> {
+    let mode = function.aes_mode().ok_or(EvalError::Unsupported("not an AES signature"))?;
+    crate::builtin_ext::crypto::aes(name, mode, function.args.len(), |index| function.args[index].eval(ctx, row), ctx)
 }
 
-/// Go `builtinAesDecryptSig` / `builtinAesDecryptIVSig`.
-fn aes_decrypt_row(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
-    crate::builtin_ext::eval_aes_lazy(
-        "aes_decrypt",
-        function.args.len(),
-        |index| function.args[index].eval(ctx, row),
-        ctx,
-    )
-    .expect("aes_decrypt is an AES function")
+/// Go `builtinAesEncryptIVSig.evalString` / `builtinAesDecryptIVSig.evalString`.
+fn aes_iv_row(
+    function: &ScalarFunction,
+    ctx: &dyn Columns,
+    row: Row<'_>,
+    name: &'static str,
+) -> Result<Datum, EvalError> {
+    let mode = function.aes_mode().ok_or(EvalError::Unsupported("not an AES signature"))?;
+    crate::builtin_ext::crypto::aes_iv(name, mode, |index| function.args[index].eval(ctx, row))
 }
 
 /// Go `builtinLastInsertIDSig.evalInt`: the session's previous last insert
@@ -1215,8 +1213,10 @@ impl PbBuiltin {
             }
             IntervalInt | IntervalReal => Kernel::Row(interval_row),
             // builtin_encryption.go
-            AesEncrypt | AesEncryptIv => Kernel::Row(aes_encrypt_row),
-            AesDecrypt | AesDecryptIv => Kernel::Row(aes_decrypt_row),
+            AesEncrypt => Kernel::Row(|function, ctx, row| aes_row(function, ctx, row, "aes_encrypt")),
+            AesEncryptIv => Kernel::Row(|function, ctx, row| aes_iv_row(function, ctx, row, "aes_encrypt")),
+            AesDecrypt => Kernel::Row(|function, ctx, row| aes_row(function, ctx, row, "aes_decrypt")),
+            AesDecryptIv => Kernel::Row(|function, ctx, row| aes_iv_row(function, ctx, row, "aes_decrypt")),
             // builtin_info.go
             LastInsertId => Kernel::Values(last_insert_id_values),
             LastInsertIdWithId => Kernel::Method(last_insert_id_with_id_method),
@@ -1526,7 +1526,7 @@ impl PbBuiltin {
                 }
                 // Go `builtinCastStringAsStringSig.evalString`: `EvalString`
                 // of an ENUM or SET is its name, whatever `EnumSetAsIntFlag`.
-                let value = if function.pb_signature() == Some(ScalarFuncSig::CastStringAsString) {
+                let value = if function.pb_code() == ScalarFuncSig::CastStringAsString {
                     args[0].eval_string(ctx, row)?
                 } else {
                     eval_numeric_row(&args[0], ctx, row, source)?

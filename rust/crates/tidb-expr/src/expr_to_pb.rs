@@ -192,9 +192,10 @@ impl<'a> PbConverter<'a> {
     /// Go `PbConverter.scalarFuncToPBExpr`.
     fn scalar_func_to_pb_expr(&self, expr: &Expression, function: &ScalarFunction) -> Option<Expr> {
         // Check whether this function has ProtoBuf signature.
-        let pb_code = function
-            .pb_signature()
-            .filter(|code| *code != ScalarFuncSig::Unspecified)?;
+        let pb_code = function.pb_code();
+        if pb_code == ScalarFuncSig::Unspecified {
+            return None;
+        }
         // Check whether this function can be pushed.
         if !crate::infer_pushdown::scalar_function_can_be_pushed(
             expr,
@@ -391,30 +392,28 @@ pub(crate) fn function_metadata(
     // other cast signatures inherit `baseBuiltinFunc`'s nil.
     use ScalarFuncSig as Sig;
     if matches!(
-        function.pb_signature(),
-        Some(
-            Sig::CastIntAsInt
-                | Sig::CastIntAsReal
-                | Sig::CastIntAsDecimal
-                | Sig::CastRealAsInt
-                | Sig::CastRealAsReal
-                | Sig::CastRealAsDecimal
-                | Sig::CastDecimalAsInt
-                | Sig::CastDecimalAsReal
-                | Sig::CastDecimalAsDecimal
-                | Sig::CastStringAsInt
-                | Sig::CastStringAsReal
-                | Sig::CastStringAsDecimal
-                | Sig::CastTimeAsInt
-                | Sig::CastTimeAsReal
-                | Sig::CastTimeAsDecimal
-                | Sig::CastDurationAsInt
-                | Sig::CastDurationAsReal
-                | Sig::CastDurationAsDecimal
-                | Sig::CastJsonAsInt
-                | Sig::CastJsonAsReal
-                | Sig::CastJsonAsDecimal
-        )
+        function.pb_code(),
+        Sig::CastIntAsInt
+            | Sig::CastIntAsReal
+            | Sig::CastIntAsDecimal
+            | Sig::CastRealAsInt
+            | Sig::CastRealAsReal
+            | Sig::CastRealAsDecimal
+            | Sig::CastDecimalAsInt
+            | Sig::CastDecimalAsReal
+            | Sig::CastDecimalAsDecimal
+            | Sig::CastStringAsInt
+            | Sig::CastStringAsReal
+            | Sig::CastStringAsDecimal
+            | Sig::CastTimeAsInt
+            | Sig::CastTimeAsReal
+            | Sig::CastTimeAsDecimal
+            | Sig::CastDurationAsInt
+            | Sig::CastDurationAsReal
+            | Sig::CastDurationAsDecimal
+            | Sig::CastJsonAsInt
+            | Sig::CastJsonAsReal
+            | Sig::CastJsonAsDecimal
     ) {
         return Some(Some(
             tidb_proto::tipb::InUnionMetadata {

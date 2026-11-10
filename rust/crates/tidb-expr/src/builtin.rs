@@ -528,6 +528,9 @@ pub(crate) enum SigFields {
     CastUnsupportedAsVectorFloat32,
     /// Go `builtinCastStringAsVectorFloat32Sig`.
     CastStringAsVectorFloat32,
+    /// Go `builtinAes*Sig.aesModeAttr`: the block encryption mode the class
+    /// read at build.
+    Aes { mode: tidb_exprctx::BlockEncryptionMode },
 }
 
 /// Go `baseBuiltinFunc` with the signature's `pbCode`.

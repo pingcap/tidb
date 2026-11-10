@@ -574,7 +574,7 @@ pub fn build_fts_to_i_like_expression_from_builtin(
     let Some(modifier) = fts.fts_mysql_match_against_modifier() else {
         return Err(FtsBuildError::Build(EvalError::Raw(format!(
             "unexpected builtin signature for match_against: {:?}",
-            fts.pb_signature()
+            fts.pb_code()
         ))));
     };
     let search_text = String::from_utf8_lossy(search_text.bytes()).into_owned();
@@ -983,7 +983,7 @@ mod tests {
             (MatchModifier::QueryExpansion, false),
         ] {
             let function = fts_match_against("mysql", 1, modifier);
-            let signature = function.pb_signature().expect("match_against has a signature");
+            let signature = function.pb_code();
             let expr = Expression::ScalarFunction(function.clone());
             assert_eq!(
                 scalar_function_can_be_pushed(

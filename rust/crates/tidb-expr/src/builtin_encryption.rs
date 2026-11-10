@@ -32,8 +32,8 @@ const PWD_HASH_LEN: i64 = 40;
 
 /// Go `aesDecryptFunctionClass.getFunction` and `aesEncryptFunctionClass
 /// .getFunction`: every argument is a string, the result is binary, and
-/// the statement's block encryption mode chooses the signature. A build
-/// without a statement reads the default mode.
+/// the build context's block encryption mode chooses the signature, which
+/// keeps it. A build without a statement reads the default mode.
 fn aes_function(
     ctx: &dyn BuildContext,
     func_name: &'static str,
@@ -50,6 +50,7 @@ fn aes_function(
         .columns()
         .map(|columns| columns.block_encryption_mode())
         .unwrap_or_default();
+    bf.sig = crate::builtin::SigFields::Aes { mode };
     bf.pb_code = if mode.iv_required() {
         if bf.args.len() != 3 {
             return Err(EvalError::WrongParameterCount(func_name));

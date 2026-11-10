@@ -40,7 +40,7 @@ use crate::expression::Expression;
 /// Go `function.(*ScalarFunction).Function.PbCode()`.
 fn pb_code(function: &Expression) -> tidb_proto::tipb::ScalarFuncSig {
     match function {
-        Expression::ScalarFunction(function) => function.pb_signature().unwrap_or_default(),
+        Expression::ScalarFunction(function) => function.pb_code(),
         _ => tidb_proto::tipb::ScalarFuncSig::Unspecified,
     }
 }

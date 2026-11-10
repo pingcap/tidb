@@ -840,10 +840,7 @@ mod tests {
         let Expression::ScalarFunction(mut function) = pb_to_expr(&pb, &[]).unwrap() else {
             panic!("scalar");
         };
-        assert_eq!(
-            function.pb_signature(),
-            Some(tipb::ScalarFuncSig::UpperUtf8)
-        );
+        assert_eq!(function.pb_code(), tipb::ScalarFuncSig::UpperUtf8);
         function = function.clone();
         function.func_name = CiString::new("lower");
         let row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(&[]);

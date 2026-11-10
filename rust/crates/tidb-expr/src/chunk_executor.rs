@@ -255,7 +255,7 @@ fn builtin_vec_result(function: &ScalarFunction) -> Option<VecResult> {
         "convert_tz" => Arg(0),
         "addtime" | "subtime" => {
             use crate::time_fn::add_sub::{kinds_of_signature, TemporalKind};
-            let kinds = function.pb_signature().and_then(kinds_of_signature);
+            let kinds = kinds_of_signature(function.pb_code());
             if kinds.is_some_and(|[first, second]| {
                 matches!(first, TemporalKind::Datetime | TemporalKind::Duration)
                     && second != TemporalKind::Datetime

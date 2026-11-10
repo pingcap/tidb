@@ -135,6 +135,38 @@ fn try_call(name: &str, vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, Eval
         .expect("the name must be part of the crypto family")
 }
 
+/// Go `funcs[name].getFunction(ctx, datumsToConstants(args))` and
+/// `evalBuiltinFunc`: the class reads `ctx`'s block encryption mode.
+fn try_aes(name: &str, vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    crate::tests::eval_builtin_func(name, vals, ctx).expect("the class accepts the argument count")
+}
+
+fn aes(name: &str, vals: &[Datum], ctx: &dyn Columns) -> Datum {
+    try_aes(name, vals, ctx).expect("the row must evaluate")
+}
+
+/// Go `aesEncryptFunctionClass.getFunction` returns `builtinAesEncryptIVSig{bf,
+/// mode}`: the signature evaluates under the mode it was built with, whatever
+/// the evaluation context's mode is.
+#[test]
+fn an_aes_signature_keeps_the_mode_it_was_built_with() {
+    let build = aes_context("aes-128-cbc");
+    let args = crate::tests::datums_to_constants(&[s("pingcap"), s("1234567890123456"), s("1234567890123456")]);
+    // `NewFunctionBase` leaves the constant call unfolded.
+    let function = crate::new_function::new_function_base(
+        &build,
+        "aes_encrypt",
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Unspecified),
+        args,
+    )
+    .unwrap();
+    let eval = aes_context("aes-128-ecb");
+    let empty = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[], 1);
+    let crypt = function.eval(&eval, empty.get_row(0)).unwrap();
+    assert_eq!(hex_upper(&bytes_of(&crypt)), "2ECA0077C5EA5768A0485AA522774792");
+    assert!(eval.warnings.borrow().is_empty());
+}
+
 fn s(text: &str) -> Datum {
     Datum::new_string_datum(text.to_string())
 }
@@ -502,7 +534,7 @@ fn eval_encrypt_with_mode(origin: &str, params: &[&str], mode_value: &str) -> Da
     let ctx = aes_context(mode_value);
     let mut vals = vec![s(origin)];
     vals.extend(params.iter().map(|p| s(p)));
-    call("AES_ENCRYPT", &vals, &ctx)
+    aes("AES_ENCRYPT", &vals, &ctx)
 }
 
 /// GO PORT of `pkg/expression/builtin_encryption_test.go:154 TestAESEncrypt`
@@ -523,7 +555,7 @@ fn test_aes_encrypt() {
         let ctx = aes_context(mode);
         let mut vals = vec![crypt];
         vals.extend(params.iter().map(|p| s(p)));
-        let plain = call("AES_DECRYPT", &vals, &ctx);
+        let plain = aes("AES_DECRYPT", &vals, &ctx);
         assert_eq!(
             bytes_of(&plain),
             origin.as_bytes(),
@@ -534,7 +566,7 @@ fn test_aes_encrypt() {
     // {"aes-128-ecb","pingcap",[]any{123}}: a numeric KEY reads through its
     // SQL text form, so the same ciphertext as string-key "123" comes back.
     let ctx = aes_context("aes-128-ecb");
-    let numeric_key = call("AES_ENCRYPT", &[s("pingcap"), Datum::Int(123)], &ctx);
+    let numeric_key = aes("AES_ENCRYPT", &[s("pingcap"), Datum::Int(123)], &ctx);
     assert_eq!(
         hex_upper(&bytes_of(&numeric_key)),
         "996E0CA8688D7AD20819B90B273E01C6"
@@ -542,7 +574,7 @@ fn test_aes_encrypt() {
     // {nil, []any{123}} -> NULL.
     let ctx = aes_context("aes-128-ecb");
     assert_eq!(
-        call("AES_ENCRYPT", &[Datum::Null, s("123")], &ctx),
+        aes("AES_ENCRYPT", &[Datum::Null, s("123")], &ctx),
         Datum::Null
     );
 
@@ -673,11 +705,11 @@ fn test_aes_encrypt() {
     // - an IV-requiring mode refuses the two-argument shape at build time,
     let ctx = aes_context("aes-128-cbc");
     assert!(matches!(
-        try_call("AES_ENCRYPT", &[s("str"), s("str")], &ctx),
+        try_aes("AES_ENCRYPT", &[s("str"), s("str")], &ctx),
         Err(EvalError::WrongParameterCount(_))
     ));
     // - a short IV fails during evaluation,
-    let err = try_call(
+    let err = try_aes(
         "AES_ENCRYPT",
         &[s("str"), s("str"), s("iv < 16 bytes")],
         &ctx,
@@ -686,7 +718,7 @@ fn test_aes_encrypt() {
     drop(err);
     // - and the two-argument ECB signature warns about the ignored IV.
     let ctx = aes_context("aes-128-ecb");
-    let _ = call("AES_ENCRYPT", &[s("str"), s("str"), s("ignored")], &ctx);
+    let _ = aes("AES_ENCRYPT", &[s("str"), s("str"), s("ignored")], &ctx);
     let warnings = ctx.warnings.borrow();
     assert!(
         warnings.iter().any(|(code, _)| *code == 1618),
@@ -708,7 +740,7 @@ fn eval_encrypt_args(origin: &Datum, params: &[Datum], mode_value: &str) -> Datu
     let ctx = aes_context(mode_value);
     let mut vals = vec![origin.clone()];
     vals.extend(params.iter().cloned());
-    call("AES_ENCRYPT", &vals, &ctx)
+    aes("AES_ENCRYPT", &vals, &ctx)
 }
 
 /// GO PORT of `pkg/expression/builtin_encryption_test.go:220 TestAESDecrypt`
@@ -720,7 +752,7 @@ fn test_aes_decrypt() {
         let ctx = aes_context(mode);
         let mut vals = vec![Datum::new_bytes_datum(decode_hex(want_hex))];
         vals.extend(params.iter().map(|p| s(p)));
-        let plain = call("AES_DECRYPT", &vals, &ctx);
+        let plain = aes("AES_DECRYPT", &vals, &ctx);
         assert_eq!(bytes_of(&plain), origin.as_bytes(), "{mode} {want_hex}");
 
         // The `{"...-ofb", ..., {"iv too short"}}` rows are absent from the
@@ -732,20 +764,20 @@ fn test_aes_decrypt() {
     // row, making the decryption input NULL -> NULL result.
     let ctx = aes_context("aes-128-ecb");
     assert_eq!(
-        call("AES_DECRYPT", &[Datum::Null, s("123")], &ctx),
+        aes("AES_DECRYPT", &[Datum::Null, s("123")], &ctx),
         Datum::Null
     );
 
     // testAmbiguousInput(t, ctx, ast.AesDecrypt): mirroring the encrypt half.
     assert!(matches!(
-        try_call(
+        try_aes(
             "AES_DECRYPT",
             &[s("str"), s("str")],
             &aes_context("aes-128-cbc")
         ),
         Err(EvalError::WrongParameterCount(_))
     ));
-    let err = try_call(
+    let err = try_aes(
         "AES_DECRYPT",
         &[s("str"), s("str"), s("iv < 16 bytes")],
         &aes_context("aes-128-cbc"),
@@ -757,7 +789,7 @@ fn test_aes_decrypt() {
     // to the SAME bytes fed there: utf8mb4 rows decrypt to the UTF-8 origin,
     // gbk rows to the GBK bytes, all under binary collation semantics.
     assert_eq!(
-        bytes_of(&call(
+        bytes_of(&aes(
             "AES_DECRYPT",
             &[
                 Datum::new_bytes_datum("CEBD80EEC6423BEAFA1BB30FD7625CBC".hex_bytes()),
@@ -768,7 +800,7 @@ fn test_aes_decrypt() {
         "你好".as_bytes()
     );
     assert_eq!(
-        bytes_of(&call(
+        bytes_of(&aes(
             "AES_DECRYPT",
             &[
                 Datum::new_bytes_datum("6AFA9D7BA2C1AED1603E804F75BB0127".hex_bytes()),

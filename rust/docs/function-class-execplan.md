@@ -134,9 +134,12 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
   deleted. `eval_in` is Go `EvalSimpleAst`: a rewrite through
   `rewriter::ContextResolver` (builds and folds in the evaluation context)
   and one evaluation of the built tree.
-- [ ] Milestone 11b-2: evaluation dispatches on the signature object alone;
-  X01 leaves the register. Four parts, in order:
-  - [ ] 11b-2a: every node is built by its function class.
+- [x] (2026-11-11) Milestone 11b-2: evaluation dispatches on the signature
+  object alone. X01 stays in the register for what its row still lists (AES
+  IV binding, `castAsArrayFunctionClass` and extension classes,
+  `UnfoldedBuildContext` callers, `BuiltinFunctionUsageInc`, the FTS
+  fallback). Four parts, in order:
+  - [x] 11b-2a: every node is built by its function class.
     `ScalarFunction::new` (a node with a name and no signature) is deleted.
     Done: the rewriter (`row`, the negated row `IN`, the operator fallback),
     `compose_condition_with_binary_op`, the null-reject fold, the
@@ -151,7 +154,10 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
     carries the parameter values Go's `ParamMarker` reads at build. The
     name-keyed integer fast path and the name-keyed numeric-domain fallback
     are deleted: a built node answers both from its signature.
-    `ScalarFunction::new` is deleted. Open: `pb_builtin` is still optional.
+    `ScalarFunction::new` is deleted. The node's `pb_builtin` is not an
+    `Option` and `ScalarFunction` has no `Default`: a node exists only over
+    the function a class or the decoder returned, and `pb_code()` is Go's
+    `Function.PbCode()`.
   - [x] 11b-2b: the class's `getFunction` binds the signature's evaluation
     (Go's `builtinXxxSig.evalT`), one Go file at a time, until
     `ScalarFunction::eval_by_signature` and `func::eval_func_values` are

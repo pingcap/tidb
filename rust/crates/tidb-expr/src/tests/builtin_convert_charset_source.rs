@@ -61,7 +61,7 @@ fn assert_function(case: &str, built: &Expression, want: Pin) {
     let (charset, collation) = function.collation.charset_and_collation();
     let got = (
         function.func_name.lowercase(),
-        function.pb_signature().unwrap(),
+        function.pb_code(),
         rt.code(),
         rt.flen(),
         rt.decimal(),

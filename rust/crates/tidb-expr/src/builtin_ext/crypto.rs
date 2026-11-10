@@ -16,9 +16,10 @@
 //! `pkg/expression/builtin_encryption_test.go`.
 //!
 //! Session-dependent functions receive their statement snapshot through
-//! [`crate::Columns`]. `AES_ENCRYPT`/`AES_DECRYPT` therefore use the live
-//! `block_encryption_mode`, including all accepted key sizes and ECB/CBC/OFB/
-//! CFB modes, IV validation, NULL propagation, and the ignored-IV warning.
+//! [`crate::Columns`]. `AES_ENCRYPT`/`AES_DECRYPT` evaluate under the
+//! `block_encryption_mode` their class bound at build, including all accepted
+//! key sizes and ECB/CBC/OFB/CFB modes, IV validation, NULL propagation, and
+//! the ignored-IV warning.
 //!
 //! `COMPRESS`, `UNCOMPRESS`, and `UNCOMPRESSED_LENGTH` implement TiDB's binary
 //! framing: a 4-byte little-endian original-length prefix followed by a zlib
@@ -56,9 +57,6 @@ pub(crate) fn dispatch(
         ("ENCODE", 2) => Some(sql_encode(&vals[0], &vals[1])),
         ("DECODE", 2) => Some(sql_decode(&vals[0], &vals[1])),
         ("COMPRESS", 1) => Some(compress(&vals[0])),
-        ("AES_ENCRYPT" | "AES_DECRYPT", _) => {
-            eval_aes_lazy(name, vals.len(), |i| Ok(vals[i].clone()), ctx)
-        }
         ("UNCOMPRESS", 1) => Some(uncompress(&vals[0], ctx)),
         ("UNCOMPRESSED_LENGTH", 1) => Some(uncompressed_length(&vals[0], ctx)),
         _ => None,
@@ -222,68 +220,48 @@ pub(crate) fn uncompressed_length(arg: &Datum, ctx: &dyn Columns) -> Result<Datu
 
 const AES_BLOCK_SIZE: usize = 16;
 
-/// Evaluates AES arguments in Go's signature order. ECB deliberately ignores
-/// a third argument without evaluating it and emits warning 1618; IV modes
-/// require and evaluate exactly three arguments. Keeping the evaluator as a
-/// closure lets both AST and chunk paths share this ordering without copying
-/// their row-access machinery.
-pub(crate) fn eval_aes_lazy<F>(
-    name: &str,
+/// Go `builtinAesEncryptSig.evalString` / `builtinAesDecryptSig.evalString`:
+/// a mode without an IV never evaluates a third argument and warns that it
+/// is ignored.
+pub(crate) fn aes(
+    function: &'static str,
+    mode: BlockEncryptionMode,
     arg_count: usize,
-    mut eval: F,
+    mut eval: impl FnMut(usize) -> Result<Datum, EvalError>,
     ctx: &dyn Columns,
-) -> Option<Result<Datum, EvalError>>
-where
-    F: FnMut(usize) -> Result<Datum, EvalError>,
-{
-    let function = if name.eq_ignore_ascii_case("aes_encrypt") {
-        "aes_encrypt"
-    } else if name.eq_ignore_ascii_case("aes_decrypt") {
-        "aes_decrypt"
-    } else {
-        return None;
+) -> Result<Datum, EvalError> {
+    let Some(input) = sql_string_bytes(&eval(0)?)? else {
+        return Ok(Datum::Null);
     };
-    let mode = ctx.block_encryption_mode();
-    if mode.iv_required() {
-        if arg_count != 3 {
-            return Some(Err(EvalError::WrongParameterCount(function)));
-        }
-    } else if !(2..=3).contains(&arg_count) {
-        return Some(Err(EvalError::WrongParameterCount(function)));
-    }
-
-    let input = match eval(0).and_then(|value| sql_string_bytes(&value)) {
-        Ok(Some(value)) => value,
-        Ok(None) => return Some(Ok(Datum::Null)),
-        Err(error) => return Some(Err(error)),
+    let Some(password) = sql_string_bytes(&eval(1)?)? else {
+        return Ok(Datum::Null);
     };
-    let password = match eval(1).and_then(|value| sql_string_bytes(&value)) {
-        Ok(Some(value)) => value,
-        Ok(None) => return Some(Ok(Datum::Null)),
-        Err(error) => return Some(Err(error)),
-    };
-    let iv = if mode.iv_required() {
-        match eval(2).and_then(|value| sql_string_bytes(&value)) {
-            Ok(Some(value)) => Some(value),
-            Ok(None) => return Some(Ok(Datum::Null)),
-            Err(error) => return Some(Err(error)),
-        }
-    } else if arg_count == 3 {
+    if arg_count == 3 {
         ctx.append_go_warning(
             &crate::expression_errors::ERR_WARN_OPTION_IGNORED,
             "<IV> option ignored",
         );
-        None
-    } else {
-        None
+    }
+    eval_aes_bytes(function, &input, &password, None, mode)
+}
+
+/// Go `builtinAesEncryptIVSig.evalString` /
+/// `builtinAesDecryptIVSig.evalString`.
+pub(crate) fn aes_iv(
+    function: &'static str,
+    mode: BlockEncryptionMode,
+    mut eval: impl FnMut(usize) -> Result<Datum, EvalError>,
+) -> Result<Datum, EvalError> {
+    let Some(input) = sql_string_bytes(&eval(0)?)? else {
+        return Ok(Datum::Null);
     };
-    Some(eval_aes_bytes(
-        function,
-        &input,
-        &password,
-        iv.as_deref(),
-        mode,
-    ))
+    let Some(password) = sql_string_bytes(&eval(1)?)? else {
+        return Ok(Datum::Null);
+    };
+    let Some(iv) = sql_string_bytes(&eval(2)?)? else {
+        return Ok(Datum::Null);
+    };
+    eval_aes_bytes(function, &input, &password, Some(&iv), mode)
 }
 
 fn eval_aes_bytes(
@@ -737,6 +715,14 @@ mod tests {
             .expect("evaluation should succeed")
     }
 
+    /// Go `funcs[name].getFunction` and `evalBuiltinFunc` under the default
+    /// block encryption mode.
+    fn aes_call(name: &str, vals: &[Datum]) -> Datum {
+        crate::tests::eval_builtin_func(name, vals, &crate::NoColumns)
+            .expect("the class accepts the argument count")
+            .expect("evaluation should succeed")
+    }
+
     fn call_with(name: &str, vals: &[Datum], context: &impl Columns) -> Datum {
         dispatch(name, vals, context)
             .expect("name/arity should dispatch to the crypto family")
@@ -919,14 +905,14 @@ mod tests {
             ),
         ];
         for (str_arg, key_arg, want) in cases {
-            let crypt = call("AES_ENCRYPT", &[str_arg.clone(), key_arg.clone()]);
+            let crypt = aes_call("AES_ENCRYPT", &[str_arg.clone(), key_arg.clone()]);
             assert_eq!(
                 hex_upper(&bytes_of(&crypt)),
                 *want,
                 "AES_ENCRYPT({str_arg:?}, {key_arg:?})"
             );
             // Round-trip decrypt recovers the plaintext.
-            let plain = call("AES_DECRYPT", &[crypt.clone(), key_arg.clone()]);
+            let plain = aes_call("AES_DECRYPT", &[crypt.clone(), key_arg.clone()]);
             assert_eq!(
                 bytes_of(&plain),
                 bytes_of(str_arg),
@@ -935,17 +921,17 @@ mod tests {
         }
 
         // NULL in either argument yields NULL.
-        assert_eq!(call("AES_ENCRYPT", &[Datum::Null, s("k")]), Datum::Null);
-        assert_eq!(call("AES_ENCRYPT", &[s("x"), Datum::Null]), Datum::Null);
-        assert_eq!(call("AES_DECRYPT", &[Datum::Null, s("k")]), Datum::Null);
+        assert_eq!(aes_call("AES_ENCRYPT", &[Datum::Null, s("k")]), Datum::Null);
+        assert_eq!(aes_call("AES_ENCRYPT", &[s("x"), Datum::Null]), Datum::Null);
+        assert_eq!(aes_call("AES_DECRYPT", &[Datum::Null, s("k")]), Datum::Null);
         // A ciphertext whose length is not a whole number of blocks -> NULL.
         assert_eq!(
-            call("AES_DECRYPT", &[s("not-16-bytes"), s("key")]),
+            aes_call("AES_DECRYPT", &[s("not-16-bytes"), s("key")]),
             Datum::Null
         );
         // Valid-length but undecryptable-to-good-padding ciphertext -> NULL.
         assert_eq!(
-            call("AES_DECRYPT", &[s("0123456789abcdef"), s("wrong-key")]),
+            aes_call("AES_DECRYPT", &[s("0123456789abcdef"), s("wrong-key")]),
             Datum::Null
         );
     }
@@ -1471,10 +1457,7 @@ mod tests {
         assert!(dispatch("PASSWORD", &[s("a"), s("b")], &ctx).is_none());
         assert!(dispatch("ENCODE", &[s("a")], &ctx).is_none());
         assert!(dispatch("DECODE", &[s("a")], &ctx).is_none());
-        assert!(matches!(
-            dispatch("AES_ENCRYPT", &[s("a")], &ctx),
-            Some(Err(crate::EvalError::WrongParameterCount("aes_encrypt")))
-        ));
+        assert!(crate::tests::eval_builtin_func("aes_encrypt", &[s("a")], &ctx).is_none());
         assert!(dispatch("COMPRESS", &[], &ctx).is_none());
         assert!(dispatch("COMPRESS", &[s("a"), s("b")], &ctx).is_none());
         assert!(dispatch("UNCOMPRESS", &[], &ctx).is_none());

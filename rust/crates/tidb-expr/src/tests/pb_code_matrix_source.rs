@@ -140,7 +140,7 @@ fn rust_pb_code(name: &str, shape: &str) -> Result<&'static str, String> {
 /// Go `function.(*ScalarFunction).Function.PbCode()`.
 fn pb_code(function: &Expression) -> tidb_proto::tipb::ScalarFuncSig {
     match function {
-        Expression::ScalarFunction(function) => function.pb_signature().unwrap_or_default(),
+        Expression::ScalarFunction(function) => function.pb_code(),
         _ => tidb_proto::tipb::ScalarFuncSig::Unspecified,
     }
 }
@@ -160,9 +160,7 @@ pub(crate) fn signature_arg_types() -> Vec<(tidb_proto::tipb::ScalarFuncSig, Vec
         ) else {
             continue;
         };
-        let Some(signature) = function.pb_signature() else {
-            continue;
-        };
+        let signature = function.pb_code();
         if !seen.insert(signature) {
             continue;
         }

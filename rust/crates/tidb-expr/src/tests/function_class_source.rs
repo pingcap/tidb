@@ -47,7 +47,7 @@ use crate::new_function::new_function;
 /// Go `function.(*ScalarFunction).Function.PbCode()`.
 fn pb_code(function: &Expression) -> tidb_proto::tipb::ScalarFuncSig {
     match function {
-        Expression::ScalarFunction(function) => function.pb_signature().unwrap_or_default(),
+        Expression::ScalarFunction(function) => function.pb_code(),
         _ => tidb_proto::tipb::ScalarFuncSig::Unspecified,
     }
 }
@@ -266,8 +266,8 @@ fn a_signature_without_a_pb_decoder_keeps_its_pb_code() {
         f,
     );
     assert_eq!(
-        node.pb_signature().map(|signature| signature.as_str_name()),
-        Some("GroupingSig")
+        node.pb_code().as_str_name(),
+        "GroupingSig"
     );
 }
 

@@ -83,6 +83,17 @@ fn build_parameters() -> [Datum; 4] {
     std::array::from_fn(|_| Datum::Int(0))
 }
 
+/// `isnull(column)`: a projection item that is neither a column nor a constant.
+fn is_null_of(column: Column) -> Expression {
+    tidb_expr::new_function_base(
+        &tidb_exprctx::NoColumns,
+        "isnull",
+        FieldType::new(FieldTypeCode::LongLong),
+        vec![Expression::Column(column)],
+    )
+    .unwrap()
+}
+
 fn parameter_condition(name: &str, column: Column, order: i64) -> Expression {
     let mut parameter = Constant::new(Datum::Int(0), FieldType::new(FieldTypeCode::LongLong));
     parameter.param_marker = Some(ParamMarker { order });
@@ -1737,7 +1748,7 @@ fn a_projection_maps_the_order_or_refuses_and_drops_constant_items() {
             Datum::Null,
             tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
         )),
-        Expression::ScalarFunction(ScalarFunction::default()),
+        is_null_of(out(1)),
     ];
     let projection = LogicalProjection::new(base, exprs);
 
@@ -1787,7 +1798,7 @@ fn partial_order_projection_maps_columns_and_rejects_computed_keys() {
         101
     );
 
-    projection.exprs[0] = Expression::ScalarFunction(ScalarFunction::default());
+    projection.exprs[0] = is_null_of(Column::new(1, ty.clone()));
     assert!(projection.try_to_get_child_prop(&prop).is_none());
     projection.exprs[0] = Expression::Constant(Constant::new(Datum::Null, ty));
     assert!(projection

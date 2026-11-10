@@ -841,7 +841,7 @@ fn can_expr_push_down_reported(
     };
     // Go `canScalarFuncPushDown`: the function itself first, with the
     // refusal warning, then each argument.
-    let signature = function.pb_signature().unwrap_or(ScalarFuncSig::Unspecified);
+    let signature = function.pb_code();
     if !scalar_function_can_be_pushed(expr, function, signature, store, blacklist) {
         if let Some(report) = report {
             let storage = match store {

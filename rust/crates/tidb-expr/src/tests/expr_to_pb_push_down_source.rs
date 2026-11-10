@@ -86,7 +86,7 @@ fn func(name: &str, ret_type: FieldType, args: Vec<Expression>) -> Expression {
 /// Go `function.(*ScalarFunction).Function.PbCode()`.
 fn pb_code(function: &Expression) -> ScalarFuncSig {
     match function {
-        Expression::ScalarFunction(function) => function.pb_signature().unwrap_or_default(),
+        Expression::ScalarFunction(function) => function.pb_code(),
         _ => ScalarFuncSig::Unspecified,
     }
 }

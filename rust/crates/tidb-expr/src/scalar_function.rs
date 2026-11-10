@@ -260,7 +260,7 @@ pub fn into_coprocessor_form(expr: &mut Expression) {
 }
 
 /// Go `ScalarFunction`: the application of a built-in function to arguments.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ScalarFunction {
     /// Go `FuncName` (an `ast.CIStr`): the function's name.
     pub func_name: CiString,
@@ -268,8 +268,9 @@ pub struct ScalarFunction {
     pub ret_type: Option<FieldType>,
     /// The function arguments. In Go these live inside `Function.getArgs()`.
     pub args: Vec<Expression>,
-    /// Go Function: a protobuf-selected builtin, independent of FuncName.
-    pb_builtin: Option<PbBuiltin>,
+    /// Go `Function`: the builtin signature a function class's `getFunction`
+    /// or `getSignatureByPB` returned. Every node has one.
+    pb_builtin: PbBuiltin,
     /// Lazily-filled `HashCode` cache (Go `hashcode`).
     hashcode: Vec<u8>,
     /// Go `BuiltinGroupingImplSig` metadata installed by `SetMetadata`.
@@ -580,29 +581,62 @@ impl ScalarFunction {
         ret_type: FieldType,
         f: crate::builtin::BaseBuiltinFunc,
     ) -> Self {
+        Self::of_function(
+            func_name,
+            ret_type,
+            f.args,
+            PbBuiltin::of_builtin_func(f.pb_code, f.kernel),
+            f.collation,
+            f.sig,
+        )
+    }
+
+    /// Go `&ScalarFunction{FuncName, RetType, Function}`.
+    fn of_function(
+        func_name: CiString,
+        ret_type: FieldType,
+        args: Vec<Expression>,
+        pb_builtin: PbBuiltin,
+        collation: CollationInfo,
+        sig: crate::builtin::SigFields,
+    ) -> Self {
         Self {
             func_name,
             ret_type: Some(ret_type),
-            args: f.args,
-            pb_builtin: Some(PbBuiltin::of_builtin_func(f.pb_code, f.kernel)),
-            collation: f.collation,
-            sig: f.sig,
-            ..Default::default()
+            args,
+            pb_builtin,
+            hashcode: Vec::new(),
+            grouping_metadata: None,
+            cannot_convert_string_as_warning: false,
+            json_sum_crc32_type: None,
+            gl_signature: None,
+            fts_modifier: Default::default(),
+            sig,
+            collation,
+            in_string_hash_set: None,
+            in_string_non_const_args: Vec::new(),
+            in_string_has_null: false,
+            json_schema_cache: Default::default(),
+            json_modify_path_cache: Default::default(),
+            find_in_set_cache: Default::default(),
+            regexp_cache: Default::default(),
+            regexp_replace_instruction_cache: Default::default(),
+            like_pattern_cache: Default::default(),
+            ilike_pattern_cache: Default::default(),
         }
     }
 
     /// The node over the builtin function a cast class's `getFunction`
     /// returned, evaluated by its signature.
     pub(crate) fn from_cast_func(f: crate::builtin::BaseBuiltinFunc, in_union: bool) -> Self {
-        Self {
-            func_name: CiString::new("cast"),
-            ret_type: Some(f.tp),
-            args: f.args,
-            pb_builtin: Some(PbBuiltin::of_cast_func(f.pb_code, f.kernel, in_union)),
-            collation: f.collation,
-            sig: f.sig,
-            ..Default::default()
-        }
+        Self::of_function(
+            CiString::new("cast"),
+            f.tp,
+            f.args,
+            PbBuiltin::of_cast_func(f.pb_code, f.kernel, in_union),
+            f.collation,
+            f.sig,
+        )
     }
 
     /// Go newDistSQLFunctionBySig: retain the wire type and implementation.
@@ -618,26 +652,25 @@ impl ScalarFunction {
             &args,
             ret_type.eval_type(),
         )?;
-        let mut function = Self {
-            func_name: CiString::new(format!("sig_{:?}", builtin.signature())),
-            args,
-            pb_builtin: Some(builtin),
-            ..Default::default()
-        };
         // Go `newBaseBuiltinFuncWithFieldType`: the signature's charset and
         // collation are the wire type's.
-        function
-            .collation
-            .set_charset_and_collation(ret_type.charset_name(), ret_type.collation_name());
-        function.ret_type = Some(ret_type);
-        function.collation.set_coercibility(collation.coer);
-        Ok(function)
+        let mut info = CollationInfo::default();
+        info.set_charset_and_collation(ret_type.charset_name(), ret_type.collation_name());
+        info.set_coercibility(collation.coer);
+        Ok(Self::of_function(
+            CiString::new(format!("sig_{:?}", builtin.signature())),
+            ret_type,
+            args,
+            builtin,
+            info,
+            Default::default(),
+        ))
     }
 
-    /// The signature selected by protobuf decoding, preserved by Clone.
+    /// Go `Function.PbCode()`.
     #[must_use]
-    pub fn pb_signature(&self) -> Option<tidb_proto::tipb::ScalarFuncSig> {
-        self.pb_builtin.map(PbBuiltin::signature)
+    pub fn pb_code(&self) -> tidb_proto::tipb::ScalarFuncSig {
+        self.pb_builtin.signature()
     }
 
     /// Go `FuncName.L == ast.Cast`.
@@ -647,7 +680,7 @@ impl ScalarFunction {
 
     /// Go `baseBuiltinCastFunc.inUnion`.
     pub fn cast_in_union(&self) -> bool {
-        self.pb_builtin.is_some_and(PbBuiltin::cast_in_union)
+        self.pb_builtin.cast_in_union()
     }
 
     /// A cast to JSON, as opposed to one to a typed array.
@@ -662,6 +695,14 @@ impl ScalarFunction {
     fn values_offset(&self) -> Option<usize> {
         match self.sig {
             crate::builtin::SigFields::Values { offset } => Some(offset),
+            _ => None,
+        }
+    }
+
+    /// Go `builtinAes*Sig.aesModeAttr`.
+    fn aes_mode(&self) -> Option<tidb_exprctx::BlockEncryptionMode> {
+        match self.sig {
+            crate::builtin::SigFields::Aes { mode } => Some(mode),
             _ => None,
         }
     }
@@ -1169,23 +1210,15 @@ impl ScalarFunction {
     /// type -- see [`Self::coerce_to_ret_type`] for why that is the whole
     /// point of Go's `Eval` and not an afterthought.
     pub fn eval(&self, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
-        if let Some(builtin) = self.pb_builtin {
-            let value = builtin.eval(self, ctx, row)?;
-            // Go ScalarFunction.Eval interprets an evalInt carrier through
-            // the wire result type, independently of the argument flags.
-            let value = match (value, self.get_static_type()) {
-                (Datum::UInt(value), Some(field)) if !field.is_unsigned() => {
-                    Datum::Int(value as i64)
-                }
-                (Datum::Int(value), Some(field)) if field.is_unsigned() => {
-                    Datum::UInt(value as u64)
-                }
-                (value, _) => value,
-            };
-            return self.coerce_to_ret_type(value);
-        }
-        // Go has no function without the signature its class returned.
-        Err(EvalError::Unsupported("this scalar function has no signature"))
+        let value = self.pb_builtin.eval(self, ctx, row)?;
+        // Go ScalarFunction.Eval interprets an evalInt carrier through
+        // the wire result type, independently of the argument flags.
+        let value = match (value, self.get_static_type()) {
+            (Datum::UInt(value), Some(field)) if !field.is_unsigned() => Datum::Int(value as i64),
+            (Datum::Int(value), Some(field)) if field.is_unsigned() => Datum::UInt(value as u64),
+            (value, _) => value,
+        };
+        self.coerce_to_ret_type(value)
     }
 
     fn eval_like(
@@ -1353,7 +1386,7 @@ impl ScalarFunction {
     /// The argument evaluation domain selected by Go's arithmetic builder.
     /// DIV returns Int but consumes Decimal unless both arguments are Int.
     fn numeric_operand_domain(&self) -> Option<EvalType> {
-        self.pb_builtin?.numeric_domain()
+        self.pb_builtin.numeric_domain()
     }
 
     fn eval_binary_values(
@@ -1625,8 +1658,8 @@ impl ScalarFunction {
         &mut self,
         modifier: tidb_ast::MatchModifier,
     ) -> Result<(), EvalError> {
-        let signature = self.pb_signature();
-        if signature != Some(tidb_proto::tipb::ScalarFuncSig::FtsMatchExpression) {
+        let signature = self.pb_code();
+        if signature != tidb_proto::tipb::ScalarFuncSig::FtsMatchExpression {
             return Err(EvalError::Raw(format!(
                 "unexpected builtin signature for match_against: {signature:?}"
             )));
@@ -1639,7 +1672,7 @@ impl ScalarFunction {
     /// another signature.
     #[must_use]
     pub fn fts_mysql_match_against_modifier(&self) -> Option<tidb_ast::MatchModifier> {
-        (self.pb_signature() == Some(tidb_proto::tipb::ScalarFuncSig::FtsMatchExpression))
+        (self.pb_code() == tidb_proto::tipb::ScalarFuncSig::FtsMatchExpression)
             .then_some(self.fts_modifier)
     }
 
@@ -1647,7 +1680,7 @@ impl ScalarFunction {
     /// the one the arguments select.
     pub(crate) fn extremum_signature(&self) -> Option<crate::builtin_ext::GlSignature> {
         self.gl_signature
-            .or_else(|| self.pb_builtin.as_ref().and_then(|builtin| crate::builtin_ext::GlSignature::of_signature(builtin.signature())))
+            .or_else(|| crate::builtin_ext::GlSignature::of_signature(self.pb_code()))
             .or_else(|| crate::rewriter::result_type::gl_signature(&self.args))
     }
 

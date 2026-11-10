@@ -2282,13 +2282,20 @@ mod attach_tests {
         assert!(matches!(pushed, Task::Mpp(_)));
         assert!(matches!(pushed.plan(), Some(PhysicalPlan::Selection(_))));
 
-        let mut unsupported = tidb_expr::scalar_function::ScalarFunction::default();
-        unsupported.func_name = tidb_ast::CiString::new("tan");
+        // Go `scalarExprSupportedByFlash` has no `ast.Tan`.
+        let unsupported = tidb_expr::new_function_base(
+            &tidb_exprctx::NoColumns,
+            "tan",
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Double),
+            vec![tidb_expr::expression::Expression::Column(tidb_expr::column::Column::new(
+                1,
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Double),
+            ))],
+        )
+        .expect("tan builds");
         let selection = PhysicalPlan::Selection(PhysicalSelection {
             base: op_with_stats("Selection", 8.0),
-            conditions: vec![tidb_expr::expression::Expression::ScalarFunction(
-                unsupported,
-            )],
+            conditions: vec![unsupported],
             ..PhysicalSelection::default()
         });
         let converted = attach2_task(
