@@ -73,6 +73,9 @@ const (
 	// decodeWorkPerGeometry is the fixed cost of copying one geometry: about 48 bytes
 	// allocated, at about 4.6 bytes per unit of work (measured), rounded up.
 	decodeWorkPerGeometry = 11
+	// smallValue is the longest value read builds without a scan: L bytes hold at most L/9
+	// collections, each copying L bytes and L/9 geometries at most, so its work fits the floor.
+	smallValue = 8192
 )
 
 // decodeWork is the work of building a geometry, counted by the scan collection by
@@ -224,9 +227,12 @@ func payloadOf(stored []byte) ([]byte, error) {
 	return stored[1:], nil
 }
 
-// read builds the geometry b holds in dialect d, after a scan that builds nothing has
-// checked it and measured the work of building it, which must be within the budget.
+// read builds the geometry b holds in dialect d. A value longer than smallValue is first
+// scanned, building nothing, to check that its work is within the budget.
 func read(b []byte, d dialect) (uint32, geom.Geometry, error) {
+	if len(b) <= smallValue {
+		return build(b, d)
+	}
 	s := scanner{r: reader{buf: b, dialect: d}, ingest: true}
 	if err := s.scan(); err != nil {
 		return 0, geom.Geometry{}, err

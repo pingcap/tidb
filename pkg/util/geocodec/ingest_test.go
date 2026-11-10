@@ -52,12 +52,17 @@ var ingestStats struct {
 	tooComplex int
 }
 
-// checkRead requires read, which scans before it builds, to agree with build on b in
-// dialect d, except that it refuses with ErrTooComplex a value over the budget, which build
-// builds. A value read accepts is the one build builds, by construction.
+// checkRead requires read to agree with build on b in dialect d, except that it refuses with
+// ErrTooComplex a value over the budget, which build builds. On a value read builds without
+// a scan, the scan must agree with build and keep within the budget.
 func checkRead(t testing.TB, b []byte, d dialect) {
 	srid, _, err := read(b, d)
 	wantSRID, _, wantErr := build(b, d)
+	if len(b) <= smallValue {
+		s := scanner{r: reader{buf: b, dialect: d}, ingest: true}
+		require.Equal(t, wantErr, s.scan(), "%X", b)
+		require.False(t, s.work.exceeds(s.budgetSize()), "%X", b)
+	}
 	if errors.Is(err, ErrTooComplex) {
 		require.NoError(t, wantErr, "%X", b)
 		ingestStats.tooComplex++
@@ -402,6 +407,30 @@ func TestDecodeBudget(t *testing.T) {
 		back, err := StoredToMySQL(stored)
 		require.NoError(t, err, c.name)
 		require.Equal(t, c.mysql, back, c.name)
+	}
+}
+
+// TestSmallValueWithinBudget checks the bound that lets read build a value of at most
+// smallValue bytes without a scan: the work of the worst such shapes is within the floor.
+func TestSmallValueWithinBudget(t *testing.T) {
+	require.LessOrEqual(t, uint64(20*smallValue*smallValue/81), uint64(decodeWorkFloor))
+	// Empty collections are the most geometries per byte; nesting copies them most often.
+	const most = smallValue / minGeometrySize
+	shapes := [][]byte{nestedCollections(most)}
+	for _, depth := range []int{2, 10, 100, 455, 800, most - 1} {
+		empties := make([][]byte, most-depth)
+		for i := range empties {
+			empties[i] = nestedCollections(1)
+		}
+		shapes = append(shapes, mysqlChain(depth, collectionWKB(empties...))[4:])
+	}
+	for _, b := range shapes {
+		require.LessOrEqual(t, len(b), smallValue)
+		s := scanner{r: reader{buf: b, dialect: dialectMySQL}, ingest: true}
+		require.NoError(t, s.scan())
+		t.Logf("%d bytes, work %d", len(b), s.work)
+		require.LessOrEqual(t, uint64(s.work), uint64(20*len(b)*len(b)/81))
+		require.False(t, s.work.exceeds(s.budgetSize()))
 	}
 }
 
