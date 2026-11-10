@@ -165,7 +165,21 @@ func RunAnalyzeStmtWithCtx(
 		sqlexec.ExecOptionUseCurSession,
 		sqlexec.ExecOptionWithSysProcTrack(autoAnalyzeProcID, autoAnalyzeTracker.Track, autoAnalyzeTracker.UnTrack),
 	}
-	defer procIDGenerator.ReleaseAutoAnalyzeProcID(autoAnalyzeProcID)
+	// A cancellation of ctx also kills the process: steps like the global stats merge only watch
+	// the SQL killer. The session resets a kill from before the statement, but then checks ctx.
+	killed := make(chan struct{})
+	stopKill := context.AfterFunc(ctx, func() {
+		defer close(killed)
+		sysProcTracker.KillSysProcess(autoAnalyzeProcID)
+	})
+	defer func() {
+		// The kill must be over before the ID is released: a released ID can be
+		// given to another process.
+		if !stopKill() {
+			<-killed
+		}
+		procIDGenerator.ReleaseAutoAnalyzeProcID(autoAnalyzeProcID)
+	}()
 	return statsutil.ExecWithOptsWithCtx(ctx, sctx, optFuncs, sql, params...)
 }
 
