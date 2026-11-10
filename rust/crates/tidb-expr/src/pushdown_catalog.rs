@@ -3826,6 +3826,8 @@ pub enum PbScalar {
         arg: Box<PbScalar>,
         /// The cast's result type.
         field_type: FieldType,
+        /// Go `baseBuiltinCastFunc.inUnion`, sent as `InUnionMetadata`.
+        in_union: bool,
     },
 }
 
@@ -5200,13 +5202,14 @@ fn describe_function(
     mut args: Vec<PbScalar>,
 ) -> Option<PbScalar> {
     let name = function.func_name.lowercase();
-    if function.is_cast() && !function.cast_in_union() && args.len() == 1 {
+    if function.is_cast() && args.len() == 1 {
         let field = expression.static_type()?;
         let signature = cast_node_signature(args[0].eval_type(), field.eval_type())?;
         return Some(PbScalar::Cast {
             signature,
             arg: Box::new(args.pop().expect("one argument")),
             field_type: field.clone(),
+            in_union: function.cast_in_union(),
         });
     }
     let mut described = build_call_with(name, args, |args| {
@@ -5695,7 +5698,13 @@ pub fn to_pb_in(
             signature,
             arg,
             field_type,
-        } => Some(cast_expr(*signature, to_pb_in(arg, columns, zone)?, to_pb_field_type(field_type)?)),
+            in_union,
+        } => Some(cast_expr(
+            *signature,
+            to_pb_in(arg, columns, zone)?,
+            to_pb_field_type(field_type)?,
+            *in_union,
+        )),
         PbScalar::Call {
             signature,
             args,
@@ -5734,7 +5743,7 @@ pub fn to_pb_in(
                             }
                             (source, target) => cast_signature(source, target)??,
                         };
-                        child = cast_expr(cast, child, target);
+                        child = cast_expr(cast, child, target, false);
                     }
                     children.push(child);
                 } else {
@@ -5817,7 +5826,7 @@ fn coerced_to_pb(
                     return to_pb_in(argument, columns, zone);
                 };
                 let field_type = cast_target_field_type(argument, required)?;
-                return Some(cast_expr(cast, to_pb_in(argument, columns, zone)?, field_type));
+                return Some(cast_expr(cast, to_pb_in(argument, columns, zone)?, field_type, false));
             }
             _ => None,
         };
@@ -5971,13 +5980,17 @@ fn cast_flags(argument: &PbScalar) -> u32 {
 }
 
 /// Go `scalarFuncToPBExpr` of a builtin cast: its `metadata()` is
-/// `InUnionMetadata{InUnion: false}` (an in-union cast is not lowered here),
-/// encoded as the expression's `val`.
-fn cast_expr(signature: ScalarFuncSig, child: Expr, field_type: tidb_proto::tipb::FieldType) -> Expr {
+/// `InUnionMetadata{InUnion: b.inUnion}`, encoded as the expression's `val`.
+fn cast_expr(
+    signature: ScalarFuncSig,
+    child: Expr,
+    field_type: tidb_proto::tipb::FieldType,
+    in_union: bool,
+) -> Expr {
     use prost::Message;
     Expr {
         tp: Some(ExprType::ScalarFunc as i32),
-        val: Some(tidb_proto::tipb::InUnionMetadata { in_union: false }.encode_to_vec()),
+        val: Some(tidb_proto::tipb::InUnionMetadata { in_union }.encode_to_vec()),
         children: vec![child],
         // Upstream `Expr.sig` and `has_distinct` are gogoproto nullable=false.
         sig: Some(signature as i32),
@@ -7248,6 +7261,7 @@ mod tests {
             signature,
             arg: Box::new(arg),
             field_type: FieldType::new(code),
+            in_union: false,
         };
         let call = build_call(
             "eq",

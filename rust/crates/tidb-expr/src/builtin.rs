@@ -520,6 +520,14 @@ pub(crate) enum SigFields {
     /// Go `builtinValues*Sig.offset`: the column's position in the
     /// statement's current-insert row.
     Values { offset: usize },
+    /// Go `castJSONAsArrayFunctionSig`.
+    CastJsonAsArray,
+    /// Go `builtinCastVectorFloat32AsUnsupportedSig`.
+    CastVectorFloat32AsUnsupported,
+    /// Go `builtinCastUnsupportedAsVectorFloat32Sig`.
+    CastUnsupportedAsVectorFloat32,
+    /// Go `builtinCastStringAsVectorFloat32Sig`.
+    CastStringAsVectorFloat32,
 }
 
 /// Go `baseBuiltinFunc` with the signature's `pbCode`.

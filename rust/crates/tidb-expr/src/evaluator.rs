@@ -1573,7 +1573,7 @@ mod tests {
                 "mul",
                 vec![
                     decimal_column(0, &price_type),
-                    typed("cast", vec![input_column(2)], target),
+                    Expression::ScalarFunction(crate::builtin_cast::cast_function_for_test(input_column(2), target.clone())),
                 ],
                 &result_type,
             );
@@ -1605,7 +1605,7 @@ mod tests {
             "mul",
             vec![
                 decimal_column(0, &price_type),
-                typed("cast", vec![input_column(2)], &narrow),
+                Expression::ScalarFunction(crate::builtin_cast::cast_function_for_test(input_column(2), narrow.clone())),
             ],
             &result_type,
         ) else {

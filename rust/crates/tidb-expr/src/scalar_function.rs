@@ -313,6 +313,7 @@ fn from_unixtime_string_argument(
     crate::cast::eval_numeric_cast_with_type(
         value.clone(),
         EvalType::String,
+        None,
         Some(source),
         &target,
         false,
@@ -660,6 +661,7 @@ impl ScalarFunction {
             args: f.args,
             pb_builtin: Some(PbBuiltin::of_cast_func(f.pb_code, in_union)),
             collation: f.collation,
+            sig: f.sig,
             ..Default::default()
         }
     }
@@ -2424,80 +2426,48 @@ impl ScalarFunction {
             );
             return crate::convert_charset::convert_using(&value, &string_type, &target);
         }
-        // Go picks one cast signature per target type; the rewriter records
-        // that choice in the name, and the width/scale arguments the CHAR,
-        // BINARY and DECIMAL casts need come from the result type.
         if name == "json_sum_crc32" && self.args.len() == 1 {
             if let Some(array_type) = &self.json_sum_crc32_type {
                 let value = self.args[0].eval(ctx, row)?;
                 return crate::cast::eval_json_sum_crc32(value, array_type);
             }
         }
+        // The cast signatures with no `pbCode`; every other cast evaluates by
+        // its signature kernel.
         if name == "cast" && self.args.len() == 1 {
+            use crate::builtin::SigFields;
             let ret_type = self
                 .get_static_type()
                 .ok_or(EvalError::Unsupported("a cast with no result type"))?;
-            let target = crate::builtin_cast::cast_target_name(ret_type)?;
-            if target == "array" {
-                let value = self.args[0].eval(ctx, row)?;
-                return crate::cast::eval_json(value, ret_type);
-            }
-            {
-                // Go `builtinCastVectorFloat32AsUnsupportedSig` and
-                // `builtinCastUnsupportedAsVectorFloat32Sig`: a vector casts
-                // to a string or a vector, and a string or a vector to a
-                // vector. Any other cast with a vector side fails before
-                // reading its argument, even when that row would have been
-                // NULL.
-                if let (Some(source), Some(ret_type)) = (self.args[0].static_type(), self.get_static_type()) {
-                    let (from, to) = (source.eval_type(), ret_type.eval_type());
-                    if (from == EvalType::VectorFloat32) != (to == EvalType::VectorFloat32)
-                        && from != EvalType::String
-                        && to != EvalType::String
-                    {
-                        return Err(EvalError::Vector(format!(
-                            "cannot cast from {} to {}",
-                            tidb_datatype::type_str(source.code()),
-                            tidb_datatype::type_str(ret_type.code()),
-                        )));
-                    }
+            return match self.sig {
+                SigFields::CastJsonAsArray => {
+                    let value = self.args[0].eval(ctx, row)?;
+                    crate::cast::eval_json(value, ret_type)
                 }
-                if target == "json" {
+                // The two unsupported signatures fail before reading their
+                // argument, even when that row would have been NULL.
+                SigFields::CastVectorFloat32AsUnsupported => Err(EvalError::Vector(format!(
+                    "cannot cast from vector to {}",
+                    tidb_datatype::type_str(ret_type.code()),
+                ))),
+                SigFields::CastUnsupportedAsVectorFloat32 => {
                     let source = self.args[0]
                         .static_type()
-                        .ok_or(EvalError::Unsupported("a JSON cast with no source type"))?
-                        .eval_type();
-                    let value = eval_numeric_row(&self.args[0], ctx, row, source)?;
-                    return cast_json_argument_value(self, value);
+                        .ok_or(EvalError::Unsupported("a cast with no source type"))?;
+                    Err(EvalError::Vector(format!(
+                        "cannot cast from {} to vector",
+                        tidb_datatype::type_str(source.code()),
+                    )))
                 }
-                let ret_type = self
-                    .get_static_type()
-                    .ok_or(EvalError::Unsupported("a cast with no result type"))?;
-                let value = match ret_type.eval_type() {
-                    numeric @ (EvalType::Int | EvalType::Real | EvalType::Decimal) => {
-                        let source = numeric_argument_source(&self.args[0], numeric)
-                            .ok_or(EvalError::Unsupported("a cast with no source type"))?;
-                        eval_numeric_row(&self.args[0], ctx, row, source)?
+                SigFields::CastStringAsVectorFloat32 => {
+                    let value = self.args[0].eval_string(ctx, row)?;
+                    if value.is_null() {
+                        return Ok(Datum::Null);
                     }
-                    _ if self.pb_signature()
-                        == Some(tidb_proto::tipb::ScalarFuncSig::CastStringAsString) =>
-                    {
-                        self.args[0].eval_string(ctx, row)?
-                    }
-                    _ => self.args[0].eval(ctx, row)?,
-                };
-                if value.is_null() {
-                    return Ok(Datum::Null);
+                    crate::cast::cast_string_as_vector_float32(value, ret_type)
                 }
-                let value = can_implicit_eval_int(&self.args[0], &value, ret_type.eval_type())
-                    .unwrap_or(value);
-                return crate::cast::eval_cast(
-                    &cast_type_of(target, ret_type)?,
-                    value,
-                    self.args[0].static_type(),
-                    ctx,
-                );
-            }
+                _ => Err(EvalError::Unsupported("a cast signature with no implementation")),
+            };
         }
         // The `DATE_ADD`/`DATE_SUB` family (`builtinAddSubDate*Sig`): Go
         // evaluates the unit, the third argument, first, then the date and
@@ -3387,68 +3357,6 @@ fn uservar_as_kind(kind: &str, value: Datum, ctx: &dyn Columns) -> Result<Datum,
     crate::cast::eval_cast(&target, value, None, ctx)
 }
 
-fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType, EvalError> {
-    use tidb_ast::CastType;
-    let len = || u32::try_from(ret_type.flen()).ok();
-    Ok(match target {
-        "signed" => CastType::Signed,
-        "unsigned" => CastType::Unsigned,
-        "char" => CastType::Char {
-            len: len(),
-            // A binary-charset CHAR target truncates in BYTES
-            // (`ProduceStrWithSpecifiedTp`'s `chs == CharsetBin` branch);
-            // carry that through the reconstructed cast type.
-            // For character targets retain the resolved target charset too:
-            // a BINARY source must pass through Go's `from_binary` decoder
-            // before `CAST AS CHAR`, and an explicit `CHARACTER SET` target
-            // must not silently fall back to the session default.
-            charset: Some(if ret_type.is_binary_string() {
-                "BINARY".to_owned()
-            } else {
-                ret_type.charset_name().to_owned()
-            }),
-        },
-        "binary" => {
-            // Go pads NUL bytes only the FIXED TypeString target
-            // (`padZeroForBinaryType`'s `TypeString` gate,
-            // `builtin_cast.go:2251`): a lengthless `BINARY` keeps
-            // TypeVarString, so its adjusted result flen (e.g. 20 for an
-            // integer source) must not turn into BINARY(N) padding here.
-            if ret_type.code() == tidb_datatype::FieldTypeCode::String {
-                CastType::Binary { len: len() }
-            } else {
-                CastType::Binary { len: None }
-            }
-        }
-        "decimal" => CastType::Decimal {
-            flen: u32::try_from(ret_type.flen()).unwrap_or(0),
-            // `WrapWithCastAsDecimal` preserves Go's `UnspecifiedLength`
-            // scale on non-decimal sources.  The AST cast fields are unsigned,
-            // so carry that state through the internal dispatch with the
-            // sentinel understood by `cast::eval_cast` instead of silently
-            // turning it into scale 0 (which rounds REAL 123.555 to 124).
-            scale: if ret_type.decimal() == UNSPECIFIED_LENGTH {
-                crate::cast::UNSPECIFIED_CAST_SCALE
-            } else {
-                u32::try_from(ret_type.decimal()).unwrap_or(0)
-            },
-        },
-        "date" => CastType::Date,
-        "datetime" => CastType::DateTime {
-            fsp: u32::try_from(ret_type.decimal()).ok(),
-        },
-        "time" => CastType::Time {
-            fsp: u32::try_from(ret_type.decimal()).ok(),
-        },
-        "year" => CastType::Year,
-        "double" => CastType::Double,
-        "float" => CastType::Float,
-        "json" => CastType::Json,
-        "vector" => CastType::Vector { dimensions: len() },
-        _ => return Err(EvalError::Unsupported("this cast target is not ported")),
-    })
-}
-
 /// One numeric value of a column-wise comparison, in the comparison's
 /// evaluation family (Go `getBaseCmpType`: `ETInt` when both sides are
 /// integers, `ETDecimal` when a decimal meets an integer or a decimal).
@@ -3979,6 +3887,7 @@ fn cast_numeric_argument_in_mode(
         return crate::cast::eval_numeric_cast_with_type(
             value,
             EvalType::Json,
+            None,
             Some(field),
             &target_field,
             false,
@@ -4466,14 +4375,21 @@ fn eval_numeric_batch_values(
                     })
                     .collect();
             }
-            let cast = cast_type_of(crate::builtin_cast::cast_target_name(field)?, field)?;
             return values
                 .into_iter()
                 .map(|value| {
                     if value.is_null() {
                         Ok(value)
                     } else {
-                        crate::cast::eval_cast(&cast, value, function.args[0].static_type(), ctx)
+                        crate::cast::eval_numeric_cast_with_type(
+                            value,
+                            source,
+                            Some(&function.args[0]),
+                            function.args[0].static_type(),
+                            field,
+                            false,
+                            ctx,
+                        )
                     }
                 })
                 .collect();
@@ -5503,11 +5419,7 @@ mod tests {
 
     #[test]
     fn cast_hash_code_includes_eval_type_byte() {
-        let mut sf = ScalarFunction::new(
-            CiString::new("cast"),
-            FieldType::new(FieldTypeCode::Long),
-            vec![Expression::Column(Column::new(1, ft()))],
-        );
+        let mut sf = crate::builtin_cast::cast_function_for_test(Expression::Column(Column::new(1, ft())), FieldType::new(FieldTypeCode::Long));
         let hc = sf.hash_code().to_vec();
         // Ends with the target EvalType byte (Long -> Int == 0).
         assert_eq!(*hc.last().unwrap(), tidb_datatype::EvalType::Int as u8);
@@ -5637,11 +5549,7 @@ use tidb_charset::Collation;
             Datum::new_string_datum(r#"["base64:type15:YWI="]"#.to_string())
         );
 
-        let cast_json = ScalarFunction::new(
-            CiString::new("cast"),
-            FieldType::new(FieldTypeCode::Json),
-            vec![Expression::Column(col)],
-        );
+        let cast_json = crate::builtin_cast::cast_function_for_test(Expression::Column(col), FieldType::new(FieldTypeCode::Json));
         let Datum::Json(got) = cast_json.eval(&NoColumns, row).unwrap() else {
             panic!("CAST AS JSON did not retain the JSON domain")
         };

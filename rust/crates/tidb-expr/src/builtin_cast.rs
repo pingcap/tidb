@@ -17,6 +17,7 @@
 
 use crate::builtin::{
     is_binary_literal, new_base_builtin_func, BaseBuiltinFunc, BuildContext, FunctionClass,
+    SigFields,
 };
 use crate::expr_collation::{Coercibility, ExprCollation, Repertoire};
 use crate::expression::{propagate_type, Expression};
@@ -35,9 +36,9 @@ const CHARSET_ASCII: &str = "ascii";
 /// The signature a cast class sets for an argument of `arg_tp`, from the
 /// codes of its int, real, decimal, time, duration, JSON and string
 /// signatures. A vector argument's signature sets none.
-fn sig_of_arg(arg_tp: EvalType, sigs: [ScalarFuncSig; 7]) -> ScalarFuncSig {
+fn set_sig_of_arg(bf: &mut BaseBuiltinFunc, arg_tp: EvalType, sigs: [ScalarFuncSig; 7]) {
     let [int, real, decimal, time, duration, json, string] = sigs;
-    match arg_tp {
+    bf.pb_code = match arg_tp {
         EvalType::Int => int,
         EvalType::Real => real,
         EvalType::Decimal => decimal,
@@ -45,8 +46,11 @@ fn sig_of_arg(arg_tp: EvalType, sigs: [ScalarFuncSig; 7]) -> ScalarFuncSig {
         EvalType::Duration => duration,
         EvalType::Json => json,
         EvalType::String => string,
-        EvalType::VectorFloat32 => ScalarFuncSig::Unspecified,
-    }
+        EvalType::VectorFloat32 => {
+            bf.sig = SigFields::CastVectorFloat32AsUnsupported;
+            return;
+        }
+    };
 }
 
 /// Go `castAsIntFunctionClass`.
@@ -62,22 +66,23 @@ impl FunctionClass for CastAsIntFunctionClass {
     ) -> Result<BaseBuiltinFunc, EvalError> {
         let mut bf = new_base_builtin_func(ctx, "cast", args, self.tp.clone())?;
         let arg_tp = type_of(&bf.args[0]);
-        bf.pb_code = if arg_tp.is_hybrid() || is_binary_literal(&bf.args[0]) {
-            ScalarFuncSig::CastIntAsInt
-        } else {
-            sig_of_arg(
-                arg_tp.eval_type(),
-                [
-                    ScalarFuncSig::CastIntAsInt,
-                    ScalarFuncSig::CastRealAsInt,
-                    ScalarFuncSig::CastDecimalAsInt,
-                    ScalarFuncSig::CastTimeAsInt,
-                    ScalarFuncSig::CastDurationAsInt,
-                    ScalarFuncSig::CastJsonAsInt,
-                    ScalarFuncSig::CastStringAsInt,
-                ],
-            )
-        };
+        if arg_tp.is_hybrid() || is_binary_literal(&bf.args[0]) {
+            bf.pb_code = ScalarFuncSig::CastIntAsInt;
+            return Ok(bf);
+        }
+        set_sig_of_arg(
+            &mut bf,
+            arg_tp.eval_type(),
+            [
+                ScalarFuncSig::CastIntAsInt,
+                ScalarFuncSig::CastRealAsInt,
+                ScalarFuncSig::CastDecimalAsInt,
+                ScalarFuncSig::CastTimeAsInt,
+                ScalarFuncSig::CastDurationAsInt,
+                ScalarFuncSig::CastJsonAsInt,
+                ScalarFuncSig::CastStringAsInt,
+            ],
+        );
         Ok(bf)
     }
 }
@@ -107,7 +112,8 @@ impl FunctionClass for CastAsRealFunctionClass {
         if arg_tp == EvalType::Decimal {
             propagate_type(&mut bf.args[0], EvalType::Real);
         }
-        bf.pb_code = sig_of_arg(
+        set_sig_of_arg(
+            &mut bf,
             arg_tp,
             [
                 ScalarFuncSig::CastIntAsReal,
@@ -145,7 +151,8 @@ impl FunctionClass for CastAsDecimalFunctionClass {
         } else {
             arg_tp.eval_type()
         };
-        bf.pb_code = sig_of_arg(
+        set_sig_of_arg(
+            &mut bf,
             arg_tp,
             [
                 ScalarFuncSig::CastIntAsDecimal,
@@ -229,8 +236,8 @@ impl FunctionClass for CastAsStringFunctionClass {
         }
         let arg_ft = type_of(&bf.args[0]);
         adjust_ret_ft_for_cast_string(&mut bf.tp, &arg_ft);
-        bf.pb_code = match arg_ft.eval_type() {
-            EvalType::VectorFloat32 => ScalarFuncSig::CastVectorFloat32AsString,
+        match arg_ft.eval_type() {
+            EvalType::VectorFloat32 => bf.pb_code = ScalarFuncSig::CastVectorFloat32AsString,
             EvalType::String => {
                 let ec = ExprCollation {
                     charset: self.tp.charset_name().to_owned(),
@@ -241,9 +248,10 @@ impl FunctionClass for CastAsStringFunctionClass {
                 bf.args.push(crate::convert_charset::handle_binary_literal(
                     ctx, arg, &ec, "cast", true,
                 ));
-                ScalarFuncSig::CastStringAsString
+                bf.pb_code = ScalarFuncSig::CastStringAsString;
             }
-            arg_tp => sig_of_arg(
+            arg_tp => set_sig_of_arg(
+                &mut bf,
                 arg_tp,
                 [
                     ScalarFuncSig::CastIntAsString,
@@ -255,7 +263,7 @@ impl FunctionClass for CastAsStringFunctionClass {
                     ScalarFuncSig::CastStringAsString,
                 ],
             ),
-        };
+        }
         Ok(bf)
     }
 }
@@ -272,8 +280,10 @@ impl FunctionClass for CastAsTimeFunctionClass {
         args: Vec<Expression>,
     ) -> Result<BaseBuiltinFunc, EvalError> {
         let mut bf = new_base_builtin_func(ctx, "cast", args, self.tp.clone())?;
-        bf.pb_code = sig_of_arg(
-            type_of(&bf.args[0]).eval_type(),
+        let arg_tp = type_of(&bf.args[0]).eval_type();
+        set_sig_of_arg(
+            &mut bf,
+            arg_tp,
             [
                 ScalarFuncSig::CastIntAsTime,
                 ScalarFuncSig::CastRealAsTime,
@@ -300,8 +310,10 @@ impl FunctionClass for CastAsDurationFunctionClass {
         args: Vec<Expression>,
     ) -> Result<BaseBuiltinFunc, EvalError> {
         let mut bf = new_base_builtin_func(ctx, "cast", args, self.tp.clone())?;
-        bf.pb_code = sig_of_arg(
-            type_of(&bf.args[0]).eval_type(),
+        let arg_tp = type_of(&bf.args[0]).eval_type();
+        set_sig_of_arg(
+            &mut bf,
+            arg_tp,
             [
                 ScalarFuncSig::CastIntAsDuration,
                 ScalarFuncSig::CastRealAsDuration,
@@ -329,7 +341,8 @@ impl FunctionClass for CastAsJsonFunctionClass {
     ) -> Result<BaseBuiltinFunc, EvalError> {
         let mut bf = new_base_builtin_func(ctx, "cast", args, self.tp.clone())?;
         let arg_tp = type_of(&bf.args[0]).eval_type();
-        bf.pb_code = sig_of_arg(
+        set_sig_of_arg(
+            &mut bf,
             arg_tp,
             [
                 ScalarFuncSig::CastIntAsJson,
@@ -391,7 +404,9 @@ impl FunctionClass for CastAsArrayFunctionClass {
                 "CAST-ing data to array of char/binary BLOBs with unspecified length".into(),
             ));
         }
-        new_base_builtin_func(ctx, "cast", args, self.tp.clone())
+        let mut bf = new_base_builtin_func(ctx, "cast", args, self.tp.clone())?;
+        bf.sig = SigFields::CastJsonAsArray;
+        Ok(bf)
     }
 }
 
@@ -407,65 +422,24 @@ impl FunctionClass for CastAsVectorFloat32FunctionClass {
         args: Vec<Expression>,
     ) -> Result<BaseBuiltinFunc, EvalError> {
         let mut bf = new_base_builtin_func(ctx, "cast", args, self.tp.clone())?;
-        if type_of(&bf.args[0]).eval_type() == EvalType::VectorFloat32 {
-            bf.pb_code = ScalarFuncSig::CastVectorFloat32AsVectorFloat32;
+        match type_of(&bf.args[0]).eval_type() {
+            EvalType::VectorFloat32 => {
+                bf.pb_code = ScalarFuncSig::CastVectorFloat32AsVectorFloat32;
+            }
+            EvalType::String => bf.sig = SigFields::CastStringAsVectorFloat32,
+            _ => bf.sig = SigFields::CastUnsupportedAsVectorFloat32,
         }
         Ok(bf)
     }
 }
 
-/// The conversion the evaluator's row and batch paths run for a cast to
-/// `target`, by the name its conversion table is keyed with.
-pub(crate) fn cast_target_name(target: &FieldType) -> Result<&'static str, EvalError> {
-    let unsigned = target.flags() & FieldTypeFlags::UNSIGNED != 0;
-    if target.is_array() {
-        return Ok("array");
+/// A test's cast node: Go `BuildCastFunction`, left unfolded.
+#[cfg(test)]
+pub(crate) fn cast_function_for_test(arg: Expression, tp: FieldType) -> ScalarFunction {
+    match build_cast_function(&crate::builtin::UnfoldedBuildContext, arg, tp) {
+        Ok(Expression::ScalarFunction(function)) => function,
+        other => panic!("a cast builds its function: {other:?}"),
     }
-    Ok(match target.code() {
-        FieldTypeCode::Year => "year",
-        FieldTypeCode::Date | FieldTypeCode::NewDate => "date",
-        FieldTypeCode::Datetime | FieldTypeCode::Timestamp => "datetime",
-        FieldTypeCode::Duration => "time",
-        FieldTypeCode::NewDecimal => "decimal",
-        // A FLOAT target is its own signature: Go's float32 cast overflows
-        // differently from the double one (`CAST('1e300' AS FLOAT)` errors
-        // 1690 where the DOUBLE cast answers 1e+300).
-        FieldTypeCode::Float => "float",
-        FieldTypeCode::Double => "double",
-        FieldTypeCode::Json => "json",
-        FieldTypeCode::VectorFloat32 => "vector",
-        FieldTypeCode::Tiny
-        | FieldTypeCode::Short
-        | FieldTypeCode::Int24
-        | FieldTypeCode::Long
-        | FieldTypeCode::LongLong
-        | FieldTypeCode::Bit => {
-            if unsigned {
-                "unsigned"
-            } else {
-                "signed"
-            }
-        }
-        FieldTypeCode::Varchar
-        | FieldTypeCode::VarString
-        | FieldTypeCode::String
-        | FieldTypeCode::Blob
-        | FieldTypeCode::TinyBlob
-        | FieldTypeCode::MediumBlob
-        | FieldTypeCode::LongBlob
-        | FieldTypeCode::Enum
-        | FieldTypeCode::Set
-        // Go's `TypeNull` is `ETString`, so `castAsStringFunctionClass`
-        // builds its cast (`castCollationForIn` over an `IN (NULL)` member).
-        | FieldTypeCode::Null => {
-            if target.charset_name() == CHARSET_BIN {
-                "binary"
-            } else {
-                "char"
-            }
-        }
-        _ => return Err(EvalError::Unsupported("this cast target is not ported")),
-    })
 }
 
 /// Go `BuildCastFunction`.
@@ -518,7 +492,6 @@ pub fn build_cast_function_with_check(
             .get_function(ctx, vec![expr])?
         }
     };
-    cast_target_name(&f.tp)?;
     let is_json = f.tp.eval_type() == EvalType::Json;
     let mut res = Expression::ScalarFunction(ScalarFunction::from_cast_func(f, in_union));
     // We do not fold CAST if the eval type of this scalar function is

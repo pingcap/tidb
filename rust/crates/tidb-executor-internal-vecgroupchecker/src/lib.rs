@@ -818,15 +818,17 @@ use tidb_exprctx::NoColumns;
                 if lu || ru {
                     output.add_flags(FieldTypeFlags::UNSIGNED);
                 }
-                let expression = Expression::ScalarFunction(ScalarFunction::new(
-                    tidb_ast::CiString::new("intdiv"),
+                let ctx = tidb_sessionctx::StmtContext::default();
+                let expression = tidb_expr::new_function(
+                    &ctx,
+                    "intdiv",
                     output,
                     vec![column(0, left.clone()), column(1, right.clone())],
-                ));
+                )
+                .unwrap();
                 let mut chunk = Chunk::new_chunk_with_capacity(&[left, right], 1);
                 chunk.append_datum(0, &value(a, lu));
                 chunk.append_datum(1, &value(b, ru));
-                let ctx = tidb_sessionctx::StmtContext::default();
                 let result = if vectorized {
                     try_eval_numeric_batch(&expression, &ctx, &chunk)
                         .map(|values| values.unwrap().remove(0))
@@ -1906,11 +1908,12 @@ use tidb_exprctx::ErrorLevel;
             }
         }
         let field = FieldType::new(FieldTypeCode::Varchar);
-        let expr = Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
-            tidb_ast::CiString::new("cast"),
+        let expr = tidb_expr::wrap_cast::build_cast_function(
+            &tidb_expr::wrap_cast::UnfoldedBuildContext,
+            column(0, field.clone()),
             FieldType::new(FieldTypeCode::LongLong),
-            vec![column(0, field.clone())],
-        ));
+        )
+        .unwrap();
         let mut chunk = Chunk::new_chunk_with_capacity(&[field], 32);
         for _ in 0..32 {
             chunk.append_string(0, "1bad");

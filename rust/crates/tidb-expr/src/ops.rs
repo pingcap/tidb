@@ -362,6 +362,7 @@ pub(crate) fn eval_binary_full(
                         value,
                         tidb_datatype::EvalType::Json,
                         None,
+                        None,
                         &tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
                             .with_unsigned(unsigned),
                         false,

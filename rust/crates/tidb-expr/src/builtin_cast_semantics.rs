@@ -217,6 +217,32 @@ mod tests {
         }
     }
 
+    /// Go `baseBuiltinCastFunc.metadata()`: a cast is sent with
+    /// `InUnionMetadata{InUnion: b.inUnion}` as its `val`, whose required
+    /// field gogoproto always writes.
+    #[test]
+    fn a_cast_is_sent_with_its_in_union_metadata() {
+        let source = || {
+            crate::expression::Expression::Constant(crate::constant::Constant::new(
+                Datum::Int(-1),
+                FieldType::new(FieldTypeCode::LongLong),
+            ))
+        };
+        let target =
+            FieldType::new(FieldTypeCode::LongLong).with_added_flags(FieldTypeFlags::UNSIGNED);
+        let ctx = crate::builtin::UnfoldedBuildContext;
+        let ordinary = crate::wrap_cast::build_cast_to(&ctx, source(), target.clone()).unwrap();
+        let in_union =
+            crate::wrap_cast::build_cast_function_4_union(&ctx, source(), target).unwrap();
+        let val = |cast| {
+            crate::pushdown_catalog::expression_to_pb(cast, &|_| None)
+                .expect("the cast is sent")
+                .val
+        };
+        assert_eq!(val(&ordinary), Some(vec![8, 0]));
+        assert_eq!(val(&in_union), Some(vec![8, 1]));
+    }
+
     #[test]
     fn union_unsigned_integer_cast_clamps_negative_values() {
         let mut source_type = FieldType::new(FieldTypeCode::LongLong);

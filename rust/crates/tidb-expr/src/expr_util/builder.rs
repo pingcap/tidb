@@ -204,6 +204,15 @@ impl FunctionBuilder for PreservingFunctionBuilder {
         ret_type: Option<FieldType>,
         args: Vec<Expression>,
     ) -> Result<Expression, FunctionBuildError> {
+        // Go `NewFunction`'s `case ast.Cast: return BuildCastFunction(ctx,
+        // args[0], retType)`.
+        if is_cast_name(func_name) && args.len() == 1 && ret_type.is_some() {
+            return self.build_cast(
+                args.into_iter().next().expect("one argument"),
+                ret_type,
+                false,
+            );
+        }
         let mut func = ScalarFunction::new(
             CiString::new(func_name),
             ret_type.clone().unwrap_or_else(tiny_int_type),

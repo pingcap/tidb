@@ -959,6 +959,11 @@ impl PbBuiltin {
                 if value.is_null() {
                     return Ok(Datum::Null);
                 }
+                // Go `builtinCastStringAs{Int,Real}Sig`: "Take the implicit
+                // evalInt path if possible."
+                if let Some(number) = super::can_implicit_eval_int(&args[0], &value, target) {
+                    return Ok(number);
+                }
                 if target == EvalType::Json {
                     return cast_json_argument_value(function, value);
                 }
@@ -969,6 +974,7 @@ impl PbBuiltin {
                     return crate::cast::eval_numeric_cast_with_type(
                         value,
                         source,
+                        Some(&args[0]),
                         args[0].static_type(),
                         field,
                         in_union,

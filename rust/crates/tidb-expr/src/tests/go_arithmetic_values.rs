@@ -1285,14 +1285,10 @@ fn strict_scalar_decimal_precision_probes_preserve_runtime_evaluation() {
                             "json_string" => r#""2tail""#,
                             _ => "9007199254740993",
                         };
-                        ScalarFunction::new(
-                            tidb_ast::CiString::new("cast"),
-                            FieldType::new(C::Json).with_added_flags(FieldTypeFlags::PARSE_TO_JSON),
-                            vec![literal(
+                        crate::builtin_cast::cast_function_for_test(literal(
                                 Datum::new_string_datum(text),
                                 FieldType::new(C::VarString),
-                            )],
-                        )
+                            ), FieldType::new(C::Json).with_added_flags(FieldTypeFlags::PARSE_TO_JSON))
                     }
                 };
                 let integer = FieldType::new(C::LongLong);
@@ -1423,11 +1419,7 @@ fn json_cast_arithmetic_batches_preserve_go_operand_passes() {
                     let cast = |index| {
                         let mut column = crate::column::Column::new(index + 1, string.clone());
                         column.index = index;
-                        Expression::ScalarFunction(ScalarFunction::new(
-                            tidb_ast::CiString::new("cast"),
-                            FieldType::new(C::Json).with_added_flags(FieldTypeFlags::PARSE_TO_JSON),
-                            vec![Expression::Column(column)],
-                        ))
+                        Expression::ScalarFunction(crate::builtin_cast::cast_function_for_test(Expression::Column(column), FieldType::new(C::Json).with_added_flags(FieldTypeFlags::PARSE_TO_JSON)))
                     };
                     let expression = crate::new_function::new_function_base(
                         &context,
@@ -1549,11 +1541,7 @@ fn json_cast_arithmetic_batches_preserve_go_operand_passes() {
                     if parse {
                         json.add_flags(FieldTypeFlags::PARSE_TO_JSON);
                     }
-                    let cast = Expression::ScalarFunction(ScalarFunction::new(
-                        tidb_ast::CiString::new("cast"),
-                        json,
-                        vec![Expression::Column(column)],
-                    ));
+                    let cast = Expression::ScalarFunction(crate::builtin_cast::cast_function_for_test(Expression::Column(column), json));
                     let right = Expression::Constant(crate::constant::Constant::new(
                         Datum::Int(2),
                         FieldType::new(C::LongLong),
@@ -1719,15 +1707,15 @@ use tidb_charset::Collation;
                 for selected in [false, true] {
                     let mut column = crate::column::Column::new(1, field.clone());
                     column.index = 0;
-                    let expression = Expression::ScalarFunction(ScalarFunction::new(
-                        tidb_ast::CiString::new("cast"),
-                        FieldType::new(C::Json).with_added_flags(if parse_document {
-                            FieldTypeFlags::PARSE_TO_JSON
-                        } else {
-                            0
-                        }),
-                        vec![Expression::Column(column)],
-                    ));
+                    let mut expression = Expression::ScalarFunction(
+                        crate::builtin_cast::cast_function_for_test(
+                            Expression::Column(column),
+                            FieldType::new(C::Json),
+                        ),
+                    );
+                    if !parse_document {
+                        crate::expr_util::disable_parse_json_flag_4_expr(&mut expression);
+                    }
                     let mut input = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(
                         std::slice::from_ref(&field),
                         2,
@@ -1780,11 +1768,7 @@ use tidb_charset::Collation;
     let vector = FieldType::new(C::VectorFloat32);
     let mut column = crate::column::Column::new(1, vector.clone());
     column.index = 0;
-    let expression = Expression::ScalarFunction(ScalarFunction::new(
-        tidb_ast::CiString::new("cast"),
-        FieldType::new(C::Json),
-        vec![Expression::Column(column)],
-    ));
+    let expression = Expression::ScalarFunction(crate::builtin_cast::cast_function_for_test(Expression::Column(column), FieldType::new(C::Json)));
     let mut input = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[vector], 1);
     input.append_null(0);
     let result = expression.eval(&crate::NoColumns, input.get_row(0));

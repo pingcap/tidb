@@ -662,12 +662,12 @@ use tidb_exprctx::NoColumns;
         let mut json = FieldType::new(FieldTypeCode::Json);
         json.set_flen(4_194_304);
         json.set_decimal(0);
-        json.add_flags(tidb_datatype::FieldTypeFlags::PARSE_TO_JSON);
-        let cast = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("cast"),
+        let cast = tidb_expr::wrap_cast::build_cast_function(
+            &tidb_expr::wrap_cast::UnfoldedBuildContext,
+            column(0, &string),
             json,
-            vec![column(0, &string)],
-        ));
+        )
+        .unwrap();
         let output_field = FieldType::new(output_code);
         let expression = Expression::ScalarFunction(ScalarFunction::new(
             CiString::new(op),

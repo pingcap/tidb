@@ -93,10 +93,12 @@ pub(crate) fn eval_string_cast_with_type(
 /// Evaluate numeric cast signatures without reducing their wire FieldType to
 /// an AST type. Go's source conversion and result production are separate steps.
 /// `in_union` is Go's `baseBuiltinCastFunc.inUnion`: a negative value cast to
-/// an UNSIGNED target in a `UNION` is 0.
+/// an UNSIGNED target in a `UNION` is 0. `arg` is Go's `b.args[0]`, which a
+/// real's overflow names in its warning.
 pub(crate) fn eval_numeric_cast_with_type(
     value: Datum,
     source: EvalType,
+    arg: Option<&crate::expression::Expression>,
     source_field: Option<&FieldType>,
     target: &FieldType,
     in_union: bool,
@@ -200,7 +202,8 @@ pub(crate) fn eval_numeric_cast_with_type(
                             &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL,
                             &format!(
                                 "Truncated incorrect DECIMAL value: '{}'",
-                                tidb_datatype::format_float_g_shortest(value)
+                                arg.and_then(|arg| crate::scalar_function::string_with_ctx(arg, ctx))
+                                    .unwrap_or_else(|| tidb_datatype::format_float_g_shortest(value))
                                 )),
                                 crate::ErrorLevel::Ignore => {}
                                 },
@@ -665,6 +668,25 @@ fn json_eval_error(_: tidb_datatype::BinaryJSONError) -> EvalError {
     EvalError::Unsupported("a malformed JSON value reached CAST(... AS ... ARRAY)")
 }
 
+/// Go `builtinCastStringAsVectorFloat32Sig.evalVectorFloat32`:
+/// `ParseVectorFloat32`, then `CheckDimsFitColumn` of the target's length.
+pub(crate) fn cast_string_as_vector_float32(
+    v: Datum,
+    target: &FieldType,
+) -> Result<Datum, EvalError> {
+    let converted = v
+        .convert_to_in_context(
+            target,
+            &tidb_datatype::ConversionContext::strict(),
+            &tidb_datatype::SessionTimeZone::utc(),
+        )
+        .map_err(|error| EvalError::Vector(error.to_string()))?;
+    match converted.error {
+        None => Ok(converted.value),
+        Some(error) => Err(EvalError::Vector(error.message().to_owned())),
+    }
+}
+
 /// Evaluates a [`CastType`] against an already-evaluated, non-`NULL`
 /// operand (`NULL` is handled by the caller — every target type maps
 /// `NULL` to `NULL`, so there's no per-type NULL case to write here).
@@ -727,7 +749,7 @@ pub(crate) fn eval_cast(
         Datum::Enum(..) | Datum::Set(..) => EvalType::Int,
         _ => inferred.eval_type(),
     };
-    eval_numeric_cast_with_type(v, domain, Some(source.unwrap_or(&inferred)), &target, false, ctx)
+    eval_numeric_cast_with_type(v, domain, None, Some(source.unwrap_or(&inferred)), &target, false, ctx)
 }
 
 fn eval_cast_value(
@@ -1111,6 +1133,7 @@ pub(crate) fn to_i64_signed_with_warnings(
         return match eval_numeric_cast_with_type(
             v.clone(),
             EvalType::Json,
+            None,
             None,
             &FieldType::new(FieldTypeCode::LongLong),
             false,

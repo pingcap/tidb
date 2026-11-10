@@ -78,7 +78,8 @@ fn cast_eval(
     ret_type: FieldType,
     ctx: &impl Columns,
 ) -> Result<Datum, EvalError> {
-    ScalarFunction::new(CiString::new(target), ret_type, vec![arg])
+    assert_eq!(target, "cast");
+    crate::builtin_cast::build_cast_function(&crate::builtin::UnfoldedBuildContext, arg, ret_type)?
         .eval(ctx, tidb_chunk::row::Row::empty())
 }
 
@@ -2337,11 +2338,7 @@ fn json_numeric_batch_scalar_and_vector_casts_share_warnings_and_nulls() {
         let field = FieldType::new(C::Json);
         let mut col = Column::new(1, field.clone());
         col.index = 0;
-        let expression = Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("cast"),
-            target,
-            vec![Expression::Column(col)],
-        ));
+        let expression = Expression::ScalarFunction(crate::builtin_cast::cast_function_for_test(Expression::Column(col), target));
         let mut input = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[field], 2);
         input.append_datum(0, &Datum::Json(BinaryJSON::parse("\"3.5tail\"").unwrap()));
         input.append_null(0);

@@ -155,10 +155,11 @@ against fixtures Go itself wrote -- and the X01 row leaves the register.
     - [x] `builtin_cast.go`: a cast node is named `cast` (Go `ast.Cast`) and
       evaluates by its signature kernel, which carries Go's `inUnion`; the
       per-target `cast_*` node names and the `*_in_union` name arms are gone.
-      Left: the batch paths and the vector-unsupported signatures still go
-      through `cast_type_of` + `cast::eval_cast` (the AST-typed conversion),
-      keyed by `builtin_cast::cast_target_name`; an in-union cast is not
-      pushed down (Go encodes `InUnionMetadata{true}`; goes with 11b-2c).
+      The signatures with no `pbCode` (JSON as array, the vector
+      unsupported pair, string as vector) are `SigFields` the classes set;
+      a cast is sent with its `InUnionMetadata`. Left: the datetime,
+      duration and vector targets of the kernel and the user-variable cast
+      still convert through `cast::eval_cast` (the AST-typed conversion).
   - [ ] 11b-2c: `pushdown_catalog`'s second description of a call
     (`PbScalar`, `BuiltinSignature`, `resolve`) is deleted; `ExprToPB`
     reads the node's signature.

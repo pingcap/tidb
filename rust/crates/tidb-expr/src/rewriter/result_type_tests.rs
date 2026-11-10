@@ -26,6 +26,7 @@ fn cast_binary_padding_gates_on_the_fixed_type_string_code() {
     fn binary_target(code: FieldTypeCode) -> FieldType {
         let mut target = FieldType::new(code);
         target.set_charset_name("binary");
+        target.set_collation_name("binary");
         target.set_flen(20);
         target.set_decimal(-1);
         target
@@ -37,11 +38,7 @@ fn cast_binary_padding_gates_on_the_fixed_type_string_code() {
         ft
     }));
 
-    let adjusted_var_string = ScalarFunction::new(
-        tidb_ast::CiString::new("cast"),
-        binary_target(FieldTypeCode::VarString),
-        vec![constant.clone()],
-    );
+    let adjusted_var_string = crate::builtin_cast::cast_function_for_test(constant.clone(), binary_target(FieldTypeCode::VarString));
     let int_field = FieldType::new(FieldTypeCode::LongLong);
     let mut chunk = tidb_chunk::chunk::Chunk::new(std::slice::from_ref(&int_field), 1, 1);
     chunk.append_int64(0, 0);
@@ -54,11 +51,7 @@ fn cast_binary_padding_gates_on_the_fixed_type_string_code() {
     };
     assert_eq!(unpadded, b"1", "the adjusted flen must not NUL-pad");
 
-    let fixed_string = ScalarFunction::new(
-        tidb_ast::CiString::new("cast"),
-        binary_target(FieldTypeCode::String),
-        vec![constant],
-    );
+    let fixed_string = crate::builtin_cast::cast_function_for_test(constant, binary_target(FieldTypeCode::String));
     let Datum::Bytes(padded) = fixed_string.eval(&tidb_exprctx::context::NoColumns, row).unwrap() else {
         panic!("expected bytes")
     };
