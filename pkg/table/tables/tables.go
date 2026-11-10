@@ -989,7 +989,7 @@ func genIndexKeyStrs(colVals []types.Datum) ([]string, error) {
 			// Chunk readers represent binary columns as strings with the binary collation.
 			if cv.Kind() == types.KindBytes || cv.Kind() == types.KindMysqlBit || cv.Kind() == types.KindBinaryLiteral ||
 				(cv.Kind() == types.KindString && cv.Collation() == charset.CollationBin) {
-				cvs = util.FmtNonASCIIPrintableCharToHex(cvs, len(cvs), true)
+				cvs = util.FmtNonASCIIPrintableCharToHex(cvs)
 			}
 		}
 		strVals = append(strVals, cvs)

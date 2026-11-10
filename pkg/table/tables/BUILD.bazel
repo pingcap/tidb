@@ -25,11 +25,8 @@ go_library(
         "//pkg/metrics",
         "//pkg/parser",
         "//pkg/parser/ast",
-<<<<<<< HEAD
-        "//pkg/parser/model",
-=======
         "//pkg/parser/charset",
->>>>>>> c43831e141a (table: escape binary values in locally detected duplicate-key errors (#72779))
+        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
@@ -81,11 +78,7 @@ go_test(
     ],
     embed = [":tables"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 41,
-=======
-    shard_count = 47,
->>>>>>> c43831e141a (table: escape binary values in locally detected duplicate-key errors (#72779))
+    shard_count = 42,
     deps = [
         "//pkg/ddl",
         "//pkg/domain",
