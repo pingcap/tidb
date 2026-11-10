@@ -626,9 +626,9 @@ func (s *BaseScheduler) scheduleSubTask(
 	if err := s.slotMgr.update(s.ctx, s.nodeMgr, s.taskMgr); err != nil {
 		return err
 	}
+	// Prefer nodes with enough slots, falling back to all eligible nodes if none qualify.
+	// Then limit the number of execution nodes to MaxNodeCount.
 	adjustedEligibleNodes := s.slotMgr.adjustEligibleNodes(eligibleNodes, task.RequiredSlots)
-	// filter by slots before applying MaxNodeCount, otherwise we might only
-	// keep nodes that are already full.
 	if task.MaxNodeCount > 0 && len(adjustedEligibleNodes) > task.MaxNodeCount {
 		adjustedEligibleNodes = adjustedEligibleNodes[:task.MaxNodeCount]
 	}
