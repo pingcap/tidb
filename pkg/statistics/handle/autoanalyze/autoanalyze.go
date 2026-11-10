@@ -293,28 +293,6 @@ func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
 	return
 }
 
-// AnalyzeVersionMatchesForTable reports whether the table already matches the requested
-// session version. For partitioned tables it checks the global stats and every partition;
-// for non-partitioned tables it checks the table stats alone.
-func (sa *statsAnalyze) AnalyzeVersionMatchesForTable(tblInfo *model.TableInfo, requestedVersion int) bool {
-	globalStats := sa.statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
-	if !statistics.AnalyzeVersionMatchesForTableStats(globalStats, requestedVersion) {
-		return false
-	}
-
-	pi := tblInfo.GetPartitionInfo()
-	if pi == nil {
-		return true
-	}
-	for _, def := range pi.Definitions {
-		partitionStats := sa.statsHandle.GetPhysicalTableStats(def.ID, tblInfo)
-		if !statistics.AnalyzeVersionMatchesForTableStats(partitionStats, requestedVersion) {
-			return false
-		}
-	}
-	return true
-}
-
 // GetPriorityQueueSnapshot returns the stats priority queue snapshot.
 func (sa *statsAnalyze) GetPriorityQueueSnapshot() (statstypes.PriorityQueueSnapshot, error) {
 	return sa.refresher.GetPriorityQueueSnapshot()

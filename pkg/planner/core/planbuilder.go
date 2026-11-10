@@ -2735,7 +2735,11 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		// Dynamic partition analyze later merges all partitions into table-level stats, so this
 		// rewrite decision must follow table-level/global stats compatibility rather than only the
 		// requested partition IDs.
-		tableVersionMatches := domain.GetDomain(b.ctx).StatsHandle().AnalyzeVersionMatchesForTable(tbl.TableInfo, version)
+		tableAndPartitionIDs := []int64{tbl.TableInfo.ID}
+		for _, def := range tbl.TableInfo.GetPartitionInfo().Definitions {
+			tableAndPartitionIDs = append(tableAndPartitionIDs, def.ID)
+		}
+		tableVersionMatches := b.analyzeVersionMatchesForPhysicalIDs(tbl.TableInfo, tableAndPartitionIDs, version)
 		if !tableVersionMatches {
 			// Reanalyze all partitions so the global merge rewrites table-level stats with the
 			// session-selected version.
