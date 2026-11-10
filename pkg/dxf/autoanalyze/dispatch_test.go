@@ -16,13 +16,18 @@ package autoanalyze_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/autoanalyze"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -135,6 +140,64 @@ func TestAutoAnalyzeThroughDXF(t *testing.T) {
 	require.True(t, autoAnalyze(exec.AnalyzedTable{ID: pt.Meta().ID, PartitionNames: []string{"p0", "p1"}},
 		"analyze table %n.%n partition %n, %n", "test", "pt", "p0", "p1"))
 	tk.MustQuery(allTasks).Check(testkit.Rows(succeededTask, succeededTask))
+
+	// Another stats owner has left a task for the table. If it runs the same
+	// statement, this statement waits for it and submits nothing. If it runs
+	// another statement, this one submits its own task while that one is active.
+	keyspace := store.GetKeyspace()
+	dxfCtx := kv.WithInternalSourceType(ctx, kv.InternalDistTask)
+	const activeTasks = "select count(*) from mysql.tidb_global_task where state in ('pending', 'running')"
+	for i, c := range []struct {
+		sql     string
+		params  []string
+		adopted bool
+	}{
+		{"analyze table %n.%n", []string{"test", "t"}, true},
+		{"analyze table %n.%n index %n", []string{"test", "t", "idx"}, false},
+	} {
+		setRowCount(tblInfo.ID, autoanalyze.RowLimit)
+		// The task of the other owner starts when release is closed. The timeout
+		// only lets the test fail instead of hang.
+		release := make(chan struct{})
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/beforeCallStartTaskExecutor",
+			func(*proto.TaskBase) {
+				select {
+				case <-release:
+				case <-time.After(30 * time.Second):
+				}
+			},
+		)
+		meta, err := json.Marshal(&autoanalyze.TaskMeta{SQL: c.sql, Params: c.params, TableID: tblInfo.ID})
+		require.NoError(t, err)
+		tasks := len(tk.MustQuery(allTasks).Rows())
+		taskKey := fmt.Sprintf("%s/%s/%d/other-owner-%d", keyspace, proto.AutoAnalyze, tblInfo.ID, i)
+		_, err = handle.SubmitTask(dxfCtx, taskKey, proto.AutoAnalyze, keyspace, 1, targetScope, 1, meta)
+		require.NoError(t, err)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/autoanalyze/afterFindActiveTask", func() {
+			if c.adopted {
+				close(release)
+			}
+		})
+		newTasks := 1
+		if !c.adopted {
+			newTasks = 2
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/handle/afterDXFTaskSubmitted", func() {
+				tk.MustQuery(activeTasks).Check(testkit.Rows("2"))
+				close(release)
+			})
+		}
+		require.True(t, autoAnalyze(exec.AnalyzedTable{ID: tblInfo.ID}, "analyze table %n.%n", "test", "t"))
+		if c.adopted {
+			// The statement has waited for the task of the other owner.
+			tk.MustQuery(activeTasks).Check(testkit.Rows("0"))
+		} else {
+			// The statement has waited for its own task only. The other one can still run.
+			require.Eventually(t, func() bool {
+				return tk.MustQuery(activeTasks).Rows()[0][0] == "0"
+			}, 30*time.Second, 50*time.Millisecond)
+		}
+		tk.MustQuery(allTasks).Check(testkit.Rows(slices.Repeat([]string{succeededTask}, tasks+newTasks)...))
+	}
 
 	// The table of a statement can be gone when the dispatcher runs. The statement then runs
 	// on the stats owner and fails there, as it does without DXF. It submits no task.
