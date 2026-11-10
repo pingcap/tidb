@@ -25,8 +25,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -274,6 +276,21 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 	for _, info := range serverInfo {
 		instance := net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port)))
 		instances[instance] = struct{}{}
+	}
+	if kerneltype.IsNextGen() {
+		// A job can also run on a DXF service node, which is not a server of this keyspace. Its node
+		// ID is also IP:Port. On a list error the function returns: it marks no live job as failed.
+		taskMgr, err := storage.GetDXFSvcTaskMgr()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		nodes, err := taskMgr.GetAllNodes(statsutil.StatsCtx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, node := range nodes {
+			instances[node.ID] = struct{}{}
+		}
 	}
 
 	jobIDs := make([]string, 0, len(rows))
