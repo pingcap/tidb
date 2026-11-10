@@ -9415,7 +9415,9 @@ use super::*;
         // The collector got one `Next` (Go `exec.Next`'s one record).
         let basic = basic_stats_of(&coll, 7);
         assert!(basic.open >= pause && basic.close >= pause, "{basic:?}");
-        assert!(basic.time - basic.open - basic.close < pause, "{basic:?}");
+        // The printed durations are rounded apart, so their difference may
+        // fall a rounding step below zero.
+        assert!(basic.time.saturating_sub(basic.open + basic.close) < pause, "{basic:?}");
         assert_eq!(basic.loops, 1);
     }
 
