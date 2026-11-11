@@ -31,10 +31,9 @@
 //! reserved one grows by Go's `append` as Go's own appends do.
 //!
 //! Narrowings, each named:
-//! - The builtins whose `vecEval*` result step is ported are the ones
-//!   [`builtin_vec_result`] lists. Any other builtin is treated as Go treats
-//!   a non-vectorized one (`evalOneColumn` appends row by row), so its tree
-//!   keeps the evaluator's appends.
+//! - [`builtin_vec_result`] lists every builtin whose Go signature is
+//!   `vectorized()`; any other is Go's non-vectorized one (`evalOneColumn`
+//!   appends row by row), so its tree keeps the evaluator's appends.
 //! - Go's control functions (`IF`, `IFNULL`, `CASE`, `COALESCE`, `AND`,
 //!   `OR`) fall back to row evaluation (`fallbackEval*`) when an argument's
 //!   vectorized evaluation errors or warns. The fallback `Resize*`s (or
@@ -68,6 +67,9 @@ enum VecResult {
     /// buffer and `ReserveString(n)`s before the rows land in it
     /// (`GreatestString`/`LeastString`).
     ArgThenReserve(usize),
+    /// `result.ReserveStringWithSizeHint(n, size)` and one append per row
+    /// (`UUID`, `UUID_V4`, `UUID_V7`).
+    ReserveStringWithSizeHint(usize),
 }
 
 /// The evaluation type Go's `GetType(ctx).EvalType()` reports, from the
@@ -85,14 +87,27 @@ fn same_class(left: EvalType, right: EvalType) -> bool {
 }
 
 /// The result step of the Go builtin signature `function` selects, for the
-/// signatures whose `vectorized()` is true and whose step is ported. `None`
-/// is Go's non-vectorized builtin (`baseBuiltinFunc.vectorized`), or one not
-/// ported here.
+/// signatures whose `vectorized()` is true. `None` is Go's non-vectorized
+/// builtin (`baseBuiltinFunc.vectorized`).
 fn builtin_vec_result(function: &ScalarFunction) -> Option<VecResult> {
     use EvalType::{Datetime, Decimal, Duration, Int, Json, Real, String, Timestamp, VectorFloat32};
     use VecResult::{Allocate, Arg};
     let eval_type = function.get_static_type()?.eval_type();
     let arg_type = |index: usize| function.args.get(index).and_then(|arg| eval_type_of(arg));
+    // builtin_vec_vec.go: every vector builtin resizes or reserves.
+    if matches!(
+        function.func_name.lowercase(),
+        "vec_dims"
+            | "vec_l1_distance"
+            | "vec_l2_distance"
+            | "vec_negative_inner_product"
+            | "vec_cosine_distance"
+            | "vec_l2_norm"
+            | "vec_from_text"
+            | "vec_as_text"
+    ) {
+        return Some(Allocate);
+    }
     // Go's `*VectorFloat32Sig`s keep `baseBuiltinFunc.vectorized`.
     if eval_type == VectorFloat32 || (0..function.args.len()).any(|index| arg_type(index) == Some(VectorFloat32)) {
         return None;
@@ -195,11 +210,31 @@ fn builtin_vec_result(function: &ScalarFunction) -> Option<VecResult> {
         // `Hex`, `MD5`, ...) or resize an integer (`ASCII`, `Strcmp`,
         // `FindInSet`, `Field*`, `Instr`, ...); `Reverse` evaluates its
         // argument into `result` and reverses each cell in place.
-        "repeat" | "space" | "hex" | "unhex" | "quote" | "insert" | "substring_index"
-        | "export_set" | "lpad" | "rpad" | "format" | "oct" | "bin" | "elt" | "char"
+        "repeat" | "space" | "hex" | "unhex" | "quote" | "insert_func" | "substring_index"
+        | "export_set" | "lpad" | "rpad" | "format" | "oct" | "bin" | "elt" | "char_func"
         | "make_set" | "to_base64" | "from_base64" | "translate" | "md5" | "sha1" | "sha"
         | "sha2" | "sm3" | "ascii" | "ord" | "strcmp" | "find_in_set" | "field" | "instr"
-        | "conv" => Allocate,
+        | "conv" | "convert" | "from_binary" | "to_binary" => Allocate,
+        // builtin_like_vec.go / builtin_ilike_vec.go resize.
+        "like" | "ilike" => Allocate,
+        // builtin_op_vec.go: the bit operators evaluate their (first)
+        // argument into `result`.
+        "bitand" | "bitor" | "bitxor" | "bitneg" | "leftshift" | "rightshift" => Arg(0),
+        // builtin_compare_vec.go: `IntervalInt` evaluates its first argument
+        // into `result`, `IntervalReal` resizes it.
+        "interval" => {
+            if (0..function.args.len()).all(|index| arg_type(index) == Some(Int)) {
+                Arg(0)
+            } else {
+                Allocate
+            }
+        }
+        // builtin_encryption_vec.go: every vectorized signature reserves and
+        // appends or resizes.
+        "aes_decrypt" | "aes_encrypt" | "compress" | "uncompress" | "uncompressed_length"
+        | "decode" | "encode" | "password" | "random_bytes" | "validate_password_strength" => {
+            Allocate
+        }
         "reverse" | "bit_count" => Arg(0),
         // `Locate2Args*` resize the result; `Locate3Args*` evaluate the
         // position argument into it.
@@ -232,7 +267,7 @@ fn builtin_vec_result(function: &ScalarFunction) -> Option<VecResult> {
                 Allocate
             }
         }
-        "sign" | "crc32" => Allocate,
+        "sign" | "crc32" | "pi" | "rand" => Allocate,
         // builtin_time_vec.go: the field extractors, differences,
         // conversions and `DATE_ADD`/`DATE_SUB` resize (`Hour`, `Minute`,
         // `Second`, `MicroSecond` through `vecEvalIntByRows`), the
@@ -244,8 +279,11 @@ fn builtin_vec_result(function: &ScalarFunction) -> Option<VecResult> {
         | "second" | "microsecond" | "unix_timestamp" | "from_days" | "makedate" | "maketime"
         | "sec_to_time" | "monthname" | "dayname" | "date_format" | "time_format"
         | "from_unixtime" | "date_add" | "date_sub" | "adddate" | "subdate" | "timestamp"
-        | "str_to_date" | "timestampadd" => Allocate,
-        "date" | "last_day" => Arg(0),
+        | "str_to_date" | "timestampadd" | "curdate" | "current_date" | "curtime"
+        | "current_time" | "now" | "current_timestamp" | "localtime" | "localtimestamp"
+        | "sysdate" | "utc_date" | "utc_time" | "utc_timestamp" | "time" | "timediff"
+        | "get_format" | "tidb_parse_tso" | "tidb_bounded_staleness" => Allocate,
+        "date" | "last_day" | "period_add" | "period_diff" => Arg(0),
         // builtin_time_vec.go `ConvertTz` evaluates its time into `result`;
         // builtin_time_vec_generated.go's `Add*`/`Sub*` signatures over a
         // DATETIME/TIMESTAMP or TIME first argument evaluate it into
@@ -280,6 +318,15 @@ fn builtin_vec_result(function: &ScalarFunction) -> Option<VecResult> {
         // `builtinInet6AtonSig` reserves and appends; both answer NULL for
         // an address their `eval*` rejects.
         "inet_aton" | "inet6_aton" => Allocate,
+        // builtin_miscellaneous_vec.go: the address, UUID and hash builtins
+        // resize or reserve and append; `UUID`, `UUID_V4` and `UUID_V7`
+        // reserve `UUIDStrLen` bytes a row; `NameConst*` evaluate their value
+        // into `result`.
+        "inet_ntoa" | "inet6_ntoa" | "is_ipv4" | "is_ipv4_compat" | "is_ipv4_mapped"
+        | "is_ipv6" | "is_uuid" | "sleep" | "bin_to_uuid" | "uuid_to_bin" | "uuid_version"
+        | "uuid_timestamp" | "vitess_hash" | "json_sum_crc32" => Allocate,
+        "uuid" | "uuid_v4" | "uuid_v7" => VecResult::ReserveStringWithSizeHint(36),
+        "name_const" => Arg(1),
         // builtin_info_vec.go: the info builtins resize or reserve;
         // `LAST_INSERT_ID(expr)` evaluates its argument into `result`.
         "database" | "schema" | "user" | "current_user" | "session_user" | "system_user"
@@ -300,6 +347,13 @@ fn builtin_vec_result(function: &ScalarFunction) -> Option<VecResult> {
             Int | Real | Decimal | String => Allocate,
             _ => return None,
         },
+        // builtin_other_vec.go `Get*Var` resize or reserve; `GetTimeVar` keeps
+        // `baseBuiltinFunc.vectorized`. `GetParamString` reserves.
+        "getvar" => match eval_type {
+            Int | Real | Decimal | String => Allocate,
+            _ => return None,
+        },
+        "getparam" => Allocate,
         "cast" => cast_vec_result(function.args.first()?, eval_type)?,
         _ => return None,
     })
@@ -476,6 +530,9 @@ fn vec_eval(
                 Some(VecResult::ArgThenReserve(index)) if index < function.args.len() => {
                     vec_eval(&function.args[index], eval_type, input, result);
                     result.reserve_string(n);
+                }
+                Some(VecResult::ReserveStringWithSizeHint(size)) => {
+                    result.reserve_string_with_size_hint(n, size);
                 }
                 _ => allocate(eval_type, n, result),
             }
