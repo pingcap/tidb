@@ -23,8 +23,8 @@ use super::add_index::{action_step, AddIndexReorg, AddIndexSubmission, ReorgOutc
 use super::add_index::{ReorgResult, ReorgStageRequest};
 use super::*;
 
-/// Go's executor halves up to `doDDLJob2`. `None` for any other statement.
-pub fn prepare_exchange_partition_job_submission<S: MetaSnapshot>(
+/// Go `executor.ExchangeTablePartition` up to `DoDDLJob`. `None` for any other statement.
+pub fn exchange_table_partition<S: MetaSnapshot>(
     snapshot: &mut S,
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,

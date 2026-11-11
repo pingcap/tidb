@@ -41,7 +41,7 @@ use tidb_infoschema_issyncer::real_tikv_catalog::reload;
 use crate::real_tikv_ddl::{
     answer_ddl_without_job, load_active_persisted_ddl_jobs_cached, load_history_persisted_ddl_job,
     load_min_persisted_ddl_job_id_cached, run_persisted_ddl_job,
-    submit_check_constraint_job_with_retry, CheckConstraintValidator, ClusterDdlReport,
+    CheckConstraintValidator, ClusterDdlReport,
     DdlSchemaSync, IndexBackfiller, PersistedDdlJobOutcome, SchemaVersionNotifier,
 };
 
@@ -1210,6 +1210,28 @@ where
     /// once the job is done and its reorg handles are cleaned, or the check
     /// ticker (`getJobCheckInterval`, capped by ten leases), then the job's
     /// history. The signal is dropped when the wait ends (`delJobDoneCh`).
+    /// Go `executor.DoDDLJobWrapper`: the job handed to the submit loop
+    /// (`deliverJobTask`, whose result is the inserted job's id), then
+    /// waited for in the history.
+    fn do_ddl_job_wrapper(
+        &self,
+        job_context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
+        spec: tidb_ddl_jobsubmit::JobSpec,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let submitted = self.submitter.delivery_job(spec).map_err(cluster_ddl_error)?;
+        self.notify_new_job_submitted();
+        let mut report = self.wait_persisted_job(job_context, submitted.job_id, submitted.action)?;
+        // A merged CREATE TABLE created this statement's table under the id
+        // its submission assigned.
+        if let (Some(table_id), ClusterDdlReport::Applied { created_id, .. }) =
+            (submitted.merged_table_id, &mut report)
+        {
+            *created_id = Some(table_id);
+        }
+        self.refresh_catalog();
+        Ok(report)
+    }
+
     fn wait_persisted_job(
         &self,
         job_context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
@@ -3066,27 +3088,6 @@ where
             );
             return Ok(last);
         }
-        if matches!(
-            statement,
-            DdlStatement::AddCheckConstraint { .. }
-                | DdlStatement::DropCheckConstraint { .. }
-                | DdlStatement::AlterCheckConstraint { .. }
-        ) {
-            let (ddl_job_id, action) = submit_check_constraint_job_with_retry(
-                Arc::clone(&self.opener),
-                statement,
-                self.timeout,
-                self.server_state.is_upgrading_state(),
-                self.scheduler.session_pool.as_ref(),
-                self.min_job_id_refresher.get_curr_min_job_id(),
-                Some(&self.scheduler.ddl_job_done_ch_map),
-            )
-            .map_err(cluster_ddl_error)?;
-            self.notify_new_job_submitted();
-            let report = self.wait_persisted_job(job_context, ddl_job_id, action)?;
-            self.refresh_catalog();
-            return Ok(report);
-        }
         let single_view =
             matches!(statement, DdlStatement::DropView { names, .. } if names.len() == 1);
         if single_view
@@ -3130,13 +3131,14 @@ where
                     | DdlStatement::TruncatePartitions { .. }
                     | DdlStatement::ExchangePartition { .. }
                     | DdlStatement::ReorganizePartitions { .. }
+                    | DdlStatement::AddCheckConstraint { .. }
+                    | DdlStatement::DropCheckConstraint { .. }
+                    | DdlStatement::AlterCheckConstraint { .. }
             )
             || crate::cluster_ddl::alter_table::is_alter_table_statement(statement)
         {
-            // Go `createIndex` / `dropIndex` / `dropTableObject` /
-            // `DropSchema`: a persisted job the owner steps through the
-            // object's schema states.
-            match crate::real_tikv_ddl::submit_persisted_job_with_retry(
+            use crate::cluster_ddl::add_index::AddIndexSubmission;
+            return match crate::real_tikv_ddl::build_ddl_job(
                 Arc::clone(&self.opener),
                 statement,
                 job_context,
@@ -3148,39 +3150,23 @@ where
                 &KvTableIndexBackfiller::new(&self.scheduler.row_ids, &self.scheduler.session_pool)
                     .with_region_store(self.scheduler.region_store.get().cloned()),
                 self.auto_ids.as_ref(),
-                Some(&self.scheduler.ddl_job_done_ch_map),
-                Some(&self.submitter),
             )
             .map_err(cluster_ddl_error)?
             {
-                crate::real_tikv_ddl::AddIndexSubmitted::AlreadySatisfied(report) => {
-                    return Ok(report)
+                AddIndexSubmission::AlreadySatisfied { detail, warnings } => {
+                    Ok(ClusterDdlReport::AlreadySatisfied { detail, warnings })
                 }
-                crate::real_tikv_ddl::AddIndexSubmitted::Job(
-                    ddl_job_id,
-                    action,
-                    executor_warnings,
-                    merged_table_id,
-                ) => {
-                    self.notify_new_job_submitted();
-                    let mut report = self.wait_persisted_job(job_context, ddl_job_id, action)?;
-                    // A merged CREATE TABLE created this statement's table
-                    // under the id its submission assigned.
-                    if let (Some(table_id), ClusterDdlReport::Applied { created_id, .. }) =
-                        (merged_table_id, &mut report)
-                    {
-                        *created_id = Some(table_id);
-                    }
-                    self.refresh_catalog();
+                AddIndexSubmission::Job(spec, executor_warnings) => {
+                    let mut report = self.do_ddl_job_wrapper(job_context, *spec)?;
                     // The executor's warnings precede the job's.
                     let (ClusterDdlReport::Applied { warnings, .. }
                     | ClusterDdlReport::AlreadySatisfied { warnings, .. }) = &mut report;
                     let job_warnings = std::mem::take(warnings);
                     *warnings = executor_warnings;
                     warnings.extend(job_warnings);
-                    return Ok(report);
+                    Ok(report)
                 }
-            }
+            };
         }
         // A statement Go's executor finishes without a job.
         answer_ddl_without_job(Arc::clone(&self.opener), statement, self.timeout)

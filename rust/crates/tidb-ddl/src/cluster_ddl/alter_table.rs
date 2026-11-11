@@ -86,8 +86,8 @@ fn already_satisfied(detail: String) -> Option<AddIndexSubmission> {
     })
 }
 
-/// Go's executor halves up to `doDDLJob2`. `None` for any other statement.
-pub fn prepare_alter_table_job_submission<S: MetaSnapshot>(
+/// Go `executor.AlterTable` up to `DoDDLJob`. `None` for any other statement.
+pub fn alter_table<S: MetaSnapshot>(
     snapshot: &mut S,
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,

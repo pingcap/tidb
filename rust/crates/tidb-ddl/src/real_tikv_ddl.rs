@@ -1218,78 +1218,6 @@ where
     }
 }
 
-/// Submits one persisted CHECK DDL job without executing it.
-///
-/// Go's submitter and owner scheduler are separate. Exposing the boundary is
-/// what lets a non-owner connection enqueue work and wait while the elected
-/// owner (possibly another server) executes it. Answers the job's id and
-/// action.
-pub fn submit_check_constraint_job_with_retry<S: StoreClient>(
-    opener: Arc<RealOptimisticTransactionOpener<S>>,
-    statement: &DdlStatement,
-    timeout: Duration,
-    upgrading: bool,
-    session_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
-    min_job_id: i64,
-    done_channels: Option<&DdlJobDoneChMap>,
-) -> Result<(i64, ActionType), ClusterDdlError> {
-    check_flashback_cluster_job(&opener, timeout, session_pool, min_job_id)?;
-    let preparation = SessionTransaction::begin(
-        Arc::clone(&opener),
-        timeout,
-        ddl_transaction_options(),
-    )?;
-    let start_ts = preparation.start_ts();
-    let prepared = {
-        let mut snapshot = SnapshotMetaSnapshot::new(
-            preparation
-                .snapshot()
-                .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
-        );
-        prepare_check_constraint_job_submission(
-            &mut snapshot,
-            statement,
-            start_ts,
-            upgrading,
-        )
-    };
-    let mut spec = match prepared {
-        Ok(Some(spec)) => spec,
-        Ok(None) => {
-            let _ = preparation.rollback();
-            return Err(ClusterDdlError::NotCommitted(
-                "the statement is not a CHECK DDL job".to_owned(),
-            ));
-        }
-        Err(error) => {
-            let _ = preparation.rollback();
-            return Err(error.into());
-        }
-    };
-    preparation
-        .rollback()
-        .map_err(ClusterDdlError::NotCommitted)?;
-
-    // Go `BeforeInsertWithAssignedIDs: s.registerJobDoneChannels`.
-    gen_gid_and_insert_jobs_with_retry(
-        opener,
-        None,
-        std::slice::from_mut(&mut spec),
-        timeout,
-        |specs| done_channels.map(|channels| channels.register_job_done_channels(specs)),
-    )?;
-    Ok((spec.job.id, spec.job.type_))
-}
-
-/// What submitting an ADD INDEX came to.
-pub enum AddIndexSubmitted {
-    /// The job queued, by id and action, with the executor's statement
-    /// warnings, and the id a merged CREATE TABLE gave the statement's table.
-    Job(i64, ActionType, Vec<tidb_context::SqlWarn>, Option<i64>),
-    /// `IF NOT EXISTS` over an existing index: nothing queued.
-    AlreadySatisfied(ClusterDdlReport),
-}
-
 /// Go's executor halves for every statement this node submits as a
 /// persisted job: the statement checked and its job built and prepared for
 /// insertion (`doDDLJob2` up to the insert), against `snapshot`.
@@ -1314,7 +1242,7 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
     let snapshot = &mut *snapshot;
     match statement {
         DdlStatement::MultiSchemaChange { .. } => {
-            crate::cluster_ddl::multi_schema::prepare_multi_schema_job_submission(
+            crate::cluster_ddl::multi_schema::multi_schema_change(
                 snapshot,
                 statement,
                 job_context,
@@ -1371,7 +1299,7 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
             )
         }
         DdlStatement::ExchangePartition { .. } => {
-            crate::cluster_ddl::exchange_partition::prepare_exchange_partition_job_submission(
+            crate::cluster_ddl::exchange_partition::exchange_table_partition(
                 snapshot,
                 statement,
                 job_context,
@@ -1423,7 +1351,7 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
         }
         DdlStatement::ModifySchemaCharsetAndCollate { .. }
         | DdlStatement::ModifySchemaDefaultPlacement { .. } => {
-            crate::cluster_ddl::alter_schema::prepare_alter_schema_job_submission(
+            crate::cluster_ddl::alter_schema::alter_schema(
                 snapshot,
                 statement,
                 job_context,
@@ -1455,7 +1383,7 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
             )
         }
         DdlStatement::TruncateTable { .. } => {
-            crate::cluster_ddl::truncate::prepare_truncate_table_job_submission(
+            crate::cluster_ddl::truncate::truncate_table(
                 snapshot,
                 statement,
                 job_context,
@@ -1464,7 +1392,7 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
             )
         }
         statement if crate::cluster_ddl::alter_table::is_alter_table_statement(statement) => {
-            crate::cluster_ddl::alter_table::prepare_alter_table_job_submission(
+            crate::cluster_ddl::alter_table::alter_table(
                 snapshot,
                 statement,
                 job_context,
@@ -1520,6 +1448,20 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 upgrading,
             )
         }
+        DdlStatement::AddCheckConstraint { .. }
+        | DdlStatement::DropCheckConstraint { .. }
+        | DdlStatement::AlterCheckConstraint { .. } => {
+            prepare_check_constraint_job_submission(snapshot, statement, start_ts, upgrading).map(
+                |spec| {
+                    spec.map(|spec| {
+                        crate::cluster_ddl::add_index::AddIndexSubmission::Job(
+                            Box::new(spec),
+                            Vec::new(),
+                        )
+                    })
+                },
+            )
+        }
         DdlStatement::DropIndex { .. } | DdlStatement::DropPrimaryKey { .. } => {
             crate::cluster_ddl::drop_index::drop_index(
                 snapshot,
@@ -1541,11 +1483,11 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
     }
 }
 
-/// Go's executor up to `doDDLJob2` for the statement kinds this node submits
-/// as persisted jobs (ADD / DROP INDEX and PRIMARY KEY, DROP TABLE / VIEW /
-/// SEQUENCE / DATABASE): one job queued without executing it; the owner
-/// steps it through Go's schema states.
-pub fn submit_persisted_job_with_retry<S: StoreClient>(
+/// Go's `executor` method for a statement, up to its `DoDDLJobWrapper`: the
+/// statement checked and its job built, with what the method does before the
+/// job (`AlterTableCache`'s size check and `mysql.table_cache_meta` row,
+/// `genPlacementPolicyID`).
+pub fn build_ddl_job<S: StoreClient>(
     opener: Arc<RealOptimisticTransactionOpener<S>>,
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,
@@ -1556,9 +1498,7 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
     min_job_id: i64,
     backfiller: &dyn IndexBackfiller,
     auto_ids: Option<&Arc<tidb_autoid::auto_id_client::AutoIdClient>>,
-    done_channels: Option<&DdlJobDoneChMap>,
-    submitter: Option<&crate::job_submitter::JobSubmitter>,
-) -> Result<AddIndexSubmitted, ClusterDdlError> {
+) -> Result<crate::cluster_ddl::add_index::AddIndexSubmission, ClusterDdlError> {
     check_flashback_cluster_job(&opener, timeout, session_pool, min_job_id)?;
     // Go `CalcMaxNodeCountByStoresNum` reads PD's store list.
     let store_count = opener
@@ -1659,18 +1599,11 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
         }
     };
     let _ = preparation.rollback();
-    let (mut spec, warnings) = match prepared? {
+    let (spec, warnings) = match prepared? {
         Some(crate::cluster_ddl::add_index::AddIndexSubmission::Job(spec, warnings)) => {
-            (*spec, warnings)
+            (spec, warnings)
         }
-        Some(crate::cluster_ddl::add_index::AddIndexSubmission::AlreadySatisfied {
-            detail,
-            warnings,
-        }) => {
-            return Ok(AddIndexSubmitted::AlreadySatisfied(
-                ClusterDdlReport::AlreadySatisfied { detail, warnings },
-            ))
-        }
+        Some(satisfied) => return Ok(satisfied),
         None => {
             return Err(ClusterDdlError::NotCommitted(
                 "the statement is not submitted as a persisted job".to_owned(),
@@ -1723,29 +1656,8 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
         })?;
         crate::cluster_ddl::placement_policy::gen_placement_policy_id(&spec, policy_id);
     }
-    // Go `deliveryJob`: the node's submit loop inserts the job, maybe merged
-    // with others (`BeforeInsertWithAssignedIDs: s.registerJobDoneChannels`).
-    if let Some(submitter) = submitter {
-        let submitted = submitter.delivery_job(spec)?;
-        return Ok(AddIndexSubmitted::Job(
-            submitted.job_id,
-            submitted.action,
-            warnings,
-            submitted.merged_table_id,
-        ));
-    }
-    gen_gid_and_insert_jobs_with_retry(
-        opener,
-        backfiller.session_pool().as_deref(),
-        std::slice::from_mut(&mut spec),
-        timeout,
-        |specs| done_channels.map(|channels| channels.register_job_done_channels(specs)),
-    )?;
-    Ok(AddIndexSubmitted::Job(
-        spec.job.id,
-        spec.job.type_,
-        warnings,
-        None,
+    Ok(crate::cluster_ddl::add_index::AddIndexSubmission::Job(
+        spec, warnings,
     ))
 }
 

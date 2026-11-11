@@ -208,9 +208,6 @@ fn run_multi_schema_changes(action: ActionType) -> DdlPlanError {
     )
 }
 
-/// Go `AlterTable` over more than one specification: each executor's job
-/// becomes a sub-job, then `multiSchemaChange` queues them as one.
-#[allow(clippy::too_many_arguments)]
 /// Go's executor functions append their notes and warnings to the
 /// statement context as they run, so a later specification's refusal leaves
 /// them in place.
@@ -223,7 +220,10 @@ fn publish_warnings(
     }
 }
 
-pub fn prepare_multi_schema_job_submission<S: MetaSnapshot>(
+/// Go `AlterTable` over more than one specification: each executor's job
+/// becomes a sub-job, then `multiSchemaChange` queues them as one.
+#[allow(clippy::too_many_arguments)]
+pub fn multi_schema_change<S: MetaSnapshot>(
     snapshot: &mut S,
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,

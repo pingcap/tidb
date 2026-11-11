@@ -22,7 +22,7 @@ use super::*;
 
 /// Go `executor.TruncateTable` up to `doDDLJob2`. `None` for any other
 /// statement.
-pub fn prepare_truncate_table_job_submission<S: MetaSnapshot>(
+pub fn truncate_table<S: MetaSnapshot>(
     snapshot: &mut S,
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,
