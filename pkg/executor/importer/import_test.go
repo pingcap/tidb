@@ -44,9 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -151,14 +149,14 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	defer sctx.Close()
 	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
 
-	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
-		options := []*plannercore.LoadDataOpt{}
-		var err error
+	convertOptions := func(inOptions []*ast.LoadDataOpt) []*ImportOption {
+		options := []*ImportOption{}
 		for _, opt := range inOptions {
-			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
+			loadDataOpt := ImportOption{Name: opt.Name}
 			if opt.Value != nil {
-				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
+				value, err := plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
 				require.NoError(t, err)
+				loadDataOpt.Value = value.(*expression.Constant)
 			}
 			options = append(options, &loadDataOpt)
 		}
@@ -270,14 +268,14 @@ func TestInitOptionsDisallowOnDuplicateKeyWithLocalSort(t *testing.T) {
 	defer sctx.Close()
 	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
 
-	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
-		options := []*plannercore.LoadDataOpt{}
-		var err error
+	convertOptions := func(inOptions []*ast.LoadDataOpt) []*ImportOption {
+		options := []*ImportOption{}
 		for _, opt := range inOptions {
-			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
+			loadDataOpt := ImportOption{Name: opt.Name}
 			if opt.Value != nil {
-				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
+				value, err := plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
 				require.NoError(t, err)
+				loadDataOpt.Value = value.(*expression.Constant)
 			}
 			options = append(options, &loadDataOpt)
 		}
@@ -301,14 +299,14 @@ func TestInitOptionsFromQueryPositiveCase(t *testing.T) {
 	defer sctx.Close()
 	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
 
-	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
-		options := []*plannercore.LoadDataOpt{}
-		var err error
+	convertOptions := func(inOptions []*ast.LoadDataOpt) []*ImportOption {
+		options := []*ImportOption{}
 		for _, opt := range inOptions {
-			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
+			loadDataOpt := ImportOption{Name: opt.Name}
 			if opt.Value != nil {
-				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
+				value, err := plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
 				require.NoError(t, err)
+				loadDataOpt.Value = value.(*expression.Constant)
 			}
 			options = append(options, &loadDataOpt)
 		}
@@ -346,14 +344,14 @@ func TestInitOptionsFromQueryNegativeCase(t *testing.T) {
 	defer sctx.Close()
 	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
 
-	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
-		options := []*plannercore.LoadDataOpt{}
-		var err error
+	convertOptions := func(inOptions []*ast.LoadDataOpt) []*ImportOption {
+		options := []*ImportOption{}
 		for _, opt := range inOptions {
-			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
+			loadDataOpt := ImportOption{Name: opt.Name}
 			if opt.Value != nil {
-				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
+				value, err := plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
 				require.NoError(t, err)
+				loadDataOpt.Value = value.(*expression.Constant)
 			}
 			options = append(options, &loadDataOpt)
 		}
@@ -490,8 +488,8 @@ func TestInitParameters(t *testing.T) {
 		Format: DataFormatCSV,
 		Path:   "azure://bucket/path?account-name=test-account&sas-token=111111",
 	}
-	require.NoError(t, p.initParameters(&plannercore.ImportInto{
-		Options: []*plannercore.LoadDataOpt{
+	require.NoError(t, p.initParameters(&Input{
+		Options: []*ImportOption{
 			{
 				Name: cloudStorageURIOption,
 				Value: &expression.Constant{
@@ -506,8 +504,8 @@ func TestInitParameters(t *testing.T) {
 		p.Parameters.Options[cloudStorageURIOption].(string))
 
 	// test other options
-	require.NoError(t, p.initParameters(&plannercore.ImportInto{
-		Options: []*plannercore.LoadDataOpt{
+	require.NoError(t, p.initParameters(&Input{
+		Options: []*ImportOption{
 			{
 				Name: detachedOption,
 			},
@@ -554,20 +552,14 @@ func newParquetPlanAndControllerForTest(ctx context.Context, t *testing.T, sctx 
 	fileName := filepath.Join(t.TempDir(), "data.parquet")
 	require.NoError(t, os.WriteFile(fileName, nil, 0o644))
 	format := DataFormatParquet
-	plan, err := NewImportPlan(ctx, sctx, plannercore.ImportInto{
-		Path:   fileName,
-		Format: &format,
-		Table: &resolve.TableNameW{
-			TableName: &ast.TableName{
-				Schema: ast.NewCIStr("test"),
-				Name:   ast.NewCIStr("t"),
-			},
-			DBInfo: &model.DBInfo{
-				Name: ast.NewCIStr("test"),
-				ID:   1,
-			},
-		},
-	}.Init(sctx.GetPlanCtx()), table)
+	plan, err := NewImportPlanFromInput(ctx, sctx, &Input{
+		DBName:         "test",
+		DBID:           1,
+		TableInfo:      tblInfo,
+		Path:           fileName,
+		Format:         &format,
+		DataSourceType: DataSourceTypeFile,
+	})
 	require.NoError(t, err)
 
 	controller, err := NewLoadDataController(plan, table, &ASTArgs{})
@@ -937,12 +929,6 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	}
 }
 
-func TestGetDataSourceType(t *testing.T) {
-	require.Equal(t, DataSourceTypeQuery, getDataSourceType(&plannercore.ImportInto{
-		SelectPlan: &physicalop.PhysicalSelection{},
-	}))
-	require.Equal(t, DataSourceTypeFile, getDataSourceType(&plannercore.ImportInto{}))
-}
 func TestParseFileType(t *testing.T) {
 	testCases := []struct {
 		name     string
@@ -1006,4 +992,52 @@ func TestGetDefMaxEngineSize(t *testing.T) {
 	} else {
 		require.Equal(t, config.ByteSize(100*units.GiB), getDefMaxEngineSize())
 	}
+}
+
+func TestImportPlanFromInput(t *testing.T) {
+	// The thread count is clamped to the CPU count, so pin it.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(4)")
+	ctx := context.Background()
+	sctx := mock.NewContext()
+	defer sctx.Close()
+	sctx.Store = keyspaceOnlyStore{}
+	tblInfo := &model.TableInfo{ID: 42, Name: ast.NewCIStr("t"), State: model.StatePublic}
+	format := DataFormatCSV
+	value := &expression.Constant{Value: types.NewIntDatum(2), RetType: types.NewFieldType(mysql.TypeLonglong)}
+	for _, sourceType := range []DataSourceType{DataSourceTypeFile, DataSourceTypeQuery} {
+		t.Run(sourceType.String(), func(t *testing.T) {
+			plan, err := NewImportPlanFromInput(ctx, sctx, &Input{
+				DBName: "test", DBID: 7, TableInfo: tblInfo,
+				Path: filepath.Join(t.TempDir(), "data.csv"), Format: &format, DataSourceType: sourceType,
+				Options: []*ImportOption{{Name: threadOption, Value: value}},
+			})
+			require.NoError(t, err)
+			require.Same(t, tblInfo, plan.TableInfo)
+			require.Same(t, tblInfo, plan.DesiredTableInfo)
+			require.Equal(t, sourceType, plan.DataSourceType)
+			require.Equal(t, 2, plan.ThreadCnt)
+			require.Equal(t, "2", plan.Parameters.Options[threadOption])
+		})
+	}
+	_, err := NewImportPlanFromInput(ctx, sctx, nil)
+	require.ErrorContains(t, err, "target table metadata")
+}
+
+func TestPlanMetadataCompatibility(t *testing.T) {
+	// Task metadata is persisted, so moving the embedded format type must not
+	// change its flattened JSON layout.
+	const legacy = `{"DBName":"db","DBID":7,"FieldsTerminatedBy":",","LinesTerminatedBy":"\n","DataSourceType":"query","OnDupKey":"error"}`
+	var p Plan
+	require.NoError(t, json.Unmarshal([]byte(legacy), &p))
+	require.Equal(t, ",", p.FieldsTerminatedBy)
+	require.Equal(t, "\n", p.LinesTerminatedBy)
+	encoded, err := json.Marshal(p)
+	require.NoError(t, err)
+	var actual, expected map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(encoded, &actual))
+	require.NoError(t, json.Unmarshal([]byte(legacy), &expected))
+	for key, value := range expected {
+		require.JSONEq(t, string(value), string(actual[key]), key)
+	}
+	require.NotContains(t, actual, "LineFieldsInfo")
 }

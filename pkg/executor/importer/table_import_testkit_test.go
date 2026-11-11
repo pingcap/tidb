@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -64,7 +65,7 @@ func TestStartDiskQuotaCheck(t *testing.T) {
 	require.True(t, ok)
 	table, err := do.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	plan, err := importer.NewImportPlan(ctx, tk.Session(), plannercore.ImportInto{
+	plan, err := executor.NewImportPlan(ctx, tk.Session(), plannercore.ImportInto{
 		Table: &resolve.TableNameW{
 			TableName: &ast.TableName{
 				Name: ast.NewCIStr("t"),
@@ -110,7 +111,7 @@ func TestImportFromSelectCleanup(t *testing.T) {
 	require.True(t, ok)
 	table, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	plan, err := importer.NewImportPlan(ctx, tk.Session(), plannercore.ImportInto{
+	plan, err := executor.NewImportPlan(ctx, tk.Session(), plannercore.ImportInto{
 		Table: &resolve.TableNameW{
 			TableName: &ast.TableName{
 				Name: ast.NewCIStr("t"),

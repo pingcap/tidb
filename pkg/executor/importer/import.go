@@ -45,6 +45,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	litlog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -56,7 +57,6 @@ import (
 	pformat "github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -297,7 +297,7 @@ type Plan struct {
 	NullValueOptEnclosed bool
 	// LinesStartingBy is not used in IMPORT INTO
 	// FieldsOptEnclosed is not used in either IMPORT INTO or LOAD DATA
-	plannercore.LineFieldsInfo
+	importdef.LineFieldsInfo
 	IgnoreLines uint64
 
 	DiskQuota             config.ByteSize
@@ -459,7 +459,8 @@ type LoadDataController struct {
 	ExecuteNodesCnt int
 }
 
-func getImportantSysVars(sctx sessionctx.Context) map[string]string {
+// GetImportantSysVars returns the system variables that affect data encoding.
+func GetImportantSysVars(sctx sessionctx.Context) map[string]string {
 	res := map[string]string{}
 	for k, defVal := range common.DefaultImportantVariables {
 		if val, ok := sctx.GetSessionVars().GetSystemVar(k); ok {
@@ -478,74 +479,14 @@ func getImportantSysVars(sctx sessionctx.Context) map[string]string {
 	return res
 }
 
-// NewPlanFromLoadDataPlan creates a import plan from LOAD DATA.
-func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.LoadData) (*Plan, error) {
-	fullTableName := common.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
-	logger := log.L().With(zap.String("table", fullTableName))
-	charset := plan.Charset
-	if charset == nil {
-		// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-character-set
-		d, err2 := userSctx.GetSessionVars().GetSessionOrGlobalSystemVar(
-			context.Background(), vardef.CharsetDatabase)
-		if err2 != nil {
-			logger.Error("LOAD DATA get charset failed", zap.Error(err2))
-		} else {
-			charset = &d
-		}
+// NewImportPlanFromInput prepares an import plan from resolved input.
+func NewImportPlanFromInput(ctx context.Context, userSctx sessionctx.Context, input *Input) (*Plan, error) {
+	if input == nil || input.TableInfo == nil {
+		return nil, errors.New("import preparation requires target table metadata")
 	}
-	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode() &&
-		plan.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
-
-	var ignoreLines uint64
-	if plan.IgnoreLines != nil {
-		ignoreLines = *plan.IgnoreLines
-	}
-
-	var (
-		nullDef              []string
-		nullValueOptEnclosed = false
-	)
-
-	lineFieldsInfo := plannercore.NewLineFieldsInfo(plan.FieldsInfo, plan.LinesInfo)
-	// todo: move null defined into plannercore.LineFieldsInfo
-	// in load data, there maybe multiple null def, but in SELECT ... INTO OUTFILE there's only one
-	if plan.FieldsInfo != nil && plan.FieldsInfo.DefinedNullBy != nil {
-		nullDef = append(nullDef, *plan.FieldsInfo.DefinedNullBy)
-		nullValueOptEnclosed = plan.FieldsInfo.NullValueOptEnclosed
-	} else if len(lineFieldsInfo.FieldsEnclosedBy) != 0 {
-		nullDef = append(nullDef, "NULL")
-	}
-	if len(lineFieldsInfo.FieldsEscapedBy) != 0 {
-		nullDef = append(nullDef, string([]byte{lineFieldsInfo.FieldsEscapedBy[0], 'N'}))
-	}
-
-	return &Plan{
-		DBName: plan.Table.Schema.L,
-		DBID:   plan.Table.DBInfo.ID,
-
-		Path:                 plan.Path,
-		Format:               DataFormatDelimitedData,
-		Restrictive:          restrictive,
-		FieldNullDef:         nullDef,
-		NullValueOptEnclosed: nullValueOptEnclosed,
-		LineFieldsInfo:       lineFieldsInfo,
-		IgnoreLines:          ignoreLines,
-
-		SQLMode:          userSctx.GetSessionVars().SQLMode,
-		Charset:          charset,
-		ImportantSysVars: getImportantSysVars(userSctx),
-
-		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
-		DataSourceType:         DataSourceTypeFile,
-	}, nil
-}
-
-// NewImportPlan creates a new import into plan.
-func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
-	failpoint.InjectCall("NewImportPlan", plan)
 	var format string
-	if plan.Format != nil {
-		format = strings.ToLower(*plan.Format)
+	if input.Format != nil {
+		format = strings.ToLower(*input.Format)
 	} else {
 		format = DataFormatAuto
 	}
@@ -556,12 +497,12 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 	// like +08:00.
 	location := userSctx.GetSessionVars().Location()
 	p := &Plan{
-		TableInfo:        tbl.Meta(),
-		DesiredTableInfo: tbl.Meta(),
-		DBName:           plan.Table.Schema.L,
-		DBID:             plan.Table.DBInfo.ID,
+		TableInfo:        input.TableInfo,
+		DesiredTableInfo: input.TableInfo,
+		DBName:           input.DBName,
+		DBID:             input.DBID,
 
-		Path:           plan.Path,
+		Path:           input.Path,
 		Format:         format,
 		Restrictive:    restrictive,
 		FieldNullDef:   defaultFieldNullDef,
@@ -569,27 +510,27 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 
 		LocationID:       timeutil.ZoneName(location),
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
-		ImportantSysVars: getImportantSysVars(userSctx),
+		ImportantSysVars: GetImportantSysVars(userSctx),
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
 		InImportInto:           true,
-		DataSourceType:         getDataSourceType(plan),
+		DataSourceType:         input.DataSourceType,
 		User:                   userSctx.GetSessionVars().User.String(),
 		Keyspace:               userSctx.GetStore().GetKeyspace(),
 	}
 	p.setUseNewCollate(collate.NewCollationEnabled())
-	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
+	if err := p.initOptions(ctx, userSctx, input.Options); err != nil {
 		return nil, err
 	}
-	if err := p.initParameters(plan); err != nil {
+	if err := p.initParameters(input); err != nil {
 		return nil, err
 	}
 	return p, nil
 }
 
-func newDefaultLineFieldsInfo() plannercore.LineFieldsInfo {
+func newDefaultLineFieldsInfo() importdef.LineFieldsInfo {
 	// those are the default values for lightning CSV format too
-	return plannercore.LineFieldsInfo{
+	return importdef.LineFieldsInfo{
 		FieldsTerminatedBy: `,`,
 		FieldsEnclosedBy:   `"`,
 		FieldsEscapedBy:    `\`,
@@ -597,29 +538,6 @@ func newDefaultLineFieldsInfo() plannercore.LineFieldsInfo {
 		// csv_parser will determine it automatically(either '\r' or '\n' or '\r\n')
 		// But user cannot set this to empty explicitly.
 		LinesTerminatedBy: ``,
-	}
-}
-
-// ASTArgsFromPlan creates ASTArgs from plan.
-func ASTArgsFromPlan(plan *plannercore.LoadData) *ASTArgs {
-	return &ASTArgs{
-		FileLocRef:         plan.FileLocRef,
-		ColumnsAndUserVars: plan.ColumnsAndUserVars,
-		ColumnAssignments:  plan.ColumnAssignments,
-		OnDuplicate:        plan.OnDuplicate,
-		FieldsInfo:         plan.FieldsInfo,
-		LinesInfo:          plan.LinesInfo,
-	}
-}
-
-// ASTArgsFromImportPlan creates ASTArgs from plan.
-func ASTArgsFromImportPlan(plan *plannercore.ImportInto) *ASTArgs {
-	// FileLocRef are not used in ImportIntoStmt, OnDuplicate not used now.
-	return &ASTArgs{
-		FileLocRef:         ast.FileLocServerOrRemote,
-		ColumnsAndUserVars: plan.ColumnsAndUserVars,
-		ColumnAssignments:  plan.ColumnAssignments,
-		OnDuplicate:        ast.OnDuplicateKeyHandlingReplace,
 	}
 }
 
@@ -767,14 +685,14 @@ func getDefMaxEngineSize() config.ByteSize {
 	return config.ByteSize(defaultMaxEngineSize)
 }
 
-func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
+func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, options []*ImportOption) error {
 	targetNodeCPUCnt, err := GetTargetNodeCPUCnt(ctx, p.DataSourceType, p.Path)
 	if err != nil {
 		return err
 	}
 	p.initDefaultOptions(ctx, targetNodeCPUCnt, seCtx.GetStore())
 
-	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
+	specifiedOptions := map[string]*ImportOption{}
 	for _, opt := range options {
 		hasValue, ok := supportedOptions[opt.Name]
 		if !ok {
@@ -831,7 +749,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		}
 	}
 
-	optAsString := func(opt *plannercore.LoadDataOpt) (string, error) {
+	optAsString := func(opt *ImportOption) (string, error) {
 		if opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetType() != mysql.TypeVarString {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
@@ -841,7 +759,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		}
 		return val, nil
 	}
-	optAsInt64 := func(opt *plannercore.LoadDataOpt) (int64, error) {
+	optAsInt64 := func(opt *ImportOption) (int64, error) {
 		// current parser takes integer and bool as mysql.TypeLonglong
 		if opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetType() != mysql.TypeLonglong || mysql.HasIsBooleanFlag(opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetFlag()) {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
@@ -1066,14 +984,14 @@ func isSupportedCloudStorageBackend(backend *backuppb.StorageBackend) bool {
 	return backend != nil && (backend.GetS3() != nil || backend.GetGcs() != nil || backend.GetAzureBlobStorage() != nil)
 }
 
-func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
+func (p *Plan) initParameters(input *Input) error {
 	redactURL := ast.RedactURL(p.Path)
 	var columnsAndVars, setClause string
 	var sb strings.Builder
 	formatCtx := pformat.NewRestoreCtx(pformat.DefaultRestoreFlags, &sb)
-	if len(plan.ColumnsAndUserVars) > 0 {
+	if len(input.ColumnsAndUserVars) > 0 {
 		sb.WriteString("(")
-		for i, col := range plan.ColumnsAndUserVars {
+		for i, col := range input.ColumnsAndUserVars {
 			if i > 0 {
 				sb.WriteString(", ")
 			}
@@ -1082,9 +1000,9 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 		sb.WriteString(")")
 		columnsAndVars = sb.String()
 	}
-	if len(plan.ColumnAssignments) > 0 {
+	if len(input.ColumnAssignments) > 0 {
 		sb.Reset()
-		for i, assign := range plan.ColumnAssignments {
+		for i, assign := range input.ColumnAssignments {
 			if i > 0 {
 				sb.WriteString(", ")
 			}
@@ -1092,15 +1010,10 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 		}
 		setClause = sb.String()
 	}
-	optionMap := make(map[string]any, len(plan.Options))
-	for _, opt := range plan.Options {
+	optionMap := make(map[string]any, len(input.Options))
+	for _, opt := range input.Options {
 		if opt.Value != nil {
-			// The option attached to the import statement here are all
-			// parameters entered by the user. TiDB will process the
-			// parameters entered by the user as constant. so we can
-			// directly convert it to constant.
-			cons := opt.Value.(*expression.Constant)
-			val := fmt.Sprintf("%v", cons.Value.GetValue())
+			val := fmt.Sprintf("%v", opt.Value.Value.GetValue())
 			if opt.Name == cloudStorageURIOption {
 				val = ast.RedactURL(val)
 			}
@@ -1235,7 +1148,7 @@ func (e *LoadDataController) GetFieldCount() int {
 // GenerateCSVConfig generates a CSV config for parser from LoadDataWorker.
 func generateCSVConfig(
 	fieldNullDef []string,
-	lineFieldsInfo plannercore.LineFieldsInfo,
+	lineFieldsInfo importdef.LineFieldsInfo,
 	inImportInto bool,
 	nullValueOptEnclosed bool,
 ) *config.CSVConfig {
@@ -1290,7 +1203,7 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) (err error) {
 		return err2
 	}
 
-	s, err := initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
+	s, err := initExternalStore(ctx, u, importdef.ImportIntoDataSource)
 	if err != nil {
 		return err
 	}
@@ -1310,7 +1223,7 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) (err error) {
 func (e *LoadDataController) parseDataSourcePath() (*url.URL, string, error) {
 	u, err := objstore.ParseRawURL(e.Path)
 	if err != nil {
-		return nil, "", exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+		return nil, "", exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(importdef.ImportIntoDataSource,
 			err.Error())
 	}
 
@@ -1330,7 +1243,7 @@ func (e *LoadDataController) parseDataSourcePath() (*url.URL, string, error) {
 func checkDataSourceGlob(fileNameKey string) error {
 	// matching an empty name is enough to detect a malformed pattern.
 	if _, err := filepath.Match(stringutil.EscapeGlobQuestionMark(fileNameKey), ""); err != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(importdef.ImportIntoDataSource,
 			"Glob pattern error: "+err.Error())
 	}
 	return nil
@@ -1357,7 +1270,7 @@ func (e *LoadDataController) CheckDataSourceAccess(ctx context.Context) error {
 		return err
 	}
 
-	sourceStore, err := initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
+	sourceStore, err := initExternalStore(ctx, u, importdef.ImportIntoDataSource)
 	if err != nil {
 		return err
 	}
@@ -1584,20 +1497,20 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 
 		if !filepath.IsAbs(e.Path) {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(importdef.ImportIntoDataSource,
 				"file location should be absolute path when import from server disk")
 		}
 		// we add this check for security, we don't want user import any sensitive system files,
 		// most of which is readable text file and don't have a suffix, such as /etc/passwd
 		if !slices.Contains(supportedSuffixForServerDisk, strings.ToLower(filepath.Ext(e.Path))) {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(importdef.ImportIntoDataSource,
 				"the file suffix is not supported when import from server disk")
 		}
 		dir := filepath.Dir(e.Path)
 		_, err := os.Stat(dir)
 		if err != nil {
 			// permission denied / file not exist error, etc.
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(importdef.ImportIntoDataSource,
 				err.Error())
 		}
 	}
@@ -2119,13 +2032,6 @@ func (e *LoadDataController) FullTableName() string {
 	return common.UniqueTable(e.DBName, e.Table.Meta().Name.O)
 }
 
-func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
-	if p.SelectPlan != nil {
-		return DataSourceTypeQuery
-	}
-	return DataSourceTypeFile
-}
-
 // GetTargetNodeCPUCnt get cpu count of target node where the import into job will be executed.
 // target node is current node if it's server-disk import, import from query or disttask is disabled,
 // else it's the node managed by disttask.
@@ -2137,7 +2043,7 @@ func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path st
 
 	u, err2 := objstore.ParseRawURL(path)
 	if err2 != nil {
-		return 0, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+		return 0, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(importdef.ImportIntoDataSource,
 			err2.Error())
 	}
 

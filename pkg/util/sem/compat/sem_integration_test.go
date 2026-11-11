@@ -58,7 +58,7 @@ func TestRestrictedSQL(t *testing.T) {
 			return
 		}
 
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/NewImportPlan", func(plan *plannercore.ImportInto) {
 			u, err := url.Parse(plan.Path)
 			require.NoError(t, err)
 			require.Contains(t, u.Query(), s3like.S3ExternalID)

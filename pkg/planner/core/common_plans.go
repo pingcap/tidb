@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -796,51 +797,7 @@ type SelectInto struct {
 
 	TargetPlan base.Plan
 	IntoOpt    *ast.SelectIntoOption
-	LineFieldsInfo
-}
-
-// LineFieldsInfo used in load-data/select-into/index-advise stmt.
-type LineFieldsInfo struct {
-	FieldsTerminatedBy string
-	FieldsEnclosedBy   string // length always <= 1, see parser.y
-	FieldsEscapedBy    string // length always <= 1, see parser.y
-	FieldsOptEnclosed  bool
-	LinesStartingBy    string
-	LinesTerminatedBy  string
-}
-
-// NewLineFieldsInfo new LineFieldsInfo from FIELDS/LINES info.
-func NewLineFieldsInfo(fieldsInfo *ast.FieldsClause, linesInfo *ast.LinesClause) LineFieldsInfo {
-	e := LineFieldsInfo{
-		FieldsTerminatedBy: "\t",
-		FieldsEnclosedBy:   "",
-		FieldsEscapedBy:    "\\",
-		FieldsOptEnclosed:  false,
-		LinesStartingBy:    "",
-		LinesTerminatedBy:  "\n",
-	}
-
-	if fieldsInfo != nil {
-		if fieldsInfo.Terminated != nil {
-			e.FieldsTerminatedBy = *fieldsInfo.Terminated
-		}
-		if fieldsInfo.Enclosed != nil {
-			e.FieldsEnclosedBy = *fieldsInfo.Enclosed
-		}
-		if fieldsInfo.Escaped != nil {
-			e.FieldsEscapedBy = *fieldsInfo.Escaped
-		}
-		e.FieldsOptEnclosed = fieldsInfo.OptEnclosed
-	}
-	if linesInfo != nil {
-		if linesInfo.Starting != nil {
-			e.LinesStartingBy = *linesInfo.Starting
-		}
-		if linesInfo.Terminated != nil {
-			e.LinesTerminatedBy = *linesInfo.Terminated
-		}
-	}
-	return e
+	importdef.LineFieldsInfo
 }
 
 // ExplainInfoForEncode store explain info for JSON encode

@@ -243,7 +243,7 @@ func newQueryStepExecutor(t *testing.T, tk *testkit.TestKit, sql string) (execut
 	require.NoError(t, err)
 	tbl, err := dom.InfoSchema().TableByName(ctx, importPlan.Table.Schema, importPlan.Table.Name)
 	require.NoError(t, err)
-	plan, err := importer.NewImportPlan(ctx, tk.Session(), importPlan, tbl)
+	plan, err := executor.NewImportPlan(ctx, tk.Session(), importPlan, tbl)
 	require.NoError(t, err)
 	plan.CloudStorageURI = sortDir
 	plan.QuerySource, err = importer.CaptureQuerySource(tk.Session(), sql)
@@ -298,7 +298,7 @@ func TestImportQueryStep(t *testing.T) {
 	tk.MustExec("insert into query_src values (1,10),(1,20),(2,30)")
 	tk.MustExec("create table query_dst(g bigint primary key, c bigint, s decimal(42,0))")
 	sql := "import into query_dst from (select /*+ STREAM_AGG() */ g, count(*), sum(v) from query_src use index(idx_g) group by g) with thread=2"
-	require.NoError(t, importer.PlanImportQueryForTest(tk.Session(), sql))
+	require.NoError(t, executor.PlanImportQueryForTest(tk.Session(), sql))
 	step, sortStore := newQueryStepExecutor(t, tk, sql)
 	ctx := context.Background()
 
@@ -321,7 +321,7 @@ func TestImportQueryStep(t *testing.T) {
 		tk.MustExec("insert into query_bad values (1, 'not json')")
 		tk.MustExec("create table query_bad_dst(g bigint primary key, j json)")
 		badSQL := "import into query_bad_dst from (select g, cast(j as json) from query_bad) with thread=2"
-		require.NoError(t, importer.PlanImportQueryForTest(tk.Session(), badSQL))
+		require.NoError(t, executor.PlanImportQueryForTest(tk.Session(), badSQL))
 		badStep, badStore := newQueryStepExecutor(t, tk, badSQL)
 		runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
@@ -346,7 +346,7 @@ func TestImportQueryStep(t *testing.T) {
 
 	t.Run("encode many chunks", func(t *testing.T) {
 		manySQL := "import into query_many_dst from (select v from query_many) with thread=2"
-		require.NoError(t, importer.PlanImportQueryForTest(tk.Session(), manySQL))
+		require.NoError(t, executor.PlanImportQueryForTest(tk.Session(), manySQL))
 		manyStep, manyStore := newQueryStepExecutor(t, tk, manySQL)
 		subtask := newQuerySubtask(t, manyStore, 4)
 		require.NoError(t, manyStep.RunSubtask(ctx, subtask))
@@ -368,7 +368,7 @@ func TestImportQueryStep(t *testing.T) {
 
 	t.Run("empty query result", func(t *testing.T) {
 		emptySQL := "import into query_many_dst from (select v from query_many where v < 0) with thread=2"
-		require.NoError(t, importer.PlanImportQueryForTest(tk.Session(), emptySQL))
+		require.NoError(t, executor.PlanImportQueryForTest(tk.Session(), emptySQL))
 		emptyStep, emptyStore := newQueryStepExecutor(t, tk, emptySQL)
 		subtask := newQuerySubtask(t, emptyStore, 5)
 		require.NoError(t, emptyStep.RunSubtask(ctx, subtask))
@@ -380,7 +380,7 @@ func TestImportQueryStep(t *testing.T) {
 
 	t.Run("encode failure stops the query", func(t *testing.T) {
 		manySQL := "import into query_many_dst from (select v from query_many) with thread=2"
-		require.NoError(t, importer.PlanImportQueryForTest(tk.Session(), manySQL))
+		require.NoError(t, executor.PlanImportQueryForTest(tk.Session(), manySQL))
 		manyStep, manyStore := newQueryStepExecutor(t, tk, manySQL)
 		// The encoders fail before reading any chunk, so the query blocks on
 		// sending until the pipeline is canceled.
