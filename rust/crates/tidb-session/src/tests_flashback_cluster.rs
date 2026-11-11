@@ -308,6 +308,38 @@ fn flashback_to_timestamp_refusals_like_go() {
     assert_eq!(variable(session, "tidb_ttl_job_enable"), "OFF");
 }
 
+/// Go `checkAndSetFlashbackClusterInfo`: a DDL job that was running at the
+/// flashback timestamp refuses the flashback.
+#[test]
+fn a_ddl_job_at_the_flashback_timestamp_is_refused_like_go() {
+    let mut session = mock_store_session();
+    let session = &mut session;
+    exec(session, "use test");
+    exec(session, "create table t(a int)");
+    let domain = crate::domain::mock_store::domain_of(session).expect("a mock store session");
+    let running = Arc::new(Mutex::new(None));
+    let seen = running.clone();
+    let before = enable_call("beforeRunOneJobStep", move |job| {
+        assert_eq!(job.type_, ActionType::ACTION_ADD_COLUMN);
+        let mut seen = seen.lock().unwrap();
+        if seen.is_none() {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            *seen = Some(get_timestamp(&mut domain.new_session().expect("a second session")));
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    });
+    exec(session, "alter table t add column b int");
+    drop(before);
+    let ts = running.lock().unwrap().expect("the job ran a step");
+    let _mock = mock_flashback(session, ts);
+    let flashback = flashback_to(ts);
+    let at = flashback.trim_start_matches("flashback cluster to timestamp '").trim_end_matches('\'');
+    assert_eq!(
+        error_of(session, &flashback),
+        (1105, format!("Detected another DDL job at {at}, can't do flashback"))
+    );
+}
+
 /// Go `ValidateFlashbackTS`, called by `checkAndSetFlashbackClusterInfo`: a
 /// timestamp ahead of the store's is refused and the job cancelled.
 #[test]
