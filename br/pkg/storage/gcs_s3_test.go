@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package s3store
+package storage
 
 import (
 	"context"
@@ -23,7 +23,6 @@ import (
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -125,8 +124,8 @@ func TestGCSS3CompatibleSignerSkipsAcceptEncoding(t *testing.T) {
 			if endpoint == "" {
 				endpoint = server.URL
 			}
-			opts := &storeapi.Options{
-				CheckPermissions: []storeapi.Permission{storeapi.AccessBuckets, storeapi.ListObjects},
+			opts := &ExternalStorageOptions{
+				CheckPermissions: []Permission{AccessBuckets, ListObjects},
 			}
 			if tc.httpClient != nil {
 				opts.HTTPClient = tc.httpClient(server.URL)
@@ -163,7 +162,7 @@ func TestGCSS3CompatibleSignerSkipsAcceptEncoding(t *testing.T) {
 					headSeen = true
 				case http.MethodGet:
 					listSeen = true
-					require.Equal(t, "2", req.listType)
+					require.Empty(t, req.listType)
 				default:
 					require.Failf(t, "unexpected request method", "method: %s", req.method)
 				}
