@@ -15,7 +15,7 @@
 package core
 
 import (
-	"math"
+	"cmp"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -140,14 +140,19 @@ func initUnfinishedPathsFromExpr(
 		ret[i].index = path.Index
 		// case 1: try to use the previous logic to handle non-mv index
 		if !isMVIndexPath(path) {
+<<<<<<< HEAD
 			// generateNormalIndexPartialPaths4DNF is introduced for handle a slice of DNF items and a slice of
 			// candidate AccessPaths before, now we reuse it to handle single filter and single candidate AccessPath,
 			// so we need to wrap them in a slice here.
 			paths, needSelection, usedMap := generateNormalIndexPartialPaths4DNF(
+=======
+			partialPath, needSelection := generateNormalIndexPartialPath(
+>>>>>>> d0ea9e50d5a (planner: prepare `AccessPath.PartialAlternativeIndexPaths` to handle MV indexes (#58397))
 				ds,
 				[]expression.Expression{expr},
 				[]*util.AccessPath{path},
 			)
+<<<<<<< HEAD
 			if len(usedMap) == 1 && usedMap[0] && len(paths) == 1 {
 				ret[i].initedAsFinished = true
 				ret[i].accessFilters = paths[0].AccessConds
@@ -158,6 +163,12 @@ func initUnfinishedPathsFromExpr(
 				if len(ret[i].accessFilters) <= 0 {
 					ret[i].accessFilters = []expression.Expression{expr}
 				}
+=======
+			if partialPath != nil {
+				ret[i].initedWithValidRange = true
+				ret[i].needKeepFilter = needSelection
+				ret[i].usableFilters = []expression.Expression{expr}
+>>>>>>> d0ea9e50d5a (planner: prepare `AccessPath.PartialAlternativeIndexPaths` to handle MV indexes (#58397))
 				continue
 			}
 		}
@@ -334,6 +345,7 @@ func buildIntoAccessPath(
 	// produce several partial paths).
 	partialPaths := make([]*util.AccessPath, 0, len(indexMergePath.indexMergeORPartialPaths))
 
+<<<<<<< HEAD
 	// for each partial path
 	for _, unfinishedPathList := range indexMergePath.indexMergeORPartialPaths {
 		var (
@@ -341,9 +353,18 @@ func buildIntoAccessPath(
 			bestCountAfterAccess float64
 			bestNeedSelection    bool
 		)
+=======
+	// for each OR branch
+	for _, orBranch := range indexMergePath.orBranches {
+		type alternative struct {
+			paths         []*util.AccessPath
+			needSelection bool
+		}
+		var alternativesForORBranch []alternative
+>>>>>>> d0ea9e50d5a (planner: prepare `AccessPath.PartialAlternativeIndexPaths` to handle MV indexes (#58397))
 
-		// for each possible access path of this partial path
-		for i, unfinishedPath := range unfinishedPathList {
+		// for each alternative of this OR branch
+		for i, unfinishedPath := range orBranch {
 			if unfinishedPath == nil {
 				continue
 			}
@@ -401,28 +422,23 @@ func buildIntoAccessPath(
 				}
 			}
 			needSelection = needSelection || unfinishedPath.needKeepFilter
-			// If there are several partial paths, we use the max CountAfterAccess for comparison.
-			maxCountAfterAccess := -1.0
-			for _, p := range paths {
-				maxCountAfterAccess = math.Max(maxCountAfterAccess, p.CountAfterAccess)
-			}
-			// Choose the best partial path for this partial path.
-			if len(bestPaths) == 0 {
-				bestPaths = paths
-				bestCountAfterAccess = maxCountAfterAccess
-				bestNeedSelection = needSelection
-			} else if bestCountAfterAccess > maxCountAfterAccess {
-				bestPaths = paths
-				bestCountAfterAccess = maxCountAfterAccess
-				bestNeedSelection = needSelection
-			}
+
+			alternativesForORBranch = append(alternativesForORBranch, alternative{paths, needSelection})
 		}
-		if len(bestPaths) == 0 {
+		if len(alternativesForORBranch) == 0 {
+			return nil
+		}
+
+		bestAlternative := slices.MinFunc(
+			alternativesForORBranch, func(a, b alternative) int {
+				return cmpAlternativesByRowCount(a.paths, b.paths)
+			})
+		if len(bestAlternative.paths) == 0 {
 			return nil
 		}
 		// Succeeded to get valid path(s) for this partial path.
-		partialPaths = append(partialPaths, bestPaths...)
-		needSelectionGlobal = needSelectionGlobal || bestNeedSelection
+		partialPaths = append(partialPaths, bestAlternative.paths...)
+		needSelectionGlobal = needSelectionGlobal || bestAlternative.needSelection
 	}
 
 	// 2. Collect the final table filter
@@ -436,4 +452,22 @@ func buildIntoAccessPath(
 	// 3. Build the final access path
 	ret := buildPartialPathUp4MVIndex(partialPaths, false, tableFilter, ds.TableStats.HistColl)
 	return ret
+}
+
+func cmpAlternativesByRowCount(a, b []*util.AccessPath) int {
+	// If one alternative consists of multiple AccessPath, we use the maximum row count of them to compare.
+	getMaxRowCountFromPaths := func(paths []*util.AccessPath) float64 {
+		maxRowCount := 0.0
+		for _, path := range paths {
+			rowCount := path.CountAfterAccess
+			if len(path.IndexFilters) > 0 {
+				rowCount = path.CountAfterIndex
+			}
+			maxRowCount = max(maxRowCount, rowCount)
+		}
+		return maxRowCount
+	}
+	lhsRowCount := getMaxRowCountFromPaths(a)
+	rhsRowCount := getMaxRowCountFromPaths(b)
+	return cmp.Compare(lhsRowCount, rhsRowCount)
 }
