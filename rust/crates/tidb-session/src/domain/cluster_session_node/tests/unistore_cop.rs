@@ -11221,6 +11221,76 @@ fn a_retried_range_dml_recomputes_at_the_advanced_for_update_ts() {
     );
 }
 
+/// Go `handlePessimisticLockError` re-executes the statement under its one
+/// `StmtCtx` (`ResetForRetry`); `ResetContextOfStmt` ran once, before the
+/// first attempt, so what it promoted from the PRECEDING statement
+/// (`PrevFoundInPlanCache`, read by `@@last_plan_from_cache`) is still there
+/// for the replay. Go's `v + @@last_plan_from_cache` adds 1 on both attempts.
+#[test]
+fn a_lock_retry_keeps_the_statement_context_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut first = factory
+        .open_session(session_context(86))
+        .expect("session opens");
+    rows(
+        &mut first,
+        "CREATE TABLE test.retry_ctx (k int primary key, v int)",
+    );
+    rows(&mut first, "INSERT INTO test.retry_ctx VALUES (7, 10)");
+    assert_eq!(
+        first
+            .node_conn()
+            .control_transaction("BEGIN")
+            .expect("begin"),
+        Some(true)
+    );
+    rows(&mut first, "UPDATE test.retry_ctx SET v = v + 1 WHERE v > 0");
+
+    let second = std::thread::scope(|scope| {
+        let contender = scope.spawn(|| {
+            let mut second = factory
+                .open_session(session_context(87))
+                .expect("session opens");
+            rows(
+                &mut second,
+                "PREPARE s FROM 'SELECT v FROM test.retry_ctx WHERE v > ?'",
+            );
+            rows(&mut second, "SET @a = 0");
+            assert_eq!(
+                second
+                    .node_conn()
+                    .control_transaction("BEGIN")
+                    .expect("begin"),
+                Some(true)
+            );
+            rows(&mut second, "EXECUTE s USING @a");
+            // The statement before the UPDATE took its plan from the cache.
+            rows(&mut second, "EXECUTE s USING @a");
+            rows(
+                &mut second,
+                "UPDATE test.retry_ctx SET v = v + @@last_plan_from_cache WHERE v > 0",
+            );
+            second
+                .node_conn()
+                .control_transaction("COMMIT")
+                .expect("commit");
+        });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        first
+            .node_conn()
+            .control_transaction("COMMIT")
+            .expect("commit");
+        contender.join()
+    });
+    second.expect("the contending transaction commits after waiting the lock out");
+
+    assert_eq!(
+        displayed(rows(&mut first, "SELECT v FROM test.retry_ctx WHERE k = 7")),
+        [["12"]],
+    );
+}
+
 /// A NON-locking read must not be answered from the pessimistic lock cache.
 ///
 /// Go gates that cache on `e.lock`: `PointGetExecutor.get`

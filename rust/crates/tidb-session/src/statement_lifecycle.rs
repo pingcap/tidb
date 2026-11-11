@@ -284,6 +284,8 @@ impl StatementLifecycle<'_> {
                     }
                     retried += 1;
                     back_off(retried);
+                    // Go `session.retry`: `StmtCtx.ResetForRetry`.
+                    self.session.set_retrying_statement(true);
                     // The ids the losing attempt assigned carry into the
                     // replay -- Go's `RetryInfo.ResetOffset`
                     // (`pkg/session/session.go:1197`). The IDS cross between
@@ -301,6 +303,7 @@ impl StatementLifecycle<'_> {
                 }
             }
         };
+        self.session.set_retrying_statement(false);
         self.session.end_external_mpp_query_scope(outcome.is_err());
         if outcome.is_ok()
             && self.txn.explicit.is_some()

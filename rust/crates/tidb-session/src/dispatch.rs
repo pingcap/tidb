@@ -2401,6 +2401,13 @@ impl Session {
             .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value))
     }
 
+    /// The running statement's next execution is a retry of it (Go
+    /// `handlePessimisticLockError` and `session.retry` keep the `StmtCtx`
+    /// and call `ResetForRetry`).
+    pub fn set_retrying_statement(&mut self, retrying: bool) {
+        self.retrying_statement = retrying;
+    }
+
     /// Go `RetryInfo.Retrying`, set around a statement the connection
     /// re-runs.
     pub fn set_retrying(&mut self, retrying: bool) {

@@ -749,6 +749,10 @@ pub struct Session {
     /// Go `SessionVars.RetryInfo.Retrying`: the connection is re-running a
     /// statement its transaction asked to retry (`StmtErrAfterQuery`).
     retrying: bool,
+    /// The running statement is being re-executed (Go
+    /// `handlePessimisticLockError`, `session.retry`): its next entry is
+    /// `StmtCtx.ResetForRetry`, not `ResetContextOfStmt`.
+    retrying_statement: bool,
     /// Go `StmtCtx.RCCheckTS`, decided at statement start
     /// (`PessimisticRCTxnContextProvider.OnStmtStart`).
     stmt_rc_check_ts: bool,
@@ -1077,6 +1081,7 @@ impl Session {
             published_last_insert_id: Arc::default(),
             retry_auto_ids: Arc::default(),
             retrying: false,
+            retrying_statement: false,
             stmt_rc_check_ts: false,
             stmt_weak_consistency: false,
             stmt_is_read_only: false,
@@ -2906,6 +2911,52 @@ impl Session {
     // boundary separate from completion, which belongs to record-set close
     // for queries and to execution itself for statements without results.
     fn begin_statement_execution(&mut self, sql: &str) -> Result<(), DriverError> {
+        self.reset_for_retry();
+        if std::mem::take(&mut self.retrying_statement) {
+            return Ok(());
+        }
+        self.begin_process_plan_info();
+        self.check_sandbox_mode(sql)?;
+        self.begin_statement_observation(sql);
+        self.publish_statement_start(sql);
+        // Go's `ResetContextOfStmt` promotes the PRECEDING statement's
+        // publication into the `Prev*` fields the next statement reads, so
+        // the promotion happens at the boundary, once, for every statement.
+        // Go promotes `FoundInPlanCache` into `PrevFoundInPlanCache` in
+        // `ResetContextOfStmt`, at the same boundary as the other `Prev*`
+        // fields above -- which is why `select @@last_plan_from_cache`
+        // reports the PRECEDING statement rather than itself.
+        self.vars.prev_found_in_plan_cache = std::mem::take(&mut self.vars.found_in_plan_cache);
+        // Go `ExchangeChunkStatus`, at the same `ResetContextOfStmt` boundary.
+        self.vars.pre_use_chunk_alloc =
+            self.use_chunk_alloc.swap(false, std::sync::atomic::Ordering::Relaxed);
+        // Go `conn.handleQuery`'s `SetAlloc(cc.chunkAlloc)` for this statement.
+        self.chunk_pool_valid.store(
+            self.vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_REUSECHUNK)
+                .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1"),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        // Go `clientConn.dispatch`'s tail for the previous statement:
+        // `ClearAlloc(&cc.chunkAlloc, err != nil)` (a failed statement's
+        // allocator is replaced) then `cc.chunkAlloc.Reset()`, which hands
+        // the columns its chunks held back to the pool for this statement.
+        self.take_result_write_chunk();
+        if std::mem::take(&mut self.chunk_alloc_failed) {
+            self.chunk_alloc = tidb_chunk::alloc::ChunkAllocator::new();
+        }
+        tidb_chunk::alloc::Allocator::reset(&self.chunk_alloc);
+        // Go promotes `FoundInBinding` at the same boundary, which is why
+        // `select @@last_plan_from_binding` reports the statement BEFORE it
+        // rather than itself (that SELECT matches no binding of its own).
+        self.vars.prev_found_in_binding = std::mem::take(&mut self.vars.found_in_binding);
+        Ok(())
+    }
+
+    /// Go `StatementContext.ResetForRetry`: what one execution of the
+    /// statement changed, so the statement can be executed again under the
+    /// context `ResetContextOfStmt` gave it.
+    fn reset_for_retry(&mut self) {
         self.mpp_attempt_completed = false;
         self.in_execute = false;
         self.last_result_output_names.clear();
@@ -2919,9 +2970,19 @@ impl Session {
             previous.statement_memory().finish_statement();
         }
         self.stmt_hints = tidb_hint::StmtHints::default();
-        self.begin_process_plan_info();
-        self.check_sandbox_mode(sql)?;
-        self.begin_statement_observation(sql);
+        self.statement_kind = StatementKind::Other;
+        self.vars.in_set_session_states_stmt = false;
+        self.statement_message.clear();
+        self.statement_affected_rows = 0;
+        *self
+            .published_last_insert_id
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+
+    /// Go `ExecStmt.Exec`'s `SetProcessInfo`: the statement a peer's
+    /// `SHOW PROCESSLIST` sees.
+    fn publish_statement_start(&mut self, sql: &str) {
         // A statement is visible to a peer's SHOW PROCESSLIST for exactly as
         // long as it runs, which is why the process list is updated here --
         // the one door every statement of this session goes through -- rather
@@ -2976,46 +3037,6 @@ impl Session {
         } else {
             None
         };
-        // Go's `ResetContextOfStmt` promotes the PRECEDING statement's
-        // publication into the `Prev*` fields the next statement reads, so
-        // the promotion happens at the boundary, once, for every statement.
-        self.statement_kind = StatementKind::Other;
-        self.vars.in_set_session_states_stmt = false;
-        self.statement_message.clear();
-        self.statement_affected_rows = 0;
-        *self
-            .published_last_insert_id
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-        // Go promotes `FoundInPlanCache` into `PrevFoundInPlanCache` in
-        // `ResetContextOfStmt`, at the same boundary as the other `Prev*`
-        // fields above -- which is why `select @@last_plan_from_cache`
-        // reports the PRECEDING statement rather than itself.
-        self.vars.prev_found_in_plan_cache = std::mem::take(&mut self.vars.found_in_plan_cache);
-        // Go `ExchangeChunkStatus`, at the same `ResetContextOfStmt` boundary.
-        self.vars.pre_use_chunk_alloc =
-            self.use_chunk_alloc.swap(false, std::sync::atomic::Ordering::Relaxed);
-        // Go `conn.handleQuery`'s `SetAlloc(cc.chunkAlloc)` for this statement.
-        self.chunk_pool_valid.store(
-            self.vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_REUSECHUNK)
-                .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1"),
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        // Go `clientConn.dispatch`'s tail for the previous statement:
-        // `ClearAlloc(&cc.chunkAlloc, err != nil)` (a failed statement's
-        // allocator is replaced) then `cc.chunkAlloc.Reset()`, which hands
-        // the columns its chunks held back to the pool for this statement.
-        self.take_result_write_chunk();
-        if std::mem::take(&mut self.chunk_alloc_failed) {
-            self.chunk_alloc = tidb_chunk::alloc::ChunkAllocator::new();
-        }
-        tidb_chunk::alloc::Allocator::reset(&self.chunk_alloc);
-        // Go promotes `FoundInBinding` at the same boundary, which is why
-        // `select @@last_plan_from_binding` reports the statement BEFORE it
-        // rather than itself (that SELECT matches no binding of its own).
-        self.vars.prev_found_in_binding = std::mem::take(&mut self.vars.found_in_binding);
-        Ok(())
     }
 
     /// Go `baseTxnContextProvider.ActivateTxn`'s `MemDBFootprint.Detach()`:

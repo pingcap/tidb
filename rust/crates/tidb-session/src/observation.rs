@@ -142,6 +142,7 @@ impl Session {
     /// `retryStartTime = time.Now()` before the running statement is
     /// executed again at a newer for-update timestamp.
     pub fn record_statement_retry(&mut self) {
+        self.retrying_statement = true;
         if let Some(observation) = &self.statement_observation {
             let mut phases = observation
                 .phases
