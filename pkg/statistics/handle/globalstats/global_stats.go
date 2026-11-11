@@ -319,7 +319,7 @@ func blockingMergePartitionStats2GlobalStats(
 		}
 
 		// Update the global NDV.
-		globalStatsNDV := min(ndvMerger.NDV(), globalStats.Count)
+		globalStatsNDV := ndvMerger.NDV()
 		sampled := ndvMerger.Sampled()
 		ndvMerger.Destroy()
 
@@ -351,10 +351,12 @@ func blockingMergePartitionStats2GlobalStats(
 		// MergePartTopNAndHistToGlobal already leaves bucket NDV = 0; here
 		// we just set the table-level NDV.
 		if globalStats.Hg[i] != nil {
-			if isLocalUnique(globalTableInfo, isIndex, histIDs[i]) {
-				globalStatsNDV = uniqueGlobalNDV(allHg[i], globalStats.Count)
+			upperBound := globalNDVUpperBound(globalTableInfo, isIndex, globalStats.Hg[i], globalStats.TopN[i], globalStats.Count)
+			globalStatsNDV = min(globalStatsNDV, upperBound)
+			if statistics.UniqueByLocalIndex(globalTableInfo, isIndex, histIDs[i]) {
+				globalStatsNDV = uniqueGlobalNDV(allHg[i], upperBound)
 			} else if sampled {
-				globalStatsNDV = sampledGlobalNDV(globalStatsNDV, globalStats.Hg[i], globalStats.TopN[i], missedNotNull, globalStats.Count)
+				globalStatsNDV = sampledGlobalNDV(globalStatsNDV, globalStats.Hg[i], globalStats.TopN[i], missedNotNull, upperBound)
 			}
 			globalStats.Hg[i].NDV = globalStatsNDV
 		}
@@ -363,31 +365,24 @@ func blockingMergePartitionStats2GlobalStats(
 	return
 }
 
-// isLocalUnique returns true for a unique column or index, i.e. a local
-// single-column unique index or its column. It is used for deciding if the
-// global NDV is the sum of the partition NDVs.
-//
-// A local unique index includes the partition columns, so a value always
-// belongs to the same partition. A global unique index does not: a row that
-// moves to another partition leaves its value in the stats of the old
-// partition until that partition is analyzed again.
-func isLocalUnique(tblInfo *model.TableInfo, isIndex bool, id int64) bool {
-	for _, idx := range tblInfo.Indices {
-		if idx.Global || !statistics.IsSingleColNonPrefixUniqueIndex(idx) {
-			continue
-		}
-		if (isIndex && idx.ID == id) || (!isIndex && tblInfo.Columns[idx.Columns[0].Offset].ID == id) {
-			return true
+// globalNDVUpperBound uses index entries to bound a multi-valued index's NDV,
+// because one table row can produce multiple distinct index entries. Other
+// columns and indexes retain the current table row count as their bound.
+func globalNDVUpperBound(tblInfo *model.TableInfo, isIndex bool, hist *statistics.Histogram, topN *statistics.TopN, count int64) int64 {
+	if isIndex {
+		if idx := tblInfo.FindIndexByID(hist.ID); idx != nil && idx.MVIndex {
+			return topNHistNotNull(hist, topN)
 		}
 	}
-	return false
+	return count
 }
 
 // uniqueGlobalNDV returns the global NDV of a column or index that
-// isLocalUnique accepts. Its values never repeat across partitions, so the
-// partition NDVs add up exactly, while the merged FMSketch estimates the sum.
-// A partition that is not analyzed again keeps its NDV after deletes, so the
-// current row count bounds the sum, as it bounds the FMSketch estimate.
+// statistics.UniqueByLocalIndex accepts. Its values never repeat across
+// partitions, so the partition NDVs add up exactly, while the merged
+// FMSketch estimates the sum.
+// A partition that is not analyzed again keeps its NDV after deletes, so
+// the sum uses the same bound as the FMSketch estimate.
 func uniqueGlobalNDV(partitionHists []*statistics.Histogram, count int64) int64 {
 	var ndv int64
 	for _, hg := range partitionHists {
@@ -438,8 +433,8 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 }
 
 // sampledGlobalNDV limits a sampled NDV, which GEE can scale too high, to the
-// current row count and to the non-NULL rows that ANALYZE saw. Those are the
-// rows of the merged TopN and histogram, plus missedNotNull for the partitions
+// row or index-entry count and to the non-NULL values that ANALYZE saw:
+// the merged TopN and histogram, plus missedNotNull for the partitions
 // where both are empty.
 func sampledGlobalNDV(ndv int64, hist *statistics.Histogram, topN *statistics.TopN, missedNotNull, count int64) int64 {
 	notNull := topNHistNotNull(hist, topN) + missedNotNull
