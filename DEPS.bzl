@@ -6393,8 +6393,20 @@ def go_deps():
         name = "org_golang_x_crypto",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/crypto",
+<<<<<<< HEAD
         sum = "h1:RMs7fP2rXdep0CftQlK8Uf+kibLm7qkCcradZWYz988=",
         version = "v0.52.0",
+=======
+        sum = "h1:zGDaB+/Mus2mScKvZ23k+W9NAUbP56sNM9SptgvWI5A=",
+        version = "v0.58.1-0.20261009181718-2f1f834330b2",
+    )
+    go_repository(
+        name = "org_golang_x_crypto_openpgp",
+        build_file_proto_mode = "disable_global",
+        importpath = "golang.org/x/crypto/openpgp",
+        sum = "h1:T+duersHJVuH6qLtQk22qtGKH5vZhxGSlL5SMFHclaQ=",
+        version = "v0.1.0-deprecated",
+>>>>>>> 34d5b479e29 (*: upgrade golang.org/x/net, golang.org/x/crypto, and golang.org/x/text (#72983))
     )
     go_repository(
         name = "org_golang_x_exp",
@@ -6442,8 +6454,13 @@ def go_deps():
         name = "org_golang_x_net",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/net",
+<<<<<<< HEAD
         sum = "h1:bcvxaJn3e1U6InsFWt1JUq1aSjnRxLzT2rtD2KfkDF8=",
         version = "v0.55.0",
+=======
+        sum = "h1:18ELalfM5+XNRwzM2nYqXsZQ9ByS1uhj2O/U7+5jqRY=",
+        version = "v0.62.0",
+>>>>>>> 34d5b479e29 (*: upgrade golang.org/x/net, golang.org/x/crypto, and golang.org/x/text (#72983))
     )
     go_repository(
         name = "org_golang_x_oauth2",
