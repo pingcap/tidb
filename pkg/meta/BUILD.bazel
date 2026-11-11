@@ -40,11 +40,7 @@ go_test(
     ],
     embed = [":meta"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 19,
-=======
-    shard_count = 25,
->>>>>>> 82af7f5d393 (meta: fix schema and table filter precedence for DDL jobs (#72918))
+    shard_count = 20,
     deps = [
         "//pkg/ddl",
         "//pkg/infoschema/context",
