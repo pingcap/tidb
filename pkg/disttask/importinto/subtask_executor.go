@@ -64,7 +64,7 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 
 	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
 	chunkCheckpoint.FileMeta.ParquetMeta = mydump.ParquetFileMeta{
-		Loc: sharedVars.TableImporter.Location,
+		Loc: sharedVars.TableImporter.ParquetLocation(),
 	}
 
 	checksum := verify.NewKVGroupChecksumWithKeyspace(sharedVars.TableImporter.GetKeySpace())

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"text/template"
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -77,6 +79,9 @@ const (
 	flagTransactionalConsistency = "transactional-consistency"
 	flagCompress                 = "compress"
 	flagCsvOutputDialect         = "csv-output-dialect"
+	flagParquetCompress          = "parquet-compress"
+	flagParquetPageSize          = "parquet-page-size"
+	flagParquetRowGroupSize      = "parquet-row-group-size"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
@@ -189,6 +194,14 @@ type Config struct {
 
 	IOTotalBytes *atomic.Uint64
 	Net          string
+
+	// ParquetCompressType is the parquet row-group compression type.
+	ParquetCompressType storage.CompressType
+	// ParquetPageSize is the parquet data page size in bytes.
+	ParquetPageSize int64
+	// ParquetRowGroupSize is the parquet row-group flush threshold by accounted
+	// in-memory bytes.
+	ParquetRowGroupSize int64
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
@@ -242,12 +255,23 @@ func DefaultConfig() *Config {
 		PromFactory:              promutil.NewDefaultFactory(),
 		PromRegistry:             promutil.NewDefaultRegistry(),
 		TransactionalConsistency: true,
+		ParquetCompressType:      parquetfile.DefaultCompressionType,
+		ParquetPageSize:          units.MiB,
+		ParquetRowGroupSize:      parquetfile.DefaultRowGroupMemoryLimitBytes,
 	}
 }
 
-// String returns dumpling's config in json format
+// redacted returns a shallow copy of conf with storage credentials masked.
+func (conf *Config) redacted() *Config {
+	c := *conf
+	c.OutputDirPath = storage.RedactURL(c.OutputDirPath)
+	c.BackendOptions = c.BackendOptions.Redacted()
+	return &c
+}
+
+// String returns dumpling's config in json format with credentials redacted.
 func (conf *Config) String() string {
-	cfg, err := json.Marshal(conf)
+	cfg, err := json.Marshal(conf.redacted())
 	if err != nil && conf.Logger != nil {
 		conf.Logger.Error("fail to marshal config to json", zap.Error(err))
 	}
@@ -288,6 +312,23 @@ func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 			MinVersion:         minTLSVersion,
 			NextProtos:         []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
 		}
+	}
+	if driverCfg.TLS.CipherSuites == nil {
+		// Some legacy MySQL servers only support RSA key exchange. Go 1.27 removed
+		// the tlsrsakex switch, so enable the required suites on MySQL connections
+		// while retaining modern suites and respecting an explicit cipher policy.
+		driverCfg.TLS = driverCfg.TLS.Clone()
+		for _, suite := range tls.CipherSuites() {
+			if slices.Contains(suite.SupportedVersions, tls.VersionTLS12) {
+				driverCfg.TLS.CipherSuites = append(driverCfg.TLS.CipherSuites, suite.ID)
+			}
+		}
+		driverCfg.TLS.CipherSuites = append(driverCfg.TLS.CipherSuites,
+			tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_RSA_WITH_AES_128_CBC_SHA,
+			tls.TLS_RSA_WITH_AES_256_CBC_SHA,
+		)
 	}
 	if conf.AllowCleartextPasswords {
 		driverCfg.AllowCleartextPasswords = true
@@ -331,7 +372,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 		"If not specified, dumpling will dump table without inner-concurrency which could be relatively slow. default unlimited")
 	flags.String(flagWhere, "", "Dump only selected records")
 	flags.Bool(flagEscapeBackslash, true, "use backslash to escape special characters")
-	flags.String(flagFiletype, "", "The type of export file (sql/csv)")
+	flags.String(flagFiletype, "", "The type of export file (sql/csv/parquet)")
 	flags.Bool(flagNoHeader, false, "whether not to dump CSV table header")
 	flags.BoolP(flagNoSchemas, "m", false, "Do not dump table schemas with the data")
 	flags.BoolP(flagNoData, "d", false, "Do not dump table data")
@@ -358,6 +399,13 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagTransactionalConsistency)
 	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'snappy', 'zstd', 'no-compression' now")
 	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift', 'bigquery' now")
+	flags.String(flagParquetCompress, "snappy", "Compress algorithm for parquet file, support 'no-compression', 'snappy', 'gzip', 'zstd'")
+	flags.String(flagParquetPageSize, units.BytesSize(float64(units.MiB)), "Parquet page size in bytes, accepts human-readable units")
+	flags.String(
+		flagParquetRowGroupSize,
+		units.BytesSize(float64(parquetfile.DefaultRowGroupMemoryLimitBytes)),
+		"Parquet row-group memory limit in bytes (flush threshold by accounted in-memory bytes), accepts human-readable units",
+	)
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -607,6 +655,23 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
+	parquetCompressType, err := flags.GetString(flagParquetCompress)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ParquetCompressType, err = parseParquetCompressType(parquetCompressType)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ParquetPageSize, err = parseSizeFlag(flags, flagParquetPageSize)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ParquetRowGroupSize, err = parseSizeFlag(flags, flagParquetRowGroupSize)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	for k, v := range params {
 		conf.SessionParams[k] = v
 	}
@@ -816,6 +881,27 @@ func ParseOutputDialect(outputDialect string) (CSVDialect, error) {
 	}
 }
 
+func parseSizeFlag(flags *pflag.FlagSet, flagName string) (int64, error) {
+	size, err := flags.GetString(flagName)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	bytes, err := units.RAMInBytes(size)
+	if err != nil {
+		return 0, errors.Annotatef(err, "failed to parse --%s", flagName)
+	}
+	return bytes, nil
+}
+
+// parseParquetCompressType parses the parquet compression flag value.
+// Empty means the flag is not configured, so Dumpling uses the parquet default.
+func parseParquetCompressType(compressType string) (storage.CompressType, error) {
+	if compressType == "" {
+		return parquetfile.DefaultCompressionType, nil
+	}
+	return ParseCompressType(compressType)
+}
+
 func (conf *Config) createExternalStorage(ctx context.Context) (storage.ExternalStorage, error) {
 	if conf.ExtStorage != nil {
 		return conf.ExtStorage, nil
@@ -904,6 +990,10 @@ func adjustFileFormat(conf *Config) error {
 			return errors.Errorf("unsupported config.FileType '%s' when we specify --sql, please unset --filetype or set it to 'csv'", conf.FileType)
 		}
 	case FileFormatCSVString:
+	case FileFormatParquetString:
+		if conf.CompressType != storage.NoCompression {
+			return errors.Errorf("parquet does not support --compress, please unset it or use --parquet-compress instead")
+		}
 	default:
 		return errors.Errorf("unknown config.FileType '%s'", conf.FileType)
 	}

@@ -215,17 +215,16 @@ func TestStaleReadProcessorWithSelectTable(t *testing.T) {
 	p1.checkMatchProcessor(t, processor, true)
 
 	tk.MustExec("set @@tidb_read_staleness=-5")
+	// Keep NOW()-5s inside p1's millisecond despite the timestamp variable's float conversion.
+	sc := tk.Session().GetSessionVars().StmtCtx
+	sc.ResetInStmtCache(stmtctx.StmtNowTsCacheKey)
+	sc.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, p1.tm.Add(5*time.Second+time.Millisecond/2))
+	sc.ResetInStmtCache(stmtctx.StmtSafeTSCacheKey)
+	sc.GetOrStoreStmtCache(stmtctx.StmtSafeTSCacheKey, uint64(0))
 	processor = createProcessor(t, tk.Session())
 	err = processor.OnSelectTable(tn)
-	require.True(t, processor.IsStaleness())
-	require.Equal(t, int64(0), processor.GetStalenessInfoSchema().SchemaMetaVersion())
-	expectedTS, err = staleread.CalculateTsWithReadStaleness(ctx, tk.Session(), -5*time.Second)
 	require.NoError(t, err)
-	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
-	evaluator = processor.GetStalenessTSEvaluatorForPrepare()
-	evaluatorTS, err = evaluator(ctx, tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, expectedTS, evaluatorTS)
+	p1.checkMatchProcessor(t, processor, true)
 	tk.MustExec("set @@tidb_read_staleness=''")
 
 	tk.MustExec("set tidb_enable_external_ts_read=OFF")
@@ -336,13 +335,16 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 	p1.checkMatchProcessor(t, processor, true)
 
 	tk.MustExec("set @@tidb_read_staleness=-5")
+	// Keep NOW()-5s inside p1's millisecond despite the timestamp variable's float conversion.
+	sc := tk.Session().GetSessionVars().StmtCtx
+	sc.ResetInStmtCache(stmtctx.StmtNowTsCacheKey)
+	sc.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, p1.tm.Add(5*time.Second+time.Millisecond/2))
+	sc.ResetInStmtCache(stmtctx.StmtSafeTSCacheKey)
+	sc.GetOrStoreStmtCache(stmtctx.StmtSafeTSCacheKey, uint64(0))
 	processor = createProcessor(t, tk.Session())
 	err = processor.OnExecutePreparedStmt(nil)
-	require.True(t, processor.IsStaleness())
-	require.Equal(t, int64(0), processor.GetStalenessInfoSchema().SchemaMetaVersion())
-	expectedTS, err = staleread.CalculateTsWithReadStaleness(ctx, tk.Session(), -5*time.Second)
 	require.NoError(t, err)
-	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
+	p1.checkMatchProcessor(t, processor, true)
 	tk.MustExec("set @@tidb_read_staleness=''")
 
 	tk.MustExec("set tidb_enable_external_ts_read=OFF")

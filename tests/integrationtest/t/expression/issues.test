@@ -856,6 +856,7 @@ insert into tx2 values (json_array(922337203685477581)),(json_array(922337203685
 #
 # ordering by a JSON col is not supported in MySQL, and the order is a bit questionable in TiDB.
 # sort by count for test result stability.
+-- replace_regex /\[3\.0\]/[3]/
 select col, count(1) c from tx2 group by col order by c desc;
 
 

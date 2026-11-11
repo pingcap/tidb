@@ -72,6 +72,8 @@
       "explain select * from t1 where (a<1 or b<2) and (a>3 and b>3)",
       "explain select * from t1 where (a<1 or b<2) and (a>3 and b>3) and c>1",
       "explain select * from t1 where (a>2 or b<2) and (a>3 and b>3) and c>2",
+      "explain select /*+ tiflash_lm_filter(t1, a, b) */ * from t1 where a + b > 100 and c in (1,2,3)",
+      "explain select /*+ tiflash_lm_filter(t1, a) */ * from t1 where a > 1 and b > 1",
       "explain select count(a), max(t) from t1 where a>1"
     ]
   }

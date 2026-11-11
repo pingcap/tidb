@@ -40,7 +40,7 @@ go_test(
     ],
     embed = [":stmtsummary"],
     flaky = True,
-    shard_count = 30,
+    shard_count = 34,
     deps = [
         "//pkg/meta/model",
         "//pkg/parser/auth",
@@ -50,6 +50,7 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/chunk",
         "//pkg/util/execdetails",
         "//pkg/util/hack",
         "//pkg/util/plancodec",
