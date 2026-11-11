@@ -2236,8 +2236,9 @@ func onDropIndex(sctx sessionctx.Context, jobCtx *jobContext, job *model.Job) (v
 			for i, indexID := range indexIDs {
 				addIndexArgs.IndexArgs = append(addIndexArgs.IndexArgs,
 					&model.IndexArg{
-						IndexID: indexID,
-						IfExist: dropArgs.IndexArgs[i].IfExist,
+						IndexID:  indexID,
+						IfExist:  dropArgs.IndexArgs[i].IfExist,
+						IsGlobal: allIndexInfos[i].Global,
 					})
 			}
 			job.FillFinishedArgs(addIndexArgs)

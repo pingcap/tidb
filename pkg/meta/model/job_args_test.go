@@ -1328,6 +1328,8 @@ func TestAddIndexArgs(t *testing.T) {
 		require.Equal(t, inArgs.IndexArgs[0].FuncExpr, a.FuncExpr)
 	}
 
+	// Finished jobs must retain global-index cleanup under both job formats.
+	inArgs.IndexArgs[0].IsGlobal = true
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionAddIndex)))

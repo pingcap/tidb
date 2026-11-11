@@ -422,14 +422,14 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		}
 
 		if len(args.IndexIDs) > 0 {
-			if len(args.PartitionIDs) == 0 {
-				return errors.Trace(doBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, args.IndexIDs, ea, "drop column: table ID"))
-			}
 			for _, pid := range args.PartitionIDs {
 				if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, args.IndexIDs, ea, "drop column: partition table ID"); err != nil {
 					return errors.Trace(err)
 				}
 			}
+			// Column jobs do not distinguish local and global index IDs. Include the
+			// logical table range for global indexes, even on partitioned tables.
+			return errors.Trace(doBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, args.IndexIDs, ea, "drop column: table ID"))
 		}
 	case model.ActionModifyColumn:
 		args, err := model.GetFinishedModifyColumnArgs(job)
@@ -440,14 +440,14 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		if len(indexIDs) == 0 {
 			return nil
 		}
-		if len(partitionIDs) == 0 {
-			return doBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, indexIDs, ea, "modify column: table ID")
-		}
 		for _, pid := range partitionIDs {
 			if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, indexIDs, ea, "modify column: partition table ID"); err != nil {
 				return errors.Trace(err)
 			}
 		}
+		// Replaced global indexes live under the logical table ID. The finished
+		// arguments can also contain local indexes, so retain partition cleanup.
+		return errors.Trace(doBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, indexIDs, ea, "modify column: table ID"))
 	}
 	return nil
 }

@@ -1789,7 +1789,7 @@ func (a *ModifyIndexArgs) getFinishedArgsV1(job *Job) []any {
 		for i, arg := range a.IndexArgs {
 			indexIDs[i] = arg.IndexID
 			ifExists[i] = arg.IfExist
-			isGlobals[i] = arg.Global
+			isGlobals[i] = arg.IsGlobal
 		}
 		return []any{indexIDs, ifExists, a.PartitionIDs, isGlobals}
 	}
