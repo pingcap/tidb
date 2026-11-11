@@ -3721,8 +3721,8 @@ def go_deps():
         name = "com_github_peterstace_simplefeatures",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/peterstace/simplefeatures",
-        sum = "h1:pmn+uh75K3CCGsJCLHnpBqgQmDECLYX3u5hfymVbqmQ=",
-        version = "v0.59.0",
+        sum = "h1:5fCM3iIwwwz0qYORRtbdoKZ91nzT44WkEjPZ9e6+fC8=",
+        version = "v0.59.1-0.20261111041833-ce2170aed953",
     )
     go_repository(
         name = "com_github_phayes_freeport",
