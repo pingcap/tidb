@@ -359,6 +359,7 @@ func TestStopwordKeysMatchCompare(t *testing.T) {
 	texts := []string{
 		"the THE The thé THÉ ｔｈｅ", "a A á Ａ i I í Ｉ", "ab a,b xby", "quick brown fox 数据库",
 		"ss ß s ﬃ ffi", "a\u0301 a\u0000 a\u00ad", "the  the\tThe", "🙃𞤀𝟙，", "", "ab\xffcd",
+		"the\u00ad\u00ad\u00ad\u00ad\u00ad", "the     ", "The     ", "ab\x00\xffthe",
 	}
 	rng := rand.New(rand.NewSource(20261012))
 	parts := []string{"a", "i", "the", "The", "thé", "ss", "ß", "ａ", "，", "🙃", "\u0301", "\u00ad", "中", "x", " ", ",", "_"}
@@ -380,6 +381,7 @@ func TestStopwordKeysMatchCompare(t *testing.T) {
 				// lookup oracle, including malformed-list callers and positions.
 				wantInfo := gotInfo
 				wantInfo.stopwordKeys, wantInfo.stopwordKeysByLength = nil, nil
+				wantInfo.builtinBinaryStopwords = false
 				for _, text := range texts {
 					require.Equal(t, wantInfo.isStopword(text), gotInfo.isStopword(text), "%s size=%d text=%q words=%q", name, size, text, words)
 					require.Equal(t, wantInfo.containsNgramStopword(text), gotInfo.containsNgramStopword(text), "%s size=%d text=%q words=%q", name, size, text, words)
@@ -388,6 +390,81 @@ func TestStopwordKeysMatchCompare(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestBuiltinBinaryStopwords(t *testing.T) {
+	previous := collate.NewCollationEnabled()
+	defer collate.SetNewCollationEnabledForTest(previous)
+	words := []string{"", "the     ", "The", "thé", "ｔｈｅ", "a\x00", "\xff", "database", "a\u00ad\u00ad\u00ad\u00ad\u00ad"}
+	for _, word := range defaultInnodbStopwords {
+		words = append(words, word, strings.ToUpper(word), word+" ", word+"x", "x"+word)
+	}
+	rng := rand.New(rand.NewSource(20261111))
+	for range 1000 {
+		bytes := make([]byte, rng.Intn(32))
+		_, err := rng.Read(bytes)
+		require.NoError(t, err)
+		words = append(words, string(bytes))
+	}
+	for _, enabled := range []bool{false, true} {
+		collate.SetNewCollationEnabledForTest(enabled)
+		for _, name := range []string{"binary", "ascii_bin", "latin1_bin", "utf8_bin", "utf8mb4_bin", "utf8mb4_0900_bin"} {
+			config := AnalyzerConfig{StopwordCollation: name, InnodbFtEnableStopword: true, NgramTokenSize: 3}
+			info := parserInfoFromConfig(config)
+			require.True(t, info.builtinBinaryStopwords)
+			for _, word := range words {
+				want := false
+				for _, stopword := range defaultInnodbStopwords {
+					want = want || info.stopwordCollator.Compare(word, stopword) == 0
+				}
+				require.Equal(t, want, info.isStopword(word), "newCollation=%v collation=%s word=%q", enabled, name, word)
+			}
+			config.InnodbFtEnableStopword = false
+			require.False(t, parserInfoFromConfig(config).builtinBinaryStopwords)
+			config.InnodbFtEnableStopword = true
+			config.Stopwords = []string{"database", "The", "a "}
+			custom := parserInfoFromConfig(config)
+			require.False(t, custom.builtinBinaryStopwords)
+			require.True(t, custom.isStopword("database"))
+			require.False(t, custom.isStopword("the"))
+		}
+	}
+}
+
+func BenchmarkBuiltinStopwords(b *testing.B) {
+	previous := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(previous)
+	for _, name := range []string{"utf8mb4_bin", "utf8mb4_0900_bin", "utf8mb4_unicode_ci"} {
+		info := parserInfoFromConfig(AnalyzerConfig{
+			StopwordCollation: name, Collation: name,
+			InnodbFtMinTokenSize: 1, InnodbFtMaxTokenSize: 84,
+			InnodbFtEnableStopword: true, NgramTokenSize: 2,
+		})
+		for _, token := range []string{"the", "xyz", "database", "数据库系统"} {
+			b.Run(name+"/lookup/"+token, func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					info.isStopword(token)
+				}
+			})
+		}
+		text := strings.Repeat("the quick brown fox jumps over the lazy dog database storage 数据库系统 ", 32)
+		b.Run(name+"/standard", func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(text)))
+			for b.Loop() {
+				analyzeStandardV1(text, info)
+			}
+		})
+		b.Run(name+"/ngram", func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(text)))
+			for b.Loop() {
+				analyzeNgramV1(text, info)
+			}
+		})
 	}
 }
 
