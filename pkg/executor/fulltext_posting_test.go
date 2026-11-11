@@ -149,7 +149,7 @@ func TestTiKVPostingSeek(t *testing.T) {
 
 		src := newTestPostingSource(s)
 		require.Equal(t, rare, searchPostings(t, src, "+rare +common"))
-		require.Less(t, src.stats.entries, int64(len(rare)*(seekReadLimit+2)+len(rare)+1), "entries read")
+		require.Less(t, src.stats.entries, int64(len(rare)*(fulltext.SeekReadLimit+2)+len(rare)+1), "entries read")
 		require.Equal(t, rare, searchPostings(t, src, `+"common rare"`))
 		require.Empty(t, searchPostings(t, src, `+"rare common"`))
 		require.Empty(t, searchPostings(t, src, "+rare -common"))

@@ -71,10 +71,11 @@ import (
 // table side.
 //
 // The path competes on cost with every other path. Reading the index costs
-// the posting entries the search reads, since each posting list it opens is
-// read in full: for every term, the rows containing it within the rows the
-// key and handle conditions select, estimated with the ILIKE form of the term
-// (see estimateFullTextPostingRows). Every other path evaluates the MATCH by
+// the posting entries the search reads: for every term, the rows containing
+// it within the rows the key and handle conditions select, estimated with the
+// ILIKE form of the term, of which an intersection reads the list that yields
+// the fewest rows in full and the others only around the rows it proposes
+// (see estimateFullTextPostingCost). Every other path evaluates the MATCH by
 // analyzing each document it returns, which the Selection's cost charges by
 // the document's size. A poorly filtering search can therefore lose to a scan,
 // and a selective condition on another index can win over the search. USE
@@ -360,11 +361,11 @@ func buildFullTextIndexPath(ds *logicalop.DataSource, idx *model.IndexInfo, matc
 	count := ds.TableStats.RowCount * selectivity
 	partial.CountAfterAccess = count
 	partial.CountAfterIndex = count
-	partial.FullText.PostingRows, err = estimateFullTextPostingRows(ds, match, query, keyConds, handleConds)
+	postingCost, err := estimateFullTextPostingCost(ds, match, query, keyConds, handleConds, handleRanges)
 	if err != nil {
 		return nil, err
 	}
-	partial.FullText.PostingScans = countFullTextPostingScans(query, handleRanges)
+	partial.FullText.PostingRows, partial.FullText.PostingScans = postingCost.Entries, postingCost.Scans
 	return &util.AccessPath{
 		PartialIndexPaths: []*util.AccessPath{partial},
 		TableFilters:      tableFilters,
@@ -399,19 +400,19 @@ func fullTextHandleRanges(keyRanges, handleRanges ranger.Ranges) ranger.Ranges {
 	return ranges
 }
 
-// estimateFullTextPostingRows estimates the posting entries a search reads.
-// Each posting list the search opens is read in full: an exact term's within
-// the rows the key-column point and the handle ranges select, a prefix's
-// within the key-column point alone, since handle ranges do not narrow it.
-// The postings of a term are the rows containing it, which is what the ILIKE
-// form of the term selects; its estimate comes from the column's statistics
-// as for any string match, or is the default string-match selectivity when
-// the statistics cannot evaluate it.
-func estimateFullTextPostingRows(ds *logicalop.DataSource, match *expression.ScalarFunction, query *fulltext.Query,
-	keyConds, handleConds []expression.Expression) (float64, error) {
-	reads := query.PostingReads()
-	if len(reads) == 0 {
-		return 0, nil
+// estimateFullTextPostingCost estimates the posting entries a search reads
+// and the posting scans it opens. The postings of an exact term are the rows
+// containing it within the rows the key-column point and the handle ranges
+// select, a prefix's within the key-column point alone, since handle ranges
+// do not narrow it. The rows containing a term are what the ILIKE form of the
+// term selects; its estimate comes from the column's statistics as for any
+// string match, or is the default string-match selectivity when the
+// statistics cannot evaluate it. How much of each list is read follows the
+// streams the search runs as: see fulltext.Query.EstimatePostingCost.
+func estimateFullTextPostingCost(ds *logicalop.DataSource, match *expression.ScalarFunction, query *fulltext.Query,
+	keyConds, handleConds []expression.Expression, handleRanges int) (fulltext.PostingCost, error) {
+	if len(query.PostingReads()) == 0 {
+		return fulltext.PostingCost{}, nil
 	}
 	selectivity := func(conds []expression.Expression) (float64, error) {
 		if len(conds) == 0 {
@@ -422,24 +423,24 @@ func estimateFullTextPostingRows(ds *logicalop.DataSource, match *expression.Sca
 	}
 	keySel, err := selectivity(keyConds)
 	if err != nil {
-		return 0, err
+		return fulltext.PostingCost{}, err
 	}
 	handleSel, err := selectivity(handleConds)
 	if err != nil {
-		return 0, err
+		return fulltext.PostingCost{}, err
 	}
 	column := match.GetArgs()[1]
 	defaultSel := ds.SCtx().GetSessionVars().GetStrMatchDefaultSelectivity()
-	rows := 0.0
-	for _, read := range reads {
+	var estimateErr error
+	postings := func(read fulltext.PostingRead) float64 {
 		// Without statistics every condition is given the generic
 		// selectivity, which for a term would mean one in nearly every row;
 		// the string-match default is the better guess.
 		termSel := defaultSel
 		if !ds.TableStats.HistColl.Pseudo {
 			if like, err := expression.BuildFTSTermILikePredicate(ds.SCtx().GetExprCtx(), column, read.Term); err == nil {
-				if termSel, err = selectivity([]expression.Expression{like}); err != nil {
-					return 0, err
+				if termSel, err = selectivity([]expression.Expression{like}); err != nil && estimateErr == nil {
+					estimateErr = err
 				}
 			}
 		}
@@ -447,23 +448,14 @@ func estimateFullTextPostingRows(ds *logicalop.DataSource, match *expression.Sca
 		if !read.Prefix {
 			scope *= handleSel
 		}
-		rows += scope * termSel
+		return scope * termSel
 	}
-	return rows, nil
-}
-
-// countFullTextPostingScans counts the posting scans a search opens: an exact
-// term is read within each handle range in turn, a prefix in one scan.
-func countFullTextPostingScans(query *fulltext.Query, handleRanges int) float64 {
-	scans := 0
-	for _, read := range query.PostingReads() {
-		if read.Prefix {
-			scans++
-		} else {
-			scans += max(1, handleRanges)
-		}
-	}
-	return float64(scans)
+	cost := query.EstimatePostingCost(fulltext.PostingCostModel{
+		Postings:  postings,
+		Rows:      ds.TableStats.RowCount * keySel * handleSel,
+		TermScans: float64(max(1, handleRanges)),
+	})
+	return cost, estimateErr
 }
 
 // pointPathSelectedByHeuristics reports whether derivePathStatsAndTryHeuristics

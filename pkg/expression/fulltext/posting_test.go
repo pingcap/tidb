@@ -568,3 +568,95 @@ func (c *failAfterCursor) Next() (Posting, bool, error) {
 	c.after--
 	return c.PostingCursor.Next()
 }
+
+// TestEstimatePostingCost covers the cost of a search following its streams:
+// an intersection reads its smallest list in full and only seeks in the
+// others, a prohibited list is sought to the rows the positive side yields,
+// and a union, a prefix, or a list too dense to skip in is read in full.
+func TestEstimatePostingCost(t *testing.T) {
+	const rows = 1_000_000
+	postings := map[string]float64{"rare": 10, "medium": 20_000, "common": 900_000, "dense": 500_000, "com": 950_000}
+	model := PostingCostModel{
+		Postings: func(read PostingRead) float64 {
+			n, ok := postings[read.Term]
+			require.True(t, ok, read.Term)
+			return n
+		},
+		Rows:      rows,
+		TermScans: 1,
+	}
+	seekRead := 2.0 * SeekReadLimit
+	cases := []struct {
+		search  string
+		entries float64
+		scans   float64
+	}{
+		{"+common", 900_000, 1},
+		{"+rare +common", 10 + 10*seekRead, 2 + 10},
+		{"+common +rare", 10 + 10*seekRead, 2 + 10},
+		{`+"rare common"`, 10 + 10*seekRead, 2 + 10},
+		{"+rare +medium +common", 10 + 2*10*seekRead, 3 + 2*10},
+		{"+rare -common", 10 + 10*seekRead, 2 + 10},
+		// Too dense to skip in: two batches between targets are read through.
+		{"+dense +common", 500_000 + 900_000, 2},
+		{"+medium +common", 20_000 + 900_000, 2},
+		// A union reads every list in full, and so does a prefix.
+		{"rare common", 900_010, 2},
+		{"+rare +com*", 10 + 950_000, 2},
+		{"+nothing", 0, 1},
+	}
+	postings["nothing"] = 0
+	for _, c := range cases {
+		query, err := CompileBooleanQuery(c.search, standardConfig())
+		require.NoError(t, err)
+		cost := query.EstimatePostingCost(model)
+		require.InDelta(t, c.entries, cost.Entries, 1e-6, c.search)
+		require.InDelta(t, c.scans, cost.Scans, 1e-6, c.search)
+	}
+	// Handle ranges multiply the scans of every exact term.
+	model.TermScans = 3
+	query, err := CompileBooleanQuery("+rare +common", standardConfig())
+	require.NoError(t, err)
+	require.InDelta(t, 6+10, query.EstimatePostingCost(model).Scans, 1e-6)
+	// A query proved empty, here a required stopword, reads nothing.
+	query, err = CompileBooleanQuery("+of", standardConfig())
+	require.NoError(t, err)
+	require.True(t, query.MatchesNothing())
+	require.Zero(t, query.EstimatePostingCost(model))
+}
+
+// TestEstimatePostingCostBoundedByFullReads checks over random queries that
+// the estimate never reads more entries than reading every list the search
+// opens in full would.
+func TestEstimatePostingCostBoundedByFullReads(t *testing.T) {
+	words := []string{"alpha", "beta", "gamma", "delta", "epsilon", "of", "the"}
+	rng := rand.New(rand.NewSource(20261105))
+	sizes := make(map[PostingRead]float64)
+	model := PostingCostModel{
+		Postings: func(read PostingRead) float64 {
+			if _, ok := sizes[read]; !ok {
+				sizes[read] = float64(rng.Intn(1_000_000))
+			}
+			return sizes[read]
+		},
+		Rows:      1_000_000,
+		TermScans: 1,
+	}
+	checked := 0
+	for range 2000 {
+		search := randomBooleanQuery(rng, words)
+		query, err := CompileBooleanQuery(search, standardConfig())
+		if err != nil {
+			continue
+		}
+		checked++
+		cost := query.EstimatePostingCost(model)
+		full := 0.0
+		for _, read := range query.PostingReads() {
+			full += model.Postings(read)
+		}
+		require.LessOrEqual(t, cost.Entries, full+1e-6, search)
+		require.GreaterOrEqual(t, cost.Entries, 0.0, search)
+	}
+	require.Greater(t, checked, 1000)
+}

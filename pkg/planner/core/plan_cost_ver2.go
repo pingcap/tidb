@@ -234,9 +234,11 @@ const fullTextPostingEntrySize = 48
 // scan-cost = posting-rows * log2(entry-size) * tikv-scan-factor
 // net-cost = posting-rows * entry-size * net-factor
 // decode-cost = posting-rows * tidb-cpu-factor
-// Every posting list the search opens is read in full and sent to TiDB, which
-// decodes and merges the entries, so the cost follows the entries read rather
-// than the rows the search matches.
+// The entries read are sent to TiDB, which decodes and merges them, so the
+// cost follows the entries read rather than the rows the search matches. An
+// intersection reads its smallest list in full and seeks in the others, each
+// seek a scan of its own; posting-rows and posting-scans count both, see
+// fulltext.Query.EstimatePostingCost.
 func fullTextIndexScanCostVer2(option *costusage.PlanCostOption, p *physicalop.PhysicalIndexScan) costusage.CostVer2 {
 	rows := p.FullText.PostingRows
 	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, property.CopMultiReadTaskType)

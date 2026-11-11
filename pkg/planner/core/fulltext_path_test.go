@@ -231,6 +231,16 @@ func TestFullTextIndexPathPlanning(t *testing.T) {
 	require.NotContains(t, plan, "FullTextIndexScan", plan)
 	require.Regexp(t, `Selection.*match_against`, plan)
 	tk.MustQuery("select id from tw where k = 5 and match(body) against('+world' in boolean mode)").Check(testkit.Rows("5"))
+	// An intersection is costed as it runs: the rare term's postings are
+	// read and the common term's are only sought to them, so the index wins
+	// although reading both lists in full would lose to the scan. A union
+	// reads every list in full, and still does.
+	usesIndex("select id from tw where match(body) against('+zebra +world' in boolean mode)", "idx_body(body)")
+	tk.MustQuery("select id from tw where match(body) against('+zebra +world' in boolean mode)").Check(testkit.Rows("1234"))
+	usesIndex("select id from tw where match(body) against('+world +zebra' in boolean mode)", "idx_body(body)")
+	usesIndex("select id from tw where match(body) against('+zebra -world' in boolean mode)", "idx_body(body)")
+	tk.MustQuery("select id from tw where match(body) against('+zebra -world' in boolean mode)").Check(testkit.Rows())
+	scans("select id from tw where match(body) against('zebra world' in boolean mode)")
 
 	// A plan with the index is never cached: the search string is baked in.
 	tk.MustExec("prepare stmt from 'select id from t where match(body) against(''+hello'' in boolean mode)'")

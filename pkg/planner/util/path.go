@@ -51,13 +51,15 @@ type FullTextAccessInfo struct {
 	Match *expression.ScalarFunction
 	// Search is the constant boolean-mode search string.
 	Search string
-	// PostingRows estimates the posting entries the search reads: every
-	// posting list it opens is read in full, whatever the size of the
-	// result, so this rather than the rows matched is what reading the index
-	// costs.
+	// PostingRows estimates the posting entries the search reads, which
+	// rather than the rows matched is what reading the index costs: the
+	// lists a union, a prefix or the smallest child of an intersection read
+	// in full, and what the seeks into the other children of an
+	// intersection read.
 	PostingRows float64
-	// PostingScans is the number of posting scans the search opens: one per
-	// term and handle range, and one per prefix.
+	// PostingScans estimates the posting scans the search opens: one per
+	// term and handle range, one per prefix, and one per seek that reopens
+	// a scan.
 	PostingScans float64
 }
 

@@ -15,6 +15,7 @@
 package fulltext
 
 import (
+	"math"
 	"slices"
 	"sort"
 
@@ -706,4 +707,200 @@ func newOrStream(streams []postingStream) postingStream {
 		return streams[0]
 	}
 	return &orStream{streams: streams, current: make([]Posting, len(streams)), valid: make([]bool, len(streams))}
+}
+
+// SeekReadLimit is how many postings a seek reads forward before it reopens
+// the posting scan at its target instead. A TiKV scan fetches entries in
+// batches of 256 by default, so reading forward costs at most about one batch
+// more than reopening, while reopening skips everything in between. The TiKV
+// posting cursor seeks this way, and EstimatePostingCost assumes it.
+const SeekReadLimit = 256
+
+// PostingCost is what evaluating a query against an index is expected to
+// read: the posting entries scanned and sent to TiDB, and the posting scans
+// opened, each at least one request.
+type PostingCost struct {
+	Entries float64
+	Scans   float64
+}
+
+// PostingCostModel holds the estimates a search is costed from.
+type PostingCostModel struct {
+	// Postings estimates the postings of one list the query reads.
+	Postings func(PostingRead) float64
+	// Rows is the number of rows the postings are drawn from. The lists of
+	// an intersection or a union are taken to be independent within them.
+	Rows float64
+	// TermScans is the number of scans one exact term's list is read in:
+	// one per handle range the scan is confined to.
+	TermScans float64
+}
+
+// EstimatePostingCost estimates what OpenPostings reads, following the
+// streams it builds rather than summing every list in full. An intersection,
+// of a group's required children or of a phrase's terms, is driven by the
+// child that yields the fewest rows; every other child only seeks to the
+// rows proposed to it. A seek into a list reads at most SeekReadLimit
+// postings forward and then reopens the scan, whose first batch is read
+// again, so a list with fewer than two batches' worth of postings between
+// targets is read through, and a sparser one costs two batches and a scan
+// per target. A union passes each target to every child, a prohibited child
+// is sought to the rows its positive side yields, and a prefix is collected
+// in full whatever is asked of it.
+func (q *Query) EstimatePostingCost(model PostingCostModel) PostingCost {
+	if q == nil || q.matchesNothing || q.root == nil {
+		return PostingCost{}
+	}
+	e := postingEstimator{model: model, postings: make(map[PostingRead]float64)}
+	return e.cost(q.root, math.Inf(1))
+}
+
+type postingEstimator struct {
+	model    PostingCostModel
+	postings map[PostingRead]float64
+}
+
+func (e postingEstimator) list(read PostingRead) float64 {
+	n, ok := e.postings[read]
+	if !ok {
+		n = max(0, e.model.Postings(read))
+		e.postings[read] = n
+	}
+	return n
+}
+
+// rows estimates the rows node yields.
+func (e postingEstimator) rows(node queryNode) float64 {
+	switch n := node.(type) {
+	case termNode:
+		return e.list(PostingRead{Term: n.token})
+	case prefixNode:
+		return e.list(PostingRead{Term: n.prefix, Prefix: true})
+	case phraseNode:
+		rows := make([]float64, 0, len(n.tokens))
+		for _, token := range n.tokens {
+			rows = append(rows, e.list(PostingRead{Term: token}))
+		}
+		return e.intersection(rows)
+	case groupNode:
+		var positive float64
+		switch {
+		case len(n.must) > 0:
+			positive = e.intersection(e.childRows(n.must))
+		case len(n.should) > 0:
+			positive = e.union(e.childRows(n.should))
+		default:
+			return 0
+		}
+		if len(n.mustNot) > 0 && e.model.Rows > 0 {
+			negative := e.union(e.childRows(n.mustNot))
+			positive *= max(0, 1-negative/e.model.Rows)
+		}
+		return positive
+	}
+	return 0
+}
+
+func (e postingEstimator) childRows(nodes []queryNode) []float64 {
+	rows := make([]float64, 0, len(nodes))
+	for _, node := range nodes {
+		rows = append(rows, e.rows(node))
+	}
+	return rows
+}
+
+func (e postingEstimator) intersection(rows []float64) float64 {
+	if e.model.Rows <= 0 || len(rows) == 0 {
+		return 0
+	}
+	result := e.model.Rows
+	for _, r := range rows {
+		result *= min(1, r/e.model.Rows)
+	}
+	return result
+}
+
+func (e postingEstimator) union(rows []float64) float64 {
+	if e.model.Rows <= 0 {
+		return 0
+	}
+	missed := 1.0
+	for _, r := range rows {
+		missed *= max(0, 1-r/e.model.Rows)
+	}
+	return e.model.Rows * (1 - missed)
+}
+
+// cost estimates what reading node costs when it is asked for at most seeks
+// rows, each by a seek; seeks is infinite when node is read through.
+func (e postingEstimator) cost(node queryNode, seeks float64) PostingCost {
+	switch n := node.(type) {
+	case termNode:
+		return e.termCost(n.token, seeks)
+	case prefixNode:
+		return PostingCost{Entries: e.list(PostingRead{Term: n.prefix, Prefix: true}), Scans: 1}
+	case phraseNode:
+		seen := make(map[string]struct{}, len(n.tokens))
+		var tokens []string
+		driver := seeks
+		for _, token := range n.tokens {
+			if _, ok := seen[token]; ok {
+				continue
+			}
+			seen[token] = struct{}{}
+			tokens = append(tokens, token)
+			driver = min(driver, e.list(PostingRead{Term: token}))
+		}
+		var cost PostingCost
+		for _, token := range tokens {
+			cost.add(e.termCost(token, driver))
+		}
+		return cost
+	case groupNode:
+		var cost PostingCost
+		var positive float64
+		switch {
+		case len(n.must) > 0:
+			// A single required child is the group's stream itself, as
+			// newAndStream returns it, and is asked what the group is.
+			driver := seeks
+			if len(n.must) > 1 {
+				for _, child := range n.must {
+					driver = min(driver, e.rows(child))
+				}
+			}
+			for _, child := range n.must {
+				cost.add(e.cost(child, driver))
+			}
+			positive = min(seeks, e.intersection(e.childRows(n.must)))
+		case len(n.should) > 0:
+			for _, child := range n.should {
+				cost.add(e.cost(child, seeks))
+			}
+			positive = min(seeks, e.union(e.childRows(n.should)))
+		default:
+			return PostingCost{}
+		}
+		for _, child := range n.mustNot {
+			cost.add(e.cost(child, positive))
+		}
+		return cost
+	}
+	return PostingCost{}
+}
+
+// termCost is what reading an exact term's list costs when it is sought to
+// at most seeks targets.
+func (e postingEstimator) termCost(term string, seeks float64) PostingCost {
+	n := e.list(PostingRead{Term: term})
+	scans := max(1, e.model.TermScans)
+	if seeks*2*SeekReadLimit >= n {
+		return PostingCost{Entries: n, Scans: scans}
+	}
+	return PostingCost{Entries: seeks * 2 * SeekReadLimit, Scans: scans + seeks}
+}
+
+func (c *PostingCost) add(other PostingCost) {
+	c.Entries += other.Entries
+	c.Scans += other.Scans
 }

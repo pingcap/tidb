@@ -238,14 +238,6 @@ func appendHandleKey(key []byte, handle kv.Handle) []byte {
 	return append(key, handle.Encoded()...)
 }
 
-// seekReadLimit is how many entries a seek reads forward before it reopens
-// the scan at its target instead. A scan fetches entries from TiKV in batches
-// of 256 by default, so reading forward costs at most about one batch more
-// than reopening would, while reopening skips everything in between; a seek
-// into a dense posting list therefore costs about what a scan of the rows
-// near the target does, not of the whole gap.
-const seekReadLimit = 256
-
 type tikvPostingCursor struct {
 	source *tikvPostingSource
 	iter   kv.Iterator
@@ -322,8 +314,9 @@ func (c *tikvPostingCursor) Next() (fulltext.Posting, bool, error) {
 }
 
 // Seek implements fulltext.PostingSeeker. It reads forward while the target
-// is near, decoding only the handles, and past seekReadLimit entries reopens
-// the scan at the target's key within the cursor's range.
+// is near, decoding only the handles, and past fulltext.SeekReadLimit entries
+// reopens the scan at the target's key within the cursor's range, which the
+// planner's cost of a search assumes; see fulltext.Query.EstimatePostingCost.
 func (c *tikvPostingCursor) Seek(target kv.Handle) (fulltext.Posting, bool, error) {
 	for steps := 0; ; steps++ {
 		handle, ok, err := c.current()
@@ -333,7 +326,7 @@ func (c *tikvPostingCursor) Seek(target kv.Handle) (fulltext.Posting, bool, erro
 		if handle.Compare(target) >= 0 {
 			return c.Next()
 		}
-		if steps < seekReadLimit || c.termKey == nil {
+		if steps < fulltext.SeekReadLimit || c.termKey == nil {
 			if err := c.advance(); err != nil {
 				return fulltext.Posting{}, false, err
 			}
