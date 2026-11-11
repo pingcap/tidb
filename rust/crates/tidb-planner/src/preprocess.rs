@@ -392,6 +392,54 @@ pub fn check_repair_table_grammar(
     check_table_name(path_name(&stmt.create.name))
 }
 
+/// Go `preprocessor.handleRepairName`: the table an `ADMIN REPAIR TABLE`
+/// names must be one `RepairInfo` holds (`repaired` is its
+/// `GetRepairedTableInfoByTableName` answer), outside the memory and system
+/// databases. Answers Go's `RepairedTable` and `RepairedDatabase` values.
+pub fn handle_repair_name<T, D>(
+    schema_lower_name: &str,
+    table_lower_name: &str,
+    repaired: (Option<T>, Option<D>),
+) -> Result<(T, D), MysqlError> {
+    let repair_table_fail = |reason: String| {
+        MysqlError::from_terror(
+            &tidb_dbterror::ERR_REPAIR_TABLE_FAIL.gen_with_stack_by_args(&[reason.into()]),
+        )
+    };
+    if tidb_metadef::is_mem_or_sys_db(schema_lower_name) {
+        return Err(repair_table_fail(
+            "memory or system database is not for repair".to_owned(),
+        ));
+    }
+    let (table_info, db_info) = repaired;
+    let Some(db_info) = db_info else {
+        return Err(repair_table_fail(format!(
+            "database {schema_lower_name} is not in repair"
+        )));
+    };
+    let Some(table_info) = table_info else {
+        return Err(repair_table_fail(format!(
+            "table {table_lower_name} is not in repair"
+        )));
+    };
+    Ok((table_info, db_info))
+}
+
+/// Go `preprocessor.checkNotInRepair`: a create, drop or rename may not name
+/// a table `RepairInfo` holds (`in_repair` is whether
+/// `GetRepairedTableInfoByTableName` answered a table).
+pub fn check_not_in_repair(table_lower_name: &str, in_repair: bool) -> Result<(), MysqlError> {
+    if in_repair {
+        return Err(MysqlError::from_terror(
+            &tidb_dbterror::ERR_WRONG_TABLE_NAME.gen_with_stack_by_args(&[
+                table_lower_name.into(),
+                "this table is in repair".into(),
+            ]),
+        ));
+    }
+    Ok(())
+}
+
 /// Go `util.IsInCorrectIdentifierName`: an empty name, or one ending in a
 /// space.
 fn is_incorrect_identifier_name(name: &str) -> bool {

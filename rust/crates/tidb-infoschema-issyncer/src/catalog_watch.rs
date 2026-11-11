@@ -262,7 +262,7 @@ impl InfoCache {
                 }
             }
         } else {
-            let mut loaded = tidb_infoschema::cluster_catalog::load_info_schema(snapshot)?;
+            let mut loaded = crate::catalog_reload::load_info_schema(snapshot)?;
             // The reserved counter may be ahead of the committed schema diff.
             // Use the same effective version as the live reload owner.
             loaded.set_schema_meta_version(version);

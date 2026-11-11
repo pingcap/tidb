@@ -25,7 +25,8 @@ use tidb_txnkv::kv_storage::{SnapshotScanRegion, Storage, Transaction};
 use tidb_txnkv::Key;
 
 use crate::catalog_reload::{reload_cluster_catalog, ReloadedCatalog};
-use tidb_infoschema::cluster_catalog::{load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot};
+use crate::catalog_reload::load_info_schema;
+use tidb_infoschema::cluster_catalog::{ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot};
 use tidb_infoschema::SessionExtendedInfoSchema;
 
 use tidb_kv::key::prefix_scan_end;

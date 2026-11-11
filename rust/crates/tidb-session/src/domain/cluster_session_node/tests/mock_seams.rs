@@ -587,6 +587,7 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::UpdateTiFlashReplicaStatus { .. }
             | DdlStatement::AlterTableMode { .. }
             | DdlStatement::RefreshMeta { .. }
+            | DdlStatement::RepairTable { .. }
             | DdlStatement::TruncateTable { .. }
             | DdlStatement::RecoverTable { .. }
             | DdlStatement::FlashbackDatabase { .. } => {

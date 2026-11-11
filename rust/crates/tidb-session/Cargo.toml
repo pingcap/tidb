@@ -225,6 +225,7 @@ tidb-topsql-reporter = { path = "../tidb-topsql-reporter" }
 tidb-stats-handle-types = { path = "../tidb-stats-handle-types" }
 tidb-stats-asyncload = { path = "../tidb-stats-asyncload" }
 tidb-ddl = { path = "../tidb-ddl", features = ["failpoints"] }
+tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer", features = ["failpoints"] }
 tidb-expensivequery = { path = "../tidb-expensivequery" }
 tidb-executor = { path = "../tidb-executor", features = ["test-util"] }
 tidb-domain-core = { path = "../tidb-domain-core", features = ["test-util"] }
@@ -264,4 +265,4 @@ path = "tests/serial.rs"
 [features]
 # Test-only fault injection: the DDL worker's `fail::fail_point!`s, for
 # the crates whose tests drive it.
-failpoints = ["tidb-ddl/failpoints"]
+failpoints = ["tidb-ddl/failpoints", "tidb-infoschema-issyncer/failpoints"]

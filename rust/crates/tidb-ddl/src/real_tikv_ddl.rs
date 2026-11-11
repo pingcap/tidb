@@ -1349,6 +1349,14 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 upgrading,
             )
         }
+        DdlStatement::RepairTable { .. } => crate::cluster_ddl::repair_table::repair_table(
+            snapshot,
+            statement,
+            job_context,
+            tiflash_stores,
+            start_ts,
+            upgrading,
+        ),
         DdlStatement::AlterTableMode { .. } | DdlStatement::RefreshMeta { .. } => {
             crate::cluster_ddl::table_mode::alter_table_mode(
                 snapshot,

@@ -47,6 +47,7 @@ mod go_executor_protocol;
 mod upgrade;
 mod tiflash_partition;
 mod table_mode;
+mod repair_table;
 mod ddl_analyze;
 mod dxf_framework;
 mod dxf_integrationtests;

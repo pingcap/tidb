@@ -653,6 +653,16 @@ pub enum DdlStatement {
         /// Go `RefreshMetaArgs.InvolvedTable`.
         involved_table: String,
     },
+    /// Go `executor.RepairTable` -> the `ActionRepairTable` job:
+    /// `ADMIN REPAIR TABLE table CREATE TABLE ...` in REPAIR MODE.
+    RepairTable {
+        /// Database of the table `RepairInfo` holds.
+        schema: String,
+        /// The table `RepairInfo` holds.
+        table: String,
+        /// The replacement `CREATE TABLE`, built once its charset is known.
+        build: Box<CreateTableBuild>,
+    },
     /// The AUTO_RANDOM portion of `ALTER TABLE ... MODIFY COLUMN`.
     AlterAutoRandomBits {
         /// Database containing the table.
@@ -1602,6 +1612,16 @@ pub fn lower_ddl_with_context(
             lower_create_table(create, default_schema, context).map(Some)
         }
         DdlStmt::DropTable(drop) => lower_drop_table(drop, default_schema).map(Some),
+        DdlStmt::RepairTable(repair) => {
+            let (schema, table) = split_name(&repair.table, default_schema, "table")?;
+            let (create_schema, _) = split_name(&repair.create.name, default_schema, "table")?;
+            let build = CreateTableBuild::new(&repair.create, &create_schema, context)?;
+            Ok(Some(DdlStatement::RepairTable {
+                schema,
+                table,
+                build: Box::new(build),
+            }))
+        }
         DdlStmt::DropView { if_exists, names } => {
             let mut resolved = Vec::with_capacity(names.len());
             for path in names {
@@ -5255,6 +5275,7 @@ pub mod multi_schema;
 pub mod partition;
 pub mod placement_policy;
 pub mod rename_table;
+pub mod repair_table;
 pub mod reorganize_partition;
 pub mod resource_group;
 pub mod table_lock;
@@ -5314,6 +5335,7 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_UNLOCK_TABLE
             | ActionType::ACTION_ALTER_TABLE_MODE
             | ActionType::ACTION_REFRESH_META
+            | ActionType::ACTION_REPAIR_TABLE
             | ActionType::ACTION_ADD_TABLE_PARTITION
             | ActionType::ACTION_DROP_TABLE_PARTITION
             | ActionType::ACTION_TRUNCATE_TABLE_PARTITION
@@ -5555,6 +5577,7 @@ fn dispatch_persisted_action(
             table_mode::on_alter_table_mode(txn, active, start_ts)
         }
         ActionType::ACTION_REFRESH_META => table_mode::on_refresh_meta(txn, active),
+        ActionType::ACTION_REPAIR_TABLE => repair_table::on_repair_table(txn, active, start_ts),
         ActionType::ACTION_DROP_SCHEMA => {
             plan_persisted_drop_schema_job_step(txn, catalog, active, row_ids)
         }
@@ -7372,8 +7395,10 @@ fn checked_job_table(
     })?;
     let shared = table;
     let table = shared.read();
+    // Check if table name is renamed.
     if !active.job.table_name.is_empty()
         && table.name.lowercase() != active.job.table_name.to_string()
+        && active.job.type_ != ActionType::ACTION_REPAIR_TABLE
     {
         return Err(cancel_ddl_job(
             active,

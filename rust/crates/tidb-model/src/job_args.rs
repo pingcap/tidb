@@ -406,6 +406,8 @@ pub enum JobArgsValue {
     CreateTable(Option<GoShared<CreateTableArgs>>),
     /// `*model.BatchCreateTableArgs`, including a typed nil pointer.
     BatchCreateTable(Option<GoShared<BatchCreateTableArgs>>),
+    /// `*model.RepairTableArgs`, including a typed nil pointer.
+    RepairTable(Option<GoShared<RepairTableArgs>>),
     /// `*model.TruncateTableArgs`, including a typed nil pointer.
     TruncateTable(Option<GoShared<TruncateTableArgs>>),
     /// `*model.DropTableArgs`, including a typed nil pointer.
@@ -487,6 +489,7 @@ impl JobArgsValue {
             Self::ModifySchema(value) => job.fill_args(value.clone()),
             Self::CreateTable(value) => job.fill_args(value.clone()),
             Self::BatchCreateTable(value) => job.fill_args(value.clone()),
+            Self::RepairTable(value) => job.fill_args(value.clone()),
             Self::TruncateTable(value) => job.fill_args(value.clone()),
             Self::DropTable(value) => job.fill_args(value.clone()),
             Self::TablePartition(value) => job.fill_args(value.clone()),
@@ -534,6 +537,7 @@ impl JobArgsValue {
             Self::ModifySchema(_) => "ModifySchemaArgs",
             Self::CreateTable(_) => "CreateTableArgs",
             Self::BatchCreateTable(_) => "BatchCreateTableArgs",
+            Self::RepairTable(_) => "RepairTableArgs",
             Self::TruncateTable(_) => "TruncateTableArgs",
             Self::DropTable(_) => "DropTableArgs",
             Self::TablePartition(_) => "TablePartitionArgs",
@@ -582,6 +586,7 @@ impl JobArgsValue {
             Self::ModifySchema(value) => value.as_ref().map(GoShared::identity_address),
             Self::CreateTable(value) => value.as_ref().map(GoShared::identity_address),
             Self::BatchCreateTable(value) => value.as_ref().map(GoShared::identity_address),
+            Self::RepairTable(value) => value.as_ref().map(GoShared::identity_address),
             Self::TruncateTable(value) => value.as_ref().map(GoShared::identity_address),
             Self::DropTable(value) => value.as_ref().map(GoShared::identity_address),
             Self::TablePartition(value) => value.as_ref().map(GoShared::identity_address),
@@ -669,6 +674,11 @@ impl JobArgsValue {
             .go_json_projection(),
             Self::BatchCreateTable(value) => GoTypedPointer::new(
                 model_type("BatchCreateTableArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::RepairTable(value) => GoTypedPointer::new(
+                model_type("RepairTableArgs", GoTypeKind::Struct),
                 value.clone(),
             )
             .go_json_projection(),

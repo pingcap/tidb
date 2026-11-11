@@ -42,7 +42,7 @@ use tidb_model::schema_state::SchemaState;
 use tidb_model::{GoShared, GoSharedPointerSlice};
 
 use tidb_infoschema::cluster_catalog::{
-    load_info_schema, list_tables, normalize_diff_loaded_table_info, with_meta_reader,
+    list_tables, load_info_schema_keeping, normalize_diff_loaded_table_info, with_meta_reader,
     ClusterCatalogError, MetaSnapshot,
 };
 use tidb_infoschema::SessionExtendedInfoSchema;
@@ -627,7 +627,14 @@ fn apply_table_update<S: MetaSnapshot>(
         }
     }
     if table_id_is_valid(new_table_id) {
-        match create_table(snapshot, catalog, version, diff.schema_id, new_table_id)? {
+        match create_table(
+            snapshot,
+            catalog,
+            version,
+            diff.schema_id,
+            new_table_id,
+            diff.action_type,
+        )? {
             Ok(created) => {
                 if diff.action_type != ActionType::ACTION_TRUNCATE_TABLE_PARTITION {
                     ids.extend(created);
@@ -911,16 +918,20 @@ fn create_table<S: MetaSnapshot>(
     version: i64,
     db_id: i64,
     table_id: i64,
+    tp: ActionType,
 ) -> AppliedDiff {
-    if catalog.schema_by_id(db_id).is_none() {
+    let Some(db_info) = catalog.schema_by_id(db_id) else {
         return Ok(Err(missing(version, format!("unknown database {db_id}"))));
-    }
+    };
     let Some(mut table) = read_table(snapshot, db_id, table_id)? else {
         return Ok(Err(missing(
             version,
             format!("table {table_id} in database {db_id}, which the snapshot does not store"),
         )));
     };
+    if repair_fetch_create_table(&db_info, &table, tp) {
+        return Ok(Ok(Vec::new()));
+    }
     normalize_diff_loaded_table_info(&mut table);
     let mut ids = Vec::new();
     affected_ids(&table, &mut ids);
@@ -934,6 +945,48 @@ fn create_table<S: MetaSnapshot>(
         database.deprecated_tables = GoSharedPointerSlice::from_handles(tables);
     });
     Ok(Ok(ids))
+}
+
+/// Go `Loader.LoadWithTS`'s full load. Its `fetchSchemasWithTables` hands a
+/// table on the repair list to `RepairInfo` (`CheckAndFetchRepairedTable`)
+/// and keeps it out of the schema until its repair job has made it public.
+pub fn load_info_schema<S: MetaSnapshot + ?Sized>(
+    snapshot: &mut S,
+) -> Result<SessionExtendedInfoSchema, ClusterCatalogError> {
+    use tidb_domainutil::REPAIR_INFO;
+    load_info_schema_keeping(snapshot, &mut |di, tbl| {
+        !(REPAIR_INFO.in_repair_mode()
+            && REPAIR_INFO.check_and_fetch_repaired_table(di, tbl)
+            && tbl.read().state != tidb_model::schema_state::SchemaState::PUBLIC)
+    })
+}
+
+/// Go `applyCreateTable`'s failpoint `repairFetchCreateTable`: a repair test
+/// loads its mock bad `TableInfo` into `RepairInfo` instead of the schema.
+#[cfg(feature = "failpoints")]
+fn repair_fetch_create_table(
+    db_info: &GoShared<tidb_model::db::DBInfo>,
+    table: &tidb_model::table_info::TableInfo,
+    tp: ActionType,
+) -> bool {
+    use tidb_domainutil::REPAIR_INFO;
+    let enabled = (|| {
+        fail::fail_point!("repairFetchCreateTable", |val| val.as_deref() == Some("true"));
+        false
+    })();
+    enabled
+        && REPAIR_INFO.in_repair_mode()
+        && tp != ActionType::ACTION_REPAIR_TABLE
+        && REPAIR_INFO.check_and_fetch_repaired_table(db_info, &GoShared::new(table.clone()))
+}
+
+#[cfg(not(feature = "failpoints"))]
+fn repair_fetch_create_table(
+    _db_info: &GoShared<tidb_model::db::DBInfo>,
+    _table: &tidb_model::table_info::TableInfo,
+    _tp: ActionType,
+) -> bool {
+    false
 }
 
 /// Go `applyDropTable`'s catalog effect; an absent table is a no-op that

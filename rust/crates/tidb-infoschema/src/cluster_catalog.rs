@@ -29,7 +29,7 @@
 use std::fmt;
 
 use tidb_model::db::DBInfo;
-use tidb_model::GoShared;
+use tidb_model::{GoShared, GoSharedPointerSlice};
 use tidb_model::table_info::{TableInfo, TABLE_INFO_VERSION2, TABLE_INFO_VERSION3};
 
 /// Failure to read or interpret the stored catalog.
@@ -261,6 +261,16 @@ pub fn get_schema_version<S: MetaSnapshot + ?Sized>(snapshot: &mut S) -> Result<
 pub fn load_info_schema<S: MetaSnapshot + ?Sized>(
     snapshot: &mut S,
 ) -> Result<crate::SessionExtendedInfoSchema, ClusterCatalogError> {
+    load_info_schema_keeping(snapshot, &mut |_, _| true)
+}
+
+/// [`load_info_schema`] whose `keep` decides, table by table, what
+/// `fetchSchemasWithTables` lets into the image: the domain's `Loader` keeps
+/// a table under repair out of it.
+pub fn load_info_schema_keeping<S: MetaSnapshot + ?Sized>(
+    snapshot: &mut S,
+    keep: &mut dyn FnMut(&GoShared<DBInfo>, &GoShared<TableInfo>) -> bool,
+) -> Result<crate::SessionExtendedInfoSchema, ClusterCatalogError> {
     let reader = meta_reader(snapshot);
     let read = |error| reader_error(&reader, error);
     let schema_version = reader.schema_version().map_err(read)?;
@@ -273,7 +283,7 @@ pub fn load_info_schema<S: MetaSnapshot + ?Sized>(
         .iter()
         .map(|group| (**group).clone())
         .collect();
-    let databases = fetch_all_schemas_with_tables(&reader).map_err(read)?;
+    let databases = fetch_all_schemas_with_tables(&reader, keep).map_err(read)?;
     Ok(crate::SessionExtendedInfoSchema::init_with_db_infos(
         databases,
         policies,
@@ -283,14 +293,25 @@ pub fn load_info_schema<S: MetaSnapshot + ?Sized>(
 }
 
 /// Go `Loader.fetchAllSchemasWithTables`: `ListDatabases`, each database's
-/// `Deprecated.Tables` its `ListTables`.
+/// `Deprecated.Tables` the tables of its `ListTables` that `keep` admits
+/// (`fetchSchemasWithTables`).
 fn fetch_all_schemas_with_tables<S: MetaSnapshot + ?Sized>(
     reader: &MetaReader<'_, S>,
+    keep: &mut dyn FnMut(&GoShared<DBInfo>, &GoShared<TableInfo>) -> bool,
 ) -> tidb_meta::Result<Vec<GoShared<DBInfo>>> {
     let mut databases = Vec::new();
-    for mut info in reader.databases()? {
-        info.deprecated_tables = database_tables(reader, info.id)?.into();
-        databases.push(GoShared::new(info));
+    for info in reader.databases()? {
+        let tables = database_tables(reader, info.id)?;
+        let di = GoShared::new(info);
+        let mut di_tables = Vec::with_capacity(tables.len());
+        for tbl in tables {
+            let tbl = GoShared::new(tbl);
+            if keep(&di, &tbl) {
+                di_tables.push(Some(tbl));
+            }
+        }
+        di.write().deprecated_tables = GoSharedPointerSlice::from_handles(di_tables);
+        databases.push(di);
     }
     Ok(databases)
 }

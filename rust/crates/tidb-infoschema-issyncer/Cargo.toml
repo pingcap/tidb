@@ -19,10 +19,16 @@ tidb-infoschema-isvalidator = { path = "../tidb-infoschema-isvalidator" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-log = { path = "../tidb-log" }
 tidb-meta = { path = "../tidb-meta" }
+tidb-domainutil = { path = "../tidb-domainutil" }
+fail = { version = "0.4", optional = true }
 tidb-model = { path = "../tidb-model" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 serde_json = { workspace = true }
+
+[features]
+# Test-only fault injection: Go's `repairFetchCreateTable`.
+failpoints = ["dep:fail", "fail/failpoints"]
 
 [lints]
 workspace = true

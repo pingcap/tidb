@@ -777,6 +777,27 @@ impl Session {
         ))
     }
 
+    /// Go `handleTableName`'s schema fill for a repair lookup: the lowered
+    /// schema (the current one for a bare name, `ErrNoDB` without one) and
+    /// table names.
+    fn repair_table_name(&self, path: &[String]) -> Result<(String, String), DriverError> {
+        let (schema, name) = match path {
+            [schema, name] => (schema.as_str(), name.as_str()),
+            [name] if !self.vars.current_db.is_empty() => {
+                (self.vars.current_db.as_str(), name.as_str())
+            }
+            _ => {
+                return Err(DriverError::from(
+                    tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
+                ))
+            }
+        };
+        Ok((
+            tidb_ast::CiString::new(schema).lowercase().to_owned(),
+            tidb_ast::CiString::new(name).lowercase().to_owned(),
+        ))
+    }
+
     /// Preprocessor errors precede both grant checking and implicit commits.
     pub fn validate_ddl_preprocess(&self, stmt: &tidb_ast::Stmt) -> Result<(), DriverError> {
         // Go's walk enters an `ADMIN REPAIR TABLE` before its CREATE TABLE,
@@ -788,6 +809,12 @@ impl Session {
                     repair,
                     repair_info.in_repair_mode(),
                     repair_info.get_repair_table_list().is_empty(),
+                )?;
+                let (schema, name) = self.repair_table_name(&repair.table)?;
+                tidb_planner::preprocess::handle_repair_name(
+                    &schema,
+                    &name,
+                    repair_info.get_repaired_table_info_by_table_name(&schema, &name),
                 )?;
             }
         }
@@ -814,6 +841,18 @@ impl Session {
             graded,
             self.vars.sql_mode().has_strict_mode(),
         )?;
+        // Go `handleTableName` under `inCreateOrDropTable`: in REPAIR MODE no
+        // create, drop or rename names a table under repair.
+        if tidb_domainutil::REPAIR_INFO.in_repair_mode() {
+            if let tidb_ast::Stmt::Ddl(ddl) = stmt {
+                for path in create_or_drop_table_names(ddl) {
+                    let (schema, name) = self.repair_table_name(path)?;
+                    let (table, _) = tidb_domainutil::REPAIR_INFO
+                        .get_repaired_table_info_by_table_name(&schema, &name);
+                    tidb_planner::preprocess::check_not_in_repair(&name, table.is_some())?;
+                }
+            }
+        }
         // Go checkCreateTableGrammar resolves LIKE through the session
         // infoschema and rejects temporary sources before privilege checking.
         // A cluster lowerer must never clone the permanent table hidden by a
@@ -1577,5 +1616,26 @@ impl Session {
         let mut rules: Vec<String> = rules.iter().cloned().collect();
         rules.sort();
         (map, rules)
+    }
+}
+
+/// The table names Go's preprocessor visits under `inCreateOrDropTable`: a
+/// created, dropped or renamed table, view or sequence, and a CREATE TABLE
+/// LIKE source.
+fn create_or_drop_table_names(ddl: &tidb_ast::DdlStmt) -> Vec<&[String]> {
+    match ddl {
+        tidb_ast::DdlStmt::CreateTable(create) => std::iter::once(create.name.as_slice())
+            .chain(create.like_table.as_deref())
+            .collect(),
+        tidb_ast::DdlStmt::CreateView(create) => vec![create.name.as_slice()],
+        tidb_ast::DdlStmt::CreateSequence(create) => vec![create.name.as_slice()],
+        tidb_ast::DdlStmt::DropTable(drop) => drop.names.iter().map(Vec::as_slice).collect(),
+        tidb_ast::DdlStmt::DropSequence(drop) => drop.names.iter().map(Vec::as_slice).collect(),
+        tidb_ast::DdlStmt::RenameTable(rename) => rename
+            .pairs
+            .iter()
+            .flat_map(|(old, new)| [old.as_slice(), new.as_slice()])
+            .collect(),
+        _ => Vec::new(),
     }
 }

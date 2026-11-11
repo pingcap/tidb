@@ -4074,6 +4074,7 @@ dependencies = [
  "tidb-domain-affinity",
  "tidb-domain-infosync",
  "tidb-domain-serverinfo",
+ "tidb-domainutil",
  "tidb-errno",
  "tidb-executor",
  "tidb-exeerrors",
@@ -5747,10 +5748,12 @@ version = "0.0.0"
 name = "tidb-infoschema-issyncer"
 version = "0.0.0"
 dependencies = [
+ "fail",
  "serde_json",
  "tidb-ast",
  "tidb-autoid",
  "tidb-datatype",
+ "tidb-domainutil",
  "tidb-infoschema",
  "tidb-infoschema-isvalidator",
  "tidb-kv",

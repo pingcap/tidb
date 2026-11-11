@@ -25,7 +25,8 @@ use crate::{
     BatchCreateTableArgs, CheckConstraintArgs, CreateSchemaArgs, CreateTableArgs,
     DropForeignKeyArgs, DropSchemaArgs, EmptyArgs, ExchangeTablePartitionArgs, ModifySchemaArgs,
     ModifyTableAutoIDCacheArgs, ModifyTableCharsetAndCollateArgs, ModifyTableCommentArgs,
-    ModifyTableEngineAttributeArgs, RebaseAutoIDArgs, RefreshMetaArgs, SetDefaultValueArgs,
+    ModifyTableEngineAttributeArgs, RebaseAutoIDArgs, RefreshMetaArgs, RepairTableArgs,
+    SetDefaultValueArgs,
     ShardRowIDArgs, TableIDIndexID, TablePartitionArgs, TruncateTableArgs,
 };
 
@@ -107,6 +108,15 @@ impl_go_json_merge_object!(CreateTableArgs, destination, map, key, {
     }
 });
 impl_go_json_deserialize!(CreateTableArgs);
+
+impl_go_json_merge_object!(RepairTableArgs, destination, map, key, {
+    if go_json_field_matches(&key, "table_info") {
+        map.next_value_seed(OptionSharedMergeSeed(&mut *destination.table_info.write()))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(RepairTableArgs);
 
 impl_go_json_merge_object!(BatchCreateTableArgs, destination, map, key, {
     if go_json_field_matches(&key, "tables") {

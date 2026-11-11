@@ -3128,6 +3128,7 @@ where
                     | DdlStatement::UnlockTables { .. }
                     | DdlStatement::AlterTableMode { .. }
                     | DdlStatement::RefreshMeta { .. }
+                    | DdlStatement::RepairTable { .. }
                     | DdlStatement::AddPartitions { .. }
                     | DdlStatement::DropPartitions { .. }
                     | DdlStatement::TruncatePartitions { .. }
@@ -3160,6 +3161,14 @@ where
                 }
                 AddIndexSubmission::Job(spec, executor_warnings) => {
                     let mut report = self.do_ddl_job_wrapper(job_context, *spec)?;
+                    if let DdlStatement::RepairTable { schema, table, .. } = statement {
+                        // Go `RepairTable`: remove the old TableInfo from
+                        // repairInfo before domain reload.
+                        tidb_domainutil::REPAIR_INFO.remove_from_repair_info(
+                            tidb_ast::CiString::new(schema.clone()).lowercase(),
+                            tidb_ast::CiString::new(table.clone()).lowercase(),
+                        );
+                    }
                     // The executor's warnings precede the job's.
                     let (ClusterDdlReport::Applied { warnings, .. }
                     | ClusterDdlReport::AlreadySatisfied { warnings, .. }) = &mut report;

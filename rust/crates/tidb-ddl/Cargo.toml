@@ -38,6 +38,7 @@ tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-ddl-bdr = { path = "../tidb-ddl-bdr" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-domain-affinity = { path = "../tidb-domain-affinity" }
+tidb-domainutil = { path = "../tidb-domainutil" }
 tidb-domain-infosync = { path = "../tidb-domain-infosync" }
 tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
 tidb-store-driver-error = { path = "../tidb-store-driver-error" }

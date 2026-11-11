@@ -142,10 +142,19 @@ impl RepairInfo {
             return false;
         }
         if let Some(repaired_db) = state.repair_db_info_map.get(&db_id) {
-            repaired_db
-                .write()
+            // Go's one `Loader` meets a table once. Here the DDL worker's
+            // `LoadWithTS` and the domain's reload both apply the diff that
+            // creates it, so a table already recorded is replaced, never
+            // recorded twice.
+            let mut repaired_db = repaired_db.write();
+            let table_id = tbl.read().id;
+            let mut tables = repaired_db
                 .deprecated_tables
-                .push_handle_go(Some(tbl.clone()));
+                .iter_handles()
+                .filter(|table| table.as_ref().is_none_or(|table| table.read().id != table_id))
+                .collect::<Vec<_>>();
+            tables.push(Some(tbl.clone()));
+            repaired_db.deprecated_tables = tidb_model::GoSharedPointerSlice::from_handles(tables);
         } else {
             // Shallow copy the DBInfo, clean the tables, and set the
             // repaired table.

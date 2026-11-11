@@ -703,6 +703,57 @@ pub fn get_create_table_args(
     get_or_decode_args(job)
 }
 
+/// Go `RepairTableArgs`.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct RepairTableArgs {
+    /// Repaired table metadata pointer.
+    #[serde(
+        rename = "table_info",
+        default,
+        skip_serializing_if = "field_shared_pointer_is_none"
+    )]
+    pub table_info: GoField<Option<GoShared<TableInfo>>>,
+}
+
+impl JobArgs for RepairTableArgs {
+    fn into_job_args_value(value: Option<GoShared<Self>>) -> JobArgsValue {
+        JobArgsValue::RepairTable(value)
+    }
+
+    fn from_job_args_value(value: &JobArgsValue) -> Option<Option<GoShared<Self>>> {
+        match value {
+            JobArgsValue::RepairTable(value) => Some(value.clone()),
+            _ => None,
+        }
+    }
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *RepairTableArgs receiver").read();
+        GoSharedSlice::from_vec(vec![typed_pointer_any(
+            model_type("TableInfo", GoTypeKind::Struct),
+            value.table_info.get(),
+        )])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let table_info = GoShared::new(TableInfo::default());
+        let value = GoShared::new(Self {
+            table_info: GoField::new(Some(table_info.clone())),
+        });
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode_pointee(&table_info, model_type("TableInfo", GoTypeKind::Struct))?;
+        decoder.finish(job);
+        Ok(Some(value))
+    }
+}
+
+/// Go `GetRepairTableArgs`.
+pub fn get_repair_table_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<RepairTableArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
 /// Go `BatchCreateTableArgs`.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct BatchCreateTableArgs {

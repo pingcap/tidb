@@ -1036,6 +1036,25 @@ pub(crate) fn first_source_getter_matrix_round_trips_values_in_both_versions() {
     }
 }
 
+// Go `TestRepairTableArgs`.
+#[test]
+fn repair_table_args_round_trip_like_go() {
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let args = GoShared::new(RepairTableArgs {
+            table_info: GoField::new(Some(GoShared::new(TableInfo {
+                id: 1,
+                name: CiString::new("t"),
+                ..Default::default()
+            }))),
+        });
+        let mut job = encoded_job(version, ActionType::ACTION_REPAIR_TABLE, args);
+        let decoded = get_repair_table_args(&mut job).unwrap().unwrap();
+        let table = decoded.read().table_info.get().unwrap();
+        assert_eq!(table.read().id, 1);
+        assert_eq!(table.read().name.original(), "t");
+    }
+}
+
 #[test]
 fn columnar_index_type_preserves_all_source_boundaries() {
     assert_eq!(
