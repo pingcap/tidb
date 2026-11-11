@@ -103,9 +103,10 @@ impl tidb_txnkv::Response for TrackingResponse {
         Ok(self.subsets.pop_front())
     }
 
-    fn close(&mut self) {
+    fn close(&mut self) -> Result<(), QueryResponseError> {
         self.closed.store(true, Ordering::SeqCst);
         self.subsets.clear();
+        Ok(())
     }
 
     fn limiter_wait_stats(&self) -> tidb_txnkv::LimiterWaitStats {
@@ -300,7 +301,7 @@ fn analyze_overrides_request_source_at_the_send_boundary() {
     assert_eq!(result.next_raw().unwrap(), Some(second));
     assert_eq!(result.next_raw().unwrap(), None);
     assert!(result.is_closed());
-    result.close();
+    result.close().unwrap();
     let transport = runtime.into_transport();
     assert_eq!(transport.operations[0], QueryOperation::Analyze);
     assert_eq!(metadata.label, ANALYZE_RESULT_LABEL);
@@ -348,7 +349,7 @@ fn query_result_has_one_close_owner() {
         .expect("raw checksum response");
     assert_eq!(result.next_raw().unwrap(), Some(vec![1, 2, 3]));
     assert!(!closed.load(Ordering::SeqCst));
-    result.close();
+    result.close().unwrap();
     assert!(closed.load(Ordering::SeqCst));
     assert!(result.is_closed());
     assert_eq!(result.next_raw().unwrap(), None);
@@ -555,8 +556,9 @@ fn registered_storage_error_survives_row_and_chunk_decoding() {
             })
         }
 
-        fn close(&mut self) {
+        fn close(&mut self) -> Result<(), QueryResponseError> {
             self.0.store(true, Ordering::SeqCst);
+            Ok(())
         }
     }
 
@@ -583,7 +585,7 @@ fn registered_storage_error_survives_row_and_chunk_decoding() {
                 message: "[tikv:9004]Resolve lock timeout".to_owned(),
             }
         );
-        iter.close();
+        iter.close().unwrap();
         assert!(closed.load(Ordering::SeqCst));
     }
 }

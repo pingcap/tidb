@@ -229,8 +229,9 @@ impl tidb_txnkv::Response for OneAnswer {
     ) -> Result<Option<tidb_txnkv::QueryResultSubset>, tidb_txnkv::QueryResponseError> {
         Ok(self.0.take())
     }
-    fn close(&mut self) {
+    fn close(&mut self) -> Result<(), tidb_txnkv::QueryResponseError> {
         self.0 = None;
+        Ok(())
     }
 }
 

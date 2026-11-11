@@ -1349,7 +1349,7 @@ impl PushdownRowStream for CopRowStream {
 
     fn close(&mut self) {
         if let Some(iter) = self.iter.as_mut() {
-            iter.close();
+            let _ = iter.close();
         }
         self.iter = None;
         self.deferred = None;
@@ -1573,7 +1573,9 @@ mod tests {
                 })
             }
 
-            fn close(&mut self) {}
+            fn close(&mut self) -> Result<(), QueryResponseError> {
+                Ok(())
+            }
         }
 
         for chunk in [false, true] {

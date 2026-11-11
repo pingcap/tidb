@@ -79,6 +79,8 @@ struct MockSelectResponse {
     batch: usize,
     remaining: usize,
     closed: Arc<AtomicBool>,
+    /// What `Close` answers.
+    close_error: Option<QueryResponseError>,
 }
 
 impl tidb_txnkv::Response for MockSelectResponse {
@@ -133,8 +135,9 @@ impl tidb_txnkv::Response for MockSelectResponse {
         }))
     }
 
-    fn close(&mut self) {
+    fn close(&mut self) -> Result<(), QueryResponseError> {
         self.closed.store(true, Ordering::SeqCst);
+        self.close_error.clone().map_or(Ok(()), Err)
     }
 }
 
@@ -169,8 +172,47 @@ fn mock_runtime(
         batch,
         remaining: total,
         closed: Arc::clone(&closed),
+        close_error: None,
     })));
     (runtime, closed)
+}
+
+/// Go `selectResult.Close` answers `r.resp.Close()`'s error, on every call
+/// (`closeErr`); here a drained response is closed by the fetch that drained
+/// it.
+#[test]
+fn a_responses_close_error_is_the_select_results() {
+    let iter = |total| {
+        let mut runtime = InjectedQueryRuntime::new(MockSelectTransport(Some(MockSelectResponse {
+            chunk_rpc: true,
+            batch: 1,
+            remaining: total,
+            closed: Arc::default(),
+            close_error: Some(QueryResponseError::Source("close".to_owned())),
+        })));
+        runtime
+            .select(
+                &transport_request(),
+                SelectInput {
+                    store_type: StoreType::TiKv,
+                    mem_tracker_bound: true,
+                    dist_sql_concurrency: 15,
+                    ..SelectInput::default()
+                },
+                QueryResultContext::new(four_longlong_columns(), WarningCollector::new()),
+            )
+            .expect("select result")
+            .into_select_iter(Vec::new())
+    };
+    let error = tidb_copr::response_channel::ResponseChannelError::Source("close".to_owned());
+    let mut abandoned = iter(2);
+    assert!(abandoned.next_row().unwrap().is_some());
+    assert_eq!(abandoned.close(), Err(error.clone()));
+    assert_eq!(abandoned.close(), Err(error.clone()));
+    let mut drained = iter(1);
+    assert!(drained.next_row().unwrap().is_some());
+    assert_eq!(drained.next_row().err(), Some(error.clone()));
+    assert_eq!(drained.close(), Err(error));
 }
 
 /// Source: `pkg/distsql/distsql_test.go::TestSelectNormal` with
@@ -213,7 +255,7 @@ fn select_normal_reads_the_mock_response_rows_before_close() {
     }
     assert_eq!(num_all_rows, 2);
 
-    iter.close();
+    iter.close().unwrap();
     assert!(iter.is_closed());
     assert!(closed.load(Ordering::SeqCst));
     assert!(iter.next_row().unwrap().is_none());
@@ -257,7 +299,7 @@ fn select_mem_tracker_fills_a_smaller_required_chunk_across_responses() {
         .expect("a full first chunk");
     assert_eq!(chunk.row.num_rows(), 4);
 
-    iter.close();
+    iter.close().unwrap();
     assert!(closed.load(Ordering::SeqCst));
 }
 
@@ -303,7 +345,7 @@ fn select_normal_chunk_size_honors_the_go_required_rows_ladder() {
         assert_eq!(chunk.row.get_row(0).get_int64(0), 1);
     }
 
-    iter.close();
+    iter.close().unwrap();
     assert!(closed.load(Ordering::SeqCst));
 }
 
@@ -493,7 +535,7 @@ fn sel_resp_channel_iter_reads_three_typed_channels_across_empty_chunks() {
             );
         }
         assert!(iter.next_row().unwrap().is_none());
-        iter.close();
+        iter.close().unwrap();
         assert!(iter.is_closed());
     }
 }

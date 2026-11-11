@@ -83,5 +83,5 @@ fn injected_query_runtime_feeds_the_existing_recordset_consumer() {
             vec![tidb_datatype::Datum::Int(2)]
         ]
     );
-    iter.close();
+    iter.close().unwrap();
 }

@@ -82,6 +82,16 @@ pub struct SelectResultClose {
 static SELECT_RESULT_STREAMS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 
+/// A response's error as its select result's.
+fn response_channel_error(error: QueryResponseError) -> ResponseChannelError {
+    match error {
+        QueryResponseError::Pending => ResponseChannelError::Pending,
+        QueryResponseError::Source(message) => ResponseChannelError::Source(message),
+        QueryResponseError::Sql { code, message } => ResponseChannelError::Sql { code, message },
+        QueryResponseError::Cancelled => ResponseChannelError::Cancelled,
+    }
+}
+
 enum SelectResponseSource {
     Channel(ResponseChannel<prost::bytes::Bytes>),
     Query(Box<dyn QueryResponse + Send>),
@@ -117,25 +127,24 @@ impl SelectResponseSource {
                     None => ResponseChannelEvent::Result(subset.data),
                 })),
                 Ok(None) => {
-                    source.close();
+                    // The drained response is closed here, so Go
+                    // `Response.Close`'s error is this fetch's.
+                    source.close().map_err(response_channel_error)?;
                     Ok(Some(ResponseChannelEvent::Closed))
                 }
-                Err(QueryResponseError::Pending) => Err(ResponseChannelError::Pending),
-                Err(QueryResponseError::Source(message)) => {
-                    Err(ResponseChannelError::Source(message))
-                }
-                Err(QueryResponseError::Sql { code, message }) => {
-                    Err(ResponseChannelError::Sql { code, message })
-                }
-                Err(QueryResponseError::Cancelled) => Err(ResponseChannelError::Cancelled),
+                Err(error) => Err(response_channel_error(error)),
             },
         }
     }
 
-    fn close(&mut self) {
+    /// Go `selectResult.closeImpl`'s `r.resp.Close()`.
+    fn close(&mut self) -> Result<(), ResponseChannelError> {
         match self {
-            Self::Channel(source) => source.close(),
-            Self::Query(source) => source.close(),
+            Self::Channel(source) => {
+                source.close();
+                Ok(())
+            }
+            Self::Query(source) => source.close().map_err(response_channel_error),
         }
     }
 
@@ -247,6 +256,7 @@ impl SelectResult for ResponseChannel<prost::bytes::Bytes> {
             close_reported: false,
             memory_tracker: None,
             closed: false,
+            close_err: Ok(()),
         }
     }
 }
@@ -286,6 +296,8 @@ pub struct SelectResponseIter {
     /// (`selectRespSize`).
     memory_tracker: Option<(Arc<tidb_memory::Tracker>, i64)>,
     closed: bool,
+    /// Go `selectResult.closeErr`.
+    close_err: Result<(), ResponseChannelError>,
 }
 
 #[derive(Clone, Debug)]
@@ -530,6 +542,7 @@ impl SelectResponseIter {
             close_reported: false,
             memory_tracker: None,
             closed: false,
+            close_err: Ok(()),
         }
     }
 
@@ -612,14 +625,14 @@ impl SelectResponseIter {
                 Ok(event) => event,
                 Err(ResponseChannelError::Pending) => return Err(ResponseChannelError::Pending),
                 Err(error) => {
-                    self.close();
+                    let _ = self.close();
                     return Err(error);
                 }
             };
             match event {
                 Some(ResponseChannelEvent::Result(bytes)) => {
                     if let Err(error) = self.install_encoded_response(bytes, None) {
-                        self.close();
+                        let _ = self.close();
                         return Err(error);
                     }
                 }
@@ -629,7 +642,7 @@ impl SelectResponseIter {
                 }) => {
                     if let Err(error) = self.install_encoded_response(result, Some(&runtime_stats))
                     {
-                        self.close();
+                        let _ = self.close();
                         return Err(error);
                     }
                 }
@@ -638,7 +651,7 @@ impl SelectResponseIter {
                 }
                 Some(ResponseChannelEvent::Error(message)) => {
                     let error = ResponseChannelError::Source(message);
-                    self.close();
+                    let _ = self.close();
                     return Err(error);
                 }
                 Some(ResponseChannelEvent::Closed) => {
@@ -763,14 +776,14 @@ impl SelectResponseIter {
                         .map_or(Err(ResponseChannelError::Pending), |chunk| Ok(Some(chunk)))
                 }
                 Err(error) => {
-                    self.close();
+                    let _ = self.close();
                     return Err(error);
                 }
             };
             match event {
                 Some(ResponseChannelEvent::Result(bytes)) => {
                     if let Err(error) = self.install_encoded_response(bytes, None) {
-                        self.close();
+                        let _ = self.close();
                         return Err(error);
                     }
                 }
@@ -780,7 +793,7 @@ impl SelectResponseIter {
                 }) => {
                     if let Err(error) = self.install_encoded_response(result, Some(&runtime_stats))
                     {
-                        self.close();
+                        let _ = self.close();
                         return Err(error);
                     }
                 }
@@ -789,7 +802,7 @@ impl SelectResponseIter {
                 }
                 Some(ResponseChannelEvent::Error(message)) => {
                     let error = ResponseChannelError::Source(message);
-                    self.close();
+                    let _ = self.close();
                     return Err(error);
                 }
                 Some(ResponseChannelEvent::Closed) => {
@@ -807,22 +820,28 @@ impl SelectResponseIter {
         }
     }
 
-    /// Closes the underlying response source and drops pending decoded rows.
-    pub fn close(&mut self) {
+    /// Go `selectResult.close`: closes the underlying response source and
+    /// drops pending decoded rows, once; every call answers that close's
+    /// error (`closeErr`).
+    ///
+    /// # Errors
+    /// The response's close error.
+    pub fn close(&mut self) -> Result<(), ResponseChannelError> {
         if self.closed {
             // A drained stream is still registered by its `Close`.
             self.report_select_result_close();
-            return;
+            return self.close_err.clone();
         }
         for channel in &mut self.channels {
             channel.close();
         }
         self.channels.clear();
-        self.source.close();
+        self.close_err = self.source.close();
         self.report_select_result_close();
         // Go `closeImpl`: `memConsume(-respSize)`.
         self.release_response_memory();
         self.closed = true;
+        self.close_err.clone()
     }
 
     /// Go `memConsume(-respSize)`: the response this select result held is

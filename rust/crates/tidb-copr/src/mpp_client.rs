@@ -1089,14 +1089,14 @@ impl<S: tikv_client::PdClient> tidb_txnkv::Response for MppQueryResponse<S> {
         }
         let result = self.pull();
         if result.is_err() || matches!(result, Ok(None)) {
-            self.close();
+            let _ = self.close();
         }
         result
     }
 
-    fn close(&mut self) {
+    fn close(&mut self) -> Result<(), QueryResponseError> {
         if self.closed {
-            return;
+            return Ok(());
         }
         self.closed = true;
         self.first_packet = None;
@@ -1109,13 +1109,14 @@ impl<S: tikv_client::PdClient> tidb_txnkv::Response for MppQueryResponse<S> {
                     .block_on(cancel_mpp_task(&target, self.cancel_meta.clone()));
             }
         }
+        Ok(())
     }
 }
 
 
 impl<S: tikv_client::PdClient> Drop for MppQueryResponse<S> {
     fn drop(&mut self) {
-        tidb_txnkv::Response::close(self);
+        let _ = tidb_txnkv::Response::close(self);
     }
 }
 
@@ -1606,7 +1607,7 @@ mod mpp_read_batch_tests {
             .open_target(&target, tidb_variable::mem_quota::StatementMemory::default())
             .unwrap();
         assert!(response.next().unwrap().is_some());
-        response.close();
+        response.close().unwrap();
         tidb_topsql_state::disable_top_sql();
         let data = stats.take();
         let total: u64 = data
@@ -1657,7 +1658,7 @@ mod mpp_read_batch_tests {
                     if fail_tail {
                         assert!(response.next().is_err());
                     }
-                    response.close();
+                    response.close().unwrap();
                 }
                 Err(error) => assert!(matches!(opening, Opening::Canceled), "{error}"),
             }
@@ -1847,7 +1848,7 @@ mod mpp_read_batch_tests {
         )
         .unwrap());
         assert_eq!(fixture.connections.load(Ordering::SeqCst), connections);
-        response.close();
+        response.close().unwrap();
     }
 
     fn assert_opening_recovery(opening: Opening) {
@@ -1862,7 +1863,7 @@ mod mpp_read_batch_tests {
             0,
             "retry canceled the live gather"
         );
-        response.close();
+        response.close().unwrap();
         assert_eq!(fixture.cancels.load(Ordering::SeqCst), 1);
     }
 
@@ -1904,7 +1905,7 @@ mod mpp_read_batch_tests {
     fn mpp_recovery_first_eof_is_success_without_cancel_or_reopen() {
         let fixture = Fixture::with_opening(false, false, false, Vec::new(), Opening::Empty);
         let mut response = fixture.open().unwrap();
-        response.close();
+        response.close().unwrap();
         assert_eq!(fixture.attempts.load(Ordering::SeqCst), 1);
         assert_eq!(
             fixture.cancels.load(Ordering::SeqCst),
@@ -1953,11 +1954,11 @@ mod mpp_read_batch_tests {
         let fixture = Fixture::with_tail(false);
         let mut response = fixture.open().unwrap();
         response.next().unwrap().unwrap();
-        response.close();
+        response.close().unwrap();
         let connections = fixture.connections.load(Ordering::SeqCst);
         let mut response = fixture.open().unwrap();
         response.next().unwrap().unwrap();
-        response.close();
+        response.close().unwrap();
         assert_eq!(fixture.connections.load(Ordering::SeqCst), connections);
     }
 
@@ -1982,7 +1983,7 @@ mod mpp_read_batch_tests {
         let mut response = fixture.open().unwrap();
         let received = response.next().unwrap().unwrap();
         assert_eq!(received.data.as_ref(), packet.as_slice());
-        response.close();
+        response.close().unwrap();
     }
 
     /// The store's connector carries the cluster TLS settings, so an MPP
@@ -2051,8 +2052,8 @@ mod mpp_read_batch_tests {
         let fixture = Fixture::new();
         let mut response = fixture.open().unwrap();
         response.next().unwrap().unwrap();
-        response.close();
-        response.close();
+        response.close().unwrap();
+        response.close().unwrap();
         drop(response);
         assert_eq!(fixture.cancels.load(Ordering::SeqCst), 1);
         drop(fixture.open().unwrap());
@@ -2089,7 +2090,7 @@ mod mpp_read_batch_tests {
         assert!(memory.bytes_consumed() > 0);
         assert_eq!(response.next().unwrap(), None);
         assert_eq!(memory.bytes_consumed(), 0);
-        response.close();
+        response.close().unwrap();
         drop(response);
         assert_eq!(fixture.cancels.load(Ordering::SeqCst), 0);
     }

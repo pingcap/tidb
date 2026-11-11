@@ -858,8 +858,8 @@ fn select_result_test_file_obligations_publish_warnings_errors_mismatch_and_clos
         iter.next_row(),
         Err(ResponseChannelError::SelectResponse { code: 1105, .. })
     ));
-    iter.close();
-    iter.close();
+    iter.close().unwrap();
+    iter.close().unwrap();
     assert!(iter.is_closed());
 
     let _source_table = BTreeMap::from([

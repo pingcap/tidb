@@ -7810,11 +7810,12 @@ use std::collections::HashMap;
             self.inner.next()
         }
 
-        fn close(&mut self) {
-            self.inner.close();
+        fn close(&mut self) -> Result<(), tidb_txnkv::QueryResponseError> {
+            self.inner.close()?;
             if let Some(closed) = &self.closed {
                 closed.store(true, Ordering::SeqCst);
             }
+            Ok(())
         }
     }
 

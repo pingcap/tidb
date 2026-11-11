@@ -575,7 +575,9 @@ mod tests {
             }))
         }
 
-        fn close(&mut self) {}
+        fn close(&mut self) -> Result<(), tidb_txnkv::QueryResponseError> {
+            Ok(())
+        }
     }
 
     impl tidb_txnkv::Client for Regions {

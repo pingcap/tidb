@@ -440,7 +440,9 @@ impl Response for MockResponse {
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         Ok(None)
     }
-    fn close(&mut self) {}
+    fn close(&mut self) -> Result<(), QueryResponseError> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default)]

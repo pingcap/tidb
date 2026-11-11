@@ -366,7 +366,8 @@ impl tidb_txnkv::Response for ResponseChannel<prost::bytes::Bytes> {
         }
     }
 
-    fn close(&mut self) {
+    fn close(&mut self) -> Result<(), QueryResponseError> {
         ResponseChannel::close(self);
+        Ok(())
     }
 }

@@ -1135,8 +1135,9 @@ impl tidb_txnkv::Response for LocalTiDbCopResponse {
         }
     }
 
-    fn close(&mut self) {
+    fn close(&mut self) -> Result<(), tidb_txnkv::QueryResponseError> {
         self.0 = None;
+        Ok(())
     }
 }
 

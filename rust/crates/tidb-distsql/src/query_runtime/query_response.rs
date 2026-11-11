@@ -88,11 +88,12 @@ impl<R: QueryResponse> QuerySelectResult<R> {
             // the select path, which decodes from it without copying.
             Ok(Some(subset)) => Ok(Some(subset.data.to_vec())),
             Ok(None) => {
-                self.close();
+                self.close()?;
                 Ok(None)
             }
             Err(error) => {
-                self.close();
+                // The fetch's error is the statement's.
+                let _ = self.close();
                 Err(error)
             }
         }
@@ -129,15 +130,19 @@ impl<R: QueryResponse> QuerySelectResult<R> {
         iter
     }
 
-    /// Closes the raw response owner. Closing is idempotent.
-    pub fn close(&mut self) {
+    /// Closes the raw response owner, once.
+    ///
+    /// # Errors
+    /// Go `Response.Close`'s error.
+    pub fn close(&mut self) -> Result<(), QueryResponseError> {
         if self.closed {
-            return;
-        }
-        if let Some(response) = &mut self.response {
-            response.close();
+            return Ok(());
         }
         self.closed = true;
+        match &mut self.response {
+            Some(response) => response.close(),
+            None => Ok(()),
+        }
     }
 
     /// Reports whether this result has closed or transferred its response.
@@ -149,6 +154,6 @@ impl<R: QueryResponse> QuerySelectResult<R> {
 
 impl<R: QueryResponse> Drop for QuerySelectResult<R> {
     fn drop(&mut self) {
-        self.close();
+        let _ = self.close();
     }
 }

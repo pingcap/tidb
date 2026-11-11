@@ -212,10 +212,12 @@ impl Executor for TableReaderExecutor {
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
-        if let Some(mut result) = self.result.take() {
-            result.close();
+        match self.result.take() {
+            Some(mut result) => result
+                .close()
+                .map_err(|error| ExecError::from(crate::cop_reader::select_response_error(error))),
+            None => Ok(()),
         }
-        Ok(())
     }
 
     fn schema(&self) -> &Schema {

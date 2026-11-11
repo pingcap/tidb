@@ -1009,13 +1009,14 @@ impl<S: NativeCopStore + ?Sized> tidb_txnkv::Response for NativeCopResponse<S> {
         }
     }
 
-    fn close(&mut self) {
+    fn close(&mut self) -> Result<(), QueryResponseError> {
         self.closed = true;
         // Go: the runaway checker counts every task's processed keys of one
         // read; the next read starts from zero.
         if let Some(checker) = &self.metadata.runaway_checker {
             checker.reset_total_processed_keys();
         }
+        Ok(())
     }
 
     /// Go `copClient.Send`'s concurrency: the request's, capped by the task

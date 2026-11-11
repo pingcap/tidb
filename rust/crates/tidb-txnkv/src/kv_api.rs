@@ -456,7 +456,10 @@ pub trait Response {
 
     /// Go `Response.Close`: closes the response and releases any unconsumed
     /// subsets.
-    fn close(&mut self);
+    ///
+    /// # Errors
+    /// Go's close error.
+    fn close(&mut self) -> Result<(), QueryResponseError>;
 
     /// Pulls one raw result subset while forwarding the caller's remaining row
     /// budget to response owners that can use it; the default is the plain
@@ -497,8 +500,8 @@ impl<R: Response + ?Sized> Response for Box<R> {
         (**self).next()
     }
 
-    fn close(&mut self) {
-        (**self).close();
+    fn close(&mut self) -> Result<(), QueryResponseError> {
+        (**self).close()
     }
 
     fn next_with_required_rows(

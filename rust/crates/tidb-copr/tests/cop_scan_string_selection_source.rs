@@ -143,8 +143,9 @@ impl tidb_txnkv::Response for FakeResponse {
         })
     }
 
-    fn close(&mut self) {
+    fn close(&mut self) -> Result<(), QueryResponseError> {
         self.subsets.clear();
+        Ok(())
     }
 }
 

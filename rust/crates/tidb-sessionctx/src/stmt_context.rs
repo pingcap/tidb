@@ -473,10 +473,16 @@ impl std::ops::DerefMut for StmtContext {
 pub type RunawayDeriver =
     Arc<dyn Fn(&str, &str) -> Option<Arc<dyn tidb_txnkv::RunawayChecker>> + Send + Sync>;
 
-/// One statement's Go `StmtCtx.RunawayChecker`, shared by every context of
-/// the statement and by its process-list row.
+/// One statement's Go `StmtCtx.RunawayChecker` and the digests it is derived
+/// from, shared by every context of the statement and by its process-list
+/// row.
 #[derive(Default)]
 pub struct StatementRunaway {
+    /// Go `StmtCtx.SQLDigest`'s digest.
+    sql_digest: String,
+    /// Go `StmtCtx.planDigest` as `ExecStmt.Exec` sets it: `GetPlanDigest`
+    /// runs there only for the checker.
+    plan_digest: std::sync::OnceLock<String>,
     /// `None` when resource control is off or the node has no runaway
     /// manager (Go's `EnableResourceControl && rm != nil`).
     deriver: Option<RunawayDeriver>,
@@ -485,10 +491,10 @@ pub struct StatementRunaway {
 }
 
 impl StatementRunaway {
-    /// A statement whose checker `deriver` derives.
+    /// The statement of `sql_digest`, whose checker `deriver` derives.
     #[must_use]
-    pub fn new(deriver: Option<RunawayDeriver>) -> Self {
-        Self { deriver, ..Self::default() }
+    pub fn new(sql_digest: String, deriver: Option<RunawayDeriver>) -> Self {
+        Self { sql_digest, deriver, ..Self::default() }
     }
 
     /// The derived checker, if any.
@@ -5712,6 +5718,24 @@ impl StmtContext {
         self.runaway.checker.get().cloned().flatten()
     }
 
+    /// Go `StmtCtx.SQLDigest`'s digest, in hex.
+    #[must_use]
+    pub fn sql_digest(&self) -> &str {
+        &self.runaway.sql_digest
+    }
+
+    /// Go `StmtCtx.GetPlanDigest`'s digest, in hex: empty until something
+    /// set it, which before the executors run is `ExecStmt.Exec`'s runaway
+    /// step or the plan cache (`SetPlanDigest` of the cached plan's).
+    #[must_use]
+    pub fn plan_digest(&self) -> &str {
+        self.runaway
+            .plan_digest
+            .get()
+            .or_else(|| self.cached_plan_digest()?.get().map(|(_, plan_digest)| plan_digest))
+            .map_or("", String::as_str)
+    }
+
     /// Go `ExecStmt.Exec`'s runaway step once the plan digest is known:
     /// `DeriveChecker` over the statement's group, then `BeforeExecutor`,
     /// whose switch group the statement's later requests carry.
@@ -5722,6 +5746,7 @@ impl StmtContext {
         let Some(deriver) = &self.runaway.deriver else {
             return Ok(());
         };
+        let _ = self.runaway.plan_digest.set(plan_digest.to_owned());
         let checker = self
             .runaway
             .checker
@@ -7490,20 +7515,43 @@ mod tests {
                 StatementMemory::default(),
                 StmtContextSessionState {
                     resource_group_name: "rg1".to_owned(),
-                    runaway: Arc::new(StatementRunaway::new(Some(deriver))),
+                    runaway: Arc::new(StatementRunaway::new("sd".to_owned(), Some(deriver))),
                     ..StmtContextSessionState::default()
                 },
             )
         };
         let ctx = context(Ok("rg2".to_owned()));
         assert_eq!(ctx.resource_group_name(), "rg1");
+        // Go `StmtCtx.GetPlanDigest` before `ExecStmt.Exec` computed it.
+        assert_eq!((ctx.sql_digest(), ctx.plan_digest()), ("sd", ""));
         ctx.check_runaway_before_executor("pd").unwrap();
+        assert_eq!((ctx.sql_digest(), ctx.plan_digest()), ("sd", "pd"));
         assert_eq!(ctx.resource_group_name(), "rg2");
         assert!(ctx.runaway_checker().is_some());
         assert_eq!(*derived.lock().unwrap(), [("rg1".to_owned(), "pd".to_owned())]);
         let ctx = context(Err(tidb_exeerrors::ERR_RESOURCE_GROUP_QUERY_RUNAWAY_QUARANTINE.clone()));
         assert!(ctx.check_runaway_before_executor("pd").is_err());
         assert_eq!(ctx.resource_group_name(), "rg1");
+
+        // Without a checker (resource control off, or no runaway manager) Go
+        // has no plan digest but the one the plan cache set.
+        let no_checker = || {
+            StmtContext::for_query_with_session(
+                StatementMemory::default(),
+                StmtContextSessionState {
+                    runaway: Arc::new(StatementRunaway::new("sd".to_owned(), None)),
+                    ..StmtContextSessionState::default()
+                },
+            )
+        };
+        let ctx = no_checker();
+        ctx.check_runaway_before_executor("pd").unwrap();
+        assert_eq!((ctx.sql_digest(), ctx.plan_digest()), ("sd", ""));
+        let cached = Arc::new(std::sync::OnceLock::new());
+        let ctx = no_checker().with_cached_plan_digest(Arc::clone(&cached));
+        assert_eq!(ctx.plan_digest(), "");
+        cached.set(("normalized".to_owned(), "cached".to_owned())).unwrap();
+        assert_eq!(ctx.plan_digest(), "cached");
     }
 
     /// Go `StmtCtx.IsDDLJobInQueue`: a DDL marking its job queued reaches the

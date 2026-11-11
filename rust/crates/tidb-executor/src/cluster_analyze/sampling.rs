@@ -639,7 +639,7 @@ where
         }
         Ok(merged)
     })();
-    result.close();
+    let _ = result.close();
     outcome
 }
 
@@ -760,7 +760,7 @@ where
             }
             Ok(())
         })();
-        result.close();
+        let _ = result.close();
         outcome?;
     }
     Ok((null_count, sketch))

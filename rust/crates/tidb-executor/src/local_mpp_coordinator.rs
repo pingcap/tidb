@@ -22,8 +22,6 @@
 //!
 //! * `CheckVisibility` (the GC safe point check after each packet): the MPP
 //!   client has no safe point to read.
-//! * The dispatch meta's `SqlDigest` / `PlanDigest`: the statement context
-//!   carries no digest here, so they are sent empty.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -873,8 +871,8 @@ impl LocalMppCoordinator {
                 resource_group_name: rg_name.clone(),
                 connection_id: mpp_task.session_id,
                 connection_alias: mpp_task.session_alias.clone(),
-                sql_digest: String::new(),
-                plan_digest: String::new(),
+                sql_digest: ctx.sql_digest().to_owned(),
+                plan_digest: ctx.plan_digest().to_owned(),
                 ..TaskMeta::default()
             };
             self.reports.lock().req_map.insert(mpp_task.id, MppRequestReport::default());
@@ -1096,7 +1094,7 @@ fn receive_results(
             }
         }
     }
-    stream.close();
+    let _ = stream.close();
 }
 
 /// Go `sendError`.
@@ -1135,16 +1133,10 @@ impl tidb_txnkv::Response for LocalMppCoordinator {
         }
     }
 
-    /// Go `Close`. Its error is a report whose RU consumption does not
-    /// decode, which a response's close has nowhere to return.
-    fn close(&mut self) {
+    /// Go `Close`.
+    fn close(&mut self) -> Result<(), QueryResponseError> {
         self.close_without_report();
-        if let Err(err) = self.handle_all_reports() {
-            tidb_logutil::bg_logger().warn(
-                "mpp coordinator handle reports meet error",
-                &[tidb_log::Field::new("error", tidb_log::Value::Str(err))],
-            );
-        }
+        self.handle_all_reports().map_err(QueryResponseError::Source)
     }
 }
 
@@ -1520,6 +1512,32 @@ mod tests {
         assert!(!coll.exists_cop_stats(5));
         assert!(!coll.exists_cop_stats(6));
         assert!(not_received.get() >= before + 1.0);
+    }
+
+    /// Go `Close`: `handleAllReports`'s error, a report whose RU consumption
+    /// does not unmarshal (`MergeTiFlashRUConsumption`), is the close's.
+    #[test]
+    fn close_returns_the_reports_error() {
+        let closed = |ru_consumption: Vec<u8>| {
+            let reports = reports_of(&[1]);
+            let mut detail = summary("TableFullScan_5", 7);
+            detail.ru_consumption = Some(ru_consumption.into());
+            reports.report_status(&report(1, "", vec![detail])).unwrap();
+            let coll = Arc::new(tidb_execdetails::runtime_stats::RuntimeStatsColl::new(None));
+            let mut coord = coordinator(reports, true, &coll);
+            let ru_details = Arc::new(tikv_client::RuDetails::new());
+            coord.ru_details = Some(Arc::clone(&ru_details));
+            (tidb_txnkv::Response::close(&mut coord), ru_details.tiflash_ru())
+        };
+        let consumption = tikv_client::proto::resource_manager::Consumption {
+            r_r_u: 2.5,
+            ..Default::default()
+        };
+        assert_eq!(closed(consumption.encode_to_vec()), (Ok(()), 2.5));
+        // A length-delimited field with no length.
+        let (result, tiflash_ru) = closed(vec![0x0a]);
+        assert!(matches!(result, Err(QueryResponseError::Source(_))), "{result:?}");
+        assert_eq!(tiflash_ru, 0.0);
     }
 
     fn scan(table_id: i64) -> tipb::Executor {

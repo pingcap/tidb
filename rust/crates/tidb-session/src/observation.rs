@@ -444,8 +444,10 @@ impl Session {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         // Go `ExecStmt.Exec`'s `rm.DeriveChecker(...)` inputs, bound now; the
         // statement's group and plan digest complete them once it is planned.
-        self.statement_runaway =
-            Arc::new(tidb_sessionctx::StatementRunaway::new(self.runaway_deriver(&text, &digest)));
+        self.statement_runaway = Arc::new(tidb_sessionctx::StatementRunaway::new(
+            digest.as_str().to_owned(),
+            self.runaway_deriver(&text, &digest),
+        ));
         self.statement_observation = Some(StatementObservation {
             sql: sql.to_owned(),
             text,

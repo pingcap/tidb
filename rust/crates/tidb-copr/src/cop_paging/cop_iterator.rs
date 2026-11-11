@@ -264,11 +264,11 @@ impl<R: tidb_txnkv::Response> CopIterator<R> {
         }
         match std::mem::replace(&mut self.driver, Driver::Closed) {
             Driver::Inline(mut source) => {
-                source.close();
+                let _ = source.close();
                 self.limiter_wait.merge(source.limiter_wait_stats());
             }
             Driver::Concurrent(mut source) => {
-                source.close();
+                let _ = source.close();
                 self.limiter_wait.merge(source.limiter_wait_stats());
             }
             Driver::Closed => {}
@@ -307,8 +307,9 @@ impl<R: CopTaskSource> tidb_txnkv::Response for CopIterator<R> {
         result
     }
 
-    fn close(&mut self) {
+    fn close(&mut self) -> Result<(), QueryResponseError> {
         self.close_inner();
+        Ok(())
     }
 
     fn cop_info(&self) -> Option<tidb_txnkv::CopInfo> {
@@ -722,8 +723,9 @@ impl<R: CopTaskSource + Send + 'static> tidb_txnkv::Response for ConcurrentRespo
         result
     }
 
-    fn close(&mut self) {
+    fn close(&mut self) -> Result<(), QueryResponseError> {
         self.group.close();
+        Ok(())
     }
 
     fn limiter_wait_stats(&self) -> tidb_txnkv::LimiterWaitStats {
@@ -883,7 +885,9 @@ mod tests {
             self.try_next()
         }
 
-        fn close(&mut self) {}
+        fn close(&mut self) -> Result<(), QueryResponseError> {
+            Ok(())
+        }
     }
 
 

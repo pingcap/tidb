@@ -84,7 +84,9 @@ impl tidb_txnkv::Response for NoRows {
     ) -> Result<Option<tidb_txnkv::QueryResultSubset>, tidb_txnkv::QueryResponseError> {
         Ok(None)
     }
-    fn close(&mut self) {}
+    fn close(&mut self) -> Result<(), tidb_txnkv::QueryResponseError> {
+        Ok(())
+    }
 }
 
 impl tidb_txnkv::Client for RecordingRegion {

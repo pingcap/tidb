@@ -398,11 +398,12 @@ impl tidb_txnkv::Response for Subsets {
         self.subsets.next().transpose()
     }
 
-    fn close(&mut self) {
+    fn close(&mut self) -> Result<(), QueryResponseError> {
         self.subsets = Vec::new().into_iter();
         if let Some(closed) = &self.closed {
             closed.store(true, std::sync::atomic::Ordering::SeqCst);
         }
+        Ok(())
     }
 }
 

@@ -418,11 +418,11 @@ impl tidb_txnkv::Response for MppTaskResponses {
                     return Ok(Some(packet));
                 }
                 Ok(None) => {
-                    stream.close();
+                    stream.close()?;
                     self.streams.pop_front();
                 }
                 Err(error) => {
-                    self.close();
+                    let _ = self.close();
                     return Err(error);
                 }
             }
@@ -430,17 +430,22 @@ impl tidb_txnkv::Response for MppTaskResponses {
         Ok(None)
     }
 
-    fn close(&mut self) {
+    fn close(&mut self) -> Result<(), QueryResponseError> {
+        let mut result = Ok(());
         for stream in &mut self.streams {
-            stream.close();
+            let closed = stream.close();
+            if result.is_ok() {
+                result = closed;
+            }
         }
         self.streams.clear();
+        result
     }
 }
 
 impl Drop for MppTaskResponses {
     fn drop(&mut self) {
-        tidb_txnkv::Response::close(self);
+        let _ = tidb_txnkv::Response::close(self);
     }
 }
 
@@ -454,7 +459,7 @@ pub trait MppGatherResponse: tidb_txnkv::Response + Send {
     /// the failed coordinator with: only report runtime stats when there is
     /// no error.
     fn close_without_report(&mut self) {
-        self.close();
+        let _ = self.close();
     }
 }
 
@@ -562,26 +567,34 @@ impl tidb_txnkv::Response for ExecutorWithRetry {
             return Ok(None);
         }
         let result = self.pull();
-        if result.is_err() || matches!(result, Ok(None)) {
-            tidb_txnkv::Response::close(self);
+        match &result {
+            Ok(Some(_)) => {}
+            // The drained gather is closed here, so Go `Close`'s error is
+            // this pull's.
+            Ok(None) => tidb_txnkv::Response::close(self)?,
+            Err(_) => {
+                let _ = tidb_txnkv::Response::close(self);
+            }
         }
         result
     }
 
-    fn close(&mut self) {
+    fn close(&mut self) -> Result<(), QueryResponseError> {
         if self.closed {
-            return;
+            return Ok(());
         }
         self.closed = true;
         self.clear_held();
-        self.gather.close();
+        // Go `ExecutorWithRetry.Close`: `err := r.coord.Close()`.
+        let result = self.gather.close();
         self.open = None;
+        result
     }
 }
 
 impl Drop for ExecutorWithRetry {
     fn drop(&mut self) {
-        tidb_txnkv::Response::close(self);
+        let _ = tidb_txnkv::Response::close(self);
     }
 }
 
@@ -657,7 +670,7 @@ impl PushdownRowStream for MppRowStream {
 
     fn close(&mut self) {
         if let Some(iter) = self.iter.as_mut() {
-            iter.close();
+            let _ = iter.close();
         }
         self.iter = None;
         self.pending = None;
@@ -899,9 +912,9 @@ mod recovery_tests {
             }),
             Box::new(|_| panic!("no failure")),
         );
-        response.close();
+        response.close().unwrap();
         assert!(observer.upgrade().is_none());
-        response.close();
+        response.close().unwrap();
     }
 
     struct Packets {
@@ -920,10 +933,97 @@ mod recovery_tests {
             self.rows.pop_front().transpose()
         }
 
-        fn close(&mut self) {
+        fn close(&mut self) -> Result<(), QueryResponseError> {
             self.closed
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
         }
+    }
+
+    /// A gather whose close answers `error`, as Go's coordinator answers
+    /// `handleAllReports`'s.
+    struct FailingClose {
+        error: QueryResponseError,
+        closed: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+    impl MppStreamResponse for FailingClose {
+        fn release_packet_memory(&mut self) {}
+
+        fn packet_error(&self) -> Option<&str> {
+            None
+        }
+    }
+    impl MppGatherResponse for FailingClose {
+        fn node_count(&self) -> usize {
+            1
+        }
+    }
+    impl tidb_txnkv::Response for FailingClose {
+        fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
+            Ok(None)
+        }
+
+        fn close(&mut self) -> Result<(), QueryResponseError> {
+            self.closed
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(self.error.clone())
+        }
+    }
+
+    /// Go `ExecutorWithRetry.Close` returns `r.coord.Close()`'s error; here
+    /// a drained gather is closed by the pull that drained it.
+    #[test]
+    fn a_gathers_close_error_is_the_responses() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        let error = QueryResponseError::Source("report".into());
+        let closed = Arc::new(AtomicUsize::new(0));
+        let response = || {
+            ExecutorWithRetry::new(
+                Box::new(FailingClose {
+                    error: error.clone(),
+                    closed: closed.clone(),
+                }),
+                true,
+                crate::StatementMemory::default(),
+                Box::new(|| panic!("no retry")),
+                Box::new(|_| panic!("no failure")),
+            )
+        };
+        let mut abandoned = response();
+        assert_eq!(abandoned.close(), Err(error.clone()));
+        assert_eq!(abandoned.close(), Ok(()));
+        assert_eq!(closed.load(SeqCst), 1);
+        let mut drained = response();
+        assert_eq!(drained.next(), Err(error.clone()));
+        assert_eq!(drained.close(), Ok(()));
+        assert_eq!(closed.load(SeqCst), 2);
+
+        // Every task's stream is closed, and the first error is the close's.
+        let failing = |message: &str| {
+            Box::new(FailingClose {
+                error: QueryResponseError::Source(message.into()),
+                closed: closed.clone(),
+            }) as Box<dyn MppStreamResponse>
+        };
+        let mut streams = MppTaskResponses {
+            streams: [
+                Box::new(Packets {
+                    rows: [].into(),
+                    closed: closed.clone(),
+                }) as Box<dyn MppStreamResponse>,
+                failing("first"),
+                failing("second"),
+            ]
+            .into(),
+            node_count: 3,
+        };
+        assert_eq!(streams.close(), Err(QueryResponseError::Source("first".into())));
+        assert_eq!(closed.load(SeqCst), 5);
+        let mut streams = MppTaskResponses {
+            streams: [failing("drained")].into(),
+            node_count: 1,
+        };
+        assert_eq!(streams.next(), Err(QueryResponseError::Source("drained".into())));
     }
 
     #[test]
@@ -950,7 +1050,7 @@ mod recovery_tests {
         assert_eq!(streams.next().unwrap(), Some(packet(1)));
         assert!(streams.next().is_err());
         assert_eq!(closed.load(std::sync::atomic::Ordering::SeqCst), 3);
-        streams.close();
+        streams.close().unwrap();
         assert_eq!(closed.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 }

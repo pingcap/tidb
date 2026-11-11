@@ -350,10 +350,12 @@ impl Executor for MppGather {
 
     /// Go `MPPGather.Close`.
     fn close(&mut self) -> Result<(), ExecError> {
-        if let Some(mut resp_iter) = self.resp_iter.take() {
-            resp_iter.close();
+        match self.resp_iter.take() {
+            Some(mut resp_iter) => resp_iter
+                .close()
+                .map_err(|error| ExecError::from(crate::cop_reader::select_response_error(error))),
+            None => Ok(()),
         }
-        Ok(())
     }
 
     fn schema(&self) -> &Schema {

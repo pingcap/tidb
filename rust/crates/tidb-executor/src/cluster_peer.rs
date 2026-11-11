@@ -720,13 +720,13 @@ impl tidb_txnkv::Response for TiDbMemCopResponse {
                 Ok(Some(subset))
             }
             Some(Err(error)) => {
-                tidb_txnkv::Response::close(self);
+                let _ = tidb_txnkv::Response::close(self);
                 Err(error)
             }
         }
     }
 
-    fn close(&mut self) {
+    fn close(&mut self) -> Result<(), tidb_txnkv::QueryResponseError> {
         // The responses never taken leave the tracker with the iterator.
         for (_, mem_size) in self.results.take().into_iter().flatten().flatten() {
             if let Some(tracker) = &self.mem_tracker {
@@ -734,6 +734,7 @@ impl tidb_txnkv::Response for TiDbMemCopResponse {
             }
         }
         self.results = Some(std::collections::VecDeque::new());
+        Ok(())
     }
 
     fn cop_info(&self) -> Option<tidb_txnkv::CopInfo> {
