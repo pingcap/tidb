@@ -969,6 +969,51 @@ func TestSharedLockLockView(t *testing.T) {
 	prepareForeignKeyTables(tk1)
 
 	conn2 := tk2.MustQuery("select connection_id()").Rows()[0][0].(string)
+	parentTableID := external.GetTableByName(t, tk1, "test", "parent").Meta().ID
+	parentKey := fmt.Sprintf("%X", []byte(tablecodec.EncodeRowKeyWithHandle(parentTableID, kv.IntHandle(1))))
+	// DATA_LOCK_WAITS also contains waiters belonging to background transactions.
+	lockWaitsSource := func(txnID uint64) string {
+		return fmt.Sprintf(
+			"from INFORMATION_SCHEMA.DATA_LOCK_WAITS as l left join INFORMATION_SCHEMA.TIDB_TRX as trx on l.trx_id = trx.id where l.key = '%s' and l.trx_id = %d and trx.session_id = %s",
+			parentKey, txnID, conn2,
+		)
+	}
+
+	// Two unrelated waiters also make the old count-ordered query select their key first.
+	noiseBlocker := testkit.NewTestKit(t, store)
+	noiseBlocker.MustExec("begin pessimistic")
+	noiseBlocker.MustExec("select * from test.parent where id=2 for update")
+	noiseDoneCh := make(chan error, 2)
+	noiseWaiters := 0
+	t.Cleanup(func() {
+		noiseBlocker.MustExec("rollback")
+		for range noiseWaiters {
+			select {
+			case err := <-noiseDoneCh:
+				require.NoError(t, err)
+			case <-time.After(10 * time.Second):
+				t.Error("unrelated waiter did not finish after rolling back its blocker")
+			}
+		}
+	})
+	for range 2 {
+		noiseWaiter := testkit.NewTestKit(t, store)
+		noiseWaiter.MustExec("begin pessimistic")
+		noiseTxnID := noiseWaiter.Session().TxnInfo().StartTS
+		noiseWaiters++
+		go func() {
+			_, err := noiseWaiter.Exec("select * from test.parent where id=2 for update")
+			if err == nil {
+				_, err = noiseWaiter.Exec("rollback")
+			}
+			noiseDoneCh <- err
+		}()
+		require.Eventually(t, func() bool {
+			return len(testTk.MustQuery(fmt.Sprintf(
+				"select TRX_ID from INFORMATION_SCHEMA.DATA_LOCK_WAITS where TRX_ID = %d", noiseTxnID,
+			)).Rows()) > 0
+		}, 10*time.Second, 100*time.Millisecond)
+	}
 
 	// Case1: shared lock waits for exclusive lock on parent row
 	tk1.MustExec("begin pessimistic")
@@ -1017,20 +1062,18 @@ func TestSharedLockLockView(t *testing.T) {
 		default:
 		}
 
-		txnWaits = testTk.MustQuery(fmt.Sprintf(
-			"select TRX_ID, SESSION_ID from INFORMATION_SCHEMA.DATA_LOCK_WAITS as l left join INFORMATION_SCHEMA.TIDB_TRX as trx on l.trx_id = trx.id where l.trx_id = %d and trx.session_id = %s",
-			conn2TxnID, conn2,
-		)).Rows()
+		txnWaits = testTk.MustQuery("select TRX_ID, SESSION_ID " + lockWaitsSource(conn2TxnID)).Rows()
 		return len(txnWaits) > 0
 	}, 10*time.Second, 100*time.Millisecond)
 	require.Falsef(t, insertFinishedEarly, "insert should be blocked before DATA_LOCK_WAITS row is observed, err: %v", insertErr)
-	lockWaits := testTk.MustQuery("select `key`, count(*) as `count` from INFORMATION_SCHEMA.DATA_LOCK_WAITS group by `key` order by `count` desc;").Rows()
+	lockWaits := testTk.MustQuery("select l.key, count(*) as `count` " + lockWaitsSource(conn2TxnID) + " group by l.key").Rows()
 	require.Len(t, lockWaits, 1)
 	key := lockWaits[0][0].(string)
+	require.Equal(t, parentKey, key)
 	count := lockWaits[0][1].(string)
 	require.Equal(t, "1", count)
 
-	txnWaits = testTk.MustQuery(fmt.Sprintf("select TRX_ID, SESSION_ID from INFORMATION_SCHEMA.DATA_LOCK_WAITS as l left join INFORMATION_SCHEMA.TIDB_TRX as trx on l.trx_id = trx.id where l.key = \"%s\"", key)).Rows()
+	txnWaits = testTk.MustQuery("select TRX_ID, SESSION_ID " + lockWaitsSource(conn2TxnID)).Rows()
 	require.Len(t, txnWaits, 1)
 	waitingTxnID := txnWaits[0][0].(string)
 	sessionID := txnWaits[0][1].(string)
@@ -1071,19 +1114,17 @@ func TestSharedLockLockView(t *testing.T) {
 		default:
 		}
 
-		txnWaits = testTk.MustQuery(fmt.Sprintf(
-			"select TRX_ID, SESSION_ID from INFORMATION_SCHEMA.DATA_LOCK_WAITS as l left join INFORMATION_SCHEMA.TIDB_TRX as trx on l.trx_id = trx.id where l.trx_id = %d and trx.session_id = %s",
-			conn2TxnID, conn2,
-		)).Rows()
+		txnWaits = testTk.MustQuery("select TRX_ID, SESSION_ID " + lockWaitsSource(conn2TxnID)).Rows()
 		return len(txnWaits) > 0
 	}, 10*time.Second, 100*time.Millisecond)
 	require.Falsef(t, exclusiveLockFinishedEarly, "exclusive lock should be blocked before DATA_LOCK_WAITS row is observed, err: %v", exclusiveLockErr)
 
-	lockWaits = testTk.MustQuery("select `key`, count(*) as `count` from INFORMATION_SCHEMA.DATA_LOCK_WAITS group by `key` order by `count` desc;").Rows()
+	lockWaits = testTk.MustQuery("select l.key, count(*) as `count` " + lockWaitsSource(conn2TxnID) + " group by l.key").Rows()
 	require.GreaterOrEqual(t, len(lockWaits), 1)
 	key = lockWaits[0][0].(string)
+	require.Equal(t, parentKey, key)
 
-	txnWaits = testTk.MustQuery(fmt.Sprintf("select TRX_ID, SESSION_ID from INFORMATION_SCHEMA.DATA_LOCK_WAITS as l left join INFORMATION_SCHEMA.TIDB_TRX as trx on l.trx_id = trx.id where l.key = \"%s\"", key)).Rows()
+	txnWaits = testTk.MustQuery("select TRX_ID, SESSION_ID " + lockWaitsSource(conn2TxnID)).Rows()
 	require.GreaterOrEqual(t, len(txnWaits), 1)
 	waitingTxnID = txnWaits[0][0].(string)
 	sessionID = txnWaits[0][1].(string)
