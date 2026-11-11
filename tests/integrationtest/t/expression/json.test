@@ -538,3 +538,14 @@ SELECT JSON_SCHEMA_VALID(b2, '{}') FROM t1;
 prepare stmt from 'select json_object(?, ?)';
 set @a=1;
 execute stmt using @a, @a;
+
+# TestIssue58888
+select json_extract("0.0", "$");
+select json_extract("[1E17]", "$");
+
+# TestIssue58894
+select json_extract('[1E27]', '$');
+
+# TestIssue58897
+select json_extract("{\"\\b\":\"\"}", "$");
+select json_extract("{\"\\f\":\"\"}", "$");
