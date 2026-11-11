@@ -2774,19 +2774,19 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		AuthPlugin: pluginName,
 		Capability: cc.capability,
 	}
-	if fakeResp.AuthPlugin != "" {
-		failpoint.Inject("ChangeUserAuthSwitch", func(val failpoint.Value) {
-			restoreOldSession()
-			failpoint.Return(errors.Errorf("%v", val))
-		})
-		newpass, err := cc.checkAuthPlugin(ctx, fakeResp)
-		if err != nil {
-			restoreOldSession()
-			return err
-		}
-		if len(newpass) > 0 {
-			fakeResp.Auth = newpass
-		}
+	failpoint.Inject("ChangeUserAuthSwitch", func(val failpoint.Value) {
+		restoreOldSession()
+		failpoint.Return(errors.Errorf("%v", val))
+	})
+	// Check the account's plugin even if the client omits it, so auth_socket
+	// always validates the transport and uses the Unix peer's OS credentials.
+	newpass, err := cc.checkAuthPlugin(ctx, fakeResp)
+	if err != nil {
+		restoreOldSession()
+		return err
+	}
+	if len(newpass) > 0 {
+		fakeResp.Auth = newpass
 	}
 	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin, fakeResp.ZstdLevel); err != nil {
 		restoreOldSession()
