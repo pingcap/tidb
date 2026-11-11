@@ -511,11 +511,8 @@ func TestLoadDataAutoRandomError(t *testing.T) {
 
 	// Create a reader with explicit value for auto_random column
 	var reader io.ReadCloser = mydump.NewStringReader("1,2\n")
-	var readerBuilder executor.LoadDataReaderBuilder = executor.LoadDataReaderBuilder{
-		Build: func(_ string) (r io.ReadCloser, err error) {
-			return reader, nil
-		},
-		Wg: &sync.WaitGroup{},
+	var readerBuilder executor.LoadDataReaderBuilder = func(_ string) (r io.ReadCloser, err error) {
+		return reader, nil
 	}
 	ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
 
