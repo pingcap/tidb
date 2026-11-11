@@ -411,12 +411,13 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 
 func TestProcessChunkWith(t *testing.T) {
 	t.Cleanup(tidb.RestoreFunc())
+	tidb.UpdateGlobal(func(c *tidb.Config) { c.TempDir = t.TempDir() })
+
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	tidb.UpdateGlobal(func(c *tidb.Config) { c.TempDir = t.TempDir() })
 	tidbCfg := tidb.GetGlobalConfig()
 
 	tk.MustExec("use test")
@@ -526,10 +527,11 @@ func TestProcessChunkWith(t *testing.T) {
 
 func TestPopulateChunks(t *testing.T) {
 	t.Cleanup(tidb.RestoreFunc())
+	tidb.UpdateGlobal(func(c *tidb.Config) { c.TempDir = t.TempDir() })
+
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalImportInto)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tidb.UpdateGlobal(func(c *tidb.Config) { c.TempDir = t.TempDir() })
 	tidbCfg := tidb.GetGlobalConfig()
 
 	tk.MustExec("use test")
