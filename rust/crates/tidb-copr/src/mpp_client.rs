@@ -40,7 +40,7 @@ use tidb_proto::mpp::{
 use tidb_txnkv::driver::tikv_store::TikvStore;
 use tidb_txnkv::retry::RegionBackoffBudget;
 use tidb_txnkv::{
-    MppBuildTasksRequest, MppContext, MppError, MppStoreTask, MppStreamResponse,
+    MppBuildTasksRequest, MppContext, MppError, MppRpcError, MppStoreTask, MppStreamResponse,
     QueryResponseError, QueryResultSubset,
 };
 
@@ -411,23 +411,28 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for MPPClient<S> 
     fn dispatch_mpp_task(
         &self,
         ctx: &Arc<dyn MppContext>,
-        task: MppStoreTask,
-        meta: TaskMeta,
-        encoded_plan: Vec<u8>,
+        task: &MppStoreTask,
+        meta: &TaskMeta,
+        encoded_plan: &[u8],
         kv_context: &tidb_txnkv::StatementKvContext,
         rpc_interceptor: &tidb_txnkv::RpcInterceptorOption,
-    ) -> Result<(), MppError> {
+        bo: &mut RegionBackoffBudget,
+    ) -> Result<tidb_proto::mpp::DispatchTaskResponse, MppRpcError> {
         let target = self.target(&task.address, rpc_interceptor);
         // Go: `mppReq.TableRegions = originalTask.PartitionTableRegions`, and a
         // partitioned task sends no plain regions.
         let (regions, table_regions) = if task.partition_table_regions.is_empty() {
-            (task.regions, Vec::new())
+            (task.regions.clone(), Vec::new())
         } else {
-            (Vec::new(), task.partition_table_regions)
+            (Vec::new(), task.partition_table_regions.clone())
         };
+        // Go `originalTask != nil`: a task with regions goes through the
+        // batch sender, whose send failure always invalidates the compute
+        // stores; a task without regions keeps them when it was canceled.
+        let has_regions = !(regions.is_empty() && table_regions.is_empty());
         let dispatch_request = encode_dispatch_request(DispatchTaskRequest {
-            meta: Some(meta),
-            encoded_plan,
+            meta: Some(meta.clone()),
+            encoded_plan: encoded_plan.to_vec(),
             regions,
             table_regions,
             schema_ver: (self.schema_version)(),
@@ -451,46 +456,59 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for MPPClient<S> 
                             tikv_client::tikv::READ_TIMEOUT_MEDIUM,
                         ),
                     )
-                    .await
-                    .map_err(|error| {
-                        target.invalidate_compute_cache();
-                        error.to_string()
-                    })?;
-                    if let Some(error) = &dispatch_response.error {
-                        return Err(format!(
-                            "tiflash mpp: dispatch refused: {} ({})",
-                            error.msg, error.code
-                        ));
-                    }
-                    // Go `MPPClient.DispatchMPPTask`: retry regions only
-                    // invalidate the region cache; they are NOT a dispatch
-                    // failure. The task itself has already registered and will
-                    // serve its regions through the learner read.
-                    invalidate_mpp_retry_regions(&target.store, &dispatch_response.retry_regions)
+                    .await;
+                    let dispatch_response = match dispatch_response {
+                        Ok(dispatch_response) => dispatch_response,
+                        Err(error) => {
+                            if has_regions || !error.canceled() {
+                                target.invalidate_compute_cache();
+                            }
+                            let retry = backoff_tiflash_rpc(ctx.as_ref(), bo, &error).await;
+                            return Err((retry, error.to_string()));
+                        }
+                    };
+                    // Go: `if realResp.Error != nil { return realResp, false, nil }`.
+                    if dispatch_response.error.is_none() {
+                        // Retry regions only invalidate the region cache; they
+                        // are NOT a dispatch failure. The task itself has
+                        // already registered and will serve its regions
+                        // through the learner read.
+                        invalidate_mpp_retry_regions(
+                            &target.store,
+                            &dispatch_response.retry_regions,
+                        )
                         .await;
-                    Ok(())
+                    }
+                    Ok(dispatch_response)
                 }),
             ))
-            .map_err(|message| MppError::after_stop(ctx.as_ref(), message))
+            .map_err(|(retry, message)| MppRpcError {
+                retry,
+                err: MppError::after_stop(ctx.as_ref(), message),
+            })
     }
 
     fn establish_mpp_conns(
         &self,
         ctx: Arc<dyn MppContext>,
         address: &str,
-        sender: TaskMeta,
-        receiver: TaskMeta,
+        sender: &TaskMeta,
+        receiver: &TaskMeta,
         kv_context: &tidb_txnkv::StatementKvContext,
         rpc_interceptor: &tidb_txnkv::RpcInterceptorOption,
-    ) -> Result<Box<dyn MppStreamResponse>, MppError> {
+        bo: &mut RegionBackoffBudget,
+    ) -> Result<Box<dyn MppStreamResponse>, MppRpcError> {
         let target = self.target(address, rpc_interceptor);
         self.store
             .block_on(crate::cop_store::with_statement_kv_context(
                 kv_context,
-                establish_mpp_response(&target, sender, receiver, Arc::clone(&ctx)),
+                establish_mpp_response(&target, sender, receiver, Arc::clone(&ctx), bo),
             ))
             .map(|response| Box::new(response) as Box<dyn MppStreamResponse>)
-            .map_err(|message| MppError::after_stop(ctx.as_ref(), message))
+            .map_err(|(retry, message)| MppRpcError {
+                retry,
+                err: MppError::after_stop(ctx.as_ref(), message),
+            })
     }
 }
 
@@ -735,19 +753,41 @@ impl MppSetupError {
         }
     }
 
-    /// client-go retries an MPP setup RPC that failed to connect or timed
-    /// out, never a cancelled one.
-    fn retryable(&self) -> bool {
+    /// Go `errors.Cause(err) == context.Canceled ||
+    /// status.Code(errors.Cause(err)) == codes.Canceled`: the statement
+    /// stopped the RPC, or the store answered that it was canceled. Such a
+    /// send is never retried.
+    fn canceled(&self) -> bool {
         // `errors.Cause`: the connection annotation is not the kind.
         match self.transport.as_ref().map(tikv_client::Error::cause) {
-            Some(tikv_client::Error::Grpc(_)) => true,
-            Some(tikv_client::Error::GrpcAPI(status)) => matches!(
-                status.code(),
-                tonic::Code::Unavailable | tonic::Code::DeadlineExceeded
-            ),
-            _ => false,
+            None | Some(tikv_client::Error::ContextCanceled) => true,
+            Some(tikv_client::Error::GrpcAPI(status)) => status.code() == tonic::Code::Cancelled,
+            Some(_) => false,
         }
     }
+}
+
+/// Go `bo.Backoff(tikv.BoTiFlashRPC(), err) == nil` after an MPP send failed
+/// with `error`: whether the coordinator sends it again. A canceled send
+/// does not back off.
+async fn backoff_tiflash_rpc(
+    memory: &dyn MppContext,
+    bo: &mut RegionBackoffBudget,
+    error: &MppSetupError,
+) -> bool {
+    if error.canceled() {
+        return false;
+    }
+    let Ok(delay) = bo.next_delay(tikv_client::retry::BO_TIFLASH_RPC) else {
+        return false;
+    };
+    let waited = mpp_setup(Some(memory), None, "retry wait", async {
+        tokio::time::sleep(delay).await;
+        Ok(())
+    })
+    .await;
+    bo.finish_wait(waited.is_ok());
+    waited.is_ok()
 }
 
 async fn mpp_setup<T>(
@@ -851,17 +891,16 @@ async fn under_rpc_interceptor<F: std::future::Future>(
 }
 
 /// Go `MPPClient.EstablishMPPConns`: the coordinator's stream from the root
-/// task, retried within the coprocessor's backoff budget until its first
-/// packet arrives.
+/// task. A send that failed before its first packet and was not canceled
+/// backs off within `bo` and answers `true`: the coordinator sends it again.
 async fn establish_mpp_response<S: tikv_client::PdClient>(
     target: &MppTarget<S>,
-    meta: TaskMeta,
-    receiver_meta: TaskMeta,
+    meta: &TaskMeta,
+    receiver_meta: &TaskMeta,
     memory: Arc<dyn MppContext>,
-) -> Result<MppQueryResponse<S>, String> {
-    // This is the coordinator's effective CopNextMaxBackoff budget.
-    let mut backoff = RegionBackoffBudget::campaign_default();
-    let result = loop {
+    bo: &mut RegionBackoffBudget,
+) -> Result<MppQueryResponse<S>, (bool, String)> {
+    let result = {
         // client-go getMPPStreamResponse receives once inside SendRequest;
         // only errors before the first packet belong to setup retry.
         let attempt = under_rpc_interceptor(
@@ -884,25 +923,13 @@ async fn establish_mpp_response<S: tikv_client::PdClient>(
         )
         .await;
         match attempt {
-            Ok(stream) => break Ok(stream),
+            Ok(stream) => Ok(stream),
             Err(error) => {
                 target.invalidate_compute_cache();
-                if !error.retryable() {
-                    break Err(error.to_string());
+                if backoff_tiflash_rpc(memory.as_ref(), bo, &error).await {
+                    return Err((true, error.to_string()));
                 }
-                let delay = match backoff.next_delay(tikv_client::retry::BO_TIFLASH_RPC) {
-                    Ok(delay) => delay,
-                    Err(_) => break Err(error.to_string()),
-                };
-                let waited = mpp_setup(Some(memory.as_ref()), None, "retry wait", async {
-                    tokio::time::sleep(delay).await;
-                    Ok(())
-                })
-                .await;
-                backoff.finish_wait(waited.is_ok());
-                if let Err(error) = waited {
-                    break Err(error.to_string());
-                }
+                Err(error.to_string())
             }
         }
     };
@@ -917,15 +944,15 @@ async fn establish_mpp_response<S: tikv_client::PdClient>(
             if let Err(error) = mpp_memory_error(memory.as_ref()) {
                 memory.consume(-held_bytes);
                 drop(stream);
-                cancel_mpp_task(target, cancel_task_meta(&meta)).await;
-                return Err(error.to_string());
+                cancel_mpp_task(target, cancel_task_meta(meta)).await;
+                return Err((false, error.to_string()));
             }
             Ok(MppQueryResponse {
                 stream: (!completed).then_some(stream),
                 first_packet: first,
                 target: (!completed).then(|| target.clone()),
                 memory,
-                cancel_meta: cancel_task_meta(&meta),
+                cancel_meta: cancel_task_meta(meta),
                 held_bytes,
                 receive_timeout: MPP_RECEIVE_TIMEOUT,
                 completed,
@@ -934,8 +961,8 @@ async fn establish_mpp_response<S: tikv_client::PdClient>(
             })
         }
         Err(error) => {
-            cancel_mpp_task(target, cancel_task_meta(&meta)).await;
-            Err(error)
+            cancel_mpp_task(target, cancel_task_meta(meta)).await;
+            Err((false, error))
         }
     }
 }
@@ -1521,15 +1548,26 @@ mod mpp_read_batch_tests {
             memory: tidb_variable::mem_quota::StatementMemory,
         ) -> Result<MppQueryResponse<TestPd>, String> {
             self.store.block_on(async {
-                let response = tokio::time::timeout(
-                    Duration::from_secs(2),
-                    establish_mpp_response(
-                        target,
-                        TaskMeta::default(),
-                        TaskMeta::default(),
-                        Arc::new(memory),
-                    ),
-                )
+                // Go `receiveResults`: the coordinator's retry loop.
+                let memory: Arc<dyn MppContext> = Arc::new(memory);
+                let mut bo = RegionBackoffBudget::campaign_default();
+                let response = tokio::time::timeout(Duration::from_secs(2), async {
+                    loop {
+                        let attempt = establish_mpp_response(
+                            target,
+                            &TaskMeta::default(),
+                            &TaskMeta::default(),
+                            Arc::clone(&memory),
+                            &mut bo,
+                        )
+                        .await;
+                        match attempt {
+                            Err((true, _)) => {}
+                            Err((false, error)) => break Err(error),
+                            Ok(response) => break Ok(response),
+                        }
+                    }
+                })
                 .await;
                 response.map_err(|_| "opening drained a stalled stream".to_string())?
             })
@@ -1713,20 +1751,28 @@ mod mpp_read_batch_tests {
                 let client = MPPClient::new(fixture.store.clone(), || 1);
                 let ctx: Arc<dyn MppContext> =
                     Arc::new(tidb_variable::mem_quota::StatementMemory::default());
+                // A budget with nothing left: the failed send is not retried.
+                let mut bo = RegionBackoffBudget::new(Duration::ZERO);
                 let result = tidb_txnkv::MppClient::dispatch_mpp_task(
                     &client,
                     &ctx,
-                    MppStoreTask {
+                    &MppStoreTask {
                         address: fixture.address.clone(),
                         regions: vec![],
                         partition_table_regions: vec![],
                     },
-                    TaskMeta::default(),
-                    Vec::new(),
+                    &TaskMeta::default(),
+                    &[],
                     &Default::default(),
                     &Default::default(),
+                    &mut bo,
                 );
-                assert!(result.is_err());
+                // Go: a response that carries the task's error is the
+                // dispatch's answer, not its failure.
+                match result {
+                    Ok(response) => assert!(application_error && response.error.is_some()),
+                    Err(error) => assert!(!application_error, "{error:?}"),
+                }
                 assert_eq!(
                     fixture.compute_stores(),
                     if disaggregated && !autoscaler && !application_error {
@@ -2020,7 +2066,7 @@ mod mpp_read_batch_tests {
                 .expect("the RPC setup deadline must run")
                 .unwrap_err();
             assert!(error.to_string().contains("timed out"), "{error}");
-            assert!(error.retryable(), "a setup deadline is retried");
+            assert!(!error.canceled(), "a setup deadline is retried");
             assert!(
                 retired.await.is_err(),
                 "the expired operation retained its owner"

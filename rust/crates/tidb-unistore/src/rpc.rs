@@ -23,8 +23,11 @@
 //! * The raw KV commands (`rawHandler`), coprocessor streams, batch
 //!   coprocessor, `CmdMPPCancel` and `CmdFlush`: not ported; they answer
 //!   Go's "not support" error, `Flush` client-rust's `Unimplemented`.
-//! * Go's failpoints and send/response hooks: test instruments with no
-//!   counterpart here.
+//! * Go's failpoints other than the MPP ones ([`mock`]) and its response
+//!   hook: test instruments with no counterpart here.
+//! * `mppRecvTimeout` and `mppRecvHang` fire in Go's
+//!   `mockMPPConnectionClient.Recv`; the stream here answers already
+//!   received, so they fire where its packets are collected.
 
 use std::any::Any;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -42,6 +45,73 @@ use tikv_client::{Error, Result};
 use crate::cluster::Cluster;
 use tidb_unistore_cophandler::mpp_task::{MppCtx, MppRpcClient, MppTaskHandler};
 use tidb_unistore_tikv::kv_handler::{KvHandler, SharedDbReader};
+
+/// Go's `failpoint.Inject` sites of `SendRequest` and
+/// `mockMPPConnectionClient.Recv`.
+#[cfg(any(test, feature = "test-util"))]
+pub mod mock {
+    use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+
+    static MPP_DISPATCH_TIMEOUT: AtomicUsize = AtomicUsize::new(0);
+    static MPP_CONN_TIMEOUT: AtomicBool = AtomicBool::new(false);
+    static MPP_VERSION_ERROR: AtomicI64 = AtomicI64::new(i64::MIN);
+    static MPP_RECV_TIMEOUT: AtomicI64 = AtomicI64::new(i64::MIN);
+    static MPP_RECV_HANG: AtomicBool = AtomicBool::new(false);
+
+    /// Go `failpoint.Enable("mppDispatchTimeout", "<times>*return(true)")`:
+    /// the next `times` dispatches fail with "rpc error"; zero disables it.
+    pub fn set_mpp_dispatch_timeout(times: usize) {
+        MPP_DISPATCH_TIMEOUT.store(times, Ordering::Release);
+    }
+
+    pub(super) fn mpp_dispatch_timeout() -> bool {
+        MPP_DISPATCH_TIMEOUT
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |times| times.checked_sub(1))
+            .is_ok()
+    }
+
+    /// Go `failpoint.Enable("mppConnTimeout", "return(true)")`: every
+    /// connection fails with "rpc error".
+    pub fn set_mpp_conn_timeout(enabled: bool) {
+        MPP_CONN_TIMEOUT.store(enabled, Ordering::Release);
+    }
+
+    pub(super) fn mpp_conn_timeout() -> bool {
+        MPP_CONN_TIMEOUT.load(Ordering::Acquire)
+    }
+
+    /// Go `failpoint.Enable("MppVersionError", "return(<version>)")`: a
+    /// dispatch or connection whose task's MPP version is below `version`
+    /// is canceled.
+    pub fn set_mpp_version_error(version: Option<i64>) {
+        MPP_VERSION_ERROR.store(version.unwrap_or(i64::MIN), Ordering::Release);
+    }
+
+    pub(super) fn mpp_version_error(versions: &[i64]) -> bool {
+        let v = MPP_VERSION_ERROR.load(Ordering::Acquire);
+        versions.iter().any(|version| v > *version)
+    }
+
+    /// Go `failpoint.Enable("mppRecvTimeout", "return(<task id>)")`: the
+    /// stream of that sender task is canceled.
+    pub fn set_mpp_recv_timeout(task_id: Option<i64>) {
+        MPP_RECV_TIMEOUT.store(task_id.unwrap_or(i64::MIN), Ordering::Release);
+    }
+
+    pub(super) fn mpp_recv_timeout(task_id: i64) -> bool {
+        MPP_RECV_TIMEOUT.load(Ordering::Acquire) == task_id
+    }
+
+    /// Go `failpoint.Enable("mppRecvHang", "return(true)")`: every stream
+    /// hangs until its context is done.
+    pub fn set_mpp_recv_hang(enabled: bool) {
+        MPP_RECV_HANG.store(enabled, Ordering::Release);
+    }
+
+    pub(super) fn mpp_recv_hang() -> bool {
+        MPP_RECV_HANG.load(Ordering::Acquire)
+    }
+}
 
 /// Go `UnistoreRPCClientSendHook`: a test's look at every request before the
 /// store serves it.
@@ -418,6 +488,24 @@ impl tikv_client::tikv::Client for RpcClient {
         }
         serve!(kvrpcpb::BufferBatchGetRequest, kv_buffer_batch_get);
         if let Some(request) = any.downcast_ref::<MppStreamRequest>() {
+            #[cfg(any(test, feature = "test-util"))]
+            {
+                let version = |meta: &Option<mpp::TaskMeta>| meta.as_ref().map_or(0, |meta| meta.mpp_version);
+                if mock::mpp_conn_timeout() {
+                    return Err(Error::StringError("rpc error".to_owned()));
+                }
+                if mock::mpp_version_error(&[version(&request.0.receiver_meta), version(&request.0.sender_meta)]) {
+                    return Err(Error::ContextCanceled);
+                }
+                if mock::mpp_recv_timeout(request.0.sender_meta.as_ref().map_or(0, |meta| meta.task_id)) {
+                    return Err(Error::ContextCanceled);
+                }
+                if mock::mpp_recv_hang() {
+                    // Go loops until `ctx.Done()`: the caller dropping this
+                    // send is the context's end.
+                    return std::future::pending().await;
+                }
+            }
             // Go `handleEstablishMPPConnection`: the sender task's packets,
             // collected while it runs, answer as an already-received stream.
             let rpc = self.clone();
@@ -431,6 +519,15 @@ impl tikv_client::tikv::Client for RpcClient {
             return Ok(Box::new(MppStreamResponse::from_packets(packets)));
         }
         if let Some(request) = any.downcast_ref::<mpp::DispatchTaskRequest>() {
+            #[cfg(any(test, feature = "test-util"))]
+            {
+                if mock::mpp_dispatch_timeout() {
+                    return Err(Error::StringError("rpc error".to_owned()));
+                }
+                if mock::mpp_version_error(&[request.meta.as_ref().map_or(0, |meta| meta.mpp_version)]) {
+                    return Err(Error::ContextCanceled);
+                }
+            }
             return Ok(Box::new(self.dispatch_mpp_task_with_store_id(request, store_id)?));
         }
         serve!(mpp::IsAliveRequest, is_alive);

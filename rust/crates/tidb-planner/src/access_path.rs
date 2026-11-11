@@ -529,6 +529,23 @@ impl tidb_planner_core_operator_logicalop::plan_context::AccessPathResolver for 
             warnings,
         )
     }
+
+    fn filter_path_by_isolation_read(
+        &self,
+        paths: &mut Vec<AccessPath>,
+        table_name: &str,
+        db_name: &str,
+        isolation_read_engines_value: &str,
+        tiflash_engine_removed_due_to_strict_sql_mode: bool,
+    ) -> Result<(), tidb_planner_core_base::PlanError> {
+        filter_path_by_isolation_read(
+            paths,
+            table_name,
+            db_name,
+            &IsolationRead::new(isolation_read_engines_value, tiflash_engine_removed_due_to_strict_sql_mode),
+            None,
+        )
+    }
 }
 
 /// Go `getPathByIndexName`: the position of the path `name` names -- the

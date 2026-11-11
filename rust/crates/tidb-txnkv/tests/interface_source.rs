@@ -475,24 +475,29 @@ impl MppClient for MockMppClient {
     fn dispatch_mpp_task(
         &self,
         _: &Arc<dyn MppContext>,
-        _: MppStoreTask,
-        _: tidb_proto::mpp::TaskMeta,
-        _: Vec<u8>,
+        _: &MppStoreTask,
+        _: &tidb_proto::mpp::TaskMeta,
+        _: &[u8],
         _: &StatementKvContext,
         _: &tidb_txnkv::RpcInterceptorOption,
-    ) -> Result<(), MppError> {
-        Ok(())
+        _: &mut tidb_txnkv::RegionBackoffBudget,
+    ) -> Result<tidb_proto::mpp::DispatchTaskResponse, tidb_txnkv::MppRpcError> {
+        Ok(tidb_proto::mpp::DispatchTaskResponse::default())
     }
     fn establish_mpp_conns(
         &self,
         _: Arc<dyn MppContext>,
         _: &str,
-        _: tidb_proto::mpp::TaskMeta,
-        _: tidb_proto::mpp::TaskMeta,
+        _: &tidb_proto::mpp::TaskMeta,
+        _: &tidb_proto::mpp::TaskMeta,
         _: &StatementKvContext,
         _: &tidb_txnkv::RpcInterceptorOption,
-    ) -> Result<Box<dyn MppStreamResponse>, MppError> {
-        Err(MppError::Other("no store".to_owned()))
+        _: &mut tidb_txnkv::RegionBackoffBudget,
+    ) -> Result<Box<dyn MppStreamResponse>, tidb_txnkv::MppRpcError> {
+        Err(tidb_txnkv::MppRpcError {
+            retry: false,
+            err: MppError::Other("no store".to_owned()),
+        })
     }
 }
 

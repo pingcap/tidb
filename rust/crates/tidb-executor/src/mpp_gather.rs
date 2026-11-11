@@ -111,6 +111,36 @@ fn build_virtual_column_info(
     (virtual_column_index, ret_types)
 }
 
+/// What Go's `checkUseMPP` and `mpp_coordinator_execute_err` failpoints
+/// replace.
+#[cfg(any(test, feature = "test-util"))]
+pub mod mock {
+    use std::sync::{Mutex, PoisonError};
+
+    static CHECK_USE_MPP: Mutex<Option<bool>> = Mutex::new(None);
+    static MPP_COORDINATOR_EXECUTE_ERR: Mutex<bool> = Mutex::new(false);
+
+    /// Go `failpoint.Enable("checkUseMPP", "return(v)")`: whether every
+    /// table reader a user statement builds must be an MPP gather.
+    pub fn set_check_use_mpp(use_mpp: Option<bool>) {
+        *CHECK_USE_MPP.lock().unwrap_or_else(PoisonError::into_inner) = use_mpp;
+    }
+
+    pub(crate) fn check_use_mpp() -> Option<bool> {
+        *CHECK_USE_MPP.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Go `failpoint.Enable("mpp_coordinator_execute_err", "return()")`: the
+    /// coordinator's `Execute` answers `mock mpp error`.
+    pub fn set_mpp_coordinator_execute_err(enabled: bool) {
+        *MPP_COORDINATOR_EXECUTE_ERR.lock().unwrap_or_else(PoisonError::into_inner) = enabled;
+    }
+
+    pub(super) fn mpp_coordinator_execute_err() -> bool {
+        *MPP_COORDINATOR_EXECUTE_ERR.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 impl MppGather {
     /// Go `executorBuilder.buildMPPGather`.
     ///
@@ -245,7 +275,14 @@ fn setup_mpp_coordinator(
     let mut coord =
         LocalMppCoordinator::new(ctx, plan, plan_ids.to_vec(), start_ts, mpp_query_id, gather_id, server_addr);
     INSTANCE_MPP_COORDINATOR_MANAGER.register(coord.unique_id(), coord.reports())?;
-    let kv_ranges = coord.execute(ctx, is, client, plan)?;
+    let executed = coord.execute(ctx, is, client, plan);
+    #[cfg(any(test, feature = "test-util"))]
+    let executed = if mock::mpp_coordinator_execute_err() {
+        Err("mock mpp error".to_owned())
+    } else {
+        executed
+    };
+    let kv_ranges = executed?;
     let node_cnt = coord.node_count();
     if node_cnt == 0 {
         return Err(format!("tiflash node count should be greater than zero: {node_cnt}"));

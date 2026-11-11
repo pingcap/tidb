@@ -124,7 +124,7 @@ pub use kv_response::{
     ResponseRuntimeStats,
 };
 pub use mem_storage::{MemIterator, MemStorage, MemStorageError};
-pub use mpp::{BackgroundMppContext, CancelMppTasksParam, MppBuildTasksRequest, MppClient, MppContext, MppCoordinator, MppDispatchRequest, MppError, MppQueryId, MppStoreTask, MppStreamResponse, MppTask, MppTaskLocation, MppTaskState, MppVersion};
+pub use mpp::{BackgroundMppContext, CancelMppTasksParam, MppBuildTasksRequest, MppClient, MppContext, MppCoordinator, MppDispatchRequest, MppError, MppQueryId, MppRpcError, MppStoreTask, MppStreamResponse, MppTask, MppTaskLocation, MppTaskState, MppVersion};
 pub use new_txn::{
     retry_backoff_delay, run_in_new_txn, run_in_new_txn_with, set_txn_resource_group, NewTxnError,
     NewTxnStorage, NewTxnTransaction, RunInNewTxnContext, TxnOptionValue, TxnResourceGroup,

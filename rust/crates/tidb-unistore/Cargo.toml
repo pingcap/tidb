@@ -10,6 +10,10 @@ description = "TiDB pkg/store/mockstore/unistore: the in-process TiKV and PD (Ru
 [lints]
 workspace = true
 
+[features]
+# Go's `failpoint.Inject` sites, as switches other crates' tests set.
+test-util = []
+
 [dependencies]
 tidb-domain-infosync = { path = "../tidb-domain-infosync" }
 tidb-unistore-tikv = { path = "../tidb-unistore-tikv" }

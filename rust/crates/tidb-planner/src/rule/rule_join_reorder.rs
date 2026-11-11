@@ -219,6 +219,7 @@ fn without_projection_inline<'a>(context: &RuleContext<'a>) -> RuleContext<'a> {
         index_merge_skip_range_scan_check: context.index_merge_skip_range_scan_check,
         index_lookup_push_down_session: context.index_lookup_push_down_session,
         isolation_read_engines: context.isolation_read_engines,
+        tiflash_engine_removed_due_to_strict_sql_mode: context.tiflash_engine_removed_due_to_strict_sql_mode,
         join_reorder_threshold: context.join_reorder_threshold,
         group_ndv_skew_ratio: context.group_ndv_skew_ratio,
         scale_ndv_skew_ratio: context.scale_ndv_skew_ratio,

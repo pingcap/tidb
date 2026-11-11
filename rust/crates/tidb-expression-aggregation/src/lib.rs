@@ -170,9 +170,7 @@
 //! - **`ExplainAggFunc`'s context-dependent half is not ported.** Only the
 //!   `normalized == true` branch has a Rust counterpart
 //!   ([`tidb_expr::expr_util::explain_normalized_info`]); the `ExplainInfo(ctx)`
-//!   branch shares the `StringWithCtx` boundary above. Its `show-agg-mode`
-//!   failpoint becomes an explicit `show_mode` parameter, since the workspace
-//!   has no failpoint injection.
+//!   branch shares the `StringWithCtx` boundary above.
 //! - **`AggFuncDesc.Equal(ctx, other)` compares arguments context-free.**
 //!   Go's `Expression.Equal(ctx, e)` evaluates constants through a collator;
 //!   [`Expression::equal`](tidb_expr::expression::Expression::equal) is the
@@ -226,7 +224,9 @@ pub use agg_to_pb::{agg_func_to_pb_expr, agg_function_mode_to_pb, pb_agg_func_mo
 pub use base_func::{approx_percentile_percent, AggDescError, BaseFuncDesc};
 pub use descriptor::{AggFuncDesc, ByItems};
 pub use dist::{DistAggregate, DistAggregateError, DistAggregateState, DistAggregator};
-pub use explain::explain_agg_func_normalized;
+#[cfg(any(test, feature = "test-util"))]
+pub use explain::mock;
+pub use explain::{explain_agg_func_normalized, show_agg_mode};
 pub use window_func::{need_frame, use_default_frame, WindowFrameDefault, WindowFuncDesc};
 
 /// Go `AggFunctionMode` (`aggregation.go:116`): the aggregate's execution

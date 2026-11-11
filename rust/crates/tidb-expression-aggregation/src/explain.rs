@@ -24,15 +24,43 @@ use super::AggFuncDesc;
 use tidb_expr::expr_util::explain_normalized_info;
 use std::fmt::Write as _;
 
-/// Go `ExplainAggFunc(ctx, agg, normalized = true)` (`explain.go:26`).
-///
-/// `show_mode` stands in for the `show-agg-mode` failpoint, which the
-/// workspace has no injection mechanism for: `true` renders
-/// `name(mode,args...)` exactly as the failpoint-enabled build does.
+/// What Go's `show-agg-mode` failpoint replaces.
+#[cfg(any(test, feature = "test-util"))]
+pub mod mock {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static SHOW_AGG_MODE: AtomicBool = AtomicBool::new(false);
+
+    /// Go `failpoint.Enable("show-agg-mode", "return(true)")`: an aggregate
+    /// explains as `name(mode,args...)`.
+    pub fn set_show_agg_mode(show_mode: bool) {
+        SHOW_AGG_MODE.store(show_mode, Ordering::Relaxed);
+    }
+
+    pub(super) fn show_agg_mode() -> bool {
+        SHOW_AGG_MODE.load(Ordering::Relaxed)
+    }
+}
+
+/// Go `ExplainAggFunc`'s `showMode`: whether the `show-agg-mode` failpoint is
+/// enabled.
 #[must_use]
-pub fn explain_agg_func_normalized(agg: &AggFuncDesc, show_mode: bool) -> String {
+pub fn show_agg_mode() -> bool {
+    #[cfg(any(test, feature = "test-util"))]
+    {
+        mock::show_agg_mode()
+    }
+    #[cfg(not(any(test, feature = "test-util")))]
+    {
+        false
+    }
+}
+
+/// Go `ExplainAggFunc(ctx, agg, normalized = true)` (`explain.go:26`).
+#[must_use]
+pub fn explain_agg_func_normalized(agg: &AggFuncDesc) -> String {
     let mut buffer = String::new();
-    if show_mode {
+    if show_agg_mode() {
         let _ = write!(buffer, "{}({},", agg.name(), agg.mode.as_str());
     } else {
         let _ = write!(buffer, "{}(", agg.name());

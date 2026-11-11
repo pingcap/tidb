@@ -22,17 +22,45 @@ use tidb_planner_core_operator_physicalop::{exhaust_physical_plans_4_logical_uni
 use tidb_planner_property::{PhysicalProperty, SortItem, TaskType};
 use tidb_planner_core_base::PlanIdAllocator;
 
+/// Go `ExhaustPhysicalPlans4LogicalUnionAll` under an MPP requirement: no
+/// candidate under a partition requirement, else one candidate, the MPP
+/// union over MPP children when `IsMPPAllowed`.
 #[test]
-fn mpp_child_requirement_is_rejected() {
+fn mpp_requirement_is_the_mpp_union_over_mpp_children() {
     let allocator = PlanIdAllocator::new();
-    let union = LogicalUnionAll::new(BaseLogicalPlan::new(&allocator, LogicalUnionAll::TYPE, 0));
+    let mut base = BaseLogicalPlan::new(&allocator, LogicalUnionAll::TYPE, 0);
+    base.set_children(vec![
+        tidb_planner_core_operator_logicalop::LogicalPlan::TableDual(
+            tidb_planner_core_operator_logicalop::LogicalTableDual::new(
+                BaseLogicalPlan::new(&allocator, "TableDual", 0),
+                1,
+            ),
+        ),
+    ]);
+    let union = LogicalUnionAll::new(base);
     let mpp = PhysicalProperty {
         task_tp: TaskType::Mpp,
         ..PhysicalProperty::default()
     };
-    assert!(
-        exhaust_physical_plans_4_logical_union_all(&union, &mpp, &allocator, 1.0, false).is_empty()
-    );
+    for (mpp_allowed, child_task_tp) in [(true, TaskType::Mpp), (false, TaskType::Root)] {
+        let plans = exhaust_physical_plans_4_logical_union_all(&union, &mpp, &allocator, 1.0, mpp_allowed);
+        assert_eq!(plans.len(), 1);
+        let PhysicalPlan::UnionAll(plan) = &plans[0] else {
+            panic!("a wired PhysicalUnionAll, got {:?}", plans[0]);
+        };
+        assert_eq!(plan.mpp, mpp_allowed);
+        assert_eq!(plan.base.child_req_prop(0).expect("prop").task_tp, child_task_tp);
+    }
+    for mpp_partition_tp in [
+        tidb_planner_property::MppPartitionType::Hash,
+        tidb_planner_property::MppPartitionType::Broadcast,
+        tidb_planner_property::MppPartitionType::SinglePartition,
+    ] {
+        let partitioned = PhysicalProperty { mpp_partition_tp, ..mpp.clone() };
+        assert!(
+            exhaust_physical_plans_4_logical_union_all(&union, &partitioned, &allocator, 1.0, true).is_empty()
+        );
+    }
 }
 
 #[test]

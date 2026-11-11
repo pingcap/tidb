@@ -139,6 +139,8 @@ pub struct RuleContext<'a> {
     pub index_lookup_push_down_session: tidb_sessionctx::IndexLookupPushDownSession,
     /// Go `SessionVars.IsolationReadEngines` (`tidb_isolation_read_engines`).
     pub isolation_read_engines: &'a str,
+    /// Go `StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode`.
+    pub tiflash_engine_removed_due_to_strict_sql_mode: bool,
     /// Go `SessionVars.TiDBOptJoinReorderThreshold`.
     pub join_reorder_threshold: i32,
     /// Go `SessionVars.RiskGroupNDVSkewRatio` for join and aggregation stats.
@@ -213,6 +215,21 @@ pub trait AccessPathResolver {
         isolation_read_engines_value: &str,
         warnings: &mut dyn FnMut(u16, String),
     ) -> Result<Vec<tidb_planner_util::path::AccessPath>, PlanError>;
+
+    /// Go `util.FilterPathByIsolationRead`: the paths the session's read
+    /// engines admit.
+    ///
+    /// # Errors
+    ///
+    /// Go `ErrInternal` when the engines admit none of the paths.
+    fn filter_path_by_isolation_read(
+        &self,
+        paths: &mut Vec<tidb_planner_util::path::AccessPath>,
+        table_name: &str,
+        db_name: &str,
+        isolation_read_engines_value: &str,
+        tiflash_engine_removed_due_to_strict_sql_mode: bool,
+    ) -> Result<(), PlanError>;
 }
 
 /// Go `ruleutil.ApplyPredicateSimplification` and

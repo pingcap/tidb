@@ -7488,6 +7488,16 @@ fn build_reader_node(
 ) -> Result<Box<dyn Executor>, DriverError> {
     match plan {
         PhysicalPlan::TableReader(reader) => {
+            #[cfg(any(test, feature = "test-util"))]
+            if let Some(val) = crate::mpp_gather::mock::check_use_mpp() {
+                if !ctx.request_source().internal && val != crate::mpp_gather::use_mpp_execution(ctx, reader) {
+                    return Err(DriverError::unsupported(if val {
+                        "expect mpp but not used"
+                    } else {
+                        "don't expect mpp but we used it"
+                    }));
+                }
+            }
             // Go `buildTableReader`: `if useMPPExecution(b.ctx, v) { return
             // b.buildMPPGather(v) }`.
             if crate::mpp_gather::use_mpp_execution(ctx, reader) {

@@ -281,6 +281,16 @@ impl MppError {
     }
 }
 
+/// Go `DispatchMPPTask` / `EstablishMPPConns`' `(retry, err)`: a failed call,
+/// and whether the coordinator sends it again.
+#[derive(Clone, Debug)]
+pub struct MppRpcError {
+    /// Go `retry`: the call backed off within `Bo` and is worth repeating.
+    pub retry: bool,
+    /// Go `err`.
+    pub err: MppError,
+}
+
 /// One store's task of a fragment (Go `batchCopTask` as a `kv.MPPTaskMeta`):
 /// the store's address and the regions it reads there.
 #[derive(Clone, Debug, PartialEq)]
@@ -333,30 +343,36 @@ pub trait MppClient: std::fmt::Debug + Send + Sync {
     ) -> Result<Vec<MppStoreTask>, MppError>;
 
     /// Go `DispatchMPPTask`: sends `encoded_plan` as the task `meta` names
-    /// to `task`'s store. The schema version the dispatch carries is the
-    /// node's current one.
+    /// to `task`'s store, and answers the store's response (which may carry
+    /// the task's own error). A send that failed and was not canceled backs
+    /// off within `bo` (Go `param.Bo`) and asks for a retry. The schema
+    /// version the dispatch carries is the node's current one.
+    #[allow(clippy::too_many_arguments)]
     fn dispatch_mpp_task(
         &self,
         ctx: &Arc<dyn MppContext>,
-        task: MppStoreTask,
-        meta: tidb_proto::mpp::TaskMeta,
-        encoded_plan: Vec<u8>,
+        task: &MppStoreTask,
+        meta: &tidb_proto::mpp::TaskMeta,
+        encoded_plan: &[u8],
         kv_context: &crate::StatementKvContext,
         rpc_interceptor: &crate::option::RpcInterceptorOption,
-    ) -> Result<(), MppError>;
+        bo: &mut crate::retry::RegionBackoffBudget,
+    ) -> Result<tidb_proto::mpp::DispatchTaskResponse, MppRpcError>;
 
     /// Go `EstablishMPPConns`: the coordinator's (`receiver`) stream from the
-    /// root task `sender` at `address`. Closing it before its end cancels
-    /// the gather.
+    /// root task `sender` at `address`, with `DispatchMPPTask`'s retry
+    /// contract. Closing it before its end cancels the gather.
+    #[allow(clippy::too_many_arguments)]
     fn establish_mpp_conns(
         &self,
         ctx: Arc<dyn MppContext>,
         address: &str,
-        sender: tidb_proto::mpp::TaskMeta,
-        receiver: tidb_proto::mpp::TaskMeta,
+        sender: &tidb_proto::mpp::TaskMeta,
+        receiver: &tidb_proto::mpp::TaskMeta,
         kv_context: &crate::StatementKvContext,
         rpc_interceptor: &crate::option::RpcInterceptorOption,
-    ) -> Result<Box<dyn MppStreamResponse>, MppError>;
+        bo: &mut crate::retry::RegionBackoffBudget,
+    ) -> Result<Box<dyn MppStreamResponse>, MppRpcError>;
 
     /// Go `helper.Storage.GetRegionCache().GetTiFlashStores(
     /// tikv.LabelFilterNoTiFlashWriteNode)`, which the coordinator reads each

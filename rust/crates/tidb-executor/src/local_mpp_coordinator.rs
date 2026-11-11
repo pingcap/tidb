@@ -41,14 +41,59 @@ use tidb_planner_core_operator_physicalop::{MppTask, PhysicalPlan, PhysicalTable
 use tidb_proto::mpp::{ReportTaskStatusRequest, TaskMeta};
 use tidb_proto::tipb::{self, DagRequest, EncodeType, ExecType};
 use tidb_txnkv::{
-    KeyRange, MppBuildTasksRequest, MppClient, MppContext, MppError, MppQueryId, MppStoreTask,
-    MppTaskLocation, MppVersion, QueryResponseError, QueryResultSubset,
+    KeyRange, MppBuildTasksRequest, MppClient, MppContext, MppError, MppQueryId, MppRpcError,
+    MppStoreTask, MppTaskLocation, MppVersion, QueryResponseError, QueryResultSubset,
+    RegionBackoffBudget,
 };
 
 use crate::dag_request::DEFAULT_DIV_PRECISION_INCREMENT;
 use crate::mpp_coordinator::MppGatherResponse;
 use crate::mppcoordmanager::{CoordinatorUniqueId, MppCoordinator, INSTANCE_MPP_COORDINATOR_MANAGER};
 use crate::StatementMemory;
+
+/// What Go's `checkTotalMPPTasks` failpoint replaces.
+#[cfg(any(test, feature = "test-util"))]
+pub mod mock {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Mutex, PoisonError};
+
+    static CHECK_TOTAL_MPP_TASKS: Mutex<Option<usize>> = Mutex::new(None);
+
+    /// Go `failpoint.Enable("checkTotalMPPTasks", "return(n)")`: the number
+    /// of tasks every coordinator must dispatch.
+    pub fn set_check_total_mpp_tasks(tasks: Option<usize>) {
+        *CHECK_TOTAL_MPP_TASKS.lock().unwrap_or_else(PoisonError::into_inner) = tasks;
+    }
+
+    pub(super) fn check_total_mpp_tasks() -> Option<usize> {
+        *CHECK_TOTAL_MPP_TASKS.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    static MPP_NON_ROOT_TASK_ERROR: AtomicBool = AtomicBool::new(false);
+
+    /// Go `failpoint.Enable("mppNonRootTaskError", "return(true)")`: every
+    /// dispatched non-root task fails with a TiFlash server timeout a second
+    /// after its dispatch.
+    pub fn set_mpp_non_root_task_error(enabled: bool) {
+        MPP_NON_ROOT_TASK_ERROR.store(enabled, Ordering::Release);
+    }
+
+    pub(super) fn mpp_non_root_task_error() -> bool {
+        MPP_NON_ROOT_TASK_ERROR.load(Ordering::Acquire)
+    }
+
+    static REDUCE_COP_NEXT_MAX_BACKOFF: AtomicBool = AtomicBool::new(false);
+
+    /// Go `failpoint.Enable("ReduceCopNextMaxBackoff", "return(true)")`: a
+    /// task's backoff budget is two milliseconds.
+    pub fn set_reduce_cop_next_max_backoff(enabled: bool) {
+        REDUCE_COP_NEXT_MAX_BACKOFF.store(enabled, Ordering::Release);
+    }
+
+    pub(super) fn reduce_cop_next_max_backoff() -> bool {
+        REDUCE_COP_NEXT_MAX_BACKOFF.load(Ordering::Acquire)
+    }
+}
 
 /// Go `UpdateExecutorTableID`: points the table (or partition) scan of
 /// `exec`'s tree at `partition_ids`, following each executor's child when
@@ -694,6 +739,15 @@ impl LocalMppCoordinator {
         for frag in &frags {
             self.append_mpp_dispatch_req(ctx, &statement, frag, &all_tiflash_store_info, &mut mpp_reqs)?;
         }
+        #[cfg(any(test, feature = "test-util"))]
+        if let Some(val) = mock::check_total_mpp_tasks() {
+            if val != mpp_reqs.len() {
+                return Err(format!(
+                    "The number of tasks is not right, expect {val} tasks but actually there are {} tasks",
+                    mpp_reqs.len()
+                ));
+            }
+        }
 
         let (resp_tx, resp_rx) = std::sync::mpsc::sync_channel(0);
         let dispatch_all = {
@@ -705,8 +759,19 @@ impl LocalMppCoordinator {
                 .map(tidb_txnkv::StatementKvContextCell::get)
                 .unwrap_or_default();
             let rpc_interceptor = statement.rpc_interceptor.clone();
+            // Go: `_, allowTiFlashFallback := AllowFallbackToTiKV[kv.TiFlash]`.
+            let need_trigger_fallback = statement.allow_tiflash_fallback;
             std::thread::spawn(move || {
-                dispatch_all(&client, &mpp_ctx, &kv_context, &rpc_interceptor, mpp_reqs, &reports, &resp_tx);
+                dispatch_all(
+                    &client,
+                    &mpp_ctx,
+                    &kv_context,
+                    &rpc_interceptor,
+                    need_trigger_fallback,
+                    mpp_reqs,
+                    &reports,
+                    &resp_tx,
+                );
             })
         };
         self.resp_rx = Some(resp_rx);
@@ -934,6 +999,7 @@ fn dispatch_all(
     mpp_ctx: &Arc<dyn MppContext>,
     kv_context: &tidb_txnkv::StatementKvContext,
     rpc_interceptor: &tidb_txnkv::RpcInterceptorOption,
+    need_trigger_fallback: bool,
     mpp_reqs: Vec<MppDispatchRequest>,
     reports: &CoordinatorReports,
     resp_tx: &SyncSender<MppResponse>,
@@ -944,19 +1010,52 @@ fn dispatch_all(
                 break;
             }
             scope.spawn(move || {
-                handle_dispatch_req(client, mpp_ctx, kv_context, rpc_interceptor, task, reports, resp_tx);
+                handle_dispatch_req(
+                    client,
+                    mpp_ctx,
+                    kv_context,
+                    rpc_interceptor,
+                    need_trigger_fallback,
+                    task,
+                    reports,
+                    resp_tx,
+                );
             });
         }
     });
 }
 
+/// Go `if c.needTriggerFallback { err = derr.ErrTiFlashServerTimeout }`: a
+/// TiFlash failure answers the timeout that makes the statement fall back to
+/// TiKV. The statement's own stop is not a TiFlash failure.
+fn trigger_fallback(need_trigger_fallback: bool, err: MppError) -> MppError {
+    match err {
+        MppError::Other(_) if need_trigger_fallback => MppError::Sql(
+            tidb_terror::MysqlError::from_terror(&tidb_txnkv::tikv_errors::ERR_TI_FLASH_SERVER_TIMEOUT),
+        ),
+        err => err,
+    }
+}
+
+/// The fields Go's dispatch and establish warnings share.
+fn dispatch_log_fields(req_meta: &TaskMeta, err: String) -> [tidb_log::Field; 4] {
+    [
+        tidb_log::Field::new("error", tidb_log::Value::Str(err)),
+        tidb_log::Field::new("timestamp", tidb_log::Value::U64(req_meta.start_ts)),
+        tidb_log::Field::new("task", tidb_log::Value::I64(req_meta.task_id)),
+        tidb_log::Field::new("mpp-version", tidb_log::Value::I64(req_meta.mpp_version)),
+    ]
+}
+
 /// Go `handleDispatchReq`: dispatches the task; a root task's packets are
 /// then received (`receiveResults`).
+#[allow(clippy::too_many_arguments)]
 fn handle_dispatch_req(
     client: &Arc<dyn MppClient>,
     mpp_ctx: &Arc<dyn MppContext>,
     kv_context: &tidb_txnkv::StatementKvContext,
     rpc_interceptor: &tidb_txnkv::RpcInterceptorOption,
+    need_trigger_fallback: bool,
     req: MppDispatchRequest,
     reports: &CoordinatorReports,
     resp_tx: &SyncSender<MppResponse>,
@@ -974,16 +1073,65 @@ fn handle_dispatch_req(
             regions: Vec::new(),
             partition_table_regions: Vec::new(),
         });
-    if let Err(err) = client.dispatch_mpp_task(
-        mpp_ctx,
-        store_task,
-        req.meta.clone(),
-        req.data,
-        kv_context,
-        rpc_interceptor,
-    ) {
+    // Go `backoff.NewBackoffer(ctx, copr.CopNextMaxBackoff)`.
+    let mut bo = RegionBackoffBudget::campaign_default();
+    #[cfg(any(test, feature = "test-util"))]
+    if mock::reduce_cop_next_max_backoff() {
+        bo = RegionBackoffBudget::new(std::time::Duration::from_millis(2));
+    }
+    let rpc_resp = loop {
+        match client.dispatch_mpp_task(
+            mpp_ctx,
+            &store_task,
+            &req.meta,
+            &req.data,
+            kv_context,
+            rpc_interceptor,
+            &mut bo,
+        ) {
+            Err(MppRpcError { retry: true, err }) => {
+                // TODO: If we want to retry, we might need to redo the plan fragment cutting and task scheduling. https://github.com/pingcap/tidb/issues/31015
+                tidb_logutil::bg_logger().warn(
+                    "mpp dispatch meet error and retrying",
+                    &dispatch_log_fields(&req.meta, err.to_string()),
+                );
+            }
+            Err(MppRpcError { retry: false, err }) => break Err(err),
+            Ok(rpc_resp) => break Ok(rpc_resp),
+        }
+    };
+    let rpc_resp = match rpc_resp {
+        Ok(rpc_resp) => rpc_resp,
+        Err(err) => {
+            tidb_logutil::bg_logger().warn(
+                "mpp dispatch meet error",
+                &dispatch_log_fields(&req.meta, err.to_string()),
+            );
+            reports.dispatch_failed.store(true, Ordering::Release);
+            // if NeedTriggerFallback is true, we return timeout to trigger tikv's fallback
+            send_error(resp_tx, &trigger_fallback(need_trigger_fallback, err));
+            return;
+        }
+    };
+    if let Some(error) = rpc_resp.error {
+        tidb_logutil::bg_logger().warn(
+            "mpp dispatch response meet error",
+            &dispatch_log_fields(&req.meta, error.msg.clone()),
+        );
         reports.dispatch_failed.store(true, Ordering::Release);
-        send_error(resp_tx, &err);
+        send_error(resp_tx, &MppError::Other(error.msg));
+        return;
+    }
+    #[cfg(any(test, feature = "test-util"))]
+    if mock::mpp_non_root_task_error() && !req.is_root {
+        std::thread::sleep(Duration::from_secs(1));
+        reports.dispatch_failed.store(true, Ordering::Release);
+        send_error(
+            resp_tx,
+            &MppError::Sql(tidb_terror::MysqlError::from_terror(
+                &tidb_txnkv::tikv_errors::ERR_TI_FLASH_SERVER_TIMEOUT,
+            )),
+        );
         return;
     }
     if !req.is_root {
@@ -1010,8 +1158,10 @@ fn handle_dispatch_req(
         mpp_ctx,
         kv_context,
         rpc_interceptor,
+        need_trigger_fallback,
         &req.meta,
         task_meta,
+        &mut bo,
         reports,
         resp_tx,
     );
@@ -1038,13 +1188,16 @@ fn mpp_stream_error(reports: &CoordinatorReports, msg: &str, req_meta: &TaskMeta
 }
 
 /// Go `receiveResults`.
+#[allow(clippy::too_many_arguments)]
 fn receive_results(
     client: &Arc<dyn MppClient>,
     mpp_ctx: &Arc<dyn MppContext>,
     kv_context: &tidb_txnkv::StatementKvContext,
     rpc_interceptor: &tidb_txnkv::RpcInterceptorOption,
+    need_trigger_fallback: bool,
     req_meta: &TaskMeta,
     task_meta: TaskMeta,
+    bo: &mut RegionBackoffBudget,
     reports: &CoordinatorReports,
     resp_tx: &SyncSender<MppResponse>,
 ) {
@@ -1060,17 +1213,31 @@ fn receive_results(
         resource_group_name: req_meta.resource_group_name.clone(),
         ..TaskMeta::default()
     };
-    let mut stream = match client.establish_mpp_conns(
-        Arc::clone(mpp_ctx),
-        &req_meta.address,
-        task_meta,
-        receiver,
-        kv_context,
-        rpc_interceptor,
-    ) {
+    let stream = loop {
+        match client.establish_mpp_conns(
+            Arc::clone(mpp_ctx),
+            &req_meta.address,
+            &task_meta,
+            &receiver,
+            kv_context,
+            rpc_interceptor,
+            bo,
+        ) {
+            Err(MppRpcError { retry: true, err }) => {
+                tidb_logutil::bg_logger().warn(
+                    "establish mpp connection meet error and retrying",
+                    &dispatch_log_fields(req_meta, err.to_string()),
+                );
+            }
+            Err(MppRpcError { retry: false, err }) => break Err(err),
+            Ok(stream) => break Ok(stream),
+        }
+    };
+    let mut stream = match stream {
         Ok(stream) => stream,
         Err(err) => {
-            send_error(resp_tx, &err);
+            // if NeedTriggerFallback is true, we return timeout to trigger tikv's fallback
+            send_error(resp_tx, &trigger_fallback(need_trigger_fallback, err));
             return;
         }
     };
@@ -1085,11 +1252,18 @@ fn receive_results(
             }
             Ok(None) => break,
             Err(err) => {
-                let err = match stream.packet_error() {
-                    Some(msg) => mpp_stream_error(reports, msg, req_meta),
-                    None => err,
-                };
-                let _ = resp_tx.send(Err(err));
+                match (stream.packet_error(), err) {
+                    (Some(msg), _) => {
+                        let _ = resp_tx.send(Err(mpp_stream_error(reports, msg, req_meta)));
+                    }
+                    // if NeedTriggerFallback is true, we return timeout to trigger tikv's fallback
+                    (None, QueryResponseError::Source(err)) => {
+                        send_error(resp_tx, &trigger_fallback(need_trigger_fallback, MppError::Other(err)));
+                    }
+                    (None, err) => {
+                        let _ = resp_tx.send(Err(err));
+                    }
+                }
                 break;
             }
         }

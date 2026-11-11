@@ -368,22 +368,44 @@ fn open_gather(
         meta.address.clone_from(&task.address);
         let address = task.address.clone();
         let dag = append_mpp_dispatch_req(request, &receiver_meta).map_err(refuse)?;
-        client.dispatch_mpp_task(
-            &ctx,
-            task,
-            meta.clone(),
-            dag.encode_to_vec(),
-            &kv_context,
-            &request.statement.rpc_interceptor,
-        )?;
-        streams.streams.push_back(client.establish_mpp_conns(
-            Arc::clone(&ctx),
-            &address,
-            meta.clone(),
-            receiver_meta.clone(),
-            &kv_context,
-            &request.statement.rpc_interceptor,
-        )?);
+        // Go `handleDispatchReq` and `receiveResults`: both calls repeat
+        // while they ask for a retry, within one backoff budget.
+        let mut bo = tidb_txnkv::RegionBackoffBudget::campaign_default();
+        let encoded_plan = dag.encode_to_vec();
+        let rpc_resp = loop {
+            match client.dispatch_mpp_task(
+                &ctx,
+                &task,
+                &meta,
+                &encoded_plan,
+                &kv_context,
+                &request.statement.rpc_interceptor,
+                &mut bo,
+            ) {
+                Err(tidb_txnkv::MppRpcError { retry: true, .. }) => {}
+                Err(error) => break Err(error.err),
+                Ok(rpc_resp) => break Ok(rpc_resp),
+            }
+        }?;
+        if let Some(error) = rpc_resp.error {
+            return Err(MppError::Other(error.msg));
+        }
+        let stream = loop {
+            match client.establish_mpp_conns(
+                Arc::clone(&ctx),
+                &address,
+                &meta,
+                &receiver_meta,
+                &kv_context,
+                &request.statement.rpc_interceptor,
+                &mut bo,
+            ) {
+                Err(tidb_txnkv::MppRpcError { retry: true, .. }) => {}
+                Err(error) => break Err(error.err),
+                Ok(stream) => break Ok(stream),
+            }
+        }?;
+        streams.streams.push_back(stream);
     }
     Ok(streams)
 }

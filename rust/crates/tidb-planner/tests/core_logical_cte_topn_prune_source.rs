@@ -110,6 +110,7 @@ fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
         index_merge_skip_range_scan_check: true,
         index_lookup_push_down_session: Default::default(),
         isolation_read_engines: "tikv,tiflash,tidb",
+        tiflash_engine_removed_due_to_strict_sql_mode: false,
         join_reorder_threshold: 0,
         group_ndv_skew_ratio: 0.0,
         scale_ndv_skew_ratio: tidb_planner_cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,

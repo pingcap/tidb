@@ -54,6 +54,17 @@ impl tidb_planner_core_operator_logicalop::plan_context::AccessPathResolver for 
     ) -> Result<Vec<tidb_planner_util::path::AccessPath>, PlanError> {
         unreachable!("core's access-path hint resolution: a planner test")
     }
+
+    fn filter_path_by_isolation_read(
+        &self,
+        _paths: &mut Vec<tidb_planner_util::path::AccessPath>,
+        _table_name: &str,
+        _db_name: &str,
+        _isolation_read_engines_value: &str,
+        _tiflash_engine_removed_due_to_strict_sql_mode: bool,
+    ) -> Result<(), tidb_planner_core_base::PlanError> {
+        unreachable!("core's access-path hint resolution: a planner test")
+    }
 }
 
 pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
@@ -92,6 +103,7 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         index_merge_skip_range_scan_check: true,
         index_lookup_push_down_session: Default::default(),
         isolation_read_engines: "tikv,tiflash,tidb",
+        tiflash_engine_removed_due_to_strict_sql_mode: false,
         join_reorder_threshold: 0,
         group_ndv_skew_ratio: tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
         scale_ndv_skew_ratio: tidb_planner_cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,

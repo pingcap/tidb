@@ -10,6 +10,10 @@ description = "TiDB pkg/expression/aggregation (Rust)."
 [lints]
 workspace = true
 
+[features]
+# Test hooks other crates' tests set (the `show-agg-mode` failpoint).
+test-util = []
+
 [dependencies]
 tidb-kv = { path = "../tidb-kv" }
 tidb-codec = { path = "../tidb-codec" }

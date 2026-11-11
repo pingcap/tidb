@@ -96,6 +96,7 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         index_merge_skip_range_scan_check: true,
         index_lookup_push_down_session: Default::default(),
         isolation_read_engines: "tikv,tiflash,tidb",
+        tiflash_engine_removed_due_to_strict_sql_mode: false,
         join_reorder_threshold: 0,
         group_ndv_skew_ratio: tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
         scale_ndv_skew_ratio: tidb_planner_cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,

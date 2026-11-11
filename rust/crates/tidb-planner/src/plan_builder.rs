@@ -3728,7 +3728,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             )),
             Some(_) => {}
         }
-        let mut public_paths = crate::access_path::get_possible_access_paths(
+        let public_paths = crate::access_path::get_possible_access_paths(
             table,
             self.ctx.optimizer_use_invisible_indexes(),
             self.source.latest_index_schema(),
@@ -3817,12 +3817,6 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 value: self.isolation_read_engines_value.clone(),
                 tiflash_engine_removed_due_to_strict_sql_mode: self.tiflash_engine_removed_due_to_strict_sql_mode,
             };
-            if !matches!(
-                tidb_mysql::to_lowercase(&data_source.db_name).as_str(),
-                "mysql" | "sys" | "workload_schema"
-            ) {
-                public_paths.retain(|path| isolation_read.permits(path));
-            }
             crate::access_path::filter_path_by_isolation_read(
                 &mut paths,
                 &table.table_name(),

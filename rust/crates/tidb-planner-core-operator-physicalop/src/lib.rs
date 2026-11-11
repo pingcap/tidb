@@ -1941,10 +1941,9 @@ pub struct PhysicalUnionAll {
 /// child property carries the parent's expected count, over scaled stats
 /// and the union's schema.
 ///
-/// Go's MPP arms — the MPP-mode candidate under an MPP parent property and
-/// the extra `mppUA` beside the root candidate — are gated on
-/// `IsMPPAllowed` over a TiFlash-backed cluster; with no TiFlash tier they
-/// narrow away as in [`exhaust_physical_plans_4_logical_limit`].
+/// Under an MPP parent property with no partition requirement the one
+/// candidate is the MPP-mode union over MPP children (`mpp_allowed` is Go's
+/// `IsMPPAllowed`); under a root one the extra `mppUA` follows it.
 /// Every child property preserves the parent's `CTEProducerStatus` and
 /// `NoCopPushDown` requirements.
 #[must_use]
@@ -1955,13 +1954,20 @@ pub fn exhaust_physical_plans_4_logical_union_all(
     skew_ratio: f64,
     mpp_allowed: bool,
 ) -> Vec<PhysicalPlan> {
-    if !prop.is_sort_item_empty() || prop.task_tp == TaskType::Mpp {
+    // TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
+    if !prop.is_sort_item_empty() || (prop.is_flash_prop() && prop.task_tp != TaskType::Mpp) {
         return Vec::new();
     }
+    // TODO: UnionAll can pass partition info, but for briefness, we prevent it from pushing down.
+    if prop.task_tp == TaskType::Mpp && prop.mpp_partition_tp != MppPartitionType::Any {
+        return Vec::new();
+    }
+    let mpp = mpp_allowed && prop.task_tp == TaskType::Mpp;
     let ch_req_props: Vec<Option<PhysicalProperty>> = (0..p.base.child_len())
         .map(|_| {
             Some(PhysicalProperty {
                 expected_cnt: prop.expected_cnt,
+                task_tp: if mpp { TaskType::Mpp } else { TaskType::Root },
                 cte_producer_status: prop.cte_producer_status,
                 no_cop_push_down: prop.no_cop_push_down,
                 ..PhysicalProperty::default()
@@ -1981,10 +1987,7 @@ pub fn exhaust_physical_plans_4_logical_union_all(
     base.base.set_stats(stats.clone());
     base.base.set_schema(p.base.base.schema().cloned());
     base.set_children_req_props(ch_req_props);
-    let mut plans = vec![PhysicalPlan::UnionAll(PhysicalUnionAll {
-        base,
-        mpp: false,
-    })];
+    let mut plans = vec![PhysicalPlan::UnionAll(PhysicalUnionAll { base, mpp })];
     // Go `ExhaustPhysicalPlans4LogicalUnionAll`: with MPP allowed and a root
     // requirement, a second `PhysicalUnionAll{Mpp: true}` candidate is
     // constructed right after the root one (its children are then refused by
@@ -3596,14 +3599,20 @@ fn get_mpp_hash_aggs(
         })
     };
 
+    // Go checks `validMppAgg` on the aggregates that run whole in TiFlash
+    // (1-phase and 2-phase) only; the `MppTiDB` and `MppScalar` candidates
+    // are appended as they are.
     let mut push_candidate =
         |child_prop: PhysicalProperty,
          mode: AggMppRunMode,
          partition_cols: Vec<MppPartitionColumn>| {
             let candidate = build(child_prop, mode, partition_cols);
-            let valid = match &candidate {
-                PhysicalPlan::HashAgg(agg) => valid_mpp_agg(&agg.agg_funcs),
-                _ => false,
+            let valid = match (&candidate, mode) {
+                (
+                    PhysicalPlan::HashAgg(agg),
+                    AggMppRunMode::Mpp1Phase | AggMppRunMode::Mpp2Phase,
+                ) => valid_mpp_agg(&agg.agg_funcs),
+                _ => true,
             };
             if valid {
                 result.push(candidate);

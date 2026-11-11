@@ -484,6 +484,10 @@ fn agg_func_text(
     function: &tidb_expression_aggregation::AggFuncDesc,
 ) -> String {
     let mut text = format!("{}(", function.base.name);
+    if tidb_expression_aggregation::show_agg_mode() {
+        text.push_str(function.mode.as_str());
+        text.push(',');
+    }
     if function.has_distinct {
         text.push_str("distinct ");
     }
@@ -3152,9 +3156,7 @@ fn aggregate_normalized_info(
             .and_then(|schema| schema.columns.get(index))
             .map_or_else(String::new, normalized_column_text);
         text.push_str("funcs:");
-        text.push_str(&tidb_expression_aggregation::explain_agg_func_normalized(
-            function, false,
-        ));
+        text.push_str(&tidb_expression_aggregation::explain_agg_func_normalized(function));
         text.push_str("->");
         text.push_str(&output);
         if index + 1 < functions.len() {

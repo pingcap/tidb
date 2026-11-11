@@ -11,7 +11,7 @@ autotests = false
 
 [features]
 # Test hooks other crates' tests read (the digest-call counter).
-test-util = ["tidb-sessmgr/test-util"]
+test-util = ["tidb-sessmgr/test-util", "tidb-expression-aggregation/test-util"]
 
 [dependencies]
 tidb-cpuprofile = { path = "../tidb-cpuprofile" }

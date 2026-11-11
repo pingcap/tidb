@@ -280,6 +280,7 @@ pub fn optimize_logical<C: OptimizeContext>(
             .get_bool_with_default(tidb_fixcontrol::FIX_52869, true),
         index_lookup_push_down_session: ctx.index_lookup_push_down_session(),
         isolation_read_engines: ctx.isolation_read_engines(),
+        tiflash_engine_removed_due_to_strict_sql_mode: ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
         join_reorder_threshold: ctx.tidb_opt_join_reorder_threshold(),
         group_ndv_skew_ratio: optimizer_cost_env.session.group_ndv_skew_ratio,
         scale_ndv_skew_ratio: optimizer_cost_env.session.scale_ndv_skew_ratio,

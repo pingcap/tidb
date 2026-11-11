@@ -7434,6 +7434,7 @@ dependencies = [
  "tidb-expensivequery",
  "tidb-expr",
  "tidb-exprctx",
+ "tidb-expression-aggregation",
  "tidb-fastrand",
  "tidb-fixcontrol",
  "tidb-gcutil",

@@ -317,7 +317,7 @@ fn test_union_with_empty_dual_table() {
     );
 }
 
-/// Go `TestMppUnionAll` (without its `checkTotalMPPTasks` failpoint run).
+/// Go `TestMppUnionAll`.
 #[test]
 fn test_mpp_union_all() {
     let (stack, mut session) = tiflash_session(2, 2157);
@@ -367,11 +367,13 @@ fn test_mpp_union_all() {
         &[&["29"]],
     );
     rows(&mut session, "set @@session.tidb_broadcast_join_threshold_count=100000");
+    tidb_executor::local_mpp_coordinator::mock::set_check_total_mpp_tasks(Some(6));
     check(
         &mut session,
         "select count(*) from (select * from x1 union all select * from x2 union all select * from x3) x join (select * from x1 union all select * from x2 union all select * from x3) y on x.a = y.b",
         &[&["29"]],
     );
+    tidb_executor::local_mpp_coordinator::mock::set_check_total_mpp_tasks(None);
 
     rows(&mut session, "drop table if exists x4");
     rows(&mut session, "create table x4(a int not null, b int not null);");
@@ -1137,4 +1139,387 @@ fn test_tiflash_plan_cacheable() {
     check(&mut session, "execute stmt using @a;", &[&["0"]]);
     // The TiFlash plan can not be cached.
     check(&mut session, "select @@last_plan_from_cache", &[&["0"]]);
+}
+
+/// Go `checkMPPInExplain`.
+fn check_mpp_in_explain(session: &mut Session, sql: &str) {
+    let res = displayed(rows(session, sql))
+        .iter()
+        .map(|row| format!("[{}]\n", row.join(" ")))
+        .collect::<String>();
+    assert!(res.contains("mpp[tiflash]"), "{sql}: {res}");
+}
+
+/// Go `TestUnionScan`: an MPP read of a cached table, and of a partitioned
+/// table inside a dirty transaction.
+#[test]
+fn test_union_scan() {
+    let (stack, mut session) = tiflash_session(2, 2190);
+    rows(&mut session, "set @@session.tidb_allow_mpp=1");
+    rows(&mut session, "set @@session.tidb_enforce_mpp=1");
+    rows(&mut session, "set @@session.tidb_allow_tiflash_cop=off");
+
+    for x in 0..2 {
+        rows(&mut session, "drop table if exists t");
+        if x == 0 {
+            // Test cache table.
+            rows(&mut session, "create table t(a int not null primary key, b int not null)");
+            rows(&mut session, "alter table t set tiflash replica 1");
+            replica_available(&stack, &mut session, "t");
+            rows(&mut session, "alter table t cache");
+        } else {
+            // Test dirty transaction.
+            rows(&mut session, "create table t(a int not null primary key, b int not null) partition by hash(a) partitions 2");
+            rows(&mut session, "alter table t set tiflash replica 1");
+            replica_available(&stack, &mut session, "t");
+        }
+
+        let mut insert_str = "insert into t values(0, 0)".to_owned();
+        for i in 1..10 {
+            insert_str += &format!(",({i}, {i})");
+        }
+        rows(&mut session, &insert_str);
+
+        if x != 0 {
+            // Test dirty transaction.
+            rows(&mut session, "begin");
+        }
+
+        // Test Basic.
+        let sql = "select /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t";
+        check_mpp_in_explain(&mut session, &format!("explain {sql}"));
+        check(&mut session, sql, &[&["10"]]);
+
+        // Test Delete.
+        rows(&mut session, "delete from t where a = 0");
+
+        let sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t";
+        check_mpp_in_explain(&mut session, &format!("explain {sql}"));
+        check(&mut session, sql, &[&["9"]]);
+
+        let sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ a, b from t order by 1";
+        check_mpp_in_explain(&mut session, &format!("explain {sql}"));
+        check(&mut session, sql, &[&["1", "1"], &["2", "2"], &["3", "3"], &["4", "4"], &["5", "5"], &["6", "6"], &["7", "7"], &["8", "8"], &["9", "9"]]);
+
+        // Test Insert.
+        rows(&mut session, "insert into t values(100, 100)");
+
+        let sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t";
+        check_mpp_in_explain(&mut session, &format!("explain {sql}"));
+        check(&mut session, sql, &[&["10"]]);
+
+        let sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ a, b from t order by 1, 2";
+        check_mpp_in_explain(&mut session, &format!("explain {sql}"));
+        check(&mut session, sql, &[&["1", "1"], &["2", "2"], &["3", "3"], &["4", "4"], &["5", "5"], &["6", "6"], &["7", "7"], &["8", "8"], &["9", "9"], &["100", "100"]]);
+
+        // Test Update
+        rows(&mut session, "update t set b = 200 where a = 100");
+
+        let sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t";
+        check_mpp_in_explain(&mut session, &format!("explain {sql}"));
+        check(&mut session, sql, &[&["10"]]);
+
+        let sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ a, b from t order by 1, 2";
+        check_mpp_in_explain(&mut session, &format!("explain {sql}"));
+        check(&mut session, sql, &[&["1", "1"], &["2", "2"], &["3", "3"], &["4", "4"], &["5", "5"], &["6", "6"], &["7", "7"], &["8", "8"], &["9", "9"], &["100", "200"]]);
+
+        if x != 0 {
+            // Test dirty transaction.
+            rows(&mut session, "commit");
+        }
+
+        let sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t";
+        check_mpp_in_explain(&mut session, &format!("explain {sql}"));
+        check(&mut session, sql, &[&["10"]]);
+
+        if x == 0 {
+            rows(&mut session, "alter table t nocache");
+        }
+    }
+}
+
+/// Go `TestPartitionTable`: the tasks an MPP read of partitioned tables
+/// dispatches under dynamic pruning.
+#[test]
+fn test_partition_table() {
+    use tidb_executor::local_mpp_coordinator::mock::set_check_total_mpp_tasks;
+    use tidb_executor::mpp_gather::mock::set_check_use_mpp;
+    let (stack, mut session) = tiflash_session(2, 2191);
+    rows(&mut session, "drop table if exists t");
+    rows(&mut session, "drop table if exists t1");
+    rows(&mut session, "drop table if exists t2");
+    rows(&mut session, "create table t(a int not null primary key, b int not null) partition by hash(a+1) partitions 4");
+    rows(&mut session, "alter table t set tiflash replica 2");
+    replica_available(&stack, &mut session, "t");
+    rows(&mut session, "insert into t values(1,0)");
+    rows(&mut session, "insert into t values(2,0)");
+    rows(&mut session, "insert into t values(3,0)");
+    rows(&mut session, "insert into t values(4,0)");
+    set_check_use_mpp(Some(true));
+    rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
+    rows(&mut session, "set @@session.tidb_allow_mpp=ON");
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=OFF");
+    // mock executor does not support use outer table as build side for outer
+    // join, so need to force the inner table as build side
+    rows(&mut session, "set tidb_opt_mpp_outer_join_fixed_build_side=1");
+    set_check_total_mpp_tasks(Some(2));
+    check(&mut session, "select count(*) from t", &[&["4"]]);
+    set_check_total_mpp_tasks(None);
+    rows(&mut session, "set @@session.tidb_partition_prune_mode='static-only'");
+    check(&mut session, "select count(*) from t", &[&["4"]]);
+    rows(&mut session, "set @@session.tidb_partition_prune_mode='dynamic-only'");
+
+    rows(&mut session, "create table t1(a int not null primary key, b int not null) partition by hash(a) partitions 4");
+    rows(&mut session, "alter table t1 set tiflash replica 2");
+    replica_available(&stack, &mut session, "t1");
+    rows(&mut session, "insert into t1 values(1,4)");
+    rows(&mut session, "insert into t1 values(2,3)");
+    rows(&mut session, "insert into t1 values(3,2)");
+    rows(&mut session, "insert into t1 values(4,1)");
+
+    rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
+    rows(&mut session, "set @@session.tidb_allow_mpp=ON");
+    // test if it is really work.
+    set_check_total_mpp_tasks(Some(4));
+    check(&mut session, "select count(*) from t1 , t where t1.a = t.a", &[&["4"]]);
+    // test partition prune
+    check(&mut session, "select count(*) from t1 , t where t1.a = t.a and t1.a < 2 and t.a < 2", &[&["1"]]);
+    check(&mut session, "select count(*) from t1 , t where t1.a = t.a and t1.a < -1 and t.a < 2", &[&["0"]]);
+    set_check_total_mpp_tasks(None);
+    // test multi-way join
+    rows(&mut session, "create table t2(a int not null primary key, b int not null)");
+    rows(&mut session, "alter table t2 set tiflash replica 2");
+    replica_available(&stack, &mut session, "t2");
+
+    rows(&mut session, "insert into t2 values(1,0)");
+    rows(&mut session, "insert into t2 values(2,0)");
+    rows(&mut session, "insert into t2 values(3,0)");
+    rows(&mut session, "insert into t2 values(4,0)");
+    // test with no partition table
+    set_check_total_mpp_tasks(Some(5));
+    check(&mut session, "select count(*) from t1 , t, t2 where t1.a = t.a and t2.a = t.a", &[&["4"]]);
+    set_check_total_mpp_tasks(None);
+
+    rows(
+        &mut session,
+        "create table t3(a int not null, b int not null) PARTITION BY RANGE (b) (
+		PARTITION p0 VALUES LESS THAN (1),
+		PARTITION p1 VALUES LESS THAN (3),
+		PARTITION p2 VALUES LESS THAN (5),
+		PARTITION p3 VALUES LESS THAN (7)
+	);",
+    );
+    rows(&mut session, "alter table t3 set tiflash replica 2");
+    replica_available(&stack, &mut session, "t3");
+
+    rows(&mut session, "insert into t3 values(1,0)");
+    rows(&mut session, "insert into t3 values(2,2)");
+    rows(&mut session, "insert into t3 values(3,4)");
+    rows(&mut session, "insert into t3 values(4,6)");
+
+    set_check_total_mpp_tasks(Some(4));
+    check(&mut session, "select count(*) from t, t3 where t3.a = t.a and t3.b <= 4", &[&["3"]]);
+    set_check_total_mpp_tasks(Some(3));
+    check(&mut session, "select count(*) from t, t3 where t3.a = t.a and t3.b > 10", &[&["0"]]);
+    set_check_total_mpp_tasks(None);
+    set_check_use_mpp(None);
+}
+
+/// Go `TestMppAggShouldAlignFinalMode`: the modes of a statically pruned
+/// partition's two-phase aggregate.
+#[test]
+fn test_mpp_agg_should_align_final_mode() {
+    let (stack, mut session) = tiflash_session(1, 2192);
+    rows(
+        &mut session,
+        "create table t (  d date,  v int,  primary key(d, v)) partition by range columns (d) (  partition p1 values less than ('2023-07-02'),  partition p2 values less than ('2023-07-03'));",
+    );
+    rows(&mut session, "alter table t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+    rows(&mut session, "set tidb_partition_prune_mode='static';");
+    tidb_expression_aggregation::mock::set_show_agg_mode(true);
+
+    // unistore does not support later materialization
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+    rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
+    let got: Vec<String> = displayed(rows(
+        &mut session,
+        "explain format='brief' select 1 from (  select /*+ read_from_storage(tiflash[t]) */ sum(1)  from t where d BETWEEN '2023-07-01' and '2023-07-03' group by d) total;",
+    ))
+    .iter()
+    .map(|row| row.join(" "))
+    .collect();
+    assert_eq!(
+        got,
+        [
+            "Projection 400.00 root  1->Column#5",
+            "└─HashAgg 400.00 root  group by:test.t.d, funcs:count(complete,1)->Column#9",
+            "  └─PartitionUnion 400.00 root  ",
+            "    ├─Projection 200.00 root  test.t.d",
+            "    │ └─HashAgg 200.00 root  group by:test.t.d, funcs:firstrow(partial2,test.t.d)->test.t.d, funcs:count(final,Column#13)->Column#10",
+            "    │   └─TableReader 200.00 root  MppVersion: 3, data:ExchangeSender",
+            "    │     └─ExchangeSender 200.00 mpp[tiflash]  ExchangeType: PassThrough",
+            "    │       └─HashAgg 200.00 mpp[tiflash]  group by:test.t.d, funcs:count(partial1,1)->Column#13",
+            "    │         └─TableRangeScan 250.00 mpp[tiflash] table:t, partition:p1 range:[2023-07-01,2023-07-03], keep order:false, stats:pseudo",
+            "    └─Projection 200.00 root  test.t.d",
+            "      └─HashAgg 200.00 root  group by:test.t.d, funcs:firstrow(partial2,test.t.d)->test.t.d, funcs:count(final,Column#15)->Column#11",
+            "        └─TableReader 200.00 root  MppVersion: 3, data:ExchangeSender",
+            "          └─ExchangeSender 200.00 mpp[tiflash]  ExchangeType: PassThrough",
+            "            └─HashAgg 200.00 mpp[tiflash]  group by:test.t.d, funcs:count(partial1,1)->Column#15",
+            "              └─TableRangeScan 250.00 mpp[tiflash] table:t, partition:p2 range:[2023-07-01,2023-07-03], keep order:false, stats:pseudo",
+        ]
+    );
+
+    tidb_expression_aggregation::mock::set_show_agg_mode(false);
+}
+
+/// Go `TestIssue59703`: a coordinator whose `Execute` fails is unregistered.
+#[test]
+fn test_issue_59703() {
+    let (stack, mut session) = tiflash_session(1, 2193);
+    rows(&mut session, "drop table if exists t");
+    rows(&mut session, "create table t(a int not null primary key, b int not null)");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+    rows(&mut session, "insert into t values(1,0)");
+    rows(&mut session, "insert into t values(2,0)");
+    rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
+    // unistore does not support later materialization
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+    rows(&mut session, "set @@session.tidb_allow_mpp=ON");
+
+    tidb_executor::mpp_gather::mock::set_mpp_coordinator_execute_err(true);
+
+    let (_, message) = query_error(&mut session, "select count(*) from t");
+    assert!(message.contains("mock mpp error"), "{message}");
+    assert_eq!(
+        tidb_executor::mppcoordmanager::INSTANCE_MPP_COORDINATOR_MANAGER.get_coord_count(),
+        0
+    );
+    tidb_executor::mpp_gather::mock::set_mpp_coordinator_execute_err(false);
+}
+
+/// The table of Go's `TestDispatchTaskRetry` and `TestMppVersionError`.
+fn dispatch_retry_table(connection_id: u64) -> (UnistoreClusterStack, Session) {
+    let (stack, mut session) = tiflash_session(2, connection_id);
+    rows(&mut session, "drop table if exists t");
+    rows(&mut session, "create table t(a int not null primary key, b int not null)");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    rows(&mut session, "insert into t values(1,0)");
+    rows(&mut session, "insert into t values(2,0)");
+    rows(&mut session, "insert into t values(3,0)");
+    rows(&mut session, "insert into t values(4,0)");
+    replica_available(&stack, &mut session, "t");
+    rows(&mut session, "set @@session.tidb_enforce_mpp=ON");
+    (stack, session)
+}
+
+/// Go `TestDispatchTaskRetry`: a dispatch the store fails three times is
+/// sent again until it is served.
+#[test]
+fn test_dispatch_task_retry() {
+    let (_stack, mut session) = dispatch_retry_table(2194);
+    tidb_unistore::rpc::mock::set_mpp_dispatch_timeout(3);
+    check(&mut session, "select count(*) from t group by b", &[&["4"]]);
+    tidb_unistore::rpc::mock::set_mpp_dispatch_timeout(0);
+}
+
+/// Go `TestTiFlashFallback`'s MPP dispatch arm: a dispatch that keeps
+/// failing answers its own error, and the TiFlash server timeout once
+/// `tidb_allow_fallback_to_tikv` names TiFlash.
+#[test]
+fn test_tiflash_fallback_mpp_dispatch() {
+    let (_stack, mut session) = dispatch_retry_table(2198);
+    tidb_executor::local_mpp_coordinator::mock::set_reduce_cop_next_max_backoff(true);
+    tidb_unistore::rpc::mock::set_mpp_dispatch_timeout(usize::MAX);
+    let sql = "select * from t t1 join t t2 on t1.a = t2.a";
+    rows(&mut session, "set @@tidb_allow_fallback_to_tikv=''");
+    let (code, _) = query_error(&mut session, sql);
+    assert_ne!(code, tidb_errno::errcode::ErrTiFlashServerTimeout);
+    rows(&mut session, "set @@tidb_allow_fallback_to_tikv='tiflash'");
+    let (code, _) = query_error(&mut session, sql);
+    assert_eq!(code, tidb_errno::errcode::ErrTiFlashServerTimeout);
+    tidb_unistore::rpc::mock::set_mpp_dispatch_timeout(0);
+    tidb_executor::local_mpp_coordinator::mock::set_reduce_cop_next_max_backoff(false);
+}
+
+/// Go `TestMppVersionError`: a store that cancels the task's MPP version
+/// fails the query, without a retry; one that serves it answers.
+#[test]
+fn test_mpp_version_error() {
+    let (_stack, mut session) = dispatch_retry_table(2195);
+    let newest = tidb_txnkv::MppVersion::NEWEST.as_i64();
+    tidb_unistore::rpc::mock::set_mpp_version_error(Some(newest + 1));
+    query_error(&mut session, "select count(*) from t group by b");
+    tidb_unistore::rpc::mock::set_mpp_version_error(None);
+    tidb_unistore::rpc::mock::set_mpp_version_error(Some(newest));
+    check(&mut session, "select count(*) from t group by b", &[&["4"]]);
+    tidb_unistore::rpc::mock::set_mpp_version_error(None);
+}
+
+/// Go `TestCancelMppTasks`: a kill ends a query whose root stream hangs.
+#[test]
+fn test_cancel_mpp_tasks() {
+    let (stack, mut session) = tiflash_session(2, 2196);
+    rows(&mut session, "drop table if exists t");
+    rows(&mut session, "create table t(a int not null primary key, b int not null)");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    rows(&mut session, "insert into t values(1,0)");
+    rows(&mut session, "insert into t values(2,0)");
+    rows(&mut session, "insert into t values(3,0)");
+    rows(&mut session, "insert into t values(4,0)");
+    replica_available(&stack, &mut session, "t");
+    rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
+    rows(&mut session, "set @@session.tidb_allow_mpp=ON");
+    // unistore does not support later materialization
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+    // mock executor does not support use outer table as build side for outer
+    // join, so need to force the inner table as build side
+    rows(&mut session, "set tidb_opt_mpp_outer_join_fixed_build_side=1");
+    tidb_unistore::rpc::mock::set_mpp_recv_hang(true);
+    let killer = session.routed_statement_memory().sql_killer().clone();
+    let kill = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(1));
+        killer.send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
+    });
+    let (code, _) = query_error(&mut session, "select count(*) from t as t1 , t where t1.a = t.a");
+    assert_eq!(code, tidb_errno::errcode::ErrQueryInterrupted);
+    kill.join().unwrap();
+    tidb_unistore::rpc::mock::set_mpp_recv_hang(false);
+}
+
+/// Go `TestMppGoroutinesExitFromErrors`: the non-root tasks' errors end a
+/// query whose root stream hangs.
+#[test]
+fn test_mpp_goroutines_exit_from_errors() {
+    let (stack, mut session) = tiflash_session(2, 2197);
+    rows(&mut session, "drop table if exists t");
+    rows(&mut session, "create table t(a int not null primary key, b int not null)");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+    rows(&mut session, "insert into t values(1,0)");
+    rows(&mut session, "insert into t values(2,0)");
+    rows(&mut session, "insert into t values(3,0)");
+    rows(&mut session, "drop table if exists t1");
+    rows(&mut session, "create table t1(a int not null primary key, b int not null)");
+    rows(&mut session, "alter table t1 set tiflash replica 1");
+    replica_available(&stack, &mut session, "t1");
+    rows(&mut session, "insert into t1 values(1,0)");
+    rows(&mut session, "insert into t1 values(2,0)");
+    rows(&mut session, "insert into t1 values(3,0)");
+    rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
+    rows(&mut session, "set @@session.tidb_allow_mpp=ON");
+    // unistore does not support later materialization
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+    // mock executor does not support use outer table as build side for outer
+    // join, so need to force the inner table as build side
+    rows(&mut session, "set tidb_opt_mpp_outer_join_fixed_build_side=1");
+    tidb_executor::local_mpp_coordinator::mock::set_mpp_non_root_task_error(true);
+    tidb_unistore::rpc::mock::set_mpp_recv_hang(true);
+
+    // generate 2 root tasks, one will hang and another will return errors
+    let (code, _) = query_error(&mut session, "select count(*) from t as t1 , t where t1.a = t.a");
+    assert_eq!(code, tidb_errno::errcode::ErrTiFlashServerTimeout);
+    tidb_executor::local_mpp_coordinator::mock::set_mpp_non_root_task_error(false);
+    tidb_unistore::rpc::mock::set_mpp_recv_hang(false);
 }

@@ -113,7 +113,7 @@ pub fn resolve_index_hints_for_partition(
     // put the table path back on every partition of `t USE INDEX (ia)`.
     // The statement-level resolution already reported this table's hint
     // warnings; a partition's rerun does not repeat them.
-    let paths = ctx.access_path_resolver.apply_table_index_hints(
+    let mut paths = ctx.access_path_resolver.apply_table_index_hints(
         &table,
         &source.public_enumerated_paths,
         &source.ast_index_hints,
@@ -126,6 +126,15 @@ pub fn resolve_index_hints_for_partition(
             .any(|engine| engine.trim().eq_ignore_ascii_case("tikv")),
         ctx.isolation_read_engines,
         &mut |_, _| {},
+    )?;
+    // Go `resolveAccessPaths`: `FilterPathByIsolationRead` over the hinted
+    // paths, which still hold the TiKV table path the hints resolve against.
+    ctx.access_path_resolver.filter_path_by_isolation_read(
+        &mut paths,
+        &source.table_info.as_ref().map_or_else(String::new, |info| info.read().name.original().to_owned()),
+        &source.db_name,
+        ctx.isolation_read_engines,
+        ctx.tiflash_engine_removed_due_to_strict_sql_mode,
     )?;
     source.possible_access_paths = None;
     source.all_possible_access_paths = paths;
