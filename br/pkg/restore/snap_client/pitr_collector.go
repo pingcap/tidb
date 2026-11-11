@@ -419,6 +419,15 @@ func (c *pitrCollector) prepareMig(ctx context.Context) error {
 
 	est := stream.MigrationExtension(c.taskStorage).WithOperationContext(c.operationContext)
 
+	c.doWithMetaLock(func() {
+		c.resetCommitting()
+	})
+	// Persist the metadata before a migration refers to it, so the migration
+	// never refers to a missing file.
+	if err := c.persistExtraBackupMeta(ctx); err != nil {
+		return err
+	}
+
 	m := stream.NewMigration()
 	m.IngestedSstPaths = append(m.IngestedSstPaths, c.metaPath())
 
@@ -426,13 +435,7 @@ func (c *pitrCollector) prepareMig(ctx context.Context) error {
 	if err != nil {
 		return errors.Annotatef(err, "failed to add the extra backup at path %s", c.metaPath())
 	}
-
-	c.doWithMetaLock(func() {
-		c.resetCommitting()
-	})
-	// Persist the metadata in case of SSTs were uploaded but the meta wasn't,
-	// which leads to a leakage.
-	return c.persistExtraBackupMeta(ctx)
+	return nil
 }
 
 func (c *pitrCollector) prepareMigIfNeeded(ctx context.Context) (err error) {

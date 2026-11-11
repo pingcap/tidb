@@ -125,6 +125,17 @@ func (p pitrCollectorT) ExtFullBkups() []backuppb.IngestedSSTs {
 	return res
 }
 
+func (p pitrCollectorT) IngestedSSTGroups() ([]stream.IngestedSSTsGroup, error) {
+	migs, err := stream.MigrationExtension(p.coll.taskStorage).Load(p.cx)
+	require.NoError(p.t, err)
+	paths := []string{}
+	for _, m := range migs.ListAll() {
+		paths = append(paths, m.IngestedSstPaths...)
+	}
+	res := iter.CollectAll(p.cx, stream.LoadIngestedSSTs(p.cx, p.coll.taskStorage, paths))
+	return res.Item, res.Err
+}
+
 func (p *pitrCollectorT) MarkSuccess() {
 	p.success.Store(true)
 }
@@ -383,15 +394,42 @@ func TestReopenWithNothingLeftToIngest(t *testing.T) {
 	require.True(t, exts[1].Finished, "%v", exts[1])
 	require.Equal(t, coll.coll.restoreUUID[:], exts[1].BackupUuid)
 
-	migs, err := stream.MigrationExtension(coll.coll.taskStorage).Load(coll.cx)
+	groups, err := coll.IngestedSSTGroups()
 	require.NoError(t, err)
-	paths := []string{}
-	for _, m := range migs.ListAll() {
-		paths = append(paths, m.IngestedSstPaths...)
+	require.Len(t, groups, 1)
+	require.True(t, groups[0].GroupFinished())
+}
+
+type metaWriteFailingOnceStorage struct {
+	storeapi.Storage
+	failed atomic.Bool
+}
+
+func (s *metaWriteFailingOnceStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	if strings.HasSuffix(name, "extbackupmeta") && s.failed.CompareAndSwap(false, true) {
+		return errors.New("meta write refused")
 	}
-	res := iter.CollectAll(coll.cx, stream.LoadIngestedSSTs(coll.cx, coll.coll.taskStorage, paths))
-	require.NoError(t, res.Err)
-	groups := res.Item
+	return s.Storage.WriteFile(ctx, name, data)
+}
+
+func TestNothingLeftToIngestAddsNoMigrationWhenItsMetaCannotBeWritten(t *testing.T) {
+	coll := newPiTRCollForTest(t)
+	batch := restore.BatchBackupFileSet{backupFileSet(withFile(nameFile("foo.txt")), withRewriteRule(remap(1, 10)))}
+
+	complete := coll.MustStartRestoreBatch(batch)
+	require.NoError(t, complete())
+	coll.Done()
+
+	coll.Reopen()
+	coll.coll.taskStorage = &metaWriteFailingOnceStorage{Storage: coll.coll.taskStorage}
+	coll.MarkSuccess()
+	require.ErrorContains(t, coll.coll.close(), "meta write refused")
+
+	coll.Reopen()
+	coll.MarkSuccess()
+	coll.Done()
+	groups, err := coll.IngestedSSTGroups()
+	require.NoError(t, err)
 	require.Len(t, groups, 1)
 	require.True(t, groups[0].GroupFinished())
 }
