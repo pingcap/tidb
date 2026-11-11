@@ -1272,10 +1272,12 @@ impl Parser {
         let token = self.peek_n(n);
         match token.kind {
             TokenKind::Ident | TokenKind::Str => {
+                let decoded;
                 let literal = if token.kind == TokenKind::Str {
-                    self.decode_string(&token.text)
+                    decoded = self.decode_string(&token.text);
+                    decoded.as_str()
                 } else {
-                    token.text.clone()
+                    token.text.as_str()
                 };
                 if literal.eq_ignore_ascii_case("FETCH") {
                     return false;

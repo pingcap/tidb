@@ -2246,7 +2246,11 @@ fn is_name_or_keyword(t: &Token) -> bool {
 }
 
 fn normalize_identifier(name: String) -> String {
-    name.replace('\u{fffd}', "?")
+    if name.contains('\u{fffd}') {
+        name.replace('\u{fffd}', "?")
+    } else {
+        name
+    }
 }
 
 fn is_table_name_first_token(token: &Token) -> bool {

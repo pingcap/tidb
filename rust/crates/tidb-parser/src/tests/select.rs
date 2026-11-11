@@ -65,6 +65,19 @@ fn values_statement_preserves_rows_and_tail() {
 fn string_literal_aliases() {
     assert_eq!(r("select 1 as 'profit'"), "SELECT 1 AS `profit`");
     assert_eq!(r("select 1 'profit'"), "SELECT 1 AS `profit`");
+
+    // Check the decoded alias: FETCH starts a clause, but a literal backslash
+    // in NO_BACKSLASH_ESCAPES mode makes this an ordinary alias.
+    let sql = r"select 1 'F\ETCH'";
+    assert!(parse(sql).is_err());
+    let mode = SqlMode {
+        no_backslash_escapes: true,
+        ..SqlMode::default()
+    };
+    assert_eq!(
+        parse_with_sql_mode(sql, mode).unwrap().restore(),
+        r"SELECT 1 AS `F\ETCH`"
+    );
 }
 
 #[test]

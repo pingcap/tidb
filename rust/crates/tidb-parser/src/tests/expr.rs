@@ -492,6 +492,9 @@ fn number_literals() {
     assert!(parse("select 1.7976931348623157e308").is_ok());
     assert!(parse("select 1.8e308").is_err());
     assert!(parse("select 1e400").is_err());
+    let error = parse("select 1e400 from t").unwrap_err();
+    assert_eq!(error.errno(), Some(1367));
+    assert_eq!((error.near_offset, error.offset), (13, 17));
 }
 
 /// Go's `ast.NewHexLiteral` keeps quoted and numeric hexadecimal syntax
