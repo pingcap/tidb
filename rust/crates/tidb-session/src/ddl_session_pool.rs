@@ -41,6 +41,8 @@ use tidb_sessionctx::StmtContext;
 pub struct NodeDdlSessionPool {
     domain: OnceLock<Weak<Domain>>,
     sess_pool: OnceLock<Arc<tidb_ddl_session::DynPool>>,
+    /// The node's store is Go's `mockStorage` (unistore), not TiKV.
+    mock_storage: bool,
 }
 
 impl std::fmt::Debug for NodeDdlSessionPool {
@@ -53,6 +55,15 @@ impl std::fmt::Debug for NodeDdlSessionPool {
 }
 
 impl NodeDdlSessionPool {
+    /// The pool of a node over Go's `mockStorage` (unistore).
+    #[must_use]
+    pub fn mock_storage() -> Self {
+        Self {
+            mock_storage: true,
+            ..Self::default()
+        }
+    }
+
     /// Binds the pool to the domain whose sessions it hands out.
     pub fn bind(&self, domain: &Arc<Domain>) {
         if self.domain.set(Arc::downgrade(domain)).is_err() {
@@ -145,6 +156,21 @@ impl DdlSessionPool for NodeDdlSessionPool {
             .and_then(Weak::upgrade)
             .ok_or_else(|| MysqlError::unknown("the DDL session pool has no running node"))?;
         domain.transactions.fresh_timestamp().map_err(MysqlError::unknown)
+    }
+
+    fn min_safe_ts(&self) -> u64 {
+        self.domain
+            .get()
+            .and_then(Weak::upgrade)
+            .map_or(0, |domain| domain.transactions.min_safe_ts("global"))
+    }
+
+    fn store_name(&self) -> &'static str {
+        if self.mock_storage {
+            "mock-storage"
+        } else {
+            "TiKV"
+        }
     }
 
     fn tiflash_store_count(&self) -> Result<u64, MysqlError> {

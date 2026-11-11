@@ -202,6 +202,37 @@ pub trait RegionStore: Send + Sync + std::fmt::Debug {
         Err("region cache unavailable".to_owned())
     }
 
+    /// Go `ddl.flashbackToVersion` over `ddlutil.SendPrepareFlashbackToVersionRPC`:
+    /// every region of `[start_key, end_key)` is locked for a flashback to
+    /// `flashback_ts` by `concurrency` range tasks; the regions prepared.
+    fn prepare_flashback_to_version(
+        &self,
+        flashback_ts: u64,
+        start_ts: u64,
+        start_key: &[u8],
+        end_key: &[u8],
+        concurrency: usize,
+    ) -> Result<u64, String> {
+        let _ = (flashback_ts, start_ts, start_key, end_key, concurrency);
+        Err("region cache unavailable".to_owned())
+    }
+
+    /// Go `ddl.flashbackToVersion` over `ddlutil.SendFlashbackToVersionRPC`:
+    /// every region of `[start_key, end_key)` is flashed back to
+    /// `flashback_ts`, committed at `commit_ts`; the regions done.
+    fn flashback_to_version(
+        &self,
+        flashback_ts: u64,
+        start_ts: u64,
+        commit_ts: u64,
+        start_key: &[u8],
+        end_key: &[u8],
+        concurrency: usize,
+    ) -> Result<u64, String> {
+        let _ = (flashback_ts, start_ts, commit_ts, start_key, end_key, concurrency);
+        Err("region cache unavailable".to_owned())
+    }
+
     /// TiDB `helper.GetMvccByEncodedKey`: TiKV's MVCC record of one
     /// encoded key, from the region holding it.
     fn mvcc_get_by_key(

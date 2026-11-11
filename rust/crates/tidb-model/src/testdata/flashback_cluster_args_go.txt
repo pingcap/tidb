@@ -1,0 +1,6 @@
+[451234567890123456,{},true,"ON","OFF",0,0,0,"ON",null]
+[451234567890123456,{"merge-schedule-limit":8},true,"OFF","ON",3,451234567890123999,451234567890124000,"OFF",[{"StartKey":"bQ==","EndKey":"bg=="},{"StartKey":"dIAAAA==","EndKey":null}]]
+[0,null,false,"OFF","OFF",0,0,0,"OFF",null]
+{"flashback_ts":451234567890123456,"enable_gc":true,"enable_auto_analyze":true,"enable_ttl_job":true}
+{"flashback_ts":451234567890123456,"pd_schedule_value":{"merge-schedule-limit":8},"enable_gc":true,"super_read_only":true,"locked_region_cnt":3,"start_ts":451234567890123999,"commit_ts":451234567890124000,"key_ranges":[{"StartKey":"bQ==","EndKey":"bg=="},{"StartKey":"dIAAAA==","EndKey":null}]}
+{}

@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, PoisonError, RwLock};
 
 /// A callback `enable_call` registers.
-pub type Callback = Arc<dyn Fn(&dyn Any) + Send + Sync>;
+pub type Callback = Arc<dyn Fn(&mut dyn Any) + Send + Sync>;
 
 static CALLS: LazyLock<RwLock<HashMap<String, Callback>>> = LazyLock::new(RwLock::default);
 
@@ -41,8 +41,9 @@ pub fn is_enabled(name: &str) -> bool {
     CALLS.read().unwrap_or_else(PoisonError::into_inner).contains_key(name)
 }
 
-/// Go `failpoint.InjectCall(name, args)`.
-pub fn inject_call(name: &str, args: &dyn Any) {
+/// Go `failpoint.InjectCall(name, args)`: `args` is Go's pointer argument,
+/// which a callback may write through.
+pub fn inject_call(name: &str, args: &mut dyn Any) {
     if cfg!(feature = "failpoints") {
         let callback = CALLS.read().unwrap_or_else(PoisonError::into_inner).get(name).cloned();
         if let Some(callback) = callback {

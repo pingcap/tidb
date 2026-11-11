@@ -494,7 +494,7 @@ fn add_vector_index_rollback_like_go() {
         let seen = cancelled.clone();
         tidb_ddl::failpoint_call::enable_call(
             "beforeRunOneJobStep",
-            Arc::new(move |job: &dyn std::any::Any| {
+            Arc::new(move |job: &mut dyn std::any::Any| {
                 let job = job.downcast_ref::<tidb_model::Job>().expect("the step's job");
                 if job.schema_state != tidb_model::SchemaState::WRITE_REORGANIZATION {
                     return;

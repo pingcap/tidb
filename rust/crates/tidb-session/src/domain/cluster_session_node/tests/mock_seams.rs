@@ -532,6 +532,7 @@ impl ClusterDdl for MockDdl {
             // duplicating the production planner in this catalog mock.
             DdlStatement::DropTables { .. }
             | DdlStatement::AcceptedNoOp { .. }
+            | DdlStatement::FlashbackCluster { .. }
             | DdlStatement::CreatePlacementPolicy { .. }
             | DdlStatement::AlterPlacementPolicy { .. }
             | DdlStatement::DropPlacementPolicy { .. }

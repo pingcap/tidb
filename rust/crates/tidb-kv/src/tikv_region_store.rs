@@ -22,14 +22,27 @@
 //! one `KVStore` to region splitting, and asks PD through that store's PD
 //! HTTP client (Go `store.GetPDHTTPClient()`).
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+
+use tikv_client::async_util::Cancellation;
+use tikv_client::proto::kvrpcpb;
+use tikv_client::retry::{RetryBackoffer, BO_REGION_MISS, BO_TIKV_RPC};
+use tikv_client::tikv::KvStore;
+use tikv_client::transaction::range_task::{RangeTaskHandler, Runner, TaskStat};
 
 use crate::region_map::{RegionMeta, RegionStore};
 use tidb_txnkv::driver::tikv_store::TikvStore;
 
 /// Go `helper.MaxBackoffTimeoutForMvccGet`.
 const MAX_BACKOFF_TIMEOUT_FOR_MVCC_GET: u64 = 5000;
+
+/// Go `ddl.flashbackMaxBackoff`.
+const FLASHBACK_MAX_BACKOFF_MS: u64 = 1_800_000;
+
+/// Go `ddl.flashbackTimeout`.
+const FLASHBACK_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 
 /// Go `tikv.NewBackofferWithVars(ctx, 20000, nil)` in `getTableRegions`.
 const LOAD_REGIONS_BACKOFF_MS: u64 = 20_000;
@@ -87,6 +100,249 @@ impl<S: tikv_client::PdClient> TikvRegionStore<S> {
         self.block_on(pd_cli.get_region_by_id(region_id))
             .map_err(|error| error.to_string())
     }
+}
+
+impl<S: tikv_client::PdClient> TikvRegionStore<S> {
+    /// Go `ddl.flashbackToVersion`: a `flashback-to-version-runner` range
+    /// task over `[start_key, end_key)` whose handler sends `rpc` region by
+    /// region and adds the regions it completed.
+    fn flashback_to_version_on_range(
+        &self,
+        rpc: FlashbackRpc,
+        flashback_ts: u64,
+        start_ts: u64,
+        start_key: &[u8],
+        end_key: &[u8],
+        concurrency: usize,
+    ) -> Result<u64, String> {
+        let total_regions = Arc::new(AtomicU64::new(0));
+        let handler = FlashbackToVersionHandler {
+            store: self.store.store().clone(),
+            rpc,
+            flashback_ts,
+            start_ts,
+            total_regions: Arc::clone(&total_regions),
+        };
+        let runner = Runner::new(
+            "flashback-to-version-runner",
+            self.store.store().pd_client(),
+            concurrency,
+            handler,
+        );
+        self.block_on(runner.run_on_range(start_key.to_vec(), end_key.to_vec()))
+            .map_err(|error| error.to_string())?;
+        Ok(total_regions.load(Ordering::Acquire))
+    }
+}
+
+/// Which of TiKV's two flashback commands a range task sends.
+#[derive(Clone, Copy)]
+enum FlashbackRpc {
+    /// Go `SendPrepareFlashbackToVersionRPC`.
+    Prepare,
+    /// Go `SendFlashbackToVersionRPC`.
+    Flashback { commit_ts: u64 },
+}
+
+/// The range-task handler of Go's `flashbackCluster` steps.
+struct FlashbackToVersionHandler<S: tikv_client::PdClient> {
+    store: KvStore<S>,
+    rpc: FlashbackRpc,
+    flashback_ts: u64,
+    start_ts: u64,
+    total_regions: Arc<AtomicU64>,
+}
+
+impl<S: tikv_client::PdClient> Clone for FlashbackToVersionHandler<S> {
+    fn clone(&self) -> Self {
+        Self {
+            store: self.store.clone(),
+            rpc: self.rpc,
+            flashback_ts: self.flashback_ts,
+            start_ts: self.start_ts,
+            total_regions: Arc::clone(&self.total_regions),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl<S: tikv_client::PdClient> RangeTaskHandler for FlashbackToVersionHandler<S> {
+    async fn handle(&self, cancellation: Cancellation, range: (Vec<u8>, Vec<u8>)) -> (TaskStat, tikv_client::Result<()>) {
+        let (stats, result) = match self.rpc {
+            FlashbackRpc::Prepare => {
+                send_prepare_flashback_to_version_rpc(&cancellation, &self.store, self.flashback_ts, self.start_ts, range)
+                    .await
+            }
+            FlashbackRpc::Flashback { commit_ts } => {
+                send_flashback_to_version_rpc(
+                    &cancellation,
+                    &self.store,
+                    self.flashback_ts,
+                    self.start_ts,
+                    commit_ts,
+                    range,
+                )
+                .await
+            }
+        };
+        self.total_regions
+            .fetch_add(stats.completed_regions as u64, Ordering::AcqRel);
+        (stats, result)
+    }
+}
+
+fn new_flashback_backoffer(cancellation: &Cancellation) -> Arc<tokio::sync::Mutex<RetryBackoffer>> {
+    Arc::new(tokio::sync::Mutex::new(RetryBackoffer::new(
+        cancellation.clone(),
+        FLASHBACK_MAX_BACKOFF_MS,
+    )))
+}
+
+async fn flashback_backoff(
+    backoffer: &Arc<tokio::sync::Mutex<RetryBackoffer>>,
+    config: tikv_client::retry::RetryConfig,
+    reason: String,
+) -> tikv_client::Result<()> {
+    backoffer
+        .lock()
+        .await
+        .backoff(config, reason)
+        .await
+        .map_err(tikv_client::Error::from)
+}
+
+/// Go `ddlutil.SendPrepareFlashbackToVersionRPC`: prepares the regions of
+/// `range` for a flashback, one request per region, blocking their
+/// scheduling, reads and writes.
+async fn send_prepare_flashback_to_version_rpc<S: tikv_client::PdClient>(
+    cancellation: &Cancellation,
+    store: &KvStore<S>,
+    flashback_ts: u64,
+    start_ts: u64,
+    range: (Vec<u8>, Vec<u8>),
+) -> (TaskStat, tikv_client::Result<()>) {
+    let (mut start_key, range_end_key) = range;
+    let mut task_stat = TaskStat::default();
+    let mut bo = new_flashback_backoffer(cancellation);
+    loop {
+        if !range_end_key.is_empty() && start_key >= range_end_key {
+            break;
+        }
+        let loc = match store.pd_client().region_for_key(&start_key.clone().into()).await {
+            Ok(loc) => loc,
+            Err(error) => return (task_stat, Err(error)),
+        };
+        let mut end_key = loc.region.end_key.clone();
+        let is_last = end_key.is_empty() || (!range_end_key.is_empty() && end_key >= range_end_key);
+        // If it is the last region.
+        if is_last {
+            end_key.clone_from(&range_end_key);
+        }
+        let request = kvrpcpb::PrepareFlashbackToVersionRequest {
+            start_key: start_key.clone(),
+            end_key: end_key.clone(),
+            start_ts,
+            version: flashback_ts,
+            ..Default::default()
+        };
+        let sent = store
+            .send_req(Arc::clone(&bo), request, &loc.ver_id(), FLASHBACK_TIMEOUT)
+            .await;
+        let response = match sent {
+            Ok(response) => response,
+            Err(tikv_client::Error::RegionError(region_error)) => {
+                if let Err(error) = flashback_backoff(&bo, BO_REGION_MISS, format!("{region_error:?}")).await {
+                    return (task_stat, Err(error));
+                }
+                continue;
+            }
+            Err(error) => return (task_stat, Err(error)),
+        };
+        if !response.error.is_empty() {
+            let reason = format!("unexpected prepare flashback to version err: {}", response.error);
+            if let Err(error) = flashback_backoff(&bo, BO_TIKV_RPC, reason).await {
+                return (task_stat, Err(error));
+            }
+            continue;
+        }
+        task_stat.completed_regions += 1;
+        if is_last {
+            break;
+        }
+        bo = new_flashback_backoffer(cancellation);
+        start_key = end_key;
+    }
+    (task_stat, Ok(()))
+}
+
+/// Go `ddlutil.SendFlashbackToVersionRPC`: flashes the regions of `range`
+/// back to `flashback_ts`, one request per region. A region TiKV reports as
+/// not prepared was flashed back by an earlier run of this step.
+async fn send_flashback_to_version_rpc<S: tikv_client::PdClient>(
+    cancellation: &Cancellation,
+    store: &KvStore<S>,
+    flashback_ts: u64,
+    start_ts: u64,
+    commit_ts: u64,
+    range: (Vec<u8>, Vec<u8>),
+) -> (TaskStat, tikv_client::Result<()>) {
+    let (mut start_key, range_end_key) = range;
+    let mut task_stat = TaskStat::default();
+    let mut bo = new_flashback_backoffer(cancellation);
+    loop {
+        if !range_end_key.is_empty() && start_key >= range_end_key {
+            break;
+        }
+        let loc = match store.pd_client().region_for_key(&start_key.clone().into()).await {
+            Ok(loc) => loc,
+            Err(error) => return (task_stat, Err(error)),
+        };
+        let mut end_key = loc.region.end_key.clone();
+        let is_last = end_key.is_empty() || (!range_end_key.is_empty() && end_key >= range_end_key);
+        // If it is the last region.
+        if is_last {
+            end_key.clone_from(&range_end_key);
+        }
+        let request = kvrpcpb::FlashbackToVersionRequest {
+            version: flashback_ts,
+            start_key: start_key.clone(),
+            end_key: end_key.clone(),
+            start_ts,
+            commit_ts,
+            ..Default::default()
+        };
+        let sent = store
+            .send_req(Arc::clone(&bo), request, &loc.ver_id(), FLASHBACK_TIMEOUT)
+            .await;
+        match sent {
+            Ok(response) => {
+                if !response.error.is_empty() {
+                    if let Err(error) = flashback_backoff(&bo, BO_TIKV_RPC, response.error).await {
+                        return (task_stat, Err(error));
+                    }
+                    continue;
+                }
+            }
+            Err(tikv_client::Error::RegionError(region_error)) => {
+                if let Err(error) = flashback_backoff(&bo, BO_REGION_MISS, format!("{region_error:?}")).await {
+                    return (task_stat, Err(error));
+                }
+                continue;
+            }
+            Err(error) => {
+                if error.to_string() != format!("region {} is not prepared for the flashback", loc.id()) {
+                    return (task_stat, Err(error));
+                }
+            }
+        }
+        task_stat.completed_regions += 1;
+        if is_last {
+            break;
+        }
+        bo = new_flashback_backoffer(cancellation);
+        start_key = end_key;
+    }
+    (task_stat, Ok(()))
 }
 
 impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
@@ -351,6 +607,43 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
             }
             start_key = cur_region.region.end_key.clone();
         }
+    }
+
+    fn prepare_flashback_to_version(
+        &self,
+        flashback_ts: u64,
+        start_ts: u64,
+        start_key: &[u8],
+        end_key: &[u8],
+        concurrency: usize,
+    ) -> Result<u64, String> {
+        self.flashback_to_version_on_range(
+            FlashbackRpc::Prepare,
+            flashback_ts,
+            start_ts,
+            start_key,
+            end_key,
+            concurrency,
+        )
+    }
+
+    fn flashback_to_version(
+        &self,
+        flashback_ts: u64,
+        start_ts: u64,
+        commit_ts: u64,
+        start_key: &[u8],
+        end_key: &[u8],
+        concurrency: usize,
+    ) -> Result<u64, String> {
+        self.flashback_to_version_on_range(
+            FlashbackRpc::Flashback { commit_ts },
+            flashback_ts,
+            start_ts,
+            start_key,
+            end_key,
+            concurrency,
+        )
     }
 
     fn region_id_by_key(&self, key: &[u8]) -> Result<u64, String> {

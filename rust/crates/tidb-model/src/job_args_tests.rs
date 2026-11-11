@@ -1817,3 +1817,101 @@ fn recover_args_encode_and_decode_as_go() {
         }
     }
 }
+
+#[test]
+fn flashback_cluster_args_encode_and_decode_as_go() {
+    let go = include_str!("testdata/flashback_cluster_args_go.txt")
+        .lines()
+        .collect::<Vec<_>>();
+    let flashback_ts = 451_234_567_890_123_456;
+    let submitted = FlashbackClusterArgs {
+        flashback_ts,
+        pd_schedule_value: Some(std::collections::BTreeMap::new()),
+        enable_gc: true,
+        enable_auto_analyze: true,
+        enable_ttl_job: true,
+        ..Default::default()
+    };
+    let running = FlashbackClusterArgs {
+        flashback_ts,
+        pd_schedule_value: Some(std::collections::BTreeMap::from([(
+            "merge-schedule-limit".to_owned(),
+            serde_json::json!(8.0),
+        )])),
+        enable_gc: true,
+        super_read_only: true,
+        locked_region_cnt: 3,
+        start_ts: 451_234_567_890_123_999,
+        commit_ts: 451_234_567_890_124_000,
+        flashback_key_ranges: Some(vec![
+            KeyRange {
+                start_key: Some(b"m".to_vec()),
+                end_key: Some(b"n".to_vec()),
+            },
+            KeyRange {
+                start_key: Some(vec![0x74, 0x80, 0, 0]),
+                end_key: None,
+            },
+        ]),
+        ..Default::default()
+    };
+    let zero = FlashbackClusterArgs::default();
+    let cases = [
+        (JobVersion::V1, &submitted, go[0]),
+        (JobVersion::V1, &running, go[1]),
+        (JobVersion::V1, &zero, go[2]),
+        (JobVersion::V2, &submitted, go[3]),
+        (JobVersion::V2, &running, go[4]),
+        (JobVersion::V2, &zero, go[5]),
+    ];
+    for (version, args, go_bytes) in cases {
+        let mut job = encoded_job(
+            version,
+            ActionType::ACTION_FLASHBACK_CLUSTER,
+            GoShared::new(args.clone()),
+        );
+        assert_eq!(job.raw_args.as_ref().unwrap().get(), go_bytes, "{version:?}");
+        let decoded = get_flashback_cluster_args(&mut job)
+            .unwrap_or_else(|error| panic!("{version:?}: {error}"))
+            .unwrap();
+        let decoded = decoded.read();
+        assert_eq!(
+            (
+                decoded.flashback_ts,
+                decoded.enable_gc,
+                decoded.enable_auto_analyze,
+                decoded.enable_ttl_job,
+                decoded.super_read_only,
+                decoded.locked_region_cnt,
+                decoded.start_ts,
+                decoded.commit_ts,
+            ),
+            (
+                args.flashback_ts,
+                args.enable_gc,
+                args.enable_auto_analyze,
+                args.enable_ttl_job,
+                args.super_read_only,
+                args.locked_region_cnt,
+                args.start_ts,
+                args.commit_ts,
+            ),
+            "{version:?}"
+        );
+        // Go: a v2 empty map is omitted and comes back nil; v1 keeps `{}`.
+        let schedule = args
+            .pd_schedule_value
+            .clone()
+            .filter(|map| version == JobVersion::V1 || !map.is_empty());
+        // Go decodes a JSON number into `float64`; `8` and `8.0` are one value.
+        let floats = |map: &Option<std::collections::BTreeMap<String, serde_json::Value>>| {
+            map.as_ref().map(|map| {
+                map.iter()
+                    .map(|(key, value)| (key.clone(), value.as_f64()))
+                    .collect::<Vec<_>>()
+            })
+        };
+        assert_eq!(floats(&decoded.pd_schedule_value), floats(&schedule), "{version:?}");
+        assert_eq!(decoded.flashback_key_ranges, args.flashback_key_ranges, "{version:?}");
+    }
+}

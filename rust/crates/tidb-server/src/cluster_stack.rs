@@ -473,6 +473,12 @@ pub fn cluster_session_stack(
         Arc::new(tidb_domain_infosync::label_delivery::PdLabelManager::new(client))
             as Arc<dyn tidb_domain_infosync::label_manager::LabelRuleManager>
     }));
+    // Go `InfoSyncer.initScheduleManager`: PD's schedule configuration, which
+    // FLASHBACK CLUSTER closes and restores.
+    tidb_domain_infosync::schedule_manager::init_schedule_manager(pd_http_client.as_ref().map(|client| {
+        Arc::new(tidb_domain_infosync::schedule_manager::PdScheduleManager::new(client))
+            as Arc<dyn tidb_domain_infosync::schedule_manager::ScheduleManager>
+    }));
     // Go `InfoSyncer.initTiFlashReplicaManager`: the TiFlash placement rules
     // DDL jobs set and the GC worker deletes.
     tidb_domain_infosync::tiflash_manager::init_tiflash_replica_manager(pd_http_client.as_ref().map(|client| {

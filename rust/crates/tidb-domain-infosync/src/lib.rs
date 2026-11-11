@@ -16,6 +16,7 @@
 //! and TiFlash replica clients.
 pub mod infosync_errors;
 pub mod pd_http;
+pub mod schedule_manager;
 pub mod label_manager;
 pub mod min_start_ts;
 pub mod resource_manager_client;

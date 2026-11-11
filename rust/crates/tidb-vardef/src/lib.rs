@@ -42,6 +42,19 @@ static ENABLE_MDL: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_ENABLE_MDL);
 /// 'foreign_key_checks' system variable.
 pub const FOREIGN_KEY_CHECKS: &str = "foreign_key_checks";
 
+static DDL_FLASHBACK_CONCURRENCY: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(defaults::DEF_TIDB_DDL_FLASHBACK_CONCURRENCY as i32);
+
+/// Go `GetDDLFlashbackConcurrency`.
+pub fn get_ddl_flashback_concurrency() -> i32 {
+    DDL_FLASHBACK_CONCURRENCY.load(Ordering::SeqCst)
+}
+
+/// Go `SetDDLFlashbackConcurrency`; validation belongs to the sysvar registry.
+pub fn set_ddl_flashback_concurrency(cnt: i32) {
+    DDL_FLASHBACK_CONCURRENCY.store(cnt, Ordering::SeqCst);
+}
+
 static DDL_ERROR_COUNT_LIMIT: AtomicI64 = AtomicI64::new(defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT);
 
 /// Go `GetDDLErrorCountLimit`, retained when a worker cannot refresh globals.

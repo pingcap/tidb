@@ -2108,23 +2108,10 @@ impl_txn_v2_only_response!(
     }
 );
 
-range_request!(kvrpcpb::PrepareFlashbackToVersionRequest);
-shardable_range!(kvrpcpb::PrepareFlashbackToVersionRequest);
+// client-go sends this to one located region (TiDB's `ddl` walks the
+// range region by region), so it is pinned, not sharded.
+region_pinned!(kvrpcpb::PrepareFlashbackToVersionRequest);
 impl HasLocks for kvrpcpb::PrepareFlashbackToVersionResponse {}
-
-impl Merge<kvrpcpb::PrepareFlashbackToVersionResponse> for Collect {
-    type Out = usize;
-
-    fn merge(
-        &self,
-        input: Vec<Result<kvrpcpb::PrepareFlashbackToVersionResponse>>,
-    ) -> Result<Self::Out> {
-        input
-            .into_iter()
-            .collect::<Result<Vec<_>>>()
-            .map(|responses| responses.len())
-    }
-}
 
 pub fn new_flashback_to_version_request(
     start_key: Vec<u8>,
@@ -2154,20 +2141,10 @@ impl_txn_v2_only_response!(
     }
 );
 
-range_request!(kvrpcpb::FlashbackToVersionRequest);
-shardable_range!(kvrpcpb::FlashbackToVersionRequest);
+// client-go sends this to one located region (TiDB's `ddl` walks the
+// range region by region), so it is pinned, not sharded.
+region_pinned!(kvrpcpb::FlashbackToVersionRequest);
 impl HasLocks for kvrpcpb::FlashbackToVersionResponse {}
-
-impl Merge<kvrpcpb::FlashbackToVersionResponse> for Collect {
-    type Out = usize;
-
-    fn merge(&self, input: Vec<Result<kvrpcpb::FlashbackToVersionResponse>>) -> Result<Self::Out> {
-        input
-            .into_iter()
-            .collect::<Result<Vec<_>>>()
-            .map(|responses| responses.len())
-    }
-}
 
 pub fn new_flush_request(
     mutations: Vec<kvrpcpb::Mutation>,

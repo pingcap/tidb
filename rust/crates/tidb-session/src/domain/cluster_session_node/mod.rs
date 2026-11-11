@@ -1603,6 +1603,44 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         })
     }
 
+    fn flashback_cluster_statement(
+        &mut self,
+        stmt: &tidb_ast::FlashbackToTimestampStmt,
+    ) -> Result<DdlStatement, SqlQueryError> {
+        // Check `TO TSO` clause, then the `TO TIMESTAMP` clause.
+        let flashback_ts = if stmt.flashback_tso > 0 {
+            stmt.flashback_tso
+        } else {
+            let expr = stmt
+                .flashback_ts
+                .as_ref()
+                .expect("FLASHBACK ... TO TIMESTAMP carries its expression");
+            self.session.calculate_as_of_ts_expr(expr).map_err(map_error)?
+        };
+        // Go `executor.FlashbackCluster`.
+        let now_ts = self
+            .node
+            .domain
+            .transactions
+            .fresh_timestamp()
+            .map_err(SqlQueryError::unknown)?;
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos() as i64);
+        let gap = (tikv_client::oracle::extract_physical(now_ts) * 1_000_000 - now_ns).abs();
+        if gap > 1_000_000_000 {
+            self.session.append_warning(
+                tidb_context::WarningLevel::Warning,
+                1105,
+                format!(
+                    "Gap between local time and PD TSO is {}, please check PD/system time",
+                    tidb_model::go_duration::format_go_duration(gap)
+                ),
+            );
+        }
+        Ok(DdlStatement::FlashbackCluster { flashback_ts })
+    }
+
     fn is_masking_policy_statement(&self, ddl: &tidb_ast::DdlStmt) -> bool {
         Session::is_masking_policy_statement(ddl)
     }

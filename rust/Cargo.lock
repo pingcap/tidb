@@ -5844,6 +5844,7 @@ dependencies = [
 name = "tidb-kv"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "smallvec",
  "tidb-dbterror",
  "tidb-errno",

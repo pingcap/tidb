@@ -3138,6 +3138,7 @@ where
                     | DdlStatement::UnlockTables { .. }
                     | DdlStatement::AlterTableMode { .. }
                     | DdlStatement::RefreshMeta { .. }
+                    | DdlStatement::FlashbackCluster { .. }
                     | DdlStatement::RepairTable { .. }
                     | DdlStatement::AddPartitions { .. }
                     | DdlStatement::DropPartitions { .. }

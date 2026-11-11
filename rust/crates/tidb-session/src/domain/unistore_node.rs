@@ -521,6 +521,8 @@ pub fn unistore_cluster_session_stack_from(
     tidb_domain_affinity::init_manager(None);
     // Go `initLabelRuleManager` without PD: a fresh `mockLabelManager`.
     tidb_domain_infosync::label_manager::init_label_rule_manager(None);
+    // Go `initScheduleManager` without PD: a fresh `mockScheduleManager`.
+    tidb_domain_infosync::schedule_manager::init_schedule_manager(None);
     tidb_domain_infosync::tiflash_manager::init_tiflash_replica_manager(None);
     // Go `initResourceManagerClient(nil)`: the mock resource manager.
     tidb_domain_infosync::resource_manager_client::init_resource_manager_client(None);
@@ -686,7 +688,7 @@ pub fn unistore_cluster_session_stack_from(
         IN_PROCESS_TIMEOUT,
     )
     .map_err(|error| engine(SqlQueryError::unknown(error)))?;
-    let ddl_session_pool = Arc::new(crate::ddl_session_pool::NodeDdlSessionPool::default());
+    let ddl_session_pool = Arc::new(crate::ddl_session_pool::NodeDdlSessionPool::mock_storage());
     let cluster_ddl = Arc::new(
         RealClusterDdl::new_with_min_job_id_refresher(
             opener.clone(),

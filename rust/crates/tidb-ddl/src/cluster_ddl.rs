@@ -677,6 +677,11 @@ pub enum DdlStatement {
         /// Go `RefreshMetaArgs.InvolvedTable`.
         involved_table: String,
     },
+    /// Go `executor.FlashbackCluster` -> the `ActionFlashbackCluster` job.
+    FlashbackCluster {
+        /// Go `FlashbackClusterArgs.FlashbackTS`.
+        flashback_ts: u64,
+    },
     /// Go `executor.RepairTable` -> the `ActionRepairTable` job:
     /// `ADMIN REPAIR TABLE table CREATE TABLE ...` in REPAIR MODE.
     RepairTable {
@@ -5297,6 +5302,7 @@ pub mod foreign_key;
 pub mod modify_column;
 pub mod multi_schema;
 pub mod partition;
+pub mod flashback_cluster;
 pub mod masking_policy;
 pub mod placement_policy;
 pub mod rename_table;
@@ -5327,6 +5333,7 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_CREATE_TABLE
             | ActionType::ACTION_CREATE_TABLES
             | ActionType::ACTION_RECOVER_TABLE
+            | ActionType::ACTION_FLASHBACK_CLUSTER
             | ActionType::ACTION_RECOVER_SCHEMA
             | ActionType::ACTION_RENAME_TABLE
             | ActionType::ACTION_RENAME_TABLES
@@ -5509,6 +5516,9 @@ fn dispatch_persisted_action(
         }
         ActionType::ACTION_RECOVER_SCHEMA => {
             recover_table::on_recover_schema(txn, active, start_ts, sessions)
+        }
+        ActionType::ACTION_FLASHBACK_CLUSTER => {
+            flashback_cluster::on_flashback_cluster(txn, catalog, active, row_ids, sessions)
         }
         ActionType::ACTION_CREATE_VIEW => {
             create_object::on_create_view(txn, active, start_ts)
@@ -5821,8 +5831,10 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         active.job.state,
         JobState::DONE | JobState::ROLLBACK_DONE | JobState::CANCELLED
     ) {
-        // Go `finishDDLJob`'s `finishRecoverTable` / `finishRecoverSchema`.
+        // Go `finishDDLJob`'s `finishRecoverTable` / `finishRecoverSchema` /
+        // `finishFlashbackCluster`.
         recover_table::finish_recover(&mut active.job, schema_state.worker.as_ref())?;
+        flashback_cluster::finish_flashback_cluster(&mut active.job, schema_state.worker.as_ref())?;
         return finish_persisted_ddl_job(
             snapshot,
             &catalog,
@@ -5835,7 +5847,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         .map(PersistedDdlJobPlan::Step);
     }
     // Go `transitOneJobStep`, before `runOneJobStep`.
-    crate::failpoint_call::inject_call("beforeRunOneJobStep", &active.job);
+    crate::failpoint_call::inject_call("beforeRunOneJobStep", &mut active.job);
 
     // Go processJobPausingRequest runs before action dispatch. The pause
     // signal is control flow, not an action error: keep the prior error and
@@ -5916,11 +5928,15 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
             count_ddl_action_error(&mut active.job, error, load_error_count_limit);
         }
     }
+    // Go `transitOneJobStep`, after `runOneJobStep`.
+    crate::failpoint_call::inject_call("afterRunOneJobStep", &mut active.job);
     // Go resets the action's transaction before handleJobDone on cancellation.
     // This also covers rollback handlers that cancel without a fresh error.
     if active.job.state == JobState::CANCELLED {
-        // Go `finishDDLJob`'s `finishRecoverTable` / `finishRecoverSchema`.
+        // Go `finishDDLJob`'s `finishRecoverTable` / `finishRecoverSchema` /
+        // `finishFlashbackCluster`.
         recover_table::finish_recover(&mut active.job, schema_state.worker.as_ref())?;
+        flashback_cluster::finish_flashback_cluster(&mut active.job, schema_state.worker.as_ref())?;
         return finish_persisted_ddl_job(
             snapshot,
             &catalog,

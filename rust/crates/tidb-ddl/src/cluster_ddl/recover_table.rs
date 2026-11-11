@@ -53,13 +53,13 @@ impl std::fmt::Debug for DdlStepWorker {
 
 /// Go `gcutil` over one of the worker's sessions, and that session's
 /// `GetRestrictedSQLExecutor()`.
-struct WorkerGcContext<'a>(
+pub(super) struct WorkerGcContext<'a>(
     &'a dyn tidb_ddl_build::session_pool::DdlSessionPool,
     Arc<dyn tidb_sqlexec::RestrictedSqlExecutor>,
 );
 
 impl<'a> WorkerGcContext<'a> {
-    fn new(pool: &'a dyn tidb_ddl_build::session_pool::DdlSessionPool) -> Self {
+    pub(super) fn new(pool: &'a dyn tidb_ddl_build::session_pool::DdlSessionPool) -> Self {
         Self(pool, pool.restricted_sql_executor())
     }
 }
@@ -100,7 +100,7 @@ impl tidb_gcutil::Context for WorkerGcContext<'_> {
     }
 }
 
-fn gc_error(error: tidb_gcutil::Error<tidb_terror::MysqlError>) -> DdlPlanError {
+pub(super) fn gc_error(error: tidb_gcutil::Error<tidb_terror::MysqlError>) -> DdlPlanError {
     match error {
         tidb_gcutil::Error::Context(error) => DdlPlanError::from_mysql_error(error),
         tidb_gcutil::Error::Sql(error) => DdlPlanError::from_mysql_error(
@@ -114,7 +114,7 @@ fn gc_error(error: tidb_gcutil::Error<tidb_terror::MysqlError>) -> DdlPlanError 
     }
 }
 
-fn worker_sessions(sessions: Option<&DdlStepWorker>) -> Result<&DdlStepWorker, DdlPlanError> {
+pub(super) fn worker_sessions(sessions: Option<&DdlStepWorker>) -> Result<&DdlStepWorker, DdlPlanError> {
     sessions.ok_or_else(|| {
         DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown(
             "the DDL worker has no session pool to reach GC through",
@@ -609,6 +609,10 @@ pub trait SnapshotMetaAt {
     fn database_at(&self, ts: u64, schema_id: i64) -> Result<Option<tidb_model::db::DBInfo>, DdlPlanError>;
     /// Go `snapMeta.ListTables(ctx, schemaID)`.
     fn tables_at(&self, ts: u64, schema_id: i64) -> Result<Vec<TableInfo>, DdlPlanError>;
+    /// Go `snapMeta.GetSchemaVersion()`.
+    fn schema_version_at(&self, ts: u64) -> Result<i64, DdlPlanError>;
+    /// Go `snapMeta.ListDatabases()`.
+    fn databases_at(&self, ts: u64) -> Result<Vec<tidb_model::db::DBInfo>, DdlPlanError>;
 }
 
 fn unknown(message: String) -> DdlPlanError {

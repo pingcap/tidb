@@ -182,6 +182,17 @@ pub trait DdlSessionPool: Send + Sync {
         ))
     }
 
+    /// Go `store.GetMinSafeTS(kv.GlobalTxnScope)` (`getStoreGlobalMinSafeTS`);
+    /// zero without a store.
+    fn min_safe_ts(&self) -> u64 {
+        0
+    }
+
+    /// Go `store.Name()`: `TiKV`, or `mock-storage` for the embedded store.
+    fn store_name(&self) -> &'static str {
+        "TiKV"
+    }
+
     /// Go `infoschema.GetTiFlashStoreCount(ctx.GetStore())` over one of the
     /// pool's sessions: the TiFlash stores PD lists.
     ///

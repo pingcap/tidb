@@ -111,7 +111,7 @@ pub use job_args::{
     ModifyColumnArgs, ModifyIndexArgs, ModifySchemaArgs, ModifyTableAutoIDCacheArgs,
     ModifyTableCharsetAndCollateArgs, ModifyTableCommentArgs, ModifyTableEngineAttributeArgs,
     MaskingPolicyArgs, PlacementPolicyArgs, RebaseAutoIDArgs, RecoverArgs, RecoverSchemaInfo, RecoverTableInfo,
-    AutoIdGroup, get_recover_args, RefreshMetaArgs, RenameTableArgs, RenameTablesArgs,
+    AutoIdGroup, get_recover_args, get_flashback_cluster_args, FlashbackClusterArgs, KeyRange, RefreshMetaArgs, RenameTableArgs, RenameTablesArgs,
     ResourceGroupArgs, SetDefaultValueArgs, SetTiFlashReplicaArgs, ShardRowIDArgs, TableColumnArgs,
     TableIDIndexID, TablePartitionArgs, TruncateTableArgs, UpdateTiFlashReplicaStatusArgs,
 };

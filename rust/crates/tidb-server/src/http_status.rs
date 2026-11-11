@@ -486,7 +486,7 @@ pub(crate) fn ddl_hook_answer(path: &str, request: &str) -> Option<Result<String
     match hook.as_str() {
         "ctc_hook" => tidb_ddl::failpoint_call::enable_call(
             BEFORE_RUN_ONE_JOB_STEP,
-            Arc::new(|job: &dyn std::any::Any| {
+            Arc::new(|job: &mut dyn std::any::Any| {
                 let Some(job) = job.downcast_ref::<tidb_model::Job>() else {
                     return;
                 };

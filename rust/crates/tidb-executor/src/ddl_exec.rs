@@ -183,6 +183,13 @@ pub trait DdlExec {
         &mut self,
         ddl: &tidb_ast::DdlStmt,
     ) -> Result<Option<DdlStatement>, SqlQueryError>;
+    /// Go `DDLExec.executeFlashBackCluster` and `executor.FlashbackCluster`
+    /// up to the job: the `TO TSO` value or the `TO TIMESTAMP` expression's
+    /// timestamp, and the warning for a local clock away from PD's.
+    fn flashback_cluster_statement(
+        &mut self,
+        stmt: &tidb_ast::FlashbackToTimestampStmt,
+    ) -> Result<DdlStatement, SqlQueryError>;
     /// Whether `ddl` is one of Go's masking-policy statements.
     fn is_masking_policy_statement(&self, ddl: &tidb_ast::DdlStmt) -> bool;
     /// Go `checkMaskingPolicyOnModifyColumn`, run once `ModifyColumn` /
@@ -256,6 +263,24 @@ pub trait DdlExec {
         // The DDL executor's target checks; the ALTER spec walk's own
         // refusals are the lowering's (`cluster_ddl`).
         self.ddl_target_checks(stmt).map_err(map_error)?;
+        // Go `DDLExec.Next`'s `*ast.FlashBackToTimestampStmt` arm.
+        if let Stmt::Ddl(ddl) = stmt {
+            if let tidb_ast::DdlStmt::FlashbackToTimestamp(flashback) = &**ddl {
+                let unsupported = |message: &str| {
+                    map_error(DriverError::from(
+                        tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL
+                            .gen_with_stack(message),
+                    ))
+                };
+                if !flashback.tables.is_empty() {
+                    return Err(unsupported("Unsupported FLASHBACK table TO TIMESTAMP"));
+                }
+                if !flashback.database_name.is_empty() {
+                    return Err(unsupported("Unsupported FLASHBACK database TO TIMESTAMP"));
+                }
+                return self.flashback_cluster_statement(flashback).map(LoweredDdl::one);
+            }
+        }
         // Go `DDLExec.executeLockTables`/`executeUnlockTables` with
         // `enable-table-lock` on: the planner's privilege check, then
         // `executor.LockTables`' checks against this node's catalog

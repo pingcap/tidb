@@ -1196,6 +1196,7 @@ impl GlobalSysvars {
                 | TIDB_ENABLE_MDL
                 | TIDB_SCHEMA_CACHE_SIZE
                 | TIDB_DDL_ERROR_COUNT_LIMIT
+                | TIDB_DDL_FLASHBACK_CONCURRENCY
                 | TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO
                 | TIDB_COMMITTER_CONCURRENCY
                 | TIDB_REDACT_LOG
@@ -1380,6 +1381,14 @@ impl GlobalSysvars {
                     .parse::<i64>()
                     .unwrap_or(tidb_vardef::defaults::DEF_TIDB_AUTO_ANALYZE_CONCURRENCY),
                 SeqCst,
+            ),
+            // Go `tidbOptPositiveInt32(val, DefTiDBDDLFlashbackConcurrency)`.
+            TIDB_DDL_FLASHBACK_CONCURRENCY => tidb_vardef::set_ddl_flashback_concurrency(
+                value
+                    .parse::<i32>()
+                    .ok()
+                    .filter(|cnt| *cnt > 0)
+                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_DDL_FLASHBACK_CONCURRENCY as i32),
             ),
             TIDB_DDL_ERROR_COUNT_LIMIT => tidb_vardef::set_ddl_error_count_limit(
                 value

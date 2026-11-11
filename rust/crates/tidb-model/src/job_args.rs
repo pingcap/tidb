@@ -438,6 +438,8 @@ pub enum JobArgsValue {
     PlacementPolicy(Option<GoShared<PlacementPolicyArgs>>),
     /// `*model.MaskingPolicyArgs`, including a typed nil pointer.
     MaskingPolicy(Option<GoShared<MaskingPolicyArgs>>),
+    /// `*model.FlashbackClusterArgs`, including a typed nil pointer.
+    FlashbackCluster(Option<GoShared<FlashbackClusterArgs>>),
     /// `*model.RecoverArgs`, including a typed nil pointer.
     Recover(Option<GoShared<RecoverArgs>>),
     /// `*model.LockTablesArgs`, including a typed nil pointer.
@@ -507,6 +509,7 @@ impl JobArgsValue {
             Self::AlterTtlInfo(value) => job.fill_args(value.clone()),
             Self::PlacementPolicy(value) => job.fill_args(value.clone()),
             Self::MaskingPolicy(value) => job.fill_args(value.clone()),
+            Self::FlashbackCluster(value) => job.fill_args(value.clone()),
             Self::Recover(value) => job.fill_args(value.clone()),
             Self::LockTables(value) => job.fill_args(value.clone()),
             Self::AlterTablePlacement(value) => job.fill_args(value.clone()),
@@ -556,6 +559,7 @@ impl JobArgsValue {
             Self::AlterTtlInfo(_) => "AlterTTLInfoArgs",
             Self::PlacementPolicy(_) => "PlacementPolicyArgs",
             Self::MaskingPolicy(_) => "MaskingPolicyArgs",
+            Self::FlashbackCluster(_) => "FlashbackClusterArgs",
             Self::Recover(_) => "RecoverArgs",
             Self::LockTables(_) => "LockTablesArgs",
             Self::AlterTablePlacement(_) => "AlterTablePlacementArgs",
@@ -608,6 +612,7 @@ impl JobArgsValue {
             Self::AlterTtlInfo(value) => value.as_ref().map(GoShared::identity_address),
             Self::PlacementPolicy(value) => value.as_ref().map(GoShared::identity_address),
             Self::MaskingPolicy(value) => value.as_ref().map(GoShared::identity_address),
+            Self::FlashbackCluster(value) => value.as_ref().map(GoShared::identity_address),
             Self::Recover(value) => value.as_ref().map(GoShared::identity_address),
             Self::LockTables(value) => value.as_ref().map(GoShared::identity_address),
             Self::AlterTablePlacement(value) => value.as_ref().map(GoShared::identity_address),
@@ -759,6 +764,11 @@ impl JobArgsValue {
             .go_json_projection(),
             Self::MaskingPolicy(value) => GoTypedPointer::new(
                 model_type("MaskingPolicyArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::FlashbackCluster(value) => GoTypedPointer::new(
+                model_type("FlashbackClusterArgs", GoTypeKind::Struct),
                 value.clone(),
             )
             .go_json_projection(),
@@ -1007,6 +1017,9 @@ pub use column::*;
 #[path = "job_args_recover.rs"]
 mod recover;
 pub use recover::*;
+#[path = "job_args_flashback.rs"]
+mod flashback;
+pub use flashback::*;
 
 #[path = "job_args_compat.rs"]
 mod compat;

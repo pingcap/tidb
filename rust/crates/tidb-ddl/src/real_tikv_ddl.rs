@@ -1374,6 +1374,13 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
             start_ts,
             upgrading,
         ),
+        DdlStatement::FlashbackCluster { .. } => crate::cluster_ddl::flashback_cluster::flashback_cluster(
+            snapshot,
+            statement,
+            job_context,
+            start_ts,
+            upgrading,
+        ),
         DdlStatement::AlterTableMode { .. } | DdlStatement::RefreshMeta { .. } => {
             crate::cluster_ddl::table_mode::alter_table_mode(
                 snapshot,
@@ -1765,6 +1772,18 @@ impl<S: StoreClient> crate::cluster_ddl::SnapshotMetaAt for StoreSnapshotMeta<S>
             reader.tables(schema_id)
         })
         .map_err(DdlPlanError::Meta)
+    }
+
+    fn schema_version_at(&self, ts: u64) -> Result<i64, DdlPlanError> {
+        let mut meta = self.meta_at(ts)?;
+        tidb_infoschema::cluster_catalog::with_meta_reader(&mut meta, |reader| reader.schema_version())
+            .map_err(DdlPlanError::Meta)
+    }
+
+    fn databases_at(&self, ts: u64) -> Result<Vec<tidb_model::db::DBInfo>, DdlPlanError> {
+        let mut meta = self.meta_at(ts)?;
+        tidb_infoschema::cluster_catalog::with_meta_reader(&mut meta, |reader| reader.databases())
+            .map_err(DdlPlanError::Meta)
     }
 }
 
