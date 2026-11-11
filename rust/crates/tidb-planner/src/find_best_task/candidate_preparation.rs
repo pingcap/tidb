@@ -52,13 +52,6 @@ pub(super) fn prepare_ordinary_paths<'a>(
         if path.store_type != tidb_kv::store_type::StoreType::TiFlash && prop.is_flash_prop() {
             continue;
         }
-        if (ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIFLASH != 0
-            && !path.is_tiflash_path())
-            || (ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIKV != 0
-                && path.is_tiflash_path())
-        {
-            continue;
-        }
         // Go: "if we already know the range of the scan is empty, just
         // return a TableDual".
         if path.ranges.is_empty() {

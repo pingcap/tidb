@@ -358,7 +358,7 @@ pub(crate) fn optimize_query_stmt_with_scalar_subqueries(
     ),
     DriverError,
 > {
-    if let QueryStmt::Select(select) = query {
+    if let (QueryStmt::Select(select), true) = (query, ctx.isolation_read_contains_tikv()) {
         // Go `TryFastPlan`'s `checkFastPlanPrivilege(..., mysql.SelectPriv)`.
         let fast_plan_privilege = |database: &str, table: &str| {
             crate::table_privilege::check_fast_plan_privilege(

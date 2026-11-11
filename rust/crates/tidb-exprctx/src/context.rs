@@ -509,6 +509,11 @@ pub trait Columns {
         false
     }
 
+    /// Go `SessionVars.TxnCtx.IsExplicit`.
+    fn txn_is_explicit(&self) -> bool {
+        false
+    }
+
     /// The statement's alternative-logical-plan signals, which a context
     /// that plans no statement does not have.
     fn alternative_logical_plan_signals(&self) -> Option<&AlternativeLogicalPlanSignals> {

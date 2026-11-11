@@ -27,6 +27,112 @@ pub(crate) mod indexmerge_unfinished_path;
 pub(crate) mod mv_index;
 pub(crate) mod ordinary;
 
+/// Go `SessionVars.GetIsolationReadEngines()` with the statement state
+/// `FilterPathByIsolationRead` reports.
+#[derive(Clone, Debug)]
+pub struct IsolationRead {
+    /// TiKV is among the engines.
+    pub tikv: bool,
+    /// TiFlash is among the engines.
+    pub tiflash: bool,
+    /// The `tidb_isolation_read_engines` value.
+    pub value: String,
+    /// Go `StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode`.
+    pub tiflash_engine_removed_due_to_strict_sql_mode: bool,
+}
+
+impl Default for IsolationRead {
+    fn default() -> Self {
+        Self::new("", false)
+    }
+}
+
+impl IsolationRead {
+    /// The engines of `value`; an empty one is the config default, which
+    /// the variable's validation never lets a session blank.
+    #[must_use]
+    pub fn new(value: &str, tiflash_engine_removed_due_to_strict_sql_mode: bool) -> Self {
+        let value = if value.is_empty() { "tikv,tiflash,tidb" } else { value };
+        let has = |name: &str| value.split(',').any(|engine| engine.trim().eq_ignore_ascii_case(name));
+        Self {
+            tikv: has("tikv"),
+            tiflash: has("tiflash") && !tiflash_engine_removed_due_to_strict_sql_mode,
+            value: value.to_owned(),
+            tiflash_engine_removed_due_to_strict_sql_mode,
+        }
+    }
+
+    /// Whether the engines admit `path`'s store.
+    #[must_use]
+    pub fn permits(&self, path: &AccessPath) -> bool {
+        if path.is_tiflash_path() {
+            self.tiflash
+        } else {
+            self.tikv
+        }
+    }
+}
+
+/// Go `FilterPathByIsolationRead`.
+///
+/// # Errors
+/// `ErrInternal` when the engines admit none of the paths.
+pub fn filter_path_by_isolation_read<P: std::borrow::Borrow<AccessPath>>(
+    paths: &mut Vec<P>,
+    table_name: &str,
+    db_name: &str,
+    isolation_read: &IsolationRead,
+    mpp_warning_sink: Option<&dyn tidb_planner_core_operator_physicalop::enforce::MppWarningSink>,
+) -> Result<(), tidb_planner_core_base::PlanError> {
+    if matches!(
+        tidb_mysql::to_lowercase(db_name).as_str(),
+        "mysql" | "sys" | "workload_schema"
+    ) {
+        return Ok(());
+    }
+    let available_engines = paths.iter().rev().fold(Vec::<&'static str>::new(), |mut engines, path| {
+        let engine = if path.borrow().is_tiflash_path() { "tiflash" } else { "tikv" };
+        if !engines.contains(&engine) {
+            engines.push(engine);
+        }
+        engines
+    });
+    paths.retain(|path| isolation_read.permits(path.borrow()));
+    if paths.is_empty() {
+        let help = if isolation_read.value.to_ascii_lowercase().contains("tiflash") {
+            if isolation_read.tiflash_engine_removed_due_to_strict_sql_mode {
+                ". Please check tiflash replica or check if the query is not readonly and sql mode is strict"
+            } else {
+                ". Please check tiflash replica"
+            }
+        } else {
+            ""
+        };
+        // Go `ErrNoAvailablePath` answers as ErrInternal (1815):
+        // `Internal : No access path for table ... Please check
+        // tiflash replica.` -- the errno template adds the prefix.
+        return Err(tidb_planner_core_base::PlanError::from(
+            tidb_plannererrors::ERR_INTERNAL.gen_with_stack_by_args(&[(format!(
+                "No access path for table '{table_name}' is found with 'tidb_isolation_read_engines' = '{}', valid values can be '{}'{help}.",
+                isolation_read.value,
+                available_engines.join(", ")
+            ))
+            .into()]),
+        ));
+    }
+    if let (false, Some(sink)) = (isolation_read.tiflash, mpp_warning_sink) {
+        if isolation_read.tiflash_engine_removed_due_to_strict_sql_mode {
+            sink.raise_mpp_warning("MPP mode may be blocked because the query is not readonly and sql mode is strict.");
+        } else {
+            sink.raise_mpp_warning(&format!(
+                "MPP mode may be blocked because 'tidb_isolation_read_engines'(value: '{}') not match, need 'tiflash'.",
+                isolation_read.value
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Go `statistics.PrepareCols4MVIndex` (`PrepareIdxColsAndUnwrapArrayType`
 /// with its one-ARRAY-column check), which `GenerateHistCollFromColumnInfo`
 /// stores as `HistColl.MVIdx2Columns`.

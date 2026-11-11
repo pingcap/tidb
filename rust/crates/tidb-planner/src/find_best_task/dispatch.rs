@@ -198,6 +198,10 @@ pub struct DispatchContext<'a> {
     pub partial_ordered_index_for_topn: bool,
     /// Go SessionVars.OptPrefixIndexSingleScan.
     pub opt_prefix_index_single_scan: bool,
+    /// Go `SessionVars.TxnCtx.IsExplicit`.
+    pub txn_is_explicit: bool,
+    /// Go `SessionVars.GetIsolationReadEngines()`.
+    pub isolation_read: crate::access_path::IsolationRead,
     /// Statement-context sink for Go's enforced-MPP refusal warnings.
     pub mpp_warning_sink: Option<&'a dyn tidb_planner_core_operator_physicalop::enforce::MppWarningSink>,
     /// Go `StmtCtx.SetSkipPlanCache` for decisions physical optimization
@@ -293,6 +297,8 @@ impl<'a> DispatchContext<'a> {
             tiflash_pre_agg_mode: tidb_vardef::defaults::DEF_TIFLASH_PRE_AGG_MODE.to_owned(),
             partial_ordered_index_for_topn: false,
             opt_prefix_index_single_scan: true,
+            txn_is_explicit: false,
+            isolation_read: crate::access_path::IsolationRead::default(),
             mpp_warning_sink: None,
             plan_cache_marker: None,
             use_plan_cache: false,
@@ -628,6 +634,19 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_opt_prefix_index_single_scan(mut self, enabled: bool) -> Self {
         self.opt_prefix_index_single_scan = enabled;
+        self
+    }
+
+    /// Installs the session state `findBestTask4LogicalDataSource` reads for
+    /// a FOR UPDATE read.
+    #[must_use]
+    pub fn with_for_update_read_session(
+        mut self,
+        txn_is_explicit: bool,
+        isolation_read: crate::access_path::IsolationRead,
+    ) -> Self {
+        self.txn_is_explicit = txn_is_explicit;
+        self.isolation_read = isolation_read;
         self
     }
 
@@ -2792,6 +2811,27 @@ fn index_join_int_pk_info(
     })
 }
 
+/// Go `isPointGetPath`.
+fn is_point_get_path(path: &tidb_planner_util::path::AccessPath) -> bool {
+    if path.ranges.is_empty() {
+        return false;
+    }
+    if !path.is_int_handle_path {
+        let Some(index) = &path.index else {
+            return false;
+        };
+        let index = index.read();
+        if !index.unique || index.has_prefix_index() {
+            return false;
+        }
+        let idx_cols_len = index.columns.len();
+        if path.ranges.iter().any(|ran| ran.low_val.len() != idx_cols_len) {
+            return false;
+        }
+    }
+    path.ranges.iter().all(tidb_ranger::types::Range::is_point_non_nullable)
+}
+
 fn find_best_task_4_logical_data_source(
     ds: &tidb_planner_core_operator_logicalop::DataSource,
     prop: &PhysicalProperty,
@@ -3407,18 +3447,26 @@ fn find_best_task_4_logical_data_source_paths(
     // (`matchProperty:1082`), the basic prefix arm for an index
     // (`matchProperty:1095`) — and the admitted scan carries
     // `KeepOrder`/`Desc` (`convertToTableScan:2834`).
-    let mut ordinary_paths = ds.possible_paths().map_or_else(
-        || ds.all_possible_access_paths.iter().collect::<Vec<_>>(),
-        |paths| {
-            paths
-                .into_iter()
-                .filter(|path| {
-                    path.partial_index_paths.is_empty()
-                        && path.partial_alternative_index_paths.is_empty()
-                })
-                .collect()
-        },
-    );
+    let mut possible_paths = ds.possible_paths_or_all();
+    if ds.is_for_update_read && ctx.txn_is_explicit && ctx.isolation_read.tikv {
+        let has_point_get_path = possible_paths.iter().any(|path| is_point_get_path(path));
+        crate::access_path::filter_path_by_isolation_read(
+            &mut possible_paths,
+            &ds.table_name(),
+            &ds.db_name,
+            &ctx.isolation_read,
+            ctx.mpp_warning_sink,
+        )?;
+        if has_point_get_path {
+            // "if the path is the point get range path with for update
+            // lock, we should forbid tiflash as it's store path (#39543)"
+            possible_paths.retain(|path| !path.is_tiflash_path());
+        }
+    }
+    let mut ordinary_paths = possible_paths
+        .into_iter()
+        .filter(|path| path.partial_index_paths.is_empty() && path.partial_alternative_index_paths.is_empty())
+        .collect::<Vec<_>>();
     let preparation = super::candidate_preparation::prepare_access_paths(
         ds, &ordinary_paths, prop, ctx, table_pseudo,
     );
@@ -3475,13 +3523,15 @@ fn find_best_task_4_logical_data_source_paths(
         if prop.is_flash_prop() && !path.is_tiflash_path() {
             continue;
         }
-        if (ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIFLASH != 0
+        // Go skips a path the storage hint excludes only after the point
+        // conversion ("prefer tiflash, while current table path is tikv,
+        // skip it"): a hinted-away TiKV path still becomes a PointGet.
+        let skipped_by_store_hint = (ds.prefer_store_type
+            & tidb_planner_core_operator_logicalop::data_source::PREFER_TIFLASH
+            != 0
             && !path.is_tiflash_path())
             || (ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIKV != 0
-                && path.is_tiflash_path())
-        {
-            continue;
-        }
+                && path.is_tiflash_path());
         if let Some(runtime) = &prop.index_join_prop {
             let admitted = if path.is_tikv_table_path() && runtime.table_range_scan && ds.handle_is_int {
                 index_join_int_pk_info(ds, runtime).is_some()
@@ -3495,7 +3545,7 @@ fn find_best_task_4_logical_data_source_paths(
             }
         }
         let cop = match path.index_info() {
-            None if !path.is_tiflash_path() => {
+            None if !path.is_tiflash_path() => 'table_path: {
                 let primary_index = &path.index;
                 if partial_order.is_some() {
                     // Go's skyline pruning deliberately omits table paths for
@@ -3851,7 +3901,12 @@ fn find_best_task_4_logical_data_source_paths(
                     }
                     let mut root = tidb_planner_core_operator_physicalop::task::RootTask::default();
                     root.set_plan(point);
-                    return Ok(Task::Root(root));
+                    // Go compares the point task with the best so far
+                    // (`compareTaskCost(pointGetTask, t)`).
+                    break 'table_path Task::Root(root);
+                }
+                if skipped_by_store_hint {
+                    continue 'paths;
                 }
                 base.base.set_id(ctx.allocator.alloc());
                 let (table_filters, root_task_conds) = tidb_planner_core_operator_physicalop::pushdown::split_scan_filters(
@@ -4029,6 +4084,9 @@ fn find_best_task_4_logical_data_source_paths(
                 // whatever the path's store.
                 if path.ranges.is_empty() {
                     return Ok(empty_range_dual_task(ds, ctx));
+                }
+                if skipped_by_store_hint {
+                    continue 'paths;
                 }
                 if cop_multi_read {
                     continue 'paths;
@@ -4626,6 +4684,9 @@ fn find_best_task_4_logical_data_source_paths(
                     let mut root = tidb_planner_core_operator_physicalop::task::RootTask::default();
                     root.set_plan(point);
                     break 'index_path Task::Root(root);
+                }
+                if skipped_by_store_hint {
+                    continue 'paths;
                 }
                 base.base.set_id(ctx.allocator.alloc());
                 let table_stats = ds

@@ -3806,73 +3806,37 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
         }
         data_source.index_merge_hints = kept_index_merge_hints;
+        // "remain tikv access path to generate point get acceess path if
+        // existed", Go issue 39543.
+        let is_for_update_read_in_explicit_txn = self.is_for_update_read && self.ctx.txn_is_explicit();
         // "Skip storage engine check for CreateView."
-        if !self.can_expand_ast
-            && !matches!(
+        if !is_for_update_read_in_explicit_txn && !self.can_expand_ast {
+            let isolation_read = crate::access_path::IsolationRead {
+                tikv: self.tikv_in_isolation_read,
+                tiflash: self.tiflash_in_isolation_read,
+                value: self.isolation_read_engines_value.clone(),
+                tiflash_engine_removed_due_to_strict_sql_mode: self.tiflash_engine_removed_due_to_strict_sql_mode,
+            };
+            if !matches!(
                 tidb_mysql::to_lowercase(&data_source.db_name).as_str(),
                 "mysql" | "sys" | "workload_schema"
-            )
-        {
-            let available_engines =
-                public_paths
-                    .iter()
-                    .rev()
-                    .fold(Vec::<&'static str>::new(), |mut engines, path| {
-                        let engine = if path.is_tiflash_path() { "tiflash" } else { "tikv" };
-                        if !engines.contains(&engine) {
-                            engines.push(engine);
-                        }
-                        engines
-                    });
-            // Go `FilterPathByIsolationRead` keys on `path.StoreType`.
-            let permitted = |path: &tidb_planner_util::path::AccessPath| {
-                if path.is_tiflash_path() {
-                    self.tiflash_in_isolation_read
-                } else {
-                    self.tikv_in_isolation_read
-                }
-            };
-            public_paths.retain(&permitted);
-            paths.retain(permitted);
-            if paths.is_empty() {
-                let help = if self
-                    .isolation_read_engines_value
-                    .to_ascii_lowercase()
-                    .contains("tiflash")
-                {
-                    if self.tiflash_engine_removed_due_to_strict_sql_mode {
-                        ". Please check tiflash replica or check if the query is not readonly and sql mode is strict"
-                    } else {
-                        ". Please check tiflash replica"
-                    }
-                } else {
-                    ""
-                };
-                // Go `ErrNoAvailablePath` answers as ErrInternal (1815):
-                // `Internal : No access path for table ... Please check
-                // tiflash replica.` -- the errno template adds the prefix.
-                return Err(PlanError::from(tidb_plannererrors::ERR_INTERNAL.gen_with_stack_by_args(&[(format!(
-                    "No access path for table '{}' is found with 'tidb_isolation_read_engines' = '{}', valid values can be '{}'{help}.",
-                    table.table_name(),
-                    self.isolation_read_engines_value,
-                    available_engines.join(", ")
-                )).into()])));
+            ) {
+                public_paths.retain(|path| isolation_read.permits(path));
             }
-            if !self.tiflash_in_isolation_read {
-                if self.tiflash_engine_removed_due_to_strict_sql_mode {
-                    self.raise_mpp_warning(
-                        "MPP mode may be blocked because the query is not readonly and sql mode is strict.",
-                    );
-                } else {
-                    self.raise_mpp_warning(&format!(
-                        "MPP mode may be blocked because 'tidb_isolation_read_engines'(value: '{}') not match, need 'tiflash'.",
-                        self.isolation_read_engines_value
-                    ));
-                }
-            }
+            crate::access_path::filter_path_by_isolation_read(
+                &mut paths,
+                &table.table_name(),
+                &data_source.db_name,
+                &isolation_read,
+                self.mpp_warning_sink,
+            )?;
         }
+        // "FOR UPDATE reads in explicit transactions drop their TiFlash
+        // paths later during physical optimization, so treat them as
+        // missing one too."
         if self.ctx.enable_alternative_logical_plans()
-            && !paths.iter().any(tidb_planner_util::path::AccessPath::is_tiflash_path)
+            && (is_for_update_read_in_explicit_txn
+                || !paths.iter().any(tidb_planner_util::path::AccessPath::is_tiflash_path))
         {
             if let Some(signals) = self.ctx.alternative_logical_plan_signals() {
                 signals.missing_tiflash_path.store(true, std::sync::atomic::Ordering::Release);

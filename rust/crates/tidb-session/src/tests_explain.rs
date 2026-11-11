@@ -10303,3 +10303,80 @@ fn the_correlate_round_builds_gos_apply_plans() {
     }
     assert!(failures.is_empty(), "{} cases\n{}", failures.len(), failures.join("\n"));
 }
+
+/// Go `buildDataSource` / `findBestTask4LogicalDataSource` (issue 39543): a
+/// FOR UPDATE read in an explicit transaction keeps its TiKV paths whatever
+/// `tidb_isolation_read_engines` says; every other read is filtered by it.
+/// The results are a Go testkit's.
+#[test]
+fn a_for_update_read_in_an_explicit_txn_keeps_its_tikv_paths_like_go() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t(id int primary key, a int, key(a))",
+        "insert into t values (1,1),(2,2)",
+        "set tidb_isolation_read_engines = 'tiflash'",
+    ] {
+        session.run(sql).unwrap();
+    }
+    const NO_PATH: &str = "Internal : No access path for table 't' is found with \
+                           'tidb_isolation_read_engines' = 'tiflash', valid values can be 'tikv'. \
+                           Please check tiflash replica";
+    let refused = |session: &mut Session, sql: &str, help: &str| {
+        let error = session.run(sql).unwrap_err().to_string();
+        assert!(error.ends_with(&format!("{NO_PATH}{help}.")), "{sql}: {error}");
+    };
+    const STRICT: &str = " or check if the query is not readonly and sql mode is strict";
+    let for_update = "select * from t where id = 1 for update";
+    refused(&mut session, "select * from t where id = 1", "");
+    refused(&mut session, for_update, STRICT);
+    refused(&mut session, &format!("explain format = 'brief' {for_update}"), STRICT);
+
+    session.run("begin").unwrap();
+    refused(&mut session, "select * from t where id = 1", "");
+    assert_eq!(row_text(session.run(for_update)), [["1", "1"]]);
+    assert_eq!(row_text(session.run("select * from t where a = 1 for update")), [["1", "1"]]);
+    assert_eq!(
+        row_text(session.run(&format!("explain format = 'brief' {for_update}"))),
+        [["Point_Get", "1.00", "root", "table:t", "handle:1, lock"]]
+    );
+    assert_eq!(
+        row_text(session.run("explain format = 'brief' select * from t where a > 0 for update")),
+        [
+            ["SelectLock", "3333.33", "root", "", "for update 0"],
+            ["└─IndexReader", "3333.33", "root", "", "index:IndexRangeScan"],
+            [
+                "  └─IndexRangeScan",
+                "3333.33",
+                "cop[tikv]",
+                "table:t, index:a(a)",
+                "range:(0,+inf], keep order:false, stats:pseudo"
+            ],
+        ]
+    );
+    session.run("update t set a = 3 where id = 1").unwrap();
+    assert_eq!(
+        row_text(session.run("select * from t for update")),
+        [["2", "2"], ["1", "3"]]
+    );
+    session.run("rollback").unwrap();
+
+    session.run("begin optimistic").unwrap();
+    assert_eq!(row_text(session.run(for_update)), [["1", "1"]]);
+    session.run("rollback").unwrap();
+
+    // A pending `autocommit = 0` transaction is not explicit before it
+    // activates.
+    session.run("set autocommit = 0").unwrap();
+    refused(&mut session, "select * from t where id = 2 for update", STRICT);
+    refused(&mut session, "select * from t where id = 2 for update", STRICT);
+    session.run("rollback").unwrap();
+    session.run("set autocommit = 1").unwrap();
+
+    session.run("set tidb_isolation_read_engines = 'tikv,tiflash'").unwrap();
+    session.run("begin").unwrap();
+    assert_eq!(
+        row_text(session.run(&format!("explain format = 'brief' {for_update}"))),
+        [["Point_Get", "1.00", "root", "table:t", "handle:1, lock"]]
+    );
+    session.run("rollback").unwrap();
+}

@@ -412,6 +412,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::in_transaction(self)
     }
 
+    fn server_status_in_trans(&self) -> bool {
+        Session::server_status_in_trans(self)
+    }
+
     fn stmt_rc_check_ts(&self) -> bool {
         self.stmt_rc_check_ts
     }

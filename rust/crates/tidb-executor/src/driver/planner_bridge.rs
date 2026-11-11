@@ -3900,10 +3900,10 @@ pub(crate) fn cached_physical_query_plan(
     // statement too; the point plan keeps its parameter markers
     // (`HandleConstant` / `IndexConstants`) so a hit rebuilds its keys.
     let fast = match query {
-        tidb_ast::QueryStmt::Select(select) => {
+        tidb_ast::QueryStmt::Select(select) if ctx.isolation_read_contains_tikv() => {
             super::point_get_plan::try_fast_plan(select, catalog, current_database, ctx)?
         }
-        tidb_ast::QueryStmt::SetOpr(_) => None,
+        tidb_ast::QueryStmt::Select(_) | tidb_ast::QueryStmt::SetOpr(_) => None,
     };
     let physical = match fast {
         Some(physical) => physical,

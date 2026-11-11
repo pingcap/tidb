@@ -781,9 +781,11 @@ fn physical_dml_plan_and_scalar_subqueries_with_cache_mode(
             let multi_update = update
                 .filter(|update| matches!(update.kind, tidb_ast::UpdateKind::Multi { .. }));
             // Go's `TryFastPlan` belongs to `planner.Optimize`, which a
-            // cascade's `OptimizeForForeignKeyCascade` does not run.
+            // cascade's `OptimizeForForeignKeyCascade` does not run, and
+            // which tries it only when TiKV is an isolation read engine.
             let allow_fast_plan = multi_update.is_none()
                 && cascade_plan_ids.is_none()
+                && ctx.isolation_read_contains_tikv()
                 && update.is_none_or(|update| try_update_point_plan(update));
             // Go `tryUpdatePointPlan` / `tryDeletePointPlan`'s
             // `checkFastPlanPrivilege(..., SelectPriv, UpdatePriv /

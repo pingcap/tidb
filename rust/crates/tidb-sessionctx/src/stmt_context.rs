@@ -1112,6 +1112,8 @@ pub struct StmtContextData {
     /// Go `SessionVars.InTxn()`: an explicit or `autocommit = 0` transaction,
     /// as opposed to an autocommit statement's implicit one.
     in_transaction: bool,
+    /// Go `SessionVars.TxnCtx.IsExplicit`.
+    txn_is_explicit: bool,
     /// Go `StmtCtx.ForeignKeyTriggerCtx.HasFKCascades`: the statement's root
     /// executor cascades foreign keys.
     fk_cascades: Arc<std::sync::atomic::AtomicBool>,
@@ -2617,6 +2619,13 @@ context_configuration! {
         self
     }
 
+    /// Records Go `SessionVars.TxnCtx.IsExplicit` for the statement.
+    #[must_use]
+    pub fn with_txn_is_explicit(mut self, explicit: bool) -> Self {
+        self.txn_is_explicit = explicit;
+        self
+    }
+
     /// Marks the statement as part of an optimistic transaction.
     #[must_use]
     pub fn with_optimistic_transaction(mut self, enabled: bool) -> Self {
@@ -3141,6 +3150,7 @@ impl StmtContext {
             pessimistic_lazy_dup_check: false,
             pessimistic_transaction: false,
             in_transaction: false,
+            txn_is_explicit: false,
             fk_cascades: Arc::default(),
             in_handle_foreign_key_trigger: Arc::default(),
             updated_rows: Arc::default(),
@@ -5453,6 +5463,24 @@ impl StmtContext {
         self
     }
 
+    /// Go `Optimize`'s `isolationReadContainTiKV`, which gates
+    /// `TryFastPlan`. An empty value is the config default, which the
+    /// variable's validation never lets a session blank.
+    #[must_use]
+    pub fn isolation_read_contains_tikv(&self) -> bool {
+        self.isolation_read_engines.is_empty()
+            || self
+                .isolation_read_engines
+                .split(',')
+                .any(|engine| engine.trim().eq_ignore_ascii_case("tikv"))
+    }
+
+    /// Go `SessionVars.TxnCtx.IsExplicit`.
+    #[must_use]
+    pub fn txn_is_explicit(&self) -> bool {
+        self.txn_is_explicit
+    }
+
     /// Go `StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode`.
     #[must_use]
     pub fn tiflash_engine_removed_due_to_strict_sql_mode(&self) -> bool {
@@ -6878,6 +6906,10 @@ impl Columns for StmtContext {
 
     fn enable_alternative_logical_plans(&self) -> bool {
         self.enable_alternative_logical_plans
+    }
+
+    fn txn_is_explicit(&self) -> bool {
+        self.txn_is_explicit
     }
 
     fn alternative_logical_plan_signals(

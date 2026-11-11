@@ -342,10 +342,11 @@ pub fn optimize_logical<C: OptimizeContext>(
 /// Go `preparePossibleProperties` with the session's reads: TiFlash in
 /// `IsolationReadEngines`, and `IsMPPAllowed()`.
 pub fn prepare_possible_properties_for<C: OptimizeContext>(ctx: &C, plan: LogicalPlan) -> LogicalPlan {
-    let tiflash_in_isolation_read = ctx
-        .isolation_read_engines()
-        .split(',')
-        .any(|engine| engine.trim().eq_ignore_ascii_case("tiflash"));
+    let tiflash_in_isolation_read = crate::access_path::IsolationRead::new(
+        ctx.isolation_read_engines(),
+        ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
+    )
+    .tiflash;
     prepare_possible_properties(plan, tiflash_in_isolation_read, ctx.optimizer_cost_env().session.mpp_allowed).0
 }
 
@@ -479,9 +480,11 @@ pub fn physical_optimize<C: OptimizeContext>(
     .with_enable_late_materialization(optimizer_cost_env.session.enable_late_materialization)
     .with_mpp_join_inputs(
         optimizer_cost_env.session.mpp_join,
-        ctx.isolation_read_engines()
-            .split(',')
-            .any(|engine| engine.trim().eq_ignore_ascii_case("tiflash")),
+        crate::access_path::IsolationRead::new(
+            ctx.isolation_read_engines(),
+            ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
+        )
+        .tiflash,
         ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
         optimizer_cost_env.session.enable_chunk_rpc,
     )
@@ -501,6 +504,13 @@ pub fn physical_optimize<C: OptimizeContext>(
             .get_bool_with_default(tidb_fixcontrol::FIX_46177, true),
     )
     .with_mpp_warning_sink(ctx)
+    .with_for_update_read_session(
+        tidb_exprctx::Columns::txn_is_explicit(ctx),
+        crate::access_path::IsolationRead::new(
+            ctx.isolation_read_engines(),
+            ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
+        ),
+    )
     .with_plan_cache(
         tidb_exprctx::Columns::use_plan_cache(ctx),
         ctx,

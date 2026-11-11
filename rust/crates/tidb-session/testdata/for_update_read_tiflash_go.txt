@@ -1,0 +1,227 @@
+set tidb_isolation_read_engines = 'tikv,tiflash' => OK
+set tidb_enforce_mpp = 0 => OK
+   select * from t where id = 1 for update       Point_Get root
+   select * from t where a = 1 for update        SelectLock root
+   select * from t where a = 1 for update        └─IndexReader root
+   select * from t where a = 1 for update        └─IndexRangeScan cop[tikv]
+   select * from t for update                    SelectLock root
+   select * from t for update                    └─IndexReader root
+   select * from t for update                    └─IndexFullScan cop[tikv]
+   select /*H*/ * from t for update              SelectLock root
+   select /*H*/ * from t for update              └─IndexReader root
+   select /*H*/ * from t for update              └─IndexFullScan cop[tikv]
+    WARN Warning 1815 No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, p
+   select /*H*/ * from t where id = 1 for update Point_Get root
+   select /*H*/ * from t where id > 0 for update SelectLock root
+   select /*H*/ * from t where id > 0 for update └─TableReader root
+   select /*H*/ * from t where id > 0 for update └─TableRangeScan cop[tikv]
+    WARN Warning 1815 No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, p
+   select * from t                               TableReader root
+   select * from t                               └─ExchangeSender mpp[tiflash]
+   select * from t                               └─TableFullScan mpp[tiflash]
+begin => OK
+   select * from t where id = 1 for update       Point_Get root lock
+   select * from t where a = 1 for update        SelectLock root
+   select * from t where a = 1 for update        └─IndexReader root
+   select * from t where a = 1 for update        └─IndexRangeScan cop[tikv]
+   select * from t for update                    SelectLock root
+   select * from t for update                    └─IndexReader root
+   select * from t for update                    └─IndexFullScan cop[tikv]
+explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t for update => ERR Internal : Can't find a proper physical plan for this 
+   select /*H*/ * from t where id = 1 for update Point_Get root lock
+explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t where id > 0 for update => ERR Internal : Can't find a proper physical p
+   select * from t                               TableReader root
+   select * from t                               └─ExchangeSender mpp[tiflash]
+   select * from t                               └─TableFullScan mpp[tiflash]
+rollback => OK
+set tidb_isolation_read_engines = 'tikv,tiflash' => OK
+set tidb_enforce_mpp = 1 => OK
+   select * from t where id = 1 for update       Point_Get root
+   select * from t where a = 1 for update        SelectLock root
+   select * from t where a = 1 for update        └─IndexReader root
+   select * from t where a = 1 for update        └─IndexRangeScan cop[tikv]
+    WARN Warning 1105 MPP mode may be blocked because the query is not readonly and sql mode is strict.
+   select * from t for update                    SelectLock root
+   select * from t for update                    └─IndexReader root
+   select * from t for update                    └─IndexFullScan cop[tikv]
+    WARN Warning 1105 MPP mode may be blocked because the query is not readonly and sql mode is strict.
+   select /*H*/ * from t for update              SelectLock root
+   select /*H*/ * from t for update              └─IndexReader root
+   select /*H*/ * from t for update              └─IndexFullScan cop[tikv]
+    WARN Warning 1105 MPP mode may be blocked because the query is not readonly and sql mode is strict.
+    WARN Warning 1815 No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, p
+   select /*H*/ * from t where id = 1 for update Point_Get root
+   select /*H*/ * from t where id > 0 for update SelectLock root
+   select /*H*/ * from t where id > 0 for update └─TableReader root
+   select /*H*/ * from t where id > 0 for update └─TableRangeScan cop[tikv]
+    WARN Warning 1105 MPP mode may be blocked because the query is not readonly and sql mode is strict.
+    WARN Warning 1815 No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, p
+   select * from t                               TableReader root
+   select * from t                               └─ExchangeSender mpp[tiflash]
+   select * from t                               └─TableFullScan mpp[tiflash]
+begin => OK
+   select * from t where id = 1 for update       Point_Get root lock
+   select * from t where a = 1 for update        SelectLock root
+   select * from t where a = 1 for update        └─IndexReader root
+   select * from t where a = 1 for update        └─IndexRangeScan cop[tikv]
+    WARN Warning 1105 MPP mode may be blocked because the query is not readonly and sql mode is strict.
+   select * from t for update                    SelectLock root
+   select * from t for update                    └─IndexReader root
+   select * from t for update                    └─IndexFullScan cop[tikv]
+    WARN Warning 1105 MPP mode may be blocked because the query is not readonly and sql mode is strict.
+explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t for update => ERR Internal : Can't find a proper physical plan for this 
+   select /*H*/ * from t where id = 1 for update Point_Get root lock
+explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t where id > 0 for update => ERR Internal : Can't find a proper physical p
+   select * from t                               TableReader root
+   select * from t                               └─ExchangeSender mpp[tiflash]
+   select * from t                               └─TableFullScan mpp[tiflash]
+rollback => OK
+set tidb_isolation_read_engines = 'tiflash' => OK
+set tidb_enforce_mpp = 0 => OK
+explain format = 'brief' select * from t where id = 1 for update => ERR Internal : No access path for table 't' is found with 'tidb_isolation_read_eng
+explain format = 'brief' select * from t where a = 1 for update => ERR Internal : No access path for table 't' is found with 'tidb_isolation_read_engi
+explain format = 'brief' select * from t for update => ERR Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tifl
+explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t for update => ERR Internal : No access path for table 't' is found with 
+explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t where id = 1 for update => ERR Internal : No access path for table 't' i
+explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t where id > 0 for update => ERR Internal : No access path for table 't' i
+   select * from t                               TableReader root
+   select * from t                               └─ExchangeSender mpp[tiflash]
+   select * from t                               └─TableFullScan mpp[tiflash]
+begin => OK
+   select * from t where id = 1 for update       Point_Get root lock
+   select * from t where a = 1 for update        SelectLock root
+   select * from t where a = 1 for update        └─IndexReader root
+   select * from t where a = 1 for update        └─IndexRangeScan cop[tikv]
+   select * from t for update                    SelectLock root
+   select * from t for update                    └─TableReader root
+   select * from t for update                    └─ExchangeSender mpp[tiflash]
+   select * from t for update                    └─TableFullScan mpp[tiflash]
+   select /*H*/ * from t for update              SelectLock root
+   select /*H*/ * from t for update              └─TableReader root
+   select /*H*/ * from t for update              └─ExchangeSender mpp[tiflash]
+   select /*H*/ * from t for update              └─TableFullScan mpp[tiflash]
+   select /*H*/ * from t where id = 1 for update Point_Get root lock
+   select /*H*/ * from t where id > 0 for update SelectLock root
+   select /*H*/ * from t where id > 0 for update └─TableReader root
+   select /*H*/ * from t where id > 0 for update └─ExchangeSender mpp[tiflash]
+   select /*H*/ * from t where id > 0 for update └─TableRangeScan mpp[tiflash]
+   select * from t                               TableReader root
+   select * from t                               └─ExchangeSender mpp[tiflash]
+   select * from t                               └─TableFullScan mpp[tiflash]
+rollback => OK
+set tidb_isolation_read_engines = 'tiflash' => OK
+set tidb_enforce_mpp = 1 => OK
+explain format = 'brief' select * from t where id = 1 for update => ERR Internal : No access path for table 't' is found with 'tidb_isolation_read_eng
+explain format = 'brief' select * from t where a = 1 for update => ERR Internal : No access path for table 't' is found with 'tidb_isolation_read_engi
+explain format = 'brief' select * from t for update => ERR Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tifl
+explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t for update => ERR Internal : No access path for table 't' is found with 
+explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t where id = 1 for update => ERR Internal : No access path for table 't' i
+explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t where id > 0 for update => ERR Internal : No access path for table 't' i
+   select * from t                               TableReader root
+   select * from t                               └─ExchangeSender mpp[tiflash]
+   select * from t                               └─TableFullScan mpp[tiflash]
+begin => OK
+   select * from t where id = 1 for update       SelectLock root
+   select * from t where id = 1 for update       └─TableReader root
+   select * from t where id = 1 for update       └─ExchangeSender mpp[tiflash]
+   select * from t where id = 1 for update       └─TableRangeScan mpp[tiflash]
+   select * from t where a = 1 for update        SelectLock root
+   select * from t where a = 1 for update        └─TableReader root
+   select * from t where a = 1 for update        └─ExchangeSender mpp[tiflash]
+   select * from t where a = 1 for update        └─TableFullScan mpp[tiflash]
+   select * from t for update                    SelectLock root
+   select * from t for update                    └─TableReader root
+   select * from t for update                    └─ExchangeSender mpp[tiflash]
+   select * from t for update                    └─TableFullScan mpp[tiflash]
+   select /*H*/ * from t for update              SelectLock root
+   select /*H*/ * from t for update              └─TableReader root
+   select /*H*/ * from t for update              └─ExchangeSender mpp[tiflash]
+   select /*H*/ * from t for update              └─TableFullScan mpp[tiflash]
+   select /*H*/ * from t where id = 1 for update SelectLock root
+   select /*H*/ * from t where id = 1 for update └─TableReader root
+   select /*H*/ * from t where id = 1 for update └─ExchangeSender mpp[tiflash]
+   select /*H*/ * from t where id = 1 for update └─TableRangeScan mpp[tiflash]
+   select /*H*/ * from t where id > 0 for update SelectLock root
+   select /*H*/ * from t where id > 0 for update └─TableReader root
+   select /*H*/ * from t where id > 0 for update └─ExchangeSender mpp[tiflash]
+   select /*H*/ * from t where id > 0 for update └─TableRangeScan mpp[tiflash]
+   select * from t                               TableReader root
+   select * from t                               └─ExchangeSender mpp[tiflash]
+   select * from t                               └─TableFullScan mpp[tiflash]
+rollback => OK
+set tidb_isolation_read_engines = 'tikv' => OK
+set tidb_enforce_mpp = 0 => OK
+   select * from t where id = 1 for update       Point_Get root
+   select * from t where a = 1 for update        SelectLock root
+   select * from t where a = 1 for update        └─IndexReader root
+   select * from t where a = 1 for update        └─IndexRangeScan cop[tikv]
+   select * from t for update                    SelectLock root
+   select * from t for update                    └─IndexReader root
+   select * from t for update                    └─IndexFullScan cop[tikv]
+   select /*H*/ * from t for update              SelectLock root
+   select /*H*/ * from t for update              └─IndexReader root
+   select /*H*/ * from t for update              └─IndexFullScan cop[tikv]
+    WARN Warning 1815 No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, p
+   select /*H*/ * from t where id = 1 for update Point_Get root
+   select /*H*/ * from t where id > 0 for update SelectLock root
+   select /*H*/ * from t where id > 0 for update └─TableReader root
+   select /*H*/ * from t where id > 0 for update └─TableRangeScan cop[tikv]
+    WARN Warning 1815 No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, p
+   select * from t                               IndexReader root
+   select * from t                               └─IndexFullScan cop[tikv]
+begin => OK
+   select * from t where id = 1 for update       Point_Get root lock
+   select * from t where a = 1 for update        SelectLock root
+   select * from t where a = 1 for update        └─IndexReader root
+   select * from t where a = 1 for update        └─IndexRangeScan cop[tikv]
+   select * from t for update                    SelectLock root
+   select * from t for update                    └─IndexReader root
+   select * from t for update                    └─IndexFullScan cop[tikv]
+explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t for update => ERR Internal : Can't find a proper physical plan for this 
+   select /*H*/ * from t where id = 1 for update Point_Get root lock
+explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t where id > 0 for update => ERR Internal : Can't find a proper physical p
+   select * from t                               IndexReader root
+   select * from t                               └─IndexFullScan cop[tikv]
+rollback => OK
+set tidb_isolation_read_engines = 'tikv' => OK
+set tidb_enforce_mpp = 1 => OK
+   select * from t where id = 1 for update       Point_Get root
+   select * from t where a = 1 for update        SelectLock root
+   select * from t where a = 1 for update        └─IndexReader root
+   select * from t where a = 1 for update        └─IndexRangeScan cop[tikv]
+    WARN Warning 1105 MPP mode may be blocked because the query is not readonly and sql mode is strict.
+   select * from t for update                    SelectLock root
+   select * from t for update                    └─IndexReader root
+   select * from t for update                    └─IndexFullScan cop[tikv]
+    WARN Warning 1105 MPP mode may be blocked because the query is not readonly and sql mode is strict.
+   select /*H*/ * from t for update              SelectLock root
+   select /*H*/ * from t for update              └─IndexReader root
+   select /*H*/ * from t for update              └─IndexFullScan cop[tikv]
+    WARN Warning 1105 MPP mode may be blocked because the query is not readonly and sql mode is strict.
+    WARN Warning 1815 No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, p
+   select /*H*/ * from t where id = 1 for update Point_Get root
+   select /*H*/ * from t where id > 0 for update SelectLock root
+   select /*H*/ * from t where id > 0 for update └─TableReader root
+   select /*H*/ * from t where id > 0 for update └─TableRangeScan cop[tikv]
+    WARN Warning 1105 MPP mode may be blocked because the query is not readonly and sql mode is strict.
+    WARN Warning 1815 No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, p
+   select * from t                               IndexReader root
+   select * from t                               └─IndexFullScan cop[tikv]
+    WARN Warning 1105 MPP mode may be blocked because 'tidb_isolation_read_engines'(value: 'tikv') not match, need 'tiflash'
+begin => OK
+   select * from t where id = 1 for update       Point_Get root lock
+   select * from t where a = 1 for update        SelectLock root
+   select * from t where a = 1 for update        └─IndexReader root
+   select * from t where a = 1 for update        └─IndexRangeScan cop[tikv]
+    WARN Warning 1105 MPP mode may be blocked because the query is not readonly and sql mode is strict.
+   select * from t for update                    SelectLock root
+   select * from t for update                    └─IndexReader root
+   select * from t for update                    └─IndexFullScan cop[tikv]
+    WARN Warning 1105 MPP mode may be blocked because the query is not readonly and sql mode is strict.
+explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t for update => ERR Internal : Can't find a proper physical plan for this 
+   select /*H*/ * from t where id = 1 for update Point_Get root lock
+explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t where id > 0 for update => ERR Internal : Can't find a proper physical p
+   select * from t                               IndexReader root
+   select * from t                               └─IndexFullScan cop[tikv]
+    WARN Warning 1105 MPP mode may be blocked because 'tidb_isolation_read_engines'(value: 'tikv') not match, need 'tiflash'
+rollback => OK

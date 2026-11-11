@@ -1745,6 +1745,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_selected_lock_keys(self.selected_lock_keys_ref().clone())
                     .with_pessimistic_transaction(self.statement_is_pessimistic())
                     .with_in_transaction(!self.is_autocommit() || self.in_transaction())
+                    .with_txn_is_explicit(self.server_status_in_trans())
                     .with_optimistic_transaction(
                         (!self.is_autocommit() || self.in_transaction())
                             && !self.statement_txn_mode().is_pessimistic(),
@@ -1948,6 +1949,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_selected_lock_keys(self.selected_lock_keys_ref().clone())
                 .with_pessimistic_transaction(self.statement_is_pessimistic())
                 .with_in_transaction(!self.is_autocommit() || self.in_transaction())
+                .with_txn_is_explicit(self.server_status_in_trans())
                 .with_optimistic_transaction(
                     (!self.is_autocommit() || self.in_transaction())
                         && !self.statement_txn_mode().is_pessimistic(),
@@ -2589,6 +2591,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// Whether a transaction is open (Go `SessionVars.InTxn`, the wire's
     /// `SERVER_STATUS_IN_TRANS`).
     fn in_transaction(&self) -> bool;
+    /// Go `SessionVars.TxnCtx.IsExplicit`, which `SetInTxn(true)` sets with
+    /// the `ServerStatusInTrans` bit.
+    fn server_status_in_trans(&self) -> bool;
     /// Go `StmtCtx.RCCheckTS`, decided when the statement started.
     fn stmt_rc_check_ts(&self) -> bool;
     /// The Go pessimistic provider that takes this statement's

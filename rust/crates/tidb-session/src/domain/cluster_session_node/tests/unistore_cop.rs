@@ -29796,3 +29796,156 @@ fn fix_control_46177_off_skips_the_enforced_data_source_plan_as_go() {
         ]
     );
 }
+
+/// Go `buildDataSource` leaves a for-update read in an explicit transaction
+/// its paths (`isForUpdateReadInExplicitTxn`), `findBestTask4LogicalDataSource`
+/// filters them by the isolation read engines when TiKV is one, `Optimize`
+/// tries the fast plan only then, a point get is a candidate before the
+/// store hint skips its path, and a projection asks for an MPP child only
+/// while TiFlash is still an isolation read engine. The fixture is a Go
+/// testkit capture of the same statements over an available TiFlash
+/// replica: each plan row's id, task and lock, and each warning.
+#[test]
+fn a_for_update_read_plans_over_a_tiflash_replica_like_go() {
+    let mut got: Vec<String> = Vec::new();
+    let clip = |line: String, width: usize| line.chars().take(width).collect::<String>();
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(4201)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    rows(&mut session, "create table t(id int primary key, a int, key(a))");
+    rows(&mut session, "insert into t values (1,1),(2,2)");
+    session
+        .node_conn()
+        .execute_write("ALTER TABLE test.t SET HYPO TIFLASH REPLICA 1")
+        .unwrap();
+    let mut run = |q: &str| {
+        use crate::domain::resultset_source::ResultSetSource;
+        let mut result = match session.node_conn().execute(q) {
+            Ok(result) => result,
+            Err(error) => {
+                got.push(clip(format!("{q} => ERR {}", error.message).replace("[planner:1815]", ""), 150));
+                return;
+            }
+        };
+        let source = result.source();
+        let mut all = Vec::new();
+        loop {
+            match source.next_batch(8) {
+                Ok(batch) if batch.is_empty() => break,
+                Ok(batch) => all.extend(batch),
+                Err(error) => {
+                    got.push(clip(format!("{q} => ERR {}", error.message).replace("[planner:1815]", ""), 150));
+                    return;
+                }
+            }
+        }
+        let _ = source.finish();
+        drop(result);
+        if !q.starts_with("explain") {
+            got.push(format!("{q} => OK"));
+            return;
+        }
+        let statement = q
+            .replace("explain format = 'brief' ", "")
+            .replace("/*+ read_from_storage(tiflash[t]) */", "/*H*/");
+        for row in displayed(all) {
+            let row = row.join(" ");
+            let mut fields = row.split_whitespace();
+            let id = fields.next().unwrap_or_default();
+            let rest = fields
+                .filter(|field| {
+                    ["cop", "mpp", "batch", "root"].iter().any(|task| field.starts_with(task)) || field.contains("lock")
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            got.push(format!("   {:<45} {id} {rest}", clip(statement.clone(), 45)));
+        }
+        for row in displayed(rows(&mut session, "show warnings")) {
+            let warning = row.join(" ").replace(['[', ']'], "");
+            let warning = warning.split_whitespace().collect::<Vec<_>>().join(" ");
+            got.push(format!("    {}", clip(format!("WARN {warning}"), 120)));
+        }
+    };
+    let queries = [
+        "explain format = 'brief' select * from t where id = 1 for update",
+        "explain format = 'brief' select * from t where a = 1 for update",
+        "explain format = 'brief' select * from t for update",
+        "explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t for update",
+        "explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t where id = 1 for update",
+        "explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t where id > 0 for update",
+        "explain format = 'brief' select * from t",
+    ];
+    for engines in ["tikv,tiflash", "tiflash", "tikv"] {
+        for mpp in ["0", "1"] {
+            run(&format!("set tidb_isolation_read_engines = '{engines}'"));
+            run(&format!("set tidb_enforce_mpp = {mpp}"));
+            for q in queries {
+                run(q);
+            }
+            run("begin");
+            for q in queries {
+                run(q);
+            }
+            run("rollback");
+        }
+    }
+    let want = include_str!("../../../../testdata/for_update_read_tiflash_go.txt");
+    assert_eq!(got.join("\n"), want.trim_end_matches('\n'));
+}
+
+/// Go `TestAlternativeEngineRestrictedRounds`' plans
+/// (`casetest/mpp/testdata/integration_suite_out.json`): the mixed-engine
+/// round-1 plan gives way to the cheaper fully-TiFlash plan when the
+/// tikv-only / tiflash-only rounds run, and survives a `READ_FROM_STORAGE`
+/// hint or a missing TiFlash replica.
+#[test]
+fn the_engine_restricted_rounds_pick_gos_plans() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(4202)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    // Go `createEngineRoundTables`.
+    rows(&mut session, "create table alt_engine_flash(a int, b int, c int)");
+    let flash = (0..5000).map(|i| format!("({}, {i}, {})", i % 50, i % 10)).collect::<Vec<_>>().join(",");
+    rows(&mut session, &format!("insert into alt_engine_flash values {flash}"));
+    rows(&mut session, "create table alt_engine_kv(a int primary key, b int)");
+    let kv = (0..2000).map(|i| format!("({i}, {})", i % 50)).collect::<Vec<_>>().join(",");
+    rows(&mut session, &format!("insert into alt_engine_kv values {kv}"));
+    rows(&mut session, "create table alt_engine_norep(a int primary key, b int)");
+    rows(&mut session, "insert into alt_engine_norep values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)");
+    rows(&mut session, "analyze table alt_engine_flash, alt_engine_kv, alt_engine_norep");
+    for table in ["alt_engine_flash", "alt_engine_kv"] {
+        session
+            .node_conn()
+            .execute_write(&format!("ALTER TABLE test.{table} SET HYPO TIFLASH REPLICA 1"))
+            .unwrap();
+    }
+    let suites: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../../../../pkg/planner/core/casetest/mpp/testdata/integration_suite_out.json"
+    ))
+    .unwrap();
+    let cases = suites
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|suite| suite["Name"] == "TestAlternativeEngineRestrictedRounds")
+        .unwrap()["Cases"]
+        .as_array()
+        .unwrap();
+    let mut failures = Vec::new();
+    for case in cases {
+        let sql = case["SQL"].as_str().unwrap();
+        if sql.starts_with("set ") {
+            rows(&mut session, sql);
+            continue;
+        }
+        let got: Vec<String> = displayed(rows(&mut session, sql)).iter().map(|row| row.join(" ")).collect();
+        let want: Vec<String> =
+            case["Plan"].as_array().into_iter().flatten().map(|line| line.as_str().unwrap().to_owned()).collect();
+        if got != want {
+            failures.push(format!("{sql}\n  got  {got:#?}\n  want {want:#?}"));
+        }
+    }
+    assert!(failures.is_empty(), "{} of {} cases\n{}", failures.len(), cases.len(), failures.join("\n"));
+}
