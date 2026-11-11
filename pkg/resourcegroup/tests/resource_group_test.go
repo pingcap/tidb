@@ -363,8 +363,7 @@ func TestResourceGroupBasic(t *testing.T) {
 		var cleanupAttempts atomic.Int32
 		cleanupTimes := make(chan time.Time, 3)
 		retryWait := ddl.GetWaitTimeWhenErrorOccurred()
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", func(jobW *model.JobW) {
-			job := jobW.Job
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeReconcileCancelledResourceGroupAlter", func(job *model.Job) {
 			if job.Type == model.ActionAlterResourceGroup && job.SchemaName == "retry_cancel_rg" && job.IsCancelled() {
 				inCancelledCleanup.Store(true)
 			}

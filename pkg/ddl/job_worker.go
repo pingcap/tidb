@@ -583,6 +583,7 @@ func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
 	if job.Type == model.ActionAlterResourceGroup && job.IsCancelled() {
 		// Keep the cancelled job durable until PD agrees with the persisted
 		// metadata, even if compensation failed or the owner changed.
+		failpoint.InjectCall("beforeReconcileCancelledResourceGroupAlter", job)
 		if err := reconcileCancelledResourceGroupAlter(jobCtx, job); err != nil {
 			w.sess.Rollback()
 			// This completion path bypasses the normal job-step retry delay.
