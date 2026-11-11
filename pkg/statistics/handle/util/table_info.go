@@ -28,16 +28,6 @@ type TableInfoGetter interface {
 	// TableInfoByID returns the table info specified by the physicalID.
 	// If the physicalID is corresponding to a partition, return its parent table.
 	TableInfoByID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool)
-<<<<<<< HEAD
-	// TableInfoByIDForInitStats returns the table info specified by the physicalID for initializing stats.
-	// If the physicalID corresponds to a partition, it returns its parent table.
-	// This method is optimized for InfoSchema V1 by caching partition-to-table mappings.
-	TableInfoByIDForInitStats(is infoschema.InfoSchema, physicalID int64) (table.Table, bool)
-	// TableItemByID returns the schema name and table name specified by the physicalID.
-	// This is pure memory operation.
-	TableItemByID(is infoschema.InfoSchema, id int64) (infoschema.TableItem, bool)
-=======
->>>>>>> 249288e17a4 (statistics: fix stats cache missing slow stats delta dumps (#72812))
 }
 
 // tableInfoGetterImpl is used to get table meta info.
@@ -59,35 +49,6 @@ func (*tableInfoGetterImpl) TableInfoByID(is infoschema.InfoSchema, physicalID i
 	return tbl, tbl != nil
 }
 
-<<<<<<< HEAD
-// TableInfoByIDForInitStats returns the table info specified by the physicalID for initializing stats.
-func (c *tableInfoGetterImpl) TableInfoByIDForInitStats(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
-	// NOTE: For InfoSchema V2, partition lookups are efficient,
-	// We can directly search for partitioned tables without maintaining a separate cache, making TableByID sufficient for both
-	// regular tables and partitions.
-	isV2, _ := infoschema.IsV2(is)
-	if isV2 {
-		return c.TableInfoByID(is, physicalID)
-	}
-
-	// For InfoSchema V1, partition lookups require a full scan of all tables, which is
-	// expensive. We maintain a cached pid2tid map to optimize these lookups during stats
-	// initialization. Locking is needed because this method may be called in parallel.
-	// See FindTableByPartitionID implementation for more details on V1's search cost.
-	c.forInitStatsAndInfoSchemaV1Only.mu.Lock()
-	defer c.forInitStatsAndInfoSchemaV1Only.mu.Unlock()
-	if is.SchemaMetaVersion() != c.forInitStatsAndInfoSchemaV1Only.schemaVersion {
-		c.forInitStatsAndInfoSchemaV1Only.schemaVersion = is.SchemaMetaVersion()
-		c.forInitStatsAndInfoSchemaV1Only.pid2tid = buildPartitionID2TableID(is)
-	}
-	if id, ok := c.forInitStatsAndInfoSchemaV1Only.pid2tid[physicalID]; ok {
-		return is.TableByID(context.Background(), id)
-	}
-	return is.TableByID(context.Background(), physicalID)
-}
-
-=======
->>>>>>> 249288e17a4 (statistics: fix stats cache missing slow stats delta dumps (#72812))
 // buildPartitionID2TableID builds the map from partition ID to table ID.
 func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
 	mapper := make(map[int64]int64)

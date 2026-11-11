@@ -121,14 +121,14 @@ func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err err
 	}, util.FlagWrapTxn)
 }
 
-<<<<<<< HEAD
 // UpdateStatsVersion will set statistics version to the newest TS,
 // then tidb-server will reload automatic.
 func (s *statsReadWriter) UpdateStatsVersion() error {
 	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		return UpdateStatsVersion(util.StatsCtx, sctx)
 	}, util.FlagWrapTxn)
-=======
+}
+
 // IsStatsMetaWriteTooSlow reports whether a stats_meta write that took dur can be missed by the
 // stats cache Update of other TiDB nodes, which looks back only LeaseOffset * lease from its newest version.
 func IsStatsMetaWriteTooSlow(lease, dur time.Duration) bool {
@@ -136,7 +136,6 @@ func IsStatsMetaWriteTooSlow(lease, dur time.Duration) bool {
 	// This is why we need to explicitly check the lease here. Without this check,
 	// the duration validation would always evaluate to true, which is not the intended behavior.
 	return lease > 0 && dur >= cache.LeaseOffset*lease
->>>>>>> 249288e17a4 (statistics: fix stats cache missing slow stats delta dumps (#72812))
 }
 
 // handleSlowStatsSaving is used to handle the slow stats saving process.

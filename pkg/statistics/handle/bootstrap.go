@@ -51,7 +51,6 @@ const (
 	initStatsPercentageInterval = float64(33)
 )
 
-<<<<<<< HEAD
 var maxTidRecord MaxTidRecord
 
 // GetMaxTidRecordForTest gets the max tid record for test.
@@ -69,19 +68,6 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 	var physicalID, maxPhysicalID int64
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID = row.GetInt64(1)
-=======
-func (*Handle) initStatsMeta4Chunk(snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) int64 {
-	var (
-		physicalID    int64
-		maxPhysicalID int64
-	)
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		physicalID = row.GetInt64(1)
-		if _, found := snapshotTableInfoGetter.TableItemByID(physicalID); !found {
-			// The table corresponding to this physical ID has been dropped but the stats meta has not yet been garbage collected.
-			continue
-		}
->>>>>>> 249288e17a4 (statistics: fix stats cache missing slow stats delta dumps (#72812))
 		maxPhysicalID = max(physicalID, maxPhysicalID)
 		newHistColl := *statistics.NewHistColl(physicalID, true, row.GetInt64(3), row.GetInt64(2), 4, 4)
 		snapshot := row.GetUint64(4)
@@ -114,11 +100,7 @@ func (*Handle) initStatsMeta4Chunk(snapshotTableInfoGetter *util.SnapshotTableIn
 	}
 }
 
-<<<<<<< HEAD
 func (h *Handle) initStatsMeta(ctx context.Context) (statstypes.StatsCache, error) {
-=======
-func (h *Handle) initStatsMeta(ctx context.Context, sctx sessionctx.Context, snapshotTableInfoGetter *util.SnapshotTableInfoGetter, tableIDs ...int64) (statstypes.StatsCache, int64, error) {
->>>>>>> 249288e17a4 (statistics: fix stats cache missing slow stats delta dumps (#72812))
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	sql := "select HIGH_PRIORITY version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta"
 	rc, err := util.Exec(h.initStatsCtx, sql)
@@ -140,12 +122,7 @@ func (h *Handle) initStatsMeta(ctx context.Context, sctx sessionctx.Context, sna
 		if req.NumRows() == 0 {
 			break
 		}
-<<<<<<< HEAD
 		h.initStatsMeta4Chunk(tables, iter)
-=======
-		chunkMax := h.initStatsMeta4Chunk(snapshotTableInfoGetter, cache, iter)
-		maxPhysicalID = max(maxPhysicalID, chunkMax)
->>>>>>> 249288e17a4 (statistics: fix stats cache missing slow stats delta dumps (#72812))
 	}
 	return tables, nil
 }
@@ -364,25 +341,9 @@ func (h *Handle) initStatsHistogramsLite(ctx context.Context, cache statstypes.S
 	return nil
 }
 
-<<<<<<< HEAD
-func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
+func (h *Handle) initStatsHistograms(snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache statstypes.StatsCache) error {
 	sql := genInitStatsHistogramsSQL(false)
 	rc, err := util.Exec(h.initStatsCtx, sql)
-=======
-func (h *Handle) initStatsHistogramsByPaging(snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
-	return h.Pool.SPool().WithSession(func(se *syssession.Session) error {
-		return se.WithSessionContext(func(sctx sessionctx.Context) error {
-			return h.initStatsHistogramsByPagingWithSCtx(sctx, snapshotTableInfoGetter, cache, task, totalMemory)
-		})
-	})
-}
-
-// initStatsHistogramsByPagingWithSCtx contains the core business logic for initStatsHistogramsByPaging.
-// This method preserves git blame history by keeping the original logic intact.
-func (h *Handle) initStatsHistogramsByPagingWithSCtx(sctx sessionctx.Context, snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
-	sql := genInitStatsHistogramsSQL(newGenHistSQLOptionsForPaging([2]int64{task.StartTid, task.EndTid}))
-	rc, err := util.Exec(sctx, sql)
->>>>>>> 249288e17a4 (statistics: fix stats cache missing slow stats delta dumps (#72812))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -398,11 +359,7 @@ func (h *Handle) initStatsHistogramsByPagingWithSCtx(sctx sessionctx.Context, sn
 		if req.NumRows() == 0 {
 			break
 		}
-<<<<<<< HEAD
-		h.initStatsHistograms4Chunk(is, cache, iter, false)
-=======
-		h.initStatsHistograms4Chunk(snapshotTableInfoGetter, cache, iter, isFullCache(cache, totalMemory))
->>>>>>> 249288e17a4 (statistics: fix stats cache missing slow stats delta dumps (#72812))
+		h.initStatsHistograms4Chunk(snapshotTableInfoGetter, cache, iter, false)
 		// The same table may continue in the next chunk. Drain LFU async admission/rejection
 		// before the next chunk reads or mutates it again.
 		cache.WaitForAsyncUpdates()
@@ -410,7 +367,7 @@ func (h *Handle) initStatsHistogramsByPagingWithSCtx(sctx sessionctx.Context, sn
 	return nil
 }
 
-func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
+func (h *Handle) initStatsHistogramsByPaging(snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
 	se, err := h.Pool.SPool().Get()
 	if err != nil {
 		return err
@@ -442,7 +399,7 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsHistograms4Chunk(is, cache, iter, IsFullCacheFunc(cache, totalMemory))
+		h.initStatsHistograms4Chunk(snapshotTableInfoGetter, cache, iter, IsFullCacheFunc(cache, totalMemory))
 		// The same table may continue in the next chunk. Drain LFU async admission/rejection
 		// before the next chunk reads or mutates it again.
 		cache.WaitForAsyncUpdates()
@@ -450,11 +407,11 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 	return nil
 }
 
-func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache statstypes.StatsCache, totalMemory uint64) error {
+func (h *Handle) initStatsHistogramsConcurrency(snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache statstypes.StatsCache, totalMemory uint64) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
 	ls := initstats.NewRangeWorker("histogram", func(task initstats.Task) error {
-		return h.initStatsHistogramsByPaging(is, cache, task, totalMemory)
+		return h.initStatsHistogramsByPaging(snapshotTableInfoGetter, cache, task, totalMemory)
 	}, uint64(maxTid), uint64(initStatsStep), initStatsPercentageInterval)
 	ls.LoadStats()
 	for tid <= maxTid {
@@ -464,50 +421,6 @@ func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache 
 		})
 		tid += initStatsStep
 	}
-<<<<<<< HEAD
-=======
-}
-
-// tableListStrategy is to load stats for a list of table IDs.
-// Used for partial loading. Applicable only when the refresh stats command is run with a specified database or table.
-type tableListStrategy struct {
-	tableIDs []int64
-}
-
-func newTableListStrategy(tableIDs []int64) tableListStrategy {
-	return tableListStrategy{
-		tableIDs: tableIDs,
-	}
-}
-
-func (t tableListStrategy) calculateTotalTaskCnt() uint64 {
-	intest.Assert(len(t.tableIDs) > 0, "tableIDs should not be empty")
-	return uint64(len(t.tableIDs))
-}
-
-func (t tableListStrategy) generateAndSendTasks(worker *initstats.RangeWorker) {
-	for _, tableID := range t.tableIDs {
-		worker.SendTask(initstats.Task{
-			StartTid: tableID,
-			EndTid:   tableID + 1,
-		})
-	}
-}
-
-func (h *Handle) initStatsHistogramsConcurrently(snapshotTableInfoGetter *util.SnapshotTableInfoGetter, cache statstypes.StatsCache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
-	totalTaskCnt := strategy.calculateTotalTaskCnt()
-	ls := initstats.NewRangeWorker(
-		"histogram",
-		func(task initstats.Task) error {
-			return h.initStatsHistogramsByPaging(snapshotTableInfoGetter, cache, task, totalMemory)
-		},
-		concurrency,
-		totalTaskCnt,
-		initStatsPercentageInterval,
-	)
-	ls.LoadStats()
-	strategy.generateAndSendTasks(ls)
->>>>>>> 249288e17a4 (statistics: fix stats cache missing slow stats delta dumps (#72812))
 	ls.Wait()
 	return nil
 }
@@ -887,12 +800,7 @@ func (h *Handle) InitStatsLite(ctx context.Context) (err error) {
 	}
 	failpoint.Inject("beforeInitStatsLite", func() {})
 	start := time.Now()
-<<<<<<< HEAD
 	cache, err := h.initStatsMeta(ctx)
-=======
-	snapshotTableInfoGetter := util.NewSnapshotTableInfoGetter(is)
-	cache, _, err := h.initStatsMeta(ctx, sctx, snapshotTableInfoGetter, tableIDs...)
->>>>>>> 249288e17a4 (statistics: fix stats cache missing slow stats delta dumps (#72812))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -935,12 +843,8 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	}
 	failpoint.Inject("beforeInitStats", func() {})
 	start := time.Now()
-<<<<<<< HEAD
-	cache, err := h.initStatsMeta(ctx)
-=======
 	snapshotTableInfoGetter := util.NewSnapshotTableInfoGetter(is)
-	cache, maxTableID, err := h.initStatsMeta(ctx, sctx, snapshotTableInfoGetter, tableIDs...)
->>>>>>> 249288e17a4 (statistics: fix stats cache missing slow stats delta dumps (#72812))
+	cache, err := h.initStatsMeta(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -950,16 +854,12 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	statslogutil.StatsLogger().Info("Complete loading the stats meta", zap.Duration("duration", time.Since(start)))
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval)
 	start = time.Now()
-<<<<<<< HEAD
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err = h.initStatsHistogramsConcurrency(is, cache, totalMemory)
+		err = h.initStatsHistogramsConcurrency(snapshotTableInfoGetter, cache, totalMemory)
 	} else {
-		err = h.initStatsHistograms(is, cache)
+		err = h.initStatsHistograms(snapshotTableInfoGetter, cache)
 	}
 	statslogutil.StatsLogger().Info("Complete loading the histogram", zap.Duration("duration", time.Since(start)))
-=======
-	err = h.initStatsHistogramsConcurrently(snapshotTableInfoGetter, cache, totalMemory, concurrency, strategy)
->>>>>>> 249288e17a4 (statistics: fix stats cache missing slow stats delta dumps (#72812))
 	if err != nil {
 		return errors.Trace(err)
 	}

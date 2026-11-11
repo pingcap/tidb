@@ -161,7 +161,6 @@ func UpdateStatsMeta(
 	return nil
 }
 
-<<<<<<< HEAD
 // InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
 func InsertExtendedStats(sctx sessionctx.Context,
 	statsCache types.StatsCache,
@@ -267,7 +266,8 @@ func removeExtendedStatsItem(statsCache types.StatsCache,
 	statsCache.UpdateStatsCache(types.CacheUpdate{
 		Updated: []*statistics.Table{newTbl},
 	})
-=======
+}
+
 // execAndCloseRecordSet executes a statement whose rows are not needed, such as a lock read.
 // The statement reaches the slow log and the execution duration metrics only when its RecordSet is closed.
 func execAndCloseRecordSet(ctx context.Context, sctx sessionctx.Context, sql string) error {
@@ -279,7 +279,6 @@ func execAndCloseRecordSet(ctx context.Context, sctx sessionctx.Context, sql str
 		return rs.Close()
 	}
 	return nil
->>>>>>> 249288e17a4 (statistics: fix stats cache missing slow stats delta dumps (#72812))
 }
 
 var changeGlobalStatsTables = []string{

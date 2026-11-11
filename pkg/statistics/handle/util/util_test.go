@@ -20,14 +20,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
-<<<<<<< HEAD
-=======
 type partitionItemLookupForbiddenInfoSchema struct {
 	infoschema.InfoSchema
 	t *testing.T
@@ -43,7 +43,6 @@ func (is partitionItemLookupForbiddenInfoSchema) TableIDByPartitionID(partitionI
 	return 0, false
 }
 
->>>>>>> 249288e17a4 (statistics: fix stats cache missing slow stats delta dumps (#72812))
 func TestIsSpecialGlobalIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -130,8 +129,6 @@ func TestCallWithSCtxSyncsStmtCtxTimeZone(t *testing.T) {
 	require.NotEqual(t, oldStmtTZ, varsTZ)
 	require.Equal(t, varsTZ, stmtTZ)
 }
-<<<<<<< HEAD
-=======
 
 func TestSnapshotTableInfoGetterAvoidsV1PartitionScan(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -177,128 +174,3 @@ func TestSnapshotTableInfoGetterAvoidsV1PartitionScan(t *testing.T) {
 	_, ok = snapshotGetter.ParentTableID(1 << 60)
 	require.False(t, ok)
 }
-
-type failingStatsGlobalAccessor struct {
-	variable.GlobalVarAccessor
-	failOn string
-}
-
-func (a failingStatsGlobalAccessor) GetGlobalSysVar(name string) (string, error) {
-	if name == a.failOn {
-		return "", errors.New("statistics settings unavailable")
-	}
-	return a.GlobalVarAccessor.GetGlobalSysVar(name)
-}
-
-func TestUpdateSCtxVarsForStatsRestore(t *testing.T) {
-	for _, failOn := range []string{
-		"",
-		vardef.TiDBEnableAsyncMergeGlobalStats,
-		vardef.TiDBAnalyzePartitionConcurrency,
-		vardef.TiDBAnalyzeVersion,
-		vardef.TiDBAnalyzeStoreBatchSize,
-		vardef.TiDBEnableHistoricalStats,
-		vardef.TiDBPartitionPruneMode,
-		vardef.TiDBEnableAnalyzeSnapshot,
-		vardef.TiDBAnalyzeSkipColumnTypes,
-		vardef.TiDBSkipMissingPartitionStats,
-		vardef.InnodbLockWaitTimeout,
-		vardef.TimeZone,
-	} {
-		name := failOn
-		if name == "" {
-			name = "success"
-		}
-		t.Run(name, func(t *testing.T) {
-			sctx := newStatsSessionContextForRestoreTest(t)
-			vars := sctx.GetSessionVars()
-			originTZ := vars.TimeZone
-			if failOn != "" {
-				vars.GlobalVarsAccessor = failingStatsGlobalAccessor{
-					GlobalVarAccessor: vars.GlobalVarsAccessor,
-					failOn:            failOn,
-				}
-			}
-			restore, err := util.UpdateSCtxVarsForStats(sctx)
-			if failOn != "" {
-				require.ErrorContains(t, err, "statistics settings unavailable")
-				require.Nil(t, restore)
-			} else {
-				require.NoError(t, err)
-				require.True(t, vars.EnableAsyncMergeGlobalStats)
-				require.Equal(t, 3, vars.AnalyzePartitionConcurrency)
-				require.Equal(t, 2, vars.AnalyzeVersion)
-				require.Equal(t, 6, vars.AnalyzeStoreBatchSize)
-				require.True(t, vars.EnableHistoricalStats)
-				require.Equal(t, "dynamic", vars.PartitionPruneMode.Load())
-				require.True(t, vars.EnableAnalyzeSnapshot)
-				require.Equal(t, map[string]struct{}{"blob": {}}, vars.AnalyzeSkipColumnTypes)
-				require.True(t, vars.SkipMissingPartitionStats)
-				require.Equal(t, int64(12000), vars.LockWaitTimeout)
-				_, offset := time.Now().In(vars.TimeZone).Zone()
-				require.Equal(t, 3*3600, offset)
-				require.Same(t, vars.TimeZone, vars.StmtCtx.TimeZone())
-				restore()
-			}
-			checkRestoredStatsSessionVars(t, sctx)
-			require.Same(t, originTZ, vars.TimeZone)
-		})
-	}
-	for _, name := range []string{
-		vardef.TiDBAnalyzePartitionConcurrency,
-		vardef.TiDBAnalyzeVersion,
-		vardef.TiDBAnalyzeStoreBatchSize,
-		vardef.InnodbLockWaitTimeout,
-		vardef.TimeZone,
-	} {
-		t.Run("invalid_"+name, func(t *testing.T) {
-			sctx := newStatsSessionContextForRestoreTest(t)
-			vars := sctx.GetSessionVars()
-			require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVarOnly(context.Background(), name, "invalid", false))
-			restore, err := util.UpdateSCtxVarsForStats(sctx)
-			require.Error(t, err)
-			require.Nil(t, restore)
-			checkRestoredStatsSessionVars(t, sctx)
-		})
-	}
-	for _, tc := range []struct {
-		name  string
-		zone  *time.Location
-		value string
-	}{
-		{"system", nil, "SYSTEM"},
-		{"utc", time.UTC, "UTC"},
-		{"fixed offset", time.FixedZone("", 8*3600), "+08:00"},
-	} {
-		t.Run("unloaded/"+tc.name, func(t *testing.T) {
-			sctx := mock.NewContext()
-			vars := sctx.GetSessionVars()
-			vars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
-			vars.TimeZone = tc.zone
-			require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBAnalyzeStoreBatchSize, "6"))
-			require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TimeZone, "+03:00"))
-			for _, name := range []string{vardef.TiDBAnalyzeStoreBatchSize, vardef.TimeZone} {
-				_, loaded := vars.GetSystemVar(name)
-				require.False(t, loaded)
-			}
-			restore, err := util.UpdateSCtxVarsForStats(sctx)
-			require.NoError(t, err)
-			require.Equal(t, 6, vars.AnalyzeStoreBatchSize)
-			restore()
-			value, loaded := vars.GetSystemVar(vardef.TiDBAnalyzeStoreBatchSize)
-			require.True(t, loaded)
-			require.Equal(t, fmt.Sprint(vardef.DefTiDBAnalyzeStoreBatchSize), value)
-			require.Equal(t, vardef.DefTiDBAnalyzeStoreBatchSize, vars.AnalyzeStoreBatchSize)
-			value, loaded = vars.GetSystemVar(vardef.TimeZone)
-			require.True(t, loaded)
-			require.Equal(t, tc.value, value)
-			if tc.zone == nil {
-				require.Nil(t, vars.TimeZone)
-			} else {
-				require.Same(t, tc.zone, vars.TimeZone)
-			}
-			require.Same(t, time.UTC, vars.StmtCtx.TimeZone())
-		})
-	}
-}
->>>>>>> 249288e17a4 (statistics: fix stats cache missing slow stats delta dumps (#72812))

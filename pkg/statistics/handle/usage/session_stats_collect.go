@@ -131,12 +131,8 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 		)
 		batchStart := time.Now()
 		err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-<<<<<<< HEAD
 			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-=======
-			is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 			snapshotTableInfoGetter := utilstats.NewSnapshotTableInfoGetter(is)
->>>>>>> 249288e17a4 (statistics: fix stats cache missing slow stats delta dumps (#72812))
 			batchUpdates = make([]*storage.DeltaUpdate, 0, len(batchTableIDs))
 			// Collect all updates in the batch.
 			for _, id := range batchTableIDs {
@@ -164,12 +160,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 
 			// Process all updates in the batch with a single transaction.
 			// Note: batchUpdates may be modified in dumpStatsDeltaToKV. (e.g. sorting, updating IsLocked)
-<<<<<<< HEAD
-			startTs, updated, err := s.dumpStatsDeltaToKV(is, sctx, batchUpdates)
-=======
-			failpoint.InjectCall("beforeDumpStatsDeltaToKV")
 			startTs, updated, err := s.dumpStatsDeltaToKV(snapshotTableInfoGetter, sctx, batchUpdates)
->>>>>>> 249288e17a4 (statistics: fix stats cache missing slow stats delta dumps (#72812))
 			if err != nil {
 				return errors.Trace(err)
 			}
