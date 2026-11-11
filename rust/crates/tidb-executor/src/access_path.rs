@@ -3396,11 +3396,6 @@ impl IndexRangeSourceExec {
                         ready: Some(Ok(LookupFetch::Completed(completed_rows))),
                         task_tracker: None,
                     });
-                    // The reader takes the completed rows before the table
-                    // workers answer for the handles (`resultCh` receives the
-                    // completed task first), so a parent that needs no more
-                    // ends the read with no row looked up here.
-                    break;
                 }
                 handles.extend(self.batch.drain(self.batch_at..));
                 self.batch_at = self.batch.len();
