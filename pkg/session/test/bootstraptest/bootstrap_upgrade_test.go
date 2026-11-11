@@ -1208,49 +1208,55 @@ func TestUpgradeVersion280MaskingPolicy(t *testing.T) {
 	}
 }
 
-func TestUpgradeVersion316MaterializedViewBootstrap(t *testing.T) {
+func TestUpgradeMaterializedViewBootstrap(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
-	store, dom := session.CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
+	for _, previousVersion := range []int{315, 320} {
+		t.Run(fmt.Sprintf("from_%d", previousVersion), func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
 
-	tk := testkit.NewTestKit(t, store)
-	for _, tableName := range []string{
-		"tidb_mview_refresh_info",
-		"tidb_mlog_purge_info",
-		"tidb_mview_refresh_hist",
-		"tidb_mview_refresh_alert",
-		"tidb_mlog_purge_hist",
-	} {
-		tk.MustExec("DROP TABLE mysql." + tableName)
+			tk := testkit.NewTestKit(t, store)
+			tables := []string{"tidb_mview_fast_refresh_source_info"}
+			if previousVersion < 316 {
+				tables = append(tables,
+					"tidb_mview_refresh_info",
+					"tidb_mlog_purge_info",
+					"tidb_mview_refresh_hist",
+					"tidb_mview_refresh_alert",
+					"tidb_mlog_purge_hist",
+				)
+			}
+			for _, tableName := range tables {
+				tk.MustExec("DROP TABLE mysql." + tableName)
+			}
+
+			se := session.CreateSessionAndSetID(t, store)
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(previousVersion)))
+			require.NoError(t, txn.Commit(context.Background()))
+			revertVersionAndVariables(t, se, previousVersion)
+			store.SetOption(session.StoreBootstrappedKey, nil)
+			ver, err := session.GetBootstrapVersion(se)
+			require.NoError(t, err)
+			require.EqualValues(t, previousVersion, ver)
+
+			dom.Close()
+			newDom, err := session.BootstrapSession(store)
+			require.NoError(t, err)
+			defer newDom.Close()
+
+			tk = testkit.NewTestKit(t, store)
+			ver, err = session.GetBootstrapVersion(tk.Session())
+			require.NoError(t, err)
+			require.Equal(t, session.CurrentBootstrapVersion, ver)
+			checkMaterializedViewBootstrapSchema(t, tk)
+			tk.MustQuery("SELECT MVIEW_ID, MLOG_ID FROM mysql.tidb_mview_fast_refresh_source_info").Check(testkit.Rows())
+		})
 	}
-
-	se := session.CreateSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(316 - 1)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	revertVersionAndVariables(t, se, 316-1)
-	store.SetOption(session.StoreBootstrappedKey, nil)
-	ver, err := session.GetBootstrapVersion(se)
-	require.NoError(t, err)
-	require.Equal(t, int64(316-1), ver)
-
-	dom.Close()
-	newDom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	defer newDom.Close()
-
-	tk = testkit.NewTestKit(t, store)
-	ver, err = session.GetBootstrapVersion(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, session.CurrentBootstrapVersion, ver)
-	checkMaterializedViewBootstrapSchema(t, tk)
 }
 
 func TestUpgradeVersion317OperateViewPrivilege(t *testing.T) {
