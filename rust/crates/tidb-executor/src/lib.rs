@@ -185,7 +185,6 @@ pub mod union_all;
 pub mod slow_query;
 pub use partition_routing::{PartitionKind, PartitionExpr, RangeBound};
 pub mod expand;
-pub mod fts_like_rewrite;
 pub mod projection;
 pub mod remote_scan;
 pub mod selection;
@@ -229,7 +228,7 @@ pub use driver::{
         PreparedPointGetPlan, PreparedSelectExecution, PreparedSelectPlan,
     },
     bind_parameters, bind_prepared_statement, bind_statement, bound_parameter_values,
-    build_prepared_dml_plan, fts_columns_are_strings, parameter_count, parsed_parameter_count,
+    build_prepared_dml_plan, parameter_count, parsed_parameter_count,
     plan_query_meta_stmt, plan_query_meta_stmt_with_subqueries, plan_select_meta_stmt,
     run_delete_in, run_delete_on, run_delete_stmt, run_delete_stmt_with_physical, run_insert_in,
     run_insert_on, run_insert_reporting, run_insert_stmt, run_insert_stmt_with_physical,

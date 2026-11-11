@@ -1038,18 +1038,11 @@ impl PreparedSelectPlan {
             Some((plan, generation)) => (plan, generation, true),
             None => {
                 let ctx = ctx?.clone().with_prepared_params(Arc::clone(&parameters));
-                let mut statement = crate::bind_prepared_statement(statement, values).ok()?;
+                let statement = crate::bind_prepared_statement(statement, values).ok()?;
                 // Go `GetPlanFromPlanCache` enables the cache before
                 // `generateNewPlan` optimizes, so the LIKE fallback's
                 // `SetSkipPlanCache` over a parameter warns on this statement.
                 ctx.start_prepared_range_tracking();
-                crate::fts_like_rewrite::rewrite_stmt_fts(
-                    &mut statement,
-                    catalog,
-                    current_database,
-                    &ctx,
-                )
-                .ok()?;
                 let tidb_ast::Stmt::Query(query) = statement else {
                     return None;
                 };

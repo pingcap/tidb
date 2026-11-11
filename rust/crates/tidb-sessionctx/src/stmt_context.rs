@@ -440,6 +440,17 @@ pub trait TiFlashClusterInfo: Send + Sync {
 #[derive(Clone, Default)]
 pub struct StmtContext(Arc<StmtContextData>);
 
+/// Go `LogicalPlanBuildState`: what [`StmtContext::save_logical_plan_build_ctx`]
+/// keeps of the statement for the rounds that build its plan again.
+#[derive(Clone, Debug)]
+pub struct LogicalPlanBuildState {
+    warnings: usize,
+    extra_warnings: usize,
+    tracker: Option<(bool, tidb_context::PlanCacheType, String, bool, bool)>,
+    skip_plan_cache_reason: Option<String>,
+    plan_cache_unqualified: Option<String>,
+}
+
 impl std::ops::Deref for StmtContext {
     type Target = StmtContextData;
 
@@ -1436,6 +1447,7 @@ pub struct StmtContextData {
     /// Go `SessionVars.EnableSemiJoinRewrite`.
     enable_semi_join_rewrite: bool,
     enable_alternative_logical_plans: bool,
+    alternative_logical_plan_signals: Arc<tidb_exprctx::context::AlternativeLogicalPlanSignals>,
     /// Go `SessionVars.ExplainNonEvaledSubQuery`
     /// (`tidb_opt_enable_non_eval_scalar_subquery`).
     explain_non_evaled_sub_query: bool,
@@ -3241,6 +3253,7 @@ impl StmtContext {
             enable_semi_join_rewrite: tidb_vardef::defaults::DEF_OPT_ENABLE_SEMI_JOIN_REWRITE,
             enable_alternative_logical_plans:
                 tidb_vardef::defaults::DEF_OPT_ENABLE_ALTERNATIVE_LOGICAL_PLANS,
+            alternative_logical_plan_signals: Arc::default(),
             explain_non_evaled_sub_query: tidb_vardef::defaults::DEF_TIDB_OPT_EXPLAIN_EVALED_SUBQUERY,
             allow_in_subq_to_join_and_agg: true,
             enable_no_decorrelate_in_select:
@@ -4347,6 +4360,79 @@ impl StmtContext {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if current.is_none() {
             *current = Some(reason);
+        }
+    }
+
+    /// Go `StmtCtx.ResetAlternativeLogicalPlanSignals`, with the plan
+    /// builder's marks a fresh round starts without.
+    pub fn reset_alternative_logical_plan_signals(&self) {
+        let signals = &self.alternative_logical_plan_signals;
+        signals.fts_like_fallback.store(false, Ordering::Release);
+        signals.has_predicate_context_match.store(false, Ordering::Release);
+        self.reset_alternative_logical_plan_marks();
+    }
+
+    /// The statement's alternative-logical-plan signals.
+    #[must_use]
+    pub fn alternative_logical_plan_signals(&self) -> &tidb_exprctx::context::AlternativeLogicalPlanSignals {
+        &self.alternative_logical_plan_signals
+    }
+
+    /// Go `PlanBuilder.Init` for the marks one round's build leaves.
+    pub fn reset_alternative_logical_plan_marks(&self) {
+        let signals = &self.alternative_logical_plan_signals;
+        signals.predicate_match.store(false, Ordering::Release);
+        signals.non_viable_fts_match.store(false, Ordering::Release);
+    }
+
+    /// Go `saveLogicalPlanBuildCtx`: the statement state a logical plan
+    /// build writes and an alternative round builds again.
+    #[must_use]
+    pub fn save_logical_plan_build_ctx(&self) -> LogicalPlanBuildState {
+        LogicalPlanBuildState {
+            warnings: self.warning_count(),
+            extra_warnings: self
+                .extra_warnings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .len(),
+            tracker: self.range_fallback.get().map(|state| state.tracker.save()),
+            skip_plan_cache_reason: self
+                .skip_plan_cache_reason
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone(),
+            plan_cache_unqualified: self.plan_cache_unqualified.as_ref().map(|cell| {
+                cell.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone()
+            }),
+        }
+    }
+
+    /// Go `restoreLogicalPlanBuildCtx`.
+    pub fn restore_logical_plan_build_ctx(&self, saved: &LogicalPlanBuildState) {
+        self.truncate_warnings(saved.warnings);
+        self.extra_warnings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .truncate(saved.extra_warnings);
+        if let (Some(state), Some(tracker)) = (self.range_fallback.get(), &saved.tracker) {
+            let (use_cache, cache_type, unqualified, force, always_warn) = tracker.clone();
+            state
+                .tracker
+                .restore(use_cache, cache_type, unqualified, force, always_warn);
+        }
+        *self
+            .skip_plan_cache_reason
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = saved.skip_plan_cache_reason.clone();
+        if let (Some(cell), Some(unqualified)) =
+            (&self.plan_cache_unqualified, &saved.plan_cache_unqualified)
+        {
+            cell.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone_from(unqualified);
         }
     }
 
@@ -6760,6 +6846,16 @@ impl Columns for StmtContext {
         if self.use_plan_cache() {
             Self::set_skip_plan_cache(self, reason);
         }
+    }
+
+    fn enable_alternative_logical_plans(&self) -> bool {
+        self.enable_alternative_logical_plans
+    }
+
+    fn alternative_logical_plan_signals(
+        &self,
+    ) -> Option<&tidb_exprctx::context::AlternativeLogicalPlanSignals> {
+        Some(&self.alternative_logical_plan_signals)
     }
 
     fn enable_vectorized_expression(&self) -> bool {

@@ -1598,28 +1598,6 @@ impl Session {
         Ok(execution)
     }
 
-    /// Runs Go's `matchAgainstToLike` before physical planning. Prepared
-    /// cache misses and ordinary statements both call this method, so the
-    /// cache retains the same rewritten tree the normal executor receives.
-    pub(crate) fn rewrite_fts_for_planning(&self, stmt: &mut Stmt) -> Result<(), DriverError> {
-        let enabled = self
-            .vars
-            .get_system(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ALTERNATIVE_LOGICAL_PLANS)
-            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
-        if !enabled {
-            return Ok(());
-        }
-
-        let current_db = self.vars.current_db.clone();
-        // The context takes its catalog-backed snapshots, so construct it
-        // before holding the catalog guard used by every resolved-type probe.
-        let ctx = self.statement_context(false);
-        let Ok(catalog) = self.lock_catalog() else {
-            return Ok(());
-        };
-        tidb_executor::fts_like_rewrite::rewrite_stmt_fts(stmt, &catalog, &current_db, &ctx)
-    }
-
     // Go keys memory arbitration by StatementContext.SQLDigest's normalized
     // OriginalSQL, not binding normalization of a restored AST. The caller
     // supplies PREPARE's original text, so bound values do not change the key.
@@ -1813,7 +1791,6 @@ impl Session {
         self.read_from_table_cache
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.wait_lock_lease_time = std::time::Duration::ZERO;
-        self.rewrite_fts_for_planning(&mut stmt)?;
         // Go's row-id shard generator belongs to the TRANSACTION, so a
         // statement that IS its own transaction starts a fresh run. Inside an
         // explicit `BEGIN`/`COMMIT` the run continues across statements,

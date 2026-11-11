@@ -309,7 +309,7 @@ pub fn fts_zero_int_const() -> Expression {
 /// term" — without it, `NOT(NULL ILIKE ...)` would be NULL and would wrongly
 /// filter out rows with a NULL column that do not contain an excluded term.
 fn build_fts_ilike_predicate(
-    ctx: &impl Columns,
+    ctx: &dyn Columns,
     column: &Expression,
     term: &str,
 ) -> Result<Expression, FtsBuildError> {
@@ -343,7 +343,7 @@ fn build_fts_ilike_predicate(
 /// `for _, column := range columns { ... }` + `ComposeDNFCondition` pair that
 /// appears three times in `buildFTSBooleanModeILikeExpression`.
 fn term_column_dnf(
-    ctx: &impl Columns,
+    ctx: &dyn Columns,
     columns: &[Expression],
     term: &str,
 ) -> Result<Option<Expression>, FtsBuildError> {
@@ -361,7 +361,7 @@ fn term_column_dnf(
 /// no required term does — because LIKE cannot rank, so optionals cannot be a
 /// mere ordering hint the way they are in real FTS.
 fn build_fts_boolean_mode_ilike_expression(
-    ctx: &impl Columns,
+    ctx: &dyn Columns,
     columns: &[Expression],
     search_text: &str,
 ) -> Result<Expression, FtsBuildError> {
@@ -442,7 +442,7 @@ fn build_fts_boolean_mode_ilike_expression(
 /// (`pkg/expression/fts_to_like.go:319`): whitespace-split the search string
 /// and OR every per-column, per-word predicate together.
 fn build_fts_natural_language_mode_ilike_expression(
-    ctx: &impl Columns,
+    ctx: &dyn Columns,
     columns: &[Expression],
     search_text: &str,
 ) -> Result<Expression, FtsBuildError> {
@@ -478,7 +478,7 @@ fn build_fts_natural_language_mode_ilike_expression(
 /// that is neither boolean nor natural-language mode. Callers wanting a
 /// graceful fallback should call the validator directly and react to it.
 pub fn build_fts_to_i_like_expression(
-    ctx: &impl Columns,
+    ctx: &dyn Columns,
     columns: &[Expression],
     search_text: &str,
     modifier: MatchModifier,
@@ -529,7 +529,7 @@ pub fn build_fts_to_i_like_expression(
 /// non-constant or non-string search argument, or anything
 /// [`build_fts_to_i_like_expression`] rejects.
 pub fn build_fts_to_i_like_expression_from_builtin(
-    ctx: &impl Columns,
+    ctx: &dyn Columns,
     fts: &ScalarFunction,
 ) -> Result<Expression, FtsBuildError> {
     if fts.func_name.lowercase() != "match_against" {

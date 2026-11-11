@@ -89,10 +89,6 @@ pub trait CompilerSession: crate::admin::AdminExec {
     /// Go `StmtCtx`'s pending plan-cache refusal, reported at EXECUTE.
     fn pending_plan_cache_refusal_mut(&mut self) -> &mut Option<&'static str>;
 
-    /// Runs Go's `matchAgainstToLike` before physical planning. Prepared
-    /// cache misses and ordinary statements both call this method, so the
-    /// cache retains the same rewritten tree the normal executor receives.
-    fn rewrite_fts_for_planning(&self, stmt: &mut tidb_ast::Stmt) -> Result<(), DriverError>;
     /// [`Self::with_catalog_retrieving`] over any way of running the
     /// statement, such as a staged catalog for a write.
     fn retrieving_memory_tables<T>(&mut self, ctx: &crate::StmtContext, run: impl FnMut(&mut Self) -> Result<T, DriverError>, ) -> Result<T, DriverError>;

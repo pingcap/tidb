@@ -1395,6 +1395,17 @@ fn planner_physical_select(
     Ok((logical, physical))
 }
 
+/// Whose build a query's is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QueryBuild {
+    /// Go `planner.optimize` of a statement that is a query, with the
+    /// alternative rounds only a logical plan gets.
+    Statement,
+    /// The read of a DML, which Go builds inside the DML's `PlanBuilder`:
+    /// the DML's plan is no logical plan, so its one round is the only one.
+    DmlRead,
+}
+
 /// What one query build does with its `PlanBuilder`'s visit infos (Go
 /// `builder.GetVisitInfo()`).
 pub(crate) enum BuildVisits<'a> {
@@ -1429,6 +1440,7 @@ fn planner_physical_query(
         &plan_ids,
         &column_ids,
         BuildVisits::Discard,
+        QueryBuild::Statement,
     )
 }
 
@@ -1442,6 +1454,7 @@ fn planner_physical_query_with_allocators(
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
     visits: BuildVisits<'_>,
+    build: QueryBuild,
 ) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner_core_base::PlanError> {
     planner_physical_query_with_registry(
         query,
@@ -1452,6 +1465,7 @@ fn planner_physical_query_with_allocators(
         plan_ids,
         column_ids,
         visits,
+        build,
     )
     .map(|(logical, physical, _)| (logical, physical))
 }
@@ -1469,6 +1483,7 @@ fn planner_physical_query_with_registry(
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
     visits: BuildVisits<'_>,
+    build: QueryBuild,
 ) -> Result<
     (LogicalPlan, PhysicalPlan, Vec<std::sync::Arc<RegisteredScalarSubquery>>),
     tidb_planner_core_base::PlanError,
@@ -1484,6 +1499,7 @@ fn planner_physical_query_with_registry(
         column_ids,
         &registry,
         visits,
+        build,
     )?;
     let physical = physical_plan_for_logical(&logical, plan_ids, column_ids, ctx)?;
     let registered = Rc::try_unwrap(registry)
@@ -1730,6 +1746,7 @@ pub(crate) fn physical_query_plan_with_scalar_subqueries(
         &plan_ids,
         &column_ids,
         visits,
+        QueryBuild::Statement,
     )
     .map(|(_, physical, registered)| (physical, registered))
 }
@@ -1758,6 +1775,7 @@ pub(crate) fn physical_query_plan_with_allocators(
         plan_ids,
         column_ids,
         visits,
+        QueryBuild::DmlRead,
     )
     .map(|(_, physical)| physical)
 }
@@ -2110,10 +2128,14 @@ fn planner_optimized_query(
         &column_ids,
         &registry,
         BuildVisits::Discard,
+        QueryBuild::Statement,
     )?;
     Ok((logical, plan_ids, column_ids))
 }
 
+/// Go `planner.optimize`: the statement's first round and, under
+/// `tidb_opt_enable_alternative_logical_plans`, the `fts-like-fallback` round
+/// a `MATCH ... AGAINST` the native path cannot serve asks for.
 #[allow(clippy::too_many_arguments)]
 fn planner_optimized_query_with_allocators(
     query: &tidb_ast::QueryStmt,
@@ -2124,7 +2146,58 @@ fn planner_optimized_query_with_allocators(
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
     registry: &ScalarSubqueryRegistry,
-    visits: BuildVisits<'_>,
+    mut visits: BuildVisits<'_>,
+    build: QueryBuild,
+) -> Result<LogicalPlan, tidb_planner_core_base::PlanError> {
+    let mut round = |visits: &mut BuildVisits<'_>| {
+        build_and_optimize_logical_plan_round(
+            query,
+            catalog,
+            current_database,
+            ctx,
+            use_plan_cache,
+            plan_ids,
+            column_ids,
+            registry,
+            visits,
+        )
+    };
+    if build == QueryBuild::DmlRead || !ctx.enable_alternative_logical_plans() {
+        return round(&mut visits);
+    }
+    use std::sync::atomic::Ordering;
+    let initial_logical_plan_ctx = ctx.save_logical_plan_build_ctx();
+    let initial_scalar_subqueries = registry.borrow().len();
+    ctx.reset_alternative_logical_plan_signals();
+    let signals = ctx.alternative_logical_plan_signals();
+    let plan = round(&mut visits)?;
+    if signals.predicate_match.load(Ordering::Acquire) {
+        signals.has_predicate_context_match.store(true, Ordering::Release);
+    }
+    if !signals.non_viable_fts_match.load(Ordering::Acquire) {
+        return Ok(plan);
+    }
+    // The native plan cannot run, so it is no candidate; the round that
+    // follows is the statement's plan or its error.
+    signals.fts_like_fallback.store(true, Ordering::Release);
+    ctx.restore_logical_plan_build_ctx(&initial_logical_plan_ctx);
+    ctx.reset_alternative_logical_plan_marks();
+    registry.borrow_mut().truncate(initial_scalar_subqueries);
+    round(&mut visits)
+}
+
+/// Go `buildAndOptimizeLogicalPlanRound`.
+#[allow(clippy::too_many_arguments)]
+fn build_and_optimize_logical_plan_round(
+    query: &tidb_ast::QueryStmt,
+    catalog: &SessionExtendedInfoSchema,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+    use_plan_cache: bool,
+    plan_ids: &PlanIdAllocator,
+    column_ids: &ColumnIdAllocator,
+    registry: &ScalarSubqueryRegistry,
+    visits: &mut BuildVisits<'_>,
 ) -> Result<LogicalPlan, tidb_planner_core_base::PlanError> {
     // Go `buildLogicalPlan`: `RewritePhaseInfo.Reset()`, then
     // `DurationRewrite` is the time `builder.Build` took.
@@ -2758,6 +2831,7 @@ pub(crate) fn physical_query_plan_and_names_with_allocators(
         plan_ids,
         column_ids,
         visits,
+        QueryBuild::DmlRead,
     )
     .map(|(logical, physical)| (physical_names(&logical), physical))
     .map(|(names, physical)| (physical, names))

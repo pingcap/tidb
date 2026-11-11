@@ -18,9 +18,25 @@
 //! evaluation context. It owns no scalar representation; every value crossing
 //! the seam is the dependency-leaf [`tidb_datatype::Datum`].
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tidb_datatype::Datum;
+
+/// What one optimization round tells the next about a statement's
+/// `MATCH ... AGAINST` predicates: Go `StatementContext`'s
+/// `AlternativeLogicalPlan*` signals and the plan builder's
+/// `predicateMatch` / `nonViableFTSMatch` marks.
+#[derive(Debug, Default)]
+pub struct AlternativeLogicalPlanSignals {
+    /// Go `StmtCtx.AlternativeLogicalPlanFTSLikeFallback`.
+    pub fts_like_fallback: AtomicBool,
+    /// Go `StmtCtx.AlternativeLogicalPlanHasPredicateContextMatch`.
+    pub has_predicate_context_match: AtomicBool,
+    /// Go `PlanBuilder.MarkPredicateMatch` / `HasPredicateMatch`.
+    pub predicate_match: AtomicBool,
+    /// Go `PlanBuilder.MarkNonViableFTSMatch` / `HasNonViableFTSMatch`.
+    pub non_viable_fts_match: AtomicBool,
+}
 
 /// The transaction timestamp visible to one SQL session.
 ///
@@ -471,6 +487,17 @@ pub trait Columns {
     /// Go `BuildContext.SetSkipPlanCache` from expression construction; the
     /// statement owner ignores it unless the statement uses the plan cache.
     fn set_skip_plan_cache(&self, _reason: &str) {}
+
+    /// Go `SessionVars.EnableAlternativeLogicalPlans`.
+    fn enable_alternative_logical_plans(&self) -> bool {
+        false
+    }
+
+    /// The statement's alternative-logical-plan signals, which a context
+    /// that plans no statement does not have.
+    fn alternative_logical_plan_signals(&self) -> Option<&AlternativeLogicalPlanSignals> {
+        None
+    }
 
     /// Whether executor expression batches use Go's vectorized path.
     fn enable_vectorized_expression(&self) -> bool {

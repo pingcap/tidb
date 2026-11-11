@@ -1018,6 +1018,69 @@ pub struct PlanScopeResolver<'a> {
     /// Go `insertPlan.Schema4OnDuplicate`'s target half, which `VALUES(col)`
     /// resolves instead of the current scope.
     values_scope: Option<(usize, &'a Schema, &'a [FieldName])>,
+    /// Go `expressionRewriter.planCtx` as `MATCH ... AGAINST` reads it.
+    match_against_scope: Option<MatchAgainstScope<'a>>,
+}
+
+/// What Go's rewriter asks its plan builder about a `MATCH ... AGAINST`.
+struct MatchAgainstScope<'a> {
+    /// The `MATCH` nodes Go `inDirectMatchBooleanContext` accepts: those of
+    /// a WHERE, HAVING or ON clause under parentheses, AND, OR and NOT only.
+    direct: Vec<*const Expr>,
+    /// Go `ftsNativeViable`'s test of one matched column.
+    native_viable_column: &'a dyn Fn(&[String]) -> bool,
+}
+
+impl tidb_expr::rewriter::MatchAgainstPlanCtx for PlanScopeResolver<'_> {
+    fn in_direct_match_boolean_context(&self, node: &Expr) -> bool {
+        self.match_against_scope
+            .as_ref()
+            .is_some_and(|scope| scope.direct.contains(&std::ptr::from_ref(node)))
+    }
+
+    fn enable_alternative_logical_plans(&self) -> bool {
+        self.warning_context
+            .is_some_and(tidb_exprctx::Columns::enable_alternative_logical_plans)
+    }
+
+    fn alternative_logical_plan_fts_like_fallback(&self) -> bool {
+        self.alternative_logical_plan_signals()
+            .is_some_and(|signals| signals.fts_like_fallback.load(std::sync::atomic::Ordering::Acquire))
+    }
+
+    fn mark_predicate_match(&self) {
+        if let Some(signals) = self.alternative_logical_plan_signals() {
+            signals.predicate_match.store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    fn mark_non_viable_fts_match(&self) {
+        if let Some(signals) = self.alternative_logical_plan_signals() {
+            signals.non_viable_fts_match.store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    fn fts_native_viable_column(&self, path: &[String]) -> bool {
+        self.match_against_scope
+            .as_ref()
+            .is_some_and(|scope| (scope.native_viable_column)(path))
+    }
+}
+
+/// The `MATCH ... AGAINST` nodes of a boolean clause whose every ancestor is
+/// a parenthesis, an AND, an OR or a NOT (Go `inDirectMatchBooleanContext`).
+fn direct_match_nodes(expr: &Expr, nodes: &mut Vec<*const Expr>) {
+    match expr {
+        Expr::Paren(inner) | Expr::Unary(tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword, inner) => {
+            direct_match_nodes(inner, nodes);
+        }
+        Expr::Binary(tidb_ast::BinaryOp::LogicAnd | tidb_ast::BinaryOp::LogicOr, lhs, rhs) => {
+            direct_match_nodes(lhs, nodes);
+            direct_match_nodes(rhs, nodes);
+        }
+        Expr::MatchAgainst { .. } => nodes.push(std::ptr::from_ref(expr)),
+        _ => {}
+    }
 }
 
 impl<'a> PlanScopeResolver<'a> {
@@ -1054,6 +1117,7 @@ impl<'a> PlanScopeResolver<'a> {
             allow_build_cast_array: false,
             default_lookup: None,
             values_scope: None,
+            match_against_scope: None,
         }
     }
 
@@ -1093,6 +1157,7 @@ impl<'a> PlanScopeResolver<'a> {
             allow_build_cast_array: false,
             default_lookup: None,
             values_scope: None,
+            match_against_scope: None,
         }
     }
 
@@ -1210,6 +1275,13 @@ impl<'a> PlanScopeResolver<'a> {
         self.full_schema = Some(schema);
         self.full_names = Some(names);
         self
+    }
+
+    fn alternative_logical_plan_signals(
+        &self,
+    ) -> Option<&tidb_exprctx::context::AlternativeLogicalPlanSignals> {
+        self.warning_context
+            .and_then(tidb_exprctx::Columns::alternative_logical_plan_signals)
     }
 
     /// Attach the live statement context used by Go's comparison builder.
@@ -1384,6 +1456,10 @@ impl ColumnResolver for PlanScopeResolver<'_> {
 
     fn comparison_context(&self) -> Option<&dyn tidb_exprctx::Columns> {
         self.warning_context
+    }
+
+    fn match_against_plan_ctx(&self) -> Option<&dyn tidb_expr::rewriter::MatchAgainstPlanCtx> {
+        self.match_against_scope.as_ref().map(|_| self as _)
     }
 
     /// A constant of this execution (a prepared parameter) is only
@@ -2149,6 +2225,44 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         Ok(rewritten)
     }
 
+    /// Go `ftsNativeViable` for one matched column: its table has an
+    /// available TiFlash replica and a public FULLTEXT index on the column.
+    fn fts_native_viable_column(&self, names: &[FieldName], path: &[String]) -> bool {
+        let Some(name) = find_field_name(names, path).and_then(|index| names.get(index)) else {
+            return false;
+        };
+        let name = &name.names;
+        let or_else = |first: &'_ str, second: &'_ str| -> String {
+            if first.is_empty() { second } else { first }.to_owned()
+        };
+        let table = or_else(&name.original_table.lower, &name.table.lower);
+        if table.is_empty() {
+            return false;
+        }
+        let db = or_else(&name.database.lower, self.source.current_database());
+        let Some(info) = self
+            .source
+            .find_table(&db, &table)
+            .and_then(|table| table.table_info.as_ref())
+        else {
+            return false;
+        };
+        let info = info.read();
+        let replicated = info.tiflash_replica.as_ref().is_some_and(|replica| {
+            let replica = replica.read();
+            replica.available && replica.count != 0
+        });
+        let column = or_else(&name.original_column.lower, &name.column.lower);
+        // Go `tableHasPublicFTSIndexOnColumn`.
+        replicated
+            && info.indices.iter_deref().any(|index| {
+                let index = index.read();
+                index.full_text_info.is_some()
+                    && index.is_public()
+                    && index.find_column_by_name(&column).is_some()
+            })
+    }
+
     fn rewrite_scalar_with_scope(
         &self,
         expr: &Expr,
@@ -2177,7 +2291,19 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         .with_warning_context(self.ctx);
         resolver.block_expand = self.current_block_expand.as_ref();
         let default_lookup = |path: &[String]| self.eval_default_expr(path, names);
-        let resolver = resolver.with_default_lookup(&default_lookup);
+        let mut resolver = resolver.with_default_lookup(&default_lookup);
+        let mut direct = Vec::new();
+        if matches!(
+            self.cur_clause,
+            ClauseCode::Where | ClauseCode::Having | ClauseCode::On
+        ) {
+            direct_match_nodes(expr, &mut direct);
+        }
+        let native_viable_column = |path: &[String]| self.fts_native_viable_column(names, path);
+        resolver.match_against_scope = Some(MatchAgainstScope {
+            direct,
+            native_viable_column: &native_viable_column,
+        });
         let resolver = match &self.values_scope {
             Some((target_len, schema, names)) => {
                 resolver.with_values_scope(*target_len, schema, names)

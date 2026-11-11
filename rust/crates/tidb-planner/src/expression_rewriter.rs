@@ -237,8 +237,6 @@ pub struct RewriterSessionFlags {
     pub allow_in_subq_to_join_and_agg: bool,
     /// Go `EnableCorrelateSubquery`.
     pub enable_correlate_subquery: bool,
-    /// Go `EnableAlternativeLogicalPlans`.
-    pub enable_alternative_logical_plans: bool,
     /// Go `EnableNoDecorrelateInSelect`.
     pub enable_no_decorrelate_in_select: bool,
     /// Go `EnableSemiJoinRewrite`.
@@ -253,7 +251,6 @@ impl Default for RewriterSessionFlags {
             // Go `vardef.DefOptInSubqToJoinAndAgg` is true.
             allow_in_subq_to_join_and_agg: true,
             enable_correlate_subquery: false,
-            enable_alternative_logical_plans: false,
             enable_no_decorrelate_in_select: false,
             enable_semi_join_rewrite: false,
             disable_subquery_preprocessing: false,

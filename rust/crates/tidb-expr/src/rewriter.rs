@@ -62,10 +62,36 @@ pub struct RollExpandGrouping {
     pub grouping_marks: Vec<std::collections::BTreeSet<u64>>,
 }
 
+/// Go `expressionRewriter.planCtx` as `matchAgainstToExpression` reads it:
+/// the plan builder's clause and node stack, the statement's alternative
+/// logical plan signals and the info schema.
+pub trait MatchAgainstPlanCtx {
+    /// Go `inDirectMatchBooleanContext` for the MATCH `node`: it is under
+    /// WHERE, HAVING or ON, and every ancestor is AND, OR, NOT or parentheses.
+    fn in_direct_match_boolean_context(&self, node: &Expr) -> bool;
+    /// Go `SessionVars.EnableAlternativeLogicalPlans`.
+    fn enable_alternative_logical_plans(&self) -> bool;
+    /// Go `StmtCtx.AlternativeLogicalPlanFTSLikeFallback`.
+    fn alternative_logical_plan_fts_like_fallback(&self) -> bool;
+    /// Go `PlanBuilder.MarkPredicateMatch`.
+    fn mark_predicate_match(&self);
+    /// Go `PlanBuilder.MarkNonViableFTSMatch`.
+    fn mark_non_viable_fts_match(&self);
+    /// Go `ftsNativeViable`'s test of one matched column: its table has an
+    /// available TiFlash replica and a public FULLTEXT index on the column.
+    fn fts_native_viable_column(&self, path: &[String]) -> bool;
+}
+
 /// Resolves a dotted column path to an output column, standing in for the
 /// schema/name resolution Go's `expression_rewriter` performs against the
 /// plan's schema (`resolveColumn`).
 pub trait ColumnResolver {
+    /// Go `er.planCtx` for a MATCH AGAINST; a rewrite outside the planner
+    /// has none.
+    fn match_against_plan_ctx(&self) -> Option<&dyn MatchAgainstPlanCtx> {
+        None
+    }
+
     /// Go `planCtx.rollExpand` as the rewriter's `ast.Grouping` arm reads it
     /// for the rewritten GROUPING arguments `args`. Outside a ROLLUP block it
     /// is nil, which is `ErrInvalidGroupFuncUse`.
@@ -295,6 +321,9 @@ pub trait ColumnResolver {
 // Keep a borrowed resolver's complete context, including trait objects, when
 // passing it through the rewriter's statically dispatched recursive helpers.
 impl<T: ColumnResolver + ?Sized> ColumnResolver for &T {
+    fn match_against_plan_ctx(&self) -> Option<&dyn MatchAgainstPlanCtx> {
+        (**self).match_against_plan_ctx()
+    }
     fn user_vars(&self) -> Option<&tidb_variable::user_vars::UserVars> {
         (**self).user_vars()
     }
@@ -673,19 +702,136 @@ fn not_to_expression(
     class_function(class, name, vec![call], resolver)
 }
 
-/// Go `matchAgainstToBuiltin`: the native `match_against(against, cols...)`
-/// builtin, which only a fulltext index evaluates.
-fn match_against_to_builtin(
+/// Go `matchAgainstToExpression`: the native builtin, or under the
+/// fts-like-fallback round the ILIKE tree of a MATCH in direct boolean
+/// context. The first round records whether such a MATCH was seen and whether
+/// the native builtin can serve it.
+fn match_against_to_expression(
+    node: &Expr,
     modifier: tidb_ast::MatchModifier,
+    paths: &[Vec<String>],
     against: Expression,
     cols: Vec<Expression>,
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
-    // Go `ftsModifierAllowsNativePushdown`: the pushdown protocol does not
-    // carry the modifier, so TiFlash would run the search in natural-language
-    // mode. `matchHasLikeFallbackRescue` is false here: a MATCH the LIKE
-    // fallback serves was rewritten before planning.
-    if modifier.is_boolean_mode() || modifier.with_query_expansion() {
+    let plan_ctx = resolver
+        .match_against_plan_ctx()
+        .filter(|plan_ctx| plan_ctx.in_direct_match_boolean_context(node));
+    let Some(plan_ctx) = plan_ctx else {
+        return match_against_to_builtin(modifier, against, cols, false, resolver);
+    };
+    if plan_ctx.alternative_logical_plan_fts_like_fallback() {
+        return match_against_to_like(plan_ctx, modifier, paths, against, cols, resolver);
+    }
+    let rescue = plan_ctx.enable_alternative_logical_plans();
+    if rescue {
+        plan_ctx.mark_predicate_match();
+        if !fts_native_viable(plan_ctx, modifier, paths) {
+            plan_ctx.mark_non_viable_fts_match();
+        }
+    }
+    match_against_to_builtin(modifier, against, cols, rescue, resolver)
+}
+
+/// Go `ftsNativeViable`: the modifier survives the pushdown and every
+/// matched column has a FULLTEXT index on a TiFlash replica.
+fn fts_native_viable(
+    plan_ctx: &dyn MatchAgainstPlanCtx,
+    modifier: tidb_ast::MatchModifier,
+    paths: &[Vec<String>],
+) -> bool {
+    !paths.is_empty()
+        && fts_modifier_allows_native_pushdown(modifier)
+        && paths.iter().all(|path| plan_ctx.fts_native_viable_column(path))
+}
+
+/// Go `ftsModifierAllowsNativePushdown`: the pushdown protocol does not carry
+/// the modifier, so TiFlash would run the search in natural-language mode.
+fn fts_modifier_allows_native_pushdown(modifier: tidb_ast::MatchModifier) -> bool {
+    !modifier.is_boolean_mode() && !modifier.with_query_expansion()
+}
+
+/// Go `matchAgainstToLike`: the ILIKE predicates that stand in for a MATCH
+/// the native path cannot serve.
+fn match_against_to_like(
+    plan_ctx: &dyn MatchAgainstPlanCtx,
+    modifier: tidb_ast::MatchModifier,
+    paths: &[Vec<String>],
+    against: Expression,
+    cols: Vec<Expression>,
+    resolver: &impl ColumnResolver,
+) -> Result<Expression, EvalError> {
+    if !matches!(against, Expression::Constant(_)) {
+        return Err(EvalError::NotImplemented(
+            "MATCH...AGAINST with non-constant search string".into(),
+        ));
+    }
+    let ctx = resolver.comparison_context().unwrap_or(&tidb_exprctx::context::NoColumns);
+    // The fallback bakes the search value into the plan, so a plan built
+    // from a mutable one is not for another execution.
+    if crate::expr_util::predicates::maybe_over_optimized_4_plan_cache(
+        ctx.use_plan_cache(),
+        std::slice::from_ref(&against),
+    ) {
+        ctx.set_skip_plan_cache(
+            "MATCH...AGAINST LIKE fallback bakes a mutable search string into plan constants",
+        );
+    }
+    if cols
+        .iter()
+        .any(|col| col.static_type().map(FieldType::eval_type) != Some(EvalType::String))
+    {
+        return Err(EvalError::NotImplemented(
+            "Doesn't support match search on a non-string column without fulltext index".into(),
+        ));
+    }
+    let search_text = resolver.eval_constant(&against)?;
+    let search_text = match search_text {
+        // NULL search yields NULL, which keeps three-valued logic under NOT.
+        Datum::Null => {
+            return Ok(Expression::Constant(Constant::new(
+                Datum::Null,
+                FieldType::new(FieldTypeCode::Tiny),
+            )));
+        }
+        Datum::String(text) => String::from_utf8_lossy(text.bytes()).into_owned(),
+        _ => {
+            return Err(EvalError::NotImplemented(
+                "MATCH...AGAINST with non-string search expression".into(),
+            ));
+        }
+    };
+    if let Err(error) =
+        crate::fts::validate_fts_search_string_for_like_fallback(&search_text, modifier)
+    {
+        if fts_native_viable(plan_ctx, modifier, paths) {
+            return match_against_to_builtin(modifier, against, cols, true, resolver);
+        }
+        return Err(EvalError::NotImplemented(error.message.into()));
+    }
+    // Go `convertMatchAgainstToLike`.
+    crate::fts::build_fts_to_i_like_expression(ctx, &cols, &search_text, modifier).map_err(
+        |error| match error {
+            crate::fts::FtsBuildError::NotSupportedYet(error) => {
+                EvalError::NotImplemented(error.message.into())
+            }
+            crate::fts::FtsBuildError::Build(error) => error,
+        },
+    )
+}
+
+/// Go `matchAgainstToBuiltin`: the native `match_against(against, cols...)`
+/// builtin, which only a fulltext index evaluates. `rescue` is Go
+/// `matchHasLikeFallbackRescue`: the alternative rounds discard this node
+/// and build the ILIKE tree.
+fn match_against_to_builtin(
+    modifier: tidb_ast::MatchModifier,
+    against: Expression,
+    cols: Vec<Expression>,
+    rescue: bool,
+    resolver: &impl ColumnResolver,
+) -> Result<Expression, EvalError> {
+    if !fts_modifier_allows_native_pushdown(modifier) && !rescue {
         return Err(EvalError::NotImplemented(
             "MATCH...AGAINST with this modifier on the native FTS path (modifier is not carried through pushdown to TiFlash)"
                 .into(),
@@ -2346,7 +2492,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 .map(|path| rewrite_expr_resolved(&Expr::Column(path.clone()), resolver))
                 .collect::<Result<Vec<_>, _>>()?;
             let against = rewrite_expr_resolved(against, resolver)?;
-            match_against_to_builtin(*modifier, against, cols, resolver)
+            match_against_to_expression(expr, *modifier, columns, against, cols, resolver)
         }
         // Go's preprocessor (`preprocess.go`, `*ast.FuncCallExpr` with a
         // schema) answers every qualified call with `ErrFunctionNotExists`,

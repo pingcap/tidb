@@ -45,6 +45,10 @@ impl<'a> FoldModeResolver<'a> {
 }
 
 impl ColumnResolver for FoldModeResolver<'_> {
+    fn match_against_plan_ctx(&self) -> Option<&dyn super::MatchAgainstPlanCtx> {
+        self.base.match_against_plan_ctx()
+    }
+
     fn user_vars(&self) -> Option<&tidb_variable::user_vars::UserVars> {
         self.base.user_vars()
     }

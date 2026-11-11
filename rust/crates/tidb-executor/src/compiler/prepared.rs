@@ -399,10 +399,6 @@ pub trait PrepareExec: super::CompilerSession {
             tidb_ast::Stmt::Query(_) | tidb_ast::Stmt::Dml(_) => {
                 let mut bound = statement.clone();
                 self.bind_variables(&mut bound)?;
-                // EXECUTE plans the tree the statement dispatch rewrites:
-                // MATCH ... AGAINST's LIKE fallback is applied there, so the
-                // PREPARE-time plan is built over the same tree.
-                self.rewrite_fts_for_planning(&mut bound)?;
                 Some(bound)
             }
             _ => None,

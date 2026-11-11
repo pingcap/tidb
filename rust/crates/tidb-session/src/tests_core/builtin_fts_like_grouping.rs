@@ -561,3 +561,126 @@ fn a_native_match_against_is_estimated_as_its_ilike() {
         assert_eq!(selection(&mut session, sql), row, "{sql}");
     }
 }
+
+/// Go `matchAgainstToLike` runs in the expression rewriter, over the search
+/// expression the rewriter built: whatever folds to a string constant there
+/// (a function of literals, a user variable) is the pattern.
+#[test]
+fn the_like_fallback_reads_the_search_string_the_rewriter_folded() {
+    let mut session = articles_session();
+    for (sql, want) in [
+        ("select id from articles where match(title) against(concat('My','SQL'))", &[&["1"][..], &["2"]][..]),
+        ("select id from articles where match(title) against(@p)", &[&["3"]]),
+        ("select id from articles where match(title) against(concat(@p,'gre'))", &[&["3"]]),
+        ("select id from articles where match(title) against(lower('POST'))", &[&["3"]]),
+        ("select id from articles where match(title) against(@n)", &[]),
+        ("select id from articles where match(title) against(@undefined)", &[]),
+    ] {
+        assert_eq!(sorted(&mut session, sql), rows(want), "{sql}");
+    }
+    for (sql, want) in [
+        ("select id from articles where match(title) against(@i)", NON_STRING_CONSTANT),
+        ("select id from articles where match(title) against(1+1)", NON_STRING_CONSTANT),
+        ("select id from articles where match(title) against(title)", NON_CONSTANT_STRING),
+        ("select id from articles where match(title) against(rand())", NON_CONSTANT_STRING),
+        (
+            "select id from articles where match(title) against(concat('My', cast(id as char)))",
+            NON_CONSTANT_STRING,
+        ),
+        ("select id from articles where match(n) against(concat('a','b'))", NON_STRING_COLUMN),
+        ("select id from articles where match(n) against(@q)", NON_STRING_COLUMN),
+    ] {
+        assert_eq!(error_of(&mut session, sql), own(want), "{sql}");
+    }
+    for (sql, pattern) in [
+        ("select id from articles where match(title) against(concat('My','SQL'))", "%MySQL%"),
+        ("select id from articles where match(title) against(@p)", "%Post%"),
+    ] {
+        assert_eq!(
+            plan_of(&mut session, sql).into_iter().find(|row| row.contains("Selection")),
+            Some(format!(
+                "└─Selection 8000.00 root  ifnull(ilike(test.articles.title, \"{pattern}\", 92), 0)"
+            )),
+            "{sql}"
+        );
+    }
+}
+
+/// Go evaluates an uncorrelated scalar or `EXISTS` subquery while the first
+/// round builds, with the native builtin: the statement fails before any
+/// alternative round. A subquery that stays in the plan (`IN`, a correlated
+/// `EXISTS`, a derived table) is rebuilt by the fallback round.
+#[test]
+fn a_subquery_the_first_round_evaluates_keeps_the_native_builtin() {
+    let mut session = articles_session();
+    for sql in [
+        "select (select count(*) from articles where match(title) against('MySQL'))",
+        "select id from articles where exists (select 1 from articles where match(title) \
+         against('MySQL'))",
+        "select id from articles where id > (select count(*) from articles where match(title) \
+         against('MySQL'))",
+        "do (select count(*) from articles where match(title) against('MySQL'))",
+    ] {
+        assert_eq!(error_of(&mut session, sql), own(MATCH_OUTSIDE_INDEX), "{sql}");
+    }
+    for sql in [
+        "select id from articles where id in (select id from articles where match(title) \
+         against('MySQL'))",
+        "select id from articles a where exists (select 1 from articles b where b.id = a.id and \
+         match(b.title) against('MySQL'))",
+        "select id from (select * from articles where match(title) against('MySQL')) d",
+    ] {
+        assert_eq!(sorted(&mut session, sql), rows(&[&["1"], &["2"]]), "{sql}");
+    }
+}
+
+/// A view's body is built by the round that reads the view: its `WHERE` is a
+/// direct boolean context, its select list is not.
+#[test]
+fn a_views_match_against_falls_back_in_the_round_that_reads_it() {
+    let mut session = articles_session();
+    for sql in [
+        "create view av as select id from articles where match(title) against('MySQL')",
+        "create view av2 as select id, match(title) against('MySQL') m from articles",
+        "prepare pv from 'select * from av order by id'",
+    ] {
+        session.run(sql).unwrap_or_else(|err| panic!("{sql}: {err:?}"));
+    }
+    assert_eq!(sorted(&mut session, "select * from av"), rows(&[&["1"], &["2"]]));
+    assert_eq!(row_text(session.run("show warnings")), rows(&[]));
+    assert_eq!(
+        sorted(&mut session, "select id from av where id in (select id from av)"),
+        rows(&[&["1"], &["2"]])
+    );
+    assert_eq!(error_of(&mut session, "select * from av2"), own(MATCH_OUTSIDE_INDEX));
+    assert_eq!(row_text(session.run("execute pv")), rows(&[&["1"], &["2"]]));
+    assert_eq!(row_text(session.run("execute pv")), rows(&[&["1"], &["2"]]));
+    assert_eq!(row_text(session.run("select @@last_plan_from_cache")), rows(&[&["1"]]));
+    assert_eq!(
+        plan_of(&mut session, "select * from av").into_iter().find(|row| row.contains("Selection")),
+        Some(
+            "└─Selection 8000.00 root  ifnull(ilike(test.articles.title, \"%MySQL%\", 92), 0)"
+                .to_owned()
+        )
+    );
+}
+
+/// A parameter inside the search expression is folded and baked by each
+/// execution's fallback round.
+#[test]
+fn an_execution_bakes_the_search_string_its_parameter_folds_to() {
+    let mut session = articles_session();
+    session
+        .run(
+            "prepare pc from 'select id from articles where match(title) \
+             against(concat(?, ''SQL'')) order by id'",
+        )
+        .unwrap();
+    session.run("set @m = 'My'").unwrap();
+    for _ in 0..2 {
+        assert_eq!(row_text(session.run("execute pc using @m")), rows(&[&["1"], &["2"]]));
+        assert_eq!(row_text(session.run("show warnings")), skip_baked_search());
+    }
+    session.run("execute pc using @m").unwrap();
+    assert_eq!(row_text(session.run("select @@last_plan_from_cache")), rows(&[&["0"]]));
+}
