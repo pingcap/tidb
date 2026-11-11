@@ -796,9 +796,9 @@ func canReuseInjectedJoinExpr(expr expression.Expression) bool {
 // injectExpr materializes expr as a column on top of p so rewritten join edges can keep using
 // column arguments only.
 //
-// If p is already a projection, we append/reuse the expression there. Otherwise we wrap p in a
-// pass-through projection first, so the new derived column stays local to this branch and the
-// branch's output schema remains explicit for later join construction.
+// If p is already a projection and substitution preserves its materialized values, we append/reuse
+// the expression there. Otherwise we wrap p in a pass-through projection first, so the new derived
+// column stays local to this branch and the branch's output schema remains explicit.
 //
 // When possible, we reuse an existing semantically equivalent deterministic expression instead of
 // appending a duplicate column. This keeps the rewritten join tree smaller and prevents repeated
@@ -806,6 +806,18 @@ func canReuseInjectedJoinExpr(expr expression.Expression) bool {
 func (s *baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
 	originalPlanID := p.ID()
 	proj, ok := p.(*logicalop.LogicalProjection)
+	if ok {
+		for _, col := range expression.ExtractColumns(expr) {
+			idx := proj.Schema().ColumnIndex(col)
+			if idx >= 0 && !canReuseInjectedJoinExpr(proj.Exprs[idx]) {
+				// AppendExpr substitutes projection outputs with their definitions. Preserve
+				// this boundary when doing so would re-evaluate a volatile or side-effect
+				// expression instead of consuming the value already produced by p.
+				ok = false
+				break
+			}
+		}
+	}
 	if !ok {
 		// Build a pass-through projection so the injected expression has a stable output column
 		// without changing the child's original outputs.
