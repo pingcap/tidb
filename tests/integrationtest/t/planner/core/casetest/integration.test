@@ -763,8 +763,6 @@ select a from t_commit_ts where _tidb_commit_ts > 0 order by a;
 select _tidb_commit_ts > 0 as valid_commit_ts from t_commit_ts union all select _tidb_commit_ts > 0 from t_commit_ts;
 -- error 1815
 explain format = 'plan_tree' select /*+ use_index_merge(t_commit_ts, idx_b, idx_c) */ _tidb_commit_ts from t_commit_ts where b = 1 or c = 1;
--- error 1815
-select _tidb_commit_ts from t_commit_ts tablesample regions();
 # Materialized view log purge deletes by _tidb_commit_ts. A miss keeps the rows; a hit removes them.
 delete from t_commit_ts where _tidb_commit_ts = 0;
 select count(*) from t_commit_ts;

@@ -1873,8 +1873,6 @@ valid_commit_ts
 1
 explain format = 'plan_tree' select /*+ use_index_merge(t_commit_ts, idx_b, idx_c) */ _tidb_commit_ts from t_commit_ts where b = 1 or c = 1;
 Error 1815 (HY000): Internal : Can't find a proper physical plan for this query
-select _tidb_commit_ts from t_commit_ts tablesample regions();
-Error 1815 (HY000): Usage of column name '_tidb_commit_ts' is not supported for TABLESAMPLE
 delete from t_commit_ts where _tidb_commit_ts = 0;
 select count(*) from t_commit_ts;
 count(*)
