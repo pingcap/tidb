@@ -10,6 +10,11 @@ description = "TiDB pkg/planner/core/operator/physicalop (Rust)."
 [lints]
 workspace = true
 
+[features]
+# Test hooks other crates' tests set (the generator's table reader cache
+# failpoints).
+test-util = []
+
 [dependencies]
 tidb-planner-core-operator-logicalop = { path = "../tidb-planner-core-operator-logicalop" }
 tidb-kv = { path = "../tidb-kv" }

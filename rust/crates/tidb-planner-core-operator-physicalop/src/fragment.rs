@@ -25,6 +25,45 @@ use crate::{ExchangeType, MppTask, PhysicalPlan, PhysicalTableScan};
 use tidb_planner_core_base::PlanError;
 use tidb_txnkv::{KeyRange, MppBuildTasksRequest, MppQueryId, MppTaskLocation, MppVersion, PartitionIdAndRanges};
 
+/// What Go's `mppTaskGeneratorTableReaderCacheHit` and
+/// `mppTaskGeneratorTableReaderCacheMiss` failpoints replace.
+#[cfg(any(test, feature = "test-util"))]
+pub mod mock {
+    use std::sync::{Arc, Mutex, PoisonError};
+
+    type Call = Option<Arc<dyn Fn() + Send + Sync>>;
+
+    static TABLE_READER_CACHE_HIT: Mutex<Call> = Mutex::new(None);
+    static TABLE_READER_CACHE_MISS: Mutex<Call> = Mutex::new(None);
+
+    /// Go `failpoint.EnableCall("mppTaskGeneratorTableReaderCacheHit", f)`:
+    /// `f` runs when a table reader takes its tasks from the cache.
+    pub fn set_mpp_task_generator_table_reader_cache_hit(call: Call) {
+        *TABLE_READER_CACHE_HIT.lock().unwrap_or_else(PoisonError::into_inner) = call;
+    }
+
+    /// Go `failpoint.EnableCall("mppTaskGeneratorTableReaderCacheMiss", f)`:
+    /// `f` runs when a table reader's tasks are built.
+    pub fn set_mpp_task_generator_table_reader_cache_miss(call: Call) {
+        *TABLE_READER_CACHE_MISS.lock().unwrap_or_else(PoisonError::into_inner) = call;
+    }
+
+    fn inject_call(call: &Mutex<Call>) {
+        let call = call.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        if let Some(call) = call {
+            call();
+        }
+    }
+
+    pub(super) fn table_reader_cache_hit() {
+        inject_call(&TABLE_READER_CACHE_HIT);
+    }
+
+    pub(super) fn table_reader_cache_miss() {
+        inject_call(&TABLE_READER_CACHE_MISS);
+    }
+}
+
 /// Go `Fragment`: one piece of the pushed-down plan, cut from the whole by
 /// network communication (shuffling, broadcasting, passing through).
 #[derive(Clone, Debug, Default)]
@@ -477,10 +516,15 @@ impl MppTaskGenerator<'_> {
 
         let val = req.cache_key();
         let metas = if let Some(metas) = self.table_reader_cache.get(&val) {
-            metas.clone()
+            let metas = metas.clone();
+            #[cfg(any(test, feature = "test-util"))]
+            mock::table_reader_cache_hit();
+            metas
         } else {
             let metas = self.ctx.construct_mpp_tasks(&req)?;
             self.table_reader_cache.insert(val, metas.clone());
+            #[cfg(any(test, feature = "test-util"))]
+            mock::table_reader_cache_miss();
             metas
         };
 

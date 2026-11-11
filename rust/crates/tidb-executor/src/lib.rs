@@ -115,6 +115,7 @@ pub mod ddl;
 pub mod ddl_sequence;
 pub mod cop_reader;
 pub mod mpp_coordinator;
+pub mod recovery_handler;
 pub mod local_mpp_coordinator;
 pub mod mpp_gather;
 pub mod mppcoordmanager;

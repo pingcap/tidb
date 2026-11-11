@@ -110,7 +110,9 @@ pub(crate) async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
     }
     let tidb_zone = tidb_zone.unwrap_or_default();
     let mut budget = RegionBackoffBudget::new(COP_BUILD_TASK_MAX_BACKOFF);
+    let mut retry_num = 0;
     loop {
+        retry_num += 1;
         let mut tasks_for_partitions = Vec::with_capacity(ranges_for_each_physical_table.len());
         for (i, ranges) in ranges_for_each_physical_table.iter().enumerate() {
             let mut located =
@@ -176,10 +178,11 @@ pub(crate) async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
             max_remote_read_count_allowed = alive_stores.store_ids_in_tidb_zone.len()
                 * MAX_REMOTE_READ_COUNT_PER_NODE_FOR_CLOSEST_REPLICAS;
             let invalid = check_alive_store(
-                &alive_stores,
+                &mut alive_stores,
                 &used_tiflash_stores,
                 &used_tiflash_stores_map,
                 tiflash_replica_read_policy,
+                retry_num,
                 &tasks,
                 min_replica_num,
                 max_remote_read_count_allowed,
@@ -328,23 +331,23 @@ async fn get_alive_stores_and_store_ids<S: tikv_client::PdClient>(
 /// Go `checkAliveStore`: the regions with no alive TiFlash store, which are
 /// invalidated and located again.
 fn check_alive_store(
-    alive_stores: &AliveStores,
+    alive_stores: &mut AliveStores,
     used_tiflash_stores: &[Vec<u64>],
     used_tiflash_stores_map: &BTreeSet<u64>,
     policy: ReplicaRead,
+    retry_num: usize,
     tasks: &[LocatedRegion],
     min_replica_num: u64,
     max_remote_read_count_allowed: usize,
 ) -> Vec<tikv_client::RegionVerId> {
-    // Go `canSkipCheckAliveStores`: every region keeps an alive replica when
-    // fewer stores died than the smallest replica count.
-    if !policy.is_closest_replicas() {
-        let dead = used_tiflash_stores_map
-            .len()
-            .saturating_sub(alive_stores.store_ids_in_all_zones.len());
-        if min_replica_num > dead as u64 {
-            return Vec::new();
-        }
+    if can_skip_check_alive_stores(
+        alive_stores,
+        used_tiflash_stores_map,
+        policy,
+        retry_num,
+        min_replica_num,
+    ) {
+        return Vec::new();
     }
     let mut invalid = Vec::new();
     if alive_stores.store_ids_in_all_zones.is_empty() {
@@ -386,6 +389,52 @@ fn check_alive_store(
         }
     }
     invalid
+}
+
+/// Go `canSkipCheckAliveStores`, the fast path for `checkAliveStore`: if
+/// minReplicaNum > deadStoreNum, there is at least one alive store for each
+/// region, and the check is skipped.
+#[cfg_attr(not(any(test, feature = "test-util")), allow(unused_variables))]
+fn can_skip_check_alive_stores(
+    alive_stores: &mut AliveStores,
+    used_tiflash_stores_map: &BTreeSet<u64>,
+    policy: ReplicaRead,
+    retry_num: usize,
+    min_replica_num: u64,
+) -> bool {
+    #[cfg(any(test, feature = "test-util"))]
+    if mock::mock_no_alive_tiflash() && retry_num <= 1 {
+        alive_stores.stores_in_all_zones = Vec::new();
+    }
+
+    if !policy.is_closest_replicas() {
+        let dead_store_num = used_tiflash_stores_map
+            .len()
+            .saturating_sub(alive_stores.store_ids_in_all_zones.len());
+        return min_replica_num > dead_store_num as u64;
+    }
+
+    // For closest_replica, need to recompute minReplicaNum and other infos,
+    // which is duplicated with the logic in checkAliveStore(), so return false directly.
+    false
+}
+
+/// Go's failpoints in `batch_coprocessor.go`, as seams.
+#[cfg(any(test, feature = "test-util"))]
+pub mod mock {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static MOCK_NO_ALIVE_TIFLASH: AtomicBool = AtomicBool::new(false);
+
+    /// Go `failpoint.Enable("mockNoAliveTiFlash", "return(true)")`: the
+    /// first build of a request's batch tasks finds no alive TiFlash store.
+    pub fn set_mock_no_alive_tiflash(enabled: bool) {
+        MOCK_NO_ALIVE_TIFLASH.store(enabled, Ordering::Release);
+    }
+
+    pub(super) fn mock_no_alive_tiflash() -> bool {
+        MOCK_NO_ALIVE_TIFLASH.load(Ordering::Acquire)
+    }
 }
 
 /// Go `filterAllStoresAccordingToTiFlashReplicaRead`: the stores the policy
@@ -806,6 +855,101 @@ mod tests {
             .iter()
             .map(|task| (task.store_addr.clone(), task.region_infos.len()))
             .collect()
+    }
+
+    fn alive(all_zones: &[u64], tidb_zone: &[u64]) -> AliveStores {
+        AliveStores {
+            stores_in_all_zones: Vec::new(),
+            store_ids_in_all_zones: all_zones.iter().copied().collect(),
+            store_ids_in_tidb_zone: tidb_zone.iter().copied().collect(),
+        }
+    }
+
+    /// Go `TestAliveStoreSkipCheck`.
+    #[test]
+    fn test_alive_store_skip_check() {
+        let used_tiflash_stores_map = BTreeSet::from([1, 2, 3]);
+        let mut can_skip = |alive_stores: &mut AliveStores, policy, min_replica_num| {
+            can_skip_check_alive_stores(alive_stores, &used_tiflash_stores_map, policy, 2, min_replica_num)
+        };
+
+        {
+            // Non closest_replica; min replica num is 1.
+            let mut alive_stores = alive(&[1, 2, 3], &[1]);
+            // 1, 2, 3 is alive, can skip check.
+            assert!(can_skip(&mut alive_stores, ReplicaRead::ClosestAdaptive, 1));
+            assert!(can_skip(&mut alive_stores, ReplicaRead::AllReplicas, 1));
+
+            // 1, 2 is alive, cannot skip check.
+            alive_stores.store_ids_in_all_zones = BTreeSet::from([1, 2]);
+            assert!(!can_skip(&mut alive_stores, ReplicaRead::ClosestAdaptive, 1));
+            assert!(!can_skip(&mut alive_stores, ReplicaRead::AllReplicas, 1));
+        }
+
+        {
+            // Non closest_replica; min replica num is 2.
+            // 1, 2, 3 is alive, can skip check.
+            let mut alive_stores = alive(&[1, 2, 3], &[1, 2, 3]);
+            assert!(can_skip(&mut alive_stores, ReplicaRead::ClosestAdaptive, 2));
+            assert!(can_skip(&mut alive_stores, ReplicaRead::AllReplicas, 2));
+
+            // 1, 2 is alive, can skip check.
+            alive_stores.store_ids_in_all_zones = BTreeSet::from([1, 2]);
+            assert!(can_skip(&mut alive_stores, ReplicaRead::ClosestAdaptive, 2));
+            assert!(can_skip(&mut alive_stores, ReplicaRead::AllReplicas, 2));
+        }
+
+        for min_replica_num in [1, 2] {
+            // closest_replica(always need check).
+            for tidb_zone in [&[1][..], &[1, 2], &[1, 2, 3]] {
+                let mut alive_stores = alive(&[1, 2, 3], tidb_zone);
+                assert!(!can_skip(&mut alive_stores, ReplicaRead::ClosestReplicas, min_replica_num));
+            }
+        }
+    }
+
+    /// Go `TestCheckAliveStore`.
+    #[test]
+    fn test_check_alive_store() {
+        let used_tiflash_stores_map = BTreeSet::from([1, 2, 3]);
+        let used_tiflash_stores = [
+            vec![1, 2], // region-1
+            vec![2, 3], // region-2
+            vec![3],    // region-3
+        ];
+        let tasks: Vec<LocatedRegion> = (1..=3)
+            .map(|id| {
+                let RegionInfo { region, info, .. } = region(id, Vec::new());
+                LocatedRegion {
+                    region,
+                    info,
+                    partition_index: 0,
+                }
+            })
+            .collect();
+        let min_replica_num = 0;
+        let check = |mut alive_stores: AliveStores, max_allowed_remote| {
+            check_alive_store(
+                &mut alive_stores,
+                &used_tiflash_stores,
+                &used_tiflash_stores_map,
+                ReplicaRead::ClosestReplicas,
+                2,
+                &tasks,
+                min_replica_num,
+                max_allowed_remote,
+            )
+            .into_iter()
+            .map(|region| region.id)
+            .collect::<Vec<_>>()
+        };
+
+        // Test closest_replica. 2 remote region, 1 tidb zone region.
+        assert_eq!(check(alive(&[1, 2, 3], &[1]), 1), [2, 3]);
+        assert_eq!(check(alive(&[1, 2, 3], &[1]), 3), [0_u64; 0]);
+        // Store 3 is not alive: region-3 has no alive store.
+        assert_eq!(check(alive(&[1, 2], &[1]), 3), [3]);
+        assert_eq!(check(alive(&[], &[]), 3), [1, 2, 3]);
     }
 
     /// Go `TestBalanceBatchCopTaskWithEmptyTaskSet`.

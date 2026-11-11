@@ -8,6 +8,10 @@ repository.workspace = true
 description = "TiDB coprocessor and MPP clients: Go pkg/store/copr (Rust rewrite)."
 autotests = false
 
+[features]
+# Go's failpoints as seams other crates' tests set.
+test-util = []
+
 [dependencies]
 tidb-cpuprofile = { path = "../tidb-cpuprofile" }
 tidb-go-strconv = { path = "../tidb-go-strconv" }

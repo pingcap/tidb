@@ -310,10 +310,8 @@ impl Executor for MppGather {
 
         let statement = crate::remote_scan::pushdown_statement_context(&self.ctx);
         let config = tidb_config::config_tree::config::get_global_config();
-        // Go `NewExecutorWithRetry`'s `enableMPPRecovery`.
-        let enable_mpp_recovery = config.disaggregated_tiflash
-            && config.use_auto_scaler
-            && !statement.allow_tiflash_fallback;
+        let disagg_tiflash_with_auto_scaler =
+            config.disaggregated_tiflash && config.use_auto_scaler;
         let (ctx, is, client, plan, reopen_plan_ids, start_ts, mpp_query_id) = (
             self.ctx.clone(),
             self.is.clone(),
@@ -325,7 +323,8 @@ impl Executor for MppGather {
         );
         let response = ExecutorWithRetry::new(
             Box::new(coord),
-            enable_mpp_recovery,
+            disagg_tiflash_with_auto_scaler,
+            statement.allow_tiflash_fallback,
             statement.memory.clone(),
             Box::new(move || {
                 setup_mpp_coordinator(&ctx, &is, &client, &plan, &reopen_plan_ids, start_ts, mpp_query_id)

@@ -2120,6 +2120,7 @@ mod mpp_read_batch_tests {
                 node_count: 1,
             }),
             true,
+            false,
             memory.clone(),
             Box::new(move || {
                 assert_eq!(next_fixture.cancels.load(Ordering::SeqCst), 1);
@@ -2159,6 +2160,7 @@ mod mpp_read_batch_tests {
                 node_count: 1,
             }),
             true,
+            false,
             memory.clone(),
             Box::new(|| panic!("no retry")),
             Box::new(|_| panic!("no recovery")),

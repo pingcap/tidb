@@ -50,6 +50,7 @@ use tidb_distsql::remote_scan::PushdownRowStream;
 use tidb_distsql::remote_scan::PushdownReadEngine;
 use tidb_kv::storage::StorageError;
 use crate::StatementMemory;
+use crate::recovery_handler::{RecoveryHandler, RecoveryInfo};
 
 /// The request shapes the MPP lowering builds: the single-fragment full
 /// scan. Every carried operator is refused BY NAME rather than served from
@@ -262,15 +263,14 @@ pub fn open_mpp_scan(
     check_mpp_request(request)
         .map_err(|reason| scanner_error(MppError::Other(format!("tiflash mpp: {reason}"))))?;
     let config = tidb_config::config_tree::config::get_global_config();
-    let enabled = config.disaggregated_tiflash
-        && config.use_auto_scaler
-        && !request.statement.allow_tiflash_fallback;
+    let disagg_tiflash_with_auto_scaler = config.disaggregated_tiflash && config.use_auto_scaler;
     let response = open_gather(client, request).map_err(scanner_error)?;
     let retry_client = Arc::clone(client);
     let retry_request = request.clone();
     let response = ExecutorWithRetry::new(
         Box::new(response),
-        enabled,
+        disagg_tiflash_with_auto_scaler,
+        request.statement.allow_tiflash_fallback,
         request.statement.memory.clone(),
         Box::new(move || {
             open_gather(&retry_client, &retry_request)
@@ -493,93 +493,227 @@ impl MppGatherResponse for MppTaskResponses {
 
 /// Reopens a gather for a recovery attempt.
 pub type MppReopen = Box<dyn FnMut() -> Result<Box<dyn MppGatherResponse>, QueryResponseError> + Send>;
-/// Recovers the compute topology for a gather of the given node count.
-pub type MppRecover = Box<dyn FnMut(usize) -> Result<(), String> + Send>;
+pub use crate::recovery_handler::MppRecover;
 
-/// Go `ExecutorWithRetry` (`mppErrRecovery`): holds two raw responses and
-/// retries a TiFlash memory-limit failure at most three times. Once any
-/// response is exposed to `SelectResponseIter`, replay is permanently unsafe.
+/// Go's failpoints in `executor_with_retry.go`, as seams.
+#[cfg(any(test, feature = "test-util"))]
+pub mod mock {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Mutex, PoisonError};
+
+    static MPP_RECOVERY_TEST_MOCK_ENABLE: AtomicBool = AtomicBool::new(false);
+
+    /// Go `failpoint.Enable("mpp_recovery_test_mock_enable", "return()")`:
+    /// recovery is enabled wherever the TiFlash fallback is not allowed.
+    pub fn set_mpp_recovery_test_mock_enable(enabled: bool) {
+        MPP_RECOVERY_TEST_MOCK_ENABLE.store(enabled, Ordering::Release);
+    }
+
+    pub(super) fn mpp_recovery_test_mock_enable() -> bool {
+        MPP_RECOVERY_TEST_MOCK_ENABLE.load(Ordering::Acquire)
+    }
+
+    static MPP_RECOVERY_TEST_IGNORE_RECOVERY_ERR: AtomicBool = AtomicBool::new(false);
+
+    /// Go `failpoint.Enable("mpp_recovery_test_ignore_recovery_err",
+    /// "return()")`: a mocked mpp error's missing handler is a recovery.
+    pub fn set_mpp_recovery_test_ignore_recovery_err(enabled: bool) {
+        MPP_RECOVERY_TEST_IGNORE_RECOVERY_ERR.store(enabled, Ordering::Release);
+    }
+
+    pub(super) fn mpp_recovery_test_ignore_recovery_err() -> bool {
+        MPP_RECOVERY_TEST_IGNORE_RECOVERY_ERR.load(Ordering::Acquire)
+    }
+
+    static MPP_RECOVERY_TEST_MAX_ERR_TIMES: Mutex<Option<u32>> = Mutex::new(None);
+
+    /// Go `failpoint.Enable("mpp_recovery_test_max_err_times", "return(n)")`:
+    /// every held read fails until `n` recoveries ran.
+    pub fn set_mpp_recovery_test_max_err_times(times: Option<u32>) {
+        *MPP_RECOVERY_TEST_MAX_ERR_TIMES
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = times;
+    }
+
+    pub(super) fn mpp_recovery_test_max_err_times() -> Option<u32> {
+        *MPP_RECOVERY_TEST_MAX_ERR_TIMES
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    static MPP_RECOVERY_TEST_HOLD_SIZE: Mutex<Option<usize>> = Mutex::new(None);
+
+    /// Go `failpoint.Enable("mpp_recovery_test_hold_size", "1*return(n)")`:
+    /// the next hold must end with `n` responses. It executes once.
+    pub fn set_mpp_recovery_test_hold_size(size: Option<usize>) {
+        *MPP_RECOVERY_TEST_HOLD_SIZE
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = size;
+    }
+
+    pub(super) fn mpp_recovery_test_hold_size() -> Option<usize> {
+        MPP_RECOVERY_TEST_HOLD_SIZE
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+    }
+}
+
+/// Go `ExecutorWithRetry`: recovers an mpp error if possible and retries the
+/// MPP task. It attempts to hold the results of MPP; while it holds, an
+/// error starts a recovery, which discards the held results and re-executes
+/// the task. Once results start being returned, error recovery cannot be
+/// performed anymore.
 pub struct ExecutorWithRetry {
-    gather: Box<dyn MppGatherResponse>,
-    recovering: bool,
-    attempts: u32,
-    held: VecDeque<QueryResultSubset>,
+    coord: Box<dyn MppGatherResponse>,
     memory: StatementMemory,
+    mpp_err_recovery: RecoveryHandler,
+    /// Go `setupMPPCoordinator(ctx, true)`'s new coordinator.
     open: Option<MppReopen>,
-    recover: MppRecover,
+    node_cnt: usize,
     closed: bool,
 }
 
 impl ExecutorWithRetry {
-    /// Wraps `gather`; `enabled` is Go's `enableMPPRecovery` (disaggregated
-    /// TiFlash under the autoscaler, without TiFlash fallback).
+    /// Go `NewExecutorWithRetry` over its first coordinator.
+    /// `disagg_tiflash_with_auto_scaler` is the config's
+    /// `DisaggregatedTiFlash && UseAutoScaler`, and `allow_tiflash_fallback`
+    /// the session's `AllowFallbackToTiKV[kv.TiFlash]`.
     #[must_use]
     pub fn new(
-        gather: Box<dyn MppGatherResponse>,
-        enabled: bool,
+        coord: Box<dyn MppGatherResponse>,
+        disagg_tiflash_with_auto_scaler: bool,
+        allow_tiflash_fallback: bool,
         memory: StatementMemory,
         open: MppReopen,
         recover: MppRecover,
     ) -> Self {
+        // TODO: After add row info in tipb.DataPacket, we can use row count as capacity.
+        // For now, use the number of tipb.DataPacket as capacity.
+        const HOLD_CAP: usize = 2;
+
+        // 1. For now, mpp err recovery only support MemLimit, which is only useful when AutoScaler is used.
+        // 2. When enable fallback to tikv, the returned mpp err will be ErrTiFlashServerTimeout,
+        //    which we cannot handle for now. Also there is no need to recovery because tikv will retry the query.
+        // 3. For cached table, will not dispatch tasks to TiFlash, so no need to recovery.
+        #[allow(unused_mut)]
+        let mut enable_mpp_recovery = disagg_tiflash_with_auto_scaler && !allow_tiflash_fallback;
+
+        #[cfg(any(test, feature = "test-util"))]
+        if mock::mpp_recovery_test_mock_enable() && !allow_tiflash_fallback {
+            enable_mpp_recovery = true;
+        }
+
+        let node_cnt = coord.node_count();
         Self {
-            gather,
-            recovering: enabled,
-            attempts: 0,
-            held: VecDeque::new(),
+            coord,
+            mpp_err_recovery: RecoveryHandler::new(
+                disagg_tiflash_with_auto_scaler,
+                HOLD_CAP,
+                enable_mpp_recovery,
+                memory.clone(),
+                recover,
+            ),
             memory,
             open: Some(open),
-            recover,
+            node_cnt,
             closed: false,
         }
     }
 
-    fn clear_held(&mut self) {
-        for packet in self.held.drain(..) {
-            self.memory
-                .stmt_tracker()
-                .consume(-(packet.data.len() as i64));
-        }
+    /// Go `setupMPPCoordinator(ctx, true)`: the failed coordinator is closed
+    /// without its report, then a new one is built and executed.
+    fn setup_mpp_coordinator(&mut self) -> Result<(), QueryResponseError> {
+        // Only report runtime stats when there is no error.
+        self.coord.close_without_report();
+        self.coord = (self.open.as_mut().expect("open recovery response"))()?;
+        self.node_cnt = self.coord.node_count();
+        Ok(())
     }
 
-    fn pull(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
-        mpp_memory_error(&self.memory)?;
-        while self.recovering && self.held.len() < 2 {
-            match self.gather.next() {
-                Ok(Some(packet)) => {
-                    self.memory.stmt_tracker().consume(packet.data.len() as i64);
-                    self.held.push_back(packet);
+    /// Go `nextWithRecovery`.
+    fn next_with_recovery(&mut self) -> Result<(), QueryResponseError> {
+        if !self.mpp_err_recovery.enabled() {
+            return Ok(());
+        }
+
+        while self.mpp_err_recovery.can_hold_result() {
+            #[allow(unused_mut)]
+            let mut resp = self.coord.next();
+
+            // Mock recovery n times.
+            #[cfg(any(test, feature = "test-util"))]
+            if mock::mpp_recovery_test_max_err_times()
+                .is_some_and(|force_err_cnt| self.mpp_err_recovery.recovery_cnt() < force_err_cnt)
+            {
+                resp = Err(QueryResponseError::Source("mock mpp error".to_owned()));
+            }
+
+            match resp {
+                Err(mpp_err) => {
+                    // The statement's own quota or KILL is terminal.
                     mpp_memory_error(&self.memory)?;
+                    #[allow(unused_mut)]
+                    let mut recovery_err = self
+                        .mpp_err_recovery
+                        .recovery(&RecoveryInfo {
+                            mpp_err: &mpp_err,
+                            node_cnt: self.node_cnt,
+                        })
+                        .err();
+
+                    // Mock recovery succeed, ignore no recovery handler err.
+                    #[cfg(any(test, feature = "test-util"))]
+                    if mock::mpp_recovery_test_ignore_recovery_err() {
+                        let recovery = recovery_err
+                            .as_deref()
+                            .expect("mocked mpp err should got recovery err");
+                        if mpp_err.to_string().contains("mock mpp error")
+                            && recovery.contains("no handler to recovery")
+                        {
+                            recovery_err = None;
+                        }
+                    }
+
+                    if recovery_err.is_some() {
+                        return Err(mpp_err);
+                    }
+
+                    if self.setup_mpp_coordinator().is_err() {
+                        return Err(mpp_err);
+                    }
+                    self.mpp_err_recovery.reset_holder();
                 }
                 Ok(None) => break,
-                Err(error) => {
-                    // Local quota/KILL errors are terminal, even if their text
-                    // happens to contain the remote TiFlash memory error pattern.
+                Ok(Some(resp)) => {
+                    self.mpp_err_recovery.hold_result(resp);
                     mpp_memory_error(&self.memory)?;
-                    let eligible = matches!(&error, QueryResponseError::Source(message)
-                        if message.contains("Memory limit"));
-                    if !eligible || self.attempts >= 3 {
-                        return Err(error);
-                    }
-                    self.attempts += 1;
-                    if (self.recover)(self.gather.node_count()).is_err() {
-                        return Err(error);
-                    }
-                    self.gather.close_without_report();
-                    let replacement = (self.open.as_mut().expect("open recovery response"))()
-                        .map_err(|_| error)?;
-                    self.clear_held();
-                    self.gather = replacement;
                 }
             }
         }
-        self.recovering = false;
-        if let Some(packet) = self.held.pop_front() {
-            self.memory
-                .stmt_tracker()
-                .consume(-(packet.data.len() as i64));
-            return Ok(Some(packet));
+
+        #[cfg(any(test, feature = "test-util"))]
+        if let Some(num) = mock::mpp_recovery_test_hold_size() {
+            // Note: this failpoint only execute once.
+            let cur_rows = self.mpp_err_recovery.num_hold_resp();
+            assert!(cur_rows == num, "unexpected holding rows, cur: {cur_rows}");
         }
-        self.gather.next()
+        Ok(())
+    }
+
+    /// Go `ExecutorWithRetry.Next`.
+    fn pull(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
+        mpp_memory_error(&self.memory)?;
+        self.next_with_recovery()?;
+
+        if self.mpp_err_recovery.num_hold_resp() != 0 {
+            return self
+                .mpp_err_recovery
+                .pop_front_resp()
+                .map(Some)
+                .map_err(QueryResponseError::Source);
+        }
+        self.coord.next()
     }
 }
 
@@ -606,9 +740,9 @@ impl tidb_txnkv::Response for ExecutorWithRetry {
             return Ok(());
         }
         self.closed = true;
-        self.clear_held();
+        self.mpp_err_recovery.reset_holder();
         // Go `ExecutorWithRetry.Close`: `err := r.coord.Close()`.
-        let result = self.gather.close();
+        let result = self.coord.close();
         self.open = None;
         result
     }
@@ -806,6 +940,7 @@ mod recovery_tests {
         let mut response = ExecutorWithRetry::new(
             gather(vec![Ok(packet(99)), Err(memory_error())], closed),
             true,
+            false,
             memory.clone(),
             Box::new(move || {
                 assert_eq!(old_closed.load(SeqCst), 1);
@@ -837,6 +972,7 @@ mod recovery_tests {
                     Arc::default(),
                 ),
                 enabled,
+                false,
                 crate::StatementMemory::default(),
                 Box::new(|| panic!("must not replay delivered packets")),
                 Box::new(|_| panic!("must not recover after delivery")),
@@ -855,6 +991,7 @@ mod recovery_tests {
         let mut response = ExecutorWithRetry::new(
             gather(vec![Err(memory_error())], Arc::default()),
             true,
+            false,
             crate::StatementMemory::default(),
             Box::new(|| Ok(gather(vec![Err(memory_error())], Arc::default()))),
             Box::new(move |_| {
@@ -869,6 +1006,7 @@ mod recovery_tests {
             let mut response = ExecutorWithRetry::new(
                 gather(vec![Ok(packet(5)), Err(memory_error())], Arc::default()),
                 true,
+                false,
                 memory.clone(),
                 Box::new(|| Err(QueryResponseError::Source("replacement failed".into()))),
                 Box::new(move |_| {
@@ -897,6 +1035,7 @@ mod recovery_tests {
             let mut response = ExecutorWithRetry::new(
                 gather(vec![Err(error.clone())], Arc::default()),
                 true,
+                false,
                 crate::StatementMemory::default(),
                 Box::new(|| panic!("terminal")),
                 Box::new(|_| panic!("terminal")),
@@ -908,6 +1047,7 @@ mod recovery_tests {
             let mut response = ExecutorWithRetry::new(
                 gather((0..count).map(|i| Ok(packet(i))).collect(), Arc::default()),
                 true,
+                false,
                 memory.clone(),
                 Box::new(|| panic!("no failure")),
                 Box::new(|_| panic!("no failure")),
@@ -927,6 +1067,7 @@ mod recovery_tests {
         let mut response = ExecutorWithRetry::new(
             gather(vec![], Arc::default()),
             true,
+            false,
             crate::StatementMemory::default(),
             Box::new(move || {
                 let _borrow = &capability;
@@ -1010,6 +1151,7 @@ mod recovery_tests {
                     closed: closed.clone(),
                 }),
                 true,
+                false,
                 crate::StatementMemory::default(),
                 Box::new(|| panic!("no retry")),
                 Box::new(|_| panic!("no failure")),

@@ -22,7 +22,7 @@ use super::*;
 fn replica_available(stack: &UnistoreClusterStack, session: &mut Session, table: &str) {
     let table_id: i64 = displayed(rows(
         session,
-        &format!("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = '{table}'"),
+        &format!("select tidb_table_id from information_schema.tables where table_schema = database() and table_name = '{table}'"),
     ))[0][0]
         .parse()
         .unwrap();
@@ -1031,6 +1031,330 @@ fn test_issue_59877() {
     );
 }
 
+/// The four tables of Go's `TestTiFlashPartitionTable*` tests in `database`
+/// (`tnormal` by `tnormal_ddl`), each with a hundred random rows; answers
+/// the rows and the test's random source.
+fn tiflash_partition_tables(
+    stack: &UnistoreClusterStack,
+    session: &mut Session,
+    database: &str,
+    tnormal_ddl: &str,
+    row_count: usize,
+    analyze: bool,
+) -> (Vec<(u64, u64)>, impl FnMut() -> u64) {
+    // Go `rand.Intn(400)`.
+    let mut state = 0x2545_f491_4f6c_dd1d_u64;
+    let mut intn = move || {
+        state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        (state >> 33) % 400
+    };
+    rows(session, &format!("create database {database}"));
+    rows(session, &format!("use {database}"));
+    rows(session, "create table thash (a int, b int) partition by hash(a) partitions 4");
+    rows(
+        session,
+        "create table trange (a int, b int) partition by range(a) (
+		partition p0 values less than (100), partition p1 values less than (200),
+		partition p2 values less than (300), partition p3 values less than (400))",
+    );
+    let list_partitions: Vec<String> = (0..4)
+        .map(|idx| {
+            let values: Vec<String> = (0..400).filter(|i| i % 4 == idx).map(|i| i.to_string()).collect();
+            values.join(", ")
+        })
+        .collect();
+    rows(
+        session,
+        &format!(
+            "create table tlist (a int, b int) partition by list(a) (
+		partition p0 values in ({}), partition p1 values in ({}),
+		partition p2 values in ({}), partition p3 values in ({}))",
+            list_partitions[0], list_partitions[1], list_partitions[2], list_partitions[3]
+        ),
+    );
+    rows(session, tnormal_ddl);
+    for tbl in ["thash", "trange", "tlist", "tnormal"] {
+        rows(session, &format!("alter table {tbl} set tiflash replica 1"));
+        replica_available(stack, session, tbl);
+    }
+    let vals: Vec<(u64, u64)> = (0..row_count).map(|_| (intn(), intn())).collect();
+    let values: Vec<String> = vals.iter().map(|(a, b)| format!("({a}, {b})")).collect();
+    for tbl in ["thash", "trange", "tlist", "tnormal"] {
+        rows(session, &format!("insert into {tbl} values {}", values.join(", ")));
+        if analyze {
+            rows(session, &format!("analyze table {tbl}"));
+        }
+    }
+    (vals, intn)
+}
+
+/// Go `TestTiFlashPartitionTableShuffledHashAggregation`.
+#[test]
+fn test_tiflash_partition_table_shuffled_hash_aggregation() {
+    let (stack, mut session) = tiflash_session(2, 2204);
+    let (vals, mut intn) = tiflash_partition_tables(
+        &stack,
+        &mut session,
+        "tiflash_partition_AGG",
+        "create table tnormal (a int, b int) partition by hash(a) partitions 4",
+        100,
+        true,
+    );
+    rows(&mut session, "set @@session.tidb_isolation_read_engines='tiflash'");
+    // unistore does not support later materialization
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+    rows(&mut session, "set @@session.tidb_enforce_mpp=1");
+    // mock executor does not support use outer table as build side for outer join, so need to
+    // force the inner table as build side
+    rows(&mut session, "set tidb_opt_mpp_outer_join_fixed_build_side=1");
+
+    for _ in 0..2 {
+        let (l, r) = (intn(), intn());
+        let (l1, r1) = (l.min(r), l.max(r));
+        let cond = format!("t1.b>={l1} and t1.b<={r1}");
+        let res = vals.iter().filter(|(_, b)| (l1..=r1).contains(b)).count().to_string();
+        for mode in ["static", "dynamic"] {
+            rows(&mut session, &format!("set @@tidb_partition_prune_mode = '{mode}'"));
+            for tbl in ["thash", "trange", "tlist", "tnormal"] {
+                let q = format!("select /*+ HASH_AGG() */ count(*) from {tbl} t1 where {cond}");
+                let plan = displayed(rows(&mut session, &format!("explain {q}")));
+                assert!(plan.iter().any(|row| row[0].contains("HashAgg")), "{q}: {plan:?}");
+                assert_eq!(displayed(rows(&mut session, &q)), [[res.clone()]], "{mode} {q}");
+            }
+        }
+    }
+}
+
+/// Go `TestTiFlashPartitionTableBroadcastJoin`.
+/// Go `TestTiFlashPartitionTableShuffledHashJoin` (skipped there as too
+/// slow).
+#[test]
+fn test_tiflash_partition_table_shuffled_hash_join() {
+    let (stack, mut session) = tiflash_session(2, 2209);
+    let (vals, mut intn) = tiflash_partition_tables(
+        &stack,
+        &mut session,
+        "tiflash_partition_SHJ",
+        "create table tnormal (a int, b int)",
+        100,
+        true,
+    );
+    rows(&mut session, "SET tidb_enforce_mpp=1");
+    rows(&mut session, "SET tidb_broadcast_join_threshold_count=0");
+    rows(&mut session, "SET tidb_broadcast_join_threshold_size=0");
+    rows(&mut session, "set @@session.tidb_isolation_read_engines='tiflash'");
+    // mock executor does not support use outer table as build side for outer join, so need to
+    // force the inner table as build side
+    rows(&mut session, "set tidb_opt_mpp_outer_join_fixed_build_side=1");
+    // unistore does not support later materialization
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+
+    for _ in 0..2 {
+        let mut lr = || {
+            let (l, r) = (intn(), intn());
+            (l.min(r), l.max(r))
+        };
+        let (l1, r1) = lr();
+        let (l2, r2) = lr();
+        let cond = format!("t1.b>={l1} and t1.b<={r1} and t2.b>={l2} and t2.b<={r2}");
+        let res = vals
+            .iter()
+            .filter(|(_, b)| (l1..=r1).contains(b))
+            .map(|(a1, _)| vals.iter().filter(|(a2, b)| a1 == a2 && (l2..=r2).contains(b)).count())
+            .sum::<usize>()
+            .to_string();
+        for mode in ["static", "dynamic"] {
+            rows(&mut session, &format!("set @@tidb_partition_prune_mode = '{mode}'"));
+            for tbl in ["thash", "trange", "tlist", "tnormal"] {
+                let q = format!("select count(*) from {tbl} t1 join {tbl} t2 on t1.a=t2.a where {cond}");
+                assert_eq!(displayed(rows(&mut session, &q)), [[res.clone()]], "{mode} {q}");
+            }
+        }
+    }
+}
+
+/// Go `TestTiFlashPartitionTableReader` (skipped there as too slow).
+#[test]
+fn test_tiflash_partition_table_reader() {
+    let (stack, mut session) = tiflash_session(2, 2210);
+    let (vals, mut intn) = tiflash_partition_tables(
+        &stack,
+        &mut session,
+        "tiflash_partition_tablereader",
+        "create table tnormal (a int, b int)",
+        500,
+        false,
+    );
+    // mock executor does not support use outer table as build side for outer join, so need to
+    // force the inner table as build side
+    rows(&mut session, "set tidb_opt_mpp_outer_join_fixed_build_side=1");
+    // unistore does not support later materialization
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+    rows(&mut session, "SET tidb_enforce_mpp=1");
+    rows(&mut session, "set @@session.tidb_isolation_read_engines='tiflash'");
+    for _ in 0..10 {
+        let (l, r) = (intn(), intn());
+        let (l, r) = (l.min(r), l.max(r));
+        let mut res: Vec<Vec<String>> = vals
+            .iter()
+            .filter(|(a, _)| (l..=r).contains(a))
+            .map(|(a, b)| vec![a.to_string(), b.to_string()])
+            .collect();
+        res.sort();
+        for mode in ["static", "dynamic"] {
+            rows(&mut session, &format!("set @@tidb_partition_prune_mode = '{mode}'"));
+            for tbl in ["thash", "trange", "tlist", "tnormal"] {
+                let q = format!("select * from {tbl} where a>={l} and a<={r}");
+                let mut got = displayed(rows(&mut session, &q));
+                got.sort();
+                assert_eq!(got, res, "{mode} {q}");
+            }
+        }
+    }
+}
+
+#[test]
+fn test_tiflash_partition_table_broadcast_join() {
+    let (stack, mut session) = tiflash_session(2, 2205);
+    let (vals, mut intn) = tiflash_partition_tables(
+        &stack,
+        &mut session,
+        "tiflash_partition_BCJ",
+        "create table tnormal (a int, b int)",
+        100,
+        true,
+    );
+    rows(&mut session, "set @@session.tidb_isolation_read_engines='tiflash'");
+    rows(&mut session, "set @@session.tidb_enforce_mpp=1");
+    // mock executor does not support use outer table as build side for outer join, so need to
+    // force the inner table as build side
+    rows(&mut session, "set tidb_opt_mpp_outer_join_fixed_build_side=1");
+    // unistore does not support later materialization
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+
+    for _ in 0..2 {
+        let mut lr = || {
+            let (l, r) = (intn(), intn());
+            (l.min(r), l.max(r))
+        };
+        let (l1, r1) = lr();
+        let (l2, r2) = lr();
+        let cond = format!("t1.b>={l1} and t1.b<={r1} and t2.b>={l2} and t2.b<={r2}");
+        let res = vals
+            .iter()
+            .filter(|(_, b)| (l1..=r1).contains(b))
+            .map(|(a1, _)| vals.iter().filter(|(a2, b)| a1 == a2 && (l2..=r2).contains(b)).count())
+            .sum::<usize>()
+            .to_string();
+        for mode in ["static", "dynamic"] {
+            rows(&mut session, &format!("set @@tidb_partition_prune_mode = '{mode}'"));
+            for tbl in ["thash", "trange", "tlist", "tnormal"] {
+                let q = format!("select count(*) from {tbl} t1 join {tbl} t2 on t1.a=t2.a where {cond}");
+                assert_eq!(displayed(rows(&mut session, &q)), [[res.clone()]], "{mode} {q}");
+            }
+        }
+    }
+}
+
+/// Go `TestMppTableReaderCacheForSingleSQL`.
+#[test]
+fn test_mpp_table_reader_cache_for_single_sql() {
+    use std::sync::atomic::{AtomicI32, Ordering};
+    use tidb_planner_core_operator_physicalop::fragment::mock;
+    let (stack, mut session) = tiflash_session(1, 2206);
+    rows(&mut session, "create table t(a int, b int, primary key(a))");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+
+    rows(&mut session, "create table t2(a int, b int) partition by hash(b) partitions 4");
+    rows(&mut session, "alter table t2 set tiflash replica 1");
+    replica_available(&stack, &mut session, "t2");
+    for i in 1..=5 {
+        rows(&mut session, &format!("insert into t values({i}, {i})"));
+    }
+    for i in 1..=5 {
+        rows(&mut session, &format!("insert into t2 values({i}, {i})"));
+    }
+
+    // unistore does not support later materialization
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+    rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
+    rows(&mut session, "set @@session.tidb_allow_mpp=ON");
+    rows(&mut session, "set @@session.tidb_enforce_mpp=ON");
+    rows(&mut session, "set @@session.tidb_max_chunk_size=32");
+
+    // Test TableReader cache for single SQL.
+    let test_cases: &[(&str, i32, i32)] = &[
+        // Non-Partition
+        // Cache hit
+        ("select * from t", 0, 1),
+        ("select * from t union select * from t", 1, 1),
+        ("select * from t union select * from t t1 union select * from t t2", 2, 1),
+        ("select * from t where b <= 3 union select * from t where b > 3", 1, 1), // both full range
+        ("select * from t where a <= 3 union select * from t where a <= 3", 1, 1), // same range
+        ("select * from t t1 join t t2 on t1.b=t2.b", 1, 1),
+        // Cache miss
+        ("select * from t union all select * from t", 0, 2), // different MPP task requests
+        ("select * from t where a <= 3 union select * from t where a > 3", 0, 2), // different range
+        // Partition
+        // Cache hit
+        ("select * from t2 union select * from t2", 1, 1),
+        ("select * from t2 where b = 1 union select * from t2 where b = 5", 1, 1), // same partition, full range
+        ("select * from t2 where b = 1 and a < 3 union select * from t2 where b = 5 and a < 3", 1, 1), // same partition, same range
+        ("select * from t2 t1 join t2 t2 on t1.b=t2.b", 1, 1),
+        ("select * from t2 t1 join t2 t2 on t1.b=t2.b where t1.a = 2 and t2.a = 2", 1, 1),
+        // Cache miss
+        ("select * from t2 union select * from t2 where b = 1", 0, 2), // different partition
+        ("select * from t2 where b = 2 union select * from t2 where b = 1", 0, 2), // different partition
+    ];
+
+    let hit_num = Arc::new(AtomicI32::new(0));
+    let miss_num = Arc::new(AtomicI32::new(0));
+    let (hit, miss) = (Arc::clone(&hit_num), Arc::clone(&miss_num));
+    mock::set_mpp_task_generator_table_reader_cache_hit(Some(Arc::new(move || {
+        hit.fetch_add(1, Ordering::SeqCst);
+    })));
+    mock::set_mpp_task_generator_table_reader_cache_miss(Some(Arc::new(move || {
+        miss.fetch_add(1, Ordering::SeqCst);
+    })));
+    for (sql, expect_hit_num, expect_miss_num) in test_cases {
+        hit_num.store(0, Ordering::SeqCst);
+        miss_num.store(0, Ordering::SeqCst);
+        rows(&mut session, sql);
+        assert_eq!(
+            (hit_num.load(Ordering::SeqCst), miss_num.load(Ordering::SeqCst)),
+            (*expect_hit_num, *expect_miss_num),
+            "{sql}"
+        );
+    }
+    mock::set_mpp_task_generator_table_reader_cache_hit(None);
+    mock::set_mpp_task_generator_table_reader_cache_miss(None);
+}
+
+/// Go `TestTiflashSupportStaleRead`.
+#[test]
+fn test_tiflash_support_stale_read() {
+    let (stack, mut session) = tiflash_session(2, 2203);
+    rows(&mut session, "drop table if exists t");
+    rows(&mut session, "create table t(a bigint(20))");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    for _ in 0..6 {
+        rows(&mut session, "insert into t values (9223372036854775807)");
+    }
+    let explain = |session: &mut Session, sql: &str| -> String {
+        displayed(rows(session, sql)).into_iter().map(|row| format!("{row:?}\n")).collect()
+    };
+    let res = explain(&mut session, "explain select avg(a) from t");
+    assert!(res.contains("tiflash"), "{res}");
+    assert!(!res.contains("tikv"), "{res}");
+    rows(&mut session, "set transaction read only as of timestamp now(1)");
+    let res = explain(&mut session, "explain select avg(a) from t");
+    assert!(res.contains("tiflash"), "{res}");
+    assert!(!res.contains("tikv"), "{res}");
+}
+
 /// Go `TestForbidTiFlashIfExtraPhysTableIDIsNeeded`.
 #[test]
 fn test_forbid_tiflash_if_extra_phys_table_id_is_needed() {
@@ -1605,6 +1929,116 @@ fn test_mpp_memory_tracker() {
     let (code, _) = query_error(&mut session, "select * from t");
     tidb_executor::local_mpp_coordinator::mock::set_test_mpp_oom_panic(false);
     assert_eq!(code, tidb_errno::errcode::ErrMemoryExceedForQuery);
+}
+
+/// Go `TestNoAliveTiFlashRetry`: a build of the batch tasks that finds no
+/// alive TiFlash store keeps the tasks it located.
+#[test]
+fn test_no_alive_tiflash_retry() {
+    let (stack, mut session) = tiflash_session(1, 2208);
+    rows(&mut session, "drop table if exists t");
+    rows(&mut session, "create table t(a int not null primary key, b int not null)");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+
+    let mut dml = "insert into t values".to_owned();
+    for i in 0..50 {
+        dml += &format!("({i}, 0)");
+        if i != 49 {
+            dml += ",";
+        }
+    }
+    rows(&mut session, &dml);
+
+    tidb_copr::batch_cop_tasks::mock::set_mock_no_alive_tiflash(true);
+    let count = displayed(rows(&mut session, "select count(*) from t"));
+    tidb_copr::batch_cop_tasks::mock::set_mock_no_alive_tiflash(false);
+    assert_eq!(count, [["50"]]);
+}
+
+/// Go `TestMPPRecovery`: a held read's error is recovered and the gather
+/// re-executed, at most three times, and never under the TiFlash fallback.
+#[test]
+fn test_mpp_recovery() {
+    use tidb_executor::mpp_coordinator::mock;
+
+    let (stack, mut session) = tiflash_session(2, 2207);
+    rows(&mut session, "create table t(a int, b int)");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+
+    let mut check_strs = vec![vec!["0".to_owned(), "0".to_owned()]];
+    let mut insert_str = "insert into t values(0, 0)".to_owned();
+    for i in 1..1500 {
+        insert_str += &format!(",({i}, {i})");
+        check_strs.push(vec![i.to_string(), i.to_string()]);
+    }
+    rows(&mut session, &insert_str);
+    rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
+    // unistore does not support later materialization
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+    let sql = "select * from t order by 1, 2";
+
+    mock::set_mpp_recovery_test_mock_enable(true);
+    mock::set_mpp_recovery_test_ignore_recovery_err(true);
+    // Test different chunk size. And force one mpp err.
+    {
+        mock::set_mpp_recovery_test_max_err_times(Some(1));
+
+        rows(&mut session, "set @@tidb_max_chunk_size = default");
+        assert_eq!(displayed(rows(&mut session, sql)), check_strs);
+        rows(&mut session, "set @@tidb_max_chunk_size = 32");
+        assert_eq!(displayed(rows(&mut session, sql)), check_strs);
+
+        mock::set_mpp_recovery_test_max_err_times(None);
+    }
+
+    // Test exceeds max recovery times. Default max times is 3.
+    {
+        mock::set_mpp_recovery_test_max_err_times(Some(5));
+
+        rows(&mut session, "set @@tidb_max_chunk_size = 32");
+        let (_, message) = query_error(&mut session, sql);
+        assert!(message.contains("mock mpp err"), "{message}");
+
+        mock::set_mpp_recovery_test_max_err_times(None);
+    }
+
+    {
+        // When AllowFallbackToTiKV, mpp err recovery should be disabled.
+        // So event we inject mock err multiple times, the query should be ok.
+        rows(&mut session, "set @@tidb_allow_fallback_to_tikv = \"tiflash\"");
+        mock::set_mpp_recovery_test_max_err_times(Some(5));
+
+        rows(&mut session, "set @@tidb_max_chunk_size = 32");
+        assert_eq!(displayed(rows(&mut session, sql)), check_strs);
+
+        rows(&mut session, "set @@tidb_allow_fallback_to_tikv = default");
+        mock::set_mpp_recovery_test_max_err_times(None);
+    }
+
+    // Test hold logic. Default hold 4 * MaxChunkSize rows.
+    {
+        mock::set_mpp_recovery_test_max_err_times(Some(0));
+
+        rows(&mut session, "set @@tidb_max_chunk_size = 32");
+        let expected_hold_size = 2;
+        mock::set_mpp_recovery_test_hold_size(Some(expected_hold_size));
+        assert_eq!(displayed(rows(&mut session, sql)), check_strs);
+        mock::set_mpp_recovery_test_hold_size(None);
+
+        mock::set_mpp_recovery_test_max_err_times(None);
+    }
+    mock::set_mpp_recovery_test_ignore_recovery_err(false);
+    mock::set_mpp_recovery_test_mock_enable(false);
+
+    {
+        // We have 2 mock tiflash, but the table is small, so only 1 tiflash node is in computation.
+        rows(&mut session, "set @@tidb_max_chunk_size = 32");
+        assert_eq!(displayed(rows(&mut session, sql)), check_strs);
+    }
+
+    rows(&mut session, "set @@tidb_max_chunk_size = default");
 }
 
 /// Go `TestMppGoroutinesExitFromErrors`: the non-root tasks' errors end a
