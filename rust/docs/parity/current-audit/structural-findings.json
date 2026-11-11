@@ -2,9 +2,9 @@
   "date": "2026-11-09",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 26,
+    "unresolved": 25,
     "open": 4,
-    "partial": 22
+    "partial": 21
   },
   "findings": [
     {
@@ -71,13 +71,6 @@
       "group": "DML and executor handoff",
       "finding": "`IndexJoin` and `IndexHashJoin` are Go's `IndexLookUpJoin` and `IndexNestedLoopHashJoin` (`join/index_lookup_join.rs`, `join/index_lookup_hash_join.rs`: outer and inner workers over `Joiner`), with Go's task memory and matching; the fused `JoinExec` lookup strategy is gone. Two gaps remain: Go's `IndexLookUpMergeJoin` executor (and `PhysicalIndexMergeJoin`'s `KeyOff2KeyOffOrderByIdx`, `CompareFuncs`, `NeedOuterSort`, `Desc`) is unported -- neither planner builds one on this branch, and the builder refuses the kind; each task's inner reader is built afresh from the lookup's template on the inner worker that runs it, as Go's `BuildExecutorForIndexJoin` builds it (only a lookup publishing shared probes keeps the one shared reader); its inner `IndexLookUp` (`IndexJoinLookupExec`) charges Go's per-task `IndexLookUpExecutor` (its tracker, index worker request, response-chunk tasks and their charges, `an_index_join_charges_its_inner_index_lookup_like_go`) without being one: each task's reader registers its runtime stats when it closes, as Go's `RegisterStats` does (`index_task`, `table_task` and its table readers' loops: `an_index_joins_inner_lookups_register_their_stats_per_task_like_go`), its index worker stops at its stream's end as Go's does (Go's 11 index-plan loops over 7 inner tasks), and each task's reader is its own executor in the plan's basic stats (Go's merged `total_` form) with Go's `next` waits",
       "go_owner": "`pkg/executor/join/index_lookup_merge_join.go`, `pkg/planner/core/operator/physicalop/physical_index_merge_join.go`, `pkg/executor/builder.go` (`dataReaderBuilder.BuildExecutorForIndexJoin`)"
-    },
-    {
-      "id": "E14",
-      "status": "partial",
-      "group": "DML and executor handoff",
-      "finding": "The embedded store's coprocessor runs every DAG through Go's `mppExec` chain (`tidb-unistore-cophandler` `mpp.rs`, `mpp_exec.rs`), filters condition by condition as Go's `VectorizedFilter` does, and answers errors as `genRespWithMPPExec` does (`SelectResponse.error`, a conflict's `OtherError`, an unsupported executor's `OtherError`), but the index-lookup push-down is absent end to end: a `LocalIndexLookUp` plan (the `index_lookup_pushdown` hint, `tidb_index_lookup_pushdown_policy`) runs as this tier's own double read (`physical_builder.rs` `lower_index_lookup_selections`) where Go's `IndexLookUpExecutor` sends one `IndexLookUp` DAG and reads its rows and `IntermediateOutputs`, and this tier's coprocessor refuses `buildIndexLookUp`",
-      "go_owner": "`pkg/store/mockstore/unistore/cophandler` (`mpp.go`, `mpp_exec.go`)"
     },
     {
       "id": "E15",
@@ -194,7 +187,7 @@
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
-  "unresolved": 26,
+  "unresolved": 25,
   "open": 4,
-  "partial": 22
+  "partial": 21
 }

@@ -1,0 +1,60 @@
+# Go testkit over unistore, executor_failpoint_test.go IndexLookUpPushDownRunVerifier with a fixed data set:
+# hit rate | where/skip/limit | row count, FNV-1a of the returned ids in order | operator:actRows:task of EXPLAIN ANALYZE.
+# `*` is a count that depends on how far the table workers got before the reader closed.
+hit=0 | 1/0/-1 | n=2000 order=84f7d58dde99743d | IndexLookUp:2000:R LocalIndexLookUp:0:C IndexFullScan:2000:C TableRowIDScan:0:C TableRowIDScan:2000:C
+hit=0 | 1/0/1500 | n=1500 order=31068fe1159671 | IndexLookUp:1500:R LocalIndexLookUp:0:C Limit:1500:C IndexFullScan:1568:C TableRowIDScan:0:C TableRowIDScan:1500:C
+hit=0 | 1/1000/700 | n=700 order=a1a150146ae2b8dd | IndexLookUp:700:R LocalIndexLookUp:0:C Limit:1700:C IndexFullScan:1792:C TableRowIDScan:0:C TableRowIDScan:700:C
+hit=0 | 1/1990/20 | n=10 order=2e1715e380d6c53c | IndexLookUp:10:R LocalIndexLookUp:0:C Limit:2000:C IndexFullScan:2000:C TableRowIDScan:0:C TableRowIDScan:10:C
+hit=0 | 1/2000/10 | n=0 order=cbf29ce484222325 | IndexLookUp:0:R LocalIndexLookUp:0:C Limit:2000:C IndexFullScan:2000:C TableRowIDScan:0:C TableRowIDScan:0:C
+hit=0 | 1/10/0 | n=0 order=cbf29ce484222325 | IndexLookUp:0:R LocalIndexLookUp:0:C Limit:10:C IndexFullScan:96:C TableRowIDScan:0:C TableRowIDScan:0:C
+hit=0 | a = 37/0/-1 | n=20 order=f5e0c6cd05eff09b | IndexLookUp:20:R LocalIndexLookUp:0:C IndexRangeScan:20:C TableRowIDScan:0:C TableRowIDScan:20:C
+hit=0 | a = 42/0/25 | n=20 order=296949729da6dcef | IndexLookUp:20:R LocalIndexLookUp:0:C Limit:20:C IndexRangeScan:20:C TableRowIDScan:0:C TableRowIDScan:20:C
+hit=0 | a < 60/0/-1 | n=1200 order=5478ee6ee92b335 | IndexLookUp:1200:R LocalIndexLookUp:0:C IndexRangeScan:1200:C TableRowIDScan:0:C TableRowIDScan:1200:C
+hit=0 | a < 60/0/77 | n=77 order=fc076bcbc0d470e2 | IndexLookUp:77:R LocalIndexLookUp:0:C Limit:77:C IndexRangeScan:160:C TableRowIDScan:0:C TableRowIDScan:77:C
+hit=0 | a > 30/0/-1 | n=1380 order=fd7ef57729c0e2db | IndexLookUp:1380:R LocalIndexLookUp:0:C IndexRangeScan:1380:C TableRowIDScan:0:C TableRowIDScan:1380:C
+hit=0 | a > 30/0/51 | n=51 order=4f8d864b31b6ecda | IndexLookUp:51:R LocalIndexLookUp:0:C Limit:51:C IndexRangeScan:128:C TableRowIDScan:0:C TableRowIDScan:51:C
+hit=0 | a >= 20 and a < 24/0/-1 | n=80 order=8f8553e58ffe93a1 | IndexLookUp:80:R LocalIndexLookUp:0:C IndexRangeScan:80:C TableRowIDScan:0:C TableRowIDScan:80:C
+hit=0 | a >= 20 and a < 24/0/33 | n=33 order=559f45fe822feeba | IndexLookUp:33:R LocalIndexLookUp:0:C Limit:33:C IndexRangeScan:80:C TableRowIDScan:0:C TableRowIDScan:33:C
+hit=0 | a > 40 and b < 500/0/-1 | n=590 order=b5bec1710d73ad3a | IndexLookUp:590:R Selection:0:C LocalIndexLookUp:0:C IndexRangeScan:1180:C TableRowIDScan:0:C Selection:590:C TableRowIDScan:1180:C
+hit=0 | a > 40 and b < 500/0/29 | n=29 order=e0c6ddf5fd9d18f | Limit:29:R IndexLookUp:29:R Limit:0:C Selection:0:C LocalIndexLookUp:0:C IndexRangeScan:1180:C TableRowIDScan:0:C Limit:*:C Selection:*:C TableRowIDScan:*:C
+hit=5 | 1/0/-1 | n=2000 order=3154844f87e313b3 | IndexLookUp:2000:R LocalIndexLookUp:1008:C IndexFullScan:2000:C TableRowIDScan:1008:C TableRowIDScan:992:C
+hit=5 | 1/0/1500 | n=1500 order=64b42be8a7d97875 | IndexLookUp:1500:R LocalIndexLookUp:771:C Limit:1500:C IndexFullScan:1568:C TableRowIDScan:771:C TableRowIDScan:729:C
+hit=5 | 1/1000/700 | n=700 order=ab7333a4e833b054 | IndexLookUp:700:R LocalIndexLookUp:864:C Limit:1700:C IndexFullScan:1792:C TableRowIDScan:864:C TableRowIDScan:700:C
+hit=5 | 1/1990/20 | n=10 order=927c01b9439fefac | IndexLookUp:10:R LocalIndexLookUp:1008:C Limit:2000:C IndexFullScan:2000:C TableRowIDScan:1008:C TableRowIDScan:10:C
+hit=5 | 1/2000/10 | n=0 order=cbf29ce484222325 | IndexLookUp:0:R LocalIndexLookUp:1008:C Limit:2000:C IndexFullScan:2000:C TableRowIDScan:1008:C TableRowIDScan:0:C
+hit=5 | 1/10/0 | n=0 order=cbf29ce484222325 | IndexLookUp:0:R LocalIndexLookUp:4:C Limit:10:C IndexFullScan:96:C TableRowIDScan:4:C TableRowIDScan:0:C
+hit=5 | a = 37/0/-1 | n=20 order=8f19cfa99df6b381 | IndexLookUp:20:R LocalIndexLookUp:7:C IndexRangeScan:20:C TableRowIDScan:7:C TableRowIDScan:13:C
+hit=5 | a = 42/0/25 | n=20 order=8605badabde05ec5 | IndexLookUp:20:R LocalIndexLookUp:10:C Limit:20:C IndexRangeScan:20:C TableRowIDScan:10:C TableRowIDScan:10:C
+hit=5 | a < 60/0/-1 | n=1200 order=7c176c510298e3ff | IndexLookUp:1200:R LocalIndexLookUp:610:C IndexRangeScan:1200:C TableRowIDScan:610:C TableRowIDScan:590:C
+hit=5 | a < 60/0/77 | n=77 order=6c3376ca4853ffdc | IndexLookUp:77:R LocalIndexLookUp:45:C Limit:77:C IndexRangeScan:160:C TableRowIDScan:45:C TableRowIDScan:32:C
+hit=5 | a > 30/0/-1 | n=1380 order=725598230d798f37 | IndexLookUp:1380:R LocalIndexLookUp:682:C IndexRangeScan:1380:C TableRowIDScan:682:C TableRowIDScan:698:C
+hit=5 | a > 30/0/51 | n=51 order=7e6f00337b31014 | IndexLookUp:51:R LocalIndexLookUp:21:C Limit:51:C IndexRangeScan:128:C TableRowIDScan:21:C TableRowIDScan:30:C
+hit=5 | a >= 20 and a < 24/0/-1 | n=80 order=2128ce01aee988ff | IndexLookUp:80:R LocalIndexLookUp:36:C IndexRangeScan:80:C TableRowIDScan:36:C TableRowIDScan:44:C
+hit=5 | a >= 20 and a < 24/0/33 | n=33 order=64052b1dedf94786 | IndexLookUp:33:R LocalIndexLookUp:14:C Limit:33:C IndexRangeScan:80:C TableRowIDScan:14:C TableRowIDScan:19:C
+hit=5 | a > 40 and b < 500/0/-1 | n=590 order=df26d2287bb7ffca | IndexLookUp:590:R Selection:283:C LocalIndexLookUp:595:C IndexRangeScan:1180:C TableRowIDScan:595:C Selection:307:C TableRowIDScan:585:C
+hit=5 | a > 40 and b < 500/0/29 | n=29 order=4f848a1bddf4d469 | Limit:29:R IndexLookUp:29:R Limit:29:C Selection:283:C LocalIndexLookUp:595:C IndexRangeScan:1180:C TableRowIDScan:595:C Limit:0:C Selection:0:C TableRowIDScan:0:C
+hit=10 | 1/0/-1 | n=2000 order=e559f3aa7a9a39ed | IndexLookUp:2000:R LocalIndexLookUp:2000:C IndexFullScan:2000:C TableRowIDScan:2000:C TableRowIDScan:0:C
+hit=10 | 1/0/1500 | n=1500 order=c4f23a6ece0f946f | IndexLookUp:1500:R LocalIndexLookUp:1500:C Limit:1500:C IndexFullScan:1568:C TableRowIDScan:1500:C TableRowIDScan:0:C
+hit=10 | 1/1000/700 | n=700 order=bf2e612e3d1a4fb9 | IndexLookUp:700:R LocalIndexLookUp:1700:C Limit:1700:C IndexFullScan:1792:C TableRowIDScan:1700:C TableRowIDScan:0:C
+hit=10 | 1/1990/20 | n=10 order=2e1715e380d6c53c | IndexLookUp:10:R LocalIndexLookUp:2000:C Limit:2000:C IndexFullScan:2000:C TableRowIDScan:2000:C TableRowIDScan:0:C
+hit=10 | 1/2000/10 | n=0 order=cbf29ce484222325 | IndexLookUp:0:R LocalIndexLookUp:2000:C Limit:2000:C IndexFullScan:2000:C TableRowIDScan:2000:C TableRowIDScan:0:C
+hit=10 | 1/10/0 | n=0 order=cbf29ce484222325 | IndexLookUp:0:R LocalIndexLookUp:10:C Limit:10:C IndexFullScan:96:C TableRowIDScan:10:C TableRowIDScan:0:C
+hit=10 | a = 37/0/-1 | n=20 order=f5e0c6cd05eff09b | IndexLookUp:20:R LocalIndexLookUp:20:C IndexRangeScan:20:C TableRowIDScan:20:C TableRowIDScan:0:C
+hit=10 | a = 42/0/25 | n=20 order=296949729da6dcef | IndexLookUp:20:R LocalIndexLookUp:20:C Limit:20:C IndexRangeScan:20:C TableRowIDScan:20:C TableRowIDScan:0:C
+hit=10 | a < 60/0/-1 | n=1200 order=42b71bedda413bcd | IndexLookUp:1200:R LocalIndexLookUp:1200:C IndexRangeScan:1200:C TableRowIDScan:1200:C TableRowIDScan:0:C
+hit=10 | a < 60/0/77 | n=77 order=8473c65c828fe0d4 | IndexLookUp:77:R LocalIndexLookUp:77:C Limit:77:C IndexRangeScan:160:C TableRowIDScan:77:C TableRowIDScan:0:C
+hit=10 | a > 30/0/-1 | n=1380 order=ad0c842d610b34cd | IndexLookUp:1380:R LocalIndexLookUp:1380:C IndexRangeScan:1380:C TableRowIDScan:1380:C TableRowIDScan:0:C
+hit=10 | a > 30/0/51 | n=51 order=9713ccbc53259736 | IndexLookUp:51:R LocalIndexLookUp:51:C Limit:51:C IndexRangeScan:128:C TableRowIDScan:51:C TableRowIDScan:0:C
+hit=10 | a >= 20 and a < 24/0/-1 | n=80 order=d2517267789b0b3b | IndexLookUp:80:R LocalIndexLookUp:80:C IndexRangeScan:80:C TableRowIDScan:80:C TableRowIDScan:0:C
+hit=10 | a >= 20 and a < 24/0/33 | n=33 order=f83c8644f3341952 | IndexLookUp:33:R LocalIndexLookUp:33:C Limit:33:C IndexRangeScan:80:C TableRowIDScan:33:C TableRowIDScan:0:C
+hit=10 | a > 40 and b < 500/0/-1 | n=590 order=9c9866a1df7dd18 | IndexLookUp:590:R Selection:590:C LocalIndexLookUp:1180:C IndexRangeScan:1180:C TableRowIDScan:1180:C Selection:0:C TableRowIDScan:0:C
+hit=10 | a > 40 and b < 500/0/29 | n=29 order=1d0a872a3b58be3e | Limit:29:R IndexLookUp:29:R Limit:29:C Selection:80:C LocalIndexLookUp:160:C IndexRangeScan:160:C TableRowIDScan:160:C Limit:0:C Selection:0:C TableRowIDScan:0:C
+tp1 hit=0 | a,b,c,d,e,f,g,h,i,j | IndexLookUp:10:R LocalIndexLookUp:0:C IndexFullScan:10:C TableRowIDScan:0:C TableRowIDScan:10:C
+tp1 hit=5 | a,b,c,d,e,f,g,h,i,j | IndexLookUp:10:R LocalIndexLookUp:6:C IndexFullScan:10:C TableRowIDScan:6:C TableRowIDScan:4:C
+tp1 hit=10 | a,b,c,d,e,f,g,h,i,j | IndexLookUp:10:R LocalIndexLookUp:10:C IndexFullScan:10:C TableRowIDScan:10:C TableRowIDScan:0:C
+tp2 hit=0 | a,b,c,d,e,f,g,h,i,j | IndexLookUp:10:R LocalIndexLookUp:0:C IndexFullScan:10:C TableRowIDScan:0:C TableRowIDScan:10:C
+tp2 hit=5 | a,b,c,d,e,f,g,h,i,j | IndexLookUp:10:R LocalIndexLookUp:5:C IndexFullScan:10:C TableRowIDScan:5:C TableRowIDScan:5:C
+tp2 hit=10 | a,b,c,d,e,f,g,h,i,j | IndexLookUp:10:R LocalIndexLookUp:10:C IndexFullScan:10:C TableRowIDScan:10:C TableRowIDScan:0:C
+tp3 hit=0 | a,b,c,d,e,f,g,h,i,j | IndexLookUp:10:R LocalIndexLookUp:0:C IndexFullScan:10:C TableRowIDScan:0:C TableRowIDScan:10:C
+tp3 hit=5 | a,b,c,d,e,f,g,h,i,j | IndexLookUp:10:R LocalIndexLookUp:2:C IndexFullScan:10:C TableRowIDScan:2:C TableRowIDScan:8:C
+tp3 hit=10 | a,b,c,d,e,f,g,h,i,j | IndexLookUp:10:R LocalIndexLookUp:10:C IndexFullScan:10:C TableRowIDScan:10:C TableRowIDScan:0:C

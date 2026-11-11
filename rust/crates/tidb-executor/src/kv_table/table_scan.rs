@@ -467,6 +467,7 @@ pub trait KvTableReader {
         projected_keep: Option<&[usize]>,
         allow_prefix_projection: bool,
         projected_handle: bool,
+        lookup: Option<&IndexLookUpPushDown<'_>>,
     ) -> Result<Option<RemoteIndexHandleCursor>, KvTableError>;
 
     /// Scans the table's record-key range in key order, decoding each value.
@@ -1320,6 +1321,7 @@ impl KvTableReader for TableCommon {
             // `table_id` is the physical partition id for a partitioned read
             // and the logical id for an ordinary table.
             table_id,
+            index_lookup: None,
             index: None,
             columns: columns.clone(),
             handle_index,
@@ -2205,6 +2207,7 @@ impl KvTableReader for TableCommon {
         for (table_id, ranges) in request_groups {
             let request = PushdownScanRequest {
                 table_id,
+                index_lookup: None,
                 index: None,
                 columns: columns.clone(),
                 handle_index: None,
@@ -2485,6 +2488,7 @@ impl KvTableReader for TableCommon {
         for physical_id in physical_ids {
             let request = PushdownScanRequest {
                 table_id: physical_id,
+                index_lookup: None,
                 index: Some(PushdownIndexScan {
                     index_id,
                     declared_unique,
@@ -2648,6 +2652,7 @@ impl KvTableReader for TableCommon {
         projected_keep: Option<&[usize]>,
         allow_prefix_projection: bool,
         projected_handle: bool,
+        lookup: Option<&IndexLookUpPushDown<'_>>,
     ) -> Result<Option<RemoteIndexHandleCursor>, KvTableError> {
         // The wire contract this request once broke -- reordered and
         // truncated columns on real TiKV -- came from the executor schema
@@ -3057,8 +3062,97 @@ impl KvTableReader for TableCommon {
             }
             None => (output_offsets, None, returned_handle_indices.clone()),
         };
+        // Go `buildIndexLookUpPushDownDAGReq`: the table plan's scan,
+        // selection and limit ride the index request, which then answers
+        // index handles on channel 0 and completed rows on channel 1.
+        let mut lookup_handle_index = None;
+        let index_lookup = match lookup {
+            Some(lookup) => {
+                if statement.need_partition_handle
+                    || !handle_only
+                    || topn.is_some()
+                    || projected_keep.is_some()
+                    || (!self.common_handle_offsets().is_empty() && common_primary.is_none())
+                {
+                    return Ok(None);
+                }
+                let mut lookup_columns = Vec::with_capacity(lookup.keep.len() + 1);
+                for offset in lookup.keep {
+                    let Some(column) = self.columns().get(*offset) else {
+                        return Ok(None);
+                    };
+                    if tidb_table::generated_column::is_virtual(column) {
+                        return Ok(None);
+                    }
+                    lookup_columns.push(PushdownScanColumn {
+                        id: column.read().id,
+                        field_type: column.read().field_type.clone(),
+                        is_handle: self.pk_handle_offset() == Some(*offset),
+                        origin_default: column.origin_default.clone(),
+                    });
+                }
+                if self.common_handle_offsets().is_empty() {
+                    lookup_handle_index = lookup_columns.iter().position(|column| column.is_handle);
+                    if lookup_handle_index.is_none() && lookup.retain_identity {
+                        lookup_handle_index = Some(lookup_columns.len());
+                        lookup_columns.push(match self.pk_handle_offset() {
+                            Some(offset) => {
+                                let column = &self.columns()[offset];
+                                PushdownScanColumn {
+                                    id: column.read().id,
+                                    field_type: column.read().field_type.clone(),
+                                    is_handle: true,
+                                    origin_default: None,
+                                }
+                            }
+                            None => PushdownScanColumn {
+                                id: EXTRA_HANDLE_COLUMN_ID,
+                                field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+                                    .with_flags(
+                                        tidb_datatype::FieldTypeFlags::NOT_NULL
+                                            | tidb_datatype::FieldTypeFlags::PRI_KEY,
+                                    ),
+                                is_handle: true,
+                                origin_default: None,
+                            },
+                        });
+                    }
+                }
+                let (primary_column_ids, primary_prefix_column_ids) = match &common_primary {
+                    Some(primary) => {
+                        let id = |offset: &usize| self.columns()[*offset].read().id;
+                        (
+                            primary.column_offsets.iter().map(id).collect(),
+                            primary
+                                .column_offsets
+                                .iter()
+                                .enumerate()
+                                .filter(|(part, offset)| {
+                                    let prefix = primary.prefix_length(*part);
+                                    prefix > 0
+                                        && i64::from(self.columns()[**offset].read().field_type.flen()) > prefix
+                                })
+                                .map(|(_, offset)| id(offset))
+                                .collect(),
+                        )
+                    }
+                    None => (Vec::new(), Vec::new()),
+                };
+                Some(tidb_distsql::remote_scan::PushdownIndexLookUp {
+                    index_handle_offsets: handle_indices.iter().map(|index| *index as u32).collect(),
+                    columns: lookup_columns,
+                    primary_column_ids,
+                    primary_prefix_column_ids,
+                    conditions: lookup.conditions.to_vec(),
+                    limit: lookup.limit,
+                })
+            }
+            None => None,
+        };
+        let lookup_width = lookup.map(|lookup| lookup.keep.len());
         let request = PushdownScanRequest {
             table_id: self.table_id(),
+            index_lookup,
             index: Some(PushdownIndexScan {
                 index_id,
                 declared_unique,
@@ -3124,6 +3218,8 @@ impl KvTableReader for TableCommon {
             pending_chunk_row: 0,
             physical_id_index,
             batch_chunk_rows: Vec::new(),
+            lookup_width,
+            lookup_handle_index,
         }))
     }
 
@@ -4579,9 +4675,76 @@ pub struct RemoteIndexHandleCursor {
     /// The rows of each response chunk the last handle batch read: one Go
     /// `idxResult.Next` each (`extractTaskHandles`).
     batch_chunk_rows: Vec<usize>,
+    /// Go `IndexLookUpExecutor.indexLookUpPushDown`: the request carries the
+    /// table plan, and this is the width of the row it completes.
+    lookup_width: Option<usize>,
+    /// Where a completed row carries its integer handle.
+    lookup_handle_index: Option<usize>,
+}
+
+/// The table side of Go's `buildIndexLookUpPushDownDAGReq`: what the index
+/// request looks up and returns for each handle it reads.
+pub struct IndexLookUpPushDown<'a> {
+    /// The table plan's schema, as table column offsets.
+    pub keep: &'a [usize],
+    /// The table plan's selection over `keep`.
+    pub conditions: &'a [Expression],
+    /// The table plan's limit.
+    pub limit: Option<u64>,
+    /// Whether the reader's output names the row's handle.
+    pub retain_identity: bool,
+}
+
+/// One row of a push-down lookup's result (Go `SelectResultRow.ChannelIndex`).
+pub enum RowOrHandle {
+    /// `channelIdxRow`: the store looked the row up.
+    Row(Option<TableHandle>, Vec<Datum>),
+    /// `channelIdxIndex`: a handle whose row the store did not hold.
+    Handle(TableHandle),
 }
 
 impl RemoteIndexHandleCursor {
+    /// Whether the request looks its rows up in the store (Go
+    /// `indexLookUpPushDown`).
+    #[must_use]
+    pub fn index_lookup_push_down(&self) -> bool {
+        self.lookup_width.is_some()
+    }
+
+    /// Go `SelectResultIter.Next` as `extractLookUpPushDownRowsOrHandles`
+    /// reads it.
+    ///
+    /// # Errors
+    /// The response's error, or a row on a channel the request did not ask for.
+    pub fn next_row_or_handle(&mut self) -> Result<Option<RowOrHandle>, KvTableError> {
+        let Some(width) = self.lookup_width else {
+            return Err(KvTableError::Decode(
+                "the index request does not look its rows up".to_owned(),
+            ));
+        };
+        let next = self.inner.next_channel_row().map_err(KvTableError::from)?;
+        self.note_rows();
+        let Some(next) = next else {
+            return Ok(None);
+        };
+        match next.channel_index {
+            0 => self.handle_from_row(&next.row).map(|handle| Some(RowOrHandle::Handle(handle))),
+            1 => {
+                let mut row = next.row;
+                let handle = match self.lookup_handle_index.and_then(|index| row.get(index)) {
+                    Some(Datum::Int(value)) => Some(TableHandle::Int(*value)),
+                    Some(Datum::UInt(value)) => Some(TableHandle::Int(*value as i64)),
+                    _ => None,
+                };
+                row.truncate(width);
+                Ok(Some(RowOrHandle::Row(handle, row)))
+            }
+            channel => Err(KvTableError::Decode(format!(
+                "a push-down lookup answered on channel {channel}"
+            ))),
+        }
+    }
+
     /// Go `RuntimeStatsColl.GetCopCountAndRows` for the index scan.
     #[must_use]
     pub fn get_cop_count_and_rows(&self) -> (u64, u64) {
@@ -6849,6 +7012,7 @@ mod remote_cursor_tests {
                 None,
                 false,
                 false,
+                None,
             )
             .unwrap()
             .is_some());
@@ -6969,6 +7133,7 @@ mod remote_cursor_tests {
                     None,
                     false,
                     false,
+                    None,
                 )
                 .unwrap();
             assert_eq!(cursor.is_some(), expected.is_some(), "prefix={prefix}, common={common}, version={version}, new_collation={new_collation}, slot={slot}");
@@ -7061,6 +7226,7 @@ mod remote_cursor_tests {
                         None,
                         false,
                         false,
+                        None,
                     )
                     .unwrap();
                 assert!(cursor.is_some());
@@ -7126,6 +7292,7 @@ mod remote_cursor_tests {
                     Some(&[projected]),
                     false,
                     projected_handle,
+                    None,
                 )
                 .unwrap()
                 .unwrap();
@@ -7214,6 +7381,7 @@ mod remote_cursor_tests {
                         Some(&[1]),
                         false,
                         false,
+                        None,
                     )
                     .unwrap();
                 assert_eq!(cursor.is_some(), index_prefix == -1);
@@ -7312,6 +7480,7 @@ mod remote_cursor_tests {
                 Some(&[1]),
                 true,
                 false,
+                None,
             )
             .unwrap()
             .unwrap();
@@ -7368,6 +7537,7 @@ mod remote_cursor_tests {
                 Some(&[1]),
                 true,
                 false,
+                None,
             )
             .unwrap()
             .is_none());
@@ -8128,6 +8298,8 @@ mod remote_cursor_tests {
             zone: tidb_datatype::SessionTimeZone::utc(),
             use_new_collation: false,
             noted_rows: 0,
+            lookup_width: None,
+            lookup_handle_index: None,
             handle_is_unsigned: None,
             handle_field_types: Vec::new(),
             handle_prefix_lengths: Vec::new(),
@@ -8351,6 +8523,8 @@ mod remote_cursor_tests {
             zone: tidb_datatype::SessionTimeZone::utc(),
             use_new_collation: false,
             noted_rows: 0,
+            lookup_width: None,
+            lookup_handle_index: None,
             handle_is_unsigned: Some(false),
             handle_field_types: Vec::new(),
             handle_prefix_lengths: Vec::new(),
@@ -8390,6 +8564,8 @@ mod remote_cursor_tests {
                 zone: tidb_datatype::SessionTimeZone::utc(),
                 use_new_collation: false,
                 noted_rows: 0,
+                lookup_width: None,
+                lookup_handle_index: None,
                 handle_is_unsigned: Some(false),
                 handle_field_types: Vec::new(),
                 handle_prefix_lengths: Vec::new(),
@@ -8430,6 +8606,8 @@ mod remote_cursor_tests {
             zone: tidb_datatype::SessionTimeZone::utc(),
             use_new_collation: false,
             noted_rows: 0,
+            lookup_width: None,
+            lookup_handle_index: None,
             handle_is_unsigned: Some(false),
             handle_field_types: Vec::new(),
             handle_prefix_lengths: Vec::new(),
@@ -8473,6 +8651,8 @@ mod remote_cursor_tests {
             zone: tidb_datatype::SessionTimeZone::utc(),
             use_new_collation: false,
             noted_rows: 0,
+            lookup_width: None,
+            lookup_handle_index: None,
             handle_is_unsigned: Some(false),
             handle_field_types: Vec::new(),
             handle_prefix_lengths: Vec::new(),
@@ -8523,6 +8703,8 @@ mod remote_cursor_tests {
             zone: tidb_datatype::SessionTimeZone::utc(),
             use_new_collation: true,
             noted_rows: 0,
+            lookup_width: None,
+            lookup_handle_index: None,
             handle_is_unsigned: None,
             handle_field_types: field_types,
             handle_prefix_lengths: vec![2, -1],
@@ -8582,6 +8764,8 @@ mod remote_cursor_tests {
             zone: tidb_datatype::SessionTimeZone::utc(),
             use_new_collation: false,
             noted_rows: 0,
+            lookup_width: None,
+            lookup_handle_index: None,
             handle_is_unsigned: None,
             handle_field_types: field_types,
             handle_prefix_lengths: Vec::new(),

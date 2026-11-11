@@ -276,6 +276,7 @@ fn request_over(
 ) -> PushdownScanRequest {
     PushdownScanRequest {
         table_id: 91,
+        index_lookup: None,
         index: None,
         read_engine: tidb_distsql::remote_scan::PushdownReadEngine::TiKv,
         schema_version: 0,

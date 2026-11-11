@@ -416,13 +416,15 @@ impl Drop for DmlExec {
 /// A reader's pushed plan nodes (leaf first) and its select-result root.
 type CopChain = (Vec<CopPlanId>, i64);
 
-/// Go `getPhysicalPlanIDs`: the plan IDs of a reader's pushed subtree, leaf
-/// first (the order its executors take in the DAG), each with the executor
-/// kind the node lowers to.
+/// Go `getPhysicalPlanIDs` over `FlattenTreePushDownPlan`: the plan IDs of a
+/// reader's pushed subtree in post-order (the order its executors take in the
+/// DAG; a `LocalIndexLookUp` follows its index side and its table scan), each
+/// with the executor kind the node lowers to.
 fn cop_plan_chain(root: &PhysicalPlan) -> Vec<CopPlanId> {
-    let mut chain = Vec::new();
-    let mut node = Some(root);
-    while let Some(plan) = node {
+    fn flatten_plan_with_postorder_traversal(plan: &PhysicalPlan, chain: &mut Vec<CopPlanId>) {
+        for child in plan.children() {
+            flatten_plan_with_postorder_traversal(child, chain);
+        }
         let kind = match plan {
             PhysicalPlan::TableScan(_) => CopPlanKind::TableScan,
             PhysicalPlan::IndexScan(_) => CopPlanKind::IndexScan,
@@ -437,9 +439,9 @@ fn cop_plan_chain(root: &PhysicalPlan) -> Vec<CopPlanId> {
             kind,
             id: plan.id() as isize,
         });
-        node = plan.children().first();
     }
-    chain.reverse();
+    let mut chain = Vec::new();
+    flatten_plan_with_postorder_traversal(root, &mut chain);
     chain
 }
 

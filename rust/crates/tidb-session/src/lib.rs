@@ -3536,6 +3536,8 @@ mod tests_expression_time;
 #[cfg(test)]
 mod tests_extra_handle;
 #[cfg(test)]
+mod tests_index_lookup_pushdown;
+#[cfg(test)]
 mod tests_extra_handle_access;
 #[cfg(test)]
 mod tests_fix_control;

@@ -218,20 +218,42 @@ fn build_resp_with(
         .eval_context
         .as_ref()
         .map(tidb_distsql::remote_scan::StatementEval::context);
-    let conditions: Option<Vec<Expr>> = request
-        .conditions
-        .iter()
-        .flat_map(tidb_expr::expr_util::split_cnf_items)
-        .map(|condition| {
-            tidb_executor_internal_exec::predicate_pushdown::condition_to_pb(
-                &condition,
-                eval_context,
-                &request.statement.time_zone,
-            )
-        })
-        .collect();
+    let conditions_to_pb = |conditions: &[tidb_expr::expression::Expression]| -> Option<Vec<Expr>> {
+        conditions
+            .iter()
+            .flat_map(tidb_expr::expr_util::split_cnf_items)
+            .map(|condition| {
+                tidb_executor_internal_exec::predicate_pushdown::condition_to_pb(
+                    &condition,
+                    eval_context,
+                    &request.statement.time_zone,
+                )
+            })
+            .collect()
+    };
+    let conditions = conditions_to_pb(&request.conditions);
     let predicates_applied = conditions.is_some();
     let conditions = conditions.unwrap_or_default();
+    // Go `PhysicalLocalIndexLookUp`: the planner pushes the lookup with the
+    // whole index side below it and the whole table plan above it, so a
+    // request that cannot carry all of them is refused, never trimmed.
+    let lookup_conditions = match &request.index_lookup {
+        None => Vec::new(),
+        Some(lookup) => {
+            if request.index.is_none()
+                || !predicates_applied
+                || request.aggregate.is_some()
+                || request.topn.is_some()
+                || request.prefix_limit.is_some()
+                || request.statement.cop_projection
+                || request.statement.cop_projection_exprs.is_some()
+            {
+                return Err(refuse("an index lookup is pushed above a complete index side only"));
+            }
+            conditions_to_pb(&lookup.conditions)
+                .ok_or_else(|| refuse("an index lookup's table Selection cannot be lowered to TiPB"))?
+        }
+    };
     // Go `NewPBConverter(client, ctx)`, for the operators above the
     // Selection.
     let pc = match eval_context {
@@ -607,6 +629,62 @@ fn build_resp_with(
         dag.output_offsets = (0..width).collect();
     }
 
+    // Go `buildIndexLookUpPushDownDAGReq` over `FlattenTreePushDownPlan`:
+    // the index side, the table scan, the lookup both hang under, then the
+    // table plan above it. The index side's output is the lookup's
+    // intermediate channel and the table plan's schema is the final one.
+    let mut intermediate_output_types = Vec::new();
+    let lookup_idx = dag.executors.len() + 1;
+    if let Some(lookup) = &request.index_lookup {
+        let table_columns = lookup
+            .columns
+            .iter()
+            .map(column_to_proto)
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| refuse("a column has no bounded coprocessor descriptor"))?;
+        if let Some(index_side) = dag.executors.last_mut() {
+            index_side.parent_idx = Some(lookup_idx as u32);
+        }
+        let mut spec = TiKvTableScanSpec::new(request.table_id, table_columns);
+        spec.primary_column_ids = lookup.primary_column_ids.clone();
+        spec.primary_prefix_column_ids = lookup.primary_prefix_column_ids.clone();
+        dag.executors.push(
+            crate::dag_request::table_scan_to_pb(&spec)
+                .map_err(|error| PushdownScannerError::Unsupported(error.to_string()))?,
+        );
+        dag.executors.push(PbExecutor {
+            index_lookup: Some(tidb_proto::tipb::IndexLookUp {
+                index_handle_offsets: lookup.index_handle_offsets.clone(),
+                ..Default::default()
+            }),
+            executor_id: Some(String::new()),
+            ..crate::dag_request::go_executor(ExecType::TypeIndexLookUp)
+        });
+        if !lookup_conditions.is_empty() {
+            dag.executors.push(
+                crate::dag_request::selection_executor(lookup_conditions.clone())
+                    .map_err(|error| PushdownScannerError::Unsupported(error.to_string()))?,
+            );
+        }
+        if let Some(limit) = lookup.limit {
+            dag.executors.push(crate::dag_request::limit_to_pb(limit));
+        }
+        let output_offsets = std::mem::take(&mut dag.output_offsets);
+        // `field_types` is already the index side's output, in
+        // `output_offsets` order.
+        intermediate_output_types.push(std::mem::take(&mut field_types));
+        dag.intermediate_output_channels = vec![tidb_proto::tipb::IntermediateOutputChannel {
+            executor_idx: lookup_idx as u32,
+            output_offsets,
+        }];
+        dag.output_offsets = (0..lookup.columns.len() as u32).collect();
+        field_types = lookup
+            .columns
+            .iter()
+            .map(|column| column.field_type.clone())
+            .collect();
+    }
+
     let key_ranges: Vec<KeyRange> = request
         .ranges
         .iter()
@@ -634,6 +712,19 @@ fn build_resp_with(
     if request.statement.cop_projection || request.statement.cop_projection_exprs.is_some() {
         shapes.push(ExecutorShape::new(ExecutorKind::Other));
     }
+    if let Some(lookup) = &request.index_lookup {
+        if let Some(index_side) = shapes.last_mut() {
+            index_side.parent_index = Some(lookup_idx);
+        }
+        shapes.push(ExecutorShape::new(ExecutorKind::TableScan));
+        shapes.push(ExecutorShape::new(ExecutorKind::IndexLookup));
+        if !lookup_conditions.is_empty() {
+            shapes.push(ExecutorShape::new(ExecutorKind::Other));
+        }
+        if let Some(limit) = lookup.limit {
+            shapes.push(ExecutorShape::limit(limit, None));
+        }
+    }
     // The wire receipt's DAG shape: the executor list this request
     // actually carries, with the Selection named when conjuncts
     // travelled. The harness reads the presence of a pushed Selection
@@ -655,6 +746,15 @@ fn build_resp_with(
         }
         if aggregate.is_some() {
             shape.push_str(" Aggregate");
+        }
+        if let Some(lookup) = &request.index_lookup {
+            shape.push_str(" TableScan IndexLookUp");
+            if !lookup_conditions.is_empty() {
+                shape.push_str(" Selection");
+            }
+            if lookup.limit.is_some() {
+                shape.push_str(" Limit");
+            }
         }
         shape
     };
@@ -700,7 +800,9 @@ fn build_resp_with(
         allow_unordered: request.allow_unordered_response,
         desc: request.desc,
         field_types: field_types.clone(),
-        paging: request.statement.paging,
+        intermediate_output_types,
+        // Go `startIndexWorker`: a pushed lookup's request is not paged.
+        paging: request.statement.paging && request.index_lookup.is_none(),
         paging_min_size: request.paging_min_size,
         time_zone: request.statement.time_zone.clone(),
         resource_group_name: request.statement.resource_group_name.clone(),
@@ -786,6 +888,9 @@ struct RemoteScanPlan {
     /// separately carries the direction for rows inside each region.
     desc: bool,
     field_types: Vec<FieldType>,
+    /// Go `SelectResult.IntoIter`'s `intermediateFieldTypes`: the row types
+    /// of each intermediate channel the DAG declares.
+    intermediate_output_types: Vec<Vec<FieldType>>,
     /// Go `RequestBuilder.SetPaging`.
     paging: bool,
     /// Optional Go IndexLookUp first-window paging floor for index scans.
@@ -982,7 +1087,7 @@ fn open_scan(
     )
     .map_err(|error| error.to_string())?;
     Ok(result
-        .into_select_iter(Vec::new())
+        .into_select_iter(plan.intermediate_output_types)
         .with_cop_response_sink(cop_response_sink)
         .with_memory_tracker(memory_tracker))
 }
@@ -1159,6 +1264,25 @@ impl PushdownRowStream for CopRowStream {
                 None => return Ok(None),
             }
         }
+    }
+
+    fn next_channel_row(
+        &mut self,
+    ) -> Result<Option<tidb_distsql::SelectResultRow<Vec<Datum>>>, StorageError> {
+        if self.exhausted {
+            return Ok(None);
+        }
+        self.open_deferred()?;
+        let Some(iter) = self.iter.as_mut() else {
+            return Ok(None);
+        };
+        let Some(row) = iter.next_row().map_err(select_response_error)? else {
+            self.exhausted = true;
+            return Ok(None);
+        };
+        scan_receipt::add_wire_rows(1);
+        self.returned += 1;
+        Ok(Some(row))
     }
 
     fn supports_chunks(&self) -> bool {

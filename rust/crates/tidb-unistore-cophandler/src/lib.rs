@@ -33,6 +33,9 @@ mod mpp;
 mod mpp_exec;
 pub mod mpp_task;
 
+#[cfg(any(test, feature = "failpoints"))]
+pub use mpp_exec::{HandleFilter, INJECT_INDEX_LOOKUP_HANDLE_FILTER};
+
 #[cfg(test)]
 #[path = "region_group_tests.rs"]
 mod region_group_tests;

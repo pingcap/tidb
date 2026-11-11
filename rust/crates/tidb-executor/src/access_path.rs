@@ -1548,6 +1548,7 @@ fn lookup_fetch_rows(outcome: &Result<LookupFetch, ExecError>) -> usize {
         Ok(LookupFetch::Remote(rows, ..)) => rows.len(),
         Ok(LookupFetch::RemoteChunk(chunk)) => chunk.request_indices.len(),
         Ok(LookupFetch::LocalFallback(handles)) => handles.len(),
+        Ok(LookupFetch::Completed(rows)) => rows.len(),
         Err(_) => 0,
     }
 }
@@ -1641,7 +1642,7 @@ impl LookupTaskAccounting {
         let (rows, reader) = match fetch {
             LookupFetch::Remote(rows, _, _, _, reader) => (rows.len(), *reader),
             LookupFetch::RemoteChunk(chunk) => (chunk.row_positions.len(), chunk.reader_memory),
-            LookupFetch::LocalFallback(_) => return,
+            LookupFetch::LocalFallback(_) | LookupFetch::Completed(_) => return,
         };
         tidb_executor_internal_exec::ruv2::record_leaf_next(
             self.table_reader_ruv2.as_ref(),
@@ -1766,6 +1767,8 @@ enum LookupFetch {
     /// through the local byte seam instead. The worker returns its owned
     /// handles so the fallback does not require cloning them before dispatch.
     LocalFallback(Vec<TableHandle>),
+    /// Go `newCompletedTask`: the store looked these rows up itself.
+    Completed(Vec<(Option<TableHandle>, Vec<Datum>)>),
 }
 
 /// Go `IndexLookUpExecutor`'s table-worker pool, narrowed to what this tier
@@ -1869,6 +1872,15 @@ pub struct IndexRangeSourceExec {
     /// over-collect the boundary partition and sort handles into the answer
     /// that Go's index-order cut excludes.
     limit_scanned_keys: u64,
+    /// Go `IndexLookUpExecutor.indexLookUpPushDown`: the index request looks
+    /// its rows up in the store, and answers rows and handles.
+    remote_lookup: bool,
+    /// Go `lookupTableTask` built by `newCompletedTask`: the rows the store
+    /// looked up, with their handles when the output names them.
+    completed_rows: Vec<(Option<TableHandle>, Vec<Datum>)>,
+    /// The keys the last push-down extraction scanned, for the index scan's
+    /// runtime stats.
+    extracted_keys: u64,
     /// Go's `canReorderHandles` (`builder.go`): whether this read may answer
     /// in handle order. FALSE for the two reads whose answer is the index
     /// walk itself -- a COVERING path, which is Go's `PhysicalIndexReader`
@@ -2358,6 +2370,9 @@ impl IndexRangeSourceExec {
             embedded_lookup_limit: false,
             skipped_handles: 0,
             limit_scanned_keys: 0,
+            remote_lookup: false,
+            completed_rows: Vec::new(),
+            extracted_keys: 0,
             can_reorder_handles: true,
             keep_order: false,
             descending: false,
@@ -2703,10 +2718,62 @@ impl IndexRangeSourceExec {
         types
     }
 
+    /// Go `indexWorker.extractLookUpPushDownRowsOrHandles`, over each
+    /// partition's result in turn as `fetchHandles` walks them.
+    fn extract_look_up_push_down_rows_or_handles(&mut self) -> Result<bool, ExecError> {
+        let scanned_before = self.limit_scanned_keys;
+        // Go checks the limit when `PushedLimit != nil`: the reader's
+        // embedded limit, which a table-side selection does not have.
+        let pushed_limit = self
+            .limit
+            .filter(|_| self.filter.is_none() || self.index_filter)
+            .map(|count| (self.lookup_offset, self.lookup_offset.saturating_add(count)));
+        let mut exhausted = true;
+        'results: while let Some(remote) = self.remote_index.as_mut() {
+            self.batch_partition = self.remote_partition;
+            while self.batch.len() + self.completed_rows.len() < self.batch_size {
+                let Some(next) = remote.next_row_or_handle().map_err(|error| {
+                    ExecError::unsupported(format!("index row failed to decode: {error:?}"))
+                })?
+                else {
+                    if self.batch.is_empty() && self.completed_rows.is_empty() && self.advance_remote_partition() {
+                        continue 'results;
+                    }
+                    break 'results;
+                };
+                self.limit_scanned_keys += 1;
+                if let Some((offset, end)) = pushed_limit {
+                    if self.limit_scanned_keys <= offset {
+                        self.skipped_handles += 1;
+                        continue;
+                    }
+                    if self.limit_scanned_keys > end {
+                        break 'results;
+                    }
+                }
+                match next {
+                    crate::kv_table::RowOrHandle::Row(handle, row) => self.completed_rows.push((handle, row)),
+                    crate::kv_table::RowOrHandle::Handle(handle) => self.batch.push(handle),
+                }
+            }
+            exhausted = false;
+            break;
+        }
+        if !exhausted {
+            self.batch_size = (self.batch_size * 2).min(self.max_lookup_batch_size);
+        }
+        self.batch.sort();
+        self.extracted_keys = self.limit_scanned_keys - scanned_before;
+        Ok(!self.batch.is_empty() || !self.completed_rows.is_empty())
+    }
+
     fn fill_handle_batch(&mut self) -> Result<bool, ExecError> {
         self.batch.clear();
         self.batch_partitions.clear();
         self.batch_at = 0;
+        if self.remote_lookup {
+            return self.extract_look_up_push_down_rows_or_handles();
+        }
         let mut pulled = false;
         if !self.lookup_pushdown && self.index_fetch_chunk.is_none() {
             let max_chunk_size = self.meta.max_chunk_size();
@@ -3243,15 +3310,19 @@ impl IndexRangeSourceExec {
                 //   end of stream is the phase-A walk itself running out. An
                 //   empty pipeline therefore always draws one window.
                 let table_filter = self.filter.is_some() && !self.index_filter;
+                // A push-down lookup's scanned keys count the offset too (Go
+                // `fetchHandles`: `scannedKeys >= Count + Offset` ends it).
                 let target = lookup_pipeline_batch_target(
                     self.batch_size,
-                    self.limit,
+                    self.limit.map(|count| {
+                        count.saturating_add(if self.remote_lookup { self.lookup_offset } else { 0 })
+                    }),
                     self.limit_scanned_keys,
                     table_filter,
                 );
                 // Handles already extracted (the index worker's read-ahead)
                 // are charged to the limit and still form the next task.
-                if target == 0 && self.batch_at == self.batch.len() {
+                if target == 0 && self.batch_at == self.batch.len() && self.completed_rows.is_empty() {
                     limit_exhausted = true;
                     break;
                 }
@@ -3290,11 +3361,46 @@ impl IndexRangeSourceExec {
                 // `extractTaskHandles` returns, the handle batch
                 // [`Self::fill_handle_batch`] built (a whole response chunk,
                 // cut at a partition boundary or a pushed limit).
-                while self.batch_at == self.batch.len() {
+                while self.batch_at == self.batch.len() && self.completed_rows.is_empty() {
                     if !self.fill_handle_batch()? && self.batch.is_empty() {
                         ended_inside = true;
                         break;
                     }
+                }
+                let completed_rows = std::mem::take(&mut self.completed_rows);
+                let extracted_keys = std::mem::take(&mut self.extracted_keys);
+                // Go `buildAndDispatchLookupTasks`: the completed task goes
+                // first, then the task for the handles the store left (they
+                // stay in the batch for the next window).
+                if !completed_rows.is_empty() {
+                    let physical_ids = match self.record_physical_ids.get(self.batch_partition) {
+                        Some(id) if partitioned => vec![*id; completed_rows.len()],
+                        _ => Vec::new(),
+                    };
+                    if let Some(basic) = self.lookup_stats.as_ref().and_then(|stats| stats.index_scan_basic.as_ref()) {
+                        basic.record_next(
+                            collect_started.elapsed(),
+                            i64::try_from(extracted_keys).unwrap_or(i64::MAX),
+                        );
+                    }
+                    let pipeline = self.lookup_pipeline.get_or_insert_with(|| LookupPipeline {
+                        inflight: VecDeque::new(),
+                        width: 1,
+                        unemitted_handles: 0,
+                    });
+                    pipeline.inflight.push_back(LookupBatchJob {
+                        started: std::time::Instant::now(),
+                        physical_ids,
+                        handle_count: 0,
+                        receiver: None,
+                        ready: Some(Ok(LookupFetch::Completed(completed_rows))),
+                        task_tracker: None,
+                    });
+                    // The reader takes the completed rows before the table
+                    // workers answer for the handles (`resultCh` receives the
+                    // completed task first), so a parent that needs no more
+                    // ends the read with no row looked up here.
+                    break;
                 }
                 handles.extend(self.batch.drain(self.batch_at..));
                 self.batch_at = self.batch.len();
@@ -3474,6 +3580,17 @@ impl IndexRangeSourceExec {
                         handles: Vec::new(),
                         filter_complete: chunk.predicates_applied,
                         chunk: Some(chunk),
+                    }));
+                }
+                LookupFetch::Completed(rows) => {
+                    let (lookup_handles, lookup_rows): (Vec<_>, Vec<_>) =
+                        rows.into_iter().map(|(handle, row)| (handle, Some(row))).unzip();
+                    return Ok(Some(LookupBatchResult {
+                        physical_ids: job.physical_ids,
+                        rows: lookup_rows,
+                        handles: lookup_handles,
+                        filter_complete: true,
+                        chunk: None,
                     }));
                 }
                 LookupFetch::LocalFallback(handles) => {
@@ -4306,6 +4423,9 @@ impl Executor for IndexRangeSourceExec {
         self.index_fetch_chunk = None;
         self.skipped_handles = 0;
         self.limit_scanned_keys = 0;
+        self.remote_lookup = false;
+        self.completed_rows.clear();
+        self.extracted_keys = 0;
         if let Some(limit) = &mut self.prefix_limit {
             limit.reset();
         }
@@ -4480,7 +4600,29 @@ impl Executor for IndexRangeSourceExec {
             let request_handle_slot = self.extra_handle_slot.map(|slot| {
                 slot - usize::from(self.physical_table_id_slot.is_some_and(|physical| physical < slot))
             });
-            let mut open = |table: &mut TableCommon, statement: &PushdownStatementContext| {
+            // Go `buildIndexLookUpPushDownDAGReq`: the table plan rides the
+            // index request. The store refusing the shape leaves the table
+            // lookups to this reader.
+            let table_filter_pushed = self
+                .filter
+                .as_ref()
+                .is_none_or(tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe::fully_pushable);
+            let lookup = (self.lookup_pushdown
+                && self.can_reorder_handles
+                && !self.covering
+                && !self.dirty_merge
+                && self.top_n.is_none()
+                && self.partial_aggregate.is_none()
+                && self.post_filter_projection.is_none())
+            .then(|| crate::kv_table::IndexLookUpPushDown {
+                keep: &self.keep,
+                conditions: if legacy_index_filter { &[] } else { &self.pushed },
+                limit: self.statement.lookup_table_limit.filter(|_| table_filter_pushed),
+                retain_identity: self.extra_handle_slot.is_some(),
+            });
+            let mut open = |table: &mut TableCommon,
+                            statement: &PushdownStatementContext,
+                            lookup: Option<&crate::kv_table::IndexLookUpPushDown<'_>>| {
                 table
                     .pushdown_index_handle_cursor(
                     &mut **store,
@@ -4532,12 +4674,15 @@ impl Executor for IndexRangeSourceExec {
                     self.covering,
                     // The local partial aggregate reads this stream's handles.
                     self.partial_aggregate.is_some(),
+                    lookup,
                     )
                     .map_err(|error| {
                         ExecError::unsupported(format!("remote index scan failed to open: {error:?}"))
                     })
             };
-            self.remote_index = match template {
+            let mut remote_index = None;
+            for lookup in lookup.iter().map(Some).chain([None]) {
+              remote_index = match &template {
                 Some(template) => {
                     let mut cursors = std::collections::VecDeque::new();
                     let mut refused = false;
@@ -4548,7 +4693,7 @@ impl Executor for IndexRangeSourceExec {
                         *physical.read_partitions_mut() = None;
                         let mut statement = base_statement.clone();
                         statement.deferred_open = ordinal > 0;
-                        match open(&mut physical, &statement)? {
+                        match open(&mut physical, &statement, lookup)? {
                             Some(cursor) => cursors.push_back((ordinal, cursor)),
                             None => {
                                 refused = true;
@@ -4569,8 +4714,17 @@ impl Executor for IndexRangeSourceExec {
                         None
                     }
                 }
-                None => open(&mut self.table, &base_statement)?,
-            };
+                None => open(&mut self.table, &base_statement, lookup)?,
+              };
+              if remote_index.is_some() {
+                  break;
+              }
+            }
+            self.remote_index = remote_index;
+            self.remote_lookup = self
+                .remote_index
+                .as_ref()
+                .is_some_and(crate::kv_table::RemoteIndexHandleCursor::index_lookup_push_down);
             self.remote_covering_selected =
                 self.covering && self.extra_handle_slot.is_none() && self.remote_index.is_some();
             self.remote_rows_projected = projected_keep.is_some() && self.remote_index.is_some();
@@ -4813,7 +4967,11 @@ impl Executor for IndexRangeSourceExec {
                     continue;
                 }
             }
-            if self.limit.is_some_and(|limit| self.produced.get() >= limit) {
+            // Go's index worker starts with the executor and reads its first
+            // task whatever the count is (`fetchHandles` ends on
+            // `scannedKeys >= Count+Offset`), so a zero count still sends the
+            // request and ends on the scanned keys.
+            if self.limit.is_some_and(|limit| limit != 0 && self.produced.get() >= limit) {
                 // Early stop: the cursor is dropped, so no entry past the cap
                 // is read and no row past it is looked up. In-flight lookup
                 // fetches are abandoned the same way -- a serial walk never
@@ -6151,6 +6309,7 @@ impl IndexJoinLookupExec {
                 self.covering.then_some(keep.as_slice()),
                 self.covering,
                 self.emit_extra_handle,
+                None,
             )
             .map_err(ExecError::from)?
         {
@@ -7071,7 +7230,7 @@ impl IndexJoinLookupExec {
                         .map(|(handle, row)| (Some(handle), Some(row)))
                         .collect(),
                 ),
-                LookupFetch::RemoteChunk(_) | LookupFetch::LocalFallback(_) => None,
+                LookupFetch::RemoteChunk(_) | LookupFetch::LocalFallback(_) | LookupFetch::Completed(_) => None,
             });
         }
         let Some(staged) = self

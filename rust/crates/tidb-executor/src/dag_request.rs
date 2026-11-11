@@ -468,7 +468,7 @@ fn validate_output_offsets(offsets: &[u32], width: usize) -> Result<(), DagReque
     Ok(())
 }
 
-fn selection_executor(conditions: Vec<Expr>) -> Result<Executor, DagRequestBuildError> {
+pub(crate) fn selection_executor(conditions: Vec<Expr>) -> Result<Executor, DagRequestBuildError> {
     if conditions.is_empty() {
         return Err(DagRequestBuildError::EmptySelection);
     }
@@ -526,7 +526,7 @@ fn aggregation_to_pb(
     }))
 }
 
-fn table_scan_to_pb(spec: &TiKvTableScanSpec) -> Result<Executor, DagRequestBuildError> {
+pub(crate) fn table_scan_to_pb(spec: &TiKvTableScanSpec) -> Result<Executor, DagRequestBuildError> {
     if let Some(feature) = spec.unsupported {
         return Err(DagRequestBuildError::UnsupportedScanFeature(feature));
     }

@@ -34,9 +34,8 @@
 //! * `selExec` filters row by row through the request's conditions rather
 //!   than `expression.VectorizedFilter`'s column-at-a-time evaluation.
 //! * `indexLookUpExec` encodes its row keys for the classic kernel
-//!   (`kerneltype.IsNextGen()` is false; no keyspace `codecV2`), has no
-//!   `inject-index-lookup-handle-filter` failpoint, and does not log the
-//!   region error of a region it leaves to the client.
+//!   (`kerneltype.IsNextGen()` is false; no keyspace `codecV2`) and does not
+//!   log the region error of a region it leaves to the client.
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -1047,6 +1046,17 @@ pub(crate) type BuildTableScan<'a> = Box<
     dyn Fn(Box<dyn DbReader + 'a>, &[coprocessor::KeyRange]) -> Result<TableScanExec<'a>, String> + 'a,
 >;
 
+/// The function a test sets through Go's
+/// `inject-index-lookup-handle-filter` call-failpoint: the handles it refuses
+/// are left to the client.
+#[cfg(any(test, feature = "failpoints"))]
+pub type HandleFilter = dyn Fn(&Handle) -> bool + Send + Sync;
+
+/// Go `failpoint.EnableCall(".../cophandler/inject-index-lookup-handle-filter", fn)`.
+#[cfg(any(test, feature = "failpoints"))]
+pub static INJECT_INDEX_LOOKUP_HANDLE_FILTER: std::sync::RwLock<Option<Arc<HandleFilter>>> =
+    std::sync::RwLock::new(None);
+
 /// Go `fetchTableScans`' `Handle`: a handle and its row's place in the
 /// index order.
 struct OrderedHandle {
@@ -1149,6 +1159,11 @@ impl<'a> IndexLookUpExec<'a> {
     fn fetch_table_scans(
         &mut self,
     ) -> Result<(Vec<TableScanExec<'a>>, Vec<usize>, Option<Chunk>), MppExecError> {
+        #[cfg(any(test, feature = "failpoints"))]
+        let handle_filter = INJECT_INDEX_LOOKUP_HANDLE_FILTER
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         let mut index_rows: Vec<Row> = Vec::with_capacity(DEFAULT_BATCH_SIZE);
         let mut sorted_handles = Vec::with_capacity(DEFAULT_BATCH_SIZE);
         while index_rows.len() < DEFAULT_BATCH_SIZE {
@@ -1178,6 +1193,11 @@ impl<'a> IndexLookUpExec<'a> {
         let mut counts = Vec::new();
         let mut cur = RegionHandles::default();
         for h in sorted_handles {
+            #[cfg(any(test, feature = "failpoints"))]
+            if handle_filter.as_ref().is_some_and(|filter| !filter(&h.handle)) {
+                left_rows[h.index_order] = true;
+                continue;
+            }
             let row_key = tidb_tablecodec::table_key::encode_row_key(self.table_id, &h.handle.encoded());
             let mut mvcc_key = Vec::new();
             tidb_codec::encode_bytes(&mut mvcc_key, &row_key);

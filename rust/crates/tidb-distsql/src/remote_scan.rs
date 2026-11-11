@@ -280,6 +280,27 @@ pub struct CopPlanId {
     pub id: isize,
 }
 
+/// Go `PhysicalLocalIndexLookUp` with the table plan above it: the store
+/// reads the rows of the handles its index side produced, and the handles it
+/// could not look up come back on an intermediate channel.
+#[derive(Clone, Debug)]
+pub struct PushdownIndexLookUp {
+    /// Go `IndexLookUp.IndexHandleOffsets`: the handle columns in the index
+    /// side's output.
+    pub index_handle_offsets: Vec<u32>,
+    /// The table scan's columns, which are the rows of the final channel.
+    pub columns: Vec<PushdownScanColumn>,
+    /// Stable column IDs forming a common row handle, in handle order.
+    pub primary_column_ids: Vec<i64>,
+    /// Common-handle columns stored as prefixes rather than whole values.
+    pub primary_prefix_column_ids: Vec<i64>,
+    /// The table side's Selection over `columns`. All of it converts or the
+    /// request is refused.
+    pub conditions: Vec<Expression>,
+    /// The table side's Limit.
+    pub limit: Option<u64>,
+}
+
 /// One base-table scan a backend may serve remotely.
 #[derive(Clone, Debug)]
 pub struct PushdownScanRequest {
@@ -287,6 +308,10 @@ pub struct PushdownScanRequest {
     pub table_id: i64,
     /// An index source for this request; `None` means a table scan.
     pub index: Option<PushdownIndexScan>,
+    /// The index lookup the store runs above `index`. With it the request's
+    /// own columns, Selection, Limit and output offsets describe the index
+    /// side, whose output is intermediate channel `0`.
+    pub index_lookup: Option<PushdownIndexLookUp>,
     /// The columns to return, in output order.
     pub columns: Vec<PushdownScanColumn>,
     /// Which of `columns` carries the integer row handle used to merge a
@@ -739,6 +764,13 @@ pub trait PushdownRowStream: Send {
     /// The next row in record-key order, as the requested columns, or `None`
     /// at the end of the answer.
     fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError>;
+
+    /// Go `SelectResultIter.Next`: the next row with the channel it came on.
+    /// A request without intermediate channels has the final one only,
+    /// channel `0`.
+    fn next_channel_row(&mut self) -> Result<Option<crate::SelectResultRow<Vec<Datum>>>, StorageError> {
+        Ok(self.next_row()?.map(|row| crate::SelectResultRow::new(0, row)))
+    }
 
     /// Whether this stream can transfer decoded columnar batches without
     /// first materializing every row as `Vec<Datum>`.

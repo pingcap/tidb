@@ -611,6 +611,7 @@ fn count_star_lowers_to_count_with_one_constant_child() {
         count_type.set_decimal(0);
         let request = PushdownScanRequest {
             table_id: 91,
+            index_lookup: None,
             index: None,
             read_engine: tidb_distsql::remote_scan::PushdownReadEngine::TiKv,
             schema_version: 0,
@@ -705,6 +706,7 @@ fn a_descending_scan_marks_both_the_dag_and_dist_sql_request() {
     }));
     let request = PushdownScanRequest {
         table_id: 91,
+        index_lookup: None,
         index: None,
         read_engine: tidb_distsql::remote_scan::PushdownReadEngine::TiKv,
         schema_version: 0,
