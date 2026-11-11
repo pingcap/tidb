@@ -497,6 +497,66 @@ func TestRefreshMaterializedViewStatements(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, ast.CancelMaterializedViewJobTypeRefresh, cancelStmt.Tp)
 	require.Equal(t, int64(42), cancelStmt.JobID)
+
+	viewName := &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("mv")}
+	restoreCases := []struct {
+		name        string
+		stmt        ast.StmtNode
+		expectedSQL string
+		expectErr   string
+	}{
+		{
+			name: "implement timestamp bounds",
+			stmt: &ast.RefreshMaterializedViewImplementStmt{
+				RefreshStmt: &ast.RefreshMaterializedViewStmt{
+					ViewName: viewName,
+					Type:     ast.RefreshMaterializedViewTypeFast,
+				},
+				LastSuccessfulRefreshReadTSO: 4242,
+				TargetRefreshReadTSO:         5252,
+				MLogRetainedLowerTSO:         3131,
+			},
+			expectedSQL: "IMPLEMENT FOR REFRESH MATERIALIZED VIEW `test`.`mv` FAST USING TIMESTAMP 4242 UP TO TIMESTAMP 5252 MLOG RETAINED LOWER TIMESTAMP 3131",
+		},
+		{
+			name: "fast ignores out of place complete type",
+			stmt: &ast.RefreshMaterializedViewStmt{
+				ViewName:     viewName,
+				Type:         ast.RefreshMaterializedViewTypeFast,
+				CompleteType: ast.RefreshMaterializedViewCompleteTypeOutOfPlace,
+			},
+			expectedSQL: "REFRESH MATERIALIZED VIEW `test`.`mv` FAST",
+		},
+		{
+			name: "fast ignores delta apply complete type",
+			stmt: &ast.RefreshMaterializedViewStmt{
+				ViewName:     viewName,
+				Type:         ast.RefreshMaterializedViewTypeFast,
+				CompleteType: ast.RefreshMaterializedViewCompleteTypeDeltaApply,
+			},
+			expectedSQL: "REFRESH MATERIALIZED VIEW `test`.`mv` FAST",
+		},
+		{
+			name: "complete type unspecified",
+			stmt: &ast.RefreshMaterializedViewStmt{
+				ViewName: viewName,
+				Type:     ast.RefreshMaterializedViewTypeComplete,
+			},
+			expectErr: "COMPLETE refresh mode must be specified explicitly",
+		},
+	}
+	for _, tc := range restoreCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var sb strings.Builder
+			err := tc.stmt.Restore(NewRestoreCtx(DefaultRestoreFlags, &sb))
+			if tc.expectErr != "" {
+				require.ErrorContains(t, err, tc.expectErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedSQL, sb.String())
+		})
+	}
 }
 
 func TestMaterializedViewDuplicateOptionsErrMsg(t *testing.T) {
@@ -536,6 +596,7 @@ func TestMaterializedViewDuplicateOptionsErrMsg(t *testing.T) {
 func TestMaterializedViewCreateOptionOrder(t *testing.T) {
 	p := parser.New()
 	invalidCases := []string{
+		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST START WITH now() AS SELECT 1",
 		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST SHARD_ROW_ID_BITS = 4 AS SELECT 1",
 		"CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES = 'x' REFRESH FAST AS SELECT 1",
 		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST REFRESH FAST AS SELECT 1",

@@ -183,6 +183,63 @@ func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchem
 	return nil
 }
 
+func checkRecoverTableForeignKeys(is infoschema.InfoSchema, schema string, recoverInfo *model.RecoverTableInfo, snapshotMeta meta.Reader) error {
+	tbInfo := recoverInfo.TableInfo
+	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version < model.FKVersion1 {
+			continue
+		}
+		// A legacy submitter may already have renamed the table in the job.
+		// Only the original metadata can distinguish a rewritten self-reference
+		// from an external reference to the new name.
+		if recoverInfo.OldSchemaName == "" || recoverInfo.OldTableName == "" || recoverInfo.SnapshotTS == 0 {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"recover/flashback table without original table metadata")
+		}
+		if recoverInfo.OldTableName == tbInfo.Name.L {
+			break
+		}
+		originalTable, err := snapshotMeta.GetTable(recoverInfo.SchemaID, tbInfo.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if originalTable == nil {
+			return infoschema.ErrTableNotExists.GenWithStackByArgs(recoverInfo.OldSchemaName, recoverInfo.OldTableName)
+		}
+		if originalTable.Name.L != recoverInfo.OldTableName {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"recover/flashback table with mismatched original table metadata")
+		}
+		for _, originalFK := range originalTable.ForeignKeys {
+			if originalFK.Version >= model.FKVersion1 &&
+				(originalFK.RefSchema.L != recoverInfo.OldSchemaName || originalFK.RefTable.L != originalTable.Name.L) {
+				return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+					"recover/flashback table with foreign keys")
+			}
+		}
+		break
+	}
+	// A standalone recovery cannot prove that an external FK endpoint still
+	// identifies the same table or that rows on both sides still match.
+	for _, fk := range tbInfo.ForeignKeys {
+		if fk.Version >= model.FKVersion1 &&
+			(fk.RefSchema.L != schema || fk.RefTable.L != tbInfo.Name.L) {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"recover/flashback table with foreign keys")
+		}
+	}
+	if len(is.GetTableReferredForeignKeys(schema, tbInfo.Name.L)) > 0 {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			"recover/flashback table referenced by foreign keys")
+	}
+	return nil
+}
+
+func isPermanentRecoverTableForeignKeyError(err error) bool {
+	return dbterror.ErrGeneralUnsupportedDDL.Equal(err) ||
+		infoschema.ErrTableNotExists.Equal(err) || meta.ErrDBNotExists.Equal(err)
+}
+
 func checkTableForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
 	var referTblInfo *model.TableInfo
 	if fk.RefSchema.L == schema && fk.RefTable.L == tbInfo.Name.L {
@@ -689,38 +746,31 @@ func checkForeignKeyConstrain(
 	}()
 
 	var buf strings.Builder
-	buf.WriteString("select 1 from %n.%n where ")
-	paramsList := make([]any, 0, 4+len(fkInfo.Cols)*2)
+	buf.WriteString("select 1 from %n.%n as c where ")
+	paramsList := make([]any, 0, 4+len(fkInfo.Cols)*3)
 	paramsList = append(paramsList, schema, table)
 	for i, col := range fkInfo.Cols {
 		if i == 0 {
-			buf.WriteString("%n is not null")
+			buf.WriteString("c.%n is not null")
 			paramsList = append(paramsList, col.L)
 		} else {
-			buf.WriteString(" and %n is not null")
+			buf.WriteString(" and c.%n is not null")
 			paramsList = append(paramsList, col.L)
 		}
 	}
-	buf.WriteString(" and (")
-	for i, col := range fkInfo.Cols {
-		if i == 0 {
-			buf.WriteString("%n")
-		} else {
-			buf.WriteString(",%n")
-		}
-		paramsList = append(paramsList, col.L)
-	}
-	buf.WriteString(") not in (select ")
-	for i, col := range fkInfo.RefCols {
-		if i == 0 {
-			buf.WriteString("%n")
-		} else {
-			buf.WriteString(",%n")
-		}
-		paramsList = append(paramsList, col.L)
-	}
-	buf.WriteString(" from %n.%n ) limit 1")
+	// Use a correlated NOT EXISTS anti-join instead of NOT IN. If the referenced
+	// key contains NULL, NOT IN can evaluate to UNKNOWN for an orphan child row,
+	// so the child row would not be reported as a constraint violation.
+	buf.WriteString(" and not exists (select 1 from %n.%n as r where ")
 	paramsList = append(paramsList, fkInfo.RefSchema.L, fkInfo.RefTable.L)
+	for i, refCol := range fkInfo.RefCols {
+		if i > 0 {
+			buf.WriteString(" and ")
+		}
+		buf.WriteString("r.%n = c.%n")
+		paramsList = append(paramsList, refCol.L, fkInfo.Cols[i].L)
+	}
+	buf.WriteString(") limit 1")
 	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
 		ctx,
 		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},

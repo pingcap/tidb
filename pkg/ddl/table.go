@@ -290,6 +290,15 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 		}
 		return ver, errors.Trace(err)
 	}
+	var snapshotMeta meta.Reader = meta.NewReader(w.store.GetSnapshot(kv.NewVersion(recoverInfo.SnapshotTS)))
+	failpoint.InjectCall("recoverTableForeignKeySnapshot", recoverInfo, &snapshotMeta)
+	if err = checkRecoverTableForeignKeys(jobCtx.infoCache.GetLatest(), job.SchemaName, recoverInfo, snapshotMeta); err != nil {
+		// Keep transient snapshot failures retryable by the owner.
+		if isPermanentRecoverTableForeignKeyError(err) {
+			job.State = model.JobStateCancelled
+		}
+		return ver, errors.Trace(err)
+	}
 
 	// Recover table divide into 2 steps:
 	// 1. Check GC enable status, to decided whether enable GC after recover table.

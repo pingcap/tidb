@@ -61,10 +61,24 @@ func TestRefreshMaterializedViewMode(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, RefreshMaterializedViewModeFast, mode)
 
+	mode, err = (&RefreshMaterializedViewStmt{Type: RefreshMaterializedViewTypeComplete, CompleteType: RefreshMaterializedViewCompleteTypeInPlace}).Mode()
+	require.NoError(t, err)
+	require.Equal(t, RefreshMaterializedViewModeCompleteInPlace, mode)
+
+	mode, err = (&RefreshMaterializedViewStmt{Type: RefreshMaterializedViewTypeComplete, CompleteType: RefreshMaterializedViewCompleteTypeOutOfPlace}).Mode()
+	require.NoError(t, err)
+	require.Equal(t, RefreshMaterializedViewModeCompleteOutOfPlace, mode)
+
 	mode, err = (&RefreshMaterializedViewStmt{Type: RefreshMaterializedViewTypeComplete, CompleteType: RefreshMaterializedViewCompleteTypeDeltaApply}).Mode()
 	require.NoError(t, err)
 	require.Equal(t, RefreshMaterializedViewModeCompleteDeltaApply, mode)
 
 	_, err = (&RefreshMaterializedViewStmt{Type: RefreshMaterializedViewTypeComplete}).Mode()
+	require.ErrorContains(t, err, "COMPLETE refresh mode must be specified explicitly")
+
+	_, err = (&RefreshMaterializedViewStmt{Type: RefreshMaterializedViewType(-1)}).Mode()
+	require.ErrorContains(t, err, "unknown REFRESH MATERIALIZED VIEW type")
+
+	_, err = (&RefreshMaterializedViewStmt{Type: RefreshMaterializedViewTypeComplete, CompleteType: RefreshMaterializedViewCompleteType(-1)}).Mode()
 	require.ErrorContains(t, err, "COMPLETE refresh mode must be specified explicitly")
 }

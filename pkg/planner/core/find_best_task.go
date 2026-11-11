@@ -206,7 +206,10 @@ func enumeratePhysicalPlans4TaskHelper(
 		}
 
 		// Optimize by shuffle executor to running in parallel manner.
-		if _, isMpp := curTask.(*physicalop.MppTask); !isMpp && prop.IsSortItemEmpty() {
+		// A removed nominal sort still requires its child's order, even when its
+		// own parent has no ordering requirement. Do not shuffle that child again.
+		_, isNominalSort := pp.(*physicalop.NominalSort)
+		if _, isMpp := curTask.(*physicalop.MppTask); !isMpp && !isNominalSort && prop.IsSortItemEmpty() {
 			// Currently, we do not regard shuffled plan as a new plan.
 			curTask = optimizeByShuffle(curTask, baseLP.Plan.SCtx())
 		}
@@ -2706,6 +2709,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	cop.IdxMergePartPlans = scans
 	cop.IdxMergeIsIntersection = path.IndexMergeIsIntersection
 	cop.IdxMergeAccessMVIndex = path.IndexMergeAccessMVIndex
+	cop.IdxMergeMVCoveredConds = path.IndexMergeMVCoveredConds
 	cop.IdxMergePartPlansMatchResults = candidate.partialPathMatchResults
 	cop.IdxMergeMatchWithAdvisorySortItems = candidate.matchWithAdvisorySortItems
 	if len(globalRemainingFilters) != 0 {

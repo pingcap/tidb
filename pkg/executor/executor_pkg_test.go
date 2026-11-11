@@ -93,6 +93,18 @@ func TestDecodeOldRowValToChunkWithExtraCommitTS(t *testing.T) {
 	}
 }
 
+func TestHistTimeUsesLocation(t *testing.T) {
+	input := time.Date(2026, 6, 14, 12, 0, 0, 123456789, time.UTC)
+	loc := time.FixedZone("UTC+8", 8*60*60)
+
+	localTime := histTime(input, loc)
+	utcTime := histTime(input, time.UTC)
+	require.Equal(t, "2026-06-14 20:00:00.123456 +0800", localTime.Format("2006-01-02 15:04:05.000000 -0700"))
+	require.Equal(t, "2026-06-14 12:00:00.123456 +0000", utcTime.Format("2006-01-02 15:04:05.000000 -0700"))
+	require.Equal(t, 123456000, localTime.Nanosecond())
+	require.Equal(t, 123456000, utcTime.Nanosecond())
+}
+
 func newTestMViewCompleteDeltaTargetTable(tp *types.FieldType) *tables.TableCommon {
 	return tables.MockTableFromMeta(&model.TableInfo{
 		ID:    1,
