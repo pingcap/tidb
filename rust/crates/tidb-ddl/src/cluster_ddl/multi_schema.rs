@@ -880,6 +880,39 @@ fn handle_revertible_exception(
     flush_cancelling(sub_jobs);
 }
 
+/// Go `promoteProxyKVDiskFullPause`: a proxy job the system paused for full
+/// TiKV disks pauses the parent job, and the sub-job keeps the state it had
+/// before the step so the resumed proxy is not recreated pausing.
+fn promote_proxy_kv_disk_full_pause(
+    parent_job: &mut Job,
+    sub_job: &mut SubJob,
+    prev_sub_state: JobState,
+    proxy_job: &Job,
+) -> bool {
+    if !proxy_job.is_pausing_or_paused_by_system_for_kv_disk_full() {
+        return false;
+    }
+    sub_job.state = prev_sub_state;
+    parent_job.state = proxy_job.state;
+    parent_job.admin_operator = proxy_job.admin_operator;
+    parent_job.clear_resume_reason();
+    parent_job.pause_reason = proxy_job
+        .pause_reason
+        .as_ref()
+        .map(|reason| GoShared::new(reason.read().clone()));
+    parent_job.error = proxy_job.error.clone().or_else(|| {
+        let message = parent_job
+            .pause_reason
+            .as_ref()
+            .map_or_else(String::new, |reason| reason.read().message.to_string());
+        Some(GoShared::new(
+            tidb_dbterror::ERR_DDL_AUTO_PAUSED_BY_KV_DISK_FULL
+                .fast_gen_by_args(&[parent_job.id.into(), message.into()]),
+        ))
+    });
+    true
+}
+
 /// Running sub-jobs turn cancelling and queued ones cancelled.
 fn flush_cancelling(sub_jobs: &[GoShared<SubJob>]) {
     for sub in sub_jobs {
@@ -974,6 +1007,7 @@ pub(super) fn on_multi_schema_change(
                     continue;
                 }
             }
+            let prev_sub_state = sub.read().state;
             let SubJobStep {
                 proxy,
                 mut step,
@@ -995,6 +1029,15 @@ pub(super) fn on_multi_schema_change(
             sub.write()
                 .from_proxy_job(&proxy.job, step.write.schema_version);
             active.job.resume_reason = proxy.job.resume_reason.clone();
+            if promote_proxy_kv_disk_full_pause(
+                &mut active.job,
+                &mut sub.write(),
+                prev_sub_state,
+                &proxy.job,
+            ) {
+                step.update_raw_args = true;
+                return Ok(step);
+            }
             handle_revertible_exception(&mut active.job, &sub_jobs, sub, proxy.job.error.clone());
             step.update_raw_args = run_error.is_none() || active.job.is_rollingback();
             step.run_error = run_error;
@@ -1028,6 +1071,7 @@ pub(super) fn on_multi_schema_change(
                 continue;
             }
             let step_catalog = sub_catalog.as_ref().unwrap_or(catalog);
+            let prev_sub_state = sub.read().state;
             let SubJobStep {
                 proxy,
                 step,
@@ -1052,6 +1096,21 @@ pub(super) fn on_multi_schema_change(
             }
             sub.write().from_proxy_job(&proxy.job, proxy_version);
             active.job.resume_reason = proxy.job.resume_reason.clone();
+            if promote_proxy_kv_disk_full_pause(
+                &mut active.job,
+                &mut sub.write(),
+                prev_sub_state,
+                &proxy.job,
+            ) {
+                // The step keeps what the sub-jobs wrote so far, under the
+                // version the first of them published.
+                subs.stage(&step.write.mutations);
+                merge_write(&mut merged, step.write);
+                let written = subs.into_mutations()?;
+                txn.stage(&written);
+                merged.schema_version = version;
+                return Ok(action_step(merged));
+            }
             if run_error.is_some() || proxy.job.error.is_some() {
                 for (earlier, saved) in sub_jobs.iter().zip(&saved).take(seq) {
                     *earlier.write() = saved.clone();
@@ -1102,6 +1161,7 @@ pub(super) fn on_multi_schema_change(
         if sub.read().is_finished() {
             continue;
         }
+        let prev_sub_state = sub.read().state;
         let SubJobStep {
             proxy,
             mut step,
@@ -1123,6 +1183,15 @@ pub(super) fn on_multi_schema_change(
         sub.write()
             .from_proxy_job(&proxy.job, step.write.schema_version);
         active.job.resume_reason = proxy.job.resume_reason.clone();
+        if promote_proxy_kv_disk_full_pause(
+            &mut active.job,
+            &mut sub.write(),
+            prev_sub_state,
+            &proxy.job,
+        ) {
+            step.update_raw_args = true;
+            return Ok(step);
+        }
         step.update_raw_args = run_error.is_none();
         step.run_error = run_error;
         return Ok(step);
@@ -1190,4 +1259,103 @@ pub(super) fn rolling_back_multi_schema_change(
         tidb_dbterror::ERR_CANCELLED_DDL_JOB
             .generate(tidb_errno::errname::ErrCancelledDDLJob.raw),
     ))
+}
+
+#[cfg(test)]
+mod promote_proxy_kv_disk_full_pause_tests {
+    use super::*;
+    use tidb_model::job::{JOB_PAUSE_REASON_KV_DISK_FULL, JOB_RESUME_REASON_KV_DISK_FULL};
+    use tidb_model::AdminCommandOperator;
+
+    fn job(id: i64, state: JobState) -> Job {
+        let mut job = Job::default();
+        job.id = id;
+        job.state = state;
+        job
+    }
+
+    fn sub_job(state: JobState) -> SubJob {
+        let mut sub = SubJob::default();
+        sub.state = state;
+        sub
+    }
+
+    fn paused_proxy(state: JobState) -> Job {
+        let mut proxy = job(7, state);
+        proxy.admin_operator = AdminCommandOperator::BY_SYSTEM;
+        proxy.set_pause_reason(JOB_PAUSE_REASON_KV_DISK_FULL, "store 1 disk full");
+        proxy
+    }
+
+    /// Go `promoteProxyKVDiskFullPause` (pkg/ddl/multi_schema_change.go): the
+    /// parent takes the proxy's state, operator, pause reason and error, drops
+    /// its resume reason, and the sub-job returns to its pre-step state.
+    #[test]
+    fn a_kv_disk_full_paused_proxy_pauses_the_parent_like_go() {
+        for state in [JobState::PAUSING, JobState::PAUSED] {
+            let proxy = paused_proxy(state);
+            let mut parent = job(42, JobState::RUNNING);
+            parent.set_resume_reason(JOB_RESUME_REASON_KV_DISK_FULL);
+            let mut sub = sub_job(state);
+            assert!(promote_proxy_kv_disk_full_pause(
+                &mut parent,
+                &mut sub,
+                JobState::RUNNING,
+                &proxy
+            ));
+            assert_eq!(sub.state, JobState::RUNNING);
+            assert_eq!(parent.state, state);
+            assert_eq!(parent.admin_operator, AdminCommandOperator::BY_SYSTEM);
+            assert!(parent.resume_reason.is_none());
+            assert!(parent.has_pause_reason(JOB_PAUSE_REASON_KV_DISK_FULL));
+            // No proxy error: `ErrDDLAutoPausedByKVDiskFull` over the parent's
+            // id and the pause message.
+            let error = parent.error.as_ref().unwrap().read().clone();
+            assert!(tidb_dbterror::ERR_DDL_AUTO_PAUSED_BY_KV_DISK_FULL.equal(Some(&error)));
+            assert_eq!(
+                error.to_string(),
+                "[ddl:8276]Job [42] has been paused by TiDB because a storage node does not have enough disk space: store 1 disk full"
+            );
+        }
+    }
+
+    #[test]
+    fn the_proxys_own_error_is_the_parents_like_go() {
+        let mut proxy = paused_proxy(JobState::PAUSED);
+        let own = GoShared::new(tidb_dbterror::ERR_CANCELLED_DDL_JOB.fast_gen_by_args(&[]));
+        proxy.error = Some(own.clone());
+        let mut parent = Job::default();
+        let mut sub = SubJob::default();
+        assert!(promote_proxy_kv_disk_full_pause(
+            &mut parent,
+            &mut sub,
+            JobState::QUEUEING,
+            &proxy
+        ));
+        assert_eq!(*parent.error.unwrap().read(), *own.read());
+        assert_eq!(sub.state, JobState::QUEUEING);
+    }
+
+    /// Any other proxy leaves the parent and the sub-job alone.
+    #[test]
+    fn another_pause_or_state_is_not_promoted_like_go() {
+        let mut by_user = paused_proxy(JobState::PAUSED);
+        by_user.admin_operator = AdminCommandOperator::BY_END_USER;
+        let mut no_reason = paused_proxy(JobState::PAUSED);
+        no_reason.clear_pause_reason();
+        let running = paused_proxy(JobState::RUNNING);
+        for proxy in [by_user, no_reason, running] {
+            let mut parent = job(42, JobState::RUNNING);
+            let mut sub = sub_job(JobState::DONE);
+            assert!(!promote_proxy_kv_disk_full_pause(
+                &mut parent,
+                &mut sub,
+                JobState::RUNNING,
+                &proxy
+            ));
+            assert_eq!(parent.state, JobState::RUNNING);
+            assert_eq!(sub.state, JobState::DONE);
+            assert!(parent.error.is_none() && parent.pause_reason.is_none());
+        }
+    }
 }

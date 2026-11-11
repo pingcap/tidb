@@ -2,9 +2,9 @@
   "date": "2026-11-09",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 25,
+    "unresolved": 24,
     "open": 4,
-    "partial": 21
+    "partial": 20
   },
   "findings": [
     {
@@ -26,7 +26,7 @@
       "id": "D02",
       "status": "partial",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "No ingest (fast-reorg) backfill: it falls back to the transactional merge (`tidb-ddl/src/cluster_ddl/add_index.rs`); with it the status port's `/ingest/*` routes (Go `IngestConcurrencyHandler` over `ingestctrl`'s rate-limit parameters) are absent",
+      "finding": "No ingest (fast-reorg) backfill: it falls back to the transactional merge (`tidb-ddl/src/cluster_ddl/add_index.rs`); with it the status port's `/ingest/*` routes (Go `IngestConcurrencyHandler` over `ingestctrl`'s rate-limit parameters) are absent, and so is the DXF add-index task's `autoPauseAddIndexJobOnKVDiskFull`, the one producer of the system pause a multi-schema change promotes (`promote_proxy_kv_disk_full_pause`)",
       "rust_evidence": "`rust/crates/tidb-ddl/src/cluster_ddl/add_index.rs`",
       "go_owner": "`pkg/ddl/backfilling*.go`, `pkg/ddl/ingest`"
     },
@@ -36,13 +36,6 @@
       "group": "DDL: migrate responsibility before deleting implementations",
       "finding": "Cancellation follows Go's `convertJob2RollbackJob` for every action the worker runs. A columnar (vector, inverted, full-text) index is checked against its table as Go's `createColumnarIndex` does (`add_index.rs` `create_columnar_index`, `checkTableTypeForColumnarIndex`), but on a table with a columnar replica this node builds no `ActionAddColumnarIndex` job: `onCreateColumnarIndex` (TiFlash schema sync, `checkColumnarIndexProcess`) and its `rollingbackAddColumanrIndex` are absent",
       "go_owner": "`pkg/ddl`"
-    },
-    {
-      "id": "D11",
-      "status": "partial",
-      "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "A multi-schema change has no `promoteProxyKVDiskFullPause`, whose only producer (`autoPauseAddIndexJobOnKVDiskFull`, the DXF add-index task) Rust lacks (D02)",
-      "go_owner": "`pkg/ddl/multi_schema_change.go`"
     },
     {
       "id": "D12",
@@ -187,7 +180,7 @@
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
-  "unresolved": 25,
+  "unresolved": 24,
   "open": 4,
-  "partial": 21
+  "partial": 20
 }

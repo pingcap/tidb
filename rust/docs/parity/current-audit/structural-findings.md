@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**25 unresolved: 4 open, 21 partial.**
+**24 unresolved: 4 open, 20 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -25,9 +25,8 @@ unresolved until it is restated against its Go owner or closed.
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
 | D01 | partial | 53 of Go's 86 `ddl.executor` methods (`pkg/ddl/executor.go`) have no counterpart, `DoDDLJob` / `DoDDLJobWrapper` among them: a statement is lowered into this port's own `DdlStatement` (`cluster_ddl.rs` `lower_ddl_with_context`, then a `lower_*` builder) and submitted by `submit_built_job` / `submit_persisted_job_with_retry`; the missing methods include `AlterSchema`, `CreateTableWithInfo` / `BatchCreateTableWithInfo`, `RebaseAutoID`, `ShardRowID`, `ChangeColumn`, `RenameColumn`, `RenameIndex`, `DropView`, `CreatePrimaryKey`, `LockTables`, `CleanupTableLock`, `RepairTable`, `CreateSequence` / `AlterSequence`, the placement-policy, check-constraint, masking-policy, TTL, cache and attribute alters | `pkg/ddl/executor.go`, `DoDDLJob` |
-| D02 | partial | No ingest (fast-reorg) backfill: it falls back to the transactional merge (`tidb-ddl/src/cluster_ddl/add_index.rs`); with it the status port's `/ingest/*` routes (Go `IngestConcurrencyHandler` over `ingestctrl`'s rate-limit parameters) are absent | `pkg/ddl/backfilling*.go`, `pkg/ddl/ingest` |
+| D02 | partial | No ingest (fast-reorg) backfill: it falls back to the transactional merge (`tidb-ddl/src/cluster_ddl/add_index.rs`); with it the status port's `/ingest/*` routes (Go `IngestConcurrencyHandler` over `ingestctrl`'s rate-limit parameters) are absent, and so is the DXF add-index task's `autoPauseAddIndexJobOnKVDiskFull`, the one producer of the system pause a multi-schema change promotes (`promote_proxy_kv_disk_full_pause`) | `pkg/ddl/backfilling*.go`, `pkg/ddl/ingest` |
 | D05 | partial | Cancellation follows Go's `convertJob2RollbackJob` for every action the worker runs. A columnar (vector, inverted, full-text) index is checked against its table as Go's `createColumnarIndex` does (`add_index.rs` `create_columnar_index`, `checkTableTypeForColumnarIndex`), but on a table with a columnar replica this node builds no `ActionAddColumnarIndex` job: `onCreateColumnarIndex` (TiFlash schema sync, `checkColumnarIndexProcess`) and its `rollingbackAddColumanrIndex` are absent | `pkg/ddl` |
-| D11 | partial | A multi-schema change has no `promoteProxyKVDiskFullPause`, whose only producer (`autoPauseAddIndexJobOnKVDiskFull`, the DXF add-index task) Rust lacks (D02) | `pkg/ddl/multi_schema_change.go` |
 | D12 | partial | A persisted DDL job step takes its schema from the owner's `InfoCache` at the step's version (Go `jobCtx.infoCache`) with the job's involved schemas reloaded whole from meta (`overlay_job_schemas`: each `DBInfo` and every table in whatever state), and its action handlers look objects up in that catalog, where Go's handlers point-read the job's objects through `jobCtx.metaMut` (`checkSchemaExistAndCancelNotExistJob`, `GetTableInfoAndCancelFaultJob`) | `pkg/ddl/job_worker.go` (`transitOneJobStep`, `runOneJobStep`), `pkg/ddl/schema.go`, `pkg/ddl/table.go` |
 
 ### Executor, DML and expressions
