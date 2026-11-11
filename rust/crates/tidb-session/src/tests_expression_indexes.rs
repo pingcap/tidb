@@ -1577,3 +1577,34 @@ fn an_index_lookup_aggregates_rows_the_source_cannot_aggregate() {
     assert_eq!(rows(&mut session, "select sum(crc32(b)) from t use index(idx)"), [["4845369563"]]);
     assert_eq!(rows(&mut session, "select count(b), max(lower(b)) from t use index(idx)"), [["2", "bb"]]);
 }
+
+/// Go `BuildHiddenColumnInfo` and `checkPartitionFuncType` build the written
+/// expression with `expression.WithTableInfo`, so a column qualified by
+/// another table is unknown; the database qualifier is not looked at, and
+/// ALTER TABLE ... PARTITION BY checks the text restored without table names.
+/// Vectors from a Go testkit probe.
+#[test]
+fn a_column_qualified_by_another_table_is_unknown_like_go() {
+    let mut session = Session::new();
+    let error = |session: &mut Session, sql: &str| {
+        let error = session.run(sql).expect_err(sql).to_mysql_error();
+        (error.code, error.message)
+    };
+    let unknown = |name: &str| (1054, format!("Unknown column '{name}' in 'expression'"));
+    assert_eq!(error(&mut session, "create table t1(a int, b int, index i1((x.a+1)))"), unknown("x.a"));
+    session.run("create table t2(a int, b int, index i1((t2.a+1)))").unwrap();
+    session.run("create table t3(a int, b int, index i1((test.t3.a+1)))").unwrap();
+    session.run("create table t4(a int, b int, index i1((otherdb.t4.a+1)))").unwrap();
+    session.run("create table t5(a int, b int)").unwrap();
+    assert_eq!(error(&mut session, "alter table t5 add index i2((x.a+1))"), unknown("x.a"));
+    assert_eq!(error(&mut session, "create index i3 on t5((x.b+1))"), unknown("x.b"));
+    session.run("create index i4 on t5((t5.b+1))").unwrap();
+    assert_eq!(error(&mut session, "create table p1(a int) partition by hash(x.a) partitions 2"), unknown("x.a"));
+    session.run("create table p2(a int) partition by hash(p2.a) partitions 2").unwrap();
+    assert_eq!(
+        error(&mut session, "create table p3(a int) partition by range(x.a+1) (partition p0 values less than (10))"),
+        unknown("x.a")
+    );
+    session.run("create table p5(a int)").unwrap();
+    session.run("alter table p5 partition by hash(x.a) partitions 2").unwrap();
+}

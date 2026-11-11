@@ -620,6 +620,7 @@ pub fn check_illegal_fn_4_generated(
 /// `parts` so the caller can put the hidden column's offset back in the right
 /// key slot.
 pub fn build_hidden_column_info(
+    table: &str,
     index_name: &str,
     parts: &[IndexPart],
     names: &[String],
@@ -627,6 +628,7 @@ pub fn build_hidden_column_info(
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Vec<(usize, HiddenIndexColumn)>, MysqlError> {
     build_hidden_columns_with_like_default_escape(
+        table,
         index_name,
         parts,
         names,
@@ -640,8 +642,11 @@ pub fn build_hidden_column_info(
 /// Statement-aware form of [`build_hidden_column_info`]. `connection_charset` is
 /// the DDL session's `character_set_connection`: Go's parser gave each plain
 /// string literal of the key part that charset, so the hidden column's
-/// stored expression writes it as the `_charset` introducer.
+/// stored expression writes it as the `_charset` introducer. `table` is the
+/// table of Go's `expression.WithTableInfo(CurrentDB, tblInfo)`: a key part's
+/// column qualified by another table is unknown.
 pub fn build_hidden_columns_with_like_default_escape(
+    table: &str,
     index_name: &str,
     parts: &[IndexPart],
     names: &[String],
@@ -681,7 +686,8 @@ pub fn build_hidden_columns_with_like_default_escape(
             types,
             zone.clone(),
             like_default_escape,
-        );
+        )
+        .with_source_table(table);
         let built_expr = match tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver) {
             Ok(built_expr) => built_expr,
             Err(error) => {

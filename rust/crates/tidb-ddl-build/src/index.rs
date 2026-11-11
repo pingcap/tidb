@@ -1251,6 +1251,7 @@ pub fn build_index_info(
         let (names, types): (Vec<_>, Vec<_>) = visible.into_iter().unzip();
         let hidden =
             crate::expression_index::build_hidden_columns_with_like_default_escape(
+                info.name.original(),
                 name,
                 &parts,
                 &names,

@@ -1344,6 +1344,7 @@ pub fn reorganize_partitions(
             .collect::<std::collections::VecDeque<_>>();
         let (spec, mut info) = table_partition::build_table_partition_info(
             &clause,
+            None,
             &names,
             &types,
             &table.indexes(),
@@ -1485,6 +1486,7 @@ pub fn alter_table_partitioning(
         let handle_offsets = handle_offsets(table);
         let (spec, mut info) = table_partition::build_table_partition_info(
             partitioning,
+            None,
             &names,
             &types,
             &table.indexes(),

@@ -530,6 +530,7 @@ pub fn build_table_info_with_stmt(
     // dependency check and the anonymous index's name both resolve against
     // the completed column list, exactly as go interleaves them.
     synthesize_expression_index_columns(
+        create.name.last().map_or("", String::as_str),
         &mut columns,
         &mut constraints,
         &constraint_exprs,
@@ -2076,6 +2077,7 @@ fn table_constraint_expr_parts(constraint: &TableConstraint) -> Vec<Option<Expr>
 /// the stored expression back from that column; the column itself never
 /// appears in the column list.
 fn synthesize_expression_index_columns(
+    table: &str,
     columns: &mut Vec<ColumnInfo>,
     constraints: &mut [Constraint],
     constraint_exprs: &[Vec<Option<Expr>>],
@@ -2129,6 +2131,7 @@ fn synthesize_expression_index_columns(
             .collect();
         let hidden =
             crate::expression_index::build_hidden_columns_with_like_default_escape(
+                table,
                 &constraint.name,
                 &parts,
                 &names,

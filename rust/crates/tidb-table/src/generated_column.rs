@@ -717,8 +717,12 @@ impl ColumnResolver for TableColumnResolver<'_> {
             None => {
                 let mut missing = self.missing.borrow_mut();
                 if missing.is_none() {
-                    // Go quotes the name as written.
-                    *missing = Some(name.clone());
+                    // Go quotes the name as written; against a source
+                    // table that is `toColumn`'s spelling.
+                    *missing = Some(match self.source_table {
+                        Some(_) => self.unknown_column_name(path),
+                        None => name.clone(),
+                    });
                 }
                 None
             }

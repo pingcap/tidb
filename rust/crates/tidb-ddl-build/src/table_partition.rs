@@ -119,6 +119,7 @@ pub fn build_table_partitioning(
         .map(|partitioning| {
             build_table_partition_info(
                 partitioning,
+                create.name.last().map(String::as_str),
                 names,
                 types,
                 indexes,
@@ -133,8 +134,15 @@ pub fn build_table_partitioning(
 /// Go `buildTablePartitionInfo` for one written partition clause, the
 /// CREATE TABLE battery that `ALTER TABLE ... PARTITION BY` and REORGANIZE
 /// PARTITION's `checkReorgPartitionDefs` run as well.
+///
+/// `source_table` is the table of Go `checkPartitionFuncType`'s
+/// `expression.WithTableInfo` when CREATE TABLE hands it the written
+/// expression (`create_table.go`), where a column qualified by another table
+/// is unknown; `None` where Go hands it `PartitionInfo.Expr`, the text
+/// restored without table names (`partition.go`, ALTER TABLE).
 pub fn build_table_partition_info(
     partitioning: &tidb_ast::TablePartitioning,
+    source_table: Option<&str>,
     names: &[String],
     types: &[FieldType],
     indexes: &[IndexInfo],
@@ -144,6 +152,7 @@ pub fn build_table_partition_info(
 ) -> Result<(PartitionExpr, PartitionInfo), MysqlError> {
     let (spec, mut definitions, expr_text) = build_table_partitioning_inner(
         partitioning,
+        source_table,
         names,
         types,
         indexes,
@@ -158,6 +167,7 @@ pub fn build_table_partition_info(
 
 fn build_table_partitioning_inner(
     partitioning: &tidb_ast::TablePartitioning,
+    source_table: Option<&str>,
     names: &[String],
     types: &[FieldType],
     indexes: &[IndexInfo],
@@ -252,6 +262,7 @@ fn build_table_partitioning_inner(
         expanded.subpartition = None;
         return build_table_partitioning_inner(
             &expanded,
+            source_table,
             names,
             types,
             indexes,
@@ -466,6 +477,25 @@ fn build_table_partitioning_inner(
     // `checkPartitionFuncType` (`create_table.go:517-533`).  Keep the same
     // order: malformed VALUES (including an early MAXVALUE or a non-integer
     // LIST bound) must win over a non-integral partition expression.
+    if let Some(table) = source_table {
+        // Go builds the written expression again here, against the table.
+        let resolver = TableColumnResolver::with_like_default_escape(
+            names,
+            types,
+            ctx.get_expr_ctx().get_eval_ctx().time_zone(),
+            ctx.get_expr_ctx().get_eval_ctx().like_default_escape(),
+        )
+        .with_source_table(table);
+        let rebuilt = tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver);
+        if let (Err(_), Some(missing)) = (rebuilt, resolver.missing_name()) {
+            return Err(tidb_terror::MysqlError::from_terror(
+                &tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(&[
+                    go_to_lower(&missing).into(),
+                    "expression".to_owned().into(),
+                ]),
+            ));
+        }
+    }
     check_partition_expression_type(expr, &built)?;
     // Go's type-specific branch of `checkPartitionDefinitionConstraints`,
     // which runs AFTER 1517 and 1499: `checkPartitionByRange` is where 1493
