@@ -53,10 +53,15 @@ go_test(
         "main_test.go",
         "null_misc_test.go",
         "path_test.go",
+        "slice_recursive_flatten_iter_test.go",
     ],
     embed = [":util"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 5,
+=======
+    shard_count = 3,
+>>>>>>> e44c60c0456 (planner: unify OR type IndexMerge code paths (#58396))
     deps = [
         "//pkg/domain",
         "//pkg/expression",
