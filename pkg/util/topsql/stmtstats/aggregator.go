@@ -278,6 +278,22 @@ func UnregisterRUCollector(collector RUCollector) {
 	globalAggregator.unregisterRUCollector(collector)
 }
 
+// RegisteredStatementStatsForTest returns the StatementStats currently
+// registered in the global aggregator, keyed by their pointers. A session
+// registers a fresh StatementStats when it is created (CreateStatementStats)
+// and finishes it when it is closed (StatementStats.SetFinished); finished
+// entries are only unregistered when the aggregator ticks. It is exported for
+// tests in other packages that need to verify a subsystem closed a session it
+// created, which has no other observable side effect.
+func RegisteredStatementStatsForTest() map[*StatementStats]struct{} {
+	result := make(map[*StatementStats]struct{})
+	globalAggregator.statsSet.Range(func(key, _ any) bool {
+		result[key.(*StatementStats)] = struct{}{}
+		return true
+	})
+	return result
+}
+
 // Collector is used to collect StatementStatsMap.
 type Collector interface {
 	// CollectStmtStatsMap is used to collect StatementStatsMap.
