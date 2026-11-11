@@ -9,6 +9,7 @@ go_library(
         "//pkg/ddl/notifier",
         "//pkg/domain/infosync",
         "//pkg/infoschema",
+        "//pkg/kv",
         "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/parser/ast",

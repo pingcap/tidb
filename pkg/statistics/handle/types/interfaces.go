@@ -178,6 +178,10 @@ type StatsAnalyze interface {
 	// their associated instances being removed from the current cluster.
 	CleanupCorruptedAnalyzeJobsOnDeadInstances() error
 
+	// MaxAutoAnalyzeFailuresPerTable returns the largest number of failed auto analyze jobs
+	// recorded in mysql.analyze_jobs for a single table (or partition) since the given time.
+	MaxAutoAnalyzeFailuresPerTable(ctx context.Context, since time.Time) (int64, error)
+
 	// HandleAutoAnalyze analyzes the outdated tables. (The change percent of the table exceeds the threshold)
 	// It also analyzes newly created tables and newly added indexes.
 	HandleAutoAnalyze() (analyzed bool)
