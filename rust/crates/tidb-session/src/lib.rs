@@ -677,6 +677,8 @@ pub struct Session {
     restricted_sql_executor: tidb_executor::memtable_reader::RestrictedSql,
     /// This session as the issuer of its restricted statements.
     restricted_sql_issuer: std::sync::Arc<restricted_sql::RestrictedSqlIssuer>,
+    /// Go `SessionVars.InspectionTableCache`.
+    inspection_table_cache: std::sync::Arc<tidb_executor::memtable_reader::InspectionTableCache>,
     /// Go `pointPlans`: the point plan a multi-statement query's prefetch
     /// built for each of its statements, empty when it built none.
     pub(crate) prefetched_point_plans: Vec<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
@@ -1063,6 +1065,7 @@ impl Session {
             statement_snapshot: None,
             restricted_sql_executor: None,
             restricted_sql_issuer: std::sync::Arc::default(),
+            inspection_table_cache: std::sync::Arc::default(),
             prefetched_point_plans: Vec::new(),
             point_plan_val: None,
             column_stats_usage: None,
@@ -3496,6 +3499,8 @@ mod session_source_tests {
 mod tests_admin_check;
 #[cfg(test)]
 mod tests_error_class;
+#[cfg(test)]
+mod tests_inspection_result;
 #[cfg(test)]
 mod tests_error_codes;
 #[cfg(test)]

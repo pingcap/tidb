@@ -116,6 +116,8 @@ pub struct InfoCache {
     published: RwLock<Arc<SessionExtendedInfoSchema>>,
     historical: Mutex<std::collections::BTreeMap<i64, Arc<SessionExtendedInfoSchema>>>,
     capacity: AtomicUsize,
+    /// Go `Data.recentMinTS`.
+    recent_min_ts: std::sync::atomic::AtomicU64,
     /// Go `Syncer`'s `s.m`: one reload at a time, held across the load, the
     /// schema validator's update and the publication, so two reload paths
     /// never interleave their validator updates.
@@ -146,9 +148,16 @@ impl InfoCache {
                 built,
             )])),
             capacity: AtomicUsize::new(16),
+            recent_min_ts: std::sync::atomic::AtomicU64::new(0),
             reload: Mutex::new(()),
             builder: RwLock::new(None),
         }
+    }
+
+    /// Go `InfoCache.GetAndResetRecentInfoSchemaTS`: the min start ts for
+    /// `InfoSyncer.ReportMinStartTS`, reset to the round's current TS.
+    pub fn get_and_reset_recent_info_schema_ts(&self, now: u64) -> u64 {
+        self.recent_min_ts.swap(now, Ordering::AcqRel)
     }
 
     /// Go's loader building one version's `InfoSchema`.

@@ -1524,6 +1524,11 @@ pub struct StmtContextData {
     /// `@@group_concat_max_len`, the BYTE budget `GROUP_CONCAT` truncates its
     /// joined buffer to (Go `baseGroupConcat4String.maxLen`).
     group_concat_max_len: u64,
+    /// Go `SessionVars.MetricSchemaStep` and `MetricSchemaRangeDuration`
+    /// (`@@tidb_metric_query_step`, `@@tidb_metric_query_range_duration`),
+    /// which a `metrics_schema` scan's PromQL and its retriever read.
+    metric_schema_step: i64,
+    metric_schema_range_duration: i64,
     /// go `SysErrorCount`/`SysWarningCount`: the PREVIOUS statement's counts,
     /// copied by `ResetContextOfStmt` and read back by `@@error_count` /
     /// `@@warning_count` (captured: after a failed `SET bogus_var=1` both
@@ -2006,6 +2011,13 @@ context_configuration! {
     #[must_use]
     pub fn with_group_concat_max_len(mut self, group_concat_max_len: u64) -> Self {
         self.group_concat_max_len = group_concat_max_len;
+        self
+    }
+
+    #[must_use]
+    pub fn with_metric_schema(mut self, step: i64, range_duration: i64) -> Self {
+        self.metric_schema_step = step;
+        self.metric_schema_range_duration = range_duration;
         self
     }
 
@@ -3323,6 +3335,8 @@ impl StmtContext {
             // with and the one the `Columns` trait default already used.
             max_allowed_packet: 64 << 20,
             group_concat_max_len: 1024,
+            metric_schema_step: tidb_vardef::defaults::DEF_TIDB_METRIC_SCHEMA_STEP,
+            metric_schema_range_duration: tidb_vardef::defaults::DEF_TIDB_METRIC_SCHEMA_RANGE_DURATION,
             apply_cache_capacity: tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_APPLY_CACHE,
             enable_parallel_apply: false,
             allow_derive_topn: false,
@@ -7226,6 +7240,12 @@ impl Columns for StmtContext {
         // trait already has a general variable channel.
         if name.eq_ignore_ascii_case("group_concat_max_len") {
             return Some(Datum::UInt(self.group_concat_max_len));
+        }
+        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_METRIC_SCHEMA_STEP) {
+            return Some(Datum::Int(self.metric_schema_step));
+        }
+        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_METRIC_SCHEMA_RANGE_DURATION) {
+            return Some(Datum::Int(self.metric_schema_range_duration));
         }
         if name.eq_ignore_ascii_case("default_collation_for_utf8mb4") {
             return Some(Datum::Bytes(

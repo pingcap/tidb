@@ -473,6 +473,12 @@ pub fn cluster_session_stack(
         Arc::new(tidb_domain_infosync::label_delivery::PdLabelManager::new(client))
             as Arc<dyn tidb_domain_infosync::label_manager::LabelRuleManager>
     }));
+    // Go `GlobalInfoSyncerInit`'s `etcdCli`, which `GetPrometheusAddr` finds
+    // the `metrics_schema` tables' Prometheus through.
+    tidb_domain_infosync::prometheus_addr::init_prometheus_addr(
+        etcd.clone().map(|client| client as Arc<dyn tidb_domain_infosync::prometheus_addr::PrometheusEtcd>),
+        &config.cluster_security,
+    );
     // Go `InfoSyncer.initScheduleManager`: PD's schedule configuration, which
     // FLASHBACK CLUSTER closes and restores.
     tidb_domain_infosync::schedule_manager::init_schedule_manager(pd_http_client.as_ref().map(|client| {
@@ -682,31 +688,26 @@ pub fn cluster_session_stack(
         let processes = factory.processes();
         let globals = users.global_vars();
         let opener = authority.transaction_opener();
+        let info_cache = InfoCacheMinTs(Arc::clone(&factory.catalog));
         runner
             .start_min_start_ts_reporter(move || {
-                let mut active = tidb_txnkv::ACTIVE_START_TS.snapshot();
-                active.extend(
-                    tidb_domain_infosync::min_start_ts::process_list_min_start_ts_candidates(
-                        &tidb_sessmgr::processinfo::SessionManager::show_process_list(&processes),
-                    ),
-                );
+                let active = tidb_txnkv::ACTIVE_START_TS.snapshot();
+                let pl = tidb_sessmgr::processinfo::SessionManager::show_process_list(&processes);
                 let internal = processes.internal_session_start_ts(|id| tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(id));
                 // Go `ReportMinStartTS`: `store.CurrentVersion(kv.GlobalTxnScope)`.
                 let version = opener.store().get_timestamp_async().wait()?;
-                let now = tikv_client::oracle::get_time_from_ts(version);
-                for ts in internal {
-                    let _ = tidb_txnkv::print_long_time_internal_txn(now, ts, false);
-                    active.push(ts);
-                }
                 let max_wait = globals
                     .get("tidb_gc_max_wait_time")
                     .map_err(|error| format!("{error:?}"))?
                     .parse::<u64>()
                     .map_err(|error| error.to_string())?;
-                Ok(tidb_txnkv::report_min_start_ts(
+                Ok(tidb_domain_infosync::min_start_ts::min_start_ts(
+                    &pl,
+                    &internal,
+                    active,
                     version,
                     max_wait,
-                    active,
+                    &info_cache,
                     &tidb_txnkv::GLOBAL_INNER_TXN_START_TS,
                 ))
             })
@@ -918,4 +919,13 @@ pub fn build_mpp_client(
         authority.tikv_store().clone(),
         schema_version,
     )
+}
+
+/// Go `InfoSyncer.infoCache`, the domain's `InfoCache` as `infoschemaMinTS`.
+struct InfoCacheMinTs(Arc<tidb_infoschema_issyncer::catalog_watch::InfoCache>);
+
+impl tidb_domain_infosync::min_start_ts::InfoschemaMinTs for InfoCacheMinTs {
+    fn get_and_reset_recent_info_schema_ts(&self, now: u64) -> u64 {
+        self.0.get_and_reset_recent_info_schema_ts(now)
+    }
 }

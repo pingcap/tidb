@@ -31,6 +31,25 @@ use std::sync::Arc;
 use crate::infoschema_reader::datetime_datum;
 use crate::memtable_reader::go_uptime_string;
 
+/// What Go's `mockClusterLogServerInfo` failpoint replaces.
+#[cfg(any(test, feature = "test-util"))]
+pub mod mock {
+    use std::sync::{Mutex, PoisonError};
+    use tidb_domain::cluster_topology::ClusterServer;
+
+    static CLUSTER_LOG_SERVER_INFO: Mutex<Option<Vec<ClusterServer>>> = Mutex::new(None);
+
+    /// Go `failpoint.Enable("mockClusterLogServerInfo", ...)`: the servers
+    /// `CLUSTER_LOG` asks, in place of the cluster's.
+    pub fn set_cluster_log_server_info(servers: Option<Vec<ClusterServer>>) {
+        *CLUSTER_LOG_SERVER_INFO.lock().unwrap_or_else(PoisonError::into_inner) = servers;
+    }
+
+    pub(super) fn cluster_log_server_info() -> Option<Vec<ClusterServer>> {
+        CLUSTER_LOG_SERVER_INFO.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+}
+
 impl ViewerState {
     /// Go `SQLDigestTextRetriever` over this node and, with `global`, its
     /// peers.
@@ -195,13 +214,20 @@ impl ViewerState {
             )));
         }
         let extractor = extractor.clone();
-        let Some((client, servers)) = self.cluster_diagnostics_servers(ctx, |tp, addr| {
+        let matches = |tp: &str, addr: &str| {
             (extractor.node_types.is_empty() || extractor.node_types.contains(tp))
                 && (extractor.instances.is_empty() || extractor.instances.contains(addr))
-        })?
-        else {
+        };
+        let Some((client, servers)) = self.cluster_diagnostics_servers(ctx, &matches)? else {
             return Ok(Vec::new());
         };
+        #[cfg(any(test, feature = "test-util"))]
+        let servers = mock::cluster_log_server_info().map_or(servers, |servers| {
+            servers
+                .into_iter()
+                .filter(|server| matches(&server.server_type, &server.address))
+                .collect()
+        });
         let request = tidb_proto::diagnosticspb::SearchLogRequest {
             start_time: extractor.start_time,
             end_time: extractor.end_time,
@@ -1167,6 +1193,20 @@ impl crate::mem_table_retrieval::MemTableRetriever for ClusterTablesRetriever {
     }
 
     fn retrieve(
+        &self,
+        read: &crate::mem_table_retrieval::MemTableRead,
+        catalog: &SessionExtendedInfoSchema,
+        ctx: &crate::StmtContext,
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        self.viewer
+            .inspection_table_cache
+            .retrieve(&read.table_name, || self.retrieve_table(read, catalog, ctx))
+    }
+}
+
+impl ClusterTablesRetriever {
+    /// Go `e.retriever.retrieve(ctx, e.Ctx())` for the tables this serves.
+    fn retrieve_table(
         &self,
         read: &crate::mem_table_retrieval::MemTableRead,
         catalog: &SessionExtendedInfoSchema,

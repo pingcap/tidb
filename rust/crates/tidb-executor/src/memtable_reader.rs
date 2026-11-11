@@ -35,6 +35,68 @@ use tidb_hack::GoCaseCompare;
 
 use crate::infoschema_reader::SchemaVisibility;
 
+/// Go `variable.TableSnapshot`: one inspection table's rows, or the error its
+/// retrieval answered.
+#[derive(Clone, Debug, Default)]
+pub struct TableSnapshot {
+    pub rows: Vec<Vec<Datum>>,
+    pub err: Option<DriverError>,
+}
+
+/// Go `SessionVars.InspectionTableCache`: the cluster tables an inspection
+/// reads once and every one of its rules sees alike. `None` is Go's nil map,
+/// the non-inspection mode. The session shares it with the internal sessions
+/// its restricted SQL runs on.
+#[derive(Debug, Default)]
+pub struct InspectionTableCache(std::sync::Mutex<Option<std::collections::HashMap<String, TableSnapshot>>>);
+
+impl InspectionTableCache {
+    fn tables(&self) -> std::sync::MutexGuard<'_, Option<std::collections::HashMap<String, TableSnapshot>>> {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// `sctx.GetSessionVars().InspectionTableCache = tables`.
+    pub fn set(&self, tables: Option<std::collections::HashMap<String, TableSnapshot>>) {
+        *self.tables() = tables;
+    }
+
+    /// Go `MemTableReaderExec.isInspectionCacheableTable`.
+    fn is_inspection_cacheable_table(tbl_name: &str) -> bool {
+        ["cluster_config", "cluster_info", "cluster_systeminfo", "cluster_load", "cluster_hardware"]
+            .contains(&tbl_name)
+    }
+
+    /// Go `MemTableReaderExec.Next`'s rows: in inspection mode a cacheable
+    /// table is retrieved once and answered from its snapshot afterwards,
+    /// its error included.
+    pub fn retrieve(
+        &self,
+        tbl: &str,
+        retrieve: impl FnOnce() -> Result<Vec<Vec<Datum>>, DriverError>,
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        let tbl = tbl.to_lowercase();
+        let found = match &*self.tables() {
+            Some(cache) if Self::is_inspection_cacheable_table(&tbl) => cache.get(&tbl).cloned(),
+            _ => return retrieve(),
+        };
+        // Obtain data from cache first.
+        let cached = found.unwrap_or_else(|| {
+            let cached = match retrieve() {
+                Ok(rows) => TableSnapshot { rows, err: None },
+                Err(err) => TableSnapshot { rows: Vec::new(), err: Some(err) },
+            };
+            if let Some(cache) = &mut *self.tables() {
+                cache.insert(tbl, cached.clone());
+            }
+            cached
+        });
+        match cached.err {
+            Some(err) => Err(err),
+            None => Ok(cached.rows),
+        }
+    }
+}
+
 /// What the instance-wide tables read of the session viewing them.
 #[derive(Clone)]
 pub struct ViewerState {
@@ -68,6 +130,8 @@ pub struct ViewerState {
     /// Go `GetRestrictedSQLExecutor`, which the inspection retrievers query
     /// the metrics tables through.
     pub restricted_sql: RestrictedSql,
+    /// Go `SessionVars.InspectionTableCache`.
+    pub inspection_table_cache: Arc<InspectionTableCache>,
     /// `@@tidb_slow_query_file`.
     pub slow_query_file: String,
     /// The DDL job store a node installs (Go reads the store's meta).
@@ -320,6 +384,7 @@ impl MemTableRetriever for InstanceStateRetriever {
             "ANALYZE_STATUS",
             "INSPECTION_RULES",
             "INSPECTION_SUMMARY",
+            "INSPECTION_RESULT",
             "METRICS_SUMMARY",
             "METRICS_SUMMARY_BY_LABEL",
             "TIFLASH_TABLES",
@@ -435,6 +500,25 @@ impl MemTableRetriever for InstanceStateRetriever {
                 query_metrics,
                 |warning| ctx.append_warning_parts(1105, &warning),
             );
+        }
+        if table.go_lower_eq("INSPECTION_RESULT") {
+            let Some(Extractor::InspectionResultTable(extractor)) = &read.extractor else {
+                return Ok(Vec::new());
+            };
+            return Ok(crate::inspection_result::inspection_result_rows(
+                extractor,
+                &read.query_time_range,
+                &self.viewer.inspection_table_cache,
+                |sql, arguments| {
+                    exec_restricted_sql_over(
+                        self.viewer.restricted_sql.as_deref(),
+                        tidb_txnkv::INTERNAL_TXN_META,
+                        sql,
+                        arguments,
+                    )
+                },
+                |warning| ctx.append_warning_parts(1105, &warning),
+            ));
         }
         if table.go_lower_eq("METRICS_SUMMARY") || table.go_lower_eq("METRICS_SUMMARY_BY_LABEL") {
             // Go checks PROCESS before it looks at the extractor.

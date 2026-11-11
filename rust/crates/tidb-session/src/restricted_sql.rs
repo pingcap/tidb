@@ -47,6 +47,8 @@ struct RestrictedSqlIssuerState {
     /// Go `SessionVars.OptimizerUseInvisibleIndexes` and
     /// `SkipMissingPartitionStats` of the issuer.
     inherited: Option<[String; 2]>,
+    /// Go `SessionVars.InspectionTableCache` of the issuer.
+    inspection_table_cache: Option<Arc<tidb_executor::memtable_reader::InspectionTableCache>>,
     warnings: Vec<SqlWarn>,
 }
 
@@ -62,6 +64,11 @@ impl RestrictedSqlIssuer {
     /// planner reads them.
     pub(crate) fn inherit(&self, internal: &mut Session) -> Result<(), DriverError> {
         use tidb_vardef::tidb_vars::{TIDB_OPT_USE_INVISIBLE_INDEXES, TIDB_SKIP_MISSING_PARTITION_STATS};
+        // `se.sessionVars.InspectionTableCache = s.sessionVars.InspectionTableCache`:
+        // the internal session reads the issuer's inspection snapshots.
+        if let Some(cache) = self.state().inspection_table_cache.clone() {
+            internal.inspection_table_cache = cache;
+        }
         let Some(values) = self.state().inherited.clone() else {
             return Ok(());
         };
@@ -86,9 +93,12 @@ impl Session {
     /// variables an internal session copies from it now.
     pub(crate) fn restricted_sql_issuer(&self) -> Arc<RestrictedSqlIssuer> {
         use tidb_vardef::tidb_vars::{TIDB_OPT_USE_INVISIBLE_INDEXES, TIDB_SKIP_MISSING_PARTITION_STATS};
-        self.restricted_sql_issuer.state().inherited =
+        let mut state = self.restricted_sql_issuer.state();
+        state.inherited =
             Some([TIDB_OPT_USE_INVISIBLE_INDEXES, TIDB_SKIP_MISSING_PARTITION_STATS]
                 .map(|name| self.vars.get_system(name).unwrap_or_default()));
+        state.inspection_table_cache = Some(Arc::clone(&self.inspection_table_cache));
+        drop(state);
         Arc::clone(&self.restricted_sql_issuer)
     }
 

@@ -92,6 +92,7 @@ impl Session {
             index_usage: std::sync::Arc::clone(&self.index_usage_collector),
             process_scoped: self.has_scoped_privilege("", "", tidb_mysql::ProcessPriv),
             restricted_sql: self.restricted_sql_executor(),
+            inspection_table_cache: std::sync::Arc::clone(&self.inspection_table_cache),
             slow_query_file: self
                 .vars
                 .get_system(tidb_vardef::tidb_vars::TIDB_SLOW_QUERY_FILE)

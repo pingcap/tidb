@@ -1636,17 +1636,62 @@ fn build_mem_table(
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
     if scan.db_name.go_lower_eq("metrics_schema") {
-        // go's metrics tables query the metric storage (Prometheus/PD),
-        // which is absent -- the queries fail `query metric error: pd
-        // unavailable` (oracle g-is: metrics_schema scans answer 1105).
-        // Go's `metricRetriever` fails when it is read, not when built.
+        // Go's `buildMemTable` gives every `metrics_schema` table a
+        // `MetricRetriever`, which queries when it is read, not when built.
+        let Some(tidb_planner::memtable_predicate_extractor::MemTableExtractor::MetricTable(extractor)) =
+            tidb_planner::memtable_predicate_extractor::extractor_of(scan).cloned()
+        else {
+            return Err(DriverError::unsupported(
+                "a metrics_schema scan without its MetricTableExtractor",
+            ));
+        };
+        let sysvar_int = |name: &str, default: i64| {
+            tidb_exprctx::Columns::sysvar(ctx, None, name)
+                .and_then(|value| value.sql_string().ok())
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(default)
+        };
+        let metric_schema_step = sysvar_int(
+            tidb_vardef::tidb_vars::TIDB_METRIC_SCHEMA_STEP,
+            tidb_vardef::defaults::DEF_TIDB_METRIC_SCHEMA_STEP,
+        );
+        let metric_schema_range_duration = sysvar_int(
+            tidb_vardef::tidb_vars::TIDB_METRIC_SCHEMA_RANGE_DURATION,
+            tidb_vardef::defaults::DEF_TIDB_METRIC_SCHEMA_RANGE_DURATION,
+        );
+        let table = scan.table_name.to_lowercase();
+        let columns: Vec<String> = scan.columns.iter().map(|column| column.name.to_lowercase()).collect();
         let meta = meta(ctx, plan, plan_schema(plan)?);
         return Ok(Box::new(MemTableSourceExec::lazy(
             meta,
-            Box::new(|| {
-                Err(retrieval_error(DriverError::Mysql(crate::driver::MysqlError::unknown(
-                    "query metric error: pd unavailable".to_owned(),
-                ))))
+            Box::new(move || {
+                let unknown = |error: String| {
+                    retrieval_error(DriverError::Mysql(crate::driver::MysqlError::unknown(error)))
+                };
+                let rows = crate::metrics_reader::MetricRetriever {
+                    table: &table,
+                    extractor: &extractor,
+                    metric_schema_step,
+                    metric_schema_range_duration,
+                }
+                .retrieve()
+                .map_err(unknown)?;
+                // A row is in the table's column order (`genColumnInfos`).
+                let names = crate::metrics_reader::column_names(&table);
+                columns
+                    .iter()
+                    .map(|column| names.iter().position(|name| name == column))
+                    .collect::<Option<Vec<_>>>()
+                    .and_then(|offsets| {
+                        rows.iter()
+                            .map(|row| offsets.iter().map(|offset| row.get(*offset).cloned()).collect())
+                            .collect::<Option<Vec<Vec<tidb_datatype::Datum>>>>()
+                    })
+                    .ok_or_else(|| {
+                        retrieval_error(DriverError::unsupported(
+                            "a metrics_schema row is not its table's columns",
+                        ))
+                    })
             }),
         )));
     }

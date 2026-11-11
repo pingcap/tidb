@@ -1761,6 +1761,141 @@ fn a_scalar_subquery_over_information_schema_reads_rows_during_planning() {
     );
 }
 
+/// Go `TestMetricTableData`: a metric table's rows are Prometheus's samples,
+/// once per quantile the statement names (the table's own when it names
+/// none), with the time on the node's clock.
+#[test]
+fn a_metric_table_reads_prometheus_once_per_quantile_like_go() {
+    use chrono::TimeZone;
+    use tidb_executor::metrics_reader::{mock, SampleStream};
+    let naive = chrono::NaiveDateTime::parse_from_str("2019-12-23 20:11:35", "%Y-%m-%d %H:%M:%S").unwrap();
+    let tt = chrono::Local.from_local_datetime(&naive).unwrap();
+    mock::set_metrics_prom_data(Some(vec![SampleStream {
+        metric: [("instance".to_owned(), "127.0.0.1:10080".to_owned())].into(),
+        values: vec![(tt.timestamp_millis(), 0.1)],
+    }]));
+    let mut session = Session::new();
+    session.run("use metrics_schema").unwrap();
+    let mut query = |sql: &str| {
+        row_text(session.run(sql)).into_iter().map(|row| row.join(" ")).collect::<Vec<_>>()
+    };
+    assert_eq!(
+        query("select time,instance,quantile,value from tidb_query_duration;"),
+        ["2019-12-23 20:11:35.000000 127.0.0.1:10080 0.9 0.1"]
+    );
+    assert_eq!(
+        query("select time,instance,quantile,value from tidb_query_duration where quantile in (0.85, 0.95);"),
+        [
+            "2019-12-23 20:11:35.000000 127.0.0.1:10080 0.85 0.1",
+            "2019-12-23 20:11:35.000000 127.0.0.1:10080 0.95 0.1",
+        ]
+    );
+    assert_eq!(
+        query("select time,instance,quantile,value from tidb_query_duration where quantile=0.5"),
+        ["2019-12-23 20:11:35.000000 127.0.0.1:10080 0.5 0.1"]
+    );
+    // A table without a quantile has no quantile column; a label the series
+    // lacks is the statement's condition on it.
+    assert_eq!(
+        query("select * from up where job='tidb'"),
+        ["2019-12-23 20:11:35.000000 127.0.0.1:10080 tidb 0.1"]
+    );
+    assert_eq!(query("select value, instance from up where job='tidb'"), ["0.1 127.0.0.1:10080"]);
+    // Go's `mockMetricsTableData`: the named table's rows as they are.
+    mock::set_metrics_table_data(Some(
+        [(
+            "up".to_owned(),
+            vec![vec![
+                tidb_datatype::Datum::Null,
+                tidb_datatype::Datum::Bytes(b"a".to_vec()),
+                tidb_datatype::Datum::Bytes(b"b".to_vec()),
+                tidb_datatype::Datum::Real(1.0),
+            ]],
+        )]
+        .into(),
+    ));
+    assert_eq!(query("select * from up"), ["NULL a b 1"]);
+    assert_eq!(query("select count(*) from tidb_qps"), ["1"]);
+    mock::set_metrics_table_data(None);
+    mock::set_metrics_prom_data(None);
+}
+
+/// A metric table's scan through the node's `InfoSyncer`: PD's
+/// `metric-storage` is the Prometheus the range query is posted to, with the
+/// table's PromQL, the scan's time range and `tidb_metric_query_step`.
+#[test]
+fn a_metric_table_queries_the_prometheus_pd_names_like_go() {
+    use std::io::{Read, Write};
+    use tidb_domain_infosync::prometheus_addr::{init_prometheus_addr, PrometheusEtcd};
+    fn serve(responses: Vec<String>) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let server = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for body in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 4096];
+                loop {
+                    let read = stream.read(&mut buffer).unwrap();
+                    request.extend_from_slice(&buffer[..read]);
+                    let text = String::from_utf8_lossy(&request).into_owned();
+                    let Some((head, sent)) = text.split_once("\r\n\r\n") else { continue };
+                    let length = head
+                        .lines()
+                        .find_map(|line| line.to_ascii_lowercase().strip_prefix("content-length: ").map(str::to_owned))
+                        .map_or(0, |length| length.parse::<usize>().unwrap());
+                    if sent.len() >= length {
+                        requests.push(format!("{} {sent}", head.lines().next().unwrap()));
+                        break;
+                    }
+                }
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+                    .unwrap();
+            }
+            requests
+        });
+        (address, server)
+    }
+    struct Etcd(String);
+    impl PrometheusEtcd for Etcd {
+        fn endpoints(&self) -> Vec<String> {
+            vec![self.0.clone()]
+        }
+        fn get(&self, _: &str, _: std::time::Duration) -> Result<Option<Vec<u8>>, String> {
+            Ok(None)
+        }
+    }
+    let (prometheus, prometheus_server) = serve(vec![
+        r#"{"status":"success","data":{"resultType":"matrix","result":[{"metric":{"instance":"10.0.1.1:4000","job":"tidb"},"values":[[1577103095.5,"1"],[1577103155,"NaN"]]}]}}"#.to_owned(),
+        r#"{"status":"error","errorType":"bad_data","error":"parse error"}"#.to_owned(),
+    ]);
+    let (pd, pd_server) = serve(vec![format!(r#"{{"pd-server":{{"metric-storage":"http://{prometheus}"}}}}"#)]);
+    init_prometheus_addr(Some(Arc::new(Etcd(pd))), &Default::default());
+
+    let mut session = Session::new();
+    session.run("set @@time_zone='+00:00'").unwrap();
+    session.run("set @@tidb_metric_query_step=30").unwrap();
+    let sql = "select instance, job, value, time is not null from metrics_schema.up \
+               where time >= '2019-12-23 12:00:00' and time <= '2019-12-23 12:30:00' and job = 'tidb'";
+    assert_eq!(
+        row_text(session.run(sql)),
+        [["10.0.1.1:4000", "tidb", "1", "1"], ["10.0.1.1:4000", "tidb", "NULL", "1"]]
+    );
+    // Prometheus's own error is the statement's, after `queryMetric`'s tries
+    // (the fake answers once; the other four find its listener closed).
+    let error = session.run(sql).unwrap_err().to_mysql_error();
+    assert_eq!(error.code, 1105);
+    assert!(error.message.starts_with("query metric error"), "{}", error.message);
+    assert_eq!(pd_server.join().unwrap(), ["GET /pd/api/v1/config HTTP/1.1 "]);
+    let requests = prometheus_server.join().unwrap();
+    assert_eq!(
+        requests[0],
+        "POST /api/v1/query_range HTTP/1.1 end=1577104200&query=up%7Bjob%3D%22tidb%22%7D&start=1577102400&step=30"
+    );
+    assert_eq!(requests[1], requests[0]);
+}
+
 /// `metrics_schema` tables are Go's `genColumnInfos` + `buildTableMeta`
 /// objects: they describe, show and list like any table (captured from Go),
 /// and a scan still fails for want of the metric storage.

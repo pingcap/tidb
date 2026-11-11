@@ -136,6 +136,23 @@ impl DomainSessions for Domain {
             cancellation: crate::domain::session_api::ConnectionCancellation::default(),
             close: crate::domain::session_api::ConnectionClose::default(),
         }, transactions, buffer)?;
+        // Go `getSessionFactoryInternal`: what a pooled internal session is
+        // given in place of the global tier.
+        for (name, value) in [
+            ("autocommit", "1".to_owned()),
+            ("max_execution_time", "0".to_owned()),
+            (
+                "max_allowed_packet",
+                tidb_config::config_tree::config::get_max_allowed_packet().to_string(),
+            ),
+            ("tidb_constraint_check_in_place_pessimistic", "ON".to_owned()),
+        ] {
+            session
+                .vars
+                .set_system(name, value)
+                .map_err(SqlQueryError::from)?;
+        }
+        session.vars.mark_common_global_loaded();
         session.set_restricted_sql(true);
         Ok(session)
     }

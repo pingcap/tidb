@@ -134,6 +134,9 @@ pub struct StatementVarSnapshot {
     max_chunk_size: usize,
     max_allowed_packet: u64,
     group_concat_max_len: u64,
+    /// Go `SessionVars.MetricSchemaStep` and `MetricSchemaRangeDuration`.
+    metric_schema_step: i64,
+    metric_schema_range_duration: i64,
     apply_cache_capacity: i64,
     enable_parallel_apply: bool,
     /// Go `SessionVars.AllowDeriveTopN` (`tidb_opt_derive_topn`).
@@ -1293,6 +1296,18 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .ok()
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(1024),
+            metric_schema_step: self
+                .session_vars()
+                .get_system(tidb_vardef::tidb_vars::TIDB_METRIC_SCHEMA_STEP)
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_METRIC_SCHEMA_STEP),
+            metric_schema_range_duration: self
+                .session_vars()
+                .get_system(tidb_vardef::tidb_vars::TIDB_METRIC_SCHEMA_RANGE_DURATION)
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_METRIC_SCHEMA_RANGE_DURATION),
             enable_parallel_apply: on("tidb_enable_parallel_apply"),
             allow_derive_topn: on("tidb_opt_derive_topn"),
             apply_cache_capacity: self
@@ -1540,6 +1555,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         };
         let max_allowed_packet = snapshot.max_allowed_packet;
         let group_concat_max_len = snapshot.group_concat_max_len;
+        let metric_schema = (snapshot.metric_schema_step, snapshot.metric_schema_range_duration);
         let apply_cache_capacity = snapshot.apply_cache_capacity;
         let enable_parallel_apply = snapshot.enable_parallel_apply;
         let allow_derive_topn = snapshot.allow_derive_topn;
@@ -1768,6 +1784,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_pipelined_window_exec(enable_pipelined_window_exec)
                     .with_max_allowed_packet(max_allowed_packet)
                     .with_group_concat_max_len(group_concat_max_len)
+                .with_metric_schema(metric_schema.0, metric_schema.1)
                     .with_apply_cache_capacity(apply_cache_capacity)
                     .with_parallel_apply(enable_parallel_apply)
                     .with_allow_derive_topn(allow_derive_topn)
@@ -1976,6 +1993,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_pipelined_window_exec(enable_pipelined_window_exec)
                 .with_max_allowed_packet(max_allowed_packet)
                 .with_group_concat_max_len(group_concat_max_len)
+                .with_metric_schema(metric_schema.0, metric_schema.1)
                 .with_apply_cache_capacity(apply_cache_capacity)
                 .with_parallel_apply(enable_parallel_apply)
                 .with_block_encryption_mode(block_encryption_mode)

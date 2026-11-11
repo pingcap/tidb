@@ -303,7 +303,6 @@ pub const SERVED_TABLES: &[&str] = &[
     "TRIGGERS",
     "ROUTINES",
     "EVENTS",
-    "INSPECTION_RESULT",
     "TIDB_INDEXES",
     "METRICS_TABLES",
     "PARAMETERS",
@@ -385,9 +384,6 @@ pub fn table_rows(
     }
     if name.go_lower_eq("EVENTS") {
         return Some(events_rows());
-    }
-    if name.go_lower_eq("INSPECTION_RESULT") {
-        return Some(inspection_result_rows());
     }
     if name.go_lower_eq("TIDB_INDEXES") {
         return Some(tidb_indexes_rows(catalog, visibility));
@@ -2448,10 +2444,6 @@ fn metrics_tables_rows() -> Vec<Vec<Datum>> {
             ]
         })
         .collect()
-}
-
-fn inspection_result_rows() -> Vec<Vec<Datum>> {
-    Vec::new()
 }
 
 fn parameters_rows() -> Vec<Vec<Datum>> {

@@ -77,7 +77,7 @@
       "id": "O09",
       "status": "partial",
       "group": "Domain and process services",
-      "finding": "`ReportMinStartTS` has no InfoCache recent-schema TS (`GetAndResetRecentInfoSchemaTS`, InfoSchema V2: I04). Lazy cursor fetch answers Go's `executor.Detach` over the physical plan (`tidb_executor::detach`), because the builder's operator tree is not Go's executor tree",
+      "finding": "Lazy cursor fetch answers Go's `executor.Detach` over the physical plan (`tidb_executor::detach`), because the builder's operator tree is not Go's executor tree",
       "go_owner": "`pkg/domain/infosync`, `pkg/executor` (`detach.go`, `adapter.go` `recordSet.TryDetach`)"
     },
     {
@@ -112,7 +112,7 @@
       "id": "I04",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "No lazy InfoSchema V2, schema-cache-size loader/evictor or InfoCache timestamp ranges",
+      "finding": "No lazy InfoSchema V2, schema-cache-size loader/evictor or InfoCache timestamp ranges; `ReportMinStartTS` reads the InfoCache's recent-schema TS (`GetAndResetRecentInfoSchemaTS`), which nothing lowers because no V2 reader calls `keepAlive`",
       "go_owner": "`pkg/infoschema`"
     },
     {
@@ -134,7 +134,7 @@
       "id": "R01",
       "status": "partial",
       "group": "Domain and process services",
-      "finding": "Go's `ExecRestrictedSQL` / `ExecuteInternal` are methods of the issuing session (`withRestrictedSQLExecutor`); this port's executors are adapters beside it (`NodeRestrictedSql`, `SystemSqlExecutor`, `ClusterStatsSqlExecutor`, the plan replayer's `SessionSql`). The node's executors apply and restore `ExecOption` as Go's `useCurrentSession` / `getInternalSession` do, and share a `RestrictedSqlIssuer` with the session they were taken from, through which the internal session inherits `OptimizerUseInvisibleIndexes` / `SkipMissingPartitionStats` and hands its warnings back (`IgnoreWarning`); the statistics session's executor is the same pair (`ClusterStatsSessionState::restricted`), and an ANALYZE is an auto analyze because its session is `InRestrictedSQL`. What remains: a user session's executor cannot run a statement on the session itself (`ExecOptionUseCurSession`), the `InspectionTableCache` is not shared, and `ExecOption.AnalyzeSnapshot` is applied as the session system variable where Go sets `SessionVars.EnableAnalyzeSnapshot` alone. `rebuildSysVarCache` consumes the rows the domain's sysvar reload loop last read (`SysVarCacheDeps::table_contents`) where Go's runs `fetchTableValues` itself",
+      "finding": "Go's `ExecRestrictedSQL` / `ExecuteInternal` are methods of the issuing session (`withRestrictedSQLExecutor`); this port's executors are adapters beside it (`NodeRestrictedSql`, `SystemSqlExecutor`, `ClusterStatsSqlExecutor`, the plan replayer's `SessionSql`). The node's executors apply and restore `ExecOption` as Go's `useCurrentSession` / `getInternalSession` do, and share a `RestrictedSqlIssuer` with the session they were taken from, through which the internal session inherits `OptimizerUseInvisibleIndexes` / `SkipMissingPartitionStats` and hands its warnings back (`IgnoreWarning`); the statistics session's executor is the same pair (`ClusterStatsSessionState::restricted`), and an ANALYZE is an auto analyze because its session is `InRestrictedSQL`. The internal session is a pooled one's (`getSessionFactoryInternal`: its own autocommit, max_execution_time, max_allowed_packet and in-place constraint check, and no copy of the global tier) and shares the issuer's `InspectionTableCache`. What remains: a user session's executor cannot run a statement on the session itself (`ExecOptionUseCurSession`). `rebuildSysVarCache` consumes the rows the domain's sysvar reload loop last read (`SysVarCacheDeps::table_contents`) where Go's runs `fetchTableValues` itself",
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
