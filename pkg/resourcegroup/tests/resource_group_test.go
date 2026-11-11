@@ -594,6 +594,10 @@ func TestResourceGroupRunawayFlood(t *testing.T) {
 	addCounter := metrics.RunawayFlusherAddCounter.WithLabelValues("runaway-record")
 	addedBefore := promtestutil.ToFloat64(addCounter)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/skipFlush", `return(1)`))
+	// The failpoint is process-wide; a failed assertion below must not leave it enabled for later tests.
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/skipFlush")
+	}()
 	// check thrice to make sure the runaway query be regarded as a repeated query.
 	err = tk.QueryToErr("select /*+ resource_group(rg1) */ sleep(0.2) from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
