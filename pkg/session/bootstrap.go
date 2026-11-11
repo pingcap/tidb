@@ -339,11 +339,11 @@ var (
 	// systemTablesOfMaterializedViewNextGenVersion contains system tables introduced for materialized view maintenance.
 	systemTablesOfMaterializedViewNextGenVersion = []TableBasicInfo{
 		{ID: metadef.TiDBMViewRefreshInfoTableID, Name: metadef.TiDBMViewRefreshInfoTableName, SQL: metadef.CreateTiDBMViewRefreshInfoTable},
-		{ID: metadef.TiDBMViewFastRefreshSourceInfoTableID, Name: metadef.TiDBMViewFastRefreshSourceInfoTableName, SQL: metadef.CreateTiDBMViewFastRefreshSourceInfoTable},
 		{ID: metadef.TiDBMLogPurgeInfoTableID, Name: metadef.TiDBMLogPurgeInfoTableName, SQL: metadef.CreateTiDBMLogPurgeInfoTable},
 		{ID: metadef.TiDBMViewRefreshHistTableID, Name: metadef.TiDBMViewRefreshHistTableName, SQL: metadef.CreateTiDBMViewRefreshHistTable},
 		{ID: metadef.TiDBMViewRefreshAlertTableID, Name: metadef.TiDBMViewRefreshAlertTableName, SQL: metadef.CreateTiDBMViewRefreshAlertTable},
 		{ID: metadef.TiDBMLogPurgeHistTableID, Name: metadef.TiDBMLogPurgeHistTableName, SQL: metadef.CreateTiDBMLogPurgeHistTable},
+		{ID: metadef.TiDBMViewFastRefreshSourceInfoTableID, Name: metadef.TiDBMViewFastRefreshSourceInfoTableName, SQL: metadef.CreateTiDBMViewFastRefreshSourceInfoTable},
 	}
 	// systemTablesOfStorageClassTransitionNextGenVersion contains the durable
 	// operation table used by the NextGen storage-class transition poller.

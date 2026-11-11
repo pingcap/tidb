@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package materializedview
+package mviewrefreshsource
 
 import (
 	"context"
@@ -36,6 +36,12 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
+
+func newMViewTestKit(t testing.TB, store kv.Storage) *testkit.TestKit {
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_mview_enable = on")
+	return tk
+}
 
 func newMViewRefreshSourceFixture(t *testing.T) (kv.Storage, *testkit.TestKit, int64, int64) {
 	t.Helper()
