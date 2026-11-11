@@ -1058,6 +1058,51 @@ impl Session {
         Ok(output)
     }
 
+    /// Go `ExecuteStmt` when the plan-cache miss's `generateNewPlan` fails:
+    /// the EXECUTE's one statement context keeps the warnings the optimizer
+    /// left on it, and the optimizer's error is the statement's.
+    pub(crate) fn fail_generate_new_plan(
+        &mut self,
+        statement: &Stmt,
+        parameters: &[tidb_datatype::Datum],
+        failure: tidb_executor::compiler::GenerateNewPlanError,
+    ) -> DriverError {
+        self.begin_prepared_statement_boundary(statement, Some(parameters.into()));
+        for warning in failure.warnings {
+            self.append_sql_warning(warning);
+        }
+        failure.error
+    }
+
+    /// [`Self::fail_generate_new_plan`] for a binary EXECUTE that opens a
+    /// record set, whose statement lifecycle opens here.
+    pub fn open_failed_generate_new_plan_for(
+        &mut self,
+        statement: &Stmt,
+        parameters: &[tidb_datatype::Datum],
+        failure: tidb_executor::compiler::GenerateNewPlanError,
+        prepared: &crate::PreparedAst,
+    ) -> Result<crate::OpenedStatement, DriverError> {
+        self.begin_statement_execution(prepared.sql())?;
+        let error = self.fail_generate_new_plan(statement, parameters, failure);
+        self.return_opened_record_set(Err(error))
+    }
+
+    /// [`Self::fail_generate_new_plan`] for a binary EXECUTE of a write,
+    /// whose statement lifecycle opens here.
+    pub fn run_failed_generate_new_plan_for(
+        &mut self,
+        statement: &Stmt,
+        parameters: &[tidb_datatype::Datum],
+        failure: tidb_executor::compiler::GenerateNewPlanError,
+        prepared: &crate::PreparedAst,
+    ) -> Result<StmtOutput, DriverError> {
+        self.run_with_columns_using(prepared.sql(), false, |session| {
+            Err(session.fail_generate_new_plan(statement, parameters, failure))
+        })
+        .map(|(output, _)| output)
+    }
+
     /// Runs a cached prepared DML for the definition PREPARE retained (see
     /// [`Self::execute_prepared_select_for`]): a binary EXECUTE, whose
     /// statement lifecycle opens here (Go `ExecutePreparedStmt` reaching

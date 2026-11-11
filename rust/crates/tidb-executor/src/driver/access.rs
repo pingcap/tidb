@@ -878,12 +878,16 @@ impl PreparedSelectPlan {
             environment,
             &self.statement,
         )
+        .ok()
+        .flatten()
     }
 
     /// Generates and retains a plan from the statement after a matched SQL
     /// binding has replaced its hints. The binding SQL itself belongs to
     /// `environment`, mirroring Go's prepared-plan cache key.
-    #[must_use]
+    ///
+    /// # Errors
+    /// The optimizer's error on a miss (Go `generateNewPlan`).
     pub fn bind_for_statement(
         self: &Arc<Self>,
         cache: &SessionPlanCache,
@@ -894,7 +898,7 @@ impl PreparedSelectPlan {
         dirty_ids: &[i64],
         environment: &PreparedPlanCacheEnvironment,
         statement: &tidb_ast::Stmt,
-    ) -> Option<PreparedSelectExecution> {
+    ) -> Result<Option<PreparedSelectExecution>, DriverError> {
         self.bind_inner(
             cache,
             values,
@@ -954,6 +958,8 @@ impl PreparedSelectPlan {
             environment,
             statement,
         )
+        .ok()
+        .flatten()
     }
 
     fn bind_inner(
@@ -966,16 +972,16 @@ impl PreparedSelectPlan {
         dirty_ids: &[i64],
         environment: &PreparedPlanCacheEnvironment,
         statement: &tidb_ast::Stmt,
-    ) -> Option<PreparedSelectExecution> {
+    ) -> Result<Option<PreparedSelectExecution>, DriverError> {
         if !super::plan_cache::tables_cacheable(catalog, &self.table_keys) {
-            return None;
+            return Ok(None);
         }
         // Go keys the entry by `PlanCacheStmt.StmtDB`, the PREPARE-time
         // database its table names were pinned to (`self.cache_key`), so a
         // `USE` between EXECUTEs keeps it; a non-prepared key names the
         // current database itself.
         if !matches!(statement, tidb_ast::Stmt::Query(_)) {
-            return None;
+            return Ok(None);
         }
         let parameter_types: Arc<[PreparedParameterType]> =
             values.iter().map(PreparedParameterType::of).collect();
@@ -987,11 +993,15 @@ impl PreparedSelectPlan {
                 Some(Datum::UInt(value)) if *value <= 10_000 => Some(*value),
                 _ => None,
             })
-            .collect::<Option<Vec<_>>>()?;
-        self.last_limit_values
-            .lock()
-            .ok()?
-            .clone_from(&limit_values);
+            .collect::<Option<Vec<_>>>();
+        let Some(limit_values) = limit_values else {
+            return Ok(None);
+        };
+        let Ok(mut last_limit_values) = self.last_limit_values.lock() else {
+            return Ok(None);
+        };
+        last_limit_values.clone_from(&limit_values);
+        drop(last_limit_values);
         let schema_version = catalog.schema_version();
         let stats_version_hash = self.stats_version_hash(catalog, environment);
         let cache_key = PhysicalPlanCacheKey {
@@ -1014,13 +1024,17 @@ impl PreparedSelectPlan {
             ctx.start_prepared_range_tracking();
             ctx.set_skip_plan_cache(reason);
         }
-        if cached.is_none() {
-            ctx?;
+        if cached.is_none() && ctx.is_none() {
+            return Ok(None);
         }
         let parameters: Arc<[Datum]> = Arc::from(values);
         let rebound = match cached {
             Some(plan) => {
-                let generation = plan.lock().ok()?.bind(values, ctx);
+                let Ok(mut guard) = plan.lock() else {
+                    return Ok(None);
+                };
+                let generation = guard.bind(values, ctx);
+                drop(guard);
                 match generation {
                     Ok(generation) => Some((plan, generation)),
                     // Every hit rebuilds each range from its access
@@ -1029,7 +1043,7 @@ impl PreparedSelectPlan {
                     Err(failure) if failure.replan(ctx) => None,
                     // A context-free lookup leaves the entry for the bind
                     // that carries the statement.
-                    Err(_) => return None,
+                    Err(_) => return Ok(None),
                 }
             }
             None => None,
@@ -1037,23 +1051,31 @@ impl PreparedSelectPlan {
         let (cached_plan, generation, cache_hit) = match rebound {
             Some((plan, generation)) => (plan, generation, true),
             None => {
-                let ctx = ctx?.clone().with_prepared_params(Arc::clone(&parameters));
-                let statement = crate::bind_prepared_statement(statement, values).ok()?;
+                let Some(ctx) = ctx else {
+                    return Ok(None);
+                };
+                let ctx = ctx.clone().with_prepared_params(Arc::clone(&parameters));
+                let Ok(statement) = crate::bind_prepared_statement(statement, values) else {
+                    return Ok(None);
+                };
                 // Go `GetPlanFromPlanCache` enables the cache before
                 // `generateNewPlan` optimizes, so the LIKE fallback's
                 // `SetSkipPlanCache` over a parameter warns on this statement.
                 ctx.start_prepared_range_tracking();
                 let tidb_ast::Stmt::Query(query) = statement else {
-                    return None;
+                    return Ok(None);
                 };
                 let query = query.into_inner();
-                let (mut plan, cacheable) = super::planner_bridge::cached_query_plan(
+                let Some((mut plan, cacheable)) = super::planner_bridge::cached_query_plan(
                     &query,
                     catalog,
                     current_database,
                     &ctx,
                     environment.plan_cacheability(self.parameter_count),
-                )?;
+                )?
+                else {
+                    return Ok(None);
+                };
                 // A rejected cache candidate still executes its already-bound plan.
                 let cacheable = cacheable && admitted;
                 // Go `generateNewPlan` caches the tree it just optimized
@@ -1076,7 +1098,7 @@ impl PreparedSelectPlan {
                 (plan, generation, false)
             }
         };
-        Some(PreparedSelectExecution {
+        Ok(Some(PreparedSelectExecution {
             parameters,
             plan: Arc::clone(self),
             schema_version,
@@ -1088,7 +1110,7 @@ impl PreparedSelectPlan {
             } else {
                 ctx.map_or_else(Vec::new, crate::StmtContext::take_warnings)
             }),
-        })
+        }))
     }
 
     fn stats_version_hash(

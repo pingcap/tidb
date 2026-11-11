@@ -3618,10 +3618,13 @@ pub(crate) fn cached_query_plan(
     current_database: &str,
     ctx: &crate::StmtContext,
     cacheability: tidb_planner::physical_plan_cache::PlanCacheabilityContext,
-) -> Option<(CachedSelectPlan, bool)> {
-    let (physical, cacheable) =
-        cached_physical_query_plan(query, catalog, current_database, ctx, cacheability)?;
-    Some((
+) -> Result<Option<(CachedSelectPlan, bool)>, crate::DriverError> {
+    let Some((physical, cacheable)) =
+        cached_physical_query_plan(query, catalog, current_database, ctx, cacheability)?
+    else {
+        return Ok(None);
+    };
+    Ok(Some((
         CachedSelectPlan {
             statement: tidb_ast::Stmt::Query(tidb_ast::NodeBox::new(query.clone())),
             physical,
@@ -3629,20 +3632,23 @@ pub(crate) fn cached_query_plan(
             digest: std::sync::Arc::default(),
         },
         cacheable,
-    ))
+    )))
 }
 
 /// Builds and admits the physical source tree shared by cached queries and
 /// cached DML roots.
+///
+/// # Errors
+/// The optimizer's error: Go `generateNewPlan` returns it as the statement's.
 pub(crate) fn cached_physical_query_plan(
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
     cacheability: tidb_planner::physical_plan_cache::PlanCacheabilityContext,
-) -> Option<(PhysicalPlan, bool)> {
+) -> Result<Option<(PhysicalPlan, bool)>, crate::DriverError> {
     if matches!(query, tidb_ast::QueryStmt::Select(select) if select.rollup) {
-        return None;
+        return Ok(None);
     }
     ctx.start_prepared_range_tracking();
     // Go `optimize` tries `TryFastPlan` before the optimizer, for a cached
@@ -3650,8 +3656,7 @@ pub(crate) fn cached_physical_query_plan(
     // (`HandleConstant` / `IndexConstants`) so a hit rebuilds its keys.
     let fast = match query {
         tidb_ast::QueryStmt::Select(select) => {
-            super::point_get_plan::try_fast_plan(select, catalog, current_database, ctx)
-                .ok()?
+            super::point_get_plan::try_fast_plan(select, catalog, current_database, ctx)?
         }
         tidb_ast::QueryStmt::SetOpr(_) => None,
     };
@@ -3659,20 +3664,20 @@ pub(crate) fn cached_physical_query_plan(
         Some(physical) => physical,
         None => {
             planner_physical_query(query, catalog, current_database, ctx, true)
-                .ok()?
+                .map_err(super::planner_error_to_driver)?
                 .1
         }
     };
     if ctx.skip_plan_cache() {
-        return Some((physical, false));
+        return Ok(Some((physical, false)));
     }
     // Go `generateNewPlan`: an uncacheable physical plan still executes, and
     // `SetSkipPlanCache` says why.
     if let Err(reason) = tidb_planner::physical_plan_cache::is_plan_cacheable(&physical, cacheability) {
         ctx.set_skip_plan_cache(reason);
-        return Some((physical, false));
+        return Ok(Some((physical, false)));
     }
-    Some((physical, true))
+    Ok(Some((physical, true)))
 }
 
 #[cfg(test)]

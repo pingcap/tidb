@@ -127,6 +127,15 @@ impl PreparedAst {
     }
 }
 
+/// A plan-cache miss whose plan the optimizer refused: Go `generateNewPlan`'s
+/// error, with the warnings the optimizer left on the statement before it.
+#[derive(Debug, Clone)]
+pub struct GenerateNewPlanError {
+    pub error: DriverError,
+    pub warnings: Vec<tidb_context::SqlWarn>,
+}
+
+
 /// Go `GetPlanFromPlanCache` over the session's prepared statements.
 pub trait PreparedAstCompile: super::CompilerSession {
     /// Go `TblInfo2UnionScan`'s dirty tables, as the physical plan cache keys
@@ -501,30 +510,39 @@ pub trait PreparedAstCompile: super::CompilerSession {
         values: &[Datum],
     ) -> Option<PreparedDmlExecution> {
         self.bind_cached_prepared_dml_for_statement(plan, values, plan.statement(), None)
+            .ok()
+            .flatten()
     }
 
     /// Binds the effective DML statement and keys it by the matching binding.
-    #[must_use]
+    ///
+    /// # Errors
+    /// A miss whose plan the optimizer refused (Go `generateNewPlan`).
     fn bind_cached_prepared_dml_for_statement(
         &self,
         plan: &Arc<PreparedDmlPlan>,
         values: &[Datum],
         statement: &Stmt,
         binding_sql: Option<&str>,
-    ) -> Option<PreparedDmlExecution> {
+    ) -> Result<Option<PreparedDmlExecution>, GenerateNewPlanError> {
         if !self.session_vars().enable_prepared_plan_cache()
             || self
                 .session_vars()
                 .optimizer_fix_control()
                 .get_bool_with_default(tidb_fixcontrol::FIX_52592, false)
         {
-            return None;
+            return Ok(None);
         }
-        let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
+        let Some(environment) = self.prepared_plan_cache_environment_for_binding(binding_sql)
+        else {
+            return Ok(None);
+        };
         self.configure_session_plan_cache();
         let lookup_start = std::time::Instant::now();
         {
-            let catalog = self.lock_catalog().ok()?;
+            let Ok(catalog) = self.lock_catalog() else {
+                return Ok(None);
+            };
             if let Some(cached) = plan.bind_cached_for_statement(
                 self.physical_plan_cache(),
                 values,
@@ -542,7 +560,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
                     self.physical_plan_cache().uses_instance(),
                 )
                 .observe(lookup_start.elapsed().as_secs_f64());
-                return Some(cached);
+                return Ok(Some(cached));
             }
         }
         // The statement context snapshots sequence/key-decode metadata from
@@ -560,7 +578,9 @@ pub trait PreparedAstCompile: super::CompilerSession {
             }
             _ => self.statement_context(true),
         };
-        let catalog = self.lock_catalog().ok()?;
+        let Ok(catalog) = self.lock_catalog() else {
+            return Ok(None);
+        };
         // Go's miss arm: the replan is recorded on the miss counter
         // (plan_cache.go:366).
         tidb_planner_core_metrics::plan_cache_miss_counter(false).inc();
@@ -574,6 +594,10 @@ pub trait PreparedAstCompile: super::CompilerSession {
             &environment,
             statement,
         )
+        .map_err(|error| GenerateNewPlanError {
+            error,
+            warnings: planner_context.take_warnings(),
+        })
     }
 
     /// Binds the current values into a retained SELECT after applying the
@@ -585,32 +609,41 @@ pub trait PreparedAstCompile: super::CompilerSession {
         values: &[Datum],
     ) -> Option<PreparedSelectExecution> {
         self.bind_cached_prepared_select_for_statement(plan, values, plan.statement(), None)
+            .ok()
+            .flatten()
     }
 
     /// Binds the effective SELECT statement and keys its physical tree by the
     /// exact matched binding SQL, as Go's `newPlanCacheKeyWithMatchedBinding`
     /// does.
-    #[must_use]
+    ///
+    /// # Errors
+    /// A miss whose plan the optimizer refused (Go `generateNewPlan`).
     fn bind_cached_prepared_select_for_statement(
         &self,
         plan: &Arc<PreparedSelectPlan>,
         values: &[Datum],
         statement: &Stmt,
         binding_sql: Option<&str>,
-    ) -> Option<PreparedSelectExecution> {
+    ) -> Result<Option<PreparedSelectExecution>, GenerateNewPlanError> {
         if !self.session_vars().enable_prepared_plan_cache()
             || self
                 .session_vars()
                 .optimizer_fix_control()
                 .get_bool_with_default(tidb_fixcontrol::FIX_52592, false)
         {
-            return None;
+            return Ok(None);
         }
-        let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
+        let Some(environment) = self.prepared_plan_cache_environment_for_binding(binding_sql)
+        else {
+            return Ok(None);
+        };
         self.configure_session_plan_cache();
         let lookup_start = std::time::Instant::now();
         {
-            let catalog = self.lock_catalog().ok()?;
+            let Ok(catalog) = self.lock_catalog() else {
+                return Ok(None);
+            };
             if let Some(execution) = plan.bind_cached_for_statement(
                 self.physical_plan_cache(),
                 values,
@@ -628,13 +661,15 @@ pub trait PreparedAstCompile: super::CompilerSession {
                     self.physical_plan_cache().uses_instance(),
                 )
                 .observe(lookup_start.elapsed().as_secs_f64());
-                return Some(execution);
+                return Ok(Some(execution));
             }
         }
         // Go's miss arm (plan_cache.go:366).
         tidb_planner_core_metrics::plan_cache_miss_counter(false).inc();
         let ctx = self.statement_context_for_stmt(statement, false);
-        let catalog = self.lock_catalog().ok()?;
+        let Ok(catalog) = self.lock_catalog() else {
+            return Ok(None);
+        };
         plan.bind_for_statement(
             self.physical_plan_cache(),
             values,
@@ -645,6 +680,10 @@ pub trait PreparedAstCompile: super::CompilerSession {
             &environment,
             statement,
         )
+        .map_err(|error| GenerateNewPlanError {
+            error,
+            warnings: ctx.take_warnings(),
+        })
     }
 }
 

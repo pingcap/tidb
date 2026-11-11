@@ -140,14 +140,22 @@ impl Session {
         if prepared.cacheable.is_ok()
             && self.prepared_plan_cache_allowed_for_statement(&effective_statement)
         {
-            if let Some(cached) = prepared.select_plan.as_ref().and_then(|plan| {
-                self.bind_cached_prepared_select_for_statement(
+            let cached = match prepared.select_plan.as_ref() {
+                Some(plan) => self.bind_cached_prepared_select_for_statement(
                     plan,
                     &values,
                     &effective_statement,
                     binding_sql.as_deref(),
-                )
-            }) {
+                ),
+                None => Ok(None),
+            };
+            let cached = match cached {
+                Ok(cached) => cached,
+                Err(failure) => {
+                    return Err(self.fail_generate_new_plan(&effective_statement, &values, failure))
+                }
+            };
+            if let Some(cached) = cached {
                 let result = self.prepare_cached_select_execution(
                     &cached,
                     &prepared.sql,
@@ -158,14 +166,22 @@ impl Session {
                 }
                 return result;
             }
-            if let Some(cached) = prepared.dml_plan.as_ref().and_then(|plan| {
-                self.bind_cached_prepared_dml_for_statement(
+            let cached = match prepared.dml_plan.as_ref() {
+                Some(plan) => self.bind_cached_prepared_dml_for_statement(
                     plan,
                     &values,
                     &effective_statement,
                     binding_sql.as_deref(),
-                )
-            }) {
+                ),
+                None => Ok(None),
+            };
+            let cached = match cached {
+                Ok(cached) => cached,
+                Err(failure) => {
+                    return Err(self.fail_generate_new_plan(&effective_statement, &values, failure))
+                }
+            };
+            if let Some(cached) = cached {
                 let result = self.execute_cached_prepared_dml(
                     &cached,
                     &prepared.sql,

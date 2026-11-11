@@ -1967,16 +1967,24 @@ impl<'s> ClusterServerSession<'s> {
         // TryFastPlan this shape; the point plan it returns is what later
         // cache hits rebuild. Do not substitute the generic SELECT tree for
         // that point plan merely because both descriptors were retained.
+        // Go `generateNewPlan`'s error is the statement's; it is reported
+        // inside the statement lifecycle that opens below.
+        let mut generate_new_plan_error = None;
         let cached_select = if fast || !cache_allowed {
             None
         } else {
             statement.select_plan().and_then(|plan| {
-                self.session.bind_cached_prepared_select_for_statement(
-                    &plan,
-                    &params,
-                    effective.expect("cacheable prepared SELECT retains a statement"),
-                    binding_sql.as_deref(),
-                )
+                self.session
+                    .bind_cached_prepared_select_for_statement(
+                        &plan,
+                        &params,
+                        effective.expect("cacheable prepared SELECT retains a statement"),
+                        binding_sql.as_deref(),
+                    )
+                    .unwrap_or_else(|failure| {
+                        generate_new_plan_error = Some(failure);
+                        None
+                    })
             })
         };
         let fast_select = cached_select.is_some();
@@ -1984,12 +1992,17 @@ impl<'s> ClusterServerSession<'s> {
             .then(|| statement.dml_plan())
             .flatten()
             .and_then(|plan| {
-                self.session.bind_cached_prepared_dml_for_statement(
-                    &plan,
-                    &params,
-                    effective.expect("cacheable prepared DML retains a statement"),
-                    binding_sql.as_deref(),
-                )
+                self.session
+                    .bind_cached_prepared_dml_for_statement(
+                        &plan,
+                        &params,
+                        effective.expect("cacheable prepared DML retains a statement"),
+                        binding_sql.as_deref(),
+                    )
+                    .unwrap_or_else(|failure| {
+                        generate_new_plan_error = Some(failure);
+                        None
+                    })
             });
         let direct_dml = cached_dml.is_some();
         let direct = fast || fast_select || direct_dml;
@@ -2041,6 +2054,16 @@ impl<'s> ClusterServerSession<'s> {
                         )? {
                             return Ok(opened);
                         }
+                    }
+                    if let Some(failure) = &generate_new_plan_error {
+                        return session.open_failed_generate_new_plan_for(
+                            effective.expect("a cached plan retains its statement"),
+                            &params,
+                            failure.clone(),
+                            prepared_ast
+                                .as_ref()
+                                .expect("a cached plan retains its definition"),
+                        );
                     }
                     if let Some(cached) = &cached_select {
                         session.open_prepared_record_set_for(
@@ -2098,6 +2121,18 @@ impl<'s> ClusterServerSession<'s> {
             self.session.set_statement_telemetry_info(stmt);
         }
         let attempt = self.with_prelocked_statement(shape, &resource_group, is_write, |session| {
+            if let Some(failure) = &generate_new_plan_error {
+                return session
+                    .run_failed_generate_new_plan_for(
+                        effective.expect("a cached plan retains its statement"),
+                        &params,
+                        failure.clone(),
+                        prepared_ast
+                            .as_ref()
+                            .expect("a cached plan retains its definition"),
+                    )
+                    .map_err(map_error);
+            }
             if direct_dml {
                 let cached = cached_dml
                     .as_ref()

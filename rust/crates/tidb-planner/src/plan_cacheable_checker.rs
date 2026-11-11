@@ -233,9 +233,11 @@ impl Visitor for CacheableChecker<'_> {
         }
         if let Some(expr) = node.downcast_ref::<tidb_ast::Expr>() {
             match expr {
-                // Go `*ast.VariableExpr`: a user variable's value is not in
-                // the cache key.
-                tidb_ast::Expr::UserVar(_) | tidb_ast::Expr::Assign { .. } => {
+                // Go `*ast.VariableExpr`, a user or a system variable: its
+                // value is not in the cache key.
+                tidb_ast::Expr::UserVar(_)
+                | tidb_ast::Expr::SysVar { .. }
+                | tidb_ast::Expr::Assign { .. } => {
                     return self.refuse("query has user-defined variables is un-cacheable");
                 }
                 tidb_ast::Expr::In { list, .. } => {

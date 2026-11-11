@@ -684,3 +684,109 @@ fn an_execution_bakes_the_search_string_its_parameter_folds_to() {
     session.run("execute pc using @m").unwrap();
     assert_eq!(row_text(session.run("select @@last_plan_from_cache")), rows(&[&["0"]]));
 }
+
+/// Go `GetPlanFromPlanCache`: a miss whose `generateNewPlan` fails returns
+/// the optimizer's error as the statement's, and the EXECUTE's one statement
+/// context keeps the warning the fallback left before it failed (captured:
+/// `execute pb using @b` with `@b = 'a*'` answers 1235 and SHOW WARNINGS
+/// lists the skip-plan-cache warning before the error).
+#[test]
+fn a_failed_plan_cache_miss_keeps_the_warnings_of_its_optimization() {
+    let mut session = articles_session();
+    session
+        .run("prepare pb from 'select id from articles where match(title) against(?) order by id'")
+        .unwrap();
+    session.run("set @b = 'a*'").unwrap();
+    let error = session.run("execute pb using @b").unwrap_err().to_mysql_error();
+    assert_eq!(error.code, 1235, "{}", error.message);
+    let mut want = skip_baked_search();
+    want.extend(rows(&[&[
+        "Error",
+        "1235",
+        "This version of TiDB doesn't yet support 'MATCH...AGAINST search term 'a*' is not \
+         supported in the LIKE fallback'",
+    ]]));
+    assert_eq!(row_text(session.run("show warnings")), want);
+}
+
+/// Go's UPDATE and DELETE never reach the LIKE fallback: the prepared write's
+/// `MATCH` is refused when the execution plans it, with no skip-plan-cache
+/// warning and no row changed (captured over `articles`).
+#[test]
+fn a_prepared_write_refuses_its_match_at_execution_like_go() {
+    let mut session = articles_session();
+    session.run("set @b = 'a*'").unwrap();
+    session.run("set @g = 'My'").unwrap();
+    let refused = "cannot use 'MATCH ... AGAINST' outside of fulltext index";
+    for (prepare, executions) in [
+        (
+            "prepare pu from 'update articles set n = n + 1 where match(title) against(?)'",
+            ["execute pu using @b", "execute pu using @g"],
+        ),
+        (
+            "prepare pd from 'delete from articles where match(title) against(?)'",
+            ["execute pd using @b", "execute pd using @g"],
+        ),
+    ] {
+        session.run(prepare).unwrap();
+        for execute in executions {
+            let error = session.run(execute).unwrap_err().to_mysql_error();
+            assert_eq!((error.code, error.message.as_str()), (1105, refused), "{execute}");
+            assert_eq!(
+                row_text(session.run("show warnings")),
+                rows(&[&["Error", "1105", refused]]),
+                "{execute}"
+            );
+        }
+    }
+    assert_eq!(
+        row_text(session.run("select id, n from articles order by id")),
+        rows(&[&["1", "1"], &["2", "2"], &["3", "3"]])
+    );
+}
+
+/// The same miss over the binary protocol (`COM_STMT_EXECUTE`): Go's
+/// `ExecutePreparedStmt` is the one `ExecuteStmt`, so the query fails with the
+/// optimizer's error and its statement context keeps the skip warning; the
+/// write is refused as the text EXECUTE's is.
+#[test]
+fn a_failed_plan_cache_miss_over_the_binary_protocol_keeps_its_warnings() {
+    use tidb_param::PreparedValue;
+
+    let mut session = articles_session();
+    let query = crate::tests_support::prepare_binary(
+        &mut session,
+        "select id from articles where match(title) against(?) order by id",
+    );
+    let failed = session
+        .node_conn()
+        .execute_general(&query, &[PreparedValue::String(b"a*".to_vec())])
+        .is_err();
+    assert!(failed, "the unsupported search term fails the EXECUTE");
+    let mut want = skip_baked_search();
+    want.extend(rows(&[&[
+        "Error",
+        "1235",
+        "This version of TiDB doesn't yet support 'MATCH...AGAINST search term 'a*' is not \
+         supported in the LIKE fallback'",
+    ]]));
+    assert_eq!(row_text(session.run("show warnings")), want);
+
+    let write = crate::tests_support::prepare_binary(
+        &mut session,
+        "update articles set n = n + 1 where match(title) against(?)",
+    );
+    let error = session
+        .node_conn()
+        .execute_general(&write, &[PreparedValue::String(b"My".to_vec())])
+        .err()
+        .expect("a write's MATCH is refused");
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1105, "cannot use 'MATCH ... AGAINST' outside of fulltext index")
+    );
+    assert_eq!(
+        row_text(session.run("select id, n from articles order by id")),
+        rows(&[&["1", "1"], &["2", "2"], &["3", "3"]])
+    );
+}

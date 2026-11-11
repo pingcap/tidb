@@ -1192,6 +1192,8 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
             &environment,
             effective_statement,
         )
+        .ok()
+        .flatten()
     }
 
     /// Generates or recursively rebuilds the physical plan owned by one
@@ -1329,7 +1331,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
             &environment,
             effective_statement,
         );
-        execution
+        execution.ok().flatten()
     }
 
     /// Whether `@@last_plan_from_cache` should report a hit, which is the

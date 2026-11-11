@@ -3626,12 +3626,16 @@ impl PreparedDmlPlan {
             environment,
             &self.statement,
         )
+        .ok()
+        .flatten()
     }
 
     /// Binds the statement after the SQL binding selected for this EXECUTE
     /// has replaced its hints. The matching `BindSQL` is carried by
     /// `environment`, so changing a binding cannot hit an older entry.
-    #[must_use]
+    ///
+    /// # Errors
+    /// The optimizer's error on a miss (Go `generateNewPlan`).
     pub fn bind_for_statement(
         self: &Arc<Self>,
         cache: &SessionPlanCache,
@@ -3642,7 +3646,7 @@ impl PreparedDmlPlan {
         dirty_ids: &[i64],
         environment: &PreparedPlanCacheEnvironment,
         statement: &Stmt,
-    ) -> Option<PreparedDmlExecution> {
+    ) -> Result<Option<PreparedDmlExecution>, DriverError> {
         self.bind_inner(
             cache,
             params,
@@ -3679,6 +3683,8 @@ impl PreparedDmlPlan {
             environment,
             statement,
         )
+        .ok()
+        .flatten()
     }
 
     fn bind_inner(
@@ -3691,9 +3697,9 @@ impl PreparedDmlPlan {
         dirty_ids: &[i64],
         environment: &PreparedPlanCacheEnvironment,
         statement: &Stmt,
-    ) -> Option<PreparedDmlExecution> {
+    ) -> Result<Option<PreparedDmlExecution>, DriverError> {
         if !super::plan_cache::tables_cacheable(catalog, &self.table_keys) {
-            return None;
+            return Ok(None);
         }
         // Keyed by the PREPARE-time database, as a cached SELECT is.
         let parameter_types: Arc<[PreparedParameterType]> =
@@ -3706,11 +3712,15 @@ impl PreparedDmlPlan {
                 Some(Datum::UInt(value)) if *value <= 10_000 => Some(*value),
                 _ => None,
             })
-            .collect::<Option<Vec<_>>>()?;
-        self.last_limit_values
-            .lock()
-            .ok()?
-            .clone_from(&limit_values);
+            .collect::<Option<Vec<_>>>();
+        let Some(limit_values) = limit_values else {
+            return Ok(None);
+        };
+        let Ok(mut last_limit_values) = self.last_limit_values.lock() else {
+            return Ok(None);
+        };
+        last_limit_values.clone_from(&limit_values);
+        drop(last_limit_values);
         let schema_version = catalog.schema_version();
         let stats_version_hash = self.stats_version_hash(catalog, environment);
         let cache_key = PhysicalPlanCacheKey {
@@ -3733,22 +3743,23 @@ impl PreparedDmlPlan {
             ctx.start_prepared_range_tracking();
             ctx.set_skip_plan_cache(reason);
         }
-        if cached.is_none() {
-            ctx?;
+        if cached.is_none() && ctx.is_none() {
+            return Ok(None);
         }
         let parameters: Arc<[Datum]> = Arc::from(params);
         let rebound = match cached {
             Some(plan) => {
-                let generation = {
-                    let mut cached = plan.lock().ok()?;
-                    cached.bind(params, ctx)
+                let Ok(mut cached) = plan.lock() else {
+                    return Ok(None);
                 };
+                let generation = cached.bind(params, ctx);
+                drop(cached);
                 match generation {
                     Ok(generation) => Some((plan, generation)),
                     // A context-free lookup leaves the entry for the bind
                     // that carries the statement.
                     Err(failure) if failure.replan(ctx) => None,
-                    Err(_) => return None,
+                    Err(_) => return Ok(None),
                 }
             }
             None => None,
@@ -3756,15 +3767,23 @@ impl PreparedDmlPlan {
         let (cached_plan, generation, cache_hit) = match rebound {
             Some((plan, generation)) => (plan, generation, true),
             None => {
-                let ctx = ctx?.clone().with_prepared_params(Arc::clone(&parameters));
-                let bound = super::bind_prepared_statement(statement, params).ok()?;
-                let (physical, cacheable) = cached_dml_physical_plan(
+                let Some(ctx) = ctx else {
+                    return Ok(None);
+                };
+                let ctx = ctx.clone().with_prepared_params(Arc::clone(&parameters));
+                let Ok(bound) = super::bind_prepared_statement(statement, params) else {
+                    return Ok(None);
+                };
+                let Some((physical, cacheable)) = cached_dml_physical_plan(
                     &bound,
                     catalog,
                     current_database,
                     &ctx,
                     environment.plan_cacheability(self.parameter_count),
-                )?;
+                )?
+                else {
+                    return Ok(None);
+                };
                 // Keep the marker-bearing statement beside the root just as
                 // Go keeps PreparedAst and PlanCacheValue.Plan. The physical
                 // tree was generated from the current marker values; `bind`
@@ -3796,7 +3815,7 @@ impl PreparedDmlPlan {
                 (plan, generation, false)
             }
         };
-        Some(PreparedDmlExecution {
+        Ok(Some(PreparedDmlExecution {
             parameters,
             planning_warnings: std::sync::Mutex::new(if cache_hit {
                 Vec::new()
@@ -3807,7 +3826,7 @@ impl PreparedDmlPlan {
             cached_plan,
             generation,
             cache_hit,
-        })
+        }))
     }
 
     fn stats_version_hash(
@@ -3907,9 +3926,9 @@ fn cached_dml_physical_plan(
     current_database: &str,
     ctx: &crate::StmtContext,
     cacheability: tidb_planner::physical_plan_cache::PlanCacheabilityContext,
-) -> Option<(tidb_planner_core_operator_physicalop::PhysicalPlan, bool)> {
+) -> Result<Option<(tidb_planner_core_operator_physicalop::PhysicalPlan, bool)>, DriverError> {
     let Stmt::Dml(dml) = statement else {
-        return None;
+        return Ok(None);
     };
     let (operator, source, write, insert_actual_col_len) = match dml.as_ref() {
         tidb_ast::DmlStmt::Insert(insert) => {
@@ -3923,17 +3942,23 @@ fn cached_dml_physical_plan(
         }
         tidb_ast::DmlStmt::Update(update) => (
             "Update",
-            Some(update_source_query(update)?),
+            Some(match update_source_query(update) {
+                Some(source) => source,
+                None => return Ok(None),
+            }),
             Some(super::multi_dml::MultiDmlRef::Update(update.as_ref())),
             None,
         ),
         tidb_ast::DmlStmt::Delete(delete) => (
             "Delete",
-            Some(delete_source_query(delete)?),
+            Some(match delete_source_query(delete) {
+                Some(source) => source,
+                None => return Ok(None),
+            }),
             Some(super::multi_dml::MultiDmlRef::Delete(delete.as_ref())),
             None,
         ),
-        _ => return None,
+        _ => return Ok(None),
     };
     let fk_spec = match dml.as_ref() {
         tidb_ast::DmlStmt::Insert(insert) => {
@@ -3941,9 +3966,11 @@ fn cached_dml_physical_plan(
         }
         tidb_ast::DmlStmt::Update(update) => build_tbl_2_update_columns(update, current_database),
         tidb_ast::DmlStmt::Delete(delete) => fk_spec_for_delete(delete, current_database),
-        _ => return None,
-    }
-    .ok()?;
+        _ => return Ok(None),
+    };
+    let Ok(fk_spec) = fk_spec else {
+        return Ok(None);
+    };
     ctx.start_prepared_range_tracking();
     let root = physical_dml_plan_with_cache_mode(
         operator,
@@ -3958,13 +3985,14 @@ fn cached_dml_physical_plan(
         insert_actual_col_len,
         super::planner_bridge::BuildVisits::Discard,
         None,
-    )
-    .ok()?;
+    )?;
     if ctx.skip_plan_cache() {
-        return Some((root, false));
+        return Ok(Some((root, false)));
     }
-    tidb_planner::physical_plan_cache::is_plan_cacheable(&root, cacheability).ok()?;
-    Some((root, true))
+    if tidb_planner::physical_plan_cache::is_plan_cacheable(&root, cacheability).is_err() {
+        return Ok(None);
+    }
+    Ok(Some((root, true)))
 }
 
 /// Go `tryUpdatePointPlan` / `tryDeletePointPlan`: an UPDATE's or DELETE's

@@ -31,7 +31,7 @@ pub mod non_prepared_plan_cache;
 // traits
 pub use explain::ExplainCompile;
 pub use prepared::PrepareExec;
-pub use prepared_ast::PreparedAstCompile;
+pub use prepared_ast::{GenerateNewPlanError, PreparedAstCompile};
 pub use non_prepared_plan_cache::NonPreparedPlanCacheCompile;
 pub mod plan_cacheable_checker;
 pub use plan_cacheable_checker::PlanCacheableChecker;
