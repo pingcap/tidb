@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,6 +34,7 @@ func TestContextDetach(t *testing.T) {
 		TypeCtx:                  types.DefaultStmtNoWarningContext,
 		ErrCtx:                   errctx.StrictNoWarningContext,
 		ExprCtx:                  exprstatic.NewExprContext(),
+		MemTracker:               memory.NewTracker(1, -1),
 		RangeFallbackHandler:     &rangeFallbackHandler,
 		PlanCacheTracker:         &planCacheTracker,
 		OptimizerFixControl:      map[uint64]string{1: "a"},
@@ -45,6 +47,7 @@ func TestContextDetach(t *testing.T) {
 		"$.TypeCtx",
 		"$.ErrCtx",
 		"$.ExprCtx",
+		"$.MemTracker",
 		"$.RangeFallbackHandler",
 		"$.PlanCacheTracker",
 	}
@@ -57,6 +60,7 @@ func TestContextDetach(t *testing.T) {
 	require.Equal(t, obj.TypeCtx, staticObj.TypeCtx)
 	require.Equal(t, obj.ErrCtx, staticObj.ErrCtx)
 	require.Equal(t, obj.ExprCtx, staticObj.ExprCtx)
+	require.Equal(t, obj.MemTracker, staticObj.MemTracker)
 	require.Equal(t, obj.RangeFallbackHandler, staticObj.RangeFallbackHandler)
 	require.Equal(t, obj.PlanCacheTracker, staticObj.PlanCacheTracker)
 }
