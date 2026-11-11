@@ -507,6 +507,7 @@ func TestDuplicateEntryMessage(t *testing.T) {
 		{"varbinary(16)", "x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d6'", `1-\xA1\xB2\xC3\xD4\x00\xF6\xA7\xB8\xC9\xD0\xE1\xF2\xA3\xB4\xC5\x`},
 		{"bit(16)", "b'1000000100000000'", `1-\x81\x00-p`},
 		{"varbinary(4)", "x'41004200'", `1-A\x00B\x00-p`},
+		{"varbinary(1)", "x'7f'", `1-\x7F-p`},
 		{"varchar(16)", "'中文'", "1-中文-p"},
 	} {
 		for _, index := range []struct {
