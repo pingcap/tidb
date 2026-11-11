@@ -16,9 +16,9 @@ package geocodec
 
 import (
 	"encoding/binary"
-	"errors"
 	"math"
 	"math/rand/v2"
+	"runtime"
 	"testing"
 
 	"github.com/peterstace/simplefeatures/geom"
@@ -31,7 +31,7 @@ func referenceMySQLToStored(b []byte) (stored []byte, srid uint32, g geom.Geomet
 		return nil, 0, geom.Geometry{}, ErrInvalid
 	}
 	srid = binary.LittleEndian.Uint32(b)
-	if _, g, err = build(b[4:], dialectMySQL); err != nil {
+	if _, g, err = read(b[4:], dialectMySQL); err != nil {
 		return nil, 0, geom.Geometry{}, err
 	}
 	if stored, err = encode(g, srid); err != nil {
@@ -48,28 +48,13 @@ func requireSummary(t testing.TB, g geom.Geometry, sum Summary) {
 // ingestStats counts what checkIngest has compared.
 var ingestStats struct {
 	accepted, rejected int
-	// tooComplex counts the values read refused for the budget, which build built.
-	tooComplex int
 }
 
-// checkRead requires read to agree with build on b in dialect d, except that it refuses with
-// ErrTooComplex a value over the budget, which build builds. On a value read builds without
-// a scan, the scan must agree with build and keep within the budget.
+// checkRead requires the scan to agree with read on b in dialect d: the same error.
 func checkRead(t testing.TB, b []byte, d dialect) {
-	srid, _, err := read(b, d)
-	wantSRID, _, wantErr := build(b, d)
-	if len(b) <= smallValue {
-		s := scanner{r: reader{buf: b, dialect: d}, ingest: true}
-		require.Equal(t, wantErr, s.scan(), "%X", b)
-		require.False(t, s.work.exceeds(s.budgetSize()), "%X", b)
-	}
-	if errors.Is(err, ErrTooComplex) {
-		require.NoError(t, wantErr, "%X", b)
-		ingestStats.tooComplex++
-		return
-	}
-	require.Equal(t, wantErr, err, "%X", b)
-	require.Equal(t, wantSRID, srid, "%X", b)
+	_, _, err := read(b, d)
+	s := scanner{r: reader{buf: b, dialect: d}, ingest: true}
+	require.Equal(t, err, s.scan(), "%X", b)
 }
 
 // checkIngest requires MySQLToStored to agree with the reference conversion on b: the
@@ -218,7 +203,7 @@ func ingestForms(t testing.TB, rnd *rand.Rand, g geom.Geometry, srid uint32) [][
 // in every form, and over those forms with one byte changed, which reach the checks a
 // well-formed value does not.
 func TestIngestMatchesReference(t *testing.T) {
-	ingestStats.accepted, ingestStats.rejected, ingestStats.tooComplex = 0, 0, 0
+	ingestStats.accepted, ingestStats.rejected = 0, 0
 	rnd := rand.New(rand.NewPCG(20261020, 1))
 	changes := []byte{0, 1, 2, 3, 4, 7, 0x20, 0x80, 0xf0, 0xf8, 0x7f, 0xff}
 	for _, ctype := range []geom.CoordinatesType{geom.DimXY, geom.DimXYZ, geom.DimXYM, geom.DimXYZM} {
@@ -248,10 +233,7 @@ func TestIngestMatchesReference(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("MySQLToStored accepted %d, rejected %d; read over the decode budget %d",
-		ingestStats.accepted, ingestStats.rejected, ingestStats.tooComplex)
-	// Generated values nest at most a few levels, as real data does, and are always built.
-	require.Zero(t, ingestStats.tooComplex)
+	t.Logf("MySQLToStored accepted %d, rejected %d", ingestStats.accepted, ingestStats.rejected)
 	require.Greater(t, ingestStats.accepted, 10000)
 	require.Greater(t, ingestStats.rejected, 100000)
 }
@@ -308,13 +290,9 @@ func TestIngestEdges(t *testing.T) {
 		m = append(append(m, members[0]...), members[1]...)
 		cases = append(cases, m, storedFromMySQL(m))
 	}
-	ingestStats.tooComplex = 0
 	for _, b := range cases {
 		checkIngest(t, b)
 	}
-	// Only the chains around 1,000 points are over the decode budget.
-	t.Logf("over the decode budget: %d", ingestStats.tooComplex)
-	require.Positive(t, ingestStats.tooComplex)
 }
 
 // TestIngestAllocs checks that MySQLToStored's scan allocates nothing: a value that
@@ -374,94 +352,30 @@ func FuzzIngestScan(f *testing.F) {
 	})
 }
 
-// TestDecodeBudget checks which shapes the decode budget refuses: real-shaped data is
-// built, also nested; a short chain to the depth bound is built; much data, or many
-// geometries however small, nested deep are refused before anything is allocated.
-func TestDecodeBudget(t *testing.T) {
-	for _, c := range budgetCases() {
-		payload := storedFromMySQL(c.mysql)[1:]
-		s := scanner{r: reader{buf: payload, dialect: dialectEWKB}, ingest: true}
-		require.NoError(t, s.scan(), c.name)
-		// The same value gets the same work and the same budget in either format.
-		m := scanner{r: reader{buf: c.mysql[4:], dialect: dialectMySQL}, ingest: true}
-		require.NoError(t, m.scan(), c.name)
-		require.Equal(t, m.work, s.work, c.name)
-		require.Equal(t, m.budgetSize(), s.budgetSize(), c.name)
-		_, _, err := read(payload, dialectEWKB)
-		t.Logf("%s: %d bytes, work %d (%.1f times the size), %v", c.name, len(payload), s.work,
-			float64(s.work)/float64(len(payload)), err)
-		if !c.refused {
-			require.NoError(t, err, c.name)
-			continue
-		}
-		require.ErrorIs(t, err, ErrTooComplex, c.name)
-		_, _, err = read(c.mysql[4:], dialectMySQL)
-		require.ErrorIs(t, err, ErrTooComplex, c.name)
-		allocs := testing.AllocsPerRun(2, func() { _, _, _ = read(payload, dialectEWKB) })
-		require.Equal(t, 0.0, allocs, c.name)
-	}
-	// Storing and converting are not limited.
-	for _, c := range budgetCases() {
-		stored, _, _, err := MySQLToStored(c.mysql)
-		require.NoError(t, err, c.name)
-		back, err := StoredToMySQL(stored)
-		require.NoError(t, err, c.name)
-		require.Equal(t, c.mysql, back, c.name)
-	}
-}
-
-// TestSmallValueWithinBudget checks the bound that lets read build a value of at most
-// smallValue bytes without a scan: the work of the worst such shapes is within the floor.
-func TestSmallValueWithinBudget(t *testing.T) {
-	require.LessOrEqual(t, uint64(20*smallValue*smallValue/81), decodeWorkFloor)
-	// Empty collections are the most geometries per byte; nesting copies them most often.
-	const most = smallValue / minGeometrySize
-	shapes := [][]byte{nestedCollections(most)}
-	for _, depth := range []int{2, 10, 100, 455, 800, most - 1} {
-		empties := make([][]byte, most-depth)
-		for i := range empties {
-			empties[i] = nestedCollections(1)
-		}
-		shapes = append(shapes, mysqlChain(depth, collectionWKB(empties...))[4:])
-	}
-	for _, b := range shapes {
-		require.LessOrEqual(t, len(b), smallValue)
-		s := scanner{r: reader{buf: b, dialect: dialectMySQL}, ingest: true}
-		require.NoError(t, s.scan())
-		t.Logf("%d bytes, work %d", len(b), s.work)
-		require.LessOrEqual(t, uint64(s.work), uint64(20*len(b)*len(b)/81))
-		require.False(t, s.work.exceeds(s.budgetSize()))
-	}
-}
-
-// budgetCases are values in MySQL's format of the shapes the decode budget is measured on,
-// and whether it refuses to build them.
-func budgetCases() []struct {
-	name    string
-	mysql   []byte
-	refused bool
-} {
-	multiPolygon := multiPolygonWKB(1000, 21)
-	points := collectionOfPointsWKB(10000)
+// TestReadAllocatesLinearly checks that reading allocates in proportion to the value's
+// length however deep its collections nest, as simplefeatures builds nested collections in
+// linear time: a version that copies them at every level allocates thousands of times more.
+func TestReadAllocatesLinearly(t *testing.T) {
 	empties := make([][]byte, 100000)
 	for i := range empties {
 		empties[i] = nestedCollections(1)
 	}
-	return []struct {
-		name    string
-		mysql   []byte
-		refused bool
+	for _, c := range []struct {
+		name string
+		b    []byte
 	}{
-		{"MultiPolygon1000Islands", append(make([]byte, 4), multiPolygon...), false},
-		{"CollectionOf10kPoints", append(make([]byte, 4), points...), false},
-		{"Nested3Deep", append(make([]byte, 4), collectionWKB(collectionWKB(collectionWKB(multiPolygon, points), points), multiPolygon)...), false},
-		{"Deep1024EmptyCollections", append(make([]byte, 4), nestedCollections(MaxDepth)...), false},
-		{"Deep100MultiPoint10k", mysqlChain(100, multiPointWKB(10000)), true},
-		{"Deep1023MultiPoint100k", mysqlChain(1023, multiPointWKB(100000)), true},
-		// Each copy of a geometry counts, however small: 100,000 empty collections below
-		// 16 collections, 900 kB, take 32 MB of work, where their bytes alone take 14 MB.
-		// As many empty polygons take the same work and allocate 159 MB to build.
-		{"Deep16CollectionOf100kEmpty", mysqlChain(16, collectionWKB(empties...)), true},
+		{"Deep1024EmptyCollections", nestedCollections(MaxDepth)},
+		{"Deep16CollectionOf100kEmpty", mysqlChain(16, collectionWKB(empties...))[4:]},
+		{"Deep1023MultiPoint100k", mysqlChain(MaxDepth-1, multiPointWKB(100000))[4:]},
+	} {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		_, _, err := read(c.b, dialectMySQL)
+		runtime.ReadMemStats(&after)
+		require.NoError(t, err, c.name)
+		perByte := float64(after.TotalAlloc-before.TotalAlloc) / float64(len(c.b))
+		t.Logf("%s: %d bytes, %.1f bytes allocated per byte", c.name, len(c.b), perByte)
+		require.Less(t, perByte, 10.0, c.name)
 	}
 }
 
@@ -520,26 +434,6 @@ func polygonWKB(n int) []byte {
 	return b
 }
 
-// multiPolygonWKB returns little-endian WKB for a MULTIPOLYGON of n islands, each a closed
-// ring of points points.
-func multiPolygonWKB(n, points int) []byte {
-	b := []byte{byteOrderLittle}
-	b = binary.LittleEndian.AppendUint32(b, 6)
-	b = binary.LittleEndian.AppendUint32(b, uint32(n))
-	for i := range n {
-		ring := polygonWKB(points)
-		// Move the island: 10 degrees of radius, 25 apart.
-		for j := 13; j+16 <= len(ring); j += 16 {
-			x := math.Float64frombits(binary.LittleEndian.Uint64(ring[j:])) + float64(i%14*25-170)
-			y := math.Float64frombits(binary.LittleEndian.Uint64(ring[j+8:])) + float64(i/14%7*25-75)
-			binary.LittleEndian.PutUint64(ring[j:], math.Float64bits(x))
-			binary.LittleEndian.PutUint64(ring[j+8:], math.Float64bits(y))
-		}
-		b = append(b, ring...)
-	}
-	return b
-}
-
 // collectionWKB returns little-endian WKB for a GEOMETRYCOLLECTION of members.
 func collectionWKB(members ...[]byte) []byte {
 	b := []byte{byteOrderLittle}
@@ -549,15 +443,6 @@ func collectionWKB(members ...[]byte) []byte {
 		b = append(b, m...)
 	}
 	return b
-}
-
-// collectionOfPointsWKB returns little-endian WKB for a GEOMETRYCOLLECTION of n points.
-func collectionOfPointsWKB(n int) []byte {
-	points := make([][]byte, n)
-	for i := range points {
-		points[i] = appendPointWKB(nil, binary.LittleEndian, float64(i%360-180), float64(i%180-90))
-	}
-	return collectionWKB(points...)
 }
 
 // bigEndianChain returns a stored value at SRID 4326 of depth-1 collections around leaf,

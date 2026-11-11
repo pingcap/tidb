@@ -52,7 +52,7 @@ func decodeStored(stored []byte) (uint32, geom.Geometry, error) {
 	if err != nil {
 		return 0, geom.Geometry{}, err
 	}
-	return build(payload, dialectEWKB)
+	return read(payload, dialectEWKB)
 }
 
 // referenceStoredToMySQL converts a stored value by decoding it into a geometry and
@@ -974,15 +974,11 @@ func TestNestedCountsAllocs(t *testing.T) {
 	require.NotErrorIs(t, err, errStoredWithoutSRID)
 	checkAgainstReference(t, stored)
 	// The reader allocates only the root's members before the second count fails, and
-	// the scan nothing, also ahead of building.
+	// the scan nothing.
 	allocs := testing.AllocsPerRun(1, func() {
-		_, _, _ = build(b[4:], dialectMySQL)
-	})
-	require.Equal(t, 1.0, allocs)
-	allocs = testing.AllocsPerRun(1, func() {
 		_, _, _ = read(b[4:], dialectMySQL)
 	})
-	require.Equal(t, 0.0, allocs)
+	require.Equal(t, 1.0, allocs)
 	allocs = testing.AllocsPerRun(1, func() {
 		_, _, _, _ = MySQLToStored(b)
 	})

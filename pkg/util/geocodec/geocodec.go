@@ -32,7 +32,6 @@ import (
 	"math"
 
 	"github.com/peterstace/simplefeatures/geom"
-	"github.com/pingcap/tidb/pkg/util/size"
 )
 
 const (
@@ -53,9 +52,6 @@ var (
 	// ErrNotMySQLExpressible means the geometry has Z or M coordinates, or an empty geometry
 	// other than a GEOMETRYCOLLECTION, which MySQL's binary format cannot hold.
 	ErrNotMySQLExpressible = errors.New("geometry cannot be expressed in MySQL's binary format")
-	// ErrTooComplex means building the geometry would exceed the decode budget; it can still
-	// be stored and converted.
-	ErrTooComplex = errors.New("geometry nests too much of its data too deep to be built")
 
 	// errBigEndianStored is the ErrInvalid of a big-endian geometry in a stored value, which
 	// StoredToMySQL cannot copy into MySQL's little-endian format.
@@ -63,37 +59,6 @@ var (
 	// errStoredWithoutSRID is the ErrInvalid of a stored value whose root has no SRID flag.
 	errStoredWithoutSRID = fmt.Errorf("%w: stored geometry without the SRID flag", ErrInvalid)
 )
-
-// The decode budget. Building a collection copies everything below it, so the work is the
-// sum over collections of their members' bytes and decodeWorkPerGeometry per geometry.
-const (
-	// decodeWorkFactor is the work allowed per byte of the value.
-	decodeWorkFactor = 16
-	// decodeWorkFloor is the work always allowed, so short deep values such as 1,024 empty
-	// collections (about 10.5 MB of work) are still built.
-	decodeWorkFloor = 16 * size.MB
-	// decodeWorkPerGeometry is the fixed cost of copying one geometry: about 48 bytes
-	// allocated, at about 4.6 bytes per unit of work (measured), rounded up.
-	decodeWorkPerGeometry = 11
-	// smallValue is the longest value read builds without a scan: L bytes hold at most L/9
-	// collections, each copying L bytes and L/9 geometries at most, so its work fits the floor.
-	smallValue = 8192
-)
-
-// decodeWork is the work of building a geometry, counted by the scan collection by
-// collection.
-type decodeWork uint64
-
-// addCollection adds the work of building a collection: its members' bytes, and the fixed
-// cost of every geometry below it.
-func (w *decodeWork) addCollection(memberBytes, geometries uint64) {
-	*w += decodeWork(memberBytes + decodeWorkPerGeometry*geometries)
-}
-
-// exceeds reports whether the work passes max(decodeWorkFactor x n, decodeWorkFloor).
-func (w decodeWork) exceeds(n uint64) bool {
-	return uint64(w) > max(decodeWorkFactor*n, decodeWorkFloor)
-}
 
 const (
 	ewkbZ     uint32 = 0x80000000
@@ -233,24 +198,8 @@ func payloadOf(stored []byte) ([]byte, error) {
 	return payload, nil
 }
 
-// read builds the geometry b holds in dialect d. A value longer than smallValue is first
-// scanned, building nothing, to check that its work is within the budget.
+// read reads and builds the geometry b holds in dialect d.
 func read(b []byte, d dialect) (uint32, geom.Geometry, error) {
-	if len(b) <= smallValue {
-		return build(b, d)
-	}
-	s := scanner{r: reader{buf: b, dialect: d}, ingest: true}
-	if err := s.scan(); err != nil {
-		return 0, geom.Geometry{}, err
-	}
-	if s.work.exceeds(s.budgetSize()) {
-		return 0, geom.Geometry{}, ErrTooComplex
-	}
-	return build(b, d)
-}
-
-// build reads and builds the geometry b holds in dialect d.
-func build(b []byte, d dialect) (uint32, geom.Geometry, error) {
 	r := reader{buf: b, dialect: d}
 	g, err := r.geometry(1, anyType, geom.DimXY)
 	if err != nil {
@@ -614,19 +563,9 @@ type scanner struct {
 	// notMySQL records Z or M coordinates or an empty non-collection, reported only once the
 	// value is known to be well-formed.
 	notMySQL bool
-	// sridBytes is 4 when the root carries an EWKB SRID.
-	sridBytes int
-	// geometries counts the geometry headers scanned so far.
-	geometries uint64
-	// work is the work of building the value.
-	work decodeWork
 	// sum is the summary.
 	sum Summary
 }
-
-// budgetSize is the length the decode budget scales with: the WKB without an EWKB SRID, so
-// a value gets the same budget in either format.
-func (s *scanner) budgetSize() uint64 { return uint64(len(s.r.buf) - s.sridBytes) }
 
 // scan scans the whole payload: one geometry, and nothing after it.
 func (s *scanner) scan() error {
@@ -645,7 +584,6 @@ func (s *scanner) geometry(depth int, want geom.GeometryType, parentCType geom.C
 		return ErrTooDeep
 	}
 	root := depth == 1
-	s.geometries++
 	order, err := s.r.byteOrder()
 	if err != nil {
 		return err
@@ -670,7 +608,6 @@ func (s *scanner) geometry(depth int, want geom.GeometryType, parentCType geom.C
 		if _, err = s.r.uint32(order); err != nil {
 			return err
 		}
-		s.sridBytes = 4
 	}
 	switch typ {
 	case geom.TypePoint:
@@ -691,13 +628,11 @@ func (s *scanner) geometry(depth int, want geom.GeometryType, parentCType geom.C
 		s.notMySQL = true
 	}
 	memberType := memberTypeOf(typ)
-	start, geometries := s.r.pos, s.geometries
 	for range n {
 		if err := s.geometry(depth+1, memberType, ctype); err != nil {
 			return err
 		}
 	}
-	s.work.addCollection(uint64(s.r.pos-start), s.geometries-geometries)
 	return nil
 }
 

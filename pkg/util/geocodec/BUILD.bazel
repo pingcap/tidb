@@ -6,7 +6,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/geocodec",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/util/size",
         "@com_github_peterstace_simplefeatures//geom",
     ],
 )
