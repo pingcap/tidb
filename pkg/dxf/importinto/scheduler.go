@@ -400,10 +400,9 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle storage.TaskHandle,
 	task *proto.Task,
-	execIDs []string,
+	nodeCnt int,
 	nextStep proto.Step,
 ) (resSubtaskMeta [][]byte, err error) {
-	nodeCnt := len(execIDs)
 	if kerneltype.IsNextGen() {
 		// in nextgen, node resource are scaled out automatically, we only consider
 		// the max allowed node for the task, and ignore how many node currently

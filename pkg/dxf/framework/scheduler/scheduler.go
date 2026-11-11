@@ -580,19 +580,18 @@ func (s *BaseScheduler) switch2NextStep() error {
 	if err != nil {
 		return err
 	}
-	if task.MaxNodeCount > 0 && len(eligibleNodes) > task.MaxNodeCount {
-		// OnNextSubtasksBatch may use len(eligibleNodes) as a hint to
-		// calculate the number of subtasks, so we need to do this before
-		// filtering nodes by available slots in scheduleSubtask.
-		eligibleNodes = eligibleNodes[:task.MaxNodeCount]
+	// Limit the planning hint without restricting the nodes available for placement.
+	nodeCnt := len(eligibleNodes)
+	if task.MaxNodeCount > 0 {
+		nodeCnt = min(nodeCnt, task.MaxNodeCount)
 	}
 
-	s.logger.Info("eligible instances", zap.Int("num", len(eligibleNodes)))
-	if len(eligibleNodes) == 0 {
+	s.logger.Info("eligible instances", zap.Int("num", nodeCnt))
+	if nodeCnt == 0 {
 		return errors.New("no available TiDB node to dispatch subtasks")
 	}
 
-	metas, err := s.OnNextSubtasksBatch(s.ctx, s, task, eligibleNodes, nextStep)
+	metas, err := s.OnNextSubtasksBatch(s.ctx, s, task, nodeCnt, nextStep)
 	if err != nil {
 		s.logger.Warn("generate part of subtasks failed", zap.Error(err))
 		return s.handlePrepareOrPlanErr(err)
@@ -627,7 +626,12 @@ func (s *BaseScheduler) scheduleSubTask(
 	if err := s.slotMgr.update(s.ctx, s.nodeMgr, s.taskMgr); err != nil {
 		return err
 	}
+	// Prefer nodes with enough slots, falling back to all eligible nodes if none qualify.
+	// Then limit the number of execution nodes to MaxNodeCount.
 	adjustedEligibleNodes := s.slotMgr.adjustEligibleNodes(eligibleNodes, task.RequiredSlots)
+	if task.MaxNodeCount > 0 && len(adjustedEligibleNodes) > task.MaxNodeCount {
+		adjustedEligibleNodes = adjustedEligibleNodes[:task.MaxNodeCount]
+	}
 	var size uint64
 	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for i, meta := range metas {

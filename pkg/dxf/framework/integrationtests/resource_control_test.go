@@ -69,7 +69,7 @@ func (c *resourceCtrlCaseContext) init(subtaskCntMap map[int64]map[proto.Step]in
 		},
 	).AnyTimes()
 	schedulerExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ []string, nextStep proto.Step) (metas [][]byte, err error) {
+		func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ int, nextStep proto.Step) (metas [][]byte, err error) {
 			cnt := subtaskCntMap[task.ID][nextStep]
 			res := make([][]byte, cnt)
 			for i := range cnt {
