@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/structure"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -85,19 +85,19 @@ func TestInfoSchemaTableNameBatchLoad(t *testing.T) {
 	is := domain.GetDomain(tk.Session()).InfoSchema()
 	ok, v2 := infoschema.IsV2(is)
 	require.True(t, ok)
-	schema := ast.NewCIStr("batch_meta")
+	schema := model.NewCIStr("batch_meta")
 	db, ok := is.SchemaByName(schema)
 	require.True(t, ok)
 	encoder := structure.NewStructure(nil, nil, []byte("m"))
 	keys := make(map[string]struct{}, len(names))
 	ids := make([]int64, len(names))
 	for i, name := range names {
-		tbl, err := is.TableByName(context.Background(), schema, ast.NewCIStr(name))
+		tbl, err := is.TableByName(context.Background(), schema, model.NewCIStr(name))
 		require.NoError(t, err)
 		ids[i] = tbl.Meta().ID
 		key := encoder.EncodeHashDataKey(fmt.Appendf(nil, "DB:%d", db.ID), meta.TableKey(ids[i]))
 		keys[string(key)] = struct{}{}
-		v2.EvictTable(schema, ast.NewCIStr(name))
+		v2.EvictTable(schema, model.NewCIStr(name))
 	}
 	client.Lock()
 	client.keys = keys

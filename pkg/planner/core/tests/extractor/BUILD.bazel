@@ -9,16 +9,12 @@ go_test(
         "table_name_batch_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 4,
-=======
-    shard_count = 6,
->>>>>>> 193e3a5a1fc (infoschema: batch metadata reads for table-name predicates (#72631))
+    shard_count = 5,
     deps = [
         "//pkg/domain",
         "//pkg/infoschema",
         "//pkg/meta",
-        "//pkg/parser/ast",
+        "//pkg/parser/model",
         "//pkg/planner/core",
         "//pkg/store/mockstore",
         "//pkg/structure",

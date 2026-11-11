@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -67,13 +67,13 @@ func TestTableInfosByNames(t *testing.T) {
 	store := &tableMetadataStore{Storage: r.Store()}
 	is := NewInfoSchemaV2(internal.CreateAutoIDRequirementWithStore(t, store), nil, NewData())
 	is.schemaMetaVersion = 2
-	db := &model.DBInfo{ID: 1, Name: ast.NewCIStr("batch_meta"), State: model.StatePublic}
+	db := &model.DBInfo{ID: 1, Name: pmodel.NewCIStr("batch_meta"), State: model.StatePublic}
 	is.Data.addDB(1, db)
-	names := make([]ast.CIStr, 130)
+	names := make([]pmodel.CIStr, 130)
 	infos := make([]*model.TableInfo, len(names))
 	for i := range names {
-		names[i] = ast.NewCIStr(fmt.Sprintf("T%d", i))
-		col := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("a"), State: model.StatePublic, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
+		names[i] = pmodel.NewCIStr(fmt.Sprintf("T%d", i))
+		col := &model.ColumnInfo{ID: 1, Name: pmodel.NewCIStr("a"), State: model.StatePublic, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
 		col.SetCharset("UTF8")
 		col.SetCollate("UTF8_BIN")
 		infos[i] = &model.TableInfo{
@@ -103,7 +103,7 @@ func TestTableInfosByNames(t *testing.T) {
 	warm := infos[0].Clone()
 	ConvertCharsetCollateToLowerCaseIfNeed(warm)
 	is.tableCache.Set(tableCacheKey{warm.ID, 1}, internal.MockTable(t, store, warm))
-	requested := append(append([]ast.CIStr(nil), names...), ast.NewCIStr("missing"))
+	requested := append(append([]pmodel.CIStr(nil), names...), pmodel.NewCIStr("missing"))
 	for range 2 {
 		store.batchSizes = nil
 		got, err := TableInfosByNames(ctx, &is, db.Name, requested)
@@ -135,14 +135,14 @@ func TestTableInfosByNames(t *testing.T) {
 	require.Empty(t, store.batchSizes)
 	for _, input := range []struct {
 		name         string
-		schema       ast.CIStr
-		names        []ast.CIStr
+		schema       pmodel.CIStr
+		names        []pmodel.CIStr
 		wantCanceled bool
 	}{
 		{"empty_names", db.Name, nil, false},
 		{"warm_cache", db.Name, names[:1], true},
-		{"missing_table", db.Name, []ast.CIStr{ast.NewCIStr("missing")}, true},
-		{"missing_schema", ast.NewCIStr("missing_schema"), names, false},
+		{"missing_table", db.Name, []pmodel.CIStr{pmodel.NewCIStr("missing")}, true},
+		{"missing_schema", pmodel.NewCIStr("missing_schema"), names, false},
 	} {
 		t.Run(input.name, func(t *testing.T) {
 			got, err := TableInfosByNames(canceled, &is, input.schema, input.names)
@@ -211,21 +211,21 @@ func TestTableInfosByNamesMetadata(t *testing.T) {
 	store := &tableMetadataStore{Storage: r.Store()}
 	is := NewInfoSchemaV2(internal.CreateAutoIDRequirementWithStore(t, store), nil, NewData())
 	is.schemaMetaVersion = 1
-	db := &model.DBInfo{ID: 1, Name: ast.NewCIStr("batch_meta"), State: model.StatePublic}
+	db := &model.DBInfo{ID: 1, Name: pmodel.NewCIStr("batch_meta"), State: model.StatePublic}
 	is.Data.addDB(1, db)
 	var infos []*model.TableInfo
-	var names []ast.CIStr
+	var names []pmodel.CIStr
 	for _, kind := range []string{"legacy_utf8", "generated", "partitioned", "check_constraint"} {
 		for _, cache := range []string{"warm", "cold"} {
 			col := &model.ColumnInfo{
-				ID: 1, Name: ast.NewCIStr("a"), State: model.StatePublic,
+				ID: 1, Name: pmodel.NewCIStr("a"), State: model.StatePublic,
 				FieldType: *types.NewFieldType(mysql.TypeVarchar),
 			}
 			col.SetCharset("UTF8")
 			col.SetCollate("UTF8_BIN")
 			col.SetFlen(32)
 			info := &model.TableInfo{
-				ID: int64(1000 + len(infos)), Name: ast.NewCIStr(kind + "_" + cache), DBID: db.ID,
+				ID: int64(1000 + len(infos)), Name: pmodel.NewCIStr(kind + "_" + cache), DBID: db.ID,
 				State: model.StatePublic, Version: model.TableInfoVersion2,
 				Charset: "UTF8", Collate: "UTF8_BIN", Columns: []*model.ColumnInfo{col},
 			}
@@ -235,22 +235,22 @@ func TestTableInfosByNamesMetadata(t *testing.T) {
 				col.Version = model.ColumnInfoVersion1
 			case "generated":
 				generated := col.Clone()
-				generated.ID, generated.Name, generated.Offset = 2, ast.NewCIStr("b"), 1
+				generated.ID, generated.Name, generated.Offset = 2, pmodel.NewCIStr("b"), 1
 				generated.GeneratedExprString = "concat(`a`, 'suffix')"
 				generated.Dependences = map[string]struct{}{"a": {}}
 				info.Columns = append(info.Columns, generated)
 			case "partitioned":
 				info.Partition = &model.PartitionInfo{
-					Type: ast.PartitionTypeKey, Columns: []ast.CIStr{col.Name}, Enable: true, Num: 2,
+					Type: pmodel.PartitionTypeKey, Columns: []pmodel.CIStr{col.Name}, Enable: true, Num: 2,
 					Definitions: []model.PartitionDefinition{
-						{ID: info.ID + 1000, Name: ast.NewCIStr("p0")},
-						{ID: info.ID + 2000, Name: ast.NewCIStr("p1")},
+						{ID: info.ID + 1000, Name: pmodel.NewCIStr("p0")},
+						{ID: info.ID + 2000, Name: pmodel.NewCIStr("p1")},
 					},
 				}
 			case "check_constraint":
 				info.Constraints = []*model.ConstraintInfo{{
-					ID: 1, Name: ast.NewCIStr("chk_a"), Table: info.Name,
-					ConstraintCols: []ast.CIStr{col.Name}, Enforced: true,
+					ID: 1, Name: pmodel.NewCIStr("chk_a"), Table: info.Name,
+					ConstraintCols: []pmodel.CIStr{col.Name}, Enforced: true,
 					ExprString: "length(`a`) > 0", State: model.StatePublic,
 				}}
 			}
@@ -311,8 +311,8 @@ func TestTableInfosByNamesMetadata(t *testing.T) {
 
 func TestTableInfosByNamesSessionOverrides(t *testing.T) {
 	ctx := context.Background()
-	schema := ast.NewCIStr("test")
-	global := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), State: model.StatePublic}
+	schema := pmodel.NewCIStr("test")
+	global := &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("t"), State: model.StatePublic}
 	base := MockInfoSchema([]*model.TableInfo{global})
 	db, ok := base.SchemaByName(schema)
 	require.True(t, ok)
@@ -324,7 +324,7 @@ func TestTableInfosByNamesSessionOverrides(t *testing.T) {
 	extended := &SessionExtendedInfoSchema{InfoSchema: base, LocalTemporaryTables: NewSessionTables(), MdlTables: NewSessionTables()}
 	require.NoError(t, extended.LocalTemporaryTables.AddTable(db, table.MockTableFromMeta(local)))
 	require.NoError(t, extended.MdlTables.AddTable(db, table.MockTableFromMeta(mdl)))
-	names := []ast.CIStr{ast.NewCIStr("T"), ast.NewCIStr("missing")}
+	names := []pmodel.CIStr{pmodel.NewCIStr("T"), pmodel.NewCIStr("missing")}
 	got, err := TableInfosByNames(ctx, extended, schema, names)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{local}, got)
@@ -339,9 +339,9 @@ func TestTableInfosByNamesSessionOverrides(t *testing.T) {
 
 	// System schemas are memory-backed even when the underlying infoschema is v2.
 	v2 := NewInfoSchemaV2(nil, nil, NewData())
-	systemTable := &model.TableInfo{ID: 3, Name: ast.NewCIStr("columns")}
+	systemTable := &model.TableInfo{ID: 3, Name: pmodel.NewCIStr("columns")}
 	v2.specials.Store("information_schema", &schemaTables{tables: map[string]table.Table{"columns": table.MockTableFromMeta(systemTable)}})
-	got, err = TableInfosByNames(ctx, &v2, ast.NewCIStr("information_schema"), []ast.CIStr{ast.NewCIStr("COLUMNS"), ast.NewCIStr("missing")})
+	got, err = TableInfosByNames(ctx, &v2, pmodel.NewCIStr("information_schema"), []pmodel.CIStr{pmodel.NewCIStr("COLUMNS"), pmodel.NewCIStr("missing")})
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{systemTable}, got)
 }

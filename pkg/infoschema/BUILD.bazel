@@ -91,20 +91,13 @@ go_test(
         "main_test.go",
         "metrics_schema_test.go",
         "sieve_test.go",
-<<<<<<< HEAD
-    ],
-    embed = [":infoschema"],
-    flaky = True,
-    shard_count = 28,
-=======
         "table_name_batch_test.go",
-        "tables_test.go",
     ],
     embed = [":infoschema"],
     flaky = True,
-    shard_count = 47,
->>>>>>> 193e3a5a1fc (infoschema: batch metadata reads for table-name predicates (#72631))
+    shard_count = 31,
     deps = [
+        "//pkg/config",
         "//pkg/ddl/placement",
         "//pkg/domain",
         "//pkg/infoschema/context",

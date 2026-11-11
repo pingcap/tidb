@@ -1065,7 +1065,7 @@ func (h *tableByNameHelper) onItem(item *tableItem) bool {
 	return true
 }
 
-func (is *infoschemaV2) searchTableItemByName(schema, name ast.CIStr) (*tableItem, bool) {
+func (is *infoschemaV2) searchTableItemByName(schema, name pmodel.CIStr) (*tableItem, bool) {
 	h := tableByNameHelper{
 		end:           tableItem{dbName: schema, tableName: name, schemaVersion: math.MaxInt64},
 		schemaVersion: is.schemaMetaVersion,
@@ -1121,7 +1121,7 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl pmodel.CISt
 }
 
 // tableInfosByNames reuses cached definitions and batches only the missing ones.
-func (is *infoschemaV2) tableInfosByNames(ctx context.Context, schema ast.CIStr, names []ast.CIStr) ([]*model.TableInfo, error) {
+func (is *infoschemaV2) tableInfosByNames(ctx context.Context, schema pmodel.CIStr, names []pmodel.CIStr) ([]*model.TableInfo, error) {
 	is.keepAlive()
 	db, ok := is.SchemaByName(schema)
 	if !ok {
@@ -1172,6 +1172,25 @@ func (is *infoschemaV2) tableInfosByNames(ctx context.Context, schema ast.CIStr,
 		}
 		return tables, nil
 	})
+}
+
+// retryOnFlashbackInProgress retries fn while table metadata cannot be read during flashback.
+// fn must return a fresh result for each attempt so a partial attempt is never reused.
+func retryOnFlashbackInProgress[T any](ctx context.Context, fn func() (T, error)) (T, error) {
+	const flashbackRetryInterval = 200 * time.Millisecond
+	for {
+		result, err := fn()
+		if err == nil || !strings.Contains(err.Error(), "in flashback progress") {
+			return result, err
+		}
+
+		select {
+		case <-time.After(flashbackRetryInterval):
+		case <-ctx.Done():
+			var zero T
+			return zero, ctx.Err()
+		}
+	}
 }
 
 // TableInfoByName implements InfoSchema.TableInfoByName

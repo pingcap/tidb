@@ -23,6 +23,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -238,7 +239,7 @@ func (is *infoSchema) TableByName(ctx stdctx.Context, schema, table pmodel.CIStr
 
 // TableInfosByNames returns existing table metadata without refilling the shared
 // cache. Result order is unspecified; session table overrides take precedence.
-func TableInfosByNames(ctx stdctx.Context, is InfoSchema, schema ast.CIStr, names []ast.CIStr) ([]*model.TableInfo, error) {
+func TableInfosByNames(ctx stdctx.Context, is InfoSchema, schema pmodel.CIStr, names []pmodel.CIStr) ([]*model.TableInfo, error) {
 	if len(names) == 0 {
 		return nil, nil
 	}
@@ -249,7 +250,7 @@ func TableInfosByNames(ctx stdctx.Context, is InfoSchema, schema ast.CIStr, name
 		}
 	case *SessionExtendedInfoSchema:
 		var tables []*model.TableInfo
-		remaining := make([]ast.CIStr, 0, len(names))
+		remaining := make([]pmodel.CIStr, 0, len(names))
 		for _, name := range names {
 			if err := ctx.Err(); err != nil {
 				return nil, err
@@ -870,18 +871,14 @@ type SessionExtendedInfoSchema struct {
 }
 
 // TableByName implements InfoSchema.TableByName
-<<<<<<< HEAD
 func (ts *SessionExtendedInfoSchema) TableByName(ctx stdctx.Context, schema, table pmodel.CIStr) (table.Table, error) {
-=======
-func (ts *SessionExtendedInfoSchema) TableByName(ctx stdctx.Context, schema, table ast.CIStr) (table.Table, error) {
 	if tbl, ok := ts.sessionTableByName(ctx, schema, table); ok {
 		return tbl, nil
 	}
 	return ts.InfoSchema.TableByName(ctx, schema, table)
 }
 
-func (ts *SessionExtendedInfoSchema) sessionTableByName(ctx stdctx.Context, schema, table ast.CIStr) (table.Table, bool) {
->>>>>>> 193e3a5a1fc (infoschema: batch metadata reads for table-name predicates (#72631))
+func (ts *SessionExtendedInfoSchema) sessionTableByName(ctx stdctx.Context, schema, table pmodel.CIStr) (table.Table, bool) {
 	if ts.LocalTemporaryTables != nil {
 		if tbl, ok := ts.LocalTemporaryTables.TableByName(ctx, schema, table); ok {
 			return tbl, true
