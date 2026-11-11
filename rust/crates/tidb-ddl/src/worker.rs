@@ -483,6 +483,8 @@ where
     /// Go `jobCtx.store`'s region cache and PD client, bound once the node
     /// has its region store.
     region_store: Arc<std::sync::OnceLock<Arc<dyn tidb_kv::region_map::RegionStore>>>,
+    /// Go `ddlCtx.startMode`.
+    start_mode: crate::StartMode,
 }
 
 impl<S> PersistedDdlScheduler<S>
@@ -557,6 +559,7 @@ where
         ddl_job_done_ch_map: Arc<crate::real_tikv_ddl::DdlJobDoneChMap>,
         session_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
         region_store: Arc<std::sync::OnceLock<Arc<dyn tidb_kv::region_map::RegionStore>>>,
+        start_mode: crate::StartMode,
     ) {
         must_reload_schemas(schema_sync.as_ref(), &stopped, DDL_SCHEDULER_INTERVAL);
         if stop.load(Ordering::Acquire) {
@@ -701,7 +704,8 @@ where
                                 };
                                 let backfiller =
                                     KvTableIndexBackfiller::new(&row_ids, &session_pool)
-                                        .with_region_store(region_store);
+                                        .with_region_store(region_store)
+                                        .with_start_mode(start_mode);
                                 // Go `getJobRunCtx`: the job context carries
                                 // the submitter's done signal, when this node
                                 // has one.
@@ -878,6 +882,7 @@ where
                 let ddl_job_done_ch_map = Arc::clone(&self.ddl_job_done_ch_map);
                 let session_pool = Arc::clone(&self.session_pool);
                 let region_store = Arc::clone(&self.region_store);
+                let start_mode = self.start_mode;
                 let owner = self
                     .owner
                     .lock()
@@ -903,6 +908,7 @@ where
                         ddl_job_done_ch_map,
                         session_pool,
                         region_store,
+                        start_mode,
                     )
                 }
             })
@@ -1130,6 +1136,7 @@ where
             ddl_job_done_ch_map: Arc::default(),
             session_pool,
             region_store: Arc::default(),
+            start_mode,
         });
         let owner: Arc<dyn tidb_owner::Manager> = match notifier.as_ref() {
             Some(etcd) => Arc::new(tidb_owner::OwnerManager::new(
@@ -3124,6 +3131,9 @@ where
                     | DdlStatement::CreateResourceGroup { .. }
                     | DdlStatement::AlterResourceGroup { .. }
                     | DdlStatement::DropResourceGroup { .. }
+                    | DdlStatement::CreateMaskingPolicy { .. }
+                    | DdlStatement::AlterMaskingPolicy { .. }
+                    | DdlStatement::DropMaskingPolicy { .. }
                     | DdlStatement::LockTables { .. }
                     | DdlStatement::UnlockTables { .. }
                     | DdlStatement::AlterTableMode { .. }
@@ -3151,7 +3161,8 @@ where
                 self.scheduler.session_pool.as_ref(),
                 self.min_job_id_refresher.get_curr_min_job_id(),
                 &KvTableIndexBackfiller::new(&self.scheduler.row_ids, &self.scheduler.session_pool)
-                    .with_region_store(self.scheduler.region_store.get().cloned()),
+                    .with_region_store(self.scheduler.region_store.get().cloned())
+                    .with_start_mode(self.scheduler.start_mode),
                 self.auto_ids.as_ref(),
             )
             .map_err(cluster_ddl_error)?
@@ -3436,6 +3447,8 @@ struct KvTableIndexBackfiller {
     session_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
     /// Go `jobCtx.store`'s region cache and PD client.
     region_store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
+    /// Go `jobCtx.oldDDLCtx.startMode`.
+    start_mode: crate::StartMode,
 }
 
 impl KvTableIndexBackfiller {
@@ -3447,7 +3460,13 @@ impl KvTableIndexBackfiller {
             row_ids: Arc::clone(row_ids),
             session_pool: Arc::clone(session_pool),
             region_store: None,
+            start_mode: crate::StartMode::Normal,
         }
+    }
+
+    fn with_start_mode(mut self, start_mode: crate::StartMode) -> Self {
+        self.start_mode = start_mode;
+        self
     }
 
     fn with_region_store(mut self, store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>) -> Self {
@@ -3463,6 +3482,10 @@ impl IndexBackfiller for KvTableIndexBackfiller {
 
     fn region_store(&self) -> Option<Arc<dyn tidb_kv::region_map::RegionStore>> {
         self.region_store.clone()
+    }
+
+    fn start_mode(&self) -> crate::StartMode {
+        self.start_mode
     }
 
     fn system_row_ids(&self) -> Arc<dyn tidb_table::table_from_meta::TableAutoIds> {

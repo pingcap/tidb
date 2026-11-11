@@ -105,7 +105,7 @@ fn alter_table_mode_runs_as_a_persisted_job_like_go() {
 }
 
 /// What `sql` is refused with (`code|message`), `None` when it runs.
-fn refusal(session: &mut Session, sql: &str) -> Option<String> {
+pub(super) fn refusal(session: &mut Session, sql: &str) -> Option<String> {
     use crate::domain::resultset_source::ResultSetSource;
     let mut result = match session.node_conn().execute(sql) {
         Ok(result) => result,

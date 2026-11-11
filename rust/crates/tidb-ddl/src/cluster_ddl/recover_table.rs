@@ -41,6 +41,8 @@ pub struct DdlStepWorker {
     pub store: Option<Arc<dyn SnapshotMetaAt>>,
     /// Go `jobCtx.store`'s region cache and PD client.
     pub region_store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
+    /// Go `jobCtx.oldDDLCtx.startMode`.
+    pub start_mode: crate::StartMode,
 }
 
 impl std::fmt::Debug for DdlStepWorker {

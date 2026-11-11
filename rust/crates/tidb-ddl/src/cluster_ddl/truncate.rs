@@ -147,6 +147,10 @@ pub(super) fn on_truncate_table(
             args.new_partition_ids.get().snapshot(),
         )
     };
+    // Go `onTruncateTable`'s `updateMaskingPolicyTableIDAfterTruncate`: the
+    // policies follow the table to its new id.
+    super::masking_policy::update_masking_policy_table_id_after_truncate(txn, stored.id, new_table_id)
+        .map_err(|error| cancel_ddl_job(active, error))?;
     let old_partition_ids = add_index::partition_ids(&stored);
     let mut mutations = Vec::new();
     let mut placement_bundles = Vec::new();

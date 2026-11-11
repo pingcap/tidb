@@ -156,6 +156,12 @@ pub trait ColumnResolver {
         "expression"
     }
 
+    /// The name Go's `toColumn` quotes for a column that resolved to nothing:
+    /// `v.String()`, the reference as written.
+    fn unknown_column_name(&self, path: &[String]) -> String {
+        path.join(".")
+    }
+
     /// Resolves the Go `Column.OrigName` carried by a source column. The
     /// planner uses this metadata for EXPLAIN and diagnostics after a column
     /// crosses a Projection or aggregate boundary; execution still binds by
@@ -349,6 +355,9 @@ impl<T: ColumnResolver + ?Sized> ColumnResolver for &T {
     }
     fn clause_message(&self) -> &'static str {
         (**self).clause_message()
+    }
+    fn unknown_column_name(&self, path: &[String]) -> String {
+        (**self).unknown_column_name(path)
     }
     fn param_value(&self, order: usize) -> Result<Datum, EvalError> {
         (**self).param_value(order)
@@ -1089,7 +1098,10 @@ fn rewrite_expr_resolved_inner(
             return Ok(constant);
         }
         return resolver.resolve_expression(path).ok_or_else(|| {
-            EvalError::UnknownColumnInClause(path.join("."), resolver.clause_message())
+            EvalError::UnknownColumnInClause(
+                resolver.unknown_column_name(path),
+                resolver.clause_message(),
+            )
         });
     }
     let mut built = rewrite_leaf(expr, resolver)?;

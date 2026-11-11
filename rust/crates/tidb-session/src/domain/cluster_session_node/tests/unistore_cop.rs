@@ -48,6 +48,7 @@ mod upgrade;
 mod tiflash_partition;
 mod table_mode;
 mod repair_table;
+mod masking_policy;
 mod ddl_analyze;
 mod dxf_framework;
 mod dxf_integrationtests;
@@ -27224,6 +27225,7 @@ fn a_step_sessions_statements_all_commit_with_the_step_as_go() {
             pool: pool.clone(),
             buffer: buffer.clone(),
             sql: Default::default(),
+            start_mode: tidb_ddl::StartMode::Normal,
         };
         for a in [1, 2, 3] {
             step.execute(

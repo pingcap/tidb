@@ -635,6 +635,16 @@ pub(super) fn on_rename_table(
             info,
             info.new_schema_id,
         )?;
+        // Go `updateMaskingPolicyNamesAfterRename`; `rename_one` already
+        // cancelled the job over a missing target database.
+        if let Some(new_database) = catalog.schema_by_id(info.new_schema_id) {
+            super::masking_policy::update_masking_policy_names_after_rename(
+                txn,
+                info.table_id,
+                &new_database.read().name,
+                &info.new_table_name,
+            )?;
+        }
     }
     tables.write(txn)?;
     set_rename_diff(&mut diff, single, &infos, |info| info.old_schema_id, active);

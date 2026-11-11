@@ -65,9 +65,10 @@ pub mod pre_split;
 pub use worker::{ClusterDdl, RealClusterDdl};
 
 /// Go `ddl.StartMode`: the mode a node starts its DDL in. `Upgrade` forces
-/// the node to be the DDL owner; Go's other readers -- the executor's `BR`
-/// checks and the masking-policy DDL's bootstrap tolerance -- belong to
-/// executor methods this port lacks (D01).
+/// the node to be the DDL owner, and outside `Normal` the masking-policy
+/// hooks tolerate a `mysql.tidb_masking_policy` that does not exist yet;
+/// Go's other readers -- the executor's `BR` checks -- belong to executor
+/// methods this port lacks (D01).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StartMode {
     /// Go `Normal` mode, cluster is in normal state.

@@ -543,6 +543,11 @@ pub struct TableColumnResolver<'a> {
     /// rewriter reads while folding temporal literals in the expression.
     zone: tidb_datatype::SessionTimeZone,
     like_default_escape: u8,
+    /// Go `SessionVars.CurrentDB` of the session the expression builds in.
+    current_database: Option<String>,
+    /// Go `WithTableInfo`'s `sourceTable` name: the only table qualifier a
+    /// column reference may carry.
+    source_table: Option<String>,
     /// The columns successfully resolved, in first-seen order, as (offset,
     /// name). This order IS the namespace the built expression indexes: a
     /// `Column` node's `index` is a position in this list, never a position
@@ -570,6 +575,8 @@ impl<'a> TableColumnResolver<'a> {
             types,
             zone,
             like_default_escape: b'\\',
+            current_database: None,
+            source_table: None,
             seen: RefCell::new(Vec::new()),
             missing: RefCell::new(None),
             zone_read: Cell::new(false),
@@ -588,6 +595,31 @@ impl<'a> TableColumnResolver<'a> {
         let mut resolver = Self::new(names, types, zone);
         resolver.like_default_escape = like_default_escape;
         resolver
+    }
+
+    /// The resolver building in a session whose current database is
+    /// `database`, which names the schema an unknown function is missing from.
+    #[must_use]
+    pub fn with_current_database(mut self, database: &str) -> Self {
+        self.current_database = (!database.is_empty()).then(|| database.to_owned());
+        self
+    }
+
+    /// The resolver of Go's `expression.WithTableInfo("", table)`: a column
+    /// qualified by another table is unknown (`toColumn`'s
+    /// `er.sourceTable.Name.L == v.Table.L`).
+    #[must_use]
+    pub fn with_source_table(mut self, table: &str) -> Self {
+        self.source_table = Some(table.to_owned());
+        self
+    }
+
+    /// Whether Go's `toColumn` looks `path` up in the source table.
+    fn names_source_table(&self, path: &[String]) -> bool {
+        match (&self.source_table, path.len().checked_sub(2)) {
+            (Some(table), Some(qualifier)) => path[qualifier].go_lower_eq(table),
+            _ => true,
+        }
     }
 
     /// The column offsets the expression referenced, in the table the
@@ -636,6 +668,10 @@ impl ColumnResolver for TableColumnResolver<'_> {
         true
     }
 
+    fn current_database(&self) -> Option<String> {
+        self.current_database.clone()
+    }
+
     fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
         self.zone_read.set(true);
         self.zone.clone()
@@ -646,12 +682,24 @@ impl ColumnResolver for TableColumnResolver<'_> {
         self.like_default_escape
     }
 
+    /// Go `toColumn`: a column missing from the source table is quoted by
+    /// its name alone, a reference to another table as written.
+    fn unknown_column_name(&self, path: &[String]) -> String {
+        match path.last() {
+            Some(name) if self.source_table.is_some() && self.names_source_table(path) => {
+                name.clone()
+            }
+            _ => path.join("."),
+        }
+    }
+
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
         let name = path.last()?;
         let offset = self
             .names
             .iter()
-            .position(|candidate| candidate.go_lower_eq(name));
+            .position(|candidate| candidate.go_lower_eq(name))
+            .filter(|_| self.names_source_table(path));
         match offset {
             Some(offset) => {
                 let mut seen = self.seen.borrow_mut();

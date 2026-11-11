@@ -91,6 +91,9 @@ impl ColumnResolver for FoldModeResolver<'_> {
     fn clause_message(&self) -> &'static str {
         self.base.clause_message()
     }
+    fn unknown_column_name(&self, path: &[String]) -> String {
+        self.base.unknown_column_name(path)
+    }
 
     fn orig_name(&self, path: &[String]) -> Option<String> {
         self.base.orig_name(path)

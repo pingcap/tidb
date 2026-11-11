@@ -175,6 +175,22 @@ pub trait DdlExec {
         &mut self,
         ddl: &tidb_ast::DdlStmt,
     ) -> Result<Option<DdlStatement>, SqlQueryError>;
+    /// Go `executor.CreateMaskingPolicy` and the `ALTER TABLE ... MASKING
+    /// POLICY` functions' checks, run over a statement snapshot (they read
+    /// `mysql.tidb_masking_policy`); `None` is an
+    /// `IF NOT EXISTS` that filed its note.
+    fn probe_masking_policy_statement(
+        &mut self,
+        ddl: &tidb_ast::DdlStmt,
+    ) -> Result<Option<DdlStatement>, SqlQueryError>;
+    /// Whether `ddl` is one of Go's masking-policy statements.
+    fn is_masking_policy_statement(&self, ddl: &tidb_ast::DdlStmt) -> bool;
+    /// Go `checkMaskingPolicyOnModifyColumn`, run once `ModifyColumn` /
+    /// `ChangeColumn` built its job.
+    fn probe_masking_policy_on_modify_column(
+        &mut self,
+        ddl: &tidb_ast::DdlStmt,
+    ) -> Result<(), SqlQueryError>;
     /// Go `executeCreateView`'s preprocess of the body, over a statement
     /// snapshot: the database, name, `OR REPLACE` and the resolved view.
     fn probe_cluster_view(
@@ -331,6 +347,21 @@ pub trait DdlExec {
                 )));
             }
         }
+        // Go `executor.CreateMaskingPolicy` and the masking-policy
+        // `ALTER TABLE` specs check against the session's schema and
+        // `mysql.tidb_masking_policy` before the job.
+        if let Stmt::Ddl(ddl) = stmt {
+            if self.is_masking_policy_statement(ddl) {
+                let statement = self.probe_masking_policy_statement(ddl)?;
+                return Ok(LoweredDdl::one(statement.unwrap_or(
+                    DdlStatement::AcceptedNoOp {
+                        schema: String::new(),
+                        table: String::new(),
+                        warning: None,
+                    },
+                )));
+            }
+        }
         // A CREATE VIEW resolves its body against this node's own
         // catalog FIRST — a bad body fails here, at CREATE time,
         // exactly where Go's `executeCreateView` preprocess fails —
@@ -354,6 +385,9 @@ pub trait DdlExec {
         let ddl_context: tidb_ddl::cluster_ddl::DdlContext = Arc::new(context.clone());
         match prepare_cluster_ddl_parsed(stmt, self.current_database(), &ddl_context) {
             Ok(Some(statement)) => {
+                if let Stmt::Ddl(ddl) = stmt {
+                    self.probe_masking_policy_on_modify_column(ddl)?;
+                }
                 // Warnings the LOWERING produced (an ignored CHECK
                 // constraint, Go ddl/create_table.go:1470) belong to
                 // this statement; Go appends them to the session's

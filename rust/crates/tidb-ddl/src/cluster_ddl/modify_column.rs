@@ -1968,6 +1968,13 @@ fn finish_modify_column_without_reorg(
         active.job.state = JobState::ROLLINGBACK;
         return Err(error);
     }
+    // Go `syncMaskingPolicyForModifiedColumn`.
+    if let Err(error) =
+        super::masking_policy::sync_masking_policy_for_modified_column(txn, &target.info, &old, new)
+    {
+        active.job.state = JobState::ROLLINGBACK;
+        return Err(error);
+    }
     let children = adjust_foreign_key_children(catalog, active, &mut target.info, new, &old)?;
     if let Err(error) = check_table_info_valid(&target.info) {
         // Go: the NOT NULL change was already in the definition.
@@ -3147,6 +3154,15 @@ fn do_modify_column_type_with_data(
             }
             let mut removed = remove_old_objects(&mut target.info, &target.old, &old_indexes);
             removed.extend(ingest_temp_index_ids(&active.job, &changing_indexes));
+            // Go `syncMaskingPolicyForModifiedColumn(tblInfo, oldCol, targetCol)`.
+            let mut target_col = changing.read().clone_like_go();
+            target_col.name = column_name.clone();
+            super::masking_policy::sync_masking_policy_for_modified_column(
+                txn,
+                &target.info,
+                &target.old.read(),
+                &target_col,
+            )?;
             let mut write = update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
             // Go `asyncNotifyEvent(NewModifyColumnEvent(...))`.
             if !tidb_metadef::is_mem_or_sys_db(&active.job.schema_name.to_string().go_to_lower()) {

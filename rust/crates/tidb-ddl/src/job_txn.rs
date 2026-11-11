@@ -89,6 +89,14 @@ impl<'a> JobTxn<'a> {
         self.session.clone()
     }
 
+    /// Go `jobCtx.oldDDLCtx.startMode`.
+    #[must_use]
+    pub fn start_mode(&self) -> crate::StartMode {
+        self.session
+            .as_ref()
+            .map_or(crate::StartMode::Normal, |session| session.start_mode)
+    }
+
     /// Go `w.sess.Execute(ctx, sql, label)` in the step's transaction;
     /// `None` when the step runs without a session.
     ///
@@ -176,6 +184,8 @@ pub struct StepSession {
     /// Go `w.sess` itself: the step's one session, opened at its first
     /// statement and shared by every statement of the step.
     pub sql: StepSqlSlot,
+    /// Go `jobCtx.oldDDLCtx.startMode`.
+    pub start_mode: crate::StartMode,
 }
 
 /// The slot of a step's one session (see [`StepSession::sql`]).

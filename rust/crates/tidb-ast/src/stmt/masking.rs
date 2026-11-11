@@ -78,7 +78,8 @@ impl MaskingPolicyRestrictOps {
         true
     }
 
-    fn names(self) -> impl Iterator<Item = &'static str> {
+    /// The restricted operations' names, in declaration order.
+    pub fn names(self) -> impl Iterator<Item = &'static str> {
         [
             (Self::INSERT_INTO_SELECT, "INSERT_INTO_SELECT"),
             (Self::UPDATE_SELECT, "UPDATE_SELECT"),

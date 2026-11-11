@@ -280,6 +280,10 @@ pub(super) fn on_drop_column(
         original_state != new_state,
         start_ts,
     )?;
+    if finished && !active.job.is_rollingback() {
+        // Go `onDropColumn`'s `dropMaskingPoliciesOnColumn`.
+        super::masking_policy::drop_masking_policies_on_column(txn, info.id, column.read().id)?;
+    }
     if finished {
         if active.job.is_rollingback() {
             active.job.finish_table_job(

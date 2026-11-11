@@ -12,18 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Runnable rename-table portion of Go
-//! `pkg/ddl/masking_policy_test.go::TestMaskingPolicyRenameTableNoPolicy`.
-//! Masking-policy DDL and its system-table state are not implemented, so this
-//! module makes no claim for those parts of the Go test.
+//! Go `pkg/ddl/masking_policy_test.go::TestMaskingPolicyRenameTableNoPolicy`.
 
 use crate::support::testkit::TestKit;
 
-/// Go `masking_policy_test.go:143::TestMaskingPolicyRenameTableNoPolicy`,
-/// runnable half. Go renames a table that carries NO policy and asserts
-/// the rename succeeds, the data reads back, and the policy count stays 0.
-/// The rename + read-back half runs here; the `select count(*) from
-/// mysql.tidb_masking_policy` assertion needs the unimplemented sys table.
+/// Go `masking_policy_test.go:143::TestMaskingPolicyRenameTableNoPolicy`:
+/// renaming a table that carries no policy succeeds, the data reads back,
+/// and the policy count stays 0.
 #[test]
 fn masking_policy_rename_table_without_a_policy_renames_and_reads_back() {
     let mut tk = TestKit::new();
@@ -38,6 +33,5 @@ fn masking_policy_rename_table_without_a_policy_renames_and_reads_back() {
 
     // Verify no error and table works.
     tk.must_query("select c from new_table").check(["secret"]);
-    // The sys-table-count assertion (Go: count(*) == 0) is the documented
-    // masking-store gap; nothing here can observe it.
+    tk.must_query("select count(*) from mysql.tidb_masking_policy").check(["0"]);
 }

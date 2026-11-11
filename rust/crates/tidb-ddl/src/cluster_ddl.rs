@@ -574,6 +574,30 @@ pub enum DdlStatement {
         /// The group being dropped.
         group: Box<tidb_model::ResourceGroupInfo>,
     },
+    /// Go `CreateMaskingPolicy` / `AddMaskingPolicy` -> the
+    /// `ActionCreateMaskingPolicy` job (`onCreateMaskingPolicy`).
+    CreateMaskingPolicy {
+        /// The policy `buildMaskingPolicyInfo` built.
+        policy: Box<tidb_model::MaskingPolicyInfo>,
+        /// `CREATE OR REPLACE`.
+        replace_on_exist: bool,
+    },
+    /// Go `alterMaskingPolicyWithInfo` -> the `ActionAlterMaskingPolicy`
+    /// job (`onAlterMaskingPolicy`).
+    AlterMaskingPolicy {
+        /// The existing policy with the statement's change applied.
+        policy: Box<tidb_model::MaskingPolicyInfo>,
+        /// The existing policy's id.
+        policy_id: i64,
+        /// The job's `SchemaName`.
+        schema_name: String,
+    },
+    /// Go `DropMaskingPolicy` -> the `ActionDropMaskingPolicy` job
+    /// (`onDropMaskingPolicy`).
+    DropMaskingPolicy {
+        /// The policy being dropped.
+        policy: Box<tidb_model::MaskingPolicyInfo>,
+    },
     /// Go `AlterTableAffinity` -> the `ActionAlterTableAffinity` job
     /// (`onAlterTableAffinity`): the table's affinity and its PD groups.
     AlterTableAffinity {
@@ -5273,6 +5297,7 @@ pub mod foreign_key;
 pub mod modify_column;
 pub mod multi_schema;
 pub mod partition;
+pub mod masking_policy;
 pub mod placement_policy;
 pub mod rename_table;
 pub mod repair_table;
@@ -5331,6 +5356,9 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_CREATE_RESOURCE_GROUP
             | ActionType::ACTION_ALTER_RESOURCE_GROUP
             | ActionType::ACTION_DROP_RESOURCE_GROUP
+            | ActionType::ACTION_CREATE_MASKING_POLICY
+            | ActionType::ACTION_ALTER_MASKING_POLICY
+            | ActionType::ACTION_DROP_MASKING_POLICY
             | ActionType::ACTION_LOCK_TABLE
             | ActionType::ACTION_UNLOCK_TABLE
             | ActionType::ACTION_ALTER_TABLE_MODE
@@ -5409,6 +5437,7 @@ fn step_session(worker: Option<&DdlStepWorker>) -> Option<crate::job_txn::StepSe
         pool: std::sync::Arc::clone(&worker.sess_pool),
         buffer: worker.step_buffer.clone(),
         sql: std::sync::Arc::clone(&worker.step_sql),
+        start_mode: worker.start_mode,
     })
 }
 
@@ -5517,6 +5546,15 @@ fn dispatch_persisted_action(
         }
         ActionType::ACTION_DROP_RESOURCE_GROUP => {
             resource_group::on_drop_resource_group(txn, catalog, active)
+        }
+        ActionType::ACTION_CREATE_MASKING_POLICY => {
+            masking_policy::on_create_masking_policy(txn, catalog, active)
+        }
+        ActionType::ACTION_ALTER_MASKING_POLICY => {
+            masking_policy::on_alter_masking_policy(txn, catalog, active)
+        }
+        ActionType::ACTION_DROP_MASKING_POLICY => {
+            masking_policy::on_drop_masking_policy(txn, active)
         }
         ActionType::ACTION_LOCK_TABLE => {
             table_lock::on_lock_tables(txn, active, start_ts)
@@ -6810,6 +6848,18 @@ fn plan_persisted_drop_schema_job_step(
         for table in &tables {
             affinity_groups.delete_table_affinity_groups_in_pd(table, None);
         }
+        // Go `onDropSchema`'s `dropMaskingPoliciesByDBName`: a failure is
+        // logged and the drop continues.
+        let schema_name = active.job.schema_name.to_string();
+        if let Err(error) = masking_policy::drop_masking_policies_by_db_name(txn, &schema_name) {
+            tidb_ddl_logutil::ddl_logger().warn(
+                "failed to delete masking policies for database, but operation will continue",
+                &[
+                    tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+                    tidb_log::Field::new("dbName", tidb_log::Value::Str(schema_name)),
+                ],
+            );
+        }
         // Go splits the drop-schema events, 100 tables each (500 past
         // 100,000 tables), under sub-job ids 0, 1, ...
         if !tidb_metadef::is_mem_or_sys_db(&db_info.name.lowercase().go_to_lower()) {
@@ -6981,6 +7031,8 @@ fn plan_persisted_drop_table_job_step(
         }
         // Go `onDropTableOrView`'s `deleteTableAffinityGroupsInPD`.
         affinity_groups.delete_table_affinity_groups_in_pd(&table, None);
+        // Go `onDropTableOrView`'s `dropMaskingPoliciesOnTable`.
+        masking_policy::drop_masking_policies_on_table(txn, table.id)?;
         let old_partition_ids = add_index::partition_ids(&table);
         let codec = tidb_ddl_label::CodecV1;
         let schema_name = active.job.schema_name.to_string();
@@ -7254,6 +7306,9 @@ fn plan_cancel_persisted_ddl_job(
         | ActionType::ACTION_CREATE_RESOURCE_GROUP
         | ActionType::ACTION_ALTER_RESOURCE_GROUP
         | ActionType::ACTION_DROP_RESOURCE_GROUP
+        | ActionType::ACTION_CREATE_MASKING_POLICY
+        | ActionType::ACTION_ALTER_MASKING_POLICY
+        | ActionType::ACTION_DROP_MASKING_POLICY
         | ActionType::ACTION_LOCK_TABLE
         | ActionType::ACTION_UNLOCK_TABLE => true,
         // `cancelOnlyNotHandledJob(job, model.StateNone)`.

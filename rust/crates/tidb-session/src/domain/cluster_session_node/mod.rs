@@ -1591,6 +1591,37 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         })
     }
 
+    fn probe_masking_policy_statement(
+        &mut self,
+        ddl: &tidb_ast::DdlStmt,
+    ) -> Result<Option<DdlStatement>, SqlQueryError> {
+        let resource_group = self.session.current_resource_group().to_owned();
+        self.probe_statement(StatementReadShape::Unknown, &resource_group, |session| {
+            session
+                .cluster_masking_policy_statement(ddl)
+                .map_err(map_error)
+        })
+    }
+
+    fn is_masking_policy_statement(&self, ddl: &tidb_ast::DdlStmt) -> bool {
+        Session::is_masking_policy_statement(ddl)
+    }
+
+    fn probe_masking_policy_on_modify_column(
+        &mut self,
+        ddl: &tidb_ast::DdlStmt,
+    ) -> Result<(), SqlQueryError> {
+        if !Session::modifies_column_type(ddl) {
+            return Ok(());
+        }
+        let resource_group = self.session.current_resource_group().to_owned();
+        self.probe_statement(StatementReadShape::Unknown, &resource_group, |session| {
+            session
+                .check_masking_policy_on_modify_column(ddl)
+                .map_err(map_error)
+        })
+    }
+
     fn probe_cluster_view(
         &mut self,
         stmt: &Stmt,

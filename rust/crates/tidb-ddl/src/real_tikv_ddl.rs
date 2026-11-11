@@ -416,6 +416,11 @@ pub trait IndexBackfiller: Sync {
         None
     }
 
+    /// Go `jobCtx.oldDDLCtx.startMode`.
+    fn start_mode(&self) -> crate::StartMode {
+        crate::StartMode::Normal
+    }
+
     /// Go `jobCtx.store`'s region cache and PD client. `None` for a worker
     /// without one.
     fn region_store(&self) -> Option<Arc<dyn tidb_kv::region_map::RegionStore>> {
@@ -954,6 +959,7 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
             timeout,
         })),
         region_store: backfiller.region_store(),
+        start_mode: backfiller.start_mode(),
     });
     loop {
         schema_state.mdl_enabled =
@@ -1298,6 +1304,17 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 upgrading,
             )
         }
+        DdlStatement::CreateMaskingPolicy { .. }
+        | DdlStatement::AlterMaskingPolicy { .. }
+        | DdlStatement::DropMaskingPolicy { .. } => {
+            crate::cluster_ddl::masking_policy::prepare_masking_policy_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+            )
+        }
         DdlStatement::ExchangePartition { .. } => {
             crate::cluster_ddl::exchange_partition::exchange_table_partition(
                 snapshot,
@@ -1570,6 +1587,7 @@ pub fn build_ddl_job<S: StoreClient>(
                     step_sql: Default::default(),
                     store: None,
                     region_store: None,
+                    start_mode: backfiller.start_mode(),
                 };
                 let gc_safe_point = crate::cluster_ddl::recover_gc_safe_point(&worker)?;
                 let catalog = load_info_schema(&mut snapshot).map_err(DdlPlanError::Meta)?;
@@ -2134,6 +2152,7 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
                 pool,
                 buffer: buffer.clone(),
                 sql: Arc::clone(&step_sql),
+                start_mode: backfiller.start_mode(),
             });
             let checkpoint = transaction
                 .snapshot()
@@ -2215,6 +2234,7 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
                     pool: Arc::clone(pool),
                     buffer: buffer.clone(),
                     sql: Arc::clone(&step_sql),
+                    start_mode: backfiller.start_mode(),
                 },
                 start_ts,
                 write.ddl_job_id,

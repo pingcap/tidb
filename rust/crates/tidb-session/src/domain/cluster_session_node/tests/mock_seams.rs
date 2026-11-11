@@ -584,6 +584,9 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::CreateResourceGroup { .. }
             | DdlStatement::AlterResourceGroup { .. }
             | DdlStatement::DropResourceGroup { .. }
+            | DdlStatement::CreateMaskingPolicy { .. }
+            | DdlStatement::AlterMaskingPolicy { .. }
+            | DdlStatement::DropMaskingPolicy { .. }
             | DdlStatement::UpdateTiFlashReplicaStatus { .. }
             | DdlStatement::AlterTableMode { .. }
             | DdlStatement::RefreshMeta { .. }
