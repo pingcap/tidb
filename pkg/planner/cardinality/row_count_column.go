@@ -126,15 +126,7 @@ func GetRowCountByIntColumnRanges(sctx planctx.PlanContext, coll *statistics.His
 }
 
 // equalRowCountOnColumn estimates the row count by a slice of Range and a Datum.
-func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val types.Datum, encodedVal []byte, realtimeRowCount, modifyCount int64) (float64, error) {
-	return equalRowCountOnColumnImpl(sctx, c, val, encodedVal, realtimeRowCount, modifyCount, false)
-}
-
-// equalRowCountOnColumnImpl is equalRowCountOnColumn. rangeBound is set for
-// the bound adjustments of an interval in GetColumnRowCount: there, a bucket
-// upper whose Repeat is zero keeps its zero, because betweenRowCountOnColumn
-// already counts that upper's rows inside the bucket.
-func equalRowCountOnColumnImpl(sctx planctx.PlanContext, c *statistics.Column, val types.Datum, encodedVal []byte, realtimeRowCount, modifyCount int64, rangeBound bool) (result float64, err error) {
+func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val types.Datum, encodedVal []byte, realtimeRowCount, modifyCount int64) (result float64, err error) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		debugtrace.RecordAnyValuesWithNames(sctx, "Value", val.String(), "Encoded", encodedVal)
@@ -185,7 +177,7 @@ func equalRowCountOnColumnImpl(sctx planctx.PlanContext, c *statistics.Column, v
 	// when the estimated NDV exceeds the histogram's row count. Fall
 	// through to the uniform estimate rather than report an exact zero.
 	// also check if this last bucket end value is underrepresented
-	if matched && (histCnt > 0 || rangeBound) && !IsLastBucketEndValueUnderrepresented(sctx,
+	if matched && histCnt > 0 && !IsLastBucketEndValueUnderrepresented(sctx,
 		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
 		return histCnt, nil
 	}
@@ -287,7 +279,7 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		// And because we use (2, MaxValue] to represent expressions like a > 2 and use [MinNotNull, 3) to represent
 		//   expressions like b < 3, we need to exclude the special values.
 		if rg.LowExclude && !lowVal.IsNull() && lowVal.Kind() != types.KindMaxValue && lowVal.Kind() != types.KindMinNotNull {
-			lowCnt, err := equalRowCountOnColumnImpl(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount, true)
+			lowCnt, err := equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -298,7 +290,7 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			cnt += float64(c.NullCount)
 		}
 		if !rg.HighExclude && highVal.Kind() != types.KindMaxValue && highVal.Kind() != types.KindMinNotNull {
-			highCnt, err := equalRowCountOnColumnImpl(sctx, c, highVal, highEncoded, realtimeRowCount, modifyCount, true)
+			highCnt, err := equalRowCountOnColumn(sctx, c, highVal, highEncoded, realtimeRowCount, modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
