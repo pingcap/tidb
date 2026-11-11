@@ -3126,6 +3126,8 @@ where
                     | DdlStatement::DropResourceGroup { .. }
                     | DdlStatement::LockTables { .. }
                     | DdlStatement::UnlockTables { .. }
+                    | DdlStatement::AlterTableMode { .. }
+                    | DdlStatement::RefreshMeta { .. }
                     | DdlStatement::AddPartitions { .. }
                     | DdlStatement::DropPartitions { .. }
                     | DdlStatement::TruncatePartitions { .. }

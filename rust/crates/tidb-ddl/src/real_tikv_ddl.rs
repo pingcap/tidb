@@ -1349,6 +1349,15 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 upgrading,
             )
         }
+        DdlStatement::AlterTableMode { .. } | DdlStatement::RefreshMeta { .. } => {
+            crate::cluster_ddl::table_mode::alter_table_mode(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+            )
+        }
         DdlStatement::ModifySchemaCharsetAndCollate { .. }
         | DdlStatement::ModifySchemaDefaultPlacement { .. } => {
             crate::cluster_ddl::alter_schema::alter_schema(

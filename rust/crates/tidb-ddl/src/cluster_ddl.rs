@@ -630,6 +630,29 @@ pub enum DdlStatement {
         /// Go `Available`.
         available: bool,
     },
+    /// Go `executor.AlterTableMode` -> the `ActionAlterTableMode` job, the
+    /// internal DDL IMPORT INTO and BR switch a table's mode with. Resolved
+    /// by ID (Go's API takes `AlterTableModeArgs`).
+    AlterTableMode {
+        /// Go `AlterTableModeArgs.TableMode`.
+        table_mode: tidb_model::TableMode,
+        /// Go `AlterTableModeArgs.SchemaID`.
+        schema_id: i64,
+        /// Go `AlterTableModeArgs.TableID`.
+        table_id: i64,
+    },
+    /// Go `executor.RefreshMeta` -> the `ActionRefreshMeta` job: BR's log
+    /// restore wrote meta KV directly, and every node reloads the table.
+    RefreshMeta {
+        /// Go `RefreshMetaArgs.SchemaID`.
+        schema_id: i64,
+        /// Go `RefreshMetaArgs.TableID`.
+        table_id: i64,
+        /// Go `RefreshMetaArgs.InvolvedDB`.
+        involved_db: String,
+        /// Go `RefreshMetaArgs.InvolvedTable`.
+        involved_table: String,
+    },
     /// The AUTO_RANDOM portion of `ALTER TABLE ... MODIFY COLUMN`.
     AlterAutoRandomBits {
         /// Database containing the table.
@@ -5235,6 +5258,7 @@ pub mod rename_table;
 pub mod reorganize_partition;
 pub mod resource_group;
 pub mod table_lock;
+pub mod table_mode;
 pub mod truncate;
 mod recover_table;
 pub use recover_table::{
@@ -5288,6 +5312,8 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_DROP_RESOURCE_GROUP
             | ActionType::ACTION_LOCK_TABLE
             | ActionType::ACTION_UNLOCK_TABLE
+            | ActionType::ACTION_ALTER_TABLE_MODE
+            | ActionType::ACTION_REFRESH_META
             | ActionType::ACTION_ADD_TABLE_PARTITION
             | ActionType::ACTION_DROP_TABLE_PARTITION
             | ActionType::ACTION_TRUNCATE_TABLE_PARTITION
@@ -5525,6 +5551,10 @@ fn dispatch_persisted_action(
         ActionType::ACTION_RENAME_TABLE | ActionType::ACTION_RENAME_TABLES => {
             rename_table::on_rename_table(txn, catalog, active, start_ts)
         }
+        ActionType::ACTION_ALTER_TABLE_MODE => {
+            table_mode::on_alter_table_mode(txn, active, start_ts)
+        }
+        ActionType::ACTION_REFRESH_META => table_mode::on_refresh_meta(txn, active),
         ActionType::ACTION_DROP_SCHEMA => {
             plan_persisted_drop_schema_job_step(txn, catalog, active, row_ids)
         }

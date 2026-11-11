@@ -585,6 +585,8 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::AlterResourceGroup { .. }
             | DdlStatement::DropResourceGroup { .. }
             | DdlStatement::UpdateTiFlashReplicaStatus { .. }
+            | DdlStatement::AlterTableMode { .. }
+            | DdlStatement::RefreshMeta { .. }
             | DdlStatement::TruncateTable { .. }
             | DdlStatement::RecoverTable { .. }
             | DdlStatement::FlashbackDatabase { .. } => {

@@ -46,6 +46,7 @@ use crate::domain::unistore_node::{unistore_cluster_session_stack, UnistoreClust
 mod go_executor_protocol;
 mod upgrade;
 mod tiflash_partition;
+mod table_mode;
 mod ddl_analyze;
 mod dxf_framework;
 mod dxf_integrationtests;
