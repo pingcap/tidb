@@ -26,6 +26,7 @@ go_test(
     ],
     embed = [":matchagainst"],
     flaky = False,
+    shard_count = 3,
     deps = [
         "@com_github_stretchr_testify//require",
     ],

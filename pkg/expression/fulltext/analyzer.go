@@ -378,7 +378,7 @@ func runeAtByte(text string, offset int) (rune, int) {
 }
 
 func isTokenChar(ch rune) bool {
-	// Local MATCH protocol version 2 requires Go Unicode 15.0.0; the full-character regression
+	// Local MATCH protocol version 2 requires Go Unicode 17.0.0; the full-character regression
 	// test fails on a different version or a changed classification. TiFlash
 	// uses a table generated from this same standard-library rule.
 	return unicode.IsLetter(ch) || unicode.IsNumber(ch) || ch == '_'

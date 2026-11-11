@@ -39,9 +39,9 @@ func TestPreserveUnderscoreTokenize(t *testing.T) {
 }
 
 func TestPreserveUnderscoreTokenizeUnicodeProtocol(t *testing.T) {
-	require.Equal(t, "15.0.0", unicode.Version, "Local MATCH requires Unicode 15.0.0")
-	tokens := PreserveUnderscoreTokenize("foo🙃bar foo👁bar foo𞤀bar foo𝟙bar foo\U0002EBF0bar foo\xffbar")
-	want := []string{"foo", "bar", "foo", "bar", "foo", "bar", "foo", "bar", "foo", "bar", "foo", "bar"}
+	require.Equal(t, "17.0.0", unicode.Version, "Local MATCH requires Unicode 17.0.0")
+	tokens := PreserveUnderscoreTokenize("foo🙃bar foo👁bar foo𞤀bar foo𝟙bar foo\U0002EBF0bar foo\xffbar foo\u088Fbar")
+	want := []string{"foo", "bar", "foo", "bar", "foo", "bar", "foo", "bar", "foo", "bar", "foo", "bar", "foo\u088Fbar"}
 	require.Len(t, tokens, len(want))
 	for i, text := range want {
 		require.Equal(t, Token{Text: text, Position: i}, tokens[i])
@@ -67,7 +67,7 @@ func TestNgramDocumentScanner(t *testing.T) {
 }
 
 func TestLocalMatchTokenClassification(t *testing.T) {
-	require.Equal(t, "15.0.0", unicode.Version, "Local MATCH requires Unicode 15.0.0")
+	require.Equal(t, "17.0.0", unicode.Version, "Local MATCH requires Unicode 17.0.0")
 	fingerprint := uint64(14695981039346656037)
 	for r := rune(0); r <= unicode.MaxRune; r++ {
 		got := isTokenChar(r)
@@ -79,7 +79,7 @@ func TestLocalMatchTokenClassification(t *testing.T) {
 		}
 		fingerprint *= 1099511628211
 	}
-	require.Equal(t, uint64(0x71f51f3810b3b529), fingerprint, "Unicode 15.0.0 classification fingerprint: %016x", fingerprint)
+	require.Equal(t, uint64(0x0b93995fa724afa0), fingerprint, "Unicode 17.0.0 classification fingerprint: %016x", fingerprint)
 	for _, r := range []rune{-1, unicode.MaxRune + 1} {
 		require.False(t, isTokenChar(r))
 	}

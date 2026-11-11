@@ -22,11 +22,11 @@ import (
 )
 
 func TestLocalMatchTokenRune(t *testing.T) {
-	// The character classes still use Unicode 15.0.0. Unlike a private table, the standard
+	// The character classes still use Unicode 17.0.0. Unlike a private table, the standard
 	// library follows the toolchain, so an upgrade must fail, never skip this
-	// check. Deploy TiFlash support before TiDB adopts a new semantic version.
-	require.Equal(t, "15.0.0", unicode.Version, "Local MATCH requires Unicode 15.0.0; do not silently upgrade the token semantics")
-	for _, r := range []rune{'a', 'Z', '0', '_', '中', 'é', '𝟙', '𞤀', '\U0002EBF0'} {
+	// check. Keep the TiFlash table in sync with the Go classification.
+	require.Equal(t, "17.0.0", unicode.Version, "Local MATCH requires Unicode 17.0.0; do not silently upgrade the token semantics")
+	for _, r := range []rune{'a', 'Z', '0', '_', '中', 'é', '𝟙', '𞤀', '\u088F', '\U0002EBF0'} {
 		require.Equal(t, r <= 0xFFFF, isNgramWordChar(r), "U+%04X", r)
 	}
 	for _, r := range []rune{-1, ' ', '.', '🙃', '👁', '\u0301', '\uFFFD', unicode.MaxRune + 1} {
