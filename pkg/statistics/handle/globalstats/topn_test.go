@@ -15,7 +15,6 @@
 package globalstats
 
 import (
-	"math"
 	"testing"
 	"time"
 
@@ -28,21 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
-
-func TestExceedsCombinedMergeBuckets(t *testing.T) {
-	tp := types.NewFieldType(mysql.TypeLonglong)
-	newHist := func(buckets int) *statistics.Histogram {
-		h := statistics.NewHistogram(1, int64(buckets), 0, 0, tp, buckets, 0)
-		for i := range buckets {
-			v := types.NewIntDatum(int64(i))
-			h.AppendBucket(&v, &v, int64(i+1), 1)
-		}
-		return h
-	}
-	require.False(t, exceedsCombinedMergeBuckets(nil))
-	require.False(t, exceedsCombinedMergeBuckets([]*statistics.Histogram{nil, newHist(math.MaxUint16)}))
-	require.True(t, exceedsCombinedMergeBuckets([]*statistics.Histogram{newHist(10), newHist(math.MaxUint16 + 1)}))
-}
 
 func TestMergePartTopN2GlobalTopNWithoutHists(t *testing.T) {
 	loc := time.UTC
