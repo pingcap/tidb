@@ -311,21 +311,209 @@ pub(super) fn check_added_primary_key_holds_no_null(
     Ok(())
 }
 
-/// Go `executor.createColumnarIndex` after `getSchemaAndTableByIdent`: a
-/// full-text index outside the starter deployment and a table
-/// `checkTableTypeForColumnarIndex` refuses are Go's errors; this node builds
-/// no columnar index job past them.
-fn create_columnar_index(stored: &TableInfo, columnar: tidb_model::ColumnarIndexType) -> DdlPlanError {
-    if columnar == tidb_model::ColumnarIndexType::FULLTEXT {
-        if let Err(error) = tidb_ddl_build::table_info_build::check_full_text_supported_in_starter() {
-            return DdlPlanError::Admission(error);
+/// Go `checkIndexNameAndColumns` for a columnar index: the name the job
+/// adds, and the note of an `IF NOT EXISTS` over an existing name -- after
+/// which Go goes on with the EMPTY name.
+fn check_index_name_and_columns(
+    stored: &TableInfo,
+    spec: &ColumnarIndexSpec,
+    columnar_index_type: tidb_model::ColumnarIndexType,
+    if_not_exists: bool,
+) -> Result<(String, Vec<tidb_context::SqlWarn>), DdlPlanError> {
+    let mut index_name = spec.index_name.clone();
+    // Deal with anonymous index.
+    if index_name.is_empty() {
+        // Go `getAnonymousIndexPrefix`.
+        let prefix = match spec.parts.first() {
+            Some(tidb_ast::IndexPart::Column { name, .. }) => name.as_str(),
+            _ if columnar_index_type == tidb_model::ColumnarIndexType::VECTOR => "vector_index",
+            _ => "expression_index",
+        };
+        let existing = stored
+            .indices
+            .iter_deref()
+            .map(|index| index.read().name.original().to_owned())
+            .collect::<Vec<_>>();
+        let existing = existing.iter().map(String::as_str).collect::<Vec<_>>();
+        index_name = tidb_ddl_build::index::get_name_for_anonymous_index(&existing, prefix, "");
+    }
+    let mut warnings = Vec::new();
+    if let Some(existing) = find_index(stored, &index_name) {
+        let error = if existing.read().state != SchemaState::PUBLIC {
+            // NOTE: explicit error message. See issue #18363.
+            tidb_dbterror::ERR_DUP_KEY_NAME.gen_with_stack(format!(
+                "index already exist {index_name}; a background job is trying to add the same index, please check by `ADMIN SHOW DDL JOBS`"
+            ))
+        } else {
+            tidb_dbterror::ERR_DUP_KEY_NAME.gen_with_stack_by_args(&[index_name.clone().into()])
+        };
+        if !if_not_exists {
+            return Err(DdlPlanError::from(error));
         }
+        warnings.push(crate::real_tikv_ddl::ddl_note(error));
+        index_name = String::new();
     }
-    if let Err(error) = check_table_type_for_columnar_index(stored) {
-        return error;
+    // Go `checkTooLongIndex`.
+    tidb_ddl_build::check_too_long_identifier(&index_name)
+        .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error)))?;
+    // Go `checkAddColumnTooManyColumns(len(t.Cols()))`, the public columns.
+    let public_columns = stored
+        .columns
+        .iter_deref()
+        .filter(|column| column.read().state == SchemaState::PUBLIC)
+        .count();
+    check_add_column_too_many_columns(public_columns)?;
+    Ok((index_name, warnings))
+}
+
+/// The key parts a columnar index job carries: Go's
+/// `IndexPartSpecification`s with a vector index's `Expr` cleared, since
+/// `FuncExpr` carries it as text.
+fn columnar_job_parts(parts: &[tidb_ast::IndexPart]) -> Vec<tidb_ast::IndexPartSpecification> {
+    parts
+        .iter()
+        .map(|part| match part {
+            tidb_ast::IndexPart::Column { name, prefix_len, desc } => tidb_ast::IndexPartSpecification {
+                column: Some(Box::new(tidb_ast::ColumnName {
+                    name: CiString::new(name.clone()),
+                    ..tidb_ast::ColumnName::default()
+                })),
+                length: prefix_len.unwrap_or(-1),
+                desc: *desc,
+                expr: None,
+            },
+            tidb_ast::IndexPart::Expr { desc, .. } => tidb_ast::IndexPartSpecification {
+                column: None,
+                length: -1,
+                desc: *desc,
+                expr: None,
+            },
+        })
+        .collect()
+}
+
+/// The key parts `BuildIndexInfo` reads back from a columnar index job: a
+/// vector index's part is `FuncExpr` parsed again (Go `onCreateColumnarIndex`).
+fn columnar_parts_of_job(arg: &tidb_model::IndexArg) -> Result<Vec<tidb_ast::IndexPart>, DdlPlanError> {
+    arg.index_part_specifications
+        .iter_deref()
+        .map(|part| {
+            let part = part.read();
+            Ok(match &part.column {
+                Some(column) => tidb_ast::IndexPart::Column {
+                    name: column.name.original().to_owned(),
+                    prefix_len: (part.length != -1).then_some(part.length),
+                    desc: part.desc,
+                },
+                None => tidb_ast::IndexPart::Expr {
+                    expr: tidb_model::generated_expr::parse_expression(&arg.func_expr)
+                        .map_err(|error| DdlPlanError::Encode(error.message))?,
+                    desc: part.desc,
+                },
+            })
+        })
+        .collect()
+}
+
+/// Go `executor.createColumnarIndex` after `getSchemaAndTableByIdent`: the
+/// `ActionAddColumnarIndex` job of a vector, inverted or full-text index.
+fn create_columnar_index(
+    schema_id: i64,
+    schema: &str,
+    stored: &TableInfo,
+    spec: &ColumnarIndexSpec,
+    if_not_exists: bool,
+    context: &DdlStatementContext,
+) -> Result<AddIndexSubmission, DdlPlanError> {
+    let tp = tidb_ast::IndexType(spec.option.tp);
+    let columnar_index_type = if tp == tidb_ast::IndexType::INVERTED {
+        tidb_model::ColumnarIndexType::INVERTED
+    } else if tp == tidb_ast::IndexType::VECTOR {
+        tidb_model::ColumnarIndexType::VECTOR
+    } else if tp == tidb_ast::IndexType::FULLTEXT {
+        tidb_model::ColumnarIndexType::FULLTEXT
+    } else {
+        return Err(DdlPlanError::from(
+            tidb_dbterror::ERR_UNSUPPORTED_INDEX_TYPE.gen_with_stack_by_args(&[tp.sql().into()]),
+        ));
+    };
+    if columnar_index_type == tidb_model::ColumnarIndexType::FULLTEXT {
+        tidb_ddl_build::table_info_build::check_full_text_supported_in_starter()
+            .map_err(DdlPlanError::Admission)?;
     }
-    DdlPlanError::Admission(tidb_ddl_build::table_info_build::DdlAdmissionError::unsupported(
-        "a columnar index job is not supported by this node",
+    check_table_type_for_columnar_index(stored)?;
+    let (index_name, warnings) =
+        check_index_name_and_columns(stored, spec, columnar_index_type, if_not_exists)?;
+    let index_name = CiString::new(index_name);
+    let metabuild = context.0.metabuild_context();
+    // Go `build{Inverted,Vector,FullText}InfoWithCheck` and
+    // `buildIndexColumns`, whose results the executor drops but for the
+    // vector function's text.
+    let (_, columnar) = tidb_ddl_build::table_info_build::build_columnar_index_info(
+        Some(&metabuild),
+        stored,
+        &index_name,
+        columnar_index_type,
+        &spec.parts,
+        &spec.option,
+        SchemaState::NONE,
+    )
+    .map_err(DdlPlanError::Admission)?;
+    // May be truncate comment here, when index comment too long and
+    // sql_mode is't strict.
+    let mut option = spec.option.clone();
+    option.comment = tidb_ddl_build::validate_comment_length(
+        &option.comment,
+        index_name.original(),
+        tidb_ddl_build::CommentOwner::Table,
+        &metabuild,
+    )
+    .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error)))?;
+
+    // Go `buildAddIndexJobWithoutTypeAndArgs`.
+    let mut job = Job::default();
+    job.version = get_job_ver_in_use();
+    job.schema_id = schema_id;
+    job.table_id = stored.id;
+    job.schema_name = schema.go_to_lower().into();
+    job.table_name = stored.name.lowercase().to_owned().into();
+    job.type_ = ActionType::ACTION_ADD_COLUMNAR_INDEX;
+    job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
+    job.priority = context.0.ddl_reorg_priority();
+    let (charset, collate) = context.0.connection_charset_info();
+    job.charset = charset.to_owned().into();
+    job.collate = collate.to_owned().into();
+    job.sql_mode = context.0.ddl_sql_mode();
+    job.query = context.0.ddl_query().into();
+    job.cdc_write_source = context.0.ddl_cdc_write_source();
+    job.trace_info = Some(GoShared::new(TraceInfo {
+        session_alias: context.0.ddl_session_alias().into(),
+        trace_id: context.0.ddl_trace_id().to_vec().into(),
+        connection_id: context.0.ddl_connection_id(),
+    }));
+    job.session_vars = Some(GoShared::new(std::collections::BTreeMap::new()));
+
+    let arg = tidb_model::IndexArg {
+        index_name,
+        index_part_specifications: columnar_job_parts(&spec.parts).into(),
+        index_option: Some(GoShared::new(option)),
+        func_expr: columnar.func_expr,
+        is_columnar: true,
+        columnar_index_type,
+        ..tidb_model::IndexArg::default()
+    };
+    let args = GoShared::new(tidb_model::ModifyIndexArgs {
+        index_args: vec![arg].into(),
+        op_type: tidb_model::IndexOp::ADD_INDEX,
+        ..tidb_model::ModifyIndexArgs::default()
+    });
+    Ok(AddIndexSubmission::Job(
+        Box::new(tidb_ddl_jobsubmit::JobSpec {
+            job,
+            args: JobArgsValue::ModifyIndex(Some(args)),
+            id_allocated: true,
+        }),
+        warnings,
     ))
 }
 
@@ -359,8 +547,9 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
     };
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
     let stored = stored.read();
-    if let Some(columnar) = columnar {
-        return Err(create_columnar_index(&stored, *columnar));
+    if let Some(spec) = columnar {
+        return create_columnar_index(schema_id, schema, &stored, spec, *if_not_exists, context)
+            .map(Some);
     }
     if index.primary && (find_index(&stored, "PRIMARY").is_some() || stored.pk_is_handle) {
         return Err(DdlPlanError::Admission(
@@ -832,59 +1021,80 @@ fn check_and_build_index_info(
     // Go `checkAddColumnTooManyColumns(len(tblInfo.Columns))`
     // (`pkg/ddl/index.go:852`), the hidden columns included.
     check_add_column_too_many_columns(info.columns.len())?;
-    // Go `BuildIndexInfo` from the key parts, every one naming a column.
-    let template = IndexInfo {
-        name: arg.index_name.clone(),
-        unique: arg.unique || is_pk,
-        primary: is_pk,
-        columns: arg
-            .index_part_specifications
-            .iter_deref()
-            .map(|part| {
-                let part = part.read();
-                IndexColumn {
-                    name: part
-                        .column
-                        .as_ref()
-                        .map(|column| column.name.clone())
-                        .unwrap_or_default(),
-                    offset: 0,
-                    length: if part.length > 0 { part.length } else { -1 },
-                    ..IndexColumn::default()
-                }
-            })
-            .collect::<Vec<_>>()
-            .into(),
-        comment: arg
+    let mut added = if arg.columnar_index_type != tidb_model::ColumnarIndexType::NA {
+        // Go `BuildIndexInfo` of a columnar index, its checks run again
+        // against the table the job finds.
+        let option = arg
             .index_option
             .as_ref()
-            .map(|option| option.read().comment.clone())
-            .unwrap_or_default(),
-        tp: tidb_ast::IndexType(
-            arg.index_option
-                .as_ref()
-                .map_or(0, |option| option.read().tp),
-        ),
-        invisible: arg
-            .index_option
-            .as_ref()
-            .is_some_and(|option| option.read().visibility == 2),
-        global: arg
-            .index_option
-            .as_ref()
-            .is_some_and(|option| option.read().global),
-        state: SchemaState::NONE,
-        ..IndexInfo::default()
-    };
-    let condition = if arg.condition_string.is_empty() {
-        None
-    } else {
-        Some(
-            tidb_model::generated_expr::parse_expression(&arg.condition_string)
-                .map_err(|error| DdlPlanError::Encode(error.message))?,
+            .map(|option| option.read().clone())
+            .unwrap_or_default();
+        let (added, _) = tidb_ddl_build::table_info_build::build_columnar_index_info(
+            None,
+            info,
+            &arg.index_name,
+            arg.columnar_index_type,
+            &columnar_parts_of_job(arg)?,
+            &option,
+            SchemaState::NONE,
         )
+        .map_err(DdlPlanError::Admission)?;
+        added
+    } else {
+        // Go `BuildIndexInfo` from the key parts, every one naming a column.
+        let template = IndexInfo {
+            name: arg.index_name.clone(),
+            unique: arg.unique || is_pk,
+            primary: is_pk,
+            columns: arg
+                .index_part_specifications
+                .iter_deref()
+                .map(|part| {
+                    let part = part.read();
+                    IndexColumn {
+                        name: part
+                            .column
+                            .as_ref()
+                            .map(|column| column.name.clone())
+                            .unwrap_or_default(),
+                        offset: 0,
+                        length: if part.length > 0 { part.length } else { -1 },
+                        ..IndexColumn::default()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            comment: arg
+                .index_option
+                .as_ref()
+                .map(|option| option.read().comment.clone())
+                .unwrap_or_default(),
+            tp: tidb_ast::IndexType(
+                arg.index_option
+                    .as_ref()
+                    .map_or(0, |option| option.read().tp),
+            ),
+            invisible: arg
+                .index_option
+                .as_ref()
+                .is_some_and(|option| option.read().visibility == 2),
+            global: arg
+                .index_option
+                .as_ref()
+                .is_some_and(|option| option.read().global),
+            state: SchemaState::NONE,
+            ..IndexInfo::default()
+        };
+        let condition = if arg.condition_string.is_empty() {
+            None
+        } else {
+            Some(
+                tidb_model::generated_expr::parse_expression(&arg.condition_string)
+                    .map_err(|error| DdlPlanError::Encode(error.message))?,
+            )
+        };
+        build_index_info(info, &template, condition.as_ref(), arg.index_name.original())?
     };
-    let mut added = build_index_info(info, &template, condition.as_ref(), arg.index_name.original())?;
     // Go `checkTooManyIndexes(tblInfo.Indices)` once the new index is
     // appended, counted before the table is touched.
     tidb_ddl_build::table_info_build::check_too_many_indexes(info.indices.len() + 1).map_err(|error| {
@@ -1046,6 +1256,234 @@ pub(super) fn plan_persisted_add_index_job_step(
             ]),
         )),
     }
+}
+
+/// Go `onCreateColumnarIndex`: one step of an `ActionAddColumnarIndex` job.
+/// The columnar replica builds the index; the job walks the schema states and
+/// waits on the replica's progress.
+pub(super) fn on_create_columnar_index(
+    txn: &mut JobTxn<'_>,
+    catalog: &SessionExtendedInfoSchema,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    start_ts: u64,
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    // Handle the rolling back job.
+    if active.job.is_rollingback() {
+        return plan_rollback_add_index(txn, catalog, active, start_ts);
+    }
+    // Handle normal job.
+    let stored = checked_job_table(catalog, active, true)?;
+    let stored = stored.read();
+    let database_id = active.job.schema_id;
+    check_table_type_for_columnar_index(&stored)?;
+    let args = tidb_model::get_modify_index_args(&mut active.job)
+        .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
+        .ok_or_else(|| DdlPlanError::Encode("ADD COLUMNAR INDEX job has nil args".to_owned()))?;
+    let arg = args
+        .read()
+        .index_args
+        .iter_deref()
+        .next()
+        .map(|arg| arg.read().clone())
+        .ok_or_else(|| DdlPlanError::Encode("ADD COLUMNAR INDEX job has no index argument".to_owned()))?;
+    let mut info = stored.clone_like_go();
+    let index = match check_and_build_index_info(&mut info, &arg, false) {
+        Ok(index) => index,
+        Err(error) => return Err(cancel_ddl_job(active, error)),
+    };
+    let original_state = index.read().state;
+    match original_state {
+        SchemaState::NONE | SchemaState::DELETE_ONLY | SchemaState::WRITE_ONLY => {
+            // none -> delete only -> write only -> reorganization
+            let next = match original_state {
+                SchemaState::NONE => SchemaState::DELETE_ONLY,
+                SchemaState::DELETE_ONLY => SchemaState::WRITE_ONLY,
+                _ => SchemaState::WRITE_REORGANIZATION,
+            };
+            index.write().state = next;
+            if next == SchemaState::WRITE_REORGANIZATION {
+                // Initialize SnapshotVer to 0 for later reorganization check.
+                active.job.snapshot_version = 0;
+            }
+            active.job.schema_state = next;
+            let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
+            Ok(action_step(write))
+        }
+        SchemaState::WRITE_REORGANIZATION => {
+            // reorganization -> public
+            let indexes = [index];
+            if active.job.is_cancelling() {
+                let error = DdlPlanError::from(
+                    tidb_dbterror::ERR_CANCELLED_DDL_JOB
+                        .generate(tidb_errno::errname::ErrCancelledDDLJob.raw),
+                );
+                return columnar_index_rollback_step(txn, active, &mut info, &indexes, error, start_ts);
+            }
+            // Send sync schema notification to TiFlash.
+            if active.job.snapshot_version == 0 {
+                tidb_domain_infosync::tiflash_manager::sync_tiflash_table_schema(info.id)
+                    .map_err(DdlPlanError::Encode)?;
+                // Go `getValidCurrentVersion`; the step's start timestamp
+                // is a version the store has reached.
+                active.job.snapshot_version = start_ts;
+                return Ok(action_step(super::job_only_write(active.job.id, Vec::new())));
+            }
+            // Check the progress of the TiFlash backfill index.
+            let index_id = indexes[0].read().id;
+            match check_columnar_index_process(txn, &mut active.job, info.id, index_id) {
+                Ok(true) => {}
+                // Go `ErrWaitReorgTimeout`: the job runs this state again.
+                Ok(false) => return Ok(action_step(super::job_only_write(active.job.id, Vec::new()))),
+                Err(error) => {
+                    if !crate::real_tikv_ddl::is_retryable_job_error(
+                        &error,
+                        active.job.error_count,
+                        tidb_vardef::ddl_error_count_limit(),
+                    ) {
+                        return columnar_index_rollback_step(txn, active, &mut info, &indexes, error, start_ts);
+                    }
+                    return Err(error);
+                }
+            }
+            indexes[0].write().state = SchemaState::PUBLIC;
+            let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
+            let finished_args = GoShared::new(tidb_model::ModifyIndexArgs {
+                index_args: vec![tidb_model::IndexArg {
+                    index_id,
+                    ..tidb_model::IndexArg::default()
+                }]
+                .into(),
+                partition_ids: partition_ids(&info).into(),
+                op_type: tidb_model::IndexOp::ADD_INDEX,
+            });
+            active.job.fill_finished_args(Some(finished_args));
+            // Finish this job.
+            active.job.finish_table_job(
+                JobState::DONE,
+                SchemaState::PUBLIC,
+                write.schema_version,
+                Some(GoShared::new(info.clone_like_go())),
+            );
+            Ok(PersistedDdlActionStep {
+                write,
+                update_raw_args: true,
+                run_error: None,
+                reorg: None,
+            })
+        }
+        state => Err(DdlPlanError::from(
+            tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
+                FormatArg::from("index"),
+                FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
+            ]),
+        )),
+    }
+}
+
+/// Go `convertAddIdxJob2RollbackJob` as a columnar index job's step.
+fn columnar_index_rollback_step(
+    txn: &mut JobTxn<'_>,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    info: &mut TableInfo,
+    indexes: &[GoShared<IndexInfo>],
+    error: DdlPlanError,
+    start_ts: u64,
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    let (write, error) = convert_add_index_to_rollback(txn, active, info, indexes, error, start_ts)?;
+    Ok(PersistedDdlActionStep {
+        write,
+        update_raw_args: true,
+        run_error: Some(error),
+        reorg: None,
+    })
+}
+
+/// Go `checkColumnarIndexProcess`: polls the replica's build for one
+/// 500 ms tick. `Ok(false)` is Go's `ErrWaitReorgTimeout`, the tick spent
+/// with the build unfinished; the job's `RowCount` follows the rows indexed.
+fn check_columnar_index_process(
+    txn: &JobTxn<'_>,
+    job: &mut Job,
+    table_id: i64,
+    index_id: i64,
+) -> Result<bool, DdlPlanError> {
+    let wait_timeout = std::time::Duration::from_millis(500);
+    let started = std::time::Instant::now();
+    while started.elapsed() < wait_timeout {
+        let (is_done, _, added_index_cnt) = check_columnar_index_process_once(txn, table_id, index_id)?;
+        job.row_count = added_index_cnt;
+        if is_done {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Go `checkColumnarIndexProcessOnce`: whether the build is done, and the
+/// rows not yet and already indexed.
+fn check_columnar_index_process_once(
+    txn: &JobTxn<'_>,
+    table_id: i64,
+    index_id: i64,
+) -> Result<(bool, i64, i64), DdlPlanError> {
+    #[cfg(feature = "failpoints")]
+    if let Some(val) =
+        fail::eval("MockCheckColumnarIndexProcess", |val| val.and_then(|val| val.parse::<i64>().ok()))
+            .flatten()
+    {
+        return match val {
+            val if val < 0 => Err(DdlPlanError::from(
+                tidb_dbterror::ERR_TIFLASH_BACKFILL_INDEX.fast_gen_by_args(&["mock a check error".into()]),
+            )),
+            0 => Ok((false, 0, 0)),
+            val => Ok((true, 0, val)),
+        };
+    }
+
+    let cse = &tidb_config::config_tree::config::get_global_config().cse;
+    // If columnar store is enabled, Go checks the columnar index process
+    // from TiKV (`CalculateColumnarIndexProgress`).
+    if cse.is_columnar_store_enabled() {
+        return Err(DdlPlanError::Encode(
+            "the columnar index progress of a columnar store is not supported by this node".to_owned(),
+        ));
+    }
+    // If TiFlash is not enabled, we return the result directly.
+    if !cse.is_tiflash_enabled() {
+        return Ok((true, 0, 0));
+    }
+
+    // TODO: Support partition table
+    let sql = format!(
+        "select rows_stable_not_indexed, rows_stable_indexed, error_message from information_schema.tiflash_indexes where table_id = {table_id} and index_id = {index_id};"
+    );
+    let rows = match txn.execute(&sql, &[]) {
+        Some(Ok(rows)) if !rows.is_empty() => rows,
+        Some(Err(error)) => return Err(DdlPlanError::from_mysql_error(error)),
+        _ => return Ok((false, 0, 0)),
+    };
+    // Get and process info from multiple TiFlash nodes.
+    let int = |datum: &tidb_datatype::Datum| match datum {
+        tidb_datatype::Datum::Int(value) => *value,
+        tidb_datatype::Datum::UInt(value) => *value as i64,
+        _ => 0,
+    };
+    let mut not_added_index_cnt = 0;
+    let mut added_index_cnt = 0;
+    for row in &rows {
+        not_added_index_cnt += int(&row[0]);
+        added_index_cnt += int(&row[1]);
+        let err_msg = String::from_utf8_lossy(row[2].go_bytes()).into_owned();
+        if !err_msg.is_empty() {
+            return Err(DdlPlanError::from(
+                tidb_dbterror::ERR_TIFLASH_BACKFILL_INDEX.fast_gen_by_args(&[err_msg.into()]),
+            ));
+        }
+    }
+    if not_added_index_cnt != 0 {
+        return Ok((false, 0, 0));
+    }
+    Ok((true, not_added_index_cnt, added_index_cnt))
 }
 
 /// Go `checkPrimaryKeyNotNull`: a nullable key column gets

@@ -46,6 +46,14 @@ pub trait TiFlashReplicaManager: Send + Sync {
     fn delete_tiflash_progress_from_cache(&self, table_id: i64);
     /// Go `CleanTiFlashProgressCache` clean progress cache.
     fn clean_tiflash_progress_cache(&self);
+    /// Go `GetStoresStat` gets the TiKV store information by accessing PD's
+    /// api.
+    fn get_stores_stat(&self) -> Result<pd_http::StoresInfo, String>;
+    /// Go `SyncTiFlashTableSchema` syncs the table's schema to TiFlash.
+    fn sync_tiflash_table_schema(&self, table_id: i64, stores: &[pd_http::StoreInfo]) -> Result<(), String>;
+    /// Go `SetMockTiFlash`'s type assertion: only the mock manager takes a
+    /// mock TiFlash.
+    fn set_mock_tiflash(&self, _tiflash: Arc<MockTiFlash>) {}
 }
 
 /// Go `tiflashProgressCache` with the four methods both of Go's managers
@@ -78,16 +86,32 @@ impl TiFlashProgressCache {
 /// Go `TiFlashReplicaManagerCtx` over the info syncer's PD HTTP client.
 pub struct TiFlashReplicaManagerCtx {
     pd_http_client: pd_http::Client,
+    security: tidb_pd_client::ClusterSecurity,
     tiflash_progress_cache: TiFlashProgressCache,
 }
 
 impl TiFlashReplicaManagerCtx {
-    /// Over the store's PD HTTP client, as the info syncer derives it.
-    pub fn new(pd_http_client: &pd_http::Client) -> Self {
+    /// Over the store's PD HTTP client, as the info syncer derives it, and
+    /// the cluster security Go's internal HTTP client is built from.
+    pub fn new(pd_http_client: &pd_http::Client, security: &tidb_pd_client::ClusterSecurity) -> Self {
         Self {
             pd_http_client: crate::pd_http::info_syncer_pd_http_client(pd_http_client),
+            security: security.clone(),
             tiflash_progress_cache: TiFlashProgressCache::default(),
         }
+    }
+
+    /// Go `helper.SyncTableSchemaToTiFlash`: only a failed request is an
+    /// error; the response is dropped. This node serves the null keyspace
+    /// (Go `m.codec.GetKeyspaceID()`).
+    fn sync_table_schema_to_tiflash(&self, status_address: &str, table_id: i64) -> Result<(), String> {
+        let schema = if self.security.is_tls_enabled() { "https" } else { "http" };
+        let stat_url = format!(
+            "{schema}://{status_address}/tiflash/sync-schema/keyspace/{}/table/{table_id}",
+            tikv_client::tikv::NULLSPACE_ID,
+        );
+        let client = tidb_store_driver_txn::cluster_http::internal_http_client(&self.security)?;
+        client.get(stat_url).send().map(drop).map_err(|error| error.to_string())
     }
 }
 
@@ -176,13 +200,76 @@ impl TiFlashReplicaManager for TiFlashReplicaManagerCtx {
     fn clean_tiflash_progress_cache(&self) {
         self.tiflash_progress_cache.clean();
     }
+
+    fn get_stores_stat(&self) -> Result<pd_http::StoresInfo, String> {
+        block_on(self.pd_http_client.get_stores())
+    }
+
+    fn sync_tiflash_table_schema(&self, table_id: i64, stores: &[pd_http::StoreInfo]) -> Result<(), String> {
+        for store in stores {
+            self.sync_table_schema_to_tiflash(&store.store.status_address, table_id)?;
+        }
+        Ok(())
+    }
 }
 
-/// Go `mockTiFlashReplicaManagerCtx` with no mock TiFlash: every write is a
-/// no-op. Its record of the calls is what tests read.
+/// Go `MockTiFlash`, the part DDL jobs read: the one TiFlash store its
+/// `HandleGetStoresStat` reports.
+pub struct MockTiFlash {
+    status_addr: String,
+    start_time: i64,
+}
+
+impl MockTiFlash {
+    /// Go `NewMockTiFlash`.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            status_addr: String::new(),
+            start_time: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX)),
+        }
+    }
+
+    /// Go `HandleGetStoresStat`.
+    #[must_use]
+    pub fn handle_get_stores_stat(&self) -> pd_http::StoresInfo {
+        pd_http::StoresInfo {
+            count: 1,
+            stores: vec![pd_http::StoreInfo {
+                store: pd_http::MetaStore {
+                    id: 1,
+                    address: "127.0.0.1:3930".to_owned(),
+                    state: 0,
+                    state_name: "Up".to_owned(),
+                    version: "4.0.0-alpha".to_owned(),
+                    status_address: self.status_addr.clone(),
+                    git_hash: "mock-tikv-githash".to_owned(),
+                    start_timestamp: self.start_time,
+                    labels: vec![pd_http::StoreLabel {
+                        key: "engine".to_owned(),
+                        value: "tiflash".to_owned(),
+                    }],
+                },
+                ..Default::default()
+            }],
+        }
+    }
+}
+
+impl Default for MockTiFlash {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Go `mockTiFlashReplicaManagerCtx`: every write is a no-op, and the stores
+/// are its mock TiFlash's. Its record of the calls is what tests read.
 #[derive(Default)]
 pub struct MockTiFlashReplicaManagerCtx {
     calls: Mutex<Vec<String>>,
+    tiflash: Mutex<Option<Arc<MockTiFlash>>>,
     tiflash_progress_cache: TiFlashProgressCache,
 }
 
@@ -239,6 +326,25 @@ impl TiFlashReplicaManager for MockTiFlashReplicaManagerCtx {
     fn clean_tiflash_progress_cache(&self) {
         self.tiflash_progress_cache.clean();
     }
+
+    /// Go's mock: `&MockTiFlashError{"MockTiFlash is not accessible"}` with
+    /// no mock TiFlash.
+    fn get_stores_stat(&self) -> Result<pd_http::StoresInfo, String> {
+        self.tiflash
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(|tiflash| tiflash.handle_get_stores_stat())
+            .ok_or_else(|| "MockTiFlash is not accessible".to_owned())
+    }
+
+    fn sync_tiflash_table_schema(&self, _table_id: i64, _stores: &[pd_http::StoreInfo]) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn set_mock_tiflash(&self, tiflash: Arc<MockTiFlash>) {
+        *self.tiflash.lock().unwrap_or_else(PoisonError::into_inner) = Some(tiflash);
+    }
 }
 
 /// The info syncer's `tiflashReplicaManager`.
@@ -269,6 +375,35 @@ fn tiflash_enabled() -> bool {
 
 fn info(message: &str, fields: &[Field]) {
     tidb_logutil::bg_logger().info(message, fields);
+}
+
+/// Go `infosync.SetMockTiFlash`: the mock manager's TiFlash.
+pub fn set_mock_tiflash(tiflash: Arc<MockTiFlash>) {
+    tiflash_replica_manager().set_mock_tiflash(tiflash);
+}
+
+/// Go `infosync.GetTiFlashStoresStat`.
+pub fn get_tiflash_stores_stat() -> Result<pd_http::StoresInfo, String> {
+    tiflash_replica_manager().get_stores_stat()
+}
+
+/// Go `infosync.SyncTiFlashTableSchema`: the table's schema synced to every
+/// store labelled `engine=tiflash`.
+pub fn sync_tiflash_table_schema(table_id: i64) -> Result<(), String> {
+    let manager = tiflash_replica_manager();
+    let tikv_stats = manager.get_stores_stat()?;
+    let tiflash_stores: Vec<pd_http::StoreInfo> = tikv_stats
+        .stores
+        .into_iter()
+        .filter(|store| {
+            store
+                .store
+                .labels
+                .iter()
+                .any(|label| label.key == "engine" && label.value == "tiflash")
+        })
+        .collect();
+    manager.sync_tiflash_table_schema(table_id, &tiflash_stores)
 }
 
 /// Go `infosync.UpdateTiFlashProgressCache`.

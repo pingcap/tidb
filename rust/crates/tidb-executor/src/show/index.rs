@@ -38,7 +38,8 @@ pub fn show_index_rows(
                     comment: &str,
                     visible: bool,
                     global: bool,
-                    sub_part: Option<i64>| {
+                    sub_part: Option<i64>,
+                    index_type: &str| {
         rows.push(vec![
             text(table_name),
             Datum::Int(i64::from(!unique)),
@@ -53,7 +54,7 @@ pub fn show_index_rows(
             sub_part.map_or(Datum::Null, |length| Datum::Int(length)),
             Datum::Null,
             text(if nullable { "YES" } else { "" }),
-            text("BTREE"),
+            text(index_type),
             text(""),
             text(comment),
             text(if visible { "YES" } else { "NO" }),
@@ -76,6 +77,7 @@ pub fn show_index_rows(
             true,
             false,
             None,
+            "BTREE",
         );
     }
     for index in table.indexes() {
@@ -110,6 +112,8 @@ pub fn show_index_rows(
                 (!index.read().invisible),
                 index.read().global,
                 sub_part,
+                // Go `fetchShowIndex`: `idx.Meta().Tp.String()`.
+                index.read().tp.sql(),
             );
         }
     }

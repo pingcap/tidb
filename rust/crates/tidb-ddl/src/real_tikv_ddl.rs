@@ -808,7 +808,7 @@ struct CommittedDdlPhase {
 // Go isRetryableJobError tests the next error against the CURRENT process
 // limit, after the checkpoint committed. Match the original error: a plain
 // action failure is retryable even though toTError persists it as DDL/-1.
-fn is_retryable_job_error(error: &DdlPlanError, error_count: i64, limit: i64) -> bool {
+pub(crate) fn is_retryable_job_error(error: &DdlPlanError, error_count: i64, limit: i64) -> bool {
     if error_count.wrapping_add(1) >= limit {
         return false;
     }

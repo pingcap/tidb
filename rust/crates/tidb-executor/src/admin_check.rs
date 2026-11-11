@@ -303,8 +303,9 @@ pub fn check_table(
     // is the error the client sees.
     for index in &selected {
         // Go `CheckTableExec.Next` leaves a multi-valued index out of
-        // `CheckIndicesCount`: one row files any number of entries.
-        if table.mv_index(index) {
+        // `CheckIndicesCount`: one row files any number of entries. A
+        // columnar index is left out with it: it files none.
+        if table.mv_index(index) || index.read().is_columnar_index() {
             continue;
         }
         let entries = index_entries(table, store, index.read().id)?;
@@ -332,8 +333,10 @@ pub fn check_table(
             checked += 1;
             continue;
         }
+        // A columnar index is outside Go's count comparison, so it is never
+        // the table-heavy one.
         let expected_count = matching_rows.len() as i64;
-        if expected_count > stored.len() as i64 {
+        if expected_count > stored.len() as i64 && !index.read().is_columnar_index() {
             let mut expected: BTreeMap<Vec<u8>, (i64, TableHandle, &Vec<Datum>)> = BTreeMap::new();
             for (physical_id, handle, row) in matching_rows {
                 for (key, _) in table

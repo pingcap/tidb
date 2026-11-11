@@ -654,6 +654,18 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
         let removed = self.with_catalog_mut(|catalog| {
             let table = admin_index_table_mut(catalog, &database, &name)?;
             let table_name = table.name().to_owned();
+            // Go `buildCleanupIndex` refuses a columnar index.
+            let columnar = table.meta().read().indices.iter_deref().any(|info| {
+                let info = info.read();
+                info.state == tidb_model::SchemaState::PUBLIC
+                    && tidb_hack::GoCaseCompare::go_lower_eq(info.name.original(), &index)
+                    && info.is_columnar_index()
+            });
+            if columnar {
+                return Err(DriverError::Mysql(crate::driver::MysqlError::unknown(format!(
+                    "columnar index `{index}` is not supported for cleanup index"
+                ))));
+            }
             crate::with_statement_store(&ctx, table, |table, store| table.cleanup_index(store, &index))
                 .map_err(crate::ddl::index_backfill_error)?
                 .ok_or_else(|| secondary_index_not_found(&index, &table_name))

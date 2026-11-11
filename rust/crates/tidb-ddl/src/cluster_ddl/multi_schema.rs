@@ -87,6 +87,7 @@ fn single_statement(
             expressions,
             condition,
             context,
+            columnar,
         } => DdlStatement::CreateIndex {
             schema,
             table,
@@ -95,7 +96,7 @@ fn single_statement(
             expressions,
             condition,
             context,
-            columnar: None,
+            columnar,
         },
         AlterColumnAction::DropIndex { if_exists, name } => DdlStatement::DropIndex {
             hypo: false,

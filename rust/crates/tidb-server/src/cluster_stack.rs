@@ -476,7 +476,10 @@ pub fn cluster_session_stack(
     // Go `InfoSyncer.initTiFlashReplicaManager`: the TiFlash placement rules
     // DDL jobs set and the GC worker deletes.
     tidb_domain_infosync::tiflash_manager::init_tiflash_replica_manager(pd_http_client.as_ref().map(|client| {
-        Arc::new(tidb_domain_infosync::tiflash_manager::TiFlashReplicaManagerCtx::new(client))
+        Arc::new(tidb_domain_infosync::tiflash_manager::TiFlashReplicaManagerCtx::new(
+            client,
+            &config.cluster_security,
+        ))
             as Arc<dyn tidb_domain_infosync::tiflash_manager::TiFlashReplicaManager>
     }));
     // One DDL-gated worker. Its guard joins before the node releases DDL/PD.

@@ -220,6 +220,19 @@ fn rewrite_partition_query_string(
 }
 
 /// One column sub-action of a multi-action `ALTER TABLE`.
+/// A vector, inverted (columnar) or full-text index as Go
+/// `createColumnarIndex` receives it: the statement's name, key parts and
+/// index option, checked against the stored table by the plan.
+#[derive(Clone, Debug)]
+pub struct ColumnarIndexSpec {
+    /// Go `indexName`; empty is anonymous.
+    pub index_name: String,
+    /// Go `indexPartSpecifications`.
+    pub parts: Vec<tidb_ast::IndexPart>,
+    /// Go `indexOption`, its `Tp` as `checkIndexGrammar` leaves it.
+    pub option: tidb_ast::IndexOption,
+}
+
 #[derive(Clone, Debug)]
 pub enum AlterColumnAction {
     /// `ADD COLUMN`, at its written position.
@@ -281,6 +294,8 @@ pub enum AlterColumnAction {
         condition: Option<tidb_ast::Expr>,
         /// SQL mode and location captured for existing-row evaluation.
         context: DdlStatementContext,
+        /// A vector, inverted (columnar) or full-text index.
+        columnar: Option<Box<ColumnarIndexSpec>>,
     },
     /// `DROP INDEX`/`DROP KEY`.
     DropIndex {
@@ -1068,7 +1083,7 @@ pub enum DdlStatement {
         /// A vector, inverted (columnar) or full-text index: Go
         /// `createColumnarIndex`, whose checks the plan runs against the
         /// stored table.
-        columnar: Option<tidb_model::ColumnarIndexType>,
+        columnar: Option<Box<ColumnarIndexSpec>>,
     },
     /// `DROP INDEX name ON [schema.]table`.
     DropIndex {
@@ -2425,17 +2440,13 @@ fn lower_alter_table_catalog(
                     // The standalone lowering owns the validation; reuse it
                     // whole so the bundled and single spellings cannot drift.
                     match lower_alter_add_index(alter, index, default_schema, context)? {
-                        DdlStatement::CreateIndex { columnar: Some(_), .. } => {
-                            return Err(DdlAdmissionError::unsupported(
-                                "a columnar index in a multi-schema change is not supported by this node",
-                            ))
-                        }
                         DdlStatement::CreateIndex {
                             if_not_exists,
                             index,
                             expressions,
                             condition,
                             context,
+                            columnar,
                             ..
                         } => actions.push(AlterColumnAction::AddIndex {
                             if_not_exists,
@@ -2443,6 +2454,7 @@ fn lower_alter_table_catalog(
                             expressions,
                             condition,
                             context,
+                            columnar,
                         }),
                         other => {
                             unreachable!(
@@ -4806,14 +4818,36 @@ fn lower_create_index(
     // `primary = true`; the caller decides, since the AST's own
     // `CREATE INDEX` grammar has no PRIMARY spelling.
     let (schema, table) = split_name(&create.table, default_schema, "table")?;
+    // Go `checkCreateIndexGrammar` / `checkConstraintGrammar` in the
+    // preprocessor.
+    let (is_columnar, tp) = tidb_ddl_build::table_info_build::check_index_grammar(
+        create.kind,
+        &create.options,
+        &create.parts,
+    )?;
     // Go `createColumnarIndex`: its checks need the stored table.
-    let columnar = match create.kind {
-        tidb_ast::IndexKind::Vector => Some(tidb_model::ColumnarIndexType::VECTOR),
-        tidb_ast::IndexKind::Columnar => Some(tidb_model::ColumnarIndexType::INVERTED),
-        tidb_ast::IndexKind::Fulltext => Some(tidb_model::ColumnarIndexType::FULLTEXT),
-        _ => None,
-    };
-    if columnar.is_some() {
+    if is_columnar {
+        let options = &create.options;
+        let option = tidb_ast::IndexOption {
+            key_block_size: options.key_block_size.unwrap_or(0),
+            tp: tp.0,
+            comment: options.comment.clone().unwrap_or_default(),
+            parser_name: CiString::new(options.parser_name.clone().unwrap_or_default()),
+            visibility: match options.visibility {
+                None => 0,
+                Some(tidb_ast::IndexVisibility::Visible) => 1,
+                Some(tidb_ast::IndexVisibility::Invisible) => 2,
+            },
+            primary_key_tp: match options.primary_key_storage {
+                None => 0,
+                Some(tidb_ast::PrimaryKeyStorage::Clustered) => 1,
+                Some(tidb_ast::PrimaryKeyStorage::NonClustered) => 2,
+                Some(tidb_ast::PrimaryKeyStorage::Unknown(value)) => value,
+            },
+            global: options.global,
+            secondary_engine_attr: options.secondary_engine_attribute.clone().unwrap_or_default(),
+            add_columnar_replica_on_demand: options.add_columnar_replica_on_demand,
+        };
         return Ok(DdlStatement::CreateIndex {
             schema,
             table,
@@ -4822,7 +4856,11 @@ fn lower_create_index(
             condition: None,
             context: DdlStatementContext(context.clone()),
             index: Box::default(),
-            columnar,
+            columnar: Some(Box::new(ColumnarIndexSpec {
+                index_name: create.name.clone(),
+                parts: create.parts.clone(),
+                option,
+            })),
         });
     }
     let (index, expressions) = tidb_ddl_build::index::index_template(create, primary)?;
@@ -5229,6 +5267,7 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_DROP_SEQUENCE
             | ActionType::ACTION_ADD_INDEX
             | ActionType::ACTION_ADD_PRIMARY_KEY
+            | ActionType::ACTION_ADD_COLUMNAR_INDEX
             | ActionType::ACTION_DROP_INDEX
             | ActionType::ACTION_DROP_PRIMARY_KEY
             | ActionType::ACTION_TRUNCATE_TABLE
@@ -5494,6 +5533,9 @@ fn dispatch_persisted_action(
         | ActionType::ACTION_DROP_VIEW
         | ActionType::ACTION_DROP_SEQUENCE => {
             plan_persisted_drop_table_job_step(txn, catalog, active, row_ids)
+        }
+        ActionType::ACTION_ADD_COLUMNAR_INDEX => {
+            add_index::on_create_columnar_index(txn, catalog, active, start_ts)
         }
         ActionType::ACTION_ADD_INDEX | ActionType::ACTION_ADD_PRIMARY_KEY => {
             add_index::plan_persisted_add_index_job_step(
@@ -7218,7 +7260,13 @@ fn plan_cancel_persisted_ddl_job(
         | ActionType::ACTION_ALTER_CHECK_CONSTRAINT => {
             return plan_persisted_check_constraint_job_step(txn, catalog, active, start_ts);
         }
-        ActionType::ACTION_ADD_INDEX | ActionType::ACTION_ADD_PRIMARY_KEY => {
+        // Go `rollingbackAddColumanrIndex`: before the reorganization state
+        // `convertNotReorgAddIdxJob2RollbackJob`, in it `onCreateColumnarIndex`'s
+        // cancelling branch -- both `convertAddIdxJob2RollbackJob` with
+        // `ErrCancelledDDLJob`.
+        ActionType::ACTION_ADD_INDEX
+        | ActionType::ACTION_ADD_PRIMARY_KEY
+        | ActionType::ACTION_ADD_COLUMNAR_INDEX => {
             return add_index::rollingback_add_index(txn, catalog, active, start_ts);
         }
         ActionType::ACTION_DROP_INDEX | ActionType::ACTION_DROP_PRIMARY_KEY => {

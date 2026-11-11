@@ -4948,15 +4948,19 @@ fn columnar_index_shapes_lower_for_gos_table_checks() {
     // `createColumnarIndex`, whose checks need the stored table, so the
     // statement lowers and its plan refuses it.
     for (sql, expected) in [
-        ("CREATE FULLTEXT INDEX fi ON u6.minimal (c)", tidb_model::ColumnarIndexType::FULLTEXT),
+        ("CREATE FULLTEXT INDEX fi ON u6.minimal (c)", tidb_ast::IndexType::FULLTEXT),
         (
             "CREATE VECTOR INDEX vi ON u6.minimal ((vec_cosine_distance(v))) USING HNSW",
-            tidb_model::ColumnarIndexType::VECTOR,
+            tidb_ast::IndexType::VECTOR,
         ),
     ] {
         let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
         match lower_ddl(&parsed, "u6") {
-            Ok(Some(DdlStatement::CreateIndex { columnar, .. })) => assert_eq!(columnar, Some(expected), "{sql}"),
+            Ok(Some(DdlStatement::CreateIndex { columnar, .. })) => assert_eq!(
+                columnar.map(|spec| tidb_ast::IndexType(spec.option.tp)),
+                Some(expected),
+                "{sql}"
+            ),
             other => panic!("`{sql}` lowered to {other:?}"),
         }
     }

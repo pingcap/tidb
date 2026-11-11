@@ -434,6 +434,13 @@ pub static ERR_WAIT_REORG_TIMEOUT: LazyLock<TerrorError> = LazyLock::new(|| {
         catalog_message(errcode::ErrWaitReorgTimeout),
     )
 });
+/// Source `dbterror.ErrTiFlashBackfillIndex`.
+pub static ERR_TIFLASH_BACKFILL_INDEX: LazyLock<TerrorError> = LazyLock::new(|| {
+    CLASS_DDL.new_std_err(
+        errcode::ErrTiFlashBackfillIndex,
+        catalog_message(errcode::ErrTiFlashBackfillIndex),
+    )
+});
 /// Source `dbterror.ErrUnsupportedAddColumnarIndex`.
 pub static ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX: LazyLock<TerrorError> = LazyLock::new(|| {
     CLASS_DDL.new_plain_err(
@@ -1179,6 +1186,7 @@ pub(crate) fn fixture_entries() -> Vec<(&'static str, &'static TerrorError)> {
         ("ErrOperateSameColumn", &*ERR_OPERATE_SAME_COLUMN),
         ("ErrOperateSameIndex", &*ERR_OPERATE_SAME_INDEX),
         ("ErrWaitReorgTimeout", &*ERR_WAIT_REORG_TIMEOUT),
+        ("ErrTiFlashBackfillIndex", &*ERR_TIFLASH_BACKFILL_INDEX),
         (
             "ErrUnsupportedAddColumnarIndex",
             &*ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX,

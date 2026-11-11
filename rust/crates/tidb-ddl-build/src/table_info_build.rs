@@ -1412,41 +1412,33 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
             "CREATE TABLE CHECK constraints are lowered separately",
         ));
     };
-    // Go `checkConstraintGrammar`: FULLTEXT is rewritten into a columnar
-    // index of the FULLTEXT type, then the options and the parts are checked.
     let mut index_type = index_type_of(&index.options);
+    let (is_columnar, tp) = check_index_grammar(
+        match index.kind {
+            IndexConstraintKind::Fulltext => tidb_ast::IndexKind::Fulltext,
+            IndexConstraintKind::Vector => tidb_ast::IndexKind::Vector,
+            IndexConstraintKind::Columnar => tidb_ast::IndexKind::Columnar,
+            _ => tidb_ast::IndexKind::Ordinary,
+        },
+        &index.options,
+        &index.parts,
+    )?;
+    if is_columnar {
+        index_type = Some(tp);
+    }
     let kind = match index.kind {
         IndexConstraintKind::PrimaryKey => ConstraintKind::PrimaryKey,
         IndexConstraintKind::Unique
         | IndexConstraintKind::UniqueKey
         | IndexConstraintKind::UniqueIndex => ConstraintKind::Unique,
         IndexConstraintKind::Key | IndexConstraintKind::Index => ConstraintKind::Key,
-        IndexConstraintKind::Fulltext => {
-            if let Some(declared) = index.options.index_type {
-                if declared != IndexType::INVALID {
-                    return Err(DdlAdmissionError::from_terror(
-                        &tidb_dbterror::ERR_UNSUPPORTED_INDEX_TYPE.fast_gen(
-                            "'USING %s' is not supported for FULLTEXT INDEX",
-                            &[declared.sql().into()],
-                        ),
-                    ));
-                }
-            }
-            index_type = Some(IndexType::FULLTEXT);
-            ConstraintKind::Columnar(ColumnarIndexType::FULLTEXT)
-        }
+        IndexConstraintKind::Fulltext => ConstraintKind::Columnar(ColumnarIndexType::FULLTEXT),
         other => {
             return Err(DdlAdmissionError::plain(format!(
                 "CREATE TABLE {other:?} indexes are not supported by this node"
             )))
         }
     };
-    check_index_options(
-        matches!(kind, ConstraintKind::Columnar(_)),
-        index_type.unwrap_or(IndexType::INVALID),
-        &index.options,
-    )?;
-    check_index_specs(index_type.unwrap_or(IndexType::INVALID), &index.parts)?;
     // Go `BuildTableInfo`: `CLUSTERED` / `NONCLUSTERED` written on anything
     // but the primary key is `ErrUnsupportedClusteredSecondaryKey`.
     if index.options.primary_key_storage.is_some() && kind != ConstraintKind::PrimaryKey {
@@ -1496,6 +1488,47 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
         parser_name: index.options.parser_name.clone().unwrap_or_default(),
         condition: index.options.condition.clone(),
     })
+}
+
+/// Go `checkCreateIndexGrammar` and `checkConstraintGrammar` past their name
+/// checks: a VECTOR or FULLTEXT key is rewritten into a columnar index of
+/// that type, then the options and the parts are checked. Returns whether the
+/// key is columnar and `Option.Tp` after the rewrite.
+///
+/// # Errors
+/// Go's `ErrUnsupportedIndexType` and `ErrUnsupportedAddColumnarIndex`.
+pub fn check_index_grammar(
+    kind: tidb_ast::IndexKind,
+    options: &IndexOptions,
+    parts: &[IndexPart],
+) -> Refusal<(bool, IndexType)> {
+    let declared = options.index_type.unwrap_or(IndexType::INVALID);
+    let refusal = |format: &str| {
+        Err(DdlAdmissionError::from_terror(
+            &tidb_dbterror::ERR_UNSUPPORTED_INDEX_TYPE.fast_gen(format, &[declared.sql().into()]),
+        ))
+    };
+    let (is_columnar, tp) = match kind {
+        tidb_ast::IndexKind::Vector => {
+            if declared != IndexType::INVALID && declared != IndexType::HNSW {
+                return refusal("'USING %s' is not supported for VECTOR INDEX");
+            }
+            (true, IndexType::VECTOR)
+        }
+        tidb_ast::IndexKind::Fulltext => {
+            if declared != IndexType::INVALID {
+                return refusal("'USING %s' is not supported for FULLTEXT INDEX");
+            }
+            (true, IndexType::FULLTEXT)
+        }
+        tidb_ast::IndexKind::Columnar => (true, declared),
+        tidb_ast::IndexKind::Ordinary
+        | tidb_ast::IndexKind::Unique
+        | tidb_ast::IndexKind::Spatial => (false, declared),
+    };
+    check_index_options(is_columnar, tp, options)?;
+    check_index_specs(tp, parts)?;
+    Ok((is_columnar, tp))
 }
 
 /// Go `checkIndexOptions`, `tp` being `indexOptions.Tp` after the rewrite of
@@ -1588,7 +1621,8 @@ pub fn check_full_text_supported_in_starter() -> Refusal<()> {
 /// Go `buildFullTextInfoWithCheck`. `checkIndexSpecs` has already refused a
 /// part that is not a column.
 fn build_full_text_info_with_check(
-    constraint: &Constraint,
+    parts: &[KeyPart],
+    parser_name: &str,
     table: &TableInfo,
 ) -> Refusal<tidb_model::index::FullTextIndexInfo> {
     use tidb_model::index::full_text_parser_type;
@@ -1598,7 +1632,7 @@ fn build_full_text_info_with_check(
             &tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX.fast_gen(message, &[]),
         ))
     };
-    let [part] = constraint.parts.as_slice() else {
+    let [part] = parts else {
         return refusal("FULLTEXT index only support one column");
     };
     if part.prefix_len != UNSPECIFIED_LENGTH {
@@ -1609,8 +1643,8 @@ fn build_full_text_info_with_check(
     }
     // The Default parser is STANDARD
     let mut parser = full_text_parser_type::STANDARD_V1;
-    if !constraint.parser_name.is_empty() {
-        parser = tidb_model::index::get_full_text_parser_type_by_sql_name(&constraint.parser_name);
+    if !parser_name.is_empty() {
+        parser = tidb_model::index::get_full_text_parser_type_by_sql_name(parser_name);
         if parser == full_text_parser_type::INVALID {
             return refusal("fulltext index must specify a valid parser");
         }
@@ -1645,6 +1679,282 @@ fn build_full_text_info_with_check(
     Ok(tidb_model::index::FullTextIndexInfo {
         parser_type: parser.to_owned(),
     })
+}
+
+/// Go `findColumnByName`.
+fn find_column_by_name(
+    name_l: &str,
+    table: &TableInfo,
+) -> Option<GoShared<tidb_model::column::ColumnInfo>> {
+    table
+        .columns
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == name_l)
+}
+
+/// What Go's `build{Vector,Inverted,FullText}InfoWithCheck` leave behind: the
+/// index's own info and its one key part as `buildIndexColumns` then reads it.
+#[derive(Clone, Debug, Default)]
+pub struct ColumnarInfo {
+    /// Go `IndexInfo.VectorInfo`.
+    pub vector_info: Option<tidb_model::index::VectorIndexInfo>,
+    /// Go `IndexInfo.InvertedInfo`.
+    pub inverted_info: Option<tidb_model::index::InvertedIndexInfo>,
+    /// Go `IndexInfo.FullTextInfo`.
+    pub full_text_info: Option<tidb_model::index::FullTextIndexInfo>,
+    /// Go `restoreFuncCall` of a vector index's distance function.
+    pub func_expr: String,
+    /// Go `idxPart.Column.Name`.
+    pub column: CiString,
+    /// Go `idxPart.Length`.
+    pub length: i64,
+    /// Go `idxPart.Desc`.
+    pub desc: bool,
+}
+
+/// Go `buildVectorInfoWithCheck`.
+fn build_vector_info_with_check(parts: &[IndexPart], table: &TableInfo) -> Refusal<ColumnarInfo> {
+    let refusal = |message: String| {
+        Err(DdlAdmissionError::from_terror(
+            &tidb_dbterror::ERR_UNSUPPORTED_ADD_VECTOR_INDEX.fast_gen_by_args(&[message.into()]),
+        ))
+    };
+    let [part] = parts else {
+        return refusal("unsupported no function".to_owned());
+    };
+    let (name, args, desc) = match part {
+        IndexPart::Expr {
+            expr: tidb_ast::Expr::Func { name, args, .. },
+            desc,
+        } => (name, args, *desc),
+        // Go prints its expression node with `%v`; the SQL is what this
+        // node can say of it.
+        IndexPart::Expr { expr, .. } => {
+            return refusal(format!("unsupported function: {}", expr.restore()))
+        }
+        IndexPart::Column { .. } => return refusal("unsupported function: <nil>".to_owned()),
+    };
+    let Some(distance_metric) =
+        tidb_model::index::indexable_fn_name_to_distance_metric(&tidb_hack::go_to_lower(name))
+    else {
+        return refusal("currently only L2 and Cosine distance is indexable".to_owned());
+    };
+    let column_name = match args.first() {
+        Some(tidb_ast::Expr::Column(path)) => path.last().cloned().unwrap_or_default(),
+        Some(other) => {
+            return refusal(format!("unsupported function args: {}", other.restore()))
+        }
+        None => return refusal("unsupported function args: <nil>".to_owned()),
+    };
+    let Some(column) = find_column_by_name(&tidb_hack::go_to_lower(&column_name), table) else {
+        return Err(DdlAdmissionError::from_terror(
+            &tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS
+                .gen_with_stack_by_args(&[column_name.into(), table.name.original().into()]),
+        ));
+    };
+    let column = column.read();
+    // check duplicated function on the same column
+    for index in table.indices.iter_deref() {
+        let index = index.read();
+        let Some(vector_info) = index.vector_info.as_ref() else {
+            continue;
+        };
+        if index.find_column_by_name(column.name.lowercase()).is_none() {
+            continue;
+        }
+        if vector_info.read().distance_metric == distance_metric {
+            return Err(DdlAdmissionError::from_terror(
+                &tidb_dbterror::ERR_DUP_KEY_NAME.gen_with_stack(format!(
+                    "vector index {} function {} already exist on column {}",
+                    index.name.original(),
+                    name,
+                    column.name.original()
+                )),
+            ));
+        }
+    }
+    if column.field_type.flen() <= 0 {
+        return Err(DdlAdmissionError::plain(
+            "add vector index can only be defined on fixed-dimension vector columns",
+        ));
+    }
+    // Go `restoreFuncCall`.
+    let IndexPart::Expr { expr, .. } = part else {
+        unreachable!("the part is a function call")
+    };
+    let func_expr = expr.restore_with_flags(
+        tidb_parser_format::RestoreFlags::STRING_SINGLE_QUOTES
+            | tidb_parser_format::RestoreFlags::KEYWORD_LOWERCASE
+            | tidb_parser_format::RestoreFlags::NAME_BACK_QUOTES
+            | tidb_parser_format::RestoreFlags::SPACES_AROUND_BINARY_OPERATION,
+    );
+    Ok(ColumnarInfo {
+        vector_info: Some(tidb_model::index::VectorIndexInfo {
+            dimension: column.field_type.flen() as u64,
+            distance_metric: distance_metric.to_owned(),
+        }),
+        func_expr,
+        column: column.name.clone(),
+        length: UNSPECIFIED_LENGTH,
+        desc,
+        ..ColumnarInfo::default()
+    })
+}
+
+/// Go `buildInvertedInfoWithCheck`.
+fn build_inverted_info_with_check(
+    parts: &[IndexPart],
+    table: &TableInfo,
+) -> Refusal<ColumnarInfo> {
+    let refusal = |message: &str| {
+        Err(DdlAdmissionError::from_terror(
+            &tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX.fast_gen_by_args(&[message.into()]),
+        ))
+    };
+    let [part] = parts else {
+        return refusal("only support one column");
+    };
+    let IndexPart::Column { name, desc, .. } = part else {
+        return refusal("unsupported no column");
+    };
+    let Some(column) = find_column_by_name(&tidb_hack::go_to_lower(name), table) else {
+        return Err(DdlAdmissionError::from_terror(
+            &tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS
+                .gen_with_stack_by_args(&[name.clone().into(), table.name.original().into()]),
+        ));
+    };
+    let column = column.read();
+    // check duplicated columnar index on the same column
+    for index in table.indices.iter_deref() {
+        let index = index.read();
+        if index.inverted_info.is_none()
+            || index.find_column_by_name(column.name.lowercase()).is_none()
+        {
+            continue;
+        }
+        if index.tp == IndexType::INVERTED {
+            return Err(DdlAdmissionError::from_terror(
+                &tidb_dbterror::ERR_DUP_KEY_NAME.gen_with_stack(format!(
+                    "inverted columnar index {} already exist on column {}",
+                    index.name.original(),
+                    column.name.original()
+                )),
+            ));
+        }
+    }
+    Ok(ColumnarInfo {
+        inverted_info: tidb_model::index::field_type_to_inverted_index_info(
+            &column.field_type,
+            column.id,
+        ),
+        column: column.name.clone(),
+        length: UNSPECIFIED_LENGTH,
+        desc: *desc,
+        ..ColumnarInfo::default()
+    })
+}
+
+/// Go `createColumnarIndex`'s and `BuildIndexInfo`'s switch over the columnar
+/// index type: the type's `build*InfoWithCheck`.
+///
+/// # Errors
+/// What Go's three builders refuse.
+pub fn build_columnar_info_with_check(
+    columnar_index_type: ColumnarIndexType,
+    parts: &[IndexPart],
+    parser_name: &str,
+    table: &TableInfo,
+) -> Refusal<ColumnarInfo> {
+    match columnar_index_type {
+        ColumnarIndexType::VECTOR => build_vector_info_with_check(parts, table),
+        ColumnarIndexType::INVERTED => build_inverted_info_with_check(parts, table),
+        _ => {
+            let key_parts: Vec<KeyPart> = parts
+                .iter()
+                .filter_map(|part| match part {
+                    IndexPart::Column {
+                        name,
+                        prefix_len,
+                        desc,
+                    } => Some(KeyPart {
+                        name: name.clone(),
+                        prefix_len: prefix_len.unwrap_or(UNSPECIFIED_LENGTH),
+                        desc: *desc,
+                    }),
+                    IndexPart::Expr { .. } => None,
+                })
+                .collect();
+            let full_text_info = build_full_text_info_with_check(&key_parts, parser_name, table)?;
+            let part = &key_parts[0];
+            Ok(ColumnarInfo {
+                full_text_info: Some(full_text_info),
+                column: CiString::new(part.name.clone()),
+                length: part.prefix_len,
+                desc: part.desc,
+                ..ColumnarInfo::default()
+            })
+        }
+    }
+}
+
+/// Go `BuildIndexInfo` for a columnar index, `index_option` being the job's
+/// `ast.IndexOption`.
+///
+/// # Errors
+/// Go's `checkTooLongIndex`, `build*InfoWithCheck` and `buildIndexColumns`
+/// errors.
+pub fn build_columnar_index_info(
+    ctx: Option<&tidb_metabuild::Context>,
+    table: &TableInfo,
+    index_name: &CiString,
+    columnar_index_type: ColumnarIndexType,
+    parts: &[IndexPart],
+    index_option: &tidb_ast::IndexOption,
+    state: SchemaState,
+) -> Refusal<(IndexInfo, ColumnarInfo)> {
+    crate::check_too_long_identifier(index_name.original()).map_err(default_admission_error)?;
+    let columnar = build_columnar_info_with_check(
+        columnar_index_type,
+        parts,
+        index_option.parser_name.original(),
+        table,
+    )?;
+    let columns: Vec<tidb_model::column::ColumnInfo> = table
+        .columns
+        .iter_deref()
+        .map(|column| column.read().clone_like_go())
+        .collect();
+    let (index_columns, mv_index) = crate::index::build_index_columns(
+        ctx,
+        &columns,
+        &[crate::index::IndexPartSpecification {
+            column: columnar.column.original(),
+            length: columnar.length,
+        }],
+        columnar_index_type,
+    )
+    .map_err(default_admission_error)?;
+    let tp = IndexType(index_option.tp);
+    let index = IndexInfo {
+        name: index_name.clone(),
+        columns: index_columns.into(),
+        state,
+        comment: index_option.comment.clone(),
+        invisible: index_option.visibility == 2,
+        // Use btree as default index type.
+        tp: if tp == IndexType::INVALID {
+            IndexType::BTREE
+        } else {
+            tp
+        },
+        global: index_option.global,
+        mv_index,
+        vector_info: columnar.vector_info.clone().map(GoShared::new),
+        inverted_info: columnar.inverted_info.clone().map(GoShared::new),
+        full_text_info: columnar.full_text_info.clone().map(GoShared::new),
+        ..IndexInfo::default()
+    };
+    Ok((index, columnar))
 }
 
 /// Go `checkTableTypeForColumnarIndex`.
@@ -3346,7 +3656,11 @@ fn build_table(
             }
         };
         let full_text_info = if columnar_index_type == ColumnarIndexType::FULLTEXT {
-            Some(GoShared::new(build_full_text_info_with_check(constraint, &table)?))
+            Some(GoShared::new(build_full_text_info_with_check(
+                &constraint.parts,
+                &constraint.parser_name,
+                &table,
+            )?))
         } else {
             None
         };

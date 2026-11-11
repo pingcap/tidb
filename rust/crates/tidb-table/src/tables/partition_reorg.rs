@@ -98,21 +98,27 @@ impl TableCommon {
         &self,
         physical_id: i64,
     ) -> (Vec<Index>, Vec<NonPublicIndex>) {
+        // Go's write loops (`addIndices`, `rebuildUpdateRecordIndices`,
+        // `removeRowIndices`) skip `IsColumnarIndex`: the columnar replica
+        // builds it, no entry is filed under the table.
+        let indexes = self.indexes.iter().filter(|index| !index.read().is_columnar_index());
+        let nonpublic = self
+            .nonpublic_indexes
+            .iter()
+            .filter(|index| !index.index.read().is_columnar_index());
         let mode = self
             .partition_reorg
             .as_deref()
             .and_then(|reorg| reorg.index_modes.get(&physical_id));
         let Some(mode) = mode else {
-            return (self.indexes.to_vec(), self.nonpublic_indexes.to_vec());
+            return (indexes.cloned().collect(), nonpublic.cloned().collect());
         };
         let mut normal = Vec::new();
-        let mut stateful: Vec<NonPublicIndex> = self
-            .nonpublic_indexes
-            .iter()
+        let mut stateful: Vec<NonPublicIndex> = nonpublic
             .filter(|index| !mode.excluded.contains(&index.index.read().id))
             .cloned()
             .collect();
-        for index in self.indexes.iter() {
+        for index in indexes {
             if mode.excluded.contains(&index.read().id) {
                 continue;
             }

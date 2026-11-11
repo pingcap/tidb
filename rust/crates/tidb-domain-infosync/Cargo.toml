@@ -31,6 +31,7 @@ tidb-placement = { path = "../tidb-placement" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-config = { path = "../tidb-config" }
+tidb-pd-client = { path = "../tidb-pd-client" }
 
 [dev-dependencies]
 tidb-session-cursor = { path = "../tidb-session-cursor" }

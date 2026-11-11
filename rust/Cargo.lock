@@ -4591,6 +4591,7 @@ dependencies = [
  "tidb-log",
  "tidb-logutil",
  "tidb-model",
+ "tidb-pd-client",
  "tidb-placement",
  "tidb-proto",
  "tidb-session-cursor",

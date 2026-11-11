@@ -1179,7 +1179,7 @@ mod tests {
     fn rule_batches_set_the_group_first_and_keep_sibling_rules() {
         use tidb_domain_infosync::tiflash_manager::{make_new_rule, TiFlashReplicaManager, TiFlashReplicaManagerCtx};
         let http = HttpFixture::new(successful_response);
-        TiFlashReplicaManagerCtx::new(&pd_http_client(&http.address))
+        TiFlashReplicaManagerCtx::new(&pd_http_client(&http.address), &tidb_pd_client::ClusterSecurity::default())
             .set_placement_rule_batch(&[make_new_rule(7, 2, &[]), make_new_rule(8, 0, &[])])
             .unwrap();
         let requests = http.requests.lock().unwrap();
@@ -1390,7 +1390,7 @@ mod tests {
                 successful_response(path)
             }
         });
-        TiFlashReplicaManagerCtx::new(&pd_http_client(&http.address))
+        TiFlashReplicaManagerCtx::new(&pd_http_client(&http.address), &tidb_pd_client::ClusterSecurity::default())
             .set_placement_rule(&make_new_rule(7, 2, &[]))
             .unwrap();
         let requests = http.requests.lock().unwrap().clone();
@@ -1404,7 +1404,7 @@ mod tests {
                 successful_response(path)
             }
         });
-        assert!(TiFlashReplicaManagerCtx::new(&pd_http_client(&http.address))
+        assert!(TiFlashReplicaManagerCtx::new(&pd_http_client(&http.address), &tidb_pd_client::ClusterSecurity::default())
             .set_placement_rule(&make_new_rule(7, 2, &[]))
             .is_err());
         assert!(!http
@@ -1448,6 +1448,12 @@ mod tests {
             }
             fn delete_tiflash_progress_from_cache(&self, _: i64) {}
             fn clean_tiflash_progress_cache(&self) {}
+            fn get_stores_stat(&self) -> Result<pd_http::StoresInfo, String> {
+                Ok(pd_http::StoresInfo::default())
+            }
+            fn sync_tiflash_table_schema(&self, _: i64, _: &[pd_http::StoreInfo]) -> Result<(), String> {
+                Ok(())
+            }
         }
         init_tiflash_replica_manager(Some(Arc::new(Rules)));
         let http = HttpFixture::new(successful_response);

@@ -34,7 +34,7 @@
       "id": "D05",
       "status": "partial",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "Cancellation follows Go's `convertJob2RollbackJob` for every action the worker runs. A columnar (vector, inverted, full-text) index is checked against its table as Go's `createColumnarIndex` does (`add_index.rs` `create_columnar_index`, `checkTableTypeForColumnarIndex`), but on a table with a columnar replica this node builds no `ActionAddColumnarIndex` job: `onCreateColumnarIndex` (TiFlash schema sync, `checkColumnarIndexProcess`) and its `rollingbackAddColumanrIndex` are absent",
+      "finding": "Cancellation follows Go's `convertJob2RollbackJob` for every action the worker runs, and a columnar (vector, inverted, full-text) index runs Go's `ActionAddColumnarIndex` job (`add_index.rs` `on_create_columnar_index`: TiFlash schema sync, `checkColumnarIndexProcess`, `rollingbackAddColumanrIndex`). What is left is the columnar store of a CSE deployment: `checkColumnarIndexProcessFromTiKV` (`infosync.CalculateColumnarIndexProgress` over each TiKV store's columnar status) has no port, so `check_columnar_index_process_once` refuses when `cse.IsColumnarStoreEnabled`, as the replica-progress side (`ddl_tiflash_api.go` `checkColumnar`) does not read it either. Go's cancel of the job from a hook at its second `WriteReorganization` step (`testAddColumnarIndexRollback` case 2) has no test here",
       "go_owner": "`pkg/ddl`"
     },
     {
