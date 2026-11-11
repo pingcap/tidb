@@ -57,6 +57,19 @@ func registeredTaskCount(t *testing.T, r *registry.Registry, taskID uint64) int 
 	return len(registrations)
 }
 
+func heartbeatOnceAfter(t *testing.T, r *registry.Registry, taskID uint64, d time.Duration) {
+	done := make(chan struct{})
+	timer := time.AfterFunc(d, func() {
+		defer close(done)
+		_ = r.UpdateHeartbeat(context.Background(), taskID)
+	})
+	t.Cleanup(func() {
+		if !timer.Stop() {
+			<-done
+		}
+	})
+}
+
 func TestAbortKeepsTaskWithLiveHeartbeat(t *testing.T) {
 	r, info, taskID := newRegistryWithRunningTask(t)
 	ctx := context.Background()
@@ -93,8 +106,7 @@ func TestAbortDeletesTaskWhoseHeartbeatStopsDuringTheAbort(t *testing.T) {
 	r, info, taskID := newRegistryWithRunningTask(t)
 	ctx := context.Background()
 
-	lastHeartbeat := time.AfterFunc(1500*time.Millisecond, func() { _ = r.UpdateHeartbeat(ctx, taskID) })
-	defer lastHeartbeat.Stop()
+	heartbeatOnceAfter(t, r, taskID, 1500*time.Millisecond)
 
 	deletedTaskID, err := r.FindAndDeleteMatchingTask(ctx, info, true)
 	require.NoError(t, err)
@@ -106,8 +118,7 @@ func TestAbortKeepsTaskWhenCancelledWhileWaitingForItsHeartbeat(t *testing.T) {
 	r, info, taskID := newRegistryWithRunningTask(t)
 	ctx := context.Background()
 
-	lastHeartbeat := time.AfterFunc(1500*time.Millisecond, func() { _ = r.UpdateHeartbeat(ctx, taskID) })
-	defer lastHeartbeat.Stop()
+	heartbeatOnceAfter(t, r, taskID, 1500*time.Millisecond)
 	abortCtx, cancel := context.WithTimeout(ctx, 4500*time.Millisecond)
 	defer cancel()
 
