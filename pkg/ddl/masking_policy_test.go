@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -831,4 +833,100 @@ func TestMaskingPolicyModifyColumnPublication(t *testing.T) {
 	root.MustExec("alter table t_publish modify column c decimal(10,2) unsigned")
 	require.True(t, checked.Load())
 	root.MustQuery("select c from t_publish").Check(testkit.Rows("0"))
+}
+
+func TestMaskingPolicyRepartitionBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_repartition(id int primary key, c varchar(20))")
+	tk.MustExec("insert into t_repartition values (1, 'secret')")
+	tk.MustExec("create masking policy p on t_repartition(c) as mask_full(c) restrict on (delete_select)")
+	for _, sql := range []string{
+		"alter table t_repartition partition by hash(id) partitions 2",
+		"alter table t_repartition remove partitioning",
+	} {
+		tk.MustExec(sql)
+		tk.MustQuery("select c from t_repartition").Check(testkit.Rows("XXXXXX"))
+		tk.MustQuery("select p.table_id = t.tidb_table_id from mysql.tidb_masking_policy p join information_schema.tables t on p.db_name=t.table_schema and p.table_name=t.table_name where p.policy_name='p' and p.table_name='t_repartition'").Check(testkit.Rows("1"))
+		tk.MustGetErrCode("delete from t_repartition where c=(select max(c) from t_repartition)", errno.ErrAccessDeniedToMaskedColumn)
+	}
+}
+
+func TestMaskingPolicyQualifiedRename(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_qualified(a varchar(20), b varchar(20))")
+	tk.MustExec("insert into t_qualified values ('secret', 'hidden')")
+	tk.MustExec("create masking policy p1 on t_qualified(a) as mask_full(t_qualified.a)")
+	tk.MustExec("create masking policy p2 on t_qualified(b) as mask_full(test.t_qualified.b)")
+	tk.MustExec("rename table t_qualified to u_qualified")
+	tk.MustQuery("select a,b from u_qualified").Check(testkit.Rows("XXXXXX XXXXXX"))
+	tk.MustExec("create database rename_qualified")
+	tk.MustExec("rename table u_qualified to rename_qualified.v_qualified")
+	tk.MustQuery("select a,b from rename_qualified.v_qualified").Check(testkit.Rows("XXXXXX XXXXXX"))
+}
+
+func TestMaskingPolicyRejectFoldedDependencies(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_dependencies(a varchar(20), b varchar(20))")
+	for _, expr := range []string{"if(1,a,b)", "case when 1 then a else b end", "ifnull(a,b)"} {
+		tk.MustGetErrCode("create masking policy p on t_dependencies(a) as "+expr, errno.ErrMaskingPolicyExprInvalidColumn)
+	}
+	tk.MustExec("create masking policy p on t_dependencies(a) as mask_full(a)")
+	tk.MustGetErrCode("alter table t_dependencies modify masking policy p set expression=if(1,a,b)", errno.ErrMaskingPolicyExprInvalidColumn)
+}
+
+func TestMaskingPolicyMultiRenameRollbackIsAtomic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_multi_atomic(a varchar(20), b varchar(20))")
+	tk.MustExec("insert into t_multi_atomic values ('secret', 'hidden')")
+	tk.MustExec("create masking policy p1 on t_multi_atomic(a) as mask_full(a)")
+	tk.MustExec("create masking policy p2 on t_multi_atomic(b) as mask_full(b)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMaskingPolicyUpdateError", "1*off->1*return(true)->off")
+	require.Error(t, tk.ExecToErr("alter table t_multi_atomic change a aa varchar(20), change b bb varchar(20)"))
+	tk.MustQuery("select column_name,expression from mysql.tidb_masking_policy where table_name='t_multi_atomic' order by policy_name").Check(testkit.Rows("a MASK_FULL(`a`)", "b MASK_FULL(`b`)"))
+	tk.MustQuery("select a,b from t_multi_atomic").Check(testkit.Rows("XXXXXX XXXXXX"))
+}
+
+func TestMaskingPolicyConcurrentAlterAttributes(t *testing.T) {
+	for _, sql := range []string{
+		"alter table t_concurrent modify masking policy p set restrict on (delete_select)",
+		"alter table t_concurrent modify masking policy p set expression=mask_null(c)",
+	} {
+		t.Run(sql, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t_concurrent(c varchar(20))")
+			tk.MustExec("create masking policy p on t_concurrent(c) as mask_full(c) disable")
+			other := testkit.NewTestKit(t, store)
+			other.MustExec("use test")
+			prepared := make(chan struct{})
+			release := make(chan struct{})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeSubmitMaskingPolicyAlter", func(action ast.AlterTableType) {
+				if action == ast.AlterTableModifyMaskingPolicyRestrictOn || action == ast.AlterTableModifyMaskingPolicyExpression {
+					close(prepared)
+					<-release
+				}
+			})
+			done := make(chan error, 1)
+			go func() { done <- other.ExecToErr(sql) }()
+			<-prepared
+			tk.MustExec("alter table t_concurrent enable masking policy p")
+			close(release)
+			require.NoError(t, <-done)
+			tk.MustQuery("select status from mysql.tidb_masking_policy where table_name='t_concurrent'").Check(testkit.Rows("ENABLED"))
+			if strings.Contains(sql, "restrict") {
+				tk.MustQuery("select restrict_on from mysql.tidb_masking_policy where table_name='t_concurrent'").Check(testkit.Rows("DELETE_SELECT"))
+			} else {
+				tk.MustQuery("select expression from mysql.tidb_masking_policy where table_name='t_concurrent'").Check(testkit.Rows("MASK_NULL(`c`)"))
+			}
+		})
+	}
 }

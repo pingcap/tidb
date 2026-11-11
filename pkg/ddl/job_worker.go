@@ -628,6 +628,7 @@ func (w *worker) transitOneJobStep(
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
 	w.maskingPolicyTxn = false
+	wasRollingback := job.IsRollingback()
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job)
 
 	failpoint.InjectCall("onJobRunAfter", job)
@@ -646,7 +647,7 @@ func (w *worker) transitOneJobStep(
 	}
 
 	if (runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone()) ||
-		(w.maskingPolicyTxn && (runJobErr != nil || job.IsCancelling())) {
+		(w.maskingPolicyTxn && (runJobErr != nil || job.IsCancelling() || job.IsRollingback() && !wasRollingback)) {
 		// Preserve the existing rollback behavior for other DDLs, but discard
 		// the entire transaction if policy SQL may have flushed partial writes.
 

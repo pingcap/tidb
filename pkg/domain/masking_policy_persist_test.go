@@ -15,6 +15,12 @@
 package domain_test
 
 import (
+	"context"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/stretchr/testify/require"
+	"math"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -61,4 +67,56 @@ func TestMaskingPolicyPersistAfterRestart(t *testing.T) {
 	// Verify policy is still in system table
 	tk2.MustQuery("select policy_name, db_name, table_name, column_name, status from mysql.tidb_masking_policy where policy_name = 'simple_mask'").
 		Check(testkit.Rows("simple_mask test t c ENABLED"))
+}
+
+func TestMaskingPolicyColdSnapshot(t *testing.T) {
+	for _, change := range []string{
+		"alter table t_cold disable masking policy p",
+		"alter table t_cold drop masking policy p",
+		"truncate table t_cold",
+	} {
+		t.Run(change, func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t_cold(c varchar(20))")
+			tk.MustExec("insert into t_cold values ('secret')")
+			tk.MustExec("create masking policy p on t_cold(c) as mask_full(c)")
+			ctx := context.Background()
+			tbl, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("t_cold"))
+			require.NoError(t, err)
+			snapshot, err := store.CurrentVersion(kv.GlobalTxnScope)
+			require.NoError(t, err)
+			tk.MustExec(change)
+			latest := dom.InfoSchema()
+			current, err := store.CurrentVersion(kv.GlobalTxnScope)
+			require.NoError(t, err)
+			// Evict historical schemas so the next read cannot reuse a warmed policy map.
+			dom.InfoCache().Reset(16)
+			dom.InfoCache().Insert(latest, current.Ver)
+			historical, err := dom.GetSnapshotInfoSchema(snapshot.Ver)
+			require.NoError(t, err)
+			policy, ok, err := historical.MaskingPolicyByTableColumn(ctx, tbl.Meta().ID, tbl.Meta().Columns[0].ID)
+			require.NoError(t, err)
+			require.True(t, ok)
+			require.Equal(t, model.MaskingPolicyStatusEnable, policy.Status)
+			require.Equal(t, tbl.Meta().ID, policy.TableID)
+		})
+	}
+}
+
+func TestMaskingPolicyLatestSnapshot(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create table test.t_latest_policy(c varchar(20))")
+	tk.MustExec("create masking policy p on test.t_latest_policy(c) as mask_full(c)")
+	ctx := context.Background()
+	is, err := dom.GetSnapshotInfoSchema(math.MaxUint64)
+	require.NoError(t, err)
+	tbl, err := is.TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("t_latest_policy"))
+	require.NoError(t, err)
+	policy, ok, err := is.MaskingPolicyByTableColumn(ctx, tbl.Meta().ID, tbl.Meta().Columns[0].ID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, model.MaskingPolicyStatusEnable, policy.Status)
 }

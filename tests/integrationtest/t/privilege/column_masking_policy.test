@@ -551,6 +551,7 @@ CREATE USER cmp_snapshot, cmp_snapshot_stale;
 GRANT SELECT ON privilege__column_masking_policy.t_snapshot_compat TO cmp_snapshot;
 GRANT SELECT ON privilege__column_masking_policy.t_snapshot_compat TO cmp_snapshot_stale;
 GRANT SELECT ON privilege__column_masking_policy.t_snapshot_compat_ts TO cmp_snapshot;
+GRANT SELECT ON privilege__column_masking_policy.t_snapshot_compat_ts TO cmp_snapshot_stale;
 # BEGIN activates a PD timestamp before the marker expression is evaluated.
 # Snapshots must not depend on local clock skew.
 BEGIN;
@@ -663,14 +664,20 @@ connection default;
 
 CREATE MASKING POLICY p_snapshot_stale ON privilege__column_masking_policy.t_snapshot_compat(c) AS MASK_FULL(c) ENABLE;
 SELECT SLEEP(2.2);
+BEGIN;
+REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
+  ('stale_clock', TIDB_PARSE_TSO(TIDB_CURRENT_TSO()) + INTERVAL 1 SECOND);
+COMMIT;
 ALTER TABLE privilege__column_masking_policy.t_snapshot_compat DISABLE MASKING POLICY p_snapshot_stale;
 
 connect (cmp_snapshot_stale_conn, localhost, cmp_snapshot_stale,, privilege__column_masking_policy);
 connection cmp_snapshot_stale_conn;
 SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
+SET @@timestamp = UNIX_TIMESTAMP((SELECT ts FROM privilege__column_masking_policy.t_snapshot_compat_ts WHERE name='stale_clock'));
 SET @@tidb_read_staleness='-1';
 SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
 SET @@tidb_read_staleness=default;
+SET @@timestamp=default;
 SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
 disconnect cmp_snapshot_stale_conn;
 connection default;

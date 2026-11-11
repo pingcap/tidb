@@ -245,3 +245,31 @@ func TestMaskingPolicyRestrictInstancePlanCache(t *testing.T) {
 		})
 	}
 }
+
+func TestMaskingPolicyRestrictAggregateSources(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	root.MustExec("use test")
+	root.MustExec("create table src_agg(c varchar(20))")
+	root.MustExec("create table dst_agg(c varchar(20))")
+	root.MustExec("insert into src_agg values ('secret')")
+	root.MustExec("insert into dst_agg values ('secret')")
+	root.MustExec("create masking policy p on src_agg(c) as case when current_user()='root@%' then c else mask_full(c) end restrict on (insert_into_select, update_select, delete_select)")
+	root.MustExec("create user aggregate_user")
+	root.MustExec("grant select,insert,update,delete on test.* to aggregate_user")
+	user := testkit.NewTestKit(t, store)
+	require.NoError(t, user.Session().Auth(&auth.UserIdentity{Username: "aggregate_user", Hostname: "%"}, nil, nil, nil))
+	user.MustExec("use test")
+	for _, agg := range []string{"max", "min"} {
+		for _, sql := range []string{
+			"delete from dst_agg where c = (select " + agg + "(c) from src_agg)",
+			"update dst_agg set c=c where c = (select " + agg + "(c) from src_agg)",
+			"insert into dst_agg select " + agg + "(c) from src_agg",
+		} {
+			user.MustGetErrCode(sql, errno.ErrAccessDeniedToMaskedColumn)
+		}
+	}
+	root.MustExec("delete from dst_agg where c = (select max(c) from src_agg)")
+	root.MustQuery("select count(*) from dst_agg").Check(testkit.Rows("0"))
+}

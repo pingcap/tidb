@@ -78,6 +78,8 @@ type infoSchema struct {
 	maskingPolicyTableColumnMap map[int64]map[int64]*model.MaskingPolicyInfo
 	// maskingPoliciesLoaded indicates whether masking policies have been loaded.
 	maskingPoliciesLoaded bool
+	// Policies belong to the same snapshot as this InfoSchema, even on a cold load.
+	maskingPolicySnapshotTS uint64
 	// maskingPoliciesLoadCh is non-nil when a masking-policy load is in progress.
 	// Waiters block on this channel to avoid serving partially initialized policy maps.
 	maskingPoliciesLoadCh chan struct{}

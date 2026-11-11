@@ -862,6 +862,7 @@ func TestMaskingPolicyArgs(t *testing.T) {
 		PolicyName:     ast.NewCIStr("policy_name"),
 		PolicyID:       123,
 		ReplaceOnExist: false,
+		AlterAction:    ast.AlterTableModifyMaskingPolicyRestrictOn,
 	}
 	for _, tp := range []ActionType{ActionCreateMaskingPolicy, ActionAlterMaskingPolicy, ActionDropMaskingPolicy} {
 		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -876,6 +877,7 @@ func TestMaskingPolicyArgs(t *testing.T) {
 			} else if tp == ActionAlterMaskingPolicy {
 				require.EqualValues(t, inArgs.Policy, args.Policy)
 				require.EqualValues(t, inArgs.PolicyID, args.PolicyID)
+				require.EqualValues(t, inArgs.AlterAction, args.AlterAction)
 			} else {
 				require.EqualValues(t, inArgs.PolicyName, args.PolicyName)
 				require.EqualValues(t, inArgs.PolicyID, args.PolicyID)

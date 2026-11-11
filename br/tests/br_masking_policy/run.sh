@@ -86,6 +86,13 @@ check_restored_db() {
         echo "TEST: [$TEST_NAME] failed at ${stage}! Expected 1 row in mysql.tidb_masking_policy for restored table_id=${restored_table_id} after db-scope restore, got $policy_row_count_after"
         exit 1
     fi
+
+    masked_output=$(run_sql "SELECT c FROM ${DB}.t ORDER BY id;")
+    masked_rows=$(printf '%s\n' "$masked_output" | awk -F': ' '$1 == "c" && $2 == "masked" { n++ } END { print n+0 }')
+    if [ "$masked_rows" != "2" ]; then
+        echo "TEST: [$TEST_NAME] failed at ${stage}! Restored query did not mask both rows"
+        exit 1
+    fi
 }
 
 # Phase 1: full backup then db-scope restore.
@@ -105,6 +112,28 @@ run_sql "DROP DATABASE $DB;"
 echo "restore from db backup start..."
 run_br restore db --db "$DB" -s "local://$TEST_DIR/${DB}_db_from_restored" --pd $PD_ADDR
 check_restored_db "restore-from-db-backup"
+
+# A filtered full backup must carry the policies of its selected tables.
+run_br --pd $PD_ADDR backup full --filter "${DB}.*" -s "local://$TEST_DIR/${DB}_filtered_full"
+run_sql "DROP DATABASE $DB;"
+run_br restore db --db "$DB" -s "local://$TEST_DIR/${DB}_filtered_full" --pd $PD_ADDR
+check_restored_db "restore-from-filtered-full"
+
+# Table backups carry the policy system table, including unrelated policy rows.
+# Restoring t at database scope must leave the existing u policy untouched.
+run_sql "CREATE TABLE ${DB}.u(c VARCHAR(100));"
+run_sql "INSERT INTO ${DB}.u VALUES ('secret');"
+run_sql "CREATE MASKING POLICY unrelated ON ${DB}.u(c) AS MASK_FULL(c);"
+run_br --pd $PD_ADDR backup table --db "$DB" --table t -s "local://$TEST_DIR/${DB}_table"
+run_sql "DROP TABLE ${DB}.t;"
+run_sql "CREATE OR REPLACE MASKING POLICY unrelated ON ${DB}.u(c) AS 'target';"
+run_br restore db --db "$DB" -s "local://$TEST_DIR/${DB}_table" --pd $PD_ADDR
+check_restored_db "restore-table-at-db-scope"
+unrelated_output=$(run_sql "SELECT c FROM ${DB}.u;")
+if ! printf '%s\n' "$unrelated_output" | grep -q '^c: target$'; then
+    echo "TEST: [$TEST_NAME] failed! Restore changed an unrelated table policy"
+    exit 1
+fi
 
 echo "TEST: [$TEST_NAME] passed!"
 run_sql "DROP DATABASE $DB;"

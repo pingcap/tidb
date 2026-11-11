@@ -647,7 +647,9 @@ func maskingPolicyTableAction(tp model.ActionType) bool {
 		model.ActionDropColumn,
 		model.ActionModifyColumn,
 		model.ActionRenameTable,
-		model.ActionRenameTables:
+		model.ActionRenameTables,
+		model.ActionAlterTablePartitioning,
+		model.ActionRemovePartitioning:
 		return true
 	default:
 		return false
@@ -1010,6 +1012,7 @@ func (b *Builder) SetSchemaVersion(version int64) {
 
 // Build builds and returns the built infoschema.
 func (b *Builder) Build(schemaTS uint64) InfoSchema {
+	b.infoSchema.maskingPolicySnapshotTS = schemaTS
 	if b.enableV2 {
 		b.infoschemaV2.ts = schemaTS
 		updateInfoSchemaBundles(b)

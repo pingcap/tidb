@@ -380,6 +380,7 @@ func restoreMaskingPoliciesFromTemporaryTable(
 	withSysTable bool,
 	tableFilter filter.Filter,
 	targetSupportsMasking bool,
+	backedUpTables map[filter.Table]struct{},
 	execSQL func(context.Context, string) error,
 ) error {
 	tempTable := utils.EncloseDBAndTable(tempDBName, sysMaskingPolicyTableName)
@@ -407,6 +408,9 @@ ORDER BY p.table_id, p.column_id, p.policy_id`,
 	for _, row := range rows {
 		dbName := row.GetString(1)
 		tableName := row.GetString(2)
+		if _, ok := backedUpTables[filter.Table{Schema: strings.ToLower(dbName), Name: strings.ToLower(tableName)}]; !ok {
+			continue
+		}
 		// Respect restore filter (for example restore db/table) while still forcing
 		// masking metadata table ingestion from temporary mysql.
 		if !utils.MatchTable(tableFilter, dbName, tableName, withSysTable) {
@@ -429,6 +433,18 @@ ORDER BY p.table_id, p.column_id, p.policy_id`,
 		}
 	}
 	return nil
+}
+
+func (rc *SnapClient) maskingPolicyRestoreTables() map[filter.Table]struct{} {
+	tables := make(map[filter.Table]struct{})
+	for _, db := range rc.databases {
+		for _, tbl := range db.Tables {
+			if tbl.Info != nil {
+				tables[filter.Table{Schema: db.Info.Name.L, Name: tbl.Info.Name.L}] = struct{}{}
+			}
+		}
+	}
+	return tables
 }
 
 func shouldForceMaskingPolicyRestore(sysDB, tableName string) bool {
@@ -659,6 +675,7 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 			rc.withSysTable,
 			tableFilter,
 			db.ExistingTables[tableName] != nil,
+			rc.maskingPolicyRestoreTables(),
 			execSQL,
 		); err != nil {
 			return err

@@ -610,7 +610,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if err := w.updateMaskingPolicyTableIDAfterTruncate(jobCtx, oldTblInfo.ID, tblInfo.ID); err != nil {
+	if err := w.updateMaskingPolicyTableID(jobCtx, oldTblInfo.ID, tblInfo.ID); err != nil {
 		return ver, err
 	}
 	truncateTableEvent := notifier.NewTruncateTableEvent(tblInfo, oldTblInfo)

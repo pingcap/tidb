@@ -639,7 +639,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		cfg.TableFilter,
 		backupTS,
 		isFullBackup(cmdName),
-		!isFullBackup(cmdName),
+		true,
 	)
 	if err != nil {
 		return errors.Trace(err)

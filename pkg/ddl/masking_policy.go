@@ -150,10 +150,21 @@ func (w *worker) onAlterMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver i
 	}
 
 	newPolicy := oldPolicy.Clone()
-	newPolicy.Expression = args.Policy.Expression
-	newPolicy.Status = args.Policy.Status
-	newPolicy.MaskingType = args.Policy.MaskingType
-	newPolicy.RestrictOps = args.Policy.RestrictOps
+	switch args.AlterAction {
+	case ast.AlterTableEnableMaskingPolicy, ast.AlterTableDisableMaskingPolicy:
+		newPolicy.Status = args.Policy.Status
+	case ast.AlterTableModifyMaskingPolicyExpression:
+		newPolicy.Expression = args.Policy.Expression
+		newPolicy.MaskingType = args.Policy.MaskingType
+	case ast.AlterTableModifyMaskingPolicyRestrictOn:
+		newPolicy.RestrictOps = args.Policy.RestrictOps
+	default:
+		// Jobs written before AlterAction was introduced contain a full replacement.
+		newPolicy.Expression = args.Policy.Expression
+		newPolicy.Status = args.Policy.Status
+		newPolicy.MaskingType = args.Policy.MaskingType
+		newPolicy.RestrictOps = args.Policy.RestrictOps
+	}
 	newPolicy.UpdatedAt = args.Policy.UpdatedAt
 	if err = w.updateMaskingPolicyInSysTable(jobCtx, newPolicy); err != nil {
 		job.State = model.JobStateCancelled
@@ -430,7 +441,7 @@ func restoreMaskingExpression(expr ast.ExprNode) (string, error) {
 }
 
 func validateMaskingPolicyExpression(ctx sessionctx.Context, tblInfo *model.TableInfo, targetCol *model.ColumnInfo, exprStr string) error {
-	expr, err := expression.ParseSimpleExpr(ctx.GetExprCtx(), exprStr, expression.WithTableInfo("", tblInfo))
+	expr, err := expression.ParseSimpleExpr(ctx.GetExprCtx(), exprStr, expression.WithTableInfo("", tblInfo), expression.WithDisableConstantFolding())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -588,10 +599,10 @@ func (w *worker) dropMaskingPoliciesByDBName(jobCtx *jobContext, dbName string) 
 	return nil
 }
 
-// updateMaskingPolicyTableIDAfterTruncate updates the table_id in
-// mysql.tidb_masking_policy from the old table ID to the new one after TRUNCATE TABLE.
+// updateMaskingPolicyTableID updates the table_id in
+// mysql.tidb_masking_policy when TRUNCATE or repartitioning replaces the table.
 // Column IDs remain the same across truncate, so column bindings are preserved.
-func (w *worker) updateMaskingPolicyTableIDAfterTruncate(jobCtx *jobContext, oldTableID, newTableID int64) error {
+func (w *worker) updateMaskingPolicyTableID(jobCtx *jobContext, oldTableID, newTableID int64) error {
 	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(jobCtx.stepCtx, oldTableID)
 	if err != nil {
 		return errors.Trace(err)
@@ -651,6 +662,10 @@ func (w *worker) updateMaskingPolicyNamesAfterRename(
 		newPolicy.TableName = newTableName
 		newPolicy.UpdatedAt = time.Now()
 
+		newPolicy.Expression, err = normalizeMaskingPolicyExprColumnNames(policy.Expression)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		if err = w.updateMaskingPolicyNamesInSysTable(ctx, newPolicy); err != nil {
 			return errors.Trace(err)
 		}
@@ -658,7 +673,7 @@ func (w *worker) updateMaskingPolicyNamesAfterRename(
 	return nil
 }
 
-// updateMaskingPolicyNamesInSysTable updates only the db_name and table_name fields.
+// updateMaskingPolicyNamesInSysTable updates names and the normalized expression.
 func (w *worker) updateMaskingPolicyNamesInSysTable(ctx context.Context, policy *model.MaskingPolicyInfo) error {
 	failpoint.Inject("mockMaskingPolicyUpdateError", func(val failpoint.Value) {
 		if enabled, ok := val.(bool); ok && enabled {
@@ -666,11 +681,12 @@ func (w *worker) updateMaskingPolicyNamesInSysTable(ctx context.Context, policy 
 		}
 	})
 	const updateSQL = `UPDATE mysql.tidb_masking_policy
-		SET db_name = %?, table_name = %?, updated_at = %?
+		SET db_name = %?, table_name = %?, expression = %?, updated_at = %?
 		WHERE policy_id = %?`
 	_, err := w.sess.Execute(ctx, updateSQL, "update-masking-policy-names",
 		policy.DBName.O,
 		policy.TableName.O,
+		policy.Expression,
 		policy.UpdatedAt,
 		policy.ID,
 	)
@@ -729,6 +745,36 @@ func (w *worker) syncMaskingPolicyForModifiedColumn(
 type renameMaskingExprVisitor struct {
 	oldCol ast.CIStr
 	newCol ast.CIStr
+}
+
+// Only the bound column may be referenced. Removing its qualifiers preserves
+// that binding when a table is renamed, including a move to another database.
+type normalizeMaskingExprVisitor struct{}
+
+func (*normalizeMaskingExprVisitor) Enter(in ast.Node) (ast.Node, bool) {
+	if col, ok := in.(*ast.ColumnNameExpr); ok {
+		col.Name.Schema = ast.CIStr{}
+		col.Name.Table = ast.CIStr{}
+	}
+	return in, false
+}
+
+func (*normalizeMaskingExprVisitor) Leave(in ast.Node) (ast.Node, bool) { return in, true }
+
+func normalizeMaskingPolicyExprColumnNames(expr string) (string, error) {
+	stmt, err := parser.New().ParseOneStmt("SELECT "+expr, "", "")
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	selectStmt, ok := stmt.(*ast.SelectStmt)
+	if !ok || selectStmt.Fields == nil || len(selectStmt.Fields.Fields) != 1 {
+		return "", errors.New("invalid masking policy expression")
+	}
+	out, ok := selectStmt.Fields.Fields[0].Expr.Accept(&normalizeMaskingExprVisitor{})
+	if !ok {
+		return "", errors.New("failed to normalize masking policy expression")
+	}
+	return restoreMaskingExpression(out.(ast.ExprNode))
 }
 
 func (v *renameMaskingExprVisitor) Enter(in ast.Node) (ast.Node, bool) {

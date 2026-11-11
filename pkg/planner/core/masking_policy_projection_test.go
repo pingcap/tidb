@@ -611,3 +611,69 @@ func TestMaskingPolicyLoadFailureBlocksQueries(t *testing.T) {
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/infoschema/mockLoadMaskingPoliciesError")
 	tk.MustQuery("select c from t_load where id=1").Check(testkit.Rows("XXXXXX"))
 }
+
+func TestMaskingPolicyCorrelatedResults(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_corr(id int primary key, c varchar(20), d varchar(20), n int)")
+	tk.MustExec("insert into t_corr values (1, 'secret', 'untouched', 0)")
+	tk.MustExec("create masking policy p on t_corr(c) as mask_full(c) restrict on none")
+	for _, sql := range []string{
+		"select d.c from t_corr t, lateral (select t.c as c) d",
+		"select e.c from t_corr t, lateral (select t.c as c) d, lateral (select d.c as c) e",
+		"select (select (select t.c)) from t_corr t",
+		"update t_corr set d = (select t_corr.c) where id = 1",
+		"update t_corr set d = (select concat(t_corr.c, '!')) where id = 1",
+		"update t_corr set d = (select (select t_corr.c)) where id = 1",
+		"update t_corr set n = (select t_corr.c) where id = 1",
+	} {
+		err := tk.ExecToErr(sql)
+		require.ErrorContains(t, err, "masking policy cannot be preserved through scalar subquery", sql)
+		require.NotContains(t, err.Error(), "secret", sql)
+	}
+	tk.MustQuery("select d, n from t_corr").Check(testkit.Rows("untouched 0"))
+	tk.MustQuery("select d.id from t_corr t, lateral (select t.id) d").Check(testkit.Rows("1"))
+	tk.MustExec("update t_corr set d = (select cast(t_corr.id as char)) where id = 1")
+	tk.MustQuery("select d from t_corr").Check(testkit.Rows("1"))
+	// A correlated predicate must continue to compare original values.
+	tk.MustExec("update t_corr set d = (select 'safe' from t_corr s where s.c = t_corr.c limit 1)")
+	tk.MustQuery("select d from t_corr").Check(testkit.Rows("safe"))
+	tk.MustExec("alter table t_corr disable masking policy p")
+	tk.MustExec("update t_corr set d = (select t_corr.c) where id = 1")
+	tk.MustQuery("select d from t_corr").Check(testkit.Rows("secret"))
+}
+
+func TestMaskingPolicyCollationSubstitution(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_collation(c varchar(20) collate utf8mb4_bin)")
+	tk.MustExec("insert into t_collation values ('secret')")
+	tk.MustExec("create masking policy p on t_collation(c) as _utf8mb4'X' collate utf8mb4_general_ci")
+	tk.MustQuery("select c from t_collation").Check(testkit.Rows("X"))
+	require.ErrorContains(t, tk.ExecToErr("select concat(c, '!') from t_collation"), "masking policy cannot be preserved through expression substitution")
+}
+
+func TestMaskingBuiltinNullableParameters(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_nullable(c varchar(20) not null, d date not null)")
+	tk.MustExec("insert into t_nullable values ('secret', '2001-02-03')")
+	for _, expr := range []string{"mask_partial(c, 0, 0, NULL)", "mask_partial(c, NULL, 0, '*')", "mask_partial(c, 0, NULL, '*')", "mask_date(d, NULL)"} {
+		tk.MustQuery("select " + expr + " is null from t_nullable").Check(testkit.Rows("1"))
+		tk.MustQuery("select c from t_nullable where " + expr + " is null").Check(testkit.Rows("secret"))
+	}
+}
+
+func TestMaskingPolicyCaseFoldingWithoutPolicies(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_case(id int primary key)")
+	tk.MustExec("insert into t_case values (1), (2)")
+	sql := "select id from t_case where id = case when 1 then 1 else sleep(0) end"
+	tk.MustQuery(sql).Check(testkit.Rows("1"))
+	require.Contains(t, tk.MustQuery("explain format='brief' " + sql).Rows()[0][0], "Point_Get")
+}

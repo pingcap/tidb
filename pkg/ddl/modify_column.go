@@ -1571,7 +1571,7 @@ func GetModifiableColumnJob(
 		return nil, errors.Trace(err)
 	}
 	if is != nil {
-		_, masked, err := is.MaskingPolicyByTableColumn(t.Meta().ID, col.ID)
+		_, masked, err := is.MaskingPolicyByTableColumn(context.Background(), t.Meta().ID, col.ID)
 		if err != nil {
 			return nil, err
 		}

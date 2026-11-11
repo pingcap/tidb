@@ -428,6 +428,7 @@ func (c *maskPartialFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		return nil, err
 	}
 	bf.tp = argType.Clone()
+	bf.tp.DelFlag(mysql.NotNullFlag)
 	if types.IsBinaryStr(argType) || types.IsBinaryStr(args[3].GetType(ctx.GetEvalCtx())) {
 		return &builtinMaskPartialSig{bf}, nil
 	}
@@ -547,6 +548,7 @@ func (c *maskDateFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		return nil, err
 	}
 	bf.tp = argType.Clone()
+	bf.tp.DelFlag(mysql.NotNullFlag)
 	return &builtinMaskDateSig{bf}, nil
 }
 

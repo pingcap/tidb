@@ -328,6 +328,7 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 			// So we keep updating the ts of the infoschema v2.
 			is = raw.CloneAndUpdateTS(startTS)
 		}
+		infoschema.UpdateMaskingPolicySnapshotTS(is, startTS)
 
 		// try to insert here as well to correct the schemaTs if previous is wrong
 		// the insert method check if schemaTs is zero
@@ -708,8 +709,17 @@ func (do *Domain) InfoSchema() infoschema.InfoSchema {
 
 // GetSnapshotInfoSchema gets a snapshot information schema.
 func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchema, error) {
+	if snapshotTS == math.MaxUint64 {
+		// Latest reads still need a real timestamp for delayed policy SQL.
+		version, err := do.store.CurrentVersion(kv.GlobalTxnScope)
+		if err != nil {
+			return nil, err
+		}
+		snapshotTS = version.Ver
+	}
 	// if the snapshotTS is new enough, we can get infoschema directly through snapshotTS.
 	if is := do.infoCache.GetBySnapshotTS(snapshotTS); is != nil {
+		infoschema.UpdateMaskingPolicySnapshotTS(is, snapshotTS)
 		return is, nil
 	}
 	is, _, _, _, err := do.loadInfoSchema(snapshotTS, true)

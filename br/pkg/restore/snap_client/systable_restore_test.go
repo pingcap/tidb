@@ -397,6 +397,9 @@ func TestRestoreMaskingPoliciesFromTemporaryTable(t *testing.T) {
 	defer tk.MustExec("DROP DATABASE IF EXISTS " + dbName)
 
 	tk.MustExec("CREATE TABLE " + dbName + ".t (id INT PRIMARY KEY, c1 INT, c2 DECIMAL(10,2))")
+	tk.MustExec("CREATE TABLE " + dbName + ".u(c VARCHAR(20))")
+	tk.MustExec("INSERT INTO " + dbName + ".u VALUES ('secret')")
+	tk.MustExec("CREATE MASKING POLICY p_unrelated ON " + dbName + ".u(c) AS 'target'")
 	tableInfo, err := restore.GetTableSchema(cluster.Domain, pmodel.NewCIStr(dbName), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 
@@ -418,7 +421,8 @@ func TestRestoreMaskingPoliciesFromTemporaryTable(t *testing.T) {
 (policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by)
 VALUES
 ('p_keep', '%s', 't', 101, 'c1', 201, 'c1', 'ENABLE', 'CUSTOM', 'NONE', NOW(6), NOW(6), 'root@%%'),
-('p_orphan', '%s', 't_missing', 102, 'c1', 202, 'c1', 'ENABLE', 'CUSTOM', 'NONE', NOW(6), NOW(6), 'root@%%')`, dbName, dbName))
+('p_orphan', '%s', 't_missing', 102, 'c1', 202, 'c1', 'ENABLE', 'CUSTOM', 'NONE', NOW(6), NOW(6), 'root@%%'),
+('p_unrelated', '%s', 'u', 103, 'c', 203, 'MASK_FULL(c)', 'ENABLE', 'MASK_FULL', 'NONE', NOW(6), NOW(6), 'root@%%')`, dbName, dbName, dbName))
 
 	execSQL := func(execCtx context.Context, sql string) error {
 		_, err := tk.Session().ExecuteInternal(execCtx, sql)
@@ -433,6 +437,7 @@ VALUES
 		true,
 		allowAllFilter,
 		true,
+		map[filter.Table]struct{}{{Schema: dbName, Name: "t"}: {}},
 		execSQL,
 	)
 	require.NoError(t, err)
@@ -442,8 +447,8 @@ VALUES
 		Check(testkit.Rows(fmt.Sprintf("%d %d", tableInfo.ID, columnID)))
 	tk.MustQuery("SELECT COUNT(*) FROM mysql.tidb_masking_policy WHERE policy_name='p_orphan' AND db_name='" + dbName + "'").
 		Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT c FROM " + dbName + ".u").Check(testkit.Rows("target"))
 }
-
 func TestRestoreMaskingPoliciesFromTemporaryTableRejectMissingTempTable(t *testing.T) {
 	cluster := mc
 	ctx := context.Background()
@@ -467,6 +472,7 @@ func TestRestoreMaskingPoliciesFromTemporaryTableRejectMissingTempTable(t *testi
 		true,
 		allowAllFilter,
 		true,
+		nil,
 		execSQL,
 	)
 	require.ErrorContains(t, err, "cannot read masking policy staging table")

@@ -513,6 +513,7 @@ CREATE USER cmp_snapshot, cmp_snapshot_stale;
 GRANT SELECT ON privilege__column_masking_policy.t_snapshot_compat TO cmp_snapshot;
 GRANT SELECT ON privilege__column_masking_policy.t_snapshot_compat TO cmp_snapshot_stale;
 GRANT SELECT ON privilege__column_masking_policy.t_snapshot_compat_ts TO cmp_snapshot;
+GRANT SELECT ON privilege__column_masking_policy.t_snapshot_compat_ts TO cmp_snapshot_stale;
 BEGIN;
 REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
 ('ts0', TIDB_PARSE_TSO(TIDB_CURRENT_TSO()));
@@ -656,15 +657,21 @@ CREATE MASKING POLICY p_snapshot_stale ON privilege__column_masking_policy.t_sna
 SELECT SLEEP(2.2);
 SLEEP(2.2)
 0
+BEGIN;
+REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
+('stale_clock', TIDB_PARSE_TSO(TIDB_CURRENT_TSO()) + INTERVAL 1 SECOND);
+COMMIT;
 ALTER TABLE privilege__column_masking_policy.t_snapshot_compat DISABLE MASKING POLICY p_snapshot_stale;
 SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
 c
 secret
+SET @@timestamp = UNIX_TIMESTAMP((SELECT ts FROM privilege__column_masking_policy.t_snapshot_compat_ts WHERE name='stale_clock'));
 SET @@tidb_read_staleness='-1';
 SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
 c
 XXXXXX
 SET @@tidb_read_staleness=default;
+SET @@timestamp=default;
 SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
 c
 secret

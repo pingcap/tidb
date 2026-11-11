@@ -1231,6 +1231,7 @@ type MaskingPolicyArgs struct {
 	Policy         *MaskingPolicyInfo `json:"policy,omitempty"`
 	ReplaceOnExist bool               `json:"replace_on_exist,omitempty"`
 	PolicyName     ast.CIStr          `json:"policy_name,omitempty"`
+	AlterAction    ast.AlterTableType `json:"alter_action,omitempty"`
 
 	// it's set for alter/drop policy in v2
 	PolicyID int64 `json:"policy_id"`
@@ -1240,7 +1241,7 @@ func (a *MaskingPolicyArgs) getArgsV1(job *Job) []any {
 	if job.Type == ActionCreateMaskingPolicy {
 		return []any{a.Policy, a.ReplaceOnExist}
 	} else if job.Type == ActionAlterMaskingPolicy {
-		return []any{a.Policy}
+		return []any{a.Policy, a.AlterAction}
 	}
 	return []any{a.PolicyName}
 }
@@ -1251,7 +1252,7 @@ func (a *MaskingPolicyArgs) decodeV1(job *Job) error {
 	if job.Type == ActionCreateMaskingPolicy {
 		return errors.Trace(job.decodeArgs(&a.Policy, &a.ReplaceOnExist))
 	} else if job.Type == ActionAlterMaskingPolicy {
-		return errors.Trace(job.decodeArgs(&a.Policy))
+		return errors.Trace(job.decodeArgs(&a.Policy, &a.AlterAction))
 	}
 	return errors.Trace(job.decodeArgs(&a.PolicyName))
 }

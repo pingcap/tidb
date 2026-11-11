@@ -15,7 +15,9 @@
 package infoschema
 
 import (
+	"context"
 	"sort"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -26,8 +28,8 @@ import (
 
 // MaskingPolicyByName returns masking policy metadata by policy name with delayed loading.
 // Note: Policy name is only unique per table, not globally. Ambiguous names return no policy. For precise lookup, use MaskingPolicyByTableColumn.
-func (is *infoSchema) MaskingPolicyByName(name pmodel.CIStr) (*model.MaskingPolicyInfo, bool, error) {
-	if err := is.loadMaskingPoliciesIfNeeded(); err != nil {
+func (is *infoSchema) MaskingPolicyByName(ctx context.Context, name pmodel.CIStr) (*model.MaskingPolicyInfo, bool, error) {
+	if err := is.loadMaskingPoliciesIfNeeded(ctx); err != nil {
 		return nil, false, err
 	}
 
@@ -48,8 +50,8 @@ func (is *infoSchema) MaskingPolicyByName(name pmodel.CIStr) (*model.MaskingPoli
 }
 
 // MaskingPolicyByTableColumn returns masking policy metadata by table and column IDs with delayed loading.
-func (is *infoSchema) MaskingPolicyByTableColumn(tableID, columnID int64) (*model.MaskingPolicyInfo, bool, error) {
-	if err := is.loadMaskingPoliciesIfNeeded(); err != nil {
+func (is *infoSchema) MaskingPolicyByTableColumn(ctx context.Context, tableID, columnID int64) (*model.MaskingPolicyInfo, bool, error) {
+	if err := is.loadMaskingPoliciesIfNeeded(ctx); err != nil {
 		return nil, false, err
 	}
 
@@ -70,8 +72,8 @@ func (is *infoSchema) MaskingPolicyByTableColumn(tableID, columnID int64) (*mode
 }
 
 // AllMaskingPolicies returns all masking policies in a stable order with delayed loading.
-func (is *infoSchema) AllMaskingPolicies() ([]*model.MaskingPolicyInfo, error) {
-	if err := is.loadMaskingPoliciesIfNeeded(); err != nil {
+func (is *infoSchema) AllMaskingPolicies(ctx context.Context) ([]*model.MaskingPolicyInfo, error) {
+	if err := is.loadMaskingPoliciesIfNeeded(ctx); err != nil {
 		return nil, err
 	}
 
@@ -95,8 +97,11 @@ func (is *infoSchema) AllMaskingPolicies() ([]*model.MaskingPolicyInfo, error) {
 
 // loadMaskingPoliciesIfNeeded loads masking policies from system table on first access.
 // Only one goroutine performs loading, others wait for completion.
-func (is *infoSchema) loadMaskingPoliciesIfNeeded() error {
+func (is *infoSchema) loadMaskingPoliciesIfNeeded(ctx context.Context) error {
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		var loadCh chan struct{}
 		is.maskingPolicyMutex.Lock()
 		if is.maskingPoliciesLoaded {
@@ -112,15 +117,22 @@ func (is *infoSchema) loadMaskingPoliciesIfNeeded() error {
 		if is.maskingPoliciesLoadCh != nil {
 			loadCh = is.maskingPoliciesLoadCh
 			is.maskingPolicyMutex.Unlock()
-			<-loadCh
+			select {
+			case <-loadCh:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 			continue
 		}
 		loadCh = make(chan struct{})
 		is.maskingPoliciesLoadCh = loadCh
+		snapshotTS := is.maskingPolicySnapshotTS
 		is.maskingPolicyMutex.Unlock()
 
 		// Load policies WITHOUT holding the lock to avoid blocking readers.
-		policies, err := LoadMaskingPolicies(is.factory)
+		loadCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		policies, err := loadMaskingPoliciesWithTableIDs(loadCtx, is.factory, nil, snapshotTS)
+		cancel()
 
 		is.maskingPolicyMutex.Lock()
 		if err != nil {
@@ -153,9 +165,22 @@ func (is *infoSchema) loadMaskingPoliciesIfNeeded() error {
 	}
 }
 
+// UpdateMaskingPolicySnapshotTS advances the policy read time after the caller
+// has verified that this schema version is valid at ts. Policy state cannot
+// change within one schema version. Advancing avoids retaining an expired read
+// timestamp when the schema stays unchanged across GC cycles.
+func UpdateMaskingPolicySnapshotTS(is InfoSchema, ts uint64) {
+	base := is.base()
+	base.maskingPolicyMutex.Lock()
+	if ts > base.maskingPolicySnapshotTS {
+		base.maskingPolicySnapshotTS = ts
+	}
+	base.maskingPolicyMutex.Unlock()
+}
+
 // HasMaskingPolicies checks for policies without copying or sorting the policy map.
-func (is *infoSchema) HasMaskingPolicies() (bool, error) {
-	if err := is.loadMaskingPoliciesIfNeeded(); err != nil {
+func (is *infoSchema) HasMaskingPolicies(ctx context.Context) (bool, error) {
+	if err := is.loadMaskingPoliciesIfNeeded(ctx); err != nil {
 		return false, err
 	}
 	is.maskingPolicyMutex.RLock()

@@ -49,7 +49,7 @@ func TestRestoreMaskingPoliciesRequiresTargetSupport(t *testing.T) {
 		{nil, false, false},
 	} {
 		calls := 0
-		err := restoreMaskingPoliciesFromTemporaryTable(context.Background(), maskingPolicyRestoreExecutor{rows: tc.rows}, "tmp_mysql", true, tableFilter, tc.supported,
+		err := restoreMaskingPoliciesFromTemporaryTable(context.Background(), maskingPolicyRestoreExecutor{rows: tc.rows}, "tmp_mysql", true, tableFilter, tc.supported, map[filter.Table]struct{}{{Schema: "test", Name: "t"}: {}},
 			func(context.Context, string) error { calls++; return nil })
 		if tc.wantError {
 			require.Error(t, err)
@@ -61,4 +61,20 @@ func TestRestoreMaskingPoliciesRequiresTargetSupport(t *testing.T) {
 			require.Equal(t, 1, calls)
 		}
 	}
+}
+
+func TestRestoreMaskingPoliciesSkipsTablesOutsideBackup(t *testing.T) {
+	tableFilter, err := filter.Parse([]string{"test.*"})
+	require.NoError(t, err)
+	rows := []chunk.Row{
+		chunk.MutRowFromValues("p1", "test", "t", "c", "mask_full(c)", "ENABLED", "NONE").ToRow(),
+		chunk.MutRowFromValues("p2", "test", "u", "c", "mask_null(c)", "DISABLED", "NONE").ToRow(),
+	}
+	var statements []string
+	err = restoreMaskingPoliciesFromTemporaryTable(context.Background(), maskingPolicyRestoreExecutor{rows: rows}, "tmp_mysql", true, tableFilter, true,
+		map[filter.Table]struct{}{{Schema: "test", Name: "t"}: {}},
+		func(_ context.Context, sql string) error { statements = append(statements, sql); return nil })
+	require.NoError(t, err)
+	require.Len(t, statements, 1)
+	require.Contains(t, statements[0], "`test`.`t`")
 }

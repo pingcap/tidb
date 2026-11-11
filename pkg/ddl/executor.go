@@ -6591,7 +6591,7 @@ func (e *executor) getMaskingPolicyByNameForDDL(
 	// Fast path: check infoSchema cache.
 	is := e.infoCache.GetLatest()
 	for _, col := range columns {
-		policy, ok, err := is.MaskingPolicyByTableColumn(tableID, col.ID)
+		policy, ok, err := is.MaskingPolicyByTableColumn(context.Background(), tableID, col.ID)
 		if err != nil {
 			return nil, false, err
 		}
@@ -6671,9 +6671,11 @@ func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident as
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	args := &model.MaskingPolicyArgs{
-		Policy:   newPolicy,
-		PolicyID: policy.ID,
+		Policy:      newPolicy,
+		PolicyID:    policy.ID,
+		AlterAction: spec.Tp,
 	}
+	failpoint.InjectCall("beforeSubmitMaskingPolicyAlter", spec.Tp)
 	return errors.Trace(e.doDDLJob2(ctx, job, args))
 }
 
@@ -6778,9 +6780,11 @@ func (e *executor) ModifyMaskingPolicyExpression(ctx sessionctx.Context, ident a
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	args := &model.MaskingPolicyArgs{
-		Policy:   newPolicy,
-		PolicyID: policy.ID,
+		Policy:      newPolicy,
+		PolicyID:    policy.ID,
+		AlterAction: spec.Tp,
 	}
+	failpoint.InjectCall("beforeSubmitMaskingPolicyAlter", spec.Tp)
 	return errors.Trace(e.doDDLJob2(ctx, job, args))
 }
 
@@ -6827,9 +6831,11 @@ func (e *executor) ModifyMaskingPolicyRestrictOn(ctx sessionctx.Context, ident a
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	args := &model.MaskingPolicyArgs{
-		Policy:   newPolicy,
-		PolicyID: policy.ID,
+		Policy:      newPolicy,
+		PolicyID:    policy.ID,
+		AlterAction: spec.Tp,
 	}
+	failpoint.InjectCall("beforeSubmitMaskingPolicyAlter", spec.Tp)
 	return errors.Trace(e.doDDLJob2(ctx, job, args))
 }
 
@@ -6870,7 +6876,7 @@ func (e *executor) createMaskingPolicyWithInfo(
 			return err
 		}
 	}
-	existPolicy, ok, err = is.MaskingPolicyByTableColumn(policy.TableID, policy.ColumnID)
+	existPolicy, ok, err = is.MaskingPolicyByTableColumn(context.Background(), policy.TableID, policy.ColumnID)
 	if err != nil {
 		return err
 	}

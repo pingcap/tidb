@@ -210,35 +210,37 @@ func TestBuildBackupRangeAndSchemaForceMaskingPolicyForDBBackup(t *testing.T) {
 	dbFilter, err := filter.Parse([]string{"test.*"})
 	require.NoError(t, err)
 
-	_, backupSchemas, _, err := backup.BuildBackupRangeAndInitSchema(
-		m.Storage, dbFilter, math.MaxUint64, false, true)
-	require.NoError(t, err)
-	require.NotNil(t, backupSchemas)
-	require.Equal(t, 2, backupSchemas.Len())
+	for _, full := range []bool{false, true} {
+		_, backupSchemas, _, err := backup.BuildBackupRangeAndInitSchema(
+			m.Storage, dbFilter, math.MaxUint64, full, true)
+		require.NoError(t, err)
+		require.NotNil(t, backupSchemas)
+		require.Equal(t, 2, backupSchemas.Len())
 
-	es := GetRandomStorage(t)
-	cipher := backuppb.CipherInfo{
-		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
-	}
-	metaWriter := metautil.NewMetaWriter(es, metautil.MetaFileSize, false, "", &cipher)
-	ctx := context.Background()
-	require.NoError(t, backupSchemas.BackupSchemas(
-		ctx, metaWriter, nil, m.Storage, nil, math.MaxUint64, nil, 1, variable.DefChecksumTableConcurrency, true, nil))
-	require.NoError(t, metaWriter.FlushBackupMeta(ctx))
+		es := GetRandomStorage(t)
+		cipher := backuppb.CipherInfo{
+			CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+		}
+		metaWriter := metautil.NewMetaWriter(es, metautil.MetaFileSize, false, "", &cipher)
+		ctx := context.Background()
+		require.NoError(t, backupSchemas.BackupSchemas(
+			ctx, metaWriter, nil, m.Storage, nil, math.MaxUint64, nil, 1, variable.DefChecksumTableConcurrency, true, nil))
+		require.NoError(t, metaWriter.FlushBackupMeta(ctx))
 
-	schemas := GetSchemasFromMeta(t, es)
-	var foundUserTable bool
-	var foundMaskingPolicyTable bool
-	for _, s := range schemas {
-		if s.DB.Name.L == "test" && s.Info != nil && s.Info.Name.L == "t_force_mask" {
-			foundUserTable = true
+		schemas := GetSchemasFromMeta(t, es)
+		var foundUserTable bool
+		var foundMaskingPolicyTable bool
+		for _, s := range schemas {
+			if s.DB.Name.L == "test" && s.Info != nil && s.Info.Name.L == "t_force_mask" {
+				foundUserTable = true
+			}
+			if s.DB.Name.L == utils.TemporaryDBName("mysql").L && s.Info != nil && s.Info.Name.L == "tidb_masking_policy" {
+				foundMaskingPolicyTable = true
+			}
 		}
-		if s.DB.Name.L == utils.TemporaryDBName("mysql").L && s.Info != nil && s.Info.Name.L == "tidb_masking_policy" {
-			foundMaskingPolicyTable = true
-		}
+		require.True(t, foundUserTable)
+		require.True(t, foundMaskingPolicyTable)
 	}
-	require.True(t, foundUserTable)
-	require.True(t, foundMaskingPolicyTable)
 }
 
 func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {

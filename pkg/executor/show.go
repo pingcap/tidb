@@ -203,7 +203,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowCreateResourceGroup:
 		return e.fetchShowCreateResourceGroup()
 	case ast.ShowMaskingPolicies:
-		return e.fetchShowMaskingPolicies()
+		return e.fetchShowMaskingPolicies(ctx)
 	case ast.ShowDatabases:
 		return e.fetchShowDatabases()
 	case ast.ShowEngines:
@@ -822,7 +822,7 @@ func maskingPolicyRestrictOpsStr(ops ast.MaskingPolicyRestrictOps) string {
 	return strings.Join(vals, ",")
 }
 
-func (e *ShowExec) fetchShowMaskingPolicies() error {
+func (e *ShowExec) fetchShowMaskingPolicies(ctx context.Context) error {
 	tb, err := e.getTable()
 	if err != nil {
 		return errors.Trace(err)
@@ -834,7 +834,7 @@ func (e *ShowExec) fetchShowMaskingPolicies() error {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
-	policies, err := e.is.AllMaskingPolicies()
+	policies, err := e.is.AllMaskingPolicies(ctx)
 	if err != nil {
 		return err
 	}
@@ -1153,7 +1153,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 	var maskingPolicies map[int64]*model.MaskingPolicyInfo
 	if ctx != nil {
 		if is, ok := ctx.GetInfoSchema().(infoschema.InfoSchema); ok {
-			allPolicies, loadErr := is.AllMaskingPolicies()
+			allPolicies, loadErr := is.AllMaskingPolicies(context.Background())
 			if loadErr != nil {
 				return loadErr
 			}

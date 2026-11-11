@@ -2506,21 +2506,21 @@ func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo)
 // buildMaskingExprsForPointGet builds masking expressions for PointGetPlan/BatchPointGetPlan.
 // Their result datums must fit the fast executor's original column representation.
 func buildMaskingExprsForPointGet(
-	_ context.Context,
+	ctx context.Context,
 	sctx base.PlanContext,
 	is infoschema.InfoSchema,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	tbl *model.TableInfo,
 ) ([]expression.Expression, error) {
-	if is == nil || schema == nil || len(names) == 0 {
+	if is == nil || schema == nil || len(names) == 0 || tbl == nil || tbl.TempTableType != model.TempTableNone {
 		return nil, nil
 	}
 	sv := sctx.GetSessionVars()
 	if sv != nil && sv.InRestrictedSQL {
 		return nil, nil
 	}
-	hasPolicies, err := is.HasMaskingPolicies()
+	hasPolicies, err := is.HasMaskingPolicies(ctx)
 	if err != nil || !hasPolicies {
 		return nil, err
 	}
@@ -2535,7 +2535,7 @@ func buildMaskingExprsForPointGet(
 	schemaVersion := is.SchemaMetaVersion()
 	hasMask := false
 	for i, col := range cols {
-		policy, colInfo, err := findMaskingPolicyForColumn(is, tbl, names[i])
+		policy, colInfo, err := findMaskingPolicyForColumn(ctx, is, tbl, names[i])
 		if err != nil {
 			return nil, err
 		}
@@ -2552,7 +2552,10 @@ func buildMaskingExprsForPointGet(
 		if placeholder == nil {
 			continue
 		}
-		masked := expression.ColumnSubstitute(sctx.GetExprCtx(), expr, expression.NewSchema(placeholder), []expression.Expression{col})
+		failed, masked := expression.ColumnSubstituteAll(sctx.GetExprCtx(), expr, expression.NewSchema(placeholder), []expression.Expression{col})
+		if failed {
+			return nil, errors.New("masking policy cannot be preserved through expression substitution")
+		}
 		maskedType := masked.GetType(sctx.GetExprCtx().GetEvalCtx())
 		// Fast executors retain both the original chunk layout and result metadata,
 		// including integer width, string length/charset and temporal precision.
@@ -2588,7 +2591,7 @@ func maybeApplyPointGetMasking(ctx base.PlanContext, p *PointGetPlan, isSelect b
 	return p
 }
 
-func findMaskingPolicyForColumn(is infoschema.InfoSchema, tbl *model.TableInfo, name *types.FieldName) (*model.MaskingPolicyInfo, *model.ColumnInfo, error) {
+func findMaskingPolicyForColumn(ctx context.Context, is infoschema.InfoSchema, tbl *model.TableInfo, name *types.FieldName) (*model.MaskingPolicyInfo, *model.ColumnInfo, error) {
 	if tbl == nil || name == nil {
 		return nil, nil, nil
 	}
@@ -2600,7 +2603,7 @@ func findMaskingPolicyForColumn(is infoschema.InfoSchema, tbl *model.TableInfo, 
 	if colInfo == nil {
 		return nil, nil, nil
 	}
-	policy, ok, err := is.MaskingPolicyByTableColumn(tbl.ID, colInfo.ID)
+	policy, ok, err := is.MaskingPolicyByTableColumn(ctx, tbl.ID, colInfo.ID)
 	if err != nil {
 		return nil, nil, err
 	}

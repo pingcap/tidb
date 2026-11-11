@@ -37,16 +37,16 @@ import (
 func LoadMaskingPolicies(
 	factory func() (pools.Resource, error),
 ) ([]*model.MaskingPolicyInfo, error) {
-	failpoint.Inject("mockLoadMaskingPoliciesError", func() {
-		failpoint.Return(nil, errors.New("mock masking policy load error"))
-	})
-	return loadMaskingPoliciesWithTableIDs(factory, nil)
+	return loadMaskingPoliciesWithTableIDs(context.Background(), factory, nil, 0)
 }
 
 // loadMaskingPoliciesWithTableIDs loads masking policy metadata through mysql.tidb_masking_policy.
 // If tableIDs is empty, all policies are loaded.
-func loadMaskingPoliciesWithTableIDs(factory func() (pools.Resource, error), tableIDs []int64) ([]*model.MaskingPolicyInfo, error) {
+func loadMaskingPoliciesWithTableIDs(ctx context.Context, factory func() (pools.Resource, error), tableIDs []int64, snapshotTS uint64) ([]*model.MaskingPolicyInfo, error) {
 	const maxBatchSize = 1024
+	failpoint.Inject("mockLoadMaskingPoliciesError", func() {
+		failpoint.Return(nil, errors.New("mock masking policy load error"))
+	})
 
 	resource, err := factory()
 	if err != nil {
@@ -68,10 +68,10 @@ func loadMaskingPoliciesWithTableIDs(factory func() (pools.Resource, error), tab
 
 	loadBatch := func(batchIDs []int64, policies []*model.MaskingPolicyInfo) ([]*model.MaskingPolicyInfo, error) {
 		query, args := buildLoadMaskingPoliciesQuery(batchIDs)
-		internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+		internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 		rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
 			internalCtx,
-			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionWithSnapshot(snapshotTS)},
 			query,
 			args...,
 		)

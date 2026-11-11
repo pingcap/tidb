@@ -251,7 +251,7 @@ Default-deny behavior is recommended: users/roles not matching allow conditions 
   - Example: `MASK_PARTIAL(credit_card, 6, 4, '*')` keeps first 6 and last 4 characters
 
 - `MASK_FULL(col)` - Masks entire column value completely
-  - `col`: The column to mask (string, datetime, or numeric types)
+  - `col`: A string, temporal, floating-point, or decimal column. Ordinary integer columns (`INT`, `BIGINT`, including unsigned variants) are not accepted by `MASK_FULL`; use `MASK_NULL` or a custom policy expression for those columns. `YEAR` is accepted.
   - For datetime types: returns '1970-01-01' (date) or '1970-01-01 00:00:00' (datetime)
   - Example: `MASK_FULL(ssn)` returns 'XXXXXXXXX' for a 9-digit SSN
 
@@ -366,10 +366,13 @@ This contract is the compatibility baseline for `tidb_snapshot`, `AS OF TIMESTAM
 
 Masking policy administration uses dynamic privileges at global scope (`ON *.*`):
 
+Policy creation and `ALTER TABLE` policy management also require `ALTER` on the target table. `CREATE OR REPLACE MASKING POLICY` requires both `CREATE MASKING POLICY` and `ALTER MASKING POLICY` in addition to the table privilege.
+
 ```sql
 GRANT CREATE MASKING POLICY ON *.* TO 'security_admin'@'%';
 GRANT ALTER MASKING POLICY ON *.* TO 'security_admin'@'%';
 GRANT DROP MASKING POLICY ON *.* TO 'security_admin'@'%';
+GRANT ALTER ON business_db.business_table TO 'security_admin'@'%';
 ```
 
 | Privilege | Description |

@@ -36,7 +36,7 @@ func (b *PlanBuilder) checkMaskingPolicyRestrictOnSelectPlan(ctx context.Context
 	if b.is == nil || p == nil || op == ast.MaskingPolicyRestrictOpNone {
 		return nil
 	}
-	hasPolicies, err := b.is.HasMaskingPolicies()
+	hasPolicies, err := b.maskingEnabled(ctx, p)
 	if err != nil || !hasPolicies {
 		return err
 	}
@@ -78,7 +78,7 @@ func (b *PlanBuilder) checkMaskingPolicyRestrictOnSelectPlan(ctx context.Context
 	return nil
 }
 
-func (*PlanBuilder) extractMaskingPolicyCandidateNamesFromOutputColumn(
+func (b *PlanBuilder) extractMaskingPolicyCandidateNamesFromOutputColumn(
 	p base.LogicalPlan,
 	outputColIdx int,
 ) []*types.FieldName {
@@ -99,6 +99,16 @@ func (*PlanBuilder) extractMaskingPolicyCandidateNamesFromOutputColumn(
 	visited := make(map[[2]int]struct{}, 4)
 	var walkByIndex func(plan base.LogicalPlan, colIdx int)
 	var walkByColumn func(plan base.LogicalPlan, col *expression.Column)
+	walkExpression := func(plan base.LogicalPlan, expr expression.Expression) {
+		for _, col := range expression.ExtractColumns(expr) {
+			walkByColumn(plan, col)
+		}
+		for _, col := range expression.ExtractCorColumns(expr) {
+			for _, outer := range b.maskingOuterPlans {
+				walkByColumn(outer, &col.Column)
+			}
+		}
+	}
 
 	walkByIndex = func(plan base.LogicalPlan, colIdx int) {
 		if plan == nil || colIdx < 0 || colIdx >= plan.Schema().Len() {
@@ -116,9 +126,31 @@ func (*PlanBuilder) extractMaskingPolicyCandidateNamesFromOutputColumn(
 		}
 
 		if proj, ok := plan.(*logicalop.LogicalProjection); ok && colIdx < len(proj.Exprs) && len(proj.Children()) > 0 {
-			for _, sourceCol := range expression.ExtractColumns(proj.Exprs[colIdx]) {
-				walkByColumn(proj.Children()[0], sourceCol)
+			walkExpression(proj.Children()[0], proj.Exprs[colIdx])
+			return
+		}
+		switch x := plan.(type) {
+		case *logicalop.LogicalAggregation:
+			for _, arg := range x.AggFuncs[colIdx].Args {
+				walkExpression(x.Children()[0], arg)
 			}
+			return
+		case *logicalop.LogicalWindow:
+			child := x.Children()[0]
+			if colIdx >= child.Schema().Len() {
+				for _, arg := range x.WindowFuncDescs[colIdx-child.Schema().Len()].Args {
+					walkExpression(child, arg)
+				}
+				return
+			}
+		case *logicalop.LogicalUnionAll:
+			for _, child := range x.Children() {
+				walkByIndex(child, colIdx)
+			}
+			return
+		case *logicalop.LogicalCTE:
+			walkByIndex(x.Cte.SeedPartLogicalPlan, colIdx)
+			walkByIndex(x.Cte.RecursivePartLogicalPlan, colIdx)
 			return
 		}
 
@@ -191,7 +223,7 @@ func (b *PlanBuilder) findMaskingPolicyByFieldName(ctx context.Context, name *ty
 	if colInfo == nil {
 		return nil, nil, nil, nil
 	}
-	policy, ok, err := b.is.MaskingPolicyByTableColumn(tblInfo.ID, colInfo.ID)
+	policy, ok, err := b.is.MaskingPolicyByTableColumn(ctx, tblInfo.ID, colInfo.ID)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -256,7 +288,7 @@ func foldMaskingPolicySessionConstants(ctx expression.BuildContext, expr express
 
 func checkCachedMaskingPolicyAccess(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, checks []stmtctx.MaskingPolicyCheck) error {
 	for _, check := range checks {
-		policy, ok, err := is.MaskingPolicyByTableColumn(check.TableID, check.ColumnID)
+		policy, ok, err := is.MaskingPolicyByTableColumn(ctx, check.TableID, check.ColumnID)
 		if err != nil {
 			return err
 		}

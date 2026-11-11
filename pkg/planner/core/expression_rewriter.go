@@ -488,6 +488,8 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, subq *ast.SubqueryExpr, subqueryCtx subQueryCtx) (np base.LogicalPlan, hintFlags uint64, err error) {
 	intest.AssertNotNil(planCtx)
 	b := planCtx.builder
+	b.maskingOuterPlans = append(b.maskingOuterPlans, planCtx.plan)
+	defer func() { b.maskingOuterPlans = b.maskingOuterPlans[:len(b.maskingOuterPlans)-1] }()
 	// The inner query block is not a value context of the outer statement.
 	// Scalar callers decide before this call whether to mask their own result.
 	savedValueCtx := b.maskScalarSubqueryValue
@@ -1399,13 +1401,13 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 		er.err = err
 		return v, true
 	}
-	maskingEnabled, err := planCtx.builder.maskingEnabled()
+	maskingEnabled, err := planCtx.builder.maskingEnabled(ctx, np, planCtx.plan)
 	if err != nil {
 		er.err = err
 		return v, true
 	}
 	if valueResult && maskingEnabled {
-		np, err = planCtx.builder.buildFinalProjectionWithMasking(ctx, np, np.Schema().Len())
+		np, err = planCtx.builder.buildFinalProjectionWithMasking(ctx, np, np.Schema().Len(), planCtx.plan)
 		if err != nil {
 			er.err = err
 			return v, true

@@ -1586,7 +1586,7 @@ func buildExpandFieldName(ctx expression.EvalContext, expr expression.Expression
 	return newName
 }
 
-func (b *PlanBuilder) findMaskingPolicy(_ context.Context, name *types.FieldName, col *expression.Column) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo, error) {
+func (b *PlanBuilder) findMaskingPolicy(ctx context.Context, name *types.FieldName, col *expression.Column) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo, error) {
 	if b.is == nil || name == nil {
 		return nil, nil, nil, nil
 	}
@@ -1620,7 +1620,7 @@ func (b *PlanBuilder) findMaskingPolicy(_ context.Context, name *types.FieldName
 	if colInfo.ID != col.ID {
 		return nil, nil, nil, nil
 	}
-	policy, ok, err := b.is.MaskingPolicyByTableColumn(tblInfo.ID, colInfo.ID)
+	policy, ok, err := b.is.MaskingPolicyByTableColumn(ctx, tblInfo.ID, colInfo.ID)
 	if err != nil {
 		return nil, nil, nil, err
 	}

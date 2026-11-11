@@ -47,28 +47,49 @@ type maskingResultBuilder struct {
 	b         *PlanBuilder
 	ctx       context.Context
 	outerPlan base.LogicalPlan
+	rootPlan  base.LogicalPlan
 	cache     map[maskingResultKey]maskingResult
 }
 
-func (b *PlanBuilder) maskingEnabled() (bool, error) {
+func (b *PlanBuilder) maskingEnabled(ctx context.Context, plans ...base.LogicalPlan) (bool, error) {
 	if b.is == nil || b.ctx.GetSessionVars().InRestrictedSQL {
 		return false, nil
 	}
-	return b.is.HasMaskingPolicies()
+	if !slices.ContainsFunc(plans, planHasMaskingSource) && !slices.ContainsFunc(b.maskingOuterPlans, planHasMaskingSource) {
+		return false, nil
+	}
+	return b.is.HasMaskingPolicies(ctx)
+}
+
+// Local temporary tables cannot have policies and must remain usable without TiKV.
+func planHasMaskingSource(p base.LogicalPlan) bool {
+	if p == nil {
+		return false
+	}
+	if ds, ok := p.(*logicalop.DataSource); ok {
+		return ds.TableInfo != nil && ds.TableInfo.TempTableType == model.TempTableNone
+	}
+	if cte, ok := p.(*logicalop.LogicalCTE); ok {
+		return planHasMaskingSource(cte.Cte.SeedPartLogicalPlan) || planHasMaskingSource(cte.Cte.RecursivePartLogicalPlan)
+	}
+	return slices.ContainsFunc(p.Children(), planHasMaskingSource)
 }
 
 // buildFinalProjectionWithMasking keeps all relational expressions on raw
 // values. Only the final projection evaluates masking, using raw dependencies
 // carried through intermediate projections and DISTINCT as auxiliary columns.
-func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p base.LogicalPlan, oldLen int) (base.LogicalPlan, error) {
+func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p base.LogicalPlan, oldLen int, outerPlan ...base.LogicalPlan) (base.LogicalPlan, error) {
 	if p == nil {
 		return p, nil
 	}
-	enabled, err := b.maskingEnabled()
+	enabled, err := b.maskingEnabled(ctx, append(outerPlan, p)...)
 	if err != nil || !enabled {
 		return p, err
 	}
-	m := maskingResultBuilder{b: b, ctx: ctx, cache: make(map[maskingResultKey]maskingResult)}
+	m := maskingResultBuilder{b: b, ctx: ctx, rootPlan: p, cache: make(map[maskingResultKey]maskingResult)}
+	if len(outerPlan) > 0 {
+		m.outerPlan = outerPlan[0]
+	}
 	cols := append([]*expression.Column(nil), p.Schema().Columns[:oldLen]...)
 	names := append(types.NameSlice(nil), p.OutputNames()[:oldLen]...)
 	exprs := make([]expression.Expression, oldLen)
@@ -126,8 +147,8 @@ func (m *maskingResultBuilder) buildColumn(p base.LogicalPlan, col *expression.C
 		if err != nil || !result.masked {
 			return plain, err
 		}
-		result.expr = m.projectInputs(x, result.expr)
-		return result, nil
+		result.expr, err = m.projectInputs(x, result.expr)
+		return result, err
 	case *logicalop.LogicalAggregation:
 		return m.aggregate(x, idx)
 	case *logicalop.LogicalUnionAll:
@@ -146,8 +167,8 @@ func (m *maskingResultBuilder) buildColumn(p base.LogicalPlan, col *expression.C
 		if err != nil {
 			return plain, err
 		}
-		expr = expression.ColumnSubstitute(m.b.ctx.GetExprCtx(), expr, expression.NewSchema(placeholder), []expression.Expression{col})
-		return maskingResult{expr: expr, masked: true, policyID: policy.ID}, nil
+		expr, err = m.substitute(expr, expression.NewSchema(placeholder), []expression.Expression{col})
+		return maskingResult{expr: expr, masked: true, policyID: policy.ID}, err
 	case *logicalop.LogicalWindow:
 		child := x.Children()[0]
 		if idx < child.Schema().Len() {
@@ -253,22 +274,24 @@ func (m *maskingResultBuilder) passThrough(p base.LogicalPlan, col *expression.C
 			}
 			replacements[i] = p.Schema().Columns[inputIdx]
 		}
-		result.expr = expression.ColumnSubstitute(m.b.ctx.GetExprCtx(), result.expr, expression.NewSchema(inputs...), replacements)
-		return result, nil
+		result.expr, err = m.substitute(result.expr, expression.NewSchema(inputs...), replacements)
+		return result, err
 	}
 	return plain, nil
 }
 
 func (m *maskingResultBuilder) expr(p base.LogicalPlan, expr expression.Expression) (maskingResult, error) {
 	for _, col := range expression.ExtractCorColumns(expr) {
-		if m.outerPlan != nil && m.outerPlan.Schema().Contains(&col.Column) {
-			result, err := m.column(m.outerPlan, &col.Column)
-			if err != nil {
-				return result, err
-			}
-			if result.masked {
-				return result, errors.New("masking policy cannot be preserved through scalar subquery")
-			}
+		outer := m.correlatedSource(&col.Column)
+		if outer == nil {
+			return maskingResult{}, errors.New("masking policy cannot be preserved through scalar subquery")
+		}
+		result, err := m.column(outer, &col.Column)
+		if err != nil {
+			return result, err
+		}
+		if result.masked {
+			return result, errors.New("masking policy cannot be preserved through scalar subquery")
 		}
 	}
 	if col, ok := expr.(*expression.Column); ok {
@@ -291,13 +314,17 @@ func (m *maskingResultBuilder) expr(p base.LogicalPlan, expr expression.Expressi
 		if expression.IsMutableEffectsExpr(expr) {
 			return result, errors.New("masking policy cannot be preserved through mutable expression")
 		}
-		result.expr = expression.ColumnSubstitute(m.b.ctx.GetExprCtx(), expr, expression.NewSchema(cols...), replacements)
+		var err error
+		result.expr, err = m.substitute(expr, expression.NewSchema(cols...), replacements)
+		if err != nil {
+			return result, err
+		}
 	}
 	return result, nil
 }
 
 // projectInputs exposes raw inputs, never masked values, to the final projection.
-func (m *maskingResultBuilder) projectInputs(p *logicalop.LogicalProjection, expr expression.Expression) expression.Expression {
+func (m *maskingResultBuilder) projectInputs(p *logicalop.LogicalProjection, expr expression.Expression) (expression.Expression, error) {
 	cols := expression.ExtractColumns(expr)
 	replacements := make([]expression.Expression, len(cols))
 	for i, col := range cols {
@@ -314,7 +341,42 @@ func (m *maskingResultBuilder) projectInputs(p *logicalop.LogicalProjection, exp
 			replacements[i] = col
 		}
 	}
-	return expression.ColumnSubstitute(m.b.ctx.GetExprCtx(), expr, expression.NewSchema(cols...), replacements)
+	return m.substitute(expr, expression.NewSchema(cols...), replacements)
+}
+
+func (m *maskingResultBuilder) substitute(expr expression.Expression, schema *expression.Schema, replacements []expression.Expression) (expression.Expression, error) {
+	failed, result := expression.ColumnSubstituteAll(m.b.ctx.GetExprCtx(), expr, schema, replacements)
+	if failed {
+		return nil, errors.New("masking policy cannot be preserved through expression substitution")
+	}
+	return result, nil
+}
+
+func (m *maskingResultBuilder) correlatedSource(col *expression.Column) base.LogicalPlan {
+	var find func(base.LogicalPlan) base.LogicalPlan
+	find = func(p base.LogicalPlan) base.LogicalPlan {
+		if p == nil {
+			return nil
+		}
+		if p.Schema().Contains(col) {
+			return p
+		}
+		for _, child := range p.Children() {
+			if source := find(child); source != nil {
+				return source
+			}
+		}
+		if cte, ok := p.(*logicalop.LogicalCTE); ok {
+			return find(cte.Cte.SeedPartLogicalPlan)
+		}
+		return nil
+	}
+	for _, p := range append([]base.LogicalPlan{m.outerPlan, m.rootPlan}, m.b.maskingOuterPlans...) {
+		if source := find(p); source != nil {
+			return source
+		}
+	}
+	return nil
 }
 
 func (m *maskingResultBuilder) aggregate(p *logicalop.LogicalAggregation, idx int) (maskingResult, error) {
@@ -336,8 +398,8 @@ func (m *maskingResultBuilder) aggregate(p *logicalop.LogicalAggregation, idx in
 		if (agg.Name == ast.AggFuncMax || agg.Name == ast.AggFuncMin) && result.policyID != 0 {
 			// MIN/MAX select an original value. Apply its policy after the raw
 			// aggregate rather than changing comparisons inside the aggregate.
-			result.expr = expression.ColumnSubstitute(m.b.ctx.GetExprCtx(), result.expr, expression.NewSchema(arg.(*expression.Column)), []expression.Expression{col})
-			return result, nil
+			result.expr, err = m.substitute(result.expr, expression.NewSchema(arg.(*expression.Column)), []expression.Expression{col})
+			return result, err
 		}
 		return plain, errors.New("masking policy cannot be preserved through aggregate")
 	}
@@ -377,7 +439,7 @@ func (m *maskingResultBuilder) aggregateInputs(p *logicalop.LogicalAggregation, 
 		p.SetOutputNames(append(p.OutputNames(), types.EmptyName))
 		replacements[i] = output
 	}
-	return expression.ColumnSubstitute(m.b.ctx.GetExprCtx(), expr, expression.NewSchema(cols...), replacements), nil
+	return m.substitute(expr, expression.NewSchema(cols...), replacements)
 }
 
 func (m *maskingResultBuilder) union(p *logicalop.LogicalUnionAll, idx int) (maskingResult, error) {
@@ -395,7 +457,10 @@ func (m *maskingResultBuilder) union(p *logicalop.LogicalUnionAll, idx int) (mas
 			return result, errors.New("masking policy cannot be preserved through UNION")
 		}
 		if branch.masked {
-			branch.expr = expression.ColumnSubstitute(m.b.ctx.GetExprCtx(), branch.expr, expression.NewSchema(input), []expression.Expression{col})
+			branch.expr, err = m.substitute(branch.expr, expression.NewSchema(input), []expression.Expression{col})
+			if err != nil {
+				return result, err
+			}
 			if i > 0 && !result.expr.Equal(m.b.ctx.GetExprCtx().GetEvalCtx(), branch.expr) {
 				return result, errors.New("masking policy cannot be preserved through UNION")
 			}
@@ -428,6 +493,6 @@ func (m *maskingResultBuilder) cte(p *logicalop.LogicalCTE, idx int) (maskingRes
 	if result.policyID == 0 {
 		return result, errors.New("masking policy cannot be preserved through materialized CTE")
 	}
-	result.expr = expression.ColumnSubstitute(m.b.ctx.GetExprCtx(), result.expr, expression.NewSchema(input), []expression.Expression{col})
-	return result, nil
+	result.expr, err = m.substitute(result.expr, expression.NewSchema(input), []expression.Expression{col})
+	return result, err
 }

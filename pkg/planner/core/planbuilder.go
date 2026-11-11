@@ -305,6 +305,7 @@ type PlanBuilder struct {
 	// SET, DO, UPDATE assignments and INSERT values. Scalar subqueries in these
 	// expressions apply masking to their own results.
 	maskScalarSubqueryValue int
+	maskingOuterPlans       []base.LogicalPlan
 	// Check whether the current building query is a CTE
 	isCTE bool
 	// CTE table name in lower case, it can be nil
