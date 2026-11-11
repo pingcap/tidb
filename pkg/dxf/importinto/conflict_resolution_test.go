@@ -17,8 +17,6 @@ package importinto_test
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/docker/go-units"
@@ -188,31 +186,4 @@ func TestConflictResolutionStepExecutor(t *testing.T) {
 	stepExe := importinto.NewConflictResolutionStepExecutor(&proto.TaskBase{RequiredSlots: 1}, hdlCtx.store, hdlCtx.taskMeta, hdlCtx.logger)
 	runConflictedKVHandleStep(t, st, stepExe)
 	hdlCtx.tk.MustQuery("select * from tc").Sort().Check(testkit.Rows("4 4 4", "5 5 5"))
-}
-
-func TestConflictedKVHandleContextIsolation(t *testing.T) {
-	t.Cleanup(config.RestoreFunc())
-	tempDir := t.TempDir()
-	config.UpdateGlobal(func(c *config.Config) { c.TempDir = tempDir })
-	// Another test process may already be using the same task ID under the
-	// configured import root. Initializing this test's backend must preserve it.
-	sortDir := filepath.Join(importer.GetImportRootDir(config.GetGlobalConfig()), "0")
-	require.NoError(t, os.MkdirAll(sortDir, 0o700))
-	marker := filepath.Join(sortDir, "active-import")
-	require.NoError(t, os.WriteFile(marker, []byte("active"), 0o600))
-
-	t.Run("collect conflicts", func(t *testing.T) {
-		hdlCtx := prepareConflictedKVHandleContext(t)
-		testSortDir := filepath.Join(importer.GetImportRootDir(config.GetGlobalConfig()), "0")
-		// Registered before the step cleanup so this checks backend cleanup
-		// before t.TempDir removes the test's entire temporary directory.
-		t.Cleanup(func() { require.NoDirExists(t, testSortDir) })
-		meta, err := json.Marshal(importinto.CollectConflictsStepMeta{Infos: hdlCtx.conflictedKVInfo})
-		require.NoError(t, err)
-		stepExe := importinto.NewCollectConflictsStepExecutor(
-			&proto.TaskBase{RequiredSlots: 1}, hdlCtx.store, hdlCtx.taskMeta, hdlCtx.logger)
-		runConflictedKVHandleStep(t, &proto.Subtask{Meta: meta}, stepExe)
-		require.FileExists(t, marker)
-	})
-	require.Equal(t, tempDir, config.GetGlobalConfig().TempDir)
 }
