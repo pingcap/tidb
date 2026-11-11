@@ -30,11 +30,10 @@ pub fn drop_index<S: MetaSnapshot>(
     job_context: &dyn DdlSessionContext,
     start_ts: u64,
     upgrading: bool,
-    min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let catalog = load_info_schema(snapshot)?;
     let built = build_drop_index_job(snapshot, &catalog, statement, job_context)?;
-    submit_built_job(snapshot, &catalog, built, start_ts, upgrading, min_job_id)
+    submit_built_job(snapshot, built, start_ts, upgrading)
 }
 
 /// The executor half without `doDDLJob2`: the job unsubmitted, which a

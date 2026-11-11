@@ -124,7 +124,6 @@ pub fn rename_table<S: MetaSnapshot>(
     job_context: &dyn DdlSessionContext,
     start_ts: u64,
     upgrading: bool,
-    min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let (pairs, is_alter) = match statement {
         DdlStatement::RenameTable {
@@ -233,7 +232,7 @@ pub fn rename_table<S: MetaSnapshot>(
         id_allocated: true,
     }];
     tidb_ddl_jobsubmit::prepare_submit_batch(
-        snapshot, &catalog, &mut specs, start_ts, upgrading, min_job_id,
+        snapshot, &mut specs, start_ts, upgrading,
     )?;
     let [spec] = specs;
     Ok(Some(AddIndexSubmission::Job(Box::new(spec), Vec::new())))

@@ -1229,9 +1229,11 @@ pub fn submit_check_constraint_job_with_retry<S: StoreClient>(
     statement: &DdlStatement,
     timeout: Duration,
     upgrading: bool,
+    session_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     min_job_id: i64,
     done_channels: Option<&DdlJobDoneChMap>,
 ) -> Result<(i64, ActionType), ClusterDdlError> {
+    check_flashback_cluster_job(&opener, timeout, session_pool, min_job_id)?;
     let preparation = SessionTransaction::begin(
         Arc::clone(&opener),
         timeout,
@@ -1249,7 +1251,6 @@ pub fn submit_check_constraint_job_with_retry<S: StoreClient>(
             statement,
             start_ts,
             upgrading,
-            min_job_id,
         )
     };
     let mut spec = match prepared {
@@ -1306,7 +1307,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
     targets: &[(String, String)],
     start_ts: u64,
     upgrading: bool,
-    min_job_id: i64,
     store_count: usize,
     tiflash_stores: &dyn Fn() -> Result<u64, String>,
     has_null: &mut dyn FnMut(&str, &tidb_model::TableInfo, i64) -> Result<bool, DdlPlanError>,
@@ -1320,7 +1320,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 job_context,
                 start_ts,
                 upgrading,
-                min_job_id,
                 store_count,
                 tiflash_stores,
                 has_null,
@@ -1333,7 +1332,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 job_context,
                 start_ts,
                 upgrading,
-                min_job_id,
                 store_count,
             )
         }
@@ -1348,7 +1346,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 targets,
                 start_ts,
                 upgrading,
-                min_job_id,
             )
         }
         DdlStatement::CreatePlacementPolicy { .. }
@@ -1360,7 +1357,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 job_context,
                 start_ts,
                 upgrading,
-                min_job_id,
             )
         }
         DdlStatement::CreateResourceGroup { .. }
@@ -1372,7 +1368,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 job_context,
                 start_ts,
                 upgrading,
-                min_job_id,
             )
         }
         DdlStatement::ExchangePartition { .. } => {
@@ -1382,7 +1377,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 job_context,
                 start_ts,
                 upgrading,
-                min_job_id,
             )
         }
         DdlStatement::AddPartitions { .. }
@@ -1394,7 +1388,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 job_context,
                 start_ts,
                 upgrading,
-                min_job_id,
             ) {
                 // An ADD on a HASH/KEY table is Go's
                 // `hashPartitionManagement`, a reorganization.
@@ -1404,7 +1397,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                     job_context,
                     start_ts,
                     upgrading,
-                    min_job_id,
                     store_count,
                 ),
                 other => other,
@@ -1417,7 +1409,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 job_context,
                 start_ts,
                 upgrading,
-                min_job_id,
                 store_count,
             )
         }
@@ -1428,7 +1419,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 job_context,
                 start_ts,
                 upgrading,
-                min_job_id,
             )
         }
         DdlStatement::ModifySchemaCharsetAndCollate { .. }
@@ -1439,7 +1429,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 job_context,
                 start_ts,
                 upgrading,
-                min_job_id,
             )
         }
         DdlStatement::CreateView { .. }
@@ -1453,7 +1442,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 tiflash_stores,
                 start_ts,
                 upgrading,
-                min_job_id,
             )
         }
         DdlStatement::CreateTable { .. } => {
@@ -1464,7 +1452,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 tiflash_stores,
                 start_ts,
                 upgrading,
-                min_job_id,
             )
         }
         DdlStatement::TruncateTable { .. } => {
@@ -1474,7 +1461,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 job_context,
                 start_ts,
                 upgrading,
-                min_job_id,
             )
         }
         statement if crate::cluster_ddl::alter_table::is_alter_table_statement(statement) => {
@@ -1484,7 +1470,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 job_context,
                 start_ts,
                 upgrading,
-                min_job_id,
                 tiflash_stores,
             )
         }
@@ -1495,7 +1480,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 job_context,
                 start_ts,
                 upgrading,
-                min_job_id,
             )
         }
         DdlStatement::CreateDatabase { .. } => {
@@ -1505,7 +1489,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 job_context,
                 start_ts,
                 upgrading,
-                min_job_id,
             )
         }
         DdlStatement::ModifyColumn { .. } | DdlStatement::RenameColumn { .. } => {
@@ -1515,7 +1498,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 job_context,
                 start_ts,
                 upgrading,
-                min_job_id,
                 store_count,
                 has_null,
             )
@@ -1527,7 +1509,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 job_context,
                 start_ts,
                 upgrading,
-                min_job_id,
             )
         }
         DdlStatement::DropColumn { .. } => {
@@ -1537,7 +1518,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 job_context,
                 start_ts,
                 upgrading,
-                min_job_id,
             )
         }
         DdlStatement::DropIndex { .. } | DdlStatement::DropPrimaryKey { .. } => {
@@ -1547,7 +1527,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
                 job_context,
                 start_ts,
                 upgrading,
-                min_job_id,
             )
         }
         _ => crate::cluster_ddl::add_index::create_index(
@@ -1555,7 +1534,6 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
             statement,
             start_ts,
             upgrading,
-            min_job_id,
             store_count,
             has_null,
             job_context,
@@ -1574,12 +1552,14 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
     targets: &[(String, String)],
     timeout: Duration,
     upgrading: bool,
+    session_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     min_job_id: i64,
     backfiller: &dyn IndexBackfiller,
     auto_ids: Option<&Arc<tidb_autoid::auto_id_client::AutoIdClient>>,
     done_channels: Option<&DdlJobDoneChMap>,
     submitter: Option<&crate::job_submitter::JobSubmitter>,
 ) -> Result<AddIndexSubmitted, ClusterDdlError> {
+    check_flashback_cluster_job(&opener, timeout, session_pool, min_job_id)?;
     // Go `CalcMaxNodeCountByStoresNum` reads PD's store list.
     let store_count = opener
         .store()
@@ -1672,7 +1652,6 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
                 targets,
                 start_ts,
                 upgrading,
-                min_job_id,
                 store_count,
                 &tiflash_stores,
                 &mut has_null,
@@ -1914,6 +1893,51 @@ pub fn load_active_persisted_ddl_jobs_cached<S: StoreClient>(
         .rollback()
         .map_err(ClusterDdlError::NotCommitted)?;
     Ok(jobs)
+}
+
+/// Go `JobSubmitter.SubmitBatch`'s admission:
+/// `sysTblMgr.HasFlashbackClusterJob(ctx, minJobIDRefresher.GetCurrMinJobID())`
+/// on a session of `ddl.sessPool`. A pool no node has bound reads the job
+/// table from a snapshot.
+fn check_flashback_cluster_job<S: StoreClient>(
+    opener: &Arc<RealOptimisticTransactionOpener<S>>,
+    timeout: Duration,
+    session_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    min_job_id: i64,
+) -> Result<(), ClusterDdlError> {
+    let encode = |error: tidb_ddl_systable::SystemTableManagerError| {
+        ClusterDdlError::from(tidb_ddl_jobsubmit::JobSubmitError::Encode(error.to_string()))
+    };
+    let has_flashback_cluster_job = match session_pool.sess_pool() {
+        Some(pool) => tidb_ddl_systable::Manager::has_flashback_cluster_job(
+            &tidb_ddl_systable::SystemTableManager::new(pool),
+            min_job_id,
+        )
+        .map_err(encode)?,
+        None => {
+            let transaction =
+                SessionTransaction::begin(Arc::clone(opener), timeout, ddl_transaction_options())?;
+            let has = {
+                let mut snapshot = SnapshotMetaSnapshot::new(
+                    transaction
+                        .snapshot()
+                        .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+                );
+                let catalog = load_info_schema(&mut snapshot).map_err(DdlPlanError::Meta)?;
+                tidb_ddl_systable::SnapshotSystemTables::new(&catalog)
+                    .has_flashback_cluster_job(&mut snapshot, min_job_id)
+                    .map_err(encode)?
+            };
+            transaction
+                .rollback()
+                .map_err(ClusterDdlError::NotCommitted)?;
+            has
+        }
+    };
+    if has_flashback_cluster_job {
+        return Err(tidb_ddl_jobsubmit::JobSubmitError::FlashbackClusterJob.into());
+    }
+    Ok(())
 }
 
 /// Reads pinned Go `systable.Manager.GetMinJobID` in a fresh read-only

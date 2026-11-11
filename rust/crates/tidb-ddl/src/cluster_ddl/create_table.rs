@@ -29,7 +29,6 @@ pub fn prepare_create_table_job_submission<S: MetaSnapshot>(
     tiflash_stores: &dyn Fn() -> Result<u64, String>,
     start_ts: u64,
     upgrading: bool,
-    min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let DdlStatement::CreateTable {
         schema,
@@ -113,7 +112,7 @@ pub fn prepare_create_table_job_submission<S: MetaSnapshot>(
         id_allocated: false,
     }];
     tidb_ddl_jobsubmit::prepare_submit_batch(
-        snapshot, &catalog, &mut specs, start_ts, upgrading, min_job_id,
+        snapshot, &mut specs, start_ts, upgrading,
     )?;
     let [spec] = specs;
     Ok(Some(AddIndexSubmission::Job(Box::new(spec), warnings)))

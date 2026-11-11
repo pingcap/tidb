@@ -240,7 +240,6 @@ pub fn create_index<S: MetaSnapshot>(
     statement: &DdlStatement,
     start_ts: u64,
     upgrading: bool,
-    min_job_id: i64,
     store_count: usize,
     has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
     job_context: &dyn DdlSessionContext,
@@ -257,7 +256,7 @@ pub fn create_index<S: MetaSnapshot>(
     if matches!(built, Some(AddIndexSubmission::Job(..))) {
         check_added_primary_key_holds_no_null(&catalog, statement, has_null)?;
     }
-    submit_built_job(snapshot, &catalog, built, start_ts, upgrading, min_job_id)
+    submit_built_job(snapshot, built, start_ts, upgrading)
 }
 
 /// Go `checkPrimaryKeyNotNull` -> `modifyColsFromNull2NotNull` ->

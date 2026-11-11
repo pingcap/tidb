@@ -38,7 +38,7 @@
 //! `util.InternalHTTPClient`.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::{mpsc, Arc, LazyLock, Mutex, RwLock};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 

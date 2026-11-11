@@ -22,8 +22,6 @@ use std::time::Duration;
 
 use tidb_domain::global_sysvars::GlobalSysvars;
 use tidb_domain_core::cluster_sysvar_seam::*;
-use tidb_infoschema::cluster_catalog::load_info_schema;
-use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_meta::transaction::Mutator;
 use tidb_pd_client::EtcdClient;
 use tidb_store_driver_txn::meta_txn::{MetaTxnError, MetaTxnStorage};
@@ -61,6 +59,7 @@ where
         timeout: Duration,
         notifier: Option<Arc<EtcdClient>>,
         publication_fence: SysvarPublicationFence,
+        sess_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
     ) -> Self {
         let switch_opener = opener;
         live.register_set_global_hook(
@@ -69,7 +68,7 @@ where
                 // Go `TiDBEnableMDL`'s `SetGlobal`.
                 let enable = tidb_vardef::option_values::tidb_opt_on(value);
                 if tidb_vardef::is_mdl_enabled(false) != enable {
-                    switch_mdl(&switch_opener, timeout, enable)?;
+                    switch_mdl(&switch_opener, sess_pool.as_ref(), timeout, enable)?;
                 }
                 Ok(())
             }),
@@ -87,29 +86,27 @@ where
 /// process flag flips and the meta key follows.
 fn switch_mdl<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
+    sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     timeout: Duration,
     enable: bool,
 ) -> Result<(), String> {
     if tidb_vardef::is_mdl_enabled(false) == enable {
         return Ok(());
     }
-    // Check if there is any DDL running (Go `select 1 from
-    // mysql.tidb_ddl_job`).
-    let running = {
-        let mut transaction = opener.begin_read_only().map_err(|error| error.to_string())?;
-        let running = {
-            let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-            let catalog = load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
-            tidb_ddl_systable::ddl_job_table::DdlJobTable::locate(&catalog)
-                .and_then(|table| table.has_jobs(&mut snapshot))
-                .map_err(|error| error.to_string())?
-        };
-        transaction
-            .finish_without_writes()
-            .map_err(|error| error.to_string())?;
-        running
-    };
-    if running {
+    // Check if there is any DDL running, on a session of `d.sessPool`.
+    let pool = sess_pool
+        .sess_pool()
+        .ok_or_else(|| "the DDL session pool has no sessions".to_owned())?;
+    let sess_ctx = pool.get().map_err(|error| error.to_string())?;
+    let rows = tidb_ddl_session::Session::new(Arc::clone(&sess_ctx)).execute(
+        &tidb_sqlexec::BackgroundContext,
+        "select 1 from mysql.tidb_ddl_job",
+        "check job",
+        &[],
+    );
+    pool.put(sess_ctx);
+    let rows = rows.map_err(|error| error.to_string())?;
+    if rows.is_some_and(|rows| !rows.is_empty()) {
         return Err("please wait for all jobs done".to_owned());
     }
     tidb_vardef::set_enable_mdl(enable);

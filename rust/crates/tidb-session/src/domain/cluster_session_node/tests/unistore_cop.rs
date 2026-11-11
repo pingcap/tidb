@@ -27492,6 +27492,65 @@ fn a_job_waiting_on_metadata_lock_does_not_block_other_tables_ddl_as_go() {
     );
 }
 
+/// Go `JobSubmitter.SubmitBatch` and `ddl.SwitchMDL` read
+/// `mysql.tidb_ddl_job` with SQL on a session of `ddl.sessPool`:
+/// `sysTblMgr.HasFlashbackClusterJob` is `select count(1) from
+/// mysql.tidb_ddl_job where job_id >= %d and type = %d` (type 62) and refuses
+/// every submission with "Can't add ddl job, have flashback cluster job";
+/// `SwitchMDL` is `select 1 from mysql.tidb_ddl_job` and answers "please
+/// wait for all jobs done". A queued job's `type` column stands for a
+/// flashback job here; the worker runs the job from `job_meta`.
+#[test]
+fn ddl_admission_and_switch_mdl_read_the_job_table_on_a_pooled_session_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut reader = stack.factory.open_session(session_context(1187)).unwrap();
+    let mut probe = stack.factory.open_session(session_context(1188)).unwrap();
+    rows(&mut reader, "create table test.fb1 (a int)");
+    rows(&mut reader, "begin");
+    rows(&mut reader, "select * from test.fb1");
+    let alter = std::thread::spawn({
+        let factory = Arc::clone(&stack.factory);
+        move || {
+            let mut writer = factory.open_session(session_context(1189)).unwrap();
+            rows(&mut writer, "alter table test.fb1 add column b int");
+        }
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while displayed(rows(&mut probe, "select count(*) from mysql.tidb_mdl_info")) != [["1"]] {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the ALTER never waited on the reader"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let error = probe
+        .node_conn()
+        .execute("set global tidb_enable_metadata_lock = 0")
+        .map(|_| ())
+        .unwrap_err();
+    assert_eq!(error.message, "please wait for all jobs done");
+    let job_type = displayed(rows(&mut probe, "select type from mysql.tidb_ddl_job"));
+    rows(&mut probe, "update mysql.tidb_ddl_job set type = 62");
+    let error = probe
+        .node_conn()
+        .execute("create table test.fb2 (a int)")
+        .map(|_| ())
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1105, "Can't add ddl job, have flashback cluster job")
+    );
+    rows(
+        &mut probe,
+        &format!("update mysql.tidb_ddl_job set type = {}", job_type[0][0]),
+    );
+    rows(&mut probe, "create table test.fb2 (a int)");
+    rows(&mut reader, "commit");
+    alter.join().unwrap();
+    rows(&mut probe, "set global tidb_enable_metadata_lock = 0");
+    rows(&mut probe, "set global tidb_enable_metadata_lock = 1");
+}
+
 /// Go `statsLockImpl.LockTables` runs Go's statements in a transaction of a
 /// statistics session of its own (`util.CallWithSCtx(..., FlagWrapTxn)`):
 /// the user's transaction stays open and the lock row outlives its

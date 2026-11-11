@@ -34,12 +34,10 @@ fn job_for(
 
 fn submission<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
     job: Job,
     args: JobArgsValue,
     start_ts: u64,
     upgrading: bool,
-    min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let mut specs = [tidb_ddl_jobsubmit::JobSpec {
         job,
@@ -47,7 +45,7 @@ fn submission<S: MetaSnapshot>(
         id_allocated: true,
     }];
     tidb_ddl_jobsubmit::prepare_submit_batch(
-        snapshot, catalog, &mut specs, start_ts, upgrading, min_job_id,
+        snapshot, &mut specs, start_ts, upgrading,
     )?;
     let [spec] = specs;
     Ok(Some(AddIndexSubmission::Job(Box::new(spec), Vec::new())))
@@ -64,7 +62,6 @@ pub fn drop_table_object<S: MetaSnapshot>(
     targets: &[(String, String)],
     start_ts: u64,
     upgrading: bool,
-    min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let catalog = load_info_schema(snapshot)?;
     match statement {
@@ -119,14 +116,13 @@ pub fn drop_table_object<S: MetaSnapshot>(
             let db_id = database.read().id;
             drop_table_like(
                 snapshot,
-                &catalog,
                 job_context,
                 ActionType::ACTION_DROP_TABLE,
                 db_id,
                 schema,
                 &stored,
                 &identifiers,
-                (start_ts, upgrading, min_job_id),
+                (start_ts, upgrading),
             )
         }
         DdlStatement::DropView { names, if_exists } => {
@@ -151,14 +147,13 @@ pub fn drop_table_object<S: MetaSnapshot>(
             check_cluster_drop_object(schema, name, &table, true)?;
             drop_table_like(
                 snapshot,
-                &catalog,
                 job_context,
                 ActionType::ACTION_DROP_VIEW,
                 db_id,
                 schema,
                 &table,
                 &[(schema.clone(), name.clone())],
-                (start_ts, upgrading, min_job_id),
+                (start_ts, upgrading),
             )
         }
         DdlStatement::DropSequence { schema, name } => {
@@ -180,14 +175,13 @@ pub fn drop_table_object<S: MetaSnapshot>(
             }
             drop_table_like(
                 snapshot,
-                &catalog,
                 job_context,
                 ActionType::ACTION_DROP_SEQUENCE,
                 db_id,
                 schema,
                 &stored,
                 &[(schema.clone(), name.clone())],
-                (start_ts, upgrading, min_job_id),
+                (start_ts, upgrading),
             )
         }
         DdlStatement::DropDatabase { name, if_exists } => {
@@ -229,12 +223,10 @@ pub fn drop_table_object<S: MetaSnapshot>(
             });
             submission(
                 snapshot,
-                &catalog,
                 job,
                 JobArgsValue::DropSchema(Some(args)),
                 start_ts,
                 upgrading,
-                min_job_id,
             )
         }
         _ => Ok(None),
@@ -245,14 +237,13 @@ pub fn drop_table_object<S: MetaSnapshot>(
 #[allow(clippy::too_many_arguments)]
 fn drop_table_like<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
     job_context: &dyn DdlSessionContext,
     action: ActionType,
     schema_id: i64,
     schema: &str,
     table: &TableInfo,
     identifiers: &[(String, String)],
-    (start_ts, upgrading, min_job_id): (u64, bool, i64),
+    (start_ts, upgrading): (u64, bool),
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let mut job = job_for(job_context, action, schema_id, schema);
     job.table_id = table.id;
@@ -271,12 +262,10 @@ fn drop_table_like<S: MetaSnapshot>(
     });
     submission(
         snapshot,
-        catalog,
         job,
         JobArgsValue::DropTable(Some(args)),
         start_ts,
         upgrading,
-        min_job_id,
     )
 }
 

@@ -677,21 +677,12 @@ pub fn job_2_table_ids(spec: &JobSpec) -> String {
 /// This phase is deliberately outside the ID-allocation retry loop.
 pub fn prepare_submit_batch<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
     specs: &mut [JobSpec],
     start_ts: u64,
     upgrading: bool,
-    min_job_id: i64,
 ) -> Result<(), JobSubmitError> {
     if specs.is_empty() {
         return Ok(());
-    }
-    let system_tables = tidb_ddl_systable::SystemTableManager::new(catalog);
-    if system_tables
-        .has_flashback_cluster_job(snapshot, min_job_id)
-        .map_err(|error| JobSubmitError::Encode(error.to_string()))?
-    {
-        return Err(JobSubmitError::FlashbackClusterJob);
     }
     let bdr_role = snapshot.get(&key::bdr_role_kv_key())?.unwrap_or_default();
     for spec in specs.iter_mut() {
@@ -908,19 +899,6 @@ pub fn set_job_state_to_queueing(job: &mut Job) {
         }
     }
     job.state = JobState::QUEUEING;
-}
-
-/// Go `HasFlashbackClusterJob` admission in `SubmitBatch`.
-pub fn ensure_no_flashback_cluster_job<'a>(
-    jobs: impl IntoIterator<Item = &'a Job>,
-) -> Result<(), JobSubmitError> {
-    if jobs
-        .into_iter()
-        .any(|job| job.type_ == ActionType::ACTION_FLASHBACK_CLUSTER)
-    {
-        return Err(JobSubmitError::FlashbackClusterJob);
-    }
-    Ok(())
 }
 
 #[cfg(test)]

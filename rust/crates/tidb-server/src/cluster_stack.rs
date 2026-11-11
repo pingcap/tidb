@@ -532,6 +532,7 @@ pub fn cluster_session_stack(
             CONTROL_PLANE_TIMEOUT,
             etcd.clone(),
             sysvar_publication_fence.clone(),
+            Arc::clone(&ddl_session_pool) as _,
         )),
         catalog,
         users.accounts(),
@@ -562,7 +563,6 @@ pub fn cluster_session_stack(
         None => factory,
     };
     let factory = factory.shared();
-    ddl_session_pool.bind(&factory);
     tidb_session::domain::cluster_session_node::NodeServices::new(analyze)
     .with_cluster_peer_client(Arc::new(tidb_executor::cluster_peer::ClusterPeerClient::new(
         authority.tikv_store().clone(),
@@ -576,6 +576,9 @@ pub fn cluster_session_stack(
             .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?,
     ))
     .bind(&factory);
+    // The pool's sessions are the node's, so it is bound once the node's
+    // session services are: the job scheduler takes one as soon as it can.
+    ddl_session_pool.bind(&factory);
     // Go `runInBootstrapSession`'s `upgrade(s)` and `finishBootstrap`, on the
     // domain's sessions before any global variable or privilege loads, so
     // the rows the upgrade writes are the ones those loops read.

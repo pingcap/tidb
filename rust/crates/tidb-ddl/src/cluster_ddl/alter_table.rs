@@ -93,7 +93,6 @@ pub fn prepare_alter_table_job_submission<S: MetaSnapshot>(
     job_context: &dyn DdlSessionContext,
     start_ts: u64,
     upgrading: bool,
-    min_job_id: i64,
     tiflash_stores: &dyn Fn() -> Result<u64, String>,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let catalog = load_info_schema(snapshot)?;
@@ -105,7 +104,7 @@ pub fn prepare_alter_table_job_submission<S: MetaSnapshot>(
         false,
         tiflash_stores,
     )?;
-    submit_built_job(snapshot, &catalog, built, start_ts, upgrading, min_job_id)
+    submit_built_job(snapshot, built, start_ts, upgrading)
 }
 
 /// The executor half without `doDDLJob2`: the job unsubmitted, which a

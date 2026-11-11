@@ -4069,6 +4069,7 @@ dependencies = [
  "tidb-ddl-notifier",
  "tidb-ddl-resourcegroup",
  "tidb-ddl-serverstate",
+ "tidb-ddl-session",
  "tidb-ddl-systable",
  "tidb-domain-affinity",
  "tidb-domain-infosync",
@@ -4259,7 +4260,6 @@ version = "0.0.0"
 dependencies = [
  "tidb-ddl",
  "tidb-ddl-systable",
- "tidb-infoschema",
  "tidb-model",
 ]
 
@@ -4323,10 +4323,12 @@ dependencies = [
  "serde_json",
  "tidb-datatype",
  "tidb-ddl-logutil",
+ "tidb-ddl-session",
  "tidb-goruntime",
  "tidb-infoschema",
  "tidb-log",
  "tidb-model",
+ "tidb-sqlexec",
  "tidb-syssession",
  "tidb-table",
  "tidb-txnkv",

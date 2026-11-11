@@ -744,6 +744,7 @@ pub fn unistore_cluster_session_stack_from(
             IN_PROCESS_TIMEOUT,
             None,
             sysvar_publication_fence.clone(),
+            Arc::clone(&ddl_session_pool) as _,
         )),
         catalog,
         users.accounts(),
@@ -776,7 +777,6 @@ pub fn unistore_cluster_session_stack_from(
         None => factory,
     };
     let factory = factory.shared();
-    ddl_session_pool.bind(&factory);
     // Go `initResourceGroupsController`'s runaway manager over unistore's
     // mock PD client; `Domain.Start` runs its loops.
     crate::domain::resource_groups_controller::start_runaway_manager(
@@ -797,6 +797,9 @@ pub fn unistore_cluster_session_stack_from(
             .map_err(|error| engine(SqlQueryError::unknown(error)))?,
     ))
     .bind(&factory);
+    // The pool's sessions are the node's, so it is bound once the node's
+    // session services are: the job scheduler takes one as soon as it can.
+    ddl_session_pool.bind(&factory);
     // Go `LoadSysVarCacheLoop`, started once the domain's sessions exist.
     let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(
         users.global_vars(),

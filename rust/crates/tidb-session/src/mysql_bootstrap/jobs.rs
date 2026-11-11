@@ -247,7 +247,6 @@ fn run_ddl_job<S: MetaSnapshot>(
         clock.tick(),
         false,
         0,
-        0,
         // The bootstrap's statements set no TiFlash replica.
         &|| Ok(0),
         &mut |_, _, _| Ok(false),

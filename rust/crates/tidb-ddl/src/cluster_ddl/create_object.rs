@@ -43,7 +43,6 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
     tiflash_stores: &dyn Fn() -> Result<u64, String>,
     start_ts: u64,
     upgrading: bool,
-    min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let catalog = load_info_schema(snapshot)?;
     let mut warnings = Vec::new();
@@ -158,7 +157,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
         }
         None => None,
     };
-    submit_built_job(snapshot, &catalog, built, start_ts, upgrading, min_job_id)
+    submit_built_job(snapshot, built, start_ts, upgrading)
 }
 
 /// Go `executor.createTableWithInfoJob`.

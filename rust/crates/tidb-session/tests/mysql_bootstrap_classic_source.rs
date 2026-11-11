@@ -328,7 +328,6 @@ fn the_first_user_table_is_117() {
         467_996_279_696_262_000,
         false,
         0,
-        0,
         // A store without TiFlash.
         &|| Ok(0),
         &mut |_, _, _| Ok(false),

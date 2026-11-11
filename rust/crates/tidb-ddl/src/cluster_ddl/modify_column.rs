@@ -69,7 +69,6 @@ pub fn prepare_modify_column_job_submission<S: MetaSnapshot>(
     job_context: &dyn DdlSessionContext,
     start_ts: u64,
     upgrading: bool,
-    min_job_id: i64,
     store_count: usize,
     has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
@@ -82,7 +81,7 @@ pub fn prepare_modify_column_job_submission<S: MetaSnapshot>(
         store_count,
         has_null,
     )?;
-    submit_built_job(snapshot, &catalog, built, start_ts, upgrading, min_job_id)
+    submit_built_job(snapshot, built, start_ts, upgrading)
 }
 
 /// The executor half without `doDDLJob2`: the job unsubmitted, which a

@@ -289,6 +289,40 @@ impl WorkerPool {
     }
 }
 
+/// Go `jobScheduler.loadAndDeliverJobs`'s read: the queued jobs the
+/// scheduler is not running, each with its row's `reorg` column.
+fn load_ddl_jobs(
+    se: &tidb_ddl_systable::DdlSession,
+    min_job_id: i64,
+    running_job_ids: &str,
+) -> Result<Vec<(bool, tidb_model::Job)>, crate::real_tikv_ddl::ClusterDdlError> {
+    let encode = |error: String| {
+        crate::real_tikv_ddl::ClusterDdlError::from(
+            tidb_ddl_build::plan_error::DdlPlanError::Encode(error),
+        )
+    };
+    let where_clause = if running_job_ids.is_empty() {
+        String::new()
+    } else {
+        format!("and job_id not in ({running_job_ids})")
+    };
+    let sql = format!(
+        "select reorg, job_meta from mysql.tidb_ddl_job where job_id >= {min_job_id} {where_clause} order by job_id"
+    );
+    let rows = se
+        .execute(&tidb_sqlexec::BackgroundContext, &sql, "load_ddl_jobs", &[])
+        .map_err(|error| encode(error.to_string()))?
+        .unwrap_or_default();
+    rows.iter()
+        .map(|row| {
+            let mut job = tidb_model::Job::default();
+            job.decode(row[1].go_bytes())
+                .map_err(|error| encode(error.to_string()))?;
+            Ok((row[0].get_int64() == 1, job))
+        })
+        .collect()
+}
+
 /// Go `jobScheduler.processJobDuringUpgrade`: whether the job may run now.
 /// During an upgrade every running job is paused by the system (a job on a
 /// system database, or one already pausing, still runs to reach its
@@ -541,6 +575,10 @@ where
         let reorg_worker_pool = WorkerPool::new(reorg_cnt);
         let general_ddl_worker_pool = WorkerPool::new(GENERAL_WORKER_CNT);
         let mut job_workers: Vec<JoinHandle<()>> = Vec::new();
+        // Go `schedule`: the scheduler's one session of `s.sessPool`; a pool
+        // no node has bound reads the job table from a snapshot.
+        let mut se: Option<(Arc<tidb_ddl_session::DynPool>, Arc<dyn tidb_ddl_session::SessionContext>)> =
+            None;
         while !stop.load(Ordering::Acquire) {
             // The wake generation is read BEFORE the jobs are loaded: a job
             // submitted while this pass runs bumps it, and the wait below then
@@ -557,32 +595,49 @@ where
             // are exhausted.
             let exhausted = reorg_worker_pool.available() == 0
                 && general_ddl_worker_pool.available() == 0;
+            if se.is_none() {
+                if let Some(pool) = session_pool.sess_pool() {
+                    match pool.get() {
+                        Ok(sess_ctx) => se = Some((pool, sess_ctx)),
+                        Err(error) => tidb_ddl_logutil::sample_logger()
+                            .warn("load and deliver jobs failed", &[zap_error(error)]),
+                    }
+                }
+            }
+            let min_job_id = min_job_id_refresher.get_curr_min_job_id();
             let loaded = if exhausted {
                 Ok(Vec::new())
             } else {
-                load_active_persisted_ddl_jobs_cached(
-                    Arc::clone(&opener),
-                    timeout,
-                    min_job_id_refresher.get_curr_min_job_id(),
-                    &mut cached_job_table,
-                )
+                match &se {
+                    Some((_, sess_ctx)) => load_ddl_jobs(
+                        &tidb_ddl_session::Session::new(Arc::clone(sess_ctx)),
+                        min_job_id,
+                        &running_jobs.all_ids(),
+                    ),
+                    None => load_active_persisted_ddl_jobs_cached(
+                        Arc::clone(&opener),
+                        timeout,
+                        min_job_id,
+                        &mut cached_job_table,
+                    )
+                    .map(|jobs| {
+                        jobs.into_iter()
+                            .filter(|job| !running_jobs.is_running(job.id))
+                            .map(|job| (job.may_need_reorg(), job))
+                            .collect()
+                    }),
+                }
             };
             match loaded {
                 Ok(jobs) => {
-                    for job in jobs {
+                    for (reorg_job, job) in jobs {
                         if stop.load(Ordering::Acquire) {
                             break;
-                        }
-                        // Go's `job_id not in (runningJobs.allIDs())`.
-                        if running_jobs.is_running(job.id) {
-                            continue;
                         }
                         if !crate::cluster_ddl::supports_persisted_ddl_job(job.type_) {
                             continue;
                         }
-                        // Go reads the row's `reorg` column, which the insert
-                        // set from `MayNeedReorg`.
-                        let target_pool = if job.may_need_reorg() {
+                        let target_pool = if reorg_job {
                             &reorg_worker_pool
                         } else {
                             &general_ddl_worker_pool
@@ -749,6 +804,9 @@ where
                     owner.as_ref(),
                 );
             }
+        }
+        if let Some((pool, sess_ctx)) = se {
+            pool.put(sess_ctx);
         }
         // Go `jobScheduler.close`: `s.wg.Wait()` for the job workers.
         for worker in job_workers {
@@ -1021,16 +1079,27 @@ where
             .spawn({
                 let refresher = Arc::clone(&min_job_id_refresher);
                 let opener = Arc::clone(&opener);
+                let session_pool = Arc::clone(&session_pool);
                 move || {
                     let mut cached_job_table: Option<DdlJobTable> = None;
+                    // Go `MinJobIDRefresher.refresh`: `sysTblMgr.GetMinJobID`
+                    // on a session of `ddl.sessPool`; a pool no node has
+                    // bound reads the job table from a snapshot.
                     refresher.start(&min_job_id_stopped, |previous| {
-                        load_min_persisted_ddl_job_id_cached(
-                            Arc::clone(&opener),
-                            timeout,
-                            previous,
-                            &mut cached_job_table,
-                        )
-                        .map_err(|error| error.to_string())
+                        match session_pool.sess_pool() {
+                            Some(pool) => tidb_ddl_systable::Manager::get_min_job_id(
+                                &tidb_ddl_systable::SystemTableManager::new(pool),
+                                previous,
+                            )
+                            .map_err(|error| error.to_string()),
+                            None => load_min_persisted_ddl_job_id_cached(
+                                Arc::clone(&opener),
+                                timeout,
+                                previous,
+                                &mut cached_job_table,
+                            )
+                            .map_err(|error| error.to_string()),
+                        }
                     });
                 }
             })
@@ -1519,7 +1588,7 @@ mod schema_sync_tests {
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
             assert!(
                 matches!(
-                    tidb_ddl_systable::SystemTableManager::new(&catalog)
+                    tidb_ddl_systable::SnapshotSystemTables::new(&catalog)
                         .get_mdl_ver(&mut snapshot, job.id),
                     Err(tidb_ddl_systable::SystemTableManagerError::NotFound)
                 ),
@@ -3008,6 +3077,7 @@ where
                 statement,
                 self.timeout,
                 self.server_state.is_upgrading_state(),
+                self.scheduler.session_pool.as_ref(),
                 self.min_job_id_refresher.get_curr_min_job_id(),
                 Some(&self.scheduler.ddl_job_done_ch_map),
             )
@@ -3073,6 +3143,7 @@ where
                 targets,
                 self.timeout,
                 self.server_state.is_upgrading_state(),
+                self.scheduler.session_pool.as_ref(),
                 self.min_job_id_refresher.get_curr_min_job_id(),
                 &KvTableIndexBackfiller::new(&self.scheduler.row_ids, &self.scheduler.session_pool)
                     .with_region_store(self.scheduler.region_store.get().cloned()),

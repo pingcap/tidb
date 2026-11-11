@@ -14,6 +14,8 @@ workspace = true
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-syssession = { path = "../tidb-syssession" }
+tidb-ddl-session = { path = "../tidb-ddl-session" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
 serde_json.workspace = true
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-ddl-logutil = { path = "../tidb-ddl-logutil" }

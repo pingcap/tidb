@@ -12,14 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Pinned Go `pkg/ddl/systable`: reads of the active DDL and MDL system
-//! tables plus the monotonic minimum-job-ID refresher.
+//! Go `pkg/ddl/systable`: reads of the active DDL and MDL system tables on
+//! the DDL's session pool, plus the monotonic minimum-job-ID refresher.
 
 pub mod ddl_job_table;
 
 use std::fmt;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_datatype::Datum;
@@ -33,67 +34,25 @@ use tidb_syssession::mysql_system_tables::{
     scan_system_table_prefixed, SystemRow, SystemTableError, SystemTableView,
 };
 
-/// Pinned Go `systable.Manager` at Rust's storage-snapshot boundary.
+/// Go `session.Session` over a session of the DDL's pool.
+pub type DdlSession = tidb_ddl_session::Session<dyn tidb_ddl_session::SessionContext>;
+
+/// Go `systable.Manager`.
 pub trait Manager: Send + Sync {
     /// Go `GetJobByID`.
-    fn get_job_by_id(
+    fn get_job_by_id(&self, job_id: i64) -> Result<JobW, SystemTableManagerError>;
+    /// Go `GetJobBytesByIDWithSe`.
+    fn get_job_bytes_by_id_with_se(
         &self,
-        snapshot: &mut dyn MetaSnapshot,
-        job_id: i64,
-    ) -> Result<JobW, SystemTableManagerError>;
-    /// Go `GetJobBytesByIDWithSe`; the borrowed Rust snapshot is the supplied
-    /// session transaction.
-    fn get_job_bytes_by_id_with_session(
-        &self,
-        snapshot: &mut dyn MetaSnapshot,
+        se: &DdlSession,
         job_id: i64,
     ) -> Result<Vec<u8>, SystemTableManagerError>;
     /// Go `GetMDLVer`.
-    fn get_mdl_ver(
-        &self,
-        snapshot: &mut dyn MetaSnapshot,
-        job_id: i64,
-    ) -> Result<i64, SystemTableManagerError>;
+    fn get_mdl_ver(&self, job_id: i64) -> Result<i64, SystemTableManagerError>;
     /// Go `GetMinJobID`.
-    fn get_min_job_id(
-        &self,
-        snapshot: &mut dyn MetaSnapshot,
-        previous_min_job_id: i64,
-    ) -> Result<i64, SystemTableManagerError>;
+    fn get_min_job_id(&self, previous_min_job_id: i64) -> Result<i64, SystemTableManagerError>;
     /// Go `HasFlashbackClusterJob`.
-    fn has_flashback_cluster_job(
-        &self,
-        snapshot: &mut dyn MetaSnapshot,
-        min_job_id: i64,
-    ) -> Result<bool, SystemTableManagerError>;
-}
-
-struct SnapshotRef<'a>(&'a mut dyn MetaSnapshot);
-
-impl MetaSnapshot for SnapshotRef<'_> {
-    fn get(
-        &mut self,
-        key: &[u8],
-    ) -> Result<Option<Vec<u8>>, tidb_infoschema::cluster_catalog::ClusterCatalogError> {
-        self.0.get(key)
-    }
-
-    fn scan_prefix(
-        &mut self,
-        prefix: &[u8],
-    ) -> Result<tidb_infoschema::cluster_catalog::MetaPairs, tidb_infoschema::cluster_catalog::ClusterCatalogError>
-    {
-        self.0.scan_prefix(prefix)
-    }
-
-    fn scan_range(
-        &mut self,
-        start: &[u8],
-        end: &[u8],
-    ) -> Result<tidb_infoschema::cluster_catalog::MetaPairs, tidb_infoschema::cluster_catalog::ClusterCatalogError>
-    {
-        self.0.scan_range(start, end)
-    }
+    fn has_flashback_cluster_job(&self, min_job_id: i64) -> Result<bool, SystemTableManagerError>;
 }
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(10);
@@ -109,6 +68,8 @@ pub enum SystemTableManagerError {
     MdlTable(SystemTableError),
     /// Stored job metadata could not be decoded.
     Job(serde_json::Error),
+    /// The pool's session or its statement failed.
+    Sql(String),
 }
 
 impl fmt::Display for SystemTableManagerError {
@@ -118,6 +79,7 @@ impl fmt::Display for SystemTableManagerError {
             Self::JobTable(error) => write!(formatter, "{error}"),
             Self::MdlTable(error) => write!(formatter, "{error}"),
             Self::Job(error) => write!(formatter, "{error}"),
+            Self::Sql(error) => formatter.write_str(error),
         }
     }
 }
@@ -125,7 +87,7 @@ impl fmt::Display for SystemTableManagerError {
 impl std::error::Error for SystemTableManagerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::NotFound => None,
+            Self::NotFound | Self::Sql(_) => None,
             Self::JobTable(error) => Some(error),
             Self::MdlTable(error) => Some(error),
             Self::Job(error) => Some(error),
@@ -151,15 +113,16 @@ impl From<serde_json::Error> for SystemTableManagerError {
     }
 }
 
-/// Pinned Go `systable.Manager` over one loaded system-table catalog.
+/// The system-table reads of a DDL with no session pool (a store-level
+/// harness): the manager's statements as record reads of one snapshot.
 #[derive(Clone, Debug)]
-pub struct SystemTableManager {
+pub struct SnapshotSystemTables {
     catalog: SessionExtendedInfoSchema,
 }
 
-impl SystemTableManager {
-    /// Go `NewManager`. Table lookup remains method-local just like Go's SQL
-    /// execution, so one absent system table cannot break unrelated reads.
+impl SnapshotSystemTables {
+    /// Table lookup remains method-local just like Go's SQL execution, so
+    /// one absent system table cannot break unrelated reads.
     #[must_use]
     pub fn new(catalog: &SessionExtendedInfoSchema) -> Self {
         Self {
@@ -242,45 +205,100 @@ impl SystemTableManager {
     }
 }
 
-impl Manager for SystemTableManager {
-    fn get_job_by_id(
-        &self,
-        snapshot: &mut dyn MetaSnapshot,
-        job_id: i64,
-    ) -> Result<JobW, SystemTableManagerError> {
-        Self::get_job_by_id(self, &mut SnapshotRef(snapshot), job_id)
+/// Go `manager`: each read is one statement on a session of the DDL's pool.
+pub struct SystemTableManager {
+    se_pool: Arc<tidb_ddl_session::DynPool>,
+}
+
+impl SystemTableManager {
+    /// Go `NewManager`.
+    #[must_use]
+    pub fn new(pool: Arc<tidb_ddl_session::DynPool>) -> Self {
+        Self { se_pool: pool }
     }
 
-    fn get_job_bytes_by_id_with_session(
+    /// Go `withNewSession`.
+    fn with_new_session<T>(
         &self,
-        snapshot: &mut dyn MetaSnapshot,
+        callback: impl FnOnce(&DdlSession) -> Result<T, SystemTableManagerError>,
+    ) -> Result<T, SystemTableManagerError> {
+        let se = self
+            .se_pool
+            .get()
+            .map_err(|error| SystemTableManagerError::Sql(error.to_string()))?;
+        let result = callback(&DdlSession::new(Arc::clone(&se)));
+        self.se_pool.put(se);
+        result
+    }
+}
+
+/// Go `se.Execute(ctx, sql, label)`: the statement's rows.
+fn execute(
+    se: &DdlSession,
+    sql: &str,
+    label: &str,
+) -> Result<Vec<Vec<Datum>>, SystemTableManagerError> {
+    se.execute(&tidb_sqlexec::BackgroundContext, sql, label, &[])
+        .map(Option::unwrap_or_default)
+        .map_err(|error| SystemTableManagerError::Sql(error.to_string()))
+}
+
+impl Manager for SystemTableManager {
+    fn get_job_by_id(&self, job_id: i64) -> Result<JobW, SystemTableManagerError> {
+        self.with_new_session(|se| {
+            let bytes = self.get_job_bytes_by_id_with_se(se, job_id)?;
+            let mut job = Job::default();
+            job.decode(&bytes)?;
+            Ok(JobW::new(
+                Some(GoShared::new(job)),
+                GoSharedSlice::from_vec(bytes),
+            ))
+        })
+    }
+
+    fn get_job_bytes_by_id_with_se(
+        &self,
+        se: &DdlSession,
         job_id: i64,
     ) -> Result<Vec<u8>, SystemTableManagerError> {
-        self.get_job_bytes_by_id_with_se(&mut SnapshotRef(snapshot), job_id)
+        let sql = format!("select job_meta from mysql.tidb_ddl_job where job_id = {job_id}");
+        let rows = execute(se, &sql, "get-job-by-id")?;
+        match rows.first() {
+            Some(row) => Ok(row[0].go_bytes().to_vec()),
+            None => Err(SystemTableManagerError::NotFound),
+        }
     }
 
-    fn get_mdl_ver(
-        &self,
-        snapshot: &mut dyn MetaSnapshot,
-        job_id: i64,
-    ) -> Result<i64, SystemTableManagerError> {
-        Self::get_mdl_ver(self, &mut SnapshotRef(snapshot), job_id)
+    fn get_mdl_ver(&self, job_id: i64) -> Result<i64, SystemTableManagerError> {
+        self.with_new_session(|se| {
+            let sql = format!("select version from mysql.tidb_mdl_info where job_id = {job_id}");
+            let rows = execute(se, &sql, "check-mdl-info")?;
+            match rows.first() {
+                Some(row) => Ok(row[0].get_int64()),
+                None => Err(SystemTableManagerError::NotFound),
+            }
+        })
     }
 
-    fn get_min_job_id(
-        &self,
-        snapshot: &mut dyn MetaSnapshot,
-        previous_min_job_id: i64,
-    ) -> Result<i64, SystemTableManagerError> {
-        Self::get_min_job_id(self, &mut SnapshotRef(snapshot), previous_min_job_id)
+    fn get_min_job_id(&self, previous_min_job_id: i64) -> Result<i64, SystemTableManagerError> {
+        self.with_new_session(|se| {
+            let sql = format!(
+                "select min(job_id) from mysql.tidb_ddl_job where job_id >= {previous_min_job_id}"
+            );
+            let rows = execute(se, &sql, "get-min-job-id")?;
+            Ok(rows.first().map_or(0, |row| row[0].get_int64()))
+        })
     }
 
-    fn has_flashback_cluster_job(
-        &self,
-        snapshot: &mut dyn MetaSnapshot,
-        min_job_id: i64,
-    ) -> Result<bool, SystemTableManagerError> {
-        Self::has_flashback_cluster_job(self, &mut SnapshotRef(snapshot), min_job_id)
+    fn has_flashback_cluster_job(&self, min_job_id: i64) -> Result<bool, SystemTableManagerError> {
+        self.with_new_session(|se| {
+            let sql = format!(
+                "select count(1) from mysql.tidb_ddl_job where job_id >= {min_job_id} and type = {}",
+                tidb_model::ActionType::ACTION_FLASHBACK_CLUSTER.0
+            );
+            let rows = execute(se, &sql, "has-flashback-cluster-job")?;
+            Ok(rows.first().is_some_and(|row| row[0].get_int64() > 0))
+        })
     }
 }
 

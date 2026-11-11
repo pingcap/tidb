@@ -4945,7 +4945,6 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
     statement: &DdlStatement,
     start_ts: u64,
     upgrading: bool,
-    min_job_id: i64,
 ) -> Result<Option<tidb_ddl_jobsubmit::JobSpec>, DdlPlanError> {
     let catalog = load_info_schema(snapshot)?;
     let (job, args) = match statement {
@@ -5080,7 +5079,7 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
         id_allocated: true,
     }];
     tidb_ddl_jobsubmit::prepare_submit_batch(
-        snapshot, &catalog, &mut specs, start_ts, upgrading, min_job_id,
+        snapshot, &mut specs, start_ts, upgrading,
     )?;
     let [spec] = specs;
     Ok(Some(spec))
@@ -5635,9 +5634,22 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         info.table_ids = active.table_ids.clone();
         info.omit_owner_id =
             tidb_metadef::is_system_related_db(&active.job.schema_name.to_string().go_to_lower());
-        match tidb_ddl_systable::SystemTableManager::new(&catalog)
-            .get_mdl_ver(snapshot, ddl_job_id)
+        // Go `transitOneJobStepAndWaitSync`: `sysTblMgr.GetMDLVer` on a
+        // session of `ddl.sessPool`; a run without one reads the step's
+        // snapshot.
+        let mdl_ver = match schema_state
+            .worker
+            .as_ref()
+            .and_then(|worker| worker.sess_pool.sess_pool())
         {
+            Some(pool) => tidb_ddl_systable::Manager::get_mdl_ver(
+                &tidb_ddl_systable::SystemTableManager::new(pool),
+                ddl_job_id,
+            ),
+            None => tidb_ddl_systable::SnapshotSystemTables::new(&catalog)
+                .get_mdl_ver(snapshot, ddl_job_id),
+        };
+        match mdl_ver {
             Ok(version) if Some(version) != schema_state.synced_version => {
                 return Ok(PersistedDdlJobPlan::SchemaSync {
                     version,
@@ -7070,17 +7082,15 @@ pub(crate) fn tiflash_replica_spec(info: &TableInfo) -> Option<(u64, Vec<String>
 /// `GenGIDAndInsertJobsWithRetry`'s admission.
 fn submit_built_job<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
     built: Option<add_index::AddIndexSubmission>,
     start_ts: u64,
     upgrading: bool,
-    min_job_id: i64,
 ) -> Result<Option<add_index::AddIndexSubmission>, DdlPlanError> {
     match built {
         Some(add_index::AddIndexSubmission::Job(spec, warnings)) => {
             let mut specs = [*spec];
             tidb_ddl_jobsubmit::prepare_submit_batch(
-                snapshot, catalog, &mut specs, start_ts, upgrading, min_job_id,
+                snapshot, &mut specs, start_ts, upgrading,
             )?;
             let [spec] = specs;
             Ok(Some(add_index::AddIndexSubmission::Job(

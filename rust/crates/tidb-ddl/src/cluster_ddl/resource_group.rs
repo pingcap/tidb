@@ -29,7 +29,6 @@ pub fn prepare_resource_group_job_submission<S: MetaSnapshot>(
     job_context: &dyn DdlSessionContext,
     start_ts: u64,
     upgrading: bool,
-    min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let (action, group, schema_id, id_allocated) = match statement {
         DdlStatement::CreateResourceGroup { group } => {
@@ -56,7 +55,6 @@ pub fn prepare_resource_group_job_submission<S: MetaSnapshot>(
         ),
         _ => return Ok(None),
     };
-    let catalog = load_info_schema(snapshot)?;
     let mut job = session_job(job_context, action);
     job.schema_id = schema_id;
     job.schema_name = group.name.lowercase().to_owned().into();
@@ -76,12 +74,9 @@ pub fn prepare_resource_group_job_submission<S: MetaSnapshot>(
         Vec::new(),
     );
     submit_built_job(
-        snapshot,
-        &catalog,
-        Some(built),
+        snapshot, Some(built),
         start_ts,
         upgrading,
-        min_job_id,
     )
 }
 

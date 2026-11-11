@@ -229,7 +229,6 @@ pub fn prepare_multi_schema_job_submission<S: MetaSnapshot>(
     job_context: &dyn DdlSessionContext,
     start_ts: u64,
     upgrading: bool,
-    min_job_id: i64,
     store_count: usize,
     tiflash_stores: &dyn Fn() -> Result<u64, String>,
     has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
@@ -264,7 +263,6 @@ pub fn prepare_multi_schema_job_submission<S: MetaSnapshot>(
                     &[],
                     start_ts,
                     upgrading,
-                    min_job_id,
                     store_count,
                     tiflash_stores,
                     has_null,
@@ -317,7 +315,6 @@ pub fn prepare_multi_schema_job_submission<S: MetaSnapshot>(
                     &single_statement(schema, table, action)?,
                     start_ts,
                     upgrading,
-                    min_job_id,
                 )?;
                 return Err(run_multi_schema_changes(
                     ActionType::ACTION_ADD_CHECK_CONSTRAINT,
@@ -329,7 +326,6 @@ pub fn prepare_multi_schema_job_submission<S: MetaSnapshot>(
                     &single_statement(schema, table, action)?,
                     start_ts,
                     upgrading,
-                    min_job_id,
                 )?;
                 return Err(run_multi_schema_changes(
                     if matches!(action, AlterColumnAction::DropCheck { .. }) {
@@ -425,12 +421,9 @@ pub fn prepare_multi_schema_job_submission<S: MetaSnapshot>(
     }
     let job = build_multi_schema_job(&catalog, schema, table, specs, job_context, store_count)?;
     submit_built_job(
-        snapshot,
-        &catalog,
-        Some(AddIndexSubmission::Job(Box::new(job), Vec::new())),
+        snapshot, Some(AddIndexSubmission::Job(Box::new(job), Vec::new())),
         start_ts,
         upgrading,
-        min_job_id,
     )
 }
 

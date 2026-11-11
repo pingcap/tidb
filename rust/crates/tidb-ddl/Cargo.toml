@@ -24,6 +24,7 @@ tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-variable = { path = "../tidb-variable" }
 tidb-ddl-jobsubmit = { path = "../tidb-ddl-jobsubmit" }
 tidb-ddl-systable = { path = "../tidb-ddl-systable" }
+tidb-ddl-session = { path = "../tidb-ddl-session" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-timeutil = { path = "../tidb-timeutil" }

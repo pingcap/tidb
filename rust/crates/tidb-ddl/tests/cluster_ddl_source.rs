@@ -35,7 +35,7 @@ use tidb_ddl::cluster_ddl::DdlJobSchemaState;
 use tidb_ddl::ddl_history_table::DdlHistoryTable;
 use tidb_ddl_jobsubmit::{finish_insert_attempt, plan_insert_attempt};
 use tidb_ddl_systable::ddl_job_table::DdlJobTable;
-use tidb_ddl_systable::{SystemTableManager, SystemTableManagerError};
+use tidb_ddl_systable::{SnapshotSystemTables as SystemTableManager, SystemTableManagerError};
 use tidb_syssession::mysql_system_tables::{SystemRow, SystemTableView};
 use tidb_syssession::system_row_write::store_clustered_row;
 use tidb_ddl_build::table_info_build::{build_table_info, build_table_info_from_ast};
@@ -250,7 +250,7 @@ fn plan_check_constraint_job_submission(
     start_ts: u64,
 ) -> Result<Option<PlannedCheckSubmission>, DdlPlanError> {
     let Some(mut spec) =
-        prepare_check_constraint_job_submission(store, statement, start_ts, false, 0)?
+        prepare_check_constraint_job_submission(store, statement, start_ts, false)?
     else {
         return Ok(None);
     };
@@ -2709,7 +2709,7 @@ fn failed_job_insert_attempt_cleans_up_assigned_id_registration_before_retry() {
     let statement = lower_ddl_with_context(&parsed, "u6", &ddl_context(&context))
         .expect("CHECK DDL is admitted")
         .expect("CHECK DDL owns a catalog route");
-    let mut spec = prepare_check_constraint_job_submission(&mut store, &statement, 2_101, false, 0)
+    let mut spec = prepare_check_constraint_job_submission(&mut store, &statement, 2_101, false)
         .expect("Go submission preflight succeeds")
         .expect("ADD CHECK creates a job spec");
     let catalog = load_info_schema(&mut store).expect("catalog loads");
@@ -2770,7 +2770,7 @@ fn check_job_submission_observes_the_global_upgrading_state() {
         .expect("CHECK DDL is admitted")
         .expect("CHECK DDL owns a catalog route");
 
-    let spec = prepare_check_constraint_job_submission(&mut store, &statement, 2_201, true, 0)
+    let spec = prepare_check_constraint_job_submission(&mut store, &statement, 2_201, true)
         .expect("Go submission preflight succeeds")
         .expect("ADD CHECK creates a job spec");
     assert_eq!(spec.job.state, tidb_model::JobState::PAUSING);
@@ -3230,7 +3230,6 @@ fn plan_ddl_with_tiflash_stores(
         &[],
         start_ts,
         false,
-        0,
         1,
         &|| Ok(tiflash_stores),
         &mut no_null,
@@ -6051,7 +6050,7 @@ fn check_job_admission_uses_alter_column_errors_and_constraint_name_scope() {
     };
     let missing = lower("ALTER TABLE check_admission ADD CONSTRAINT cb CHECK(b>0)");
     let error =
-        prepare_check_constraint_job_submission(&mut store, &missing, 3_002, false, 0).unwrap_err();
+        prepare_check_constraint_job_submission(&mut store, &missing, 3_002, false).unwrap_err();
     let DdlPlanError::Admission(error) = error else {
         panic!("{error:?}")
     };
@@ -6062,7 +6061,6 @@ fn check_job_admission_uses_alter_column_errors_and_constraint_name_scope() {
         &shares_index_name,
         3_002,
         false,
-        0
     )
     .unwrap()
     .is_some());

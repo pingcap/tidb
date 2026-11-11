@@ -17,20 +17,19 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
-use tidb_infoschema::cluster_catalog::MetaSnapshot;
 use tidb_ddl::ddl_job_scheduler::SchemaLoader;
-use tidb_ddl_systable::{Manager, SystemTableManagerError};
+use tidb_ddl_systable::{DdlSession, Manager, SystemTableManagerError};
 use tidb_model::JobW;
 
 type ReloadCall = Box<dyn FnOnce() -> Result<(), String> + Send>;
 type JobCall =
-    Box<dyn FnOnce(&mut dyn MetaSnapshot, i64) -> Result<JobW, SystemTableManagerError> + Send>;
+    Box<dyn FnOnce(i64) -> Result<JobW, SystemTableManagerError> + Send>;
 type BytesCall =
-    Box<dyn FnOnce(&mut dyn MetaSnapshot, i64) -> Result<Vec<u8>, SystemTableManagerError> + Send>;
+    Box<dyn FnOnce(&DdlSession, i64) -> Result<Vec<u8>, SystemTableManagerError> + Send>;
 type I64Call =
-    Box<dyn FnOnce(&mut dyn MetaSnapshot, i64) -> Result<i64, SystemTableManagerError> + Send>;
+    Box<dyn FnOnce(i64) -> Result<i64, SystemTableManagerError> + Send>;
 type BoolCall =
-    Box<dyn FnOnce(&mut dyn MetaSnapshot, i64) -> Result<bool, SystemTableManagerError> + Send>;
+    Box<dyn FnOnce(i64) -> Result<bool, SystemTableManagerError> + Send>;
 
 /// Native recorder for generated Go `MockSchemaLoader`.
 #[derive(Default)]
@@ -145,7 +144,7 @@ impl MockManagerRecorder<'_> {
     /// Records one expected Go `GetJobByID` call.
     pub fn get_job_by_id(
         self,
-        call: impl FnOnce(&mut dyn MetaSnapshot, i64) -> Result<JobW, SystemTableManagerError>
+        call: impl FnOnce(i64) -> Result<JobW, SystemTableManagerError>
             + Send
             + 'static,
     ) {
@@ -157,9 +156,9 @@ impl MockManagerRecorder<'_> {
     }
 
     /// Records one expected Go `GetJobBytesByIDWithSe` call.
-    pub fn get_job_bytes_by_id_with_session(
+    pub fn get_job_bytes_by_id_with_se(
         self,
-        call: impl FnOnce(&mut dyn MetaSnapshot, i64) -> Result<Vec<u8>, SystemTableManagerError>
+        call: impl FnOnce(&DdlSession, i64) -> Result<Vec<u8>, SystemTableManagerError>
             + Send
             + 'static,
     ) {
@@ -173,7 +172,7 @@ impl MockManagerRecorder<'_> {
     /// Records one expected Go `GetMDLVer` call.
     pub fn get_mdl_version(
         self,
-        call: impl FnOnce(&mut dyn MetaSnapshot, i64) -> Result<i64, SystemTableManagerError>
+        call: impl FnOnce(i64) -> Result<i64, SystemTableManagerError>
             + Send
             + 'static,
     ) {
@@ -187,7 +186,7 @@ impl MockManagerRecorder<'_> {
     /// Records one expected Go `GetMinJobID` call.
     pub fn get_min_job_id(
         self,
-        call: impl FnOnce(&mut dyn MetaSnapshot, i64) -> Result<i64, SystemTableManagerError>
+        call: impl FnOnce(i64) -> Result<i64, SystemTableManagerError>
             + Send
             + 'static,
     ) {
@@ -201,7 +200,7 @@ impl MockManagerRecorder<'_> {
     /// Records one expected Go `HasFlashbackClusterJob` call.
     pub fn has_flashback_cluster_job(
         self,
-        call: impl FnOnce(&mut dyn MetaSnapshot, i64) -> Result<bool, SystemTableManagerError>
+        call: impl FnOnce(i64) -> Result<bool, SystemTableManagerError>
             + Send
             + 'static,
     ) {
@@ -216,62 +215,58 @@ impl MockManagerRecorder<'_> {
 impl Manager for MockManager {
     fn get_job_by_id(
         &self,
-        snapshot: &mut dyn MetaSnapshot,
         job_id: i64,
     ) -> Result<JobW, SystemTableManagerError> {
         self.job_calls
             .lock()
             .unwrap()
             .pop_front()
-            .expect("unexpected GetJobByID call")(snapshot, job_id)
+            .expect("unexpected GetJobByID call")(job_id)
     }
 
-    fn get_job_bytes_by_id_with_session(
+    fn get_job_bytes_by_id_with_se(
         &self,
-        snapshot: &mut dyn MetaSnapshot,
+        se: &DdlSession,
         job_id: i64,
     ) -> Result<Vec<u8>, SystemTableManagerError> {
         self.bytes_calls
             .lock()
             .unwrap()
             .pop_front()
-            .expect("unexpected GetJobBytesByIDWithSe call")(snapshot, job_id)
+            .expect("unexpected GetJobBytesByIDWithSe call")(se, job_id)
     }
 
     fn get_mdl_ver(
         &self,
-        snapshot: &mut dyn MetaSnapshot,
         job_id: i64,
     ) -> Result<i64, SystemTableManagerError> {
         self.mdl_calls
             .lock()
             .unwrap()
             .pop_front()
-            .expect("unexpected GetMDLVer call")(snapshot, job_id)
+            .expect("unexpected GetMDLVer call")(job_id)
     }
 
     fn get_min_job_id(
         &self,
-        snapshot: &mut dyn MetaSnapshot,
         previous_min_job_id: i64,
     ) -> Result<i64, SystemTableManagerError> {
         self.min_calls
             .lock()
             .unwrap()
             .pop_front()
-            .expect("unexpected GetMinJobID call")(snapshot, previous_min_job_id)
+            .expect("unexpected GetMinJobID call")(previous_min_job_id)
     }
 
     fn has_flashback_cluster_job(
         &self,
-        snapshot: &mut dyn MetaSnapshot,
         min_job_id: i64,
     ) -> Result<bool, SystemTableManagerError> {
         self.flashback_calls
             .lock()
             .unwrap()
             .pop_front()
-            .expect("unexpected HasFlashbackClusterJob call")(snapshot, min_job_id)
+            .expect("unexpected HasFlashbackClusterJob call")(min_job_id)
     }
 }
 

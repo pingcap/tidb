@@ -30,7 +30,6 @@ pub fn prepare_table_lock_job_submission<S: MetaSnapshot>(
     job_context: &dyn DdlSessionContext,
     start_ts: u64,
     upgrading: bool,
-    min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let catalog = load_info_schema(snapshot)?;
     // Go names each table the job touches; an unlock skips a table dropped
@@ -121,12 +120,9 @@ pub fn prepare_table_lock_job_submission<S: MetaSnapshot>(
         Vec::new(),
     );
     submit_built_job(
-        snapshot,
-        &catalog,
-        Some(built),
+        snapshot, Some(built),
         start_ts,
         upgrading,
-        min_job_id,
     )
 }
 
