@@ -38,6 +38,20 @@ type blockingOpenMemStorage struct {
 	max       atomic.Int32
 }
 
+type walkCountingStorage struct {
+	storeapi.Storage
+	count atomic.Int32
+}
+
+func (s *walkCountingStorage) WalkDir(
+	ctx context.Context,
+	opt *storeapi.WalkOption,
+	fn func(path string, size int64) error,
+) error {
+	s.count.Add(1)
+	return s.Storage.WalkDir(ctx, opt, fn)
+}
+
 func (s *blockingOpenMemStorage) Open(
 	ctx context.Context,
 	path string,
@@ -301,15 +315,13 @@ func TestGetAllFileNames(t *testing.T) {
 	}, filenames)
 }
 
-func TestCleanUpFiles(t *testing.T) {
-	ctx := context.Background()
-	store := objstore.NewMemStorage()
+func writeCleanupTestFiles(ctx context.Context, t *testing.T, store storeapi.Storage, dir string) {
 	w := NewWriterBuilder().
 		SetMemorySizeLimit(10*(lengthBytes*2+2)).
 		SetBlockSize(10*(lengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", "0")
+		Build(store, dir, "0")
 	keys := make([][]byte, 0, 30)
 	values := make([][]byte, 0, 30)
 	for i := range 30 {
@@ -320,22 +332,38 @@ func TestCleanUpFiles(t *testing.T) {
 		err := w.WriteRow(ctx, key, values[i], nil)
 		require.NoError(t, err)
 	}
-	err := w.Close(ctx)
-	require.NoError(t, err)
+	require.NoError(t, w.Close(ctx))
+}
 
-	filenames, err := GetAllFileNames(ctx, store, "subtask")
+func TestCleanUpFiles(t *testing.T) {
+	ctx := context.Background()
+	baseStore := objstore.NewMemStorage()
+	store := &walkCountingStorage{Storage: baseStore}
+	writeCleanupTestFiles(ctx, t, store, "/subtask")
+	writeCleanupTestFiles(ctx, t, store, "/subtask2")
+	writeCleanupTestFiles(ctx, t, store, "/kept")
+
+	filenames, err := GetAllFileNames(ctx, store, "subtask", "subtask2")
 	require.NoError(t, err)
 	filenames = removePartitionPrefix(t, filenames)
 	require.Equal(t, []string{
 		"/subtask/0/0", "/subtask/0/1", "/subtask/0/2",
 		"/subtask/0_stat/0", "/subtask/0_stat/1", "/subtask/0_stat/2",
+		"/subtask2/0/0", "/subtask2/0/1", "/subtask2/0/2",
+		"/subtask2/0_stat/0", "/subtask2/0_stat/1", "/subtask2/0_stat/2",
 	}, filenames)
+	require.Equal(t, int32(1), store.count.Load())
 
-	require.NoError(t, CleanUpFiles(ctx, store, "subtask"))
+	store.count.Store(0)
+	require.NoError(t, CleanUpFiles(ctx, store, "subtask", "subtask2"))
+	require.Equal(t, int32(1), store.count.Load())
 
-	filenames, err = GetAllFileNames(ctx, store, "subtask")
+	filenames, err = GetAllFileNames(ctx, baseStore, "subtask", "subtask2")
 	require.NoError(t, err)
 	require.Equal(t, []string(nil), filenames)
+	filenames, err = GetAllFileNames(ctx, baseStore, "kept")
+	require.NoError(t, err)
+	require.Len(t, filenames, 6)
 }
 
 func TestGetMaxOverlapping(t *testing.T) {

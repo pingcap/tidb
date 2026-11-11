@@ -107,6 +107,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -1217,7 +1218,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				txnMode = ctx.GetSessionVars().GetReadableTxnMode()
 			}
 			vars := cc.getCtx().GetSessionVars()
-			for _, dbName := range session.GetDBNames(vars) {
+			for _, dbName := range metricsutil.GetDBNames(vars) {
 				metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), dbName, vars.ResourceGroupName).Inc()
 			}
 
@@ -1334,9 +1335,15 @@ func (cc *clientConn) addQueryMetrics(cmd byte, startTime time.Time, err error) 
 	if stmtType != "" {
 		sqlType = stmtType
 	}
+	commandSQLType := sqlType
+	if cmd == mysql.ComQuery && vars.InMultiStmts {
+		// The duration covers the whole command, not just its last statement.
+		// Other commands must not inherit the previous COM_QUERY's multi-statement flag.
+		commandSQLType = "MultiStmt"
+	}
 
-	for _, dbName := range session.GetDBNames(vars) {
-		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
+	for _, dbName := range metricsutil.GetDBNames(vars) {
+		metrics.CommandDurationHistogram.WithLabelValues(commandSQLType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
 		metrics.QueryRPCHistogram.WithLabelValues(sqlType, dbName).Observe(float64(vars.StmtCtx.GetExecDetails().RequestCount))
 		if vars.StmtCtx.GetExecDetails().ScanDetail != nil {
 			metrics.QueryProcessedKeyHistogram.WithLabelValues(sqlType, dbName).Observe(float64(vars.StmtCtx.GetExecDetails().ScanDetail.ProcessedKeys))
@@ -1789,6 +1796,8 @@ func (cc *clientConn) audit(ctx context.Context, eventType plugin.GeneralEvent) 
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
 	sessVars := cc.ctx.GetSessionVars()
+	// Reset before parsing so empty queries and parse errors cannot reuse the last request's flag.
+	sessVars.InMultiStmts = false
 	sc := sessVars.StmtCtx
 	prevWarns := sc.GetWarnings()
 	var stmts []ast.StmtNode
@@ -1812,8 +1821,8 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	parserWarns := warns[len(prevWarns):]
 
 	var pointPlans []base.Plan
-	cc.ctx.GetSessionVars().InMultiStmts = false
-	if len(stmts) > 1 {
+	sessVars.InMultiStmts = len(stmts) > 1
+	if sessVars.InMultiStmts {
 		// The client gets to choose if it allows multi-statements, and
 		// probably defaults OFF. This helps prevent against SQL injection attacks
 		// by early terminating the first statement, and then running an entirely
@@ -1834,7 +1843,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 				parserWarns = append(parserWarns, warn)
 			}
 		}
-		cc.ctx.GetSessionVars().InMultiStmts = true
 
 		// Only pre-build point plans for multi-statement query
 		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts, sql)
@@ -2047,6 +2055,10 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	if len(idxKeys) == 0 && len(rowKeys) == 0 {
 		return pointPlans, nil
 	}
+	// Multi-statement prefetch runs before handleStmt and can wait on pessimistic
+	// locks, so it needs its own connection-liveness probe.
+	clearConnectionAlive := cc.setSQLKillerConnectionAlive()
+	defer clearConnectionAlive()
 	snapshot := txn.GetSnapshot()
 	setResourceGroupTaggerForMultiStmtPrefetch(snapshot, sqls)
 	idxVals, err1 := snapshot.BatchGet(ctx, idxKeys)
@@ -2065,8 +2077,10 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		allKeys := append(rowKeys, idxKeys...)
 		err = executor.LockKeys(ctx, cc.getCtx(), vars.LockWaitTimeout, allKeys...)
 		if err != nil {
+			if exeerrors.ErrQueryInterrupted.Equal(err) {
+				return nil, err
+			}
 			// suppress the lock error, we are not going to handle it here for simplicity.
-			err = nil
 			logutil.BgLogger().Warn("lock keys error on prefetch", zap.Error(err))
 		}
 	} else {
@@ -2087,6 +2101,84 @@ func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls strin
 	if len(normalized) != 0 {
 		snapshot.SetOption(kv.ResourceGroupTagger, kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceNameBytesBySettings()).SetSQLDigest(digest))
 	}
+}
+
+// setSQLKillerConnectionAlive installs a connection-liveness probe on the
+// session SQLKiller for execution checkpoints such as HandleSignal and the
+// slow pre-commit backstop. It intentionally does not start a background
+// monitor, so short statements do not pay goroutine, ticker, or channel costs.
+func (cc *clientConn) setSQLKillerConnectionAlive() func() {
+	sessVars := cc.ctx.GetSessionVars()
+	isAlive := cc.isConnectionAlive
+	sessVars.SQLKiller.IsConnectionAlive.Store(&isAlive)
+
+	var clearOnce sync.Once
+	return func() {
+		clearOnce.Do(func() {
+			sessVars.SQLKiller.IsConnectionAlive.CompareAndSwap(&isAlive, nil)
+		})
+	}
+}
+
+func (cc *clientConn) isConnectionAlive() bool {
+	if cc.bufReadConn != nil {
+		// IsAlive returns 0 only when the connection is known dead. Treat
+		// unknown states as alive so we do not interrupt queries
+		// conservatively when the liveness check itself cannot run.
+		return cc.bufReadConn.IsAlive() != 0
+	}
+	return true
+}
+
+func (cc *clientConn) cancelDispatch() {
+	cc.mu.RLock()
+	cancelFunc := cc.mu.cancelFunc
+	cc.mu.RUnlock()
+	if cancelFunc != nil {
+		cancelFunc()
+	}
+}
+
+func shouldInstallConnectionAlive(stmt ast.StmtNode, sessVars *variable.SessionVars) bool {
+unwrapStmt:
+	for {
+		switch wrappedStmt := stmt.(type) {
+		case *ast.ExecuteStmt:
+			prepared, err := plannercore.GetPreparedStmt(wrappedStmt, sessVars)
+			if err != nil || prepared.PreparedAst == nil {
+				return false
+			}
+			stmt = prepared.PreparedAst.Stmt
+		case *ast.TraceStmt:
+			stmt = wrappedStmt.Stmt
+		case *ast.ExplainStmt:
+			if !wrappedStmt.Analyze {
+				return true
+			}
+			stmt = wrappedStmt.Stmt
+		default:
+			break unwrapStmt
+		}
+	}
+
+	switch stmt := stmt.(type) {
+	case *ast.BRIEStmt:
+		switch stmt.Kind {
+		case ast.BRIEKindBackup, ast.BRIEKindRestore:
+			// BACKUP and RESTORE are synchronous operations that can run for a long time.
+			// Avoid unexpectedly killing them when client keepalive is not configured properly.
+			return false
+		}
+	case ast.DDLNode, *ast.AnalyzeTableStmt, *ast.LoadDataStmt, *ast.ImportIntoStmt:
+		// Avoid unexpectedly killing long-running operations when client keepalive
+		// is not configured properly.
+		return false
+	case *ast.CommitStmt, *ast.RollbackStmt:
+		// The corresponding client-go commit and rollback/cleanup actions are
+		// non-interruptible, so keep SQL transaction finalization non-interruptible too.
+		return false
+	}
+	return true
 }
 
 // The first return value indicates whether the call of handleStmt has no side effect and can be retried.
@@ -2111,7 +2203,15 @@ func (cc *clientConn) handleStmt(
 		}
 	}
 
+	clearConnectionAlive := func() {}
+	if shouldInstallConnectionAlive(stmt, cc.ctx.GetSessionVars()) {
+		clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+		defer clearConnectionAlive()
+	}
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
+	if rs == nil || err != nil {
+		clearConnectionAlive()
+	}
 	reg.End()
 	// - If rs is not nil, the statement tracker detachment from session tracker
 	//   is done in the `rs.Close` in most cases.
@@ -2147,17 +2247,9 @@ func (cc *clientConn) handleStmt(
 				//nolint: errcheck
 				rs.Finish()
 			})
-		fn := func() bool {
-			if cc.bufReadConn != nil {
-				return cc.bufReadConn.IsAlive() != 0
-			}
-			return true
-		}
-		cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(&fn)
 		cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(true)
 		defer cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(false)
 		defer cc.ctx.GetSessionVars().SQLKiller.ClearFinishFunc()
-		defer cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(nil)
 		if retryable, err := cc.writeResultSet(ctx, rs, false, status, 0); err != nil {
 			return retryable, err
 		}
@@ -2405,7 +2497,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 	req := rs.NewChunk(cc.ctx.GetSessionVars().GetChunkAllocator())
 	gotColumnInfo := false
 	var columns []*column.Info
-	columnCount := 0
 	firstNext := true
 	validNextCount := 0
 	var start time.Time
@@ -2415,20 +2506,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		//nolint:forcetypeassert
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
-	totalRows := 0
-	defer func() {
-		cells := int64(totalRows) * int64(columnCount)
-		if cells <= 0 {
-			return
-		}
-		ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
-		if ruv2Metrics == nil {
-			ruv2Metrics = cc.ctx.GetSessionVars().RUV2Metrics
-		}
-		if ruv2Metrics != nil {
-			ruv2Metrics.AddResultChunkCells(cells)
-		}
-	}()
 	for {
 		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
 			//nolint:forcetypeassert
@@ -2454,7 +2531,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
 			columns = rs.Columns()
-			columnCount = len(columns)
 			if stmtDetail != nil {
 				start = time.Now()
 			}
@@ -2476,7 +2552,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		if rowCount == 0 {
 			break
 		}
-		totalRows += rowCount
 		validNextCount++
 		firstNext = false
 		reg := trace.StartRegion(ctx, "WriteClientConn")
@@ -2530,16 +2605,12 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 		start      time.Time
 	)
 	data := cc.alloc.AllocWithLen(4, 1024)
-	writtenRows := 0
 	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
 		//nolint:forcetypeassert
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
-	defer func() {
-		cells := int64(writtenRows) * int64(len(rs.Columns()))
-		resultset.ReportCursorRUV2Delta(rs, cells)
-	}()
+	defer resultset.ReportCursorRUV2Delta(rs)
 	if stmtDetail != nil {
 		start = time.Now()
 	}
@@ -2557,7 +2628,6 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 		if err = cc.writePacket(data); err != nil {
 			return err
 		}
-		writtenRows++
 
 		iter.Next(ctx)
 	}
@@ -2612,8 +2682,10 @@ func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 
 func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	oldResourceGroup := cc.currentResourceGroupName()
+	oldUser, oldDBName, oldAuthPlugin := cc.user, cc.dbname, cc.authPlugin
+	oldCtx := cc.getCtx()
 	user, data := util2.ParseNullTermString(data)
-	cc.user = string(hack.String(user))
+	newUser := string(hack.String(user))
 	if len(data) < 1 {
 		return mysql.ErrMalformPacket
 	}
@@ -2625,7 +2697,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	pass := data[:passLen]
 	data = data[passLen:]
 	dbName, data := util2.ParseNullTermString(data)
-	cc.dbname = string(hack.String(dbName))
+	newDBName := string(hack.String(dbName))
 	pluginName := ""
 	if len(data) > 0 {
 		// skip character set
@@ -2638,14 +2710,25 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		}
 	}
 
-	if err := cc.ctx.Close(); err != nil {
-		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
-	}
-	// session was closed by `ctx.Close` and should `openSession` explicitly to renew session.
-	// `openSession` won't run again in `openSessionAndDoAuth` because ctx is not nil.
+	cc.user = newUser
+	cc.dbname = newDBName
 	err := cc.openSession()
 	cc.moveResourceGroupCounter(oldResourceGroup)
+	restoreOldSession := func() {
+		newResourceGroup := cc.currentResourceGroupName()
+		if newCtx := cc.getCtx(); newCtx != nil && newCtx != oldCtx {
+			if err := newCtx.Close(); err != nil {
+				logutil.Logger(ctx).Debug("close new context failed", zap.Error(err))
+			}
+		}
+		cc.SetCtx(oldCtx)
+		cc.moveResourceGroupCounter(newResourceGroup)
+		cc.user = oldUser
+		cc.dbname = oldDBName
+		cc.authPlugin = oldAuthPlugin
+	}
 	if err != nil {
+		restoreOldSession()
 		return err
 	}
 	fakeResp := &handshake.Response41{
@@ -2655,10 +2738,12 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	}
 	if fakeResp.AuthPlugin != "" {
 		failpoint.Inject("ChangeUserAuthSwitch", func(val failpoint.Value) {
+			restoreOldSession()
 			failpoint.Return(errors.Errorf("%v", val))
 		})
 		newpass, err := cc.checkAuthPlugin(ctx, fakeResp)
 		if err != nil {
+			restoreOldSession()
 			return err
 		}
 		if len(newpass) > 0 {
@@ -2666,7 +2751,13 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		}
 	}
 	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin, fakeResp.ZstdLevel); err != nil {
+		restoreOldSession()
 		return err
+	}
+	if oldCtx != nil {
+		if err := oldCtx.Close(); err != nil {
+			logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
+		}
 	}
 	return cc.handleCommonConnectionReset(ctx)
 }

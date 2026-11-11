@@ -27,6 +27,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
+// AnyColumn is passed as the column to check SELECT on the table or on any
+// of its columns, e.g. for `SELECT COUNT(*) FROM t`. It must be longer than
+// mysql.MaxColumnNameLength (64), so it never collides with the name of a
+// real column, such as a column named `*`. This is enforced by tests.
+const AnyColumn = "<any column: this marker is longer than the 64-character limit of column names>"
+
 type keyType int
 
 func (k keyType) String() string {
@@ -47,6 +53,15 @@ type VerificationInfo struct {
 type Manager interface {
 	// ShowGrants shows granted privileges for user.
 	ShowGrants(ctx context.Context, sctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) ([]string, error)
+
+	// FetchColumnPrivileges gets column privilege for user
+	FetchColumnPrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error)
+
+	// FetchTablePrivileges gets table privilege for user
+	FetchTablePrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error)
+
+	// FetchSchemaPrivileges gets schema privilege for user
+	FetchSchemaPrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error)
 
 	// RequestVerification verifies user privilege for the request.
 	// If table is "", only check global/db scope privileges.

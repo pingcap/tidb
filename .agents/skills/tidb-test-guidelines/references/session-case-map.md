@@ -12,7 +12,7 @@
 - `pkg/session/bench_test.go` - session: Tests basic.
 - `pkg/session/bootstrap_test.go` - session: Tests MySQL DB tables.
 - `pkg/session/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/session/session_test.go` - session: Tests get start mode.
+- `pkg/session/session_test.go` - session: Tests start mode and bootstrap-version guards and retries.
 - `pkg/session/tidb_test.go` - session: Tests do map handle nil.
 - `pkg/session/upgrade_test.go` - session: Tests upgrade to ver functions check.
 

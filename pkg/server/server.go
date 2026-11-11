@@ -40,7 +40,6 @@ import (
 	_ "net/http/pprof" // #nosec G108 for pprof
 	"os"
 	"os/user"
-	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -197,7 +196,7 @@ func (s *Server) BitwiseOrAssignCapability(capability uint32) {
 
 // GetStatusServerAddr gets statusServer address for MppCoordinatorManager usage
 func (s *Server) GetStatusServerAddr() (on bool, addr string) {
-	if !s.cfg.Status.ReportStatus {
+	if !s.fullStatusServerEnabled() {
 		return false, ""
 	}
 	if strings.Contains(s.statusAddr, config.DefStatusHost) {
@@ -553,19 +552,16 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 
 		clientConn := s.newConn(conn)
 		if isUnixSocket {
-			var (
-				uc *net.UnixConn
-				ok bool
-			)
-			if clientConn.ppEnabled {
-				// Using reflect to get Raw Conn object from proxy protocol wrapper connection object
-				ppv := reflect.ValueOf(conn)
-				vconn := ppv.Elem().FieldByName("Conn")
-				rconn := vconn.Interface()
-				uc, ok = rconn.(*net.UnixConn)
-			} else {
-				uc, ok = conn.(*net.UnixConn)
+			// When PROXY protocol is enabled the accepted conn may be wrapped by
+			// the PROXY-protocol conn, which exposes NetConn() since
+			// go-proxyprotocol v1.0.8. Unwrap it to reach the underlying
+			// *net.UnixConn; a raw conn (for example when the client address is
+			// not in the allowed networks) is left as-is.
+			sockConn := conn
+			if underlay, ok := sockConn.(proxyprotocol.UnderlayConn); ok {
+				sockConn = underlay.NetConn()
 			}
+			uc, ok := sockConn.(*net.UnixConn)
 			if !ok {
 				logutil.BgLogger().Error("Expected UNIX socket, but got something else")
 				return
@@ -1017,13 +1013,7 @@ func killQuery(conn *clientConn, maxExecutionTime, runaway bool) {
 	} else {
 		sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}
-	conn.mu.RLock()
-	cancelFunc := conn.mu.cancelFunc
-	conn.mu.RUnlock()
-
-	if cancelFunc != nil {
-		cancelFunc()
-	}
+	conn.cancelDispatch()
 	sessVars.SQLKiller.FinishResultSet()
 }
 

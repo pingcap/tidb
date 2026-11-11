@@ -96,6 +96,50 @@ func (*DXFActiveTaskHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	handler.WriteData(w, summary)
 }
 
+type dxfNode struct {
+	Host     string `json:"host"`
+	Role     string `json:"role"`
+	CPUCount int    `json:"cpu_count"`
+}
+
+// DXFNodesHandler handles listing nodes registered in `mysql.dist_framework_meta`.
+type DXFNodesHandler struct {
+	// Keep this dependency injectable for testing errors and cancellation
+	// without replacing global task-manager state.
+	getNodes func(context.Context) ([]proto.ManagedNode, error)
+}
+
+// NewDXFNodesHandler creates a new DXFNodesHandler.
+func NewDXFNodesHandler() *DXFNodesHandler {
+	return &DXFNodesHandler{getNodes: handle.ListManagedNodes}
+}
+
+// ServeHTTP implements http.Handler interface.
+func (h *DXFNodesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		handler.WriteError(w, errors.Errorf("This api only support GET method"))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(req.Context(), requestDefaultTimeout)
+	defer cancel()
+	nodes, err := h.getNodes(ctx)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get DXF nodes", zap.Error(err))
+		handler.WriteErrorWithCode(w, http.StatusInternalServerError, err)
+		return
+	}
+	result := make([]dxfNode, len(nodes))
+	for i, node := range nodes {
+		result[i] = dxfNode{
+			Host:     node.ID,
+			Role:     node.Role,
+			CPUCount: node.CPUCount,
+		}
+	}
+	handler.WriteData(w, result)
+}
+
 // DXFTaskHistoryHandler handles listing history tasks in `mysql.tidb_global_task_history`.
 type DXFTaskHistoryHandler struct{}
 

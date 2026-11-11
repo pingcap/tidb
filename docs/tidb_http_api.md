@@ -2,6 +2,31 @@
 
 `TiDBIP` is the ip of the TiDB server. `10080` is the default status port, and you can edit it in tidb.toml when starting the TiDB server.
 
+## Diagnostic mode availability
+
+When TiDB starts with `--diagnostic-mode` and `status.report-status` is enabled,
+the status listener exposes only the following GET endpoints:
+
+| Endpoint | Purpose and parameters | Example |
+| --- | --- | --- |
+| `/status` | Local readiness, connection count, version and statistics initialization status. No parameters. | `curl http://127.0.0.1:10080/status` |
+| `/metrics` | Local Prometheus metrics. No parameters. | `curl http://127.0.0.1:10080/metrics` |
+| `/debug/pprof/` | Index of available local runtime profiles. | `curl http://127.0.0.1:10080/debug/pprof/` |
+| `/debug/pprof/cmdline` | Process command line. No parameters. | `curl http://127.0.0.1:10080/debug/pprof/cmdline` |
+| `/debug/pprof/profile` | CPU profile; optional `seconds` controls collection duration. | `curl -o cpu.pprof 'http://127.0.0.1:10080/debug/pprof/profile?seconds=5'` |
+| `/debug/pprof/symbol` | Resolve program counters supplied in the query string. GET only. | `curl http://127.0.0.1:10080/debug/pprof/symbol` |
+| `/debug/pprof/trace` | Runtime trace; optional `seconds` controls collection duration. | `curl -o trace.out 'http://127.0.0.1:10080/debug/pprof/trace?seconds=1'` |
+| `/debug/pprof/{profile}` | Named runtime profile, such as `goroutine` or `heap`; optional `debug` selects text output. | `curl 'http://127.0.0.1:10080/debug/pprof/goroutine?debug=1'` |
+
+Other management endpoints described below, including `/info` and `/settings`,
+are unavailable in this mode and return HTTP 404. The diagnostic listener does
+not serve gRPC/MPP services. Requests using unsupported methods are rejected.
+Cluster TLS and certificate verification settings also apply to this listener;
+TLS advertises HTTP/1.1 only. Disabling `status.report-status` disables the
+listener entirely. Normal-mode HTTP API availability is unchanged.
+
+## HTTP endpoints
+
 1. Get the current status of TiDB, including the connections, version, and `git_hash`.
 
     ```shell
@@ -739,6 +764,35 @@ timezone.*
      curl http://{TiDBIP}:10080/txn-gc-states
      ```
 
+43. Get the live TiFlash replica summary for this TiDB.
+
+     Method: `GET` only. Counts **logical** tables that currently have `TiFlashReplica` metadata on this TiDB's InfoSchema. Dropped or truncated leftovers are not included.
+
+     Optional query `reload` (default `false` when omitted): `false` uses the in-memory InfoSchema (cheap default). `true` will sync the schema first to reduce lease-lag under-counts TiFlash replica on non-DDL-owner nodes; invalid values return HTTP 400. Reload can be slow on a large schema. This is a **best-effort** snapshot for operators. Even with `reload=true`, a concurrent `SET TIFLASH REPLICA` after the read can invalidate the `table_count` and `can_disable`.
+
+     Next-gen: the count is for the keyspace bound to this TiDB. Query a user-keyspace instance to inspect that logical cluster; a SYSTEM instance only reports SYSTEM.
+
+     ```shell
+     curl http://{TiDBIP}:10080/tiflash/replica
+     curl 'http://{TiDBIP}:10080/tiflash/replica?reload=true'
+     ```
+
+     Example response:
+
+     ```json
+     {
+      "keyspace": "ks1",
+      "keyspace_id": 123,
+      "tidb_columnar_storage_enabled": "ON",
+      "columnar_store_type": "columnar",
+      "can_disable": false,
+      "table_count": 2,
+      "reloaded": false
+     }
+     ```
+
+     `can_disable` is true only when `table_count` is 0. `tidb_columnar_storage_enabled` is always present as `ON` or `OFF` on HTTP 200; if the sysvar cannot be read, the API returns HTTP 5xx instead of omitting the field. `columnar_store_type` is this TiDB's `cse.columnar-store-type` (`tiflash`, `columnar`, or `both`). `reloaded` reports whether this request synced schema first. If schema reload fails, the API also returns HTTP 5xx instead of an empty success body. Old kernels do not serve this endpoint.
+
 ## Test-only APIs (enableTestAPI failpoint)
 
 These APIs are only registered when the `enableTestAPI` failpoint is enabled.
@@ -788,6 +842,43 @@ curl -X POST "http://{TiDBIP}:10080/test/delete/indexkey/{db}/{table}/{index}?{i
 These APIs are registered only on TiDB instances running in the TiDB-X SYSTEM keyspace. All examples in this section assume `{TiDBIP}:10080` belongs to a TiDB process in that SYSTEM keyspace.
 
 The `/dxf/...` APIs are for DXF (Distributed eXecution Framework) operator observability and emergency runtime tuning. In TiDB-X, DXF runs as a shared SYSTEM-keyspace service for resource-intensive work such as IMPORT INTO and distributed add index, so some APIs are called on a SYSTEM-keyspace TiDB process but target a user keyspace parameter.
+
+### List DXF nodes
+
+This API lists the TiDB nodes registered with DXF. The response is ordered by `host` and omits the internal `keyspace_id` field.
+
+Usage:
+
+```shell
+curl http://{TiDBIP}:10080/dxf/nodes
+```
+
+Parameters: none.
+
+Response fields:
+
+- `host`: The TiDB execution ID in `IP:PORT` form.
+- `role`: The node's configured TiDB service scope. `dxf_service` is the normal value for TiDB-X DXF nodes; `background`, an empty string, or another configured scope can also appear.
+- `cpu_count`: The number of CPU slots available to DXF on the node.
+
+Example response:
+
+```json
+[
+ {
+  "host": "192.168.1.10:5000",
+  "role": "dxf_service",
+  "cpu_count": 8
+ },
+ {
+  "host": "192.168.1.11:5000",
+  "role": "background",
+  "cpu_count": 16
+ }
+]
+```
+
+If no DXF nodes are registered, the response is `[]`.
 
 ### Get the DXF schedule status
 
@@ -954,8 +1045,8 @@ Example response:
    "ID": 30001,
    "Key": "keyspace1/ddl/backfill/9",
    "Type": "backfill",
-   "State": "succeed",
-   "Step": -2,
+   "State": "reverted",
+   "Step": 1,
    "Priority": 512,
    "RequiredSlots": 1,
    "TargetScope": "dxf_service",
@@ -963,6 +1054,8 @@ Example response:
    "MaxNodeCount": 1,
    "ExtraParams": {},
    "Keyspace": "keyspace1",
+   "ErrorCode": "kv:1062",
+   "ErrorCategory": "data-error",
    "StartTime": "2026-04-13T11:30:13+08:00",
    "StateUpdateTime": "2026-04-13T11:30:17+08:00",
    "EndTime": "2026-04-13T11:30:16+08:00"
@@ -973,6 +1066,8 @@ Example response:
  "ApproxTotalCount": 1
 }
 ```
+
+`ErrorCode` contains the effective RFC error code when the stored task error provides one, and is empty for a plain error. `ErrorCategory` is `failed`, `cancelled`, or `data-error` for a task with an error, and is empty when the task has no error. The response does not include the task error message.
 
 ### Get IMPORT INTO history job details
 

@@ -30,10 +30,12 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -91,6 +93,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
@@ -102,6 +105,7 @@ const (
 	nmConfig           = "config"
 	nmConfigCheck      = "config-check"
 	nmConfigStrict     = "config-strict"
+	nmDiagnosticMode   = "diagnostic-mode"
 	nmStore            = "store"
 	nmStorePath        = "path"
 	nmHost             = "host"
@@ -147,10 +151,11 @@ const (
 )
 
 var (
-	version      *bool
-	configPath   *string
-	configCheck  *bool
-	configStrict *bool
+	version        *bool
+	configPath     *string
+	configCheck    *bool
+	configStrict   *bool
+	diagnosticMode *bool
 
 	// Base
 	store            *string
@@ -213,6 +218,7 @@ func initFlagSet() *flag.FlagSet {
 	configPath = fset.String(nmConfig, "", "config file path")
 	configCheck = flagBoolean(fset, nmConfigCheck, false, "check config file validity and exit")
 	configStrict = flagBoolean(fset, nmConfigStrict, false, "enforce config file validity")
+	diagnosticMode = flagBoolean(fset, nmDiagnosticMode, false, "enable process-wide diagnostic mode")
 
 	// Base
 	store = fset.String(nmStore, string(config.StoreTypeUniStore), fmt.Sprintf("registered store name, %v", config.StoreTypeList()))
@@ -295,6 +301,7 @@ func main() {
 		}
 	}
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
+	terror.MustNil(diagnosticmode.Initialize(*diagnosticMode))
 	if kerneltype.IsNextGen() {
 		terror.MustNil(initDeployMode(config.GetGlobalConfig()))
 	}
@@ -312,6 +319,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "invalid config: keyspace name or standby mode is not supported for classic TiDB")
 		os.Exit(0)
 	}
+
+	tikvrpc.SetDefaultRequestOrigin(kvrpcpb.RequestOrigin_RequestOriginTiDB)
 
 	var standbyController server.StandbyController
 	if config.GetGlobalConfig().Standby.StandByMode {

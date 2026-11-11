@@ -615,6 +615,10 @@ func TestSetSysVar(t *testing.T) {
 	require.Equal(t, "America/New_York", val)
 	variable.SetSysVar(vardef.SystemTimeZone, originalVal) // restore
 	require.Equal(t, originalVal, variable.GetSysVar(vardef.SystemTimeZone).Value)
+
+	planReplayerFileRetentionTimeVar := variable.GetSysVar(vardef.TiDBPlanReplayerFileRetentionTime)
+	require.NotNil(t, planReplayerFileRetentionTimeVar)
+	require.Equal(t, (7 * 24 * time.Hour).String(), planReplayerFileRetentionTimeVar.Value)
 }
 
 func TestSkipSysvarCache(t *testing.T) {

@@ -157,6 +157,7 @@ func GlobalInfoSyncerInit(
 	codec tikv.Codec,
 	skipRegisterToDashBoard bool,
 	infoCache infoschemaMinTS,
+	serverInfoOptions ...serverinfo.SyncerOption,
 ) (*InfoSyncer, error) {
 	if pdHTTPCli != nil {
 		pdHTTPCli = pdHTTPCli.
@@ -172,7 +173,7 @@ func GlobalInfoSyncerInit(
 		infoCache:      infoCache,
 		tikvCodec:      codec,
 	}
-	is.svrInfoSyncer = serverinfo.NewSyncer(uuid, serverIDGetter, etcdCli, is)
+	is.svrInfoSyncer = serverinfo.NewSyncer(uuid, serverIDGetter, etcdCli, is, serverInfoOptions...)
 	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
 		return nil, err

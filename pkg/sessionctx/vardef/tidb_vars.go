@@ -538,6 +538,13 @@ const (
 	// TiDBMaxPagingSize is used to control the max paging size in the coprocessor paging protocol.
 	TiDBMaxPagingSize = "tidb_max_paging_size"
 
+	// TiDBPagingSizeBytes is the global byte budget per coprocessor page.
+	// Updates apply when a statement initializes its DistSQL context, including in existing sessions.
+	// A non-zero value takes effect only when Resource Control is enabled and the active Resource Group
+	// is non-burstable (has limited burst).
+	// 0 means disabled (no byte-budget paging).
+	TiDBPagingSizeBytes = "tidb_paging_size_bytes"
+
 	// TiDBEnableCascadesPlanner is used to control whether to enable the cascades planner.
 	TiDBEnableCascadesPlanner = "tidb_enable_cascades_planner"
 
@@ -774,6 +781,10 @@ const (
 
 	// TiDBRestrictedReadOnly is meant for the cloud admin to toggle the cluster read only
 	TiDBRestrictedReadOnly = "tidb_restricted_read_only"
+
+	// TiDBColumnarStorageEnabled is the cluster-level gate for adding TiFlash replicas
+	// when cse.columnar-store-type = "columnar" / "both".
+	TiDBColumnarStorageEnabled = "tidb_columnar_storage_enabled"
 
 	// TiDBSuperReadOnly is tidb's variant of mysql's super_read_only, which has some differences from mysql's super_read_only.
 	TiDBSuperReadOnly = "tidb_super_read_only"
@@ -1023,6 +1034,9 @@ const (
 
 	// TiDBEnablePlanReplayerContinuousCapture indicates whether to enable continuous capture
 	TiDBEnablePlanReplayerContinuousCapture = "tidb_enable_plan_replayer_continuous_capture"
+
+	// TiDBPlanReplayerFileRetentionTime indicates how long to retain non-capture plan replayer files.
+	TiDBPlanReplayerFileRetentionTime = "tidb_plan_replayer_file_retention_time"
 	// TiDBEnableReusechunk indicates whether to enable chunk alloc
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 
@@ -1410,80 +1424,89 @@ const (
 
 // Default TiDB system variable values.
 const (
-	DefHostname                             = "localhost"
-	DefIndexLookupConcurrency               = ConcurrencyUnset
-	DefIndexLookupJoinConcurrency           = ConcurrencyUnset
-	DefIndexSerialScanConcurrency           = 1
-	DefIndexJoinBatchSize                   = 25000
-	DefIndexLookupSize                      = 20000
-	DefDistSQLScanConcurrency               = 15
-	DefAnalyzeDistSQLScanConcurrency        = 4
-	DefBuildStatsConcurrency                = 2
-	DefBuildSamplingStatsConcurrency        = 2
-	DefAutoAnalyzeRatio                     = 0.5
-	DefAutoAnalyzeStartTime                 = "00:00 +0000"
-	DefAutoAnalyzeEndTime                   = "23:59 +0000"
-	DefAutoIncrementIncrement               = 1
-	DefAutoIncrementOffset                  = 1
-	DefChecksumTableConcurrency             = 4
-	DefSkipUTF8Check                        = false
-	DefSkipASCIICheck                       = false
-	DefOptAggPushDown                       = false
-	DefOptDeriveTopN                        = false
-	DefOptCartesianBCJ                      = 1
-	DefOptMPPOuterJoinFixedBuildSide        = false
-	DefOptWriteRowID                        = false
-	DefOptEnableCorrelationAdjustment       = true
-	DefOptLimitPushDownThreshold            = 5000
-	DefOptCorrelationThreshold              = 0.9
-	DefOptCorrelationExpFactor              = 1
-	DefOptRiskEqSkewRatio                   = 0.0
-	DefOptRiskRangeSkewRatio                = 0.0
-	DefOptRiskScaleNDVSkewRatio             = 1.0
-	DefOptRiskGroupNDVSkewRatio             = 0.0
-	DefOptAlwaysKeepJoinKey                 = true
-	DefOptCartesianJoinOrderThreshold       = 0.0
-	DefOptCPUFactor                         = 3.0
-	DefOptCopCPUFactor                      = 3.0
-	DefOptTiFlashConcurrencyFactor          = 24.0
-	DefOptNetworkFactor                     = 1.0
-	DefOptScanFactor                        = 1.5
-	DefOptDescScanFactor                    = 3.0
-	DefOptSeekFactor                        = 20.0
-	DefOptMemoryFactor                      = 0.001
-	DefOptDiskFactor                        = 1.5
-	DefOptConcurrencyFactor                 = 3.0
-	DefOptIndexScanCostFactor               = 1.0
-	DefOptIndexReaderCostFactor             = 1.0
-	DefOptTableReaderCostFactor             = 1.0
-	DefOptTableFullScanCostFactor           = 1.0
-	DefOptTableRangeScanCostFactor          = 1.0
-	DefOptTableRowIDScanCostFactor          = 1.0
-	DefOptTableTiFlashScanCostFactor        = 1.0
-	DefOptIndexLookupCostFactor             = 1.0
-	DefOptIndexMergeCostFactor              = 1.0
-	DefOptSortCostFactor                    = 1.0
-	DefOptTopNCostFactor                    = 1.0
-	DefOptLimitCostFactor                   = 1.0
-	DefOptStreamAggCostFactor               = 1.0
-	DefOptHashAggCostFactor                 = 1.0
-	DefOptMergeJoinCostFactor               = 1.0
-	DefOptHashJoinCostFactor                = 1.0
-	DefOptIndexJoinCostFactor               = 1.0
-	DefOptSelectivityFactor                 = 0.8
-	DefOptForceInlineCTE                    = false
-	DefOptInSubqToJoinAndAgg                = true
-	DefOptPreferRangeScan                   = true
-	DefOptEnableNoDecorrelateInSelect       = false
-	DefOptEnableAlternativeLogicalPlans     = false
-	DefOptEnableSemiJoinRewrite             = false
-	DefBatchInsert                          = false
-	DefBatchDelete                          = false
-	DefBatchCommit                          = false
-	DefCurretTS                             = 0
-	DefInitChunkSize                        = 32
-	DefMinPagingSize                        = int(paging.MinPagingSize)
-	DefMaxPagingSize                        = int(paging.MinAllowedMaxPagingSize)
+	DefHostname                         = "localhost"
+	DefIndexLookupConcurrency           = ConcurrencyUnset
+	DefIndexLookupJoinConcurrency       = ConcurrencyUnset
+	DefIndexSerialScanConcurrency       = 1
+	DefIndexJoinBatchSize               = 25000
+	DefIndexLookupSize                  = 20000
+	DefDistSQLScanConcurrency           = 15
+	DefAnalyzeDistSQLScanConcurrency    = 4
+	DefBuildStatsConcurrency            = 2
+	DefBuildSamplingStatsConcurrency    = 2
+	DefAutoAnalyzeRatio                 = 0.5
+	DefAutoAnalyzeStartTime             = "00:00 +0000"
+	DefAutoAnalyzeEndTime               = "23:59 +0000"
+	DefAutoIncrementIncrement           = 1
+	DefAutoIncrementOffset              = 1
+	DefChecksumTableConcurrency         = 4
+	DefSkipUTF8Check                    = false
+	DefSkipASCIICheck                   = false
+	DefOptAggPushDown                   = false
+	DefOptDeriveTopN                    = false
+	DefOptCartesianBCJ                  = 1
+	DefOptMPPOuterJoinFixedBuildSide    = false
+	DefOptWriteRowID                    = false
+	DefOptEnableCorrelationAdjustment   = true
+	DefOptLimitPushDownThreshold        = 5000
+	DefOptCorrelationThreshold          = 0.9
+	DefOptCorrelationExpFactor          = 1
+	DefOptRiskEqSkewRatio               = 0.0
+	DefOptRiskRangeSkewRatio            = 0.0
+	DefOptRiskScaleNDVSkewRatio         = 1.0
+	DefOptRiskGroupNDVSkewRatio         = 0.0
+	DefOptAlwaysKeepJoinKey             = true
+	DefOptCartesianJoinOrderThreshold   = 0.0
+	DefOptCPUFactor                     = 3.0
+	DefOptCopCPUFactor                  = 3.0
+	DefOptTiFlashConcurrencyFactor      = 24.0
+	DefOptNetworkFactor                 = 1.0
+	DefOptScanFactor                    = 1.5
+	DefOptDescScanFactor                = 3.0
+	DefOptSeekFactor                    = 20.0
+	DefOptMemoryFactor                  = 0.001
+	DefOptDiskFactor                    = 1.5
+	DefOptConcurrencyFactor             = 3.0
+	DefOptIndexScanCostFactor           = 1.0
+	DefOptIndexReaderCostFactor         = 1.0
+	DefOptTableReaderCostFactor         = 1.0
+	DefOptTableFullScanCostFactor       = 1.0
+	DefOptTableRangeScanCostFactor      = 1.0
+	DefOptTableRowIDScanCostFactor      = 1.0
+	DefOptTableTiFlashScanCostFactor    = 1.0
+	DefOptIndexLookupCostFactor         = 1.0
+	DefOptIndexMergeCostFactor          = 1.0
+	DefOptSortCostFactor                = 1.0
+	DefOptTopNCostFactor                = 1.0
+	DefOptLimitCostFactor               = 1.0
+	DefOptStreamAggCostFactor           = 1.0
+	DefOptHashAggCostFactor             = 1.0
+	DefOptMergeJoinCostFactor           = 1.0
+	DefOptHashJoinCostFactor            = 1.0
+	DefOptIndexJoinCostFactor           = 1.0
+	DefOptSelectivityFactor             = 0.8
+	DefOptForceInlineCTE                = false
+	DefOptInSubqToJoinAndAgg            = true
+	DefOptPreferRangeScan               = true
+	DefOptEnableNoDecorrelateInSelect   = false
+	DefOptEnableAlternativeLogicalPlans = false
+	DefOptEnableSemiJoinRewrite         = false
+	DefBatchInsert                      = false
+	DefBatchDelete                      = false
+	DefBatchCommit                      = false
+	DefCurretTS                         = 0
+	DefInitChunkSize                    = 32
+	DefMinPagingSize                    = int(paging.MinPagingSize)
+	DefMaxPagingSize                    = int(paging.MinAllowedMaxPagingSize)
+	// DefPagingSizeBytes defaults to 0 (byte-budget paging disabled).
+	// A non-zero value takes effect only when Resource Control is enabled and the active Resource Group
+	// is non-burstable (has limited burst).
+	// Regression tests across cap-bound and under-cap TPC-C, FullScan, and Join workloads found no
+	// material performance regression with byte-budget paging. Among the tested 1, 2, 4, 8, and 16 MiB
+	// candidates, 4 MiB provided the best overall balance of throughput, tail latency, RU stability,
+	// RPC overhead, CPU, and RU efficiency. Consider setting this to 4 MiB (4194304) when enabling
+	// byte-budget paging for resource groups with limited burst.
+	DefPagingSizeBytes                      = 0
 	DefMaxChunkSize                         = 1024
 	DefDMLBatchSize                         = 0
 	DefMaxPreparedStmtCount                 = -1
@@ -1575,6 +1598,7 @@ const (
 	DefTiDBRedactLog                        = Off
 	DefTiDBRestrictedReadOnly               = false
 	DefTiDBSuperReadOnly                    = false
+	DefTiDBColumnarStorageEnabled           = true // missing rows keep historical SET TIFLASH REPLICA behavior
 	DefTiDBShardAllocateStep                = math.MaxInt64
 	DefTiDBPointGetCache                    = false
 	DefTiDBEnableTelemetry                  = true
@@ -1715,6 +1739,7 @@ const (
 	DefTiDBEnableReusechunk                           = true
 	DefTiDBUseAlloc                                   = false
 	DefTiDBEnablePlanReplayerCapture                  = true
+	DefTiDBPlanReplayerFileRetentionTime              = 7 * 24 * time.Hour
 	DefTiDBIndexMergeIntersectionConcurrency          = ConcurrencyUnset
 	DefTiDBTTLJobEnable                               = true
 	DefTiDBTTLScanBatchSize                           = 500
@@ -1920,6 +1945,7 @@ var (
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
 	EnableResourceControl           = atomic.NewBool(false)
 	EnableResourceControlStrictMode = atomic.NewBool(true)
+	PagingSizeBytes                 = atomic.NewInt64(DefPagingSizeBytes)
 	EnableCheckConstraint           = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats       = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 	TiFlashEnablePipelineMode       = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)

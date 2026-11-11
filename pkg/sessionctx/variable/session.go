@@ -261,34 +261,6 @@ type TxnCtxNoNeedToRestore struct {
 	CurrentStmtPessimisticLockCache map[string][]byte
 }
 
-// RUV2Weights returns the active TiDB-side RU v2 weights for the current
-// session. The weights come from the global config, but the conversion is kept
-// in the session layer so lower-level utility packages remain config-free.
-func (s *SessionVars) RUV2Weights() execdetails.RUV2Weights {
-	if cfg := config.GetGlobalConfig(); cfg != nil {
-		return ruv2WeightsFromConfig(cfg.RUV2)
-	}
-	return ruv2WeightsFromConfig(config.DefaultRUV2Config())
-}
-
-func ruv2WeightsFromConfig(cfg config.RUV2Config) execdetails.RUV2Weights {
-	return execdetails.RUV2Weights{
-		RUScale:                 cfg.RUScale,
-		ResultChunkCells:        cfg.ResultChunkCells,
-		ExecutorL1:              cfg.ExecutorL1,
-		ExecutorL2:              cfg.ExecutorL2,
-		ExecutorL3:              cfg.ExecutorL3,
-		ExecutorL5InsertRows:    cfg.ExecutorL5InsertRows,
-		PlanCnt:                 cfg.PlanCnt,
-		PlanDeriveStatsPaths:    cfg.PlanDeriveStatsPaths,
-		ResourceManagerReadCnt:  cfg.ResourceManagerReadCnt,
-		ResourceManagerWriteCnt: cfg.ResourceManagerWriteCnt,
-		WriteKeys:               cfg.WriteKeys,
-		SessionParserTotal:      cfg.SessionParserTotal,
-		TxnCnt:                  cfg.TxnCnt,
-	}
-}
-
 // SavepointRecord indicates a transaction's savepoint record.
 type SavepointRecord struct {
 	// name is the name of the savepoint
@@ -940,8 +912,6 @@ type SessionVars struct {
 	StmtCtx *stmtctx.StatementContext
 	// RUV2Metrics stores statement-level RU v2 metrics for current statement.
 	RUV2Metrics *execdetails.RUV2Metrics
-	// RUV2PendingSessionParserTotal stores session parser count before statement context reset.
-	RUV2PendingSessionParserTotal atomic.Int64
 
 	// RefCountOfStmtCtx indicates the reference count of StmtCtx. When the
 	// StmtCtx is accessed by other sessions, e.g. oom-alarm-handler/expensive-query-handler, add one first.
@@ -1864,6 +1834,9 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
+	// TTLJobID attributes a user-table scan/delete transaction to a TTL job. Empty means
+	// no scan/delete attribution; TTL sessions restore it after draining the result.
+	TTLJobID string
 
 	// MemArbitrator represents the properties to be controlled by the memory arbitrator.
 	MemArbitrator struct {
@@ -2463,6 +2436,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
+	vars.KVVars.KillSignalHandler = &vars.SQLKiller
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            vardef.DefIndexLookupConcurrency,
 		indexLookupJoinConcurrency:        vardef.DefIndexLookupJoinConcurrency,

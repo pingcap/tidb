@@ -242,9 +242,10 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 		Concurrency:    15,
 		StoreBatchSize: 3,
 		Paging: struct {
-			Enable        bool
-			MinPagingSize uint64
-			MaxPagingSize uint64
+			Enable          bool
+			MinPagingSize   uint64
+			MaxPagingSize   uint64
+			PagingSizeBytes uint64
 		}{
 			Enable:        true,
 			MinPagingSize: 1,
@@ -255,6 +256,74 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Nil(t, errRes)
 	tasks = it.GetTasks()
 	require.Equal(t, len(tasks), 4)
+
+	// byte-budget paging disables store batch without changing row-count paging.
+	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
+	req = &kv.Request{
+		Tp:             kv.ReqTypeDAG,
+		StoreType:      kv.TiKV,
+		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 1, 3, 3}),
+		Concurrency:    15,
+		StoreBatchSize: 3,
+	}
+	req.Paging.PagingSizeBytes = uint64(4 * 1024 * 1024)
+	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
+	tasks = it.GetTasks()
+	require.Equal(t, len(tasks), 4)
+	require.False(t, req.Paging.Enable)
+	require.Zero(t, req.Paging.MinPagingSize)
+	require.Zero(t, req.Paging.MaxPagingSize)
+	// The byte budget is kept for TiKV DAG requests.
+	require.Equal(t, uint64(4*1024*1024), req.Paging.PagingSizeBytes)
+
+	// A byte budget bounds a page but is not a read-size prediction, so RPCs
+	// sent before any page is observed carry no pre-charge hint. Cancel at the
+	// pre-send hook so this does not depend on a TiKV response.
+	req = &kv.Request{
+		Tp:          kv.ReqTypeDAG,
+		StoreType:   kv.TiKV,
+		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(copr.BuildKeyRanges("a", "c"), nil),
+		Concurrency: 15,
+	}
+	req.Paging.PagingSizeBytes = uint64(4 * 1024 * 1024)
+	func() {
+		predictedReadBytes := make(chan uint64, 1)
+		hintCtx, cancelHint := context.WithTimeout(ctx, 5*time.Second)
+		defer cancelHint()
+		// Disable explicitly: the same failpoint is enabled again below with a test cleanup.
+		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx", func(rpcReq *tikvrpc.Request) {
+			if _, ok := rpcReq.Req.(*coprocessor.Request); !ok {
+				return
+			}
+			select {
+			case predictedReadBytes <- rpcReq.PredictedReadBytes:
+			default:
+			}
+			cancelHint()
+		}))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx"))
+		}()
+		hintResp := copClient.Send(hintCtx, req, vars, opt)
+		_, err := hintResp.Next(hintCtx)
+		require.ErrorIs(t, err, context.Canceled)
+		require.NoError(t, hintResp.Close())
+		require.Zero(t, <-predictedReadBytes)
+	}()
+
+	// byte-budget paging only applies to TiKV DAG requests; a non-DAG request
+	// drops the budget so req.Paging.PagingSizeBytes is the single source of truth.
+	req = &kv.Request{
+		Tp:          kv.ReqTypeAnalyze,
+		StoreType:   kv.TiKV,
+		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(copr.BuildKeyRanges("a", "c"), nil),
+		Concurrency: 15,
+	}
+	req.Paging.PagingSizeBytes = uint64(4 * 1024 * 1024)
+	_, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
+	require.Zero(t, req.Paging.PagingSizeBytes)
 
 	// only small tasks will be batched.
 	ranges = copr.BuildKeyRanges("a", "b", "h", "i", "o", "p")

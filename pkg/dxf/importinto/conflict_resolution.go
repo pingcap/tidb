@@ -130,6 +130,10 @@ func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 		task.End(zapcore.ErrorLevel, err)
 	}()
 
+	targetIdx, err := getKVGroupIndexInfo(e.tableImporter, kvGroup)
+	if err != nil {
+		return err
+	}
 	encoders, err := createEncoders(concurrency, e.tableImporter)
 	if err != nil {
 		return err
@@ -137,11 +141,17 @@ func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 	pairCh := external.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
+	deleterChs, needDispatch := createConflictHandlerChannels(pairCh, concurrency, targetIdx)
 	for i := range concurrency {
 		encoder := encoders[i]
 		deleter := conflictedkv.NewDeleter(e.tableImporter.Table, e.logger, e.store, kvGroup, encoder, e.GetMeterRecorder())
 		eg.Go(func() error {
-			return deleter.Run(egCtx, pairCh)
+			return deleter.Run(egCtx, deleterChs[i])
+		})
+	}
+	if needDispatch {
+		eg.Go(func() error {
+			return dispatchMVIndexKVPairs(egCtx, e.store, pairCh, deleterChs, targetIdx)
 		})
 	}
 

@@ -453,8 +453,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.Value != nil {
 			p.varsMutable[nameLower] = struct{}{}
 			delete(p.varsReadonly, nameLower)
-		} else if p.stmtTp == TypeSelect {
-			// Only check the variable in select statement.
+		} else if p.stmtTp == TypeSelect || p.stmtTp == TypeUpdate || p.stmtTp == TypeInsert || p.stmtTp == TypeDelete {
+			// Only check variables in SELECT, UPDATE, INSERT, and DELETE statements.
 			_, ok := p.varsMutable[nameLower]
 			if !ok {
 				p.varsReadonly[nameLower] = struct{}{}
@@ -562,12 +562,7 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 		currentUser, activeRoles := p.sctx.GetSessionVars().User, p.sctx.GetSessionVars().ActiveRoles
 		if pm := privilege.GetPrivilegeManager(p.sctx); pm != nil {
 			if !pm.RequestVerification(activeRoles, sName.L, tn.Name.O, "", mysql.AllPrivMask) {
-				u := currentUser.Username
-				h := currentUser.Hostname
-				if currentUser.AuthHostname != "" {
-					u = currentUser.AuthUsername
-					h = currentUser.AuthHostname
-				}
+				u, h := auth.GetUserAndHostName(currentUser)
 				return nil, plannererrors.ErrTableaccessDenied.GenWithStackByArgs(p.stmtType(), u, h, tn.Name.O)
 			}
 		}
@@ -1380,10 +1375,15 @@ func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
 }
 
 func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
-	oldTable := stmt.TableToTables[0].OldTable.Name.String()
-	newTable := stmt.TableToTables[0].NewTable.Name.String()
+	for _, tableToTable := range stmt.TableToTables {
+		oldTable := tableToTable.OldTable.Name.String()
+		newTable := tableToTable.NewTable.Name.String()
 
-	p.checkRenameTable(oldTable, newTable)
+		p.checkRenameTable(oldTable, newTable)
+		if p.err != nil {
+			return
+		}
+	}
 }
 
 func (p *preprocessor) checkRenameTable(oldTable, newTable string) {

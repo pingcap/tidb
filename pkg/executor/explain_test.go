@@ -186,6 +186,64 @@ func checkActRows(t *testing.T, tk *testkit.TestKit, sql string, expected []stri
 	}
 }
 
+func checkAnalyzeRUFormat(t *testing.T, tk *testkit.TestKit, sql string, expectedActRows []string) {
+	t.Helper()
+	rows := tk.MustQuery("explain analyze format = 'ru' " + sql).Rows()
+	require.Equal(t, len(expectedActRows), len(rows))
+	for id, row := range rows {
+		require.Len(t, row, 7)
+		require.NotEmpty(t, row[0])
+		require.NotEmpty(t, row[1])
+		require.Equal(t, expectedActRows[id], row[2], fmt.Sprintf("error comparing %s", sql))
+		require.NotEmpty(t, row[3])
+		require.NotEmpty(t, row[4])
+		require.NotEmpty(t, row[5])
+		require.Equal(t, "", row[6])
+	}
+}
+
+func TestExplainAnalyzeRUFormatIgnoresLiteralLength(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableCollectExecutionInfo = true
+	})
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_ru_literal_length")
+	tk.MustExec("create table t_ru_literal_length(a varchar(20))")
+	tk.MustExec("insert into t_ru_literal_length values ('x')")
+
+	explainAnalyzeRUTotal := func(sql string) float64 {
+		t.Helper()
+		rows := tk.MustQuery("explain analyze format = 'ru' " + sql).Rows()
+		require.NotEmpty(t, rows)
+
+		const (
+			cumRUCol    = 4
+			cumRUPctCol = 5
+		)
+		var totalRU *float64
+		for _, row := range rows {
+			require.Len(t, row, 7)
+			if row[cumRUPctCol] != "100.00%" {
+				continue
+			}
+			ru, err := strconv.ParseFloat(row[cumRUCol].(string), 64)
+			require.NoError(t, err)
+			require.Nil(t, totalRU)
+			totalRU = &ru
+		}
+		require.NotNil(t, totalRU)
+		return *totalRU
+	}
+
+	shortRU := explainAnalyzeRUTotal("select * from t_ru_literal_length where a = 'aaa'")
+	longRU := explainAnalyzeRUTotal("select * from t_ru_literal_length where a = 'aaaaaaaaaa'")
+	require.Equal(t, shortRU, longRU)
+}
+
 func TestCheckActRowsWithUnistore(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -260,6 +318,9 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 	for _, test := range tests {
 		checkActRows(t, tk, test.sql, test.expected)
 	}
+
+	checkAnalyzeRUFormat(t, tk, "select * from t_unistore_act_rows", []string{"4", "4"})
+	checkAnalyzeRUFormat(t, tk, "select * from t_unistore_act_rows where b > 0", []string{"1", "1", "4"})
 }
 
 func TestExplainAnalyzeCTEMemoryAndDiskInfo(t *testing.T) {
@@ -496,6 +557,7 @@ func TestExplainFormatInCtx(t *testing.T) {
 		types.ExplainFormatTiDBJSON,
 		types.ExplainFormatCostTrace,
 		types.ExplainFormatPlanCache,
+		types.ExplainFormatRU,
 	}
 
 	tk.MustExec("select * from t")

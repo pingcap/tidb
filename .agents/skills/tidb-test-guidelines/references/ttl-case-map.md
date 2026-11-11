@@ -44,7 +44,7 @@
 
 ### Tests
 - `pkg/ttl/ttlworker/del_test.go` - Tests TTL del retry buffer.
-- `pkg/ttl/ttlworker/job_manager_integration_test.go` - Tests with session.
+- `pkg/ttl/ttlworker/job_manager_integration_test.go` - Tests TTL job execution and RU attribution, including time zone resets without a job ID.
 - `pkg/ttl/ttlworker/job_manager_test.go` - Tests ready for lock heartbeat timeout job tables.
 - `pkg/ttl/ttlworker/scan_integration_test.go` - Tests cancel while scan.
 - `pkg/ttl/ttlworker/scan_test.go` - Tests scan worker schedule.

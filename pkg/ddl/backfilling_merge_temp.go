@@ -141,6 +141,16 @@ func (e *mergeTempIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.
 	}
 	e.mergeCounter.Add(float64(collector.addCount))
 	e.RowCnt.Add(int64(collector.addCount))
+	// Publish the committed transaction bytes of this subtask only after the
+	// whole pipeline has succeeded. This makes the merge RU accounting
+	// best-effort: if the pipeline fails after some ranges already committed,
+	// those bytes are not reported, and DXF resets the summary before retrying
+	// the subtask. The retry cannot reconstruct them either, because the merged
+	// temporary index keys have already been deleted, so only the ranges not yet
+	// merged in the failed attempt are charged again. We accept this small
+	// under-count because persisting progress after every committed range would
+	// add a durable write to the merge hot path.
+	e.Bytes.Add(collector.writtenBytes)
 	e.totalRows += int64(collector.scanCount)
 	logutil.Logger(ctx).Info("merge temp index executor finish subtask", zap.Int("added", collector.addCount), zap.Int("scanned", collector.scanCount))
 	return err
@@ -150,11 +160,16 @@ type mergeTempIndexCollector struct {
 	execute.NoopCollector
 	addCount  int
 	scanCount int
+	// writtenBytes accumulates the committed transaction size of every merged
+	// range, as reported by the merge workers through tempIdxResult. It is the
+	// merge counterpart of the ingest KV size used by the backfill task.
+	writtenBytes int64
 }
 
-func (m *mergeTempIndexCollector) Processed(_, rows int64) {
+func (m *mergeTempIndexCollector) Processed(processedUnits, rows int64) {
 	m.addCount += int(rows)
 	m.scanCount += int(rows)
+	m.writtenBytes += processedUnits
 }
 
 func (e *mergeTempIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {

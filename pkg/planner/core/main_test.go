@@ -33,6 +33,7 @@ func TestMain(m *testing.M) {
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
 	testDataMap.LoadTestSuiteData("testdata", "runtime_filter_generator_suite")
+	testDataMap.LoadTestSuiteData("testdata", "explain_analyze_ru_suite")
 
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
 	opts := []goleak.Option{
@@ -59,4 +60,8 @@ func TestMain(m *testing.M) {
 
 func GetRuntimeFilterGeneratorData() testdata.TestData {
 	return testDataMap["runtime_filter_generator_suite"]
+}
+
+func GetExplainAnalyzeRUSuiteData() testdata.TestData {
+	return testDataMap["explain_analyze_ru_suite"]
 }

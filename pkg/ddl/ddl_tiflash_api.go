@@ -618,11 +618,12 @@ func (d *ddl) refreshTiFlashPlacementRules(sctx sessionctx.Context, tick uint64)
 				SQLMode:        sctx.GetSessionVars().SQLMode,
 			}
 			// We should reset tiflash replica available to false so that the user can wait before
-			// tiflash replica is built after fixing the placement rules.
+			// tiflash replica is built after fixing the placement rules. Skip the columnar storage
+			// gate: this only reconstructs PD rules for existing replica metadata.
 			args := model.SetTiFlashReplicaArgs{TiflashReplica: ast.TiFlashReplicaSpec{
 				Count:  replica.TableInfo.TiFlashReplica.Count,
 				Labels: replica.TableInfo.TiFlashReplica.LocationLabels,
-			}, ResetAvailable: true}
+			}, ResetAvailable: true, SkipColumnarStorageGate: true}
 			err = d.executor.doDDLJob2(sctx, job, &args)
 			if err != nil {
 				logutil.DDLLogger().Warn("fix tiflash placement rule err", zap.Int64("tableID", replica.TableInfo.ID), zap.Uint64("count", replica.TableInfo.TiFlashReplica.Count), zap.Error(err))

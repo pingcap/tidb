@@ -10,7 +10,7 @@
 
 ### Tests
 - `pkg/domain/db_test.go` - Tests domain session.
-- `pkg/domain/domain_test.go` - Tests domain info.
+- `pkg/domain/domain_test.go` - Tests domain info and sysvar-cache reload behavior.
 - `pkg/domain/domain_utils_test.go` - Tests error code.
 - `pkg/domain/domainctx_test.go` - Tests domain ctx.
 - `pkg/domain/extract_test.go` - Tests extract plan without history view.

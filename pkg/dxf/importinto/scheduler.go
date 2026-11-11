@@ -461,12 +461,12 @@ func (sch *importScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, ta
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Reset table mode earlier than scheduler cleanup. Cleanup routine remains a fallback.
+	// Reset table mode earlier than scheduler cleanup. The cleaner remains a fallback.
 	sch.switchTableMode2NormalMode(ctx, taskMeta, logger)
 	if task.State == proto.TaskStateReverting {
 		errMsg := ""
 		if task.Error != nil {
-			if scheduler.IsCancelledErr(task.Error) {
+			if storage.IsCancelledErr(task.Error) {
 				return sch.cancelJob(ctx, task, taskMeta, logger)
 			}
 			errMsg = task.Error.Error()

@@ -2345,6 +2345,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		// used by ApplyDiff in updateSchemaVersion
 		args.OldPhysicalTblIDs = physicalTableIDs
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		accountPendingReorgRU(jobCtx, job, err)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2658,6 +2659,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		// used by ApplyDiff in updateSchemaVersion
 		args.ShouldUpdateAffectedPartitions = true
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		accountPendingReorgRU(jobCtx, job, err)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2945,6 +2947,21 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 	partDef.ID, nt.ID = nt.ID, partDef.ID
 	pt.Partition.DDLState = model.StateNone
 	pt.Partition.DDLAction = model.ActionNone
+
+	// Column and index IDs are encoded in row and index keys. Dropped column
+	// values stay in the row, and dropped index keys are removed asynchronously
+	// under the physical table ID, which exchange moves between the tables.
+	// NT receives PT's old partition, so it inherits PT's original counters.
+	// PT keeps its other partitions and receives NT's physical table ID, so
+	// its counters must cover both tables' historical IDs.
+	// Foreign key and check constraint IDs are not part of the KV encoding.
+	// Their metadata stays with each logical table, so leave their counters unchanged.
+	// See https://github.com/pingcap/tidb/issues/72478.
+	exchangeMaxID := func(ptMaxID, ntMaxID *int64) {
+		*ptMaxID, *ntMaxID = max(*ptMaxID, *ntMaxID), *ptMaxID
+	}
+	exchangeMaxID(&pt.MaxColumnID, &nt.MaxColumnID)
+	exchangeMaxID(&pt.MaxIndexID, &nt.MaxIndexID)
 
 	err = metaMut.UpdateTable(ptSchemaID, pt)
 	if err != nil {
@@ -3522,6 +3539,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		job.SchemaState = model.StateDeleteReorganization
 		tblInfo.Partition.DDLState = job.SchemaState
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		accountPendingReorgRU(jobCtx, job, err)
 
 	case model.StateDeleteReorganization:
 		// Need to have one more state before completing, due to:
@@ -3950,6 +3968,7 @@ func (w *reorgPartitionWorker) BackfillData(_ context.Context, handleRange reorg
 			}
 			taskCtx.addedCount++
 		}
+		taskCtx.writtenBytes = txn.Size()
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)

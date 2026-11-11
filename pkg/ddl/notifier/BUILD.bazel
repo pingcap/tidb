@@ -38,7 +38,7 @@ go_test(
     ],
     embed = [":notifier"],
     flaky = True,
-    shard_count = 12,
+    shard_count = 13,
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/ddl/session",

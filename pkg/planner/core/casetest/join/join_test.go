@@ -15,6 +15,8 @@
 package join
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -330,4 +332,49 @@ JOIN
 			from issue66859_t0 left join issue66859_t1 on issue66859_t0.c0 = issue66859_t1.c0
 			where 5 >= issue66859_t0.c0`).Check(testkit.Rows("-1 <nil>"))
 	})
+}
+
+func TestIssue70757IndexJoinInnerIndexSelection(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t_outer (
+		id int not null,
+		c varchar(36) not null,
+		primary key (id),
+		key idx_c (c))`)
+	tk.MustExec(`create table t_inner (
+		id int not null auto_increment,
+		k int not null,
+		c varchar(36) not null,
+		primary key (id),
+		key idx_k (k),
+		key idx_c (c))`)
+
+	const (
+		rowsPerC = 101
+		cNDV     = 3
+	)
+	outerValues := make([]string, 0, rowsPerC)
+	for id := 1; id <= rowsPerC; id++ {
+		outerValues = append(outerValues, fmt.Sprintf("(%d, 'cust-1')", id))
+	}
+	tk.MustExec("insert into t_outer (id, c) values " + strings.Join(outerValues, ","))
+
+	innerValues := make([]string, 0, rowsPerC*cNDV)
+	for k := 1; k <= rowsPerC*cNDV; k++ {
+		innerValues = append(innerValues, fmt.Sprintf("(%d, 'cust-%d')", k, (k-1)/rowsPerC+1))
+	}
+	tk.MustExec("insert into t_inner (k, c) values " + strings.Join(innerValues, ","))
+	tk.MustExec("analyze table t_outer, t_inner")
+
+	// This is a scaled-down form of issue 70757: idx_k has higher NDV, while idx_c
+	// gets a much smaller CountAfterAccess from the propagated c='cust-1' predicate.
+	// Lower the Fix45132 threshold so the small data set triggers the same comparison.
+	tk.MustExec("set tidb_opt_fix_control = '45132:2'")
+	query := `select /*+ inl_join(i) */ * from t_outer o join t_inner i on i.k = o.id and i.c = o.c where o.c = 'cust-1'`
+	plan := tk.MustQuery("explain format='plan_tree' " + query)
+	plan.CheckContain("outer key:test.t_outer.id, inner key:test.t_inner.k")
+	plan.CheckContain("table:i, index:idx_k(k)")
+	plan.CheckNotContain("table:i, index:idx_c(c)")
 }

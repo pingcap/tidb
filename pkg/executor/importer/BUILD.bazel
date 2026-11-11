@@ -117,7 +117,7 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-    shard_count = 42,
+    shard_count = 44,
     deps = [
         "//br/pkg/mock",
         "//br/pkg/streamhelper",
@@ -197,5 +197,6 @@ go_test(
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_mock//gomock",
         "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )

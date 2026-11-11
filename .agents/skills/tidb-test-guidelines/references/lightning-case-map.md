@@ -27,7 +27,7 @@
 - `pkg/lightning/backend/external/reader_test.go` - lightning/backend/external: Tests read all data basic.
 - `pkg/lightning/backend/external/sort_test.go` - lightning/backend/external: Tests global sort local basic.
 - `pkg/lightning/backend/external/split_test.go` - lightning/backend/external: Tests general properties.
-- `pkg/lightning/backend/external/util_test.go` - lightning/backend/external: Tests seek props offsets.
+- `pkg/lightning/backend/external/util_test.go` - lightning/backend/external: Tests property seeking and batched cleanup file discovery.
 - `pkg/lightning/backend/external/writer_test.go` - lightning/backend/external: Tests writer.
 
 ## pkg/lightning/backend/kv

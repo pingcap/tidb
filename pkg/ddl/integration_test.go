@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -236,6 +237,19 @@ func TestJobVersionAndGlobalIndexV1SupportForNextGen(t *testing.T) {
 		t.Skip("nextgen only")
 	}
 	integration.BeforeTestExternal(t)
+
+	// This test temporarily sets `global config.Store=TiKV` to initialize DDL in a
+	// next-gen-like mode. It must not leak ingest global env state to other UTs
+	// in the same test binary (for example, tests that run with the default
+	// unistore config).
+	origLitInitialized := ingest.LitInitialized
+	origLitMemRoot := ingest.LitMemRoot
+	origLitDiskRoot := ingest.LitDiskRoot
+	t.Cleanup(func() {
+		ingest.LitInitialized = origLitInitialized
+		ingest.LitMemRoot = origLitMemRoot
+		ingest.LitDiskRoot = origLitDiskRoot
+	})
 
 	originJobVer := model.GetJobVerInUse()
 	originGlobalIdxV1 := model.GetGlobalIndexV1Supported()

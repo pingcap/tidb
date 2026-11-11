@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -55,6 +56,8 @@ func getRandString() string {
 	}
 	return string(b)
 }
+
+const hashAggRuntimeStatsPlanID = 1
 
 func generateData(rowNum int, ndv int) ([]string, []float64) {
 	keys := make([]string, 0)
@@ -244,7 +247,7 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 	aggFuncs := []*aggregation.AggFuncDesc{aggFirstRow, aggSum, aggCount, aggAvg, aggMin, aggMax}
 
 	aggExec := &aggregate.HashAggExec{
-		BaseExecutor:          exec.NewBaseExecutor(ctx, schema, 0, child),
+		BaseExecutor:          exec.NewBaseExecutor(ctx, schema, hashAggRuntimeStatsPlanID, child),
 		Sc:                    ctx.GetSessionVars().StmtCtx,
 		PartialAggFuncs:       make([]aggfuncs.AggFunc, 0, len(aggFuncs)),
 		FinalAggFuncs:         make([]aggfuncs.AggFunc, 0, len(aggFuncs)),
@@ -425,6 +428,7 @@ func TestGetCorrectResult(t *testing.T) {
 	opt := getMockDataSourceParameters(ctx)
 	dataSource := buildMockDataSource(opt, col0, col1)
 	result := generateResult(t, ctx, dataSource, testFuncName)
+	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 
 	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/slowSomePartialWorkers", `return(true)`)
 	require.NoError(t, err)
@@ -452,6 +456,10 @@ func TestGetCorrectResult(t *testing.T) {
 	aggExec := buildHashAggExecutor(t, ctx, dataSource, testFuncName)
 	executeCorrecResultTest(t, ctx, nil, dataSource, result, testFuncName)
 	executeCorrecResultTest(t, ctx, aggExec, dataSource, result, testFuncName)
+	hashState, found := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootHashStateRowsSnapshot(hashAggRuntimeStatsPlanID)
+	require.True(t, found)
+	require.False(t, hashState.Invalid())
+	require.Equal(t, int64(len(result)*2), hashState.Rows)
 
 	finished.Store(true)
 	wg.Wait()

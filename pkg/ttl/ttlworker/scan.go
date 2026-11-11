@@ -208,6 +208,7 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 		return err
 	}
 	defer terror.Call(restoreSession)
+	sqlCtx := session.WithJobContext(scanCtx, t.JobID)
 
 	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, t.ExpireTime, t.ScanRangeStart, t.ScanRangeEnd)
 	if err != nil {
@@ -244,7 +245,7 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 		}
 
 		sqlStart := time.Now()
-		rows, retryable, sqlErr := sess.ExecuteSQLWithCheck(scanCtx, sql)
+		rows, retryable, sqlErr := sess.ExecuteSQLWithCheck(sqlCtx, sql)
 		selectInterval := time.Since(sqlStart)
 		if sqlErr != nil {
 			metrics.SelectErrorDuration.Observe(selectInterval.Seconds())

@@ -1474,6 +1474,13 @@ func TestCreateTableWithColumnarIndex(t *testing.T) {
 	})
 	checkCreateTableWithColumnarIdx(1)
 
+	tk.MustExec("set global tidb_columnar_storage_enabled = 'OFF'")
+	tk.MustGetErrCode("create table t_off(a int, b int, c int, columnar index idx(b) using inverted);", errno.ErrUnsupportedDDLOperation)
+	tk.MustContainErrMsg("create table t_off(a int, b int, c int, columnar index idx(b) using inverted);",
+		"Unsupported add columnar index: Columnar Storage is not enabled")
+	tk.MustQuery("show tables like 't_off'").Check(testkit.Rows())
+	tk.MustExec("set global tidb_columnar_storage_enabled = 'ON'")
+
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.CSE.ColumnarStoreType = "tiflash"
 	})

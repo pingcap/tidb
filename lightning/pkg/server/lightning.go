@@ -582,7 +582,7 @@ func (l *Lightning) initDataSource(ctx context.Context, taskCfg *config.Config, 
 	})
 	if !errors.ErrorEqual(walkErr, expectedErr) {
 		if walkErr == nil {
-			return nil, nil, common.ErrEmptySourceDir.GenWithStackByArgs(taskCfg.Mydumper.SourceDir)
+			return nil, nil, common.ErrEmptySourceDir.GenWithStackByArgs(objstore.RedactURL(taskCfg.Mydumper.SourceDir))
 		}
 		return nil, nil, common.NormalizeOrWrapErr(common.ErrStorageUnknown, walkErr)
 	}

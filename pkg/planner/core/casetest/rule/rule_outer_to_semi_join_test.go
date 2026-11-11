@@ -62,6 +62,29 @@ func TestOuterToSemiJoin(tt *testing.T) {
 			tk.MustQuery("EXPLAIN FORMAT='plan_tree' " + sql).Check(testkit.Rows(output[i].Plan...))
 			tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 		}
+
+		// issue:68112
+		tk.MustExec("drop table if exists t_outer, t_inner")
+		tk.MustExec("create table t_outer (id int not null)")
+		tk.MustExec(`create table t_inner (
+			id int not null,
+			d varchar(64) not null
+		)`)
+		tk.MustExec("insert into t_outer values (1), (3)")
+		tk.MustExec("insert into t_inner values (2, 'alpha')")
+		query := `select d
+			from (
+				(
+					select t_inner.d
+					from t_outer
+					left join t_inner on t_outer.id = t_inner.id
+					where t_inner.id is null
+				)
+				union all
+				select 'z'
+			) y
+			order by d`
+		tk.MustQuery(query).Check(testkit.Rows("<nil>", "<nil>", "z"))
 	})
 }
 
