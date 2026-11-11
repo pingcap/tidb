@@ -1169,10 +1169,10 @@ pub(super) fn plan_persisted_add_index_job_step(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     if active.job.is_rollingback() {
-        return plan_rollback_add_index(txn, catalog, active, start_ts);
+        return plan_rollback_add_index(txn, active, start_ts);
     }
     let is_pk = active.job.type_ == ActionType::ACTION_ADD_PRIMARY_KEY;
-    let stored = checked_job_table(catalog, active, true)?;
+    let stored = checked_job_table(txn, active, true)?;
     let stored = stored.read();
     let database_id = active.job.schema_id;
     if stored.table_cache_status_type != tidb_model::TableCacheStatusType::DISABLE {
@@ -1263,16 +1263,15 @@ pub(super) fn plan_persisted_add_index_job_step(
 /// waits on the replica's progress.
 pub(super) fn on_create_columnar_index(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     // Handle the rolling back job.
     if active.job.is_rollingback() {
-        return plan_rollback_add_index(txn, catalog, active, start_ts);
+        return plan_rollback_add_index(txn, active, start_ts);
     }
     // Handle normal job.
-    let stored = checked_job_table(catalog, active, true)?;
+    let stored = checked_job_table(txn, active, true)?;
     let stored = stored.read();
     let database_id = active.job.schema_id;
     check_table_type_for_columnar_index(&stored)?;
@@ -1433,7 +1432,7 @@ fn check_columnar_index_process_once(
     {
         return match val {
             val if val < 0 => Err(DdlPlanError::from(
-                tidb_dbterror::ERR_TIFLASH_BACKFILL_INDEX.fast_gen_by_args(&["mock a check error".into()]),
+                tidb_dbterror::ERR_TI_FLASH_BACKFILL_INDEX.fast_gen_by_args(&["mock a check error".into()]),
             )),
             0 => Ok((false, 0, 0)),
             val => Ok((true, 0, val)),
@@ -1476,7 +1475,7 @@ fn check_columnar_index_process_once(
         let err_msg = String::from_utf8_lossy(row[2].go_bytes()).into_owned();
         if !err_msg.is_empty() {
             return Err(DdlPlanError::from(
-                tidb_dbterror::ERR_TIFLASH_BACKFILL_INDEX.fast_gen_by_args(&[err_msg.into()]),
+                tidb_dbterror::ERR_TI_FLASH_BACKFILL_INDEX.fast_gen_by_args(&[err_msg.into()]),
             ));
         }
     }
@@ -1825,11 +1824,10 @@ fn convert_add_index_to_rollback(
 /// delete-reorganization -> gone, then ROLLBACK DONE.
 fn plan_rollback_add_index(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
-    let stored = checked_job_table(catalog, active, true)?;
+    let stored = checked_job_table(txn, active, true)?;
     let stored = stored.read();
     let database_id = active.job.schema_id;
     let mut info = stored.clone_like_go();
@@ -2013,12 +2011,11 @@ fn drop_index_column_flag(info: &TableInfo, index: &IndexInfo) {
 /// its rollback, from wherever it stood.
 pub(super) fn rollingback_add_index(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let _ = start_ts;
-    let stored = checked_job_table(catalog, active, true)?;
+    let stored = checked_job_table(txn, active, true)?;
     let stored = stored.read();
     let mut info = stored.clone_like_go();
     let args = tidb_model::get_modify_index_args(&mut active.job)

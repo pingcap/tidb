@@ -110,9 +110,10 @@ struct DropColumnTarget {
 /// not there (the job is cancelled).
 fn check_drop_column_in_owner(
     catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<Result<DropColumnTarget, (bool, DdlPlanError)>, DdlPlanError> {
-    let stored = checked_job_table(catalog, active, true)?.read().clone_like_go();
+    let stored = checked_job_table(txn, active, true)?.read().clone_like_go();
     let args = tidb_model::get_table_column_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
         .ok_or_else(|| {
@@ -187,7 +188,7 @@ pub(super) fn on_drop_column(
         column,
         indexes,
         args,
-    } = match check_drop_column_in_owner(catalog, active)? {
+    } = match check_drop_column_in_owner(catalog, txn, active)? {
         Ok(target) => target,
         Err((true, error)) => {
             // Go: IF EXISTS turns the error into the job's warning.
@@ -307,9 +308,10 @@ pub(super) fn on_drop_column(
 /// that the drop runs on.
 pub(super) fn rollingback_drop_column(
     catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
-    let target = check_drop_column_in_owner(catalog, active)?.map_err(|(_, error)| error)?;
+    let target = check_drop_column_in_owner(catalog, txn, active)?.map_err(|(_, error)| error)?;
     for index in &target.indexes {
         match index.read().state {
             SchemaState::WRITE_ONLY

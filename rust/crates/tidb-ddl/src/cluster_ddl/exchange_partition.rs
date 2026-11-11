@@ -268,9 +268,7 @@ pub(super) fn on_exchange_table_partition(
     let (raw_args, args) = exchange_args(active)?;
     // `checkSchemaExistAndCancelNotExistJob` and the partitioned table's
     // database.
-    if !catalog
-        .schema_by_id(args.pt_schema_id).is_some()
-    {
+    if job_schema(txn, args.pt_schema_id)?.is_none() {
         return Err(cancel_ddl_job(
             active,
             DdlPlanError::from(
@@ -283,11 +281,11 @@ pub(super) fn on_exchange_table_partition(
             ),
         ));
     }
-    let mut standalone = checked_job_table(catalog, active, true)?.read().clone_like_go();
+    let mut standalone = checked_job_table(txn, active, true)?.read().clone_like_go();
     if active.job.is_rollingback() {
-        return rollback_exchange_table_partition(txn, catalog, active, &args, standalone);
+        return rollback_exchange_table_partition(txn, active, &args, standalone);
     }
-    let Some(partitioned) = stored_table_by_ids(catalog, args.pt_schema_id, args.pt_table_id)
+    let Some(partitioned) = stored_table_by_ids(txn, args.pt_schema_id, args.pt_table_id)?
     else {
         return Err(cancel_ddl_job(
             active,
@@ -397,17 +395,16 @@ pub(super) fn on_exchange_table_partition(
         let outcome = reorg_outcome.filter(|outcome| outcome.job_id == active.job.id);
         match outcome.map(|outcome| &outcome.result) {
             None => {
-                let schema_name = |id: i64| {
-                    catalog
-                        .schema_by_id(id)
+                let mut schema_name = |id: i64| -> Result<String, DdlPlanError> {
+                    Ok(job_schema(txn, id)?
                         .map(|database| database.read().name.lowercase().to_owned())
-                        .unwrap_or_default()
+                        .unwrap_or_default())
                 };
                 let check = ExchangePartitionValidation {
                     partitioned: Box::new(partitioned.clone_like_go()),
                     standalone: Box::new(standalone.clone_like_go()),
-                    partitioned_schema: schema_name(args.pt_schema_id),
-                    standalone_schema: schema_name(active.job.schema_id),
+                    partitioned_schema: schema_name(args.pt_schema_id)?,
+                    standalone_schema: schema_name(active.job.schema_id)?,
                     partition_name: args.partition_name.clone(),
                     check_constraints: tidb_vardef::ENABLE_CHECK_CONSTRAINT
                         .load(std::sync::atomic::Ordering::Relaxed),
@@ -542,8 +539,7 @@ pub(super) fn on_exchange_table_partition(
     // The standalone table's label rule moves to the partition and the
     // partition's to the table.
     let mut label_rules = LabelRuleSteps::new();
-    let partitioned_schema = catalog
-        .schema_by_id(args.pt_schema_id)
+    let partitioned_schema = job_schema(txn, args.pt_schema_id)?
         .map(|database| database.read().name.lowercase().to_owned())
         .unwrap_or_default();
     let swap = ExchangePartitionLabelSwap {
@@ -594,7 +590,6 @@ pub(super) fn on_exchange_table_partition(
 /// partitioned one, if it was marked) loses its `ExchangePartitionInfo`.
 fn rollback_exchange_table_partition(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &ExchangeArgs,
     mut standalone: TableInfo,
@@ -605,7 +600,7 @@ fn rollback_exchange_table_partition(
     let partitioned = if standalone.constraints.is_empty() {
         None
     } else {
-        let mut partitioned = stored_table_by_ids(catalog, args.pt_schema_id, args.pt_table_id)
+        let mut partitioned = stored_table_by_ids(txn, args.pt_schema_id, args.pt_table_id)?
             .ok_or_else(|| {
                 DdlPlanError::from(
                     tidb_dbterror::CLASS_SCHEMA
@@ -634,15 +629,14 @@ fn rollback_exchange_table_partition(
 /// Go `rollingbackExchangeTablePartition`.
 pub(super) fn rollingback_exchange_table_partition(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     if active.job.schema_state == SchemaState::NONE {
         return Err(cancelled_ddl_job(active));
     }
     let (_, args) = exchange_args(active)?;
-    let standalone = checked_job_table(catalog, active, true)?.read().clone_like_go();
-    rollback_exchange_table_partition(txn, catalog, active, &args, standalone)
+    let standalone = checked_job_table(txn, active, true)?.read().clone_like_go();
+    rollback_exchange_table_partition(txn, active, &args, standalone)
 }
 
 /// Go `partitionMaxValue`.

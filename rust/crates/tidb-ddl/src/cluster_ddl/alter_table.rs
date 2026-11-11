@@ -1240,7 +1240,7 @@ pub(super) fn plan_persisted_alter_table_job_step(
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
-    let mut info = checked_job_table(catalog, active, true)?.read().clone_like_go();
+    let mut info = checked_job_table(txn, active, true)?.read().clone_like_go();
     let schema_id = active.job.schema_id;
     let schema = active.job.schema_name.to_string();
     let table = info.name.original().to_owned();
@@ -1922,7 +1922,7 @@ pub(super) fn plan_persisted_alter_table_job_step(
 
 /// Go `convertJob2RollbackJob` for these actions.
 pub(super) fn convert_job_2_rollback_job(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let cancel = match active.job.type_ {
@@ -1936,7 +1936,7 @@ pub(super) fn convert_job_2_rollback_job(
         ActionType::ACTION_DROP_FOREIGN_KEY => active.job.schema_state == SchemaState::PUBLIC,
         // `rollingbackRenameIndex`: cancellable while the source is public.
         ActionType::ACTION_RENAME_INDEX => {
-            let info = checked_job_table(catalog, active, true)?.read().clone_like_go();
+            let info = checked_job_table(txn, active, true)?.read().clone_like_go();
             let args = tidb_model::get_modify_index_args(&mut active.job)
                 .map_err(|error| args_error(active, error))?
                 .ok_or_else(|| nil_args(active))?;

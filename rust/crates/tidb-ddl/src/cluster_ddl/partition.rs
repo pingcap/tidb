@@ -695,9 +695,9 @@ pub(super) fn on_add_table_partition(
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = table_partition_args(active)?;
     if active.job.is_rollingback() {
-        return rollback_like_drop_partition(txn, catalog, active, start_ts);
+        return rollback_like_drop_partition(txn, active, start_ts);
     }
-    let info = checked_job_table(catalog, active, true)?.read().clone_like_go();
+    let info = checked_job_table(txn, active, true)?.read().clone_like_go();
     let partition = job_partition(active, &info)?;
     let part_info = args
         .read()
@@ -882,12 +882,11 @@ pub(super) fn on_add_table_partition(
 /// rules, and the placement bundles are rebuilt without them.
 pub(super) fn rollback_like_drop_partition(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = table_partition_args(active)?;
-    let info = checked_job_table(catalog, active, true)?.read().clone_like_go();
+    let info = checked_job_table(txn, active, true)?.read().clone_like_go();
     let partition = job_partition(active, &info)?;
     let schema = active.job.schema_name.to_string();
     let database_id = active.job.schema_id;
@@ -1067,7 +1066,7 @@ pub(super) fn on_drop_table_partition(
         .into_iter()
         .map(|name| name.to_string())
         .collect::<Vec<_>>();
-    let info = checked_job_table(catalog, active, true)?.read().clone_like_go();
+    let info = checked_job_table(txn, active, true)?.read().clone_like_go();
     let database_id = active.job.schema_id;
     let schema = active.job.schema_name.to_string();
     match active.job.schema_state {
@@ -1238,7 +1237,7 @@ pub(super) fn on_truncate_table_partition(
             DdlPlanError::Encode("len(oldIDs) must be the same as len(newIDs)".to_owned()),
         ));
     }
-    let info = checked_job_table(catalog, active, true)?.read().clone_like_go();
+    let info = checked_job_table(txn, active, true)?.read().clone_like_go();
     let Some(partition) = info.partition.clone() else {
         return Err(fault(
             active,
@@ -1559,11 +1558,10 @@ fn convert_add_table_partition_job2_rollback_job(
 /// `rollingbackTruncateTablePartition` (`convertTruncateTablePartitionJob2RollbackJob`).
 pub(super) fn rollingback_add_table_partition(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
-    let info = checked_job_table(catalog, active, true)?.read().clone_like_go();
+    let info = checked_job_table(txn, active, true)?.read().clone_like_go();
     let database_id = active.job.schema_id;
     match active.job.type_ {
         ActionType::ACTION_ADD_TABLE_PARTITION => {

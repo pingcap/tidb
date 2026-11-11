@@ -153,6 +153,7 @@ pub(super) fn build_drop_index_job<S: MetaSnapshot>(
 /// needed by a foreign key. `Ok(Err(if_exists))` when one is missing.
 fn check_drop_index(
     catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<
     (
@@ -161,7 +162,7 @@ fn check_drop_index(
     ),
     DdlPlanError,
 > {
-    let stored = checked_job_table(catalog, active, false)?.read().clone_like_go();
+    let stored = checked_job_table(txn, active, false)?.read().clone_like_go();
     let args = tidb_model::get_drop_index_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
         .ok_or_else(|| {
@@ -218,7 +219,7 @@ pub(super) fn on_drop_index(
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
-    let (stored, checked) = check_drop_index(catalog, active)?;
+    let (stored, checked) = check_drop_index(catalog, txn, active)?;
     let indexes = match checked {
         Ok(indexes) => indexes,
         Err((true, error)) if error.equal(&tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY) => {
@@ -319,9 +320,10 @@ pub(super) fn on_drop_index(
 /// cancelled; past that the drop runs on.
 pub(super) fn rollingback_drop_index(
     catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
-    let (_, checked) = check_drop_index(catalog, active)?;
+    let (_, checked) = check_drop_index(catalog, txn, active)?;
     let indexes = checked.map_err(|(_, error)| error)?;
     if indexes[0].read().state == SchemaState::PUBLIC {
         return Err(cancelled_ddl_job(active));

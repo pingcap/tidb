@@ -135,10 +135,10 @@ fn column_exists(name: &str) -> DdlPlanError {
 /// Go `checkAddColumn`. `Ok(Err((if_not_exists, error)))` when a public
 /// column of that name already exists (the job is cancelled).
 fn check_add_column(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<Result<AddColumnTarget, (bool, DdlPlanError)>, DdlPlanError> {
-    let info = checked_job_table(catalog, active, true)?.read().clone_like_go();
+    let info = checked_job_table(txn, active, true)?.read().clone_like_go();
     let args = tidb_model::get_table_column_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
         .ok_or_else(|| {
@@ -220,7 +220,7 @@ pub(super) fn on_add_column(
         column,
         args,
         position,
-    } = match check_add_column(catalog, active)? {
+    } = match check_add_column(txn, active)? {
         Ok(target) => target,
         Err((true, error)) => {
             // Go: IF NOT EXISTS turns the error into the job's warning.
@@ -329,12 +329,11 @@ pub(super) fn on_add_column(
 /// cancelled; afterwards it turns delete-only and rolls back as a drop.
 pub(super) fn rollingback_add_column(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let AddColumnTarget { info, column, .. } =
-        check_add_column(catalog, active)?.map_err(|(_, error)| error)?;
+        check_add_column(txn, active)?.map_err(|(_, error)| error)?;
     let Some(column) = column else {
         return Err(cancelled_ddl_job(active));
     };

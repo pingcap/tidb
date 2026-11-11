@@ -241,17 +241,15 @@ pub fn rename_table<S: MetaSnapshot>(
 
 /// The tables as the job's earlier moves left them, keyed by id, with the
 /// meta keys the job writes and deletes.
-struct EvolvingTables<'a> {
-    catalog: &'a SessionExtendedInfoSchema,
+struct EvolvingTables {
     tables: BTreeMap<i64, (i64, TableInfo)>,
     written: Vec<i64>,
     deleted: Vec<(i64, i64)>,
 }
 
-impl<'a> EvolvingTables<'a> {
-    fn new(catalog: &'a SessionExtendedInfoSchema) -> Self {
+impl EvolvingTables {
+    fn new() -> Self {
         Self {
-            catalog,
             tables: BTreeMap::new(),
             written: Vec::new(),
             deleted: Vec::new(),
@@ -259,21 +257,22 @@ impl<'a> EvolvingTables<'a> {
     }
 
     /// Go `meta.GetTable(schemaID, tableID)`.
-    fn get(&mut self, schema_id: i64, table_id: i64) -> Option<TableInfo> {
+    fn get(
+        &mut self,
+        txn: &mut JobTxn<'_>,
+        schema_id: i64,
+        table_id: i64,
+    ) -> Result<Option<TableInfo>, DdlPlanError> {
         if let Some((schema, table)) = self.tables.get(&table_id) {
-            return (*schema == schema_id).then(|| table.clone_like_go());
+            return Ok((*schema == schema_id).then(|| table.clone_like_go()));
         }
-        let table = self
-            .catalog
-            .schema_by_id(schema_id)?
-            .read().deprecated_tables
-            .iter_deref()
-            .find(|table| table.read().id == table_id)?
-            .read()
-            .clone_like_go();
+        let Some(table) = stored_table_by_ids(txn, schema_id, table_id)? else {
+            return Ok(None);
+        };
+        let table = table.read().clone_like_go();
         self.tables
             .insert(table_id, (schema_id, table.clone_like_go()));
-        Some(table)
+        Ok(Some(table))
     }
 
     fn drop_table(&mut self, schema_id: i64, table_id: i64) {
@@ -354,7 +353,8 @@ fn referred_foreign_keys(
 #[allow(clippy::too_many_arguments)]
 fn rename_one(
     catalog: &SessionExtendedInfoSchema,
-    tables: &mut EvolvingTables<'_>,
+    txn: &mut JobTxn<'_>,
+    tables: &mut EvolvingTables,
     helper: &mut ForeignKeyHelper,
     label_rules: &mut LabelRuleSteps,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
@@ -374,7 +374,7 @@ fn rename_one(
     };
     // Go `GetTableInfoAndCancelFaultJob(t, job, oldSchemaID)` by the job's
     // table id.
-    let Some(mut table) = tables.get(info.old_schema_id, active.job.table_id) else {
+    let Some(mut table) = tables.get(txn, info.old_schema_id, active.job.table_id)? else {
         return Err(cancel_ddl_job(active, not_exists()));
     };
     if table.state != SchemaState::PUBLIC {
@@ -476,7 +476,7 @@ fn rename_one(
                 (database_id, child_id)
             }
         };
-        let Some(mut child) = tables.get(schema_id, table_id) else {
+        let Some(mut child) = tables.get(txn, schema_id, table_id)? else {
             continue;
         };
         let Some(fk) = child
@@ -540,14 +540,7 @@ pub(super) fn on_rename_table(
         // ones, a second version, done.
         let mut finished = Vec::with_capacity(infos.len());
         for info in &infos {
-            let table = catalog
-                .schema_by_id(info.new_schema_id)
-                .and_then(|database| {
-                    database
-                        .read().deprecated_tables
-                        .iter_deref()
-                        .find(|table| table.read().id == info.table_id)
-                });
+            let table = stored_table_by_ids(txn, info.new_schema_id, info.table_id)?;
             let Some(table) = table else {
                 return Err(cancel_ddl_job(
                     active,
@@ -627,7 +620,7 @@ pub(super) fn on_rename_table(
             ));
         }
     }
-    let mut tables = EvolvingTables::new(catalog);
+    let mut tables = EvolvingTables::new();
     let mut helper = ForeignKeyHelper::default();
     for info in &infos {
         if !single {
@@ -636,6 +629,7 @@ pub(super) fn on_rename_table(
         }
         rename_one(
             catalog,
+            txn,
             &mut tables,
             &mut helper,
             &mut label_rules,

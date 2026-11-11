@@ -114,7 +114,7 @@ pub(super) fn on_truncate_table(
                 DdlPlanError::Encode("TRUNCATE TABLE has nil args".to_owned()),
             )
         })?;
-    let stored = checked_job_table(catalog, active, false)?.read().clone_like_go();
+    let stored = checked_job_table(txn, active, false)?.read().clone_like_go();
     let schema = active.job.schema_name.to_string();
     if stored.view.is_some() || stored.is_sequence() {
         return Err(cancel_ddl_job(

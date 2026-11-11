@@ -130,7 +130,6 @@ pub fn prepare_alter_schema_job_submission<S: MetaSnapshot>(
 /// Go `onModifySchemaCharsetAndCollate` / `onModifySchemaDefaultPlacement`.
 pub(super) fn on_modify_schema_charset_and_collate(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = tidb_model::get_modify_schema_args(&mut active.job)
@@ -142,8 +141,7 @@ pub(super) fn on_modify_schema_charset_and_collate(
             )
         })?;
     // Go `checkSchemaExistAndCancelNotExistJob`.
-    let Some(database) = catalog
-        .schema_by_id(active.job.schema_id)
+    let Some(database) = job_schema(txn, active.job.schema_id)?
     else {
         return Err(cancel_ddl_job(
             active,

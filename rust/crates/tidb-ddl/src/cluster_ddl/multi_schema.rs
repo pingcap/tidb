@@ -1046,7 +1046,7 @@ pub(super) fn on_multi_schema_change(
         }
 
         // Save the table and the sub-jobs for rolling back.
-        let saved_info = checked_job_table(catalog, active, true)?.read().clone_like_go();
+        let saved_info = checked_job_table(txn, active, true)?.read().clone_like_go();
         let finished = super::analyze::do_analyze_without_reorg(txn, &active.job, &saved_info);
         if !finished {
             let schema_id = active.job.schema_id;
@@ -1059,7 +1059,6 @@ pub(super) fn on_multi_schema_change(
         let mut merged = job_only_write(active.job.id, Vec::new());
         let mut version = 0;
         let mut action_types = Vec::new();
-        let mut sub_catalog: Option<SessionExtendedInfoSchema> = None;
         // The sub-jobs' writes, which reach the step only when every one of
         // them stepped (a failed one restores the table alone).
         let session = txn.session();
@@ -1071,7 +1070,6 @@ pub(super) fn on_multi_schema_change(
             if sub.read().is_finished() {
                 continue;
             }
-            let step_catalog = sub_catalog.as_ref().unwrap_or(catalog);
             let prev_sub_state = sub.read().state;
             let SubJobStep {
                 proxy,
@@ -1079,7 +1077,7 @@ pub(super) fn on_multi_schema_change(
                 run_error,
             } = run_sub_job_step(
                 &mut subs,
-                step_catalog,
+                catalog,
                 active,
                 sub,
                 seq,
@@ -1133,7 +1131,6 @@ pub(super) fn on_multi_schema_change(
             subs.stage(&step.write.mutations);
             merge_write(&mut merged, step.write);
             action_types.push(sub.read().type_);
-            sub_catalog = Some(load_info_schema(&mut subs)?);
         }
         let written = subs.into_mutations()?;
         txn.stage(&written);
@@ -1197,7 +1194,7 @@ pub(super) fn on_multi_schema_change(
         step.run_error = run_error;
         return Ok(step);
     }
-    finish_multi_schema_job(catalog, active, &sub_jobs)
+    finish_multi_schema_job(txn, active, &sub_jobs)
 }
 
 /// One sub-job's write joined to the step's; its mutations are already the
@@ -1217,7 +1214,7 @@ fn merge_write(merged: &mut DdlWrite, write: DdlWrite) {
 /// Go `finishMultiSchemaJob`: done under the newest sub-job version,
 /// publishing nothing new.
 fn finish_multi_schema_job(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     sub_jobs: &[GoShared<SubJob>],
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -1226,7 +1223,7 @@ fn finish_multi_schema_job(
         .map(|sub| sub.read().schema_version)
         .max()
         .unwrap_or(0);
-    let info = checked_job_table(catalog, active, false)?.read().clone_like_go();
+    let info = checked_job_table(txn, active, false)?.read().clone_like_go();
     active.job.finish_table_job(
         JobState::DONE,
         SchemaState::NONE,

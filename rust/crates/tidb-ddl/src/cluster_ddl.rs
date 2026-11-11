@@ -5417,7 +5417,7 @@ fn dispatch_persisted_action(
         ActionType::ACTION_ADD_CHECK_CONSTRAINT
         | ActionType::ACTION_DROP_CHECK_CONSTRAINT
         | ActionType::ACTION_ALTER_CHECK_CONSTRAINT => {
-            plan_persisted_check_constraint_job_step(txn, catalog, active, start_ts)
+            plan_persisted_check_constraint_job_step(txn, active, start_ts)
         }
         ActionType::ACTION_CREATE_SCHEMA => {
             plan_persisted_create_schema_job_step(txn, catalog, active)
@@ -5435,17 +5435,17 @@ fn dispatch_persisted_action(
             recover_table::on_recover_schema(txn, active, start_ts, sessions)
         }
         ActionType::ACTION_CREATE_VIEW => {
-            create_object::on_create_view(txn, catalog, active, start_ts)
+            create_object::on_create_view(txn, active, start_ts)
         }
         ActionType::ACTION_CREATE_SEQUENCE => {
-            create_object::on_create_sequence(txn, catalog, active, start_ts)
+            create_object::on_create_sequence(txn, active, start_ts)
         }
         ActionType::ACTION_ALTER_SEQUENCE => {
-            create_object::on_alter_sequence(txn, catalog, active, start_ts)
+            create_object::on_alter_sequence(txn, active, start_ts)
         }
         ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE
         | ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT => {
-            alter_schema::on_modify_schema_charset_and_collate(txn, catalog, active)
+            alter_schema::on_modify_schema_charset_and_collate(txn, active)
         }
         ActionType::ACTION_CREATE_PLACEMENT_POLICY => {
             placement_policy::on_create_placement_policy(
@@ -5472,10 +5472,10 @@ fn dispatch_persisted_action(
             resource_group::on_drop_resource_group(txn, catalog, active)
         }
         ActionType::ACTION_LOCK_TABLE => {
-            table_lock::on_lock_tables(txn, catalog, active, start_ts)
+            table_lock::on_lock_tables(txn, active, start_ts)
         }
         ActionType::ACTION_UNLOCK_TABLE => {
-            table_lock::on_unlock_tables(txn, catalog, active, start_ts)
+            table_lock::on_unlock_tables(txn, active, start_ts)
         }
         ActionType::ACTION_ADD_TABLE_PARTITION => {
             partition::on_add_table_partition(
@@ -5535,7 +5535,7 @@ fn dispatch_persisted_action(
             plan_persisted_drop_table_job_step(txn, catalog, active, row_ids)
         }
         ActionType::ACTION_ADD_COLUMNAR_INDEX => {
-            add_index::on_create_columnar_index(txn, catalog, active, start_ts)
+            add_index::on_create_columnar_index(txn, active, start_ts)
         }
         ActionType::ACTION_ADD_INDEX | ActionType::ACTION_ADD_PRIMARY_KEY => {
             add_index::plan_persisted_add_index_job_step(
@@ -5608,12 +5608,13 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
     // Go `transitOneJobStep`: the schema from `jobCtx.infoCache` at the
-    // step's version, the job's own schemas from meta (`jobCtx.metaMut`).
+    // step's version; the handlers read the job's own objects through
+    // `jobCtx.metaMut`.
     let cached = match &schema_state.info_cache {
         Some(cache) => Some(cache.load_with_ts(snapshot, cache.capacity())?),
         None => None,
     };
-    let mut catalog = match &cached {
+    let catalog = match &cached {
         Some(cached) => cached.metadata_copy(),
         None => load_info_schema(snapshot)?,
     };
@@ -5623,17 +5624,6 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         .load_by_id(snapshot, ddl_job_id)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?
         .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
-    if let Some(cached) = &cached {
-        let mut schema_ids: Vec<i64> = active
-            .schema_ids
-            .split(',')
-            .filter_map(|id| id.trim().parse().ok())
-            .collect();
-        schema_ids.push(active.job.schema_id);
-        schema_ids.sort_unstable();
-        schema_ids.dedup();
-        catalog = tidb_infoschema::cluster_catalog::overlay_job_schemas(snapshot, cached, &schema_ids)?;
-    }
     if !supports_action(active.job.type_) {
         return Err(DdlPlanError::Encode(format!(
             "unsupported persisted DDL action {}",
@@ -5990,16 +5980,14 @@ fn finish_persisted_ddl_job<S: MetaSnapshot>(
 /// and a later owner can call this function with the same job ID.
 fn plan_persisted_check_constraint_job_step(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
 
-    let stored = checked_job_table(catalog, active, true)?;
+    let stored = checked_job_table(txn, active, true)?;
     let stored = stored.read();
-    let database = catalog
-        .schema_by_id(active.job.schema_id)
+    let database = job_schema_with_tables(txn, active.job.schema_id)?
         .expect("checked_job_table checked the database");
     let cancelling = active.job.is_cancelling();
     let mut info = stored.clone_like_go();
@@ -6524,8 +6512,7 @@ fn plan_persisted_create_tables_job_step(
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
         .ok_or_else(|| DdlPlanError::Encode("CREATE TABLES job has nil args".to_owned()))?;
 
-    let database = catalog
-        .schema_by_id(active.job.schema_id)
+    let database = job_schema_with_tables(txn, active.job.schema_id)?
         .ok_or_else(|| {
             cancel_ddl_job(
                 active,
@@ -6688,8 +6675,7 @@ fn plan_persisted_drop_schema_job_step(
     let ddl_job_id = active.job.id;
     let mut mutations = Vec::new();
 
-    let Some(database) = catalog
-        .schema_by_id(active.job.schema_id)
+    let Some(database) = job_schema(txn, active.job.schema_id)?
         .map(|database| database.read().clone())
     else {
         return Err(cancel_ddl_job(
@@ -6719,16 +6705,10 @@ fn plan_persisted_drop_schema_job_step(
         // Go `onDropSchema`: as the schema leaves the public state, every
         // table's and partition's label rule goes, under the job's schema
         // name.
-        let tables = catalog
-            .schema_by_id(db_info.id)
-            .map(|database| {
-                database
-                    .read().deprecated_tables
-                    .iter_deref()
-                    .map(|table| LabelRuleTable::from_table_info(&table.read()))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let tables = job_schema_tables(txn, db_info.id)?
+            .iter()
+            .map(LabelRuleTable::from_table_info)
+            .collect::<Vec<_>>();
         label_rules.push(
             label_rules::drop_schema_label_rules(&active.job.schema_name.to_string(), &tables),
             None,
@@ -6758,17 +6738,9 @@ fn plan_persisted_drop_schema_job_step(
         // `HDel(DBs, DB:<id>)`: every field of the database's hash, its
         // tables' metadata and allocators, goes; the tables' rows are left
         // to the delete range.
+        // Go `metaMut.ListTables(job.SchemaID)`.
+        let tables = meta.tables(db_info.id).map_err(meta_error)?;
         meta.drop_database(db_info.id).map_err(meta_error)?;
-        let tables: Vec<TableInfo> = catalog
-            .schema_by_id(db_info.id)
-            .map(|database| {
-                database
-                    .read().deprecated_tables
-                    .iter_deref()
-                    .map(|table| TableInfo::clone_like_go(&table.read()))
-                    .collect()
-            })
-            .unwrap_or_default();
         // Go `onDropSchema`'s `batchDeleteTableAffinityGroups`.
         for table in &tables {
             affinity_groups.delete_table_affinity_groups_in_pd(table, None);
@@ -6849,9 +6821,8 @@ fn plan_persisted_drop_table_job_step(
     let ddl_job_id = active.job.id;
     let mut mutations = Vec::new();
 
-    let mut table = checked_job_table(catalog, active, false)?.read().clone_like_go();
-    let database = catalog
-        .schema_by_id(active.job.schema_id)
+    let mut table = checked_job_table(txn, active, false)?.read().clone_like_go();
+    let database = job_schema(txn, active.job.schema_id)?
         .expect("checked_job_table checked the database");
 
     let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
@@ -7233,8 +7204,7 @@ fn plan_cancel_persisted_ddl_job(
             active.job.schema_state == SchemaState::NONE
         }
         ActionType::ACTION_DROP_SCHEMA => {
-            let database = catalog
-                .schema_by_id(active.job.schema_id)
+            let database = job_schema(txn, active.job.schema_id)?
                 .ok_or_else(|| {
                     cancel_ddl_job(
                         active,
@@ -7251,14 +7221,14 @@ fn plan_cancel_persisted_ddl_job(
         ActionType::ACTION_DROP_TABLE
         | ActionType::ACTION_DROP_VIEW
         | ActionType::ACTION_DROP_SEQUENCE => {
-            let table = checked_job_table(catalog, active, false)?;
+            let table = checked_job_table(txn, active, false)?;
             let table = table.read();
             table.state == SchemaState::PUBLIC
         }
         ActionType::ACTION_ADD_CHECK_CONSTRAINT
         | ActionType::ACTION_DROP_CHECK_CONSTRAINT
         | ActionType::ACTION_ALTER_CHECK_CONSTRAINT => {
-            return plan_persisted_check_constraint_job_step(txn, catalog, active, start_ts);
+            return plan_persisted_check_constraint_job_step(txn, active, start_ts);
         }
         // Go `rollingbackAddColumanrIndex`: before the reorganization state
         // `convertNotReorgAddIdxJob2RollbackJob`, in it `onCreateColumnarIndex`'s
@@ -7267,19 +7237,19 @@ fn plan_cancel_persisted_ddl_job(
         ActionType::ACTION_ADD_INDEX
         | ActionType::ACTION_ADD_PRIMARY_KEY
         | ActionType::ACTION_ADD_COLUMNAR_INDEX => {
-            return add_index::rollingback_add_index(txn, catalog, active, start_ts);
+            return add_index::rollingback_add_index(txn, active, start_ts);
         }
         ActionType::ACTION_DROP_INDEX | ActionType::ACTION_DROP_PRIMARY_KEY => {
-            return drop_index::rollingback_drop_index(catalog, active);
+            return drop_index::rollingback_drop_index(catalog, txn, active);
         }
         ActionType::ACTION_ADD_COLUMN => {
-            return add_column::rollingback_add_column(txn, catalog, active, start_ts);
+            return add_column::rollingback_add_column(txn, active, start_ts);
         }
         ActionType::ACTION_DROP_COLUMN => {
-            return drop_column::rollingback_drop_column(catalog, active);
+            return drop_column::rollingback_drop_column(catalog, txn, active);
         }
         ActionType::ACTION_MODIFY_COLUMN => {
-            return modify_column::rollingback_modify_column(catalog, active);
+            return modify_column::rollingback_modify_column(txn, active);
         }
         ActionType::ACTION_ADD_FOREIGN_KEY => {
             return foreign_key::rollingback_add_foreign_key(active);
@@ -7290,26 +7260,25 @@ fn plan_cancel_persisted_ddl_job(
         ActionType::ACTION_ADD_TABLE_PARTITION
         | ActionType::ACTION_DROP_TABLE_PARTITION
         | ActionType::ACTION_TRUNCATE_TABLE_PARTITION => {
-            return partition::rollingback_add_table_partition(txn, catalog, active, start_ts);
+            return partition::rollingback_add_table_partition(txn, active, start_ts);
         }
         ActionType::ACTION_EXCHANGE_TABLE_PARTITION => {
-            return exchange_partition::rollingback_exchange_table_partition(txn, catalog, active);
+            return exchange_partition::rollingback_exchange_table_partition(txn, active);
         }
         ActionType::ACTION_REORGANIZE_PARTITION
         | ActionType::ACTION_ALTER_TABLE_PARTITIONING
         | ActionType::ACTION_REMOVE_PARTITIONING => {
             return reorganize_partition::on_rollback_reorganize_partition(
-                txn,
-                catalog, active, start_ts,
+                txn, active, start_ts,
             );
         }
         action if alter_table::ALTER_TABLE_ACTIONS.contains(&action) => {
-            return alter_table::convert_job_2_rollback_job(catalog, active);
+            return alter_table::convert_job_2_rollback_job(txn, active);
         }
         // Go `rollingbackTruncateTable`: `cancelOnlyNotHandledJob` at
         // `StateNone`, after `GetTableInfoAndCancelFaultJob`.
         ActionType::ACTION_TRUNCATE_TABLE => {
-            checked_job_table(catalog, active, false)?;
+            checked_job_table(txn, active, false)?;
             active.job.schema_state == SchemaState::NONE
         }
         // Go's `default`: the job is cancelled (RECOVER TABLE among them).
@@ -7322,17 +7291,19 @@ fn plan_cancel_persisted_ddl_job(
     Ok(job_control_step(&active.job))
 }
 
-// Go GetTableInfoAndCancelFaultJob/checkTableExistAndCancelNonExistJob. Keep
-// the same object checks on forward CHECK and cancellation paths.
-fn checked_job_table<'a>(
-    catalog: &'a SessionExtendedInfoSchema,
+// Go GetTableInfoAndCancelFaultJob/checkTableExistAndCancelNonExistJob over
+// `jobCtx.metaMut`. Keep the same object checks on forward CHECK and
+// cancellation paths.
+fn checked_job_table(
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     require_public: bool,
 ) -> Result<GoShared<TableInfo>, DdlPlanError> {
-    let database = catalog
-        .schema_by_id(active.job.schema_id)
-        .ok_or_else(|| {
-            cancel_ddl_job(
+    let meta = txn.meta();
+    let table = match meta.table(active.job.schema_id, active.job.table_id) {
+        Ok(table) => table,
+        Err(tidb_meta::MetaError::DatabaseNotExists) => {
+            return Err(cancel_ddl_job(
                 active,
                 DdlPlanError::from(
                     tidb_dbterror::CLASS_SCHEMA
@@ -7342,25 +7313,23 @@ fn checked_job_table<'a>(
                             active.job.schema_id
                         )),
                 ),
-            )
-        })?;
-    let table = database
-        .read().deprecated_tables
-        .iter_deref()
-        .find(|table| table.read().id == active.job.table_id)
-        .ok_or_else(|| {
-            cancel_ddl_job(
-                active,
-                DdlPlanError::from(
-                    tidb_dbterror::CLASS_SCHEMA
-                        .new_std(tidb_errno::errcode::ErrNoSuchTable)
-                        .generate(format!(
-                            "Table '(Schema ID {}).(Table ID {})' doesn't exist",
-                            active.job.schema_id, active.job.table_id
-                        )),
-                ),
-            )
-        })?;
+            ));
+        }
+        Err(error) => return Err(DdlPlanError::Meta(job_meta_error(&meta, error))),
+    };
+    let table = table.map(GoShared::new).ok_or_else(|| {
+        cancel_ddl_job(
+            active,
+            DdlPlanError::from(
+                tidb_dbterror::CLASS_SCHEMA
+                    .new_std(tidb_errno::errcode::ErrNoSuchTable)
+                    .generate(format!(
+                        "Table '(Schema ID {}).(Table ID {})' doesn't exist",
+                        active.job.schema_id, active.job.table_id
+                    )),
+            ),
+        )
+    })?;
     let shared = table;
     let table = shared.read();
     if !active.job.table_name.is_empty()
@@ -8872,16 +8841,57 @@ fn lock_plan_error(error: tidb_terror::MysqlError) -> DdlPlanError {
     DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
 }
 
+/// Go `getTableInfo` over `jobCtx.metaMut`, a missing schema or table
+/// answered `None`.
 fn stored_table_by_ids(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     schema_id: i64,
     table_id: i64,
-) -> Option<GoShared<TableInfo>> {
-    catalog
-        .schema_by_id(schema_id)?
-        .read().deprecated_tables
-        .iter_deref()
-        .find(|table| table.read().id == table_id)
+) -> Result<Option<GoShared<TableInfo>>, DdlPlanError> {
+    let meta = txn.meta();
+    match meta.table(schema_id, table_id) {
+        Ok(table) => Ok(table.map(GoShared::new)),
+        Err(tidb_meta::MetaError::DatabaseNotExists) => Ok(None),
+        Err(error) => Err(DdlPlanError::Meta(job_meta_error(&meta, error))),
+    }
+}
+
+/// Go `meta.Mutator.ListTables` over `jobCtx.metaMut`.
+fn job_schema_tables(
+    txn: &mut JobTxn<'_>,
+    schema_id: i64,
+) -> Result<Vec<TableInfo>, DdlPlanError> {
+    let meta = txn.meta();
+    meta.tables(schema_id)
+        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))
+}
+
+/// Go `meta.Mutator.GetDatabase` with `ListTables` over `jobCtx.metaMut`:
+/// the schema and the tables it stores, in whatever state, as
+/// `checkTableNotExistsFromStore` and `checkConstraintNamesNotExists` list
+/// them.
+fn job_schema_with_tables(
+    txn: &mut JobTxn<'_>,
+    schema_id: i64,
+) -> Result<Option<GoShared<DBInfo>>, DdlPlanError> {
+    let meta = txn.meta();
+    let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+    let Some(mut database) = meta.database(schema_id).map_err(meta_error)? else {
+        return Ok(None);
+    };
+    database.deprecated_tables = meta.tables(schema_id).map_err(meta_error)?.into();
+    Ok(Some(GoShared::new(database)))
+}
+
+/// Go `meta.Mutator.GetDatabase` over `jobCtx.metaMut`.
+fn job_schema(
+    txn: &mut JobTxn<'_>,
+    schema_id: i64,
+) -> Result<Option<GoShared<DBInfo>>, DdlPlanError> {
+    let meta = txn.meta();
+    meta.database(schema_id)
+        .map(|database| database.map(GoShared::new))
+        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))
 }
 
 fn already(detail: String) -> DdlPlan {

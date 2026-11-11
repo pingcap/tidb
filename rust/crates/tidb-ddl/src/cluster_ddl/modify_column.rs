@@ -1165,12 +1165,11 @@ struct ModifyTarget {
 /// Go `getModifyColumnInfo`: the database, the table and the column being
 /// changed, found by the id persisted after the first visit.
 fn get_modify_column_info(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &mut tidb_model::ModifyColumnArgs,
 ) -> Result<ModifyTarget, DdlPlanError> {
-    let Some(database) = catalog
-        .schema_by_id(active.job.schema_id)
+    let Some(database) = job_schema(txn, active.job.schema_id)?
     else {
         return Err(cancel_ddl_job(
             active,
@@ -1185,7 +1184,7 @@ fn get_modify_column_info(
         ));
     };
     let schema = database.read().name.original().to_owned();
-    let info = checked_job_table(catalog, active, true)?.read().clone_like_go();
+    let info = checked_job_table(txn, active, true)?.read().clone_like_go();
     let old = if args.old_column_id > 0 {
         tidb_model::column::find_column_info_by_id(&info.columns, args.old_column_id)
     } else {
@@ -1401,7 +1400,7 @@ fn plan_modify_column_step(
             )
         })?;
     let mut args = args.read().clone();
-    let mut target = get_modify_column_info(catalog, active, &mut args)?;
+    let mut target = get_modify_column_info(txn, active, &mut args)?;
     let new = args
         .column
         .as_ref()
@@ -3318,7 +3317,7 @@ fn merge_reorg_warnings(job: &Job, warnings: &[(u16, String, i64)]) {
 
 /// Go `rollingbackModifyColumn`.
 pub(super) fn rollingback_modify_column(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     // Go `IsRollbackable`: a modify-column job is not once it is public.
@@ -3335,7 +3334,7 @@ pub(super) fn rollingback_modify_column(
             )
         })?;
     let mut args = args.read().clone();
-    let target = get_modify_column_info(catalog, active, &mut args)?;
+    let target = get_modify_column_info(txn, active, &mut args)?;
     let cancelled = || {
         DdlPlanError::from(
             tidb_dbterror::ERR_CANCELLED_DDL_JOB

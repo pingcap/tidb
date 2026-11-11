@@ -257,8 +257,7 @@ pub(super) fn on_create_table(
         )
     };
     let mut info = table_handle.read().clone();
-    let database = catalog
-        .schema_by_id(active.job.schema_id)
+    let database = job_schema_with_tables(txn, active.job.schema_id)?
         .ok_or_else(|| {
             cancel_ddl_job(
                 active,

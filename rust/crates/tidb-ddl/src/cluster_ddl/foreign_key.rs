@@ -272,7 +272,7 @@ pub(super) fn on_create_foreign_key(
     outcome: Option<&ReorgOutcome>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let database_id = active.job.schema_id;
-    let mut info = checked_job_table(catalog, active, true)?.read().clone_like_go();
+    let mut info = checked_job_table(txn, active, true)?.read().clone_like_go();
     let args = tidb_model::get_add_foreign_key_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
         .ok_or_else(|| {

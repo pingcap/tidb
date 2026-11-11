@@ -434,24 +434,22 @@ fn create_table_args(
 /// The job's database, or the job cancelled as Go's
 /// `checkSchemaExistAndCancelNotExistJob` cancels it.
 fn job_database(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<GoShared<DBInfo>, DdlPlanError> {
-    catalog
-        .schema_by_id(active.job.schema_id)
-        .ok_or_else(|| {
-            cancel_ddl_job(
-                active,
-                DdlPlanError::from(
-                    tidb_dbterror::CLASS_SCHEMA
-                        .new_std(tidb_errno::errcode::ErrBadDB)
-                        .generate(format!(
-                            "Unknown database '(Schema ID {})'",
-                            active.job.schema_id
-                        )),
-                ),
-            )
-        })
+    job_schema_with_tables(txn, active.job.schema_id)?.ok_or_else(|| {
+        cancel_ddl_job(
+            active,
+            DdlPlanError::from(
+                tidb_dbterror::CLASS_SCHEMA
+                    .new_std(tidb_errno::errcode::ErrBadDB)
+                    .generate(format!(
+                        "Unknown database '(Schema ID {})'",
+                        active.job.schema_id
+                    )),
+            ),
+        )
+    })
 }
 
 fn table_exists_in_owner(schema: &str, name: &str) -> DdlPlanError {
@@ -486,12 +484,11 @@ fn object_step(
 /// Go `onCreateView`.
 pub(super) fn on_create_view(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let (handle, or_replace, old_view_id) = create_table_args(active)?;
-    let database = job_database(catalog, active)?;
+    let database = job_database(txn, active)?;
     let database_id = database.read().id;
     let schema = database.read().name.original().to_owned();
     let mut info = handle.read().clone_like_go();
@@ -577,12 +574,11 @@ pub(super) fn create_sequence_with_check(
 /// Go `onCreateSequence`.
 pub(super) fn on_create_sequence(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let (handle, _, _) = create_table_args(active)?;
-    let database = job_database(catalog, active)?;
+    let database = job_database(txn, active)?;
     let database_id = database.read().id;
     let schema = database.read().name.original().to_owned();
     let mut info = handle.read().clone_like_go();
@@ -682,7 +678,6 @@ fn build_alter_sequence_job(
 /// Go `onAlterSequence`.
 pub(super) fn on_alter_sequence(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -703,7 +698,7 @@ pub(super) fn on_alter_sequence(
             .collect();
         (args.ident.clone(), options)
     };
-    let mut info = checked_job_table(catalog, active, false)?.read().clone_like_go();
+    let mut info = checked_job_table(txn, active, false)?.read().clone_like_go();
     let database_id = active.job.schema_id;
     let Some(old) = info.sequence.as_ref().map(|shared| shared.read().clone()) else {
         return Err(cancel_ddl_job(

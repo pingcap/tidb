@@ -498,11 +498,11 @@ fn changed_indexes(partition: &tidb_model::partition::PartitionInfo) -> BTreeMap
 /// Go `getReorgPartitionInfo`: the table, and at the first step the DDL's
 /// target scheme recorded on its partitioning.
 fn reorg_partition_info(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     part_info: &tidb_model::partition::PartitionInfo,
 ) -> Result<TableInfo, DdlPlanError> {
-    let mut info = checked_job_table(catalog, active, true)?.read().clone_like_go();
+    let mut info = checked_job_table(txn, active, true)?.read().clone_like_go();
     if active.job.schema_state == SchemaState::NONE {
         let partition = match &info.partition {
             Some(partition) => partition.clone(),
@@ -561,7 +561,7 @@ pub(super) fn on_reorganize_partition(
             )
         })?;
     if active.job.is_rollingback() {
-        return super::partition::rollback_like_drop_partition(txn, catalog, active, start_ts);
+        return super::partition::rollback_like_drop_partition(txn, active, start_ts);
     }
     let (part_names, part_info) = {
         let args = args.read();
@@ -578,7 +578,7 @@ pub(super) fn on_reorganize_partition(
                 .unwrap_or_default(),
         )
     };
-    let mut info = reorg_partition_info(catalog, active, &part_info)?;
+    let mut info = reorg_partition_info(txn, active, &part_info)?;
     let partition = info
         .partition
         .clone()
@@ -724,7 +724,7 @@ pub(super) fn on_reorganize_partition(
                         Ok(need_retry) => need_retry,
                         Err(error) => {
                             return rollback_reorganize_partition_with_err(
-                                txn, catalog, active, &args, start_ts, error,
+                                txn, active, &args, start_ts, error,
                             );
                         }
                     };
@@ -787,7 +787,7 @@ pub(super) fn on_reorganize_partition(
                 PartitionReorgWork::Failed(error) => {
                     return rollback_reorganize_partition_with_err(
                         txn,
-                        catalog, active, &args, start_ts, error,
+                        active, &args, start_ts, error,
                     )
                 }
                 PartitionReorgWork::Done => {}
@@ -1189,7 +1189,6 @@ fn do_partition_reorg_work<S: MetaSnapshot>(
 /// `rollbackLikeDropPartition`.
 fn rollback_reorganize_partition_with_err(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &GoShared<tidb_model::TablePartitionArgs>,
     start_ts: u64,
@@ -1198,7 +1197,7 @@ fn rollback_reorganize_partition_with_err(
     if active.job.schema_state == SchemaState::NONE {
         return Err(cancel_ddl_job(active, error));
     }
-    let mut info = checked_job_table(catalog, active, true)?.read().clone_like_go();
+    let mut info = checked_job_table(txn, active, true)?.read().clone_like_go();
     let partition = info
         .partition
         .clone()
@@ -1296,7 +1295,6 @@ fn rollback_reorganize_partition_with_err(
 /// destroyed, so the job rolls on.
 pub(super) fn on_rollback_reorganize_partition(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -1314,7 +1312,6 @@ pub(super) fn on_rollback_reorganize_partition(
     }
     rollback_reorganize_partition_with_err(
         txn,
-        catalog,
         active,
         &args,
         start_ts,

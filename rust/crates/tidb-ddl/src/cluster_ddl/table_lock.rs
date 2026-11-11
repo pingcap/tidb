@@ -155,7 +155,6 @@ fn no_table_write(active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob) -> Dd
 /// lock changed; a table dropped since it was locked is skipped.
 fn unlock_tables(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &mut tidb_model::LockTablesArgs,
     start_ts: u64,
@@ -169,7 +168,7 @@ fn unlock_tables(
     };
     active.job.schema_id = target.schema_id;
     active.job.table_id = target.table_id;
-    let write = match stored_table_by_ids(catalog, target.schema_id, target.table_id) {
+    let write = match stored_table_by_ids(txn, target.schema_id, target.table_id)? {
         None => no_table_write(active),
         Some(stored) => {
             let stored = stored.read();
@@ -195,32 +194,31 @@ fn unlock_tables(
 
 /// The job's current table (Go `GetTableInfoAndCancelFaultJob` after the
 /// step points the job at it).
-fn job_table<'a>(
-    catalog: &'a SessionExtendedInfoSchema,
+fn job_table(
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &tidb_model::TableLockTpInfo,
 ) -> Result<GoShared<TableInfo>, DdlPlanError> {
     active.job.schema_id = target.schema_id;
     active.job.table_id = target.table_id;
-    checked_job_table(catalog, active, true)
+    checked_job_table(txn, active, true)
 }
 
 /// Go `onLockTables`.
 pub(super) fn on_lock_tables(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let mut args = lock_tables_args(active)?;
     // The session's earlier locks go first.
     if (args.index_of_unlock as usize) < args.unlock_tables.len() {
-        return unlock_tables(txn, catalog, active, &mut args, start_ts).map(action_step);
+        return unlock_tables(txn, active, &mut args, start_ts).map(action_step);
     }
     // Another session's lock is checked once, before the first lock.
     if args.index_of_lock == 0 {
         for target in &args.lock_tables {
-            let info = job_table(catalog, active, target)?;
+            let info = job_table(txn, active, target)?;
             let info = info.read();
             let current = info.lock.as_ref().map(|lock| lock.read().clone());
             tidb_ddl_build::table_lock::check_table_locked(
@@ -239,7 +237,7 @@ pub(super) fn on_lock_tables(
     else {
         return Ok(action_step(no_table_write(active)));
     };
-    let mut info = job_table(catalog, active, &target)?.read().clone_like_go();
+    let mut info = job_table(txn, active, &target)?.read().clone_like_go();
     let current = info.lock.as_ref().map(|lock| lock.read().clone());
     let mut lock = tidb_ddl_build::table_lock::lock_table(
         info.name.lowercase(),
@@ -297,12 +295,11 @@ pub(super) fn on_lock_tables(
 /// Go `onUnlockTables`.
 pub(super) fn on_unlock_tables(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let mut args = lock_tables_args(active)?;
-    let write = unlock_tables(txn, catalog, active, &mut args, start_ts)?;
+    let write = unlock_tables(txn, active, &mut args, start_ts)?;
     if args.index_of_unlock as usize == args.unlock_tables.len() {
         active.job.finish_table_job(
             JobState::DONE,
