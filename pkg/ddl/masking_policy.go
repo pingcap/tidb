@@ -762,6 +762,7 @@ func (*normalizeMaskingExprVisitor) Enter(in ast.Node) (ast.Node, bool) {
 func (*normalizeMaskingExprVisitor) Leave(in ast.Node) (ast.Node, bool) { return in, true }
 
 func normalizeMaskingPolicyExprColumnNames(expr string) (string, error) {
+	// #nosec G202: expression here is parsed as SQL AST for rewrite, not executed against storage.
 	stmt, err := parser.New().ParseOneStmt("SELECT "+expr, "", "")
 	if err != nil {
 		return "", errors.Trace(err)
