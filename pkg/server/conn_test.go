@@ -2193,7 +2193,7 @@ func TestChangeUserAuthSwitch(t *testing.T) {
 					}
 				}
 				brc := serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: input})
-				pkt := packetio.New(brc)
+				pkt := internal.NewPacketIO(brc)
 				pkt.SetBufWriter(bufio.NewWriter(&output))
 				cc := &clientConn{
 					connectionID: 1,
@@ -2244,7 +2244,7 @@ func TestChangeUserAuthSwitch(t *testing.T) {
 					require.Equal(t, testCase.name, cc.ctx.GetSessionVars().User.Username)
 				}
 				require.NoError(t, cc.flush(context.Background()))
-				packets := packetio.New(serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: output}))
+				packets := internal.NewPacketIO(serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: output}))
 				if !testCase.noSwitch {
 					response, err := packets.ReadPacket()
 					require.NoError(t, err)
@@ -2265,6 +2265,43 @@ func TestChangeUserAuthSwitch(t *testing.T) {
 					require.NoError(t, err)
 					require.Equal(t, mysql.OKHeader, response[0])
 				}
+				if denied || testCase.plugin == mysql.AuthNativePassword {
+					return
+				}
+
+				// The next change uses the negotiated plugin and must authenticate
+				// without another plugin switch.
+				nextUser := testCase.name + "_next"
+				tk.MustExec(fmt.Sprintf("CREATE USER IF NOT EXISTS '%s' IDENTIFIED WITH %s BY '%s'", nextUser, testCase.plugin, testCase.password))
+				require.Equal(t, testCase.plugin, cc.authPlugin)
+				var continuation bytes.Buffer
+				if needFullAuth {
+					response := append([]byte(testCase.password), 0)
+					continuation.Write(append([]byte{byte(len(response)), 0, 0, 1}, response...))
+				}
+				cc.setConn(&testutil.BytesConn{Buffer: continuation})
+				cc.pkt.SetBufWriter(bufio.NewWriter(&output))
+				cc.pkt.SetSequence(0)
+				output.Reset()
+				initialAuth = scramble(testCase.plugin, testCase.password)
+				data = append([]byte(nextUser), 0, byte(len(initialAuth)))
+				data = append(data, initialAuth...)
+				data = append(data, 0, 0, 0) // empty database and two-byte character set
+				data = append(data, testCase.plugin...)
+				data = append(data, 0)
+				require.NoError(t, cc.handleChangeUser(context.Background(), data))
+				require.Equal(t, nextUser, cc.ctx.GetSessionVars().User.Username)
+				require.NoError(t, cc.flush(context.Background()))
+				packets = internal.NewPacketIO(serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: output}))
+				if needFullAuth {
+					response, err := packets.ReadPacket()
+					require.NoError(t, err)
+					require.Equal(t, []byte{1, 4}, response)
+					packets.SetSequence(2)
+				}
+				response, err := packets.ReadPacket()
+				require.NoError(t, err)
+				require.Equal(t, mysql.OKHeader, response[0])
 			})
 		}
 	}
@@ -2322,7 +2359,7 @@ func TestChangeUserAuthSocket(t *testing.T) {
 						peerHost:      "localhost",
 						collation:     mysql.DefaultCollationID,
 						capability:    protocol.capability,
-						pkt:           packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+						pkt:           internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 						server:        srv,
 						user:          "low_priv",
 						dbname:        "test",
