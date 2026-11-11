@@ -240,17 +240,17 @@ func tokenizeNgramDocument(text string) []Token {
 }
 
 type parserInfo struct {
-	innodbFtMinTokenSize   int
-	innodbFtMaxTokenSize   int
-	ngramTokenSize         int
-	stopwords              map[string]struct{}
-	stopwordsByLength      map[int][]string
-	stopwordKeys           map[string]struct{}
-	stopwordKeysByLength   map[int]map[string]struct{}
-	collator               collate.Collator // MATCH column collation
-	stopwordCollator       collate.Collator // collation_server
-	builtinBinaryStopwords bool
-	trimStopwordSpace      bool
+	innodbFtMinTokenSize int
+	innodbFtMaxTokenSize int
+	ngramTokenSize       int
+	stopwords            map[string]struct{}
+	stopwordsByLength    map[int][]string
+	stopwordKeys         map[string]struct{}
+	stopwordKeysByLength map[int]map[string]struct{}
+	collator             collate.Collator // MATCH column collation
+	stopwordCollator     collate.Collator // collation_server
+	// Zero disables the source-length shortcut for STANDARD tokens.
+	standardStopwordMaxBytes int
 }
 
 func parserInfoFromConfig(config AnalyzerConfig) parserInfo {
@@ -271,11 +271,14 @@ func parserInfoFromConfig(config AnalyzerConfig) parserInfo {
 		collator:             collator,
 		stopwordCollator:     stopwordCollator,
 	}
-	// Only byte-preserving collations can reject long source words safely.
-	// Unicode collations may ignore characters or expand their weights.
-	info.builtinBinaryStopwords = config.InnodbFtEnableStopword && len(config.Stopwords) == 0 &&
-		stopwordCollator != nil && (collate.IsBinCollation(config.StopwordCollation) || collate.CanUseRawMemAsKey(stopwordCollator))
-	info.trimStopwordSpace = info.builtinBinaryStopwords && !collate.CanUseRawMemAsKey(stopwordCollator)
+	// Byte-preserving collations allow a STANDARD source byte bound. Leave
+	// other collations on the existing collation-aware lookup path.
+	if len(config.Stopwords) == 0 && stopwordCollator != nil &&
+		(collate.IsBinCollation(config.StopwordCollation) || collate.CanUseRawMemAsKey(stopwordCollator)) {
+		for word := range stopwords {
+			info.standardStopwordMaxBytes = max(info.standardStopwordMaxBytes, len(word))
+		}
+	}
 	if stopwordCollator != nil && len(stopwords) > 0 {
 		// Compile immutable keys once per analyzer, not once per document.
 		// Keep NGRAM buckets indexed by source code-point length: a collation
@@ -356,24 +359,6 @@ func stopwordSetFromConfig(config AnalyzerConfig) map[string]struct{} {
 	return set
 }
 
-// isBuiltinBinaryStopword avoids key creation and hash lookup for the fixed
-// ASCII list. Keep it in sync with defaultInnodbStopwords; the differential
-// tests check every entry as well as case, padding and non-ASCII candidates.
-func isBuiltinBinaryStopword(token string) bool {
-	if len(token) > len("about") {
-		return false
-	}
-	switch token {
-	case "a", "about", "an", "are", "as", "at", "be", "by", "com", "de", "en",
-		"for", "from", "how", "i", "in", "is", "it", "la", "of", "on", "or",
-		"that", "the", "this", "to", "was", "what", "when", "where", "who",
-		"will", "with", "und", "www":
-		return true
-	default:
-		return false
-	}
-}
-
 func getFulltextSysVar(sessVars *variable.SessionVars, name string) (string, error) {
 	val, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), name)
 	if err != nil {
@@ -451,7 +436,10 @@ func stopwordFilter(tokens []Token, parserInfo parserInfo) []Token {
 
 	out := tokens[:0]
 	for _, token := range tokens {
-		if !parserInfo.isStopword(token.Text) {
+		// STANDARD tokens contain no trailing spaces, so PAD SPACE cannot
+		// shorten them. Keep this shortcut out of the general lookup helper.
+		if (parserInfo.standardStopwordMaxBytes > 0 && len(token.Text) > parserInfo.standardStopwordMaxBytes) ||
+			!parserInfo.isStopword(token.Text) {
 			out = append(out, token)
 		}
 	}
@@ -495,14 +483,6 @@ func (p parserInfo) containsNgramStopword(token string) bool {
 				continue
 			}
 			candidate := token[startByte:endByte]
-			if p.builtinBinaryStopwords {
-				// Each bucket requires the stopword's source character length.
-				// Trimming candidate spaces here would violate that constraint.
-				if isBuiltinBinaryStopword(candidate) {
-					return true
-				}
-				continue
-			}
 			if p.stopwordCollator == nil {
 				if _, ok := p.stopwords[candidate]; ok {
 					return true
@@ -531,12 +511,6 @@ func (p parserInfo) containsNgramStopword(token string) bool {
 }
 
 func (p parserInfo) isStopword(token string) bool {
-	if p.builtinBinaryStopwords {
-		if p.trimStopwordSpace {
-			token = strings.TrimRight(token, " ")
-		}
-		return isBuiltinBinaryStopword(token)
-	}
 	if p.stopwordCollator == nil {
 		_, ok := p.stopwords[strings.ToLower(token)]
 		return ok
