@@ -2147,6 +2147,98 @@ func TestChangeUserAuth(t *testing.T) {
 	require.Equal(t, "root", cc.user)
 }
 
+func TestChangeUserAuthSocket(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER low_priv")
+	tk.MustExec("CREATE USER socket_user IDENTIFIED WITH auth_socket")
+	tk.MustExec("CREATE USER socket_mapped IDENTIFIED WITH auth_socket AS 'socket_os_user'")
+
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	srv, err := NewServer(cfg, NewTiDBDriver(store))
+	require.NoError(t, err)
+	defer srv.Close()
+	t.Cleanup(func() { mockOSUserForAuthSocketTest.Store(nil) })
+
+	for _, protocol := range []struct {
+		name       string
+		capability uint32
+		plugin     []byte
+	}{
+		{name: "legacy", capability: mysql.ClientProtocol41},
+		{name: "empty_plugin", capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth, plugin: []byte{0}},
+		{name: "omitted_plugin", capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth},
+		{name: "native_plugin", capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth, plugin: append([]byte(mysql.AuthNativePassword), 0)},
+	} {
+		t.Run(protocol.name, func(t *testing.T) {
+			for _, testCase := range []struct {
+				name   string
+				user   string
+				auth   string
+				unix   bool
+				osUser string
+				denied bool
+			}{
+				{name: "tcp_forged_username", user: "socket_user", auth: "socket_user", denied: true},
+				{name: "tcp_empty_auth", user: "socket_user", denied: true},
+				{name: "tcp_forged_mapping", user: "socket_mapped", auth: "socket_os_user", denied: true},
+				{name: "unix_forged_username", user: "socket_user", auth: "socket_user", unix: true, osUser: "other_os_user", denied: true},
+				{name: "unix_empty_auth", user: "socket_user", unix: true, osUser: "other_os_user", denied: true},
+				{name: "unix_forged_mapping", user: "socket_mapped", auth: "socket_os_user", unix: true, osUser: "other_os_user", denied: true},
+				{name: "unix_matching_username", user: "socket_user", auth: "untrusted_client_data", unix: true, osUser: "socket_user"},
+				{name: "unix_matching_mapping", user: "socket_mapped", unix: true, osUser: "socket_os_user"},
+			} {
+				t.Run(testCase.name, func(t *testing.T) {
+					mockOSUserForAuthSocketTest.Store(&testCase.osUser)
+					cc := &clientConn{
+						connectionID:  1,
+						alloc:         arena.NewAllocator(1024),
+						chunkAlloc:    chunk.NewAllocator(),
+						peerHost:      "localhost",
+						collation:     mysql.DefaultCollationID,
+						capability:    protocol.capability,
+						pkt:           packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+						server:        srv,
+						user:          "low_priv",
+						dbname:        "test",
+						authPlugin:    mysql.AuthNativePassword,
+						isUnixSocket:  testCase.unix,
+						socketCredUID: uint32(os.Getuid()),
+					}
+					se, err := session.CreateSession4Test(store)
+					require.NoError(t, err)
+					require.NoError(t, se.Auth(&auth.UserIdentity{Username: "low_priv", Hostname: "localhost"}, nil, nil, nil))
+					oldCtx := &TiDBContext{Session: se, stmts: make(map[int]*TiDBStatement)}
+					cc.SetCtx(oldCtx)
+					defer func() { require.NoError(t, cc.getCtx().Close()) }()
+
+					data := append([]byte(testCase.user), 0, byte(len(testCase.auth)))
+					data = append(data, testCase.auth...)
+					data = append(data, 0, 0, 0) // empty database and two-byte character set
+					data = append(data, protocol.plugin...)
+					err = cc.handleChangeUser(context.Background(), data)
+					if testCase.denied {
+						require.ErrorContains(t, err, "Access denied")
+						require.Same(t, oldCtx, cc.getCtx())
+						require.Equal(t, "low_priv", cc.user)
+						require.Equal(t, "test", cc.dbname)
+						require.Equal(t, mysql.AuthNativePassword, cc.authPlugin)
+						require.Equal(t, "low_priv", cc.ctx.GetSessionVars().User.Username)
+						testkit.NewTestKitWithSession(t, store, cc.ctx.Session).
+							MustQuery("SELECT CURRENT_USER()").Check(testkit.Rows("low_priv@%"))
+						return
+					}
+					require.NoError(t, err)
+					require.Equal(t, testCase.user, cc.ctx.GetSessionVars().User.Username)
+					require.Equal(t, mysql.AuthSocket, cc.ctx.GetSessionVars().User.AuthPlugin)
+				})
+			}
+		})
+	}
+}
+
 func TestChangeUserAuthFailureRestoresOldSession(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
