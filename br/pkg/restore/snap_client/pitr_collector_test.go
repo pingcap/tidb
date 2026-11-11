@@ -400,6 +400,35 @@ func TestReopenWithNothingLeftToIngest(t *testing.T) {
 	require.True(t, groups[0].GroupFinished())
 }
 
+func TestRetryAfterCommitAddsNothing(t *testing.T) {
+	for _, reingest := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reingest=%v", reingest), func(t *testing.T) {
+			coll := newPiTRCollForTest(t)
+			batch := restore.BatchBackupFileSet{backupFileSet(withFile(nameFile("foo.txt")), withRewriteRule(remap(1, 10)))}
+
+			complete := coll.MustStartRestoreBatch(batch)
+			require.NoError(t, complete())
+			coll.MarkSuccess()
+			coll.Done()
+
+			coll.Reopen()
+			if reingest {
+				if complete := coll.MustStartRestoreBatch(batch); complete != nil {
+					require.NoError(t, complete())
+				}
+			}
+			coll.MarkSuccess()
+			coll.Done()
+
+			groups, err := coll.IngestedSSTGroups()
+			require.NoError(t, err)
+			require.Len(t, groups, 1)
+			require.True(t, groups[0].GroupFinished())
+			require.Len(t, coll.ExtFullBkups(), 1)
+		})
+	}
+}
+
 type metaWriteFailingOnceStorage struct {
 	storeapi.Storage
 	failed atomic.Bool

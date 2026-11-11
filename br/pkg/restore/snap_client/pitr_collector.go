@@ -1,6 +1,7 @@
 package snapclient
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"path/filepath"
@@ -164,6 +165,9 @@ type pitrCollector struct {
 	putMigOnce          sync.Once
 	writerRoutine       persisterHandle
 	concControl         *util.WorkerPool
+	// committedByEarlierRun is set by prepareMig when an earlier run of this
+	// restore has already committed, so this run must not add anything.
+	committedByEarlierRun bool
 
 	// Delegates.
 
@@ -211,6 +215,9 @@ func (c *pitrCollector) close() error {
 	if err != nil {
 		return errors.Annotate(err, "failed to commit pitrCollector")
 	}
+	if c.committedByEarlierRun {
+		return nil
+	}
 	log.Info("Log backup SSTs are committed.",
 		zap.Uint64("commitTS", commitTS), zap.String("committedTo", c.outputPath()))
 
@@ -241,6 +248,9 @@ func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBacku
 
 	if err := c.prepareMigIfNeeded(ctx); err != nil {
 		return nil, err
+	}
+	if c.committedByEarlierRun {
+		return nil, nil
 	}
 
 	begin := time.Now()
@@ -419,6 +429,17 @@ func (c *pitrCollector) prepareMig(ctx context.Context) error {
 
 	est := stream.MigrationExtension(c.taskStorage).WithOperationContext(c.operationContext)
 
+	committed, err := c.isCommittedByEarlierRun(ctx, est)
+	if err != nil {
+		return err
+	}
+	if committed {
+		log.Info("An earlier run of this restore has committed its SSTs to the log backup, this run adds nothing.",
+			zap.Stringer("uuid", c.restoreUUID))
+		c.committedByEarlierRun = true
+		return nil
+	}
+
 	c.doWithMetaLock(func() {
 		c.resetCommitting()
 	})
@@ -431,11 +452,40 @@ func (c *pitrCollector) prepareMig(ctx context.Context) error {
 	m := stream.NewMigration()
 	m.IngestedSstPaths = append(m.IngestedSstPaths, c.metaPath())
 
-	_, err := est.AppendMigration(ctx, m)
+	_, err = est.AppendMigration(ctx, m)
 	if err != nil {
 		return errors.Annotatef(err, "failed to add the extra backup at path %s", c.metaPath())
 	}
 	return nil
+}
+
+// isCommittedByEarlierRun tells whether a migration already refers to a finished
+// metadata of this restore. A retry from the checkpoint ingests nothing that
+// group lacks, and any metadata of the restore after the finished one makes
+// loading the ingested SSTs fail.
+func (c *pitrCollector) isCommittedByEarlierRun(ctx context.Context, est stream.MigrationExt) (bool, error) {
+	migs, err := est.Load(ctx)
+	if err != nil {
+		return false, errors.Annotate(err, "failed to load the migrations")
+	}
+	for _, mig := range migs.ListAll() {
+		for _, path := range mig.IngestedSstPaths {
+			content, err := c.taskStorage.ReadFile(ctx, path)
+			if err != nil {
+				log.Warn("Failed to read an extra backup meta, skipping it.", zap.String("path", path), logutil.ShortError(err))
+				continue
+			}
+			var meta pb.IngestedSSTs
+			if err := meta.Unmarshal(content); err != nil {
+				log.Warn("Failed to decode an extra backup meta, skipping it.", zap.String("path", path), logutil.ShortError(err))
+				continue
+			}
+			if meta.Finished && bytes.Equal(meta.BackupUuid, c.restoreUUID[:]) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func (c *pitrCollector) prepareMigIfNeeded(ctx context.Context) (err error) {
@@ -451,6 +501,9 @@ func (c *pitrCollector) commit(ctx context.Context) (uint64, error) {
 	// marks the SSTs ingested by the earlier runs of the same restore as usable.
 	if err := c.prepareMigIfNeeded(ctx); err != nil {
 		return 0, err
+	}
+	if c.committedByEarlierRun {
+		return 0, nil
 	}
 	c.ingestedSSTMeta.msg.Finished = true
 	ts, err := c.tso(ctx)
