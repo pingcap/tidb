@@ -763,6 +763,7 @@ pub fn cluster_session_stack(
     factory.install_bdr_role_store(
         Arc::new(authority.transaction_opener()),
         TRANSACTION_RPC_TIMEOUT,
+        Arc::clone(&ddl_session_pool) as _,
     );
     factory.start_ru_stats_writer(
         authority.tikv_store().clone(),

@@ -829,7 +829,11 @@ pub fn unistore_cluster_session_stack_from(
     .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
     factory.attach_login_storage(&users);
     let stack_opener = opener.clone();
-    factory.install_bdr_role_store(Arc::new(opener), IN_PROCESS_TIMEOUT);
+    factory.install_bdr_role_store(
+        Arc::new(opener),
+        IN_PROCESS_TIMEOUT,
+        Arc::clone(&ddl_session_pool) as _,
+    );
     factory.load_signing_cert_loop(
         &config.global_config.security.session_token_signing_cert,
         &config.global_config.security.session_token_signing_key,

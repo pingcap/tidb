@@ -2060,20 +2060,37 @@ pub(super) fn rollingback_add_index(
     })
 }
 
-/// Go `getDDLReorgHandle`: the job's `mysql.tidb_ddl_reorg` row.
-pub(super) fn get_ddl_reorg_handle<S: MetaSnapshot>(
-    snapshot: &mut S,
+/// Go `getDDLReorgHandle`: the job's `mysql.tidb_ddl_reorg` row, selected on
+/// the step's session; a step without one reads the row off its snapshot.
+pub(super) fn get_ddl_reorg_handle(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<ReorgHandle, DdlPlanError> {
-    let table =
-        crate::ddl_reorg_table::DdlReorgTable::locate(catalog).map_err(DdlPlanError::Encode)?;
-    table
-        .load(snapshot, active.job.id)
-        .map_err(DdlPlanError::Encode)?
-        .into_iter()
-        .next()
-        .map(|row| row.handle)
+    let sql = format!(
+        "select ele_id, ele_type, start_key, end_key, physical_id, reorg_meta from mysql.tidb_ddl_reorg where job_id = {}",
+        active.job.id
+    );
+    let handle = match txn.execute(&sql, &[]) {
+        Some(rows) => rows
+            .map_err(DdlPlanError::from_mysql_error)?
+            .first()
+            .map(|row| ReorgHandle {
+                element_id: row[0].get_int64(),
+                element_type: row[1].go_bytes().to_vec(),
+                start_key: row[2].go_bytes().to_vec(),
+                end_key: row[3].go_bytes().to_vec(),
+                physical_id: row[4].get_int64(),
+            }),
+        None => crate::ddl_reorg_table::DdlReorgTable::locate(catalog)
+            .map_err(DdlPlanError::Encode)?
+            .load(txn, active.job.id)
+            .map_err(DdlPlanError::Encode)?
+            .into_iter()
+            .next()
+            .map(|row| row.handle),
+    };
+    handle
         .ok_or_else(|| {
             // Go `meta.ErrDDLReorgElementNotExist`.
             DdlPlanError::Encode(format!("DDL job {} has no reorg handle", active.job.id))

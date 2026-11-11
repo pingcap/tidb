@@ -27498,7 +27498,8 @@ fn a_job_waiting_on_metadata_lock_does_not_block_other_tables_ddl_as_go() {
 /// mysql.tidb_ddl_job where job_id >= %d and type = %d` (type 62) and refuses
 /// every submission with "Can't add ddl job, have flashback cluster job";
 /// `SwitchMDL` is `select 1 from mysql.tidb_ddl_job` and answers "please
-/// wait for all jobs done". A queued job's `type` column stands for a
+/// wait for all jobs done"; ADMIN SHOW DDL JOBS and ADMIN SHOW DDL select the
+/// running jobs the same way (`getJobsBySQL`). A queued job's `type` column stands for a
 /// flashback job here; the worker runs the job from `job_meta`.
 #[test]
 fn ddl_admission_and_switch_mdl_read_the_job_table_on_a_pooled_session_as_go() {
@@ -27529,6 +27530,17 @@ fn ddl_admission_and_switch_mdl_read_the_job_table_on_a_pooled_session_as_go() {
         .map(|_| ())
         .unwrap_err();
     assert_eq!(error.message, "please wait for all jobs done");
+    // Go `GetAllDDLJobs` (`select job_meta from mysql.tidb_ddl_job where 1
+    // order by job_id`) and `get2JobsFromTable` (`not reorg order by job_id
+    // limit 1`).
+    let jobs = displayed(rows(&mut probe, "admin show ddl jobs"));
+    let queued = jobs
+        .iter()
+        .find(|job| job[2] == "fb1" && job[3] == "add column")
+        .expect("ADMIN SHOW DDL JOBS lists the waiting ALTER");
+    assert_eq!(queued[11], "running");
+    let info = displayed(rows(&mut probe, "admin show ddl"));
+    assert!(info[0][3].contains("Type:add column"), "{}", info[0][3]);
     let job_type = displayed(rows(&mut probe, "select type from mysql.tidb_ddl_job"));
     rows(&mut probe, "update mysql.tidb_ddl_job set type = 62");
     let error = probe

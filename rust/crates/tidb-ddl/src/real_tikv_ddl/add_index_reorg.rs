@@ -486,6 +486,43 @@ fn reorg_runnable(
     })
 }
 
+/// Go `sysTblMgr.GetJobByID`: the job as `mysql.tidb_ddl_job` has it now,
+/// selected on a session of the DDL's pool; a pool no node has bound reads
+/// the row off a snapshot.
+fn latest_job<S>(
+    opener: &Arc<RealOptimisticTransactionOpener<S>>,
+    timeout: Duration,
+    sess_pool: Option<&dyn tidb_ddl_build::session_pool::DdlSessionPool>,
+    tables: &ReorgTables,
+    job_id: i64,
+) -> Result<Option<tidb_model::Job>, ClusterDdlError>
+where
+    S: StoreClient,
+{
+    match sess_pool.and_then(|sess_pool| sess_pool.sess_pool()) {
+        Some(pool) => match tidb_ddl_systable::Manager::get_job_by_id(
+            &tidb_ddl_systable::SystemTableManager::new(pool),
+            job_id,
+        ) {
+            Ok(job) => Ok(job.job.map(|job| job.read().clone())),
+            Err(tidb_ddl_systable::SystemTableManagerError::NotFound) => Ok(None),
+            Err(error) => Err(ClusterDdlError::Backfill(error.to_string())),
+        },
+        None => reorg_transaction(
+            opener,
+            timeout,
+            &crate::job_ctx::internal_ddl_source(),
+            |meta, _, _, _| {
+                let job = tables
+                    .jobs
+                    .load_by_id(meta, job_id)
+                    .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?;
+                Ok((job.map(|active| active.job), Vec::new()))
+            },
+        ),
+    }
+}
+
 /// Go `runReorgJob` from the persisted handle: every physical table from
 /// the handle's on, each in batches of `batch_size` rows (or temporary
 /// entries, for each index in turn while merging).
@@ -581,23 +618,15 @@ where
             };
             // Go `reorgInfo.UpdateConfigFromSysTbl`.
             let reload_config = || {
-                reorg_transaction(opener, timeout, &crate::job_ctx::internal_ddl_source(), |meta, _, _, _| {
-                    let job = tables
-                        .jobs
-                        .load_by_id(meta, reorg.job_id)
-                        .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?;
-                    Ok((
-                        job.filter(|active| {
-                            active.job.state == JobState::RUNNING && active.job.is_alterable()
-                        })
-                        .map(|active| {
+                latest_job(opener, timeout, sess_pool, tables, reorg.job_id)
+                .map(|job| {
+                    job.filter(|job| job.state == JobState::RUNNING && job.is_alterable())
+                        .map(|job| {
                             (
-                                crate::cluster_ddl::add_index::job_concurrency(&active.job),
-                                crate::cluster_ddl::add_index::job_batch_size(&active.job),
+                                crate::cluster_ddl::add_index::job_concurrency(&job),
+                                crate::cluster_ddl::add_index::job_batch_size(&job),
                             )
-                        }),
-                        Vec::new(),
-                    ))
+                        })
                 })
                 .inspect_err(|error| {
                     tidb_ddl_logutil::ddl_logger().warn(

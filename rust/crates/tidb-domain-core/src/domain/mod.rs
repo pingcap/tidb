@@ -1610,6 +1610,7 @@ impl Domain {
         &self,
         opener: Arc<tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>>,
         timeout: Duration,
+        ddl_session_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
     ) where
         S: tidb_store_driver_txn::transaction::StoreClient + 'static,
     {
@@ -1621,7 +1622,7 @@ impl Domain {
             )));
         // Go reads the DDL jobs through the same meta store.
         let _ = self.ddl_job_history_store.set(Arc::new(
-            ddl_job_history_store::ClusterDdlJobHistoryStore::new(opener, timeout),
+            ddl_job_history_store::ClusterDdlJobHistoryStore::new(opener, timeout, ddl_session_pool),
         ));
     }
 

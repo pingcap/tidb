@@ -44,6 +44,49 @@ pub fn get_2_jobs_from_table(jobs: &[tidb_model::Job]) -> Vec<tidb_model::Job> {
     general.into_iter().chain(reorg).cloned().collect()
 }
 
+/// Go `getJobsBySQL`: the jobs of `mysql.tidb_ddl_job` matching
+/// `condition`, selected on `se`.
+///
+/// # Errors
+///
+/// The statement's error, or a job that does not decode.
+pub fn get_jobs_by_sql(
+    se: &tidb_ddl_systable::DdlSession,
+    condition: &str,
+) -> Result<Vec<tidb_model::Job>, String> {
+    let rows = se
+        .execute(
+            &tidb_sqlexec::BackgroundContext,
+            &format!("select job_meta from mysql.tidb_ddl_job where {condition}"),
+            "get_job",
+            &[],
+        )
+        .map_err(|error| error.to_string())?
+        .unwrap_or_default();
+    rows.iter()
+        .map(|row| {
+            let mut job = tidb_model::Job::default();
+            job.decode(row[0].go_bytes())
+                .map_err(|error| error.to_string())?;
+            Ok(job)
+        })
+        .collect()
+}
+
+/// Runs `read` on a session of the DDL's pool (Go `sess.NewSession` over a
+/// pooled context); `None` when no node has bound the pool.
+pub fn with_pool_session<T>(
+    sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    read: impl FnOnce(&tidb_ddl_systable::DdlSession) -> Result<T, String>,
+) -> Option<Result<T, String>> {
+    let pool = sess_pool.sess_pool()?;
+    Some(pool.get().map_err(|error| error.to_string()).and_then(|sess_ctx| {
+        let result = read(&tidb_ddl_session::Session::new(std::sync::Arc::clone(&sess_ctx)));
+        pool.put(sess_ctx);
+        result
+    }))
+}
+
 /// Go `ddl.Info`, as `ADMIN SHOW DDL` reads it.
 #[derive(Debug, Default)]
 pub struct DdlInfo {

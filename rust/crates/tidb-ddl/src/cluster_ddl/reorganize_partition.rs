@@ -1049,8 +1049,8 @@ fn phase_scope(info: &TableInfo, phase: PartitionReorgPhase) -> (Vec<i64>, Vec<i
 /// on the adding partitions, then the new global indexes filled from the
 /// untouched partitions, each a resumable reorganization the owner runs
 /// between steps.
-fn do_partition_reorg_work<S: MetaSnapshot>(
-    snapshot: &mut S,
+fn do_partition_reorg_work(
+    snapshot: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     info: &TableInfo,

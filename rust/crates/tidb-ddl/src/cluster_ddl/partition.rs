@@ -499,8 +499,8 @@ fn table_info_with_dropping_partitions(info: &TableInfo) -> TableInfo {
 /// entries of the old partitions' rows go, through a reorganization the
 /// owner runs between steps. `None` once it is done; otherwise the step that
 /// asks for (or records) the next part of it.
-fn clean_global_index_entries_from_dropped_partitions<S: MetaSnapshot>(
-    snapshot: &mut S,
+fn clean_global_index_entries_from_dropped_partitions(
+    snapshot: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     old_info: &TableInfo,

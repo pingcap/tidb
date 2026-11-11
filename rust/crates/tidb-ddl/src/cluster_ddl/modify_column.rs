@@ -3204,8 +3204,8 @@ enum ColumnReorgVisit {
 /// Go `doReorgWorkForModifyColumn`: the row rewrite into the changing
 /// column, in the owner's own batched transactions; the warnings it met are
 /// merged into the job's `ReorgMeta`.
-fn do_reorg_work_for_modify_column<S: MetaSnapshot>(
-    snapshot: &mut S,
+fn do_reorg_work_for_modify_column(
+    snapshot: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &ModifyTarget,
