@@ -48,6 +48,26 @@ The submitter-side wait loop assumes this simplified sequence (see the comment i
 - resumable (persist progress needed for the next step),
 - safe under partial failures (e.g., crash after meta write but before schema sync).
 
+Internal SQL can move earlier metadata writes out of the current statement buffer.
+Steps that use `jobContext.mustRollbackTxnOnError` discard the entire transaction
+on error before persisting either a retry or a cancelled job. This also protects
+TRUNCATE TABLE when masking-policy SQL has already flushed the old table deletion;
+`sess.Reset()` alone only discards the current statement buffer.
+
+Rolling back the DDL transaction does not undo changes a step has made in PD.
+For TRUNCATE TABLE, affinity groups follow two rules:
+
+- Groups that the new metadata replaces stay until the job commits as done.
+  TRUNCATE TABLE deletes the old groups in the done-job branch of
+  `transitOneJobStep`.
+- When a TRUNCATE TABLE job ends cancelled,
+  `deleteAffinityGroupsOfCancelledJob` runs in the
+  cancellation branch of `transitOneJobStep`, before the cancellation commits.
+  It deletes the groups the job may have created, as identified by the job
+  arguments, that the metadata in that transaction does not use. This covers PD
+  committing only part of a creation request, groups left by an earlier attempt,
+  and cancellation by `ADMIN CANCEL DDL JOBS` or the error count limit.
+
 ## Schema version + diff and cluster-wide synchronization
 
 After schema changes, TiDB relies on a global schema version + per-job synchronization to coordinate all nodes.

@@ -112,7 +112,6 @@ type jobContext struct {
 	// statement that can modify state in the DDL transaction. StmtCommit or
 	// StmtRollback can move prior metadata mutations out of the current statement
 	// buffer, so any error after that must discard the whole DDL transaction.
-	// Currently, only MView/MLog DDL paths use this mechanism.
 	mustRollbackTxnOnError bool
 	// DXF propagates add-index reorganization RU v2 through recordDistTaskRU ->
 	// reorgCtx.ru -> reorgFnResult.ru -> stageReorgResultRU -> pendingReorgRU ->
@@ -705,8 +704,11 @@ func (w *worker) transitOneJobStep(
 			if err := w.checkBeforeCommit(); err != nil {
 				return 0, err
 			}
-			if job.Type == model.ActionMViewRefreshOutOfPlaceCutover {
+			switch job.Type {
+			case model.ActionMViewRefreshOutOfPlaceCutover:
 				w.cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx, job)
+			case model.ActionTruncateTable:
+				cleanupTruncateTableAffinityGroupsAfterCommit(jobCtx, job)
 			}
 			job.State = model.JobStateSynced
 		}
@@ -756,18 +758,14 @@ func (w *worker) transitOneJobStep(
 
 	failpoint.InjectCall("afterRunOneJobStep", job)
 
-	if job.IsCancelled() {
-		defer jobCtx.unlockSchemaVersion(jobCtx, job.ID)
-		w.sess.Reset()
-		return 0, w.handleJobDone(jobCtx, job)
-	}
-
 	if err = w.checkBeforeCommit(); err != nil {
 		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
 	}
 
-	if runJobErr != nil {
+	// countForError consumes errors for cancelled jobs, so cancellation must
+	// also trigger a full rollback when internal SQL has flushed step writes.
+	if runJobErr != nil || job.IsCancelled() {
 		if jobCtx.mustRollbackTxnOnError {
 			// Internal SQL can commit or roll back its own statement buffer.
 			// Discard all mutations from this job step, including ones made while
@@ -788,7 +786,7 @@ func (w *worker) transitOneJobStep(
 			}
 			jobCtx.metaMut = meta.NewMutator(txn)
 			schemaVer = 0
-		} else if !job.IsRollingback() && !job.IsRollbackDone() {
+		} else if !job.IsCancelled() && !job.IsRollingback() && !job.IsRollbackDone() {
 			// If the running job meets an error and the job state is rolling back,
 			// the rollback path may have intentionally updated table info and the
 			// schema version. Keep those mutations unless the error explicitly
@@ -798,6 +796,17 @@ func (w *worker) transitOneJobStep(
 			// Result in the retry duration is up to 2 * lease.
 			schemaVer = 0
 		}
+	}
+
+	if job.IsCancelled() {
+		defer jobCtx.unlockSchemaVersion(jobCtx, job.ID)
+		// Internal SQL may have flushed metadata into the transaction. Finish
+		// cancellation only after the full rollback above has discarded it.
+		w.sess.Reset()
+		// Delete PD groups before the cancellation commits. If the commit fails,
+		// the job runs again and repeats this idempotent cleanup.
+		deleteAffinityGroupsOfCancelledJob(jobCtx, job)
+		return 0, w.handleJobDone(jobCtx, job)
 	}
 
 	err = w.registerMDLInfo(job, schemaVer)
