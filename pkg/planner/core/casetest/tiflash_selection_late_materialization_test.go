@@ -45,6 +45,13 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 	tk.MustExec("set @@tidb_opt_enable_late_materialization = on")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 
+	// Equal-selectivity filters must keep the same pushdown choice across optimizations.
+	for range 64 {
+		rows := testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' select a from t1 where a > 1 and b > 1").Rows())
+		plan := strings.Join(rows, "\n")
+		require.Contains(t, plan, "pushed down filter:gt(test.t1.a, 1)")
+	}
+
 	var input []string
 	var output []struct {
 		SQL  string

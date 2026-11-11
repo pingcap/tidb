@@ -108,6 +108,8 @@ func transformColumnsToCode(cols []*expression.Column, totalColumnCount int) str
 func groupByColumnsSortBySelectivity(sctx base.PlanContext, conds []expression.Expression, physicalTableScan *PhysicalTableScan) []expressionGroup {
 	// Create a map to store the groupMap of conditions keyed by the columns
 	groupMap := make(map[string][]expression.Expression)
+	// Preserve first occurrence order so ties in the stable sort do not depend on map iteration.
+	var groupOrder []string
 
 	// Iterate through the conditions and group them by columns
 	for _, cond := range conds {
@@ -131,12 +133,16 @@ func groupByColumnsSortBySelectivity(sctx base.PlanContext, conds []expression.E
 			// So we skip it to reduce the cost of calculating the selectivity.
 			continue
 		}
+		if _, ok := groupMap[code]; !ok {
+			groupOrder = append(groupOrder, code)
+		}
 		groupMap[code] = append(groupMap[code], cond)
 	}
 
 	// Estimate the selectivity of each group and check if it is larger than the selectivityThreshold
 	var exprGroups []expressionGroup
-	for _, group := range groupMap {
+	for _, code := range groupOrder {
+		group := groupMap[code]
 		selectivity, _, err := cardinality.Selectivity(sctx, physicalTableScan.tblColHists, group, nil)
 		if err != nil {
 			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
