@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -191,4 +192,41 @@ func TestCheckpointStorageLogRedaction(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(logged), "context-value")
 	require.Contains(t, cfg.CheckpointStorage, "context-value")
+}
+
+func TestHasCheckpointPersistedChecksSnapshotCheckpointOfTheTask(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	checkpointStorage, err := objstore.NewLocalStorage(base)
+	require.NoError(t, err)
+	snapshotManagerOf := func(restoreID uint64) func(context.Context) (checkpoint.SnapshotMetaManagerT, error) {
+		return func(context.Context) (checkpoint.SnapshotMetaManagerT, error) {
+			return checkpoint.NewSnapshotStorageMetaManager(checkpointStorage, nil, 1, "snapshot", restoreID), nil
+		}
+	}
+	snapshotManager, err := snapshotManagerOf(1)(ctx)
+	require.NoError(t, err)
+	require.NoError(t, snapshotManager.SaveCheckpointMetadata(ctx, &checkpoint.CheckpointMetadataForSnapshotRestore{}))
+
+	logOnly := &RestoreConfig{CheckpointStorage: "local://" + base}
+	require.NoError(t, logOnly.newStorageCheckpointMetaManagerPITR(ctx, 1, 1))
+	require.Nil(t, logOnly.snapshotCheckpointMetaManager)
+
+	persisted, err := hasCheckpointPersisted(ctx, logOnly, snapshotManagerOf(1))
+	require.NoError(t, err)
+	require.True(t, persisted)
+
+	persisted, err = hasCheckpointPersisted(ctx, logOnly, snapshotManagerOf(2))
+	require.NoError(t, err)
+	require.False(t, persisted)
+
+	withFullBackup := &RestoreConfig{CheckpointStorage: "local://" + base}
+	withFullBackup.FullBackupStorage = "local://" + t.TempDir()
+	require.NoError(t, withFullBackup.newStorageCheckpointMetaManagerPITR(ctx, 1, 2))
+	persisted, err = hasCheckpointPersisted(ctx, withFullBackup, func(context.Context) (checkpoint.SnapshotMetaManagerT, error) {
+		t.Fatal("the snapshot checkpoint meta manager of the run must be used")
+		return nil, nil
+	})
+	require.NoError(t, err)
+	require.False(t, persisted)
 }
