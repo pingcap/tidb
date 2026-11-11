@@ -117,6 +117,8 @@ func TestImportStepExecutorCleanupAllLocalEnginesOnRetry(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("next-gen doesn't support local sort, skip this test")
 	}
+	t.Cleanup(tidbconfig.RestoreFunc())
+	tidbconfig.UpdateGlobal(func(c *tidbconfig.Config) { c.TempDir = t.TempDir() })
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -178,6 +180,7 @@ func TestImportStepExecutorCleanupAllLocalEnginesOnRetry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	require.NoError(t, stepExecutor.Init(ctx))
+	t.Cleanup(func() { require.NoError(t, stepExecutor.Cleanup(ctx)) })
 
 	subtaskMetaBytes, err := json.Marshal(importinto.ImportStepMeta{
 		ID: 1,

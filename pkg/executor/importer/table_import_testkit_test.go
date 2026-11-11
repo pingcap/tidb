@@ -48,12 +48,56 @@ func checkImportDirEmpty(t *testing.T) {
 	}
 }
 
-func TestImportFromSelectCleanup(t *testing.T) {
+<<<<<<< HEAD
+=======
+func TestStartDiskQuotaCheck(t *testing.T) {
+	t.Cleanup(tidb.RestoreFunc())
+	tidb.UpdateGlobal(func(c *tidb.Config) { c.TempDir = t.TempDir() })
+
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tidbCfg := tidb.GetGlobalConfig()
-	tidbCfg.TempDir = t.TempDir()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	dbInfo, ok := do.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	table, err := do.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	plan, err := importer.NewImportPlan(ctx, tk.Session(), plannercore.ImportInto{
+		Table: &resolve.TableNameW{
+			TableName: &ast.TableName{
+				Name: ast.NewCIStr("t"),
+			},
+			DBInfo: &model.DBInfo{
+				Name: ast.NewCIStr("test"),
+				ID:   dbInfo.ID,
+			},
+		},
+		SelectPlan: &physicalop.PhysicalSelection{},
+	}.Init(tk.Session().GetPlanCtx()), table)
+	require.NoError(t, err)
+	controller, err := importer.NewLoadDataController(plan, table, &importer.ASTArgs{})
+	require.NoError(t, err)
+	ti, err := importer.NewTableImporterForTest(ctx, controller, "test-disk-quota", store)
+	require.NoError(t, err)
+	defer ti.Backend().CloseEngineMgr()
+
+	stop := ti.StartDiskQuotaCheck(ctx)
+	// stop should cancel the goroutine and return without hanging.
+	stop()
+}
+
+>>>>>>> 26012dd5683 (dxf, executor: isolate IMPORT INTO tests and clean up step executors (#73000))
+func TestImportFromSelectCleanup(t *testing.T) {
+	t.Cleanup(tidb.RestoreFunc())
+	tidb.UpdateGlobal(func(c *tidb.Config) { c.TempDir = t.TempDir() })
+
+	ctx := context.Background()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 	checkImportDirEmpty(t)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/mockImportFromSelectErr", `return(true)`))
