@@ -63,8 +63,8 @@ type TimeCostRecorderForTest interface {
 // 2. If the mode is DumpAll, then return true.
 // 3. If the stats delta haven't been dumped in the past hour, then return true.
 // 4. If the table stats is pseudo or empty or `Modify Count / Table Count` exceeds the threshold.
-func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bool, id int64, item variable.TableDelta, currentTime time.Time) bool {
-	tableItem, ok := s.statsHandle.TableItemByID(is, id)
+func (s *statsUsageImpl) needDumpStatsDelta(snapshotTableInfoGetter *utilstats.SnapshotTableInfoGetter, dumpAll bool, id int64, item variable.TableDelta, currentTime time.Time) bool {
+	tableItem, ok := snapshotTableInfoGetter.TableItemByID(id)
 	if !ok {
 		return false
 	}
@@ -79,8 +79,10 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 		// Dump the stats to kv at least once per hour to make sure the stats can be updated when there are only few modifications.
 		return true
 	}
-	statsTbl := s.statsHandle.GetPartitionStatsByID(is, id)
-	if statsTbl == nil || statsTbl.Pseudo || statsTbl.RealtimeCount == 0 || float64(item.Count)/float64(statsTbl.RealtimeCount) > DumpStatsDeltaRatio {
+	// use GetNonPseudoPhysicalTableStats to avoid creating pseudo tables and dropping instantly
+	statsTable, found := s.statsHandle.GetNonPseudoPhysicalTableStats(id)
+	if !found || statsTable == nil || statsTable.RealtimeCount == 0 ||
+		float64(item.Count)/float64(statsTable.RealtimeCount) > DumpStatsDeltaRatio {
 		// Dump the stats when there are many modifications.
 		return true
 	}
@@ -132,6 +134,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 		batchStart := time.Now()
 		err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+			snapshotTableInfoGetter := utilstats.NewSnapshotTableInfoGetter(is)
 			batchUpdates = make([]*storage.DeltaUpdate, 0, len(batchTableIDs))
 			// Collect all updates in the batch.
 			for _, id := range batchTableIDs {
@@ -141,7 +144,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 					item.InitTime = batchStart
 					deltaMap[id] = item
 				}
-				needDump := s.needDumpStatsDelta(is, dumpAll, id, item, batchStart)
+				needDump := s.needDumpStatsDelta(snapshotTableInfoGetter, dumpAll, id, item, batchStart)
 				if !needDump {
 					continue
 				}
@@ -159,7 +162,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 
 			// Process all updates in the batch with a single transaction.
 			// Note: batchUpdates may be modified in dumpStatsDeltaToKV. (e.g. sorting, updating IsLocked)
-			startTs, updated, err := s.dumpStatsDeltaToKV(is, sctx, batchUpdates)
+			startTs, updated, err := s.dumpStatsDeltaToKV(snapshotTableInfoGetter, sctx, batchUpdates)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -203,6 +206,29 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 				unlockedTableIDs = append(unlockedTableIDs, update.TableID)
 			}
 		}
+		// The batch wrote its start_ts as the version. If it committed too late, the stats cache on other
+		// TiDB nodes may have moved past that version, so write a newer one, as handleSlowStatsSaving does.
+		if batchDur := time.Since(batchStart); len(unlockedTableIDs) > 0 &&
+			storage.IsStatsMetaWriteTooSlow(s.statsHandle.Lease(), batchDur) {
+			updateStart := time.Now()
+			newVersion, err := s.updateStatsMetaVerForSlowDump(unlockedTableIDs)
+			updateDur := time.Since(updateStart)
+			if err != nil {
+				statslogutil.StatsLogger().Warn("Failed to update stats meta version for slow stats delta dump, "+
+					"the stats cache on other TiDB nodes may miss the delta",
+					zap.Int("tableCount", len(unlockedTableIDs)),
+					zap.Duration("dumpDuration", batchDur),
+					zap.Duration("updateVersionDuration", updateDur),
+					zap.Error(err))
+			} else {
+				statsVersion = newVersion
+				statslogutil.StatsSampleLogger().Info("Updated stats meta version for slow stats delta dump",
+					zap.Int("tableCount", len(unlockedTableIDs)),
+					zap.Duration("dumpDuration", batchDur),
+					zap.Duration("updateVersionDuration", updateDur),
+					zap.Uint64("statsVersion", statsVersion))
+			}
+		}
 		s.statsHandle.RecordHistoricalStatsMeta(statsVersion, "flush stats", false, unlockedTableIDs...)
 		// Log a warning if recording historical stats meta takes too long, as it can be slow for large table counts
 		if time.Since(startRecordHistoricalStatsMeta) > time.Minute*15 {
@@ -215,6 +241,15 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 	return nil
 }
 
+// updateStatsMetaVerForSlowDump updates the version of the dumped tables to a newer TS.
+func (s *statsUsageImpl) updateStatsMetaVerForSlowDump(tableIDs []int64) (statsVersion uint64, err error) {
+	err = utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		statsVersion, err = storage.UpdateStatsMetaVer(utilstats.StatsCtx, sctx, tableIDs...)
+		return err
+	}, utilstats.FlagWrapTxn)
+	return statsVersion, errors.Trace(err)
+}
+
 // dumpStatsDeltaToKV processes and writes multiple table stats count deltas to KV storage in batches.
 // Note: The `batchUpdates` parameter may be modified during the execution of this function.
 //
@@ -225,7 +260,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 // 2. Stashes lock information:
 //   - Records lock information for each table or partition.
 func (s *statsUsageImpl) dumpStatsDeltaToKV(
-	is infoschema.InfoSchema,
+	snapshotTableInfoGetter *utilstats.SnapshotTableInfoGetter,
 	sctx sessionctx.Context,
 	updates []*storage.DeltaUpdate,
 ) (statsVersion uint64, updated []*storage.DeltaUpdate, err error) {
@@ -248,7 +283,7 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 		// Add psychical table ID.
 		allTableIDs = append(allTableIDs, update.TableID)
 		// Add parent table ID if it's a partition table.
-		if tblID, ok := is.TableIDByPartitionID(update.TableID); ok {
+		if tblID, ok := snapshotTableInfoGetter.ParentTableID(update.TableID); ok {
 			allTableIDs = append(allTableIDs, tblID)
 		}
 	}
@@ -266,7 +301,7 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 			continue
 		}
 
-		tableID, ok := is.TableIDByPartitionID(update.TableID)
+		tableID, ok := snapshotTableInfoGetter.ParentTableID(update.TableID)
 		if ok { // It's a partition table.
 			isTableLocked := false
 			isPartitionLocked := false
