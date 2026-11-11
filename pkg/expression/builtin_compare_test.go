@@ -105,6 +105,7 @@ func TestCompareTimeColumnWithDatetime(t *testing.T) {
 		require.NoError(t, err)
 		d, err := f.Eval(ctx.GetEvalCtx(), row)
 		require.NoError(t, err)
+		require.False(t, d.IsNull(), test.exprStr)
 		require.Equal(t, test.result, d.GetInt64(), test.exprStr)
 	}
 }
