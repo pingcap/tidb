@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/table"
@@ -41,6 +42,8 @@ const (
 	MLogSourceReplace
 	// MLogSourceLoadData marks rows produced by LOAD DATA statements.
 	MLogSourceLoadData
+	// MLogSourceRefresh marks MV refreshes, whose row mutations represent logical inserts, updates, or deletes.
+	MLogSourceRefresh
 )
 
 // MLogDMLType indicates the logical row change kind written to `_MLOG$_DML_TYPE`.
@@ -280,6 +283,8 @@ func (t *mlogTable) shouldLogUpdate(touched []bool) bool {
 
 func (t *mlogTable) addRecordDMLType(opt *table.AddRecordOpt, hadRemovedConflict bool) MLogDMLType {
 	switch t.sourceStmt {
+	case MLogSourceRefresh:
+		return MLogDMLTypeInsert
 	case MLogSourceUpdate:
 		return MLogDMLTypeUpdate
 	case MLogSourceInsert, MLogSourceReplace, MLogSourceLoadData:
@@ -300,7 +305,7 @@ func (t *mlogTable) updateRecordDMLType() MLogDMLType {
 }
 
 func (t *mlogTable) removeRecordDMLType() MLogDMLType {
-	if t.sourceStmt == MLogSourceDelete {
+	if t.sourceStmt == MLogSourceDelete || t.sourceStmt == MLogSourceRefresh {
 		return MLogDMLTypeDelete
 	}
 	// Under INSERT/UPDATE/REPLACE/LOAD DATA, RemoveRecord is the old side of an update.
@@ -315,6 +320,13 @@ func (t *mlogTable) writeMLogRow(
 	oldNew int64,
 	opts ...table.AddRecordOption,
 ) error {
+	failpoint.Inject("mockMLogWriteError", func(val failpoint.Value) {
+		if msg, ok := val.(string); ok {
+			failpoint.Return(errors.New(msg))
+		}
+		failpoint.Return(errors.New("mock materialized view log write error"))
+	})
+
 	mlogRow := make([]types.Datum, 0, len(t.trackedBaseOffsets)+2)
 	for _, offset := range t.trackedBaseOffsets {
 		if offset < 0 || offset >= len(baseRow) {

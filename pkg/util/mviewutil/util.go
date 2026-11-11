@@ -15,6 +15,7 @@
 package mviewutil
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -22,6 +23,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
+
+// RefreshAdvisoryLockName identifies the lock shared by MV refresh and DDL that
+// must exclude an in-flight refresh of the same MV.
+func RefreshAdvisoryLockName(schemaID, mviewID int64) string {
+	return fmt.Sprintf("mv_refresh_%d_%d", schemaID, mviewID)
+}
 
 // CheckMaterializedViewSelect checks the SELECT clauses that are not supported
 // by materialized views. It is called before the planner builds the SELECT so

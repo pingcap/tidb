@@ -305,12 +305,12 @@ func TestCreateMaterializedViewLogRejectNonBaseObject(t *testing.T) {
 		{"create materialized view log on gt (a)", "gt"},
 		{"create materialized view log on mysql.user (User)", "user"},
 		{"create materialized view log on information_schema.tables (TABLE_SCHEMA)", "tables"},
-		{"create materialized view log on mv (a, cnt)", "mv"},
 	} {
 		err := tk.ExecToErr(testCase.sql)
 		require.Error(t, err, testCase.sql)
 		require.Contains(t, err.Error(), "is not BASE TABLE")
 	}
+	tk.MustExec("create materialized view log on mv (a, cnt)")
 	tk.MustExec("create table t_mlog_base (a int)")
 	tk.MustExec("create materialized view log on t_mlog_base (a)")
 	err := tk.ExecToErr("create materialized view log on `$mlog$t_mlog_base` (a)")

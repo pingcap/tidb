@@ -277,8 +277,8 @@ func TestDropMaterializedViewIfExists(t *testing.T) {
 
 	err = tk.ExecToErr("drop materialized view if exists t_drop_if_exists")
 	require.ErrorContains(t, err, "is not MATERIALIZED VIEW")
-	err = tk.ExecToErr("drop materialized view log if exists on mv_drop_if_exists")
-	require.ErrorContains(t, err, "is not BASE TABLE")
+	tk.MustExec("drop materialized view log if exists on mv_drop_if_exists")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1051 Unknown table 'test.mv_drop_if_exists'"))
 
 	tk.MustExec("drop materialized view if exists mv_drop_if_exists")
 	tk.MustExec("drop materialized view if exists mv_drop_if_exists")
