@@ -2647,13 +2647,22 @@ func TestRebaseAutoIncrementIDForSepAutoIncTables(t *testing.T) {
 	require.Less(t, staleNext, target, "expected stale in-memory allocation before rebase")
 
 	client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, nil)
+	// Routed restores write the counter under the table-level target schema ID
+	// while the parent DBReplace only carries the source schema ID. The rebase
+	// must read the counter from the same place, otherwise it silently skips and
+	// the service keeps handing out already-restored IDs.
 	schemasReplace := &stream.SchemasReplace{
 		DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
-			dbID: {
-				Name: "test",
-				DbID: dbID,
+			dbID + 1000: {
+				Name: "source_db",
+				DbID: dbID + 1000,
 				TableMap: map[stream.UpstreamID]*stream.TableReplace{
-					tableID: {Name: "t", TableID: tableID},
+					tableID: {
+						Name:         "t",
+						TableID:      tableID,
+						TargetDBName: "test",
+						TargetDBID:   dbID,
+					},
 				},
 			},
 		},

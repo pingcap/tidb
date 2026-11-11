@@ -1528,11 +1528,14 @@ func (rc *LogClient) RebaseAutoIncrementIDForSepAutoIncTables(ctx context.Contex
 			if tableReplace.FilteredOut {
 				continue
 			}
-			if err := rc.rebaseAutoIncrementIDForTable(ctx, store, infoSchema, dbReplace.DbID, tableReplace.TableID); err != nil {
+			// The counter key is rewritten with the table-level target schema ID,
+			// so a cross-schema route must read it from there as well.
+			dbID := tableReplace.EffectiveDBID(dbReplace)
+			if err := rc.rebaseAutoIncrementIDForTable(ctx, store, infoSchema, dbID, tableReplace.TableID); err != nil {
 				// Best effort: a single table failing to rebase must not abort the
 				// whole restore, so log and continue.
 				log.Warn("failed to rebase auto-increment allocator after PiTR log replay",
-					zap.Int64("schemaID", dbReplace.DbID),
+					zap.Int64("schemaID", dbID),
 					zap.Int64("tableID", tableReplace.TableID),
 					zap.String("tableName", tableReplace.Name),
 					zap.Error(err))
