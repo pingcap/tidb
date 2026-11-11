@@ -6068,6 +6068,7 @@ impl Executor for TableScanExec {
             && self.remote_materialization.is_none()
             && self.extra_handle_slot.is_none()
             && self.physical_table_id_slot.is_none()
+            && self.extra_commit_ts_slot.is_none()
         {
             if let Some(remote) = self.remote.as_mut() {
                 let target = self.limit.map_or(cap, |limit| {

@@ -617,3 +617,27 @@ fn aggregate_shapes_prune_through_their_arguments() {
     assert_eq!(rows, vec![vec!["3"]]);
     assert_eq!(decoded, BTreeSet::new());
 }
+
+/// An `EXISTS` child keeps no projection (`popExistsSubPlan`), so its reader
+/// emits the whole `DataSource` schema, `_tidb_commit_ts` included, under a
+/// root `Selection`. Go answers 1, 0 and every outer row.
+#[test]
+fn an_exists_child_under_a_root_selection_emits_its_commit_ts_column() {
+    let mut session = Session::new();
+    session
+        .run("create table articles (id int primary key, title varchar(200), n int)")
+        .unwrap();
+    session
+        .run("insert into articles values (1, 'MySQL Tutorial', 1), (2, 'Optimizing MySQL', 2), (3, 'PostgreSQL', 3)")
+        .unwrap();
+    for (sql, want) in [
+        ("select exists (select id from articles where n + sleep(0) > 0)", vec![vec!["1"]]),
+        ("select exists (select id from articles where n + sleep(0) > 5)", vec![vec!["0"]]),
+        (
+            "select id from articles where exists (select title from articles where title ilike '%MySQL%') order by id",
+            vec![vec!["1"], vec!["2"], vec!["3"]],
+        ),
+    ] {
+        assert_eq!(row_text(session.run(sql)), want, "{sql}");
+    }
+}
