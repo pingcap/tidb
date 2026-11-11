@@ -537,3 +537,46 @@ alter schema ro_bypass read only 0;
 drop database ro_bypass;
 drop user 'repl_writer'@'localhost';
 drop user 'normal_user'@'localhost';
+
+# Sequence expressions must check read-only mode at execution, including cached plans.
+create database ro_sequence;
+use ro_sequence;
+create sequence s nocache;
+select nextval(s);
+prepare seq_stmt from 'select nextval(ro_sequence.s)';
+alter database ro_sequence read only = 1;
+-- error 3989
+select nextval(s);
+-- error 3989
+select setval(s, 100);
+-- error 3989
+execute seq_stmt;
+select lastval(s);
+create user 'ro_sequence_writer'@'localhost';
+grant all on ro_sequence.* to 'ro_sequence_writer'@'localhost';
+grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'ro_sequence_writer'@'localhost';
+connect (sequence_writer,localhost,ro_sequence_writer,,ro_sequence);
+connection sequence_writer;
+select nextval(s);
+select setval(s, 100);
+select nextval(s);
+connection default;
+disconnect sequence_writer;
+deallocate prepare seq_stmt;
+alter database ro_sequence read only = 0;
+drop database ro_sequence;
+drop user 'ro_sequence_writer'@'localhost';
+
+# Materialized-view attributes are database metadata writes.
+create database ro_mv;
+use ro_mv;
+set tidb_mview_enable = on;
+create table t(a int not null);
+create materialized view log on t(a);
+create materialized view mv(a, cnt) as select a, count(1) from t group by a;
+alter database ro_mv read only = 1;
+-- error 3989
+alter materialized view mv attributes='mview_alert_warning=5,mview_alert_overdue=10,mview_alert_refresh_failed=yes';
+alter database ro_mv read only = 0;
+drop database ro_mv;
+use test;

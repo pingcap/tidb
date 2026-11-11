@@ -92,6 +92,10 @@ type Manager interface {
 	// MatchUserResourceGroupName matches a user with specified resource group name
 	MatchUserResourceGroupName(exec sqlexec.RestrictedSQLExecutor, resourceGroupName string) (string, bool)
 
+	// GetUserResourceGroup returns the resource group bound to the account, or "" if it has none.
+	// Requires exact match on user name and host name.
+	GetUserResourceGroup(user, host string) string
+
 	// DBIsVisible returns true is the database is visible to current user.
 	DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool
 
@@ -124,6 +128,20 @@ type Manager interface {
 // ReplicaWriterAdminPriv is the dynamic privilege name that allows a session
 // to write to databases that are in read-only mode (e.g. replication threads).
 const ReplicaWriterAdminPriv = "RESTRICTED_REPLICA_WRITER_ADMIN"
+
+// HasExplicitReplicaWriterAdmin reports whether an authenticated session may
+// bypass database read-only checks. SUPER and internal sessions do not imply it.
+func HasExplicitReplicaWriterAdmin(ctx interface {
+	Value(fmt.Stringer) any
+	GetSessionVars() *variable.SessionVars
+}) bool {
+	vars := ctx.GetSessionVars()
+	if vars.User == nil {
+		return false
+	}
+	manager := GetPrivilegeManager(ctx)
+	return manager != nil && manager.HasExplicitlyGrantedDynamicPrivilege(vars.ActiveRoles, ReplicaWriterAdminPriv, false)
+}
 
 const key keyType = 0
 

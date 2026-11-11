@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -396,6 +397,8 @@ func (p *preprocessor) extractSchema(in ast.Node) []ast.CIStr {
 		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.CreateViewStmt:
 		dbNames = append(dbNames, node.ViewName.Schema)
+	case *ast.AlterMaterializedViewStmt:
+		dbNames = append(dbNames, node.ViewName.Schema)
 	case *ast.DropTableStmt:
 		for _, tbl := range node.Tables {
 			dbNames = append(dbNames, tbl.Schema)
@@ -485,14 +488,8 @@ func (p *preprocessor) checkSchemaReadOnly(dbName ast.CIStr) {
 		// Allow replication threads with RESTRICTED_REPLICA_WRITER_ADMIN to bypass.
 		// Gate on User != nil so that internal/unauthenticated sessions (including
 		// mock-store test sessions where SkipWithGrant is true) are still blocked.
-		vars := p.sctx.GetSessionVars()
-		if vars.User != nil {
-			pm := privilege.GetPrivilegeManager(p.sctx)
-			if pm != nil {
-				if pm.HasExplicitlyGrantedDynamicPrivilege(vars.ActiveRoles, privilege.ReplicaWriterAdminPriv, false) {
-					return
-				}
-			}
+		if privilege.HasExplicitReplicaWriterAdmin(p.sctx) {
+			return
 		}
 		p.err = errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(dbName.O))
 	}
@@ -2552,6 +2549,23 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 	}()
 
 	if !sctx.GetSessionVars().TxnCtx.EnableMDL {
+		vars := sctx.GetSessionVars()
+		if vars.SnapshotInfoschema != nil || vars.TxnCtx.IsStaleness || tbl.Meta().TempTableType == model.TempTableLocal {
+			return tbl, nil
+		}
+		// Publish the first access before checking the latest flag. Either the
+		// DDL sees this transaction, or this access sees its published flag.
+		tables := vars.GetRelatedTableForReadOnly()
+		if _, loaded := tables.LoadOrStore(tbl.Meta().ID, dbName); !loaded {
+			dbInfo, exists := is.SchemaByName(dbName)
+			latestIS := sctx.GetLatestISWithoutSessExt()
+			latestDB, latestExists := latestIS.SchemaByName(dbName)
+			if exists && latestExists && dbInfo.ReadOnly != latestDB.ReadOnly {
+				tables.Delete(tbl.Meta().ID)
+				return nil, domain.ErrInfoSchemaChanged.GenWithStack("public schema %s read only state has changed", dbInfo.Name.L)
+			}
+		}
+		failpoint.InjectCall("afterCheckSchemaReadOnlyWithoutMDL", dbName)
 		return tbl, nil
 	}
 	if is.SchemaMetaVersion() == 0 {

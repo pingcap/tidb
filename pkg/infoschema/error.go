@@ -113,5 +113,5 @@ var (
 	// ErrInvalidTableModeSet returns for invalid TableMode conversion.
 	ErrInvalidTableModeSet = dbterror.ClassSchema.NewStd(mysql.ErrInvalidTableModeSet)
 	// ErrSchemaInReadOnlyMode returns when the schema is in read-only mode.
-	ErrSchemaInReadOnlyMode = dbterror.ClassSchema.NewStd(mysql.ErrSchemaInReadOnlyMode)
+	ErrSchemaInReadOnlyMode = dbterror.ErrSchemaInReadOnlyMode
 )

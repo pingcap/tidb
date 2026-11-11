@@ -261,15 +261,7 @@ func (*Insert) buildOnReplaceReferredFKTriggers(ctx base.PlanContext, is infosch
 // RESTRICTED_REPLICA_WRITER_ADMIN and should bypass per-database read-only
 // enforcement on FK cascade writes.
 func skipReadOnlyCheckForReplica(ctx base.PlanContext) bool {
-	vars := ctx.GetSessionVars()
-	if vars.User == nil {
-		return false
-	}
-	pm := privilege.GetPrivilegeManager(ctx)
-	if pm == nil {
-		return false
-	}
-	return pm.HasExplicitlyGrantedDynamicPrivilege(vars.ActiveRoles, privilege.ReplicaWriterAdminPriv, false)
+	return privilege.HasExplicitReplicaWriterAdmin(ctx)
 }
 
 // BuildOnUpdateFKTriggers builds the foreign key triggers for update statement.

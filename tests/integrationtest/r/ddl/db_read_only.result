@@ -522,3 +522,48 @@ alter schema ro_bypass read only 0;
 drop database ro_bypass;
 drop user 'repl_writer'@'localhost';
 drop user 'normal_user'@'localhost';
+create database ro_sequence;
+use ro_sequence;
+create sequence s nocache;
+select nextval(s);
+nextval(s)
+1
+prepare seq_stmt from 'select nextval(ro_sequence.s)';
+alter database ro_sequence read only = 1;
+select nextval(s);
+Error 3989 (HY000): Schema 'ro_sequence' is in read only mode.
+select setval(s, 100);
+Error 3989 (HY000): Schema 'ro_sequence' is in read only mode.
+execute seq_stmt;
+Error 3989 (HY000): Schema 'ro_sequence' is in read only mode.
+select lastval(s);
+lastval(s)
+1
+create user 'ro_sequence_writer'@'localhost';
+grant all on ro_sequence.* to 'ro_sequence_writer'@'localhost';
+grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'ro_sequence_writer'@'localhost';
+select nextval(s);
+nextval(s)
+2
+select setval(s, 100);
+setval(s, 100)
+100
+select nextval(s);
+nextval(s)
+101
+deallocate prepare seq_stmt;
+alter database ro_sequence read only = 0;
+drop database ro_sequence;
+drop user 'ro_sequence_writer'@'localhost';
+create database ro_mv;
+use ro_mv;
+set tidb_mview_enable = on;
+create table t(a int not null);
+create materialized view log on t(a);
+create materialized view mv(a, cnt) as select a, count(1) from t group by a;
+alter database ro_mv read only = 1;
+alter materialized view mv attributes='mview_alert_warning=5,mview_alert_overdue=10,mview_alert_refresh_failed=yes';
+Error 3989 (HY000): Schema 'ro_mv' is in read only mode.
+alter database ro_mv read only = 0;
+drop database ro_mv;
+use test;

@@ -103,6 +103,16 @@ func TestNewSessionVars(t *testing.T) {
 
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.BatchSize))
+
+	// MDL cleanup must not discard the independent read-only tracking set,
+	// while ending the transaction must discard it.
+	vars.GetRelatedTableForReadOnly().Store(int64(1), "test")
+	vars.ClearRelatedTableForMDL()
+	_, tracked := vars.GetRelatedTableForReadOnly().Load(int64(1))
+	require.True(t, tracked)
+	vars.TxnCtx.Cleanup()
+	_, tracked = vars.GetRelatedTableForReadOnly().Load(int64(1))
+	require.False(t, tracked)
 }
 
 func assertFieldsGreaterThanZero(t *testing.T, val reflect.Value) {

@@ -956,7 +956,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			}
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
-				dbName = ast.NewCIStr(currentDB)
+				dbName = hintProcessor.resolveHintDBName(hintProcessor.GetHintOffset(getHintTableQBName(hint), currentLevel),
+					hint.Tables[0].TableName, currentDB)
 			}
 			noIndexLookUpPushDownTables = append(noIndexLookUpPushDownTables, HintedTable{
 				DBName:  dbName,
@@ -965,7 +966,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		case HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown:
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
-				dbName = ast.NewCIStr(currentDB)
+				dbName = hintProcessor.resolveHintDBName(hintProcessor.GetHintOffset(getHintTableQBName(hint), currentLevel),
+					hint.Tables[0].TableName, currentDB)
 			}
 			var hintType ast.IndexHintType
 			var pushDownLookUp bool
@@ -1009,7 +1011,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			}
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
-				dbName = ast.NewCIStr(currentDB)
+				dbName = hintProcessor.resolveHintDBName(hintProcessor.GetHintOffset(getHintTableQBName(hint), currentLevel),
+					hint.Tables[0].TableName, currentDB)
 			}
 			tiflashLMFilters = append(tiflashLMFilters, HintedColumn{
 				DBName:       dbName,
@@ -1027,7 +1030,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		case HintIndexMerge:
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
-				dbName = ast.NewCIStr(currentDB)
+				dbName = hintProcessor.resolveHintDBName(hintProcessor.GetHintOffset(getHintTableQBName(hint), currentLevel),
+					hint.Tables[0].TableName, currentDB)
 			}
 			indexMergeHintList = append(indexMergeHintList, HintedIndex{
 				DBName:     dbName,
@@ -1140,7 +1144,6 @@ func tableNames2HintTableInfo(currentDB, hintName string, hintTables []ast.HintT
 		return nil
 	}
 	hintTableInfos := make([]HintedTable, 0, len(hintTables))
-	defaultDBName := ast.NewCIStr(currentDB)
 	isInapplicable := false
 	for _, hintTable := range hintTables {
 		tableInfo := HintedTable{
@@ -1150,7 +1153,7 @@ func tableNames2HintTableInfo(currentDB, hintName string, hintTables []ast.HintT
 			SelectOffset: p.GetHintOffset(hintTable.QBName, currentOffset),
 		}
 		if tableInfo.DBName.L == "" {
-			tableInfo.DBName = defaultDBName
+			tableInfo.DBName = p.resolveHintDBName(tableInfo.SelectOffset, tableInfo.TblName, currentDB)
 		}
 		switch hintName {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ,

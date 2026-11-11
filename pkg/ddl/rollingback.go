@@ -779,6 +779,12 @@ func rollingBackAlterConstraint(jobCtx *jobContext, job *model.Job) (ver int64, 
 }
 
 func rollbackModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	// The execution path records progress before writing database metadata.
+	// A cancelled queued job must not undo a preceding job's successful change.
+	if job.SchemaState == model.StateNone {
+		job.State = model.JobStateRollbackDone
+		return ver, nil
+	}
 	dbInfo, err := jobCtx.metaMut.GetDatabase(job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)

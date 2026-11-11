@@ -513,11 +513,10 @@ func TestAlterSchemaReadonlyBasic(t *testing.T) {
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("alter database test read only = 1")
 	tk.MustQuery("show create database test").Check(testkit.Rows("test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /* READ ONLY = 1 */"))
-	is := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	v := is.SchemaMetaVersion()
+	v := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion()
 	tk.MustExec("alter database test read only = 1")
 	tk.MustQuery("show create database test").Check(testkit.Rows("test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /* READ ONLY = 1 */"))
-	require.Equal(t, v, is.SchemaMetaVersion())
+	require.Equal(t, v, sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema().SchemaMetaVersion())
 	tk.MustExec("alter database test read only = 0")
 	tk.MustQuery("show create database test").Check(testkit.Rows("test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	// note
@@ -804,7 +803,7 @@ func TestReadWriteDDLNotBlockByTxn(t *testing.T) {
 	tk1.MustExec("begin;use test_db;")
 	tk1.MustExec("select * from t")
 	tk2.MustExec("alter database test_db read only = 0") // won't be blocked
-	tk2.MustQuery("show create database test").Check(testkit.Rows("test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
+	tk2.MustQuery("show create database test_db").Check(testkit.Rows("test_db CREATE DATABASE `test_db` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 }
 
 func TestReadOnlyInMiddleState(t *testing.T) {
@@ -895,22 +894,24 @@ func TestAlterSchemaReadOnlyDDLRollback(t *testing.T) {
 	require.Equal(t, r[0][4], "none")
 	require.Equal(t, r[0][11], "rollback done")
 
-	// read only -> read write, StatePendingReadOnly -> StatePublic error
+	// read write -> read only, StatePendingReadOnly -> StatePublic error
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockErrorOnModifySchemaReadOnlyStatePendingReadOnly", "return")
 	tk1.MustGetErrMsg("alter schema test_db read only = 1", "[ddl:-1]mock error at StatePendingReadOnly")
 	tk1.MustQuery("show create database test_db").Check(testkit.Rows("test_db CREATE DATABASE `test_db` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	tk1.MustExec("insert into test_db.t values (1);")
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockErrorOnModifySchemaReadOnlyStatePendingReadOnly")
+	r = tk1.MustQuery("admin show ddl jobs 1 where db_name = 'test_db' and job_type = 'modify schema read only'").Rows()
 	require.Equal(t, r[0][4], "none")
 	require.Equal(t, r[0][11], "rollback done")
 
-	// read write -> read only,  error
+	// read only -> read write, error
 	tk1.MustExec("alter schema test_db read only = 1")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockErrorOnModifySchemaReadOnly2ReadWrite", "return")
 	tk1.MustGetErrMsg("alter schema test_db read only = 0", "[ddl:-1]mock error at read only to read write")
 	tk1.MustQuery("show create database test_db").Check(testkit.Rows("test_db CREATE DATABASE `test_db` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /* READ ONLY = 1 */"))
 	tk1.MustGetErrMsg("insert into test_db.t values (1);", "[schema:3989]Schema 'test_db' is in read only mode.")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockErrorOnModifySchemaReadOnlyStatePendingReadOnly")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockErrorOnModifySchemaReadOnly2ReadWrite")
+	r = tk1.MustQuery("admin show ddl jobs 1 where db_name = 'test_db' and job_type = 'modify schema read only'").Rows()
 	require.Equal(t, r[0][4], "none")
 	require.Equal(t, r[0][11], "rollback done")
 }

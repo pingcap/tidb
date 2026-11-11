@@ -534,6 +534,10 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 		txnInfo.ProcessInfo.RelatedTableIDs[key.(int64)] = struct{}{}
 		return true
 	})
+	s.GetSessionVars().GetRelatedTableForReadOnly().Range(func(key, _ any) bool {
+		txnInfo.ProcessInfo.RelatedTableIDs[key.(int64)] = struct{}{}
+		return true
+	})
 	return &txnInfo
 }
 
@@ -2089,6 +2093,7 @@ func (s *session) GetAdvisoryLock(lockName string, timeout int64) error {
 	if err != nil {
 		return err
 	}
+	failpoint.InjectCall("afterGetAdvisoryLockSession", s, se)
 	lock := &advisoryLock{session: se, ctx: context.TODO(), owner: s.getAdvisoryLockOwner(), clean: clean}
 	err = lock.GetLock(lockName, timeout)
 	if err != nil {
@@ -2557,6 +2562,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	s.rebindDroppedResourceGroup(ctx)
 	ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
 	sessVars.RUV2Metrics = ruv2Metrics
 	bypass := shouldBypass(ctx, stmtNode, sessVars)
@@ -3486,10 +3492,10 @@ func (s *session) rebuildFromPrepareCache(
 	// newly-parsed tree rather than the cached one.
 	plannercore.CollectPlanCacheStmtInfo(ctx, is, newStmt, stmtNode)
 
-	// dbName and tbls are only read during Execute (not written to by
+	// The table names and tbls are only read during Execute (not written to by
 	// CollectPlanCacheStmtInfo since that populates tables, not tbls).
 	// Clone them so that planCachePreprocess can safely replace tbls[i].
-	newStmt.SetDBNameAndTbls(cached.Stmt.DBName(), cached.Stmt.Tbls())
+	newStmt.SetDBNameAndTbls(cached.Stmt.DBName(), cached.Stmt.TableNames(), cached.Stmt.Tbls())
 
 	return newStmt, nil
 }
@@ -3722,6 +3728,47 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	}
 
 	return dctx
+}
+
+// rebindDroppedResourceGroup moves the session off a resource group that no longer exists.
+// DROP RESOURCE GROUP only checks the users bound in mysql.user, so a session may still use a
+// dropped group: it logged in before ALTER USER moved the user, or it ran SET RESOURCE GROUP.
+// Once the PD resource controller forgets the group, every request of the session would fail
+// with ErrResourceGroupNotExists. The session takes the group a new session of its account
+// gets: the account's current group if resource control is enabled, otherwise default.
+func (s *session) rebindDroppedResourceGroup(ctx context.Context) {
+	sessVars := s.sessionVars
+	dropped := sessVars.ResourceGroupName
+	if dropped == "" || dropped == resourcegroup.DefaultResourceGroupName {
+		return
+	}
+	is := s.infoCache.GetLatest()
+	if _, ok := is.ResourceGroupByName(ast.NewCIStr(dropped)); ok {
+		return
+	}
+	target := resourcegroup.DefaultResourceGroupName
+	if user := sessVars.User; user != nil && vardef.EnableResourceControl.Load() {
+		if checker := privilege.GetPrivilegeManager(s); checker != nil {
+			if bound := checker.GetUserResourceGroup(user.AuthUsername, user.AuthHostname); bound != "" {
+				if _, ok := is.ResourceGroupByName(ast.NewCIStr(bound)); ok {
+					target = bound
+				}
+			}
+		}
+	}
+	logutil.Logger(ctx).Info("resource group of the session no longer exists, rebind the session",
+		zap.String("dropped", dropped), zap.String("target", target))
+	sessVars.SetResourceGroupName(target)
+	sessVars.StmtCtx.ResourceGroupName = target
+	sessVars.StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+		"resource group %s no longer exists, the session now uses resource group %s", dropped, target))
+	// An open transaction keeps the group it started with. Update it so that its commit and the
+	// requests it sends from now on use the new group. client-go keeps the group of pessimistic
+	// lock requests from the transaction's first lock, so a transaction that already locked keys
+	// still sends its later locks with the dropped group.
+	if txn, err := s.Txn(false); err == nil && txn != nil && txn.Valid() {
+		kv.SetTxnResourceGroup(txn, target)
+	}
 }
 
 func resourceGroupAllowsPagingSizeBytes(dom *domain.Domain, resourceGroupName string) bool {
@@ -4286,24 +4333,24 @@ var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 	// DDLJobTables is a list of tables definitions used in concurrent DDL.
 	DDLJobTables = []TableBasicInfo{
-		{ID: metadef.TiDBDDLJobTableID, Name: "tidb_ddl_job", SQL: metadef.CreateTiDBDDLJobTable},
-		{ID: metadef.TiDBDDLReorgTableID, Name: "tidb_ddl_reorg", SQL: metadef.CreateTiDBReorgTable},
-		{ID: metadef.TiDBDDLHistoryTableID, Name: "tidb_ddl_history", SQL: metadef.CreateTiDBDDLHistoryTable},
+		{ID: metadef.TiDBDDLJobTableID, Name: metadef.TiDBDDLJobTableName, SQL: metadef.CreateTiDBDDLJobTable},
+		{ID: metadef.TiDBDDLReorgTableID, Name: metadef.TiDBDDLReorgTableName, SQL: metadef.CreateTiDBReorgTable},
+		{ID: metadef.TiDBDDLHistoryTableID, Name: metadef.TiDBDDLHistoryTableName, SQL: metadef.CreateTiDBDDLHistoryTable},
 	}
 	// MDLTables is a list of tables definitions used for metadata lock.
 	MDLTables = []TableBasicInfo{
-		{ID: metadef.TiDBMDLInfoTableID, Name: "tidb_mdl_info", SQL: metadef.CreateTiDBMDLTable},
+		{ID: metadef.TiDBMDLInfoTableID, Name: metadef.TiDBMDLInfoTableName, SQL: metadef.CreateTiDBMDLTable},
 	}
 	// BackfillTables is a list of tables definitions used in dist reorg DDL.
 	BackfillTables = []TableBasicInfo{
-		{ID: metadef.TiDBBackgroundSubtaskTableID, Name: "tidb_background_subtask", SQL: metadef.CreateTiDBBackgroundSubtaskTable},
-		{ID: metadef.TiDBBackgroundSubtaskHistoryTableID, Name: "tidb_background_subtask_history", SQL: metadef.CreateTiDBBackgroundSubtaskHistoryTable},
+		{ID: metadef.TiDBBackgroundSubtaskTableID, Name: metadef.TiDBBackgroundSubtaskTableName, SQL: metadef.CreateTiDBBackgroundSubtaskTable},
+		{ID: metadef.TiDBBackgroundSubtaskHistoryTableID, Name: metadef.TiDBBackgroundSubtaskHistoryTableName, SQL: metadef.CreateTiDBBackgroundSubtaskHistoryTable},
 	}
 	// DDLNotifierTables contains the table definitions used in DDL notifier.
 	// It only contains the notifier table.
 	// Put it here to reuse a unified initialization function and make it easier to find.
 	DDLNotifierTables = []TableBasicInfo{
-		{ID: metadef.TiDBDDLNotifierTableID, Name: "tidb_ddl_notifier", SQL: metadef.CreateTiDBDDLNotifierTable},
+		{ID: metadef.TiDBDDLNotifierTableID, Name: metadef.TiDBDDLNotifierTableName, SQL: metadef.CreateTiDBDDLNotifierTable},
 	}
 
 	ddlTableVersionTables = []versionedDDLTables{

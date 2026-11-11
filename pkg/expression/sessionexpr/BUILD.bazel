@@ -22,6 +22,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/collate",
         "//pkg/util/context",
+        "//pkg/util/dbterror",
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/mathutil",

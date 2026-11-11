@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -401,11 +402,25 @@ func (s *sequenceOperator) GetSequenceID() int64 {
 }
 
 func (s *sequenceOperator) GetSequenceNextVal() (int64, error) {
+	if err := s.checkReadOnly(); err != nil {
+		return 0, err
+	}
 	return s.tbl.GetSequenceNextVal(s.sctx, s.db, s.name)
 }
 
 func (s *sequenceOperator) SetSequenceVal(newVal int64) (int64, bool, error) {
+	if err := s.checkReadOnly(); err != nil {
+		return 0, false, err
+	}
 	return s.tbl.SetSequenceVal(s.sctx, newVal, s.db, s.name)
+}
+
+func (s *sequenceOperator) checkReadOnly() error {
+	is := s.sctx.GetLatestISWithoutSessExt()
+	if db, ok := is.SchemaByName(ast.NewCIStr(s.db)); ok && db.ReadOnly && !privilege.HasExplicitReplicaWriterAdmin(s.sctx) {
+		return dbterror.ErrSchemaInReadOnlyMode.GenWithStackByArgs(db.Name.O)
+	}
+	return nil
 }
 
 func sequenceOperatorProp(sctx sessionctx.Context) expropt.SequenceOperatorProvider {
