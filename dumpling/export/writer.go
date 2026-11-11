@@ -219,11 +219,16 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 				return
 			}
 		}
-		err = ir.Start(tctx, conn)
+		readCtx, cancel := tctx.WithCancel()
+		defer cancel()
+		err = ir.Start(readCtx, conn)
 		if err != nil {
 			tctx.L().Warn("failed to start table chunk", zap.Error(err))
 			return
 		}
+		defer func() {
+			_ = ir.Close()
+		}()
 		if conf.SQL != "" {
 			rows := ir.RawRows()
 			meta, err = setTableMetaFromRows(w.conf.ServerInfo.ServerType, rows)
@@ -234,14 +239,11 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 				return errors.Trace(err)
 			}
 		}
-		defer func() {
-			_ = ir.Close()
-		}()
-		return w.tryToWriteTableData(tctx, meta, ir, currentChunk)
+		return w.tryToWriteTableData(tctx, readCtx, cancel, meta, ir, currentChunk)
 	}, newRebuildConnBackOffer(canRebuildConn(conf.Consistency, conf.TransactionalConsistency)))
 }
 
-func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir TableDataIR, curChkIdx int) error {
+func (w *Writer) tryToWriteTableData(tctx, readCtx *tcontext.Context, cancel func(), meta TableMeta, ir TableDataIR, curChkIdx int) error {
 	conf, format := w.conf, w.fileFmt
 	_, isKVData := ir.(*kvTableData)
 	namer := newOutputFileNamer(meta, curChkIdx, isKVData || conf.Rows != UnspecifiedSize, conf.FileSize != UnspecifiedSize)
@@ -254,6 +256,9 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 	if err != nil {
 		return err
 	}
+	reader := newTableDataReader(readCtx, cancel, meta, ir)
+	defer reader.Close()
+	ir = reader
 
 	var wo *storeapi.WriterOption
 	if format == FileFormatCSV || format == FileFormatSQLText {
