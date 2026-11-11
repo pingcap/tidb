@@ -359,6 +359,7 @@ func TestStopwordKeysMatchCompare(t *testing.T) {
 	texts := []string{
 		"the THE The thé THÉ ｔｈｅ", "a A á Ａ i I í Ｉ", "ab a,b xby", "quick brown fox 数据库",
 		"ss ß s ﬃ ffi", "a\u0301 a\u0000 a\u00ad", "the  the\tThe", "🙃𞤀𝟙，", "", "ab\xffcd",
+		"the\u00ad\u00ad\u00ad\u00ad\u00ad", "the     ", "The     ", "ab\x00\xffthe",
 	}
 	rng := rand.New(rand.NewSource(20261012))
 	parts := []string{"a", "i", "the", "The", "thé", "ss", "ß", "ａ", "，", "🙃", "\u0301", "\u00ad", "中", "x", " ", ",", "_"}
@@ -380,6 +381,7 @@ func TestStopwordKeysMatchCompare(t *testing.T) {
 				// lookup oracle, including malformed-list callers and positions.
 				wantInfo := gotInfo
 				wantInfo.stopwordKeys, wantInfo.stopwordKeysByLength = nil, nil
+				wantInfo.standardStopwordMaxBytes = 0
 				for _, text := range texts {
 					require.Equal(t, wantInfo.isStopword(text), gotInfo.isStopword(text), "%s size=%d text=%q words=%q", name, size, text, words)
 					require.Equal(t, wantInfo.containsNgramStopword(text), gotInfo.containsNgramStopword(text), "%s size=%d text=%q words=%q", name, size, text, words)
@@ -388,6 +390,97 @@ func TestStopwordKeysMatchCompare(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestStandardStopwordLengthLimit(t *testing.T) {
+	previous := collate.NewCollationEnabled()
+	defer collate.SetNewCollationEnabledForTest(previous)
+	for _, enabled := range []bool{false, true} {
+		collate.SetNewCollationEnabledForTest(enabled)
+		for _, name := range []string{"binary", "ascii_bin", "latin1_bin", "utf8_bin", "utf8mb4_bin", "utf8mb4_0900_bin"} {
+			config := AnalyzerConfig{StopwordCollation: name, InnodbFtEnableStopword: true, NgramTokenSize: 3,
+				InnodbFtMinTokenSize: 1, InnodbFtMaxTokenSize: 84}
+			info := parserInfoFromConfig(config)
+			require.Equal(t, 5, info.standardStopwordMaxBytes)
+			counting := &stopwordCountingCollator{Collator: info.stopwordCollator}
+			info.stopwordCollator = counting
+			require.Equal(t, []Token{{Text: "database", Position: 1}, {Text: "数据库系统", Position: 2}},
+				analyzeStandardV1("the database 数据库系统 where", info))
+			require.Equal(t, 2, counting.keys, "only short tokens should create collation keys")
+			require.Empty(t, analyzeStandardV1(strings.Join(defaultInnodbStopwords, " "), info))
+			// The general helper must retain PAD SPACE semantics for arbitrary
+			// strings; only the STANDARD token filter uses the byte shortcut.
+			require.Equal(t, info.stopwordCollator.Compare("the     ", "the") == 0, info.isStopword("the     "))
+			config.InnodbFtEnableStopword = false
+			require.Zero(t, parserInfoFromConfig(config).standardStopwordMaxBytes)
+			config.InnodbFtEnableStopword = true
+			config.Stopwords = []string{"database", "The", "a "}
+			custom := parserInfoFromConfig(config)
+			require.Zero(t, custom.standardStopwordMaxBytes)
+			require.True(t, custom.isStopword("database"))
+			require.False(t, custom.isStopword("the"))
+		}
+	}
+	collate.SetNewCollationEnabledForTest(true)
+	for _, name := range []string{"", "utf8mb4_general_ci", "utf8mb4_unicode_ci", "utf8mb4_0900_ai_ci", "gbk_bin"} {
+		require.Zero(t, parserInfoFromConfig(AnalyzerConfig{
+			StopwordCollation: name, InnodbFtEnableStopword: true,
+		}).standardStopwordMaxBytes, name)
+	}
+}
+
+type stopwordCountingCollator struct {
+	collate.Collator
+	keys int
+}
+
+func (c *stopwordCountingCollator) Key(word string) []byte {
+	c.keys++
+	return c.Collator.Key(word)
+}
+
+func BenchmarkBuiltinStopwords(b *testing.B) {
+	previous := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(previous)
+	for _, name := range []string{"utf8mb4_bin", "utf8mb4_0900_bin", "utf8mb4_unicode_ci"} {
+		info := parserInfoFromConfig(AnalyzerConfig{
+			StopwordCollation: name, Collation: name,
+			InnodbFtMinTokenSize: 1, InnodbFtMaxTokenSize: 84,
+			InnodbFtEnableStopword: true, NgramTokenSize: 2,
+		})
+		for _, token := range []string{"the", "xyz", "database", "数据库系统"} {
+			b.Run(name+"/lookup/"+token, func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					info.isStopword(token)
+				}
+			})
+			b.Run(name+"/standard_filter/"+token, func(b *testing.B) {
+				tokens := make([]Token, 1)
+				b.ReportAllocs()
+				for b.Loop() {
+					tokens[0] = Token{Text: token}
+					stopwordFilter(tokens, info)
+				}
+			})
+		}
+		text := strings.Repeat("the quick brown fox jumps over the lazy dog database storage 数据库系统 ", 32)
+		b.Run(name+"/standard", func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(text)))
+			for b.Loop() {
+				analyzeStandardV1(text, info)
+			}
+		})
+		b.Run(name+"/ngram", func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(text)))
+			for b.Loop() {
+				analyzeNgramV1(text, info)
+			}
+		})
 	}
 }
 

@@ -249,6 +249,8 @@ type parserInfo struct {
 	stopwordKeysByLength map[int]map[string]struct{}
 	collator             collate.Collator // MATCH column collation
 	stopwordCollator     collate.Collator // collation_server
+	// Zero disables the source-length shortcut for STANDARD tokens.
+	standardStopwordMaxBytes int
 }
 
 func parserInfoFromConfig(config AnalyzerConfig) parserInfo {
@@ -268,6 +270,14 @@ func parserInfoFromConfig(config AnalyzerConfig) parserInfo {
 		stopwordsByLength:    stopwordsByLength(stopwords),
 		collator:             collator,
 		stopwordCollator:     stopwordCollator,
+	}
+	// Byte-preserving collations allow a STANDARD source byte bound. Leave
+	// other collations on the existing collation-aware lookup path.
+	if len(config.Stopwords) == 0 && stopwordCollator != nil &&
+		(collate.IsBinCollation(config.StopwordCollation) || collate.CanUseRawMemAsKey(stopwordCollator)) {
+		for word := range stopwords {
+			info.standardStopwordMaxBytes = max(info.standardStopwordMaxBytes, len(word))
+		}
 	}
 	if stopwordCollator != nil && len(stopwords) > 0 {
 		// Compile immutable keys once per analyzer, not once per document.
@@ -426,7 +436,10 @@ func stopwordFilter(tokens []Token, parserInfo parserInfo) []Token {
 
 	out := tokens[:0]
 	for _, token := range tokens {
-		if !parserInfo.isStopword(token.Text) {
+		// STANDARD tokens contain no trailing spaces, so PAD SPACE cannot
+		// shorten them. Keep this shortcut out of the general lookup helper.
+		if (parserInfo.standardStopwordMaxBytes > 0 && len(token.Text) > parserInfo.standardStopwordMaxBytes) ||
+			!parserInfo.isStopword(token.Text) {
 			out = append(out, token)
 		}
 	}
