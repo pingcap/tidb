@@ -188,13 +188,6 @@ func typeCases() []typeCase {
 		typeCase{"duration", ftOf(mysql.TypeDuration),
 			types.NewDurationDatum(types.Duration{Duration: time.Hour}),
 			types.NewDurationDatum(types.Duration{Duration: 5 * time.Hour})},
-		// JSON stats are opt-in (JSON is in the default
-		// tidb_analyze_skip_column_types). The key carries the binary
-		// form, numbers little-endian, so 256 encodes before 1 while it
-		// compares after it.
-		typeCase{"json", ftOf(mysql.TypeJSON),
-			types.NewJSONDatum(types.CreateBinaryJSON(int64(1))),
-			types.NewJSONDatum(types.CreateBinaryJSON(int64(256)))},
 	)
 }
 
@@ -389,7 +382,7 @@ func TestTopNOrderingMatchesDatumOrder(t *testing.T) {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	// The types sortTopNEntries orders by decoded value.
 	orderedByDatum := map[byte]bool{
-		mysql.TypeEnum: true, mysql.TypeSet: true, mysql.TypeBit: true, mysql.TypeJSON: true,
+		mysql.TypeEnum: true, mysql.TypeSet: true, mysql.TypeBit: true,
 	}
 	diverges := map[byte]string{} // type -> the case that showed it
 
@@ -448,14 +441,15 @@ func TestTypeMatrixCoversAllColumnTypes(t *testing.T) {
 		covered[tc.ft.GetType()] = true
 	}
 	// Types a histogram never carries. Checked by hand when written:
-	// ANALYZE produces no stats_histograms row for a vector column, and
-	// a geometry column cannot be created at all. This is a snapshot, so
-	// an entry here is a claim to re-check if that type ever gains
-	// support.
+	// ANALYZE produces no stats_histograms row for a JSON or a vector
+	// column, and a geometry column cannot be created at all. This is a
+	// snapshot, so an entry here is a claim to re-check if that type
+	// ever gains support.
 	outOfScope := map[byte]string{
 		mysql.TypeUnspecified:       "not a storable column type",
 		mysql.TypeNull:              "the NULL literal's type, it has no values",
 		mysql.TypeGeometry:          "not supported by TiDB",
+		mysql.TypeJSON:              "ANALYZE collects no statistics for JSON columns",
 		mysql.TypeTiDBVectorFloat32: "vector columns carry no histogram",
 	}
 	for tp := range 256 {

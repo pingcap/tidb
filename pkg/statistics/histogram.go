@@ -1975,21 +1975,19 @@ func flattenSortedTopN(
 // sortTopNEntries orders the flattened stream the way Pass 1 walks it
 // against the bucket stream. That is the encoded byte order, except for
 // ENUM and SET, which encode as their numeric value but compare by
-// element name, BIT, which encodes numerically but compares as a
-// binary literal with leading zeros trimmed, and JSON, which encodes
-// its binary form (numbers little-endian) but compares by JSON value.
-// Those four have to be ordered by their decoded values, with the
-// encoded key as a tie-break so entries for the same value stay
-// adjacent for the compaction that follows. An index bound is the
-// encoded key itself, so the index path never needs this.
-// TestTopNOrderingMatchesDatumOrder pins the type list against what
-// the encodings actually do.
+// element name, and BIT, which encodes numerically but compares as a
+// binary literal with leading zeros trimmed. Those three have to be
+// ordered by their decoded values, with the encoded key as a tie-break
+// so entries for the same value stay adjacent for the compaction that
+// follows. An index bound is the encoded key itself, so the index path
+// never needs this. TestTopNOrderingMatchesDatumOrder pins the type
+// list against what the encodings actually do.
 func sortTopNEntries(
 	sc *stmtctx.StatementContext, allTopN []topNEntry, ft *types.FieldType, isIndex bool,
 ) error {
 	byteOrdered := isIndex
 	switch ft.GetType() {
-	case mysql.TypeEnum, mysql.TypeSet, mysql.TypeBit, mysql.TypeJSON:
+	case mysql.TypeEnum, mysql.TypeSet, mysql.TypeBit:
 	default:
 		byteOrdered = true
 	}
@@ -2001,8 +1999,8 @@ func sortTopNEntries(
 	}
 
 	// Keyed by value, not by entry: the same value is typically in many
-	// partitions' TopN, so this decodes once per value rather than once
-	// per entry.
+	// partitions' TopN, and these types have few distinct values, so
+	// this decodes once per value rather than once per entry.
 	tz := sc.TimeZone()
 	datums := make(map[string]types.Datum, len(allTopN))
 	for _, e := range allTopN {
