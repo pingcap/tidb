@@ -387,10 +387,11 @@ fn a_prepared_like_fallback_bakes_its_parameter_and_skips_the_plan_cache() {
         own(MATCH_OUTSIDE_INDEX)
     );
     // Go's class refuses the column while PREPARE builds its plan over the
-    // NULL marker; the port's PREPARE reports only what both of its stand-in
-    // values raise, so the same refusal is EXECUTE's here.
-    session.run("prepare st_n from 'select id from articles where match(n) against(?)'").ok();
-    assert_eq!(error_of(&mut session, "execute st_n using @q"), own(NON_STRING_COLUMN));
+    // NULL marker.
+    assert_eq!(
+        error_of(&mut session, "prepare st_n from 'select id from articles where match(n) against(?)'"),
+        own(NON_STRING_COLUMN)
+    );
 }
 
 fn own(error: (u16, &str)) -> (u16, String) {

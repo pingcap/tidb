@@ -712,6 +712,36 @@ fn a_limit_parameter_must_be_a_non_negative_integer() {
     assert_eq!(errno(session.run("EXECUTE lo USING @l, @ls")), 1210);
 }
 
+/// Go `GeneratePlanCacheStmtWithAST` builds PREPARE's plan with every marker
+/// NULL and `InExecute` false: each statement's outcome is the one a Go
+/// testkit gave (`testdata/prepare_null_markers_go.txt`).
+#[test]
+fn prepare_builds_its_plan_over_null_markers_like_go() {
+    let mut session = Session::new();
+    let mut differences = Vec::new();
+    for line in include_str!("../testdata/prepare_null_markers_go.txt").lines() {
+        let (sql, want) = line.split_once(" => ").unwrap();
+        let got = match session.run(sql) {
+            Ok(_) => "OK".to_owned(),
+            Err(error) => {
+                let error = error.to_mysql_error();
+                let class_end = want.find(']').map_or(0, |end| end + 1);
+                let class = want.get(4..class_end).unwrap_or_default();
+                let coded = class.is_empty() || class.ends_with(&format!(":{}]", error.code));
+                if coded {
+                    format!("ERR {class}{}", error.message)
+                } else {
+                    format!("ERR {} {}", error.code, error.message)
+                }
+            }
+        };
+        if got != want {
+            differences.push(format!("{sql}: {got}"));
+        }
+    }
+    assert!(differences.is_empty(), "{}", differences.join(" ;; "));
+}
+
 /// The `USING` list admits user variables only: a literal and a system
 /// variable are both parse errors, which is why nothing downstream has to
 /// consider them.

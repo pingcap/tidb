@@ -5259,6 +5259,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             Expr::Int(digits) => digits
                 .parse()
                 .map_err(|_| PlanError::internal("Incorrect arguments to LIMIT")),
+            // Go `getUintFromNode`'s `if !v.InExecute { return 0, false, true }`.
+            Expr::ParamMarker {
+                in_execute: false, ..
+            } => Ok(0),
             Expr::ParamMarker {
                 in_execute: true,
                 value: Some(value),

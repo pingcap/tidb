@@ -371,7 +371,10 @@ pub trait PrepareExec: super::CompilerSession {
             // site; the classified 1064 lands afterwards from the
             // statement error return -- SHOW WARNINGS carries both rows.
             self.append_sql_warning(tidb_context::SqlWarn::with_code(tidb_context::WarningLevel::Error, 1105, raw.clone()));
-            DriverError::from(tidb_util::misc::syntax_error(raw))
+            match e.terror {
+                Some(proto) => DriverError::from(proto.gen_with_stack(e.message)),
+                None => DriverError::from(tidb_util::misc::syntax_error(raw)),
+            }
         })?;
         if statements.len() != 1 {
             return Err(DriverError::from(
@@ -431,55 +434,38 @@ pub trait PrepareExec: super::CompilerSession {
                         )
                     })?;
                 }
-                // Go builds this plan (an INSERT's, UPDATE's or DELETE's too)
-                // with each `?` still a ParamMarkerExpr, so what the markers
-                // will hold is not checked, but a name the statement cannot
-                // resolve is refused. A marker stands here as a
-                // value, and an error raised under BOTH NULL and 1 does not
-                // depend on that value: it is the query's own.
+                // Go `GeneratePlanCacheStmtWithAST` builds this plan (an
+                // INSERT's, UPDATE's or DELETE's too) with every marker's
+                // `Datum.SetNull()` and `InExecute = false`.
                 Some(bound @ (tidb_ast::Stmt::Query(_) | tidb_ast::Stmt::Dml(_))) => {
-                    let stand_in_error = |stand_in: &Datum| -> Option<DriverError> {
-                        let values = vec![stand_in.clone(); param_count];
-                        let ctx = planner_context.with_isolated_warnings();
-                        let current_db = self.session_vars().current_db.as_str();
-                        match crate::bind_statement(bound.clone(), &values).ok()? {
-                            tidb_ast::Stmt::Query(query) => {
-                                crate::plan_query_meta_stmt(&query, &catalog, current_db, &ctx).err()
-                            }
-                            tidb_ast::Stmt::Dml(dml) => {
-                                crate::driver::prepare_dml_plan(&dml, &catalog, current_db, &ctx).err()
-                            }
-                            _ => None,
+                    let ctx = planner_context
+                        .with_isolated_warnings()
+                        .with_prepared_params(vec![Datum::Null; param_count].into());
+                    let current_db = self.session_vars().current_db.as_str();
+                    let built = match bound {
+                        tidb_ast::Stmt::Query(query) => {
+                            crate::plan_query_meta_stmt(query, &catalog, current_db, &ctx).err()
                         }
-                        // A scan of a memory table needs the session to
-                        // retrieve its rows, which says nothing of the query.
-                        .filter(|error| !matches!(error, DriverError::MemTableRetrievalNeeded))
+                        tidb_ast::Stmt::Dml(dml) => {
+                            crate::driver::prepare_dml_plan(dml, &catalog, current_db, &ctx).err()
+                        }
+                        _ => None,
                     };
-                    // A shape this tier cannot plan is no answer Go gives,
-                    // so it never refuses a PREPARE Go would admit.
-                    let rust_only = |error: &DriverError| {
-                        matches!(
+                    // A scan of a memory table needs the session to retrieve
+                    // its rows, which says nothing of the query, and a shape
+                    // this tier cannot plan is no answer Go gives.
+                    if let Some(error) = built.filter(|error| {
+                        !matches!(
                             error,
-                            DriverError::Unsupported(_)
+                            DriverError::MemTableRetrievalNeeded
+                                | DriverError::Unsupported(_)
                                 | DriverError::Exec(crate::ExecError::Unsupported(_))
                                 | DriverError::Exec(crate::ExecError::Eval(
                                     tidb_exprctx::EvalError::Unsupported(_)
                                 ))
                         )
-                    };
-                    if let (Some(with_null), Some(with_one)) =
-                        (stand_in_error(&Datum::Null), stand_in_error(&Datum::Int(1)))
-                    {
-                        let (null_reported, one_reported) = (
-                            with_null.clone().to_mysql_error(),
-                            with_one.to_mysql_error(),
-                        );
-                        if null_reported.code == one_reported.code
-                            && null_reported.message == one_reported.message
-                            && !rust_only(&with_null)
-                        {
-                            return Err(with_null);
-                        }
+                    }) {
+                        return Err(error);
                     }
                 }
                 _ => {}

@@ -1,0 +1,94 @@
+create table t (a int not null, b varchar(20), c json, d datetime, primary key(a)) => OK
+insert into t values (1,'x','{}','2020-01-01 00:00:00') => OK
+prepare s from 'select * from t limit ?' => OK
+prepare s from 'select * from t limit ?, ?' => OK
+prepare s from 'select * from t order by ?' => OK
+prepare s from 'select a from t group by ?' => ERR [planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
+prepare s from 'insert into t values (?, ?, ?, ?)' => OK
+prepare s from 'insert into t (a) values (?) on duplicate key update a = ?' => OK
+prepare s from 'update t set a = ? where nosuch = 1' => ERR [planner:1054]Unknown column 'nosuch' in 'where clause'
+prepare s from 'update t set a = ? where b = ?' => OK
+prepare s from 'delete from t where a = ? limit ?' => OK
+prepare s from 'select 1 div ?' => OK
+prepare s from 'select 1 / ?' => OK
+prepare s from 'select * from t where a = ? + nosuch' => ERR [planner:1054]Unknown column 'nosuch' in 'where clause'
+prepare s from 'select json_extract(?, ?)' => OK
+prepare s from 'select json_object(?, 1)' => OK
+prepare s from 'select json_array_append(c, ?, ?) from t' => OK
+prepare s from 'select date_add(d, interval ? day) from t' => OK
+prepare s from 'select ? collate utf8mb4_bin' => OK
+prepare s from 'select cast(? as signed)' => OK
+prepare s from 'select row(?,1) = row(1,?)' => OK
+prepare s from 'select * from t where a in (?)' => OK
+prepare s from 'select * from t where a in (?, ?, ?)' => OK
+prepare s from 'select repeat(b, ?) from t' => OK
+prepare s from 'select nth_value(a, ?) over () from t' => OK
+prepare s from 'select ntile(?) over () from t' => OK
+prepare s from 'select lead(a, ?) over () from t' => OK
+prepare s from 'select lag(a, ?, ?) over () from t' => OK
+prepare s from 'select elt(?, b) from t' => OK
+prepare s from 'select b regexp ? from t' => OK
+prepare s from 'select regexp_like(b, ?, ?) from t' => OK
+prepare s from 'select date_format(d, ?) from t' => OK
+prepare s from 'select round(a, ?), truncate(a, ?) from t' => OK
+prepare s from 'select ? = any (select a from t)' => OK
+prepare s from 'select (select ?)' => OK
+prepare s from 'select * from t where a = (select ? from dual)' => OK
+prepare s from 'select * from t where a = (select max(a) from t where b = ?)' => OK
+prepare s from 'select get_lock(?, ?)' => OK
+prepare s from 'select name_const(?, 1)' => ERR [planner:1210]Incorrect arguments to NAME_CONST
+prepare s from 'select convert(? using nosuch)' => ERR [parser:1115]Unknown character set: 'nosuch'
+prepare s from 'select char(? using utf8mb4)' => OK
+prepare s from 'select interval(?, 1, 2)' => OK
+prepare s from 'select * from t where a between ? and ?' => OK
+prepare s from 'select * from t where d = ?' => OK
+prepare s from 'select ? + ?' => OK
+prepare s from 'select -?' => OK
+prepare s from 'select ? is null, ? is true' => OK
+prepare s from 'select case ? when 1 then 2 end' => OK
+prepare s from 'select if(?, ?, ?)' => OK
+prepare s from 'select a from t where a = ? for update' => OK
+prepare s from 'select a from t having ? order by a' => OK
+prepare s from 'select sum(a) over (order by a rows between ? preceding and current row) from t' => OK
+prepare s from 'select group_concat(a order by ?) from t' => OK
+prepare s from 'select a, count(*) from t group by a with rollup having grouping(a) = ?' => OK
+prepare s from 'select * from t tablesample bernoulli(?)' => ERR [expression:8128]Invalid TABLESAMPLE: Only supports REGIONS sampling method
+prepare s from 'select time_format(?, ?), str_to_date(?, ?)' => OK
+prepare s from 'select json_contains_path(c, ?, ?) from t' => OK
+prepare s from 'select json_search(c, ?, ?) from t' => OK
+prepare s from 'select json_length(?), json_valid(?), json_type(?)' => OK
+prepare s from 'select sleep(?), benchmark(?, 1)' => OK
+prepare s from 'select get_format(date, ?)' => OK
+prepare s from 'select a from t where a = ? union select ?' => OK
+prepare s from 'replace into t values (?, ?, ?, ?)' => OK
+prepare s from 'insert into t select ?, ?, ?, ? from t' => OK
+prepare s from 'select * from t where a = ? and nosuch.a = 1' => ERR [planner:1054]Unknown column 'nosuch.a' in 'where clause'
+prepare s from 'select aes_encrypt(?, ?), aes_decrypt(?, ?, ?)' => OK
+prepare s from 'select lpad(b, ?, ?) from t' => OK
+prepare s from 'select substring(b, ?, ?) from t' => OK
+prepare s from 'select conv(?, ?, ?)' => OK
+prepare s from 'select unix_timestamp(?), from_unixtime(?), from_unixtime(?, ?)' => OK
+prepare s from 'select timestampadd(day, ?, d), timestampdiff(day, ?, d) from t' => OK
+prepare s from 'select convert_tz(?, ?, ?)' => OK
+prepare s from 'select ? in (select a from t)' => OK
+prepare s from 'select exists (select 1 from t where a = ?)' => OK
+prepare s from 'select * from (select ? as x) y' => OK
+prepare s from 'with c as (select ? as x) select * from c' => OK
+prepare s from 'select * from t where b = ? collate utf8mb4_general_ci' => OK
+prepare s from 'select field(?, ?, ?)' => OK
+prepare s from 'select make_set(?, ?)' => OK
+prepare s from 'select export_set(?, ?, ?)' => OK
+prepare s from 'select bit_count(?), ? << ?, ~?' => OK
+prepare s from 'select ? member of (c) from t' => OK
+prepare s from 'select json_overlaps(c, ?) from t' => OK
+prepare s from 'select a from t order by a limit ? offset ?' => OK
+prepare s from 'select vec_cosine_distance(?, ?)' => OK
+prepare s from 'select * from t where a = ? or a = ? order by ? desc' => OK
+prepare s from 'select count(?) from t' => OK
+prepare s from 'select sum(?), avg(?), max(?) from t' => OK
+prepare s from 'select a from t group by a having sum(a) > ?' => OK
+prepare s from 'select distinct ? from t' => OK
+prepare s from 'select approx_percentile(a, ?) from t' => ERR APPROX_PERCENTILE: Percentage value cannot be NULL
+prepare s from 'select json_arrayagg(?), json_objectagg(?, ?) from t' => OK
+prepare s from 'select group_concat(? separator ",") from t' => OK
+prepare s from 'select null collate utf8mb4_bin' => ERR [ddl:1253]COLLATION 'utf8mb4_bin' is not valid for CHARACTER SET 'binary'

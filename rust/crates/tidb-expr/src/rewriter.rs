@@ -1589,9 +1589,12 @@ fn rewrite_leaf_literal(
                     if is_json {
                         "utf8mb4".to_owned()
                     } else if ft.is_string()
-                        || matches!(ft.code(), FieldTypeCode::Enum | FieldTypeCode::Set)
+                        || matches!(ft.code(), FieldTypeCode::Enum | FieldTypeCode::Set | FieldTypeCode::Null)
                     {
-                        // An ENUM/SET column keeps its declared charset too.
+                        // An ENUM/SET column keeps its declared charset too,
+                        // and a NULL its own: a literal's is 'binary', a
+                        // NULL parameter's the default
+                        // (`InferParamTypeFromUnderlyingValue`).
                         ft.charset_name().to_owned()
                     } else {
                         "binary".to_owned()

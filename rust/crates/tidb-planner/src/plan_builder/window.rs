@@ -102,9 +102,6 @@
 //! * `ast.Groups` (`checkOriginWindowSpec`'s `ErrNotSupportedYet("GROUPS")`).
 //!   [`tidb_ast::FrameKind`] has only `Rows` and `Range`, so a `GROUPS` frame
 //!   is unrepresentable and the check is vacuous rather than omitted.
-//! * `expression.ParamMarkerInPrepareChecker`. There is no prepared-statement
-//!   surface in this crate, so `NewWindowFuncDesc`'s `skipCheckArgs` is always
-//!   `false` — the STRICTER arm, which validates the constant arguments.
 //!
 //! # 4. Session variables
 //!
@@ -1239,6 +1236,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// another road: a bound offset that names a column does not build, and so
     /// reports `None` exactly as Go's `default: return 0, false, false` does.
     fn frame_offset_uint(&self, offset: &Expr) -> Option<(u64, bool)> {
+        // `getUintFromNode`'s `if !v.InExecute { return 0, false, true }`.
+        if matches!(offset, Expr::ParamMarker { in_execute: false, .. }) {
+            return Some((0, false));
+        }
         let expr = self
             .rewrite_scalar(offset, &Schema::default(), &[], &BTreeMap::new())
             .ok()?;
@@ -1514,9 +1515,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 ));
             }
             let args = self.build_args_for_window_func(&func.args, schema, names, markers)?;
-            // `// boundary:` `ParamMarkerInPrepareChecker`; see section 3. The
-            // `false` is Go's non-prepared arm, which DOES check.
-            let desc = WindowFuncDesc::new(self.ctx, &func.name, args, false)
+            let desc = WindowFuncDesc::new(self.ctx, &func.name, args, param_marker_in_prepare(&func.args))
                 .map_err(|error| PlanError::internal(error.to_string()))?;
             if desc.is_none() {
                 return Err(PlanError::from(
@@ -1796,7 +1795,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 let arg_count = func.args.len();
                 let func_args = args[consumed..consumed + arg_count].to_vec();
                 consumed += arg_count;
-                let desc = WindowFuncDesc::new(self.ctx, &func.name, func_args, false)
+                let desc = WindowFuncDesc::new(
+                    self.ctx,
+                    &func.name,
+                    func_args,
+                    param_marker_in_prepare(&func.args),
+                )
                     .map_err(|error| PlanError::internal(error.to_string()))?;
                 let Some(mut desc) = desc else {
                     return Err(PlanError::from(
@@ -2008,4 +2012,21 @@ pub fn partition_by_items(spec: &WindowSpec) -> Vec<OrderItem> {
             desc: false,
         })
         .collect()
+}
+
+/// Go `expression.ParamMarkerInPrepareChecker` over a window function's
+/// arguments: whether the marker visited last is not in an `EXECUTE`, which
+/// is `NewWindowFuncDesc`'s `skipCheckArgs`.
+fn param_marker_in_prepare(args: &[Expr]) -> bool {
+    let mut in_prepare_stmt = false;
+    for arg in args {
+        walk_exprs(arg, &mut |node| {
+            if let Expr::ParamMarker { in_execute, .. } = node {
+                in_prepare_stmt = !in_execute;
+                return true;
+            }
+            false
+        });
+    }
+    in_prepare_stmt
 }
