@@ -42,12 +42,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
-<<<<<<< HEAD
 	tikverr "github.com/tikv/client-go/v2/error"
-=======
 	pderr "github.com/tikv/pd/client/errs"
-	"go.uber.org/atomic"
->>>>>>> 08e20a9ea20 (ddl: retry transient PD TSO stream errors during reorg (#71080))
 )
 
 func TestDoneTaskKeeper(t *testing.T) {
@@ -84,8 +80,6 @@ func TestBackfillRetryableErrors(t *testing.T) {
 		err := dbterror.ErrIngestCheckEnvFailed.FastGenByArgs("mock insufficient local sort disk space")
 		require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
 	})
-<<<<<<< HEAD
-=======
 
 	t.Run("PD TSO stream errors are retryable", func(t *testing.T) {
 		errs := []error{
@@ -102,7 +96,7 @@ func TestBackfillRetryableErrors(t *testing.T) {
 			convertedErr := ingest.TryConvertToKeyExistsErr(err, &model.IndexInfo{}, &model.TableInfo{})
 			require.ErrorIs(t, convertedErr, err)
 			require.True(t, isRetryableJobError(convertedErr, 0))
-			require.False(t, isRetryableJobError(convertedErr, vardef.GetDDLErrorCountLimit()-1))
+			require.False(t, isRetryableJobError(convertedErr, variable.GetDDLErrorCountLimit()-1))
 		}
 	})
 
@@ -110,8 +104,6 @@ func TestBackfillRetryableErrors(t *testing.T) {
 		err := pderr.ErrClientProtoUnmarshal.FastGenByArgs("invalid response")
 		require.False(t, isRetryableError(err, false))
 	})
-}
->>>>>>> 08e20a9ea20 (ddl: retry transient PD TSO stream errors during reorg (#71080))
 
 	t.Run("modify column retries typed PD timeout", func(t *testing.T) {
 		pdTimeout := tikverr.NewErrPDServerTimeout("region cache is not ready")

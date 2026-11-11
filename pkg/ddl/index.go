@@ -88,12 +88,8 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
-<<<<<<< HEAD
-	pdHttp "github.com/tikv/pd/client/http"
-=======
 	pderr "github.com/tikv/pd/client/errs"
-	pdhttp "github.com/tikv/pd/client/http"
->>>>>>> 08e20a9ea20 (ddl: retry transient PD TSO stream errors during reorg (#71080))
+	pdHttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
