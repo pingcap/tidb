@@ -29,6 +29,7 @@ var (
 	RUV2Unit         *prometheus.CounterVec
 	RUV2Statements   *prometheus.CounterVec
 	ruv2TiDB         prometheus.Counter
+	ruv2TiFlash      prometheus.Counter
 	ruv2Select       prometheus.Counter
 	ruv2Insert       prometheus.Counter
 	ruv2Replace      prometheus.Counter
@@ -37,6 +38,7 @@ var (
 	ruv2Commit       prometheus.Counter
 	ruv2Analyze      prometheus.Counter
 	ruv2Other        prometheus.Counter
+	RUV2TTLTotal     prometheus.Counter
 )
 
 // RUV2 unit label constants define the label name and values for RU v2 raw unit metrics.
@@ -46,6 +48,7 @@ const (
 	LblRUV2UnitCPUWork              = "cpu_work"
 	LblRUV2UnitScanBytes            = "scan_bytes"
 	LblRUV2UnitNetBytes             = "net_bytes"
+	LblRUV2UnitCrossAZNetBytes      = "cross_az_net_bytes"
 	LblRUV2UnitFrontendCompileBytes = "frontend_compile_bytes"
 	LblRUV2UnitHashStateRows        = "hash_state_rows"
 	LblRUV2UnitJoinOutputRows       = "join_output_rows"
@@ -57,6 +60,15 @@ const (
 
 // InitRUV2Metrics initializes RUv2 metrics.
 func InitRUV2Metrics() {
+	RUV2TTLTotal = metricscommon.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "ruv2",
+			Name:      "ttl_ru_total",
+			Help: "Counter of RU v2 consumption from TTL user-table scans and deletes, including their commits; " +
+				"included in ru_total.",
+		},
+	)
 	RUV2Total = metricscommon.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -94,6 +106,7 @@ func InitRUV2Metrics() {
 		}, []string{LblEngine},
 	)
 	ruv2TiDB = RUV2ByEngine.WithLabelValues("tidb")
+	ruv2TiFlash = RUV2ByEngine.WithLabelValues(LblEngineTiFlash)
 	RUV2ByEngineTiKV = RUV2ByEngine.WithLabelValues(LblEngineTiKV)
 
 	RUV2Unit = metricscommon.NewCounterVec(
@@ -115,8 +128,8 @@ func InitRUV2Metrics() {
 }
 
 // AddRUV2Results records total, SQL-type and supported engine results without
-// a label lookup on the statement hot path. TiFlash has no RU v2 model yet.
-func AddRUV2Results(tikvRU, tidbRU, totalRU float64, sqlType string) {
+// a label lookup on the statement hot path.
+func AddRUV2Results(tikvRU, tidbRU, tiflashRU, totalRU float64, sqlType string) {
 	counter := ruv2Other
 	switch sqlType {
 	case "select":
@@ -138,4 +151,5 @@ func AddRUV2Results(tikvRU, tidbRU, totalRU float64, sqlType string) {
 	counter.Add(totalRU)
 	RUV2ByEngineTiKV.Add(tikvRU)
 	ruv2TiDB.Add(tidbRU)
+	ruv2TiFlash.Add(tiflashRU)
 }

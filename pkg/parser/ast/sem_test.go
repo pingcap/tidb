@@ -48,3 +48,37 @@ func TestBRIECommand(t *testing.T) {
 		require.NotEqual(t, stmt.SEMCommand(), UnknownCommand, "SEMCommand should not be UnknownCommand for BRIEKind %s", i)
 	}
 }
+
+func TestRefreshMaterializedViewCommand(t *testing.T) {
+	require.Equal(t, CompareMaterializedViewCommand, (&CompareMaterializedViewStmt{}).SEMCommand())
+	require.Equal(t, RefreshMaterializedViewCommand, (&RefreshMaterializedViewStmt{}).SEMCommand())
+	require.Equal(t, RefreshMaterializedViewCommand, (&RefreshMaterializedViewImplementStmt{}).SEMCommand())
+	require.Equal(t, CancelMaterializedViewRefreshJobCommand, (&CancelMaterializedViewJobStmt{Tp: CancelMaterializedViewJobTypeRefresh}).SEMCommand())
+}
+
+func TestRefreshMaterializedViewMode(t *testing.T) {
+	mode, err := (&RefreshMaterializedViewStmt{Type: RefreshMaterializedViewTypeFast}).Mode()
+	require.NoError(t, err)
+	require.Equal(t, RefreshMaterializedViewModeFast, mode)
+
+	mode, err = (&RefreshMaterializedViewStmt{Type: RefreshMaterializedViewTypeComplete, CompleteType: RefreshMaterializedViewCompleteTypeInPlace}).Mode()
+	require.NoError(t, err)
+	require.Equal(t, RefreshMaterializedViewModeCompleteInPlace, mode)
+
+	mode, err = (&RefreshMaterializedViewStmt{Type: RefreshMaterializedViewTypeComplete, CompleteType: RefreshMaterializedViewCompleteTypeOutOfPlace}).Mode()
+	require.NoError(t, err)
+	require.Equal(t, RefreshMaterializedViewModeCompleteOutOfPlace, mode)
+
+	mode, err = (&RefreshMaterializedViewStmt{Type: RefreshMaterializedViewTypeComplete, CompleteType: RefreshMaterializedViewCompleteTypeDeltaApply}).Mode()
+	require.NoError(t, err)
+	require.Equal(t, RefreshMaterializedViewModeCompleteDeltaApply, mode)
+
+	_, err = (&RefreshMaterializedViewStmt{Type: RefreshMaterializedViewTypeComplete}).Mode()
+	require.ErrorContains(t, err, "COMPLETE refresh mode must be specified explicitly")
+
+	_, err = (&RefreshMaterializedViewStmt{Type: RefreshMaterializedViewType(-1)}).Mode()
+	require.ErrorContains(t, err, "unknown REFRESH MATERIALIZED VIEW type")
+
+	_, err = (&RefreshMaterializedViewStmt{Type: RefreshMaterializedViewTypeComplete, CompleteType: RefreshMaterializedViewCompleteType(-1)}).Mode()
+	require.ErrorContains(t, err, "COMPLETE refresh mode must be specified explicitly")
+}

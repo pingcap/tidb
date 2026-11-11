@@ -69,7 +69,15 @@ func mergeOverlappingFilesImpl(ctx context.Context,
 	}()
 
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize, checkHotspot, 1)
+	iter, err := NewMergeKVIter(
+		ctx,
+		paths,
+		zeroOffsets,
+		store,
+		readBufferSize,
+		checkHotspot,
+		readerMemoryForConcurrency(256),
+	)
 	if err != nil {
 		return err
 	}

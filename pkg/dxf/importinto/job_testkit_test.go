@@ -64,6 +64,7 @@ func switchTaskStep(
 func TestShouldUseAsyncPrepare(t *testing.T) {
 	localSortPlan := &importer.Plan{}
 	globalSortPlan := &importer.Plan{CloudStorageURI: "s3://bucket/path"}
+	queryPlan := &importer.Plan{CloudStorageURI: "s3://bucket/path", QuerySource: &importer.QuerySource{}}
 
 	require.False(t, importinto.ShouldUseAsyncPrepare(nil))
 	require.False(t, importinto.ShouldUseAsyncPrepare(localSortPlan))
@@ -99,6 +100,8 @@ func TestShouldUseAsyncPrepare(t *testing.T) {
 				conf.StarterParams.MaxImportDataSize = tt.maxImportDataSize
 			})
 			require.Equal(t, tt.want, importinto.ShouldUseAsyncPrepare(globalSortPlan))
+			// Query imports have no source files to discover.
+			require.False(t, importinto.ShouldUseAsyncPrepare(queryPlan))
 		})
 	}
 }
@@ -651,6 +654,10 @@ func TestShowImportProgress(t *testing.T) {
 	require.EqualValues(t, 1000, runInfo.Total)
 	require.EqualValues(t, 500, runInfo.Processed)
 	checkShowInfo("encode", "500B", "1000B", "50", "100B/s", "00:00:05", 0)
+
+	// Query totals cannot be known before the SELECT has finished.
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepQuery)
+	checkShowInfo("query", "N/A", "N/A", "N/A", "N/A", "N/A", 0)
 
 	// Merge step
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepMergeSort)

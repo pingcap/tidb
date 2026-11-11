@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -1572,14 +1573,62 @@ func TestGetLock(t *testing.T) {
 
 	// Test someone else has the lock with short timeout.
 	tk2 := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
+	// Keep an unrelated checkout registered so the test cannot rely on a global count.
+	backgroundSession, err := dom.SysSessionPool().Get()
+	require.NoError(t, err)
+	defer dom.SysSessionPool().Put(backgroundSession)
+	sessionManager := dom.InfoSyncer().GetSessionManager()
+	type lockSession struct {
+		session  any
+		returned bool
+	}
+	var mu sync.Mutex
+	var sessions []*lockSession
+	active := make(map[any]*lockSession)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/afterGetAdvisoryLockSession", func(owner, internal any) {
+		if owner != tk.Session() && owner != tk2.Session() {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		tracked := &lockSession{session: internal}
+		sessions = append(sessions, tracked)
+		active[internal] = tracked
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/testkit/afterDeleteInternalSession", func(internal any) {
+		mu.Lock()
+		defer mu.Unlock()
+		if tracked := active[internal]; tracked != nil {
+			tracked.returned = true
+			delete(active, internal)
+		}
+	})
+	checkSessions := func(returned ...bool) {
+		t.Helper()
+		mu.Lock()
+		defer mu.Unlock()
+		require.Len(t, sessions, len(returned))
+		for i, expected := range returned {
+			require.Equal(t, expected, sessions[i].returned, "advisory lock attempt %d", i+1)
+			if !expected {
+				require.True(t, sessionManager.ContainsInternalSession(sessions[i].session))
+			}
+		}
+	}
 	tk2.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("1"))
-	tk.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("0"))  // someone else has the lock
+	checkSessions(false)
+	tk.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("0")) // someone else has the lock
+	checkSessions(false, true)
 	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0")) // never had the lock
 	// try again
-	tk.MustQuery("SELECT get_lock('mygloballock', 0)").Check(testkit.Rows("0"))  // someone else has the lock
+	tk.MustQuery("SELECT get_lock('mygloballock', 0)").Check(testkit.Rows("0")) // someone else has the lock
+	checkSessions(false, true, true)
 	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0")) // never had the lock
 	// release it
 	tk2.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("1")) // works
+	// The deletion event is recorded before the session becomes available for reuse.
+	checkSessions(true, true, true)
 
 	// Confirm all locks are released
 	tk2.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
@@ -4498,6 +4547,50 @@ func TestIssue57608(t *testing.T) {
 			"<nil> <nil> <nil>",
 		))
 	}
+}
+
+func TestMaterializedScheduleRuntimeEvalUsesScheduleSQLMode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	evalTK := testkit.NewTestKit(t, store)
+
+	allowInvalidDatesMode, err := mysql.GetSQLMode("ALLOW_INVALID_DATES")
+	require.NoError(t, err)
+	strictMode, err := mysql.GetSQLMode("STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO")
+	require.NoError(t, err)
+
+	nextExpr := "CAST('2026-02-31' AS DATE)"
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMViewMaintenance)
+	evalTK.MustExec("set @@session.sql_mode='STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO'")
+	nextAt, shouldUpdate, err := expression.DeriveMaterializedScheduleNextTime(
+		ctx,
+		evalTK.Session(),
+		nextExpr,
+		allowInvalidDatesMode,
+	)
+	require.NoError(t, err)
+	require.True(t, shouldUpdate)
+	require.NotNil(t, nextAt)
+
+	evalTK.MustExec("set @@session.sql_mode='ALLOW_INVALID_DATES'")
+	_, _, err = expression.DeriveMaterializedScheduleNextTime(
+		ctx,
+		evalTK.Session(),
+		"'2026-02-31 00:00:00'",
+		strictMode,
+	)
+	require.ErrorContains(t, err, "expected DATE/DATETIME/TIMESTAMP")
+
+	dateExpr := "CAST('2026-02-28' AS DATE)"
+	nextAt, shouldUpdate, err = expression.DeriveMaterializedScheduleNextTime(
+		ctx,
+		evalTK.Session(),
+		dateExpr,
+		strictMode,
+	)
+	require.NoError(t, err)
+	require.True(t, shouldUpdate)
+	require.NotNil(t, nextAt)
+	require.Equal(t, mysql.TypeDate, nextAt.Type())
 }
 
 // This is a testcase for issue #57608, which is to ensure that the return type

@@ -2434,12 +2434,14 @@ func TestGCPlacementRulesForCreateMaterializedViewRollback(t *testing.T) {
 	historyJobFailpointEnabled = false
 
 	for _, test := range []struct {
-		name      string
-		failpoint string
-		tableID   int64
+		name          string
+		failpoint     string
+		tableID       int64
+		shadowTableID int64
 	}{
 		{name: "drop materialized view", failpoint: "drop-mview:20", tableID: 20},
 		{name: "drop materialized view log", failpoint: "drop-mlog:30", tableID: 30},
+		{name: "out of place materialized view cutover", failpoint: "mview-cutover:40:41", tableID: 40, shadowTableID: 41},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", `return("`+test.failpoint+`")`))
@@ -2451,7 +2453,13 @@ func TestGCPlacementRulesForCreateMaterializedViewRollback(t *testing.T) {
 			bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{PrimaryRegion: "r1", Regions: "r1, r2"})
 			require.NoError(t, err)
 			bundle.ID = bundleID
-			require.NoError(t, infosync.PutRuleBundles(context.Background(), []*placement.Bundle{bundle}))
+			bundles := []*placement.Bundle{bundle}
+			if test.shadowTableID != 0 {
+				shadowBundle := bundle.Clone()
+				shadowBundle.ID = placement.GroupID(test.shadowTableID)
+				bundles = append(bundles, shadowBundle)
+			}
+			require.NoError(t, infosync.PutRuleBundles(context.Background(), bundles))
 
 			var cache sync.Map
 			dr := util.DelRangeTask{JobID: 1, ElementID: test.tableID}
@@ -2462,6 +2470,12 @@ func TestGCPlacementRulesForCreateMaterializedViewRollback(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, got)
 			require.True(t, got.IsEmpty())
+			if test.shadowTableID != 0 {
+				got, err = infosync.GetRuleBundle(context.Background(), placement.GroupID(test.shadowTableID))
+				require.NoError(t, err)
+				require.NotNil(t, got)
+				require.False(t, got.IsEmpty())
+			}
 		})
 	}
 }

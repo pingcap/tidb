@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -51,6 +52,9 @@ type statementRURealTiKVObservation struct {
 }
 
 func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("statement RU collection requires NextGen")
+	}
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires a RealTiKV cluster that publishes ExecDetailsV2.RuV2")
 	}
@@ -72,7 +76,7 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 		observedConnectionID uint64,
 		calibrationState string,
 		cpuWork, scanBytes, netBytes, frontendCompileBytes, hashStateRows, joinOutputRows float64,
-		writeStatement, operatorNum, writeKeys, writeBytes float64,
+		writeStatement, operatorNum, writeKeys, writeBytes, _ float64,
 	) {
 		if observedConnectionID != connectionID {
 			return

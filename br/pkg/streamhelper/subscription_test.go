@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -329,21 +330,36 @@ func TestSubscriptionIdleTimeoutClearsCacheBeforeRetry(t *testing.T) {
 }
 
 func TestSubscriptionIdleTimeoutWhileSendingEvents(t *testing.T) {
-	req := require.New(t)
-	ctx := context.Background()
-	c := createFakeCluster(t, 4, true)
-	c.splitAndScatter(manyRegions(0, 1500)...)
-	installSubscribeSupport(c)
+	// Advance idle time only after setup and event forwarding have blocked,
+	// so scheduler delays cannot expire subscriptions before the output fills.
+	synctest.Test(t, func(t *testing.T) {
+		req := require.New(t)
+		ctx := context.Background()
+		c := createFakeCluster(t, 4, true)
+		c.splitAndScatter(manyRegions(0, 1500)...)
+		installSubscribeSupport(c)
 
-	sub := streamhelper.NewSubscriber(c, c, streamhelper.WithSubscriptionIdleTimeout(200*time.Millisecond))
-	defer sub.Drop()
-	req.NoError(sub.UpdateStoreTopology(ctx))
+		sub := streamhelper.NewSubscriber(c, c, streamhelper.WithSubscriptionIdleTimeout(200*time.Millisecond))
+		defer sub.Drop()
+		req.NoError(sub.UpdateStoreTopology(ctx))
 
-	c.advanceCheckpoints()
-	c.flushAll()
+		c.advanceCheckpoints()
+		c.flushAll()
+		synctest.Wait()
+		req.Len(sub.Events(), cap(sub.Events()))
+		req.NoError(sub.PendingErrors())
 
-	req.Eventually(func() bool {
-		err := sub.PendingErrors()
-		return err != nil && strings.Contains(err.Error(), "has no activity")
-	}, 3*time.Second, 10*time.Millisecond)
+		deadline := time.Now().Add(3 * time.Second)
+		var lastErr error
+		for {
+			lastErr = sub.PendingErrors()
+			if lastErr != nil && strings.Contains(lastErr.Error(), "has no activity") {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("pending errors did not contain %q within %s; last error: %v", "has no activity", 3*time.Second, lastErr)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	})
 }

@@ -6,6 +6,7 @@ go_library(
         "execdetails.go",
         "runtime_stats.go",
         "ruv2_metrics.go",
+        "tiflash_execution_units.go",
         "tiflash_stats.go",
         "util.go",
     ],
@@ -28,6 +29,7 @@ go_test(
     srcs = [
         "execdetails_test.go",
         "main_test.go",
+        "tiflash_execution_units_test.go",
     ],
     embed = [":execdetails"],
     flaky = True,

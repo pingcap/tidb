@@ -199,7 +199,7 @@ func Zone(loc *time.Location) (string, int64) {
 }
 
 // ZoneName return the zone name of the location. If the name is empty, it will
-// return the offset in format like "+08:00" or "-06:00".
+// return the offset in format like "+08:00" or "-06:00", including seconds when nonzero.
 // Note: the input loc cannot be a Location constructed by time.FixedZone with
 // any name, otherwise the name will be returned directly, and might be
 // un-parsable by ParseTimeZone
@@ -213,8 +213,12 @@ func ZoneName(loc *time.Location) string {
 		sign = '-'
 		offset = -offset
 	}
-	hours := offset / int64(time.Hour/time.Second)
-	minutes := offset % int64(time.Hour/time.Second) / int64(time.Minute/time.Second)
+	hours := offset / int64(time.Hour.Seconds())
+	minutes := offset % int64(time.Hour.Seconds()) / int64(time.Minute.Seconds())
+	seconds := offset % int64(time.Minute.Seconds())
+	if seconds != 0 {
+		return fmt.Sprintf("%c%02d:%02d:%02d", sign, hours, minutes, seconds)
+	}
 	return fmt.Sprintf("%c%02d:%02d", sign, hours, minutes)
 }
 

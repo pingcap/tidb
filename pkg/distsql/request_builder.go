@@ -186,8 +186,32 @@ func (builder *RequestBuilder) SetPartitionsAndHandles(handles []kv.Handle) *Req
 
 const estimatedRegionRowCount = 100000
 
+// ScanLimitWithMinimalConcurrency returns the limit of a Scan -> Limit DAG that SetDAGRequest sends with
+// minimal concurrency. Only for such a DAG can SetDAGRequestWithRowCountUpperBound change the concurrency.
+func ScanLimitWithMinimalConcurrency(dag *tipb.DAGRequest) (uint64, bool) {
+	if dag == nil || len(dag.Executors) != 2 {
+		return 0, false
+	}
+	limit := dag.Executors[1].GetLimit()
+	if limit == nil || limit.Limit >= estimatedRegionRowCount {
+		return 0, false
+	}
+	return limit.Limit, true
+}
+
 // SetDAGRequest sets the request type to "ReqTypeDAG" and construct request data.
 func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuilder {
+	return builder.setDAGRequest(dag, 0, false)
+}
+
+// SetDAGRequestWithRowCountUpperBound is SetDAGRequest for key ranges that are proven to return at most
+// rowCountUpperBound rows, e.g. when every range is a point on a unique key. A Scan -> Limit DAG keeps the
+// normal concurrency when the bound is not larger than the limit.
+func (builder *RequestBuilder) SetDAGRequestWithRowCountUpperBound(dag *tipb.DAGRequest, rowCountUpperBound uint64) *RequestBuilder {
+	return builder.setDAGRequest(dag, rowCountUpperBound, true)
+}
+
+func (builder *RequestBuilder) setDAGRequest(dag *tipb.DAGRequest, rowCountUpperBound uint64, hasRowCountUpperBound bool) *RequestBuilder {
 	if builder.err == nil {
 		builder.Request.Tp = kv.ReqTypeDAG
 		builder.Request.Cacheable = true
@@ -205,8 +229,10 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 			if limit := secondExec.GetLimit(); limit != nil && limit.Limit < estimatedRegionRowCount {
 				minimalConcurrency := false
 				if execCnt == 2 {
-					// execCnt == 2 indicates TableScan / IndexScan -> Limit
-					minimalConcurrency = true
+					// execCnt == 2 indicates TableScan / IndexScan -> Limit.
+					// If the key ranges are proven to return no more rows than the limit, the limit can never
+					// be reached before all cop tasks finish, so sending them one by one only adds latency.
+					minimalConcurrency = !hasRowCountUpperBound || rowCountUpperBound > limit.Limit
 				} else {
 					// if execCnt > 2 and the limit's parent is IndexLookup,
 					// it means the DAG is a push-down IndexLookUp and its build side is IndexScan -> Limit.
