@@ -339,6 +339,7 @@ var (
 	// systemTablesOfMaterializedViewNextGenVersion contains system tables introduced for materialized view maintenance.
 	systemTablesOfMaterializedViewNextGenVersion = []TableBasicInfo{
 		{ID: metadef.TiDBMViewRefreshInfoTableID, Name: metadef.TiDBMViewRefreshInfoTableName, SQL: metadef.CreateTiDBMViewRefreshInfoTable},
+		{ID: metadef.TiDBMViewFastRefreshSourceInfoTableID, Name: metadef.TiDBMViewFastRefreshSourceInfoTableName, SQL: metadef.CreateTiDBMViewFastRefreshSourceInfoTable},
 		{ID: metadef.TiDBMLogPurgeInfoTableID, Name: metadef.TiDBMLogPurgeInfoTableName, SQL: metadef.CreateTiDBMLogPurgeInfoTable},
 		{ID: metadef.TiDBMViewRefreshHistTableID, Name: metadef.TiDBMViewRefreshHistTableName, SQL: metadef.CreateTiDBMViewRefreshHistTable},
 		{ID: metadef.TiDBMViewRefreshAlertTableID, Name: metadef.TiDBMViewRefreshAlertTableName, SQL: metadef.CreateTiDBMViewRefreshAlertTable},

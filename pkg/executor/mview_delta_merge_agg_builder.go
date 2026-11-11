@@ -96,6 +96,12 @@ func (b *executorBuilder) buildMViewDeltaMerge(v *plannercore.MViewDeltaMerge) e
 	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
 	}
+	if b.err = validateMVFastRefreshInput(
+		b.ctx, b.sctx, v.MVTableID, v,
+		b.sctx.GetSessionVars().TxnCtx.GetForUpdateTS(), v.RegisteredMLogIDs,
+	); b.err != nil {
+		return nil
+	}
 	sourceExec := b.build(v.Source)
 	if b.err != nil {
 		return nil

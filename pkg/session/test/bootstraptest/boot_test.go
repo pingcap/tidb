@@ -22,6 +22,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -133,6 +135,18 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	checkMaterializedViewBootstrapSchema(t, tk)
+	sourceInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr(metadef.TiDBMViewFastRefreshSourceInfoTableName))
+	require.NoError(t, err)
+	require.True(t, sourceInfo.Meta().IsCommonHandle)
+	if kerneltype.IsNextGen() {
+		require.Equal(t, metadef.TiDBMViewFastRefreshSourceInfoTableID, sourceInfo.Meta().ID)
+	}
+	tk.MustQuery("select lower(column_name), lower(column_type), is_nullable from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_fast_refresh_source_info' order by ordinal_position").
+		Check(testkit.Rows("mview_id bigint(20) NO", "mlog_id bigint(20) NO"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_fast_refresh_source_info' and index_name='PRIMARY' order by seq_in_index").
+		Check(testkit.Rows("mview_id", "mlog_id"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_fast_refresh_source_info' and index_name='idx_mlog' order by seq_in_index").
+		Check(testkit.Rows("mlog_id", "mview_id"))
 }
 
 func checkMaterializedViewBootstrapSchema(t *testing.T, tk *testkit.TestKit) {
