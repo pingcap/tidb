@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "udf",
+    srcs = [
+        "cache.go",
+        "types.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/udf",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/mysql",
+        "//pkg/types",
+    ],
+)

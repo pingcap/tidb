@@ -1482,6 +1482,9 @@ func BuildNotNullExpr(ctx BuildContext, expr Expression) Expression {
 func IsRuntimeConstExpr(expr Expression) bool {
 	switch x := expr.(type) {
 	case *ScalarFunction:
+		if _, ok := x.Function.(*udfFuncSig); ok {
+			return false
+		}
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
 			return false
 		}
@@ -1505,6 +1508,9 @@ func CheckNonDeterministic(e Expression) bool {
 	case *Constant, *Column, *CorrelatedColumn:
 		return false
 	case *ScalarFunction:
+		if _, ok := x.Function.(*udfFuncSig); ok {
+			return true
+		}
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
 			return true
 		}
@@ -1537,6 +1543,9 @@ func CheckFuncInExpr(e Expression, funcName string) bool {
 func IsMutableEffectsExpr(expr Expression) bool {
 	switch x := expr.(type) {
 	case *ScalarFunction:
+		if _, ok := x.Function.(*udfFuncSig); ok {
+			return true
+		}
 		if _, ok := mutableEffectsFunctions[x.FuncName.L]; ok {
 			return true
 		}
@@ -1557,6 +1566,9 @@ func IsMutableEffectsExpr(expr Expression) bool {
 func IsImmutableFunc(expr Expression) bool {
 	switch x := expr.(type) {
 	case *ScalarFunction:
+		if _, ok := x.Function.(*udfFuncSig); ok {
+			return false
+		}
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
 			return false
 		}

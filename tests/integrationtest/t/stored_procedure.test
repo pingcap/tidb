@@ -1,0 +1,581 @@
+# Stored Procedure Integration Tests
+# These tests verify MySQL-compatible stored procedure features
+
+CREATE DATABASE IF NOT EXISTS sp_test;
+USE sp_test;
+
+# ====================
+# TEST 1: Basic OUT parameter
+# ====================
+DROP PROCEDURE IF EXISTS sp_basic_out;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_basic_out(OUT result INT)
+BEGIN
+    SET result = 42;
+END //
+
+DELIMITER ;
+
+CALL sp_basic_out(@v1);
+SELECT @v1 AS basic_out_result;
+
+# ====================
+# TEST 2: IN + OUT parameter
+# ====================
+DROP PROCEDURE IF EXISTS sp_in_out;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_in_out(IN val INT, OUT result INT)
+BEGIN
+    SET result = val * 2;
+END //
+
+DELIMITER ;
+
+CALL sp_in_out(10, @v2);
+SELECT @v2 AS in_out_result;
+
+# ====================
+# TEST 3: INOUT parameter
+# ====================
+DROP PROCEDURE IF EXISTS sp_inout;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_inout(INOUT val INT)
+BEGIN
+    SET val = val * 3;
+END //
+
+DELIMITER ;
+
+SET @v3 = 5;
+CALL sp_inout(@v3);
+SELECT @v3 AS inout_result;
+
+# ====================
+# TEST 4: Multiple OUT parameters
+# ====================
+DROP PROCEDURE IF EXISTS sp_multi_out;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_multi_out(IN a INT, IN b INT, OUT sum_val INT, OUT prod_val INT)
+BEGIN
+    SET sum_val = a + b;
+    SET prod_val = a * b;
+END //
+
+DELIMITER ;
+
+CALL sp_multi_out(3, 4, @sum, @prod);
+SELECT @sum AS sum_result, @prod AS product_result;
+
+# ====================
+# TEST 5: DOUBLE/FLOAT types
+# ====================
+DROP PROCEDURE IF EXISTS sp_double;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_double(IN val DOUBLE, OUT result DOUBLE)
+BEGIN
+    SET result = val / 2.0;
+END //
+
+DELIMITER ;
+
+CALL sp_double(10.5, @d1);
+SELECT @d1 AS double_result;
+
+# ====================
+# TEST 6: DECIMAL type
+# ====================
+DROP PROCEDURE IF EXISTS sp_decimal;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_decimal(IN val DECIMAL(10,2), OUT result DECIMAL(10,2))
+BEGIN
+    SET result = val * 1.5;
+END //
+
+DELIMITER ;
+
+CALL sp_decimal(100.50, @dec);
+SELECT @dec AS decimal_result;
+
+# ====================
+# TEST 7: VARCHAR type
+# ====================
+DROP PROCEDURE IF EXISTS sp_varchar;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_varchar(IN prefix VARCHAR(50), IN name VARCHAR(50), OUT result VARCHAR(100))
+BEGIN
+    SET result = CONCAT(prefix, ' ', name);
+END //
+
+DELIMITER ;
+
+CALL sp_varchar('Hello', 'World', @str);
+SELECT @str AS varchar_result;
+
+# ====================
+# TEST 8: IF statement
+# ====================
+DROP PROCEDURE IF EXISTS sp_if;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_if(IN val INT, OUT result VARCHAR(20))
+BEGIN
+    IF val > 0 THEN
+        SET result = 'positive';
+    ELSEIF val < 0 THEN
+        SET result = 'negative';
+    ELSE
+        SET result = 'zero';
+    END IF;
+END //
+
+DELIMITER ;
+
+CALL sp_if(5, @r1);
+CALL sp_if(-3, @r2);
+CALL sp_if(0, @r3);
+SELECT @r1 AS positive_test, @r2 AS negative_test, @r3 AS zero_test;
+
+# ====================
+# TEST 9: CASE statement
+# ====================
+DROP PROCEDURE IF EXISTS sp_case;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_case(IN grade INT, OUT letter VARCHAR(2))
+BEGIN
+    CASE
+        WHEN grade >= 90 THEN SET letter = 'A';
+        WHEN grade >= 80 THEN SET letter = 'B';
+        WHEN grade >= 70 THEN SET letter = 'C';
+        WHEN grade >= 60 THEN SET letter = 'D';
+        ELSE SET letter = 'F';
+    END CASE;
+END //
+
+DELIMITER ;
+
+CALL sp_case(95, @g1);
+CALL sp_case(85, @g2);
+CALL sp_case(55, @g3);
+SELECT @g1 AS grade_A, @g2 AS grade_B, @g3 AS grade_F;
+
+# ====================
+# TEST 10: WHILE loop
+# ====================
+DROP PROCEDURE IF EXISTS sp_while;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_while(IN n INT, OUT result INT)
+BEGIN
+    DECLARE i INT DEFAULT 1;
+    DECLARE total INT DEFAULT 0;
+    WHILE i <= n DO
+        SET total = total + i;
+        SET i = i + 1;
+    END WHILE;
+    SET result = total;
+END //
+
+DELIMITER ;
+
+CALL sp_while(5, @w);
+SELECT @w AS sum_1_to_5;
+
+# ====================
+# TEST 11: REPEAT loop
+# ====================
+DROP PROCEDURE IF EXISTS sp_repeat;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_repeat(IN n INT, OUT result INT)
+BEGIN
+    DECLARE i INT DEFAULT 1;
+    DECLARE factorial INT DEFAULT 1;
+    REPEAT
+        SET factorial = factorial * i;
+        SET i = i + 1;
+    UNTIL i > n END REPEAT;
+    SET result = factorial;
+END //
+
+DELIMITER ;
+
+CALL sp_repeat(5, @fact);
+SELECT @fact AS factorial_5;
+
+# ====================
+# TEST 12: LOOP with LEAVE
+# ====================
+DROP PROCEDURE IF EXISTS sp_loop_leave;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_loop_leave(IN target INT, OUT result INT)
+BEGIN
+    DECLARE counter INT DEFAULT 0;
+    myloop: LOOP
+        SET counter = counter + 1;
+        IF counter >= target THEN
+            LEAVE myloop;
+        END IF;
+    END LOOP myloop;
+    SET result = counter;
+END //
+
+DELIMITER ;
+
+CALL sp_loop_leave(10, @loop_res);
+SELECT @loop_res AS loop_result;
+
+# ====================
+# TEST 13: Local variables
+# ====================
+DROP PROCEDURE IF EXISTS sp_local_vars;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_local_vars(IN a INT, IN b INT, OUT result INT)
+BEGIN
+    DECLARE temp1 INT;
+    DECLARE temp2 INT;
+    SET temp1 = a * 2;
+    SET temp2 = b * 3;
+    SET result = temp1 + temp2;
+END //
+
+DELIMITER ;
+
+CALL sp_local_vars(5, 4, @lv);
+SELECT @lv AS local_vars_result;
+
+# ====================
+# TEST 14: Multiple INOUT (swap)
+# ====================
+DROP PROCEDURE IF EXISTS sp_swap;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_swap(INOUT a INT, INOUT b INT)
+BEGIN
+    DECLARE temp INT;
+    SET temp = a;
+    SET a = b;
+    SET b = temp;
+END //
+
+DELIMITER ;
+
+SET @x = 10, @y = 20;
+CALL sp_swap(@x, @y);
+SELECT @x AS swapped_x, @y AS swapped_y;
+
+# ====================
+# TEST 15: Mixed IN, OUT, INOUT
+# ====================
+DROP PROCEDURE IF EXISTS sp_mixed;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_mixed(IN base INT, INOUT multiplier INT, OUT result INT)
+BEGIN
+    SET result = base * multiplier;
+    SET multiplier = multiplier + 1;
+END //
+
+DELIMITER ;
+
+SET @mult = 5;
+CALL sp_mixed(10, @mult, @mixed_res);
+SELECT @mult AS updated_multiplier, @mixed_res AS mixed_result;
+
+# ====================
+# TEST 16: Nested blocks
+# ====================
+DROP PROCEDURE IF EXISTS sp_nested_blocks;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_nested_blocks(IN val INT, OUT result INT)
+BEGIN
+    DECLARE outer_var INT DEFAULT 1;
+    BEGIN
+        DECLARE inner_var INT DEFAULT 2;
+        SET outer_var = outer_var + inner_var + val;
+    END;
+    SET result = outer_var;
+END //
+
+DELIMITER ;
+
+CALL sp_nested_blocks(10, @nested);
+SELECT @nested AS nested_result;
+
+# ====================
+# TEST 17: NULL handling
+# ====================
+DROP PROCEDURE IF EXISTS sp_null_handling;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_null_handling(IN val INT, OUT result INT)
+BEGIN
+    IF val IS NULL THEN
+        SET result = -1;
+    ELSE
+        SET result = val;
+    END IF;
+END //
+
+DELIMITER ;
+
+CALL sp_null_handling(NULL, @null1);
+CALL sp_null_handling(42, @null2);
+SELECT @null1 AS null_input, @null2 AS non_null_input;
+
+# ====================
+# TEST 18: String operations
+# ====================
+DROP PROCEDURE IF EXISTS sp_string_ops;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_string_ops(IN s VARCHAR(100), OUT len_result INT, OUT upper_result VARCHAR(100))
+BEGIN
+    SET len_result = LENGTH(s);
+    SET upper_result = UPPER(s);
+END //
+
+DELIMITER ;
+
+CALL sp_string_ops('hello world', @len, @upper);
+SELECT @len AS string_length, @upper AS upper_string;
+
+# ====================
+# TEST 19: Math functions
+# ====================
+DROP PROCEDURE IF EXISTS sp_math;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_math(IN val DOUBLE, OUT abs_val DOUBLE, OUT ceil_val INT, OUT floor_val INT)
+BEGIN
+    SET abs_val = ABS(val);
+    SET ceil_val = CEIL(val);
+    SET floor_val = FLOOR(val);
+END //
+
+DELIMITER ;
+
+CALL sp_math(-3.7, @abs, @ceil, @floor);
+SELECT @abs AS abs_result, @ceil AS ceil_result, @floor AS floor_result;
+
+# ====================
+# TEST 20: Fibonacci
+# ====================
+DROP PROCEDURE IF EXISTS sp_fibonacci;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_fibonacci(IN n INT, OUT result INT)
+BEGIN
+    DECLARE a INT DEFAULT 0;
+    DECLARE b INT DEFAULT 1;
+    DECLARE temp INT;
+    DECLARE i INT DEFAULT 0;
+
+    IF n <= 0 THEN
+        SET result = 0;
+    ELSEIF n = 1 THEN
+        SET result = 1;
+    ELSE
+        WHILE i < n - 1 DO
+            SET temp = a + b;
+            SET a = b;
+            SET b = temp;
+            SET i = i + 1;
+        END WHILE;
+        SET result = b;
+    END IF;
+END //
+
+DELIMITER ;
+
+CALL sp_fibonacci(10, @fib);
+SELECT @fib AS fibonacci_10;
+
+# ====================
+# TEST 21: GCD (Euclidean algorithm)
+# ====================
+DROP PROCEDURE IF EXISTS sp_gcd;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_gcd(IN a INT, IN b INT, OUT result INT)
+BEGIN
+    DECLARE temp INT;
+    WHILE b != 0 DO
+        SET temp = b;
+        SET b = a MOD b;
+        SET a = temp;
+    END WHILE;
+    SET result = a;
+END //
+
+DELIMITER ;
+
+CALL sp_gcd(48, 18, @gcd);
+SELECT @gcd AS gcd_result;
+
+# ====================
+# TEST 22: Prime check
+# ====================
+DROP PROCEDURE IF EXISTS sp_is_prime;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_is_prime(IN n INT, OUT is_prime INT)
+BEGIN
+    DECLARE i INT DEFAULT 2;
+    SET is_prime = 1;
+
+    IF n <= 1 THEN
+        SET is_prime = 0;
+    ELSE
+        WHILE i * i <= n AND is_prime = 1 DO
+            IF n MOD i = 0 THEN
+                SET is_prime = 0;
+            END IF;
+            SET i = i + 1;
+        END WHILE;
+    END IF;
+END //
+
+DELIMITER ;
+
+CALL sp_is_prime(17, @prime1);
+CALL sp_is_prime(15, @prime2);
+SELECT @prime1 AS is_17_prime, @prime2 AS is_15_prime;
+
+# ====================
+# TEST 23: DECLARE with DEFAULT
+# ====================
+DROP PROCEDURE IF EXISTS sp_defaults;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_defaults(OUT result INT)
+BEGIN
+    DECLARE a INT DEFAULT 10;
+    DECLARE b INT DEFAULT 20;
+    DECLARE c INT DEFAULT 30;
+    SET result = a + b + c;
+END //
+
+DELIMITER ;
+
+CALL sp_defaults(@def);
+SELECT @def AS defaults_sum;
+
+# ====================
+# TEST 24: Complex calculation
+# ====================
+DROP PROCEDURE IF EXISTS sp_complex_calc;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_complex_calc(IN x INT, IN y INT, OUT sum_val INT, OUT diff_val INT, OUT prod_val INT, OUT quot_val DOUBLE)
+BEGIN
+    SET sum_val = x + y;
+    SET diff_val = x - y;
+    SET prod_val = x * y;
+    IF y != 0 THEN
+        SET quot_val = x / y;
+    ELSE
+        SET quot_val = NULL;
+    END IF;
+END //
+
+DELIMITER ;
+
+CALL sp_complex_calc(20, 4, @s, @d, @p, @q);
+SELECT @s AS sum, @d AS diff, @p AS product, @q AS quotient;
+
+# ====================
+# TEST 25: ITERATE in loop
+# ====================
+DROP PROCEDURE IF EXISTS sp_iterate;
+
+DELIMITER //
+
+CREATE PROCEDURE sp_iterate(IN max_val INT, OUT result INT)
+BEGIN
+    DECLARE i INT DEFAULT 0;
+    DECLARE total INT DEFAULT 0;
+
+    myloop: LOOP
+        SET i = i + 1;
+        IF i > max_val THEN
+            LEAVE myloop;
+        END IF;
+        IF i MOD 2 = 0 THEN
+            ITERATE myloop;
+        END IF;
+        SET total = total + i;
+    END LOOP myloop;
+    SET result = total;
+END //
+
+DELIMITER ;
+
+CALL sp_iterate(10, @odd_sum);
+SELECT @odd_sum AS sum_of_odds;
+
+# ====================
+# TEST 26: DROP PROCEDURE
+# ====================
+DROP PROCEDURE IF EXISTS sp_basic_out;
+DROP PROCEDURE IF EXISTS sp_in_out;
+DROP PROCEDURE IF EXISTS sp_inout;
+DROP PROCEDURE IF EXISTS sp_multi_out;
+DROP PROCEDURE IF EXISTS sp_double;
+DROP PROCEDURE IF EXISTS sp_decimal;
+DROP PROCEDURE IF EXISTS sp_varchar;
+DROP PROCEDURE IF EXISTS sp_if;
+DROP PROCEDURE IF EXISTS sp_case;
+DROP PROCEDURE IF EXISTS sp_while;
+DROP PROCEDURE IF EXISTS sp_repeat;
+DROP PROCEDURE IF EXISTS sp_loop_leave;
+DROP PROCEDURE IF EXISTS sp_local_vars;
+DROP PROCEDURE IF EXISTS sp_swap;
+DROP PROCEDURE IF EXISTS sp_mixed;
+DROP PROCEDURE IF EXISTS sp_nested_blocks;
+DROP PROCEDURE IF EXISTS sp_null_handling;
+DROP PROCEDURE IF EXISTS sp_string_ops;
+DROP PROCEDURE IF EXISTS sp_math;
+DROP PROCEDURE IF EXISTS sp_fibonacci;
+DROP PROCEDURE IF EXISTS sp_gcd;
+DROP PROCEDURE IF EXISTS sp_is_prime;
+DROP PROCEDURE IF EXISTS sp_defaults;
+DROP PROCEDURE IF EXISTS sp_complex_calc;
+DROP PROCEDURE IF EXISTS sp_iterate;
+
+# Cleanup
+DROP DATABASE sp_test;
