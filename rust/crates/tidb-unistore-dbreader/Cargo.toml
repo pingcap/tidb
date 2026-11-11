@@ -11,4 +11,5 @@ description = "TiDB pkg/store/mockstore/unistore/tikv/dbreader: the reader the u
 workspace = true
 
 [dependencies]
+tidb-proto = { path = "../tidb-proto" }
 tidb-unistore-kverrors = { path = "../tidb-unistore-kverrors" }

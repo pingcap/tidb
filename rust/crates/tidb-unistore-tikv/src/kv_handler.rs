@@ -186,6 +186,8 @@ struct RequestCtx {
     reg_ctx: Option<RegionCtx>,
     /// `rpcCtx`.
     rpc_ctx: kvrpcpb::Context,
+    /// `storeID`.
+    store_id: u64,
 }
 
 impl RequestCtx {
@@ -218,11 +220,80 @@ impl RequestCtx {
 struct RequestDbReader<'a> {
     store: &'a MvccStore,
     ctx: ReadContext,
+    /// Go `reader.ExtraDbReaderProvider = req`: the request's region manager
+    /// and store.
+    regions: &'a MockRegionManager,
+    store_id: u64,
 }
 
 impl tidb_unistore_dbreader::DbReader for RequestDbReader<'_> {
     fn scan(&self, req: &tidb_unistore_dbreader::ScanReq) -> Vec<tidb_unistore_dbreader::KvPair> {
         self.store.scan_with(&self.ctx, req)
+    }
+
+    fn extra_db_reader_provider(&self) -> Option<&dyn tidb_unistore_dbreader::ExtraDbReaderProvider> {
+        Some(self)
+    }
+}
+
+/// Go `requestCtx.LocateExtraRegion`: the region `pdClient.GetRegion` answers
+/// for `key`, found when this store leads it.
+fn locate_extra_region(
+    regions: &MockRegionManager,
+    store_id: u64,
+    key: &[u8],
+) -> tidb_unistore_dbreader::LocateExtraRegionResult {
+    match regions.get_region_by_key(key) {
+        Some((region, leader)) if leader.store_id == store_id => {
+            tidb_unistore_dbreader::LocateExtraRegionResult {
+                found: true,
+                region: Some(region),
+                peer: Some(leader),
+                is_leader: true,
+            }
+        }
+        _ => tidb_unistore_dbreader::LocateExtraRegionResult::default(),
+    }
+}
+
+/// Go `requestCtx.GetExtraDBReaderByRegion` up to `NewDBReader`: the read
+/// context bounded by the region `ctx` names.
+fn extra_read_context(
+    regions: &MockRegionManager,
+    request: &ReadContext,
+    ctx: &tidb_unistore_dbreader::GetExtraDbReaderContext,
+) -> Result<ReadContext, errorpb::Error> {
+    let reg_ctx = regions.get_region_from_ctx(&kvrpcpb::Context {
+        region_id: ctx.region.as_ref().map_or(0, |region| region.id),
+        region_epoch: ctx.region.as_ref().and_then(|region| region.region_epoch.clone()),
+        peer: ctx.peer.clone(),
+        ..kvrpcpb::Context::default()
+    })?;
+    Ok(ReadContext {
+        region_raw_start: reg_ctx.raw_start().to_vec(),
+        region_raw_end: reg_ctx.raw_end().to_vec(),
+        ..request.clone()
+    })
+}
+
+impl tidb_unistore_dbreader::ExtraDbReaderProvider for RequestDbReader<'_> {
+    fn locate_extra_region(
+        &self,
+        key: &[u8],
+    ) -> Result<tidb_unistore_dbreader::LocateExtraRegionResult, String> {
+        Ok(locate_extra_region(self.regions, self.store_id, key))
+    }
+
+    fn get_extra_db_reader_by_region<'s>(
+        &'s self,
+        ctx: &tidb_unistore_dbreader::GetExtraDbReaderContext,
+    ) -> Result<Box<dyn tidb_unistore_dbreader::DbReader + 's>, errorpb::Error> {
+        Ok(Box::new(RequestDbReader {
+            store: self.store,
+            ctx: extra_read_context(self.regions, &self.ctx, ctx)?,
+            regions: self.regions,
+            store_id: self.store_id,
+        }))
     }
 }
 
@@ -232,13 +303,19 @@ impl tidb_unistore_dbreader::DbReader for RequestDbReader<'_> {
 pub struct SharedDbReader {
     handler: Arc<std::sync::Mutex<KvHandler>>,
     ctx: ReadContext,
+    /// Go `requestCtx.storeID`.
+    store_id: u64,
 }
 
 impl SharedDbReader {
     /// The reader of `handler`'s store under `ctx`.
     #[must_use]
-    pub fn new(handler: Arc<std::sync::Mutex<KvHandler>>, ctx: ReadContext) -> Self {
-        Self { handler, ctx }
+    pub fn new(handler: Arc<std::sync::Mutex<KvHandler>>, ctx: ReadContext, store_id: u64) -> Self {
+        Self {
+            handler,
+            ctx,
+            store_id,
+        }
     }
 }
 
@@ -246,6 +323,32 @@ impl tidb_unistore_dbreader::DbReader for SharedDbReader {
     fn scan(&self, req: &tidb_unistore_dbreader::ScanReq) -> Vec<tidb_unistore_dbreader::KvPair> {
         let handler = self.handler.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         handler.store.db_reader_scan(&self.ctx, req)
+    }
+
+    fn extra_db_reader_provider(&self) -> Option<&dyn tidb_unistore_dbreader::ExtraDbReaderProvider> {
+        Some(self)
+    }
+}
+
+impl tidb_unistore_dbreader::ExtraDbReaderProvider for SharedDbReader {
+    fn locate_extra_region(
+        &self,
+        key: &[u8],
+    ) -> Result<tidb_unistore_dbreader::LocateExtraRegionResult, String> {
+        let handler = self.handler.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(locate_extra_region(&handler.regions, self.store_id, key))
+    }
+
+    fn get_extra_db_reader_by_region<'s>(
+        &'s self,
+        ctx: &tidb_unistore_dbreader::GetExtraDbReaderContext,
+    ) -> Result<Box<dyn tidb_unistore_dbreader::DbReader + 's>, errorpb::Error> {
+        let handler = self.handler.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(Box::new(SharedDbReader {
+            handler: Arc::clone(&self.handler),
+            ctx: extra_read_context(&handler.regions, &self.ctx, ctx)?,
+            store_id: self.store_id,
+        }))
     }
 }
 
@@ -352,10 +455,21 @@ impl KvHandler {
             Ok(region) => (Some(region), None),
             Err(region_error) => (None, Some(region_error)),
         };
-        if let Err(region_error) = self.regions.get_store_info_from_ctx(&rpc_ctx) {
-            reg_err = Some(region_error);
-        }
-        (RequestCtx { reg_ctx, rpc_ctx }, reg_err)
+        let store_id = match self.regions.get_store_info_from_ctx(&rpc_ctx) {
+            Ok((_, store_id)) => store_id,
+            Err(region_error) => {
+                reg_err = Some(region_error);
+                0
+            }
+        };
+        (
+            RequestCtx {
+                reg_ctx,
+                rpc_ctx,
+                store_id,
+            },
+            reg_err,
+        )
     }
 
     /// Go `Server.KvGet` (`server.go`).
@@ -1011,6 +1125,8 @@ impl KvHandler {
         let reader = RequestDbReader {
             store: &self.store,
             ctx: req_ctx.read_context(),
+            regions: &self.regions,
+            store_id: req_ctx.store_id,
         };
         let mut resp = tidb_unistore_cophandler::handle_cop_request(&reader, req);
         resp.batch_responses = self.store_batch_coprocessor(req);
@@ -1455,6 +1571,69 @@ mod tests {
             ..kvrpcpb::CommitRequest::default()
         });
         assert!(resp.error.is_none(), "{:?}", resp.error);
+    }
+
+    /// Go `requestCtx.LocateExtraRegion` and `GetExtraDBReaderByRegion`: a
+    /// region this store leads is found and read within its own bounds; a
+    /// region led elsewhere is not found, and a stale epoch is a region
+    /// error.
+    #[test]
+    fn a_request_reader_provides_readers_of_the_other_regions_this_store_leads() {
+        use tidb_unistore_dbreader::{DbReader, GetExtraDbReaderContext, ScanReq};
+        let mut handler = KvHandler::default();
+        for key in [b"a", b"m", b"z"] {
+            put_committed(&mut handler, key, b"v", 10, 11);
+        }
+        split_at(&mut handler, b"m");
+        let (req_ctx, region_error) = handler.new_request_ctx(ctx_for(&handler, b"a").as_ref());
+        assert_eq!(region_error, None);
+        let reader = |store_id| RequestDbReader {
+            store: &handler.store,
+            ctx: req_ctx.read_context(),
+            regions: &handler.regions,
+            store_id,
+        };
+        let local = reader(req_ctx.store_id);
+        assert_eq!(req_ctx.store_id, crate::region_manager::STORE_ID);
+        let provider = local.extra_db_reader_provider().expect("a request reader provides");
+        let key = crate::region_manager::encode_region_key(b"z");
+        let located = provider.locate_extra_region(&key).unwrap();
+        let (region, leader) = handler.regions.get_region_by_key(&key).unwrap();
+        assert!(located.found && located.is_leader);
+        assert_eq!(located.region.as_ref(), Some(&region));
+        assert_eq!(located.peer.as_ref(), Some(&leader));
+
+        // An open-ended scan stops at the reader's region end.
+        let scan = |reader: &dyn DbReader, start_key: &[u8]| {
+            reader
+                .scan(&ScanReq {
+                    start_key: start_key.to_vec(),
+                    version: 20,
+                    limit: 10,
+                    ..ScanReq::default()
+                })
+                .into_iter()
+                .map(|pair| pair.key)
+                .collect::<Vec<_>>()
+        };
+        let mut ctx = GetExtraDbReaderContext {
+            region: located.region,
+            peer: located.peer,
+            ranges: Vec::new(),
+        };
+        let extra = provider.get_extra_db_reader_by_region(&ctx).ok().expect("the region reads");
+        assert_eq!(scan(&local, b"a"), [b"a".to_vec()]);
+        assert_eq!(scan(&local, b"m"), Vec::<Vec<u8>>::new());
+        assert_eq!(scan(extra.as_ref(), b"m"), [b"m".to_vec(), b"z".to_vec()]);
+        drop(extra);
+
+        ctx.region.as_mut().unwrap().region_epoch.as_mut().unwrap().version += 1;
+        let err = provider.get_extra_db_reader_by_region(&ctx).err().expect("a stale epoch");
+        assert!(err.epoch_not_match.is_some(), "{err:?}");
+
+        let elsewhere = reader(req_ctx.store_id + 1);
+        let provider = elsewhere.extra_db_reader_provider().unwrap();
+        assert_eq!(provider.locate_extra_region(&key).unwrap(), Default::default());
     }
 
     fn put_committed(

@@ -16,7 +16,51 @@
 //! handler reads committed data through. The tikv server builds the reader over
 //! its MVCC store and hands it to `cophandler`, which never sees the store.
 
+use tidb_proto::{coprocessor, errorpb, metapb};
 use tidb_unistore_kverrors::KvError;
+
+/// Go `LocateExtraRegionResult`: the result of `LocateExtraRegion`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LocateExtraRegionResult {
+    /// `Found`.
+    pub found: bool,
+    /// `Region`.
+    pub region: Option<metapb::Region>,
+    /// `Peer`.
+    pub peer: Option<metapb::Peer>,
+    /// `IsLeader`.
+    pub is_leader: bool,
+}
+
+/// Go `GetExtraDBReaderContext`: the context for `GetExtraDBReaderByRegion`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GetExtraDbReaderContext {
+    /// `Region`.
+    pub region: Option<metapb::Region>,
+    /// `Peer`.
+    pub peer: Option<metapb::Peer>,
+    /// `Ranges`.
+    pub ranges: Vec<coprocessor::KeyRange>,
+}
+
+/// Go `ExtraDbReaderProvider`: provides the readers of other regions; the
+/// index-lookup push-down reads the table rows through them.
+pub trait ExtraDbReaderProvider {
+    /// Go `LocateExtraRegion`: the local region holding the encoded `key`.
+    ///
+    /// # Errors
+    /// The placement lookup's failure.
+    fn locate_extra_region(&self, key: &[u8]) -> Result<LocateExtraRegionResult, String>;
+
+    /// Go `GetExtraDBReaderByRegion`: a reader for the region.
+    ///
+    /// # Errors
+    /// The region error of a region this store no longer serves as asked.
+    fn get_extra_db_reader_by_region<'s>(
+        &'s self,
+        ctx: &GetExtraDbReaderContext,
+    ) -> Result<Box<dyn DbReader + 's>, errorpb::Error>;
+}
 
 /// One `kvrpcpb.KvPair` reduced to what this slice produces: a key with a
 /// value, or a key with the blocking lock as its error.
@@ -58,4 +102,20 @@ pub struct ScanReq {
 pub trait DbReader {
     /// Go `Scan` over `req`'s range and version.
     fn scan(&self, req: &ScanReq) -> Vec<KvPair>;
+
+    /// Go `DBReader.ExtraDbReaderProvider`, nil for a reader built outside a
+    /// request.
+    fn extra_db_reader_provider(&self) -> Option<&dyn ExtraDbReaderProvider> {
+        None
+    }
+}
+
+impl<T: DbReader + ?Sized> DbReader for &T {
+    fn scan(&self, req: &ScanReq) -> Vec<KvPair> {
+        (**self).scan(req)
+    }
+
+    fn extra_db_reader_provider(&self) -> Option<&dyn ExtraDbReaderProvider> {
+        (**self).extra_db_reader_provider()
+    }
 }

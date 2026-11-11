@@ -33,20 +33,26 @@
 //!   processed versions).
 //! * `selExec` filters row by row through the request's conditions rather
 //!   than `expression.VectorizedFilter`'s column-at-a-time evaluation.
-//! * `indexLookUpExec`, `joinExec`, `exchSenderExec`, `exchRecvExec` and
-//!   `expandExec` are MPP-only or need region-located extra readers; their
-//!   builders refuse by name (`mpp.rs`).
+//! * `indexLookUpExec` encodes its row keys for the classic kernel
+//!   (`kerneltype.IsNextGen()` is false; no keyspace `codecV2`), has no
+//!   `inject-index-lookup-handle-filter` failpoint, and does not log the
+//!   region error of a region it leaves to the client.
 
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_proto::coprocessor;
+use tidb_proto::metapb;
 use tidb_proto::tipb;
 use tidb_tablecodec::table_key::RecordHandle;
-use tidb_unistore_dbreader::{DbReader, KvPair, ScanReq};
+use tidb_txnkv::{CommonHandle, Handle, IntHandle};
+use tidb_unistore_dbreader::{
+    DbReader, ExtraDbReaderProvider, GetExtraDbReaderContext, KvPair, LocateExtraRegionResult, ScanReq,
+};
 
 use crate::eval_context::RequestEvalContext;
 use crate::{condition_holds, CopExecError, RegionAggregator, SimpleExpr, TopNSpec};
@@ -187,6 +193,36 @@ pub(crate) trait MppExec<'a> {
     /// `*indexScanExec`: the scan's `rowCnt`, every version it processed.
     fn scan_row_cnt(&self) -> Option<i64> {
         None
+    }
+
+    /// Go `baseMPPExec.takeIntermediateResults`.
+    fn take_intermediate_results(&mut self) -> Vec<Chunk> {
+        panic!("not implemented")
+    }
+
+    /// Go `baseMPPExec.getIntermediateFieldTypes`.
+    fn get_intermediate_field_types(&self) -> Vec<FieldType> {
+        panic!("not implemented")
+    }
+}
+
+/// Go `*baseMPPExec` as an `mppExec`: `indexLookUpExec`'s mock second child,
+/// which only carries the field types and the execution summary.
+impl<'a> MppExec<'a> for BaseMppExec<'a> {
+    fn base(&self) -> &BaseMppExec<'a> {
+        self
+    }
+
+    fn base_mut(&mut self) -> &mut BaseMppExec<'a> {
+        self
+    }
+
+    fn open(&mut self) -> Result<(), MppExecError> {
+        panic!("not implemented")
+    }
+
+    fn next(&mut self) -> Result<Option<Chunk>, MppExecError> {
+        panic!("not implemented")
     }
 }
 
@@ -411,7 +447,7 @@ pub(crate) struct TableScanExec<'a> {
     base: BaseMppExec<'a>,
     kv_ranges: Vec<coprocessor::KeyRange>,
     start_ts: u64,
-    db_reader: &'a dyn DbReader,
+    db_reader: Box<dyn DbReader + 'a>,
     counts: Option<Rc<RefCell<RangeCounts>>>,
     row_cnt: i64,
     decoder: TableRowDecoder,
@@ -439,7 +475,7 @@ impl<'a> TableScanExec<'a> {
         field_types: Vec<FieldType>,
         kv_ranges: Vec<coprocessor::KeyRange>,
         start_ts: u64,
-        db_reader: &'a dyn DbReader,
+        db_reader: Box<dyn DbReader + 'a>,
         counts: Option<Rc<RefCell<RangeCounts>>>,
         decoder: TableRowDecoder,
         desc: bool,
@@ -676,7 +712,7 @@ impl<'a> MppExec<'a> for TableScanExec<'a> {
         self.range_pairs = self
             .kv_ranges
             .iter()
-            .map(|range| scan_range(self.db_reader, range, self.start_ts, self.desc))
+            .map(|range| scan_range(self.db_reader.as_ref(), range, self.start_ts, self.desc))
             .collect();
         for pairs in &self.range_pairs {
             check_range_lock(pairs, self.desc)?;
@@ -761,6 +797,9 @@ pub(crate) struct IndexScanExec<'a> {
     /// last requested column (filled from the key).
     num_columns: usize,
     has_phys_tbl_id: bool,
+    /// Go `commonHandleKeyIdx`: the column an index lookup reads the
+    /// encoded common handle from.
+    common_handle_key_idx: Option<usize>,
     time_zone: SessionTimeZone,
     paging: Option<SharedPaging>,
     chunk_last_processed_keys: Vec<Vec<u8>>,
@@ -780,6 +819,7 @@ impl<'a> IndexScanExec<'a> {
         num_idx_cols: usize,
         hdl_status: tidb_tablecodec::HandleStatus,
         has_phys_tbl_id: bool,
+        common_handle_key_idx: Option<usize>,
         time_zone: SessionTimeZone,
         paging: Option<SharedPaging>,
     ) -> Self {
@@ -812,6 +852,7 @@ impl<'a> IndexScanExec<'a> {
             hdl_status,
             num_columns,
             has_phys_tbl_id,
+            common_handle_key_idx,
             time_zone,
             paging,
             chunk_last_processed_keys: Vec::new(),
@@ -855,6 +896,15 @@ impl<'a> IndexScanExec<'a> {
         // The physical table id, when the entry does not already carry it.
         if self.has_phys_tbl_id && row.len() < self.num_columns {
             row.push(Datum::Int(tidb_tablecodec::table_key::decode_table_id(key)));
+        }
+        // If we need common handle key, we should fill it here.
+        if self.common_handle_key_idx.is_some_and(|idx| idx >= values.len()) {
+            let handle = tidb_tablecodec::decode_index_handle(key, value, self.num_idx_cols)
+                .map_err(|error| other(format!("invalid index handle: {error:?}")))?;
+            let Some(Handle::Common(common_handle)) = handle else {
+                return Err(other("common handle expected".to_owned()));
+            };
+            row.push(Datum::Bytes(common_handle.encoded().to_vec()));
         }
         if row.len() != self.num_columns {
             return Err(other(
@@ -974,6 +1024,261 @@ impl<'a> MppExec<'a> for IndexScanExec<'a> {
 
     fn scan_row_cnt(&self) -> Option<i64> {
         Some(self.row_cnt)
+    }
+}
+
+/// Go `indexLookUpExec`: the index child's rows name the table rows; those a
+/// region of this store holds are read here, through a table scan over that
+/// region's reader, and the others go back as intermediate results for the
+/// client to look up.
+pub(crate) struct IndexLookUpExec<'a> {
+    pub(crate) base: BaseMppExec<'a>,
+    pub(crate) index_handle_offsets: Vec<u32>,
+    pub(crate) table_id: i64,
+    pub(crate) is_common_handle: bool,
+    /// Go's nil interface when the reader was built outside a request.
+    pub(crate) extra_reader_provider: Option<&'a dyn ExtraDbReaderProvider>,
+    pub(crate) build_table_scan: BuildTableScan<'a>,
+    pub(crate) index_chunks: Vec<Chunk>,
+}
+
+/// Go `indexLookUpExec.buildTableScan`.
+pub(crate) type BuildTableScan<'a> = Box<
+    dyn Fn(Box<dyn DbReader + 'a>, &[coprocessor::KeyRange]) -> Result<TableScanExec<'a>, String> + 'a,
+>;
+
+/// Go `fetchTableScans`' `Handle`: a handle and its row's place in the
+/// index order.
+struct OrderedHandle {
+    handle: Handle,
+    index_order: usize,
+}
+
+/// The handles `fetchTableScans` has gathered for the region it is on.
+#[derive(Default)]
+struct RegionHandles {
+    region: LocateExtraRegionResult,
+    keys: Vec<Vec<u8>>,
+    handles: Vec<OrderedHandle>,
+}
+
+/// Go `indexLookUpExec.regionContainsKey`.
+fn region_contains_key(region: Option<&metapb::Region>, key: &[u8]) -> bool {
+    let (start_key, end_key) = region.map_or((&[][..], &[][..]), |region| {
+        (region.start_key.as_slice(), region.end_key.as_slice())
+    });
+    start_key <= key && (key < end_key || end_key.is_empty())
+}
+
+impl<'a> IndexLookUpExec<'a> {
+    fn provider(&self) -> &'a dyn ExtraDbReaderProvider {
+        self.extra_reader_provider
+            .expect("invalid memory address or nil pointer dereference")
+    }
+
+    /// Go `indexLookUpExec.buildHandle`.
+    fn build_handle(&self, row: &Row) -> Result<Handle, MppExecError> {
+        if self.is_common_handle {
+            let Some(Datum::Bytes(encoded)) = row.last() else {
+                return Err(MppExecError::Other("common handle key expected".to_owned()));
+            };
+            return CommonHandle::new(encoded.to_vec())
+                .map(Handle::from)
+                .map_err(|error| MppExecError::Other(error.to_string()));
+        }
+        match row.get(self.index_handle_offsets[0] as usize) {
+            Some(Datum::Int(value)) => Ok(IntHandle::new(*value).into()),
+            Some(Datum::UInt(value)) => Ok(IntHandle::new(*value as i64).into()),
+            _ => Err(MppExecError::Other("int handle expected".to_owned())),
+        }
+    }
+
+    /// Go `fetchTableScans`' `endRegion`: the gathered handles become one
+    /// table scan over the region's reader, consecutive int handles sharing a
+    /// range. A region this store cannot read leaves its rows to the client.
+    fn end_region(
+        &self,
+        cur: &mut RegionHandles,
+        left_rows: &mut [bool],
+        table_scans: &mut Vec<TableScanExec<'a>>,
+        counts: &mut Vec<usize>,
+    ) -> Result<(), MppExecError> {
+        let cur = std::mem::take(cur);
+        if cur.keys.is_empty() {
+            return Ok(());
+        }
+        let mut ranges = Vec::new();
+        let mut range_start = 0;
+        for (i, h) in cur.handles.iter().enumerate() {
+            if !self.is_common_handle
+                && i + 1 < cur.handles.len()
+                && h.handle.next().compare(&cur.handles[i + 1].handle) == Ok(Ordering::Equal)
+            {
+                continue;
+            }
+            ranges.push(coprocessor::KeyRange {
+                start: cur.keys[range_start].clone(),
+                end: key_next(&cur.keys[i]),
+            });
+            range_start = i + 1;
+        }
+        let ctx = GetExtraDbReaderContext {
+            region: cur.region.region,
+            peer: cur.region.peer,
+            ranges,
+        };
+        match self.provider().get_extra_db_reader_by_region(&ctx) {
+            Err(_) => {
+                for h in &cur.handles {
+                    left_rows[h.index_order] = true;
+                }
+            }
+            Ok(reader) => {
+                table_scans.push((self.build_table_scan)(reader, &ctx.ranges).map_err(MppExecError::Other)?);
+                counts.push(cur.handles.len());
+            }
+        }
+        Ok(())
+    }
+
+    /// Go `indexLookUpExec.fetchTableScans`: a batch of index rows, their
+    /// handles in handle order grouped by the local region holding each, one
+    /// table scan per group; the rows no local region holds are the index
+    /// chunk answered.
+    #[allow(clippy::type_complexity)]
+    fn fetch_table_scans(
+        &mut self,
+    ) -> Result<(Vec<TableScanExec<'a>>, Vec<usize>, Option<Chunk>), MppExecError> {
+        let mut index_rows: Vec<Row> = Vec::with_capacity(DEFAULT_BATCH_SIZE);
+        let mut sorted_handles = Vec::with_capacity(DEFAULT_BATCH_SIZE);
+        while index_rows.len() < DEFAULT_BATCH_SIZE {
+            let Some(chk) = self.base.children[0].next()? else {
+                break;
+            };
+            if chk.is_empty() {
+                break;
+            }
+            for row in chk {
+                sorted_handles.push(OrderedHandle {
+                    handle: self.build_handle(&row)?,
+                    index_order: index_rows.len(),
+                });
+                index_rows.push(row);
+            }
+        }
+
+        let mut left_rows = vec![false; index_rows.len()];
+        sorted_handles.sort_by(|a, b| {
+            a.handle
+                .compare(&b.handle)
+                .expect("the handles of one table share a kind")
+        });
+
+        let mut table_scans = Vec::new();
+        let mut counts = Vec::new();
+        let mut cur = RegionHandles::default();
+        for h in sorted_handles {
+            let row_key = tidb_tablecodec::table_key::encode_row_key(self.table_id, &h.handle.encoded());
+            let mut mvcc_key = Vec::new();
+            tidb_codec::encode_bytes(&mut mvcc_key, &row_key);
+            if cur.region.found {
+                if region_contains_key(cur.region.region.as_ref(), &mvcc_key) {
+                    cur.keys.push(row_key);
+                    cur.handles.push(h);
+                    continue;
+                }
+                self.end_region(&mut cur, &mut left_rows, &mut table_scans, &mut counts)?;
+            }
+            cur.region = self
+                .provider()
+                .locate_extra_region(&mvcc_key)
+                .map_err(MppExecError::Other)?;
+            if cur.region.found {
+                cur.keys.push(row_key);
+                cur.handles.push(h);
+            } else {
+                left_rows[h.index_order] = true;
+            }
+        }
+        self.end_region(&mut cur, &mut left_rows, &mut table_scans, &mut counts)?;
+
+        let mut index_chk: Option<Chunk> = None;
+        for (row, left) in index_rows.into_iter().zip(left_rows) {
+            if left {
+                index_chk
+                    .get_or_insert_with(|| Vec::with_capacity(DEFAULT_BATCH_SIZE))
+                    .push(row);
+            }
+        }
+        Ok((table_scans, counts, index_chk))
+    }
+}
+
+impl<'a> MppExec<'a> for IndexLookUpExec<'a> {
+    fn base(&self) -> &BaseMppExec<'a> {
+        &self.base
+    }
+
+    fn base_mut(&mut self) -> &mut BaseMppExec<'a> {
+        &mut self.base
+    }
+
+    /// Go `indexLookUpExec.open`.
+    fn open(&mut self) -> Result<(), MppExecError> {
+        self.base.children[0].open()
+    }
+
+    /// Go `indexLookUpExec.stop`.
+    fn stop(&mut self) -> Result<(), MppExecError> {
+        self.base.children[0].stop()
+    }
+
+    /// Go `indexLookUpExec.next`. Go drops the error of a table scan's
+    /// `open` and then waits on a scan that never started; the error is
+    /// answered here.
+    fn next(&mut self) -> Result<Option<Chunk>, MppExecError> {
+        let (tbl_scans, counts, index_chk) = self.fetch_table_scans()?;
+        if tbl_scans.is_empty() && index_chk.as_ref().is_none_or(Vec::is_empty) {
+            return Ok(None);
+        }
+        self.index_chunks.extend(index_chk);
+
+        let mut ret: Option<Chunk> = None;
+        for (mut tbl_scan, expect_cnt) in tbl_scans.into_iter().zip(counts) {
+            let mut read_cnt = 0;
+            let mut scanned = tbl_scan.open();
+            while scanned.is_ok() {
+                match tbl_scan.next() {
+                    Err(error) => scanned = Err(error),
+                    Ok(Some(chk)) if !chk.is_empty() => {
+                        read_cnt += chk.len();
+                        self.base.exec_summary.update_only_rows(chk.len());
+                        self.base.children[1].base_mut().exec_summary.update_only_rows(chk.len());
+                        ret.get_or_insert_with(Vec::new).extend(chk);
+                    }
+                    Ok(_) => break,
+                }
+            }
+            if let Err(error) = tbl_scan.stop() {
+                panic!("{error:?}");
+            }
+            scanned?;
+            assert!(
+                expect_cnt == read_cnt,
+                "data may be inconsistency, expectCnt({expect_cnt}) != readCnt({read_cnt})"
+            );
+        }
+        Ok(ret)
+    }
+
+    /// Go `indexLookUpExec.takeIntermediateResults`.
+    fn take_intermediate_results(&mut self) -> Vec<Chunk> {
+        std::mem::take(&mut self.index_chunks)
+    }
+
+    /// Go `indexLookUpExec.getIntermediateFieldTypes`.
+    fn get_intermediate_field_types(&self) -> Vec<FieldType> {
+        self.base.children[0].get_field_types().to_vec()
     }
 }
 

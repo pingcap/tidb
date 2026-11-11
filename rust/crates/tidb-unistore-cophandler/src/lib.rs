@@ -40,6 +40,10 @@ mod region_group_tests;
 #[cfg(test)]
 #[path = "mpp_exec_tests.rs"]
 mod mpp_exec_tests;
+
+#[cfg(test)]
+#[path = "index_lookup_tests.rs"]
+mod index_lookup_tests;
 #[cfg(test)]
 mod mpp_task_tests;
 
@@ -182,6 +186,7 @@ pub fn handle_mpp_dag_req(
         paging_size: 0,
         mpp_ctx: Some(mpp_ctx),
         output_offsets: dag_req.output_offsets.clone(),
+        in_build_index_look_up: false,
     };
     let root_exec = dag_req
         .root_executor
@@ -282,6 +287,8 @@ fn handle_cop_dag_request(
 struct MppRun<'a> {
     exec: Box<dyn mpp_exec::MppExec<'a> + 'a>,
     chunks: Vec<mpp_exec::Chunk>,
+    /// Each intermediate output channel's chunks.
+    intermediate_chunks: Vec<Vec<mpp_exec::Chunk>>,
     last_range: Option<coprocessor::KeyRange>,
     counts: Vec<i64>,
     ndvs: Vec<i64>,
@@ -298,10 +305,6 @@ fn build_and_run_mpp_executor<'a>(
         Some(root) => root.clone(),
         None => executor_lists_to_tree(&dag_req.executors)?,
     };
-    if !dag_req.intermediate_output_channels.is_empty() {
-        // Only `indexLookUpExec` produces intermediate results.
-        return Err("intermediate output channels are a later course of this port".to_owned());
-    }
     let counts = dag_req.collect_range_counts().then(|| {
         Rc::new(RefCell::new(mpp_exec::RangeCounts {
             counts: vec![0; context.key_ranges.len()],
@@ -320,9 +323,10 @@ fn build_and_run_mpp_executor<'a>(
         paging_size: context.paging_size,
         mpp_ctx: None,
         output_offsets: Vec::new(),
+        in_build_index_look_up: false,
     };
     let mut exec = builder.build_mpp_executor(&root_exec)?;
-    let (chunks, err) = mpp_execute(exec.as_mut(), dag_req, context.paging_size);
+    let (chunks, intermediate_chunks, err) = mpp_execute(exec.as_mut(), dag_req, context.paging_size);
     // An empty paging range means the scan never reported one.
     let last_range = paging
         .map(|paging| paging.take())
@@ -334,6 +338,7 @@ fn build_and_run_mpp_executor<'a>(
     Ok(MppRun {
         exec,
         chunks,
+        intermediate_chunks,
         last_range,
         counts,
         ndvs,
@@ -347,10 +352,17 @@ fn mpp_execute<'a>(
     exec: &mut (dyn mpp_exec::MppExec<'a> + 'a),
     dag_req: &tipb::DagRequest,
     paging_size: u64,
-) -> (Vec<mpp_exec::Chunk>, Option<mpp_exec::MppExecError>) {
+) -> (
+    Vec<mpp_exec::Chunk>,
+    Vec<Vec<mpp_exec::Chunk>>,
+    Option<mpp_exec::MppExecError>,
+) {
     let mut chunks = Vec::new();
+    let mut intermediate_chunks = Vec::new();
     let mut err = exec.open().err();
     if err.is_none() {
+        let channels = &dag_req.intermediate_output_channels;
+        intermediate_chunks.resize_with(channels.len(), Vec::new);
         let mut total_rows = 0_u64;
         loop {
             let chk = match exec.next() {
@@ -360,11 +372,19 @@ fn mpp_execute<'a>(
                     break;
                 }
             };
-            let cur_row_cnt = chk.as_ref().map_or(0, Vec::len);
+            let mut cur_row_cnt = chk.as_ref().map_or(0, Vec::len);
+            chunks.extend(chk.filter(|chk| !chk.is_empty()));
+            for (channel, output) in channels.iter().zip(&mut intermediate_chunks) {
+                let taken = nth_mpp_exec_mut(exec, channel.executor_idx as usize, &mut |exec| {
+                    exec.take_intermediate_results()
+                })
+                .expect("index out of range");
+                cur_row_cnt += taken.iter().map(Vec::len).sum::<usize>();
+                output.extend(taken);
+            }
             if cur_row_cnt == 0 {
                 break;
             }
-            chunks.extend(chk);
             total_rows += cur_row_cnt as u64;
             if dag_req.encode_type() == tipb::EncodeType::TypeChunk
                 && paging_size > 0
@@ -376,7 +396,33 @@ fn mpp_execute<'a>(
     }
     // Go's deferred `exec.stop()`, which panics on an error.
     exec.stop().expect("stopping the executors succeeds");
-    (chunks, err)
+    (chunks, intermediate_chunks, err)
+}
+
+/// `flattenMppExec(exec, nil)[idx]`, mutably: the chain is walked in post
+/// order, children first.
+fn nth_mpp_exec_mut<'a, T>(
+    exec: &mut (dyn mpp_exec::MppExec<'a> + 'a),
+    idx: usize,
+    visit: &mut dyn FnMut(&mut (dyn mpp_exec::MppExec<'a> + 'a)) -> T,
+) -> Option<T> {
+    fn walk<'a, T>(
+        exec: &mut (dyn mpp_exec::MppExec<'a> + 'a),
+        left: &mut usize,
+        visit: &mut dyn FnMut(&mut (dyn mpp_exec::MppExec<'a> + 'a)) -> T,
+    ) -> Option<T> {
+        for child in &mut exec.base_mut().children {
+            if let Some(visited) = walk(child.as_mut(), left, visit) {
+                return Some(visited);
+            }
+        }
+        if *left == 0 {
+            return Some(visit(exec));
+        }
+        *left -= 1;
+        None
+    }
+    walk(exec, &mut { idx }, visit)
 }
 
 /// Go `flattenMppExec`: the chain in post order, children first.
@@ -418,17 +464,32 @@ fn gen_resp_with_mpp_exec(
             return other_error(message);
         }
     }
-    let (chunks, counts, ndvs) = if run.err.is_some() {
+    let mut mpp_execs = Vec::with_capacity(dag_req.executors.len());
+    flatten_mpp_exec(run.exec.as_ref(), &mut mpp_execs);
+    let (chunks, intermediate_outputs, counts, ndvs) = if run.err.is_some() {
         let chunks = EncodedChunks {
             chunks: Vec::new(),
             encode_type: dag_req.encode_type(),
         };
-        (chunks, Vec::new(), Vec::new())
+        (chunks, Vec::new(), Vec::new(), Vec::new())
     } else {
-        match encode_chunks(&run.chunks, run.exec.get_field_types(), context) {
-            Ok(chunks) => (chunks, run.counts, run.ndvs),
-            Err(message) => return other_error(&message),
+        let chunks =
+            match encode_chunks(&run.chunks, run.exec.get_field_types(), &dag_req.output_offsets, context) {
+                Ok(chunks) => chunks,
+                Err(message) => return other_error(&message),
+            };
+        let mut intermediate_outputs = Vec::with_capacity(run.intermediate_chunks.len());
+        for (channel, chunks) in dag_req.intermediate_output_channels.iter().zip(&run.intermediate_chunks) {
+            let fields = mpp_execs[channel.executor_idx as usize].get_intermediate_field_types();
+            match encode_chunks(chunks, &fields, &channel.output_offsets, context) {
+                Ok(output) => intermediate_outputs.push(tipb::IntermediateOutput {
+                    encode_type: Some(output.encode_type as i32),
+                    chunks: output.chunks,
+                }),
+                Err(message) => return other_error(&message),
+            }
         }
+        (chunks, intermediate_outputs, run.counts, run.ndvs)
     };
     let error = run.err.as_ref().map(|err| match err {
         mpp_exec::MppExecError::Exec(error) => error.to_pb_error(),
@@ -447,12 +508,11 @@ fn gen_resp_with_mpp_exec(
         error,
         chunks: chunks.chunks,
         output_counts: counts,
+        intermediate_outputs,
         ndvs,
         encode_type: Some(chunks.encode_type as i32),
         ..tipb::SelectResponse::default()
     };
-    let mut mpp_execs = Vec::with_capacity(dag_req.executors.len());
-    flatten_mpp_exec(run.exec.as_ref(), &mut mpp_execs);
     if dag_req.collect_execution_summaries() {
         let time_processed = u64::try_from(dur.as_nanos()).unwrap_or(u64::MAX);
         sel_resp.execution_summaries = (0..dag_req.executors.len())
@@ -518,7 +578,7 @@ struct EncodedChunks {
     encode_type: tipb::EncodeType,
 }
 
-/// Go `encodeChunk` over every chunk the root produced, each picked by
+/// Go `encodeChunk` over every chunk an executor produced, each picked by
 /// `output_offsets`. `TypeChunk` (`useChunkEncoding`) carries each value as
 /// decoded -- a DECIMAL keeps its stored words, which the default row
 /// encoding would round to the field type's fraction on the TiDB side
@@ -531,9 +591,9 @@ struct EncodedChunks {
 fn encode_chunks(
     chunks: &[mpp_exec::Chunk],
     fields: &[tidb_datatype::FieldType],
+    output_offsets: &[u32],
     context: &DagContext,
 ) -> Result<EncodedChunks, String> {
-    let output_offsets = &context.dag_req.output_offsets;
     let project = |row: &mpp_exec::Row| -> Result<mpp_exec::Row, String> {
         if output_offsets.is_empty() {
             return Ok(row.clone());

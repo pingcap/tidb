@@ -9010,6 +9010,7 @@ dependencies = [
  "tidb-rowcodec",
  "tidb-stats",
  "tidb-tablecodec",
+ "tidb-txnkv",
  "tidb-unistore-dbreader",
  "tidb-unistore-kverrors",
  "tidb-unistore-tikv",
@@ -9019,6 +9020,7 @@ dependencies = [
 name = "tidb-unistore-dbreader"
 version = "0.0.0"
 dependencies = [
+ "tidb-proto",
  "tidb-unistore-kverrors",
 ]
 

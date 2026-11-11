@@ -20,8 +20,6 @@
 //!
 //! * `extractKVRanges` validates and orders the request ranges; the store
 //!   reader carries no region bounds to clip them to.
-//! * `buildIndexLookUp` refuses by name: it needs region-located extra
-//!   readers.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -34,8 +32,8 @@ use tidb_unistore_dbreader::DbReader;
 
 use crate::eval_context::RequestEvalContext;
 use crate::mpp_exec::{
-    AggExec, BaseMppExec, ExecDetail, ExpandExec, IndexScanExec, LimitExec, MppExec, ProjExec, RangeCounts,
-    SelExec, SharedPaging, TableRowDecoder, TableScanExec, TopNExec,
+    AggExec, BaseMppExec, ExecDetail, ExpandExec, IndexLookUpExec, IndexScanExec, LimitExec, MppExec, ProjExec,
+    RangeCounts, SelExec, SharedPaging, TableRowDecoder, TableScanExec, TopNExec,
 };
 use crate::{convert_expr_with_context, field_type_from_pb_column, RegionAggregator, SimpleExpr, TopNSpec};
 
@@ -55,6 +53,34 @@ pub(crate) struct MppExecBuilder<'a> {
     pub(crate) mpp_ctx: Option<Arc<crate::mpp_task::MppCtx>>,
     /// Go `dagReq.OutputOffsets`, which an exchange sender sends.
     pub(crate) output_offsets: Vec<u32>,
+    /// Go `inBuildIndexLookUp`.
+    pub(crate) in_build_index_look_up: bool,
+}
+
+/// Go `buildMPPTableScanWithReader`, over the builder's state it reads.
+fn build_mpp_table_scan_with_reader<'a>(
+    sctx: &Arc<RequestEvalContext>,
+    start_ts: u64,
+    counts: Option<Rc<RefCell<RangeCounts>>>,
+    paging: Option<SharedPaging>,
+    pb: &tipb::TableScan,
+    reader: Box<dyn DbReader + 'a>,
+    read_ranges: &[coprocessor::KeyRange],
+) -> Result<TableScanExec<'a>, String> {
+    let ranges = extract_kv_ranges(read_ranges, pb.desc())?;
+    let field_types = pb.columns.iter().map(field_type_from_pb_column).collect();
+    let decoder = TableRowDecoder::new(&pb.columns, &pb.primary_column_ids, sctx.zone.clone());
+    Ok(TableScanExec::new(
+        Arc::clone(sctx),
+        field_types,
+        ranges,
+        start_ts,
+        reader,
+        counts,
+        decoder,
+        pb.desc(),
+        paging,
+    ))
 }
 
 /// Go's `%v` rendering of a `[]byte`: space-separated decimals in brackets.
@@ -111,22 +137,69 @@ impl<'a> MppExecBuilder<'a> {
         self.sctx.with_column_types(child.get_field_types().to_vec())
     }
 
-    /// Go `buildMPPTableScan` / `buildMPPTableScanWithReader`.
+    /// Go `buildMPPTableScan`.
     fn build_mpp_table_scan(&mut self, pb: &tipb::TableScan) -> Result<TableScanExec<'a>, String> {
-        let ranges = extract_kv_ranges(&self.key_ranges, pb.desc())?;
-        let field_types = pb.columns.iter().map(field_type_from_pb_column).collect();
-        let decoder = TableRowDecoder::new(&pb.columns, &pb.primary_column_ids, self.sctx.zone.clone());
-        Ok(TableScanExec::new(
-            Arc::clone(&self.sctx),
-            field_types,
-            ranges,
+        build_mpp_table_scan_with_reader(
+            &self.sctx,
             self.start_ts,
-            self.db_reader,
             self.counts.clone(),
-            decoder,
-            pb.desc(),
             self.paging.clone(),
-        ))
+            pb,
+            Box::new(self.db_reader),
+            &self.key_ranges,
+        )
+    }
+
+    /// Go `buildIndexLookUp`.
+    fn build_index_look_up(&mut self, pb: &tipb::IndexLookUp) -> Result<IndexLookUpExec<'a>, String> {
+        self.in_build_index_look_up = true;
+        let built = self.build_index_look_up_inner(pb);
+        self.in_build_index_look_up = false;
+        built
+    }
+
+    fn build_index_look_up_inner(&mut self, pb: &tipb::IndexLookUp) -> Result<IndexLookUpExec<'a>, String> {
+        if pb.children.len() != 2 {
+            return Err("IndexLookUp should have two children".to_owned());
+        }
+        if pb.children[1].tp() != tipb::ExecType::TypeTableScan {
+            return Err("The second child of IndexLookUp should be TableScan".to_owned());
+        }
+        if self.paging_size > 0 {
+            return Err("paging not supported in index lookup push down".to_owned());
+        }
+
+        let tbl_scan_pb = body(pb.children[1].tbl_scan.as_ref(), "tbl_scan")?.clone();
+        let index_scan_child = self.build_mpp_executor(&pb.children[0])?;
+        let field_types = tbl_scan_pb
+            .columns
+            .iter()
+            .map(field_type_from_pb_column)
+            .collect::<Vec<_>>();
+        // a mock child that only used to provide base and metrics info
+        let mock_child = Box::new(self.base(Vec::new(), field_types.clone()));
+        let db_reader = self.db_reader;
+        let (sctx, start_ts) = (Arc::clone(&self.sctx), self.start_ts);
+        let (counts, paging) = (self.counts.clone(), self.paging.clone());
+        Ok(IndexLookUpExec {
+            base: self.base(vec![index_scan_child, mock_child], field_types),
+            index_handle_offsets: pb.index_handle_offsets.clone(),
+            table_id: tbl_scan_pb.table_id(),
+            is_common_handle: !tbl_scan_pb.primary_column_ids.is_empty(),
+            extra_reader_provider: db_reader.extra_db_reader_provider(),
+            build_table_scan: Box::new(move |reader, ranges| {
+                build_mpp_table_scan_with_reader(
+                    &sctx,
+                    start_ts,
+                    counts.clone(),
+                    paging.clone(),
+                    &tbl_scan_pb,
+                    reader,
+                    ranges,
+                )
+            }),
+            index_chunks: Vec::new(),
+        })
     }
 
     /// Go `buildMPPPartitionTableScan`: an ascending scan without range
@@ -143,7 +216,7 @@ impl<'a> MppExecBuilder<'a> {
             field_types,
             ranges,
             self.start_ts,
-            self.db_reader,
+            Box::new(self.db_reader),
             None,
             decoder,
             false,
@@ -157,7 +230,7 @@ impl<'a> MppExecBuilder<'a> {
         const EXTRA_HANDLE_ID: i64 = -1;
         const EXTRA_PHYSICAL_TABLE_ID: i64 = -3;
         let ranges = extract_kv_ranges(&self.key_ranges, pb.desc())?;
-        let field_types = pb
+        let mut field_types = pb
             .columns
             .iter()
             .map(field_type_from_pb_column)
@@ -198,6 +271,13 @@ impl<'a> MppExecBuilder<'a> {
         } else {
             tidb_tablecodec::HandleStatus::NotNeeded
         };
+        // For index scan in index lookup, if the table has common handle, we need to
+        // return the common handle key to indexLookUpExec
+        let common_handle_key_idx =
+            (self.in_build_index_look_up && !pb.primary_column_ids.is_empty()).then(|| {
+                field_types.push(FieldType::new(tidb_datatype::FieldTypeCode::Varchar));
+                field_types.len() - 1
+            });
         Ok(IndexScanExec::new(
             Arc::clone(&self.sctx),
             field_types,
@@ -210,6 +290,7 @@ impl<'a> MppExecBuilder<'a> {
             num_idx_cols,
             hdl_status,
             has_phys_tbl_id,
+            common_handle_key_idx,
             self.sctx.zone.clone(),
             self.paging.clone(),
         ))
@@ -524,7 +605,7 @@ impl<'a> MppExecBuilder<'a> {
             }
             tipb::ExecType::TypeExpand => Box::new(self.build_expand(body(exec.expand.as_deref(), "expand")?)?),
             tipb::ExecType::TypeIndexLookUp => {
-                return Err(format!("the {tp:?} executor is a later course of this port"))
+                Box::new(self.build_index_look_up(body(exec.index_lookup.as_ref(), "index_lookup")?)?)
             }
             _ => return Err(format!("{ERR_EXECUTOR_NOT_SUPPORTED_MSG}{tp:?}")),
         })

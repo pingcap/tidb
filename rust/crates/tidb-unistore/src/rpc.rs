@@ -232,7 +232,7 @@ impl RpcClient {
     ) {
         let task_id = handler.meta.task_id;
         let (read_ctx, cop_req) = self.lock().mpp_dispatch_request(req, store_id, task_id);
-        let db_reader = SharedDbReader::new(Arc::clone(&self.handler), read_ctx);
+        let db_reader = SharedDbReader::new(Arc::clone(&self.handler), read_ctx, store_id);
         let mpp_ctx = Arc::new(MppCtx {
             rpc_client: Arc::clone(&handler.rpc_client),
             store_addr,
