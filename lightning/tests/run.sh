@@ -59,6 +59,8 @@ run_case() {
     local case=$1
     local script=$2
     echo "*===== Running test $script... =====*"
+    # Tests inspect error values, including after earlier cases restart the cluster.
+    TEST_NAME="$case" run_sql "SET GLOBAL tidb_redact_log = OFF"
     INTEGRATION_TEST=1 \
     TEST_DIR="$TEST_DIR" \
     TEST_NAME="$case" \

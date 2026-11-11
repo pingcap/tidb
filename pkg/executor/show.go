@@ -2613,11 +2613,11 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 // tryFillViewColumnType fill the columns type info of a view.
 // Because view's underlying table's column could change or recreate, so view's column type may change over time.
 // To avoid this situation we need to generate a logical plan and extract current column types from Schema.
-func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName pmodel.CIStr, tbl *model.TableInfo) error {
+func tryFillViewColumnType(_ context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName pmodel.CIStr, tbl *model.TableInfo) error {
 	if !tbl.IsView() {
 		return nil
 	}
-	ctx = kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	// We need to run the build plan process in another session because there may be
 	// multiple goroutines running at the same time while session is not goroutine-safe.
 	// Take joining system table as an example, `fetchBuildSideRows` and `fetchProbeSideChunks` can be run concurrently.

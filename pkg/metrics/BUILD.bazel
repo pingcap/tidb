@@ -23,8 +23,8 @@ go_library(
         "server.go",
         "session.go",
         "sli.go",
-        "stmtsummary.go",
         "stats.go",
+        "stmtsummary.go",
         "telemetry.go",
         "topsql.go",
         "ttl.go",
@@ -57,7 +57,7 @@ go_test(
     ],
     embed = [":metrics"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 5,
     deps = [
         "//pkg/parser/terror",
         "//pkg/statistics/handle/cache",

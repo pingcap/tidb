@@ -227,7 +227,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		predicates = p.outerJoinPropConst(predicates)
+		predicates = p.joinPropConst(predicates)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, predicates, opt)
@@ -246,7 +246,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, rightPushCond...)
 	case RightOuterJoin:
-		predicates = p.outerJoinPropConst(predicates)
+		predicates = p.joinPropConst(predicates)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, predicates, opt)
@@ -272,7 +272,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
-		tempCond = expression.PropagateConstant(p.SCtx().GetExprCtx(), tempCond)
+		tempCond = expression.PropagateConstantForJoin(p.SCtx().GetExprCtx(), p.SCtx().GetSessionVars().AlwaysKeepJoinKey,
+			p.Children()[0].Schema(), p.Children()[1].Schema(), tempCond)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
@@ -288,6 +289,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		rightCond = rightPushCond
 	case AntiSemiJoin:
 		predicates = expression.PropagateConstant(p.SCtx().GetExprCtx(), predicates)
+		predicates = p.joinPropConst(predicates)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
@@ -1694,8 +1696,8 @@ func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 	return proj
 }
 
-// outerJoinPropConst propagates constant equal and column equal conditions over outer join.
-func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []expression.Expression {
+// joinPropConst propagates constant equal and column equal conditions over outer join or anti semi join.
+func (p *LogicalJoin) joinPropConst(predicates []expression.Expression) []expression.Expression {
 	outerTable := p.Children()[0]
 	innerTable := p.Children()[1]
 	if p.JoinType == RightOuterJoin {
@@ -1713,11 +1715,12 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	p.LeftConditions = nil
 	p.RightConditions = nil
 	p.OtherConditions = nil
-	nullSensitive := p.JoinType == AntiLeftOuterSemiJoin || p.JoinType == LeftOuterSemiJoin
+	nullSensitive := p.JoinType == AntiLeftOuterSemiJoin || p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiSemiJoin
 	exprCtx := p.SCtx().GetExprCtx()
 	outerTableSchema := outerTable.Schema()
 	innerTableSchema := innerTable.Schema()
-	joinConds, predicates = expression.PropConstOverOuterJoin(exprCtx, joinConds, predicates, outerTableSchema, innerTableSchema, nullSensitive)
+	joinConds, predicates = expression.PropConstOverSpecialJoin(exprCtx, joinConds, predicates, outerTableSchema, innerTableSchema,
+		p.SCtx().GetSessionVars().AlwaysKeepJoinKey, nullSensitive)
 	p.AttachOnConds(joinConds)
 	return predicates
 }

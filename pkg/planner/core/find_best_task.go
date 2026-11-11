@@ -692,10 +692,12 @@ type candidatePath struct {
 	matchWithAdvisorySortItems bool
 	// partialPathMatchResults stores each partial path's matchProperty result.
 	// Length equals len(path.PartialIndexPaths). Only set for IndexMerge paths.
-	partialPathMatchResults []property.PhysicalPropMatchResult
-	indexJoinCols           int  // how many index columns are used in access conditions in this IndexJoin.
-	isFullRange             bool // cached result of whether this path covers the full scan range.
-	eqOrInCount             int  // cached result of equalPredicateCount().
+	partialPathMatchResults      []property.PhysicalPropMatchResult
+	countAfterAccess4IndexJoin   float64
+	countAfterAccess4IndexJoinOK bool
+	indexJoinCols                int  // how many index columns are used in access conditions in this IndexJoin.
+	isFullRange                  bool // cached result of whether this path covers the full scan range.
+	eqOrInCount                  int  // cached result of equalPredicateCount().
 }
 
 func compareBool(l, r bool) int {
@@ -724,6 +726,16 @@ func compareGlobalIndex(lhs, rhs *candidatePath) int {
 		return 0
 	}
 	return compareBool(lhs.path.Index.Global, rhs.path.Index.Global)
+}
+
+func (c *candidatePath) getCountAfterAccess4SkylinePruning() (float64, bool) {
+	if c.indexJoinCols > 0 {
+		if !c.countAfterAccess4IndexJoinOK {
+			return 0, false
+		}
+		return c.countAfterAccess4IndexJoin, true
+	}
+	return c.path.CountAfterAccess, true
 }
 
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
@@ -785,15 +797,20 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 
 	// This rule is empirical but not always correct.
 	// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
-	if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
+	lhsCountAfterAccess, lhsCountAfterAccessOK := lhs.getCountAfterAccess4SkylinePruning()
+	rhsCountAfterAccess, rhsCountAfterAccessOK := rhs.getCountAfterAccess4SkylinePruning()
+	// Runtime join keys reduce per-probe access counts. Skip this strong pruning rule
+	// when their NDV is unstable and let the later IndexJoin NDV comparison decide.
+	if lhsCountAfterAccessOK && rhsCountAfterAccessOK &&
+		lhsCountAfterAccess > 100 && rhsCountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
 		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 && // not IndexMerge since its row count estimation is not accurate enough
 		prop.ExpectedCnt == math.MaxFloat64 { // Limit may affect access row count
 		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
 		if threshold > 0 { // set it to 0 to disable this rule
-			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold {
+			if lhsCountAfterAccess/rhsCountAfterAccess > threshold {
 				return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 			}
-			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold {
+			if rhsCountAfterAccess/lhsCountAfterAccess > threshold {
 				return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 			}
 		}
@@ -888,6 +905,25 @@ func isFullIndexMatch(candidate *candidatePath) bool {
 	return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
 }
 
+// hasV0NewCollationStringHandle reports whether ds has CommonHandleVersion == 0
+// with new collation enabled and at least one non-binary string column in the
+// handle. In this combination the handle bytes stored in the index are collation
+// sortKey weights, not original values, so they cannot be used as scan ranges,
+// and collation-aware comparison on those bytes during merge-sort would be
+// incorrect.
+func hasV0NewCollationStringHandle(ds *logicalop.DataSource) bool {
+	if ds.TableInfo.CommonHandleVersion != 0 || !collate.NewCollationEnabled() {
+		return false
+	}
+	for _, col := range ds.CommonHandleCols {
+		if col != nil && col.RetType.EvalType() == types.ETString &&
+			!mysql.HasBinaryFlag(col.RetType.GetFlag()) {
+			return true
+		}
+	}
+	return false
+}
+
 func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) property.PhysicalPropMatchResult {
 	// This function may set the two fields below for the PropMatchedNeedMergeSort case, so we reset them here to
 	// avoid leaving the AccessPath with an inconsistent state when there are multiple calls to matchProperty with
@@ -927,11 +963,57 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	all, _ := prop.AllSameOrder()
 	// When the prop is empty or `all` is false, `matchProperty` is better to be `PropNotMatched` because
 	// it needs not to keep order for index scan.
-	if prop.IsSortItemEmpty() || !all || len(path.IdxCols) < len(prop.SortItems) {
+	if prop.IsSortItemEmpty() || !all {
 		return property.PropNotMatched
 	}
 
-	// Basically, if `prop.SortItems` is the prefix of `path.IdxCols`, then the property is matched.
+	// For non-unique secondary indexes on CommonHandle tables, the index physically
+	// stores (index_cols, PK_cols). Build an effective column list that includes the
+	// PK suffix so that ORDER BY on PK columns can be recognised.
+	//
+	// Skip this when CommonHandleVersion == 0 with new collation enabled and
+	// the handle contains non-binary string columns. In v0, string handle columns
+	// are stored as sortKey bytes (collation weight), not original values. If we
+	// extend idxCols and the query triggers PropMatchedNeedMergeSort (e.g. IN
+	// predicate), the merge-sort comparator would apply the column's collation to
+	// sortKey bytes, producing incorrect ordering.
+	idxCols := path.IdxCols
+	idxColLens := path.IdxColLens
+	if path.Index != nil && !path.Index.Unique && !path.Index.Primary &&
+		ds.TableInfo.IsCommonHandle && len(ds.CommonHandleCols) > 0 &&
+		len(path.Index.Columns) == len(path.IdxCols) &&
+		!hasV0NewCollationStringHandle(ds) {
+		extended := false
+		for i, handleCol := range ds.CommonHandleCols {
+			if handleCol == nil {
+				continue
+			}
+			alreadyInIndex := false
+			for _, col := range idxCols {
+				if col != nil && col.EqualColumn(handleCol) {
+					alreadyInIndex = true
+					break
+				}
+			}
+			if !alreadyInIndex {
+				if !extended {
+					idxCols = make([]*expression.Column, len(path.IdxCols), len(path.IdxCols)+len(ds.CommonHandleCols))
+					copy(idxCols, path.IdxCols)
+					idxColLens = make([]int, len(path.IdxColLens), len(path.IdxColLens)+len(ds.CommonHandleCols))
+					copy(idxColLens, path.IdxColLens)
+					extended = true
+				}
+				idxCols = append(idxCols, handleCol)
+				idxColLens = append(idxColLens, ds.CommonHandleLens[i])
+			}
+		}
+	}
+
+	if len(idxCols) < len(prop.SortItems) {
+		return property.PropNotMatched
+	}
+
+	// Basically, if `prop.SortItems` is the prefix of `idxCols`, then the property is matched.
 	// However, we need to consider the situations when some columns of `path.IdxCols` are evaluated as constant.
 	// For example:
 	// ```
@@ -953,9 +1035,9 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	colIdx := 0
 	for _, sortItem := range prop.SortItems {
 		found := false
-		for ; colIdx < len(path.IdxCols); colIdx++ {
+		for ; colIdx < len(idxCols); colIdx++ {
 			// Case 1: this sort item is satisfied by the index column, go to match the next sort item.
-			if path.IdxColLens[colIdx] == types.UnspecifiedLength && sortItem.Col.EqualColumn(path.IdxCols[colIdx]) {
+			if idxColLens[colIdx] == types.UnspecifiedLength && sortItem.Col.EqualColumn(idxCols[colIdx]) {
 				found = true
 				colIdx++
 				break
@@ -1450,8 +1532,13 @@ func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 	return candidate
 }
 
-func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int) *candidatePath {
-	candidate := &candidatePath{path: path, indexJoinCols: indexJoinCols}
+func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int, countAfterAccess4IndexJoin float64, countAfterAccess4IndexJoinOK bool) *candidatePath {
+	candidate := &candidatePath{
+		path:                         path,
+		indexJoinCols:                indexJoinCols,
+		countAfterAccess4IndexJoin:   countAfterAccess4IndexJoin,
+		countAfterAccess4IndexJoinOK: countAfterAccess4IndexJoinOK,
+	}
 	// cherry-pick from the master: false instead of property.PropNotMatched in PR#63958
 	candidate.matchPropResult = property.PropNotMatched
 	candidate.accessCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
@@ -2703,7 +2790,9 @@ func (is *PhysicalIndexScan) getScanRowSize() float64 {
 //	PhysicalIndexScan.IdxCols       []*expression.Column
 //	PhysicalIndexScan.Columns       []*model.ColumnInfo
 func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoubleRead bool) {
-	indexCols := make([]*expression.Column, len(is.IdxCols), len(is.Index.Columns)+1)
+	// IdxCols may exceed the declared index columns when handle columns were appended
+	// (one for an int handle, possibly several for a common handle).
+	indexCols := make([]*expression.Column, len(is.IdxCols), max(len(is.IdxCols), len(is.Index.Columns))+1)
 	copy(indexCols, is.IdxCols)
 
 	for i := len(is.IdxCols); i < len(is.Index.Columns); i++ {
@@ -2720,7 +2809,13 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 	}
 	is.NeedCommonHandle = is.Table.IsCommonHandle
 
-	if is.NeedCommonHandle {
+	// fillIndexPath may have appended the full common-handle suffix to IdxCols for
+	// non-unique indexes, in which case indexCols already ends with the handle columns
+	// and appending idxExprCols' handle segment would duplicate them. Otherwise append
+	// the segment verbatim — it must stay complete even when a handle column repeats a
+	// declared index column, because the executor addresses the handle at the offsets
+	// right after the declared index columns (see buildIndexScanOutputOffsets).
+	if is.NeedCommonHandle && len(is.IdxCols) <= len(is.Index.Columns) {
 		for i := len(is.Index.Columns); i < len(idxExprCols); i++ {
 			indexCols = append(indexCols, idxExprCols[i])
 		}

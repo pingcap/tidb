@@ -62,4 +62,11 @@ func TestStatusVar(t *testing.T) {
 	require.NoError(t, err)
 	v := &StatusVal{Scope: DefaultStatusVarScopeFlag, Value: testStatusVal}
 	require.EqualValues(t, vars[testStatus], v)
+
+	require.Equal(t, &StatusVal{Scope: ScopeSession, Value: uint64(0)}, vars["tidb_keys_examined"])
+	sessionVars := NewSessionVars(nil)
+	sessionVars.KeysExamined = 42
+	vars, err = GetStatusVars(sessionVars)
+	require.NoError(t, err)
+	require.Equal(t, &StatusVal{Scope: ScopeSession, Value: uint64(42)}, vars["tidb_keys_examined"])
 }

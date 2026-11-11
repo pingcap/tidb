@@ -1894,6 +1894,11 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	}
 	var servers = make([]ServerInfo, 0, len(tidbNodes))
 	for _, node := range tidbNodes {
+		// Skip processes that register server info but cannot receive TiDB RPC,
+		// such as standalone BR. Their address is not a cluster endpoint.
+		if node.DisableRPC {
+			continue
+		}
 		servers = append(servers, ServerInfo{
 			ServerType:     "tidb",
 			Address:        net.JoinHostPort(node.IP, strconv.Itoa(int(node.Port))),

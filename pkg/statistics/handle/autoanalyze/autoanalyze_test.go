@@ -726,3 +726,36 @@ func TestAutoAnalyzeAfterAnalyzeVersionChange(t *testing.T) {
 	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Equal(t, statistics.Version1, statsTbl.StatsVer)
 }
+
+func TestCleanupCorruptedAnalyzeJobsIgnoresNonServingNodes(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		serverInfo string
+		removed    []string
+	}{
+		{"BR reuses dead instance address", `{"tidb":{"ip":"127.0.0.1","listening_port":4000},"br":{"ip":"10.0.0.1","listening_port":4000,"disable_rpc":true}}`, []string{"2"}},
+		{"only BR", `{"br":{"ip":"10.0.0.1","listening_port":4000,"disable_rpc":true}}`, []string{"1", "2"}},
+		{"serving node shares BR address", `{"tidb":{"ip":"127.0.0.1","listening_port":4000},"tidb2":{"ip":"10.0.0.1","listening_port":4000,"disable_rpc":false},"br":{"ip":"10.0.0.1","listening_port":4000,"disable_rpc":true}}`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", "return(`"+tc.serverInfo+"`)")
+			ctrl := gomock.NewController(t)
+			exec := mock.NewMockRestrictedSQLExecutor(ctrl)
+			c := chunk.NewChunkWithCapacity([]*types.FieldType{
+				types.NewFieldType(mysql.TypeLonglong),
+				types.NewFieldType(mysql.TypeVarchar),
+			}, 2)
+			c.AppendInt64(0, 1)
+			c.AppendString(1, "127.0.0.1:4000")
+			c.AppendInt64(0, 2)
+			c.AppendString(1, "10.0.0.1:4000")
+			exec.EXPECT().ExecRestrictedSQL(gomock.All(&test.CtxMatcher{}), util.UseCurrentSessionOpt,
+				autoanalyze.SelectAnalyzeJobsSQL, gomock.Any()).Return([]chunk.Row{c.GetRow(0), c.GetRow(1)}, nil, nil)
+			if len(tc.removed) > 0 {
+				exec.EXPECT().ExecRestrictedSQL(gomock.All(&test.CtxMatcher{}), util.UseCurrentSessionOpt,
+					autoanalyze.BatchUpdateAnalyzeJobSQL, []any{tc.removed}).Return(nil, nil, nil)
+			}
+			require.NoError(t, autoanalyze.CleanupCorruptedAnalyzeJobsOnDeadInstances(WrapAsSCtx(exec)))
+		})
+	}
+}

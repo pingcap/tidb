@@ -227,9 +227,9 @@ func canBroadcastAnalyzeStatsDeltaForTest(ctx context.Context) (bool, error) {
 	}
 	rpcAddrs := make([]string, 0, len(servers))
 	for _, server := range servers {
-		// Keep the same skip behavior as buildTiDBMemCopTasks for placeholder
-		// nodes that should not receive TiDB-type coprocessor requests.
-		if server.IP == "<nil>" {
+		// Skip processes that register server info but cannot receive TiDB RPC,
+		// such as standalone BR.
+		if server.DisableRPC {
 			continue
 		}
 		// In-process test domains can register server info without starting a
@@ -400,6 +400,12 @@ TASKLOOP:
 		}
 		for i := sentTasks; i < len(tasks); i++ {
 			finishJobWithLog(statsHandle, tasks[i].job, err)
+		}
+		// The result handler returns early on a kill signal or a panic, so it may
+		// leave results it never read. waitFinish has closed resultsCh by now.
+		for result := range resultsCh {
+			finishJobWithLog(statsHandle, result.Job, err)
+			result.DestroyAndPutToPool()
 		}
 		return err
 	}
@@ -788,6 +794,7 @@ func analyzeWorkerExitErr(ctx context.Context, errExitCh <-chan struct{}) error 
 func (e *AnalyzeExec) trySendAnalyzeResult(ctx context.Context, statsHandle *handle.Handle, resultsCh chan<- *statistics.AnalyzeResults, result *statistics.AnalyzeResults) {
 	select {
 	case resultsCh <- result:
+		failpoint.InjectCall("analyzeResultSent")
 		return
 	case <-ctx.Done():
 	case <-e.errExitCh:
