@@ -39,6 +39,10 @@ impl ResourceGroupsController for FakeGroups {
     fn get_resource_group(&self, name: &str) -> Result<Option<rmpb::ResourceGroup>, String> {
         Ok(self.0.lock().unwrap().get(name).cloned())
     }
+
+    fn get_config(&self) -> Arc<tikv_client::pd_resource_group::controller::RUConfig> {
+        Arc::new(tikv_client::pd_resource_group::controller::default_ru_config())
+    }
 }
 
 /// A session whose executors answer every statement with no rows.

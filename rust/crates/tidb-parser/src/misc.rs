@@ -270,13 +270,7 @@ impl Parser {
                 "START_TIME" => CalibrateResourceOption::StartTime(self.parse_expr(prec::NONE)?),
                 "END_TIME" => CalibrateResourceOption::EndTime(self.parse_expr(prec::NONE)?),
                 _ if self.peek().kind == TokenKind::Str => {
-                    let value = self.bumped_string();
-                    crate::parse_config_duration(&value).map_err(|error| {
-                        self.err_here(&format!(
-                            "The DURATION option is not a valid duration: {error}"
-                        ))
-                    })?;
-                    CalibrateResourceOption::DurationString(value)
+                    CalibrateResourceOption::DurationString(self.bumped_string())
                 }
                 _ if self.is_kw("INTERVAL") => {
                     self.bump();

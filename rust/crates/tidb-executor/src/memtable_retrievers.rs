@@ -627,7 +627,7 @@ pub fn set_data_for_hot_region_by_metrics(
 }
 
 /// Go `util.InternalHTTPSchema`: `https` when the cluster TLS CA is set.
-fn internal_http_schema() -> &'static str {
+pub(crate) fn internal_http_schema() -> &'static str {
     if tidb_config::config_tree::config::get_global_config()
         .security
         .cluster_ssl_ca

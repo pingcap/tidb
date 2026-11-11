@@ -78,6 +78,7 @@ pub mod metrics_reader;
 pub mod cluster_config;
 pub mod cluster_diagnostics;
 pub mod builder_utils;
+pub mod calibrate_resource;
 pub mod cluster_peer;
 pub mod coprocessor;
 pub mod show;

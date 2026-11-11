@@ -1343,6 +1343,7 @@ mod tests_privilege_tls;
 mod process_arm;
 mod show;
 mod plan_replayer;
+mod calibrate_resource;
 mod query_watch;
 use tidb_variable::vars;
 #[cfg(test)]
@@ -3499,6 +3500,8 @@ mod session_source_tests {
 mod tests_admin_check;
 #[cfg(test)]
 mod tests_error_class;
+#[cfg(test)]
+mod tests_calibrate_resource;
 #[cfg(test)]
 mod tests_inspection_result;
 #[cfg(test)]

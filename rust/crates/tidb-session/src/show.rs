@@ -407,6 +407,13 @@ impl tidb_executor::admin::AdminExec for Session {
         }
     }
 
+    fn calibrate_resource_stmt(
+        &mut self,
+        stmt: &tidb_ast::CalibrateResourceStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        self.calibrate_resource(stmt)
+    }
+
     fn server_id(&self) -> u64 {
         (self.server_id_getter)()
     }

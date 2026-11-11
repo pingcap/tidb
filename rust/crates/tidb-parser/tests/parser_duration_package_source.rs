@@ -78,11 +78,9 @@ fn unicode_decimal_digits_reach_parse_float_before_sql_error_wrapping() {
         ttl_error.message,
         "The TTL_JOB_INTERVAL option is not a valid duration: strconv.ParseFloat: parsing \"٢\": invalid syntax"
     );
-    let calibrate_error = parse("calibrate resource duration='1٢h'").unwrap_err();
-    assert_eq!(
-        calibrate_error.message,
-        "The DURATION option is not a valid duration: strconv.ParseFloat: parsing \"1٢\": invalid syntax"
-    );
+    // Go's parser keeps CALIBRATE RESOURCE's DURATION string as it is; the
+    // executor's `duration.ParseDuration` refuses it.
+    assert!(parse("calibrate resource duration='1٢h'").is_ok());
 }
 
 #[test]
@@ -91,11 +89,7 @@ fn a_non_ascii_unit_reports_the_first_source_byte() {
         parse_config_duration("1雪").unwrap_err(),
         ConfigDurationError::UnknownUnit('é')
     );
-    let error = parse("calibrate resource duration='1雪'").unwrap_err();
-    assert_eq!(
-        error.message,
-        "The DURATION option is not a valid duration: unknown unit é"
-    );
+    assert!(parse("calibrate resource duration='1雪'").is_ok());
 }
 
 #[test]
@@ -123,7 +117,7 @@ fn sql_consumers_use_the_same_duration_contract() {
             "TTL_JOB_INTERVAL={value:?}"
         );
         assert!(
-            parse(&format!("calibrate resource duration='{value}'")).is_err(),
+            parse(&format!("calibrate resource duration='{value}'")).is_ok(),
             "CALIBRATE DURATION={value:?}"
         );
     }
@@ -133,9 +127,5 @@ fn sql_consumers_use_the_same_duration_contract() {
         ttl_error.message,
         "The TTL_JOB_INTERVAL option is not a valid duration: strconv.ParseFloat: parsing \".\": invalid syntax"
     );
-    let calibrate_error = parse("calibrate resource duration='.h'").unwrap_err();
-    assert_eq!(
-        calibrate_error.message,
-        "The DURATION option is not a valid duration: strconv.ParseFloat: parsing \".\": invalid syntax"
-    );
+    assert!(parse("calibrate resource duration='.h'").is_ok());
 }

@@ -41,6 +41,9 @@ pub trait ResourceGroupsController: Send + Sync {
         &self,
         name: &str,
     ) -> Result<Option<tidb_proto::resource_manager::ResourceGroup>, String>;
+
+    /// Go `GetConfig`: the RU model the controller charges by.
+    fn get_config(&self) -> std::sync::Arc<tikv_client::pd_resource_group::controller::RUConfig>;
 }
 
 /// Go `sessionctx.Context` as the runaway records drive a pooled session.

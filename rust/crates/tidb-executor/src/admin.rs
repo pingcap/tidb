@@ -772,6 +772,11 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
     /// Go `querywatch.AddExecutor.Next` / `ExecDropQueryWatch` over the
     /// domain's runaway manager.
     fn query_watch_stmt(&mut self, stmt: &tidb_ast::AdminStmt) -> Result<StmtOutput, DriverError>;
+    /// Go `calibrateresource.Executor.Next`.
+    fn calibrate_resource_stmt(
+        &mut self,
+        stmt: &tidb_ast::CalibrateResourceStmt,
+    ) -> Result<StmtOutput, DriverError>;
 
     fn server_id(&self) -> u64;
     /// Go's TiDB peer RPC client (`KILL` of another node's connection).
@@ -947,6 +952,10 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
             // Go `querywatch.AddExecutor` and `SimpleExec.executeDropQueryWatch`.
             tidb_ast::AdminStmt::AddQueryWatch(_) | tidb_ast::AdminStmt::DropQueryWatch(_) => {
                 self.query_watch_stmt(admin).map(Some)
+            }
+            // Go `calibrateresource.Executor`.
+            tidb_ast::AdminStmt::CalibrateResource(calibrate) => {
+                self.calibrate_resource_stmt(calibrate).map(Some)
             }
             // Go `getTiProxyAddrs`: every TRAFFIC statement talks to a
             // TiProxy, and this deployment has none.

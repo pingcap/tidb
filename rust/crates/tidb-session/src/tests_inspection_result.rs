@@ -47,6 +47,12 @@ fn dt(text: &str) -> Datum {
 /// The mocks are the process's: one inspection at a time.
 static MOCKS: Mutex<()> = Mutex::new(());
 
+/// The lock every test that sets the process's metric and cluster mocks
+/// holds.
+pub(crate) fn lock_mocks() -> MutexGuard<'static, ()> {
+    MOCKS.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// Go `createInspectionContext(t, mockData, configurations)`: the metric
 /// tables and the cluster tables an inspection reads.
 struct InspectionContext {
@@ -56,7 +62,7 @@ struct InspectionContext {
 
 impl InspectionContext {
     fn new(metrics: HashMap<String, Vec<Vec<Datum>>>, tables: HashMap<String, Vec<Vec<Datum>>>) -> Self {
-        let mocks = MOCKS.lock().unwrap_or_else(PoisonError::into_inner);
+        let mocks = lock_mocks();
         let tables = tables
             .into_iter()
             .map(|(name, mut rows)| {

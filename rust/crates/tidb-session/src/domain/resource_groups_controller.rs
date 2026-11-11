@@ -135,4 +135,8 @@ impl<PdC: tikv_client::PdClient> tidb_resourcegroup_runaway::ResourceGroupsContr
             .map(|group| Some((*group).clone()))
             .map_err(|error| error.to_string())
     }
+
+    fn get_config(&self) -> Arc<tikv_client::pd_resource_group::controller::RUConfig> {
+        self.controller.get_config()
+    }
 }
