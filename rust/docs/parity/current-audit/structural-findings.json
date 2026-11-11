@@ -2,16 +2,16 @@
   "date": "2026-11-09",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 19,
+    "unresolved": 18,
     "open": 4,
-    "partial": 15
+    "partial": 14
   },
   "findings": [
     {
       "id": "A01",
       "status": "partial",
       "group": "Privilege and account policy owners",
-      "finding": "A query, INSERT, UPDATE or DELETE is checked over the visit infos of the build that plans it (`table_privilege::check_plan_privilege`: a query's before it is optimized, a DML's once it is built, a point plan's through `check_fast_plan_privilege`). PREPARE and a new non-prepared plan-cache entry keep the `VisitInfos` of one logical build (`Session::collect_table_privileges`), as Go's `GeneratePlanCacheStmtWithAST` keeps those of its `destBuilder.Build`: a query's is that build (`query_visit_info`, `build_query_node`), but a DML's is `dml_visit_info`'s `insert_visits` / `update_visits` / `delete_visits`, which compose the pieces of the read and the write targets beside the driver's own DML planning, where Go has one `buildInsert` / `buildUpdate` / `buildDelete`; and an INSERT's visit infos come from the separate builders of its target, source and values, where Go's `buildInsert` has one `PlanBuilder`",
+      "finding": "A query, INSERT, UPDATE or DELETE is checked over the visit infos of the build that plans it (`table_privilege::check_plan_privilege`: a query's before it is optimized, a DML's once it is built, a point plan's through `check_fast_plan_privilege`). PREPARE, the binary protocol's prepare and a new non-prepared plan-cache entry keep the `VisitInfos` of one build (`Session::collect_table_privileges`), as Go's `GeneratePlanCacheStmtWithAST` keeps those of its `destBuilder.Build`: a query's is `query_visit_info`'s `build_query_node`, a DML's is the driver's own build with no fast plan (`dml_visit_info`). What remains: that DML build is a second one beside the plan the prepare caches (`build_prepared_dml_plan`), where Go builds once; and an INSERT's visit infos come from the separate builders of its target, source and values, where Go's `buildInsert` has one `PlanBuilder`",
       "go_owner": "`pkg/planner/core` (`visitInfo`, `CheckPrivilege`, `GeneratePlanCacheStmtWithAST`)"
     },
     {
@@ -95,13 +95,6 @@
       "go_owner": "`pkg/planner/core` (MPP fragments), `pkg/executor/mpp_gather.go`, `pkg/store/copr/mpp.go`, `pkg/store/copr/batch_coprocessor.go`"
     },
     {
-      "id": "P03",
-      "status": "partial",
-      "group": "Protocol and PD owners",
-      "finding": "PD's `serviceDiscovery` (`servicediscovery/service_discovery.go`) is not one owner here: member updates and the leader connection live in `pd/cluster.rs` / `pd/retry.rs`, with no per-member `serviceClient`, no `apiCandidateNodes` / `GetServiceClientByKind` (how Go picks a follower for a follower-handled region API) and no `checkServiceModeChanged`",
-      "go_owner": "PD client `servicediscovery`"
-    },
-    {
       "id": "Q01",
       "status": "open",
       "group": "Expanded subsystem ownership review",
@@ -145,7 +138,7 @@
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
-  "unresolved": 19,
+  "unresolved": 18,
   "open": 4,
-  "partial": 15
+  "partial": 14
 }

@@ -1134,3 +1134,82 @@ fn an_insert_value_subquery_is_not_checked_for_privileges() {
         vec![vec!["2", "1"], vec!["11", "1"]]
     );
 }
+
+/// Go `GeneratePlanCacheStmtWithAST` checks `checkPreparedPriv` over the
+/// visit infos its one `destBuilder.Build` left, for `PREPARE` and the binary
+/// protocol's prepare alike: a build error precedes every denial, and a
+/// denial is the first visit the build pushed. Each outcome is the one a Go
+/// testkit gave (`testdata/prepare_dml_privileges_go.txt`).
+#[test]
+fn prepare_checks_the_visits_of_its_one_dml_build_like_go() {
+    let privs = tidb_privilege::PrivilegeRegistry::default();
+    let mut boot = bootstrap_session(&privs);
+    boot.run("CREATE TABLE t (id INT PRIMARY KEY, a INT, b INT)")
+        .unwrap();
+    boot.run("CREATE TABLE s (id INT PRIMARY KEY, a INT)").unwrap();
+    boot.run("INSERT INTO t VALUES (1,1,1),(2,2,2)").unwrap();
+    boot.run("INSERT INTO s VALUES (1,1),(2,2)").unwrap();
+    for (user, grant) in [
+        ("u_sel", "GRANT SELECT ON test.t TO u_sel"),
+        ("u_ins", "GRANT INSERT ON test.t TO u_ins"),
+        ("u_upd", "GRANT UPDATE ON test.t TO u_upd"),
+        ("u_del", "GRANT DELETE ON test.t TO u_del"),
+        ("u_t", "GRANT ALL ON test.t TO u_t"),
+        (
+            "u_ts",
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON test.* TO u_ts",
+        ),
+    ] {
+        boot.run(&format!("CREATE USER {user}")).unwrap();
+        boot.run(grant).unwrap();
+    }
+    let mut sessions = std::collections::HashMap::new();
+    let mut differences = Vec::new();
+    for line in include_str!("../../testdata/prepare_dml_privileges_go.txt").lines() {
+        let (statement, want) = line.split_once(" => ").unwrap();
+        let mut parts = statement.splitn(3, " | ");
+        let (user, mode, sql) = (
+            parts.next().unwrap(),
+            parts.next().unwrap(),
+            parts.next().unwrap(),
+        );
+        let session = sessions
+            .entry(user)
+            .or_insert_with(|| session_as(&privs, boot.shared_catalog(), user, "%"));
+        let outcome = match mode {
+            "text" => session
+                .run(&format!("PREPARE p FROM '{sql}'"))
+                .map(|_| ())
+                .map_err(|error| {
+                    let error = error.to_mysql_error();
+                    (error.code, error.message)
+                }),
+            _ => session
+                .node_conn()
+                .prepare_general(sql)
+                .map(|_| ())
+                .map_err(|error| (error.code, error.message)),
+        };
+        let got = match outcome {
+            Ok(()) => "OK".to_owned(),
+            Err((code, message)) => {
+                let class_end = want.find(']').map_or(0, |end| end + 1);
+                let class = want.get(4..class_end).unwrap_or_default();
+                if class.ends_with(&format!(":{}]", code)) {
+                    format!("ERR {class}{message}")
+                } else {
+                    format!("ERR {code} {message}")
+                }
+            }
+        };
+        if got != want {
+            differences.push(format!("{statement}: {got}"));
+        }
+    }
+    assert!(
+        differences.is_empty(),
+        "{} differences: {}",
+        differences.len(),
+        differences.join(" ;; ")
+    );
+}

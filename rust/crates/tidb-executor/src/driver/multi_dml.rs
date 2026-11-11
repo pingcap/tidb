@@ -824,6 +824,7 @@ pub(crate) fn multi_dml_physical_plan(
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
+    visits: super::planner_bridge::BuildVisits<'_>,
 ) -> Result<
     (
         tidb_planner_core_operator_physicalop::PhysicalPlan,
@@ -917,6 +918,7 @@ pub(crate) fn multi_dml_physical_plan(
         ctx,
         &specs,
         keep,
+        visits,
     )
 }
 
@@ -960,13 +962,27 @@ pub(crate) fn multi_dml_explain_plan(
             let tidb_ast::UpdateKind::Multi { .. } = &update.kind else {
                 return Ok(None);
             };
-            multi_dml_physical_plan(MultiDmlRef::Update(update), catalog, current_db, ctx).map(Some)
+            multi_dml_physical_plan(
+                MultiDmlRef::Update(update),
+                catalog,
+                current_db,
+                ctx,
+                super::planner_bridge::BuildVisits::Check,
+            )
+            .map(Some)
         }
         MultiDmlRef::Delete(delete) => {
             let tidb_ast::DeleteKind::Multi { .. } = &delete.kind else {
                 return Ok(None);
             };
-            multi_dml_physical_plan(MultiDmlRef::Delete(delete), catalog, current_db, ctx).map(Some)
+            multi_dml_physical_plan(
+                MultiDmlRef::Delete(delete),
+                catalog,
+                current_db,
+                ctx,
+                super::planner_bridge::BuildVisits::Check,
+            )
+            .map(Some)
         }
     }
 }

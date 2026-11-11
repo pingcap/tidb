@@ -1,0 +1,288 @@
+u_sel | text | insert into t values (?,?,?) => ERR [planner:1142]INSERT command denied to user 'u_sel'@'%' for table 't'
+u_sel | binary | insert into t values (?,?,?) => ERR [planner:1142]INSERT command denied to user 'u_sel'@'%' for table 't'
+u_sel | text | insert into t values (?,?) => ERR [planner:1136]Column count doesn't match value count at row 1
+u_sel | binary | insert into t values (?,?) => ERR [planner:1136]Column count doesn't match value count at row 1
+u_sel | text | insert into t (id, nosuch) values (?,?) => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_sel | binary | insert into t (id, nosuch) values (?,?) => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_sel | text | replace into t values (?,?,?) => ERR [planner:1142]INSERT command denied to user 'u_sel'@'%' for table 't'
+u_sel | binary | replace into t values (?,?,?) => ERR [planner:1142]INSERT command denied to user 'u_sel'@'%' for table 't'
+u_sel | text | insert into t values (?,?,?) on duplicate key update a=? => ERR [planner:1142]INSERT command denied to user 'u_sel'@'%' for table 't'
+u_sel | binary | insert into t values (?,?,?) on duplicate key update a=? => ERR [planner:1142]INSERT command denied to user 'u_sel'@'%' for table 't'
+u_sel | text | insert into t select id,a,a from s where id=? => ERR [planner:1142]INSERT command denied to user 'u_sel'@'%' for table 't'
+u_sel | binary | insert into t select id,a,a from s where id=? => ERR [planner:1142]INSERT command denied to user 'u_sel'@'%' for table 't'
+u_sel | text | insert into t values ((select a from s where id=1),?,?) => ERR [planner:1142]INSERT command denied to user 'u_sel'@'%' for table 't'
+u_sel | binary | insert into t values ((select a from s where id=1),?,?) => ERR [planner:1142]INSERT command denied to user 'u_sel'@'%' for table 't'
+u_sel | text | insert into t values (?,?,?) on duplicate key update a=(select a from s where id=1) => ERR [planner:1142]INSERT command denied to user 'u_sel'@'%' for table 't'
+u_sel | binary | insert into t values (?,?,?) on duplicate key update a=(select a from s where id=1) => ERR [planner:1142]INSERT command denied to user 'u_sel'@'%' for table 't'
+u_sel | text | update t set a=? where id=? => ERR [planner:8121]privilege check for 'Update' fail
+u_sel | binary | update t set a=? where id=? => ERR [planner:8121]privilege check for 'Update' fail
+u_sel | text | update t set a=? where b=? => ERR [planner:8121]privilege check for 'Update' fail
+u_sel | binary | update t set a=? where b=? => ERR [planner:8121]privilege check for 'Update' fail
+u_sel | text | update t set a=1 => ERR [planner:8121]privilege check for 'Update' fail
+u_sel | binary | update t set a=1 => ERR [planner:8121]privilege check for 'Update' fail
+u_sel | text | update t set nosuch=? where id=? => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_sel | binary | update t set nosuch=? where id=? => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_sel | text | update t, s set t.a=s.a where t.id=s.id and s.id=? => ERR [planner:1142]SELECT command denied to user 'u_sel'@'%' for table 's'
+u_sel | binary | update t, s set t.a=s.a where t.id=s.id and s.id=? => ERR [planner:1142]SELECT command denied to user 'u_sel'@'%' for table 's'
+u_sel | text | update t set a=(select a from s where id=?) where id=1 => ERR [planner:1142]SELECT command denied to user 'u_sel'@'%' for table 's'
+u_sel | binary | update t set a=(select a from s where id=?) where id=1 => ERR [planner:1142]SELECT command denied to user 'u_sel'@'%' for table 's'
+u_sel | text | update t set a=1 limit ? => ERR [planner:8121]privilege check for 'Update' fail
+u_sel | binary | update t set a=1 limit ? => ERR [planner:8121]privilege check for 'Update' fail
+u_sel | text | delete from t where id=? => ERR [planner:1142]DELETE command denied to user 'u_sel'@'%' for table 't'
+u_sel | binary | delete from t where id=? => ERR [planner:1142]DELETE command denied to user 'u_sel'@'%' for table 't'
+u_sel | text | delete from t => ERR [planner:1142]DELETE command denied to user 'u_sel'@'%' for table 't'
+u_sel | binary | delete from t => ERR [planner:1142]DELETE command denied to user 'u_sel'@'%' for table 't'
+u_sel | text | delete from t where a=? => ERR [planner:1142]DELETE command denied to user 'u_sel'@'%' for table 't'
+u_sel | binary | delete from t where a=? => ERR [planner:1142]DELETE command denied to user 'u_sel'@'%' for table 't'
+u_sel | text | delete from t order by a limit 1 => ERR [planner:1142]DELETE command denied to user 'u_sel'@'%' for table 't'
+u_sel | binary | delete from t order by a limit 1 => ERR [planner:1142]DELETE command denied to user 'u_sel'@'%' for table 't'
+u_sel | text | delete t from t join s on t.id=s.id where s.a=? => ERR [planner:1142]SELECT command denied to user 'u_sel'@'%' for table 's'
+u_sel | binary | delete t from t join s on t.id=s.id where s.a=? => ERR [planner:1142]SELECT command denied to user 'u_sel'@'%' for table 's'
+u_sel | text | delete from t where id in (select id from s) => ERR [planner:1142]SELECT command denied to user 'u_sel'@'%' for table 's'
+u_sel | binary | delete from t where id in (select id from s) => ERR [planner:1142]SELECT command denied to user 'u_sel'@'%' for table 's'
+u_sel | text | delete from nosuch where id=? => ERR [planner:1142]DELETE command denied to user 'u_sel'@'%' for table 'nosuch'
+u_sel | binary | delete from nosuch where id=? => ERR [planner:1142]DELETE command denied to user 'u_sel'@'%' for table 'nosuch'
+u_sel | text | insert into nosuch values (?) => ERR [planner:1142]INSERT command denied to user 'u_sel'@'%' for table 'nosuch'
+u_sel | binary | insert into nosuch values (?) => ERR [planner:1142]INSERT command denied to user 'u_sel'@'%' for table 'nosuch'
+u_sel | text | update nosuch set a=? => ERR [planner:1142]UPDATE command denied to user 'u_sel'@'%' for table 'nosuch'
+u_sel | binary | update nosuch set a=? => ERR [planner:1142]UPDATE command denied to user 'u_sel'@'%' for table 'nosuch'
+u_ins | text | insert into t values (?,?,?) => OK
+u_ins | binary | insert into t values (?,?,?) => OK
+u_ins | text | insert into t values (?,?) => ERR [planner:1136]Column count doesn't match value count at row 1
+u_ins | binary | insert into t values (?,?) => ERR [planner:1136]Column count doesn't match value count at row 1
+u_ins | text | insert into t (id, nosuch) values (?,?) => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_ins | binary | insert into t (id, nosuch) values (?,?) => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_ins | text | replace into t values (?,?,?) => ERR [planner:1142]DELETE command denied to user 'u_ins'@'%' for table 't'
+u_ins | binary | replace into t values (?,?,?) => ERR [planner:1142]DELETE command denied to user 'u_ins'@'%' for table 't'
+u_ins | text | insert into t values (?,?,?) on duplicate key update a=? => ERR [planner:1142]UPDATE command denied to user 'u_ins'@'%' for table 't'
+u_ins | binary | insert into t values (?,?,?) on duplicate key update a=? => ERR [planner:1142]UPDATE command denied to user 'u_ins'@'%' for table 't'
+u_ins | text | insert into t select id,a,a from s where id=? => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 's'
+u_ins | binary | insert into t select id,a,a from s where id=? => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 's'
+u_ins | text | insert into t values ((select a from s where id=1),?,?) => OK
+u_ins | binary | insert into t values ((select a from s where id=1),?,?) => OK
+u_ins | text | insert into t values (?,?,?) on duplicate key update a=(select a from s where id=1) => ERR [planner:1142]UPDATE command denied to user 'u_ins'@'%' for table 't'
+u_ins | binary | insert into t values (?,?,?) on duplicate key update a=(select a from s where id=1) => ERR [planner:1142]UPDATE command denied to user 'u_ins'@'%' for table 't'
+u_ins | text | update t set a=? where id=? => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | binary | update t set a=? where id=? => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | text | update t set a=? where b=? => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | binary | update t set a=? where b=? => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | text | update t set a=1 => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | binary | update t set a=1 => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | text | update t set nosuch=? where id=? => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_ins | binary | update t set nosuch=? where id=? => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_ins | text | update t, s set t.a=s.a where t.id=s.id and s.id=? => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | binary | update t, s set t.a=s.a where t.id=s.id and s.id=? => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | text | update t set a=(select a from s where id=?) where id=1 => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | binary | update t set a=(select a from s where id=?) where id=1 => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | text | update t set a=1 limit ? => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | binary | update t set a=1 limit ? => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | text | delete from t where id=? => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | binary | delete from t where id=? => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | text | delete from t => ERR [planner:1142]DELETE command denied to user 'u_ins'@'%' for table 't'
+u_ins | binary | delete from t => ERR [planner:1142]DELETE command denied to user 'u_ins'@'%' for table 't'
+u_ins | text | delete from t where a=? => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | binary | delete from t where a=? => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | text | delete from t order by a limit 1 => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | binary | delete from t order by a limit 1 => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | text | delete t from t join s on t.id=s.id where s.a=? => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | binary | delete t from t join s on t.id=s.id where s.a=? => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | text | delete from t where id in (select id from s) => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | binary | delete from t where id in (select id from s) => ERR [planner:1142]SELECT command denied to user 'u_ins'@'%' for table 't'
+u_ins | text | delete from nosuch where id=? => ERR [planner:1142]DELETE command denied to user 'u_ins'@'%' for table 'nosuch'
+u_ins | binary | delete from nosuch where id=? => ERR [planner:1142]DELETE command denied to user 'u_ins'@'%' for table 'nosuch'
+u_ins | text | insert into nosuch values (?) => ERR [planner:1142]INSERT command denied to user 'u_ins'@'%' for table 'nosuch'
+u_ins | binary | insert into nosuch values (?) => ERR [planner:1142]INSERT command denied to user 'u_ins'@'%' for table 'nosuch'
+u_ins | text | update nosuch set a=? => ERR [planner:1142]UPDATE command denied to user 'u_ins'@'%' for table 'nosuch'
+u_ins | binary | update nosuch set a=? => ERR [planner:1142]UPDATE command denied to user 'u_ins'@'%' for table 'nosuch'
+u_upd | text | insert into t values (?,?,?) => ERR [planner:1142]INSERT command denied to user 'u_upd'@'%' for table 't'
+u_upd | binary | insert into t values (?,?,?) => ERR [planner:1142]INSERT command denied to user 'u_upd'@'%' for table 't'
+u_upd | text | insert into t values (?,?) => ERR [planner:1136]Column count doesn't match value count at row 1
+u_upd | binary | insert into t values (?,?) => ERR [planner:1136]Column count doesn't match value count at row 1
+u_upd | text | insert into t (id, nosuch) values (?,?) => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_upd | binary | insert into t (id, nosuch) values (?,?) => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_upd | text | replace into t values (?,?,?) => ERR [planner:1142]INSERT command denied to user 'u_upd'@'%' for table 't'
+u_upd | binary | replace into t values (?,?,?) => ERR [planner:1142]INSERT command denied to user 'u_upd'@'%' for table 't'
+u_upd | text | insert into t values (?,?,?) on duplicate key update a=? => ERR [planner:1142]INSERT command denied to user 'u_upd'@'%' for table 't'
+u_upd | binary | insert into t values (?,?,?) on duplicate key update a=? => ERR [planner:1142]INSERT command denied to user 'u_upd'@'%' for table 't'
+u_upd | text | insert into t select id,a,a from s where id=? => ERR [planner:1142]INSERT command denied to user 'u_upd'@'%' for table 't'
+u_upd | binary | insert into t select id,a,a from s where id=? => ERR [planner:1142]INSERT command denied to user 'u_upd'@'%' for table 't'
+u_upd | text | insert into t values ((select a from s where id=1),?,?) => ERR [planner:1142]INSERT command denied to user 'u_upd'@'%' for table 't'
+u_upd | binary | insert into t values ((select a from s where id=1),?,?) => ERR [planner:1142]INSERT command denied to user 'u_upd'@'%' for table 't'
+u_upd | text | insert into t values (?,?,?) on duplicate key update a=(select a from s where id=1) => ERR [planner:1142]INSERT command denied to user 'u_upd'@'%' for table 't'
+u_upd | binary | insert into t values (?,?,?) on duplicate key update a=(select a from s where id=1) => ERR [planner:1142]INSERT command denied to user 'u_upd'@'%' for table 't'
+u_upd | text | update t set a=? where id=? => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | binary | update t set a=? where id=? => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | text | update t set a=? where b=? => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | binary | update t set a=? where b=? => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | text | update t set a=1 => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | binary | update t set a=1 => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | text | update t set nosuch=? where id=? => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_upd | binary | update t set nosuch=? where id=? => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_upd | text | update t, s set t.a=s.a where t.id=s.id and s.id=? => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | binary | update t, s set t.a=s.a where t.id=s.id and s.id=? => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | text | update t set a=(select a from s where id=?) where id=1 => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | binary | update t set a=(select a from s where id=?) where id=1 => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | text | update t set a=1 limit ? => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | binary | update t set a=1 limit ? => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | text | delete from t where id=? => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | binary | delete from t where id=? => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | text | delete from t => ERR [planner:1142]DELETE command denied to user 'u_upd'@'%' for table 't'
+u_upd | binary | delete from t => ERR [planner:1142]DELETE command denied to user 'u_upd'@'%' for table 't'
+u_upd | text | delete from t where a=? => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | binary | delete from t where a=? => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | text | delete from t order by a limit 1 => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | binary | delete from t order by a limit 1 => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | text | delete t from t join s on t.id=s.id where s.a=? => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | binary | delete t from t join s on t.id=s.id where s.a=? => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | text | delete from t where id in (select id from s) => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | binary | delete from t where id in (select id from s) => ERR [planner:1142]SELECT command denied to user 'u_upd'@'%' for table 't'
+u_upd | text | delete from nosuch where id=? => ERR [planner:1142]DELETE command denied to user 'u_upd'@'%' for table 'nosuch'
+u_upd | binary | delete from nosuch where id=? => ERR [planner:1142]DELETE command denied to user 'u_upd'@'%' for table 'nosuch'
+u_upd | text | insert into nosuch values (?) => ERR [planner:1142]INSERT command denied to user 'u_upd'@'%' for table 'nosuch'
+u_upd | binary | insert into nosuch values (?) => ERR [planner:1142]INSERT command denied to user 'u_upd'@'%' for table 'nosuch'
+u_upd | text | update nosuch set a=? => ERR [planner:1142]UPDATE command denied to user 'u_upd'@'%' for table 'nosuch'
+u_upd | binary | update nosuch set a=? => ERR [planner:1142]UPDATE command denied to user 'u_upd'@'%' for table 'nosuch'
+u_del | text | insert into t values (?,?,?) => ERR [planner:1142]INSERT command denied to user 'u_del'@'%' for table 't'
+u_del | binary | insert into t values (?,?,?) => ERR [planner:1142]INSERT command denied to user 'u_del'@'%' for table 't'
+u_del | text | insert into t values (?,?) => ERR [planner:1136]Column count doesn't match value count at row 1
+u_del | binary | insert into t values (?,?) => ERR [planner:1136]Column count doesn't match value count at row 1
+u_del | text | insert into t (id, nosuch) values (?,?) => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_del | binary | insert into t (id, nosuch) values (?,?) => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_del | text | replace into t values (?,?,?) => ERR [planner:1142]INSERT command denied to user 'u_del'@'%' for table 't'
+u_del | binary | replace into t values (?,?,?) => ERR [planner:1142]INSERT command denied to user 'u_del'@'%' for table 't'
+u_del | text | insert into t values (?,?,?) on duplicate key update a=? => ERR [planner:1142]INSERT command denied to user 'u_del'@'%' for table 't'
+u_del | binary | insert into t values (?,?,?) on duplicate key update a=? => ERR [planner:1142]INSERT command denied to user 'u_del'@'%' for table 't'
+u_del | text | insert into t select id,a,a from s where id=? => ERR [planner:1142]INSERT command denied to user 'u_del'@'%' for table 't'
+u_del | binary | insert into t select id,a,a from s where id=? => ERR [planner:1142]INSERT command denied to user 'u_del'@'%' for table 't'
+u_del | text | insert into t values ((select a from s where id=1),?,?) => ERR [planner:1142]INSERT command denied to user 'u_del'@'%' for table 't'
+u_del | binary | insert into t values ((select a from s where id=1),?,?) => ERR [planner:1142]INSERT command denied to user 'u_del'@'%' for table 't'
+u_del | text | insert into t values (?,?,?) on duplicate key update a=(select a from s where id=1) => ERR [planner:1142]INSERT command denied to user 'u_del'@'%' for table 't'
+u_del | binary | insert into t values (?,?,?) on duplicate key update a=(select a from s where id=1) => ERR [planner:1142]INSERT command denied to user 'u_del'@'%' for table 't'
+u_del | text | update t set a=? where id=? => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | binary | update t set a=? where id=? => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | text | update t set a=? where b=? => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | binary | update t set a=? where b=? => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | text | update t set a=1 => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | binary | update t set a=1 => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | text | update t set nosuch=? where id=? => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_del | binary | update t set nosuch=? where id=? => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_del | text | update t, s set t.a=s.a where t.id=s.id and s.id=? => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | binary | update t, s set t.a=s.a where t.id=s.id and s.id=? => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | text | update t set a=(select a from s where id=?) where id=1 => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | binary | update t set a=(select a from s where id=?) where id=1 => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | text | update t set a=1 limit ? => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | binary | update t set a=1 limit ? => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | text | delete from t where id=? => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | binary | delete from t where id=? => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | text | delete from t => OK
+u_del | binary | delete from t => OK
+u_del | text | delete from t where a=? => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | binary | delete from t where a=? => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | text | delete from t order by a limit 1 => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | binary | delete from t order by a limit 1 => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | text | delete t from t join s on t.id=s.id where s.a=? => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | binary | delete t from t join s on t.id=s.id where s.a=? => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | text | delete from t where id in (select id from s) => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | binary | delete from t where id in (select id from s) => ERR [planner:1142]SELECT command denied to user 'u_del'@'%' for table 't'
+u_del | text | delete from nosuch where id=? => ERR [planner:1142]DELETE command denied to user 'u_del'@'%' for table 'nosuch'
+u_del | binary | delete from nosuch where id=? => ERR [planner:1142]DELETE command denied to user 'u_del'@'%' for table 'nosuch'
+u_del | text | insert into nosuch values (?) => ERR [planner:1142]INSERT command denied to user 'u_del'@'%' for table 'nosuch'
+u_del | binary | insert into nosuch values (?) => ERR [planner:1142]INSERT command denied to user 'u_del'@'%' for table 'nosuch'
+u_del | text | update nosuch set a=? => ERR [planner:1142]UPDATE command denied to user 'u_del'@'%' for table 'nosuch'
+u_del | binary | update nosuch set a=? => ERR [planner:1142]UPDATE command denied to user 'u_del'@'%' for table 'nosuch'
+u_t | text | insert into t values (?,?,?) => OK
+u_t | binary | insert into t values (?,?,?) => OK
+u_t | text | insert into t values (?,?) => ERR [planner:1136]Column count doesn't match value count at row 1
+u_t | binary | insert into t values (?,?) => ERR [planner:1136]Column count doesn't match value count at row 1
+u_t | text | insert into t (id, nosuch) values (?,?) => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_t | binary | insert into t (id, nosuch) values (?,?) => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_t | text | replace into t values (?,?,?) => OK
+u_t | binary | replace into t values (?,?,?) => OK
+u_t | text | insert into t values (?,?,?) on duplicate key update a=? => OK
+u_t | binary | insert into t values (?,?,?) on duplicate key update a=? => OK
+u_t | text | insert into t select id,a,a from s where id=? => ERR [planner:1142]SELECT command denied to user 'u_t'@'%' for table 's'
+u_t | binary | insert into t select id,a,a from s where id=? => ERR [planner:1142]SELECT command denied to user 'u_t'@'%' for table 's'
+u_t | text | insert into t values ((select a from s where id=1),?,?) => OK
+u_t | binary | insert into t values ((select a from s where id=1),?,?) => OK
+u_t | text | insert into t values (?,?,?) on duplicate key update a=(select a from s where id=1) => ERR [planner:1142]SELECT command denied to user 'u_t'@'%' for table 's'
+u_t | binary | insert into t values (?,?,?) on duplicate key update a=(select a from s where id=1) => ERR [planner:1142]SELECT command denied to user 'u_t'@'%' for table 's'
+u_t | text | update t set a=? where id=? => OK
+u_t | binary | update t set a=? where id=? => OK
+u_t | text | update t set a=? where b=? => OK
+u_t | binary | update t set a=? where b=? => OK
+u_t | text | update t set a=1 => OK
+u_t | binary | update t set a=1 => OK
+u_t | text | update t set nosuch=? where id=? => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_t | binary | update t set nosuch=? where id=? => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_t | text | update t, s set t.a=s.a where t.id=s.id and s.id=? => ERR [planner:1142]SELECT command denied to user 'u_t'@'%' for table 's'
+u_t | binary | update t, s set t.a=s.a where t.id=s.id and s.id=? => ERR [planner:1142]SELECT command denied to user 'u_t'@'%' for table 's'
+u_t | text | update t set a=(select a from s where id=?) where id=1 => ERR [planner:1142]SELECT command denied to user 'u_t'@'%' for table 's'
+u_t | binary | update t set a=(select a from s where id=?) where id=1 => ERR [planner:1142]SELECT command denied to user 'u_t'@'%' for table 's'
+u_t | text | update t set a=1 limit ? => OK
+u_t | binary | update t set a=1 limit ? => OK
+u_t | text | delete from t where id=? => OK
+u_t | binary | delete from t where id=? => OK
+u_t | text | delete from t => OK
+u_t | binary | delete from t => OK
+u_t | text | delete from t where a=? => OK
+u_t | binary | delete from t where a=? => OK
+u_t | text | delete from t order by a limit 1 => OK
+u_t | binary | delete from t order by a limit 1 => OK
+u_t | text | delete t from t join s on t.id=s.id where s.a=? => ERR [planner:1142]SELECT command denied to user 'u_t'@'%' for table 's'
+u_t | binary | delete t from t join s on t.id=s.id where s.a=? => ERR [planner:1142]SELECT command denied to user 'u_t'@'%' for table 's'
+u_t | text | delete from t where id in (select id from s) => ERR [planner:1142]SELECT command denied to user 'u_t'@'%' for table 's'
+u_t | binary | delete from t where id in (select id from s) => ERR [planner:1142]SELECT command denied to user 'u_t'@'%' for table 's'
+u_t | text | delete from nosuch where id=? => ERR [planner:1142]DELETE command denied to user 'u_t'@'%' for table 'nosuch'
+u_t | binary | delete from nosuch where id=? => ERR [planner:1142]DELETE command denied to user 'u_t'@'%' for table 'nosuch'
+u_t | text | insert into nosuch values (?) => ERR [planner:1142]INSERT command denied to user 'u_t'@'%' for table 'nosuch'
+u_t | binary | insert into nosuch values (?) => ERR [planner:1142]INSERT command denied to user 'u_t'@'%' for table 'nosuch'
+u_t | text | update nosuch set a=? => ERR [planner:1142]UPDATE command denied to user 'u_t'@'%' for table 'nosuch'
+u_t | binary | update nosuch set a=? => ERR [planner:1142]UPDATE command denied to user 'u_t'@'%' for table 'nosuch'
+u_ts | text | insert into t values (?,?,?) => OK
+u_ts | binary | insert into t values (?,?,?) => OK
+u_ts | text | insert into t values (?,?) => ERR [planner:1136]Column count doesn't match value count at row 1
+u_ts | binary | insert into t values (?,?) => ERR [planner:1136]Column count doesn't match value count at row 1
+u_ts | text | insert into t (id, nosuch) values (?,?) => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_ts | binary | insert into t (id, nosuch) values (?,?) => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_ts | text | replace into t values (?,?,?) => OK
+u_ts | binary | replace into t values (?,?,?) => OK
+u_ts | text | insert into t values (?,?,?) on duplicate key update a=? => OK
+u_ts | binary | insert into t values (?,?,?) on duplicate key update a=? => OK
+u_ts | text | insert into t select id,a,a from s where id=? => OK
+u_ts | binary | insert into t select id,a,a from s where id=? => OK
+u_ts | text | insert into t values ((select a from s where id=1),?,?) => OK
+u_ts | binary | insert into t values ((select a from s where id=1),?,?) => OK
+u_ts | text | insert into t values (?,?,?) on duplicate key update a=(select a from s where id=1) => OK
+u_ts | binary | insert into t values (?,?,?) on duplicate key update a=(select a from s where id=1) => OK
+u_ts | text | update t set a=? where id=? => OK
+u_ts | binary | update t set a=? where id=? => OK
+u_ts | text | update t set a=? where b=? => OK
+u_ts | binary | update t set a=? where b=? => OK
+u_ts | text | update t set a=1 => OK
+u_ts | binary | update t set a=1 => OK
+u_ts | text | update t set nosuch=? where id=? => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_ts | binary | update t set nosuch=? where id=? => ERR [planner:1054]Unknown column 'nosuch' in 'field list'
+u_ts | text | update t, s set t.a=s.a where t.id=s.id and s.id=? => OK
+u_ts | binary | update t, s set t.a=s.a where t.id=s.id and s.id=? => OK
+u_ts | text | update t set a=(select a from s where id=?) where id=1 => OK
+u_ts | binary | update t set a=(select a from s where id=?) where id=1 => OK
+u_ts | text | update t set a=1 limit ? => OK
+u_ts | binary | update t set a=1 limit ? => OK
+u_ts | text | delete from t where id=? => OK
+u_ts | binary | delete from t where id=? => OK
+u_ts | text | delete from t => OK
+u_ts | binary | delete from t => OK
+u_ts | text | delete from t where a=? => OK
+u_ts | binary | delete from t where a=? => OK
+u_ts | text | delete from t order by a limit 1 => OK
+u_ts | binary | delete from t order by a limit 1 => OK
+u_ts | text | delete t from t join s on t.id=s.id where s.a=? => OK
+u_ts | binary | delete t from t join s on t.id=s.id where s.a=? => OK
+u_ts | text | delete from t where id in (select id from s) => OK
+u_ts | binary | delete from t where id in (select id from s) => OK
+u_ts | text | delete from nosuch where id=? => ERR [schema:1146]Table 'test.nosuch' doesn't exist
+u_ts | binary | delete from nosuch where id=? => ERR [schema:1146]Table 'test.nosuch' doesn't exist
+u_ts | text | insert into nosuch values (?) => ERR [schema:1146]Table 'test.nosuch' doesn't exist
+u_ts | binary | insert into nosuch values (?) => ERR [schema:1146]Table 'test.nosuch' doesn't exist
+u_ts | text | update nosuch set a=? => ERR [schema:1146]Table 'test.nosuch' doesn't exist
+u_ts | binary | update nosuch set a=? => ERR [schema:1146]Table 'test.nosuch' doesn't exist

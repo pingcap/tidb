@@ -432,49 +432,66 @@ pub(crate) fn run_fk_cascade(
 }
 
 /// Go `GeneratePlanCacheStmtWithAST`'s `destBuilder.Build` for an INSERT,
-/// UPDATE or DELETE: the statement's plan, built and discarded, so its build
-/// errors surface at PREPARE ahead of `checkPreparedPriv`.
-pub fn prepare_dml_plan(
+/// UPDATE or DELETE: the statement's plan, built and discarded for the
+/// `VisitInfos` its builder holds, which PREPARE (or a new non-prepared
+/// plan-cache entry) keeps for `checkPreparedPriv`. Its build errors surface
+/// ahead of that check, and its warnings are not the statement's.
+pub fn dml_visit_info(
     dml: &tidb_ast::DmlStmt,
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    use super::multi_dml::{multi_dml_explain_plan, MultiDmlRef};
+) -> Result<Vec<tidb_planner::plan_builder::visit_info::VisitInfo>, DriverError> {
+    let warning_bookmark = ctx.warning_count();
+    let visits = build_dml_visit_info(dml, catalog, current_db, ctx);
+    ctx.truncate_warnings(warning_bookmark);
+    visits
+}
+
+fn build_dml_visit_info(
+    dml: &tidb_ast::DmlStmt,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<tidb_planner::plan_builder::visit_info::VisitInfo>, DriverError> {
+    use super::multi_dml::{multi_dml_physical_plan, MultiDmlRef};
+    use super::planner_bridge::BuildVisits;
+    let mut visits = Vec::new();
     let (operator, write, source, fk_spec) = match dml {
-        tidb_ast::DmlStmt::Update(update) => {
-            if multi_dml_explain_plan(MultiDmlRef::Update(update), catalog, current_db, ctx)?.is_some() {
-                return Ok(());
-            }
-            (
+        tidb_ast::DmlStmt::Update(update) => match update_source_query(update) {
+            Some(source) => (
                 "Update",
                 MultiDmlRef::Update(update),
-                update_source_query(update),
+                source,
                 build_tbl_2_update_columns(update, current_db)?,
-            )
-        }
-        tidb_ast::DmlStmt::Delete(delete) => {
-            if multi_dml_explain_plan(MultiDmlRef::Delete(delete), catalog, current_db, ctx)?.is_some() {
-                return Ok(());
+            ),
+            None => {
+                let write = MultiDmlRef::Update(update);
+                multi_dml_physical_plan(write, catalog, current_db, ctx, BuildVisits::Collect(&mut visits))?;
+                return Ok(visits);
             }
-            (
+        },
+        tidb_ast::DmlStmt::Delete(delete) => match delete_source_query(delete) {
+            Some(source) => (
                 "Delete",
                 MultiDmlRef::Delete(delete),
-                delete_source_query(delete),
+                source,
                 fk_spec_for_delete(delete, current_db)?,
-            )
-        }
+            ),
+            None => {
+                let write = MultiDmlRef::Delete(delete);
+                multi_dml_physical_plan(write, catalog, current_db, ctx, BuildVisits::Collect(&mut visits))?;
+                return Ok(visits);
+            }
+        },
         // Go `buildInsert`: the source, then the VALUES lists and the ON
         // DUPLICATE assignments.
         tidb_ast::DmlStmt::Insert(insert) => {
-            let mut source_visits = Vec::new();
-            let physical = physical_insert_plan(insert, catalog, current_db, ctx, &mut source_visits)?;
-            return plan_insert_over(insert, Some(&physical), catalog, current_db, ctx).map(drop);
+            let physical = physical_insert_plan(insert, catalog, current_db, ctx, &mut visits)?;
+            let planned = plan_insert_over(insert, Some(&physical), catalog, current_db, ctx)?;
+            return Ok(planned.statement_visits(visits));
         }
-        _ => return Ok(()),
-    };
-    let Some(source) = source else {
-        return Ok(());
+        _ => return Ok(visits),
     };
     physical_dml_plan_with_cache_mode(
         operator,
@@ -487,10 +504,10 @@ pub fn prepare_dml_plan(
         std::slice::from_ref(&fk_spec),
         DmlKeep::Auto,
         None,
-        super::planner_bridge::BuildVisits::Discard,
+        BuildVisits::Collect(&mut visits),
         None,
-    )
-    .map(drop)
+    )?;
+    Ok(visits)
 }
 
 /// Builds and prepares the same UPDATE or DELETE plan for execution and
@@ -567,6 +584,7 @@ pub(crate) fn physical_multi_dml_plan(
     ctx: &crate::StmtContext,
     fk_specs: &[fk_trigger_plan::FkPlanSpec],
     keep: DmlKeep,
+    visits: super::planner_bridge::BuildVisits<'_>,
 ) -> Result<
     (
         tidb_planner_core_operator_physicalop::PhysicalPlan,
@@ -585,7 +603,7 @@ pub(crate) fn physical_multi_dml_plan(
         fk_specs,
         keep,
         None,
-        super::planner_bridge::BuildVisits::Check,
+        visits,
         None,
     )
 }
@@ -783,7 +801,9 @@ fn physical_dml_plan_and_scalar_subqueries_with_cache_mode(
             // Go's `TryFastPlan` belongs to `planner.Optimize`, which a
             // cascade's `OptimizeForForeignKeyCascade` does not run, and
             // which tries it only when TiKV is an isolation read engine.
+            // PREPARE's `destBuilder.Build` is the plan builder alone.
             let allow_fast_plan = multi_update.is_none()
+                && !matches!(visits, BuildVisits::Collect(_))
                 && cascade_plan_ids.is_none()
                 && ctx.isolation_read_contains_tikv()
                 && update.is_none_or(|update| try_update_point_plan(update));
@@ -3209,6 +3229,7 @@ pub fn run_update_stmt_with_physical(
                 catalog,
                 current_db,
                 ctx,
+                super::planner_bridge::BuildVisits::Check,
             )
             .map(|(plan, _)| plan),
         })
@@ -4623,6 +4644,7 @@ pub fn run_delete_stmt_with_physical(
                 catalog,
                 current_db,
                 ctx,
+                super::planner_bridge::BuildVisits::Check,
             )
             .map(|(plan, _)| plan),
         })

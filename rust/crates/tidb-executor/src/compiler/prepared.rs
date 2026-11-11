@@ -434,23 +434,16 @@ pub trait PrepareExec: super::CompilerSession {
                         )
                     })?;
                 }
-                // Go `GeneratePlanCacheStmtWithAST` builds this plan (an
-                // INSERT's, UPDATE's or DELETE's too) with every marker's
-                // `Datum.SetNull()` and `InExecute = false`.
-                Some(bound @ (tidb_ast::Stmt::Query(_) | tidb_ast::Stmt::Dml(_))) => {
+                // Go `GeneratePlanCacheStmtWithAST` builds this plan with
+                // every marker's `Datum.SetNull()` and `InExecute = false`;
+                // an INSERT's, UPDATE's or DELETE's is the build its visit
+                // infos are kept from, below.
+                Some(tidb_ast::Stmt::Query(query)) => {
                     let ctx = planner_context
                         .with_isolated_warnings()
                         .with_prepared_params(vec![Datum::Null; param_count].into());
                     let current_db = self.session_vars().current_db.as_str();
-                    let built = match bound {
-                        tidb_ast::Stmt::Query(query) => {
-                            crate::plan_query_meta_stmt(query, &catalog, current_db, &ctx).err()
-                        }
-                        tidb_ast::Stmt::Dml(dml) => {
-                            crate::driver::prepare_dml_plan(dml, &catalog, current_db, &ctx).err()
-                        }
-                        _ => None,
-                    };
+                    let built = crate::plan_query_meta_stmt(query, &catalog, current_db, &ctx).err();
                     // A scan of a memory table needs the session to retrieve
                     // its rows, which says nothing of the query, and a shape
                     // this tier cannot plan is no answer Go gives.
@@ -520,7 +513,12 @@ pub trait PrepareExec: super::CompilerSession {
         } else {
             text
         };
-        let privilege_requests = self.collect_table_privileges(&statement, true)?;
+        // The build reads each variable as its value now, as above.
+        let built = match &validated_query {
+            Some(bound @ tidb_ast::Stmt::Dml(_)) => bound,
+            _ => &statement,
+        };
+        let privilege_requests = self.collect_table_privileges(built, true)?;
         // Go `GeneratePlanCacheStmtWithAST` ends with `checkPreparedPriv`:
         // PREPARE itself is refused without the statement's privileges.
         self.check_table_privilege_requests(&privilege_requests)?;

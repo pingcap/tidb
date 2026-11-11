@@ -709,8 +709,20 @@ impl Session {
         let (user, host) = (user.to_owned(), host.to_owned());
         let missing: Vec<(String, String)> = {
             let catalog = self.lock_catalog()?;
-            tidb_executor::table_privilege::read_tables(stmt, &self.vars.current_db)
+            // Go's preprocessor resolves every `TableName`, an INSERT's
+            // target first.
+            let insert_target = match stmt {
+                tidb_ast::Stmt::Dml(dml) => match &**dml {
+                    tidb_ast::DmlStmt::Insert(insert) => {
+                        tidb_executor::table_privilege::split_path(&insert.table, &self.vars.current_db)
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+            insert_target
                 .into_iter()
+                .chain(tidb_executor::table_privilege::read_tables(stmt, &self.vars.current_db))
                 .filter(|(schema, table)| {
                     catalog.table_in(schema, table).is_none()
                         && !self.is_local_temporary_table(schema, table)

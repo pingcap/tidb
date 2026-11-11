@@ -1843,10 +1843,16 @@ impl<'s> ClusterServerSession<'s> {
         // table another connection created since this one's last statement
         // resolves.
         self.rebuild_catalog_if_stale();
-        let prepared_ast = self
-            .session
-            .prepare_ast_parsed(sql, parsed)
-            .map_err(map_error)?;
+        // The build reads inside the statement, as Go's `PrepareExec` does
+        // after `PrepareTxnCtx`: an uncorrelated subquery of a DML is
+        // evaluated while `buildInsert` / `buildUpdate` / `buildDelete` run.
+        let resource_group = self.session.current_resource_group().to_owned();
+        let prepared_ast =
+            self.probe_statement(StatementReadShape::Unknown, &resource_group, |session| {
+                session
+                    .prepare_ast_parsed(sql, parsed.clone())
+                    .map_err(map_error)
+            })?;
         self.session
             .note_prepared_plan_cache_refusal(prepared_ast.statement())
             .map_err(map_error)?;

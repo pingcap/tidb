@@ -111,7 +111,7 @@ impl TablePrivilegeRequest {
 /// to the session's current database exactly as Go's builders do
 /// (`dbName == "" => CurrentDB`). `None` for a path this tier cannot read as
 /// a table name.
-fn split_path<'a>(path: &'a [String], current_db: &'a str) -> Option<(String, String)> {
+pub fn split_path<'a>(path: &'a [String], current_db: &'a str) -> Option<(String, String)> {
     match path {
         // An unqualified name with NO current database is Go's `ErrNoDB`,
         // raised during name resolution -- which runs BEFORE

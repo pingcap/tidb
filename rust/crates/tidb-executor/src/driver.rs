@@ -57,7 +57,8 @@ pub(crate) use tidb_planner::from_scope as from;
 mod multi_dml;
 pub(crate) use multi_dml::{multi_dml_explain_plan, MultiDmlRef};
 
-pub use planner_bridge::{dml_visit_info, query_visit_info};
+pub use dml::dml_visit_info;
+pub use planner_bridge::query_visit_info;
 mod record_set;
 pub use record_set::RecordSet;
 pub(crate) mod fk_trigger_plan;
