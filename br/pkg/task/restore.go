@@ -1367,45 +1367,43 @@ func hasCheckpointPersisted(
 	cfg *RestoreConfig,
 	newSnapshotManager func(context.Context) (checkpoint.SnapshotMetaManagerT, error),
 ) (bool, error) {
-	var newSnapshotManagerErr error
+	var firstErr error
+	keepFirst := func(err error) {
+		if firstErr == nil {
+			firstErr = errors.Trace(err)
+		}
+	}
 	snapshotManager := cfg.snapshotCheckpointMetaManager
 	if snapshotManager == nil && newSnapshotManager != nil {
 		m, err := newSnapshotManager(ctx)
 		if err != nil {
-			newSnapshotManagerErr = errors.Trace(err)
+			keepFirst(err)
 		} else {
 			defer m.Close()
 			snapshotManager = m
 		}
 	}
+	checks := make([]func(context.Context) (bool, error), 0, 3)
 	if snapshotManager != nil {
-		exists, err := snapshotManager.ExistsCheckpointMetadata(ctx)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if exists {
-			return true, nil
-		}
+		checks = append(checks, snapshotManager.ExistsCheckpointMetadata)
 	}
 	if cfg.logCheckpointMetaManager != nil {
-		exists, err := cfg.logCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if exists {
-			return true, nil
-		}
+		checks = append(checks, cfg.logCheckpointMetaManager.ExistsCheckpointMetadata)
 	}
 	if cfg.sstCheckpointMetaManager != nil {
-		exists, err := cfg.sstCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
+		checks = append(checks, cfg.sstCheckpointMetaManager.ExistsCheckpointMetadata)
+	}
+	for _, exists := range checks {
+		found, err := exists(ctx)
 		if err != nil {
-			return false, errors.Trace(err)
+			keepFirst(err)
+			continue
 		}
-		if exists {
+		if found {
 			return true, nil
 		}
 	}
-	return false, newSnapshotManagerErr
+	return false, firstErr
 }
 
 type SnapshotRestoreConfig struct {

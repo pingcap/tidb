@@ -234,12 +234,32 @@ func TestHasCheckpointPersistedChecksSnapshotCheckpointOfTheTask(t *testing.T) {
 	failingSnapshotManager := func(context.Context) (checkpoint.SnapshotMetaManagerT, error) {
 		return nil, errors.New("cannot create session")
 	}
-	persisted, err = hasCheckpointPersisted(ctx, logOnly, failingSnapshotManager)
-	require.ErrorContains(t, err, "cannot create session")
-	require.False(t, persisted)
+	unreadableSnapshotManager := func(ctx context.Context) (checkpoint.SnapshotMetaManagerT, error) {
+		m, err := snapshotManagerOf(1)(ctx)
+		return unreadableSnapshotMetaManager{m}, err
+	}
+	for _, newSnapshotManager := range []func(context.Context) (checkpoint.SnapshotMetaManagerT, error){
+		failingSnapshotManager, unreadableSnapshotManager,
+	} {
+		persisted, err = hasCheckpointPersisted(ctx, logOnly, newSnapshotManager)
+		require.Error(t, err)
+		require.False(t, persisted)
+	}
 
 	require.NoError(t, logOnly.logCheckpointMetaManager.SaveCheckpointMetadata(ctx, &checkpoint.CheckpointMetadataForLogRestore{}))
-	persisted, err = hasCheckpointPersisted(ctx, logOnly, failingSnapshotManager)
-	require.NoError(t, err)
-	require.True(t, persisted)
+	for _, newSnapshotManager := range []func(context.Context) (checkpoint.SnapshotMetaManagerT, error){
+		failingSnapshotManager, unreadableSnapshotManager,
+	} {
+		persisted, err = hasCheckpointPersisted(ctx, logOnly, newSnapshotManager)
+		require.NoError(t, err)
+		require.True(t, persisted)
+	}
+}
+
+type unreadableSnapshotMetaManager struct {
+	checkpoint.SnapshotMetaManagerT
+}
+
+func (unreadableSnapshotMetaManager) ExistsCheckpointMetadata(context.Context) (bool, error) {
+	return false, errors.New("cannot read snapshot checkpoint")
 }
