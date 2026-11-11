@@ -28,7 +28,23 @@ stats="s"
 collation_opt=2
 
 set -eu
-trap 'set +e; PIDS=$(jobs -p); [ -n "$PIDS" ] && kill -9 $PIDS' EXIT
+SERVER_PID=""
+function cleanup()
+{
+    local exit_code=$?
+    trap - EXIT
+    if [[ -n "$SERVER_PID" ]]; then
+        kill -9 "$SERVER_PID" 2>/dev/null || true
+        wait "$SERVER_PID" 2>/dev/null || true
+    fi
+    exit "$exit_code"
+}
+trap cleanup EXIT
+startup_timeout=${TIDB_TEST_STARTUP_TIMEOUT_SECONDS:-300}
+if ! [[ "$startup_timeout" =~ ^[1-9][0-9]*$ ]]; then
+    echo "TIDB_TEST_STARTUP_TIMEOUT_SECONDS must be a positive integer" >&2
+    exit 2
+fi
 # make tests stable time zone wise
 export TZ="Asia/Shanghai"
 
@@ -228,6 +244,37 @@ function start_tidb_server()
         SERVER_PID=$!
     fi
     echo "tidb-server(PID: $SERVER_PID) started"
+    wait_for_tidb_server
+}
+
+function wait_for_tidb_server()
+{
+    local deadline=$((SECONDS + startup_timeout))
+    local next_progress=$SECONDS
+    while true; do
+        if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+            echo "tidb-server exited before becoming ready" >&2
+            tail -n 80 "$mysql_tester_log" >&2 || true
+            return 1
+        fi
+        # /status reports healthy after bootstrap and SQL listener initialization.
+        # mysql-tester subsequently verifies the SQL connection itself.
+        if curl --noproxy '*' --fail --silent --connect-timeout 1 --max-time 2 \
+            "http://127.0.0.1:${status}/status" >/dev/null 2>&1; then
+            echo "tidb-server is ready"
+            return 0
+        fi
+        if (( SECONDS >= deadline )); then
+            echo "Timed out after ${startup_timeout}s waiting for tidb-server readiness" >&2
+            tail -n 80 "$mysql_tester_log" >&2 || true
+            return 1
+        fi
+        if (( SECONDS >= next_progress )); then
+            echo "Waiting for tidb-server readiness (up to ${startup_timeout}s); log: ${mysql_tester_log}"
+            next_progress=$((SECONDS + 15))
+        fi
+        sleep 1
+    done
 }
 
 function run_mysql_tester()
@@ -254,6 +301,13 @@ function run_mysql_tester()
       fi
       $mysql_tester -port "$port" --check-error=true --collation-disable=$coll_disabled $tests
     fi
+}
+
+function stop_tidb_server()
+{
+    kill -15 "$SERVER_PID"
+    wait "$SERVER_PID" || true
+    SERVER_PID=""
 }
 
 function check_data_race() {
@@ -306,10 +360,7 @@ if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     enabled_new_collation=0
     start_tidb_server
     run_mysql_tester
-    kill -15 $SERVER_PID
-    while ps -p $SERVER_PID > /dev/null; do
-        sleep 1
-    done
+    stop_tidb_server
     check_data_race
 fi
 
@@ -317,10 +368,7 @@ if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
     enabled_new_collation=1
     start_tidb_server
     run_mysql_tester
-    kill -15 $SERVER_PID
-    while ps -p $SERVER_PID > /dev/null; do
-        sleep 1
-    done
+    stop_tidb_server
     check_data_race
 fi
 

@@ -54,6 +54,15 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 
 	tk.MustExec("analyze table t")
+	// Reused real-TiKV storage may retain histograms belonging to other tables.
+	// Keep one present so both assertions must select this table's statistics.
+	tk.MustExec("create table histogram_scope_other(a int)")
+	unrelatedTable, lookupErr := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("histogram_scope_other"))
+	require.NoError(t, lookupErr)
+	tk.MustExec(fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, stats_ver) values (%d, 0, 1, 99, 0, 2)", unrelatedTable.Meta().ID))
+	scopedTable, lookupErr := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, lookupErr)
+	require.NotEqual(t, unrelatedTable.Meta().ID, scopedTable.Meta().ID)
 	tk.MustExec("explain select * from t where a = 'aaa'")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 
@@ -113,7 +122,7 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
 		"test t  a 0 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C 2",
 	))
-	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms where table_id = %d", scopedTable.Meta().ID)).Sort().Check(testkit.Rows(
 		"0 1 15 0 1 0.8411764705882353",
 		"1 1 8 0 1 0",
 		"1 2 13 0 1 0",
@@ -182,7 +191,7 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 		"test t  ia3 1 \x00B\x00B 1",
 		"test t  ia3 1 \x00B\x00B\x00B 5",
 	))
-	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms where table_id = %d", scopedTable.Meta().ID)).Sort().Check(testkit.Rows(
 		"0 1 15 0 2 0.8411764705882353",
 		"1 1 8 0 2 0",
 		"1 2 13 0 2 0",

@@ -28,9 +28,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestTablesCreateTimeLightweightPath(t *testing.T) {
+func newCreateTimeV2TestKit(t *testing.T) *testkit.TestKit {
+	t.Helper()
+	originalSchemaCacheSize := variable.SchemaCacheSize.Load()
+	originalSchemaCacheSizeText := variable.SchemaCacheSizeOriginText.Load()
+	t.Cleanup(func() {
+		variable.SchemaCacheSize.Store(originalSchemaCacheSize)
+		variable.SchemaCacheSizeOriginText.Store(originalSchemaCacheSizeText)
+	})
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	// NewTestKit may select v1; these regressions specifically exercise v2.
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_schema_cache_size = %d", variable.DefTiDBSchemaCacheSize))
+	dom := domain.GetDomain(tk.Session())
+	require.NoError(t, dom.Reload())
+	isV2, _ := infoschema.IsV2(dom.InfoSchema())
+	require.True(t, isV2, "the CREATE_TIME regression must run with InfoSchema v2")
+	return tk
+}
+
+func TestTablesCreateTimeLightweightPath(t *testing.T) {
+	tk := newCreateTimeV2TestKit(t)
 	tk.MustExec("use test")
 	tk.MustExec("create table lightweight_time (a int)")
 	for _, testCase := range []struct {
@@ -54,8 +73,7 @@ func TestTablesCreateTimeLightweightPath(t *testing.T) {
 }
 
 func TestTablesCreateTimeRange(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newCreateTimeV2TestKit(t)
 	tk.MustExec("use test")
 	tk.MustExec("set time_zone = '+08:00'")
 	tk.MustExec("create table create_time_test (a int)")

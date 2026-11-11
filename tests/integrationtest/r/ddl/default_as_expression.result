@@ -10,6 +10,7 @@ create table t6 (c int(10), c1 varchar(256) default (date_format(now(),'%b %d %Y
 Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `KindString %b %d %Y %h:%i %p`.
 create table t7 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m-%d %H:%i:%s %p')));
 Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `KindString %Y-%m-%d %H:%i:%s %p`.
+SET timestamp = 1700000000;
 SET @x := NOW();
 insert into t0(c) values (1);
 insert into t0 values (2, default);
@@ -144,6 +145,7 @@ date_format(now(), _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
 show columns from test.t1 where field='c1';
 Field	Type	Null	Key	Default	Extra
 c1	datetime	YES		date_format(now(), _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
+SET timestamp = DEFAULT;
 drop table if exists t, t1, t2;
 create table t (c int(10), c1 varchar(256) default (REPLACE(UPPER(UUID()), '-', '')), index idx(c1));
 create table t1 (c int(10), c1 int default (REPLACE(UPPER(UUID()), '-', '')), index idx(c1));

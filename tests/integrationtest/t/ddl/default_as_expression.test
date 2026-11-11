@@ -13,6 +13,8 @@ create table t6 (c int(10), c1 varchar(256) default (date_format(now(),'%b %d %Y
 -- error 3770
 create table t7 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m-%d %H:%i:%s %p')));
 # insert records
+# Keep DEFAULT/NOW() assertions independent of statement latency and date boundaries.
+SET timestamp = 1700000000;
 SET @x := NOW();
 insert into t0(c) values (1);
 insert into t0 values (2, default);
@@ -77,6 +79,8 @@ SELECT count(1) FROM t0 WHERE c1 = date_format(@x,'%Y-%m') OR c1 = date_format(@
 SELECT count(1) FROM t1 WHERE c1 = date_format(@x,'%Y-%m-%d');
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
 show columns from test.t1 where field='c1';
+# Later function tests use the normal session clock.
+SET timestamp = DEFAULT;
 
 # TestDefaultColumnWithReplace
 # replace

@@ -3397,7 +3397,7 @@ func TestPointLockNonExistentKeyWithFairLockingUnderRC(t *testing.T) {
 func TestIssue66571(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
-	test := func(isRetried bool, isPrimaryChanged bool) {
+	test := func(t *testing.T, isRetried bool, isPrimaryChanged bool) {
 		tk := testkit.NewTestKit(t, store)
 		tk2 := testkit.NewTestKit(t, store)
 
@@ -3422,7 +3422,9 @@ func TestIssue66571(t *testing.T) {
 			}
 		}
 
-		defer setLockTTL(100).restore()
+		// Keep the lease above ordinary CI RPC latency, but below the competing
+		// lock wait so a stopped TTL manager still makes this regression fail.
+		defer setLockTTL(2000).restore()
 		tk.MustExec("set @@tidb_pessimistic_txn_fair_locking=1")
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -3432,7 +3434,7 @@ func TestIssue66571(t *testing.T) {
 		}
 		tk.MustExec("insert into t values (1, 10, 100)")
 		tk2.MustExec("use test")
-		tk2.MustExec("set innodb_lock_wait_timeout = 1")
+		tk2.MustExec("set innodb_lock_wait_timeout = 5")
 
 		tk.MustExec("begin pessimistic")
 		if earlyConflictingStmt != "" {
@@ -3453,9 +3455,9 @@ func TestIssue66571(t *testing.T) {
 		tk.MustQuery("select * from t").Check(testkit.Rows(expectedFinalData...))
 	}
 
-	test(false, false)
-	test(true, false)
-	test(true, true)
+	t.Run("basic", func(t *testing.T) { test(t, false, false) })
+	t.Run("retry_same_primary", func(t *testing.T) { test(t, true, false) })
+	t.Run("retry_changed_primary", func(t *testing.T) { test(t, true, true) })
 }
 
 func TestIssueBatchResolveLocks(t *testing.T) {

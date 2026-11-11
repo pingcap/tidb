@@ -24,6 +24,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -1538,13 +1539,18 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ts.startServer(t)
-	defer ts.stopServer(t)
-
-	time.Sleep(time.Second)
 	integration.BeforeTestExternal(t)
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
+
+	// The domain must release its etcd registrations before the cluster stops.
+	defer ts.stopServer(t)
+	ts.startServer(t)
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels = map[string]string{}
+	})
+
+	time.Sleep(time.Second)
 	client := cluster.RandClient()
 	infosync.SetEtcdClient(client)
 
@@ -1566,32 +1572,34 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 		newLabels := config.GetGlobalConfig().Labels
 		require.Equal(t, newLabels, labels)
 	}
-	testStoreTopology := func() {
-		require.NoError(t, ts.domain.InfoSyncer().StoreTopologyInfo(context.Background()))
-	}
-
-	done := make(chan struct{})
+	var topologyErr error
 	var wg sync.WaitGroup
+	defer func() {
+		// Also stop the worker if a label assertion exits the test early.
+		cancel()
+		wg.Wait()
+		require.NoError(t, topologyErr)
+	}()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		for {
 			select {
-			case <-done:
+			case <-ctx.Done():
 				return
 			default:
-				testStoreTopology()
+				if err := ts.domain.InfoSyncer().StoreTopologyInfo(ctx); err != nil {
+					if !errors.Is(err, context.Canceled) || ctx.Err() == nil {
+						topologyErr = err
+					}
+					return
+				}
 			}
 		}
 	}()
 	for i := 0; i < 100; i++ {
 		testUpdateLabels()
 	}
-	close(done)
+	cancel()
 	wg.Wait()
-
-	// reset the global variable
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Labels = map[string]string{}
-	})
 }

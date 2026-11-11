@@ -27,9 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/pd/client/constants"
+	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"google.golang.org/grpc"
@@ -132,18 +134,28 @@ func mustPutWaitJobReq(t *testing.T, cli *clientv3.Client, key string, value []b
 	require.NoError(t, err)
 }
 
-func mustWaitJobResp(t *testing.T, cli *clientv3.Client, key string, expected []byte) {
+type waitJobResponseGetter interface {
+	Get(context.Context, string, ...clientv3.OpOption) (*clientv3.GetResponse, error)
+}
+
+func mustWaitJobResp(t *testing.T, cli waitJobResponseGetter, key string, expected []byte) {
 	t.Helper()
-	require.Eventually(t, func() bool {
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		resp, err := cli.Get(ctx, key)
-		require.NoError(t, err)
-		return len(resp.Kvs) == 1 && bytes.Equal(resp.Kvs[0].Value, expected)
+		if !assert.NoError(c, err) {
+			return
+		}
+		if assert.Len(c, resp.Kvs, 1) {
+			assert.Equal(c, expected, resp.Kvs[0].Value)
+		}
 	}, 5*time.Second, 50*time.Millisecond)
 }
 
 func TestTiDBWaitJobManagerWatchLoopCompactedBeforeStart(t *testing.T) {
+	// Pause the initial watch, compact its request history, then resume it to
+	// verify resync. Cleanup must also unblock the watch when setup fails.
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 creates path with colon which is not allowed on Windows")
 	}
@@ -172,6 +184,7 @@ func TestTiDBWaitJobManagerWatchLoopCompactedBeforeStart(t *testing.T) {
 
 	enterAfterInitWatchHook := make(chan struct{})
 	leaveAfterInitWatchHook := make(chan struct{})
+	resumeWatch := sync.OnceFunc(func() { close(leaveAfterInitWatchHook) })
 
 	var pauseOnce sync.Once
 	tidbWaitJobAfterInitWatch = func() {
@@ -196,6 +209,8 @@ func TestTiDBWaitJobManagerWatchLoopCompactedBeforeStart(t *testing.T) {
 	}()
 	defer func() {
 		cancel()
+		// The paused callback cannot observe cancellation until it is released.
+		resumeWatch()
 		<-doneCh
 		manager.close()
 	}()
@@ -209,7 +224,7 @@ func TestTiDBWaitJobManagerWatchLoopCompactedBeforeStart(t *testing.T) {
 	_, err = etcdCli.Compact(ctx, getResp.Header.Revision)
 	require.NoError(t, err)
 	mustPutWaitJobReq(t, etcdCli, job.reqKey(), []byte{2})
-	close(leaveAfterInitWatchHook)
+	resumeWatch()
 
 	mustWaitJobResp(t, etcdCli, job.respKey(), []byte{2})
 	time.Sleep(100 * time.Millisecond)
@@ -524,4 +539,32 @@ func TestBuildFlashbackRanges(t *testing.T) {
 			require.Equal(t, tt.want, buildFlashbackRanges(tt.skips))
 		})
 	}
+}
+
+// transientWaitJobResponseGetter exposes each intermediate read to the real
+// polling helper, including invalid payloads that must not satisfy readiness.
+type transientWaitJobResponseGetter struct {
+	calls atomic.Int32
+}
+
+func (c *transientWaitJobResponseGetter) Get(_ context.Context, key string, _ ...clientv3.OpOption) (*clientv3.GetResponse, error) {
+	switch c.calls.Add(1) {
+	case 1:
+		return nil, context.DeadlineExceeded
+	case 2:
+		return &clientv3.GetResponse{Kvs: []*mvccpb.KeyValue{
+			{Key: []byte(key), Value: []byte{1}},
+			{Key: []byte(key), Value: []byte{1}},
+		}}, nil
+	case 3:
+		return &clientv3.GetResponse{Kvs: []*mvccpb.KeyValue{{Key: []byte(key), Value: []byte{2}}}}, nil
+	default:
+		return &clientv3.GetResponse{Kvs: []*mvccpb.KeyValue{{Key: []byte(key), Value: []byte{1}}}}, nil
+	}
+}
+
+func TestWaitJobRespRetriesTransientReads(t *testing.T) {
+	cli := &transientWaitJobResponseGetter{}
+	mustWaitJobResp(t, cli, "test_wait_job_response", []byte{1})
+	require.EqualValues(t, 4, cli.calls.Load())
 }

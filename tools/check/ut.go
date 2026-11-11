@@ -471,6 +471,25 @@ var retryCount int
 var except string
 var only string
 
+// defaultTestParallelism bounds worker pools by a container's CPU request.
+// The request is the declared budget on a shared node; a missing quota can
+// otherwise make runtime.GOMAXPROCS report all host CPUs. An explicit user
+// setting keeps precedence, and native runs retain the runtime default.
+func defaultTestParallelism(maxProcs int, cpuRequestPath string) int {
+	if os.Getenv("GOMAXPROCS") != "" {
+		return maxProcs
+	}
+	data, err := os.ReadFile(cpuRequestPath)
+	if err != nil {
+		return maxProcs
+	}
+	requestedCPU, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || requestedCPU <= 0 || requestedCPU >= maxProcs {
+		return maxProcs
+	}
+	return requestedCPU
+}
+
 //nolint:typecheck
 func main() {
 	junitfile = handleFlags("--junitfile")
@@ -493,8 +512,13 @@ func main() {
 		defer os.Remove(coverFileTempDir)
 	}
 
-	// Get the correct count of CPU if it's in docker.
-	p = runtime.GOMAXPROCS(0)
+	// Shared CI pods may have a CPU request without a quota. Size worker pools
+	// to that declared budget unless GOMAXPROCS was explicitly configured.
+	maxProcs := runtime.GOMAXPROCS(0)
+	p = defaultTestParallelism(maxProcs, "/etc/containerinfo/cpu_request")
+	if p < maxProcs {
+		log.Printf("UT parallelism=%d from container CPU request (runtime GOMAXPROCS=%d)", p, maxProcs)
+	}
 	// We use 2 * p for `go build` to make it faster.
 	buildParallel = p * 2
 	var err error
@@ -835,7 +859,7 @@ func (n *numa) runTestCaseOnce(pkg string, fn string, buf *bytes.Buffer) (time.D
 		}
 
 		start := time.Now()
-		err = cmd.Run()
+		err = runIsolatedTestCommand(cmd)
 		d = time.Since(start)
 		if err != nil {
 			//lint:ignore S1020
@@ -858,6 +882,28 @@ func (n *numa) runTestCaseOnce(pkg string, fn string, buf *bytes.Buffer) (time.D
 		break
 	}
 	return d, err
+}
+
+// runIsolatedTestCommand gives each attempt ownership of its temporary files.
+// Set the environment before starting the process: package init may cache the
+// temporary path, and independent test binaries must not share fixtures or locks.
+func runIsolatedTestCommand(cmd *exec.Cmd) (err error) {
+	tempDir, err := os.MkdirTemp("", "tidb-ut-")
+	if err != nil {
+		return fmt.Errorf("create test temporary directory: %w", err)
+	}
+	defer func() {
+		if cleanupErr := os.RemoveAll(tempDir); err == nil && cleanupErr != nil {
+			err = fmt.Errorf("remove test temporary directory: %w", cleanupErr)
+		}
+	}()
+	// TMPDIR may itself be relative; the child runs in its package directory.
+	absoluteTempDir, err := filepath.Abs(tempDir)
+	if err != nil {
+		return err
+	}
+	cmd.Env = append(cmd.Environ(), "TMPDIR="+absoluteTempDir, "TMP="+absoluteTempDir, "TEMP="+absoluteTempDir)
+	return cmd.Run()
 }
 
 var retryLogTimestampRegexp = regexp.MustCompile(`^\[\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d{3} [+-]\d{2}:\d{2}\]`)
@@ -1034,6 +1080,18 @@ func buildTestBinaryMulti(pkgs []string) error {
 
 	// go test --exec=xprog -cover -vet=off --count=0 $(pkgs)
 	xprogPath := filepath.Join(workDir, "tools", "bin", "xprog")
+
+	// xprog places binaries below workDir. Keep Go's scratch files on that
+	// filesystem so it can rename them instead of copying each binary from
+	// the container's temporary filesystem into the workspace volume.
+	buildTempDir, err := os.MkdirTemp(workDir, ".tidb-ut-build-")
+	if err != nil {
+		return withTrace(err)
+	}
+	defer func() {
+		_ = os.RemoveAll(buildTempDir)
+	}()
+
 	packages := make([]string, 0, len(pkgs))
 	for _, pkg := range pkgs {
 		packages = append(packages, filepath.Join(modulePath, pkg))
@@ -1041,6 +1099,7 @@ func buildTestBinaryMulti(pkgs []string) error {
 
 	var cmd *exec.Cmd
 	cmd = exec.Command("go", "test", "--tags=intest", "-p", strconv.Itoa(buildParallel), "--exec", xprogPath, "-vet", "off", "-count", "0")
+	cmd.Env = append(cmd.Environ(), "GOTMPDIR="+buildTempDir)
 	if coverprofile != "" {
 		cmd.Args = append(cmd.Args, "-cover")
 	}

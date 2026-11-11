@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_library(
     name = "ut_lib",
@@ -15,4 +15,13 @@ go_binary(
     name = "ut-server",
     embed = [":ut_lib"],
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "check_test",
+    srcs = [
+        "pkdb_ut_parallelism_test.go",
+        "pkdb_ut_temp_test.go",
+    ],
+    embed = [":ut_lib"],  # keep: the existing tool library uses a custom name.
 )

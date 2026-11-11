@@ -160,6 +160,7 @@ test_part_dumpling: dumpling_unit_test dumpling_integration_test
 .PHONY: integrationtest
 integrationtest: server_check
 	@mkdir -p $(TEST_COVERAGE_DIR)
+	@cd tests/integrationtest && python3 test_startup.py
 	@cd tests/integrationtest && GOCOVERDIR=../../$(TEST_COVERAGE_DIR) ./run-tests.sh -s ../../bin/tidb-server
 	@$(GO) tool covdata textfmt -i=$(TEST_COVERAGE_DIR) -o=coverage.dat
 
@@ -176,6 +177,8 @@ ddltest:
 .PHONY: ut
 ut: tools/bin/ut tools/bin/xprog failpoint-enable ## Run unit tests
 	@echo "Debug: Running ut with X=$(X)"
+	@echo "Testing the ut runner itself"
+	@go test ./tools/check -count=1 || { $(FAILPOINT_DISABLE); $(CLEAN_UT_BINARY); exit 1; }
 	tools/bin/ut $(X) --except flaky_ut.list --retry-cnt 3 || { $(FAILPOINT_DISABLE); $(CLEAN_UT_BINARY); exit 1; }
 	@$(FAILPOINT_DISABLE)
 	@$(CLEAN_UT_BINARY)

@@ -29,6 +29,62 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// runPausedTxnStatement keeps the worker and pause alive until the main test
+// has observed the state. Cleanup releases and joins it before fixture cleanup.
+func runPausedTxnStatement(t *testing.T, tk *testkit.TestKit, point, sql string) func() {
+	t.Helper()
+	require.NoError(t, failpoint.Enable(point, "pause"))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	result := make(chan error, 1)
+	enabled := true
+	disable := func() error {
+		if !enabled {
+			return nil
+		}
+		err := failpoint.Disable(point)
+		if err == nil {
+			enabled = false
+		}
+		return err
+	}
+	t.Cleanup(func() {
+		if err := disable(); err != nil {
+			t.Errorf("disable statement failpoint: %v", err)
+		}
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+			t.Error("statement worker did not finish before fixture cleanup")
+		}
+	})
+	go func() {
+		defer close(done)
+		rs, err := tk.ExecWithContext(ctx, sql)
+		if rs != nil {
+			closeErr := rs.Close()
+			if err == nil {
+				err = closeErr
+			}
+		}
+		result <- err
+	}()
+	return func() {
+		t.Helper()
+		require.NoError(t, disable())
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+			t.Fatal("statement worker did not finish after releasing failpoint")
+		}
+		cancel()
+		require.NoError(t, <-result)
+	}
+}
+
+// TestBasicTxnState holds lock and commit statements at their pauses, verifies
+// their state and SQL metadata, then releases and joins each statement.
 func TestBasicTxnState(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
@@ -45,24 +101,19 @@ func TestBasicTxnState(t *testing.T) {
 	startTS, err := strconv.ParseUint(startTSStr, 10, 64)
 	require.NoError(t, err)
 
-	require.NoError(t, failpoint.Enable("tikvclient/beforePessimisticLock", "pause"))
-	defer func() { require.NoError(t, failpoint.Disable("tikvclient/beforePessimisticLock")) }()
-	ch := make(chan any)
-	go func() {
-		tk.MustExec("select * from t for update;")
-		ch <- nil
-	}()
-	time.Sleep(100 * time.Millisecond)
-
-	info = tk.Session().TxnInfo()
+	finish := runPausedTxnStatement(t, tk, "tikvclient/beforePessimisticLock", "select * from t for update;")
 	_, expectedDigest := parser.NormalizeDigest("select * from t for update;")
+	require.Eventually(t, func() bool {
+		info := tk.Session().TxnInfo()
+		return info != nil && info.State == txninfo.TxnLockAcquiring && info.CurrentSQLDigest == expectedDigest.String()
+	}, 5*time.Second, 10*time.Millisecond)
+	info = tk.Session().TxnInfo()
 	require.Equal(t, expectedDigest.String(), info.CurrentSQLDigest)
 	require.Equal(t, txninfo.TxnLockAcquiring, info.State)
 	require.True(t, info.BlockStartTime.Valid)
 	require.Equal(t, startTS, info.StartTS)
 
-	require.NoError(t, failpoint.Disable("tikvclient/beforePessimisticLock"))
-	<-ch
+	finish()
 
 	info = tk.Session().TxnInfo()
 	require.Equal(t, "", info.CurrentSQLDigest)
@@ -79,32 +130,29 @@ func TestBasicTxnState(t *testing.T) {
 	require.Equal(t, "test", info.ProcessInfo.CurrentDB)
 	require.Equal(t, startTS, info.StartTS)
 
-	require.NoError(t, failpoint.Enable("tikvclient/beforePrewrite", "pause"))
-	go func() {
-		tk.MustExec("commit;")
-		ch <- nil
-	}()
-	time.Sleep(100 * time.Millisecond)
+	finish = runPausedTxnStatement(t, tk, "tikvclient/beforePrewrite", "commit;")
 	_, commitDigest := parser.NormalizeDigest("commit;")
+	require.Eventually(t, func() bool {
+		info := tk.Session().TxnInfo()
+		return info != nil && info.State == txninfo.TxnCommitting && info.CurrentSQLDigest == commitDigest.String()
+	}, 5*time.Second, 10*time.Millisecond)
 	info = tk.Session().TxnInfo()
 	require.Equal(t, commitDigest.String(), info.CurrentSQLDigest)
 	require.Equal(t, txninfo.TxnCommitting, info.State)
 	require.Equal(t, []string{beginDigest.String(), selectTSDigest.String(), expectedDigest.String(), commitDigest.String()}, info.AllSQLDigests)
 
-	require.NoError(t, failpoint.Disable("tikvclient/beforePrewrite"))
-	<-ch
+	finish()
 	info = tk.Session().TxnInfo()
 	require.Nil(t, info)
 
 	// Test autocommit transaction
-	require.NoError(t, failpoint.Enable("tikvclient/beforePrewrite", "pause"))
-	go func() {
-		tk.MustExec("insert into t values (2)")
-		ch <- nil
-	}()
-	time.Sleep(100 * time.Millisecond)
-	info = tk.Session().TxnInfo()
+	finish = runPausedTxnStatement(t, tk, "tikvclient/beforePrewrite", "insert into t values (2)")
 	_, expectedDigest = parser.NormalizeDigest("insert into t values (2)")
+	require.Eventually(t, func() bool {
+		info := tk.Session().TxnInfo()
+		return info != nil && info.State == txninfo.TxnCommitting && info.CurrentSQLDigest == expectedDigest.String()
+	}, 5*time.Second, 10*time.Millisecond)
+	info = tk.Session().TxnInfo()
 	require.Equal(t, expectedDigest.String(), info.CurrentSQLDigest)
 	require.Equal(t, txninfo.TxnCommitting, info.State)
 	require.False(t, info.BlockStartTime.Valid)
@@ -112,8 +160,7 @@ func TestBasicTxnState(t *testing.T) {
 	require.Equal(t, 1, len(info.AllSQLDigests))
 	require.Equal(t, expectedDigest.String(), info.AllSQLDigests[0])
 
-	require.NoError(t, failpoint.Disable("tikvclient/beforePrewrite"))
-	<-ch
+	finish()
 	info = tk.Session().TxnInfo()
 	require.Nil(t, info)
 }
@@ -200,6 +247,8 @@ func TestBlocked(t *testing.T) {
 	<-ch
 }
 
+// TestCommitting locks disjoint rows in two sessions, pauses the second commit,
+// and verifies its Committing state before releasing and joining it.
 func TestCommitting(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
@@ -212,22 +261,21 @@ func TestCommitting(t *testing.T) {
 	tk1.MustExec("insert into t(a) values (1), (2);")
 	tk1.MustExec("begin pessimistic;")
 	tk1.MustExec("select * from t where a = 1 for update;")
-	ch := make(chan struct{})
-	go func() {
-		tk2.MustExec("begin pessimistic")
-		require.NotNil(t, tk2.Session().TxnInfo())
-		tk2.MustExec("select * from t where a = 2 for update;")
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockSlowCommit", "pause"))
-		tk2.MustExec("commit;")
-		ch <- struct{}{}
-	}()
-	time.Sleep(100 * time.Millisecond)
+	tk2.MustExec("begin pessimistic")
+	require.NotNil(t, tk2.Session().TxnInfo())
+	tk2.MustExec("select * from t where a = 2 for update;")
+	finish := runPausedTxnStatement(t, tk2, "github.com/pingcap/tidb/pkg/session/mockSlowCommit", "commit;")
+	require.Eventually(t, func() bool {
+		info := tk2.Session().TxnInfo()
+		return info != nil && info.State == txninfo.TxnCommitting
+	}, 5*time.Second, 10*time.Millisecond)
 	require.Equal(t, txninfo.TxnCommitting, tk2.Session().TxnInfo().State)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockSlowCommit"))
+	finish()
 	tk1.MustExec("commit;")
-	<-ch
 }
 
+// TestRollbackTxnState pauses rollback of an uncommitted row, observes its state,
+// then releases the worker and confirms the row was not committed.
 func TestRollbackTxnState(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
@@ -235,18 +283,46 @@ func TestRollbackTxnState(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t(a) values (1), (2);")
-	ch := make(chan struct{})
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t(a) values (3);")
+
+	const rollbackFailpoint = "github.com/pingcap/tidb/pkg/session/mockSlowRollback"
+	require.NoError(t, failpoint.Enable(rollbackFailpoint, "pause"))
+	ctx, cancel := context.WithCancel(context.Background())
+	workerDone := make(chan struct{})
+	rollbackErr := make(chan error, 1)
+	t.Cleanup(func() {
+		// Release rollback before the store/domain cleanup, including after FailNow.
+		if err := failpoint.Disable(rollbackFailpoint); err != nil {
+			t.Errorf("disable rollback failpoint: %v", err)
+		}
+		cancel()
+		select {
+		case <-workerDone:
+		case <-time.After(30 * time.Second):
+			t.Error("rollback worker did not finish before fixture cleanup")
+		}
+	})
 	go func() {
-		tk.MustExec("begin pessimistic")
-		tk.MustExec("insert into t(a) values (3);")
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockSlowRollback", "pause"))
-		tk.MustExec("rollback;")
-		ch <- struct{}{}
+		defer close(workerDone)
+		_, err := tk.ExecWithContext(ctx, "rollback;")
+		rollbackErr <- err
 	}()
-	time.Sleep(100 * time.Millisecond)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockSlowRollback"))
+
+	require.Eventually(t, func() bool {
+		info := tk.Session().TxnInfo()
+		return info != nil && info.State == txninfo.TxnRollingBack
+	}, 5*time.Second, 10*time.Millisecond)
+	// Observe the state while the rollback is still paused.
 	require.Equal(t, txninfo.TxnRollingBack, tk.Session().TxnInfo().State)
-	<-ch
+	require.NoError(t, failpoint.Disable(rollbackFailpoint))
+	select {
+	case err := <-rollbackErr:
+		require.NoError(t, err)
+	case <-time.After(30 * time.Second):
+		t.Fatal("rollback worker did not finish after releasing failpoint")
+	}
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1", "2"))
 }
 
 func TestTxnInfoWithPreparedStmt(t *testing.T) {
