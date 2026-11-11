@@ -211,6 +211,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	// Collect information for metadata lock.
 	dbName := make([]ast.CIStr, 0, len(vars.StmtCtx.RelatedTableIDs))
+	tblName := make([]ast.CIStr, 0, len(vars.StmtCtx.RelatedTableIDs))
 	tbls := make([]table.Table, 0, len(vars.StmtCtx.RelatedTableIDs))
 	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.RelatedTableIDs))
 	for id := range vars.StmtCtx.RelatedTableIDs {
@@ -225,6 +226,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 			return nil, nil, 0, errors.New("database not found in info schema")
 		}
 		dbName = append(dbName, db.Name)
+		tblName = append(tblName, tbl.Meta().Name)
 		tbls = append(tbls, tbl)
 		relateVersion[id] = tbl.Meta().Revision
 	}
@@ -244,6 +246,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		HasUsePlanCacheHint: hasUsePlanCacheHint,
 		BindingInfo:         bindingInfo,
 		dbName:              dbName,
+		tblName:             tblName,
 		tbls:                tbls,
 		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
 		RelateVersion:       relateVersion,
@@ -824,9 +827,10 @@ type PlanCacheStmt struct {
 	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
 	StmtText string
 
-	// dbName and tbls are used to add metadata lock.
-	dbName []ast.CIStr
-	tbls   []table.Table
+	// dbName and tblName retain the table names used to resolve tbls.
+	dbName  []ast.CIStr
+	tblName []ast.CIStr
+	tbls    []table.Table
 }
 
 // PrepareStmtCacheEntry is stored in the session-level prepare dedup cache.
@@ -871,12 +875,16 @@ func (s *PlanCacheStmt) DBName() []ast.CIStr { return s.dbName }
 // Tbls returns the tbls field (used for metadata lock during Execute).
 func (s *PlanCacheStmt) Tbls() []table.Table { return s.tbls }
 
-// SetDBNameAndTbls sets the dbName and tbls fields, cloning the input slices
+// TableNames returns the table names used to resolve the statement's tables.
+func (s *PlanCacheStmt) TableNames() []ast.CIStr { return s.tblName }
+
+// SetDBNameAndTbls sets the table names and tbls fields, cloning the input slices
 // so that this PlanCacheStmt owns independent backing arrays. This is required
 // because planCachePreprocess replaces tbls[i] in-place during Execute, and
 // sharing the backing array with a cached template would cause cross-stmt contamination.
-func (s *PlanCacheStmt) SetDBNameAndTbls(dbName []ast.CIStr, tbls []table.Table) {
+func (s *PlanCacheStmt) SetDBNameAndTbls(dbName, tblName []ast.CIStr, tbls []table.Table) {
 	s.dbName = slices.Clone(dbName)
+	s.tblName = slices.Clone(tblName)
 	s.tbls = slices.Clone(tbls)
 }
 

@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -27,6 +28,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -96,6 +98,11 @@ func prepareImportQuery(
 	if err := q.RestoreStates(ctx, sctx); err != nil {
 		return nil, nil, err
 	}
+	if kerneltype.IsNextGen() {
+		// Optimization can execute uncorrelated subqueries and cache their DistSQL
+		// context, so select the execution group before compilation starts.
+		vars.SetResourceGroupName(resourcegroup.DefaultResourceGroupName)
+	}
 	// Without a statistics provider, this worker uses static partition pruning.
 	vars.PartitionPruneMode.Store("static")
 	vars.InMViewMaintenance = q.InMViewMaintenance
@@ -146,6 +153,10 @@ func buildImportQueryExecutor(
 	}
 	// Apply the quota after compilation, which may apply SET_VAR(tidb_mem_quota_query) hint.
 	vars := sctx.GetSessionVars()
+	if kerneltype.IsNextGen() {
+		// Compilation may apply a RESOURCE_GROUP hint from the captured SELECT.
+		vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
+	}
 	vars.MemQuotaQuery = memQuota
 	vars.MemTracker.SetBytesLimit(memQuota)
 	p, ok := stmt.Plan.(base.PhysicalPlan)

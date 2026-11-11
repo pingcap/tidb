@@ -234,6 +234,11 @@ type PlanBuilder struct {
 	// rewriterCounter counts how many rewriter is being used.
 	rewriterPool    []*expressionRewriter
 	rewriterCounter int
+	// projNameIndex indexes the input names of the projection being built by
+	// buildProjection, so that resolving many select fields (e.g. SELECT * on a
+	// wide table) does not scan all input names once per field. It is used only
+	// when the rewriter's names are exactly the indexed slice.
+	projNameIndex *expression.FieldNameIndex
 
 	windowSpecs  map[string]*ast.WindowSpec
 	inUpdateStmt bool

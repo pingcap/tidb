@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -1572,27 +1573,62 @@ func TestGetLock(t *testing.T) {
 
 	// Test someone else has the lock with short timeout.
 	tk2 := testkit.NewTestKit(t, store)
-	sessionManager := domain.GetDomain(tk.Session()).InfoSyncer().GetSessionManager()
-	checkInternalSessionCount := func(expected int) {
-		t.Helper()
-		// Background tasks can temporarily borrow sessions from the same pool.
-		require.Eventually(t, func() bool {
-			return sessionManager.InternalSessionCount() == expected
-		}, 10*time.Second, 20*time.Millisecond, "expected %d internal sessions", expected)
+	dom := domain.GetDomain(tk.Session())
+	// Keep an unrelated checkout registered so the test cannot rely on a global count.
+	backgroundSession, err := dom.SysSessionPool().Get()
+	require.NoError(t, err)
+	defer dom.SysSessionPool().Put(backgroundSession)
+	sessionManager := dom.InfoSyncer().GetSessionManager()
+	type lockSession struct {
+		session  any
+		returned bool
 	}
-	checkInternalSessionCount(0)
+	var mu sync.Mutex
+	var sessions []*lockSession
+	active := make(map[any]*lockSession)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/afterGetAdvisoryLockSession", func(owner, internal any) {
+		if owner != tk.Session() && owner != tk2.Session() {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		tracked := &lockSession{session: internal}
+		sessions = append(sessions, tracked)
+		active[internal] = tracked
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/testkit/afterDeleteInternalSession", func(internal any) {
+		mu.Lock()
+		defer mu.Unlock()
+		if tracked := active[internal]; tracked != nil {
+			tracked.returned = true
+			delete(active, internal)
+		}
+	})
+	checkSessions := func(returned ...bool) {
+		t.Helper()
+		mu.Lock()
+		defer mu.Unlock()
+		require.Len(t, sessions, len(returned))
+		for i, expected := range returned {
+			require.Equal(t, expected, sessions[i].returned, "advisory lock attempt %d", i+1)
+			if !expected {
+				require.True(t, sessionManager.ContainsInternalSession(sessions[i].session))
+			}
+		}
+	}
 	tk2.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("1"))
-	checkInternalSessionCount(1)
+	checkSessions(false)
 	tk.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("0")) // someone else has the lock
-	checkInternalSessionCount(1)
+	checkSessions(false, true)
 	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0")) // never had the lock
 	// try again
 	tk.MustQuery("SELECT get_lock('mygloballock', 0)").Check(testkit.Rows("0")) // someone else has the lock
-	checkInternalSessionCount(1)
+	checkSessions(false, true, true)
 	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0")) // never had the lock
 	// release it
 	tk2.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("1")) // works
-	checkInternalSessionCount(0)
+	// The deletion event is recorded before the session becomes available for reuse.
+	checkSessions(true, true, true)
 
 	// Confirm all locks are released
 	tk2.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))

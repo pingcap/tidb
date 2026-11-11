@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/table"
 	"go.uber.org/zap"
 )
@@ -235,6 +236,12 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
+	// DXF has dedicated resources and metering in NextGen. Its execution must
+	// not inherit the submitter's foreground resource-group quota. Only change
+	// the decoded execution copy; s.task.Meta retains the original job metadata.
+	if kerneltype.IsNextGen() && bgm.Job.ReorgMeta != nil {
+		bgm.Job.ReorgMeta.ResourceGroupName = resourcegroup.DefaultResourceGroupName
+	}
 	s.taskMeta = bgm
 	return nil
 }

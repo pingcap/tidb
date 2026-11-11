@@ -218,6 +218,17 @@ func TestHash(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, value)
 
+	values, err := tx.HGetBatch(context.Background(), key, [][]byte{[]byte("2"), []byte("fake"), []byte("1"), []byte("2")})
+	require.NoError(t, err)
+	require.Equal(t, [][]byte{[]byte("2"), nil, []byte("1"), []byte("2")}, values)
+	pointOnly := structure.NewStructure(struct{ kv.Retriever }{txn}, nil, []byte{0x00})
+	values, err = pointOnly.HGetBatch(context.Background(), key, [][]byte{[]byte("1"), []byte("fake")})
+	require.NoError(t, err)
+	require.Equal(t, [][]byte{[]byte("1"), nil}, values)
+	values, err = tx.HGetBatch(context.Background(), key, nil)
+	require.NoError(t, err)
+	require.Empty(t, values)
+
 	keys, err := tx.HKeys(key)
 	require.NoError(t, err)
 	require.Equal(t, [][]byte{[]byte("1"), []byte("2")}, keys)
