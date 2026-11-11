@@ -143,14 +143,9 @@ require (
 	go.uber.org/mock v0.4.0
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.27.1
-<<<<<<< HEAD
-	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa
-	golang.org/x/net v0.61.0
-=======
 	golang.org/x/crypto/openpgp v0.1.0-deprecated
-	golang.org/x/exp v0.0.0-20260112195511-716be5621a96
+	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa
 	golang.org/x/net v0.62.0
->>>>>>> 34d5b479e29 (*: upgrade golang.org/x/net, golang.org/x/crypto, and golang.org/x/text (#72983))
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/sys v0.49.0
