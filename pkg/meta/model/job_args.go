@@ -2024,6 +2024,10 @@ func GetModifyTableEngineAttributeArgs(job *Job) (*ModifyTableEngineAttributeArg
 // AlterTableAffinityArgs is the argument for AlterTableAffinity
 type AlterTableAffinityArgs struct {
 	Affinity *TableAffinityInfo `json:"affinity,omitempty"`
+	// OldAffinity is the affinity the table had before the job. It is set when
+	// the job finishes, so the groups of the old level can be deleted after the
+	// job commits.
+	OldAffinity *TableAffinityInfo `json:"old_affinity,omitempty"`
 }
 
 func (a *AlterTableAffinityArgs) getArgsV1(*Job) []any {
