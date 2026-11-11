@@ -271,6 +271,7 @@ impl Session {
         Ok(Some(DdlStatement::CreateMaskingPolicy {
             policy: Box::new(policy),
             replace_on_exist: on_exist == OnExist::Replace,
+            ignore_on_exist: on_exist == OnExist::Ignore,
         }))
     }
 

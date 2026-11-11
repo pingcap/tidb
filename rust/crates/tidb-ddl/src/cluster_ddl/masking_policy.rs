@@ -45,6 +45,7 @@ pub fn prepare_masking_policy_job_submission<S: MetaSnapshot>(
         DdlStatement::CreateMaskingPolicy {
             policy,
             replace_on_exist,
+            ..
         } => (
             ActionType::ACTION_CREATE_MASKING_POLICY,
             0,

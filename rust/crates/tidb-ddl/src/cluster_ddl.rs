@@ -581,6 +581,9 @@ pub enum DdlStatement {
         policy: Box<tidb_model::MaskingPolicyInfo>,
         /// `CREATE OR REPLACE`.
         replace_on_exist: bool,
+        /// Go's `onExist == OnExistIgnore`: the executor keeps the job's
+        /// `ErrMaskingPolicyExists` as a note.
+        ignore_on_exist: bool,
     },
     /// Go `alterMaskingPolicyWithInfo` -> the `ActionAlterMaskingPolicy`
     /// job (`onAlterMaskingPolicy`).

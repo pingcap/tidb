@@ -529,9 +529,24 @@ pub trait DdlExec {
         }
         // The session owns the rest of the DDL path; this node installed
         // the service that publishes to the cluster.
-        let created = self
-            .run_ddl_statement(sql, parsed, statement)
-            .map_err(map_error)?;
+        let created = match self.run_ddl_statement(sql, parsed, statement) {
+            // Go `createMaskingPolicyWithInfo` after `doDDLJob2`: the policy
+            // another session created first is `IF NOT EXISTS`'s note.
+            Err(error)
+                if matches!(
+                    statement,
+                    DdlStatement::CreateMaskingPolicy {
+                        ignore_on_exist: true,
+                        ..
+                    }
+                ) && error.equal(&tidb_meta::meta_errors::ERR_MASKING_POLICY_EXISTS) =>
+            {
+                let note = error.to_mysql_error();
+                self.append_warning(tidb_context::WarningLevel::Note, note.code, note.message);
+                return Ok(());
+            }
+            result => result.map_err(map_error)?,
+        };
         // Go's executor pre-splits the table a CREATE TABLE published and
         // the new identity `onTruncateTable` gave.
         if matches!(

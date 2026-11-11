@@ -3525,6 +3525,8 @@ mod tests_columnar_index;
 #[cfg(test)]
 mod tests_flashback_cluster;
 #[cfg(test)]
+mod tests_masking_policy;
+#[cfg(test)]
 mod tests_charset;
 #[cfg(test)]
 mod tests_charset_introducer;
