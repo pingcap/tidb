@@ -2329,7 +2329,7 @@ func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
 	rootTk := testkit.NewTestKit(t, store)
 	rootTk.MustExec(`CREATE USER 'testuser'@'localhost' PASSWORD EXPIRE`)
 	// prepare session token
-	token, err := sessionstates.CreateSessionToken("testuser")
+	token, err := sessionstates.CreateSessionToken("testuser", "localhost")
 	require.NoError(t, err)
 	tokenBytes, err := json.Marshal(token)
 	require.NoError(t, err)
@@ -2360,9 +2360,29 @@ func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "rg1", tk.Session().GetSessionVars().ResourceGroupName)
 
+	// Loopback aliases still resolve to the same localhost privilege record.
+	loopbackUser := &auth.UserIdentity{Username: "testuser", Hostname: "127.0.0.1", AuthPlugin: mysql.AuthTiDBSessionToken}
+	require.NoError(t, tk.Session().Auth(loopbackUser, tokenBytes, nil, nil))
+
 	// Wrong token
 	err = tk.Session().Auth(user, nil, nil, nil)
 	require.ErrorContains(t, err, "Access denied")
+
+	// A valid token must not authenticate a different account, even when only
+	// the username case or the matched host differs.
+	rootTk.MustExec(`CREATE USER 'TESTUSER'@'localhost' IDENTIFIED BY 'other-password'`)
+	rootTk.MustExec(`CREATE USER 'testuser'@'%' IDENTIFIED BY 'other-password'`)
+	rootTk.MustExec(`GRANT ALL ON *.* TO 'TESTUSER'@'localhost', 'testuser'@'%'`)
+	for _, target := range []*auth.UserIdentity{
+		{Username: "TESTUSER", Hostname: "localhost", AuthPlugin: mysql.AuthTiDBSessionToken},
+		{Username: "testuser", Hostname: "192.0.2.1", AuthPlugin: mysql.AuthTiDBSessionToken},
+	} {
+		t.Run(target.String(), func(t *testing.T) {
+			targetTk := testkit.NewTestKit(t, store)
+			err := targetTk.Session().Auth(target, tokenBytes, nil, nil)
+			require.ErrorContains(t, err, "Access denied")
+		})
+	}
 }
 
 func TestNilHandleInSkipWithGrant(t *testing.T) {
