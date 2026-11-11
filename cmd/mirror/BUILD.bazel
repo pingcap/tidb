@@ -1,20 +1,11 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_library(
     name = "mirror_lib",
-    srcs = [
-        "mirror.go",
-        "skylarkutil.go",
-    ],
+    srcs = ["mirror.go"],
     importpath = "github.com/pingcap/tidb/cmd/mirror",
     visibility = ["//visibility:private"],
-    deps = [
-        "@com_github_google_skylark//syntax",
-        "@com_google_cloud_go_storage//:storage",
-        "@io_bazel_rules_go//go/tools/bazel:go_default_library",
-        "@org_golang_google_api//googleapi",
-        "@org_golang_x_sync//errgroup",
-    ],
+    deps = ["@io_bazel_rules_go//go/tools/bazel:go_default_library"],
 )
 
 go_binary(
@@ -30,4 +21,12 @@ go_binary(
     ],
     embed = [":mirror_lib"],
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "mirror_test",
+    timeout = "short",
+    srcs = ["mirror_test.go"],
+    embed = [":mirror_lib"],
+    flaky = True,
 )
