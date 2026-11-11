@@ -361,8 +361,29 @@ mod tests {
             self.sent().iter().map(|sent| sent.keep_order).collect()
         }
 
-        /// Each request's reader-local projection TiKV applies after its
-        /// predicates (`DAGRequest.output_offsets`).
+        /// The child offsets each request's Projection executor (Go
+        /// `PhysicalProjection.ToPB`) selects.
+        fn requested_projections(&self) -> Vec<Vec<i64>> {
+            self.sent()
+                .iter()
+                .map(|sent| {
+                    let projection = sent
+                        .dag
+                        .executors
+                        .last()
+                        .and_then(|executor| executor.projection.as_ref())
+                        .expect("the request's last executor is a Projection");
+                    projection
+                        .exprs
+                        .iter()
+                        .map(|expr| tidb_codec::decode_int(expr.val()).expect("a column reference").1)
+                        .collect()
+                })
+                .collect()
+        }
+
+        /// The columns of its last executor each request returns
+        /// (`DAGRequest.output_offsets`).
         fn requested_output_offsets(&self) -> Vec<Vec<u32>> {
             self.sent()
                 .iter()
@@ -2809,10 +2830,11 @@ mod tests {
             ]
         );
         assert_eq!(
-            region.requested_output_offsets(),
+            region.requested_projections(),
             vec![vec![1]],
-            "the selected cop projection must reach DAGRequest.output_offsets",
+            "the selected cop projection must reach the request as its Projection executor",
         );
+        assert_eq!(region.requested_output_offsets(), vec![vec![0]]);
     }
 
     /// A prepared cache hit recursively rebuilds the retained range tree and
@@ -2871,10 +2893,11 @@ mod tests {
             assert_eq!(rows, expected);
         }
         assert_eq!(
-            region.requested_output_offsets(),
+            region.requested_projections(),
             vec![vec![1], vec![1]],
             "both the first build and recursive cache rebuild keep the cop projection",
         );
+        assert_eq!(region.requested_output_offsets(), vec![vec![0], vec![0]]);
     }
 
     /// Go `copr`'s other error (`coprocessor.go`'s `handleCopResponse`) is
