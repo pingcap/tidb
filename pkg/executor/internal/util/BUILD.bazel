@@ -4,12 +4,17 @@ go_library(
     name = "util",
     srcs = [
         "partition_table.go",
+        "touched_rows.go",
         "util.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/executor/internal/util",
     visibility = ["//pkg/executor:__subpackages__"],
     deps = [
         "//pkg/config",
+        "//pkg/parser/mysql",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/collate",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@com_github_pingcap_tipb//go-tipb",

@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,4 +57,25 @@ func TestIndexJoinRuntimeStats(t *testing.T) {
 	require.Equal(t, stats.Clone().String(), stats.String())
 	stats.Merge(stats.Clone())
 	require.Equal(t, "inner:{total:10s, concurrency:5, task:32, construct:200ms, fetch:600ms, build:500ms, join:300ms}, probe:2s", stats.String())
+
+	stats.adaptiveLimitSnapshot = &exec.AdaptiveLimitSnapshot{
+		DemandRows:              1000,
+		OutputRows:              1000,
+		OuterFetched:            1413,
+		OuterConsumed:           1000,
+		OuterOutstandingAtStop:  413,
+		LookupHandles:           1256,
+		LookupRows:              1000,
+		LookupOutstandingAtStop: 256,
+		Stopped:                 true,
+	}
+	cloned := stats.Clone()
+	require.Contains(t, cloned.String(), "adaptive:{outer:1413/1000, lookup:1256/1000, outstanding:413/256, blocked:outer=0s,lookup=0s}")
+	merged := &indexLookUpJoinRuntimeStats{}
+	merged.Merge(cloned)
+	require.Contains(t, merged.String(), "adaptive:{outer:1413/1000, lookup:1256/1000, outstanding:413/256, blocked:outer=0s,lookup=0s}")
+	stats.adaptiveLimitSnapshot.OuterFetched = 999
+	require.Contains(t, cloned.String(), "outer:1413/1000")
+	cloned.(*indexLookUpJoinRuntimeStats).adaptiveLimitSnapshot.OuterFetched = 777
+	require.Contains(t, merged.String(), "outer:1413/1000")
 }

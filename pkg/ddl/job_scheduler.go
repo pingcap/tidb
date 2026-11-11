@@ -592,15 +592,16 @@ func (s *jobScheduler) getJobRunCtx(trace *traceevent.Trace, jobID int64, traceI
 		newCtx = traceevent.ContextWithTraceID(newCtx, traceInfo.TraceID)
 	}
 	return &jobContext{
-		ctx:                  newCtx,
-		unSyncedJobTracker:   s.unSyncedTracker,
-		schemaVersionManager: s.schemaVerMgr,
-		infoCache:            s.infoCache,
-		autoidCli:            s.autoidCli,
-		store:                s.store,
-		schemaVerSyncer:      s.schemaVerSyncer,
-		eventPublishStore:    s.eventPublishStore,
-		sysTblMgr:            s.sysTblMgr,
+		ctx:                           newCtx,
+		unSyncedJobTracker:            s.unSyncedTracker,
+		schemaVersionManager:          s.schemaVerMgr,
+		infoCache:                     s.infoCache,
+		autoidCli:                     s.autoidCli,
+		store:                         s.store,
+		schemaVerSyncer:               s.schemaVerSyncer,
+		eventPublishStore:             s.eventPublishStore,
+		sysTblMgr:                     s.sysTblMgr,
+		storageClassTransitionManager: s.storageClassTransitionManager,
 
 		notifyCh: ch,
 		logger: tidblogutil.LoggerWithTraceInfo(

@@ -16,10 +16,13 @@ package gofmt
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
-	"github.com/golangci/gofmt/gofmt"
+	"github.com/golangci/gofmt"
 	"github.com/pingcap/tidb/build/linter/util"
+	"github.com/rogpeppe/go-internal/diff"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -50,18 +53,26 @@ func run(pass *analysis.Pass) (any, error) {
 		Replacement: "any",
 	}}
 	for _, f := range fileNames {
-		diff, err := gofmt.RunRewrite(f, needSimplify, rules)
+		src, err := os.ReadFile(f)
+		if err != nil {
+			return nil, fmt.Errorf("could not read source: %w (%s)", err, f)
+		}
+		formatted, err := gofmt.Source(f, src, gofmt.Options{
+			NeedSimplify: needSimplify,
+			RewriteRules: rules,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("could not run gofmt: %w (%s)", err, f)
 		}
-
-		if diff == nil {
+		name := filepath.ToSlash(f)
+		changes := diff.Diff(name+".orig", src, name, formatted)
+		if changes == nil {
 			continue
 		}
 
 		pass.Report(analysis.Diagnostic{
 			Pos:     1,
-			Message: fmt.Sprintf("\n%s", diff),
+			Message: fmt.Sprintf("\n%s", changes),
 		})
 	}
 

@@ -58,7 +58,7 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	require.Equal(t, "CAST('2026-01-02 03:14:05' AS DATETIME)", mlogInfo.PurgeNext)
 	require.NotNil(t, mlogInfo.LogAccumulationAlertRows)
 	require.Equal(t, uint64(1234), *mlogInfo.LogAccumulationAlertRows)
-	require.Equal(t, expectedSQLMode, mlogInfo.DefinitionSQLMode)
+	require.Equal(t, expectedSQLMode, mlogInfo.PurgeScheduleSQLMode)
 
 	var hasDMLType, hasOldNew bool
 	for _, col := range mlogTable.Meta().Columns {
@@ -118,6 +118,17 @@ func TestCreateMaterializedViewLogNameLengthByRune(t *testing.T) {
 	tk.MustExec("use test")
 
 	maxBaseNameLen := mysql.MaxTableNameLength - len([]rune(model.MaterializedViewLogTableNamePrefix))
+	asciiBaseName := strings.Repeat("t", mysql.MaxTableNameLength)
+	asciiMLogName := model.MaterializedViewLogTableNamePrefix + strings.Repeat("t", maxBaseNameLen)
+	require.Equal(t, asciiMLogName, model.MaterializedViewLogTableName(ast.NewCIStr(asciiBaseName)).O)
+	tk.MustExec(fmt.Sprintf("create table `%s` (id int primary key)", asciiBaseName))
+	tk.MustExec(fmt.Sprintf("create materialized view log on `%s` (id)", asciiBaseName))
+	tk.MustQuery(fmt.Sprintf("select table_name from information_schema.tables where table_schema='test' and table_name='%s'", asciiMLogName)).Check(testkit.Rows(asciiMLogName))
+	tk.MustExec(fmt.Sprintf("insert into `%s` values (1)", asciiBaseName))
+	tk.MustQuery(fmt.Sprintf("select id, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `%s`", asciiMLogName)).Check(testkit.Rows("1 I 1"))
+	tk.MustExec(fmt.Sprintf("drop materialized view log on `%s`", asciiBaseName))
+	tk.MustQuery(fmt.Sprintf("select table_name from information_schema.tables where table_schema='test' and table_name='%s'", asciiMLogName)).Check(testkit.Rows())
+
 	maxName := strings.Repeat("表", maxBaseNameLen)
 	maxMLogName := model.MaterializedViewLogTableName(ast.NewCIStr(maxName)).O
 	require.Equal(t, mysql.MaxTableNameLength, len([]rune(maxMLogName)))
@@ -130,6 +141,10 @@ func TestCreateMaterializedViewLogNameLengthByRune(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("create table `%s` (a int)", tooLongName))
 	err := tk.ExecToErr(fmt.Sprintf("create materialized view log on `%s` (a)", tooLongName))
 	require.ErrorContains(t, err, "already exists")
+
+	tk.MustExec(fmt.Sprintf("drop materialized view log on `%s`", maxName))
+	tk.MustExec(fmt.Sprintf("create materialized view log on `%s` (a)", tooLongName))
+	tk.MustQuery(fmt.Sprintf("select count(*) from information_schema.tables where table_schema='test' and table_name='%s'", maxMLogName)).Check(testkit.Rows("1"))
 }
 
 func TestCreateMaterializedViewLogPurgeExprTypeValidation(t *testing.T) {
@@ -142,9 +157,13 @@ func TestCreateMaterializedViewLogPurgeExprTypeValidation(t *testing.T) {
 	require.Truef(t, dbterror.ErrGeneralUnsupportedDDL.Equal(err), "err %v", err)
 	require.ErrorContains(t, err, "PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
 	err = tk.ExecToErr("create materialized view log on t (a) purge start with 1 next date_add(now(), interval 1 hour)")
-	require.ErrorContains(t, err, "PURGE START WITH expression must return DATETIME/TIMESTAMP")
+	require.ErrorContains(t, err, "PURGE START WITH expression must return DATE/DATETIME/TIMESTAMP")
 	err = tk.ExecToErr("create materialized view log on t (a) purge next 600")
-	require.ErrorContains(t, err, "PURGE NEXT expression must return DATETIME/TIMESTAMP")
+	require.ErrorContains(t, err, "PURGE NEXT expression must return DATE/DATETIME/TIMESTAMP")
+	tk.MustExec("create table t_date_schedule (a int)")
+	tk.MustExec("create materialized view log on t_date_schedule (a) purge next cast('2030-01-02' as date)")
+	tk.MustExec("create table t_current_date_schedule (a int)")
+	tk.MustExec("create materialized view log on t_current_date_schedule (a) purge start with current_date next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view log on t (a) purge start with now() next date_add(now(), interval 1 hour)")
 }
 
@@ -197,14 +216,16 @@ func TestAlterMaterializedViewLogPurgeExprTypeValidation(t *testing.T) {
 	tk.MustExec("create materialized view log on t (a) purge next date_add(now(), interval 1 hour)")
 
 	err := tk.ExecToErr("alter materialized view log on t purge start with 1 next date_add(now(), interval 1 hour)")
-	require.ErrorContains(t, err, "PURGE START WITH expression must return DATETIME/TIMESTAMP")
+	require.ErrorContains(t, err, "PURGE START WITH expression must return DATE/DATETIME/TIMESTAMP")
 
 	err = tk.ExecToErr("alter materialized view log on t purge next 300")
-	require.ErrorContains(t, err, "PURGE NEXT expression must return DATETIME/TIMESTAMP")
+	require.ErrorContains(t, err, "PURGE NEXT expression must return DATE/DATETIME/TIMESTAMP")
 
 	err = tk.ExecToErr("alter materialized view log on t purge immediate")
 	require.ErrorContains(t, err, "PURGE IMMEDIATE is not supported for ALTER MATERIALIZED VIEW LOG")
 
+	tk.MustExec("alter materialized view log on t purge next cast('2030-01-02' as date)")
+	tk.MustExec("alter materialized view log on t purge start with current_date next date_add(now(), interval 1 hour)")
 	tk.MustExec("alter materialized view log on t purge start with now() next date_add(now(), interval 1 hour)")
 }
 
@@ -251,6 +272,15 @@ func TestCreateMaterializedViewLogPurgeInfoNextUnixSecondsDerivation(t *testing.
 		"select NEXT_PURGE_UNIX_SECONDS is not null, NEXT_PURGE_UNIX_SECONDS > TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 20 minute), NEXT_PURGE_UNIX_SECONDS < TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', UTC_TIMESTAMP() + interval 2 hour) from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
 		mlogNearNowID,
 	)).Check(testkit.Rows("1 1 1"))
+
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustExec("create table t_purge_date (a int)")
+	tk.MustExec("create materialized view log on t_purge_date (a) purge next cast('2030-01-02' as date)")
+	mlogDateID := getMLogID("t_purge_date")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_PURGE_UNIX_SECONDS = TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', '2030-01-02 00:00:00') from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		mlogDateID,
+	)).Check(testkit.Rows("1"))
 }
 
 func TestCreateMaterializedViewLogRejectNonBaseObject(t *testing.T) {
@@ -420,7 +450,7 @@ func TestAlterMaterializedViewLogDDL(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select NEXT_PURGE_UNIX_SECONDS is null from mysql.tidb_mlog_purge_info where MLOG_ID = %d", mlogTable.ID)).Check(testkit.Rows("1"))
 }
 
-func TestAlterMaterializedViewLogPurgeScheduleTimeZone(t *testing.T) {
+func TestAlterMaterializedViewLogPurgeScheduleUTC(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
@@ -437,21 +467,23 @@ func TestAlterMaterializedViewLogPurgeScheduleTimeZone(t *testing.T) {
 	}
 
 	mlogTable, info := getMLog()
-	initialTimeZoneName := info.PurgeScheduleTimeZone.Name
-	initialTimeZoneOffset := info.PurgeScheduleTimeZone.Offset
-	require.Equal(t, 0, initialTimeZoneOffset)
+	initialPurgeScheduleSQLMode := info.PurgeScheduleSQLMode
 
 	tk.MustExec("set time_zone = '+08:00'")
 	tk.MustExec("alter materialized view log on t purge")
 	_, info = getMLog()
-	require.Equal(t, initialTimeZoneName, info.PurgeScheduleTimeZone.Name)
-	require.Equal(t, initialTimeZoneOffset, info.PurgeScheduleTimeZone.Offset)
+	require.Equal(t, initialPurgeScheduleSQLMode, info.PurgeScheduleSQLMode)
 	require.Empty(t, info.PurgeNext)
 
-	tk.MustExec("alter materialized view log on t purge next cast('2030-01-02 10:00:00' as datetime)")
+	tk.MustExec("set sql_mode = 'PIPES_AS_CONCAT'")
+	tk.MustExec("alter materialized view log on t purge next cast(date_add('2030-01-01', interval (1 || 2) day) as datetime)")
 	_, info = getMLog()
-	require.Equal(t, 8*60*60, info.PurgeScheduleTimeZone.Offset)
-	tk.MustQuery("select NEXT_PURGE_UNIX_SECONDS = 1893549600 from mysql.tidb_mlog_purge_info where MLOG_ID = " + strconv.FormatInt(mlogTable.ID, 10)).Check(testkit.Rows("1"))
+	require.Equal(t, tk.Session().GetSessionVars().SQLMode, info.PurgeScheduleSQLMode)
+	tk.MustQuery("select NEXT_PURGE_UNIX_SECONDS = TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', '2030-01-13 00:00:00') from mysql.tidb_mlog_purge_info where MLOG_ID = " + strconv.FormatInt(mlogTable.ID, 10)).Check(testkit.Rows("1"))
+
+	tk.MustExec("set time_zone = 'America/Los_Angeles'")
+	tk.MustExec("alter materialized view log on t purge next cast('2021-03-14 02:30:00' as datetime)")
+	tk.MustQuery("select NEXT_PURGE_UNIX_SECONDS = 1615689000 from mysql.tidb_mlog_purge_info where MLOG_ID = " + strconv.FormatInt(mlogTable.ID, 10)).Check(testkit.Rows("1"))
 }
 
 func TestAlterMaterializedViewLogAddColumnRejectsInvalidColumns(t *testing.T) {
@@ -476,7 +508,13 @@ func TestAlterMaterializedViewLogAddColumnRejectsInvalidColumns(t *testing.T) {
 	require.ErrorContains(t, err, "ALTER MATERIALIZED VIEW LOG does not support BLOB column b")
 	err = tk.ExecToErr("alter materialized view log on t_add_mlog_unsupported add column (j)")
 	require.ErrorContains(t, err, "ALTER MATERIALIZED VIEW LOG does not support JSON column j")
+	tk.MustExec("insert into t_add_mlog_unsupported (id, g1) values (1, 10)")
 	tk.MustExec("alter materialized view log on t_add_mlog_unsupported add column (g2)")
+	tk.MustExec("update t_add_mlog_unsupported set g1 = 20 where id = 1")
+	tk.MustQuery("select id, g2, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t_add_mlog_unsupported` where `_MLOG$_DML_TYPE` = 'U'").Sort().Check(testkit.Rows(
+		"1 11 U -1",
+		"1 21 U 1",
+	))
 }
 
 func TestAlterMaterializedViewLogAddColumnCopiesBaseColumnMetadata(t *testing.T) {

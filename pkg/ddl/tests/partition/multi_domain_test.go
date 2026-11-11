@@ -494,7 +494,7 @@ func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
 			tkNO.MustQuery(`select * from t where a = 5`).Sort().Check(testkit.Rows("5 5 5"))
 			tkO.MustQuery(`select * from t where a = 6`).Sort().Check(testkit.Rows("6 6 6"))
 		case model.StateWriteReorganization.String():
-			// It will go through StateWriteReorg more than once.
+			// It will go through StateWriteReorganization more than once.
 			if doneStateWriteReorganize {
 				break
 			}
@@ -617,9 +617,9 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 		schemaState := res.Rows()[0][0].(string)
 		switch schemaState {
 		case model.StateDeleteOnly.String():
-			// we are only interested in StateWriteReorganization
+			// No checks are needed in this intermediate state.
 		case model.StateWriteOnly.String():
-			// we are only interested in StateDeleteReorganization->StatePublic
+			// No checks are needed in this intermediate state.
 		case model.StateWriteReorganization.String():
 		case model.StatePublic.String():
 			if !firstTimeToPublic {

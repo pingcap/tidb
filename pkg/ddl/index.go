@@ -93,6 +93,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
+	pderr "github.com/tikv/pd/client/errs"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -645,7 +646,8 @@ func DropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	col := indexInfo.Columns[0]
 	// other index may still cover this col
 	for _, index := range tblInfo.Indices {
-		if index.Name.L == indexInfo.Name.L {
+		// Compare IDs, since a partition reorganization keeps index copies with the same name.
+		if index.ID == indexInfo.ID {
 			continue
 		}
 
@@ -1387,6 +1389,25 @@ func initForReorgIndexes(w *worker, job *model.Job, idxInfos []*model.IndexInfo)
 		return nil
 	}
 	loadCloudStorageURI(w, job)
+	// On a NextGen cluster, global sort is the product design for add index /
+	// modify column; local sort is not supported. So, like IMPORT INTO, reject
+	// add index / modify column with local sort.
+	//
+	// ingest.LitInitialized is required to tell whether the lightning/ingest
+	// environment is available: when it is not (e.g. tests backed by a
+	// non-TiKV store), pickBackfillType falls back to txn-merge backfill, which
+	// does not sort locally and therefore must not be rejected here.
+	//
+	// job.ReorgMeta.IsFastReorg is required here even though fast reorg is
+	// always enabled on NextGen: for jobs involving system-related DBs,
+	// initJobReorgMetaFromVariables explicitly disables fast reorg and dist
+	// reorg because they cannot use the distributed task framework. Such jobs
+	// only happen during upgrade (e.g. ADD INDEX on mysql.stats_history) and
+	// fall back to txn backfill, which doesn't sort at all, so they must not be
+	// rejected here.
+	if kerneltype.IsNextGen() && ingest.LitInitialized && job.ReorgMeta.IsFastReorg && !job.ReorgMeta.UseCloudStorage {
+		return dbterror.ErrNotSupportedYet.GenWithStackByArgs("add index or modify column with local sort")
+	}
 	reorgTp, err := pickBackfillType(job)
 	if err != nil {
 		return err
@@ -1614,10 +1635,11 @@ func (w *worker) analyzeTableInner(job *model.Job, tblInfo *model.TableInfo, dbN
 				return errors.Errorf("not restricted SQL executor: %T", sessCtx)
 			}
 			// internal sql may not init the analysis related variable correctly.
-			err = statsutil.UpdateSCtxVarsForStats(sessCtx)
+			restoreStatsVars, err := statsutil.UpdateSCtxVarsForStats(sessCtx)
 			if err != nil {
 				return err
 			}
+			defer restoreStatsVars()
 			failpoint.InjectCall("beforeAnalyzeTable")
 			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
 			failpoint.InjectCall("afterAnalyzeTable", &err)
@@ -1907,7 +1929,14 @@ func doReorgWorkForCreateIndex(
 				zap.String("table", tbl.Meta().Name.O))
 			return true, ver, nil
 		}
-		return runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, false)
+		done, ver, err = runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, false)
+		if done && err == nil {
+			// This path has no metadata transition of its own, so persist the RU
+			// staged by the backfill once the reorg is done. The merge process
+			// below accounts it after its own table-state transition instead.
+			accountPendingReorgRU(jobCtx, job, nil)
+		}
+		return done, ver, err
 	}
 	switch allIndexInfos[0].BackfillState {
 	case model.BackfillStateRunning:
@@ -1940,6 +1969,7 @@ func doReorgWorkForCreateIndex(
 			indexInfo.BackfillState = model.BackfillStateReadyToMerge
 		}
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
+		accountPendingReorgRU(jobCtx, job, err)
 		failpoint.InjectCall("afterBackfillStateRunningDone", job)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateReadyToMerge:
@@ -1971,6 +2001,7 @@ func doReorgWorkForCreateIndex(
 			indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
 		}
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
+		accountPendingReorgRU(jobCtx, job, err)
 		return true, ver, errors.Trace(err)
 	default:
 		return false, 0, dbterror.ErrInvalidDDLState.GenWithStackByArgs("backfill", allIndexInfos[0].BackfillState)
@@ -2029,6 +2060,9 @@ func isRetryableError(err error, retryUnknown bool) bool {
 	if errdef.ErrNoLeader.Equal(originErr) ||
 		errdef.ErrKVNotLeader.Equal(originErr) ||
 		errdef.ErrKVRegionNotFound.Equal(originErr) {
+		return true
+	}
+	if pderr.ErrClientCreateTSOStream.Equal(originErr) || pderr.ErrClientTSOStreamClosed.Equal(originErr) {
 		return true
 	}
 	if tErr, ok := originErr.(*terror.Error); ok {
@@ -2238,12 +2272,13 @@ func onDropIndex(sctx sessionctx.Context, jobCtx *jobContext, job *model.Job) (v
 	return ver, errors.Trace(err)
 }
 
-// RemoveDependentHiddenColumns removes hidden columns by the indexInfo.
+// RemoveDependentHiddenColumns removes the hidden columns used by the index, except those still
+// used by another index, e.g. a copy of the index made by a partition reorganization.
 func RemoveDependentHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 	hiddenColOffs := make([]int, 0)
 	for _, indexColumn := range idxInfo.Columns {
 		col := tblInfo.Columns[indexColumn.Offset]
-		if col.Hidden {
+		if col.Hidden && !isColumnUsedByOtherIndex(tblInfo, idxInfo.ID, col.Offset) {
 			hiddenColOffs = append(hiddenColOffs, col.Offset)
 		}
 	}
@@ -2255,6 +2290,22 @@ func RemoveDependentHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.Index
 		tblInfo.MoveColumnInfo(offset, endOffset)
 	}
 	tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-len(hiddenColOffs)]
+}
+
+// isColumnUsedByOtherIndex checks whether the column is used by an index other than
+// indexID, e.g. a copy of the index made by a partition reorganization.
+func isColumnUsedByOtherIndex(tblInfo *model.TableInfo, indexID int64, offset int) bool {
+	for _, idx := range tblInfo.Indices {
+		if idx.ID == indexID {
+			continue
+		}
+		for _, col := range idx.Columns {
+			if col.Offset == offset {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func removeIndexInfo(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
@@ -2502,6 +2553,7 @@ type baseIndexWorker struct {
 
 type addIndexTxnWorker struct {
 	baseIndexWorker
+	physicalID int64
 
 	// The following attributes are used to reduce memory allocation.
 	idxKeyBufs         [][]byte
@@ -2540,6 +2592,7 @@ func newAddIndexTxnWorker(
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 
 	return &addIndexTxnWorker{
+		physicalID: t.GetPhysicalID(),
 		baseIndexWorker: baseIndexWorker{
 			backfillCtx: bfCtx,
 			indexes:     allIndexes,
@@ -2720,6 +2773,13 @@ func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.K
 	h, err := tablecodec.DecodeIndexHandle(key, value, idxColLen)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if idxInfo.Global {
+		// Equal compares partition IDs only when both handles are PartitionHandles.
+		// The same inner handle in another partition is a different row.
+		if _, ok := handle.(kv.PartitionHandle); !ok {
+			handle = kv.NewPartitionHandle(w.physicalID, handle)
+		}
 	}
 	hasBeenBackFilled := h.Equal(handle)
 	if hasBeenBackFilled {
@@ -3034,6 +3094,7 @@ func (w *addIndexTxnWorker) BackfillData(_ context.Context, handleRange reorgBac
 			taskCtx.addedCount++
 		}
 
+		taskCtx.writtenBytes = txn.Size()
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "AddIndexBackfillData", 3000)
@@ -3315,11 +3376,13 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 		return err
 	}
 
+	var finishedTask *proto.Task
 	waitTaskDoneOrAutoPause := func(taskID int64) error {
 		found, err := handle.WaitTaskDoneOrPausedWithResult(ctx, taskID)
 		if err != nil {
 			return err
 		}
+		finishedTask = found
 		if found.State == proto.TaskStatePaused && errdef.IsKVDiskFullError(found.Error) {
 			logutil.DDLLogger().Warn("auto pause add-index DDL job because DXF task hit storage node disk full",
 				zap.Int64("job-id", reorgInfo.Job.ID),
@@ -3350,7 +3413,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			logutil.DDLLogger().Info(
 				"task succeed, start to resume the ddl job",
 				zap.String("task-key", taskKey))
-			return nil
+			return w.recordDistTaskRU(reorgInfo.Job.ID, task)
 		}
 		taskMeta := &BackfillTaskMeta{}
 		if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
@@ -3472,7 +3535,43 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	})
 
 	err = g.Wait()
-	return err
+	if err != nil {
+		return err
+	}
+	return w.recordDistTaskRU(reorgInfo.Job.ID, finishedTask)
+}
+
+func (w *worker) recordDistTaskRU(jobID int64, task *proto.Task) error {
+	if !kerneltype.IsNextGen() || task == nil || task.State != proto.TaskStateSucceed {
+		return nil
+	}
+	taskMeta := &BackfillTaskMeta{}
+	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
+		return errors.Trace(err)
+	}
+	if rc := w.getReorgCtx(jobID); rc != nil {
+		rc.setRU(distTaskRU(taskMeta))
+	}
+	return nil
+}
+
+// distTaskRU converts the workload of a finished backfill DXF task into RU v2.
+// A task is either the ingest backfill or the temp-index merge, so it is
+// accounted with the weight of the write path it actually used.
+func distTaskRU(taskMeta *BackfillTaskMeta) float64 {
+	if taskMeta.Summary == nil {
+		return 0
+	}
+	weights := currentDDLRUWeights()
+	if taskMeta.MergeTempIndex {
+		// The temp-index merge writes the merged index through transactions
+		// instead of ingest, so it is charged on committed transaction bytes.
+		return float64(taskMeta.Summary.MergeTempIndexTxnKVSize) * weights.TxnKVBytes
+	}
+	// TODO: Include scan bytes in this estimate. For partial indexes, the index
+	// KV size can be much smaller than the scanned bytes. For now, only index KV
+	// size is considered because normal and multi-valued indexes are more common.
+	return float64(taskMeta.Summary.IndexKVSize) * weights.IngestKVBytes
 }
 
 func (w *worker) checkRunnableOrHandlePauseOrCanceled(stepCtx context.Context, taskKey string) (err error) {
@@ -3957,16 +4056,25 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 		loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 		n := len(w.indexes)
 		globalIndexKeys := make([]kv.Key, 0, len(idxRecords))
-		allKeys := make([]kv.Key, 0, len(idxRecords))
+		// Keep the fetched records intact: i%n identifies the index even when an
+		// array expands to zero or multiple entries, and progress is per record.
+		recordValues := make([][][]types.Datum, len(idxRecords))
+		recordKeys := make([][]kv.Key, len(idxRecords))
 		for i, idxRecord := range idxRecords {
-			key, distinct, err := w.indexes[i%n].GenIndexKey(ec, loc, idxRecord.vals, idxRecord.handle, nil)
-			if err != nil {
-				return errors.Trace(err)
+			index := w.indexes[i%n]
+			iter := index.GenIndexKVIter(ec, loc, idxRecord.vals, idxRecord.handle, idxRecord.rsData)
+			for iter.Valid() {
+				values := iter.PeekIndexedValues()
+				key, _, distinct, err := iter.Next(nil, nil)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				recordValues[i] = append(recordValues[i], values)
+				if distinct {
+					globalIndexKeys = append(globalIndexKeys, key)
+				}
+				recordKeys[i] = append(recordKeys[i], key)
 			}
-			if distinct {
-				globalIndexKeys = append(globalIndexKeys, key)
-			}
-			allKeys = append(allKeys, key)
 		}
 
 		var found map[string][]byte
@@ -3977,32 +4085,40 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 
 		for i, idxRecord := range idxRecords {
 			taskCtx.scanCount++
-			if val, ok := found[string(allKeys[i])]; ok {
-				// Only delete if it is from the partition it was read from.
-				handle, errPart := tablecodec.DecodeHandleInIndexValue(val)
-				if errPart != nil {
-					return errors.Trace(errPart)
-				}
-				if partHandle, ok := handle.(kv.PartitionHandle); ok {
-					if partHandle.PartitionID != handleRange.physicalTable.GetPhysicalID() {
-						continue
+			// Count records with empty arrays as processed even though they have no index keys to delete.
+			cleaned := len(recordKeys[i]) == 0
+			for j, key := range recordKeys[i] {
+				if val, ok := found[string(key)]; ok {
+					// Only delete if it is from the partition it was read from.
+					handle, errPart := tablecodec.DecodeHandleInIndexValue(val)
+					if errPart != nil {
+						return errors.Trace(errPart)
+					}
+					if partHandle, ok := handle.(kv.PartitionHandle); ok {
+						if partHandle.PartitionID != handleRange.physicalTable.GetPhysicalID() {
+							continue
+						}
+					}
+					// Mark the entry for transactional conflict checking. A concurrent
+					// takeover causes the optimistic transaction to conflict and retry.
+					err = txn.LockKeys(ctx, lockCtx, key)
+					if err != nil {
+						return errors.Trace(err)
 					}
 				}
-				// Lock the global index entry, to prevent deleting something that is concurrently added.
-				err = txn.LockKeys(ctx, lockCtx, allKeys[i])
+				// Delete only the checked element, not the original array: another
+				// element of the same row may now belong to a surviving partition.
+				err = w.indexes[i%n].Delete(w.tblCtx, txn, recordValues[i][j], idxRecord.handle)
 				if err != nil {
 					return errors.Trace(err)
 				}
+				cleaned = true
 			}
-			// we fetch records row by row, so records will belong to
-			// index[0], index[1] ... index[n-1], index[0], index[1] ...
-			// respectively. So indexes[i%n] is the index of idxRecords[i].
-			err = w.indexes[i%n].Delete(w.tblCtx, txn, idxRecord.vals, idxRecord.handle)
-			if err != nil {
-				return errors.Trace(err)
+			if cleaned {
+				taskCtx.addedCount++
 			}
-			taskCtx.addedCount++
 		}
+		taskCtx.writtenBytes = txn.Size()
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "cleanUpIndexBackfillDataInTxn", 3000)

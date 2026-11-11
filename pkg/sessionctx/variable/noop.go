@@ -623,7 +623,7 @@ var noopSysVars = []*SysVar{
 	{Scope: vardef.ScopeGlobal, Name: "rpl_stop_slave_timeout", Value: "31536000"},
 	{Scope: vardef.ScopeGlobal, Name: "slave_net_timeout", Value: "3600"},
 	{Scope: vardef.ScopeGlobal, Name: "sync_master_info", Value: "10000"},
-	{Scope: vardef.ScopeGlobal, Name: "init_slave", Value: ""},
+	{Scope: vardef.ScopeGlobal, Name: "init_slave", Value: "", IsSensitive: true},
 	{Scope: vardef.ScopeGlobal, Name: vardef.SlaveCompressedProtocol, Value: vardef.Off, Type: vardef.TypeBool},
 	{Scope: vardef.ScopeGlobal, Name: "rpl_semi_sync_slave_trace_level", Value: ""},
 	{Scope: vardef.ScopeGlobal, Name: vardef.LogSlowSlaveStatements, Value: vardef.Off, Type: vardef.TypeBool},

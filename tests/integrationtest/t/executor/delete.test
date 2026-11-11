@@ -144,3 +144,98 @@ select * from parent2;
 batch on `a` limit 1000 delete from parent where a = 1;
 batch on `a` limit 1000 delete ignore from parent where a = 1;
 --disable_warnings
+
+# Issue 71946: rows of a nonclustered partitioned table can share a _tidb_rowid
+# across partitions after EXCHANGE PARTITION, multi-table DELETE must delete each of them.
+drop table if exists t, tx, t2;
+create table t (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue);
+insert into t values (1, 1);
+create table tx (a int, b int);
+insert into tx values (11, 1);
+alter table t exchange partition p1 with table tx;
+select *, _tidb_rowid from t order by a;
+create table t2 (b int);
+insert into t2 values (1);
+--enable_info
+delete t from t join t2 on t.b = t2.b;
+--disable_info
+select * from t;
+select * from t2;
+
+drop table t, tx;
+create table t (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue);
+insert into t values (1, 1);
+create table tx (a int, b int);
+insert into tx values (11, 1);
+alter table t exchange partition p1 with table tx;
+--enable_info
+delete t, t2 from t join t2 on t.b = t2.b;
+--disable_info
+select * from t;
+select * from t2;
+
+drop table t, tx;
+create table t (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue);
+insert into t values (1, 1);
+create table tx (a int, b int);
+insert into tx values (11, 1);
+alter table t exchange partition p1 with table tx;
+--enable_info
+delete t from t, (select 1) s where t.b = 1;
+--disable_info
+select * from t;
+
+# Each deleted row matches two t2 rows and must be deleted once.
+drop table t, tx;
+create table t (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue);
+insert into t values (1, 1), (2, 2);
+create table tx (a int, b int);
+insert into tx values (11, 1), (12, 2);
+alter table t exchange partition p1 with table tx;
+select *, _tidb_rowid from t order by a;
+insert into t2 values (1), (1);
+--enable_info
+delete t from t join t2 on t.b = t2.b;
+--disable_info
+select *, _tidb_rowid from t order by a;
+insert into t2 values (2), (2);
+--enable_info
+delete t, t2 from t join t2 on t.b = t2.b;
+--disable_info
+select * from t;
+select * from t2;
+
+# The same partitioned table deleted through two aliases.
+drop table t, tx;
+create table t (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue);
+insert into t values (1, 1);
+create table tx (a int, b int);
+insert into tx values (11, 1);
+alter table t exchange partition p1 with table tx;
+--enable_info
+delete x, y from t x join t y on x.b = y.b;
+--disable_info
+select * from t;
+
+# Clustered partitioned and nonpartitioned tables, where each deleted row matches two t2 rows.
+drop table t, tx;
+create table t (a int, b int, primary key (a) clustered) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue);
+insert into t values (1, 1), (2, 2);
+create table tx (a int, b int, primary key (a) clustered);
+insert into tx values (11, 1), (12, 2);
+alter table t exchange partition p1 with table tx;
+truncate table t2;
+insert into t2 values (1), (1);
+--enable_info
+delete t from t join t2 on t.b = t2.b;
+--disable_info
+--sorted_result
+select * from t;
+drop table t;
+create table t (a int, b int);
+insert into t values (1, 1), (11, 1), (2, 2);
+--enable_info
+delete t from t join t2 on t.b = t2.b;
+--disable_info
+select * from t;
+drop table t, tx, t2;
