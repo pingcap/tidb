@@ -123,6 +123,9 @@ type jobContext struct {
 	deferStorageClassTransitionStaging bool
 	pendingStorageClassTransitions     []pendingStorageClassTransition
 	sharedMultiSchemaVersion           int64
+	// rollbackResourceGroupAlter restores the PD resource-group state when an
+	// ALTER RESOURCE GROUP step does not commit its metadata transaction.
+	rollbackResourceGroupAlter func()
 
 	metaMut *meta.Mutator
 	// decoded JobArgs, we store it here to avoid decoding it multiple times and
@@ -577,6 +580,22 @@ func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
 	if err := w.checkBeforeCommit(); err != nil {
 		return err
 	}
+	if job.Type == model.ActionAlterResourceGroup && job.IsCancelled() {
+		// Keep the cancelled job durable until PD agrees with the persisted
+		// metadata, even if compensation failed or the owner changed.
+		failpoint.InjectCall("beforeReconcileCancelledResourceGroupAlter", job)
+		if err := reconcileCancelledResourceGroupAlter(jobCtx, job); err != nil {
+			w.sess.Rollback()
+			// This completion path bypasses the normal job-step retry delay.
+			// Release the transaction before waiting, and stop promptly on owner loss.
+			select {
+			case <-time.After(GetWaitTimeWhenErrorOccurred()):
+			case <-w.workCtx.Done():
+			}
+			return err
+		}
+	}
+
 	err := w.finishDDLJob(jobCtx, job)
 	if err != nil {
 		w.sess.Rollback()
@@ -684,6 +703,13 @@ func (w *worker) transitOneJobStep(
 	defer r.End()
 
 	job := jobW.Job
+	jobCtx.rollbackResourceGroupAlter = nil
+	commitStarted := false
+	defer func() {
+		if !commitStarted {
+			jobCtx.compensateResourceGroupAlter()
+		}
+	}()
 	txn, err := w.prepareTxn(job)
 	if err != nil {
 		return 0, err
@@ -772,6 +798,7 @@ func (w *worker) transitOneJobStep(
 			// Internal SQL can commit or roll back its own statement buffer.
 			// Discard all mutations from this job step, including ones made while
 			// the job is already rolling back.
+			jobCtx.compensateResourceGroupAlter()
 			w.sess.Rollback()
 			failpoint.InjectCall("afterRollbackTxnForMustRollbackTxnOnError", job)
 			txn, txnErr := w.prepareTxn(job)
@@ -793,6 +820,7 @@ func (w *worker) transitOneJobStep(
 			// the rollback path may have intentionally updated table info and the
 			// schema version. Keep those mutations unless the error explicitly
 			// requires the whole transaction to be rolled back.
+			jobCtx.compensateResourceGroupAlter()
 			w.sess.Reset()
 			// If error happens after updateSchemaVersion(), then the schemaVer is updated.
 			// Result in the retry duration is up to 2 * lease.
@@ -813,6 +841,9 @@ func (w *worker) transitOneJobStep(
 	}
 	err = w.updateDDLJob(jobCtx, job, updateRawArgs)
 	failpoint.InjectCall("afterUpdateJobToTable", job, &err)
+	if err != nil {
+		jobCtx.compensateResourceGroupAlter()
+	}
 	if err = w.handleUpdateJobError(jobCtx, job, err); err != nil {
 		w.sess.Rollback()
 		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
@@ -820,11 +851,22 @@ func (w *worker) transitOneJobStep(
 	}
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
+	commitStarted = true
 	err = w.sess.Commit(w.workCtx)
 	jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 	if err != nil {
+		// A retryable commit error guarantees that this transaction was not
+		// committed, so it is safe to restore the external PD state. For an
+		// undetermined commit result, compensating could instead undo metadata
+		// that was committed successfully.
+		if kv.IsTxnRetryableError(err) {
+			jobCtx.compensateResourceGroupAlter()
+		} else {
+			jobCtx.rollbackResourceGroupAlter = nil
+		}
 		return 0, err
 	}
+	jobCtx.rollbackResourceGroupAlter = nil
 	jobCtx.addUnSynced(job.ID)
 
 	// If error is non-retryable, we can ignore the sleep.
