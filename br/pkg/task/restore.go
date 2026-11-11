@@ -1367,14 +1367,16 @@ func hasCheckpointPersisted(
 	cfg *RestoreConfig,
 	newSnapshotManager func(context.Context) (checkpoint.SnapshotMetaManagerT, error),
 ) (bool, error) {
+	var newSnapshotManagerErr error
 	snapshotManager := cfg.snapshotCheckpointMetaManager
 	if snapshotManager == nil && newSnapshotManager != nil {
 		m, err := newSnapshotManager(ctx)
 		if err != nil {
-			return false, errors.Trace(err)
+			newSnapshotManagerErr = errors.Trace(err)
+		} else {
+			defer m.Close()
+			snapshotManager = m
 		}
-		defer m.Close()
-		snapshotManager = m
 	}
 	if snapshotManager != nil {
 		exists, err := snapshotManager.ExistsCheckpointMetadata(ctx)
@@ -1403,7 +1405,7 @@ func hasCheckpointPersisted(
 			return true, nil
 		}
 	}
-	return false, nil
+	return false, newSnapshotManagerErr
 }
 
 type SnapshotRestoreConfig struct {

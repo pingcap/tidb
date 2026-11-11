@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/gogo/protobuf/proto"
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
@@ -229,4 +230,16 @@ func TestHasCheckpointPersistedChecksSnapshotCheckpointOfTheTask(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.False(t, persisted)
+
+	failingSnapshotManager := func(context.Context) (checkpoint.SnapshotMetaManagerT, error) {
+		return nil, errors.New("cannot create session")
+	}
+	persisted, err = hasCheckpointPersisted(ctx, logOnly, failingSnapshotManager)
+	require.ErrorContains(t, err, "cannot create session")
+	require.False(t, persisted)
+
+	require.NoError(t, logOnly.logCheckpointMetaManager.SaveCheckpointMetadata(ctx, &checkpoint.CheckpointMetadataForLogRestore{}))
+	persisted, err = hasCheckpointPersisted(ctx, logOnly, failingSnapshotManager)
+	require.NoError(t, err)
+	require.True(t, persisted)
 }
