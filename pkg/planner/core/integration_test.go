@@ -44,6 +44,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestBinaryLiteralNumericAggregation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table bit_agg(a int)")
+	tk.MustExec("insert into bit_agg values(1),(1),(2)")
+	tk.MustQuery("select a,sum(b'101010'),avg(b'101010') from bit_agg group by a order by a").Check(testkit.Rows("1 84 42", "2 42 42"))
+	tk.MustQuery("select a,sum(x'31'),avg(x'31') from bit_agg group by a order by a").Check(testkit.Rows("1 98 49", "2 49 49"))
+	tk.MustQuery("select a,sum('1'),avg('1') from bit_agg group by a order by a").Check(testkit.Rows("1 2 1", "2 1 1"))
+	tk.MustQuery("select hex(min(b'101010')),hex(max(b'101010')),count(b'101010') from bit_agg").Check(testkit.Rows("2A 2A 3"))
+	tk.MustQuery("select sum(b'101010'),avg(b'101010') from bit_agg where a=3").Check(testkit.Rows("<nil> <nil>"))
+}
+
 func TestReverseExpressionSortNullableColumn(t *testing.T) {
 	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
 	tk.MustExec("use test")
@@ -2874,4 +2887,37 @@ func TestIndexScanSeekCost(t *testing.T) {
 	tsRows := tk.MustQuery("explain format='cost_trace' select * from t4 where c in (1,2,3) and d > 5").Rows()
 	require.Contains(t, tsRows[len(tsRows)-1][0].(string), "TableRangeScan")
 	require.Contains(t, tsRows[len(tsRows)-1][3].(string), "rangeSeek")
+}
+
+func TestIssue72090(t *testing.T) {
+	// column-free predicates must not be pushed below a scalar aggregation: it
+	// emits one row for empty input, while a grouped aggregation emits none.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (k int, c0 int)")
+	tk.MustExec("insert into t values (1, 10), (1, 20), (2, 30)")
+
+	// requirePlanOrder asserts that the first occurrence of `before` comes before
+	// the first occurrence of `after` in the plan tree of the given query.
+	requirePlanOrder := func(t *testing.T, query, before, after string) {
+		plan := fmt.Sprint(tk.MustQuery("explain format = 'plan_tree' " + query).Rows())
+		beforePos := strings.Index(plan, before)
+		afterPos := strings.Index(plan, after)
+		require.NotEqual(t, -1, beforePos, plan)
+		require.NotEqual(t, -1, afterPos, plan)
+		require.Less(t, beforePos, afterPos, plan)
+	}
+
+	t.Run("scalar aggregation without group by", func(t *testing.T) {
+		tk.MustQuery("select count(*) from (select max(c0) as m from t) d where inet_aton('')").Check(testkit.Rows("0"))
+		requirePlanOrder(t, "select * from (select max(c0) as m from t) d where inet_aton('')", "Selection", "Agg")
+	})
+
+	t.Run("group by aggregation", func(t *testing.T) {
+		tk.MustQuery("select count(*) from (select k, max(c0) as m from t group by k) d where inet_aton('')").Check(testkit.Rows("0"))
+		requirePlanOrder(t, "select * from (select k, max(c0) as m from t group by k) d where inet_aton('')", "Agg", "Selection")
+	})
 }

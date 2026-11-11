@@ -60,6 +60,51 @@ var (
 	InspectionRules        = inspectionRules
 )
 
+func TestDecodeOldRowValToChunkWithExtraCommitTS(t *testing.T) {
+	sctx := mock.NewContext()
+	col := &model.ColumnInfo{ID: 1, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+	tblInfo := &model.TableInfo{Columns: []*model.ColumnInfo{col}}
+	commitTSCol := model.NewExtraCommitTSColInfo()
+	fieldTypes := []*types.FieldType{&col.FieldType, &commitTSCol.FieldType}
+	schema := expression.NewSchema(
+		&expression.Column{ID: col.ID, RetType: fieldTypes[0]},
+		&expression.Column{ID: commitTSCol.ID, RetType: fieldTypes[1]},
+	)
+
+	for _, emptyRow := range []bool{false, true} {
+		t.Run(fmt.Sprintf("empty_row=%t", emptyRow), func(t *testing.T) {
+			values, colIDs := types.MakeDatums(42), []int64{col.ID}
+			if emptyRow {
+				values, colIDs = nil, nil
+			}
+			rowVal, err := tablecodec.EncodeOldRow(sctx.GetSessionVars().Location(), values, colIDs, nil, nil)
+			require.NoError(t, err)
+			chk := chunk.NewChunkWithCapacity(fieldTypes, 1)
+			require.NoError(t, DecodeRowValToChunk(sctx, schema, tblInfo, kv.IntHandle(1), rowVal, chk, nil))
+			require.Equal(t, 1, chk.NumRows())
+			row := chk.GetRow(0)
+			require.Equal(t, emptyRow, row.IsNull(0))
+			if !emptyRow {
+				require.Equal(t, int64(42), row.GetInt64(0))
+			}
+			// The synthetic column is absent from TableInfo and has a NULL default.
+			require.True(t, row.IsNull(1))
+		})
+	}
+}
+
+func TestHistTimeUsesLocation(t *testing.T) {
+	input := time.Date(2026, 6, 14, 12, 0, 0, 123456789, time.UTC)
+	loc := time.FixedZone("UTC+8", 8*60*60)
+
+	localTime := histTime(input, loc)
+	utcTime := histTime(input, time.UTC)
+	require.Equal(t, "2026-06-14 20:00:00.123456 +0800", localTime.Format("2006-01-02 15:04:05.000000 -0700"))
+	require.Equal(t, "2026-06-14 12:00:00.123456 +0000", utcTime.Format("2006-01-02 15:04:05.000000 -0700"))
+	require.Equal(t, 123456000, localTime.Nanosecond())
+	require.Equal(t, 123456000, utcTime.Nanosecond())
+}
+
 func newTestMViewCompleteDeltaTargetTable(tp *types.FieldType) *tables.TableCommon {
 	return tables.MockTableFromMeta(&model.TableInfo{
 		ID:    1,

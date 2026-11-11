@@ -41,6 +41,26 @@ The diagnostic test also verifies that the diagnostic TiDB log does not contain
 `start DDL`. Missing, unreadable or empty logs fail the test. This case does not
 support `-P`, because the runner must capture the diagnostic startup log.
 
+### 4. External Servers and Reused TiKV Stores
+
+Golden results require `tidb_redact_log = OFF` to preserve literal values in
+errors and EXPLAIN output. Before using `-P <port>` with an existing test server,
+connect to that server and run:
+
+```sql
+SET GLOBAL tidb_redact_log = OFF;
+```
+
+This changes the persisted global setting and disables log redaction on the
+server. Use a dedicated test server; restore its previous setting afterward if
+needed. The `-P` option skips server startup and does not apply `init.sql`.
+
+For servers started by the runner, `-initialize-sql-file init.sql` applies this
+setting only on first bootstrap. A reused TiKV store bootstrapped with this
+`init.sql` already has the setting, unless it was subsequently changed. If the
+store was bootstrapped without it, or redaction has since been enabled, run the
+same statement against the test server before running golden cases.
+
 ---
 
 ## Script Options
@@ -71,6 +91,9 @@ Usage: ./run-tests.sh [options]
 
     -t <test-name>: Run the specified test case(s) (ignored if -r is provided).
         Example: ./run-tests.sh -t select
+
+    -P <port>: Use an existing tidb-server; first set its global tidb_redact_log to OFF.
+        See "External Servers and Reused TiKV Stores" above for persistence details.
 
     -v <vendor-path>: Add <vendor-path> to $GOPATH.
 

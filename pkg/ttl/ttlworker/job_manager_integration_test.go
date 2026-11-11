@@ -403,7 +403,8 @@ func TestTriggerTTLJob(t *testing.T) {
 		if !stmt.Ctx.GetSessionVars().InRestrictedSQL {
 			return
 		}
-		sql := stmt.GetTextToLog(false)
+		// Classify the original SQL independently of log redaction.
+		sql := stmt.Text()
 		ruMu.Lock()
 		defer ruMu.Unlock()
 		if strings.HasPrefix(sql, "SELECT LOW_PRIORITY SQL_NO_CACHE") {

@@ -121,34 +121,32 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 
 	// step 3: add metadata lock and check each table's schema version
 	schemaNotMatch := false
+	// Clear the statement-owned map before rebuilding it to handle table ID swaps
+	// and avoid allocating a new map for every execution.
+	relateVersion := stmt.RelateVersion
+	clear(relateVersion)
 	for i := range stmt.dbName {
-		tbl, ok := is.TableByID(ctx, stmt.tbls[i].Meta().ID)
-		if !ok {
-			tblByName, err := is.TableByName(context.Background(), stmt.dbName[i], stmt.tbls[i].Meta().Name)
-			if err != nil {
-				return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
-			}
-			// Table ID is changed, for example, drop & create table, truncate table.
-			delete(stmt.RelateVersion, stmt.tbls[i].Meta().ID)
-			tbl = tblByName
+		tbl, err := is.TableByName(ctx, stmt.dbName[i], stmt.tblName[i])
+		if err != nil {
+			return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
 		// newTbl is the 'should be used' table info for this execution.
 		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(ctx, sctx.GetPlanCtx(), stmt.dbName[i], tbl, is)
 		if err != nil {
 			logutil.BgLogger().Warn("meet error during tryLockMDLAndUpdateSchemaIfNecessary", zap.String("table name", tbl.Meta().Name.String()), zap.Error(err))
 			// Invalid the cache key related fields to avoid using plan cache.
-			stmt.RelateVersion[tbl.Meta().ID] = math.MaxUint64
+			relateVersion[tbl.Meta().ID] = math.MaxUint64
 			schemaNotMatch = true
 			continue
 		}
-		if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision {
+		// A table name may resolve to a different ID after RENAME TABLE even if the revision is the same.
+		if stmt.tbls[i].Meta().ID != newTbl.Meta().ID || stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision {
 			schemaNotMatch = true
 		}
 		// Update the cache key related fields.
 		stmt.tbls[i] = newTbl
-		stmt.RelateVersion[newTbl.Meta().ID] = newTbl.Meta().Revision
+		relateVersion[newTbl.Meta().ID] = newTbl.Meta().Revision
 	}
-
 	// step 4: check schema version
 	if schemaNotMatch || stmt.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
@@ -255,13 +253,13 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 
 	paramTypes := parseParamTypes(sctx, params)
 	if stmtCtx.UseCache() {
-		plan, outputCols, stmtHints, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
+		plan, outputCols, stmtHints, lockTableIDs, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
 		skipPrivCheck := stmt.PointGet.Executor != nil // this case is specially handled
 		if hit && instancePlanCacheEnabled(ctx) {
 			plan, hit = clonePlanForInstancePlanCache(ctx, sctx, stmt, plan)
 		}
 		if hit {
-			if plan, ok, err := adjustCachedPlan(ctx, sctx, plan, stmtHints, isNonPrepared, skipPrivCheck, binding, is, stmt); err != nil || ok {
+			if plan, ok, err := adjustCachedPlan(ctx, sctx, plan, stmtHints, lockTableIDs, isNonPrepared, skipPrivCheck, binding, is, stmt); err != nil || ok {
 				return plan, outputCols, err
 			}
 		}
@@ -306,7 +304,7 @@ func instancePlanCacheEnabled(ctx context.Context) bool {
 }
 
 func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey string,
-	paramTypes []*types.FieldType) (plan base.Plan, outputCols types.NameSlice, stmtHints *hint.StmtHints, hit bool) {
+	paramTypes []*types.FieldType) (plan base.Plan, outputCols types.NameSlice, stmtHints *hint.StmtHints, lockTableIDs map[int64]struct{}, hit bool) {
 	useInstanceCache := instancePlanCacheEnabled(ctx)
 	defer func(begin time.Time) {
 		if hit {
@@ -320,15 +318,15 @@ func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey stri
 		v, hit = sctx.GetSessionPlanCache().Get(cacheKey, paramTypes)
 	}
 	if !hit {
-		return nil, nil, nil, false
+		return nil, nil, nil, nil, false
 	}
 	pcv := v.(*PlanCacheValue)
 	sctx.GetSessionVars().PlanCacheValue = pcv
-	return pcv.Plan, pcv.OutputColumns, pcv.StmtHints, true
+	return pcv.Plan, pcv.OutputColumns, pcv.StmtHints, pcv.lockTableIDs, true
 }
 
 func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
-	plan base.Plan, stmtHints *hint.StmtHints, isNonPrepared, skipPrivCheck bool,
+	plan base.Plan, stmtHints *hint.StmtHints, lockTableIDs map[int64]struct{}, isNonPrepared, skipPrivCheck bool,
 	bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (
 	base.Plan, bool, error) {
 	sessVars := sctx.GetSessionVars()
@@ -340,6 +338,14 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
 	}
 	if !RebuildPlan4CachedPlan(plan) {
 		return nil, false, nil
+	}
+	// Keep cached metadata immutable when the statement context is cleared for the next execution.
+	clear(stmtCtx.LockTableIDs)
+	if len(lockTableIDs) > 0 && stmtCtx.LockTableIDs == nil {
+		stmtCtx.LockTableIDs = make(map[int64]struct{}, len(lockTableIDs))
+	}
+	for tableID := range lockTableIDs {
+		stmtCtx.LockTableIDs[tableID] = struct{}{}
 	}
 	sessVars.FoundInPlanCache = true
 	if len(bindSQL) > 0 { // We're using binding, set this to true.

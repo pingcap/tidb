@@ -93,6 +93,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/telemetry"
@@ -699,7 +700,7 @@ func (do *Domain) Init(
 	do.cancelFns.fns = append(do.cancelFns.fns, cancelFunc)
 	do.cancelFns.mu.Unlock()
 
-	ddlNotifierStore := notifier.OpenTableStore("mysql", metadef.NotifierTableName)
+	ddlNotifierStore := notifier.OpenTableStore("mysql", metadef.TiDBDDLNotifierTableName)
 	do.ddlNotifier = notifier.NewDDLNotifier(
 		do.sysSessionPool,
 		ddlNotifierStore,
@@ -713,6 +714,11 @@ func (do *Domain) Init(
 		do.ctx,
 		do.ddlNotifier.RegisterHandler,
 		do.sysSessionPool,
+		func() statstypes.StatsHandle {
+			return do.StatsHandle()
+		},
+		&do.sysProcesses,
+		do.stopAutoAnalyze.Load,
 		func() {
 			select {
 			case do.mvService.ddlNotify <- struct{}{}:

@@ -166,8 +166,8 @@ func isPlanReplayerDownloadURL(token string) bool {
 func (e *PlanReplayerExec) removeCaptureTask(ctx context.Context) error {
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	exec := e.Ctx().GetRestrictedSQLExecutor()
-	_, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("delete from mysql.plan_replayer_task where sql_digest = '%s' and plan_digest = '%s'",
-		e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest))
+	_, _, err := exec.ExecRestrictedSQL(ctx1, nil, "delete from mysql.plan_replayer_task where sql_digest = %? and plan_digest = %?",
+		e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest)
 	if err != nil {
 		logutil.BgLogger().Warn("remove mysql.plan_replayer_status record failed",
 			zap.Error(err))
@@ -192,8 +192,8 @@ func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
 		return errors.New("plan replayer capture task already exists")
 	}
 	exec := e.Ctx().GetRestrictedSQLExecutor()
-	_, _, err = exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('%s','%s')",
-		e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest))
+	_, _, err = exec.ExecRestrictedSQL(ctx1, nil, "insert into mysql.plan_replayer_task (sql_digest, plan_digest) values (%?,%?)",
+		e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest)
 	if err != nil {
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
 			zap.Error(err))

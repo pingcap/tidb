@@ -290,6 +290,15 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 		}
 		return ver, errors.Trace(err)
 	}
+	var snapshotMeta meta.Reader = meta.NewReader(w.store.GetSnapshot(kv.NewVersion(recoverInfo.SnapshotTS)))
+	failpoint.InjectCall("recoverTableForeignKeySnapshot", recoverInfo, &snapshotMeta)
+	if err = checkRecoverTableForeignKeys(jobCtx.infoCache.GetLatest(), job.SchemaName, recoverInfo, snapshotMeta); err != nil {
+		// Keep transient snapshot failures retryable by the owner.
+		if isPermanentRecoverTableForeignKeyError(err) {
+			job.State = model.JobStateCancelled
+		}
+		return ver, errors.Trace(err)
+	}
 
 	// Recover table divide into 2 steps:
 	// 1. Check GC enable status, to decided whether enable GC after recover table.
@@ -1005,6 +1014,9 @@ func (w *worker) onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, 
 	fkh := newForeignKeyHelper()
 	metaMut := jobCtx.metaMut
 	is := jobCtx.infoCache.GetLatest()
+	firstRenameByTableID := make(map[int64]*model.RenameTableArgs)
+	finalRenameByTableID := make(map[int64]*model.RenameTableArgs)
+	renamedTableByID := make(map[int64]schemaIDAndTableInfo)
 	for _, info := range args.RenameTableInfos {
 		job.TableID = info.TableID
 		job.TableName = info.OldTableName.L
@@ -1016,12 +1028,11 @@ func (w *worker) onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		err = adjustForeignKeyChildTableInfoAfterRenameTable(
-			jobCtx.infoCache, metaMut, job, &fkh, tblInfo,
-			info.OldSchemaName, info.OldTableName, info.NewTableName, info.NewSchemaID)
-		if err != nil {
-			return ver, errors.Trace(err)
+		if _, ok := firstRenameByTableID[info.TableID]; !ok {
+			firstRenameByTableID[info.TableID] = info
 		}
+		finalRenameByTableID[info.TableID] = info
+		renamedTableByID[info.TableID] = schemaIDAndTableInfo{schemaID: info.NewSchemaID, tblInfo: tblInfo}
 		// Update masking policy names after table rename.
 		newDB, ok := is.SchemaByID(info.NewSchemaID)
 		if !ok {
@@ -1032,6 +1043,11 @@ func (w *worker) onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, 
 			info.OldSchemaName, newDB.Name, info.OldTableName, info.NewTableName); err != nil {
 			return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
 		}
+	}
+	err = adjustForeignKeyChildTableInfoAfterRenameTables(
+		is, metaMut, &fkh, firstRenameByTableID, finalRenameByTableID, renamedTableByID)
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
 
 	ver, err = updateSchemaVersion(jobCtx, job, fkh.getLoadedTables()...)
@@ -1116,6 +1132,59 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(
 		return nil
 	}
 	fkh.addLoadedTable(oldSchemaName.L, oldTableName.L, newDB.ID, tblInfo)
+	err := adjustReferredForeignKeysAfterRename(is, t, fkh, referredFKs, newDB.Name, newTableName)
+	if err != nil {
+		return err
+	}
+	return updateLoadedForeignKeyTables(t, fkh)
+}
+
+func adjustForeignKeyChildTableInfoAfterRenameTables(
+	is infoschema.InfoSchema,
+	t *meta.Mutator,
+	fkh *foreignKeyHelper,
+	firstRenameByTableID, finalRenameByTableID map[int64]*model.RenameTableArgs,
+	renamedTableByID map[int64]schemaIDAndTableInfo,
+) error {
+	if !vardef.EnableForeignKey.Load() {
+		return nil
+	}
+
+	// The InfoSchema referred-FK map describes table names before the statement.
+	// Register each renamed object under its original name, but point to the
+	// TableInfo at its final location so child tables renamed earlier in the same
+	// statement are updated in place.
+	for tableID, firstRename := range firstRenameByTableID {
+		renamedTable := renamedTableByID[tableID]
+		fkh.addLoadedTable(firstRename.OldSchemaName.L, firstRename.OldTableName.L,
+			renamedTable.schemaID, renamedTable.tblInfo)
+	}
+
+	for tableID, firstRename := range firstRenameByTableID {
+		referredFKs := is.GetTableReferredForeignKeys(firstRename.OldSchemaName.L, firstRename.OldTableName.L)
+		if len(referredFKs) == 0 {
+			continue
+		}
+		finalRename := finalRenameByTableID[tableID]
+		newDB, ok := is.SchemaByID(finalRename.NewSchemaID)
+		if !ok {
+			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", finalRename.NewSchemaID))
+		}
+		if err := adjustReferredForeignKeysAfterRename(
+			is, t, fkh, referredFKs, newDB.Name, finalRename.NewTableName); err != nil {
+			return err
+		}
+	}
+	return updateLoadedForeignKeyTables(t, fkh)
+}
+
+func adjustReferredForeignKeysAfterRename(
+	is infoschema.InfoSchema,
+	t *meta.Mutator,
+	fkh *foreignKeyHelper,
+	referredFKs []*model.ReferredFKInfo,
+	newSchemaName, newTableName ast.CIStr,
+) error {
 	for _, referredFK := range referredFKs {
 		childTableInfo, err := fkh.getTableFromStorage(is, t, referredFK.ChildSchema, referredFK.ChildTable)
 		if err != nil {
@@ -1128,9 +1197,13 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(
 		if childFKInfo == nil {
 			continue
 		}
-		childFKInfo.RefSchema = newDB.Name
+		childFKInfo.RefSchema = newSchemaName
 		childFKInfo.RefTable = newTableName
 	}
+	return nil
+}
+
+func updateLoadedForeignKeyTables(t *meta.Mutator, fkh *foreignKeyHelper) error {
 	for _, info := range fkh.loaded {
 		err := updateTable(t, info.schemaID, info.tblInfo, false)
 		if err != nil {
@@ -2069,29 +2142,56 @@ func (w *worker) onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx *jobC
 		return ver, errors.Trace(err)
 	}
 	jobCtx.jobArgs = args
-	if args.OldMViewID != job.TableID || args.OldMViewID == args.ShadowTableID || args.BuildReadTSO == 0 {
+	if args.OldMViewID != job.TableID {
 		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: invalid table IDs or build read tso")
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: mismatched old materialized view id")
+	}
+	if args.OldMViewID == args.ShadowTableID {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: shadow table id equals old materialized view id")
+	}
+	if args.BuildReadTSO == 0 {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: invalid build read tso")
 	}
 	oldMViewTblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if oldMViewTblInfo.MaterializedView == nil || len(oldMViewTblInfo.MaterializedView.BaseTableIDs) != 1 {
+	if oldMViewTblInfo.MaterializedView == nil {
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrWrongObject.GenWithStackByArgs(job.SchemaName, job.TableName, "MATERIALIZED VIEW")
 	}
+	if len(oldMViewTblInfo.MaterializedView.BaseTableIDs) != 1 {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrWrongObject.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: materialized view must reference exactly one base table in Stage-1, got %d", len(oldMViewTblInfo.MaterializedView.BaseTableIDs))
+	}
 	if args.ExpectedOldMViewRevision != nil && oldMViewTblInfo.Revision != *args.ExpectedOldMViewRevision {
 		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: stale old materialized view revision detected before cutover")
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack(
+			"refresh materialized view complete OUT OF PLACE cutover: stale old materialized view revision detected before cutover, expected %d but got %d",
+			*args.ExpectedOldMViewRevision, oldMViewTblInfo.Revision,
+		)
 	}
 	shadowTblInfo, err := getTableInfoAndCancelNonExistJob(jobCtx.metaMut, job, args.ShadowTableID, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if shadowTblInfo.MaterializedView != nil || shadowTblInfo.MaterializedViewLog != nil || shadowTblInfo.View != nil || shadowTblInfo.Sequence != nil || shadowTblInfo.MaterializedViewShadow == nil || shadowTblInfo.MaterializedViewShadow.SourceMViewID != args.OldMViewID || shadowTblInfo.State != model.StatePublic {
+	if shadowTblInfo.MaterializedView != nil || shadowTblInfo.MaterializedViewLog != nil || shadowTblInfo.View != nil || shadowTblInfo.Sequence != nil {
 		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: invalid shadow table metadata")
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: shadow table is not a protected physical table")
+	}
+	if shadowTblInfo.MaterializedViewShadow == nil {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: shadow table is missing shadow metadata")
+	}
+	if shadowTblInfo.MaterializedViewShadow.SourceMViewID != args.OldMViewID {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: shadow table source materialized view id mismatch")
+	}
+	if shadowTblInfo.State != model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: shadow table is not in public, but %s", shadowTblInfo.State)
 	}
 	baseTblInfo, err := getTableInfoAndCancelNonExistJob(jobCtx.metaMut, job, oldMViewTblInfo.MaterializedView.BaseTableIDs[0], job.SchemaID)
 	if err != nil {

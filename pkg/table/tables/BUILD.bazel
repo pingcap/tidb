@@ -27,6 +27,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/parser",
         "//pkg/parser/ast",
+        "//pkg/parser/charset",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
@@ -82,7 +83,7 @@ go_test(
     ],
     embed = [":tables"],
     flaky = True,
-    shard_count = 44,
+    shard_count = 47,
     deps = [
         "//pkg/ddl",
         "//pkg/domain",

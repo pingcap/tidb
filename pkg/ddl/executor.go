@@ -825,7 +825,7 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 		}
 		return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
 	}
-	if isReservedSchemaObjInNextGen(old.ID) {
+	if isSystemSchemaInNextGen(old.Name.L) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Drop '%s' database", old.Name.L))
 	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
@@ -1546,6 +1546,11 @@ func (e *executor) RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.
 	if ok := is.TableExists(schema.Name, tbInfo.Name); ok {
 		return infoschema.ErrTableExists.GenWithStackByArgs(tbInfo.Name)
 	}
+	snapshotMeta := meta.NewReader(e.store.GetSnapshot(kv.NewVersion(recoverTableInfo.SnapshotTS)))
+	if err := checkRecoverTableForeignKeys(is, schema.Name.L, recoverTableInfo, snapshotMeta); err != nil {
+		return err
+	}
+	failpoint.InjectCall("afterCheckRecoverTableForeignKeys", recoverTableInfo)
 
 	// for "flashback table xxx to yyy"
 	// Note: this case only allow change table name, schema remains the same.
@@ -2897,7 +2902,7 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	meta := t.Meta().Clone()
-	if isReservedSchemaObjInNextGen(meta.ID) {
+	if isSystemTableInNextGen(schema.Name.L, meta.Name.L) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Change system table '%s.%s' to partitioned table", schema.Name.L, meta.Name.L))
 	}
 	if t.Meta().Affinity != nil {
@@ -3639,7 +3644,8 @@ func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	ntMeta := nt.Meta()
-	if metadef.IsReservedID(ntMeta.ID) {
+	// Classic also uses reserved IDs for DDL system tables.
+	if metadef.IsReservedID(ntMeta.ID) || isSystemTableInNextGen(ntSchema.Name.L, ntMeta.Name.L) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Exchange partition on system table '%s.%s'", ntSchema.Name.L, ntMeta.Name.L))
 	}
 	err = checkExchangePartition(ptMeta, ntMeta)
@@ -4773,8 +4779,8 @@ var systemTables = map[string]struct{}{
 	"gc_delete_range_done": {},
 }
 
-func isUndroppableTable(schema, table string, tableInfo *model.TableInfo) bool {
-	if isReservedSchemaObjInNextGen(tableInfo.ID) {
+func isUndroppableTable(schema, table string) bool {
+	if isSystemTableInNextGen(schema, table) {
 		return true
 	}
 	if schema == mysql.WorkloadSchema {
@@ -4835,6 +4841,9 @@ func (e *executor) dropTableObject(
 					return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tn.Name, referredFK.ChildFKName, referredFK.ChildTable))
 				}
 			}
+			if fkCheck {
+				objects = orderDropTableObjectsByForeignKey(is, objects)
+			}
 		}
 		switch tableObjectType {
 		case materializedViewObject:
@@ -4875,7 +4884,7 @@ func (e *executor) dropTableObject(
 
 		// Protect important system table from been dropped by a mistake.
 		// I can hardly find a case that a user really need to do this.
-		if isUndroppableTable(tn.Schema.L, tn.Name.L, tableInfo.Meta()) {
+		if isUndroppableTable(tn.Schema.L, tn.Name.L) {
 			return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Drop tidb system table '%s.%s'", tn.Schema.L, tn.Name.L))
 		}
 		switch tableObjectType {
@@ -4938,7 +4947,9 @@ func (e *executor) dropTableObject(
 			SQLMode:             ctx.GetSessionVars().SQLMode,
 		}
 		args := &model.DropTableArgs{
-			Identifiers: objectIdents,
+			// The owner may ignore a self-reference, but it must not assume that
+			// later objects in this statement have already been dropped.
+			Identifiers: []ast.Ident{fullti},
 			FKCheck:     fkCheck,
 		}
 
@@ -4949,6 +4960,7 @@ func (e *executor) dropTableObject(
 		} else if err != nil {
 			return errors.Trace(err)
 		}
+		failpoint.InjectCall("afterDropTableObject", tableInfo.Meta().Name.L)
 
 		// unlock table after drop
 		if tableObjectType == viewObject || tableObjectType == sequenceObject {
@@ -4971,6 +4983,74 @@ func (e *executor) dropTableObject(
 		}
 	}
 	return nil
+}
+
+// orderDropTableObjectsByForeignKey orders children before their referenced
+// parents. Each table is dropped by an independent DDL job, so this prevents a
+// referring child from being renamed between an earlier parent job and its own
+// later job. Cycles retain their input order and are rejected by the owner-side
+// foreign-key check unless foreign_key_checks is disabled.
+func orderDropTableObjectsByForeignKey(is infoschema.InfoSchema, objects []*ast.TableName) []*ast.TableName {
+	objectIndex := make(map[schemaAndTable]int, len(objects))
+	for i, object := range objects {
+		objectIndex[schemaAndTable{schema: object.Schema.L, table: object.Name.L}] = i
+	}
+
+	children := make([][]int, len(objects))
+	indegree := make([]int, len(objects))
+	edges := make(map[[2]int]struct{})
+	for childIdx, child := range objects {
+		childTable, err := is.TableByName(context.Background(), child.Schema, child.Name)
+		if err != nil {
+			continue
+		}
+		for _, fk := range childTable.Meta().ForeignKeys {
+			if fk.Version < model.FKVersion1 {
+				continue
+			}
+			parentSchema := fk.RefSchema.L
+			if parentSchema == "" {
+				parentSchema = child.Schema.L
+			}
+			parentIdx, ok := objectIndex[schemaAndTable{schema: parentSchema, table: fk.RefTable.L}]
+			if !ok || childIdx == parentIdx {
+				continue
+			}
+			edge := [2]int{childIdx, parentIdx}
+			if _, ok := edges[edge]; ok {
+				continue
+			}
+			edges[edge] = struct{}{}
+			children[childIdx] = append(children[childIdx], parentIdx)
+			indegree[parentIdx]++
+		}
+	}
+
+	ordered := make([]*ast.TableName, 0, len(objects))
+	processed := make([]bool, len(objects))
+	for len(ordered) < len(objects) {
+		selected := -1
+		for i := range objects {
+			if !processed[i] && indegree[i] == 0 {
+				selected = i
+				break
+			}
+		}
+		if selected < 0 {
+			for i, object := range objects {
+				if !processed[i] {
+					ordered = append(ordered, object)
+				}
+			}
+			break
+		}
+		processed[selected] = true
+		ordered = append(ordered, objects[selected])
+		for _, parentIdx := range children[selected] {
+			indegree[parentIdx]--
+		}
+	}
+	return ordered
 }
 
 func buildDropTableInvolvingSchemaInfo(
@@ -5117,7 +5197,7 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
 	}
-	if isReservedSchemaObjInNextGen(tblInfo.ID) {
+	if isSystemTableInNextGen(schema.Name.L, tblInfo.Name.L) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Truncate system table '%s.%s'", schema.Name.L, tblInfo.Name.L))
 	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
@@ -5202,7 +5282,7 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		if err = dbutil.CheckTableModeIsNormal(tbl.Meta().Name, tbl.Meta().Mode); err != nil {
 			return err
 		}
-		if isReservedSchemaObjInNextGen(tbl.Meta().ID) {
+		if isSystemTableInNextGen(schemas[0].Name.L, tbl.Meta().Name.L) {
 			return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Rename system table '%s.%s'", schemas[0].Name.L, oldIdent.Name.L))
 		}
 	}
@@ -5258,7 +5338,9 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 			if err = dbutil.CheckTableModeIsNormal(t.Meta().Name, t.Meta().Mode); err != nil {
 				return err
 			}
-			if isReservedSchemaObjInNextGen(t.Meta().ID) {
+			// Classify this pair by its source name. TableByID returns the pre-statement
+			// snapshot, so an earlier pair can pair schemas[0] with a different table name.
+			if isSystemTableInNextGen(schemas[0].Name.L, oldIdents[i].Name.L) {
 				return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Rename system table '%s.%s'", schemas[0].Name.L, oldIdents[i].Name.L))
 			}
 		}
@@ -5440,6 +5522,9 @@ func checkCreateGlobalIndex(ec errctx.Context, tblInfo *model.TableInfo, indexNa
 
 func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
+	if indexOption != nil && indexOption.Condition != nil {
+		return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("create an primary key with partial index is not supported")
+	}
 	if indexOption != nil && indexOption.PrimaryKeyTp == ast.PrimaryKeyTypeClustered {
 		return dbterror.ErrUnsupportedModifyPrimaryKey.GenWithStack("Adding clustered primary key is not supported. " +
 			"Please consider adding NONCLUSTERED primary key instead")
@@ -8371,11 +8456,18 @@ func checkColumnReferencedByPartialCondition(t *model.TableInfo, colName ast.CIS
 	return nil
 }
 
-func isReservedSchemaObjInNextGen(id int64) bool {
+func isSystemSchemaInNextGen(schemaName string) bool {
 	failpoint.Inject("skipCheckReservedSchemaObjInNextGen", func() {
 		failpoint.Return(false)
 	})
-	return kerneltype.IsNextGen() && metadef.IsReservedID(id)
+	return kerneltype.IsNextGen() && (metadef.IsSystemDB(schemaName) || schemaName == mysql.SysDB)
+}
+
+func isSystemTableInNextGen(schema, table string) bool {
+	failpoint.Inject("skipCheckReservedSchemaObjInNextGen", func() {
+		failpoint.Return(false)
+	})
+	return kerneltype.IsNextGen() && metadef.IsBuiltinSystemTable(schema, table)
 }
 
 // AlterTableSetRegionSplitPolicy sets persistent region split policy for table

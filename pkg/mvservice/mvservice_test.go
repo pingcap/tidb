@@ -34,6 +34,7 @@ func TestNewMVServiceConfig(t *testing.T) {
 		cfg.RefreshTaskConcurrencyRatio = 0.6
 		cfg.RefreshTaskTimeout = 42 * time.Second
 		cfg.PurgeTaskTimeout = 84 * time.Second
+		cfg.MLogAnalyzeTaskConcurrency = 3
 		cfg.FetchInterval = 37 * time.Second
 		cfg.BasicInterval = 2 * time.Second
 		cfg.ServerRefreshInterval = 9 * time.Second
@@ -52,6 +53,8 @@ func TestNewMVServiceConfig(t *testing.T) {
 		refreshConcurrency, purgeConcurrency := splitTaskConcurrency(cfg.TaskMaxConcurrency, cfg.RefreshTaskConcurrencyRatio)
 		require.Equal(t, refreshConcurrency, int(svc.refreshExecutor.maxConcurrency.Load()))
 		require.Equal(t, purgeConcurrency, int(svc.purgeExecutor.maxConcurrency.Load()))
+		require.Equal(t, cfg.MLogAnalyzeTaskConcurrency, int(svc.mlogAnalyzeExecutor.maxConcurrency.Load()))
+		require.Zero(t, svc.mlogAnalyzeExecutor.timeoutNanos.Load())
 		require.Equal(t, cfg.RefreshTaskConcurrencyRatio, svc.GetRefreshTaskConcurrencyRatio())
 		require.Equal(t, cfg.RefreshTaskTimeout, time.Duration(svc.refreshExecutor.timeoutNanos.Load()))
 		require.Equal(t, cfg.PurgeTaskTimeout, time.Duration(svc.purgeExecutor.timeoutNanos.Load()))
@@ -70,6 +73,7 @@ func TestNewMVServiceConfig(t *testing.T) {
 		require.Equal(t, cfg.TaskBackpressure, backpressureCfg)
 		require.NotNil(t, svc.refreshExecutor.backpressure.Load())
 		require.NotNil(t, svc.purgeExecutor.backpressure.Load())
+		require.NotNil(t, svc.mlogAnalyzeExecutor.backpressure.Load())
 
 		require.Equal(t, cfg.FetchInterval, svc.fetchInterval())
 		require.Equal(t, cfg.BasicInterval, svc.basicInterval)
@@ -80,6 +84,7 @@ func TestNewMVServiceConfig(t *testing.T) {
 	t.Run("normalized_defaults", func(t *testing.T) {
 		cfg := DefaultMVServiceConfig()
 		cfg.TaskMaxConcurrency = -1
+		cfg.MLogAnalyzeTaskConcurrency = -1
 		cfg.RefreshTaskConcurrencyRatio = -1
 		cfg.MViewRefreshHistRetention = -time.Hour
 		cfg.MLogPurgeHistRetention = -time.Hour
@@ -101,6 +106,8 @@ func TestNewMVServiceConfig(t *testing.T) {
 		require.Equal(t, defaultMVRefreshTaskConcurrencyRatio, svc.GetRefreshTaskConcurrencyRatio())
 		require.Nil(t, svc.refreshExecutor.backpressure.Load())
 		require.Nil(t, svc.purgeExecutor.backpressure.Load())
+		require.Nil(t, svc.mlogAnalyzeExecutor.backpressure.Load())
+		require.Equal(t, int64(defaultMLogAnalyzeTaskConcurrency), svc.mlogAnalyzeExecutor.maxConcurrency.Load())
 	})
 
 	t.Run("invalid_retry_panics", func(t *testing.T) {
@@ -155,12 +162,15 @@ func TestMVServiceUpdateConfigs(t *testing.T) {
 		require.Equal(t, time.Second, cfg.Delay)
 		require.NotNil(t, svc.refreshExecutor.backpressure.Load())
 		require.NotNil(t, svc.purgeExecutor.backpressure.Load())
+		require.NotNil(t, svc.mlogAnalyzeExecutor.backpressure.Load())
 
 		err = svc.SetTaskBackpressureConfig(TaskBackpressureConfig{})
 		require.NoError(t, err)
 		require.Equal(t, TaskBackpressureConfig{}, svc.GetTaskBackpressureConfig())
 		require.Nil(t, svc.refreshExecutor.backpressure.Load())
 		require.Nil(t, svc.purgeExecutor.backpressure.Load())
+		require.Nil(t, svc.mlogAnalyzeExecutor.backpressure.Load())
+		require.Equal(t, int64(defaultMLogAnalyzeTaskConcurrency), svc.mlogAnalyzeExecutor.maxConcurrency.Load())
 
 		err = svc.SetTaskBackpressureConfig(TaskBackpressureConfig{
 			CPUThreshold: -1,

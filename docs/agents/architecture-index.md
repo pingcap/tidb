@@ -61,6 +61,13 @@ Hard requirements remain in the repository root `AGENTS.md`.
 - `pkg/parser/`
 - Typical changes: SQL grammar, AST nodes, parser behavior.
 
+### Dumpling export
+- `dumpling/export/`: export orchestration, source adapters, filtering, and writers.
+- `dumpling/dumpservice/`: HTTP/2 client and Unix-socket protocol contract.
+- `dumpling/internal/kvsource/`: TiDB metadata access, row decoding, and SQL-compatible conversion.
+- `dumpling/internal/dumpservicetest/`: shared dump-service fixtures for source and export tests.
+- First tests: metadata consumer tests in `kvsource` and dump-service lifecycle/parity tests in `export`.
+
 ## Test Surfaces
 - Unit tests: package-local tests under `pkg/**`.
 - Integration tests:
