@@ -20,9 +20,6 @@
 //!
 //! # Narrowings, by name
 //!
-//! * `taskZoneInfoHelper`: the stores carry no zone labels here, so every
-//!   exchange's same-zone flags stay unset, as Go leaves them for stores
-//!   without zones.
 //! * `CheckVisibility` (the GC safe point check after each packet): the MPP
 //!   client has no safe point to read.
 //! * The dispatch meta's `SqlDigest` / `PlanDigest`: the statement context
@@ -115,6 +112,185 @@ pub fn update_executor_table_id(
         return update_executor_table_id(child, recursive, partition_ids);
     }
     Ok(())
+}
+
+/// Go `placement.DCLabelKey`.
+const DC_LABEL_KEY: &str = "zone";
+
+/// Go `tiFlashStoreInfo`.
+#[derive(Clone, Debug, Default)]
+struct TiFlashStoreInfo {
+    zone: String,
+    store_id: u64,
+}
+
+/// Go `addTiFlashStoreInfo`.
+fn add_tiflash_store_info(
+    all_tiflash_store_info: &mut HashMap<String, TiFlashStoreInfo>,
+    tiflash_store: &tikv_client::proto::metapb::Store,
+) {
+    let zone = tiflash_store
+        .labels
+        .iter()
+        .find(|label| label.key == DC_LABEL_KEY)
+        .map(|label| label.value.clone())
+        .unwrap_or_default();
+    all_tiflash_store_info.insert(
+        tiflash_store.address.clone(),
+        TiFlashStoreInfo {
+            zone,
+            store_id: tiflash_store.id,
+        },
+    );
+}
+
+/// Go `taskZoneInfoHelper`: used to help reset exchange executor's same zone
+/// flags.
+struct TaskZoneInfoHelper<'a> {
+    all_tiflash_store_info: &'a HashMap<String, TiFlashStoreInfo>,
+    /// exchangeZoneInfo is used to cache one mpp task's zone info: key is
+    /// executor id, value is zone info array. For ExchangeSender, it's
+    /// target tiflash nodes' zone info; for ExchangeReceiver, it's source
+    /// tiflash nodes' zone info.
+    exchange_zone_info: HashMap<String, Vec<String>>,
+    tidb_zone: String,
+    current_task_zone: String,
+    is_root: bool,
+}
+
+impl<'a> TaskZoneInfoHelper<'a> {
+    /// Go `taskZoneInfoHelper.init`.
+    fn init(all_tiflash_store_info: &'a HashMap<String, TiFlashStoreInfo>) -> Self {
+        Self {
+            all_tiflash_store_info,
+            exchange_zone_info: HashMap::with_capacity(2),
+            tidb_zone: tidb_config::config_tree::config::get_global_config()
+                .labels
+                .get(DC_LABEL_KEY)
+                .cloned()
+                .unwrap_or_default(),
+            current_task_zone: String::new(),
+            is_root: false,
+        }
+    }
+
+    /// Go `allTiFlashStoreInfo[address].zone`: the store's zone, empty for
+    /// an address that is no store's.
+    fn zone_of(&self, address: &str) -> &str {
+        self.all_tiflash_store_info
+            .get(address)
+            .map_or("", |store_info| store_info.zone.as_str())
+    }
+
+    /// Go `tryQuickFillWithUncertainZones`.
+    fn try_quick_fill_with_uncertain_zones(
+        &self,
+        exec: &tipb::Executor,
+        slots: usize,
+        same_zone_flags: &mut Vec<bool>,
+    ) -> bool {
+        if exec.executor_id.is_none() || self.current_task_zone.is_empty() {
+            same_zone_flags.extend(std::iter::repeat(true).take(slots));
+            return true;
+        }
+        if self.is_root && exec.tp == Some(ExecType::TypeExchangeSender as i32) {
+            same_zone_flags.push(self.tidb_zone.is_empty() || self.current_task_zone == self.tidb_zone);
+            return true;
+        }
+        false
+    }
+
+    /// Go `collectExchangeZoneInfos`.
+    fn collect_exchange_zone_infos(&self, encoded_task_meta: &[Vec<u8>]) -> Vec<String> {
+        encoded_task_meta
+            .iter()
+            .map(|task_bytes| {
+                TaskMeta::decode(task_bytes.as_slice())
+                    .map(|task_meta| self.zone_of(&task_meta.address).to_owned())
+                    .unwrap_or_default()
+            })
+            .collect()
+    }
+
+    /// Go `inferSameZoneFlag`.
+    fn infer_same_zone_flag(&mut self, exec: &tipb::Executor, encoded_task_meta: &[Vec<u8>]) -> Vec<bool> {
+        let slots = encoded_task_meta.len();
+        let mut same_zone_flags = Vec::with_capacity(slots);
+        if self.try_quick_fill_with_uncertain_zones(exec, slots, &mut same_zone_flags) {
+            return same_zone_flags;
+        }
+        let executor_id = exec.executor_id.as_deref().unwrap_or_default();
+        if !self.exchange_zone_info.contains_key(executor_id) {
+            let zone_infos = self.collect_exchange_zone_infos(encoded_task_meta);
+            self.exchange_zone_info.insert(executor_id.to_owned(), zone_infos);
+        }
+        let zone_infos = &self.exchange_zone_info[executor_id];
+
+        if zone_infos.len() != slots {
+            // This branch is for safety purpose, not expected
+            same_zone_flags.extend(std::iter::repeat(true).take(slots));
+            return same_zone_flags;
+        }
+
+        same_zone_flags.extend(
+            zone_infos
+                .iter()
+                .map(|zone_info| zone_info.is_empty() || &self.current_task_zone == zone_info),
+        );
+        same_zone_flags
+    }
+
+    /// Go `fillSameZoneFlagForExchange`.
+    fn fill_same_zone_flag_for_exchange(&mut self, exec: &mut tipb::Executor) {
+        let tp = exec.tp.unwrap_or_default();
+        let mut children: Vec<&mut tipb::Executor> = Vec::with_capacity(2);
+        match ExecType::try_from(tp) {
+            Ok(
+                ExecType::TypeTableScan
+                | ExecType::TypePartitionTableScan
+                | ExecType::TypeIndexScan
+                | ExecType::TypeCteSource,
+            ) => {}
+            Ok(ExecType::TypeSelection) => children.extend(exec.selection.as_mut().and_then(|e| e.child.as_deref_mut())),
+            Ok(ExecType::TypeAggregation | ExecType::TypeStreamAgg) => {
+                children.extend(exec.aggregation.as_mut().and_then(|e| e.child.as_deref_mut()));
+            }
+            Ok(ExecType::TypeTopN) => children.extend(exec.top_n.as_mut().and_then(|e| e.child.as_deref_mut())),
+            Ok(ExecType::TypeLimit) => children.extend(exec.limit.as_mut().and_then(|e| e.child.as_deref_mut())),
+            Ok(ExecType::TypeExchangeSender) => {
+                let same_zone_flag = exec
+                    .exchange_sender
+                    .as_ref()
+                    .map(|sender| self.infer_same_zone_flag(exec, &sender.encoded_task_meta));
+                if let (Some(sender), Some(same_zone_flag)) = (exec.exchange_sender.as_mut(), same_zone_flag) {
+                    sender.same_zone_flag = same_zone_flag;
+                    children.extend(sender.child.as_deref_mut());
+                }
+            }
+            Ok(ExecType::TypeExchangeReceiver) => {
+                let same_zone_flag = exec
+                    .exchange_receiver
+                    .as_ref()
+                    .map(|receiver| self.infer_same_zone_flag(exec, &receiver.encoded_task_meta));
+                if let (Some(receiver), Some(same_zone_flag)) = (exec.exchange_receiver.as_mut(), same_zone_flag) {
+                    receiver.same_zone_flag = same_zone_flag;
+                }
+            }
+            Ok(ExecType::TypeCteSink) => children.extend(exec.cte_sink.as_mut().and_then(|e| e.child.as_deref_mut())),
+            Ok(ExecType::TypeJoin) => children.extend(exec.join.as_mut().into_iter().flat_map(|e| e.children.iter_mut())),
+            Ok(ExecType::TypeProjection) => {
+                children.extend(exec.projection.as_mut().and_then(|e| e.child.as_deref_mut()));
+            }
+            Ok(ExecType::TypeWindow) => children.extend(exec.window.as_mut().and_then(|e| e.child.as_deref_mut())),
+            Ok(ExecType::TypeSort) => children.extend(exec.sort.as_mut().and_then(|e| e.child.as_deref_mut())),
+            Ok(ExecType::TypeExpand) => children.extend(exec.expand.as_mut().and_then(|e| e.child.as_deref_mut())),
+            Ok(ExecType::TypeExpand2) => children.extend(exec.expand2.as_mut().and_then(|e| e.child.as_deref_mut())),
+            _ => tidb_logutil::bg_logger().warn(&format!("unknown new tipb protocol {tp}"), &[]),
+        }
+        for child in children {
+            self.fill_same_zone_flag_for_exchange(child);
+        }
+    }
 }
 
 /// What Go's `mppTaskGenerator` reads off the session: the statement's
@@ -507,9 +683,18 @@ impl LocalMppCoordinator {
         let (frags, kv_ranges, node_info) =
             generate_root_mpp_tasks(&gen_ctx, start_ts, gather_id, mpp_query_id, sender)
                 .map_err(|err| err.to_string())?;
+        let mut all_tiflash_store_info = HashMap::new();
+        for tiflash_store in client.tiflash_stores() {
+            add_tiflash_store_info(&mut all_tiflash_store_info, &tiflash_store);
+        }
+        if tidb_config::config_tree::config::get_global_config().disaggregated_tiflash {
+            for tiflash_store in client.tiflash_compute_stores().unwrap_or_default() {
+                add_tiflash_store_info(&mut all_tiflash_store_info, &tiflash_store);
+            }
+        }
         let mut mpp_reqs = Vec::new();
         for frag in &frags {
-            self.append_mpp_dispatch_req(ctx, &statement, frag, &mut mpp_reqs)?;
+            self.append_mpp_dispatch_req(ctx, &statement, frag, &all_tiflash_store_info, &mut mpp_reqs)?;
         }
 
         let (resp_tx, resp_rx) = std::sync::mpsc::sync_channel(0);
@@ -632,6 +817,7 @@ impl LocalMppCoordinator {
         ctx: &crate::StmtContext,
         statement: &PushdownStatementContext,
         pf: &Fragment,
+        all_tiflash_store_info: &HashMap<String, TiFlashStoreInfo>,
         mpp_reqs: &mut Vec<MppDispatchRequest>,
     ) -> Result<(), String> {
         let sink = pf
@@ -650,6 +836,7 @@ impl LocalMppCoordinator {
         let PhysicalPlan::ExchangeSender(sender) = sink else {
             return Err("the fragment's sink is not an exchange sender".to_owned());
         };
+        let mut zone_helper = TaskZoneInfoHelper::init(all_tiflash_store_info);
         let rg_name = if tidb_vardef::ENABLE_RESOURCE_CONTROL.load(Ordering::SeqCst) {
             statement.resource_group_name.clone()
         } else {
@@ -664,6 +851,11 @@ impl LocalMppCoordinator {
                 // already the physical table id of this partition, no need to
                 // update again.
                 update_executor_table_id(dag_req.root_executor.as_mut(), true, &[mpp_task.table_id])?;
+            }
+            zone_helper.is_root = pf.is_root;
+            zone_helper.current_task_zone = zone_helper.zone_of(mpp_task.location.address()).to_owned();
+            if let Some(root_executor) = dag_req.root_executor.as_mut() {
+                zone_helper.fill_same_zone_flag_for_exchange(root_executor);
             }
             let pb_data = dag_req.encode_to_vec();
             // Go `MPPClient.DispatchMPPTask`'s task meta.
@@ -1025,6 +1217,156 @@ mod tests {
             5,
             false
         ));
+    }
+
+    fn mock_task_zone_info_helper<'a>(
+        is_root: bool,
+        task_zone: &str,
+        tidb_zone: &str,
+        all_tiflash_store_info: &'a HashMap<String, TiFlashStoreInfo>,
+    ) -> TaskZoneInfoHelper<'a> {
+        TaskZoneInfoHelper {
+            all_tiflash_store_info,
+            exchange_zone_info: HashMap::new(),
+            tidb_zone: tidb_zone.to_owned(),
+            current_task_zone: task_zone.to_owned(),
+            is_root,
+        }
+    }
+
+    /// Go `TestZoneHelperTryQuickFill`.
+    #[test]
+    fn test_zone_helper_try_quick_fill() {
+        let mut slots = 3;
+        let all_tiflash_zone_info = HashMap::new();
+        let mut helper = mock_task_zone_info_helper(false, "", "east", &all_tiflash_zone_info);
+        let sender = tipb::Executor {
+            executor_id: Some("ExchangeSender_1".to_owned()),
+            tp: Some(ExecType::TypeExchangeSender as i32),
+            exchange_sender: Some(Box::default()),
+            ..tipb::Executor::default()
+        };
+        let mut same_zone_flags = Vec::with_capacity(slots);
+        // When task zone is empty, then the function returns true, and all sameZoneFlags are true
+        assert!(helper.try_quick_fill_with_uncertain_zones(&sender, slots, &mut same_zone_flags));
+        assert_eq!(same_zone_flags, [true; 3]);
+
+        // When task is root task, and executor is exchangeSender then the function compares tidbZone with currentTaskZone
+        helper.is_root = true;
+        helper.current_task_zone = "west".to_owned();
+        slots = 1;
+        same_zone_flags = Vec::with_capacity(slots);
+        assert!(helper.try_quick_fill_with_uncertain_zones(&sender, slots, &mut same_zone_flags));
+        assert_eq!(same_zone_flags, [false]);
+
+        helper.current_task_zone = "east".to_owned();
+        same_zone_flags = Vec::with_capacity(slots);
+        assert!(helper.try_quick_fill_with_uncertain_zones(&sender, slots, &mut same_zone_flags));
+        assert_eq!(same_zone_flags, [true]);
+
+        // When task is neither root exchange sender nor current task zone is empty, return false, and empty sameZoneFlags
+        helper.is_root = false;
+        helper.current_task_zone = "west".to_owned();
+        slots = 3;
+        same_zone_flags = Vec::with_capacity(slots);
+        assert!(!helper.try_quick_fill_with_uncertain_zones(&sender, slots, &mut same_zone_flags));
+        assert!(same_zone_flags.is_empty());
+
+        helper.is_root = true;
+        helper.current_task_zone = "west".to_owned();
+        same_zone_flags = Vec::with_capacity(slots);
+        let receiver = tipb::Executor {
+            executor_id: Some("ExchangeReceiver_2".to_owned()),
+            tp: Some(ExecType::TypeExchangeReceiver as i32),
+            exchange_receiver: Some(tipb::ExchangeReceiver::default()),
+            ..tipb::Executor::default()
+        };
+        assert!(!helper.try_quick_fill_with_uncertain_zones(&receiver, slots, &mut same_zone_flags));
+        assert!(same_zone_flags.is_empty());
+    }
+
+    /// Go's `fillSameZoneFlagForExchange` over a sender above a join of a
+    /// scan and a receiver, by the bytes Go marshals each filled executor to
+    /// (`testdata/task_zone_info_helper_go.txt`, from a test in Go's package):
+    /// stores a, b and c in zones east, west and none, a sender to a, b, c, an
+    /// unknown store and a task meta that does not decode, a receiver from b
+    /// and a.
+    #[test]
+    fn fill_same_zone_flag_for_exchange_fills_gos_bytes() {
+        let go: HashMap<&str, Vec<u8>> = include_str!("../testdata/task_zone_info_helper_go.txt")
+            .lines()
+            .map(|line| {
+                let (name, hex) = line.split_once(' ').unwrap();
+                let bytes = (0..hex.len())
+                    .step_by(2)
+                    .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+                    .collect();
+                (name, bytes)
+            })
+            .collect();
+        let input = || tipb::Executor::decode(go["input"].as_slice()).unwrap();
+        assert_eq!(input().encode_to_vec(), go["input"]);
+        let mut stores = HashMap::new();
+        for (id, (address, zone)) in [("a:3930", "east"), ("b:3930", "west"), ("c:3930", "")].into_iter().enumerate() {
+            add_tiflash_store_info(
+                &mut stores,
+                &tikv_client::proto::metapb::Store {
+                    id: id as u64 + 1,
+                    address: address.to_owned(),
+                    labels: vec![
+                        tikv_client::proto::metapb::StoreLabel {
+                            key: "engine".to_owned(),
+                            value: "tiflash".to_owned(),
+                        },
+                        tikv_client::proto::metapb::StoreLabel {
+                            key: "zone".to_owned(),
+                            value: zone.to_owned(),
+                        },
+                    ],
+                    ..Default::default()
+                },
+            );
+        }
+        assert_eq!(stores["b:3930"].store_id, 2);
+        for (name, is_root, task_zone, tidb_zone, has_id) in [
+            ("nonroot_west", false, "west", "east", true),
+            ("nonroot_east", false, "east", "east", true),
+            ("root_west_tidb_east", true, "west", "east", true),
+            ("root_west_tidb_west", true, "west", "west", true),
+            ("root_west_tidb_empty", true, "west", "", true),
+            ("task_zone_empty", false, "", "east", true),
+            ("root_task_zone_empty", true, "", "east", true),
+            ("no_executor_id", false, "west", "east", false),
+        ] {
+            let mut helper = mock_task_zone_info_helper(is_root, task_zone, tidb_zone, &stores);
+            let mut exec = input();
+            if !has_id {
+                exec.executor_id = None;
+            }
+            helper.fill_same_zone_flag_for_exchange(&mut exec);
+            assert_eq!(exec.encode_to_vec(), go[name], "{name}");
+        }
+
+        // One helper over a fragment's tasks: an executor's zones are read once.
+        let mut helper = mock_task_zone_info_helper(false, "west", "east", &stores);
+        helper.fill_same_zone_flag_for_exchange(&mut input());
+        helper.current_task_zone = "east".to_owned();
+        let meta = |address: &str| {
+            TaskMeta {
+                address: address.to_owned(),
+                ..TaskMeta::default()
+            }
+            .encode_to_vec()
+        };
+        let mut second = input();
+        second.exchange_sender.as_mut().unwrap().encoded_task_meta = vec![meta("b:3930"); 5];
+        let tipb::Executor { join: Some(join), .. } = second.exchange_sender.as_mut().unwrap().child.as_deref_mut().unwrap()
+        else {
+            panic!("a join under the sender");
+        };
+        join.children[1].exchange_receiver.as_mut().unwrap().encoded_task_meta = vec![meta("a:3930")];
+        helper.fill_same_zone_flag_for_exchange(&mut second);
+        assert_eq!(second.encode_to_vec(), go["cached_second_task"]);
     }
 
     fn summary(executor_id: &str, rows: u64) -> tipb::ExecutorExecutionSummary {

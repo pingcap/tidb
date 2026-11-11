@@ -323,6 +323,20 @@ impl<S: tikv_client::PdClient> MPPClient<S> {
 }
 
 impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for MPPClient<S> {
+    fn tiflash_stores(&self) -> Vec<tikv_client::proto::metapb::Store> {
+        self.store
+            .store()
+            .pd_client()
+            .get_tiflash_stores(tikv_client::TiFlashLabelFilter::NoWriteNode)
+    }
+
+    fn tiflash_compute_stores(&self) -> Result<Vec<tikv_client::proto::metapb::Store>, String> {
+        let pd = self.store.store().pd_client();
+        self.store
+            .block_on(async move { pd.get_tiflash_compute_stores().await })
+            .map_err(|error| error.to_string())
+    }
+
     fn construct_mpp_tasks(
         &self,
         ctx: &Arc<dyn MppContext>,

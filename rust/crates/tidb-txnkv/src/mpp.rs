@@ -357,6 +357,19 @@ pub trait MppClient: std::fmt::Debug + Send + Sync {
         kv_context: &crate::StatementKvContext,
         rpc_interceptor: &crate::option::RpcInterceptorOption,
     ) -> Result<Box<dyn MppStreamResponse>, MppError>;
+
+    /// Go `helper.Storage.GetRegionCache().GetTiFlashStores(
+    /// tikv.LabelFilterNoTiFlashWriteNode)`, which the coordinator reads each
+    /// store's zone from. A store that is no `helper.Storage` has none.
+    fn tiflash_stores(&self) -> Vec<tikv_client::proto::metapb::Store> {
+        Vec::new()
+    }
+
+    /// Go `RegionCache.GetTiFlashComputeStores`, which the coordinator adds
+    /// on a disaggregated cluster.
+    fn tiflash_compute_stores(&self) -> Result<Vec<tikv_client::proto::metapb::Store>, String> {
+        Ok(Vec::new())
+    }
 }
 
 /// MPP execution coordinator contract.
