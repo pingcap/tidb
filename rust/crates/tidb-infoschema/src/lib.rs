@@ -79,6 +79,29 @@ pub mod statistics_access;
 pub mod temporary;
 pub mod cluster_catalog;
 
+/// Go `dbutil.CheckTableModeIsNormal` (`pkg/util/dbutil/table.go:48`): only a
+/// table in `TableModeNormal` can be accessed; `table_name` is reported as
+/// the caller holds it.
+///
+/// # Errors
+///
+/// `ErrProtectedTableMode` for any other mode.
+pub fn check_table_mode_is_normal(
+    table_name: &str,
+    mode: tidb_model::TableMode,
+) -> Result<(), tidb_terror::TerrorError> {
+    if mode == tidb_model::TableMode::NORMAL {
+        return Ok(());
+    }
+    Err(infoschema_errors::ERR_PROTECTED_TABLE_MODE
+        .fast_gen_by_args(&[table_name.to_owned().into(), mode.to_string().into()]))
+}
+
+/// Whether `entry` is a table in a mode other than `TableModeNormal`.
+fn table_mode_is_set(entry: &TableEntry) -> bool {
+    matches!(entry, TableEntry::Kv(table) if table.meta().read().mode != tidb_model::TableMode::NORMAL)
+}
+
 /// Splits a table reference into its schema and table names. A bare name
 /// resolves in the default schema; `db.t` names its schema explicitly.
 ///
@@ -212,6 +235,11 @@ pub struct InfoSchema {
     /// `LOCK TABLES` lock, which every statement's `CheckTableLock` asks;
     /// monotonic for the same reason as `foreign_keys_present`.
     table_locks_present: bool,
+    /// Sticky indication that some table of this catalog has been in a
+    /// mode other than `TableModeNormal`, which every statement's
+    /// `CheckTableMode` asks; monotonic for the same reason as
+    /// `foreign_keys_present`.
+    table_modes_present: bool,
     /// The stored tables this tier could not build into this image (Go
     /// builds every stored table, so Go has no such list).
     skipped: Arc<[cluster_catalog::SkippedTable]>,
@@ -409,6 +437,7 @@ impl SessionExtendedInfoSchema {
                 temporary_sweep: None,
                 foreign_keys_present: false,
                 table_locks_present: false,
+                table_modes_present: false,
                 skipped: Arc::from(Vec::new()),
             },
             planner_view: std::sync::OnceLock::new(),
@@ -595,6 +624,7 @@ impl SessionExtendedInfoSchema {
         mut table: TableEntry,
     ) -> Result<(), DriverError> {
         let table_is_locked = matches!(&table, TableEntry::Kv(table) if table.lock().is_some());
+        let table_mode_is_set = table_mode_is_set(&table);
         let table_has_foreign_keys = matches!(
             &table,
             TableEntry::Kv(table) if !table.meta().read().foreign_keys.is_empty()
@@ -617,6 +647,7 @@ impl SessionExtendedInfoSchema {
             .insert(name.go_to_lower(), std::sync::Arc::new(table));
         self.schema.foreign_keys_present |= table_has_foreign_keys;
         self.schema.table_locks_present |= table_is_locked;
+        self.schema.table_modes_present |= table_mode_is_set;
         self.bump_version();
         Ok(())
     }
@@ -913,9 +944,10 @@ impl SessionExtendedInfoSchema {
         };
         self.bump_metadata_version();
         Arc::make_mut(&mut self.schema.databases).insert(key, Arc::clone(database));
-        // Both flags are sticky: a stale `true` only costs a scan.
+        // The flags are sticky: a stale `true` only costs a scan.
         self.schema.foreign_keys_present |= previous.schema.foreign_keys_present;
         self.schema.table_locks_present |= previous.schema.table_locks_present;
+        self.schema.table_modes_present |= previous.schema.table_modes_present;
         self.bump_version();
         true
     }
@@ -948,6 +980,7 @@ impl SessionExtendedInfoSchema {
             return false;
         };
         let table_is_locked = matches!(&*entry, TableEntry::Kv(table) if table.lock().is_some());
+        let table_mode_is_set = table_mode_is_set(&entry);
         let table_has_foreign_keys = matches!(
             &*entry,
             TableEntry::Kv(table) if !table.meta().read().foreign_keys.is_empty()
@@ -959,6 +992,7 @@ impl SessionExtendedInfoSchema {
         schema.tables.insert(name, entry);
         self.schema.foreign_keys_present |= table_has_foreign_keys;
         self.schema.table_locks_present |= table_is_locked;
+        self.schema.table_modes_present |= table_mode_is_set;
         self.bump_version();
         true
     }
@@ -1194,6 +1228,38 @@ impl SessionExtendedInfoSchema {
     #[must_use]
     pub fn has_table_locks(&self) -> bool {
         self.schema.table_locks_present
+    }
+
+    /// Whether any table of this catalog may be in a mode other than
+    /// `TableModeNormal`. `false` lets Go's `CheckTableMode` answer without
+    /// resolving a table name.
+    #[must_use]
+    pub fn has_table_modes(&self) -> bool {
+        self.schema.table_modes_present
+    }
+
+    /// Go `core.CheckTableMode`'s loop over the statement's resolved table
+    /// names (`resolve.Context.GetTableNames`): the first of `names`, as
+    /// written and resolved against `current_db`, that is not in
+    /// `TableModeNormal`, with its mode -- the arguments of the
+    /// `ErrProtectedTableMode` that [`check_table_mode_is_normal`] raises.
+    #[must_use]
+    pub fn protected_table_mode(
+        &self,
+        names: &[Vec<String>],
+        current_db: &str,
+    ) -> Option<(String, tidb_model::TableMode)> {
+        if !self.has_table_modes() {
+            return None;
+        }
+        names.iter().find_map(|path| {
+            let (database, name) = split_table_path(path, current_db).ok()?;
+            let Some(TableEntry::Kv(table)) = self.table_in(database, name) else {
+                return None;
+            };
+            let mode = table.meta().read().mode;
+            (mode != tidb_model::TableMode::NORMAL).then(|| (name.to_owned(), mode))
+        })
     }
 
     /// Go `DBInfo.ID` of `database`.

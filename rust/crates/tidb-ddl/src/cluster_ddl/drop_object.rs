@@ -110,6 +110,9 @@ pub fn drop_table_object<S: MetaSnapshot>(
                 return missing();
             };
             let stored = stored.read();
+            // Go `dropTableObject` asks the mode of every object it finds,
+            // before it tells a table from a view or a sequence.
+            super::rename_table::check_table_mode_is_normal(&stored)?;
             if !check_cluster_drop_object(schema, table, &stored, false)? {
                 return missing();
             }

@@ -927,6 +927,13 @@ pub struct StmtContextData {
     stmt_safe_ts: std::sync::OnceLock<u64>,
     /// See [`StmtContextSessionState::locked_tables`].
     locked_tables: Option<LockedTables>,
+    /// What Go's `core.CheckTableMode` finds for the statement this context
+    /// plans: the first table its resolve context names that is not in
+    /// `TableModeNormal`, with that mode. `planner.optimize` raises it after
+    /// `CheckPrivilege` and `CheckTableLock`, so the session installs it
+    /// beside the plan privilege check
+    /// ([`Self::with_protected_table_mode`]).
+    protected_table_mode: Option<(String, tidb_model::TableMode)>,
     /// Go expression BuildContext.NewCollationEnabled, captured for this task.
     new_collation_enabled: bool,
     /// Go `SessionVars.Rng`: the SESSION-scoped generator unseeded `RAND()`
@@ -3110,6 +3117,7 @@ impl StmtContext {
             min_safe_ts_provider: session.min_safe_ts_provider,
             stmt_safe_ts: std::sync::OnceLock::new(),
             locked_tables: session.locked_tables,
+            protected_table_mode: None,
             new_collation_enabled: tidb_datatype::new_collation_enabled(),
             rand_session: None,
             builtin_function_usage_inc: None,
@@ -4532,6 +4540,22 @@ impl StmtContext {
         check: Option<Arc<dyn std::any::Any + Send + Sync>>,
     ) -> Self {
         self.plan_privilege_check = check;
+        self
+    }
+
+    /// The statement's table not in `TableModeNormal` (see the field).
+    pub fn protected_table_mode(&self) -> Option<&(String, tidb_model::TableMode)> {
+        self.protected_table_mode.as_ref()
+    }
+
+    /// Installs the statement's table not in `TableModeNormal` (see the
+    /// field).
+    #[must_use]
+    pub fn with_protected_table_mode(
+        mut self,
+        table: Option<(String, tidb_model::TableMode)>,
+    ) -> Self {
+        self.protected_table_mode = table;
         self
     }
 

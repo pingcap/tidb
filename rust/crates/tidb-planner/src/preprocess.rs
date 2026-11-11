@@ -205,6 +205,135 @@ pub fn handle_table_name<N: Visitable>(node: &mut N, current_db: &str) -> Result
     Ok(())
 }
 
+/// The table names Go's preprocessor leaves in a statement's
+/// `resolve.Context` (`GetTableNames`), as written: `handleTableName`
+/// (`pkg/planner/core/preprocess.go:1757`) records every `*ast.TableName` it
+/// leaves except a CTE's, and records none while `inCreateOrDropTable` or
+/// `inRepairTable` is set -- CREATE TABLE / VIEW / SEQUENCE, DROP TABLE /
+/// VIEW / SEQUENCE, RENAME TABLE, an ALTER TABLE that renames the table or
+/// adds a foreign key (`resolveAlterTableStmt`), a BRIE statement and ADMIN
+/// REPAIR TABLE. FLASHBACK TABLE, RECOVER TABLE and OPTIMIZE TABLE hold
+/// names Go's `Accept` never visits.
+#[must_use]
+pub fn resolve_ctx_table_names(stmt: &Stmt) -> Vec<Vec<String>> {
+    use tidb_ast::{AdminCheckStmt, AdminStmt, AlterTableAction, DdlStmt, DmlStmt};
+    struct Names {
+        scope: CteScope,
+        names: Vec<Vec<String>>,
+    }
+    impl Visitor for Names {
+        fn enter(&mut self, node: &mut dyn Any) -> bool {
+            self.scope.enter(node);
+            if let Some(table_ref) = node.downcast_mut::<tidb_ast::TableRef>() {
+                if !self.scope.contains(&table_ref.name) {
+                    self.names.push(table_ref.name.clone());
+                }
+            } else if let Some(insert) = node.downcast_mut::<tidb_ast::InsertStmt>() {
+                self.names.push(insert.table.clone());
+            }
+            false
+        }
+
+        fn leave(&mut self, node: &mut dyn Any) -> bool {
+            self.scope.leave(node);
+            true
+        }
+    }
+    let mut names = Vec::new();
+    match stmt {
+        Stmt::Ddl(ddl) => match &**ddl {
+            DdlStmt::CreateTable(_)
+            | DdlStmt::CreateView(_)
+            | DdlStmt::AlterView(_)
+            | DdlStmt::DropTable(_)
+            | DdlStmt::DropView { .. }
+            | DdlStmt::RenameTable(_)
+            | DdlStmt::CreateSequence(_)
+            | DdlStmt::DropSequence(_)
+            | DdlStmt::RepairTable(_) => return names,
+            DdlStmt::AlterTable(alter) => {
+                if alter.actions.iter().any(|action| {
+                    matches!(
+                        action,
+                        AlterTableAction::RenameTable { .. } | AlterTableAction::AddForeignKey(_)
+                    )
+                }) {
+                    return names;
+                }
+                names.push(alter.name.clone());
+            }
+            DdlStmt::CreateIndex(create) => names.push(create.table.clone()),
+            DdlStmt::DropIndex(drop) => names.push(drop.table.clone()),
+            DdlStmt::TruncateTable(table) => names.push((**table).clone()),
+            DdlStmt::LockTables(locks) => names.extend(locks.iter().map(|lock| lock.table.clone())),
+            DdlStmt::AlterSequence(alter) => names.push(alter.name.clone()),
+            DdlStmt::CleanupTableLock(cleanup) => names.extend(cleanup.tables.iter().cloned()),
+            _ => {}
+        },
+        Stmt::Admin(admin) => match &**admin {
+            AdminStmt::Brie(_) => return names,
+            AdminStmt::AnalyzeTable(analyze) => names.extend(analyze.tables.iter().cloned()),
+            AdminStmt::AdminCheck(check) => match &**check {
+                AdminCheckStmt::Table { tables } => names.extend(tables.iter().cloned()),
+                AdminCheckStmt::Index { table, .. } => names.push(table.clone()),
+            },
+            AdminStmt::AdminChecksum(checksum) => names.extend(checksum.tables.iter().cloned()),
+            AdminStmt::AdminRecoverIndex(index) | AdminStmt::AdminCleanupIndex(index) => {
+                names.push(index.table.clone());
+            }
+            AdminStmt::ShowNextRowId(show) => names.push(show.table.clone()),
+            AdminStmt::DropStats(drop) => names.extend(drop.tables.iter().cloned()),
+            AdminStmt::LockStats(lock) | AdminStmt::UnlockStats(lock) => {
+                names.extend(lock.tables.iter().map(|table| table.name.clone()));
+            }
+            AdminStmt::CompactTable(compact) => names.push(compact.table.clone()),
+            AdminStmt::SplitRegion(split) => names.push(split.table.clone()),
+            AdminStmt::Show(show) => names.extend(show.table.clone()),
+            _ => {}
+        },
+        Stmt::Dml(dml) => match &**dml {
+            DmlStmt::ImportInto(import) => names.push(import.table.clone()),
+            DmlStmt::LoadData(load) => names.push(load.table.clone()),
+            DmlStmt::DistributeTable(distribute) => names.push(distribute.table.clone()),
+            _ => {}
+        },
+        Stmt::Query(_) | Stmt::Session(_) => {}
+    }
+    let mut collector = Names {
+        scope: CteScope::default(),
+        names,
+    };
+    stmt.clone().accept(&mut collector);
+    collector.names
+}
+
+/// The table names Go's `core.CheckTableMode`
+/// (`pkg/planner/core/optimizer.go:304`) checks for `stmt`: none for a SHOW
+/// and none for ADMIN CHECKSUM TABLE (which IMPORT INTO runs on its own
+/// table); an EXPLAIN is not checked itself, so its names are the ones the
+/// optimization of the statement it explains checks.
+#[must_use]
+pub fn check_table_mode_names(stmt: &Stmt) -> Vec<Vec<String>> {
+    use tidb_ast::{AdminStmt, ExplainTarget};
+    if let Stmt::Admin(admin) = stmt {
+        match &**admin {
+            AdminStmt::Show(_) | AdminStmt::AdminChecksum(_) => return Vec::new(),
+            AdminStmt::Explain(explain) => {
+                return match &explain.target {
+                    ExplainTarget::Statement(inner) | ExplainTarget::ExploreStatement(inner) => {
+                        check_table_mode_names(inner)
+                    }
+                    ExplainTarget::PlanDigest(_)
+                    | ExplainTarget::ExploreDigest(_)
+                    | ExplainTarget::ExploreReplayer(_) => Vec::new(),
+                };
+            }
+            _ => {}
+        }
+    }
+    resolve_ctx_table_names(stmt)
+}
+
 /// Go `preprocessor.resolveShowStmt` (`pkg/planner/core/preprocess.go:2028`)
 /// and the `handleTableName` the preprocessor then runs on `Table`: a SHOW
 /// without a database takes its table's schema, else the current database;

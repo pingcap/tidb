@@ -364,7 +364,10 @@ pub fn plan_privilege_check_any(
 /// Go `planner.optimize`'s checks after `buildLogicalPlan`, over the visit
 /// infos of the `PlanBuilder` that built the statement: `CheckPrivilege` on
 /// `VisitInfo4PrivCheck(...)` (for a query or a DML, a local temporary table
-/// needs no grant), then `CheckTableLock`.
+/// needs no grant), then `CheckTableLock`, then `CheckTableMode` on the
+/// statement's resolved table names (`ctx.protected_table_mode()`). A fast
+/// plan (`TryFastPlan`) returns before all three and checks its privileges
+/// itself, so it never asks the table mode.
 ///
 /// A query's build reaches it before `DoOptimize`; a DML's after its
 /// `buildInsert` / `buildUpdate` / `buildDelete`, which optimize the read
@@ -375,7 +378,11 @@ pub fn check_plan_privilege(
     visits: &[tidb_planner::plan_builder::visit_info::VisitInfo],
 ) -> Result<(), crate::DriverError> {
     let requests: Vec<_> = visits.iter().map(statement_request_of_visit).collect();
-    check_plan_privilege_requests(ctx, catalog, &requests)
+    check_plan_privilege_requests(ctx, catalog, &requests)?;
+    if let Some((table, mode)) = ctx.protected_table_mode() {
+        tidb_infoschema::check_table_mode_is_normal(table, *mode)?;
+    }
+    Ok(())
 }
 
 /// [`request_of_visit`] under a query's or a DML's `VisitInfo4PrivCheck`:

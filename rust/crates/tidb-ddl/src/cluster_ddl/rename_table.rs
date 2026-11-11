@@ -106,14 +106,13 @@ fn check_renamable(
             format!("'{operation}' is unsupported on cache tables."),
         ));
     }
-    // Go `dbutil.CheckTableModeIsNormal`.
-    if table.mode != tidb_model::TableMode::NORMAL {
-        return Err(coded_refusal(
-            &tidb_infoschema::infoschema_errors::ERR_PROTECTED_TABLE_MODE,
-            format!("Table {} is in mode {}", table.name.original(), table.mode),
-        ));
-    }
-    Ok(())
+    check_table_mode_is_normal(&table)
+}
+
+/// Go `dbutil.CheckTableModeIsNormal(tableInfo.Name, tableInfo.Mode)`.
+pub(super) fn check_table_mode_is_normal(table: &TableInfo) -> Result<(), DdlPlanError> {
+    tidb_infoschema::check_table_mode_is_normal(table.name.original(), table.mode)
+        .map_err(DdlPlanError::from)
 }
 
 /// Go `executor.RenameTable` up to `doDDLJob2`. `None` for any other

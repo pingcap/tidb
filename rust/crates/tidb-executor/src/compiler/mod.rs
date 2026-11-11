@@ -170,7 +170,11 @@ pub trait CompilerSession: crate::admin::AdminExec {
     /// `ctx` carrying the session's plan privilege check
     /// ([`crate::table_privilege::check_plan_privilege`]), for a statement
     /// whose plan the executor builds.
-    fn with_plan_privilege_check(&self, ctx: crate::StmtContext) -> crate::StmtContext;
+    fn with_plan_privilege_check(
+        &self,
+        ctx: crate::StmtContext,
+        stmt: &Stmt,
+    ) -> Result<crate::StmtContext, DriverError>;
     /// Session primitive.
     fn bind_statement_hints(&mut self, stmt: &Stmt) -> Option<Stmt>;
     /// Applies Go `optimize.go`'s `StmtHints.SetVars` after the canonical

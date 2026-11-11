@@ -104,6 +104,10 @@ pub(crate) fn build_fk_triggers(
             tidb_plannererrors::ERR_ROW_IS_REFERENCED2
                 .gen_with_stack_by_args(&[fk.into()]),
         ),
+        FkPlanError::ProtectedTableMode(table, mode) => DriverError::from(
+            tidb_infoschema::check_table_mode_is_normal(&table, mode)
+                .expect_err("the child table is not in TableModeNormal"),
+        ),
         FkPlanError::Unsupported(message) => DriverError::unsupported(message),
     })
 }

@@ -166,7 +166,7 @@ pub trait ExplainCompile: super::CompilerSession {
         // `checkStableResultMode` reads to keep `ResultReorder` off a DML.
         // Go's `buildExplain` optimizes the target (`OptimizeAstNode`), whose
         // `CheckPrivilege` reads the target's `PlanBuilder` visit infos.
-        let mut ctx = self.with_plan_privilege_check(ctx);
+        let mut ctx = self.with_plan_privilege_check(ctx, target)?;
         // Go `buildExplain` optimizes the target through `optimizeNoCache`,
         // which plans a target that is not read-only without TiFlash.
         if self.tiflash_engine_removed_due_to_strict_sql_mode(target) {

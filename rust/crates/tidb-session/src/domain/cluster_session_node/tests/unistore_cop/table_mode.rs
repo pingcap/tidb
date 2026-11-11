@@ -104,6 +104,198 @@ fn alter_table_mode_runs_as_a_persisted_job_like_go() {
     );
 }
 
+/// What `sql` is refused with (`code|message`), `None` when it runs.
+fn refusal(session: &mut Session, sql: &str) -> Option<String> {
+    use crate::domain::resultset_source::ResultSetSource;
+    let mut result = match session.node_conn().execute(sql) {
+        Ok(result) => result,
+        Err(error) => return Some(format!("{}|{}", error.code, error.message)),
+    };
+    let source = result.source();
+    loop {
+        match source.next_batch(8) {
+            Ok(batch) if batch.is_empty() => break,
+            Ok(_) => {}
+            Err(error) => return Some(format!("{}|{}", error.code, error.message)),
+        }
+    }
+    source.finish().expect("finish");
+    source.close().expect("close");
+    None
+}
+
+/// Sets the mode of `test.<table>` through an `ActionAlterTableMode` job.
+fn set_table_mode(stack: &UnistoreClusterStack, table: &str, table_mode: TableMode) {
+    let (schema, info) = stack
+        .factory
+        .catalog_snapshot()
+        .table_info_by_name("test", table)
+        .unwrap();
+    let (schema_id, table_id) = (schema.read().id, info.read().id);
+    stack
+        .factory
+        .ddl
+        .execute(
+            &DdlStatement::AlterTableMode {
+                table_mode,
+                schema_id,
+                table_id,
+            },
+            &tidb_sessionctx::StmtContext::for_query(),
+        )
+        .unwrap();
+}
+
+/// Go `TestTableModeBasic`'s statements on a table in `TableModeRestore`
+/// (and `TableModeImport`): the statements that only read its metadata run,
+/// every other is `ErrProtectedTableMode` -- from `core.CheckTableMode`, or
+/// from the DDL executor for DROP TABLE and the renames.
+#[test]
+fn a_table_not_in_normal_mode_is_protected_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(2113)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    for create in [
+        "create table t1(id int, c1 int, c2 int, index idx1(c1))",
+        "create table t2(id int, c1 int, c2 int, index idx1(c1))",
+        "create table t1_foreign_key(id int, pid INT, INDEX idx_pid (pid),FOREIGN KEY fk_1 (pid) REFERENCES t1(c1) ON UPDATE SET NULL)",
+        "create table t1_restore_import(id int, c1 int, c2 int, index idx1(c1))",
+    ] {
+        rows(&mut session, create);
+    }
+    set_table_mode(&stack, "t1_foreign_key", TableMode::IMPORT);
+    assert_eq!(
+        refusal(&mut session, "ALTER TABLE t1_foreign_key DROP FOREIGN KEY fk_1").as_deref(),
+        Some("8258|Table t1_foreign_key is in mode Import"),
+    );
+    set_table_mode(&stack, "t1_restore_import", TableMode::RESTORE);
+
+    for allowed in [
+        "show create table t1_restore_import",
+        "show table status where Name = 't1_restore_import'",
+        "show columns from t1_restore_import",
+        "show index from t1_restore_import",
+        "describe t1_restore_import",
+        "create table t1_restore_import_2 like t1_restore_import",
+        "create view t1_restore_import_view as select * from t1_restore_import",
+        "create table foreign_key_child(id int, pid INT, INDEX idx_pid (pid),FOREIGN KEY (pid) REFERENCES t1_restore_import(c1) ON DELETE CASCADE)",
+        "drop table foreign_key_child",
+        "admin checksum table t1_restore_import",
+        // A table in `TableModeNormal` beside it is untouched.
+        "select * from t1",
+        "insert into t2 values(1, 1, 1)",
+    ] {
+        assert_eq!(refusal(&mut session, allowed), None, "{allowed}");
+    }
+    for protected in [
+        "select * from t1_restore_import",
+        "explain select * from t1_restore_import",
+        "desc select * from t1_restore_import",
+        "insert into t1_restore_import values(1, 1, 1)",
+        "replace into t1_restore_import values(1,1,1)",
+        "update t1_restore_import set id = 2 where id = 1",
+        "delete from t1_restore_import where id = 2",
+        "truncate table t1_restore_import",
+        "drop table t1_restore_import",
+        "alter table t1_restore_import rename to t1_new",
+        "rename table t1_restore_import to t1_new",
+        "rename table t1_restore_import to t1_new, t2 to t2_new",
+        "alter table t1_restore_import modify column c2 bigint",
+        "alter table t1_restore_import add column c3 int",
+        "alter table t1_restore_import drop column c2",
+        "alter table t1_restore_import drop index idx1",
+        "alter table t1_restore_import add index idx2(c2)",
+        "alter table t1_restore_import partition by range(id) (partition p0 values less than (100))",
+        "alter table t1_restore_import comment='new comment'",
+        "alter table t1_restore_import convert to character set utf8mb4",
+        "alter table t1_restore_import rename column c1 to c1_new",
+        "alter table t1_restore_import alter column c1 set default 100",
+        "alter table t1_restore_import add foreign key fk_1 (c2) REFERENCES t1(c1) ON UPDATE SET NULL ",
+        // Statements Go's test leaves out, whose table name its
+        // preprocessor resolves the same way.
+        "select * from t1 where id in (select id from t1_restore_import)",
+        "insert into t2 select * from t1_restore_import",
+        "explain insert into t1_restore_import values(1, 1, 1)",
+        "explain update t1_restore_import set id = 2 where id = 1",
+        "create index idx2 on t1_restore_import(c2)",
+        "drop index idx1 on t1_restore_import",
+        "analyze table t1_restore_import",
+        "admin check table t1_restore_import",
+    ] {
+        assert_eq!(
+            refusal(&mut session, protected).as_deref(),
+            Some("8258|Table t1_restore_import is in mode Restore"),
+            "{protected}"
+        );
+    }
+    rows(&mut session, "begin");
+    assert_eq!(
+        refusal(&mut session, "insert into t1_restore_import values(1,1,1)").as_deref(),
+        Some("8258|Table t1_restore_import is in mode Restore"),
+    );
+    rows(&mut session, "rollback");
+
+    // Back in `TableModeNormal` the table is an ordinary one.
+    set_table_mode(&stack, "t1_restore_import", TableMode::NORMAL);
+    assert_eq!(refusal(&mut session, "insert into t1_restore_import values(1, 1, 1)"), None);
+    assert_eq!(
+        displayed(rows(&mut session, "select * from t1_restore_import")),
+        [["1", "1", "1"]]
+    );
+}
+
+/// Go `TestForeignKeyAndTableMode` (`pkg/ddl/tests/fk`): a parent's write
+/// that would check or cascade into a child table not in `TableModeNormal`
+/// is `ErrProtectedTableMode` (`buildOnDeleteOrUpdateFKTrigger`).
+#[test]
+fn a_parent_write_into_a_protected_child_is_refused_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(2114)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    for sql in [
+        "create table parent_1(id int primary key, name varchar(20))",
+        "create table parent_2(id int primary key, name varchar(20))",
+        "create table child_delete_cascade(id int primary key, parent_id int, constraint fk_cascade foreign key (parent_id) references parent_1(id) on delete cascade)",
+        "create table child_update_cascade(id int primary key, parent_id int, constraint fk_cascade foreign key (parent_id) references parent_2(id) on update cascade)",
+        "insert into parent_1 values(1, 'parent_1')",
+        "insert into child_delete_cascade values(111, 1)",
+        "insert into parent_2 values(2, 'parent_2'), (22222, 'parent_22')",
+        "insert into child_update_cascade values(222, 2)",
+    ] {
+        rows(&mut session, sql);
+    }
+    let children = ["child_delete_cascade", "child_update_cascade"];
+    for child in children {
+        set_table_mode(&stack, child, TableMode::IMPORT);
+    }
+    for (sql, child) in [
+        ("delete from parent_1 where id = 1", children[0]),
+        ("update parent_2 set id = 22 where id = 2", children[1]),
+        (
+            "insert into parent_2 values (2, 'parent_11') on duplicate key update id =22",
+            children[1],
+        ),
+    ] {
+        assert_eq!(
+            refusal(&mut session, sql),
+            Some(format!("8258|Table {child} is in mode Import")),
+            "{sql}"
+        );
+    }
+    for child in children {
+        set_table_mode(&stack, child, TableMode::NORMAL);
+    }
+    rows(&mut session, "delete from parent_1 where id = 1");
+    rows(&mut session, "update parent_2 set id = 22 where id = 2");
+    assert!(rows(&mut session, "select * from child_delete_cascade").is_empty());
+    assert_eq!(
+        displayed(rows(&mut session, "select * from child_update_cascade")),
+        [["222", "22"]]
+    );
+}
+
 /// Go `TestRefreshMetaBasic`: an `ActionRefreshMeta` job publishes exactly
 /// one schema version.
 #[test]

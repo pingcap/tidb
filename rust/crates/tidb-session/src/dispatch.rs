@@ -1892,7 +1892,7 @@ impl Session {
             Stmt::Query(query) => {
                 let current_db = self.vars.current_db.clone();
                 let ctx =
-                    self.with_plan_privilege_check(self.statement_context_for_stmt(&stmt, false));
+                    self.with_plan_privilege_check(self.statement_context_for_stmt(&stmt, false), &stmt)?;
                 // go `SelectIntoOutfile` opens the destination with O_EXCL
                 // when the executor opens, after the statement was planned
                 // and its privileges checked: an existing file is refused
@@ -2048,7 +2048,7 @@ impl Session {
                                 insert.rows.len() == 1,
                                 enable_strict_not_null_check,
                             );
-                        let ctx = self.with_plan_privilege_check(ctx);
+                        let ctx = self.with_plan_privilege_check(ctx, &stmt)?;
                         if insert.source.is_some() {
                             self.write_sli.set_invalid();
                         }
@@ -2109,7 +2109,7 @@ impl Session {
                             // `sc.Priority = stmt.Priority`.
                             .with_statement_priority(statement_priority_of(&stmt))
                             .with_statement_class(tidb_sessionctx::StatementClass::Update);
-                        let ctx = self.with_plan_privilege_check(ctx);
+                        let ctx = self.with_plan_privilege_check(ctx, &stmt)?;
                         let output = match &update.kind {
                             tidb_ast::UpdateKind::Single(_) => self
                                 .retrieving_memory_tables(&ctx, |session| {
@@ -2162,7 +2162,7 @@ impl Session {
                             // `sc.Priority = stmt.Priority`.
                             .with_statement_priority(statement_priority_of(&stmt))
                             .with_statement_class(tidb_sessionctx::StatementClass::Delete);
-                        let ctx = self.with_plan_privilege_check(ctx);
+                        let ctx = self.with_plan_privilege_check(ctx, &stmt)?;
                         let output = match &delete.kind {
                             tidb_ast::DeleteKind::Single(_) => self
                                 .retrieving_memory_tables(&ctx, |session| {

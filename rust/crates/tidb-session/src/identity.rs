@@ -582,6 +582,7 @@ impl Session {
             Some(requests) => self.check_table_privilege_requests(requests)?,
             None => self.check_visit_infos(&visits)?,
         }
+        self.check_table_mode(stmt)?;
         Ok(Some(plan))
     }
 
@@ -613,6 +614,7 @@ impl Session {
             .map(tidb_executor::table_privilege::request_of_visit)
             .collect();
         self.check_table_privilege_requests(&requests)?;
+        self.check_table_mode(stmt)?;
         self.precompiled = Some(PrecompiledStatement {
             stmt: stmt.clone(),
             requests,
@@ -1001,16 +1003,58 @@ impl Session {
         )
     }
 
-    /// `ctx` for a user statement whose plan the executor builds: it carries
-    /// [`Self::plan_privilege_check`], which the build's `CheckPrivilege`
-    /// and `CheckTableLock` run on.
+    /// `ctx` for a user statement `stmt` whose plan the executor builds: it
+    /// carries [`Self::plan_privilege_check`], which the build's
+    /// `CheckPrivilege` and `CheckTableLock` run on, and what the build's
+    /// `CheckTableMode` finds ([`Self::protected_table_mode`]).
     pub(crate) fn with_plan_privilege_check(
         &self,
         ctx: tidb_sessionctx::StmtContext,
-    ) -> tidb_sessionctx::StmtContext {
-        ctx.with_plan_privilege_check_any(Some(
-            tidb_executor::table_privilege::plan_privilege_check_any(self.plan_privilege_check()),
-        ))
+        stmt: &Stmt,
+    ) -> Result<tidb_sessionctx::StmtContext, DriverError> {
+        Ok(ctx
+            .with_plan_privilege_check_any(Some(
+                tidb_executor::table_privilege::plan_privilege_check_any(
+                    self.plan_privilege_check(),
+                ),
+            ))
+            .with_protected_table_mode(self.protected_table_mode(stmt)?))
+    }
+
+    /// Go `core.CheckTableMode(node)` (`pkg/planner/core/optimizer.go:304`)
+    /// as far as its answer: the first table `stmt`'s resolve context names
+    /// that is not in `TableModeNormal`, with that mode.
+    fn protected_table_mode(
+        &self,
+        stmt: &Stmt,
+    ) -> Result<Option<(String, tidb_model::TableMode)>, DriverError> {
+        self.with_txn_catalog(|catalog| {
+            if !catalog.has_table_modes() {
+                return None;
+            }
+            catalog.protected_table_mode(
+                &tidb_planner::preprocess::check_table_mode_names(stmt),
+                &self.vars.current_db,
+            )
+        })
+    }
+
+    /// Go `core.CheckTableMode(node)` for a statement the session plans
+    /// itself, after its `CheckPrivilege` and `CheckTableLock`. An EXPLAIN is
+    /// not checked here: the build of the statement it explains is.
+    ///
+    /// # Errors
+    ///
+    /// `ErrProtectedTableMode` for a table not in `TableModeNormal`.
+    pub(crate) fn check_table_mode(&self, stmt: &Stmt) -> Result<(), DriverError> {
+        if matches!(stmt, Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::Explain(_)))
+        {
+            return Ok(());
+        }
+        if let Some((table, mode)) = self.protected_table_mode(stmt)? {
+            tidb_infoschema::check_table_mode_is_normal(&table, mode)?;
+        }
+        Ok(())
     }
 }
 

@@ -82,6 +82,9 @@ pub enum FkPlanError {
     /// Go `ErrRowIsReferenced2`: a parent-side check has no access path;
     /// the payload is the foreign key's `FKInfo.String`.
     RowIsReferenced(String),
+    /// Go `ErrProtectedTableMode` from `buildOnDeleteOrUpdateFKTrigger`'s
+    /// `dbutil.CheckTableModeIsNormal`: the child table's name and mode.
+    ProtectedTableMode(String, tidb_model::TableMode),
     /// A message-only refusal.
     Unsupported(String),
 }
@@ -115,6 +118,17 @@ pub fn build_fk_triggers(
             let fk = fk.read();
             if !on_delete && !touches(updated, &fk.ref_cols.snapshot()) {
                 continue;
+            }
+            // Go `buildOnDeleteOrUpdateFKTrigger`: a child table that is
+            // not in `TableModeNormal` refuses the parent's write.
+            if let Some(child) = catalog.table(&child_db, &child_table) {
+                let child = child.read();
+                if child.mode != tidb_model::TableMode::NORMAL {
+                    return Err(FkPlanError::ProtectedTableMode(
+                        child.name.original().to_owned(),
+                        child.mode,
+                    ));
+                }
             }
             let action = ReferOptionType::from(if on_delete {
                 fk.on_delete

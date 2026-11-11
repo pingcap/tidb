@@ -118,8 +118,12 @@ impl tidb_executor::compiler::CompilerSession for Session {
         Session::require_explain_statement_privileges(self, stmt)
     }
 
-    fn with_plan_privilege_check(&self, ctx: tidb_sessionctx::StmtContext) -> tidb_sessionctx::StmtContext {
-        Session::with_plan_privilege_check(self, ctx)
+    fn with_plan_privilege_check(
+        &self,
+        ctx: tidb_sessionctx::StmtContext,
+        stmt: &Stmt,
+    ) -> Result<tidb_sessionctx::StmtContext, DriverError> {
+        Session::with_plan_privilege_check(self, ctx, stmt)
     }
 
     fn bind_statement_hints(&mut self, stmt: &Stmt) -> Option<Stmt> {
