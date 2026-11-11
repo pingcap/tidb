@@ -19,7 +19,7 @@ import "github.com/pingcap/tidb/pkg/parser/ast"
 // ImportIntoDataSource names the data source of IMPORT INTO in error messages.
 const ImportIntoDataSource = "data source"
 
-// LineFieldsInfo used in load-data/select-into/index-advise stmt.
+// LineFieldsInfo describes field and line formatting for data import and export.
 type LineFieldsInfo struct {
 	FieldsTerminatedBy string
 	FieldsEnclosedBy   string // length always <= 1, see parser.y
