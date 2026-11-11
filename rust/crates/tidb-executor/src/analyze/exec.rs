@@ -1345,6 +1345,8 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
                 .get_system(name)
                 .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value))
         };
+        // Go `buildAnalyze`: "auto " when the session is `InRestrictedSQL`.
+        statement.auto_analyze = self.session_vars().restricted_sql;
         statement.persist_options = on(tidb_vardef::tidb_vars::TIDB_PERSIST_ANALYZE_OPTIONS);
         statement.default_columns = if self
             .session_vars()

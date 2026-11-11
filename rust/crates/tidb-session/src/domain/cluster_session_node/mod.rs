@@ -322,7 +322,6 @@ fn trace_of(stmt: &Stmt) -> &tidb_ast::TraceStmt {
 
 use tidb_domain_core::domain::*;
 pub(crate) use tidb_domain_core::sys_session::stats_session_error;
-pub(crate) use tidb_domain_core::util::is_analyze_table_sql;
 mod dxf_sessions;
 mod sessions;
 mod ttl_sessions;
@@ -2952,6 +2951,18 @@ fn with_exec_option<T>(
     option: &tidb_sqlexec::ExecOption,
     run: impl FnOnce(&mut Session) -> Result<T, tidb_sqlexec::SqlExecError>,
 ) -> Result<T, tidb_sqlexec::SqlExecError> {
+    with_exec_option_of(session, |session| session, option, run)
+}
+
+/// [`with_exec_option`] for a statement that runs on `holder`, the loan of
+/// the session `session_of` names.
+fn with_exec_option_of<H, T>(
+    holder: &mut H,
+    session_of: impl Fn(&mut H) -> &mut Session,
+    option: &tidb_sqlexec::ExecOption,
+    run: impl FnOnce(&mut H) -> Result<T, tidb_sqlexec::SqlExecError>,
+) -> Result<T, tidb_sqlexec::SqlExecError> {
+    let session = session_of(holder);
     use tidb_vardef::tidb_vars::{
         TIDB_ANALYZE_VERSION, TIDB_ENABLE_ANALYZE_SNAPSHOT, TIDB_PARTITION_PRUNE_MODE, TIDB_SNAPSHOT,
     };
@@ -2980,7 +2991,8 @@ fn with_exec_option<T>(
         }
         Ok(())
     })();
-    let result = applied.and_then(|()| run(session));
+    let result = applied.and_then(|()| run(holder));
+    let session = session_of(holder);
     for (name, value) in [
         (TIDB_ANALYZE_VERSION, prev_stats_ver),
         (TIDB_ENABLE_ANALYZE_SNAPSHOT, prev_analyze_snapshot),

@@ -577,30 +577,19 @@ impl ClusterStatsSessionState {
         ),
         tidb_sqlexec::SqlExecError,
     > {
-        self.with_session(|session| {
-            let mut result = session.reborrow().execute(sql).map_err(|error| {
-                super::boxed_sql_query_error(error)
-            })?;
-            let source = result.source();
-            let fields = source.fields()?;
-            let mut rows = Vec::new();
-            loop {
-                let batch = source.next_batch(1024)?;
-                if batch.is_empty() {
-                    break;
-                }
-                rows.extend(batch);
-            }
-            source.finish()?;
-            source.close()?;
-            Ok((rows, stats_result_fields(fields)))
-        })
+        self.with_session(|session| materialize_on(session, sql))
     }
 
-    fn execute_auto_analyze(
+    /// Go `withRestrictedSQLExecutor` of the statistics session: the
+    /// statement on this session under `ExecOptionUseCurSession`
+    /// (`useCurrentSession`), on a fresh internal session of its node
+    /// otherwise (`getInternalSession`), tracked as a system process while it
+    /// runs when the caller asks (`TrackSysProc`).
+    fn restricted(
         &self,
-        sql: &str,
+        context: &dyn tidb_sqlexec::ExecutionContext,
         options: &[tidb_sqlexec::OptionFuncAlias],
+        sql: &str,
     ) -> Result<
         (
             Vec<Vec<tidb_datatype::Datum>>,
@@ -609,11 +598,22 @@ impl ClusterStatsSessionState {
         tidb_sqlexec::SqlExecError,
     > {
         let option = tidb_sqlexec::exec_option(options);
-        if option.analyze_ver != 2 || !option.use_cur_session {
-            return Err(stats_session_error(
-                "auto analyze requires statistics version 2 in the current session",
-            ));
+        if !option.use_cur_session {
+            let internal = self.with_session(|session| {
+                Ok(super::NodeRestrictedSql::of_issuer(
+                    Arc::downgrade(&session.node.domain),
+                    session.session.restricted_sql_issuer(),
+                ))
+            })?;
+            let result = tidb_sqlexec::RestrictedSqlExecutor::exec_restricted_sql(&internal, context, options, sql, &[]);
+            self.with_session(|session| {
+                session.session.append_restricted_sql_warnings();
+                Ok(())
+            })?;
+            return result;
         }
+        self.adopt_request_source(context);
+        honor_canceled_caller(context)?;
         let track_guard = if let Some(track) = option.track_sys_proc.as_ref() {
             let process = self.with_session(|session| {
                 session
@@ -644,15 +644,43 @@ impl ClusterStatsSessionState {
                     .session
                     .set_connection_id(option.track_sys_proc_id);
             }
-            execution
-                .session
-                .run_auto_analyze_sql(sql, option.analyze_snapshot, &option.partition_prune_mode)
-                .map_err(|error| stats_session_error(error.message))?;
-            Ok((Vec::new(), Vec::new()))
+            super::with_exec_option_of(
+                &mut *execution.session,
+                |session| &mut *session.session,
+                &option,
+                |session| materialize_on(session, sql),
+            )
         });
         drop(track_guard);
         result
     }
+}
+
+/// One statement on `session`, its rows drained beside their result fields.
+fn materialize_on(
+    session: &mut ClusterServerSession<'_>,
+    sql: &str,
+) -> Result<
+    (
+        Vec<Vec<tidb_datatype::Datum>>,
+        Vec<tidb_resolve::ResultFieldRef>,
+    ),
+    tidb_sqlexec::SqlExecError,
+> {
+    let mut result = session.reborrow().execute(sql).map_err(super::boxed_sql_query_error)?;
+    let source = result.source();
+    let fields = source.fields()?;
+    let mut rows = Vec::new();
+    loop {
+        let batch = source.next_batch(1024)?;
+        if batch.is_empty() {
+            break;
+        }
+        rows.extend(batch);
+    }
+    source.finish()?;
+    source.close()?;
+    Ok((rows, stats_result_fields(fields)))
 }
 
 pub(crate) fn stats_result_fields(
@@ -749,7 +777,7 @@ impl tidb_sqlexec::RestrictedSqlExecutor for ClusterStatsSqlExecutor {
         &self,
         context: &dyn tidb_sqlexec::ExecutionContext,
         statement: &tidb_ast::Stmt,
-        _options: &[tidb_sqlexec::OptionFuncAlias],
+        options: &[tidb_sqlexec::OptionFuncAlias],
     ) -> Result<
         (
             Vec<Vec<tidb_datatype::Datum>>,
@@ -757,10 +785,8 @@ impl tidb_sqlexec::RestrictedSqlExecutor for ClusterStatsSqlExecutor {
         ),
         tidb_sqlexec::SqlExecError,
     > {
-        self.state.adopt_request_source(context);
-        honor_canceled_caller(context)?;
         let sql = String::from_utf8(statement.original_text().to_vec())?;
-        self.state.materialize(&sql)
+        self.state.restricted(context, options, &sql)
     }
 
     fn exec_restricted_sql(
@@ -776,13 +802,7 @@ impl tidb_sqlexec::RestrictedSqlExecutor for ClusterStatsSqlExecutor {
         ),
         tidb_sqlexec::SqlExecError,
     > {
-        self.state.adopt_request_source(context);
-        let escaped = super::sql_with_params(sql, arguments)?;
-        if is_analyze_table_sql(&escaped) && !options.is_empty() {
-            self.state.execute_auto_analyze(&escaped, options)
-        } else {
-            self.state.materialize(&escaped)
-        }
+        self.state.restricted(context, options, &super::sql_with_params(sql, arguments)?)
     }
 }
 

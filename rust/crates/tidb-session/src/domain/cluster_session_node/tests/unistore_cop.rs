@@ -30015,3 +30015,73 @@ fn a_restricted_statement_inherits_from_and_warns_its_issuer_like_go() {
     session.append_restricted_sql_warnings();
     assert!(rows(&mut session, "SHOW WARNINGS").is_empty());
 }
+
+/// Go `withRestrictedSQLExecutor` on a statistics session: the statement
+/// runs on that session under `ExecOptionUseCurSession` and on a fresh
+/// internal session otherwise, either way under its `ExecOption`
+/// (`ExecOptionWithSnapshot`, `GetPartitionPruneModeOption`), which is
+/// restored afterwards; an ANALYZE the session issues is an auto analyze
+/// because the session is `InRestrictedSQL`. Rows are a Go testkit capture
+/// over `statsutil.ExecWithOpts` on a `StatsHandle().SPool()` session.
+#[test]
+fn a_statistics_session_runs_restricted_sql_under_its_exec_option_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = stack.factory;
+    let mut client = factory.open_session(session_context(1293)).unwrap();
+    rows(&mut client, "USE test");
+    rows(&mut client, "CREATE TABLE rs (a INT)");
+    rows(&mut client, "INSERT INTO rs VALUES (1)");
+    rows(&mut client, "BEGIN");
+    rows(&mut client, "SELECT * FROM rs");
+    let ts: u64 = displayed(rows(&mut client, "SELECT @@tidb_current_ts"))[0][0]
+        .parse()
+        .unwrap();
+    rows(&mut client, "ROLLBACK");
+    rows(&mut client, "UPDATE rs SET a = 2");
+    let cur: tidb_sqlexec::OptionFuncAlias = Arc::new(tidb_sqlexec::exec_option_use_cur_session);
+    let pool = factory.advanced_sys_session_pool();
+    tidb_stats_handle_util::call_with_sctx(
+        pool.as_ref(),
+        |context| {
+            let run = |options: &[tidb_sqlexec::OptionFuncAlias], sql: &str| {
+                displayed(tidb_stats_handle_util::exec_with_opts(context, options, sql, &[]).unwrap().0)
+                    .into_iter()
+                    .map(|row| row.join("|"))
+                    .collect::<Vec<_>>()
+            };
+            let vars =
+                "select concat(@@tidb_snapshot), concat(@@tidb_partition_prune_mode), concat(@@tidb_analyze_version)";
+            run(&[cur.clone()], "set @x = 7");
+            assert_eq!(run(&[cur.clone()], "select concat(@x)"), ["7"]);
+            assert_eq!(run(&[], "select concat(@x)"), ["NULL"]);
+            assert_eq!(run(&[cur.clone()], vars), ["|dynamic|2"]);
+            let snapshot = tidb_sqlexec::exec_option_with_snapshot(ts);
+            assert_eq!(run(&[cur.clone(), snapshot.clone()], "select concat(a) from test.rs"), ["1"]);
+            assert_eq!(run(&[snapshot], "select concat(a) from test.rs"), ["1"]);
+            assert_eq!(run(&[cur.clone()], "select concat(a) from test.rs"), ["2"]);
+            assert_eq!(
+                run(
+                    &[cur.clone(), tidb_sqlexec::get_partition_prune_mode_option("static")],
+                    "select concat(@@tidb_partition_prune_mode)"
+                ),
+                ["static"]
+            );
+            assert_eq!(run(&[cur.clone()], vars), ["|dynamic|2"]);
+            run(&[cur.clone()], "analyze table test.rs");
+            Ok(())
+        },
+        &[],
+    )
+    .unwrap();
+    rows(&mut client, "ANALYZE TABLE rs");
+    assert_eq!(
+        displayed(rows(
+            &mut client,
+            "select job_info from mysql.analyze_jobs where table_name = 'rs' order by id"
+        )),
+        [
+            ["auto analyze table all columns with 256 buckets, 100 topn, 1 samplerate"],
+            ["analyze table all columns with 256 buckets, 100 topn, 1 samplerate"],
+        ]
+    );
+}

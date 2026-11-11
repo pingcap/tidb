@@ -35,6 +35,6 @@ fn analyze_process_sql_detection_matches_go() {
         "/*+ hint */ analyze table test.t",
         "/*+ hint */analyze table test.t",
     ] {
-        assert!(super::is_analyze_table_sql(sql), "{sql:?}");
+        assert!(tidb_domain_core::util::is_analyze_table_sql(sql), "{sql:?}");
     }
 }
