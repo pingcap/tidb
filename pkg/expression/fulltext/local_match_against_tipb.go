@@ -22,10 +22,9 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// LocalMatchAgainstProtocolVersion versions the Local MATCH semantics carried
-// by the Tipb query, including the built-in stopword set. TiFlash must implement
-// and be deployed with a version before TiDB emits it. Never change the meaning
-// of an existing version; reject unknown versions and add a new version instead.
+// LocalMatchAgainstProtocolVersion identifies the Local MATCH semantics in the
+// Tipb query. TiDB and TiFlash must agree on the Unicode character classification
+// for version 2. Readers reject unknown versions.
 // Version 2 returns zero for NULL searches and gives NGRAM document scanning
 // its own multibyte-character rule; STANDARD and the NGRAM query lexer use
 // BMP word characters. Filtered phrases are verified against unfiltered text.
