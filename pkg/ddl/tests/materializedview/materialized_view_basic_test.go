@@ -33,8 +33,33 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMViewRefreshSourceInfoLifecycle(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_sources (a int not null, b int not null)")
+	tk.MustExec("insert into t_sources values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_sources (a, b)")
+	tk.MustExec("create materialized view mv_sources (a, s, cnt) refresh fast as select a, sum(b), count(*) from t_sources group by a")
+	tk.MustExec("create materialized view mv_sources_peer (a, cnt) refresh fast as select a, count(*) from t_sources group by a")
+	getID := func(name string) int64 {
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
+		require.NoError(t, err)
+		return tbl.Meta().ID
+	}
+	mvID, peerID, mlogID := getID("mv_sources"), getID("mv_sources_peer"), getID("$mlog$t_sources")
+	tk.MustQuery("select MVIEW_ID, MLOG_ID from mysql.tidb_mview_fast_refresh_source_info order by MVIEW_ID").Check(testkit.Rows(
+		fmt.Sprintf("%d %d", mvID, mlogID), fmt.Sprintf("%d %d", peerID, mlogID),
+	))
+	tk.MustExec("drop materialized view mv_sources")
+	tk.MustQuery("select MVIEW_ID, MLOG_ID from mysql.tidb_mview_fast_refresh_source_info use index(idx_mlog)").Check(testkit.Rows(fmt.Sprintf("%d %d", peerID, mlogID)))
+	tk.MustExec("drop materialized view mv_sources_peer")
+	tk.MustQuery("select count(*) from mysql.tidb_mview_fast_refresh_source_info").Check(testkit.Rows("0"))
+}
 
 func TestCreateMaterializedViewValidationCoverage(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -515,12 +540,14 @@ func TestMaterializedViewOutOfPlaceCutoverUpdatesMLogDependencies(t *testing.T) 
 	require.NoError(t, err)
 	shadowTableID := shadowTable.Meta().ID
 	lastSuccessReadTSO, lastSuccessReadTSONull := getLastSuccessReadTSO(t, tk, oldMViewID)
+	buildSources, err := mviewutil.ResolveRefreshSources(context.Background(), dom.InfoSchema(), oldMViewID)
+	require.NoError(t, err)
 	oldMViewRevision := oldMView.Meta().Revision
 	const buildReadTSO uint64 = 123456789
 	setRefreshCutoverQueryString(t, tk, "mv_cutover_dependency")
 	require.NoError(t, dom.DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		tk.Session(), dbInfo.ID, dbInfo.Name, oldMView.Meta().Name, oldMViewID, shadowTableID,
-		buildReadTSO, &oldMViewRevision, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
+		buildReadTSO, buildSources, &oldMViewRevision, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
 	))
 
 	newMView := mustGetMaterializedView(t, dom, "mv_cutover_dependency")
@@ -559,6 +586,8 @@ func TestMaterializedViewOutOfPlaceCutoverFailureRollsBackMLogDependencies(t *te
 	require.NoError(t, err)
 	shadowTableID := shadowTable.Meta().ID
 	lastSuccessReadTSO, lastSuccessReadTSONull := getLastSuccessReadTSO(t, tk, oldMViewID)
+	buildSources, err := mviewutil.ResolveRefreshSources(context.Background(), dom.InfoSchema(), oldMViewID)
+	require.NoError(t, err)
 	oldMViewRevision := oldMView.Meta().Revision
 
 	const cutoverFailpoint = "github.com/pingcap/tidb/pkg/ddl/mockMViewRefreshOutOfPlaceCutoverAfterMigrateRefreshInfoError"
@@ -566,7 +595,7 @@ func TestMaterializedViewOutOfPlaceCutoverFailureRollsBackMLogDependencies(t *te
 	require.NoError(t, failpoint.Enable(cutoverFailpoint, "return"))
 	err = dom.DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		tk.Session(), dbInfo.ID, dbInfo.Name, oldMView.Meta().Name, oldMViewID, shadowTableID,
-		123456789, &oldMViewRevision, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
+		123456789, buildSources, &oldMViewRevision, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
 	)
 	require.NoError(t, failpoint.Disable(cutoverFailpoint))
 	require.ErrorContains(t, err, "error after migrating refresh info")
@@ -605,6 +634,8 @@ func TestMaterializedViewOutOfPlaceCutoverPublishEventErrorKeepsRefreshMetadataA
 	require.NoError(t, err)
 	shadowTableID := shadowTable.Meta().ID
 	lastSuccessReadTSO, lastSuccessReadTSONull := getLastSuccessReadTSO(t, tk, oldMViewID)
+	buildSources, err := mviewutil.ResolveRefreshSources(context.Background(), dom.InfoSchema(), oldMViewID)
+	require.NoError(t, err)
 	oldMViewRevision := oldMView.Meta().Revision
 	tk.MustExec(fmt.Sprintf(
 		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, UPDATE_TIME) values (%d, 'test', 'mv_cutover_publish_error', 'warning', UTC_TIMESTAMP())",
@@ -616,7 +647,7 @@ func TestMaterializedViewOutOfPlaceCutoverPublishEventErrorKeepsRefreshMetadataA
 	setRefreshCutoverQueryString(t, tk, "mv_cutover_publish_error")
 	err = dom.DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		tk.Session(), dbInfo.ID, dbInfo.Name, oldMView.Meta().Name, oldMViewID, shadowTableID,
-		123456789, &oldMViewRevision, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
+		123456789, buildSources, &oldMViewRevision, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
 	)
 	require.NoError(t, failpoint.Disable(publishEventErrorFailpoint))
 	require.ErrorContains(t, err, "mock publish event error")
@@ -633,7 +664,7 @@ func TestMaterializedViewOutOfPlaceCutoverPublishEventErrorKeepsRefreshMetadataA
 	setRefreshCutoverQueryString(t, tk, "mv_cutover_publish_error")
 	require.NoError(t, dom.DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		tk.Session(), dbInfo.ID, dbInfo.Name, oldMView.Meta().Name, oldMViewID, shadowTableID,
-		123456790, &oldMViewRevision, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
+		123456790, buildSources, &oldMViewRevision, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
 	))
 	newMView := mustGetMaterializedView(t, dom, "mv_cutover_publish_error")
 	require.Equal(t, shadowTableID, newMView.Meta().ID)
@@ -682,6 +713,8 @@ func TestMaterializedViewOutOfPlaceCutoverFailureKeepsOldAffinityGroup(t *testin
 	require.NoError(t, err)
 	shadowTableID := shadowTable.Meta().ID
 	lastSuccessReadTSO, lastSuccessReadTSONull := getLastSuccessReadTSO(t, tk, oldMViewID)
+	buildSources, err := mviewutil.ResolveRefreshSources(context.Background(), dom.InfoSchema(), oldMViewID)
+	require.NoError(t, err)
 	// The fixture updates metadata directly, so this test intentionally does not
 	// pass an expected revision to the cutover job.
 
@@ -690,7 +723,7 @@ func TestMaterializedViewOutOfPlaceCutoverFailureKeepsOldAffinityGroup(t *testin
 	setRefreshCutoverQueryString(t, tk, "mv_cutover_affinity")
 	err = dom.DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		tk.Session(), dbInfo.ID, dbInfo.Name, oldMView.Meta().Name, oldMViewID, shadowTableID,
-		123456789, nil, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
+		123456789, buildSources, nil, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
 	)
 	require.NoError(t, failpoint.Disable(cutoverFailpoint))
 	require.ErrorContains(t, err, "error before commit")
@@ -704,7 +737,7 @@ func TestMaterializedViewOutOfPlaceCutoverFailureKeepsOldAffinityGroup(t *testin
 	setRefreshCutoverQueryString(t, tk, "mv_cutover_affinity")
 	require.NoError(t, dom.DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		tk.Session(), dbInfo.ID, dbInfo.Name, oldMView.Meta().Name, oldMViewID, shadowTableID,
-		123456790, nil, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
+		123456790, buildSources, nil, lastSuccessReadTSO, lastSuccessReadTSONull, nil, false,
 	))
 	newMView := mustGetMaterializedView(t, dom, "mv_cutover_affinity")
 	require.Equal(t, shadowTableID, newMView.Meta().ID)

@@ -278,6 +278,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 			fullInner, fullInnerCount, fullRanges, fullKeyMap, fullKeyResult, fullOutput = tmpl.InnerSource, tmpl.InnerColumnCount, tmpl.IndexRanges, tmpl.KeyOff2IdxOff, tmpl.KeyResultColIdxes, tmpl.OutputMVOffsets
 		}
 		plan := &MViewDeltaMerge{
+			RegisteredMLogIDs:     stmt.RegisteredMLogIDs,
 			Source:                source,
 			MLogEmpty:             mlogEmpty,
 			FullUpdateInnerSource: fullInner, FullUpdateInnerColumnCount: fullInnerCount,

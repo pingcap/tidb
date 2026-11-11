@@ -344,6 +344,10 @@ var (
 		{ID: metadef.TiDBMViewRefreshAlertTableID, Name: metadef.TiDBMViewRefreshAlertTableName, SQL: metadef.CreateTiDBMViewRefreshAlertTable},
 		{ID: metadef.TiDBMLogPurgeHistTableID, Name: metadef.TiDBMLogPurgeHistTableName, SQL: metadef.CreateTiDBMLogPurgeHistTable},
 	}
+	// systemTablesOfMaterializedViewRefreshSourceNextGenVersion contains the MV input-log baseline table.
+	systemTablesOfMaterializedViewRefreshSourceNextGenVersion = []TableBasicInfo{
+		{ID: metadef.TiDBMViewFastRefreshSourceInfoTableID, Name: metadef.TiDBMViewFastRefreshSourceInfoTableName, SQL: metadef.CreateTiDBMViewFastRefreshSourceInfoTable},
+	}
 	// systemTablesOfStorageClassTransitionNextGenVersion contains the durable
 	// operation table used by the NextGen storage-class transition poller.
 	systemTablesOfStorageClassTransitionNextGenVersion = []TableBasicInfo{
@@ -373,6 +377,9 @@ var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	}, nextGenOnly: true},
 	{ver: meta.MaterializedViewNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaterializedViewNextGenVersion},
+	}},
+	{ver: meta.MaterializedViewRefreshSourceNextGenBootTableVersion, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaterializedViewRefreshSourceNextGenVersion},
 	}},
 }
 
