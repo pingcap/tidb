@@ -24,6 +24,7 @@ import (
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -199,7 +200,7 @@ func (e *LoadDataController) checkGlobalSortStorePrivilege(ctx context.Context) 
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, errors.GetErrStackMsg(err2))
 	}
 
-	if !isSupportedCloudStorageBackend(b) {
+	if !importinto.SupportsGlobalSortBackend(b) {
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("unsupported cloud storage uri scheme: " + cloudStorageURL.Scheme)
 	}
 

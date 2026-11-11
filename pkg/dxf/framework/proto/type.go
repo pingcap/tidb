@@ -19,6 +19,8 @@ const (
 	TaskTypeExample TaskType = "Example"
 	// ImportInto is TaskType of ImportInto.
 	ImportInto TaskType = "ImportInto"
+	// MViewBuild is a DDL-owned materialized view build.
+	MViewBuild TaskType = "MViewBuild"
 	// Backfill is TaskType of add index Backfilling process.
 	Backfill TaskType = "backfill"
 )
@@ -32,6 +34,8 @@ func Type2Int(t TaskType) int {
 		return 2
 	case Backfill:
 		return 3
+	case MViewBuild:
+		return 4
 	default:
 		return 0
 	}
@@ -46,6 +50,8 @@ func Int2Type(i int) TaskType {
 		return ImportInto
 	case 3:
 		return Backfill
+	case 4:
+		return MViewBuild
 	default:
 		return ""
 	}

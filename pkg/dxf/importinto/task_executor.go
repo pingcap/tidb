@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	importcore "github.com/pingcap/tidb/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
@@ -76,6 +77,10 @@ const (
 	queryMemBudgetRatio = 0.25
 )
 
+// QueryRunner executes the SELECT for a captured import source. The bootstrap
+// supplies the concrete executor when constructing a task executor.
+type QueryRunner func(context.Context, sessionctx.Context, *importer.QuerySource, string, int64, chan<- importer.QueryChunk) error
+
 // importStepExecutor is a executor for import step.
 // StepExecutor is equivalent to a Lightning instance.
 type importStepExecutor struct {
@@ -83,9 +88,10 @@ type importStepExecutor struct {
 	execute.NoopCollector
 
 	taskID        int64
-	taskMeta      *TaskMeta
+	taskMeta      *importcore.TaskMeta
 	tableImporter *importer.TableImporter
 	queryRuntime  sqlsvrapi.Runtime
+	runQuery      QueryRunner
 	store         tidbkv.Storage
 	sharedVars    sync.Map
 	logger        *zap.Logger
@@ -110,7 +116,7 @@ type importStepExecutor struct {
 func getTableImporter(
 	ctx context.Context,
 	taskID int64,
-	taskMeta *TaskMeta,
+	taskMeta *importcore.TaskMeta,
 	store tidbkv.Storage,
 	logger *zap.Logger,
 ) (*importer.TableImporter, error) {
@@ -430,6 +436,9 @@ func (s *importStepExecutor) readQuery(
 			err = util.GetRecoverError(r)
 		}
 	}()
+	if s.runQuery == nil {
+		return errors.New("import query runner is not configured")
+	}
 	pool := s.queryRuntime.SysSessionPool()
 	resource, err := pool.Get()
 	if err != nil {
@@ -447,7 +456,7 @@ func (s *importStepExecutor) readQuery(
 		}
 	}()
 
-	return importer.RunImportQuery(
+	return s.runQuery(
 		ctx, se, s.taskMeta.Plan.QuerySource, s.taskMeta.Stmt,
 		int64(float64(s.GetResource().Mem.Capacity())*queryMemBudgetRatio), selected)
 }
@@ -538,7 +547,7 @@ func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 type mergeSortStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 	task     *proto.TaskBase
-	taskMeta *TaskMeta
+	taskMeta *importcore.TaskMeta
 	logger   *zap.Logger
 	// subtask of a task is run in serial now, so we don't need lock here.
 	// change to SyncMap when we support parallel subtask in the future.
@@ -747,7 +756,7 @@ type writeAndIngestStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 
 	taskID        int64
-	taskMeta      *TaskMeta
+	taskMeta      *importcore.TaskMeta
 	logger        *zap.Logger
 	tableImporter *importer.TableImporter
 	store         tidbkv.Storage
@@ -911,7 +920,7 @@ type postProcessStepExecutor struct {
 	taskID       int64
 	store        tidbkv.Storage
 	taskTbl      taskexecutor.TaskTable
-	taskMeta     *TaskMeta
+	taskMeta     *importcore.TaskMeta
 	taskKeyspace string
 	logger       *zap.Logger
 }
@@ -924,7 +933,7 @@ func NewPostProcessStepExecutor(
 	taskID int64,
 	store tidbkv.Storage,
 	taskTbl taskexecutor.TaskTable,
-	taskMeta *TaskMeta,
+	taskMeta *importcore.TaskMeta,
 	taskKeyspace string,
 	logger *zap.Logger,
 ) execute.StepExecutor {
@@ -957,6 +966,7 @@ func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto
 type importExecutor struct {
 	*taskexecutor.BaseTaskExecutor
 	indicesGenKV map[int64]importer.GenKVIndex
+	runQuery     QueryRunner
 }
 
 // NewImportExecutor creates a new import task executor.
@@ -964,12 +974,14 @@ func NewImportExecutor(
 	ctx context.Context,
 	task *proto.Task,
 	param taskexecutor.Param,
+	runQuery QueryRunner,
 ) taskexecutor.TaskExecutor {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 
 	s := &importExecutor{
 		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(subCtx, task, param),
+		runQuery:         runQuery,
 	}
 	s.BaseTaskExecutor.Extension = s
 	return s
@@ -989,7 +1001,7 @@ func (*importExecutor) IsRetryableError(err error) bool {
 }
 
 func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
-	taskMeta := TaskMeta{}
+	taskMeta := importcore.TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1011,6 +1023,7 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 			store:        store,
 			indicesGenKV: indicesGenKV,
 			queryRuntime: e.TaskRuntime,
+			runQuery:     e.runQuery,
 		}, nil
 	case proto.ImportStepMergeSort:
 		return &mergeSortStepExecutor{

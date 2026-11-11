@@ -53,7 +53,7 @@ func Step2Str(t TaskType, s Step) string {
 	switch t {
 	case Backfill:
 		return backfillStep2Str(s)
-	case ImportInto:
+	case ImportInto, MViewBuild:
 		return importIntoStep2Str(s)
 	case TaskTypeExample:
 		return exampleStep2Str(s)

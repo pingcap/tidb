@@ -627,6 +627,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildInsert(ctx, x)
 	case *ast.ImportIntoStmt:
 		return b.buildImportInto(ctx, x)
+	case *ast.PrepareMViewBuildStmt:
+		return b.buildSimple(ctx, x)
 	case *ast.LoadDataStmt:
 		return b.buildLoadData(ctx, x)
 	case *ast.LoadStatsStmt:
@@ -3893,6 +3895,17 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 	p := &Simple{Statement: node, ResolveCtx: b.resolveCtx}
 
 	switch raw := node.(type) {
+	case *ast.PrepareMViewBuildStmt:
+		vars := b.ctx.GetSessionVars()
+		if !vars.InRestrictedSQL || !vars.InMViewMaintenance || raw.DDLJobID <= 0 {
+			return nil, errors.New("MV build preparation requires an internal maintenance session and DDL job")
+		}
+		p.SetSchema(expression.NewSchema(&expression.Column{
+			UniqueID: vars.AllocPlanColumnID(),
+			RetType:  types.NewFieldType(mysql.TypeLongBlob),
+		}))
+		p.SetOutputNames(types.NameSlice{&types.FieldName{ColName: ast.NewCIStr("task")}})
+
 	case *ast.FlushStmt:
 		if raw.Tp == ast.FlushStatsDelta {
 			if err := fillDefaultDBForStatsObjects(b.ctx, raw.FlushObjects); err != nil {

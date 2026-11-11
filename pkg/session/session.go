@@ -4684,7 +4684,14 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	taskexecutor.RegisterTaskType(
 		proto.ImportInto,
 		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
-			return importinto.NewImportExecutor(ctx, task, param)
+			return importinto.NewImportExecutor(ctx, task, param, executor.RunImportQuery)
+		},
+	)
+
+	scheduler.RegisterSchedulerFactory(proto.MViewBuild, importinto.NewMViewBuildScheduler)
+	taskexecutor.RegisterTaskType(proto.MViewBuild,
+		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
+			return importinto.NewImportExecutor(ctx, task, param, executor.RunImportQuery)
 		},
 	)
 

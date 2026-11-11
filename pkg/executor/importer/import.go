@@ -16,9 +16,7 @@ package importer
 
 import (
 	"context"
-	"fmt"
 	"io"
-	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -32,28 +30,24 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	tidb "github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
-	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	litlog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pformat "github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -61,20 +55,13 @@ import (
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
-	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/naming"
-	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	pd "github.com/tikv/pd/client"
@@ -82,121 +69,10 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// DataFormatCSV represents the data source file of IMPORT INTO is csv.
-	DataFormatCSV = "csv"
-	// DataFormatDelimitedData delimited data.
-	DataFormatDelimitedData = "delimited data"
-	// DataFormatSQL represents the data source file of IMPORT INTO is mydumper-format DML file.
-	DataFormatSQL = "sql"
-	// DataFormatParquet represents the data source file of IMPORT INTO is parquet.
-	DataFormatParquet = "parquet"
-	// DataFormatAuto represents format is not set in IMPORT INTO, we will determine format automatically.
-	DataFormatAuto = "auto"
-
-	// DefaultDiskQuota is the default disk quota for IMPORT INTO
-	DefaultDiskQuota = config.ByteSize(50 << 30) // 50GiB
-
-	// 0 means no limit
-	unlimitedWriteSpeed = config.ByteSize(0)
-
-	characterSetOption        = "character_set"
-	fieldsTerminatedByOption  = "fields_terminated_by"
-	fieldsEnclosedByOption    = "fields_enclosed_by"
-	fieldsEscapedByOption     = "fields_escaped_by"
-	fieldsDefinedNullByOption = "fields_defined_null_by"
-	linesTerminatedByOption   = "lines_terminated_by"
-	skipRowsOption            = "skip_rows"
-	groupKeyOption            = "group_key"
-	splitFileOption           = "split_file"
-	diskQuotaOption           = "disk_quota"
-	threadOption              = "thread"
-	maxWriteSpeedOption       = "max_write_speed"
-	checksumTableOption       = "checksum_table"
-	recordErrorsOption        = "record_errors"
-	onDupKeyOption            = "on_duplicate_key"
-	detachedOption            = "detached"
-	// if 'import mode' enabled, TiKV will:
-	//  - set level0_stop_writes_trigger = max(old, 1 << 30)
-	//  - set level0_slowdown_writes_trigger = max(old, 1 << 30)
-	//  - set soft_pending_compaction_bytes_limit = 0,
-	//  - set hard_pending_compaction_bytes_limit = 0,
-	//  - will not trigger flow control when SST count in L0 is large
-	//  - will not trigger region split, it might cause some region became
-	//    very large and be a hotspot, might cause latency spike.
-	//
-	// default false for local sort, true for global sort.
-	disableTiKVImportModeOption = "disable_tikv_import_mode"
-	cloudStorageURIOption       = ast.CloudStorageURI
-	disablePrecheckOption       = "disable_precheck"
-	// used for test
-	maxEngineSizeOption  = "__max_engine_size"
-	forceMergeStep       = "__force_merge_step"
-	manualRecoveryOption = "__manual_recovery"
-)
+// DefaultDiskQuota is the default disk quota for IMPORT INTO.
+const DefaultDiskQuota = importinto.DefaultDiskQuota
 
 var (
-	// all supported options.
-	// name -> whether the option has value
-	supportedOptions = map[string]bool{
-		characterSetOption:          true,
-		fieldsTerminatedByOption:    true,
-		fieldsEnclosedByOption:      true,
-		fieldsEscapedByOption:       true,
-		fieldsDefinedNullByOption:   true,
-		linesTerminatedByOption:     true,
-		skipRowsOption:              true,
-		groupKeyOption:              true,
-		splitFileOption:             false,
-		diskQuotaOption:             true,
-		threadOption:                true,
-		maxWriteSpeedOption:         true,
-		checksumTableOption:         true,
-		recordErrorsOption:          true,
-		onDupKeyOption:              true,
-		detachedOption:              false,
-		disableTiKVImportModeOption: false,
-		maxEngineSizeOption:         true,
-		forceMergeStep:              false,
-		manualRecoveryOption:        false,
-		cloudStorageURIOption:       true,
-		disablePrecheckOption:       false,
-	}
-
-	csvOnlyOptions = map[string]struct{}{
-		characterSetOption:        {},
-		fieldsTerminatedByOption:  {},
-		fieldsEnclosedByOption:    {},
-		fieldsEscapedByOption:     {},
-		fieldsDefinedNullByOption: {},
-		linesTerminatedByOption:   {},
-		skipRowsOption:            {},
-		splitFileOption:           {},
-	}
-
-	// we only support global sort on nextgen cluster when SEM enabled, and doesn't
-	// allow set separate cloud storage URI.
-	disallowedOptionsOfNextGen = map[string]struct{}{
-		diskQuotaOption:       {},
-		maxWriteSpeedOption:   {},
-		cloudStorageURIOption: {},
-		threadOption:          {},
-		checksumTableOption:   {},
-		recordErrorsOption:    {},
-	}
-
-	disallowedOptionsForSEM = map[string]struct{}{
-		maxEngineSizeOption:  {},
-		forceMergeStep:       {},
-		manualRecoveryOption: {},
-	}
-
-	allowedOptionsOfImportFromQuery = map[string]struct{}{
-		diskQuotaOption:       {},
-		threadOption:          {},
-		disablePrecheckOption: {},
-	}
-
 	// LoadDataReadBlockSize is exposed for test.
 	LoadDataReadBlockSize = int64(config.ReadBlockSize)
 
@@ -206,38 +82,7 @@ var (
 		".zstd", ".zst",
 		".snappy",
 	}
-
-	// default character set
-	defaultCharacterSet = "utf8mb4"
-	// default field null def
-	defaultFieldNullDef = []string{`\N`}
 )
-
-// OnDupKeyMode controls the behavior when IMPORT INTO finds conflicted rows.
-type OnDupKeyMode string
-
-const (
-	// OnDupKeyModeCapture keeps current behavior, i.e. remove conflicted
-	// rows and capture them for later inspection.
-	OnDupKeyModeCapture OnDupKeyMode = "capture"
-	// OnDupKeyModeError means fail on first conflict.
-	OnDupKeyModeError OnDupKeyMode = "error"
-)
-
-// DataSourceType indicates the data source type of IMPORT INTO.
-type DataSourceType string
-
-const (
-	// DataSourceTypeFile represents the data source of IMPORT INTO is file.
-	// exported for test.
-	DataSourceTypeFile DataSourceType = "file"
-	// DataSourceTypeQuery represents the data source of IMPORT INTO is query.
-	DataSourceTypeQuery DataSourceType = "query"
-)
-
-func (t DataSourceType) String() string {
-	return string(t)
-}
 
 var (
 	// NewClientWithAPIContext returns a kv.Client.
@@ -259,119 +104,27 @@ type LoadDataReaderInfo struct {
 	Remote *mydump.SourceFileMeta
 }
 
-// Plan describes the plan of LOAD DATA and IMPORT INTO.
-type Plan struct {
-	QuerySource *QuerySource `json:",omitempty"`
-	DBName      string
-	DBID        int64
-	// TableInfo is the table info we used during import, we might change it
-	// if add index by SQL is enabled(it's disabled now).
-	TableInfo *model.TableInfo
-	// DesiredTableInfo is the table info before import, and the desired table info
-	// after import.
-	DesiredTableInfo *model.TableInfo
+// Plan is the shared persisted import description.
+type Plan = importinto.Plan
 
-	Path string
-	// only effective when data source is file.
-	Format string
-	// Data interpretation is restrictive if the SQL mode is restrictive and neither
-	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
-	// operation.
-	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
-	Restrictive bool
+// OnDupKeyMode controls conflict handling.
+type OnDupKeyMode = importinto.OnDupKeyMode
 
-	// LocationID is used to convert time type for parquet, see
-	// https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp
-	LocationID string
+// DataSourceType identifies the import source.
+type DataSourceType = importinto.DataSourceType
 
-	SQLMode mysql.SQLMode
-	// Charset is the charset of the data file when file is CSV or TSV.
-	// it might be nil when using LOAD DATA and no charset is specified.
-	// for IMPORT INTO, it is always non-nil and default to be defaultCharacterSet.
-	Charset          *string
-	ImportantSysVars map[string]string
-
-	// used for LOAD DATA and CSV format of IMPORT INTO
-	FieldNullDef []string
-	// this is not used in IMPORT INTO
-	NullValueOptEnclosed bool
-	// LinesStartingBy is not used in IMPORT INTO
-	// FieldsOptEnclosed is not used in either IMPORT INTO or LOAD DATA
-	plannercore.LineFieldsInfo
-	IgnoreLines uint64
-
-	DiskQuota             config.ByteSize
-	Checksum              config.PostOpLevel
-	ThreadCnt             int
-	MaxNodeCnt            int
-	MaxWriteSpeed         config.ByteSize
-	SplitFile             bool
-	MaxRecordedErrors     int64
-	OnDupKey              OnDupKeyMode
-	Detached              bool
-	DisableTiKVImportMode bool
-	MaxEngineSize         config.ByteSize
-	CloudStorageURI       string
-	DisablePrecheck       bool
-	GroupKey              string
-
-	// used for checksum in physical mode
-	DistSQLScanConcurrency int
-
-	// todo: remove it when load data code is reverted.
-	InImportInto   bool
-	DataSourceType DataSourceType
-	// only initialized for IMPORT INTO, used when creating job.
-	Parameters *ImportParameters `json:"-"`
-	// only initialized for IMPORT INTO, used when format is detected automatically
-	SpecifiedOptionNames map[string]struct{} `json:",omitempty"`
-	// the user who executes the statement, in the form of user@host
-	// only initialized for IMPORT INTO
-	User string `json:"-"`
-
-	IsRaftKV2 bool
-	// total data file size in bytes.
-	TotalFileSize int64
-	// used in tests to force enable merge-step when using global sort.
-	ForceMergeStep bool
-	// see ManualRecovery in proto.ExtraParams
-	ManualRecovery bool
-	// the keyspace name when submitting this job, only for import-into
-	Keyspace string
-	// UseNewCollate captures whether the new collation implementation was enabled
-	// in the submitting keyspace. Import execution may happen in another keyspace,
-	// so key and expression encoding must use this captured value instead of the
-	// executor process default. Nil means old metadata and should fall back to the
-	// caller-provided default.
-	UseNewCollate *bool `json:"use_new_collate,omitempty"`
-}
-
-// GetOnDupKeyMode returns the conflict handling mode.
-// For task metadata generated before this option was introduced, the value is
-// empty.
-// Note: currently it's not possible to have other unknown values, so we don't
-// handle that case here.
-func (p *Plan) GetOnDupKeyMode() OnDupKeyMode {
-	if p.OnDupKey == "" {
-		return OnDupKeyModeError
-	}
-	return p.OnDupKey
-}
-
-// GetUseNewCollateOrDefault returns the captured new-collation mode, or
-// defaultVal for import metadata generated before the field existed.
-func (p *Plan) GetUseNewCollateOrDefault(defaultVal bool) bool {
-	if p.UseNewCollate == nil {
-		return defaultVal
-	}
-	return *p.UseNewCollate
-}
-
-// setUseNewCollate stores the new-collation mode captured from the submitting
-// keyspace.
-func (p *Plan) setUseNewCollate(useNewCollate bool) {
-	p.UseNewCollate = &useNewCollate
-}
+// Compatibility names for shared import metadata.
+const (
+	DataFormatCSV           = importinto.DataFormatCSV
+	DataFormatDelimitedData = importinto.DataFormatDelimitedData
+	DataFormatSQL           = importinto.DataFormatSQL
+	DataFormatParquet       = importinto.DataFormatParquet
+	DataFormatAuto          = importinto.DataFormatAuto
+	OnDupKeyModeCapture     = importinto.OnDupKeyModeCapture
+	OnDupKeyModeError       = importinto.OnDupKeyModeError
+	DataSourceTypeFile      = importinto.DataSourceTypeFile
+	DataSourceTypeQuery     = importinto.DataSourceTypeQuery
+)
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
 // TODO: remove this struct and use the struct which can be serialized.
@@ -382,43 +135,6 @@ type ASTArgs struct {
 	OnDuplicate        ast.OnDuplicateKeyHandlingType
 	FieldsInfo         *ast.FieldsClause
 	LinesInfo          *ast.LinesClause
-}
-
-// StepSummary records the number of data involved in each step.
-// The data stored might be inaccurate, such as the number of rows in encode step.
-type StepSummary struct {
-	Bytes  int64 `json:"input-bytes,omitempty"`
-	RowCnt int64 `json:"input-rows,omitempty"`
-}
-
-// Summary records the amount of data to be processed in each import job step.
-// This information will be saved into tidb_import_jobs table after the job is finished.
-type Summary struct {
-	// EncodeSummary stores source bytes and row counts for the encode step.
-	EncodeSummary StepSummary `json:"encode-summary,omitempty"`
-
-	// MergeSummary stores merged bytes and row counts for the merge step.
-	MergeSummary StepSummary `json:"merge-summary,omitempty"`
-
-	// IngestSummary stores bytes and row counts for the ingest step.
-	IngestSummary StepSummary `json:"ingest-summary,omitempty"`
-
-	// CollectConflictsSummary stores conflict KV pair counts for the
-	// collect-conflicts step. RowCnt is used as the counter.
-	CollectConflictsSummary StepSummary `json:"collect-conflicts-summary,omitempty"`
-
-	// ResolveConflictsSummary stores conflict KV pair counts for the
-	// resolve-conflicts step. RowCnt is used as the counter.
-	ResolveConflictsSummary StepSummary `json:"resolve-conflicts-summary,omitempty"`
-
-	// ImportedRows is the number of rows imported into TiKV.
-	// conflicted rows are excluded from this count if using global-sort.
-	ImportedRows   int64  `json:"row-count,omitempty"`
-	ConflictRowCnt uint64 `json:"conflict-row-count,omitempty"`
-	// TooManyConflicts indicates there are too many conflicted rows that we
-	// cannot deduplicate during collecting its checksum, so we will skip later
-	// checksum step.
-	TooManyConflicts bool `json:"too-many-conflicts,omitempty"`
 }
 
 // LoadDataController load data controller.
@@ -457,25 +173,6 @@ type LoadDataController struct {
 	globalSortStore storeapi.Storage
 	// ExecuteNodesCnt is the count of execute nodes.
 	ExecuteNodesCnt int
-}
-
-func getImportantSysVars(sctx sessionctx.Context) map[string]string {
-	res := map[string]string{}
-	for k, defVal := range common.DefaultImportantVariables {
-		if val, ok := sctx.GetSessionVars().GetSystemVar(k); ok {
-			res[k] = val
-		} else {
-			res[k] = defVal
-		}
-	}
-	for k, defVal := range common.DefaultImportVariablesTiDB {
-		if val, ok := sctx.GetSessionVars().GetSystemVar(k); ok {
-			res[k] = val
-		} else {
-			res[k] = defVal
-		}
-	}
-	return res
 }
 
 // NewPlanFromLoadDataPlan creates a import plan from LOAD DATA.
@@ -533,71 +230,47 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
 		Charset:          charset,
-		ImportantSysVars: getImportantSysVars(userSctx),
+		ImportantSysVars: importinto.CaptureEncodingVars(userSctx),
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
 		DataSourceType:         DataSourceTypeFile,
 	}, nil
 }
 
-// NewImportPlan creates a new import into plan.
+// NewImportPlan adapts a SQL plan to the shared preparation input.
 func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
 	failpoint.InjectCall("NewImportPlan", plan)
-	var format string
-	if plan.Format != nil {
-		format = strings.ToLower(*plan.Format)
-	} else {
-		format = DataFormatAuto
-	}
-	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode()
-	lineFieldsInfo := newDefaultLineFieldsInfo()
-	// TiDB doesn't support setting zones like UTC+8, it should be parsable by
-	// ParseTimeZone, i.e. in IANA format like Asia/Shanghai, or in offset form
-	// like +08:00.
-	location := userSctx.GetSessionVars().Location()
-	p := &Plan{
-		TableInfo:        tbl.Meta(),
-		DesiredTableInfo: tbl.Meta(),
-		DBName:           plan.Table.Schema.L,
-		DBID:             plan.Table.DBInfo.ID,
-
-		Path:           plan.Path,
-		Format:         format,
-		Restrictive:    restrictive,
-		FieldNullDef:   defaultFieldNullDef,
-		LineFieldsInfo: lineFieldsInfo,
-
-		LocationID:       timeutil.ZoneName(location),
-		SQLMode:          userSctx.GetSessionVars().SQLMode,
-		ImportantSysVars: getImportantSysVars(userSctx),
-
-		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
-		InImportInto:           true,
-		DataSourceType:         getDataSourceType(plan),
-		User:                   userSctx.GetSessionVars().User.String(),
-		Keyspace:               userSctx.GetStore().GetKeyspace(),
-	}
-	p.setUseNewCollate(collate.NewCollationEnabled())
-	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
+	options, err := resolveImportOptions(plan.Options)
+	if err != nil {
 		return nil, err
 	}
-	if err := p.initParameters(plan); err != nil {
-		return nil, err
-	}
-	return p, nil
+	return NewImportPlanFromInput(ctx, userSctx, &importinto.Input{
+		DBName:             plan.Table.Schema.L,
+		DBID:               plan.Table.DBInfo.ID,
+		TableInfo:          tbl.Meta(),
+		Path:               plan.Path,
+		Format:             plan.Format,
+		DataSourceType:     getDataSourceType(plan),
+		ColumnsAndUserVars: plan.ColumnsAndUserVars,
+		ColumnAssignments:  plan.ColumnAssignments,
+		Options:            options,
+	})
 }
 
-func newDefaultLineFieldsInfo() plannercore.LineFieldsInfo {
-	// those are the default values for lightning CSV format too
-	return plannercore.LineFieldsInfo{
-		FieldsTerminatedBy: `,`,
-		FieldsEnclosedBy:   `"`,
-		FieldsEscapedBy:    `\`,
-		LinesStartingBy:    ``,
-		// csv_parser will determine it automatically(either '\r' or '\n' or '\r\n')
-		// But user cannot set this to empty explicitly.
-		LinesTerminatedBy: ``,
+func resolveImportOptions(options []*plannercore.LoadDataOpt) ([]*importinto.Option, error) {
+	result := make([]*importinto.Option, len(options))
+	for i, option := range options {
+		item := &importinto.Option{Name: option.Name}
+		if option.Value != nil {
+			value, ok := option.Value.(*expression.Constant)
+			if !ok {
+				return nil, exeerrors.ErrInvalidOptionVal.GenWithStackByArgs(option.Name)
+			}
+			item.Value = value
+		}
+		result[i] = item
 	}
+	return result, nil
 }
 
 // ASTArgsFromPlan creates ASTArgs from plan.
@@ -736,386 +409,6 @@ func (e *LoadDataController) checkFieldParams() error {
 		return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("FIELDS ENCLOSED BY and TERMINATED BY must not be prefix of each other")
 	}
 
-	return nil
-}
-
-func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, store tidbkv.Storage) {
-	var threadCnt int
-	threadCnt = int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
-	if p.DataSourceType == DataSourceTypeQuery {
-		threadCnt = 2
-	}
-	p.Checksum = config.OpLevelRequired
-	p.ThreadCnt = threadCnt
-	p.MaxWriteSpeed = unlimitedWriteSpeed
-	p.SplitFile = false
-	p.MaxRecordedErrors = 100
-	p.OnDupKey = OnDupKeyModeError
-	p.Detached = false
-	p.DisableTiKVImportMode = false
-	p.MaxEngineSize = getDefMaxEngineSize()
-	p.CloudStorageURI = handle.GetCloudStorageURI(ctx, store)
-
-	v := defaultCharacterSet
-	p.Charset = &v
-}
-
-func getDefMaxEngineSize() config.ByteSize {
-	if kerneltype.IsNextGen() {
-		return config.DefaultBatchSize
-	}
-	return config.ByteSize(defaultMaxEngineSize)
-}
-
-func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
-	targetNodeCPUCnt, err := GetTargetNodeCPUCnt(ctx, p.DataSourceType, p.Path)
-	if err != nil {
-		return err
-	}
-	p.initDefaultOptions(ctx, targetNodeCPUCnt, seCtx.GetStore())
-
-	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
-	for _, opt := range options {
-		hasValue, ok := supportedOptions[opt.Name]
-		if !ok {
-			return exeerrors.ErrUnknownOption.FastGenByArgs(opt.Name)
-		}
-		if hasValue && opt.Value == nil || !hasValue && opt.Value != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		if _, ok = specifiedOptions[opt.Name]; ok {
-			return exeerrors.ErrDuplicateOption.FastGenByArgs(opt.Name)
-		}
-		specifiedOptions[opt.Name] = opt
-	}
-	p.SpecifiedOptionNames = make(map[string]struct{}, len(specifiedOptions))
-	for k := range specifiedOptions {
-		p.SpecifiedOptionNames[k] = struct{}{}
-	}
-
-	if kerneltype.IsNextGen() && sem.IsEnabled() {
-		// we put the check here, not in planner, to make sure the cloud_storage_uri
-		// won't change in between.
-		if p.IsLocalSort() {
-			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with local sort")
-		}
-		for k := range disallowedOptionsOfNextGen {
-			if _, ok := specifiedOptions[k]; ok {
-				return exeerrors.ErrLoadDataUnsupportedOption.GenWithStackByArgs(k, "nextgen kernel")
-			}
-		}
-	}
-
-	if sem.IsEnabled() {
-		for k := range disallowedOptionsForSEM {
-			if _, ok := specifiedOptions[k]; ok {
-				return exeerrors.ErrLoadDataUnsupportedOption.GenWithStackByArgs(k, "SEM enabled")
-			}
-		}
-	}
-
-	// DataFormatAuto means format is unspecified from stmt,
-	// will validate below CSV options when init data files.
-	if p.Format != DataFormatCSV && p.Format != DataFormatAuto {
-		for k := range csvOnlyOptions {
-			if _, ok := specifiedOptions[k]; ok {
-				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
-			}
-		}
-	}
-	if p.DataSourceType == DataSourceTypeQuery {
-		for k := range specifiedOptions {
-			if _, ok := allowedOptionsOfImportFromQuery[k]; !ok {
-				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "import from query")
-			}
-		}
-	}
-
-	optAsString := func(opt *plannercore.LoadDataOpt) (string, error) {
-		if opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetType() != mysql.TypeVarString {
-			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		val, isNull, err2 := opt.Value.EvalString(seCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-		if err2 != nil || isNull {
-			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		return val, nil
-	}
-	optAsInt64 := func(opt *plannercore.LoadDataOpt) (int64, error) {
-		// current parser takes integer and bool as mysql.TypeLonglong
-		if opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetType() != mysql.TypeLonglong || mysql.HasIsBooleanFlag(opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetFlag()) {
-			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		val, isNull, err2 := opt.Value.EvalInt(seCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-		if err2 != nil || isNull {
-			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		return val, nil
-	}
-	if opt, ok := specifiedOptions[characterSetOption]; ok {
-		v, err := optAsString(opt)
-		if err != nil || v == "" {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		_, err = config.ParseCharset(v)
-		if err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		p.Charset = &v
-	}
-	if opt, ok := specifiedOptions[fieldsTerminatedByOption]; ok {
-		v, err := optAsString(opt)
-		if err != nil || v == "" {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		p.FieldsTerminatedBy = v
-	}
-	if opt, ok := specifiedOptions[fieldsEnclosedByOption]; ok {
-		v, err := optAsString(opt)
-		if err != nil || len(v) > 1 {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		p.FieldsEnclosedBy = v
-	}
-	if opt, ok := specifiedOptions[fieldsEscapedByOption]; ok {
-		v, err := optAsString(opt)
-		if err != nil || len(v) > 1 {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		p.FieldsEscapedBy = v
-	}
-	if opt, ok := specifiedOptions[fieldsDefinedNullByOption]; ok {
-		v, err := optAsString(opt)
-		if err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		p.FieldNullDef = []string{v}
-	}
-	if opt, ok := specifiedOptions[linesTerminatedByOption]; ok {
-		v, err := optAsString(opt)
-		// cannot set terminator to empty string explicitly
-		if err != nil || v == "" {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		p.LinesTerminatedBy = v
-	}
-	if opt, ok := specifiedOptions[skipRowsOption]; ok {
-		vInt, err := optAsInt64(opt)
-		if err != nil || vInt < 0 {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		p.IgnoreLines = uint64(vInt)
-	}
-	if _, ok := specifiedOptions[splitFileOption]; ok {
-		p.SplitFile = true
-	}
-	if opt, ok := specifiedOptions[diskQuotaOption]; ok {
-		v, err := optAsString(opt)
-		if err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		if err = p.DiskQuota.UnmarshalText([]byte(v)); err != nil || p.DiskQuota <= 0 {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-	}
-	if opt, ok := specifiedOptions[threadOption]; ok {
-		vInt, err := optAsInt64(opt)
-		if err != nil || vInt <= 0 {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		p.ThreadCnt = int(vInt)
-	}
-	if opt, ok := specifiedOptions[maxWriteSpeedOption]; ok {
-		v, err := optAsString(opt)
-		if err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		if err = p.MaxWriteSpeed.UnmarshalText([]byte(v)); err != nil || p.MaxWriteSpeed < 0 {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-	}
-	if opt, ok := specifiedOptions[checksumTableOption]; ok {
-		v, err := optAsString(opt)
-		if err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		if err = p.Checksum.FromStringValue(v); err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-	}
-	if opt, ok := specifiedOptions[onDupKeyOption]; ok {
-		v, err := optAsString(opt)
-		if err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		mode := OnDupKeyMode(strings.ToLower(v))
-		switch mode {
-		case OnDupKeyModeCapture, OnDupKeyModeError:
-			p.OnDupKey = mode
-		default:
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-	}
-	if opt, ok := specifiedOptions[groupKeyOption]; ok {
-		v, err := optAsString(opt)
-		if err != nil || v == "" || naming.CheckWithMaxLen(v, 256) != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		p.GroupKey = v
-	}
-	if opt, ok := specifiedOptions[recordErrorsOption]; ok {
-		vInt, err := optAsInt64(opt)
-		if err != nil || vInt < -1 {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		p.MaxRecordedErrors = vInt
-	}
-	if _, ok := specifiedOptions[detachedOption]; ok {
-		p.Detached = true
-	}
-	if _, ok := specifiedOptions[disableTiKVImportModeOption]; ok {
-		p.DisableTiKVImportMode = true
-	}
-	if opt, ok := specifiedOptions[cloudStorageURIOption]; ok {
-		v, err := optAsString(opt)
-		if err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		// set cloud storage uri to empty string to force uses local sort when
-		// the global variable is set.
-		if v != "" {
-			b, err := objstore.ParseBackend(v, nil)
-			if err != nil {
-				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-			}
-			if !isSupportedCloudStorageBackend(b) {
-				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-			}
-		}
-		p.CloudStorageURI = v
-	}
-	if opt, ok := specifiedOptions[maxEngineSizeOption]; ok {
-		v, err := optAsString(opt)
-		if err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		if err = p.MaxEngineSize.UnmarshalText([]byte(v)); err != nil || p.MaxEngineSize < 0 {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-	}
-	if _, ok := specifiedOptions[disablePrecheckOption]; ok {
-		p.DisablePrecheck = true
-	}
-	if _, ok := specifiedOptions[forceMergeStep]; ok {
-		p.ForceMergeStep = true
-	}
-	if _, ok := specifiedOptions[manualRecoveryOption]; ok {
-		p.ManualRecovery = true
-	}
-
-	if _, ok := specifiedOptions[onDupKeyOption]; ok && p.IsLocalSort() {
-		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(onDupKeyOption, "local sort")
-	}
-
-	if kerneltype.IsClassic() {
-		if sv, ok := seCtx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
-			p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
-			if p.MaxNodeCnt == -1 { // -1 means calculate automatically
-				p.MaxNodeCnt = scheduler.CalcMaxNodeCountByStoresNum(ctx, seCtx.GetStore())
-			}
-		}
-	}
-
-	// when split-file is set, data file will be split into chunks of 256 MiB.
-	// skip_rows should be 0 or 1, we add this restriction to simplify skip_rows
-	// logic, so we only need to skip on the first chunk for each data file.
-	// CSV parser limit each row size to LargestEntryLimit(120M), the first row
-	// will NOT cross file chunk.
-	if p.SplitFile && p.IgnoreLines > 1 {
-		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("skip_rows, should be <= 1 when split-file is enabled")
-	}
-
-	if p.SplitFile && len(p.LinesTerminatedBy) == 0 {
-		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("lines_terminated_by, should not be empty when use split_file")
-	}
-
-	p.adjustOptions(targetNodeCPUCnt)
-	return nil
-}
-
-func (p *Plan) adjustOptions(targetNodeCPUCnt int) {
-	limit := targetNodeCPUCnt
-	if p.DataSourceType == DataSourceTypeQuery {
-		// for query, row is produced using 1 thread, the max cpu used is much
-		// lower than import from file, so we set limit to 2*targetNodeCPUCnt.
-		// TODO: adjust after spec is ready.
-		limit *= 2
-	}
-	// max value is cpu-count
-	if p.ThreadCnt > limit {
-		log.L().Info("adjust IMPORT INTO thread count",
-			zap.Int("before", p.ThreadCnt), zap.Int("after", limit))
-		p.ThreadCnt = limit
-	}
-	if p.IsGlobalSort() {
-		p.DisableTiKVImportMode = true
-	}
-}
-
-func isSupportedCloudStorageBackend(backend *backuppb.StorageBackend) bool {
-	return backend != nil && (backend.GetS3() != nil || backend.GetGcs() != nil || backend.GetAzureBlobStorage() != nil)
-}
-
-func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
-	redactURL := ast.RedactURL(p.Path)
-	var columnsAndVars, setClause string
-	var sb strings.Builder
-	formatCtx := pformat.NewRestoreCtx(pformat.DefaultRestoreFlags, &sb)
-	if len(plan.ColumnsAndUserVars) > 0 {
-		sb.WriteString("(")
-		for i, col := range plan.ColumnsAndUserVars {
-			if i > 0 {
-				sb.WriteString(", ")
-			}
-			_ = col.Restore(formatCtx)
-		}
-		sb.WriteString(")")
-		columnsAndVars = sb.String()
-	}
-	if len(plan.ColumnAssignments) > 0 {
-		sb.Reset()
-		for i, assign := range plan.ColumnAssignments {
-			if i > 0 {
-				sb.WriteString(", ")
-			}
-			_ = assign.Restore(formatCtx)
-		}
-		setClause = sb.String()
-	}
-	optionMap := make(map[string]any, len(plan.Options))
-	for _, opt := range plan.Options {
-		if opt.Value != nil {
-			// The option attached to the import statement here are all
-			// parameters entered by the user. TiDB will process the
-			// parameters entered by the user as constant. so we can
-			// directly convert it to constant.
-			cons := opt.Value.(*expression.Constant)
-			val := fmt.Sprintf("%v", cons.Value.GetValue())
-			if opt.Name == cloudStorageURIOption {
-				val = ast.RedactURL(val)
-			}
-			optionMap[opt.Name] = val
-		} else {
-			optionMap[opt.Name] = nil
-		}
-	}
-	p.Parameters = &ImportParameters{
-		ColumnsAndVars: columnsAndVars,
-		SetClause:      setClause,
-		FileLocation:   redactURL,
-		Format:         p.Format,
-		Options:        optionMap,
-	}
 	return nil
 }
 
@@ -1979,27 +1272,6 @@ func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
 	return res
 }
 
-// IsLocalSort returns true if we sort data on local disk.
-func (p *Plan) IsLocalSort() bool {
-	return p.CloudStorageURI == ""
-}
-
-// IsGlobalSort returns true if we sort data on global storage.
-func (p *Plan) IsGlobalSort() bool {
-	return !p.IsLocalSort()
-}
-
-// CheckNonCSVFormatOptions non CSV format should not specify CSV only options,
-// we check it again if the format is detected automatically.
-func (p *Plan) CheckNonCSVFormatOptions() error {
-	for k := range csvOnlyOptions {
-		if _, ok := p.SpecifiedOptionNames[k]; ok {
-			return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
-		}
-	}
-	return nil
-}
-
 // CreateColAssignExprs creates the column assignment expressions using session context.
 // RewriteAstExpr will write ast node in place(due to xxNode.Accept), but it doesn't change node content,
 // so we sync it.
@@ -2126,24 +1398,12 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 	return DataSourceTypeFile
 }
 
-// GetTargetNodeCPUCnt get cpu count of target node where the import into job will be executed.
-// target node is current node if it's server-disk import, import from query or disttask is disabled,
-// else it's the node managed by disttask.
-// exported for testing.
+// NewImportPlanFromInput prepares a description from resolved import input.
+func NewImportPlanFromInput(ctx context.Context, sctx sessionctx.Context, input *importinto.Input) (*Plan, error) {
+	return importinto.NewPlan(ctx, sctx, input)
+}
+
+// GetTargetNodeCPUCnt returns the CPU count used for import resource defaults.
 func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path string) (int, error) {
-	if sourceType == DataSourceTypeQuery {
-		return cpu.GetCPUCount(), nil
-	}
-
-	u, err2 := objstore.ParseRawURL(path)
-	if err2 != nil {
-		return 0, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
-			err2.Error())
-	}
-
-	serverDiskImport := objstore.IsLocal(u)
-	if serverDiskImport || !vardef.EnableDistTask.Load() {
-		return cpu.GetCPUCount(), nil
-	}
-	return handle.GetCPUCountOfNode(ctx)
+	return importinto.GetTargetNodeCPUCnt(ctx, sourceType, path)
 }

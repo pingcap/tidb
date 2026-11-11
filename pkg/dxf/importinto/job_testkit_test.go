@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	importcore "github.com/pingcap/tidb/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -398,7 +399,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
 
 	// local sort
-	taskMeta := importinto.TaskMeta{
+	taskMeta := importcore.TaskMeta{
 		Plan: importer.Plan{},
 		Summary: importer.Summary{
 			EncodeSummary: importer.StepSummary{
@@ -441,7 +442,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 	require.Equal(t, "80", runInfo.Percent())
 
 	// global sort
-	taskMeta = importinto.TaskMeta{
+	taskMeta = importcore.TaskMeta{
 		Plan: importer.Plan{
 			CloudStorageURI: "s3://test-bucket/test-path",
 		},
@@ -559,7 +560,7 @@ func TestShowImportProgress(t *testing.T) {
 	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
 
 	// global sort
-	taskMeta := importinto.TaskMeta{
+	taskMeta := importcore.TaskMeta{
 		Plan: importer.Plan{
 			CloudStorageURI: "s3://test-bucket/test-path",
 		},

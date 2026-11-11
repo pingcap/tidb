@@ -51,6 +51,7 @@ func TestImportTaskExecutor(t *testing.T) {
 			TaskBase: proto.TaskBase{ID: 1},
 		},
 		param,
+		nil,
 	).(*importExecutor)
 
 	require.NotNil(t, executor.BaseTaskExecutor.Extension)
@@ -97,6 +98,7 @@ func TestImportTaskExecutorUsesTaskRuntimeStoreWithoutExtraLookup(t *testing.T) 
 			TaskBase: proto.TaskBase{ID: 2},
 		},
 		param,
+		nil,
 	).(*importExecutor)
 
 	taskMeta := []byte(`{"Plan":{"TableInfo":{}}}`)

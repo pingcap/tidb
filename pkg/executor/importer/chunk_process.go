@@ -31,11 +31,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -570,20 +568,6 @@ func (p *dataDeliver) summaryFields() []zap.Field {
 		zap.Duration("deliverDur", p.deliverTotalDur),
 	}
 }
-
-// QueryChunk is a chunk from query result.
-type QueryChunk struct {
-	Fields      []*types.FieldType
-	Chk         *chunk.Chunk
-	RowIDOffset int64
-}
-
-// RunImportQuery runs the SELECT of the IMPORT INTO statement importSQL at q.ReadTS.
-// sctx takes the session states of the submitter, so the caller must destroy it.
-// It sends the result chunks to output, which the caller closes, and the
-// receiver owns the chunks it gets.
-// TODO(joechenrh): Registration by executor is to avoid import cycle. We can refactor it later.
-var RunImportQuery func(ctx context.Context, sctx sessionctx.Context, q *QuerySource, importSQL string, memQuota int64, output chan<- QueryChunk) error
 
 func newQueryChunkProcessor(
 	chunkCh chan QueryChunk,

@@ -19,24 +19,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"os/user"
 	"path"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/schema"
-	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/dumpformat/testutils"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/importinto"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -44,10 +42,10 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -56,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
-	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -68,42 +65,11 @@ func (keyspaceOnlyStore) GetKeyspace() string {
 	return ""
 }
 
-func TestInitDefaultOptions(t *testing.T) {
-	plan := &Plan{
-		DataSourceType: DataSourceTypeQuery,
-	}
-	plan.initDefaultOptions(context.Background(), 10, nil)
-	require.Equal(t, 2, plan.ThreadCnt)
-
-	plan = &Plan{
-		DataSourceType: DataSourceTypeFile,
-	}
-	vardef.CloudStorageURI.Store("s3://bucket")
-	t.Cleanup(func() {
-		vardef.CloudStorageURI.Store("")
-	})
-	plan.initDefaultOptions(context.Background(), 1, nil)
-	require.Equal(t, config.ByteSize(0), plan.DiskQuota)
-	require.Equal(t, config.OpLevelRequired, plan.Checksum)
-	require.Equal(t, 1, plan.ThreadCnt)
-	require.Equal(t, unlimitedWriteSpeed, plan.MaxWriteSpeed)
-	require.Equal(t, false, plan.SplitFile)
-	require.Equal(t, int64(100), plan.MaxRecordedErrors)
-	require.Equal(t, OnDupKeyModeError, plan.OnDupKey)
-	require.Equal(t, false, plan.Detached)
-	require.Equal(t, "utf8mb4", *plan.Charset)
-	require.Equal(t, false, plan.DisableTiKVImportMode)
-	if kerneltype.IsNextGen() {
-		require.Equal(t, config.DefaultBatchSize, plan.MaxEngineSize)
-	} else {
-		require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
-	}
-
-	require.Equal(t, "s3://bucket/dxf/", plan.CloudStorageURI)
-
-	plan.initDefaultOptions(context.Background(), 10, nil)
-	require.Equal(t, 5, plan.ThreadCnt)
-}
+// Explicit CSV fixture values; preparation defaults are tested in importinto.
+var (
+	defaultCharacterSet = "utf8mb4"
+	defaultFieldNullDef = []string{`\N`}
+)
 
 func TestInitDataStoreWithoutSource(t *testing.T) {
 	ctx := context.Background()
@@ -125,317 +91,7 @@ func TestInitDataStoreWithoutSource(t *testing.T) {
 	}
 }
 
-func TestPlanUseNewCollate(t *testing.T) {
-	plan := &Plan{}
-	require.True(t, plan.GetUseNewCollateOrDefault(true))
-	require.False(t, plan.GetUseNewCollateOrDefault(false))
-
-	plan.setUseNewCollate(false)
-	require.False(t, plan.GetUseNewCollateOrDefault(true))
-
-	data, err := json.Marshal(plan)
-	require.NoError(t, err)
-	require.Contains(t, string(data), `"use_new_collate":false`)
-
-	var decoded Plan
-	require.NoError(t, json.Unmarshal(data, &decoded))
-	require.False(t, decoded.GetUseNewCollateOrDefault(true))
-
-	decoded.setUseNewCollate(true)
-	require.True(t, decoded.GetUseNewCollateOrDefault(false))
-}
-
 // for negative case see TestImportIntoOptionsNegativeCase
-func TestInitOptionsPositiveCase(t *testing.T) {
-	sctx := mock.NewContext()
-	defer sctx.Close()
-	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
-
-	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
-		options := []*plannercore.LoadDataOpt{}
-		var err error
-		for _, opt := range inOptions {
-			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
-			if opt.Value != nil {
-				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
-				require.NoError(t, err)
-			}
-			options = append(options, &loadDataOpt)
-		}
-		return options
-	}
-
-	sqlTemplate := "import into t from '/file.csv' with %s"
-	p := parser.New()
-	sql := fmt.Sprintf(sqlTemplate, characterSetOption+"='utf8', "+
-		fieldsTerminatedByOption+"='aaa', "+
-		fieldsEnclosedByOption+"='|', "+
-		fieldsEscapedByOption+"='', "+
-		fieldsDefinedNullByOption+"='N', "+
-		linesTerminatedByOption+"='END', "+
-		skipRowsOption+"=1, "+
-		diskQuotaOption+"='100gib', "+
-		checksumTableOption+"='optional', "+
-		threadOption+"=100000, "+
-		maxWriteSpeedOption+"='200mib', "+
-		splitFileOption+", "+
-		recordErrorsOption+"=123, "+
-		detachedOption+", "+
-		disableTiKVImportModeOption+", "+
-		maxEngineSizeOption+"='100gib', "+
-		disablePrecheckOption,
-	)
-	stmt, err := p.ParseOneStmt(sql, "", "")
-	require.NoError(t, err, sql)
-	plan := &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
-	require.NoError(t, err, sql)
-	require.Equal(t, "utf8", *plan.Charset, sql)
-	require.Equal(t, "aaa", plan.FieldsTerminatedBy, sql)
-	require.Equal(t, "|", plan.FieldsEnclosedBy, sql)
-	require.Equal(t, "", plan.FieldsEscapedBy, sql)
-	require.Equal(t, []string{"N"}, plan.FieldNullDef, sql)
-	require.Equal(t, "END", plan.LinesTerminatedBy, sql)
-	require.Equal(t, uint64(1), plan.IgnoreLines, sql)
-	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
-	require.Equal(t, config.OpLevelOptional, plan.Checksum, sql)
-	require.Equal(t, OnDupKeyModeError, plan.OnDupKey, sql)
-	require.Equal(t, runtime.GOMAXPROCS(0), plan.ThreadCnt, sql) // it's adjusted to the number of CPUs
-	require.Equal(t, config.ByteSize(200<<20), plan.MaxWriteSpeed, sql)
-	require.True(t, plan.SplitFile, sql)
-	require.Equal(t, int64(123), plan.MaxRecordedErrors, sql)
-	require.True(t, plan.Detached, sql)
-	require.True(t, plan.DisableTiKVImportMode, sql)
-	require.Equal(t, config.ByteSize(100<<30), plan.MaxEngineSize, sql)
-	require.Empty(t, plan.CloudStorageURI, sql)
-	require.True(t, plan.DisablePrecheck, sql)
-
-	// set cloud storage uri
-	vardef.CloudStorageURI.Store("s3://bucket/path")
-	t.Cleanup(func() {
-		vardef.CloudStorageURI.Store("")
-	})
-	sqlCapture := sql + ", " + onDupKeyOption + "='capture'"
-	stmt, err = p.ParseOneStmt(sqlCapture, "", "")
-	require.NoError(t, err, sqlCapture)
-	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
-	require.NoError(t, err, sqlCapture)
-	require.Equal(t, "s3://bucket/path/dxf/", plan.CloudStorageURI, sqlCapture)
-	require.Equal(t, OnDupKeyModeCapture, plan.OnDupKey, sqlCapture)
-
-	// override cloud storage uri using option
-	sql2 := sql + ", " + cloudStorageURIOption + "='s3://bucket/path2'"
-	stmt, err = p.ParseOneStmt(sql2, "", "")
-	require.NoError(t, err, sql2)
-	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
-	require.NoError(t, err, sql2)
-	require.Equal(t, "s3://bucket/path2", plan.CloudStorageURI, sql2)
-	// override with gs
-	sql3 := sql + ", " + cloudStorageURIOption + "='gs://bucket/path2'"
-	stmt, err = p.ParseOneStmt(sql3, "", "")
-	require.NoError(t, err, sql3)
-	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
-	require.NoError(t, err, sql3)
-	require.Equal(t, "gs://bucket/path2", plan.CloudStorageURI, sql3)
-	// override with azure
-	sql3a := sql + ", " + cloudStorageURIOption + "='azure://container/path2'"
-	stmt, err = p.ParseOneStmt(sql3a, "", "")
-	require.NoError(t, err, sql3a)
-	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
-	require.NoError(t, err, sql3a)
-	require.Equal(t, "azure://container/path2", plan.CloudStorageURI, sql3a)
-	sql3b := sql + ", " + cloudStorageURIOption + "='azblob://container/path3'"
-	stmt, err = p.ParseOneStmt(sql3b, "", "")
-	require.NoError(t, err, sql3b)
-	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
-	require.NoError(t, err, sql3b)
-	require.Equal(t, "azblob://container/path3", plan.CloudStorageURI, sql3b)
-	// override with empty string, force use local sort
-	sql4 := sql + ", " + cloudStorageURIOption + "=''"
-	stmt, err = p.ParseOneStmt(sql4, "", "")
-	require.NoError(t, err, sql4)
-	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
-	require.NoError(t, err, sql4)
-	require.Equal(t, "", plan.CloudStorageURI, sql4)
-}
-
-func TestInitOptionsDisallowOnDuplicateKeyWithLocalSort(t *testing.T) {
-	sctx := mock.NewContext()
-	defer sctx.Close()
-	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
-
-	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
-		options := []*plannercore.LoadDataOpt{}
-		var err error
-		for _, opt := range inOptions {
-			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
-			if opt.Value != nil {
-				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
-				require.NoError(t, err)
-			}
-			options = append(options, &loadDataOpt)
-		}
-		return options
-	}
-
-	sql := "import into t from '/file.csv' with on_duplicate_key='capture'"
-	stmt, err := parser.New().ParseOneStmt(sql, "", "")
-	require.NoError(t, err)
-
-	vardef.CloudStorageURI.Store("")
-	plan := &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
-	require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption)
-	require.ErrorContains(t, err, onDupKeyOption)
-	require.ErrorContains(t, err, "local sort")
-}
-
-func TestInitOptionsFromQueryPositiveCase(t *testing.T) {
-	sctx := mock.NewContext()
-	defer sctx.Close()
-	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
-
-	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
-		options := []*plannercore.LoadDataOpt{}
-		var err error
-		for _, opt := range inOptions {
-			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
-			if opt.Value != nil {
-				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
-				require.NoError(t, err)
-			}
-			options = append(options, &loadDataOpt)
-		}
-		return options
-	}
-
-	p := parser.New()
-
-	// all allowed options for import from query: thread, disable_precheck, disk_quota
-	sql := "import into t from select * from t2 with " +
-		threadOption + "=4, " +
-		disablePrecheckOption + ", " +
-		diskQuotaOption + "='100gib'"
-	stmt, err := p.ParseOneStmt(sql, "", "")
-	require.NoError(t, err, sql)
-	plan := &Plan{DataSourceType: DataSourceTypeQuery}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
-	require.NoError(t, err, sql)
-	require.Equal(t, 4, plan.ThreadCnt, sql)
-	require.True(t, plan.DisablePrecheck, sql)
-	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
-
-	// disk_quota alone should work
-	sql = "import into t from select * from t2 with " + diskQuotaOption + "='50gib'"
-	stmt, err = p.ParseOneStmt(sql, "", "")
-	require.NoError(t, err, sql)
-	plan = &Plan{DataSourceType: DataSourceTypeQuery}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
-	require.NoError(t, err, sql)
-	require.Equal(t, config.ByteSize(50<<30), plan.DiskQuota, sql)
-}
-
-func TestInitOptionsFromQueryNegativeCase(t *testing.T) {
-	sctx := mock.NewContext()
-	defer sctx.Close()
-	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
-
-	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
-		options := []*plannercore.LoadDataOpt{}
-		var err error
-		for _, opt := range inOptions {
-			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
-			if opt.Value != nil {
-				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
-				require.NoError(t, err)
-			}
-			options = append(options, &loadDataOpt)
-		}
-		return options
-	}
-
-	p := parser.New()
-
-	// options not allowed for import from query
-	disallowedOptions := []string{
-		characterSetOption + "='utf8'",
-		fieldsTerminatedByOption + "='aaa'",
-		fieldsEnclosedByOption + "='|'",
-		fieldsEscapedByOption + "='\\\\'",
-		fieldsDefinedNullByOption + "='N'",
-		linesTerminatedByOption + "='\\n'",
-		skipRowsOption + "=1",
-		splitFileOption,
-		checksumTableOption + "='optional'",
-		maxWriteSpeedOption + "='200mib'",
-		recordErrorsOption + "=123",
-		detachedOption,
-		disableTiKVImportModeOption,
-		maxEngineSizeOption + "='100gib'",
-		cloudStorageURIOption + "='s3://bucket/path'",
-	}
-	for _, opt := range disallowedOptions {
-		sql := "import into t from select * from t2 with " + opt
-		stmt, err := p.ParseOneStmt(sql, "", "")
-		require.NoError(t, err, sql)
-		plan := &Plan{DataSourceType: DataSourceTypeQuery}
-		err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
-		require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption, sql)
-	}
-
-	// invalid disk_quota values for query source
-	invalidDiskQuotaCases := []string{
-		diskQuotaOption + "='aa'",
-		diskQuotaOption + "='220MiBxxx'",
-		diskQuotaOption + "=1",
-		diskQuotaOption + "=false",
-	}
-	for _, opt := range invalidDiskQuotaCases {
-		sql := "import into t from select * from t2 with " + opt
-		stmt, err := p.ParseOneStmt(sql, "", "")
-		require.NoError(t, err, sql)
-		plan := &Plan{DataSourceType: DataSourceTypeQuery}
-		err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
-		require.Error(t, err, sql)
-	}
-
-	// duplicate options
-	sql := "import into t from select * from t2 with " + diskQuotaOption + "='100gib', " + diskQuotaOption + "='200gib'"
-	stmt, err := p.ParseOneStmt(sql, "", "")
-	require.NoError(t, err, sql)
-	plan := &Plan{DataSourceType: DataSourceTypeQuery}
-	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
-	require.ErrorIs(t, err, exeerrors.ErrDuplicateOption, sql)
-}
-
-func TestAdjustOptions(t *testing.T) {
-	plan := &Plan{
-		DiskQuota:      1,
-		ThreadCnt:      100000000,
-		MaxWriteSpeed:  10,
-		DataSourceType: DataSourceTypeFile,
-	}
-	plan.adjustOptions(16)
-	require.Equal(t, 16, plan.ThreadCnt)
-	require.Equal(t, config.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
-	require.False(t, plan.DisableTiKVImportMode)
-
-	plan.ThreadCnt = 100000000
-	plan.DataSourceType = DataSourceTypeQuery
-	plan.adjustOptions(16)
-	require.Equal(t, 32, plan.ThreadCnt)
-	require.False(t, plan.DisableTiKVImportMode)
-
-	plan.CloudStorageURI = "s3://bucket/path"
-	plan.adjustOptions(16)
-	require.True(t, plan.DisableTiKVImportMode)
-}
 
 func TestGetConflictHandlingMode(t *testing.T) {
 	plan := &Plan{}
@@ -471,57 +127,6 @@ func TestASTArgsFromStmt(t *testing.T) {
 	importIntoStmt := stmtNode.(*ast.ImportIntoStmt)
 	require.Equal(t, astArgs.ColumnAssignments, importIntoStmt.ColumnAssignments)
 	require.Equal(t, astArgs.ColumnsAndUserVars, importIntoStmt.ColumnsAndUserVars)
-}
-
-func urlEqual(t *testing.T, expected, actual string) {
-	urlExpected, err := url.Parse(expected)
-	require.NoError(t, err)
-	urlGot, err := url.Parse(actual)
-	require.NoError(t, err)
-	// order of query parameters might change
-	require.Equal(t, urlExpected.Query(), urlGot.Query())
-	urlExpected.RawQuery, urlGot.RawQuery = "", ""
-	require.Equal(t, urlExpected.String(), urlGot.String())
-}
-
-func TestInitParameters(t *testing.T) {
-	// test redacted
-	p := &Plan{
-		Format: DataFormatCSV,
-		Path:   "azure://bucket/path?account-name=test-account&sas-token=111111",
-	}
-	require.NoError(t, p.initParameters(&plannercore.ImportInto{
-		Options: []*plannercore.LoadDataOpt{
-			{
-				Name: cloudStorageURIOption,
-				Value: &expression.Constant{
-					Value: types.NewStringDatum("azblob://this-is-for-storage/path?account-name=test-account&sas_token=bbbbbb"),
-				},
-			},
-		},
-	}))
-	urlEqual(t, "azure://bucket/path?account-name=test-account&sas-token=xxxxxx", p.Parameters.FileLocation)
-	require.Len(t, p.Parameters.Options, 1)
-	urlEqual(t, "azblob://this-is-for-storage/path?account-name=test-account&sas_token=xxxxxx",
-		p.Parameters.Options[cloudStorageURIOption].(string))
-
-	// test other options
-	require.NoError(t, p.initParameters(&plannercore.ImportInto{
-		Options: []*plannercore.LoadDataOpt{
-			{
-				Name: detachedOption,
-			},
-			{
-				Name: threadOption,
-				Value: &expression.Constant{
-					Value: types.NewIntDatum(3),
-				},
-			},
-		},
-	}))
-	require.Len(t, p.Parameters.Options, 2)
-	require.Contains(t, p.Parameters.Options, detachedOption)
-	require.Equal(t, "3", p.Parameters.Options[threadOption])
 }
 
 func TestGetLocalBackendCfg(t *testing.T) {
@@ -749,7 +354,7 @@ func TestInitCompressedFiles(t *testing.T) {
 				Format:         DataFormatCSV,
 				InImportInto:   true,
 				Charset:        &defaultCharacterSet,
-				LineFieldsInfo: newDefaultLineFieldsInfo(),
+				LineFieldsInfo: importinto.DefaultLineFieldsInfo(),
 				FieldNullDef:   defaultFieldNullDef,
 				Parameters:     &ImportParameters{},
 			},
@@ -777,7 +382,7 @@ func TestInitCompressedFiles(t *testing.T) {
 			Format:         DataFormatCSV,
 			InImportInto:   true,
 			Charset:        &defaultCharacterSet,
-			LineFieldsInfo: newDefaultLineFieldsInfo(),
+			LineFieldsInfo: importinto.DefaultLineFieldsInfo(),
 			FieldNullDef:   defaultFieldNullDef,
 			Parameters:     &ImportParameters{},
 		},
@@ -809,7 +414,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 			Format:         DataFormatCSV,
 			InImportInto:   true,
 			Charset:        &defaultCharacterSet,
-			LineFieldsInfo: newDefaultLineFieldsInfo(),
+			LineFieldsInfo: importinto.DefaultLineFieldsInfo(),
 			FieldNullDef:   defaultFieldNullDef,
 			Parameters:     &ImportParameters{},
 		},
@@ -1000,10 +605,61 @@ func TestParseFileType(t *testing.T) {
 	})
 }
 
-func TestGetDefMaxEngineSize(t *testing.T) {
-	if kerneltype.IsClassic() {
-		require.Equal(t, config.ByteSize(500*units.GiB), getDefMaxEngineSize())
-	} else {
-		require.Equal(t, config.ByteSize(100*units.GiB), getDefMaxEngineSize())
+func TestImportPlanFromInput(t *testing.T) {
+	ctx := context.Background()
+	sctx := mock.NewContext()
+	defer sctx.Close()
+	sctx.Store = keyspaceOnlyStore{}
+	node, err := parser.New().ParseOneStmt("create table t(a int)", "", "")
+	require.NoError(t, err)
+	tblInfo, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 42)
+	require.NoError(t, err)
+	tblInfo.State = model.StatePublic
+	tbl := tables.MockTableFromMeta(tblInfo)
+	format := DataFormatCSV
+	for _, sourceType := range []DataSourceType{DataSourceTypeFile, DataSourceTypeQuery} {
+		t.Run(sourceType.String(), func(t *testing.T) {
+			value := &expression.Constant{Value: types.NewIntDatum(2), RetType: types.NewFieldType(mysql.TypeLonglong)}
+			path := filepath.Join(t.TempDir(), "data.csv")
+			input := &importinto.Input{
+				DBName: "test", DBID: 7, TableInfo: tblInfo,
+				Path: path, Format: &format, DataSourceType: sourceType,
+				Options: []*importinto.Option{{Name: "thread", Value: value}},
+			}
+			physical := &plannercore.ImportInto{
+				Table: &resolve.TableNameW{
+					TableName: &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("t")},
+					DBInfo:    &model.DBInfo{ID: 7, Name: ast.NewCIStr("test")},
+				},
+				Path: path, Format: &format,
+				Options: []*plannercore.LoadDataOpt{{Name: "thread", Value: value}},
+			}
+			if sourceType == DataSourceTypeQuery {
+				physical.SelectPlan = &physicalop.PhysicalSelection{}
+			}
+			fromSQL, err := NewImportPlan(ctx, sctx, physical, tbl)
+			require.NoError(t, err)
+			direct, err := NewImportPlanFromInput(ctx, sctx, input)
+			require.NoError(t, err)
+			require.Equal(t, fromSQL, direct)
+			require.Same(t, tblInfo, direct.TableInfo)
+			require.JSONEq(t, fromSQL.Parameters.String(), direct.Parameters.String())
+			encoded, err := json.Marshal(fromSQL)
+			require.NoError(t, err)
+			directEncoded, err := json.Marshal(direct)
+			require.NoError(t, err)
+			require.JSONEq(t, string(encoded), string(directEncoded))
+
+			// Both entrypoints must reject the same invalid numeric option.
+			bad := &expression.Constant{Value: types.NewStringDatum("bad"), RetType: types.NewFieldType(mysql.TypeVarString)}
+			input.Options[0].Value = bad
+			physical.Options[0].Value = bad
+			_, sqlErr := NewImportPlan(ctx, sctx, physical, tbl)
+			_, directErr := NewImportPlanFromInput(ctx, sctx, input)
+			require.Error(t, sqlErr)
+			require.EqualError(t, directErr, sqlErr.Error())
+		})
 	}
+	_, err = NewImportPlanFromInput(ctx, sctx, nil)
+	require.ErrorContains(t, err, "target table metadata")
 }
