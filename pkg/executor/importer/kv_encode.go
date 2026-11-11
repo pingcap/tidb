@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
 // TableKVEncoder encodes a row of data into a KV pair.
@@ -150,6 +151,9 @@ func (en *TableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, err
 
 // todo merge with code in load_data.go
 func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID int64) ([]types.Datum, error) {
+	if len(en.fileColumns) > 0 && len(parserData) != len(en.fileColumns) {
+		return nil, plannererrors.ErrWrongValueCountOnRow.GenWithStackByArgs(rowID)
+	}
 	if cap(en.insertColumnRowCache) < len(en.insertColumns) {
 		en.insertColumnRowCache = make([]types.Datum, 0, len(en.insertColumns))
 	}
