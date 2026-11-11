@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/stretchr/testify/require"
 )
@@ -33,6 +34,8 @@ func TestMViewRefreshSourceInfoLogSets(t *testing.T) {
 			exec := tk.Session().GetSQLExecutor()
 			if layout != "bootstrap" {
 				// SQL access must not depend on column offsets or physical handle encoding.
+				// Allow replacing the protected NextGen system table for this layout fixture.
+				testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipCheckReservedSchemaObjInNextGen", "return(true)")
 				tk.MustExec("drop table mysql.tidb_mview_fast_refresh_source_info")
 				tk.MustExec("create table mysql.tidb_mview_fast_refresh_source_info (MLOG_ID bigint not null, EXTRA int default 7, MVIEW_ID bigint not null, primary key (MVIEW_ID, MLOG_ID) nonclustered, key idx_mlog (MLOG_ID, MVIEW_ID))")
 			}
