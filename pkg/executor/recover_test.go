@@ -23,11 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-<<<<<<< HEAD:pkg/executor/recover_test.go
-=======
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
->>>>>>> b1322c5d663 (ddl: reject unsafe standalone recovery of foreign keys (#71074)):pkg/executor/test/recovertest/recover_test.go
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -36,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -344,13 +341,13 @@ func TestFlashbackTableForeignKeyOwnerCheck(t *testing.T) {
 			flashTK.MustExec("use fk_owner_flashback")
 			tk.MustExec("set foreign_key_checks = 1")
 			t.Cleanup(func() { tk.MustExec("set foreign_key_checks = 1") })
-			timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+			timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
 			t.Cleanup(resetGC)
 			tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 			require.NoError(t, gcutil.EnableGC(tk.Session()))
 			tk.MustExec("create table p (id int primary key)")
 			tk.MustExec("insert into p values (1)")
-			oldParent, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("fk_owner_flashback"), ast.NewCIStr("p"))
+			oldParent, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("fk_owner_flashback"), pmodel.NewCIStr("p"))
 			require.NoError(t, err)
 			oldID := oldParent.Meta().ID
 			tk.MustExec("drop table p")
@@ -422,7 +419,7 @@ func TestFlashbackTableForeignKeyOwnerCheck(t *testing.T) {
 				// its exclusive dependency on p. The child belongs to a new p,
 				// whose rows do not match the historical parent being recovered.
 				tk.MustExecWithContext(ctx, "create table p (id int primary key)")
-				replacement, lookupErr := dom.InfoSchema().TableByName(ctx, ast.NewCIStr("fk_owner_flashback"), ast.NewCIStr("p"))
+				replacement, lookupErr := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("fk_owner_flashback"), pmodel.NewCIStr("p"))
 				require.NoError(t, lookupErr)
 				require.NotEqual(t, oldID, replacement.Meta().ID)
 				tk.MustExecWithContext(ctx, "insert into p values (2)")
@@ -484,7 +481,7 @@ func TestFlashbackTableForeignKeyOwnerCheck(t *testing.T) {
 				tk := testkit.NewTestKit(t, store)
 				tk.MustExec("create database fk_owner_legacy_flashback")
 				tk.MustExec("use fk_owner_legacy_flashback")
-				timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+				timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
 				t.Cleanup(resetGC)
 				tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 				require.NoError(t, gcutil.EnableGC(tk.Session()))
@@ -497,9 +494,9 @@ func TestFlashbackTableForeignKeyOwnerCheck(t *testing.T) {
 					tk.MustExec("create table c (id int primary key, pid int, foreign key (pid) references c(id) on delete cascade)")
 					tk.MustExec("insert into c values (1, null), (2, 1)")
 				}
-				schema, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("fk_owner_legacy_flashback"))
+				schema, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr("fk_owner_legacy_flashback"))
 				require.True(t, ok)
-				child, err := dom.InfoSchema().TableByName(context.Background(), schema.Name, ast.NewCIStr("c"))
+				child, err := dom.InfoSchema().TableByName(context.Background(), schema.Name, pmodel.NewCIStr("c"))
 				require.NoError(t, err)
 				restoredTable := child.Meta().Clone()
 				dropJobIDs := make(chan int64, 1)
@@ -524,7 +521,7 @@ func TestFlashbackTableForeignKeyOwnerCheck(t *testing.T) {
 				if tc.external {
 					tk.MustExec("drop table p")
 				}
-				snapshotTS := ddl.GetRecoverSnapshotTS(dropJob)
+				snapshotTS := dropJob.StartTS
 				autoIDs, err := dom.GetSnapshotMeta(snapshotTS).GetAutoIDAccessors(schema.ID, restoredTable.ID).Get()
 				require.NoError(t, err)
 
@@ -547,7 +544,7 @@ func TestFlashbackTableForeignKeyOwnerCheck(t *testing.T) {
 				// Submit each persisted argument version directly, as an older
 				// frontend would, without invoking the current frontend guard.
 				if tc.rename {
-					restoredTable.Name = ast.NewCIStr("p")
+					restoredTable.Name = pmodel.NewCIStr("p")
 					if !tc.external {
 						restoredTable.ForeignKeys[0].RefTable = restoredTable.Name
 					}

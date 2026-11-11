@@ -21,14 +21,9 @@ import (
 	"strings"
 	"testing"
 
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/meta/metadef"
->>>>>>> b1322c5d663 (ddl: reject unsafe standalone recovery of foreign keys (#71074))
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -76,17 +71,17 @@ func TestCheckRecoverTableForeignKeys(t *testing.T) {
 	}{
 		{name: "self rename", reads: 1},
 		{name: "unchanged self", change: func(info *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
-			info.TableInfo.Name = ast.NewCIStr("old")
+			info.TableInfo.Name = pmodel.NewCIStr("old")
 			info.TableInfo.ForeignKeys[0].RefTable = info.TableInfo.Name
 			reader.err = decodeErr
 		}},
 		{name: "original external endpoint", reads: 1, permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
 			change: func(_ *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
-				reader.table.ForeignKeys[0].RefTable = ast.NewCIStr("restored")
+				reader.table.ForeignKeys[0].RefTable = pmodel.NewCIStr("restored")
 			}},
 		{name: "original external schema", reads: 1, permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
 			change: func(_ *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
-				reader.table.ForeignKeys[0].RefSchema = ast.NewCIStr("other")
+				reader.table.ForeignKeys[0].RefSchema = pmodel.NewCIStr("other")
 			}},
 		{name: "missing old schema", permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
 			change: func(info *model.RecoverTableInfo, _ *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
@@ -106,7 +101,7 @@ func TestCheckRecoverTableForeignKeys(t *testing.T) {
 			}},
 		{name: "mismatched historical table", reads: 1, permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
 			change: func(_ *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
-				reader.table.Name = ast.NewCIStr("other")
+				reader.table.Name = pmodel.NewCIStr("other")
 			}},
 		{name: "missing historical schema", reads: 1, permanent: true, wantError: meta.ErrDBNotExists.Equal,
 			change: func(_ *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
@@ -122,7 +117,7 @@ func TestCheckRecoverTableForeignKeys(t *testing.T) {
 			}},
 		{name: "legacy untracked foreign key", change: func(info *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
 			info.TableInfo.ForeignKeys[0].Version = 0
-			info.TableInfo.ForeignKeys[0].RefTable = ast.NewCIStr("other")
+			info.TableInfo.ForeignKeys[0].RefTable = pmodel.NewCIStr("other")
 			info.OldSchemaName, info.OldTableName, info.SnapshotTS = "", "", 0
 			reader.err = decodeErr
 		}},
@@ -133,7 +128,7 @@ func TestCheckRecoverTableForeignKeys(t *testing.T) {
 		}},
 		{name: "current external endpoint", reads: 1, permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
 			change: func(info *model.RecoverTableInfo, _ *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
-				info.TableInfo.ForeignKeys[0].RefTable = ast.NewCIStr("other")
+				info.TableInfo.ForeignKeys[0].RefTable = pmodel.NewCIStr("other")
 			}},
 		{name: "incoming target reference", reads: 1, permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
 			change: func(_ *model.RecoverTableInfo, _ *recoverTableForeignKeySnapshotReader, is *recoverTableForeignKeyInfoSchema) {
@@ -141,11 +136,11 @@ func TestCheckRecoverTableForeignKeys(t *testing.T) {
 			}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			original := &model.TableInfo{ID: 42, Name: ast.NewCIStr("old"), ForeignKeys: []*model.FKInfo{{
-				Version: model.FKVersion1, RefSchema: ast.NewCIStr("test"), RefTable: ast.NewCIStr("old"),
+			original := &model.TableInfo{ID: 42, Name: pmodel.NewCIStr("old"), ForeignKeys: []*model.FKInfo{{
+				Version: model.FKVersion1, RefSchema: pmodel.NewCIStr("test"), RefTable: pmodel.NewCIStr("old"),
 			}}}
 			restored := original.Clone()
-			restored.Name = ast.NewCIStr("restored")
+			restored.Name = pmodel.NewCIStr("restored")
 			restored.ForeignKeys[0].RefTable = restored.Name
 			info := &model.RecoverTableInfo{
 				SchemaID: 1, TableInfo: restored, SnapshotTS: 100, OldSchemaName: "test", OldTableName: "old",
