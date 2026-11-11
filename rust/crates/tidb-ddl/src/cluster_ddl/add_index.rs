@@ -316,17 +316,10 @@ pub(super) fn check_added_primary_key_holds_no_null(
 /// `checkTableTypeForColumnarIndex` refuses are Go's errors; this node builds
 /// no columnar index job past them.
 fn create_columnar_index(stored: &TableInfo, columnar: tidb_model::ColumnarIndexType) -> DdlPlanError {
-    let refusal = |terror: &tidb_terror::TerrorError, message: &str| {
-        DdlPlanError::Admission(tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
-            &terror.gen_with_stack(message),
-        ))
-    };
     if columnar == tidb_model::ColumnarIndexType::FULLTEXT {
-        // Go `checkFullTextSupportedInStarter`.
-        return refusal(
-            &tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX,
-            "FULLTEXT index is only supported in starter deployment mode",
-        );
+        if let Err(error) = tidb_ddl_build::table_info_build::check_full_text_supported_in_starter() {
+            return DdlPlanError::Admission(error);
+        }
     }
     if let Err(error) = check_table_type_for_columnar_index(stored) {
         return error;
@@ -338,26 +331,8 @@ fn create_columnar_index(stored: &TableInfo, columnar: tidb_model::ColumnarIndex
 
 /// Go `checkTableTypeForColumnarIndex`.
 fn check_table_type_for_columnar_index(stored: &TableInfo) -> Result<(), DdlPlanError> {
-    let refusal = |terror: tidb_terror::TerrorError| {
-        Err(DdlPlanError::Admission(tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(&terror)))
-    };
-    if stored.table_cache_status_type != tidb_model::TableCacheStatusType::DISABLE {
-        return refusal(tidb_dbterror::ERR_OPT_ON_CACHE_TABLE.gen_with_stack_by_args(&["create columnar index".into()]));
-    }
-    if stored.temp_table_type != tidb_model::TempTableType::NONE {
-        return refusal(tidb_dbterror::ERR_OPT_ON_TEMPORARY_TABLE.fast_gen_by_args(&["columnar index".into()]));
-    }
-    if stored.get_partition_info().is_some() {
-        return refusal(
-            tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX.fast_gen_by_args(&["unsupported partition table".into()]),
-        );
-    }
-    if stored.tiflash_replica.as_ref().is_none_or(|replica| replica.read().count == 0) {
-        return refusal(tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX.fast_gen_by_args(&[
-            "columnar replica must exist to create vector index, columnar index or fulltext index".into(),
-        ]));
-    }
-    Ok(())
+    tidb_ddl_build::table_info_build::check_table_type_for_columnar_index(stored)
+        .map_err(DdlPlanError::Admission)
 }
 
 /// The executor half without `doDDLJob2`: the job unsubmitted, which a

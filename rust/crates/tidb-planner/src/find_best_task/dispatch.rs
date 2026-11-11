@@ -3950,6 +3950,11 @@ fn find_best_task_4_logical_data_source_paths(
                     filter_condition: table_filters.clone(),
                     late_materialization_filter_condition: Vec::new(),
                     late_materialization_selectivity: 0.0,
+                    used_columnar_indexes: ds.fts_push_down
+                        .as_ref()
+                        .map(tidb_planner_core_operator_physicalop::build_full_text_index_extra)
+                        .into_iter()
+                        .collect(),
                     table_id: ds.physical_table_id,
                     table_as_name: ds.table_as_name.clone(),
                     dynamic_partition_access: ds.dynamic_partition_access.clone(),
@@ -4201,6 +4206,11 @@ fn find_best_task_4_logical_data_source_paths(
                     filter_condition: path.table_filters.clone(),
                     late_materialization_filter_condition: Vec::new(),
                     late_materialization_selectivity: 0.0,
+                    used_columnar_indexes: ds.fts_push_down
+                        .as_ref()
+                        .map(tidb_planner_core_operator_physicalop::build_full_text_index_extra)
+                        .into_iter()
+                        .collect(),
                     resolved_descriptor: Some(tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor::new(
                         ds.physical_table_id,
                         ds.is_common_handle(),
@@ -5043,6 +5053,7 @@ fn find_best_task_4_logical_data_source_paths(
                             filter_condition: Vec::new(),
                             late_materialization_filter_condition: Vec::new(),
                             late_materialization_selectivity: 0.0,
+                            used_columnar_indexes: Vec::new(),
                             resolved_descriptor: Some(
                                 tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor::new(
                                     ds.physical_table_id,

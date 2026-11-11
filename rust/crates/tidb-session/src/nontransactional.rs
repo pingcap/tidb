@@ -757,11 +757,7 @@ impl Session {
                 return Err(plain_error("Non-transactional DML, shard column not found"));
             }
         };
-        let redact = self
-            .vars
-            .system_value("tidb_redact_log")
-            .map(|value| value.into_owned())
-            .unwrap_or_else(|_| "OFF".to_owned());
+        let redact = self.vars.enable_redact_log().to_owned();
         let ignore_error = self.session_bool("tidb_nontransactional_ignore_error", false);
         Ok(Box::new(JobRun {
             jobs,
@@ -856,11 +852,7 @@ impl Session {
             });
         }
         // tidb_nontransactional_ignore_error must be set.
-        let redact = self
-            .vars
-            .system_value("tidb_redact_log")
-            .map(|value| value.into_owned())
-            .unwrap_or_else(|_| "OFF".to_owned());
+        let redact = self.vars.enable_redact_log().to_owned();
         let mut errors = String::new();
         for job in &failed {
             let error = job.err.as_ref().expect("a failed job has an error");

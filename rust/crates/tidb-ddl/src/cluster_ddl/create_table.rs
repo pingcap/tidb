@@ -26,6 +26,7 @@ pub fn prepare_create_table_job_submission<S: MetaSnapshot>(
     snapshot: &mut S,
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
     start_ts: u64,
     upgrading: bool,
     min_job_id: i64,
@@ -48,6 +49,7 @@ pub fn prepare_create_table_job_submission<S: MetaSnapshot>(
         table,
         *if_not_exists,
         build,
+        tiflash_stores,
         &mut warnings,
     )? {
         Ok(info) => info,

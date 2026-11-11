@@ -1114,6 +1114,8 @@ pub struct StmtContextData {
     in_transaction: bool,
     /// Go `SessionVars.TxnCtx.IsExplicit`.
     txn_is_explicit: bool,
+    /// Go `SessionVars.EnableRedactLog`.
+    enable_redact_log: String,
     /// Go `StmtCtx.ForeignKeyTriggerCtx.HasFKCascades`: the statement's root
     /// executor cascades foreign keys.
     fk_cascades: Arc<std::sync::atomic::AtomicBool>,
@@ -1305,6 +1307,9 @@ pub struct StmtContextData {
     /// Go `StmtCtx.IsTiFlash` as `buildDataSource` sets it: MPP is allowed
     /// and a table the statement reads has an available TiFlash replica.
     is_tiflash: Arc<AtomicBool>,
+    /// Go `StmtCtx.FTSFunctionIsUsed`: `FTS_MATCH_WORD()` appears in the
+    /// statement, set where the function is built.
+    fts_function_is_used: Arc<AtomicBool>,
     kv_exec_counter: tidb_topsql_stmtstats::KvExecCounterHandle,
     /// Go `KvExecCounter.RPCInterceptor()`, built once per statement so every
     /// request the statement configures runs the same interceptor.
@@ -2626,6 +2631,13 @@ context_configuration! {
         self
     }
 
+    /// Records Go `SessionVars.EnableRedactLog` for the statement.
+    #[must_use]
+    pub fn with_enable_redact_log(mut self, enable_redact_log: String) -> Self {
+        self.enable_redact_log = enable_redact_log;
+        self
+    }
+
     /// Marks the statement as part of an optimistic transaction.
     #[must_use]
     pub fn with_optimistic_transaction(mut self, enabled: bool) -> Self {
@@ -3151,6 +3163,7 @@ impl StmtContext {
             pessimistic_transaction: false,
             in_transaction: false,
             txn_is_explicit: false,
+            enable_redact_log: String::new(),
             fk_cascades: Arc::default(),
             in_handle_foreign_key_trigger: Arc::default(),
             updated_rows: Arc::default(),
@@ -3221,6 +3234,7 @@ impl StmtContext {
             plan_cache_unqualified: None,
             top_profiling_registration: None,
             is_tiflash: Arc::default(),
+            fts_function_is_used: Arc::default(),
             kv_exec_counter: Default::default(),
             rpc_interceptor: Default::default(),
             statement_kv_context: None,
@@ -6910,6 +6924,18 @@ impl Columns for StmtContext {
 
     fn txn_is_explicit(&self) -> bool {
         self.txn_is_explicit
+    }
+
+    fn tidb_redact_log(&self) -> String {
+        self.enable_redact_log.clone()
+    }
+
+    fn fts_function_is_used(&self) -> bool {
+        self.fts_function_is_used.load(Ordering::Relaxed)
+    }
+
+    fn set_fts_function_is_used(&self) {
+        self.fts_function_is_used.store(true, Ordering::Relaxed);
     }
 
     fn alternative_logical_plan_signals(

@@ -86,7 +86,7 @@ use tidb_hack::GoCaseCompare;
 use tidb_model::column::{
     ColumnDefaultValue, ColumnInfo, GoAny, GoStringSet, CURR_LATEST_COLUMN_INFO_VERSION,
 };
-use tidb_model::index::IndexInfo;
+use tidb_model::index::{ColumnarIndexType, IndexInfo};
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::{TableInfo, TABLE_INFO_VERSION5};
 use tidb_model::GoShared;
@@ -242,7 +242,7 @@ pub fn build_table_info_from_ast(
         [schema, _] => schema.clone(),
         _ => String::new(),
     };
-    let tb_info = build_table_info_with_stmt(
+    let mut tb_info = build_table_info_with_stmt(
         create,
         &schema,
         db_charset,
@@ -254,7 +254,12 @@ pub fn build_table_info_from_ast(
     // expression first, then checkTableInfoValidExtra will pass the
     // tableInfo check successfully.
     check_table_info_valid_with_stmt(context, &tb_info)?;
-    check_table_info_valid_extra(&mut |warning| context.append_warning(warning), &tb_info)?;
+    check_table_info_valid_extra(
+        &mut |warning| context.append_warning(warning),
+        None,
+        &schema,
+        &mut tb_info,
+    )?;
     Ok(tb_info)
 }
 
@@ -902,15 +907,17 @@ pub fn check_table_info_valid_with_stmt(
 /// indexes, its charset and collation, and then `checkTableInfoValid`.
 /// `append_warning` is Go's `ec errctx.Context`.
 ///
-/// Go's `checkColumnarIndexIfNeedTiFlashReplica` returns at once for a table
-/// with no columnar index, which is every table this port builds.
+/// `tiflash_stores` is what Go's `checkColumnarIndexIfNeedTiFlashReplica`
+/// reads off `store`.
 ///
 /// # Errors
 ///
 /// The first of Go's errors the table trips.
 pub fn check_table_info_valid_extra(
     append_warning: &mut dyn FnMut(WarnErr),
-    tb_info: &TableInfo,
+    tiflash_stores: Option<&dyn Fn() -> Result<u64, String>>,
+    db_name: &str,
+    tb_info: &mut TableInfo,
 ) -> Refusal<()> {
     crate::check_too_long_identifier(tb_info.name.original()).map_err(default_admission_error)?;
     let columns = tb_info.columns.iter_deref().collect::<Vec<_>>();
@@ -928,6 +935,7 @@ pub fn check_table_info_valid_extra(
         })?;
     }
     check_global_indexes(append_warning, tb_info)?;
+    check_columnar_index_if_need_tiflash_replica(tiflash_stores, db_name, tb_info)?;
     check_charset_and_collation(&tb_info.charset, &tb_info.collate)?;
     check_table_info_valid(tb_info)
 }
@@ -1344,6 +1352,8 @@ struct Constraint {
     invisible: bool,
     global: bool,
     index_type: Option<IndexType>,
+    /// Go `IndexOption.ParserName`.
+    parser_name: String,
     /// A partial index's `WHERE`.
     condition: Option<Expr>,
 }
@@ -1353,6 +1363,9 @@ enum ConstraintKind {
     PrimaryKey,
     Unique,
     Key,
+    /// Go `ast.ConstraintColumnar`, with the columnar type `BuildTableInfo`
+    /// reads off `constr.Option.Tp`.
+    Columnar(ColumnarIndexType),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1399,20 +1412,28 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
             "CREATE TABLE CHECK constraints are lowered separately",
         ));
     };
+    // Go `checkConstraintGrammar`: FULLTEXT is rewritten into a columnar
+    // index of the FULLTEXT type, then the options and the parts are checked.
+    let mut index_type = index_type_of(&index.options);
     let kind = match index.kind {
         IndexConstraintKind::PrimaryKey => ConstraintKind::PrimaryKey,
         IndexConstraintKind::Unique
         | IndexConstraintKind::UniqueKey
         | IndexConstraintKind::UniqueIndex => ConstraintKind::Unique,
         IndexConstraintKind::Key | IndexConstraintKind::Index => ConstraintKind::Key,
-        // Go `checkFullTextSupportedInStarter`: a classic deployment refuses
-        // a FULLTEXT key outright, with its own wording and the 8200 code.
         IndexConstraintKind::Fulltext => {
-            return Err(DdlAdmissionError::from_terror(
-                &tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX.gen_with_stack(
-                    "FULLTEXT index is only supported in starter deployment mode",
-                ),
-            ))
+            if let Some(declared) = index.options.index_type {
+                if declared != IndexType::INVALID {
+                    return Err(DdlAdmissionError::from_terror(
+                        &tidb_dbterror::ERR_UNSUPPORTED_INDEX_TYPE.fast_gen(
+                            "'USING %s' is not supported for FULLTEXT INDEX",
+                            &[declared.sql().into()],
+                        ),
+                    ));
+                }
+            }
+            index_type = Some(IndexType::FULLTEXT);
+            ConstraintKind::Columnar(ColumnarIndexType::FULLTEXT)
         }
         other => {
             return Err(DdlAdmissionError::plain(format!(
@@ -1420,6 +1441,12 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
             )))
         }
     };
+    check_index_options(
+        matches!(kind, ConstraintKind::Columnar(_)),
+        index_type.unwrap_or(IndexType::INVALID),
+        &index.options,
+    )?;
+    check_index_specs(index_type.unwrap_or(IndexType::INVALID), &index.parts)?;
     // Go `BuildTableInfo`: `CLUSTERED` / `NONCLUSTERED` written on anything
     // but the primary key is `ErrUnsupportedClusteredSecondaryKey`.
     if index.options.primary_key_storage.is_some() && kind != ConstraintKind::PrimaryKey {
@@ -1465,9 +1492,238 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
         comment: index.options.comment.clone().unwrap_or_default(),
         invisible: index.options.visibility == Some(tidb_ast::IndexVisibility::Invisible),
         global: index.options.global,
-        index_type: index_type_of(&index.options),
+        index_type,
+        parser_name: index.options.parser_name.clone().unwrap_or_default(),
         condition: index.options.condition.clone(),
     })
+}
+
+/// Go `checkIndexOptions`, `tp` being `indexOptions.Tp` after the rewrite of
+/// `checkConstraintGrammar`.
+fn check_index_options(is_columnar: bool, tp: IndexType, options: &IndexOptions) -> Refusal<()> {
+    let refusal = |format: &str, arg: &str| {
+        Err(DdlAdmissionError::from_terror(
+            &tidb_dbterror::ERR_UNSUPPORTED_INDEX_TYPE.fast_gen(format, &[arg.into()]),
+        ))
+    };
+    if is_columnar {
+        match tp {
+            IndexType::VECTOR | IndexType::INVERTED => {}
+            IndexType::FULLTEXT => {
+                let parser_name = options.parser_name.as_deref().unwrap_or_default();
+                if !parser_name.is_empty()
+                    && tidb_model::index::get_full_text_parser_type_by_sql_name(parser_name)
+                        == tidb_model::index::full_text_parser_type::INVALID
+                {
+                    return refusal("Unsupported parser '%s'", parser_name);
+                }
+            }
+            IndexType::INVALID => {
+                return Err(DdlAdmissionError::from_terror(
+                    &tidb_dbterror::ERR_UNSUPPORTED_INDEX_TYPE
+                        .fast_gen("COLUMNAR INDEX must specify 'USING <index_type>'", &[]),
+                ));
+            }
+            other => return refusal("'USING %s' is not supported for COLUMNAR INDEX", other.sql()),
+        }
+        if options.visibility == Some(tidb_ast::IndexVisibility::Invisible) {
+            return refusal("INVISIBLE can not be used in %s INDEX", tp.sql());
+        }
+        return Ok(());
+    }
+    match tp {
+        IndexType::HNSW => Err(DdlAdmissionError::from_terror(
+            &tidb_dbterror::ERR_UNSUPPORTED_INDEX_TYPE
+                .fast_gen("'USING HNSW' can be only used for VECTOR INDEX", &[]),
+        )),
+        IndexType::VECTOR | IndexType::INVERTED | IndexType::FULLTEXT => {
+            refusal("'USING %s' can be only used for COLUMNAR INDEX", tp.sql())
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Go `checkIndexSpecs`.
+fn check_index_specs(tp: IndexType, parts: &[IndexPart]) -> Refusal<()> {
+    let refusal = |message: &str| {
+        Err(DdlAdmissionError::from_terror(
+            &tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX.fast_gen(message, &[]),
+        ))
+    };
+    let one = |column: bool| match parts {
+        [IndexPart::Column { .. }] => column,
+        [IndexPart::Expr { .. }] => !column,
+        _ => false,
+    };
+    match tp {
+        IndexType::VECTOR if !one(false) => refusal(
+            "VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))",
+        ),
+        IndexType::INVERTED if !one(true) => {
+            refusal("COLUMNAR INDEX of INVERTED type must specify one column name")
+        }
+        IndexType::FULLTEXT if !one(true) => {
+            refusal("FULLTEXT index must specify one column name")
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Go `checkFullTextSupportedInStarter`.
+///
+/// # Errors
+/// A deployment that is not the starter one.
+pub fn check_full_text_supported_in_starter() -> Refusal<()> {
+    if !tidb_config_deploymode::is_starter() {
+        return Err(DdlAdmissionError::from_terror(
+            &tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX.fast_gen(
+                "FULLTEXT index is only supported in starter deployment mode",
+                &[],
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Go `buildFullTextInfoWithCheck`. `checkIndexSpecs` has already refused a
+/// part that is not a column.
+fn build_full_text_info_with_check(
+    constraint: &Constraint,
+    table: &TableInfo,
+) -> Refusal<tidb_model::index::FullTextIndexInfo> {
+    use tidb_model::index::full_text_parser_type;
+    check_full_text_supported_in_starter()?;
+    let refusal = |message: &str| {
+        Err(DdlAdmissionError::from_terror(
+            &tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX.fast_gen(message, &[]),
+        ))
+    };
+    let [part] = constraint.parts.as_slice() else {
+        return refusal("FULLTEXT index only support one column");
+    };
+    if part.prefix_len != UNSPECIFIED_LENGTH {
+        return refusal("FULLTEXT index does not support prefix length");
+    }
+    if part.desc {
+        return refusal("FULLTEXT index does not support DESC order");
+    }
+    // The Default parser is STANDARD
+    let mut parser = full_text_parser_type::STANDARD_V1;
+    if !constraint.parser_name.is_empty() {
+        parser = tidb_model::index::get_full_text_parser_type_by_sql_name(&constraint.parser_name);
+        if parser == full_text_parser_type::INVALID {
+            return refusal("fulltext index must specify a valid parser");
+        }
+    }
+    let name_l = tidb_hack::go_to_lower(&part.name);
+    let Some(column) = table
+        .columns
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == name_l)
+    else {
+        return Err(DdlAdmissionError::from_terror(
+            &tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS
+                .gen_with_stack_by_args(&[name_l.into(), table.name.original().into()]),
+        ));
+    };
+    let column = column.read();
+    for index in table.indices.iter_deref() {
+        let index = index.read();
+        if index.full_text_info.is_none()
+            || index.find_column_by_name(column.name.lowercase()).is_none()
+        {
+            continue;
+        }
+        return Err(DdlAdmissionError::from_terror(
+            &tidb_dbterror::ERR_DUP_KEY_NAME.gen_with_stack(format!(
+                "fulltext index '{}' already exist on column {}",
+                index.name.original(),
+                column.name.original()
+            )),
+        ));
+    }
+    Ok(tidb_model::index::FullTextIndexInfo {
+        parser_type: parser.to_owned(),
+    })
+}
+
+/// Go `checkTableTypeForColumnarIndex`.
+pub fn check_table_type_for_columnar_index(tbl_info: &TableInfo) -> Refusal<()> {
+    let refusal = |terror: tidb_terror::TerrorError| Err(DdlAdmissionError::from_terror(&terror));
+    if tbl_info.table_cache_status_type != tidb_model::TableCacheStatusType::DISABLE {
+        return refusal(
+            tidb_dbterror::ERR_OPT_ON_CACHE_TABLE
+                .gen_with_stack_by_args(&["create columnar index".into()]),
+        );
+    }
+    if tbl_info.temp_table_type != tidb_model::TempTableType::NONE {
+        return refusal(
+            tidb_dbterror::ERR_OPT_ON_TEMPORARY_TABLE.fast_gen_by_args(&["columnar index".into()]),
+        );
+    }
+    if tbl_info.get_partition_info().is_some() {
+        return refusal(
+            tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX
+                .fast_gen_by_args(&["unsupported partition table".into()]),
+        );
+    }
+    if tbl_info
+        .tiflash_replica
+        .as_ref()
+        .is_none_or(|replica| replica.read().count == 0)
+    {
+        return refusal(tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX.fast_gen_by_args(&[
+            "columnar replica must exist to create vector index, columnar index or fulltext index"
+                .into(),
+        ]));
+    }
+    Ok(())
+}
+
+/// Go `checkColumnarIndexIfNeedTiFlashReplica`. `tiflash_stores` is Go's
+/// `infoschema.GetTiFlashStoreCount(store)`, `None` for Go's nil store.
+fn check_columnar_index_if_need_tiflash_replica(
+    tiflash_stores: Option<&dyn Fn() -> Result<u64, String>>,
+    db_name: &str,
+    tbl_info: &mut TableInfo,
+) -> Refusal<()> {
+    if !tbl_info
+        .indices
+        .iter_deref()
+        .any(|index| index.read().is_columnar_index())
+    {
+        return Ok(());
+    }
+    let Some(tiflash_stores) = tiflash_stores else {
+        return Err(DdlAdmissionError::plain("the store is nil"));
+    };
+    crate::ddl_executor::is_table_tiflash_supported(db_name, tbl_info)
+        .map_err(default_admission_error)?;
+    if tbl_info
+        .tiflash_replica
+        .as_ref()
+        .is_none_or(|replica| replica.read().count == 0)
+    {
+        if tidb_config::config_tree::config::get_global_config()
+            .cse
+            .is_tiflash_enabled()
+        {
+            let replicas = tiflash_stores().map_err(DdlAdmissionError::plain)?;
+            if replicas == 0 {
+                return Err(DdlAdmissionError::from_terror(
+                    &tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX
+                        .fast_gen_by_args(&["unsupported TiFlash store count is 0".into()]),
+                ));
+            }
+        }
+        // Always try to set to 1 as the default replica count.
+        tbl_info.tiflash_replica = Some(GoShared::new(tidb_model::table::TiFlashReplicaInfo {
+            count: 1,
+            location_labels: tidb_model::serde_helpers::GoValueSlice::allocated(Vec::new()),
+            ..Default::default()
+        }));
+    }
+    check_table_type_for_columnar_index(tbl_info)
 }
 
 fn index_type_of(options: &IndexOptions) -> Option<IndexType> {
@@ -2462,6 +2718,7 @@ fn build_column(
                             invisible: false,
                             global: inline.global,
                             index_type: None,
+                            parser_name: String::new(),
                             condition: None,
                         },
                     ));
@@ -2485,6 +2742,7 @@ fn build_column(
                             invisible: false,
                             global: inline.global,
                             index_type: None,
+                            parser_name: String::new(),
                             condition: None,
                         },
                     ));
@@ -2960,6 +3218,8 @@ fn stamp_constraint_flags(columns: &mut [ColumnInfo], constraint: &Constraint) -
                 }
             }
         }
+        // Go's switch has no case for a columnar index.
+        ConstraintKind::Columnar(_) => {}
     }
     Ok(())
 }
@@ -3078,11 +3338,23 @@ fn build_table(
                 length: part.prefix_len,
             })
             .collect();
+        // Go `BuildIndexInfo`: the columnar index's own info first.
+        let columnar_index_type = match constraint.kind {
+            ConstraintKind::Columnar(columnar_index_type) => columnar_index_type,
+            ConstraintKind::PrimaryKey | ConstraintKind::Unique | ConstraintKind::Key => {
+                ColumnarIndexType::NA
+            }
+        };
+        let full_text_info = if columnar_index_type == ColumnarIndexType::FULLTEXT {
+            Some(GoShared::new(build_full_text_info_with_check(constraint, &table)?))
+        } else {
+            None
+        };
         let (index_columns, mv_index) = crate::index::build_index_columns(
             Some(context),
             &all_table_columns,
             &parts,
-            tidb_model::index::ColumnarIndexType::NA,
+            columnar_index_type,
         )
         .map_err(default_admission_error)?;
         table.max_index_id += 1;
@@ -3099,6 +3371,7 @@ fn build_table(
             invisible: constraint.invisible,
             global: constraint.global,
             mv_index,
+            full_text_info,
             ..IndexInfo::default()
         };
         build_index_condition(&table, &mut index, constraint.condition.as_ref(), context)?;

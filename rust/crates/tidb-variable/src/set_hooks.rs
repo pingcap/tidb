@@ -171,6 +171,9 @@ impl SessionVars {
             if let Some(globals) = self.globals.clone() {
                 let stored = self.get_global(name)?;
                 globals.run_set_global_hook(name, &stored)?;
+                if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_REDACT_LOG) {
+                    self.set_enable_redact_log(stored);
+                }
             }
         }
         Ok(())

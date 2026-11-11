@@ -40,6 +40,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
     snapshot: &mut S,
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
     start_ts: u64,
     upgrading: bool,
     min_job_id: i64,
@@ -86,6 +87,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
                 (**info).clone(),
                 on_exist,
                 job_context,
+                tiflash_stores,
                 &mut warnings,
             )?
         }
@@ -108,6 +110,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
                 (**info).clone(),
                 on_exist,
                 job_context,
+                tiflash_stores,
                 &mut warnings,
             )?
         }
@@ -130,6 +133,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
                     info,
                     on_exist,
                     job_context,
+                    tiflash_stores,
                     &mut warnings,
                 )?
             }
@@ -165,6 +169,7 @@ pub(super) fn create_table_with_info_job<S: MetaSnapshot>(
     mut info: TableInfo,
     on_exist: OnExist,
     job_context: &dyn DdlSessionContext,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
     warnings: &mut Vec<tidb_context::SqlWarn>,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let Some(database) = find_database(catalog, schema) else {
@@ -217,7 +222,7 @@ pub(super) fn create_table_with_info_job<S: MetaSnapshot>(
             _ => return Err(exists()),
         }
     }
-    check_table_info_valid_extra(&info, warnings)?;
+    check_table_info_valid_extra(tiflash_stores, schema, &mut info, warnings)?;
     let action = if info.view.is_some() {
         ActionType::ACTION_CREATE_VIEW
     } else if info.sequence.is_some() {
@@ -375,7 +380,7 @@ pub fn build_session_temporary_table_info(
     warnings: &mut Vec<tidb_context::SqlWarn>,
 ) -> Result<TableInfo, DdlPlanError> {
     let mb_ctx = context.metabuild_context();
-    let info = match like {
+    let mut info = match like {
         Some((_, source)) => tidb_ddl_build::table_info_build::build_table_info_with_like(
             database.name.original(),
             table,
@@ -396,7 +401,9 @@ pub fn build_session_temporary_table_info(
     };
     tidb_ddl_build::table_info_build::check_table_info_valid_with_stmt(&mb_ctx, &info)
         .map_err(DdlPlanError::Admission)?;
-    check_table_info_valid_extra(&info, warnings)?;
+    // Go hands `e.store` over; `isTableTiFlashSupported` refuses a temporary
+    // table before the store is read.
+    check_table_info_valid_extra(&|| Ok(0), database.name.original(), &mut info, warnings)?;
     Ok(info)
 }
 

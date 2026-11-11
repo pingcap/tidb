@@ -214,8 +214,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
     fn redact_log_mode(&self) -> String {
         let mode = self
             .session_vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_REDACT_LOG)
-            .unwrap_or_default()
+            .enable_redact_log()
             .to_ascii_uppercase();
         match mode.as_str() {
             "ON" | "MARKER" => mode,

@@ -138,7 +138,9 @@ pub fn create_table_in_catalog(
         .map_err(refused)?;
     tidb_ddl_build::table_info_build::check_table_info_valid_extra(
         &mut |warning| mb_ctx.append_warning(warning),
-        &info,
+        None,
+        &database,
+        &mut info,
     )
     .map_err(refused)?;
     info.id = reserved_table_id.unwrap_or_else(fixture_global_id);

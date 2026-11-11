@@ -79,6 +79,7 @@ pub mod expr_util;
 pub mod expression;
 mod field_name;
 pub mod fts;
+pub mod fts_helper;
 mod func;
 mod grouping;
 pub mod grouping_sets;

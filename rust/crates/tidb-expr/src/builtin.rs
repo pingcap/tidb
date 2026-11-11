@@ -65,6 +65,12 @@ pub trait BuildContext {
     /// Go `ctx.GetEvalCtx()` itself, for a build that evaluates in the
     /// statement: a context-free resolver has none.
     fn columns(&self) -> Option<&dyn Columns>;
+    /// Go `sessionVars.StmtCtx.FTSFunctionIsUsed = true`.
+    fn set_fts_function_is_used(&self) {
+        if let Some(columns) = self.columns() {
+            columns.set_fts_function_is_used();
+        }
+    }
 }
 
 /// The [`BuildContext`] of a function built through `NewFunction`.

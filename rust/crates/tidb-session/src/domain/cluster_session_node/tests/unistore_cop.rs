@@ -51,6 +51,7 @@ mod dxf_framework;
 mod dxf_integrationtests;
 mod dxf_scheduler;
 mod dxf_taskexecutor;
+mod fts_resolve_index;
 mod mpp_to_pb;
 mod mpp_execution;
 

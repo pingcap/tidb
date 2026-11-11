@@ -193,14 +193,21 @@ pub struct OptimizeServices<'a> {
 }
 
 /// Go `adjustOptimizationFlags` (`VolcanoOptimize`, run for the statement
-/// and for each CTE part): stable result mode adds `ResultReorder`.
+/// and for each CTE part): stable result mode adds `ResultReorder`, and an
+/// `FTS_MATCH_WORD()` under the starter deployment adds the four full-text
+/// index resolvers.
 #[must_use]
-pub fn adjust_optimization_flags<C: OptimizeContext>(flags: u64, ctx: &C) -> u64 {
+pub fn adjust_optimization_flags<C: OptimizeContext>(mut flags: u64, ctx: &C) -> u64 {
     if ctx.stable_result_mode() {
-        flags | flags::STABILIZE_RESULTS
-    } else {
-        flags
+        flags |= flags::STABILIZE_RESULTS;
     }
+    if ctx.fts_function_is_used() && tidb_config_deploymode::is_starter() {
+        flags |= flags::FULL_TEXT_INDEX_RESOLVE_WHERE
+            | flags::FULL_TEXT_INDEX_RESOLVE_TOPN
+            | flags::FULL_TEXT_INDEX_RESOLVE_PROJECTION
+            | flags::FULL_TEXT_INDEX_RESOLVE_REJECT;
+    }
+    flags
 }
 
 /// Go `DoOptimize`'s logical half over a built plan.

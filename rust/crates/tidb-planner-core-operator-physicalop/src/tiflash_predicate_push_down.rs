@@ -168,6 +168,9 @@ fn predicate_push_down_to_table_scan(
     ts: &mut PhysicalTableScan,
     selectivity: &dyn Fn(&[Expression]) -> Option<f64>,
 ) {
+    if ts.has_full_text_index_push_down() {
+        return;
+    }
     // group the conditions by columns and sort them by selectivity
     let sorted_conds = group_by_columns_sort_by_selectivity(conds, ts, selectivity);
 

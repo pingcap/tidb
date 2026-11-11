@@ -37,6 +37,7 @@ tidb-plannererrors = { path = "../tidb-plannererrors" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-parser-types = { path = "../tidb-parser-types" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-config-deploymode = { path = "../tidb-config-deploymode" }
 tidb-planner-coreusage = { path = "../tidb-planner-coreusage" }
 tidb-planner-costusage = { path = "../tidb-planner-costusage" }
 tidb-planner-tablesampler = { path = "../tidb-planner-tablesampler" }
@@ -74,6 +75,7 @@ tidb-driver-error = { path = "../tidb-driver-error" }
 tidb-table = { path = "../tidb-table" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
+tidb-proto = { path = "../tidb-proto" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-resolve = { path = "../tidb-resolve" }

@@ -278,6 +278,9 @@ pub struct SessionVars {
     /// Go's typed `SessionVars.EnableWindowFunction`, maintained by the
     /// `tidb_enable_window_function` sysvar's `SetSession` hook.
     enable_window_function: bool,
+    /// Go's typed `SessionVars.EnableRedactLog`, written by both the
+    /// `SetSession` and the `SetGlobal` hook of `tidb_redact_log`.
+    enable_redact_log: String,
     /// Go's typed `SessionVars.TiFlashMaxBytesBeforeExternalJoin`, maintained
     /// by the corresponding TiFlash threshold `SetSession` hook.
     ti_flash_max_bytes_before_ext_join: i64,
@@ -618,6 +621,7 @@ impl Default for SessionVars {
             enable_prepared_plan_cache: tidb_vardef::defaults::DEF_TIDB_ENABLE_PREP_PLAN_CACHE,
             shared_lock_promotion: tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_PROMOTION,
             enable_window_function: tidb_vardef::defaults::DEF_ENABLE_WINDOW_FUNCTION,
+            enable_redact_log: tidb_vardef::defaults::DEF_TIDB_REDACT_LOG.to_owned(),
             ti_flash_max_bytes_before_ext_join:
                 tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_JOIN,
             ti_flash_max_bytes_before_ext_agg:
@@ -859,6 +863,10 @@ impl SessionVars {
         let enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&systems);
         let shared_lock_promotion = Self::shared_lock_promotion_from_systems(&systems);
         let enable_window_function = Self::enable_window_function_from_systems(&systems);
+        let enable_redact_log = systems
+            .get(tidb_vardef::tidb_vars::TIDB_REDACT_LOG)
+            .map_or(tidb_vardef::defaults::DEF_TIDB_REDACT_LOG, String::as_str)
+            .to_owned();
         let ti_flash_max_bytes_before_ext_join =
             Self::ti_flash_max_bytes_before_ext_join_from_systems(&systems);
         let ti_flash_max_bytes_before_ext_agg =
@@ -891,6 +899,7 @@ impl SessionVars {
         self.enable_prepared_plan_cache = enable_prepared_plan_cache;
         self.shared_lock_promotion = shared_lock_promotion;
         self.enable_window_function = enable_window_function;
+        self.enable_redact_log = enable_redact_log;
         self.ti_flash_max_bytes_before_ext_join = ti_flash_max_bytes_before_ext_join;
         self.ti_flash_max_bytes_before_ext_agg = ti_flash_max_bytes_before_ext_agg;
         self.ti_flash_max_bytes_before_ext_sort = ti_flash_max_bytes_before_ext_sort;
@@ -1190,6 +1199,18 @@ impl SessionVars {
     #[must_use]
     pub const fn enable_window_function(&self) -> bool {
         self.enable_window_function
+    }
+
+    /// Go `SessionVars.EnableRedactLog`.
+    #[must_use]
+    pub fn enable_redact_log(&self) -> &str {
+        &self.enable_redact_log
+    }
+
+    /// Go `TiDBRedactLog`'s `SetGlobal` hook: the session that sets the
+    /// GLOBAL value takes it as its own.
+    pub(crate) fn set_enable_redact_log(&mut self, value: String) {
+        self.enable_redact_log = value;
     }
 
     /// Go `SessionVars.BuildParserConfig`: the switches every statement this
@@ -2024,6 +2045,9 @@ impl SessionVars {
         }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_WINDOW_FUNCTION {
             self.enable_window_function = value == "ON";
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_REDACT_LOG {
+            self.enable_redact_log.clone_from(&value);
         }
         // Go `TiDBConstraintCheckInPlacePessimistic`'s SetSession hook counts
         // every lazy setting.

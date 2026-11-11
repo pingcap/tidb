@@ -403,6 +403,8 @@ impl PhysicalTableScan {
             ts_exec.pushed_down_filter_conditions =
                 expressions_to_pb_list(ctx, &self.late_materialization_filter_condition, schema_of(plan)?)?;
         }
+        ts_exec.used_columnar_indexes =
+            self.used_columnar_indexes.iter().map(|idx| idx.query_info.clone()).collect();
         // Go `int32(p.maxWaitTimeMs)`, zero without runtime filters.
         ts_exec.max_wait_time_ms = Some(0);
         // Go `p.isPartition` (`ds.PartitionDefIdx != nil`): the scan reads
@@ -449,6 +451,8 @@ impl PhysicalTableScan {
             pts_exec.pushed_down_filter_conditions =
                 expressions_to_pb_list(ctx, &self.late_materialization_filter_condition, schema_of(plan)?)?;
         }
+        pts_exec.used_columnar_indexes =
+            self.used_columnar_indexes.iter().map(|idx| idx.query_info.clone()).collect();
         // Go `int32(p.maxWaitTimeMs)`, zero without runtime filters.
         pts_exec.max_wait_time_ms = Some(0);
         pts_exec.desc = Some(self.desc);

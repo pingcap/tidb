@@ -58,6 +58,7 @@ impl FunctionClass for FtsMatchWordFunctionClass {
             EvalType::Real,
             &[EvalType::String, EvalType::String],
         )?;
+        ctx.set_fts_function_is_used();
         bf.pb_code = ScalarFuncSig::FtsMatchWord;
         Ok(bf)
     }

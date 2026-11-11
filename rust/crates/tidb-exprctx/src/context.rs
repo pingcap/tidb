@@ -514,6 +514,20 @@ pub trait Columns {
         false
     }
 
+    /// Go `SessionVars.EnableRedactLog` (`EvalContext.GetTiDBRedactLog`).
+    fn tidb_redact_log(&self) -> String {
+        String::new()
+    }
+
+    /// Go `StmtCtx.FTSFunctionIsUsed`.
+    fn fts_function_is_used(&self) -> bool {
+        false
+    }
+
+    /// Go `StmtCtx.FTSFunctionIsUsed = true`; a context with no statement
+    /// has nothing to mark.
+    fn set_fts_function_is_used(&self) {}
+
     /// The statement's alternative-logical-plan signals, which a context
     /// that plans no statement does not have.
     fn alternative_logical_plan_signals(&self) -> Option<&AlternativeLogicalPlanSignals> {

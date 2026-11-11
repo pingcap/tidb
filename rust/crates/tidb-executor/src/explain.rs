@@ -1086,11 +1086,11 @@ fn physical_access(
                 ..ScanAccessObject::default()
             }))
         }
-        PhysicalPlan::TableScan(scan) => Some(AccessObject::Scan(table_access(
-            catalog,
-            scan.table_id,
-            scan.table_as_name.as_deref(),
-        ))),
+        PhysicalPlan::TableScan(scan) => {
+            let mut access = table_access(catalog, scan.table_id, scan.table_as_name.as_deref());
+            access.indexes.extend(columnar_index_accesses(scan));
+            Some(AccessObject::Scan(access))
+        }
         PhysicalPlan::TableSample(sample) => Some(AccessObject::Scan(table_access(
             catalog,
             sample.physical_table_id,
@@ -1236,6 +1236,97 @@ impl tidb_planner::memtable_predicate_extractor::MemTableExplainEnv for MemTable
             tidb_vardef::defaults::DEF_TIDB_METRIC_SCHEMA_RANGE_DURATION,
         )
     }
+}
+
+/// Go `PhysicalTableScan.AccessObject`'s `UsedColumnarIndexes` loop: an index
+/// column over a hidden column is named by its generated expression.
+fn columnar_index_accesses(
+    scan: &tidb_planner_core_operator_physicalop::PhysicalTableScan,
+) -> Vec<tidb_planner_core_access::IndexAccess> {
+    scan.used_columnar_indexes
+        .iter()
+        .map(|idx| {
+            let index_info = idx.index_info.read();
+            let table = scan.table.as_ref().map(|table| table.read());
+            tidb_planner_core_access::IndexAccess {
+                name: index_info.name.original().to_owned(),
+                cols: (0..index_info.columns.len())
+                    .filter_map(|position| index_info.columns.get(position))
+                    .map(|idx_col| {
+                        let idx_col = idx_col.read();
+                        table
+                            .as_ref()
+                            .and_then(|table| table.columns.get(idx_col.offset as usize))
+                            .map(|tbl_col| tbl_col.read().clone())
+                            .filter(|tbl_col| tbl_col.hidden)
+                            .map_or_else(
+                                || idx_col.name.original().to_owned(),
+                                |tbl_col| tbl_col.generated_expr_string,
+                            )
+                    })
+                    .collect(),
+                is_clustered_index: false,
+            }
+        })
+        .collect()
+}
+
+/// Go `PhysicalTableScan.explainColumnarIndexes` without its leading `", "`.
+fn explain_columnar_indexes(
+    eval_ctx: &dyn tidb_exprctx::Columns,
+    scan: &tidb_planner_core_operator_physicalop::PhysicalTableScan,
+    normalized: bool,
+) -> Option<String> {
+    use tidb_proto::tipb;
+    let redact_mode = eval_ctx.tidb_redact_log();
+    let fts_indexes = scan
+        .used_columnar_indexes
+        .iter()
+        .filter_map(|idx| match &idx.query_info.index {
+            Some(tipb::columnar_index_info::Index::FtsQueryInfo(fts_query_info)) => Some(fts_query_info),
+            _ => None,
+        })
+        .map(|fts_query_info| {
+            // Go `explainFullTextIndex`.
+            let mut buffer = String::with_capacity(128);
+            if let Some(top_k) = fts_query_info.top_k.filter(|top_k| *top_k < u32::MAX) {
+                buffer.push_str("top");
+                if normalized {
+                    buffer.push('K');
+                } else {
+                    buffer.push_str(&top_k.to_string());
+                }
+                buffer.push(' ');
+            }
+            if normalized {
+                buffer.push('?');
+            } else {
+                tidb_redact::write_redact(&mut buffer, fts_query_info.query_text(), &redact_mode);
+            }
+            if let Some(column_name) = fts_query_info.column_names.first() {
+                buffer.push_str(" IN ");
+                buffer.push_str(column_name);
+            }
+            if let Some(score) = scan
+                .base
+                .base
+                .schema()
+                .and_then(|schema| schema.columns.last())
+                .filter(|col| {
+                    fts_query_info.query_type() == tipb::FtsQueryType::WithScore
+                        && col.id == tidb_model::column::VIRTUAL_COL_FTS_SCORE_ID
+                })
+            {
+                buffer.push_str("->");
+                buffer.push_str(&expression_text(
+                    eval_ctx,
+                    &tidb_expr::expression::Expression::Column(score.clone()),
+                ));
+            }
+            buffer
+        })
+        .collect::<Vec<_>>();
+    (!fts_indexes.is_empty()).then(|| format!("ftsIndex:{}", fts_indexes.join(", ")))
 }
 
 fn physical_operator_info(
@@ -1516,6 +1607,7 @@ fn physical_operator_own_info(
             {
                 parts.push("PartitionTableScan:true".to_owned());
             }
+            parts.extend(explain_columnar_indexes(eval_ctx, scan, false));
             parts.join(", ")
         }
         PhysicalPlan::TableDual(dual) => dual.explain_info(),
@@ -3194,8 +3286,11 @@ fn physical_normalized_info(
             } else {
                 String::new()
             };
+            let columnar_indexes = explain_columnar_indexes(eval_ctx, scan, true)
+                .map(|indexes| format!(", {indexes}"))
+                .unwrap_or_default();
             format!(
-                "{}, {ranges}{pushed_down_filter}{}",
+                "{}, {ranges}{pushed_down_filter}{}{columnar_indexes}",
                 access(plan),
                 scan_keep_order_text(scan.keep_order, scan.desc)
             )

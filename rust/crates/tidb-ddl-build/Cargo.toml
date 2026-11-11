@@ -50,6 +50,7 @@ tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-config = { path = "../tidb-config" }
+tidb-config-deploymode = { path = "../tidb-config-deploymode" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-model = { path = "../tidb-model" }

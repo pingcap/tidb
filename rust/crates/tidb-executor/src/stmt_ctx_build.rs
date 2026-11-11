@@ -1227,11 +1227,10 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .unwrap_or(tidb_memory::DEF_MEM_QUOTA_QUERY),
             redact_sql: match self
                 .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_REDACT_LOG)
-                .as_deref()
+                .enable_redact_log()
             {
-                Ok("ON") => tidb_parser::RedactMode::Enabled,
-                Ok("MARKER") => tidb_parser::RedactMode::Marker,
+                "ON" => tidb_parser::RedactMode::Enabled,
+                "MARKER" => tidb_parser::RedactMode::Marker,
                 _ => tidb_parser::RedactMode::Disabled,
             },
             analyze_version: self
@@ -1746,6 +1745,10 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_pessimistic_transaction(self.statement_is_pessimistic())
                     .with_in_transaction(!self.is_autocommit() || self.in_transaction())
                     .with_txn_is_explicit(self.server_status_in_trans())
+                    .with_enable_redact_log(
+                        self.session_vars()
+                            .enable_redact_log().to_owned(),
+                    )
                     .with_optimistic_transaction(
                         (!self.is_autocommit() || self.in_transaction())
                             && !self.statement_txn_mode().is_pessimistic(),
@@ -1950,6 +1953,10 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_pessimistic_transaction(self.statement_is_pessimistic())
                 .with_in_transaction(!self.is_autocommit() || self.in_transaction())
                 .with_txn_is_explicit(self.server_status_in_trans())
+                .with_enable_redact_log(
+                    self.session_vars()
+                        .enable_redact_log().to_owned(),
+                )
                 .with_optimistic_transaction(
                     (!self.is_autocommit() || self.in_transaction())
                         && !self.statement_txn_mode().is_pessimistic(),

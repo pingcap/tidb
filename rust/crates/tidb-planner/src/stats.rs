@@ -302,6 +302,7 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                     env.rule_context
                         .is_none_or(|context| context.index_merge_skip_range_scan_check),
                 )
+                .and_then(|merged| crate::access_path::clean_access_path_for_fts(op).map(|()| merged))
             });
             match derived {
                 Ok((index_merge_max_count, warning)) => {

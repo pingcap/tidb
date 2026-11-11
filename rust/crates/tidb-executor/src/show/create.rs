@@ -352,19 +352,42 @@ pub fn construct_result_of_show_create_table(
             .join(",");
         // Go `if idxInfo.Primary`.
         let primary = index.read().primary;
+        let name = escape_name(index.read().name.original(), ansi_quotes);
+        let vector_info = index.read().vector_info.clone();
+        let full_text_info = index.read().full_text_info.clone();
+        let inverted_info = index.read().inverted_info.is_some();
         let mut clause = if primary {
-            format!("  PRIMARY KEY ({columns})")
+            "  PRIMARY KEY ".to_owned()
         } else if index.read().unique {
-            format!(
-                "  UNIQUE KEY {} ({columns})",
-                escape_name(index.read().name.original(), ansi_quotes)
-            )
+            format!("  UNIQUE KEY {name} ")
+        } else if vector_info.is_some() {
+            format!("  VECTOR INDEX {name}")
+        } else if full_text_info.is_some() {
+            format!("  FULLTEXT INDEX {name}")
+        } else if inverted_info {
+            format!("  COLUMNAR INDEX {name}")
         } else {
-            format!(
-                "  KEY {} ({columns})",
-                escape_name(index.read().name.original(), ansi_quotes)
-            )
+            format!("  KEY {name} ")
         };
+        match &vector_info {
+            Some(vector_info) => {
+                let func_name = tidb_model::index::indexable_distance_metric_to_fn_name(
+                    &vector_info.read().distance_metric,
+                )
+                .unwrap_or_default();
+                clause.push_str(&format!("(({}({columns})))", func_name.to_uppercase()));
+            }
+            None => clause.push_str(&format!("({columns})")),
+        }
+        if inverted_info {
+            clause.push_str(" USING INVERTED");
+        }
+        if let Some(full_text_info) = &full_text_info {
+            clause.push_str(" WITH PARSER ");
+            clause.push_str(tidb_model::index::full_text_parser_sql_name(
+                &full_text_info.read().parser_type,
+            ));
+        }
         // Go `show.go`: a partial index prints its stored condition right
         // after the key parts, before the visibility and comment suffixes.
         if let Some(restored) = condition.as_deref() {

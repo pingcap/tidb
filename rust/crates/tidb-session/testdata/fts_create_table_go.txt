@@ -1,0 +1,46 @@
+classic | create table f1(id int primary key, title text, fulltext key ft(title)) | ERR [ddl:8200]FULLTEXT index is only supported in starter deployment mode
+classic | show create table f1 | ERR [schema:1146]Table 'test.f1' doesn't exist
+classic | create table f2(id int primary key, title text, body text, fulltext key ft(title, body)) | ERR [ddl:8200]FULLTEXT index must specify one column name
+classic | create table f3(id int primary key, title varchar(100), fulltext key ft(title(10))) | ERR [ddl:8200]FULLTEXT index is only supported in starter deployment mode
+classic | create table f4(id int primary key, title text, fulltext key ft(title desc)) | ERR [ddl:8200]FULLTEXT index is only supported in starter deployment mode
+classic | create table f5(id int primary key, title text, fulltext key ft(title) with parser ngram) | ERR [ddl:8200]Unsupported parser 'ngram'
+classic | show create table f5 | ERR [schema:1146]Table 'test.f5' doesn't exist
+classic | create table f6(id int primary key, title text, fulltext key ft(title) with parser nosuch) | ERR [ddl:8200]Unsupported parser 'nosuch'
+classic | create table f7(id int primary key, title text, fulltext key ft(title) using btree) | ERR [ddl:8200]'USING BTREE' is not supported for FULLTEXT INDEX
+classic | create table f8(id int primary key, title text, fulltext key ft(title) invisible) | ERR [ddl:8200]INVISIBLE can not be used in FULLTEXT INDEX
+classic | create table f9(id int primary key, title int, fulltext key ft(title)) | ERR [ddl:8200]FULLTEXT index is only supported in starter deployment mode
+classic | create table f10(id int primary key, title text, fulltext key ft1(title), fulltext key ft2(title)) | ERR [ddl:8200]FULLTEXT index is only supported in starter deployment mode
+classic | create table f11(id int primary key, title text, fulltext key ft((lower(title)))) | ERR [ddl:8200]FULLTEXT index must specify one column name
+classic | create table f12(id int primary key, title text, key k(id) using hnsw) | ERR [ddl:8200]'USING HNSW' can be only used for VECTOR INDEX
+classic | create table f13(id int primary key, title text, key k(id) using inverted) | ERR [ddl:8200]'USING INVERTED' can be only used for COLUMNAR INDEX
+classic | create table f14(id int primary key, title text, key k(id) with parser ngram) | OK
+classic | create temporary table f15(id int primary key, title text, fulltext key ft(title)) | ERR [ddl:8200]FULLTEXT index is only supported in starter deployment mode
+classic | create table f16(id int primary key, title json, fulltext key ft(title)) | ERR [ddl:8200]FULLTEXT index is only supported in starter deployment mode
+classic | create table f17(id int primary key, title text, fulltext key ft(title) with parser standard) | ERR [ddl:8200]FULLTEXT index is only supported in starter deployment mode
+classic | show create table f17 | ERR [schema:1146]Table 'test.f17' doesn't exist
+classic | create table f18(id int primary key, title char(20), body varchar(30), fulltext key ft1(title), fulltext key ft2(body)) | ERR [ddl:8200]FULLTEXT index is only supported in starter deployment mode
+classic | show create table f18 | ERR [schema:1146]Table 'test.f18' doesn't exist
+classic | create table f19(id int primary key, title text, fulltext key ft(title)) partition by hash(id) partitions 2 | ERR [ddl:8200]FULLTEXT index is only supported in starter deployment mode
+starter | create table f1(id int primary key, title text, fulltext key ft(title)) | OK
+starter | show create table f1 | ROWS f1CREATE TABLE `f1` (\n  `id` int(11) NOT NULL,\n  `title` text DEFAULT NULL,\n  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  FULLTEXT INDEX `ft`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+starter | create table f2(id int primary key, title text, body text, fulltext key ft(title, body)) | ERR [ddl:8200]FULLTEXT index must specify one column name
+starter | create table f3(id int primary key, title varchar(100), fulltext key ft(title(10))) | ERR [ddl:8200]FULLTEXT index does not support prefix length
+starter | create table f4(id int primary key, title text, fulltext key ft(title desc)) | ERR [ddl:8200]FULLTEXT index does not support DESC order
+starter | create table f5(id int primary key, title text, fulltext key ft(title) with parser ngram) | ERR [ddl:8200]Unsupported parser 'ngram'
+starter | show create table f5 | ERR [schema:1146]Table 'test.f5' doesn't exist
+starter | create table f6(id int primary key, title text, fulltext key ft(title) with parser nosuch) | ERR [ddl:8200]Unsupported parser 'nosuch'
+starter | create table f7(id int primary key, title text, fulltext key ft(title) using btree) | ERR [ddl:8200]'USING BTREE' is not supported for FULLTEXT INDEX
+starter | create table f8(id int primary key, title text, fulltext key ft(title) invisible) | ERR [ddl:8200]INVISIBLE can not be used in FULLTEXT INDEX
+starter | create table f9(id int primary key, title int, fulltext key ft(title)) | ERR [ddl:8200]Unsupported add columnar index: only support string type, but this is type: int(11)
+starter | create table f10(id int primary key, title text, fulltext key ft1(title), fulltext key ft2(title)) | ERR [ddl:1061]fulltext index 'ft1' already exist on column title
+starter | create table f11(id int primary key, title text, fulltext key ft((lower(title)))) | ERR [ddl:8200]FULLTEXT index must specify one column name
+starter | create table f12(id int primary key, title text, key k(id) using hnsw) | ERR [ddl:8200]'USING HNSW' can be only used for VECTOR INDEX
+starter | create table f13(id int primary key, title text, key k(id) using inverted) | ERR [ddl:8200]'USING INVERTED' can be only used for COLUMNAR INDEX
+starter | create table f14(id int primary key, title text, key k(id) with parser ngram) | ERR [schema:1050]Table 'test.f14' already exists
+starter | create temporary table f15(id int primary key, title text, fulltext key ft(title)) | ERR [ddl:8006]`set TiFlash replica` is unsupported on temporary tables.
+starter | create table f16(id int primary key, title json, fulltext key ft(title)) | ERR [ddl:8200]Unsupported add columnar index: only support string type, but this is type: json BINARY
+starter | create table f17(id int primary key, title text, fulltext key ft(title) with parser standard) | OK
+starter | show create table f17 | ROWS f17CREATE TABLE `f17` (\n  `id` int(11) NOT NULL,\n  `title` text DEFAULT NULL,\n  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  FULLTEXT INDEX `ft`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+starter | create table f18(id int primary key, title char(20), body varchar(30), fulltext key ft1(title), fulltext key ft2(body)) | OK
+starter | show create table f18 | ROWS f18CREATE TABLE `f18` (\n  `id` int(11) NOT NULL,\n  `title` char(20) DEFAULT NULL,\n  `body` varchar(30) DEFAULT NULL,\n  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  FULLTEXT INDEX `ft1`(`title`) WITH PARSER STANDARD,\n  FULLTEXT INDEX `ft2`(`body`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+starter | create table f19(id int primary key, title text, fulltext key ft(title)) partition by hash(id) partitions 2 | ERR [ddl:8200]Unsupported add columnar index: unsupported partition table

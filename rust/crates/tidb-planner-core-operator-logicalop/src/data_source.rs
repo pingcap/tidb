@@ -104,6 +104,16 @@ pub enum PossibleAccessPath {
     IndexMerge(tidb_planner_util::path::AccessPath),
 }
 
+/// Go `logicalop.FTSPushDown`: the full-text search a scan of this table
+/// runs.
+#[derive(Clone, Debug)]
+pub struct FtsPushDown {
+    /// Go `IndexInfo`.
+    pub index_info: tidb_model::GoShared<tidb_model::IndexInfo>,
+    /// Go `QueryInfo`.
+    pub query_info: tidb_proto::tipb::FtsQueryInfo,
+}
+
 /// Go `logicalop.DataSource` (`logical_datasource.go:58`).
 #[derive(Clone, Debug, Default)]
 pub struct DataSource {
@@ -133,6 +143,8 @@ pub struct DataSource {
     /// Physical table-scan costing uses this complete row width even when
     /// the scan only returns a narrow projected schema.
     pub table_columns: Vec<Column>,
+    /// Go `FtsPushDown`.
+    pub fts_push_down: Option<FtsPushDown>,
     /// Go `PushedDownConds`: the conditions the storage layer will evaluate.
     pub pushed_down_conds: Vec<Expression>,
     /// Go `AllConds`: every condition on this table, pushed down or not.
@@ -1393,6 +1405,7 @@ impl DataSource {
             dynamic_partition_access: self.dynamic_partition_access.clone(),
             columns: self.columns.clone(),
             table_columns: self.table_columns.clone(),
+            fts_push_down: self.fts_push_down.clone(),
             pushed_down_conds: self.pushed_down_conds.clone(),
             all_conds: self.all_conds.clone(),
             all_possible_access_paths: self.all_possible_access_paths.clone(),

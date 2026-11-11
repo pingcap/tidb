@@ -128,6 +128,7 @@ pub mod rule_decorrelate;
 pub mod rule_derive_topn_from_window;
 pub mod rule_eliminate_empty_selection;
 pub mod rule_eliminate_unionall_dual_item;
+pub mod rule_fts_resolve_index;
 pub mod rule_generate_column_substitute;
 pub mod rule_join_elimination;
 pub mod rule_join_reorder;
@@ -261,7 +262,7 @@ impl RuleId {
             Self::ProjectionEliminator => "projection_eliminate",
             Self::MaxMinEliminator => "max_min_eliminate",
             Self::ConstantPropagationSolver => "constant_propagation",
-            Self::FullTextIndexResolverWhere => "full_text_index_resolve_where",
+            Self::FullTextIndexResolverWhere => "fts_resolve_index_where",
             Self::ConvertOuterToInnerJoin => "convert_outer_to_inner_join",
             Self::PpdSolver => "predicate_push_down",
             Self::JoinKeyTypeCastRewriter => "join_key_type_cast",
@@ -272,8 +273,8 @@ impl RuleId {
             Self::DeriveTopNFromWindow => "derive_topn_from_window",
             Self::PredicateSimplification => "predicate_simplification",
             Self::PushDownTopNOptimizer => "topn_push_down",
-            Self::FullTextIndexResolverTopN => "full_text_index_resolve_topn",
-            Self::FullTextIndexResolverProjection => "full_text_index_resolve_projection",
+            Self::FullTextIndexResolverTopN => "fts_resolve_index_topn",
+            Self::FullTextIndexResolverProjection => "fts_resolve_index_projection",
             Self::OrderAwareJoinReorder => "order_aware_join_reorder",
             Self::SyncWaitStatsLoadPoint => "sync_wait_stats_load_point",
             Self::JoinReOrderSolver => "join_reorder",
@@ -284,7 +285,7 @@ impl RuleId {
             // constant's spelling; `isLogicalRuleDisabled` matches `Name()`.
             Self::EliminateUnionAllDualItem => "union_all_eliminate_dual_item",
             Self::EmptySelectionEliminator => "eliminate_empty_selection",
-            Self::FullTextIndexResolverRejectRemaining => "full_text_index_resolve_reject",
+            Self::FullTextIndexResolverRejectRemaining => "fts_resolve_reject_remaining",
             Self::ResolveExpand => "resolve_expand",
         }
     }
@@ -359,10 +360,18 @@ impl RuleId {
             Self::OuterJoinEliminator => Some(&rule_join_elimination::OuterJoinEliminator),
             Self::DecorrelateSolver => Some(&rule_decorrelate::DecorrelateSolver),
             Self::CorrelateSolver => Some(&rule_correlate::CorrelateSolver),
-            Self::FullTextIndexResolverWhere
-            | Self::FullTextIndexResolverTopN
-            | Self::FullTextIndexResolverProjection
-            | Self::FullTextIndexResolverRejectRemaining => None,
+            Self::FullTextIndexResolverWhere => {
+                Some(&rule_fts_resolve_index::FullTextIndexResolverWhere)
+            }
+            Self::FullTextIndexResolverTopN => {
+                Some(&rule_fts_resolve_index::FullTextIndexResolverTopN)
+            }
+            Self::FullTextIndexResolverProjection => {
+                Some(&rule_fts_resolve_index::FullTextIndexResolverProjection)
+            }
+            Self::FullTextIndexResolverRejectRemaining => {
+                Some(&rule_fts_resolve_index::FullTextIndexResolverRejectRemaining)
+            }
         }
     }
 }

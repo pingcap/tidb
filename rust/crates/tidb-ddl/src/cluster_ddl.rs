@@ -4553,13 +4553,17 @@ fn table_column_count_limit() -> usize {
 
 /// Go `checkTableInfoValidExtra`, its `ec` warnings recorded with the job's.
 fn check_table_info_valid_extra(
-    info: &TableInfo,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
+    db_name: &str,
+    info: &mut TableInfo,
     warnings: &mut Vec<tidb_context::SqlWarn>,
 ) -> Result<(), DdlPlanError> {
     tidb_ddl_build::table_info_build::check_table_info_valid_extra(
         &mut |warning| {
             warnings.push(tidb_context::SqlWarn::new(WarningLevel::Warning, warning));
         },
+        Some(tiflash_stores),
+        db_name,
         info,
     )?;
     Ok(())
@@ -8464,6 +8468,7 @@ fn build_create_table_info<S: MetaSnapshot>(
     table: &str,
     if_not_exists: bool,
     build: &CreateTableBuild,
+    tiflash_stores: &dyn Fn() -> Result<u64, String>,
     warnings: &mut Vec<tidb_context::SqlWarn>,
 ) -> Result<Result<TableInfo, DdlPlan>, DdlPlanError> {
     let Some(database) = find_database(catalog, schema) else {
@@ -8544,7 +8549,7 @@ fn build_create_table_info<S: MetaSnapshot>(
             ]),
         ));
     }
-    check_table_info_valid_extra(&info, warnings)?;
+    check_table_info_valid_extra(tiflash_stores, schema, &mut info, warnings)?;
     Ok(Ok(info))
 }
 

@@ -149,6 +149,7 @@ pub(super) fn build_prepared_index_merge_task(
         filter_condition: Vec::new(),
         late_materialization_filter_condition: Vec::new(),
         late_materialization_selectivity: 0.0,
+        used_columnar_indexes: Vec::new(),
         resolved_descriptor: Some(tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor::new(
             ds.physical_table_id,
             !ds.common_handle_cols.is_empty(),

@@ -366,6 +366,37 @@ pub(crate) fn generate_index_merge_path(
     Ok((index_merge_max_count, index_merge_warning))
 }
 
+/// Go `cleanAccessPathForFTS`: a full-text search reads only the columnar
+/// paths.
+pub(crate) fn clean_access_path_for_fts(
+    source: &mut tidb_planner_core_operator_logicalop::DataSource,
+) -> Result<(), tidb_planner_core_base::PlanError> {
+    if source.fts_push_down.is_none() {
+        return Ok(());
+    }
+    let valid_paths = source
+        .possible_access_paths
+        .iter()
+        .flatten()
+        .filter(|path| {
+            let path = match path {
+                PossibleAccessPath::Shared(position) => &source.all_possible_access_paths[*position],
+                PossibleAccessPath::IndexMerge(path) => path,
+            };
+            path.store_type == tidb_kv::store_type::StoreType::TiFlash
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if valid_paths.is_empty() {
+        return Err(tidb_planner_core_base::PlanError::from(tidb_plannererrors::ERR_INTERNAL.fast_gen(
+            "Full text search can be only executed in a columnar storage (TiFlash), but it is not available. Possible reasons: TiFlash is not deployed; columnar replica is not set on this table; columnar replica is not available due to SQL hint /*+ read_from_storage */ or tidb_isolation_read_engines variable.",
+            &[],
+        )));
+    }
+    source.possible_access_paths = Some(valid_paths);
+    Ok(())
+}
+
 /// Go `getPossibleAccessPaths` (`planbuilder.go:1320-1441`) without hints —
 /// the enumeration Go performs before any hint filtering.
 ///

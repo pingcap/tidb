@@ -96,6 +96,19 @@ impl Column {
         }
     }
 
+    /// Go `ToInfo`: the column as a `model.ColumnInfo` holding its id and type.
+    #[must_use]
+    pub fn to_info(&self) -> tidb_model::ColumnInfo {
+        let mut info = tidb_model::ColumnInfo {
+            id: self.id,
+            ..tidb_model::ColumnInfo::default()
+        };
+        if let Some(ret_type) = &self.ret_type {
+            info.field_type = ret_type.clone();
+        }
+        info
+    }
+
     /// Go `GetStaticType` / `GetType` (the latter ignores its `EvalContext`),
     /// returning the column's result type (`None` for a nil `RetType`).
     #[must_use]

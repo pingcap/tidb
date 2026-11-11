@@ -1198,6 +1198,33 @@ pub fn exhaust_physical_plans_4_logical_limit(
     ret
 }
 
+/// Go `physicalop.ColumnarIndexExtra`: the extra information for a columnar
+/// index a table scan uses.
+#[derive(Clone, Debug)]
+pub struct ColumnarIndexExtra {
+    /// Go `IndexInfo`.
+    pub index_info: tidb_model::GoShared<tidb_model::IndexInfo>,
+    /// Go `QueryInfo`.
+    pub query_info: tidb_proto::tipb::ColumnarIndexInfo,
+}
+
+/// Go `buildFullTextIndexExtra`.
+#[must_use]
+pub fn build_full_text_index_extra(
+    fts_push_down: &tidb_planner_core_operator_logicalop::data_source::FtsPushDown,
+) -> ColumnarIndexExtra {
+    use tidb_proto::tipb;
+    ColumnarIndexExtra {
+        index_info: fts_push_down.index_info.clone(),
+        query_info: tipb::ColumnarIndexInfo {
+            index_type: Some(tipb::ColumnarIndexType::TypeFulltext as i32),
+            index: Some(tipb::columnar_index_info::Index::FtsQueryInfo(
+                fts_push_down.query_info.clone(),
+            )),
+        },
+    }
+}
+
 /// Go `physicalop.PhysicalTableScan`.
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalTableScan {
@@ -1260,6 +1287,8 @@ pub struct PhysicalTableScan {
     pub late_materialization_filter_condition: Vec<Expression>,
     /// Go `LateMaterializationSelectivity`.
     pub late_materialization_selectivity: f64,
+    /// Go `UsedColumnarIndexes`: the columnar indexes the scan uses.
+    pub used_columnar_indexes: Vec<ColumnarIndexExtra>,
     /// Go `DBName`.
     pub db_name: String,
     /// Go `Table.Name.O`: the scan's own table spelling, which a cluster
@@ -1336,6 +1365,14 @@ pub struct PhysicalMemTable {
 }
 
 impl PhysicalTableScan {
+    /// Go `PhysicalTableScan.hasFullTextIndexPushDown`.
+    #[must_use]
+    pub fn has_full_text_index_push_down(&self) -> bool {
+        self.used_columnar_indexes.iter().any(|idx| {
+            idx.query_info.index_type == Some(tidb_proto::tipb::ColumnarIndexType::TypeFulltext as i32)
+        })
+    }
+
     /// Initializes one wired table scan from its resolved TiKV fields.
     #[must_use]
     pub fn init(
@@ -4999,6 +5036,7 @@ impl PhysicalPlan {
                 filter_condition: op.filter_condition.clone(),
                 late_materialization_filter_condition: op.late_materialization_filter_condition.clone(),
                 late_materialization_selectivity: op.late_materialization_selectivity,
+                used_columnar_indexes: op.used_columnar_indexes.clone(),
                 db_name: op.db_name.clone(),
                 table_name: op.table_name.clone(),
                 handle_col_unique_id: op.handle_col_unique_id,
