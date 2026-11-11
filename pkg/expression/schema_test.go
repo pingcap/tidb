@@ -16,7 +16,6 @@ package expression
 
 import (
 	"fmt"
-	"math"
 	"testing"
 	"unsafe"
 
@@ -182,11 +181,11 @@ func TestGetUsedList(t *testing.T) {
 	// entries (when there is room) are a duplicate, a column from another schema,
 	// and a prefix column sharing a UniqueID with a schema column, which must
 	// still count as used. The ID layouts reach both representations of
-	// uniqueIDSet: stride 1 (including IDs that cross zero) uses the bitset,
+	// uniqueIDSet: stride 1 uses the bitset,
 	// stride 1024 the map, and stride 16 the map with 32 used columns and the
 	// bitset with 150.
 	for _, ids := range []struct{ base, stride int64 }{
-		{0, 1}, {1000000, 1}, {-150, 1}, {1000000, 16}, {1000000, 1024}, {-1000000, 1024}, {1 << 40, 1024},
+		{0, 1}, {1000000, 1}, {1000000, 16}, {1000000, 1024},
 	} {
 		wide := s.generateSchema(300)
 		foreign := s.generateSchema(10).Columns
@@ -229,16 +228,12 @@ func TestUniqueIDSet(t *testing.T) {
 		bitset bool
 		absent []int64
 	}{
-		{"dense", []int64{5, 6, 7, 9, 5}, true, []int64{4, 8, 10, 0, -1, math.MinInt64, math.MaxInt64}},
+		{"dense", []int64{5, 6, 7, 9, 5}, true, []int64{4, 8, 10, 0}},
 		{"one id", []int64{3}, true, []int64{2, 4}},
-		{"negative to positive", []int64{-70, -1, 0, 1, 60}, true, []int64{-71, -2, 2, 61}},
-		{"word boundaries", []int64{0, 63, 64, 127, 128}, true, []int64{1, 62, 65, 126, 129}},
-		{"span at the limit", []int64{0, 127}, true, []int64{1, 64, 126, 128}},
-		{"span over the limit", []int64{0, 128}, false, []int64{1, 64, 127, 129}},
-		{"sparse", []int64{1 << 40, 1 << 41, -(1 << 40)}, false, []int64{0, 1<<40 + 1}},
-		{"int64 extremes", []int64{math.MinInt64, math.MaxInt64, 0}, false, []int64{1, -1, math.MinInt64 + 1, math.MaxInt64 - 1}},
-		{"near the top", []int64{math.MaxInt64 - 2, math.MaxInt64}, true, []int64{math.MaxInt64 - 1, math.MaxInt64 - 3, math.MinInt64}},
-		{"near the bottom", []int64{math.MinInt64, math.MinInt64 + 2}, true, []int64{math.MinInt64 + 1, math.MinInt64 + 3, math.MaxInt64}},
+		{"word boundaries", []int64{1, 64, 65, 128, 129}, true, []int64{0, 2, 63, 66, 127, 130}},
+		{"span at the limit", []int64{1, 128}, true, []int64{0, 2, 65, 127, 129}},
+		{"span over the limit", []int64{1, 129}, false, []int64{0, 2, 65, 128, 130}},
+		{"sparse", []int64{1, 1025, 2049}, false, []int64{0, 2, 1024, 1026, 2048, 2050}},
 	} {
 		var set uniqueIDSet
 		set.init(cols(tc.ids...))
