@@ -3771,6 +3771,18 @@ fn a_projection_sizes_its_result_columns_as_go_vec_eval_does() {
         ("SELECT json_unquote(json_extract(k, '$.n')), a+1 FROM q", "15.8 KB"),
         ("SELECT last_insert_id(a), a+1 FROM p", "7.01 KB"),
         ("SELECT connection_id(), a+1 FROM p", "6.91 KB"),
+        ("SELECT if(a>5, cast(c AS SIGNED), a), a FROM p", "10.4 KB"),
+        ("SELECT if(a>5, a, cast(c AS SIGNED)), a FROM p", "10.4 KB"),
+        ("SELECT if(a>5, a, b), a FROM p", "8.70 KB"),
+        ("SELECT ifnull(cast(c AS SIGNED), a), a FROM p", "10.4 KB"),
+        ("SELECT ifnull(b, cast(c AS SIGNED)), a FROM p", "12.9 KB"),
+        ("SELECT a AND cast(c AS SIGNED), a FROM p", "10.4 KB"),
+        ("SELECT if(a>5, concat(c, cast(c AS SIGNED)), c), a FROM p", "11.8 KB"),
+        ("SELECT if(a>5, c, concat(c, cast(c AS SIGNED))), a FROM p", "11.8 KB"),
+        ("SELECT if(a>5, c, concat(c,'1')), a FROM p", "11.8 KB"),
+        ("SELECT CASE WHEN a>50 THEN cast(c AS SIGNED) ELSE 0 END, a FROM p", "10.4 KB"),
+        ("SELECT coalesce(b, cast(c AS SIGNED)), a FROM p", "12.9 KB"),
+        ("SELECT if(a>5, d/(a-a), d), a FROM p", "22.9 KB"),
         ("SET @@tidb_enable_vectorized_expression = 0", ""),
         ("SELECT a+1, b*2 FROM p", "9.23 KB"),
         ("SELECT a+1, upper(c) FROM p", "12.5 KB"),
@@ -3802,6 +3814,39 @@ fn a_projection_sizes_its_result_columns_as_go_vec_eval_does() {
         }
     }
     assert!(mismatches.is_empty(), "{mismatches:#?}");
+}
+
+/// Go `builtinIf*Sig.vecEval*` / `fallbackEval*` (and `IfNull`, `CaseWhen`,
+/// `Coalesce`, `LogicAnd`): a branch whose vectorized evaluation warns has
+/// its warnings truncated and the rows evaluated one by one, so only the
+/// branch a row takes warns. `./gorun` on this branch.
+#[test]
+fn a_control_function_warns_only_for_the_branch_a_row_takes_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, b VARCHAR(10))").unwrap();
+    session.run("INSERT INTO t VALUES (0,'x'),(1,'2'),(2,'y')").unwrap();
+    for (sql, rows, warnings) in [
+        ("SELECT if(a=0, 0, 1/a) FROM t", "0.0000;0.5000;1.0000", ""),
+        ("SELECT if(a=0, 1/a, 7) FROM t", "7.0000;7.0000;NULL", "Warning|1365|Division by 0"),
+        ("SELECT if(a=1, cast(b AS SIGNED), a) FROM t", "0;2;2", ""),
+        (
+            "SELECT ifnull(cast(b AS SIGNED), a) FROM t",
+            "0;0;2",
+            "Warning|1292|Truncated incorrect INTEGER value: 'x';Warning|1292|Truncated incorrect INTEGER value: 'y'",
+        ),
+        ("SELECT a=1 AND cast(b AS SIGNED) FROM t", "0;0;1", ""),
+        (
+            "SELECT CASE WHEN a=1 THEN cast(b AS SIGNED) ELSE 5 END, coalesce(NULL, cast(b AS SIGNED)) FROM t",
+            "2|2;5|0;5|0",
+            "Warning|1292|Truncated incorrect INTEGER value: 'x';Warning|1292|Truncated incorrect INTEGER value: 'y'",
+        ),
+    ] {
+        let mut got: Vec<String> = row_text(session.run(sql)).iter().map(|row| row.join("|")).collect();
+        got.sort();
+        assert_eq!(got.join(";"), rows, "{sql}");
+        let got: Vec<String> = row_text(session.run("SHOW WARNINGS")).iter().map(|row| row.join("|")).collect();
+        assert_eq!(got.join(";"), warnings, "{sql}");
+    }
 }
 
 /// Go `explainPlanInRowFormatCTE` / `cteProducer`: a CTE's definition row is

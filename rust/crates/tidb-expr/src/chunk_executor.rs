@@ -37,10 +37,9 @@
 //!   keeps the evaluator's appends.
 //! - Go's control functions (`IF`, `IFNULL`, `CASE`, `COALESCE`, `AND`,
 //!   `OR`) fall back to row evaluation (`fallbackEval*`) when an argument's
-//!   vectorized evaluation errors or warns. For a fixed-width result that
-//!   fallback `Resize*`s the column; this port always takes the vectorized
-//!   step, which differs only when `IF`'s condition warns before its
-//!   branch was evaluated into the column.
+//!   vectorized evaluation errors or warns. The fallback `Resize*`s (or
+//!   `Reserve*`s) the column the vectorized step already sized, so the
+//!   column's shape is the vectorized step's either way.
 //! - `GREATEST`/`LEAST` over strings: an even argument count copies the
 //!   rows into `result` with `CopyConstruct` (one bulk append) where this
 //!   port appends them row by row; both start from `ReserveString(n)`, so
