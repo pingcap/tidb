@@ -652,8 +652,8 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	tk.MustExec("analyze table t all columns;")
 	// estimate cost is 38
 	checkMetrics("select s from t where id >= 1 and id < 3;", 1, 0)
-	// estimate cost is 39 with 2 cop request
-	checkMetrics("select s from t where id >= 2 and id < 4;", 0, 2)
+	// each of the 2 cop requests has the estimate of the query above
+	checkMetrics("select s from t where id >= 2 and id < 4;", 2, 0)
 
 	// index reader
 	tk.MustExec("drop table if exists t;")

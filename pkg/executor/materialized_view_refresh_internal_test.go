@@ -17,7 +17,6 @@ package executor
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -26,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -84,7 +82,17 @@ func TestRestoreRefreshMaterializedViewStmtForSlowLog(t *testing.T) {
 		"IMPLEMENT FOR REFRESH MATERIALIZED VIEW `mv` COMPLETE IN PLACE USING TIMESTAMP",
 		restoreStmtTextForSlowLogWhenEmptySQL(stmt),
 	)
+	stmt.RefreshStmt = &ast.RefreshMaterializedViewStmt{
+		ViewName: &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("mv")},
+		Type:     ast.RefreshMaterializedViewTypeFast,
+	}
+	stmt.LastSuccessfulRefreshReadTSO = 123456789
+	require.Equal(t,
+		"IMPLEMENT FOR REFRESH MATERIALIZED VIEW `test`.`mv` FAST USING TIMESTAMP",
+		restoreStmtTextForSlowLogWhenEmptySQL(stmt),
+	)
 	require.Empty(t, restoreStmtTextForSlowLogWhenEmptySQL(&ast.RefreshMaterializedViewImplementStmt{}))
+	require.Empty(t, restoreStmtTextForSlowLogWhenEmptySQL(&ast.SelectStmt{}))
 }
 
 func TestBuildMVRefreshOutOfPlaceShadowTableInfoSetsSource(t *testing.T) {
@@ -100,26 +108,6 @@ func TestBuildMVRefreshOutOfPlaceShadowTableInfoSetsSource(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, shadow.MaterializedViewShadow)
 	require.Equal(t, int64(42), shadow.MaterializedViewShadow.SourceMViewID)
-}
-
-func TestInitRefreshMaterializedViewSessionAppliesDefinitionDivPrecisionIncrement(t *testing.T) {
-	sessVars := variable.NewSessionVars(nil)
-	require.False(t, sessVars.EnableMView)
-	sessVars.DivPrecisionIncrement = 2
-	sessVars.TimeZone = time.UTC
-	sessVars.StmtCtx.SetTimeZone(time.UTC)
-
-	restore, err := initRefreshMaterializedViewSession(sessVars, &model.MaterializedViewInfo{
-		DefinitionDivPrecisionIncrement: 9,
-		DefinitionTimeZone:              model.TimeZoneLocation{Name: "UTC"},
-	})
-	require.NoError(t, err)
-	require.True(t, sessVars.EnableMView)
-	require.Equal(t, 9, sessVars.DivPrecisionIncrement)
-
-	restore()
-	require.False(t, sessVars.EnableMView)
-	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
 }
 
 func TestPrepareMVRefreshObserveInternalSessionRedaction(t *testing.T) {

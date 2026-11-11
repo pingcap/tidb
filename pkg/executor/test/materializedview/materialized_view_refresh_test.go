@@ -31,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -105,6 +107,7 @@ func TestMaterializedViewRefreshStatementResult(t *testing.T) {
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
 			tk := setupMaterializedViewRefreshStatementResultTest(t)
+			require.NotNil(t, tk.Session().Value(sessionctx.LastExecuteDDL))
 			if tc.mode == "fast as of timestamp" {
 				tk.MustExec("set time_zone = '+00:00'")
 			}
@@ -124,6 +127,7 @@ func TestMaterializedViewRefreshStatementResult(t *testing.T) {
 			}
 
 			tk.MustExec(refreshSQL)
+			require.Nil(t, tk.Session().Value(sessionctx.LastExecuteDDL))
 			requireRefreshMVStatementResult(t, tk, tc.insertRows, tc.updateRows, tc.deleteRows)
 			if tc.mode == "fast" {
 				require.Equal(t, 3.0, readAffectedRowsMetricValue(t, "RefreshMV")-beforeRefreshMV)
@@ -1881,9 +1885,11 @@ func TestMaterializedViewRefreshCompleteUsesDefinitionSessionSemantics(t *testin
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.sql_mode = 'NO_UNSIGNED_SUBTRACTION'")
 	tk.MustExec("set @@session.time_zone = '+00:00'")
+	tk.MustExec("set @@session.div_precision_increment = 9")
 	tk.MustExec("create table t (a int not null, b int not null, ts timestamp not null)")
-	tk.MustExec("insert into t values (1, 10, '2020-01-01 00:30:00'), (2, 20, '2019-12-31 23:30:00')")
+	tk.MustExec("insert into t values (1, 10, '2019-12-31 23:59:45'), (2, 20, '2019-12-31 23:59:15')")
 	tk.MustExec("create materialized view log on t (a, b, ts) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("set @@session.time_zone = '+00:00:30'")
 	tk.MustExec(`create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
 select a, sum(b), count(1) from t
 where ts >= '2020-01-01 00:00:00'
@@ -1897,16 +1903,39 @@ group by a`)
 	expectedLoc, err := mvTable.Meta().MaterializedView.DefinitionTimeZone.GetLocation()
 	require.NoError(t, err)
 	expectedTimeZone := expectedLoc.String()
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterInitSession", func(mode mysql.SQLMode, tz string) {
+	worker := testkit.NewTestKit(t, store)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterInitSession", func(mode mysql.SQLMode, tz string, sctx sessionctx.Context) {
 		require.Equal(t, expectedSQLMode, mode)
 		require.Equal(t, expectedTimeZone, tz)
+		require.Equal(t, "test", sctx.GetSessionVars().CurrentDB)
+		require.Equal(t, "mv_refresh", sctx.GetSessionVars().ResourceGroupName)
+		require.Equal(t, "mv_refresh", sctx.GetSessionVars().StmtCtx.ResourceGroupName)
+		var captured sessionstates.SessionStates
+		require.NoError(t, sctx.EncodeStates(context.Background(), &captured))
+		require.Equal(t, "mv_refresh", captured.ResourceGroupName)
+		states := &sessionstates.SessionStates{
+			SystemVars: make(map[string]string, 3),
+			Status:     uint32(worker.Session().GetSessionVars().Status()),
+		}
+		for _, name := range []string{vardef.SQLModeVar, vardef.TimeZone, vardef.DivPrecisionIncrement} {
+			require.Contains(t, captured.SystemVars, name)
+			states.SystemVars[name] = captured.SystemVars[name]
+		}
+		require.NoError(t, worker.Session().DecodeStates(context.Background(), states))
+		worker.MustQuery("select @@div_precision_increment, 1 / 7, cast(0 as unsigned) - 1").Check(testkit.Rows("9 0.142857142 -1"))
+		worker.MustQuery("select unix_timestamp('2020-01-01 00:00:00')").Check(testkit.Rows("1577836770"))
 	})
 
 	// Keep creator/session semantics and refresh caller semantics different.
 	tk.MustExec("set @@session.sql_mode = ''")
 	tk.MustExec("set @@session.time_zone = '-01:00'")
-	tk.MustExec("refresh materialized view mv complete delta apply")
-	tk.MustQuery("select a, s, cnt from mv").Check(testkit.Rows("1 10 1"))
+	tk.MustExec("set @@session.div_precision_increment = 2")
+	tk.MustExec("create resource group mv_refresh ru_per_sec = 1000000")
+	tk.MustExec("set resource group mv_refresh")
+	for _, mode := range []string{"complete delta apply", "complete out of place"} {
+		tk.MustExec("refresh materialized view mv " + mode)
+		tk.MustQuery("select a, s, cnt from mv").Check(testkit.Rows("1 10 1"))
+	}
 }
 
 func TestMaterializedViewRefreshHistory(t *testing.T) {
@@ -2854,6 +2883,7 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverFailure(t *testing.T) {
 
 		tk.MustExec("insert into t values (2, 3), (3, 4)")
 
+		oldMViewRevision := mvTable.Meta().Revision
 		const pauseCreateShadowFailpoint = "github.com/pingcap/tidb/pkg/executor/pauseRefreshMaterializedViewOutOfPlaceAfterCreateShadow"
 		require.NoError(t, failpoint.Enable(pauseCreateShadowFailpoint, "pause"))
 		enabled := true
@@ -2881,14 +2911,15 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverFailure(t *testing.T) {
 		require.NoError(t, failpoint.Disable(pauseCreateShadowFailpoint))
 		enabled = false
 
-		err = <-refreshDone
-		require.Error(t, err)
-		require.ErrorContains(t, err, "stale old materialized view revision detected before cutover")
+		refreshErr := <-refreshDone
+		require.ErrorContains(t, refreshErr, "stale old materialized view revision detected before cutover")
+		require.NotContains(t, refreshErr.Error(), "%!(EXTRA")
 
 		is = dom.InfoSchema()
 		mvTable, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv"))
 		require.NoError(t, err)
 		require.Equal(t, mviewID, mvTable.Meta().ID)
+		require.ErrorContains(t, refreshErr, fmt.Sprintf("expected %d but got %d", oldMViewRevision, mvTable.Meta().Revision))
 
 		tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
 			Check(testkit.Rows("1"))
