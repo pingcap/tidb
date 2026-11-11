@@ -364,6 +364,7 @@ where
         .first()
         .ok_or_else(|| ClusterDdlError::Backfill("ADD INDEX reorg names no table".to_owned()))?;
     let row_ids = backfiller.system_row_ids();
+    crate::job_ctx::attach_reorg_skip_check(&reorg.query.to_utf8_lossy_go());
     let mut initialized = None;
     let result = reorg_transaction(opener, timeout, &crate::job_ctx::backfill_request_source(reorg.job_id), |meta, snapshot, buffer, start_ts| {
         let handle = if reorg.merging {

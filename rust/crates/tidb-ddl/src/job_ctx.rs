@@ -138,6 +138,13 @@ pub(crate) fn attach_top_profiling_info(job_id: i64, job_query: &str) {
     with_job_ctx(job_id, |ctx| ctx.attach_top_profiling_info(job_query));
 }
 
+/// Go `checkIfTableReorgWorkCanSkip` / `checkIfTempIndexReorgWorkCanSkip`:
+/// the emptiness check runs under a context of its own (`NewReorgContext`)
+/// attached to the job's SQL.
+pub(crate) fn attach_reorg_skip_check(job_query: &str) {
+    ReorgContext::default().attach_top_profiling_info(job_query);
+}
+
 /// Go `ddlCtx.setDDLSourceForDiagnosis`, returning Go `ddlJobSourceType`:
 /// the request source the job's step transaction carries.
 pub(crate) fn set_ddl_source_for_diagnosis(job_id: i64, job_type: ActionType) -> String {
@@ -286,6 +293,14 @@ mod tests {
 
             attach_top_profiling_info(job_id, "ALTER TABLE t ADD INDEX j (b)");
             let (_, other) = tidb_parser::normalize_digest("ALTER TABLE t ADD INDEX j (b)");
+            assert_eq!(labelled_digest().as_deref(), Some(other.as_str()));
+
+            // The reorg skip check's own context attaches the same way and
+            // leaves the job's cached digest alone.
+            attach_reorg_skip_check("ALTER TABLE t ADD INDEX k (c)");
+            let (_, skip) = tidb_parser::normalize_digest("ALTER TABLE t ADD INDEX k (c)");
+            assert_eq!(labelled_digest().as_deref(), Some(skip.as_str()));
+            attach_top_profiling_info(job_id, "ALTER TABLE t ADD INDEX j (b)");
             assert_eq!(labelled_digest().as_deref(), Some(other.as_str()));
             tidb_topsql_state::disable_top_sql();
             remove_job_ctx(job_id);
