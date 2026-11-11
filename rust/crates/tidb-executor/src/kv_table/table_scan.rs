@@ -3043,7 +3043,24 @@ impl KvTableReader for TableCommon {
         // the columns the reader returns, in the index schema's order -- and
         // the handle when the consumer reads it (a write's inner reader
         // outputs it).
+        // Go `PhysicalProjection.ToPB` over the index scan: a computing
+        // Projection reads the index executor's columns, and its rows are the
+        // response's.
+        let mut statement = statement.clone();
+        let computed_width = match (&mut statement.cop_projection_exprs, &projected_indices) {
+            (Some((exprs, _)), Some(indices)) if !projected_handle => {
+                for expression in exprs.iter_mut() {
+                    if relocate_expression(expression, indices).is_none() {
+                        return Ok(None);
+                    }
+                }
+                Some(exprs.len())
+            }
+            (Some(_), _) => return Ok(None),
+            (None, _) => None,
+        };
         let (output_offsets, projected_indices, cursor_handle_indices) = match projected_indices {
+            Some(_) if computed_width.is_some() => (None, computed_width.map(|width| (0..width).collect()), Vec::new()),
             Some(projected) => {
                 let mut wire = projected.clone();
                 if projected_handle {
@@ -3187,7 +3204,7 @@ impl KvTableReader for TableCommon {
             schema_version: 0,
             ranges: key_ranges,
             range_hints: Vec::new(),
-            statement: statement.clone(),
+            statement,
         };
         let Some(scan) = crate::remote_scan::open_table_remote_scan(self, &*store, &request) else {
             return Ok(None);
@@ -3795,19 +3812,37 @@ pub struct StagedHandlesLookup {
     kv_ranges_mem_usage: i64,
 }
 
-/// A table source's pushed computing Projection (see
+/// A source's pushed computing Projection (see
 /// `TableAccess::accept_computed_projection`).
-struct PostFilterExprs {
-    exprs: Vec<Expression>,
-    types: Vec<FieldType>,
-    ctx: crate::StmtContext,
+pub(crate) struct PostFilterExprs {
+    pub(crate) exprs: Vec<Expression>,
+    pub(crate) types: Vec<FieldType>,
+    pub(crate) ctx: crate::StmtContext,
     /// One row of the scan's types, which the local scan evaluates over.
-    scratch: Chunk,
+    pub(crate) scratch: Chunk,
+}
+
+/// Moves `expression`'s column offsets through `layout`: offset `i` reads
+/// `layout[i]`.
+fn relocate_expression(expression: &mut Expression, layout: &[usize]) -> Option<()> {
+    match expression {
+        Expression::Column(column) => {
+            let slot = usize::try_from(column.index).ok()?;
+            column.index = i64::try_from(*layout.get(slot)?).ok()?;
+        }
+        Expression::ScalarFunction(function) => {
+            for argument in &mut function.args {
+                relocate_expression(argument, layout)?;
+            }
+        }
+        Expression::Constant(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => {}
+    }
+    Some(())
 }
 
 impl PostFilterExprs {
     /// Go's Projection over one scan row, computed in this tier.
-    fn compute(&mut self, row: &[Datum]) -> Result<Vec<Datum>, ExecError> {
+    pub(crate) fn compute(&mut self, row: &[Datum]) -> Result<Vec<Datum>, ExecError> {
         self.scratch.reset();
         for (column, value) in row.iter().enumerate() {
             self.scratch.append_datum(column, value);
@@ -6440,6 +6475,12 @@ impl tidb_executor_internal_exec::table_access::TableAccess for TableScanExec {
         );
         self.post_filter_projection = Some(keep.to_vec());
         true
+    }
+
+    /// Go `PhysicalProjection.ToPB` of a Projection of columns pushed over
+    /// this scan.
+    fn lower_output_as_projection(&mut self) {
+        self.statement.cop_projection = true;
     }
 
     fn accept_computed_projection(

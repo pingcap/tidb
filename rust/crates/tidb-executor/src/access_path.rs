@@ -2024,6 +2024,9 @@ pub struct IndexRangeSourceExec {
     /// filter sees (`accept_post_filter_projection`): a pushed Projection of
     /// columns over the scan and its Selection.
     post_filter_projection: Option<Vec<usize>>,
+    /// The covering read's pushed computing Projection over the row the
+    /// filter sees (`accept_computed_projection`).
+    post_filter_exprs: Option<crate::kv_table::PostFilterExprs>,
     /// Whether the remote index stream already returns the projected row.
     remote_rows_projected: bool,
     /// Go `indexLookUpExecutorContext.indexLookupConcurrency`, resolved from
@@ -2416,6 +2419,7 @@ impl IndexRangeSourceExec {
             partial_done: false,
             remote_partial_lookup: false,
             post_filter_projection: None,
+            post_filter_exprs: None,
             remote_rows_projected: false,
             lookup_concurrency: DEFAULT_LOOKUP_FETCH_CONCURRENCY,
             lookup_pipeline: None,
@@ -4271,10 +4275,11 @@ impl IndexRangeSourceExec {
 
     /// The covering row a filter admitted, as the accepted post-filter
     /// projection selects it.
-    fn project_post_filter(&self, row: Vec<Datum>) -> Vec<Datum> {
-        match &self.post_filter_projection {
-            Some(projection) => projection.iter().map(|slot| row[*slot].clone()).collect(),
-            None => row,
+    fn project_post_filter(&mut self, row: Vec<Datum>) -> Result<Vec<Datum>, ExecError> {
+        match (&mut self.post_filter_exprs, &self.post_filter_projection) {
+            (Some(projection), _) => projection.compute(&row),
+            (None, Some(projection)) => Ok(projection.iter().map(|slot| row[*slot].clone()).collect()),
+            (None, None) => Ok(row),
         }
     }
 
@@ -4575,6 +4580,13 @@ impl Executor for IndexRangeSourceExec {
                 && !self.dirty_merge
                 && !global_index;
             let mut base_statement = index_statement.as_ref().unwrap_or(&self.statement).clone();
+            // Go `PhysicalProjection.ToPB`: a computing Projection is the
+            // request's last executor.
+            base_statement.cop_projection_exprs = self
+                .post_filter_exprs
+                .as_ref()
+                .filter(|_| projected_keep.is_some())
+                .map(|projection| (projection.exprs.clone(), projection.types.clone()));
             // Go's global index lookup reads `kv.PartitionHandle`s under the
             // logical table, in one request (`needPartitionHandle`).
             // A table adding or dropping partitions filters a full read's
@@ -4910,7 +4922,7 @@ impl Executor for IndexRangeSourceExec {
                         }
                     }
                 }
-                let row = if self.remote_rows_projected { row } else { self.project_post_filter(row) };
+                let row = if self.remote_rows_projected { row } else { self.project_post_filter(row)? };
                 for (column, value) in row.iter().enumerate() {
                     req.append_datum(column, value);
                 }
@@ -4941,7 +4953,7 @@ impl Executor for IndexRangeSourceExec {
                         continue;
                     }
                 }
-                let row = self.project_post_filter(row);
+                let row = self.project_post_filter(row)?;
                 for (column, value) in row.iter().enumerate() {
                     req.append_datum(column, value);
                 }
@@ -4995,7 +5007,7 @@ impl Executor for IndexRangeSourceExec {
                     }
                 }
             }
-            let row = self.project_post_filter(row);
+            let row = self.project_post_filter(row)?;
             for (c, value) in row.iter().enumerate() {
                 req.append_datum(c, value);
             }
@@ -5294,6 +5306,74 @@ impl tidb_executor_internal_exec::table_access::TableAccess for IndexRangeSource
 
     fn lower_output_as_projection(&mut self) {
         IndexRangeSourceExec::lower_output_as_projection(self);
+    }
+
+    fn accept_computed_projection(
+        &mut self,
+        exprs: &[Expression],
+        output: &tidb_expr::schema::Schema,
+        ctx: &crate::StmtContext,
+    ) -> bool {
+        // Go's covering reader evaluates its pushed Selection and then the
+        // pushed Projection in the coprocessor, as it does a Projection of
+        // columns. A request holds one Projection: the reader's
+        // `OutputColumns` may already be it.
+        if !self.covering
+            || self.statement.cop_projection
+            || self.extra_handle_slot.is_some()
+            || self.physical_table_id_slot.is_some()
+            || self.partial_aggregate.is_some()
+            || self.post_filter_projection.is_some()
+            || self.dirty_merge
+            || self.table.has_dirty_content(&self.statement.staged_writes)
+            || self
+                .filter
+                .as_ref()
+                .is_some_and(|filter| !filter.fully_pushable())
+            || exprs.is_empty()
+            || output.len() != exprs.len()
+            || expression_column_offsets(exprs)
+                .iter()
+                .any(|offset| *offset >= self.keep.len())
+        {
+            return false;
+        }
+        let Some(types) = output
+            .columns
+            .iter()
+            .map(|column| column.ret_type.clone())
+            .collect::<Option<Vec<_>>>()
+        else {
+            return false;
+        };
+        let input_types = self.meta.ret_field_types().to_vec();
+        let columns = output
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(index, column)| {
+                let mut column = column.clone();
+                column.index = index as i64;
+                column
+            })
+            .collect();
+        self.meta = ExecutorMeta::new(
+            Schema::new(columns),
+            self.meta.id(),
+            self.meta.init_cap(),
+            self.meta.max_chunk_size(),
+        );
+        let mut scratch = Chunk::new(&input_types, 1, 1);
+        scratch.reset();
+        // The Projection reads the whole row the filter sees.
+        self.post_filter_projection = Some((0..self.keep.len()).collect());
+        self.post_filter_exprs = Some(crate::kv_table::PostFilterExprs {
+            exprs: exprs.to_vec(),
+            types,
+            ctx: ctx.clone(),
+            scratch,
+        });
+        true
     }
 
     fn accept_column_prune(&mut self, keep: &[usize]) -> bool {

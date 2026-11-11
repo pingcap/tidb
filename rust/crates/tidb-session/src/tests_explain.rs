@@ -10025,3 +10025,61 @@ fn a_global_index_scan_spends_gos_partition_pruning_plan_id() {
         assert_eq!(got, ids, "{sql}: {rows:?}");
     }
 }
+
+/// Go `PhysicalProjection.ToPB`: a Projection the planner pushed into a
+/// reader is the request's last executor, over a table scan or an index scan,
+/// whether it selects columns or computes. The reader's memory is the
+/// Projection's response and the Projection reports its rows. Oracle: Go
+/// testkit `EXPLAIN ANALYZE` over the same 64 rows.
+#[test]
+fn a_readers_pushed_projection_is_a_coprocessor_executor_like_go() {
+    let mut session = Session::new();
+    session
+        .run("create table ct (a int, b int, c int, s varchar(64), key ks(s), key kab(a, b))")
+        .unwrap();
+    session.run("insert into ct select 1, 1, 1, '{\"x\": 1}'").unwrap();
+    for step in [1, 2, 4, 8, 16, 32] {
+        session
+            .run(&format!(
+                "insert into ct select a+{step}, b+{step}, c+{step}, concat('{{\"x\": ', a+{step}, '}}') from ct"
+            ))
+            .unwrap();
+    }
+    for (sql, reader, memory, projection, rows) in [
+        ("select a from ct ignore index(kab) where b > 10", "TableReader_11", "677 Bytes", "Projection_5", "54"),
+        ("select c, a from ct where b > 10", "TableReader_11", "1.09 KB", "Projection_5", "54"),
+        ("select a from ct use index(kab) where b > 10", "IndexReader_11", "677 Bytes", "Projection_5", "54"),
+        ("select json_valid(s) from ct use index(ks)", "IndexReader_8", "761 Bytes", "Projection_4", "64"),
+        (
+            "select json_valid(s), s from ct use index(ks) where s like '%3%'",
+            "IndexReader_11",
+            "660 Bytes",
+            "Projection_5",
+            "16",
+        ),
+    ] {
+        let plan = row_text(session.run(&format!("explain analyze {sql}")));
+        let row = |name: &str| {
+            plan.iter()
+                .find(|row| row[0].contains(name))
+                .unwrap_or_else(|| panic!("{sql}: {name}: {plan:?}"))
+                .clone()
+        };
+        assert_eq!(row(reader)[7], memory, "{sql}: {plan:?}");
+        assert_eq!(row(reader)[2], rows, "{sql}: {plan:?}");
+        let pushed = row(projection);
+        assert_eq!((pushed[2].as_str(), pushed[3].as_str()), (rows, "cop[tikv]"), "{sql}: {plan:?}");
+    }
+    assert_eq!(
+        row_text(session.run("select json_valid(s), s from ct use index(ks) where s like '%33%' order by s")),
+        [["1", "{\"x\": 33}"]]
+    );
+    assert_eq!(
+        row_text(session.run("select c, a from ct where b > 62 order by a")),
+        [["63", "63"], ["64", "64"]]
+    );
+    assert_eq!(
+        row_text(session.run("select json_valid(s), count(*) from ct use index(ks) group by 1")),
+        [["1", "64"]]
+    );
+}

@@ -48,6 +48,7 @@ mod partition_maintenance;
 mod table_scan;
 pub use table_scan::RowDecodeContextExt;
 pub(crate) use table_scan::insert_extra_handle;
+pub(crate) use table_scan::PostFilterExprs;
 pub use ddl_ops::KvTableDdl;
 pub use partition_maintenance::KvTablePartitionMaintenance;
 pub use table_scan::KvTableReader;
