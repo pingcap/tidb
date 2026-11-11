@@ -1038,9 +1038,24 @@ func DetachCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, conditions [
 // detachCondAndBuildRange detaches the index filters from table filters and uses them to build ranges.
 func detachCondAndBuildRange(sctx *rangerctx.RangerContext, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int, rangeMaxSize int64, convertToSortKey bool, mergeConsecutive bool) (*DetachRangeResult, error) {
+	condCols := expression.ExtractColumnsFromExpressions(conditions, nil)
 	newTpSlice := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
-		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
+		newTp := newFieldType(col.RetType)
+		if col.RetType.GetType() == mysql.TypeSet {
+			for _, condCol := range condCols {
+				if condCol.UniqueID == col.UniqueID && mysql.HasEnumSetAsIntFlag(condCol.RetType.GetFlag()) {
+					// EliminateNoPrecisionLossSetCast marks only columns that came
+					// from an explicit CAST(SET AS UNSIGNED). Preserve the physical
+					// SET type used to encode ranges, and carry the marker separately
+					// so ordinary SET comparisons retain their string semantics.
+					newTp = newTp.Clone()
+					newTp.AddFlag(mysql.EnumSetAsIntFlag)
+					break
+				}
+			}
+		}
+		newTpSlice = append(newTpSlice, newTp)
 	}
 
 	return detachCondAndBuildRangeRecursive(sctx, conditions, cols, lengths, newTpSlice, rangeMaxSize, convertToSortKey, mergeConsecutive)

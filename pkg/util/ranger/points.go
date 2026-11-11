@@ -109,9 +109,9 @@ func rangePointEqualValueCmp(a, b *point) int {
 
 func convertPointsToSortKeyInPlace(sctx *rangerctx.RangerContext, points []*point, newTp *types.FieldType) error {
 	// Only handle normal string type here.
-	// Currently, set won't be pushed down and it shouldn't reach here in theory.
-	// For enum, we have separate logic for it, like handleEnumFromBinOp(). For now, it only supports point range,
-	// intervals are not supported. So we also don't need to handle enum here.
+	// SET ranges produced from CAST(SET AS UNSIGNED) already contain physical
+	// uint64 values. ENUM has separate handling in handleEnumFromBinOp(). Neither
+	// type needs a collation sort key here.
 	if newTp.EvalType() != types.ETString ||
 		newTp.GetType() == mysql.TypeEnum ||
 		newTp.GetType() == mysql.TypeSet {
