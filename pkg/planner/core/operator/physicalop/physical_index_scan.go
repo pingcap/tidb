@@ -790,7 +790,7 @@ func ConvertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *PhysP
 	}
 
 	if len(indexConds) > 0 {
-		pushedFilters, remainingFilter := extractFiltersForIndexMerge(util.GetPushDownCtx(ds.SCtx()), indexConds)
+		pushedFilters, remainingFilter := extractFiltersForIndexMerge(util.GetPushDownCtx(ds.SCtx()), indexConds, ds.PushedDownConds)
 		var selectivity float64
 		if path.CountAfterAccess > 0 {
 			selectivity = path.CountAfterIndex / path.CountAfterAccess

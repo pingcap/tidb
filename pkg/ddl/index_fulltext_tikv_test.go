@@ -212,6 +212,9 @@ func TestFullTextIndexBuiltInTiKVRefusals(t *testing.T) {
 		{"create table bad (n int, fulltext index idx (n))", "FULLTEXT index requires a string column"},
 		{"create table bad (body text, title text, fulltext index idx (body, title))", "BLOB/TEXT column 'body' used in key specification without a key length"},
 		{"alter table t add fulltext index idx (body) with parser unknown", "Unsupported parser 'unknown'"},
+		// The rows of a local temporary table never reach TiKV, where the
+		// index is read, as MySQL refuses one on an InnoDB temporary table.
+		{"create temporary table bad (id int primary key, body text, fulltext index idx (body))", "Cannot create FULLTEXT index on temporary InnoDB table"},
 	} {
 		tk.MustContainErrMsg(tc.sql, tc.err)
 	}
@@ -227,6 +230,7 @@ func TestFullTextIndexBuiltInTiKVRefusals(t *testing.T) {
 	tk.MustExec("create fulltext index idx_tenant_body on t (n, body)")
 	tk.MustExec("create fulltext index idx_title on t (title) with parser ngram")
 	tk.MustContainErrMsg("create table bad (n int, body text, fulltext index a (body), fulltext index b (n, body) with parser ngram)", "must use the parser and analyzer settings of the existing FULLTEXT index a")
+	tk.MustContainErrMsg("create temporary table bad like t", "Cannot create FULLTEXT index on temporary InnoDB table")
 	tk.MustExec("alter table t drop index idx_body, drop index idx_tenant_body, drop index idx_title")
 
 	// An existing name under IF NOT EXISTS is a note, as for an ordinary

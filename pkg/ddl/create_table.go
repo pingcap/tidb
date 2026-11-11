@@ -1145,6 +1145,13 @@ func setTemporaryType(tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
 		}
 	case ast.TemporaryLocal:
 		tbInfo.TempTableType = model.TempTableLocal
+		// The rows of a local temporary table never reach TiKV, and the
+		// FULLTEXT read path scans postings from a TiKV snapshot.
+		for _, idx := range tbInfo.Indices {
+			if idx.TiKVFullText != nil {
+				return errors.Trace(dbterror.ErrNoFullTextOnTemporaryTable)
+			}
+		}
 	default:
 		tbInfo.TempTableType = model.TempTableNone
 	}

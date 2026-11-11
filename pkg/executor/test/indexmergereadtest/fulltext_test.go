@@ -242,6 +242,35 @@ func TestFullTextIndexMatchAgainstPartitioned(t *testing.T) {
 	}
 }
 
+// TestFullTextIndexMatchAgainstOtherMatches covers MATCH predicates the
+// IndexMerge reader does not serve itself: the one a FULLTEXT scan serves is
+// consumed, every other MATCH on the table must still filter its rows.
+func TestFullTextIndexMatchAgainstOtherMatches(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, k int, body text, fulltext index idx (body), index ik (k))")
+	fullTextCorpus(t, tk, "t", 1500, 5)
+	tk.MustExec("analyze table t")
+
+	expected := tk.MustQuery("select id from t ignore index (idx) where match(body) against('+rareword +alpha' in boolean mode) order by id").Rows()
+	require.NotEmpty(t, expected)
+	for _, hint := range []string{"use index (idx)", ""} {
+		sql := fmt.Sprintf("select id from t %s where match(body) against('+rareword' in boolean mode) and match(body) against('+alpha' in boolean mode) order by id", hint)
+		tk.MustQuery(sql).Check(expected)
+	}
+	plan := tk.MustQuery("explain format = 'brief' select id from t use index (idx) where match(body) against('+rareword' in boolean mode) and match(body) against('+alpha' in boolean mode)").String()
+	require.Contains(t, plan, `fulltext:"+rareword"`)
+	require.Regexp(t, `Selection.*match_against\("\+alpha"`, plan)
+	// An IndexMerge over ordinary indexes evaluates the MATCH above it.
+	sql := "select /*+ use_index_merge(t, primary, ik) */ id from t where (id < 300 or k = 3) and match(body) against('+rareword' in boolean mode) order by id"
+	require.Contains(t, tk.MustQuery("explain format = 'brief' "+sql).String(), "IndexMerge")
+	tk.MustQuery(sql).Check(tk.MustQuery("select id from t ignore index (idx) where (id < 300 or k = 3) and match(body) against('+rareword' in boolean mode) order by id").Rows())
+}
+
 // TestFullTextIndexMatchAgainstKeyColumns covers an index with key columns
 // ahead of the tokenized one, the multi-tenant shape: a search is answered
 // by the index only within one value of every key column, which the query
