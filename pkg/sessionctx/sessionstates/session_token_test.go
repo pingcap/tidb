@@ -121,9 +121,24 @@ func TestSignAlgo(t *testing.T) {
 				err := util.CreateCertificates(certPath, keyPath, keySize, test.pubKeyAlgo, signAlgo)
 				require.NoError(t, err, msg)
 				ReloadSigningCert()
-				_, tokenBytes := createNewToken(t, "test_user")
+				token, tokenBytes := createNewToken(t, "test_user")
 				err = ValidateSessionToken(tokenBytes, "test_user", "%")
 				require.NoError(t, err, msg)
+
+				// All signed fields must be protected, including those beyond the
+				// first curve-order bytes that ECDSA takes from its digest input.
+				token.Hostname = "localhost"
+				tokenBytes, err = json.Marshal(token)
+				require.NoError(t, err, msg)
+				err = ValidateSessionToken(tokenBytes, "test_user", "localhost")
+				require.ErrorContains(t, err, "verification", msg)
+
+				token.Hostname = "%"
+				token.ExpireTime = token.ExpireTime.Add(time.Hour)
+				tokenBytes, err = json.Marshal(token)
+				require.NoError(t, err, msg)
+				err = ValidateSessionToken(tokenBytes, "test_user", "%")
+				require.ErrorContains(t, err, "verification", msg)
 			}
 		}
 	}

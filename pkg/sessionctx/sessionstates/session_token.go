@@ -323,6 +323,11 @@ func (sc *signingCert) sign(content []byte) ([]byte, error) {
 		}
 	case *ecdsa.PrivateKey:
 		signer = key
+		// ECDSA expects a digest and truncates inputs longer than the curve order.
+		// Hash the complete payload so every token field is authenticated.
+		hashed := sha256.Sum256(content)
+		content = hashed[:]
+		opts = crypto.SHA256
 	default:
 		return nil, errors.Errorf("not supported private key type '%s' for signing", certInfo.cert.SignatureAlgorithm.String())
 	}
@@ -343,7 +348,8 @@ func (sc *signingCert) checkSignature(content, signature []byte) error {
 		switch certInfo.privKey.(type) {
 		// ESDSA is special: `PrivateKey.Sign` doesn't match with `Certificate.CheckSignature`.
 		case *ecdsa.PrivateKey:
-			if !ecdsa.VerifyASN1(certInfo.cert.PublicKey.(*ecdsa.PublicKey), content, signature) {
+			hashed := sha256.Sum256(content)
+			if !ecdsa.VerifyASN1(certInfo.cert.PublicKey.(*ecdsa.PublicKey), hashed[:], signature) {
 				err = errors.New("x509: ECDSA verification failure")
 			}
 		default:
