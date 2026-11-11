@@ -123,6 +123,7 @@ use tidb_planner_core_operator_logicalop::plan_context::{DisabledLogicalRules, L
 pub mod rule_aggregation_elimination;
 pub mod rule_aggregation_push_down;
 pub mod rule_aggregation_skew_rewrite;
+pub mod rule_correlate;
 pub mod rule_decorrelate;
 pub mod rule_derive_topn_from_window;
 pub mod rule_eliminate_empty_selection;
@@ -357,10 +358,10 @@ impl RuleId {
             }
             Self::OuterJoinEliminator => Some(&rule_join_elimination::OuterJoinEliminator),
             Self::DecorrelateSolver => Some(&rule_decorrelate::DecorrelateSolver),
+            Self::CorrelateSolver => Some(&rule_correlate::CorrelateSolver),
             Self::FullTextIndexResolverWhere
             | Self::FullTextIndexResolverTopN
             | Self::FullTextIndexResolverProjection
-            | Self::CorrelateSolver
             | Self::FullTextIndexResolverRejectRemaining => None,
         }
     }

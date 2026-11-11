@@ -440,7 +440,8 @@ fn attach_dynamic_partition_access(
 }
 
 /// Go `physicalOptimize` and `postOptimize`: the cheapest physical plan for
-/// the optimized logical plan, then the post-optimization rewrites.
+/// the optimized logical plan with its cost (`getPlanCost` of the best task's
+/// plan), then the post-optimization rewrites.
 /// `col_ref_from_update_plan` is Go's `StmtCtx.ColRefFromUpdatePlan` for an
 /// UPDATE's read plan (empty otherwise).
 ///
@@ -453,7 +454,7 @@ pub fn physical_optimize<C: OptimizeContext>(
     column_ids: &ColumnIdAllocator,
     ctx: &C,
     col_ref_from_update_plan: &BTreeSet<i64>,
-) -> Result<PhysicalPlan, PlanError> {
+) -> Result<(PhysicalPlan, f64), PlanError> {
     let begin_physical_opt = ctx.take_begin_physical_opt().unwrap_or_else(Instant::now);
     let optimizer_cost_env = ctx.optimizer_cost_env();
     let coster = Ver2Coster::from_env(optimizer_cost_env)
@@ -545,6 +546,9 @@ pub fn physical_optimize<C: OptimizeContext>(
             ]),
         )
     })?;
+    let cost = coster
+        .plan_cost(&physical, tidb_planner_property::task_type::TaskType::Root, false)
+        .value();
     // Go caches each operator's cost while `findBestTask` compares tasks
     // (`PlanCostInit`), and EXPLAIN shows that cost for the finished plan even
     // where `postOptimize` later put an operator between a parent and its
@@ -601,5 +605,5 @@ pub fn physical_optimize<C: OptimizeContext>(
         .base_mut()
         .base
         .set_output_names(logical.output_names().to_vec());
-    Ok(physical)
+    Ok((physical, cost))
 }

@@ -110,6 +110,13 @@ impl PlanIdAllocator {
     pub fn current(&self) -> i32 {
         self.next.load(Ordering::Relaxed)
     }
+
+    /// Go `PlanID.Store(current)`: the next [`Self::alloc`] returns
+    /// `current + 1` again, as `buildLogicalPlan` restarts the counter for
+    /// each round of a statement's planning.
+    pub fn store(&self, current: i32) {
+        self.next.store(current, Ordering::Relaxed);
+    }
 }
 
 /// Go `SessionVars.AllocPlanColumnID()`: the source of a plan column's
@@ -151,6 +158,18 @@ impl ColumnIdAllocator {
             );
         }
         id
+    }
+
+    /// The last id handed out, without allocating one.
+    pub fn current(&self) -> i64 {
+        self.next.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Go `PlanColumnID.Store(current)`: the next [`Self::alloc`] returns
+    /// `current + 1` again, as `buildLogicalPlan` restarts the counter for
+    /// each round of a statement's planning.
+    pub fn store(&self, current: i64) {
+        self.next.store(current, std::sync::atomic::Ordering::Relaxed);
     }
 }
 

@@ -10152,3 +10152,154 @@ fn a_readers_pushed_projection_is_a_coprocessor_executor_like_go() {
         [["1", "64"]]
     );
 }
+
+/// Runs one Go `correlate_suite_out.json` suite: every case's brief plan and
+/// rows, as Go's `TestCorrelate` checks them.
+fn check_correlate_suite(session: &mut Session, name: &str) {
+    let suites: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../pkg/planner/core/casetest/rule/testdata/correlate_suite_out.json"
+    ))
+    .unwrap();
+    let cases = suites
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|suite| suite["Name"] == name)
+        .unwrap()["Cases"]
+        .as_array()
+        .unwrap();
+    // Go records an empty result as `null`.
+    let strings = |value: &serde_json::Value| -> Vec<String> {
+        value.as_array().into_iter().flatten().map(|line| line.as_str().unwrap().to_owned()).collect()
+    };
+    let mut failures = Vec::new();
+    for (index, case) in cases.iter().enumerate() {
+        let sql = case["SQL"].as_str().unwrap();
+        let plan: Vec<String> = row_text(session.run(&format!("explain format = 'brief' {sql}")))
+            .iter()
+            .map(|row| row.join(" "))
+            .collect();
+        if plan != strings(&case["Plan"]) {
+            failures.push(format!("{index} plan {sql}\n  got  {plan:#?}\n  want {:#?}", strings(&case["Plan"])));
+        }
+        let rows: Vec<String> = row_text(session.run(sql)).iter().map(|row| row.join(" ")).collect();
+        if rows != strings(&case["Result"]) {
+            failures.push(format!("{index} rows {sql}: got {rows:?} want {:?}", strings(&case["Result"])));
+        }
+    }
+    assert!(failures.is_empty(), "{name}: {} of {} cases\n{}", failures.len(), cases.len(), failures.join("\n"));
+}
+
+fn correlate_suite_session() -> Session {
+    let mut session = Session::new();
+    for sql in [
+        "create table t1 (a int, b int, key(a))",
+        "create table t2 (a int, b int, key(a))",
+        "create table t3 (a int, b int, key(a))",
+        "insert into t1 values (1,1),(2,2),(3,3)",
+        "insert into t2 values (1,10),(2,20)",
+        "insert into t3 values (10,1),(20,2)",
+        "set tidb_opt_enable_alternative_logical_plans = ON",
+    ] {
+        session.run(sql).unwrap();
+    }
+    session
+}
+
+/// Go `TestCorrelate`: with alternative logical plans on, `planner.optimize`
+/// runs its extra rounds and keeps the cheapest plan.
+#[test]
+fn alternative_logical_plan_rounds_pick_gos_correlate_suite_plans() {
+    check_correlate_suite(&mut correlate_suite_session(), "TestCorrelate");
+}
+
+/// Go `TestCorrelateWithCostFactors`: costly hash and merge joins let the
+/// correlate and semi-join-rewrite rounds win.
+#[test]
+fn alternative_logical_plan_rounds_pick_gos_plans_under_cost_factors() {
+    let mut session = correlate_suite_session();
+    session.run("set tidb_opt_hash_join_cost_factor = 1000").unwrap();
+    session.run("set tidb_opt_merge_join_cost_factor = 1000").unwrap();
+    check_correlate_suite(&mut session, "TestCorrelateWithCostFactors");
+}
+
+/// Go `TestCorrelateNullSemantics` and `TestCorrelateAlternativeChoosesApply`:
+/// the correlate round turns a non-correlated IN semi join into an Apply only
+/// where a NULL key cannot change the answer.
+#[test]
+fn the_correlate_round_keeps_null_semantics_and_chooses_apply_like_go() {
+    let mut session = Session::new();
+    for sql in [
+        "create table tn (a int)",
+        "create table sn (a int, key(a))",
+        "insert into tn values (1)",
+        "insert into sn values (null)",
+        "set tidb_opt_enable_alternative_logical_plans = ON",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let scalar_in = "select tn.a in (select sn.a from sn) as r from tn";
+    assert_eq!(row_text(session.run(scalar_in)), [["NULL"]]);
+    for sql in ["truncate table tn", "truncate table sn", "insert into tn values (null)", "insert into sn values (1)"] {
+        session.run(sql).unwrap();
+    }
+    assert_eq!(row_text(session.run(scalar_in)), [["NULL"]]);
+    for sql in [
+        "create table tnn (a int not null)",
+        "create table snn (a int not null, key(a))",
+        "insert into tnn values (1), (2), (3)",
+        "insert into snn values (1), (2)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    assert_eq!(
+        row_text(session.run("select tnn.a in (select snn.a from snn) as r from tnn order by tnn.a")),
+        [["1"], ["1"], ["0"]]
+    );
+
+    for sql in [
+        "create table t1 (a int not null, b int, key(a))",
+        "create table t2 (a int not null, b int, key(a))",
+        "insert into t1 values (1,1),(2,2),(3,3)",
+        "insert into t2 values (1,10),(2,20)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let sql = "select * from t1 where b = 1 and a in (select a from t2)";
+    let has = |session: &mut Session, operator: &str| {
+        let plan = row_text(session.run(&format!("explain format = 'brief' {sql}")));
+        assert!(plan.iter().any(|row| row[0].contains(operator)), "{operator}: {plan:#?}");
+    };
+    session.run("set tidb_opt_enable_alternative_logical_plans = OFF").unwrap();
+    has(&mut session, "IndexJoin");
+    assert_eq!(row_text(session.run(sql)), [["1", "1"]]);
+    session.run("set tidb_opt_enable_alternative_logical_plans = ON").unwrap();
+    has(&mut session, "Apply");
+    assert_eq!(row_text(session.run(sql)), [["1", "1"]]);
+}
+
+/// Go's plans and rows for the correlate round, captured from a Go testkit
+/// run of the same statements (`testdata/alternative_rounds_go.json`): the
+/// Apply's inner side is the cloned subquery under a `Limit 1` with the join
+/// key pushed into its index range, a nullable key of a scalar `IN` keeps the
+/// join, and a decorrelated `EXISTS` beside a preferred `IN` is its own Apply.
+#[test]
+fn the_correlate_round_builds_gos_apply_plans() {
+    let cases: serde_json::Value =
+        serde_json::from_str(include_str!("../testdata/alternative_rounds_go.json")).unwrap();
+    let mut session = Session::new();
+    let mut failures = Vec::new();
+    for case in cases.as_array().unwrap() {
+        let sql = case["SQL"].as_str().unwrap();
+        let Some(want) = case["Rows"].as_array() else {
+            session.run(sql).unwrap();
+            continue;
+        };
+        let want: Vec<&str> = want.iter().map(|row| row.as_str().unwrap()).collect();
+        let got: Vec<String> = row_text(session.run(sql)).iter().map(|row| row.join(" ")).collect();
+        if got != want {
+            failures.push(format!("{sql}\n  got  {got:#?}\n  want {want:#?}"));
+        }
+    }
+    assert!(failures.is_empty(), "{} cases\n{}", failures.len(), failures.join("\n"));
+}

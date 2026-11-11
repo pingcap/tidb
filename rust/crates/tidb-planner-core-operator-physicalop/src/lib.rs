@@ -57,6 +57,8 @@ use tidb_planner_property::stats_info::HistCollExt as _;
 use tidb_kv::store_type::StoreType;
 use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 pub mod shuffle;
+pub mod single_scan_index_join;
+pub mod storage_engine_usage;
 pub use shuffle::{PhysicalShuffle, PhysicalShuffleReceiverStub};
 
 use tidb_expr::expression::Expression;
@@ -866,6 +868,9 @@ pub struct PhysicalIndexJoin {
     /// pairs otherwise (`indexJoinIntPKRangeInfo` vs
     /// `indexJoinPathRangeInfo`).
     pub inner_range_bare: bool,
+    /// Go `PhysicalIndexJoin.FromDecorrelatedApply`: this index join keeps
+    /// the original outer side of a join an apply was decorrelated into.
+    pub from_decorrelated_apply: bool,
 }
 
 impl Default for PhysicalIndexJoin {
@@ -897,6 +902,7 @@ impl Default for PhysicalIndexJoin {
             compare_filters: None,
             range_rebuild: None,
             inner_range_bare: false,
+            from_decorrelated_apply: false,
         }
     }
 }
@@ -4936,6 +4942,7 @@ impl PhysicalPlan {
                 keep_outer_order: op.keep_outer_order,
                 inner_access_table_id: op.inner_access_table_id,
                 inner_range_bare: op.inner_range_bare,
+                from_decorrelated_apply: op.from_decorrelated_apply,
                 inner_access_index_id: op.inner_access_index_id,
                 inner_access_conditions: op.inner_access_conditions.clone(),
                 left_join_keys: op.left_join_keys.clone(),

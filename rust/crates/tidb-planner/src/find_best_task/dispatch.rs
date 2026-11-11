@@ -1334,6 +1334,7 @@ fn exhaust_physical_plans(
                             inner_access_table_id: None,
                             inner_access_index_id: None,
                             inner_range_bare: false,
+                            from_decorrelated_apply: op.from_decorrelated_apply && outer_idx == 0,
                             inner_access_conditions: Vec::new(),
                             left_join_keys: left_columns.clone(),
                             right_join_keys: right_columns.clone(),
@@ -5435,7 +5436,24 @@ fn enumerate_physical_plans_4_task(
                 &ctx.expr_pushdown_blacklist,
                 ctx.mpp_warning_sink,
             ) {
-                Ok(task) => task,
+                Ok(task) => {
+                    // Go `indexJoinAttach2Task`.
+                    if let PhysicalPlan::IndexJoin(join) = pp {
+                        if join.from_decorrelated_apply
+                            && join.kind == tidb_planner_core_operator_physicalop::IndexJoinKind::IndexJoin
+                        {
+                            if let Some(signals) = ctx
+                                .mpp_warning_sink
+                                .and_then(|sink| sink.get_expr_ctx().alternative_logical_plan_signals())
+                            {
+                                signals
+                                    .same_order_index_join
+                                    .store(true, std::sync::atomic::Ordering::Release);
+                            }
+                        }
+                    }
+                    task
+                }
                 // An unported attach body refuses; Go has no such arm, so a
                 // refusal must SURFACE rather than silently skip a
                 // candidate Go would have priced.

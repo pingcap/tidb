@@ -1483,6 +1483,98 @@ struct PushDownTopN<'a> {
     builder: &'a dyn tidb_expr::expr_util::builder::FunctionBuilder,
 }
 
+impl PushDownTopN<'_> {
+    /// Go `LogicalJoin.PushDownTopN`, which `LogicalApply` is promoted.
+    fn push_down_topn_to_join(
+        &mut self,
+        op: &super::LogicalJoin,
+        topn: Option<Box<LogicalTopN>>,
+        child_count: usize,
+    ) -> Descend<Option<Box<LogicalTopN>>, ()> {
+        let outer_idx = match op.join_type {
+            LogicalJoinType::LeftOuter
+            | LogicalJoinType::LeftOuterSemi
+            | LogicalJoinType::AntiLeftOuterSemi => Some(0usize),
+            LogicalJoinType::RightOuter => Some(1usize),
+            LogicalJoinType::Inner | LogicalJoinType::Semi | LogicalJoinType::AntiSemi => {
+                None
+            }
+        };
+        let Some(outer_idx) = outer_idx else {
+            self.stash.push(match topn {
+                Some(inner_topn) => PendingTopN::Reattach(inner_topn),
+                None => PendingTopN::Nothing,
+            });
+            return Descend::Children(vec![None; child_count]);
+        };
+        let Some(topn) = topn else {
+            self.stash.push(PendingTopN::Nothing);
+            return Descend::Children(vec![None; child_count]);
+        };
+        let topn = *topn;
+        let children = op.base.children();
+        let child_schema = children
+            .get(outer_idx)
+            .and_then(super::LogicalPlan::schema)
+            .map(|schema| schema.to_owned());
+        // "for _, by := range topN.ByItems": every by-item column must
+        // survive in the preserved child's schema, else the TopN
+        // cannot enter that child and just re-attaches above.
+        let by_item_cols_fit_child = child_schema.as_ref().is_some_and(|schema| {
+            topn.by_items.iter().all(|item| {
+                extract_columns(&item.expr)
+                    .iter()
+                    .all(|col| schema.contains(col))
+            })
+        });
+        if !by_item_cols_fit_child {
+            self.stash.push(PendingTopN::Reattach(Box::new(topn)));
+            if child_count == 0 {
+                return Descend::Stop(());
+            }
+            return Descend::Children(vec![None; child_count]);
+        }
+        let inner_idx = 1 - outer_idx;
+        let (left_keys, right_keys, _is_null_eq, has_null_eq) = op.get_join_keys();
+        let inner_keys = if outer_idx == 0 {
+            right_keys
+        } else {
+            left_keys
+        };
+        let inner_unique = children
+            .get(inner_idx)
+            .and_then(super::LogicalPlan::schema)
+            .is_some_and(|schema| {
+                schema.is_unique(true, &inner_keys)
+                    || (!has_null_eq && schema.is_unique(false, &inner_keys))
+            });
+        let (count, offset) = if inner_unique {
+            (topn.count, topn.offset)
+        } else {
+            (topn.count + topn.offset, 0)
+        };
+        let mut pushed = topn.clone();
+        pushed.count = count;
+        pushed.offset = offset;
+        self.stash
+            .push(if inner_unique && topn.by_items.is_empty() {
+                PendingTopN::Nothing
+            } else if inner_unique {
+                PendingTopN::ReattachAsSort(topn.by_items.clone())
+            } else {
+                PendingTopN::Reattach(Box::new(topn))
+            });
+        if child_count == 0 {
+            return Descend::Stop(());
+        }
+        let mut downs: Vec<Option<Box<LogicalTopN>>> = vec![None; child_count];
+        if let Some(slot) = downs.get_mut(outer_idx) {
+            *slot = Some(Box::new(pushed));
+        }
+        Descend::Children(downs)
+    }
+}
+
 impl OwnedRewrite for PushDownTopN<'_> {
     type Down = Option<Box<LogicalTopN>>;
     type Up = ();
@@ -1690,92 +1782,11 @@ impl OwnedRewrite for PushDownTopN<'_> {
             // inner side is unique on the join key, each preserved-side row
             // keeps its own output row, so the offset travels down too and the
             // join ELIMINATES the TopN (a by-item-only sort stays above).
-            LogicalPlan::Join(op) => {
-                let outer_idx = match op.join_type {
-                    LogicalJoinType::LeftOuter
-                    | LogicalJoinType::LeftOuterSemi
-                    | LogicalJoinType::AntiLeftOuterSemi => Some(0usize),
-                    LogicalJoinType::RightOuter => Some(1usize),
-                    LogicalJoinType::Inner | LogicalJoinType::Semi | LogicalJoinType::AntiSemi => {
-                        None
-                    }
-                };
-                let Some(outer_idx) = outer_idx else {
-                    self.stash.push(match topn {
-                        Some(inner_topn) => PendingTopN::Reattach(inner_topn),
-                        None => PendingTopN::Nothing,
-                    });
-                    return Descend::Children(vec![None; child_count]);
-                };
-                let Some(topn) = topn else {
-                    self.stash.push(PendingTopN::Nothing);
-                    return Descend::Children(vec![None; child_count]);
-                };
-                let topn = *topn;
-                let children = op.base.children();
-                let child_schema = children
-                    .get(outer_idx)
-                    .and_then(super::LogicalPlan::schema)
-                    .map(|schema| schema.to_owned());
-                // "for _, by := range topN.ByItems": every by-item column must
-                // survive in the preserved child's schema, else the TopN
-                // cannot enter that child and just re-attaches above.
-                let by_item_cols_fit_child = child_schema.as_ref().is_some_and(|schema| {
-                    topn.by_items.iter().all(|item| {
-                        extract_columns(&item.expr)
-                            .iter()
-                            .all(|col| schema.contains(col))
-                    })
-                });
-                if !by_item_cols_fit_child {
-                    self.stash.push(PendingTopN::Reattach(Box::new(topn)));
-                    if child_count == 0 {
-                        return Descend::Stop(());
-                    }
-                    return Descend::Children(vec![None; child_count]);
-                }
-                let inner_idx = 1 - outer_idx;
-                let (left_keys, right_keys, _is_null_eq, has_null_eq) = op.get_join_keys();
-                let inner_keys = if outer_idx == 0 {
-                    right_keys
-                } else {
-                    left_keys
-                };
-                let inner_unique = children
-                    .get(inner_idx)
-                    .and_then(super::LogicalPlan::schema)
-                    .is_some_and(|schema| {
-                        schema.is_unique(true, &inner_keys)
-                            || (!has_null_eq && schema.is_unique(false, &inner_keys))
-                    });
-                let (count, offset) = if inner_unique {
-                    (topn.count, topn.offset)
-                } else {
-                    (topn.count + topn.offset, 0)
-                };
-                let mut pushed = topn.clone();
-                pushed.count = count;
-                pushed.offset = offset;
-                self.stash
-                    .push(if inner_unique && topn.by_items.is_empty() {
-                        PendingTopN::Nothing
-                    } else if inner_unique {
-                        PendingTopN::ReattachAsSort(topn.by_items.clone())
-                    } else {
-                        PendingTopN::Reattach(Box::new(topn))
-                    });
-                if child_count == 0 {
-                    return Descend::Stop(());
-                }
-                let mut downs: Vec<Option<Box<LogicalTopN>>> = vec![None; child_count];
-                if let Some(slot) = downs.get_mut(outer_idx) {
-                    *slot = Some(Box::new(pushed));
-                }
-                Descend::Children(downs)
-            }
+            // `LogicalApply` embeds `LogicalJoin` and takes the same body.
+            LogicalPlan::Join(op) => self.push_down_topn_to_join(op, topn, child_count),
+            LogicalPlan::Apply(op) => self.push_down_topn_to_join(&op.join, topn, child_count),
             base_arms![
                 Selection,
-                Apply,
                 TopN,
                 Aggregation,
                 Window,

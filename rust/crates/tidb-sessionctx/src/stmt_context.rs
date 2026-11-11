@@ -1447,6 +1447,7 @@ pub struct StmtContextData {
     /// Go `SessionVars.EnableSemiJoinRewrite`.
     enable_semi_join_rewrite: bool,
     enable_alternative_logical_plans: bool,
+    enable_correlate_subquery: bool,
     alternative_logical_plan_signals: Arc<tidb_exprctx::context::AlternativeLogicalPlanSignals>,
     /// Go `SessionVars.ExplainNonEvaledSubQuery`
     /// (`tidb_opt_enable_non_eval_scalar_subquery`).
@@ -1823,6 +1824,14 @@ context_configuration! {
     #[must_use]
     pub fn with_enable_semi_join_rewrite(mut self, enable: bool) -> Self {
         self.enable_semi_join_rewrite = enable;
+        self
+    }
+
+    /// Go `SessionVars.EnableCorrelateSubquery`: the internal flag the
+    /// correlate alternative round turns on.
+    #[must_use]
+    pub fn with_enable_correlate_subquery(mut self, enable: bool) -> Self {
+        self.enable_correlate_subquery = enable;
         self
     }
 
@@ -3253,6 +3262,7 @@ impl StmtContext {
             enable_semi_join_rewrite: tidb_vardef::defaults::DEF_OPT_ENABLE_SEMI_JOIN_REWRITE,
             enable_alternative_logical_plans:
                 tidb_vardef::defaults::DEF_OPT_ENABLE_ALTERNATIVE_LOGICAL_PLANS,
+            enable_correlate_subquery: false,
             alternative_logical_plan_signals: Arc::default(),
             explain_non_evaled_sub_query: tidb_vardef::defaults::DEF_TIDB_OPT_EXPLAIN_EVALED_SUBQUERY,
             allow_in_subq_to_join_and_agg: true,
@@ -4017,6 +4027,12 @@ impl StmtContext {
         self.enable_semi_join_rewrite
     }
 
+    /// Go `SessionVars.EnableCorrelateSubquery`.
+    #[must_use]
+    pub fn enable_correlate_subquery(&self) -> bool {
+        self.enable_correlate_subquery
+    }
+
     /// Returns `@@tidb_opt_enable_alternative_logical_plans`
     /// (Go `SessionVars.EnableAlternativeLogicalPlans`).
     pub fn enable_alternative_logical_plans(&self) -> bool {
@@ -4367,8 +4383,20 @@ impl StmtContext {
     /// builder's marks a fresh round starts without.
     pub fn reset_alternative_logical_plan_signals(&self) {
         let signals = &self.alternative_logical_plan_signals;
-        signals.fts_like_fallback.store(false, Ordering::Release);
-        signals.has_predicate_context_match.store(false, Ordering::Release);
+        for signal in [
+            &signals.decorrelated_apply,
+            &signals.same_order_index_join,
+            &signals.order_aware_join_reorder,
+            &signals.fts_like_fallback,
+            &signals.has_predicate_context_match,
+            &signals.prefer_correlate,
+            &signals.semi_join_rewrite,
+            &signals.mixed_storage_engines,
+            &signals.missing_tiflash_path,
+            &signals.has_store_type_hint,
+        ] {
+            signal.store(false, Ordering::Release);
+        }
         self.reset_alternative_logical_plan_marks();
     }
 

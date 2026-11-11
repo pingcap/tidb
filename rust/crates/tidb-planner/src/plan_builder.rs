@@ -3871,9 +3871,21 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 }
             }
         }
+        if self.ctx.enable_alternative_logical_plans()
+            && !paths.iter().any(tidb_planner_util::path::AccessPath::is_tiflash_path)
+        {
+            if let Some(signals) = self.ctx.alternative_logical_plan_signals() {
+                signals.missing_tiflash_path.store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
         data_source.public_enumerated_paths = public_paths;
         data_source.all_possible_access_paths = paths;
         self.set_preferred_store_type(&mut data_source);
+        if data_source.prefer_store_type != 0 {
+            if let Some(signals) = self.ctx.alternative_logical_plan_signals() {
+                signals.has_store_type_hint.store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
 
         data_source
             .base

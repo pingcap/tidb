@@ -222,7 +222,14 @@ impl DecorrelateSolver {
             // NOT EXISTS anti-semi = 1537.74 = the semi's 1922.18 * 0.8 on go
             // master nightly); only OuterJoinToSemiJoin's LEFT-JOIN +
             // IS-NULL conversion inherits the outer join's unscaled stats.
-            return Self::optimize_children(ctx, LogicalPlan::Join(apply.join), group_by_column);
+            let mut join = apply.join;
+            if ctx.eval_context.enable_alternative_logical_plans() {
+                if let Some(signals) = ctx.eval_context.alternative_logical_plan_signals() {
+                    signals.decorrelated_apply.store(true, std::sync::atomic::Ordering::Release);
+                }
+                join.from_decorrelated_apply = true;
+            }
+            return Self::optimize_children(ctx, LogicalPlan::Join(join), group_by_column);
         }
         if apply.no_decorrelate {
             return Self::optimize_children(ctx, LogicalPlan::Apply(apply), group_by_column);

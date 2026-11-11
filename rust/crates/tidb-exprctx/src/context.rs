@@ -22,12 +22,28 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tidb_datatype::Datum;
 
-/// What one optimization round tells the next about a statement's
-/// `MATCH ... AGAINST` predicates: Go `StatementContext`'s
+/// What the first optimization round tells Go `planner.optimize` about the
+/// alternative rounds worth trying: Go `StatementContext`'s
 /// `AlternativeLogicalPlan*` signals and the plan builder's
 /// `predicateMatch` / `nonViableFTSMatch` marks.
 #[derive(Debug, Default)]
 pub struct AlternativeLogicalPlanSignals {
+    /// Go `StmtCtx.AlternativeLogicalPlanDecorrelatedApply`.
+    pub decorrelated_apply: AtomicBool,
+    /// Go `StmtCtx.AlternativeLogicalPlanSameOrderIndexJoin`.
+    pub same_order_index_join: AtomicBool,
+    /// Go `StmtCtx.AlternativeLogicalPlanOrderAwareJoinReorder`.
+    pub order_aware_join_reorder: AtomicBool,
+    /// Go `StmtCtx.AlternativeLogicalPlanPreferCorrelate`.
+    pub prefer_correlate: AtomicBool,
+    /// Go `StmtCtx.AlternativeLogicalPlanSemiJoinRewrite`.
+    pub semi_join_rewrite: AtomicBool,
+    /// Go `StmtCtx.AlternativeLogicalPlanMixedStorageEngines`.
+    pub mixed_storage_engines: AtomicBool,
+    /// Go `StmtCtx.AlternativeLogicalPlanMissingTiFlashPath`.
+    pub missing_tiflash_path: AtomicBool,
+    /// Go `StmtCtx.AlternativeLogicalPlanHasStoreTypeHint`.
+    pub has_store_type_hint: AtomicBool,
     /// Go `StmtCtx.AlternativeLogicalPlanFTSLikeFallback`.
     pub fts_like_fallback: AtomicBool,
     /// Go `StmtCtx.AlternativeLogicalPlanHasPredicateContextMatch`.

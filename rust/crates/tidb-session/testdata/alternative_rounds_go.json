@@ -1,0 +1,280 @@
+[
+ {
+  "SQL": "create table tn(a int)"
+ },
+ {
+  "SQL": "create table sn(a int, key(a))"
+ },
+ {
+  "SQL": "insert into tn values (1),(null)"
+ },
+ {
+  "SQL": "insert into sn values (null),(2)"
+ },
+ {
+  "SQL": "create table tnn(a int not null)"
+ },
+ {
+  "SQL": "create table snn(a int not null, key(a))"
+ },
+ {
+  "SQL": "insert into tnn values (1), (2), (3)"
+ },
+ {
+  "SQL": "insert into snn values (1), (2)"
+ },
+ {
+  "SQL": "create table t1 (a int not null, b int, key(a))"
+ },
+ {
+  "SQL": "create table t2 (a int not null, b int, key(a))"
+ },
+ {
+  "SQL": "insert into t1 values (1,1),(2,2),(3,3)"
+ },
+ {
+  "SQL": "insert into t2 values (1,10),(2,20)"
+ },
+ {
+  "SQL": "set tidb_opt_enable_alternative_logical_plans = ON"
+ },
+ {
+  "SQL": "explain format = 'brief' select * from t1 where b = 1 and a in (select a from t2)",
+  "Rows": [
+   "Apply 8.00 root  CARTESIAN semi join, left side:TableReader",
+   "├─TableReader(Build) 10.00 root  data:Selection",
+   "│ └─Selection 10.00 cop[tikv]  eq(test.t1.b, 1)",
+   "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+   "└─Limit(Probe) 10.00 root  offset:0, count:1",
+   "  └─IndexReader 10.00 root  index:Limit",
+   "    └─Limit 10.00 cop[tikv]  offset:0, count:1",
+   "      └─IndexRangeScan 10.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
+  ]
+ },
+ {
+  "SQL": "explain format = 'brief' select * from t1 where b = 1 and a in (select a from t2) and a not in (select a from snn)",
+  "Rows": [
+   "IndexHashJoin 6.40 root  anti semi join, inner:IndexReader, left side:Apply, outer key:test.t1.a, inner key:test.snn.a, equal cond:eq(test.t1.a, test.snn.a)",
+   "├─Apply(Build) 8.00 root  CARTESIAN semi join, left side:TableReader",
+   "│ ├─TableReader(Build) 10.00 root  data:Selection",
+   "│ │ └─Selection 10.00 cop[tikv]  eq(test.t1.b, 1)",
+   "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+   "│ └─Limit(Probe) 10.00 root  offset:0, count:1",
+   "│   └─IndexReader 10.00 root  index:Limit",
+   "│     └─Limit 10.00 cop[tikv]  offset:0, count:1",
+   "│       └─IndexRangeScan 10.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+   "└─IndexReader(Probe) 10.00 root  index:IndexRangeScan",
+   "  └─IndexRangeScan 10.00 cop[tikv] table:snn, index:a(a) range: decided by [eq(test.snn.a, test.t1.a)], keep order:false, stats:pseudo"
+  ]
+ },
+ {
+  "SQL": "explain format = 'brief' select * from t1 where b = 1 and a in (select a from t2) and not exists (select 1 from snn where snn.a = t1.a)",
+  "Rows": [
+   "Apply 6.40 root  CARTESIAN anti semi join, left side:Apply",
+   "├─Apply(Build) 8.00 root  CARTESIAN semi join, left side:TableReader",
+   "│ ├─TableReader(Build) 10.00 root  data:Selection",
+   "│ │ └─Selection 10.00 cop[tikv]  eq(test.t1.b, 1)",
+   "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+   "│ └─Limit(Probe) 10.00 root  offset:0, count:1",
+   "│   └─IndexReader 10.00 root  index:Limit",
+   "│     └─Limit 10.00 cop[tikv]  offset:0, count:1",
+   "│       └─IndexRangeScan 10.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+   "└─Limit(Probe) 8.00 root  offset:0, count:1",
+   "  └─IndexReader 8.00 root  index:Limit",
+   "    └─Limit 8.00 cop[tikv]  offset:0, count:1",
+   "      └─IndexRangeScan 8.00 cop[tikv] table:snn, index:a(a) range: decided by [eq(test.snn.a, test.t1.a)], keep order:false, stats:pseudo"
+  ]
+ },
+ {
+  "SQL": "explain format = 'brief' select * from t1 where b = 1 and a in (select a from t2) and exists (select 1 from snn where snn.a = t1.a)",
+  "Rows": [
+   "Apply 6.40 root  CARTESIAN semi join, left side:Apply",
+   "├─Apply(Build) 8.00 root  CARTESIAN semi join, left side:TableReader",
+   "│ ├─TableReader(Build) 10.00 root  data:Selection",
+   "│ │ └─Selection 10.00 cop[tikv]  eq(test.t1.b, 1)",
+   "│ │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+   "│ └─Limit(Probe) 10.00 root  offset:0, count:1",
+   "│   └─IndexReader 10.00 root  index:Limit",
+   "│     └─Limit 10.00 cop[tikv]  offset:0, count:1",
+   "│       └─IndexRangeScan 10.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+   "└─Limit(Probe) 8.00 root  offset:0, count:1",
+   "  └─IndexReader 8.00 root  index:Limit",
+   "    └─Limit 8.00 cop[tikv]  offset:0, count:1",
+   "      └─IndexRangeScan 8.00 cop[tikv] table:snn, index:a(a) range: decided by [eq(test.snn.a, test.t1.a)], keep order:false, stats:pseudo"
+  ]
+ },
+ {
+  "SQL": "set tidb_opt_hash_join_cost_factor = 1000"
+ },
+ {
+  "SQL": "set tidb_opt_merge_join_cost_factor = 1000"
+ },
+ {
+  "SQL": "set tidb_opt_index_join_cost_factor = 1000"
+ },
+ {
+  "SQL": "explain format = 'brief' select tn.a in (select sn.a from sn) as r from tn",
+  "Rows": [
+   "HashJoin 10000.00 root  CARTESIAN left outer semi join, left side:TableReader, other cond:eq(test.tn.a, test.sn.a)",
+   "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+   "│ └─IndexFullScan 10000.00 cop[tikv] table:sn, index:a(a) keep order:false, stats:pseudo",
+   "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+   "  └─TableFullScan 10000.00 cop[tikv] table:tn keep order:false, stats:pseudo"
+  ]
+ },
+ {
+  "SQL": "select tn.a in (select sn.a from sn) as r from tn order by 1",
+  "Rows": [
+   "NULL",
+   "NULL"
+  ]
+ },
+ {
+  "SQL": "explain format = 'brief' select tnn.a in (select snn.a from snn) as r from tnn",
+  "Rows": [
+   "HashJoin 10000.00 root  left outer semi join, left side:TableReader, equal:[eq(test.tnn.a, test.snn.a)]",
+   "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+   "│ └─IndexFullScan 10000.00 cop[tikv] table:snn, index:a(a) keep order:false, stats:pseudo",
+   "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+   "  └─TableFullScan 10000.00 cop[tikv] table:tnn keep order:false, stats:pseudo"
+  ]
+ },
+ {
+  "SQL": "select tnn.a in (select snn.a from snn) as r from tnn order by tnn.a",
+  "Rows": [
+   "1",
+   "1",
+   "0"
+  ]
+ },
+ {
+  "SQL": "explain format = 'brief' select * from t1 where a in (select a from t2) and exists (select 1 from t2 where t2.b = t1.b)",
+  "Rows": [
+   "Apply 6400.00 root  CARTESIAN semi join, left side:Apply",
+   "├─Apply(Build) 8000.00 root  CARTESIAN semi join, left side:TableReader",
+   "│ ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+   "│ │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+   "│ └─Limit(Probe) 10000.00 root  offset:0, count:1",
+   "│   └─IndexReader 10000.00 root  index:Limit",
+   "│     └─Limit 10000.00 cop[tikv]  offset:0, count:1",
+   "│       └─IndexRangeScan 10000.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+   "└─Limit(Probe) 8000.00 root  offset:0, count:1",
+   "  └─TableReader 8000.00 root  data:Limit",
+   "    └─Limit 8000.00 cop[tikv]  offset:0, count:1",
+   "      └─Selection 8000.00 cop[tikv]  eq(test.t2.b, test.t1.b)",
+   "        └─TableFullScan 8000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+  ]
+ },
+ {
+  "SQL": "explain format = 'brief' select * from t1 where a in (select a from t2)",
+  "Rows": [
+   "Apply 8000.00 root  CARTESIAN semi join, left side:TableReader",
+   "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+   "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+   "└─Limit(Probe) 10000.00 root  offset:0, count:1",
+   "  └─IndexReader 10000.00 root  index:Limit",
+   "    └─Limit 10000.00 cop[tikv]  offset:0, count:1",
+   "      └─IndexRangeScan 10000.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
+  ]
+ },
+ {
+  "SQL": "explain format = 'brief' select * from t1 where a in (select a from t2 order by a limit 5)",
+  "Rows": [
+   "Apply 8000.00 root  CARTESIAN semi join, left side:TableReader",
+   "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+   "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+   "└─Limit(Probe) 10000.00 root  offset:0, count:1",
+   "  └─Limit 50000.00 root  offset:0, count:5",
+   "    └─IndexReader 50000.00 root  index:Limit",
+   "      └─Limit 50000.00 cop[tikv]  offset:0, count:5",
+   "        └─IndexRangeScan 50000.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:true, stats:pseudo"
+  ]
+ },
+ {
+  "SQL": "select * from t1 where a in (select a from t2 order by a limit 5)",
+  "Rows": [
+   "1 1",
+   "2 2"
+  ]
+ },
+ {
+  "SQL": "explain format = 'brief' select * from t1 where a in (select a from t2) and not exists (select 1 from t2 where t2.a = t1.a)",
+  "Rows": [
+   "Apply 6400.00 root  CARTESIAN anti semi join, left side:Apply",
+   "├─Apply(Build) 8000.00 root  CARTESIAN semi join, left side:TableReader",
+   "│ ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+   "│ │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+   "│ └─Limit(Probe) 10000.00 root  offset:0, count:1",
+   "│   └─IndexReader 10000.00 root  index:Limit",
+   "│     └─Limit 10000.00 cop[tikv]  offset:0, count:1",
+   "│       └─IndexRangeScan 10000.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+   "└─Limit(Probe) 8000.00 root  offset:0, count:1",
+   "  └─IndexReader 8000.00 root  index:Limit",
+   "    └─Limit 8000.00 cop[tikv]  offset:0, count:1",
+   "      └─IndexRangeScan 8000.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
+  ]
+ },
+ {
+  "SQL": "explain format = 'brief' select * from tn where a in (select a from sn)",
+  "Rows": [
+   "Apply 7992.00 root  CARTESIAN semi join, left side:TableReader",
+   "├─TableReader(Build) 9990.00 root  data:Selection",
+   "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.tn.a))",
+   "│   └─TableFullScan 10000.00 cop[tikv] table:tn keep order:false, stats:pseudo",
+   "└─Limit(Probe) 9990.00 root  offset:0, count:1",
+   "  └─IndexReader 9990.00 root  index:Limit",
+   "    └─Limit 9990.00 cop[tikv]  offset:0, count:1",
+   "      └─Selection 10888.10 cop[tikv]  eq(test.sn.a, test.tn.a)",
+   "        └─IndexFullScan 10888101.00 cop[tikv] table:sn, index:a(a) keep order:false, stats:pseudo"
+  ]
+ },
+ {
+  "SQL": "explain format = 'brief' select tnn.a in (select snn.a from snn) from tnn where tnn.a = 1",
+  "Rows": [
+   "IndexHashJoin 10.00 root  left outer semi join, inner:IndexReader, left side:TableReader, outer key:test.tnn.a, inner key:test.snn.a, equal cond:eq(test.tnn.a, test.snn.a)",
+   "├─TableReader(Build) 10.00 root  data:Selection",
+   "│ └─Selection 10.00 cop[tikv]  eq(test.tnn.a, 1)",
+   "│   └─TableFullScan 10000.00 cop[tikv] table:tnn keep order:false, stats:pseudo",
+   "└─IndexReader(Probe) 12.50 root  index:IndexRangeScan",
+   "  └─IndexRangeScan 12.50 cop[tikv] table:snn, index:a(a) range: decided by [eq(test.snn.a, test.tnn.a)], keep order:false, stats:pseudo"
+  ]
+ },
+ {
+  "SQL": "explain format = 'brief' select tn.a in (select sn.a from sn) from tn where tn.a = 1",
+  "Rows": [
+   "Projection 10.00 root  Column#10",
+   "└─Apply 10.00 root  CARTESIAN left outer semi join, left side:TableReader, other cond:eq(test.tn.a, test.sn.a)",
+   "  ├─TableReader(Build) 10.00 root  data:Selection",
+   "  │ └─Selection 10.00 cop[tikv]  eq(test.tn.a, 1)",
+   "  │   └─TableFullScan 10000.00 cop[tikv] table:tn keep order:false, stats:pseudo",
+   "  └─IndexReader(Probe) 100000.00 root  index:IndexFullScan",
+   "    └─IndexFullScan 100000.00 cop[tikv] table:sn, index:a(a) keep order:false, stats:pseudo"
+  ]
+ },
+ {
+  "SQL": "explain format = 'brief' select tnn.a, tnn.a in (select snn.a from snn) from tnn limit 1",
+  "Rows": [
+   "Limit 1.00 root  offset:0, count:1",
+   "└─IndexHashJoin 1.00 root  left outer semi join, inner:IndexReader, left side:Limit, outer key:test.tnn.a, inner key:test.snn.a, equal cond:eq(test.tnn.a, test.snn.a)",
+   "  ├─Limit(Build) 1.00 root  offset:0, count:1",
+   "  │ └─TableReader 1.00 root  data:Limit",
+   "  │   └─Limit 1.00 cop[tikv]  offset:0, count:1",
+   "  │     └─TableFullScan 1.00 cop[tikv] table:tnn keep order:false, stats:pseudo",
+   "  └─IndexReader(Probe) 1.25 root  index:IndexRangeScan",
+   "    └─IndexRangeScan 1.25 cop[tikv] table:snn, index:a(a) range: decided by [eq(test.snn.a, test.tnn.a)], keep order:false, stats:pseudo"
+  ]
+ },
+ {
+  "SQL": "explain format = 'brief' select tn.a, tn.a in (select sn.a from sn) from tn limit 1",
+  "Rows": [
+   "Limit 1.00 root  offset:0, count:1",
+   "└─Apply 1.00 root  CARTESIAN left outer semi join, left side:Limit, other cond:eq(test.tn.a, test.sn.a)",
+   "  ├─Limit(Build) 1.00 root  offset:0, count:1",
+   "  │ └─TableReader 1.00 root  data:Limit",
+   "  │   └─Limit 1.00 cop[tikv]  offset:0, count:1",
+   "  │     └─TableFullScan 1.00 cop[tikv] table:tn keep order:false, stats:pseudo",
+   "  └─IndexReader(Probe) 10000.00 root  index:IndexFullScan",
+   "    └─IndexFullScan 10000.00 cop[tikv] table:sn, index:a(a) keep order:false, stats:pseudo"
+  ]
+ }
+]

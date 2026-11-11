@@ -310,6 +310,18 @@ pub struct RewriterEnv<'a, C: Columns> {
 }
 
 impl<C: Columns> RewriterEnv<'_, C> {
+    /// The statement's alternative-round signals when Go
+    /// `SessionVars.EnableAlternativeLogicalPlans` is on.
+    fn alternative_logical_plan_signals(
+        &self,
+    ) -> Option<&tidb_exprctx::context::AlternativeLogicalPlanSignals> {
+        if self.ctx.enable_alternative_logical_plans() {
+            self.ctx.alternative_logical_plan_signals()
+        } else {
+            None
+        }
+    }
+
     fn base(&self, tp: &str) -> BaseLogicalPlan {
         BaseLogicalPlan::new(self.plan_ids, tp, self.select_offset)
     }
@@ -1056,6 +1068,14 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             let builder = self.env.builder();
             let opts = SubstituteOptions::new(&builder);
             join.attach_on_conds(&on_condition, &outer_schema, &inner_schema, &opts);
+        }
+        if !force_rewrite
+            && !self.env.flags.enable_semi_join_rewrite
+            && join_type == LogicalJoinType::Semi
+        {
+            if let Some(signals) = self.env.alternative_logical_plan_signals() {
+                signals.semi_join_rewrite.store(true, std::sync::atomic::Ordering::Release);
+            }
         }
         if force_rewrite || self.env.flags.enable_semi_join_rewrite {
             join.prefer_join_type |= tidb_hint::join_hint_flags::REWRITE_SEMI_JOIN;
@@ -1811,12 +1831,13 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             SubQueryCtx::In,
             &mut self.hint_warnings,
         );
-        if !no_decorrelate
-            && !cor_cols.is_empty()
-            && !not
-            && self.env.flags.enable_correlate_subquery
-        {
-            no_decorrelate = true;
+        if !no_decorrelate && !cor_cols.is_empty() && !not {
+            if let Some(signals) = self.env.alternative_logical_plan_signals() {
+                signals.prefer_correlate.store(true, std::sync::atomic::Ordering::Release);
+            }
+            if self.env.flags.enable_correlate_subquery {
+                no_decorrelate = true;
+            }
         }
 
         let can_rewrite_to_join_agg = self.env.flags.allow_in_subq_to_join_and_agg
@@ -1824,6 +1845,13 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             && !as_scalar
             && cor_cols.is_empty()
             && collations_compatible;
+        if can_rewrite_to_join_agg {
+            // Go: "Signal that a correlate alternative round is worth
+            // attempting."
+            if let Some(signals) = self.env.alternative_logical_plan_signals() {
+                signals.prefer_correlate.store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
 
         let mut plan = if can_rewrite_to_join_agg && !self.env.flags.enable_correlate_subquery {
             self.build_in_subquery_join_agg(outer, np, &lexpr, check_condition, l_len)?

@@ -118,8 +118,11 @@ pub struct LogicalJoin {
     pub prefer_correlate: bool,
     /// Go `EqualCondOutCnt`: the estimated row count after `EqualConditions`.
     pub equal_cond_out_cnt: f64,
-    /// Go `FromDecorrelatedApply`.
+    /// Whether `OuterJoinToSemiJoin` built this anti-semi join, which keeps
+    /// the outer join's unscaled estimate.
     pub preserved_side_unscaled: bool,
+    /// Go `FromDecorrelatedApply`.
+    pub from_decorrelated_apply: bool,
 }
 
 impl Default for LogicalJoin {
@@ -150,6 +153,7 @@ impl Default for LogicalJoin {
             prefer_correlate: false,
             equal_cond_out_cnt: 0.0,
             preserved_side_unscaled: false,
+            from_decorrelated_apply: false,
         }
     }
 }
@@ -1413,6 +1417,7 @@ impl LogicalJoin {
             prefer_correlate: self.prefer_correlate,
             equal_cond_out_cnt: self.equal_cond_out_cnt,
             preserved_side_unscaled: self.preserved_side_unscaled,
+            from_decorrelated_apply: self.from_decorrelated_apply,
         }
     }
 }
