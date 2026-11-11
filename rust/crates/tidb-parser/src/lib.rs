@@ -56,6 +56,7 @@ pub mod util_parser;
 
 use std::any::Any;
 use std::cell::{Cell, OnceCell};
+use std::collections::BTreeMap;
 
 use tidb_ast::{
     AdminStmt, DdlStmt, ExplainForStmt, ExplainStmt, ExplainTarget, Expr,
@@ -802,6 +803,9 @@ struct Parser {
     pos: usize,
     open_paren_run: Cell<(usize, usize)>,
     matching_parens: OnceCell<Vec<usize>>,
+    /// Decoded string aliases seen ahead of a parenthesized derived join.
+    /// Nested joins can have more than one outstanding token position.
+    lookahead_aliases: BTreeMap<usize, String>,
     enable_mariadb: bool,
     param_marker_position: usize,
     /// Decoded byte length of the first token in the most recently parsed
@@ -1032,6 +1036,7 @@ impl Parser {
             pos: 0,
             open_paren_run: Cell::new((0, 0)),
             matching_parens: OnceCell::new(),
+            lookahead_aliases: BTreeMap::new(),
             enable_mariadb,
             param_marker_position: 0,
             string_projection_offset: None,
@@ -1332,6 +1337,7 @@ impl Parser {
             pos: 0,
             open_paren_run: Cell::new((0, 0)),
             matching_parens: OnceCell::new(),
+            lookahead_aliases: BTreeMap::new(),
             enable_mariadb: false,
             param_marker_position: 0,
             string_projection_offset: None,

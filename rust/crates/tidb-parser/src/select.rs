@@ -70,6 +70,8 @@
 //! parsing on the WHOLE first term once it was already known there was
 //! no following set operator, too late to matter for this shape.
 
+use std::borrow::Cow;
+
 use tidb_ast::{
     Cte, Expr, Hint, HintKind, HintTable, Join, JoinNode, JoinType, LeadingElement, Limit,
     OrderItem, QueryStmt, SampleMethod, SampleUnit, SelectField, SelectStatementKind, SelectStmt,
@@ -1222,10 +1224,10 @@ impl Parser {
         // Go `parseSelectField`: RETURNING is never an implicit field alias,
         // so that it can start a DML RETURNING clause (yacc:
         // FieldAsNameOpt %prec higherThanReturning).
-        if !self.is_kw("RETURNING") && self.can_be_alias_name() {
-            return Ok(Some(self.parse_alias_name()?));
+        if self.is_kw("RETURNING") {
+            return Ok(None);
         }
-        Ok(None)
+        Ok(self.take_implicit_alias())
     }
 
     fn parse_opt_table_alias(&mut self) -> PResult<Option<String>> {
@@ -1248,47 +1250,47 @@ impl Parser {
             }
             return Ok(Some(self.parse_explicit_alias_name()?));
         }
-        if self.can_be_alias_name() && !(disallow_returning_alias && self.is_kw("RETURNING")) {
-            return Ok(Some(self.parse_alias_name()?));
+        if disallow_returning_alias && self.is_kw("RETURNING") {
+            return Ok(None);
         }
-        Ok(None)
+        Ok(self.take_implicit_alias())
     }
 
-    /// Reports whether the CURRENT token is eligible as a BARE (no `AS`)
-    /// alias name — mirrors Go's `CanBeImplicitAlias` (see
-    /// [`Parser::parse_opt_alias`]'s own doc for why this is deliberately
-    /// NOT the same gate the explicit `AS name` form uses).
-    fn can_be_alias_name(&self) -> bool {
-        self.can_be_implicit_alias_at(0)
-    }
-
-    /// Go `CanBeImplicitAlias` for the token `n` positions ahead. Plain
-    /// identifiers and string literals always work except FETCH (reserved
-    /// for the LIMIT clause) and WINDOW followed by `identifier AS` (a
-    /// WINDOW clause). Any keyword works unless it is on Go's curated
-    /// exclusion list — reserved words like DATABASE or BINARY included.
-    /// Numeric literals and operator punctuation never do.
-    fn can_be_implicit_alias_at(&self, n: usize) -> bool {
+    /// Return the eligible alias text without advancing. A string literal is
+    /// checked *after* decoding under the active charset and SQL mode; its
+    /// owned value can then go straight into the AST. Other names keep their
+    /// token text until the parser commits to consuming the alias.
+    fn implicit_alias_at(&self, n: usize) -> Option<Cow<'_, str>> {
         let token = self.peek_n(n);
-        match token.kind {
-            TokenKind::Ident | TokenKind::Str => {
-                let decoded;
-                let literal = if token.kind == TokenKind::Str {
-                    decoded = self.decode_string(&token.text);
-                    decoded.as_str()
-                } else {
-                    token.text.as_str()
-                };
-                if literal.eq_ignore_ascii_case("FETCH") {
-                    return false;
-                }
-                !(literal.eq_ignore_ascii_case("WINDOW")
-                    && self.peek_n(n + 1).kind == TokenKind::Ident
-                    && self.is_kw_at(n + 2, "AS"))
+        let text = match token.kind {
+            TokenKind::Ident => Cow::Borrowed(token.text.as_str()),
+            TokenKind::Str => Cow::Owned(self.decode_string(&token.text)),
+            TokenKind::Keyword if !is_alias_excluded_keyword(&token.text) => {
+                return Some(Cow::Borrowed(&token.text));
             }
-            TokenKind::Keyword => !is_alias_excluded_keyword(&token.text),
-            _ => false,
+            _ => return None,
+        };
+        if text.eq_ignore_ascii_case("FETCH")
+            || (text.eq_ignore_ascii_case("WINDOW")
+                && self.peek_n(n + 1).kind == TokenKind::Ident
+                && self.is_kw_at(n + 2, "AS"))
+        {
+            return None;
         }
+        Some(text)
+    }
+
+    fn take_implicit_alias(&mut self) -> Option<String> {
+        let name = if let Some(decoded) = self.lookahead_aliases.remove(&self.pos) {
+            decoded
+        } else {
+            match self.implicit_alias_at(0)? {
+                Cow::Owned(decoded) => decoded,
+                Cow::Borrowed(name) => crate::normalize_identifier(name.to_owned()),
+            }
+        };
+        self.advance();
+        Some(name)
     }
 
     /// Reports whether the CURRENT token is eligible as an EXPLICIT `AS
@@ -1300,22 +1302,11 @@ impl Parser {
             || (self.peek().kind == TokenKind::Keyword && !crate::is_reserved(&self.peek().text))
     }
 
-    /// Parses a BARE alias name that MUST be present — used only where a
-    /// bare name was already confirmed eligible via
-    /// [`Parser::can_be_alias_name`].
-    fn parse_alias_name(&mut self) -> PResult<String> {
-        if self.can_be_alias_name() {
-            Ok(self.bump_alias_token())
-        } else {
-            Err(self.err_here("expected identifier"))
-        }
-    }
-
     /// Parses an EXPLICIT `AS name` alias name that MUST be present —
     /// unlike the bare form, `AS` alone with nothing eligible following
     /// it is a genuine `ParseError`, not a silently-absent alias. See
     /// [`Parser::parse_opt_alias`]'s own doc for why this uses a
-    /// different (broader) acceptance gate than [`Parser::parse_alias_name`].
+    /// different (broader) acceptance gate than [`Parser::take_implicit_alias`].
     fn parse_explicit_alias_name(&mut self) -> PResult<String> {
         if self.can_be_explicit_alias_name() {
             Ok(self.bump_alias_token())

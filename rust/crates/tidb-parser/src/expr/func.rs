@@ -796,20 +796,16 @@ impl Parser {
         // NEVER start a function call, so `in(1)`/`and(-1)` are yacc's 1064
         // at the keyword token itself (captured: line 1 column 9 near
         // "in(1)"), not the binder's 1582.
-        if matches!(
-            self.peek().text.to_ascii_lowercase().as_str(),
-            "in" | "and" | "or" | "xor"
-        ) && self.peek().kind == TokenKind::Keyword
+        let upper = self.peek().text.to_ascii_uppercase();
+        if self.peek().kind == TokenKind::Keyword
+            && matches!(upper.as_str(), "IN" | "AND" | "OR" | "XOR")
         {
             return Err(self.err_here("reserved keyword cannot be used as a function name"));
         }
         // Go `parseScalarFuncCall` routes SYSDATE and CURTIME to
         // `parseDatetimePrecFuncCall`: an integer literal or nothing, so
         // `sysdate(-1)` is 1064 near "-1)".
-        if matches!(
-            self.peek().text.to_ascii_uppercase().as_str(),
-            "SYSDATE" | "CURTIME"
-        ) {
+        if matches!(upper.as_str(), "SYSDATE" | "CURTIME") {
             return self.parse_datetime_precision_func();
         }
         let origin_position = self.peek().offset;
@@ -818,20 +814,19 @@ impl Parser {
         let mut args = Vec::new();
         if !self.is_op(")") {
             args.push(self.parse_expr(prec::NONE)?);
+            // A sequence call rejects a second argument at the comma.
+            if matches!(upper.as_str(), "LASTVAL" | "NEXTVAL") && self.is_op(",") {
+                return Err(self.err_here("sequence function takes one sequence name"));
+            }
+            let requires_interval = matches!(upper.as_str(), "DATE_ADD" | "DATE_SUB");
             while self.is_op(",") {
-                // Go `parseNextLastValFuncCall` reads exactly one sequence
-                // name and then expects ')': a second argument is 1064 AT the
-                // comma (`lastval(seq, 1)` near ", 1)").
-                if matches!(name.to_ascii_uppercase().as_str(), "LASTVAL" | "NEXTVAL") {
-                    return Err(self.err_here("sequence function takes one sequence name"));
-                }
                 self.advance();
                 // go's DATE_ADD/DATE_SUB production requires the second
                 // operand to START with INTERVAL: yacc fails AT the
                 // offending token (`date_add(1.25, -3.75)` anchors near
                 // "-3.75)"), never after parsing it -- so the lookahead
                 // check fires here, before the operand is consumed.
-                if matches!(name.to_ascii_uppercase().as_str(), "DATE_ADD" | "DATE_SUB")
+                if requires_interval
                     && !(self.peek().kind == TokenKind::Keyword
                         && self.peek().text.eq_ignore_ascii_case("INTERVAL"))
                 {
@@ -848,7 +843,7 @@ impl Parser {
         // boundary byte for byte. Go's `parseScalarFuncCall` accepts an EMPTY
         // argument list for every other name, so `lastval()`, `nextval()` and
         // `interval()` reach the binder's 1582.
-        match name.to_ascii_uppercase().as_str() {
+        match upper.as_str() {
             "MID" if args.len() != 2 && args.len() != 3 => {
                 return Err(self.err_here("MID requires two or three arguments"));
             }

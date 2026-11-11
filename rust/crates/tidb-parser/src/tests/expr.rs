@@ -1911,3 +1911,24 @@ fn sequence_functions() {
     assert_eq!(r("select next from t"), "SELECT `next` FROM `t`");
     assert_eq!(r("select value from t"), "SELECT `value` FROM `t`");
 }
+
+#[test]
+fn named_function_argument_errors_keep_their_token_positions() {
+    for (sql, near) in [
+        ("SELECT LaStVaL(seq, 1)", ", 1)"),
+        ("SELECT NeXtVaL(seq, 2)", ", 2)"),
+        ("SELECT DaTe_SuB(1, -3)", "-3)"),
+        ("SELECT DaTe_AdD(1)", ")"),
+        ("SELECT MiD(1)", ")"),
+    ] {
+        let error = parse(sql).unwrap_err();
+        assert_eq!(&sql[error.near_offset..], near, "{sql}");
+    }
+    // Classification must not replace the original spelling in the AST.
+    let mut parser = Parser::new("myMixedCall(1, 2, 3)");
+    let Expr::Func { name, args, .. } = parser.parse_named_func().unwrap() else {
+        panic!("expected function call");
+    };
+    assert_eq!(name, "myMixedCall");
+    assert_eq!(args.len(), 3);
+}

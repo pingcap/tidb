@@ -81,6 +81,29 @@ fn string_literal_aliases() {
 }
 
 #[test]
+fn implicit_string_aliases_follow_sql_mode_and_survive_join_lookahead() {
+    // FETCH is not an alias if the escape is decoded away.
+    let sql = r"SELECT 1 'F\ETCH'";
+    assert!(parse(sql).is_err());
+    let mode = SqlMode {
+        no_backslash_escapes: true,
+        ..SqlMode::default()
+    };
+    assert_eq!(
+        parse_with_sql_mode(sql, mode).unwrap().restore(),
+        r"SELECT 1 AS `F\ETCH`"
+    );
+    assert_eq!(r("SELECT 1 'a''b�'"), "SELECT 1 AS `a'b�`");
+
+    // The outer lookahead sees its alias before the nested join is parsed.
+    // An implicit quoted table alias is valid; AS still requires an identifier.
+    let quoted = "SELECT * FROM ((SELECT * FROM ((SELECT 1) 'in''ner' JOIN t ON 1)) 'ou''ter' JOIN u ON 1)";
+    let named = "SELECT * FROM ((SELECT * FROM ((SELECT 1) `in'ner` JOIN t ON 1)) `ou'ter` JOIN u ON 1)";
+    assert_eq!(r(quoted), r(named));
+    assert!(parse("SELECT * FROM ((SELECT 1) AS 'invalid' JOIN t ON 1)").is_err());
+}
+
+#[test]
 fn qualified_wildcards() {
     assert_eq!(r("select t.* from t"), "SELECT `t`.* FROM `t`");
     assert_eq!(

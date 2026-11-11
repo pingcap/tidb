@@ -589,7 +589,7 @@ impl Parser {
     /// contain a derived query, then be followed by an alias and a join before
     /// the outer `)`. Restricting this disambiguation to that source grammar
     /// keeps ordinary nested derived-table parentheses on their existing path.
-    fn starts_parenthesized_derived_join(&self) -> bool {
+    fn starts_parenthesized_derived_join(&mut self) -> bool {
         if !self.is_op("(") || !self.is_op_at(1, "(") {
             return false;
         }
@@ -604,19 +604,32 @@ impl Parser {
         } else {
             offset + 1
         };
-        // Go `wrapAsTableSource` takes the bare alias through
-        // `CanBeImplicitAlias`.
-        if !self.can_be_implicit_alias_at(alias_offset) {
+        let after_alias = alias_offset + 1;
+        if !(self.is_op_at(after_alias, ")")
+            || self.is_kw_at(after_alias, "JOIN")
+            || self.is_kw_at(after_alias, "INNER")
+            || self.is_kw_at(after_alias, "CROSS")
+            || self.is_kw_at(after_alias, "LEFT")
+            || self.is_kw_at(after_alias, "RIGHT")
+            || self.is_kw_at(after_alias, "NATURAL")
+            || self.is_kw_at(after_alias, "STRAIGHT_JOIN"))
+        {
             return false;
         }
-        self.is_op_at(alias_offset + 1, ")")
-            || self.is_kw_at(alias_offset + 1, "JOIN")
-            || self.is_kw_at(alias_offset + 1, "INNER")
-            || self.is_kw_at(alias_offset + 1, "CROSS")
-            || self.is_kw_at(alias_offset + 1, "LEFT")
-            || self.is_kw_at(alias_offset + 1, "RIGHT")
-            || self.is_kw_at(alias_offset + 1, "NATURAL")
-            || self.is_kw_at(alias_offset + 1, "STRAIGHT_JOIN")
+        // Lookahead does not consume the token. Keep a decoded string alias
+        // for the table factor that will consume it after parsing the query.
+        let pos = self.pos + alias_offset;
+        if self.lookahead_aliases.contains_key(&pos) {
+            return true;
+        }
+        match self.implicit_alias_at(alias_offset) {
+            Some(std::borrow::Cow::Owned(decoded)) => {
+                self.lookahead_aliases.insert(pos, decoded);
+                true
+            }
+            Some(std::borrow::Cow::Borrowed(_)) => true,
+            None => false,
+        }
     }
 
     /// Returns the join type and straight flag if the current position starts a
