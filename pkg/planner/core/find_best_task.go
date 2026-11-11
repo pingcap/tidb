@@ -52,7 +52,6 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -3239,10 +3238,6 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 
 func convertToSampleTable(ds *logicalop.DataSource, prop *property.PhysicalProperty,
 	candidate *candidatePath) (base.Task, error) {
-	if accessesExtraCommitTSColumn(ds) {
-		return base.InvalidTask, plannererrors.ErrInternal.GenWithStack(
-			"Usage of column name '%s' is not supported for TABLESAMPLE", model.ExtraCommitTSName.O)
-	}
 	if prop.TaskTp == property.CopMultiReadTaskType {
 		return base.InvalidTask, nil
 	}
