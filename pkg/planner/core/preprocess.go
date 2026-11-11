@@ -267,6 +267,8 @@ type preprocessor struct {
 	// useInfoSchemaAsIs keeps table resolution on the infoschema selected by the
 	// caller, instead of upgrading table metadata to the latest domain schema.
 	useInfoSchemaAsIs bool
+	// readOnlyDefaultDB preserves PREPARE's binding for multi-delete targets.
+	readOnlyDefaultDB string
 }
 
 type tableSourceCollector struct {
@@ -366,13 +368,17 @@ func (p *preprocessor) extractUpdateSchemas(node *ast.UpdateStmt) []ast.CIStr {
 
 func (p *preprocessor) extractMultiDeleteSchemas(node *ast.DeleteStmt) []ast.CIStr {
 	dbNames := make([]ast.CIStr, 0, len(node.Tables.Tables))
+	defaultDB := p.sctx.GetSessionVars().CurrentDB
+	if p.readOnlyDefaultDB != "" {
+		defaultDB = p.readOnlyDefaultDB
+	}
 	updatableList := make(map[string]bool)
 	tableNameByKey := make(map[string]*ast.TableName)
 	collectTableName(node.TableRefs.TableRefs, &updatableList, &tableNameByKey)
 	for _, target := range node.Tables.Tables {
 		tbl, canUpdate, foundMatch := resolveMultiDeleteTarget(
 			target,
-			p.sctx.GetSessionVars().CurrentDB,
+			defaultDB,
 			updatableList,
 			tableNameByKey,
 		)
@@ -397,6 +403,16 @@ func (p *preprocessor) extractSchema(in ast.Node) []ast.CIStr {
 		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.CreateViewStmt:
 		dbNames = append(dbNames, node.ViewName.Schema)
+	case *ast.CreateMaterializedViewStmt:
+		dbNames = append(dbNames, node.ViewName.Schema)
+	case *ast.CreateMaterializedViewLogStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.DropMaterializedViewStmt:
+		dbNames = append(dbNames, node.ViewName.Schema)
+	case *ast.DropMaterializedViewLogStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.AlterMaterializedViewLogStmt:
+		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.AlterMaterializedViewStmt:
 		dbNames = append(dbNames, node.ViewName.Schema)
 	case *ast.DropTableStmt:
@@ -464,7 +480,15 @@ func (p *preprocessor) extractSchema(in ast.Node) []ast.CIStr {
 		if node.LockInfo != nil {
 			if logicalop.IsSelectForUpdateLockType(node.LockInfo.LockType) ||
 				(logicalop.IsSelectForShareLockType(node.LockInfo.LockType) && p.sctx.GetSessionVars().SharedLockPromotion) {
-				dbNames = append(dbNames, getAllDBNames(node.From)...)
+				if len(node.LockInfo.Tables) == 0 {
+					dbNames = append(dbNames, getAllDBNames(node.From)...)
+				} else {
+					for _, target := range node.LockInfo.Tables {
+						if tbl := p.resolveCtx.GetTableName(target); tbl != nil && tbl.DBInfo != nil {
+							dbNames = append(dbNames, tbl.DBInfo.Name)
+						}
+					}
+				}
 			}
 		}
 	}
@@ -476,6 +500,19 @@ func (p *preprocessor) checkSchemaReadOnlyInStmt(in ast.Node) {
 	for _, dbName := range dbNames {
 		p.checkSchemaReadOnly(dbName)
 	}
+}
+
+// schemaReadOnlyChecker rechecks session-dependent permissions without repeating
+// name resolution or mutating the prepared statement's other preprocessing state.
+type schemaReadOnlyChecker struct {
+	*preprocessor
+}
+
+func (*schemaReadOnlyChecker) Enter(ast.Node) bool { return false }
+
+func (c *schemaReadOnlyChecker) Leave(in ast.Node) bool {
+	c.checkSchemaReadOnlyInStmt(in)
+	return c.err == nil
 }
 
 func (p *preprocessor) checkSchemaReadOnly(dbName ast.CIStr) {
@@ -2588,6 +2625,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 	}
 	tableInfo := tbl.Meta()
 	dbInfo, _ := is.SchemaByName(dbName)
+	// Activation must recheck these accesses even with MDL: a database-level
+	// read-only job does not acquire the table's metadata lock.
+	sctx.GetSessionVars().GetRelatedTableForReadOnly().Store(tableInfo.ID, dbName)
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {

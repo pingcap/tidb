@@ -23,7 +23,7 @@ import (
 )
 
 var (
-	// ErrSchemaInReadOnlyMode returns when a write targets a read-only database.
+	// ErrSchemaInReadOnlyMode rejects writes to a read-only database.
 	ErrSchemaInReadOnlyMode = ClassSchema.NewStd(mysql.ErrSchemaInReadOnlyMode)
 	// ErrInvalidWorker means the worker is invalid.
 	ErrInvalidWorker = ClassDDL.NewStd(mysql.ErrInvalidDDLWorker)

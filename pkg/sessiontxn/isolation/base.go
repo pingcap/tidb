@@ -284,6 +284,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.txn != nil {
 		return p.txn, nil
 	}
+	failpoint.InjectCall("beforeActivateTxnForSchemaReadOnly", p.sctx)
 
 	if err := p.prepareTxn(); err != nil {
 		return nil, err
@@ -318,7 +319,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		sessVars.MemDBFootprint.Detach()
 	}
 	sessVars.MemDBFootprint = nil
-	if !sessVars.TxnCtx.EnableMDL && !sessVars.TxnCtx.IsStaleness && sessVars.SnapshotInfoschema == nil {
+	if !sessVars.TxnCtx.IsStaleness && sessVars.SnapshotInfoschema == nil {
 		// Planning can register accesses before a lazy transaction appears in
 		// CLUSTER_TIDB_TRX. Once it becomes visible, recheck the published flag
 		// so a transition cannot miss both its scan and this transaction.

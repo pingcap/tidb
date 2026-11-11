@@ -330,6 +330,8 @@ func (s SchemaState) String() string {
 		return "replica only"
 	case StateGlobalTxnOnly:
 		return "global txn only"
+	case StatePendingReadOnly:
+		return "pending read only"
 	default:
 		return "none"
 	}
@@ -474,6 +476,10 @@ type Job struct {
 	// Only happens when tidb_enable_fast_create_table = on
 	// this field is useless since 8.3
 	LocalMode bool `json:"local_mode"`
+	// CheckSchemaReadOnly requires the owner to recheck writable schemas before
+	// the first step. The submitter's explicit replica-writer bypass clears it.
+	// A multi-schema parent consumes it before creating any sub-job proxies.
+	CheckSchemaReadOnly bool `json:"check_schema_read_only,omitempty"`
 
 	// SQLMode for executing DDL query.
 	SQLMode mysql.SQLMode `json:"sql_mode"`

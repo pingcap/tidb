@@ -1030,6 +1030,13 @@ func (w *worker) runOneJobStep(
 		// when rolling back, we use worker context to process.
 		jobCtx.stepCtx = w.workCtx
 	} else {
+		if job.CheckSchemaReadOnly {
+			if err := checkSchemaReadOnlyBeforeJob(jobCtx, job); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, false, w.countForError(jobCtx, job, err)
+			}
+			job.CheckSchemaReadOnly = false
+		}
 		job.State = model.JobStateRunning
 
 		if jobCtx.shouldPollDDLJob() {

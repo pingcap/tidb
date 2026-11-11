@@ -8098,6 +8098,10 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	}
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
+	// A job can wait behind a read-only transition after its SQL passed
+	// preprocessing. Persist the submitter's bypass decision for the owner.
+	job.CheckSchemaReadOnly = job.Type != model.ActionModifySchemaReadOnly &&
+		job.Type != model.ActionCreateSchema && !privilege.HasExplicitReplicaWriterAdmin(ctx)
 
 	if traceevent.IsEnabled(tracing.DDLJob) && ctx.GetTraceCtx() != nil {
 		traceevent.TraceEvent(ctx.GetTraceCtx(), tracing.DDLJob, "ddlDelieverJobTask",

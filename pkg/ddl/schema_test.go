@@ -566,12 +566,14 @@ func TestSchemaReadOnlyAffectAllUsers(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
+	userTK := testkit.NewTestKitWithSession(t, store, se)
 	tcs := []struct {
 		user string
 		priv string
 	}{
 		{"u1", "all"},
-		{"u2", "super"},
+		// SUPER does not grant INSERT or the explicit read-only bypass.
+		{"u2", "super, insert"},
 		{"u3", "insert"},
 	}
 	tk.MustExec("alter database test read only = 1")
@@ -579,12 +581,12 @@ func TestSchemaReadOnlyAffectAllUsers(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("create user '%s'@'%%'", tc.user))
 		tk.MustExec(fmt.Sprintf("grant %s on *.* to '%s'@'%%'", tc.priv, tc.user))
 		require.NoError(t, se.Auth(&auth.UserIdentity{Username: tc.user, Hostname: "%"}, nil, nil, nil))
-		tk.MustGetErrMsg("insert into test.t values (1)", "[schema:3989]Schema 'test' is in read only mode.")
+		userTK.MustGetErrMsg("insert into test.t values (1)", "[schema:3989]Schema 'test' is in read only mode.")
 	}
 	tk.MustExec("alter database test read only = 0")
 	for _, tc := range tcs {
 		require.NoError(t, se.Auth(&auth.UserIdentity{Username: tc.user, Hostname: "%"}, nil, nil, nil))
-		tk.MustExec("insert into test.t values (1)")
+		userTK.MustExec("insert into test.t values (1)")
 	}
 }
 
@@ -730,35 +732,67 @@ func TestPreparedAlterDefaultDatabaseUsesCurrentDB(t *testing.T) {
 }
 
 func TestAlterDBReadOnlyBlockByTxn(t *testing.T) {
-	enableReadOnlyDDLFp(t)
-	store := testkit.CreateMockStore(t)
-	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-	tk1.MustExec("create database test_db")
-	tk1.MustExec("use test_db")
-	tk1.MustExec("create table t (a int)")
-	tk1.MustExec("begin")
-	tk1.MustExec("select * from t")
-	r := tk1.MustQuery("select @@tidb_current_ts").Rows()
-	txnID, err := strconv.ParseInt(r[0][0].(string), 10, 64)
-	require.NoError(t, err)
-	var txnObserved atomic.Bool
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		require.Eventually(t, func() bool {
-			return txnObserved.Load()
-		}, 5*time.Second, 100*time.Millisecond)
-		tk1.MustExec("commit")
-	}()
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkUncommittedTxns", func(ids map[int64]struct{}) {
-		_, ok := ids[txnID]
-		txnObserved.Store(len(ids) == 1 && ok)
-	})
-	tk2.MustExec("alter database test_db read only = 1")
-	wg.Wait()
-	tk2.MustQuery("show create database test_db").Check(testkit.Rows("test_db CREATE DATABASE `test_db` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /* READ ONLY = 1 */"))
+	for _, observe := range []bool{true, false} {
+		t.Run(fmt.Sprintf("observe=%t", observe), func(t *testing.T) {
+			enableReadOnlyDDLFp(t)
+			store := testkit.CreateMockStore(t)
+			tk1 := testkit.NewTestKit(t, store)
+			tk2 := testkit.NewTestKit(t, store)
+			tk1.MustExec("create database test_db")
+			tk1.MustExec("use test_db")
+			tk1.MustExec("create table t (a int)")
+			tk1.MustExec("begin")
+			tk1.MustExec("select * from t")
+			r := tk1.MustQuery("select @@tidb_current_ts").Rows()
+			txnID, err := strconv.ParseInt(r[0][0].(string), 10, 64)
+			require.NoError(t, err)
+			scanned := make(chan struct{})
+			observed := make(chan struct{})
+			var scanOnce, observeOnce sync.Once
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkUncommittedTxns", func(ids map[int64]struct{}) {
+				if _, ok := ids[txnID]; len(ids) == 1 && ok {
+					if observe {
+						observeOnce.Do(func() { close(observed) })
+					}
+					scanOnce.Do(func() { close(scanned) })
+				}
+			})
+			ctx, cancel := context.WithCancel(context.Background())
+			var wg sync.WaitGroup
+			defer func() { cancel(); wg.Wait() }()
+			commitDone := make(chan error, 1)
+			observationDone := make(chan bool, 1)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				select {
+				case <-scanned:
+				case <-ctx.Done():
+				}
+				wait := 5 * time.Second
+				if !observe {
+					wait = 10 * time.Millisecond
+				}
+				timer := time.NewTimer(wait)
+				defer timer.Stop()
+				observationSucceeded := false
+				select {
+				case <-observed:
+					observationSucceeded = true
+				case <-timer.C:
+				case <-ctx.Done():
+				}
+				// Always release the transaction, then report background failures
+				// to the test goroutine after the ALTER has unblocked.
+				commitDone <- tk1.ExecToErr("commit")
+				observationDone <- observationSucceeded
+			}()
+			tk2.MustExec("alter database test_db read only = 1")
+			require.NoError(t, <-commitDone)
+			require.Equal(t, observe, <-observationDone)
+			tk2.MustQuery("show create database test_db").Check(testkit.Rows("test_db CREATE DATABASE `test_db` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /* READ ONLY = 1 */"))
+		})
+	}
 }
 
 func TestAlterDBReadOnlyNotBlockByIrrelevantTxn(t *testing.T) {

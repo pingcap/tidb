@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	utillogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -171,6 +172,28 @@ func onModifySchemaDefaultPlacement(jobCtx *jobContext, job *model.Job) (ver int
 	return ver, nil
 }
 
+// checkSchemaReadOnlyBeforeJob closes the gap between statement preprocessing
+// and execution of a queued DDL. Shared dependencies are read sources.
+func checkSchemaReadOnlyBeforeJob(jobCtx *jobContext, job *model.Job) error {
+	for _, target := range job.GetInvolvingSchemaInfo() {
+		if target.Mode != model.ExclusiveInvolving || target.Database == model.InvolvingNone || target.Database == model.InvolvingAll {
+			continue
+		}
+		db, ok := jobCtx.infoCache.GetLatest().SchemaByName(ast.NewCIStr(target.Database))
+		if !ok {
+			continue // Let the operation report its normal missing-schema error.
+		}
+		db, err := jobCtx.metaMut.GetDatabase(db.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if db != nil && db.ReadOnly {
+			return infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(db.Name.O)
+		}
+	}
+	return nil
+}
+
 func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	args, err := model.GetModifySchemaArgs(job)
 	if err != nil {
@@ -252,13 +275,23 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 		for len(uncommittedTxn) > 0 {
 			select {
 			case <-ticker.C:
+				// The cluster table enumerates all connections even with an ID
+				// predicate, so confirm the whole pending set with one scan.
+				txnIDs := make([]string, 0, len(uncommittedTxn))
 				for txnID := range uncommittedTxn {
-					sql := fmt.Sprintf("SELECT ID FROM INFORMATION_SCHEMA.%s WHERE ID = %d", trxTableName, txnID)
-					r, err := executeReadOnlyTxnQuery(jobCtx.stepCtx, session, sql, "check if txn committed")
-					if err != nil {
-						return ver, errors.Trace(err)
-					}
-					if len(r) == 0 {
+					txnIDs = append(txnIDs, strconv.FormatInt(txnID, 10))
+				}
+				sql := fmt.Sprintf("SELECT ID FROM INFORMATION_SCHEMA.%s WHERE ID IN (%s)", trxTableName, strings.Join(txnIDs, ","))
+				rows, err := executeReadOnlyTxnQuery(jobCtx.stepCtx, session, sql, "check if txns committed")
+				if err != nil {
+					return ver, errors.Trace(err)
+				}
+				active := make(map[int64]struct{}, len(rows))
+				for _, row := range rows {
+					active[row.GetInt64(0)] = struct{}{}
+				}
+				for txnID := range uncommittedTxn {
+					if _, ok := active[txnID]; !ok {
 						delete(uncommittedTxn, txnID)
 						continue
 					}
@@ -266,7 +299,6 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 						zap.Int64("txn ID", txnID),
 						zap.Int64("job ID", job.ID),
 					)
-					break
 				}
 				failpoint.InjectCall("checkUncommittedTxns", uncommittedTxn)
 			case <-jobCtx.stepCtx.Done():

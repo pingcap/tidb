@@ -179,6 +179,22 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		stmt.ResolveCtx = nodeW.GetResolveContext()
 		stmt.SchemaVersion = is.SchemaMetaVersion()
 	}
+	// A privilege revocation or SET ROLE does not change the schema version.
+	// Recheck the resolved targets on every execution, including cache misses.
+	readOnlyResolveCtx := resolve.NewContext()
+	for _, tableName := range stmt.ResolveCtx.GetTableNames() {
+		readOnlyResolveCtx.AddTableName(tableName)
+	}
+	readOnlyChecker := &schemaReadOnlyChecker{preprocessor: &preprocessor{
+		sctx:               sctx,
+		resolveCtx:         readOnlyResolveCtx,
+		readOnlyDefaultDB:  stmt.StmtDB,
+		PreprocessorReturn: &PreprocessorReturn{InfoSchema: is},
+	}}
+	ast.Walk(stmtAst.Stmt, readOnlyChecker)
+	if readOnlyChecker.err != nil {
+		return readOnlyChecker.err
+	}
 
 	// step 5: handle expiration
 	// If the lastUpdateTime less than expiredTimeStamp4PC,

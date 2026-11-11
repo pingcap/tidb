@@ -176,17 +176,18 @@ func TestLocation(t *testing.T) {
 
 func TestJobClone(t *testing.T) {
 	job := &Job{
-		Version:         JobVersion1,
-		ID:              100,
-		Type:            ActionCreateTable,
-		SchemaID:        101,
-		TableID:         102,
-		SchemaName:      "test",
-		TableName:       "t",
-		State:           JobStateDone,
-		RU:              12.5,
-		MultiSchemaInfo: nil,
-		ResumeReason:    &JobResumeReason{Type: JobResumeReasonKVDiskFull},
+		Version:             JobVersion1,
+		CheckSchemaReadOnly: true,
+		ID:                  100,
+		Type:                ActionCreateTable,
+		SchemaID:            101,
+		TableID:             102,
+		SchemaName:          "test",
+		TableName:           "t",
+		State:               JobStateDone,
+		RU:                  12.5,
+		MultiSchemaInfo:     nil,
+		ResumeReason:        &JobResumeReason{Type: JobResumeReasonKVDiskFull},
 	}
 	clone := job.Clone()
 	require.Equal(t, job.ID, clone.ID)
@@ -199,6 +200,7 @@ func TestJobClone(t *testing.T) {
 	require.Equal(t, job.RU, clone.RU)
 	require.Equal(t, job.MultiSchemaInfo, clone.MultiSchemaInfo)
 	require.Equal(t, job.ResumeReason, clone.ResumeReason)
+	require.True(t, clone.CheckSchemaReadOnly)
 }
 
 func TestSubJobToProxyJobWithResumeReason(t *testing.T) {

@@ -3131,6 +3131,14 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 		loginUser := sctx.GetSessionVars().User
 		hasProcessPriv := hasPriv(sctx, mysql.ProcessPriv)
 		infoList := sm.ShowTxnList()
+		// Internal SQL requests have no authenticated user, including on remote
+		// TiDB coprocessors. Only these requests need internal write transactions
+		// for database read-only draining; preserve client-visible TIDB_TRX rows.
+		if loginUser == nil {
+			if provider, ok := sm.(interface{ ShowInternalTxnList() []*txninfo.TxnInfo }); ok {
+				infoList = append(infoList, provider.ShowInternalTxnList()...)
+			}
+		}
 		e.txnInfo = make([]*txninfo.TxnInfo, 0, len(infoList))
 		for _, info := range infoList {
 			// If you have the PROCESS privilege, you can see all running transactions.
