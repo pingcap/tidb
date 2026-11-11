@@ -944,7 +944,9 @@ mod recovery_tests {
         closed: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     }
     impl MppStreamResponse for Packets {
-        fn release_packet_memory(&mut self) {}
+        fn release_packet_memory(&mut self) -> i64 {
+            0
+        }
 
         fn packet_error(&self) -> Option<&str> {
             None
@@ -969,7 +971,9 @@ mod recovery_tests {
         closed: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     }
     impl MppStreamResponse for FailingClose {
-        fn release_packet_memory(&mut self) {}
+        fn release_packet_memory(&mut self) -> i64 {
+            0
+        }
 
         fn packet_error(&self) -> Option<&str> {
             None

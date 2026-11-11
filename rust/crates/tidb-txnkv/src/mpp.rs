@@ -302,6 +302,13 @@ pub struct MppStoreTask {
     /// Go `batchCopTask.PartitionTableRegions`: a partitioned read's regions
     /// by physical table, which the dispatch carries as `TableRegions`.
     pub partition_table_regions: Vec<tidb_proto::coprocessor::TableRegions>,
+    /// Go `batchCopTask.ctx.Store`'s id; 0 for a task built over the compute
+    /// stores, whose send failure switches no region peer.
+    pub store_id: u64,
+    /// Go `len(RegionInfo.Meta.Peers)` of each of `regions`: the peers the
+    /// region had when the task was built, which a send failure compares
+    /// with the cached region's (`OnSendFailForTiFlash`'s `prev`).
+    pub region_peers: Vec<usize>,
 }
 
 impl MppTaskLocation for MppStoreTask {
@@ -317,9 +324,10 @@ impl MppTaskLocation for MppStoreTask {
 /// Go `tikvrpc.MPPStreamResponse` as the gather reads it: a raw response
 /// whose received packet is charged to the statement until it is handed on.
 pub trait MppStreamResponse: crate::Response + Send {
-    /// Releases the charge for the packet the last `next` returned; the
-    /// gather that holds the packet charges it itself.
-    fn release_packet_memory(&mut self);
+    /// Releases the charge for the packet the last `next` returned, and
+    /// answers its size (Go `MPPDataPacket.Size`); the gather that holds the
+    /// packet charges it itself.
+    fn release_packet_memory(&mut self) -> i64;
 
     /// Go `MPPDataPacket.Error`'s message, when the last `next` failed on a
     /// packet that carries the task's error.
@@ -386,6 +394,10 @@ pub trait MppClient: std::fmt::Debug + Send + Sync {
     fn tiflash_compute_stores(&self) -> Result<Vec<tikv_client::proto::metapb::Store>, String> {
         Ok(Vec::new())
     }
+
+    /// Go `GetMPPStoreCount`: the number of TiFlash stores, or the error
+    /// that kept it from being read.
+    fn get_mpp_store_count(&self) -> Result<usize, String>;
 }
 
 /// MPP execution coordinator contract.

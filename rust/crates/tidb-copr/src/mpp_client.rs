@@ -31,6 +31,7 @@
 //! the packet stream (`MPPDataPacket.data` = tipb `SelectResponse`) in the
 //! same `SelectResponseIter` the TiKV cop path consumes.
 
+use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 use std::sync::Arc;
 
 use prost::Message as _;
@@ -117,6 +118,82 @@ pub struct MPPClient<S: tikv_client::PdClient = tikv_client::PdRpcClient> {
     /// version; this tier's session catalog carries a mutation counter rather
     /// than the cluster's version, so the node's watch answers instead.
     schema_version: Arc<dyn Fn() -> i64 + Send + Sync>,
+    /// Go `kvStore.mppStoreCnt`.
+    mpp_store_cnt: Arc<MppStoreCnt>,
+}
+
+/// Go `GetMPPStoreCount`'s TTL: 120 seconds, in microseconds.
+const MPP_STORE_COUNT_TTL: i64 = 120 * 1_000_000;
+
+/// Go `mppStoreCnt`: the cached number of TiFlash stores.
+#[derive(Debug, Default)]
+pub struct MppStoreCnt {
+    cnt: AtomicI32,
+    last_update: AtomicI64,
+    init_flag: AtomicI32,
+    /// Go failpoint `mppStoreCountSetLastUpdateTimeP2`: the last update
+    /// time another caller stores between this caller's read and its swap.
+    #[cfg(test)]
+    last_update_p2: std::sync::Mutex<Option<i64>>,
+}
+
+impl MppStoreCnt {
+    /// Go `mppStoreCnt.getMPPStoreCount`: the cached count while it is
+    /// younger than `ttl` microseconds, else the stores `get_all_stores`
+    /// (Go `pdClient.GetAllStores(ctx, opt.WithExcludeTombstone())`) answers
+    /// that pass `tikv.LabelFilterNoTiFlashWriteNode`.
+    pub fn get_mpp_store_count(
+        &self,
+        get_all_stores: impl FnOnce() -> Result<Vec<tikv_client::proto::metapb::Store>, String>,
+        ttl: i64,
+    ) -> Result<usize, String> {
+        let last_update = self.last_update.load(Ordering::SeqCst);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_micros() as i64);
+        let is_init = self.init_flag.load(Ordering::SeqCst) != 0;
+        let cached = || Ok(self.cnt.load(Ordering::SeqCst) as usize);
+
+        if now - last_update < ttl && is_init {
+            return cached();
+        }
+
+        #[cfg(test)]
+        if let Some(value) = *self.last_update_p2.lock().unwrap() {
+            self.last_update.store(value, Ordering::SeqCst);
+        }
+
+        // if has't initialized, always fetch latest mpp store info
+        if self
+            .last_update
+            .compare_exchange(last_update, now, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+            && is_init
+        {
+            return cached();
+        }
+
+        // update mpp store cache
+        let stores = match get_all_stores() {
+            Ok(stores) => stores,
+            Err(error) => {
+                // always to update cache next time
+                self.init_flag.store(0, Ordering::SeqCst);
+                return Err(error);
+            }
+        };
+        let cnt = stores
+            .iter()
+            .filter(|store| tikv_client::TiFlashLabelFilter::NoWriteNode.matches(&store.labels))
+            .count();
+
+        if !is_init || self.last_update.load(Ordering::SeqCst) == now {
+            self.cnt.store(cnt as i32, Ordering::SeqCst);
+            self.init_flag.store(1, Ordering::SeqCst);
+        }
+
+        Ok(cnt)
+    }
 }
 
 impl<S: tikv_client::PdClient> Clone for MPPClient<S> {
@@ -124,6 +201,7 @@ impl<S: tikv_client::PdClient> Clone for MPPClient<S> {
         Self {
             store: self.store.clone(),
             schema_version: Arc::clone(&self.schema_version),
+            mpp_store_cnt: Arc::clone(&self.mpp_store_cnt),
         }
     }
 }
@@ -143,6 +221,7 @@ impl<S: tikv_client::PdClient> MPPClient<S> {
         Self {
             store,
             schema_version: Arc::new(schema_version),
+            mpp_store_cnt: Arc::default(),
         }
     }
 
@@ -187,6 +266,12 @@ impl<S: tikv_client::PdClient> MPPClient<S> {
             .zip(partition_table_regions.drain(..))
             .map(|(task, partition_table_regions)| MppStoreTask {
                 address: task.store_addr,
+                store_id: task.store_id,
+                region_peers: task
+                    .region_infos
+                    .iter()
+                    .map(|region| region.region.region.peers.len())
+                    .collect(),
                 regions: task
                     .region_infos
                     .into_iter()
@@ -323,6 +408,22 @@ impl<S: tikv_client::PdClient> MPPClient<S> {
 }
 
 impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for MPPClient<S> {
+    fn get_mpp_store_count(&self) -> Result<usize, String> {
+        self.mpp_store_cnt.get_mpp_store_count(
+            || {
+                let pd = self.store.store().pd_client();
+                // `get_all_stores` answers tombstones too; Go asks PD to
+                // leave them out (`opt.WithExcludeTombstone()`).
+                let tombstone = tikv_client::proto::metapb::StoreState::Tombstone as i32;
+                self.store
+                    .block_on(async move { pd.get_all_stores().await })
+                    .map(|stores| stores.into_iter().filter(|store| store.state != tombstone).collect())
+                    .map_err(|error| error.to_string())
+            },
+            MPP_STORE_COUNT_TTL,
+        )
+    }
+
     fn tiflash_stores(&self) -> Vec<tikv_client::proto::metapb::Store> {
         self.store
             .store()
@@ -463,7 +564,12 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for MPPClient<S> 
                             if has_regions || !error.canceled() {
                                 target.invalidate_compute_cache();
                             }
-                            let retry = backoff_tiflash_rpc(ctx.as_ref(), bo, &error).await;
+                            let retry = if has_regions {
+                                on_send_fail_for_batch_regions(ctx.as_ref(), bo, &target, task, &error)
+                                    .await
+                            } else {
+                                backoff_tiflash_rpc(ctx.as_ref(), bo, &error).await
+                            };
                             return Err((retry, error.to_string()));
                         }
                     };
@@ -552,6 +658,8 @@ fn compute_region_tasks(
                 address,
                 regions: vec![region],
                 partition_table_regions: Vec::new(),
+                store_id: 0,
+                region_peers: Vec::new(),
             });
         }
     }
@@ -765,6 +873,40 @@ impl MppSetupError {
             Some(_) => false,
         }
     }
+}
+
+/// Go `RegionBatchRequestSender.onSendFailForBatchRegions` with
+/// `RegionCache.OnSendFailForBatchRegions`: after a send to the task's store
+/// failed, every region of the task switches to its next TiFlash peer and
+/// reloads, and the answer is whether the send is retried. A canceled send
+/// and a TiDB that is shutting down do neither.
+async fn on_send_fail_for_batch_regions<S: tikv_client::PdClient>(
+    memory: &dyn MppContext,
+    bo: &mut RegionBackoffBudget,
+    target: &MppTarget<S>,
+    task: &MppStoreTask,
+    error: &MppSetupError,
+) -> bool {
+    if error.canceled() || tikv_client::load_shutting_down() > 0 {
+        return false;
+    }
+    if target.store_type == tikv_client::tikv::EndpointType::TiFlash {
+        // The reload region param is always true. Because that every time we try, we must
+        // re-build the range then re-create the batch sender.
+        let pd = target.store.store().pd_client();
+        for (region, peers) in task.regions.iter().zip(&task.region_peers) {
+            let epoch = region.region_epoch.clone().unwrap_or_default();
+            pd.on_send_fail_for_tiflash(
+                &tikv_client::tikv::new_region_ver_id(region.region_id, epoch.conf_ver, epoch.version),
+                task.store_id,
+                *peers,
+                true,
+                true,
+            )
+            .await;
+        }
+    }
+    backoff_tiflash_rpc(memory, bo, error).await
 }
 
 /// Go `bo.Backoff(tikv.BoTiFlashRPC(), err) == nil` after an MPP send failed
@@ -1043,11 +1185,10 @@ struct MppQueryResponse<S: tikv_client::PdClient> {
 }
 
 impl<S: tikv_client::PdClient> MppQueryResponse<S> {
-    fn release_packet(&mut self) {
-        if self.held_bytes != 0 {
-            self.memory.consume(-self.held_bytes);
-            self.held_bytes = 0;
-        }
+    fn release_packet(&mut self) -> i64 {
+        let held_bytes = std::mem::take(&mut self.held_bytes);
+        self.memory.consume(-held_bytes);
+        held_bytes
     }
     fn pull(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         self.release_packet();
@@ -1100,8 +1241,8 @@ impl<S: tikv_client::PdClient> MppQueryResponse<S> {
 
 /// The gather holds the packet it was handed and charges it itself.
 impl<S: tikv_client::PdClient> MppStreamResponse for MppQueryResponse<S> {
-    fn release_packet_memory(&mut self) {
-        self.release_packet();
+    fn release_packet_memory(&mut self) -> i64 {
+        self.release_packet()
     }
 
     fn packet_error(&self) -> Option<&str> {
@@ -1160,6 +1301,75 @@ fn encode_dispatch_request(mut request: DispatchTaskRequest) -> DispatchTaskRequ
     request.set_api_version(keyspace.api_version());
     request.set_keyspace_id(keyspace.context_keyspace_id());
     request
+}
+
+#[cfg(test)]
+mod mpp_store_cnt_tests {
+    use super::*;
+    use tikv_client::proto::metapb::{Store, StoreLabel};
+
+    fn store(labels: &[(&str, &str)]) -> Store {
+        Store {
+            labels: labels
+                .iter()
+                .map(|(key, value)| StoreLabel {
+                    key: (*key).to_owned(),
+                    value: (*value).to_owned(),
+                })
+                .collect(),
+            ..Store::default()
+        }
+    }
+
+    /// Go failpoint `mppStoreCountSetMPPCnt`: PD answers `cnt` TiFlash stores.
+    fn tiflash(cnt: usize) -> Result<Vec<Store>, String> {
+        Ok(vec![store(&[("engine", "tiflash")]); cnt])
+    }
+
+    /// Go failpoint `mppStoreCountPDError`.
+    fn pd_error() -> Result<Vec<Store>, String> {
+        Err("failed to get mpp store count".to_owned())
+    }
+
+    fn now() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_micros() as i64
+    }
+
+    /// Go `TestMppStoreCntWithErrors`, with each failpoint's effect applied
+    /// where Go injects it.
+    #[test]
+    fn test_mpp_store_cnt_with_errors() {
+        let cnt = MppStoreCnt::default();
+        let ttl = MPP_STORE_COUNT_TTL;
+        // Three mock TiFlash stores beside a TiKV store and a write node.
+        let stores = || {
+            let mut stores = tiflash(3).unwrap();
+            stores.push(store(&[]));
+            stores.push(store(&[("engine", "tiflash"), ("engine_role", "write")]));
+            Ok(stores)
+        };
+        assert_eq!(cnt.get_mpp_store_count(stores, ttl), Ok(3));
+        // meet cache
+        assert_eq!(cnt.get_mpp_store_count(|| tiflash(1000), ttl), Ok(3));
+        // update cache
+        cnt.last_update.store(0, Ordering::SeqCst);
+        assert_eq!(cnt.get_mpp_store_count(|| tiflash(1000), ttl), Ok(1000));
+        cnt.last_update.store(0, Ordering::SeqCst);
+        assert_eq!(
+            cnt.get_mpp_store_count(pd_error, ttl),
+            Err("failed to get mpp store count".to_owned())
+        );
+        // set last update time to the latest: still update cache
+        cnt.last_update.store(now(), Ordering::SeqCst);
+        assert_eq!(cnt.get_mpp_store_count(|| tiflash(2222), ttl), Ok(2222));
+        // fail to get lock and old cache
+        cnt.last_update.store(1, Ordering::SeqCst);
+        *cnt.last_update_p2.lock().unwrap() = Some(2);
+        assert_eq!(cnt.get_mpp_store_count(pd_error, ttl), Ok(2222));
+    }
 }
 
 #[cfg(test)]
@@ -1760,6 +1970,8 @@ mod mpp_read_batch_tests {
                         address: fixture.address.clone(),
                         regions: vec![],
                         partition_table_regions: vec![],
+                        store_id: 0,
+                        region_peers: vec![],
                     },
                     &TaskMeta::default(),
                     &[],
@@ -1783,6 +1995,88 @@ mod mpp_read_batch_tests {
                 );
             }
         }
+    }
+
+    /// Go `RegionBatchRequestSender.onSendFailForBatchRegions`: a dispatch
+    /// that fails on its store switches each of the task's regions to its
+    /// next TiFlash peer and schedules the region's reload.
+    #[test]
+    fn a_failed_dispatch_switches_the_tasks_regions_to_the_next_tiflash_peer_like_go() {
+        use tikv_client::PdClient as _;
+        let fixture = Fixture::with_opening(
+            false,
+            false,
+            false,
+            b"first".to_vec(),
+            Opening::DispatchUnavailable,
+        );
+        let manager = fixture.cluster.region_manager();
+        let (_, _, region_id) = tidb_unistore::cluster::bootstrap_with_single_store(manager);
+        let add_tiflash = |address: &str| {
+            let store_id = manager.alloc_id();
+            manager.add_store(store_id, address, engine_label("tiflash"));
+            manager.add_peer(region_id, store_id, manager.alloc_id());
+            store_id
+        };
+        let failed_store = add_tiflash(&fixture.address);
+        let next_store = add_tiflash("127.0.0.1:1");
+        let pd = fixture.store.store().pd_client();
+        let key = tikv_client::Key::from(b"a".to_vec());
+        let region = fixture.store.block_on(pd.region_for_key(&key)).unwrap();
+        let selected = |region: &tikv_client::RegionWithLeader| {
+            fixture
+                .store
+                .block_on(pd.get_tiflash_rpc_context(
+                    region,
+                    false,
+                    tikv_client::TiFlashLabelFilter::NoWriteNode,
+                ))
+                .unwrap()
+                .map(|(_, store)| store.id)
+                .map_err(|detail| detail.reason)
+        };
+        assert_eq!(selected(&region), Ok(failed_store));
+
+        let client = MPPClient::new(fixture.store.clone(), || 1);
+        let ctx: Arc<dyn MppContext> =
+            Arc::new(tidb_variable::mem_quota::StatementMemory::default());
+        let mut bo = RegionBackoffBudget::new(Duration::ZERO);
+        let epoch = region.region.region_epoch.clone().unwrap();
+        tidb_txnkv::MppClient::dispatch_mpp_task(
+            &client,
+            &ctx,
+            &MppStoreTask {
+                address: fixture.address.clone(),
+                regions: vec![tidb_proto::coprocessor::RegionInfo {
+                    region_id,
+                    region_epoch: Some(tidb_proto::metapb::RegionEpoch {
+                        conf_ver: epoch.conf_ver,
+                        version: epoch.version,
+                    }),
+                    ..Default::default()
+                }],
+                partition_table_regions: vec![],
+                store_id: failed_store,
+                region_peers: vec![region.region.peers.len()],
+            },
+            &TaskMeta::default(),
+            &[],
+            &Default::default(),
+            &Default::default(),
+            &mut bo,
+        )
+        .unwrap_err();
+        // The cached region is due a reload,
+        assert_eq!(
+            selected(&region),
+            Err(tikv_client::TiFlashRpcContextUnavailableReason::NeedReloadOnAccess)
+        );
+        // its next lookup reloads it from PD,
+        add_tiflash("127.0.0.1:2");
+        let reloaded = fixture.store.block_on(pd.region_for_key(&key)).unwrap();
+        assert!(reloaded.region.peers.len() > region.region.peers.len());
+        // and the reloaded region reads the next TiFlash peer.
+        assert_eq!(selected(&reloaded), Ok(next_store));
     }
 
     #[test]

@@ -197,6 +197,12 @@ impl crate::optimize::OptimizeContext for StmtContext {
     fn tiflash_fine_grained_shuffle(&self) -> tidb_sessionctx::TiFlashFineGrainedShuffleSession {
         StmtContext::tiflash_fine_grained_shuffle(self)
     }
+    fn get_mpp_store_count(&self) -> Result<usize, String> {
+        self.txn_store()
+            .and_then(|store| store.mpp_client())
+            .ok_or_else(|| "the store has no MPP client".to_owned())?
+            .get_mpp_store_count()
+    }
     fn tiflash_cluster_info(&self) -> Option<&Arc<dyn tidb_sessionctx::TiFlashClusterInfo>> {
         StmtContext::tiflash_cluster_info(self)
     }

@@ -275,6 +275,21 @@ pub trait PdClient: Send + Sync + 'static {
     /// [`Self::get_tiflash_compute_stores`] reloads the list from PD.
     fn invalidate_tiflash_compute_stores(&self) {}
 
+    /// client-go `RegionCache.OnSendFailForTiFlash(bo, store, region, prev,
+    /// scheduleReload, err, ...)`: a send to `store_id` for the region failed,
+    /// so the region's next TiFlash read goes to its next TiFlash peer.
+    /// `previous_peer_count` is `len(prev.Peers)`. Clients without a region
+    /// cache have nothing to switch.
+    async fn on_send_fail_for_tiflash(
+        &self,
+        _ver_id: &RegionVerId,
+        _store_id: StoreId,
+        _previous_peer_count: usize,
+        _schedule_reload: bool,
+        _has_error: bool,
+    ) {
+    }
+
     /// client-go `RegionCache.GetTiFlashRPCContext(bo, id, loadBalance,
     /// labelFilter)`: the TiFlash peer and store a batch task for `region`
     /// goes to, or why the region has none. Clients without a region cache
@@ -1838,6 +1853,25 @@ where
 
     fn invalidate_tiflash_compute_stores(&self) {
         self.region_cache.invalidate_tiflash_compute_stores();
+    }
+
+    async fn on_send_fail_for_tiflash(
+        &self,
+        ver_id: &RegionVerId,
+        store_id: StoreId,
+        previous_peer_count: usize,
+        schedule_reload: bool,
+        has_error: bool,
+    ) {
+        self.region_cache
+            .on_send_fail_for_tiflash(
+                ver_id,
+                store_id,
+                previous_peer_count,
+                schedule_reload,
+                has_error,
+            )
+            .await;
     }
 
     async fn get_tiflash_rpc_context(

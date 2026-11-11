@@ -1443,6 +1443,106 @@ fn test_tiflash_fallback_mpp_dispatch() {
     tidb_executor::local_mpp_coordinator::mock::set_reduce_cop_next_max_backoff(false);
 }
 
+/// Go `physicalplantest`'s case loop over `plan_suite_out.json`: a `set` or
+/// `insert` case is executed, every other case's rows
+/// (`ConvertRowsToStrings`) and warnings are the recorded ones.
+fn check_plan_suite(session: &mut Session, name: &str) {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../../../../../pkg/planner/core/casetest/physicalplantest/testdata/plan_suite_out.json"
+    ))
+    .unwrap();
+    let cases = fixture.as_array().unwrap().iter().find(|section| section["Name"] == name).unwrap()["Cases"]
+        .as_array()
+        .unwrap();
+    let strings = |value: &serde_json::Value| -> Vec<String> {
+        value
+            .as_array()
+            .map(|rows| rows.iter().map(|row| row.as_str().unwrap().to_owned()).collect())
+            .unwrap_or_default()
+    };
+    let mut mismatches = Vec::new();
+    for case in cases {
+        let sql = case["SQL"].as_str().unwrap();
+        if sql.starts_with("set") || sql.starts_with("insert") {
+            for statement in sql.split(';').filter(|statement| !statement.trim().is_empty()) {
+                rows(session, statement);
+            }
+            continue;
+        }
+        let got: Vec<String> = displayed(rows(session, sql)).into_iter().map(|row| row.join(" ")).collect();
+        let got_warn: Vec<String> =
+            displayed(rows(session, "show warnings")).into_iter().map(|row| row[2].clone()).collect();
+        let (want, want_warn) = (strings(&case["Plan"]), strings(&case["Warn"]));
+        if got != want || got_warn != want_warn {
+            mismatches.push(format!("{sql}\ngot:  {got:#?}\nwant: {want:#?}\ngot warnings:  {got_warn:?}\nwant warnings: {want_warn:?}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
+}
+
+/// Go `GetMPPClient().GetMPPStoreCount()` of the stack's store.
+fn mpp_store_count(stack: &UnistoreClusterStack) -> Result<usize, String> {
+    stack.factory.mpp_client.as_ref().unwrap().get_mpp_store_count()
+}
+
+/// Go `TestMPPBCJModel`: with three MPP stores the planner does not choose
+/// a broadcast join under `tidb_prefer_broadcast_join_by_exchange_data_size`.
+#[test]
+fn test_mpp_bcj_model() {
+    let (stack, mut session) = tiflash_session(3, 2199);
+    rows(&mut session, "create table t (a int, b int, c int, index idx_a(a), index idx_b(b))");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+    assert_eq!(mpp_store_count(&stack), Ok(3));
+    check_plan_suite(&mut session, "TestMPPBCJModel");
+}
+
+/// Go `TestMPPPreferBCJ`.
+#[test]
+fn test_mpp_prefer_bcj() {
+    let (stack, mut session) = tiflash_session(3, 2200);
+    rows(&mut session, "drop table if exists t1");
+    rows(&mut session, "create table t1 (a int)");
+    rows(&mut session, "drop table if exists t2");
+    rows(&mut session, "create table t2 (b int)");
+    rows(&mut session, "insert into t1 values (1);");
+    rows(&mut session, "insert into t2 values (1), (2), (3), (4), (5), (6), (7), (8);");
+    rows(&mut session, "alter table t1 set tiflash replica 1");
+    replica_available(&stack, &mut session, "t1");
+    rows(&mut session, "alter table t2 set tiflash replica 1");
+    replica_available(&stack, &mut session, "t2");
+    rows(&mut session, "analyze table t1 all columns");
+    rows(&mut session, "analyze table t2 all columns");
+    rows(&mut session, "set @@tidb_allow_mpp=1");
+    rows(&mut session, "set @@tidb_enforce_mpp=1");
+    check_plan_suite(&mut session, "TestMPPPreferBCJ");
+}
+
+/// Go `TestMPPBCJModelOneTiFlash`: with one MPP store the planner chooses
+/// a broadcast join under `tidb_prefer_broadcast_join_by_exchange_data_size`.
+#[test]
+fn test_mpp_bcj_model_one_tiflash() {
+    let (stack, mut session) = tiflash_session(1, 2201);
+    rows(&mut session, "create table t (a int, b int, c int, index idx_a(a), index idx_b(b))");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+    assert_eq!(mpp_store_count(&stack), Ok(1));
+    session
+        .node_conn()
+        .execute("set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=-1")
+        .map(|_| ())
+        .unwrap_err();
+    session
+        .node_conn()
+        .execute("set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=2")
+        .map(|_| ())
+        .unwrap_err();
+    // no BCJ if `tidb_prefer_broadcast_join_by_exchange_data_size` is OFF
+    rows(&mut session, "set @@session.tidb_broadcast_join_threshold_size=0");
+    rows(&mut session, "set @@session.tidb_broadcast_join_threshold_count=0");
+    check_plan_suite(&mut session, "TestMPPBCJModelOneTiFlash");
+}
+
 /// Go `TestMppVersionError`: a store that cancels the task's MPP version
 /// fails the query, without a retry; one that serves it answers.
 #[test]
@@ -1486,6 +1586,25 @@ fn test_cancel_mpp_tasks() {
     assert_eq!(code, tidb_errno::errcode::ErrQueryInterrupted);
     kill.join().unwrap();
     tidb_unistore::rpc::mock::set_mpp_recv_hang(false);
+}
+
+/// Go `TestMPPMemoryTracker`: a response waiting for the gather is charged
+/// to the statement.
+#[test]
+fn test_mpp_memory_tracker() {
+    let (stack, mut session) = tiflash_session(2, 2202);
+    rows(&mut session, "set tidb_mem_quota_query = 1 << 30");
+    rows(&mut session, "set global tidb_mem_oom_action = 'CANCEL'");
+    rows(&mut session, "create table t(a int);");
+    rows(&mut session, "insert into t values (1);");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+    rows(&mut session, "set tidb_enforce_mpp = on;");
+    assert_eq!(displayed(rows(&mut session, "select * from t")), [["1"]]);
+    tidb_executor::local_mpp_coordinator::mock::set_test_mpp_oom_panic(true);
+    let (code, _) = query_error(&mut session, "select * from t");
+    tidb_executor::local_mpp_coordinator::mock::set_test_mpp_oom_panic(false);
+    assert_eq!(code, tidb_errno::errcode::ErrMemoryExceedForQuery);
 }
 
 /// Go `TestMppGoroutinesExitFromErrors`: the non-root tasks' errors end a

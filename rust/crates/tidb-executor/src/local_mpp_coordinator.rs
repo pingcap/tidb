@@ -82,6 +82,18 @@ pub mod mock {
         MPP_NON_ROOT_TASK_ERROR.load(Ordering::Acquire)
     }
 
+    static TEST_MPP_OOM_PANIC: AtomicBool = AtomicBool::new(false);
+
+    /// Go `failpoint.Enable("testMPPOOMPanic", "return(true)")`: a response
+    /// that holds a packet is charged a gigabyte.
+    pub fn set_test_mpp_oom_panic(enabled: bool) {
+        TEST_MPP_OOM_PANIC.store(enabled, Ordering::Release);
+    }
+
+    pub(super) fn test_mpp_oom_panic() -> bool {
+        TEST_MPP_OOM_PANIC.load(Ordering::Acquire)
+    }
+
     static REDUCE_COP_NEXT_MAX_BACKOFF: AtomicBool = AtomicBool::new(false);
 
     /// Go `failpoint.Enable("ReduceCopNextMaxBackoff", "return(true)")`: a
@@ -1072,6 +1084,8 @@ fn handle_dispatch_req(
             address: req.meta.address.clone(),
             regions: Vec::new(),
             partition_table_regions: Vec::new(),
+            store_id: 0,
+            region_peers: Vec::new(),
         });
     // Go `backoff.NewBackoffer(ctx, copr.CopNextMaxBackoff)`.
     let mut bo = RegionBackoffBudget::campaign_default();
@@ -1244,9 +1258,8 @@ fn receive_results(
     loop {
         match stream.next() {
             Ok(Some(resp)) => {
-                // The gather charges what it holds.
-                stream.release_packet_memory();
-                if resp_tx.send(Ok(resp)).is_err() {
+                let resp_size = stream.release_packet_memory();
+                if send_to_resp_ch(mpp_ctx, resp_tx, resp, resp_size) {
                     break;
                 }
             }
@@ -1269,6 +1282,35 @@ fn receive_results(
         }
     }
     let _ = stream.close();
+}
+
+/// Go `sendToRespCh`: the response is charged to the statement (Go
+/// `mppResponse.MemSize`: its packet's size) while it waits for the gather;
+/// a charge the statement's quota refuses is sent as the response's error,
+/// as Go's recovered `Consume` panic is. `true` once the gather has gone.
+fn send_to_resp_ch(
+    mpp_ctx: &Arc<dyn MppContext>,
+    resp_tx: &SyncSender<MppResponse>,
+    resp: tidb_txnkv::QueryResultSubset,
+    resp_size: i64,
+) -> bool {
+    #[cfg(any(test, feature = "test-util"))]
+    let resp_size = if mock::test_mpp_oom_panic() && resp_size != 0 {
+        1 << 30
+    } else {
+        resp_size
+    };
+    mpp_ctx.consume(resp_size);
+    let resp = match mpp_ctx.check() {
+        Ok(()) => Ok(resp),
+        Err(err) => Err(QueryResponseError::Sql {
+            code: err.code,
+            message: err.message,
+        }),
+    };
+    let exit = resp_tx.send(resp).is_err();
+    mpp_ctx.consume(-resp_size);
+    exit
 }
 
 /// Go `sendError`.

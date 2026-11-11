@@ -78,6 +78,8 @@ pub trait OptimizeContext:
     fn tiflash_engine_removed_due_to_strict_sql_mode(&self) -> bool;
     /// Go `SessionVars`' inputs to `handleFineGrainedShuffle`.
     fn tiflash_fine_grained_shuffle(&self) -> tidb_sessionctx::TiFlashFineGrainedShuffleSession;
+    /// Go `GetMPPClient().GetMPPStoreCount()`.
+    fn get_mpp_store_count(&self) -> Result<usize, String>;
     /// The TiFlash cluster `handleFineGrainedShuffle` sizes streams from.
     fn tiflash_cluster_info(&self) -> Option<&std::sync::Arc<dyn tidb_sessionctx::TiFlashClusterInfo>>;
     /// Go `SessionVars.GetEnableIndexMerge()`.
@@ -469,11 +471,13 @@ pub fn physical_optimize<C: OptimizeContext>(
     let coster = Ver2Coster::from_env(optimizer_cost_env)
         .with_scan_penalty_vars(ctx.allow_prefer_range_scan(), ctx.get_index_force());
     let evaluate = tidb_ranger::points::StatementRangerEvaluator(ctx);
+    let get_mpp_store_count = || ctx.get_mpp_store_count();
     let mut dispatch = DispatchContext::new(
         plan_ids,
         &coster,
         optimizer_cost_env.session.scale_ndv_skew_ratio,
     )
+    .with_mpp_store_count(&get_mpp_store_count)
     .with_estimator_options(optimizer_cost_env.session.estimator_options.clone())
     .with_group_ndv_skew_ratio(optimizer_cost_env.session.group_ndv_skew_ratio)
     .with_correlation_options(optimizer_cost_env.session.correlation_options)

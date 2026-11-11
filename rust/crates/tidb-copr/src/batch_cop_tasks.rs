@@ -65,6 +65,8 @@ pub(crate) struct RegionInfo {
 /// Go `batchCopTask`: the regions one TiFlash store serves.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct BatchCopTask {
+    /// Go `ctx.Store`'s id.
+    pub(crate) store_id: u64,
     /// Go `storeAddr`.
     pub(crate) store_addr: String,
     /// Go `regionInfos`.
@@ -219,6 +221,7 @@ pub(crate) async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
             store_task_map
                 .entry(address.clone())
                 .or_insert_with(|| BatchCopTask {
+                    store_id: rpc_stores[index].id,
                     store_addr: address,
                     region_infos: Vec::new(),
                 })
@@ -600,6 +603,7 @@ pub(crate) fn balance_batch_cop_task(
             (
                 store.id,
                 BatchCopTask {
+                    store_id: store.id,
                     store_addr: store.address.clone(),
                     region_infos: Vec::new(),
                 },
@@ -791,6 +795,7 @@ mod tests {
 
     fn task(store_id: u64, regions: Vec<RegionInfo>) -> BatchCopTask {
         BatchCopTask {
+            store_id,
             store_addr: format!("tiflash-{store_id}:3930"),
             region_infos: regions,
         }

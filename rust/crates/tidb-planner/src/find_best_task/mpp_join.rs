@@ -145,18 +145,12 @@ fn has_tiflash_replica_for_mpp(plan: &LogicalPlan, ctx: &DispatchContext<'_>) ->
     !children.is_empty() && children.iter().all(|child| has_tiflash_replica_for_mpp(child, ctx))
 }
 
-/// Go `checkChildFitBC`: a side small enough to broadcast.
-fn check_child_fit_bc(child: &LogicalPlan, ctx: &DispatchContext<'_>) -> bool {
+/// Go `cardinality.GetAvgRowSize(p.SCtx(), s.HistColl, p.Schema().Columns,
+/// false, false)` of a join child, when its stats carry a `HistColl`.
+fn child_avg_row_size(child: &LogicalPlan, ctx: &DispatchContext<'_>) -> Option<f64> {
     use tidb_planner_cardinality::row_size::{get_avg_row_size, RowSizeColumn};
     use tidb_planner_property::stats_info::HistCollExt;
-    let Some(stats) = child.stats_info() else {
-        return false;
-    };
-    let session = &ctx.mpp_join;
-    let count = stats.count();
-    let Some(hist) = stats.hist_coll() else {
-        return session.bcj_threshold_count == -1 || count < session.bcj_threshold_count;
-    };
+    let hist = child.stats_info()?.hist_coll()?;
     let columns: Vec<_> = child
         .schema()
         .into_iter()
@@ -166,16 +160,100 @@ fn check_child_fit_bc(child: &LogicalPlan, ctx: &DispatchContext<'_>) -> bool {
             estimated_width: 0.0,
         })
         .collect();
-    let avg = get_avg_row_size(&columns, hist.pseudo(), hist.realtime_count(), false, false, ctx.enable_chunk_rpc);
+    Some(get_avg_row_size(&columns, hist.pseudo(), hist.realtime_count(), false, false, ctx.enable_chunk_rpc))
+}
+
+/// Go `checkChildFitBC`: a side small enough to broadcast.
+fn check_child_fit_bc(child: &LogicalPlan, ctx: &DispatchContext<'_>) -> bool {
+    let Some(stats) = child.stats_info() else {
+        return false;
+    };
+    let session = &ctx.mpp_join;
+    let count = stats.count();
+    let Some(avg) = child_avg_row_size(child, ctx) else {
+        return session.bcj_threshold_count == -1 || count < session.bcj_threshold_count;
+    };
     session.bcj_threshold_size == -1 || avg * (count as f64) < session.bcj_threshold_size as f64
 }
 
-/// Go `preferMppBCJ`.
-///
-/// Under `tidb_prefer_broadcast_join_by_exchange_data_size` Go asks the MPP
-/// client how many TiFlash stores there are; the planner has no MPP client,
-/// which is Go's error answer (`GetMPPStoreCount` failing), so the
-/// threshold checks below decide.
+/// An exchange's rows and, when the child's stats carry a `HistColl`, bytes.
+struct ExchangeSize {
+    row: f64,
+    size: Option<f64>,
+}
+
+impl ExchangeSize {
+    /// Go `isJoinFitMPPBCJ` / `isJoinChildFitMPPBCJ`'s comparison: the
+    /// broadcast exchange, scaled by the store count, against the hash one.
+    fn fits(&self, hash: &Self, mpp_store_cnt: usize) -> bool {
+        match (self.size, hash.size) {
+            (Some(sz_bc), Some(sz_hash)) => sz_bc * mpp_store_cnt as f64 <= sz_hash,
+            _ => self.row * mpp_store_cnt as f64 <= hash.row,
+        }
+    }
+}
+
+/// A child's exchange size over `row` rows (Go `calcBroadcastExchangeSize`
+/// and `calcHashExchangeSize`'s shared tail).
+fn calc_exchange_size(child: &LogicalPlan, row: f64, ctx: &DispatchContext<'_>) -> ExchangeSize {
+    ExchangeSize {
+        row,
+        size: child_avg_row_size(child, ctx).map(|avg| avg * row),
+    }
+}
+
+/// Go `calcBroadcastExchangeSize`.
+fn calc_broadcast_exchange_size(child: &LogicalPlan, mpp_store_cnt: usize, ctx: &DispatchContext<'_>) -> ExchangeSize {
+    let count = child.stats_info().map_or(0, |stats| stats.count());
+    calc_exchange_size(child, count as f64 * (mpp_store_cnt as f64 - 1.0), ctx)
+}
+
+/// Go `calcBroadcastExchangeSizeByChild`.
+fn calc_broadcast_exchange_size_by_child(
+    p1: &LogicalPlan,
+    p2: &LogicalPlan,
+    mpp_store_cnt: usize,
+    ctx: &DispatchContext<'_>,
+) -> ExchangeSize {
+    let one = calc_broadcast_exchange_size(p1, mpp_store_cnt, ctx);
+    let two = calc_broadcast_exchange_size(p2, mpp_store_cnt, ctx);
+    // broadcast exchange size:
+    //   Build: (mppStoreCnt - 1) * sizeof(BuildTable)
+    //   Probe: 0
+    // choose the child plan with the maximum approximate value as Probe
+    ExchangeSize {
+        row: one.row.min(two.row),
+        size: one.size.zip(two.size).map(|(size1, size2)| size1.min(size2)),
+    }
+}
+
+/// Go `calcHashExchangeSize`.
+fn calc_hash_exchange_size(child: &LogicalPlan, mpp_store_cnt: usize, ctx: &DispatchContext<'_>) -> ExchangeSize {
+    let count = child.stats_info().map_or(0, |stats| stats.count());
+    let row = count as f64 * (mpp_store_cnt as f64 - 1.0) / mpp_store_cnt as f64;
+    calc_exchange_size(child, row, ctx)
+}
+
+/// Go `calcHashExchangeSizeByChild`.
+fn calc_hash_exchange_size_by_child(
+    p1: &LogicalPlan,
+    p2: &LogicalPlan,
+    mpp_store_cnt: usize,
+    ctx: &DispatchContext<'_>,
+) -> ExchangeSize {
+    let one = calc_hash_exchange_size(p1, mpp_store_cnt, ctx);
+    let two = calc_hash_exchange_size(p2, mpp_store_cnt, ctx);
+    // hash exchange size:
+    //   Build: sizeof(BuildTable) * (mppStoreCnt - 1) / mppStoreCnt
+    //   Probe: sizeof(ProbeTable) * (mppStoreCnt - 1) / mppStoreCnt
+    ExchangeSize {
+        row: one.row + two.row,
+        size: one.size.zip(two.size).map(|(size1, size2)| size1 + size2),
+    }
+}
+
+/// Go `preferMppBCJ`: if we can use mpp broadcast join, that's our first
+/// choice.
 fn prefer_mpp_bcj(op: &LogicalJoin, plan: &LogicalPlan, ctx: &DispatchContext<'_>) -> bool {
     if op.equal_conditions.is_empty() && ctx.mpp_join.allow_cartesian_bcj == 2 {
         return true;
@@ -183,12 +261,40 @@ fn prefer_mpp_bcj(op: &LogicalJoin, plan: &LogicalPlan, ctx: &DispatchContext<'_
     let [left, right] = plan.children() else {
         return false;
     };
-    match op.join_type {
-        LogicalJoinType::LeftOuter | LogicalJoinType::Semi | LogicalJoinType::AntiSemi => {
-            check_child_fit_bc(right, ctx)
+    // Go `onlyCheckChild1` / `onlyCheckChild0`: the one child an outer or
+    // semi join may broadcast.
+    let only_check_child = match op.join_type {
+        LogicalJoinType::LeftOuter | LogicalJoinType::Semi | LogicalJoinType::AntiSemi => Some(right),
+        LogicalJoinType::RightOuter => Some(left),
+        _ => None,
+    };
+
+    if ctx.mpp_join.prefer_bcj_by_exchange_data_size {
+        // No need to exchange data if there is only ONE mpp store. But the behavior of optimizer is unexpected if use broadcast way forcibly, such as tpch q4.
+        // TODO: always use broadcast way to exchange data if there is only ONE mpp store.
+        match ((ctx.get_mpp_store_count)(), only_check_child) {
+            (Ok(mpp_store_cnt), None) if mpp_store_cnt > 0 => {
+                // Go `isJoinFitMPPBCJ`.
+                return calc_broadcast_exchange_size_by_child(left, right, mpp_store_cnt, ctx).fits(
+                    &calc_hash_exchange_size_by_child(left, right, mpp_store_cnt, ctx),
+                    mpp_store_cnt,
+                );
+            }
+            (Ok(mpp_store_cnt), Some(child)) if mpp_store_cnt > 1 => {
+                // Go `isJoinChildFitMPPBCJ`.
+                return calc_broadcast_exchange_size(child, mpp_store_cnt, ctx).fits(
+                    &calc_hash_exchange_size_by_child(left, right, mpp_store_cnt, ctx),
+                    mpp_store_cnt,
+                );
+            }
+            // If mppStoreCnt is ONE and only need to check one child plan, rollback to original way.
+            // Otherwise, the plan of tpch q4 may be unexpected.
+            _ => {}
         }
-        LogicalJoinType::RightOuter => check_child_fit_bc(left, ctx),
-        _ => check_child_fit_bc(left, ctx) || check_child_fit_bc(right, ctx),
+    }
+    match only_check_child {
+        Some(child) => check_child_fit_bc(child, ctx),
+        None => check_child_fit_bc(left, ctx) || check_child_fit_bc(right, ctx),
     }
 }
 

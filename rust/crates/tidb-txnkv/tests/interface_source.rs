@@ -461,6 +461,10 @@ impl Client for MockClient {
 struct MockMppClient;
 
 impl MppClient for MockMppClient {
+    fn get_mpp_store_count(&self) -> Result<usize, String> {
+        Ok(0)
+    }
+
     fn construct_mpp_tasks(
         &self,
         _: &Arc<dyn MppContext>,

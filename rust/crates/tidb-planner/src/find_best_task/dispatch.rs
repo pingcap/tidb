@@ -179,6 +179,8 @@ pub struct DispatchContext<'a> {
     pub allow_batch_cop: i64,
     /// Go `SessionVars`' MPP join switches.
     pub mpp_join: crate::plan_cost_ver2::MppJoinSession,
+    /// Go `SCtx().GetMPPClient().GetMPPStoreCount()`.
+    pub get_mpp_store_count: &'a dyn Fn() -> Result<usize, String>,
     /// Go `GetIsolationReadEngines()` holds TiFlash.
     pub tiflash_in_isolation_read: bool,
     /// Go `StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode`.
@@ -288,6 +290,7 @@ impl<'a> DispatchContext<'a> {
             disaggregated_tiflash: false,
             allow_batch_cop: 1,
             mpp_join: crate::plan_cost_ver2::MppJoinSession::default(),
+            get_mpp_store_count: &|| Err("the store has no MPP client".to_owned()),
             tiflash_in_isolation_read: true,
             tiflash_engine_removed_due_to_strict_sql_mode: false,
             enable_chunk_rpc: true,
@@ -548,6 +551,13 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_mpp_allowed(mut self, allowed: bool) -> Self {
         self.mpp_allowed = allowed;
+        self
+    }
+
+    /// Go `GetMPPClient().GetMPPStoreCount()` of the statement's store.
+    #[must_use]
+    pub fn with_mpp_store_count(mut self, get_mpp_store_count: &'a dyn Fn() -> Result<usize, String>) -> Self {
+        self.get_mpp_store_count = get_mpp_store_count;
         self
     }
 
