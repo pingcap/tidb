@@ -241,11 +241,34 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	return rewriteExprNode(rewriter, exprNode, asScalar)
 }
 
+// rewriterSchemaAndNames returns the schema and names an expression rewriter
+// over p resolves column references against.
+func rewriterSchemaAndNames(p base.LogicalPlan) (*expression.Schema, types.NameSlice) {
+	if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
+		return join.FullSchema, join.FullNames
+	}
+	return p.Schema(), p.OutputNames()
+}
+
+// rewriterNames returns the names an expression rewriter over p resolves column
+// references against.
+func rewriterNames(p base.LogicalPlan) types.NameSlice {
+	if p == nil {
+		return nil
+	}
+	_, names := rewriterSchemaAndNames(p)
+	return names
+}
+
 func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalPlan) (rewriter *expressionRewriter) {
 	defer func() {
 		if p != nil {
+<<<<<<< HEAD
 			rewriter.schema = p.Schema()
 			rewriter.names = p.OutputNames()
+=======
+			rewriter.schema, rewriter.names = rewriterSchemaAndNames(p)
+>>>>>>> 8626dd78607 (planner, expression: index field names when building wide projections (#72825))
 		}
 	}()
 
@@ -284,6 +307,12 @@ func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScal
 	if planCtx != nil && planCtx.plan != nil {
 		curColLen := planCtx.plan.Schema().Len()
 		defer func() {
+			if planCtx.plan.Schema().Len() == curColLen && len(planCtx.plan.OutputNames()) == curColLen {
+				// No column was added, so the names below would be an element-wise copy
+				// of the current ones. Skip the copy: it is O(columns) per rewritten
+				// expression, which is quadratic for SELECT * on a wide table.
+				return
+			}
 			names := planCtx.plan.OutputNames().Shallow()[:curColLen]
 			for i := curColLen; i < planCtx.plan.Schema().Len(); i++ {
 				names = append(names, types.EmptyName)
@@ -2529,6 +2558,7 @@ func (er *expressionRewriter) clause() clauseCode {
 	return expressionClause
 }
 
+<<<<<<< HEAD
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	var fieldName4PrivilegeCheck *types.FieldName
 	defer func() {
@@ -2537,6 +2567,45 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		}
 	}()
 	idx, err := expression.FindFieldName(er.names, v)
+=======
+func shouldRemapRedundantBaseColumn(planCtx *exprRewriterPlanCtx, clause clauseCode, name *types.FieldName) bool {
+	if planCtx == nil || planCtx.builder == nil || name == nil {
+		return false
+	}
+	if clause != whereClause && clause != havingClause {
+		return false
+	}
+	// UPDATE/DELETE build JOIN schema/output names in merged (non-coalesced) order.
+	// Skip redundant-column remap in DML to avoid mixing coalesced mapping semantics.
+	if planCtx.builder.inUpdateStmt || planCtx.builder.inDeleteStmt {
+		return false
+	}
+	return name.Redundant && name.OrigTblName.L != ""
+}
+
+// fieldNameLookupHookForTest, when set in tests, is told for each column
+// reference resolved by findFieldName whether the projection name index served it.
+var fieldNameLookupHookForTest func(v *ast.ColumnName, indexed bool)
+
+func (er *expressionRewriter) findFieldName(v *ast.ColumnName) (int, error) {
+	if planCtx := er.planCtx; planCtx != nil && planCtx.builder != nil {
+		if nameIdx := planCtx.builder.projNameIndex; nameIdx.Covers(er.names) {
+			if intest.InTest && fieldNameLookupHookForTest != nil {
+				fieldNameLookupHookForTest(v, true)
+			}
+			return nameIdx.FindFieldName(v)
+		}
+	}
+	if intest.InTest && fieldNameLookupHookForTest != nil {
+		fieldNameLookupHookForTest(v, false)
+	}
+	return expression.FindFieldName(er.names, v)
+}
+
+func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
+	planCtx := er.planCtx
+	idx, err := er.findFieldName(v)
+>>>>>>> 8626dd78607 (planner, expression: index field names when building wide projections (#72825))
 	if err != nil {
 		er.err = plannererrors.ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
 		return
