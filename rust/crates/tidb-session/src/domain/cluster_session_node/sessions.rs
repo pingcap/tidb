@@ -355,9 +355,10 @@ impl DomainSessions for Domain {
                 Arc::from(self.cached_table_session_factory());
             let globals = self.global_vars.clone();
             let statistics_view = Arc::clone(&self.statistics_view);
-            let restricted_sql = Arc::new(NodeRestrictedSql {
-                factory: self.binding_session_factory.clone(),
-            });
+            let restricted_sql = Arc::new(NodeRestrictedSql::of_issuer(
+                self.binding_session_factory.clone(),
+                session.restricted_sql_issuer(),
+            ));
             session.set_restricted_sql_executor(Arc::clone(&restricted_sql) as _);
             let safe_ts_transactions = Arc::clone(&transactions);
             session.set_min_safe_ts_provider(Arc::new(move |txn_scope| {

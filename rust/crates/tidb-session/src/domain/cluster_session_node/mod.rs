@@ -2684,11 +2684,21 @@ struct AccountSystemSession(Session);
 /// and runs in that session's own autocommit transaction.
 pub(crate) struct NodeRestrictedSql {
     factory: Weak<Domain>,
+    /// Go's `s`, the session the executor was taken from.
+    issuer: Arc<crate::restricted_sql::RestrictedSqlIssuer>,
 }
 
 impl NodeRestrictedSql {
+    /// The domain's own executor, which no session issues.
     pub(crate) fn new(factory: Weak<Domain>) -> Self {
-        Self { factory }
+        Self::of_issuer(factory, Arc::default())
+    }
+
+    pub(crate) fn of_issuer(
+        factory: Weak<Domain>,
+        issuer: Arc<crate::restricted_sql::RestrictedSqlIssuer>,
+    ) -> Self {
+        Self { factory, issuer }
     }
 }
 
@@ -2711,9 +2721,16 @@ impl NodeRestrictedSql {
             tidb_domain_core::sys_session::stats_session_error("cluster session factory is stopped")
         })?;
         let mut session = factory.open_system_session().map_err(boxed_sql_query_error)?;
-        with_exec_option(&mut session, option, |session| {
+        self.issuer
+            .inherit(&mut session)
+            .map_err(|error| -> tidb_sqlexec::SqlExecError { error.to_mysql_error().message.into() })?;
+        let result = with_exec_option(&mut session, option, |session| {
             execute_internal_under(session, context, sql)
-        })
+        });
+        if !option.ignore_warning {
+            self.issuer.append_warnings(&session.warnings);
+        }
+        result
     }
 }
 
@@ -2820,9 +2837,13 @@ impl SystemSqlExecutor {
                 execute_internal_under(session, context, sql)
             });
         }
-        let domain = Arc::downgrade(&session.node().domain);
+        // Go `getInternalSession`, this session the issuer.
+        let internal =
+            NodeRestrictedSql::of_issuer(Arc::downgrade(&session.node().domain), session.restricted_sql_issuer());
         drop(session);
-        NodeRestrictedSql::new(domain).run(context, &option, sql)
+        let result = internal.run(context, &option, sql);
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).append_restricted_sql_warnings();
+        result
     }
 }
 

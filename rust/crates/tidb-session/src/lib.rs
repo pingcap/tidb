@@ -675,6 +675,8 @@ pub struct Session {
     /// Go `GetRestrictedSQLExecutor`: internal sessions of the node, absent
     /// on the in-process tier; see [`restricted_sql`].
     restricted_sql_executor: tidb_executor::memtable_reader::RestrictedSql,
+    /// This session as the issuer of its restricted statements.
+    restricted_sql_issuer: std::sync::Arc<restricted_sql::RestrictedSqlIssuer>,
     /// Go `pointPlans`: the point plan a multi-statement query's prefetch
     /// built for each of its statements, empty when it built none.
     pub(crate) prefetched_point_plans: Vec<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
@@ -1060,6 +1062,7 @@ impl Session {
             snapshot_schema: None,
             statement_snapshot: None,
             restricted_sql_executor: None,
+            restricted_sql_issuer: std::sync::Arc::default(),
             prefetched_point_plans: Vec::new(),
             point_plan_val: None,
             column_stats_usage: None,
@@ -3212,6 +3215,7 @@ impl Session {
     }
 
     fn finish_statement_state(&mut self, result: &Result<StatementCompletion, DriverError>) {
+        self.append_restricted_sql_warnings();
         self.move_parse_warnings_behind_execution(result.is_ok());
         // Go `FinishExecuteStmt`: a statement that read a cached table's
         // in-memory copy counts once.

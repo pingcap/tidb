@@ -29950,3 +29950,68 @@ fn the_engine_restricted_rounds_pick_gos_plans() {
     }
     assert!(failures.is_empty(), "{} of {} cases\n{}", failures.len(), cases.len(), failures.join("\n"));
 }
+
+/// Go `getInternalSession`: the internal session a restricted statement runs
+/// on copies the issuer's `OptimizerUseInvisibleIndexes`, and its `clean`
+/// appends the internal session's warnings to the issuer's statement unless
+/// the caller passed `ExecOptionIgnoreWarning`. Rows, plans and warnings are
+/// a Go testkit capture over `tk.Session().GetRestrictedSQLExecutor()`.
+#[test]
+fn a_restricted_statement_inherits_from_and_warns_its_issuer_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1291)).unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
+    session
+        .node_conn()
+        .execute_write("CREATE TABLE ri (a INT, b INT, INDEX ia (a) INVISIBLE)")
+        .unwrap();
+    let source = tidb_txnkv::INTERNAL_TXN_OTHERS;
+    let explain = |session: &mut Session| {
+        displayed(
+            session
+                .exec_restricted_sql_rows(source, "explain format='brief' select a from test.ri where a = 1")
+                .unwrap(),
+        )
+        .into_iter()
+        .map(|row| row.join("|"))
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        explain(&mut session),
+        [
+            "TableReader|10.00|root||data:Selection",
+            "└─Selection|10.00|cop[tikv]||eq(test.ri.a, 1)",
+            "  └─TableFullScan|10000.00|cop[tikv]|table:ri|keep order:false, stats:pseudo",
+        ]
+    );
+    rows(&mut session, "set @@tidb_opt_use_invisible_indexes = 1");
+    assert_eq!(
+        explain(&mut session),
+        [
+            "IndexReader|10.00|root||index:IndexRangeScan",
+            "└─IndexRangeScan|10.00|cop[tikv]|table:ri, index:ia(a)|range:[1,1], keep order:false, stats:pseudo",
+        ]
+    );
+    rows(&mut session, "set @@tidb_opt_use_invisible_indexes = 0");
+
+    let truncating = "select concat(cast('a' as signed))";
+    let truncated = vec![vec![
+        Datum::new_string_datum("Warning"),
+        Datum::UInt(1292),
+        Datum::new_string_datum("Truncated incorrect INTEGER value: 'a'"),
+    ]];
+    assert_eq!(displayed(session.exec_restricted_sql_rows(source, truncating).unwrap()), [["0"]]);
+    assert_eq!(rows(&mut session, "SHOW WARNINGS"), truncated);
+
+    rows(&mut session, "select 1");
+    let context = tikv_client::util::with_internal_source_type(&tikv_client::trace::TraceContext::new(), source);
+    let ignore_warning: tidb_sqlexec::OptionFuncAlias = Arc::new(tidb_sqlexec::exec_option_ignore_warning);
+    let (ignored, _) = session
+        .restricted_sql_executor()
+        .unwrap()
+        .exec_restricted_sql(&context, &[ignore_warning], truncating, &[])
+        .unwrap();
+    assert_eq!(displayed(ignored), [["0"]]);
+    session.append_restricted_sql_warnings();
+    assert!(rows(&mut session, "SHOW WARNINGS").is_empty());
+}

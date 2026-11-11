@@ -46,7 +46,7 @@ impl tidb_telemetry::Session for Session {
 
     fn exec_restricted_sql(&self, sql: &str) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
         tidb_executor::memtable_reader::exec_restricted_sql_over(
-            self.restricted_sql_executor.as_deref(),
+            self.restricted_sql_executor().as_deref(),
             tidb_txnkv::INTERNAL_TXN_TELEMETRY,
             sql,
             &[],
