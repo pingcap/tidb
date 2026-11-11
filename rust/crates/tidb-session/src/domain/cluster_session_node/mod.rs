@@ -998,6 +998,7 @@ impl<'s> ClusterServerSession<'s> {
     /// the locking read's lock). A row the session already filed for the
     /// same error is not filed twice.
     fn record_statement_failure(&mut self, error: SqlQueryError) -> SqlQueryError {
+        self.session.close_context_of_prepared_stmt();
         self.session
             .record_ddl_failure(error.code, error.message.clone(), error.identity);
         error
@@ -1941,6 +1942,28 @@ impl<'s> ClusterServerSession<'s> {
             &resource_group,
             effective.is_some_and(|stmt| matches!(stmt, Stmt::Query(_))),
         )?;
+        // Go `ExecuteStmt`: `PrepareTxnCtx`, then `ResetContextOfStmt` once,
+        // before `Compile`'s plan-cache lookup.
+        let is_write = match effective {
+            Some(template) => self.session.statement_kind_parsed(template) == StmtKind::Write,
+            None => self.session.statement_kind(&sql).map_err(map_error)? == StmtKind::Write,
+        };
+        if let Some(template) = effective {
+            if matches!(template, Stmt::Query(_)) {
+                // Go `executePlanCacheStmt`'s `ContextWithInitializedExecDetails`.
+                self.session.context_with_initialized_exec_details(&sql);
+                self.session.on_stmt_start(template);
+            } else if is_write {
+                // Session finishes its scratch execution inside the durable
+                // storage attempt. Retain one observation until commit/retry
+                // has completed.
+                self.session
+                    .begin_prepared_routed_statement_observation(&sql, template);
+            }
+            self.session.set_binary_prepared_execution(true);
+            self.session.reset_context_of_prepared_stmt(&sql, template);
+            self.session.set_binary_prepared_execution(false);
+        }
         let cache_allowed = effective.is_some_and(|template| {
             self.session
                 .prepared_plan_cache_allowed_for_statement(template)
@@ -2009,10 +2032,19 @@ impl<'s> ClusterServerSession<'s> {
         let bound_template = if direct && !fast_select {
             None
         } else {
-            effective
-                .map(|template| tidb_executor::bind_statement(template.clone(), &params))
-                .transpose()
-                .map_err(map_error)?
+            // A statement whose values do not bind fails inside the
+            // lifecycle that opens below, like a plan `Compile` refuses.
+            effective.and_then(|template| {
+                tidb_executor::bind_statement(template.clone(), &params)
+                    .map_err(|error| {
+                        generate_new_plan_error =
+                            Some(tidb_executor::compiler::GenerateNewPlanError {
+                                error,
+                                warnings: Vec::new(),
+                            });
+                    })
+                    .ok()
+            })
         };
         let shape = if fast {
             point_read_shape.unwrap_or(StatementReadShape::Unknown)
@@ -2021,9 +2053,11 @@ impl<'s> ClusterServerSession<'s> {
             // fresh for-update snapshot and lock-value cache on every replay.
             // Classify this execution's values, not the unbound PREPARE
             // markers: a complete point key may use MaxTS even on cache hits.
-            self.session.statement_read_shape_bound(
-                bound_template.as_ref().expect("cached SELECT is bound"),
-            )
+            bound_template
+                .as_ref()
+                .map_or(StatementReadShape::Unknown, |bound| {
+                    self.session.statement_read_shape_bound(bound)
+                })
         } else if direct_dml {
             StatementReadShape::AutocommitWrite
         } else {
@@ -2032,16 +2066,7 @@ impl<'s> ClusterServerSession<'s> {
                 |bound| self.session.statement_read_shape_bound(bound),
             )
         };
-        let is_write = match effective {
-            Some(template) => self.session.statement_kind_parsed(template) == StmtKind::Write,
-            None => self.session.statement_kind(&sql).map_err(map_error)? == StmtKind::Write,
-        };
         if effective.is_some_and(|stmt| matches!(stmt, Stmt::Query(_))) {
-            // Go `executePlanCacheStmt`'s `ContextWithInitializedExecDetails`.
-            self.session.context_with_initialized_exec_details(&sql);
-            if let Some(template) = effective {
-                self.session.on_stmt_start(template);
-            }
             let telemetry = self.session.statement_telemetry();
             let result = self.open_statement_result(shape, &resource_group, |session| {
                 session.set_binary_prepared_execution(true);
@@ -2097,6 +2122,9 @@ impl<'s> ClusterServerSession<'s> {
                         count.record();
                     }
                 }
+                if opened.is_err() {
+                    session.close_context_of_prepared_stmt();
+                }
                 opened.map_err(map_error)
             });
             telemetry.update_telemetry_metric();
@@ -2107,13 +2135,7 @@ impl<'s> ClusterServerSession<'s> {
                 None => result,
             }));
         }
-        // Session finishes its scratch execution inside the durable storage
-        // attempt. Retain one observation until commit/retry has completed.
         let observed_write = is_write && effective.is_some();
-        if let Some(stmt) = effective.filter(|_| is_write) {
-            self.session
-                .begin_prepared_routed_statement_observation(&sql, stmt);
-        }
         self.session.set_binary_prepared_execution(true);
         self.node.activate_statement_txn =
             is_write && effective.is_some_and(|stmt| self.activates_txn_at_build(stmt));
@@ -2164,6 +2186,7 @@ impl<'s> ClusterServerSession<'s> {
         });
         self.node.activate_statement_txn = false;
         self.session.set_binary_prepared_execution(false);
+        self.session.close_context_of_prepared_stmt();
         self.session.update_telemetry_metric();
         if direct || self.session.successful_compiles() != compiles {
             if let Some(count) = stmt_node_count {

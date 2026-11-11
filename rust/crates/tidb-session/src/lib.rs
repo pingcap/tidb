@@ -811,6 +811,11 @@ pub struct Session {
     /// boundary for the same statement would reset the counts the first one
     /// snapshotted.
     statement_boundary_open: bool,
+    /// Whether a binary EXECUTE already ran THIS statement's
+    /// `ResetContextOfStmt` before it looked its plan up in the cache
+    /// ([`Self::reset_context_of_prepared_stmt`]); the execution that follows
+    /// runs under that context.
+    context_of_stmt_reset: bool,
     /// Privilege requests derived once per prepared text -- Go's
     /// `PlanCacheStmt.VisitInfos`, checked on every EXECUTE without
     /// re-walking the statement.
@@ -1099,6 +1104,7 @@ impl Session {
             readonly_user_vars: Arc::default(),
             sequence_last_values: Arc::default(),
             statement_boundary_open: false,
+            context_of_stmt_reset: false,
             process: None,
             has_process_priv: false,
             privileges: None,
@@ -2911,6 +2917,9 @@ impl Session {
     // boundary separate from completion, which belongs to record-set close
     // for queries and to execution itself for statements without results.
     fn begin_statement_execution(&mut self, sql: &str) -> Result<(), DriverError> {
+        if std::mem::take(&mut self.context_of_stmt_reset) {
+            return Ok(());
+        }
         self.reset_for_retry();
         if std::mem::take(&mut self.retrying_statement) {
             return Ok(());
@@ -2951,6 +2960,28 @@ impl Session {
         // rather than itself (that SELECT matches no binding of its own).
         self.vars.prev_found_in_binding = std::mem::take(&mut self.vars.found_in_binding);
         Ok(())
+    }
+
+    /// Go `ExecuteStmt`'s `ResetContextOfStmt` for a binary EXECUTE: it runs
+    /// once, before `Compile` looks the statement's plan up in the plan
+    /// cache, and the execution that follows opens no second boundary. A
+    /// boundary the sandbox refuses stays closed, and the statement's
+    /// lifecycle reports the refusal.
+    pub fn reset_context_of_prepared_stmt(&mut self, sql: &str, stmt: &Stmt) {
+        self.close_context_of_prepared_stmt();
+        if self.begin_statement_execution(sql).is_ok() {
+            self.begin_prepared_statement_boundary(stmt, None);
+            self.context_of_stmt_reset = true;
+            self.statement_boundary_open = true;
+        }
+    }
+
+    /// The end of the statement [`Self::reset_context_of_prepared_stmt`]
+    /// opened: a statement that failed before its execution began leaves no
+    /// boundary open for the next one.
+    pub fn close_context_of_prepared_stmt(&mut self) {
+        self.context_of_stmt_reset = false;
+        self.statement_boundary_open = false;
     }
 
     /// Go `StatementContext.ResetForRetry`: what one execution of the

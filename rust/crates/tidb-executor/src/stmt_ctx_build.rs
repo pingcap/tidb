@@ -479,7 +479,12 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         // detach after a new OOM action is installed and clear that action.
         if let Some(authority) = self.statement_result_authority_ref().borrow().as_ref() {
             if !authority.statement_memory().is_finished() {
-                return authority.clone();
+                // The tracker is the statement's; the chunk bounds are the
+                // session variables as this build reads them (a `SET_VAR`
+                // hint lands between the boundary and the executor build).
+                return authority
+                    .clone()
+                    .with_chunk_sizes(snapshot.init_chunk_size, snapshot.max_chunk_size);
             }
         }
         let memory = self.session_memory_ref().statement_with_arbitration(
@@ -2316,6 +2321,15 @@ impl ResultMaterializationAuthority {
             start_ts_guard: None,
             current_tso: None,
         }
+    }
+
+    /// The same statement's authority under the chunk bounds a later build
+    /// reads.
+    #[must_use]
+    pub fn with_chunk_sizes(mut self, init_chunk_size: usize, max_chunk_size: usize) -> Self {
+        self.init_chunk_size = init_chunk_size;
+        self.max_chunk_size = max_chunk_size;
+        self
     }
 
     /// Retains the snapshot across transaction completion until result/cursor close.

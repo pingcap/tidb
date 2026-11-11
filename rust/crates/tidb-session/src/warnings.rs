@@ -238,6 +238,7 @@ impl Session {
         }
         self.prepared_params = None;
         self.in_execute = false;
+        self.context_of_stmt_reset = false;
         self.statement_boundary_open = true;
         self.parse_warnings = None;
         self.reset_plan_cache_tracker();
@@ -395,6 +396,11 @@ impl Session {
     ) {
         self.observe_statement_node(stmt, true);
         self.prepared_params = parameters;
+        // Go's `ResetContextOfStmt` runs once per statement: a binary EXECUTE
+        // opened this boundary before its plan-cache lookup.
+        if std::mem::take(&mut self.statement_boundary_open) {
+            return;
+        }
         let previous = std::mem::take(&mut self.warnings);
         self.install_statement_warning_state(stmt, previous);
     }
@@ -431,6 +437,11 @@ impl Session {
     pub(crate) fn begin_cached_prepared_query_boundary(&mut self) {
         self.restore_statement_variables();
         self.prepared_params = None;
+        // Go's `ResetContextOfStmt` runs once per statement: a binary EXECUTE
+        // opened this boundary before its plan-cache lookup.
+        if std::mem::take(&mut self.statement_boundary_open) {
+            return;
+        }
         if let Some(previous) = self.statement_result_authority.get_mut().take() {
             // Retire before installing the next root action, even when a
             // retained authority delays Drop beyond the statement boundary.

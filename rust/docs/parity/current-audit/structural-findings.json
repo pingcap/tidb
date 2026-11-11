@@ -2,9 +2,9 @@
   "date": "2026-11-09",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 24,
+    "unresolved": 23,
     "open": 4,
-    "partial": 20
+    "partial": 19
   },
   "findings": [
     {
@@ -95,13 +95,6 @@
       "go_owner": "`pkg/executor/importer`, `pkg/disttask/importinto`"
     },
     {
-      "id": "E22",
-      "status": "partial",
-      "group": "DML and executor handoff",
-      "finding": "A text `EXECUTE` of a cached prepared write runs inside the `EXECUTE`'s one statement lifecycle (`execute_cached_prepared_dml` no longer opens a nested `run_with_columns_using`), so it has one `StatementMemory` tracker, as Go's one `StmtCtx` does. The process plan follows Go's `SetProcessInfo`. A binary-protocol EXECUTE publishes no plan of its own (`runStmt`'s nil `currentPlan`), so the process info keeps the last valid plan, its brief binary plan and its collector. A SET, USE, DDL or transaction-control statement's plan renders no rows under `EXPLAIN FOR CONNECTION`. Both match a Go tidb-server over the wire (`unistore_cop.rs` `explain_for_connection_follows_gos_process_plan`). A lock-conflict or autocommit retry keeps the statement's context as Go's `handlePessimisticLockError` and `session.retry` do: the statement boundary (`begin_statement_execution`, Go `ResetContextOfStmt`) runs once and the re-execution runs `reset_for_retry` (Go `StmtCtx.ResetForRetry`), so the retry keeps the observation, the process info and the `Prev*` promotions (`unistore_cop.rs` `a_lock_retry_keeps_the_statement_context_like_go`). A plan-cache miss whose planning fails is the statement's error, as Go's `GetPlanFromPlanCache` returns `generateNewPlan`'s: the bind hands the error with the optimizer's warnings (`GenerateNewPlanError`) and the session runs the statement boundary, keeps the warnings and returns it (`fail_generate_new_plan`), over both protocols. Remaining: a binary-protocol `EXECUTE` (`cluster_session_node` `execute_general`) binds its cached point, SELECT or DML plan before that boundary, so a plan-cache miss builds its planner context (`statement_context_for_stmt`) under the previous statement's authority. Go's `ExecuteStmt` runs `PrepareTxnCtx` and `ResetContextOfStmt` once, before `Compile`'s plan-cache lookup. No wire-visible symptom found (warnings, `last_plan_from_cache` and bindings match Go over the binary protocol).",
-      "go_owner": "`pkg/session/session.go` (`ExecutePreparedStmt`, `ExecuteStmt`), `pkg/executor/compiler.go` (`Compile`)"
-    },
-    {
       "id": "O09",
       "status": "partial",
       "group": "Domain and process services",
@@ -180,7 +173,7 @@
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
-  "unresolved": 24,
+  "unresolved": 23,
   "open": 4,
-  "partial": 20
+  "partial": 19
 }
