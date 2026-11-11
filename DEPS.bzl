@@ -6447,6 +6447,13 @@ def go_deps():
         version = "v0.58.1-0.20261009181718-2f1f834330b2",
     )
     go_repository(
+        name = "org_golang_x_crypto_openpgp",
+        build_file_proto_mode = "disable_global",
+        importpath = "golang.org/x/crypto/openpgp",
+        sum = "h1:T+duersHJVuH6qLtQk22qtGKH5vZhxGSlL5SMFHclaQ=",
+        version = "v0.1.0-deprecated",
+    )
+    go_repository(
         name = "org_golang_x_exp",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/exp",
