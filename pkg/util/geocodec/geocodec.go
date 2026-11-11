@@ -93,22 +93,15 @@ const (
 	dialectMySQL
 )
 
-// Summary is what converting a value into the stored format learns about it, besides its
-// SRID, without building it.
-type Summary struct {
-	// Type is the geometry type of the root.
-	Type geom.GeometryType
-}
-
 // MySQLToStored converts MySQL's binary format into the stored format. It checks the WKB
 // framing, not MySQL's structure rules such as a linestring's minimum of two points.
-func MySQLToStored(b []byte) (stored []byte, srid uint32, sum Summary, err error) {
+func MySQLToStored(b []byte) (stored []byte, srid uint32, err error) {
 	if len(b) < 4 {
-		return nil, 0, Summary{}, ErrInvalid
+		return nil, 0, ErrInvalid
 	}
 	s := scanner{r: reader{buf: b[4:], dialect: dialectMySQL}, ingest: true}
 	if err := s.scan(); err != nil {
-		return nil, 0, Summary{}, err
+		return nil, 0, err
 	}
 	// The scan has checked the root header: the little-endian byte order and a type code
 	// without flags.
@@ -117,7 +110,7 @@ func MySQLToStored(b []byte) (stored []byte, srid uint32, sum Summary, err error
 	stored = append(stored, Version1, byteOrderLittle)
 	stored = binary.LittleEndian.AppendUint32(stored, binary.LittleEndian.Uint32(b[5:])|ewkbSRID)
 	stored = binary.LittleEndian.AppendUint32(stored, srid)
-	return append(stored, b[9:]...), srid, s.sum, nil
+	return append(stored, b[9:]...), srid, nil
 }
 
 // StoredToMySQL converts a stored value into MySQL's binary format, rewriting only the
@@ -563,8 +556,6 @@ type scanner struct {
 	// notMySQL records Z or M coordinates or an empty non-collection, reported only once the
 	// value is known to be well-formed.
 	notMySQL bool
-	// sum is the summary.
-	sum Summary
 }
 
 // scan scans the whole payload: one geometry, and nothing after it.
@@ -597,9 +588,6 @@ func (s *scanner) geometry(depth int, want geom.GeometryType, parentCType geom.C
 	}
 	if !root && (ctype != parentCType || (want != anyType && typ != want)) {
 		return ErrInvalid
-	}
-	if root {
-		s.sum.Type = typ
 	}
 	if ctype != geom.DimXY {
 		s.notMySQL = true

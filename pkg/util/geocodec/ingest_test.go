@@ -26,23 +26,19 @@ import (
 )
 
 // referenceMySQLToStored converts by building the geometry and encoding it.
-func referenceMySQLToStored(b []byte) (stored []byte, srid uint32, g geom.Geometry, err error) {
+func referenceMySQLToStored(b []byte) (stored []byte, srid uint32, err error) {
 	if len(b) < 4 {
-		return nil, 0, geom.Geometry{}, ErrInvalid
+		return nil, 0, ErrInvalid
 	}
 	srid = binary.LittleEndian.Uint32(b)
-	if _, g, err = read(b[4:], dialectMySQL); err != nil {
-		return nil, 0, geom.Geometry{}, err
+	_, g, err := read(b[4:], dialectMySQL)
+	if err != nil {
+		return nil, 0, err
 	}
 	if stored, err = encode(g, srid); err != nil {
-		return nil, 0, geom.Geometry{}, err
+		return nil, 0, err
 	}
-	return stored, srid, g, nil
-}
-
-// requireSummary requires sum to summarize g.
-func requireSummary(t testing.TB, g geom.Geometry, sum Summary) {
-	require.Equal(t, Summary{Type: g.Type()}, sum, g.AsText())
+	return stored, srid, nil
 }
 
 // ingestStats counts what checkIngest has compared.
@@ -71,8 +67,8 @@ func checkIngest(t testing.TB, b []byte) {
 		checkRead(t, b[4:], dialectMySQL)
 	}
 	checkAgainstReference(t, b)
-	got, gotSRID, sum, err := MySQLToStored(b)
-	want, wantSRID, g, wantErr := referenceMySQLToStored(b)
+	got, gotSRID, err := MySQLToStored(b)
+	want, wantSRID, wantErr := referenceMySQLToStored(b)
 	require.Equal(t, wantErr, err, "%X", b)
 	require.Equal(t, want, got, "%X", b)
 	if err != nil {
@@ -83,7 +79,6 @@ func checkIngest(t testing.TB, b []byte) {
 	// The stored format adds only the version byte: the SRID moves behind the type word.
 	require.Len(t, got, len(b)+1, "%X", b)
 	require.Equal(t, wantSRID, gotSRID, "%X", b)
-	requireSummary(t, g, sum)
 }
 
 // mixedWriter writes a stored value as writer does, except that each geometry below the
@@ -308,7 +303,7 @@ func TestIngestAllocs(t *testing.T) {
 		{hostileCounts(), 0},
 		{deep[:len(deep)-1], 0},
 	} {
-		allocs := testing.AllocsPerRun(3, func() { _, _, _, _ = MySQLToStored(c.b) })
+		allocs := testing.AllocsPerRun(3, func() { _, _, _ = MySQLToStored(c.b) })
 		require.Equal(t, c.allocs, allocs, "%X", c.b[:min(len(c.b), 32)])
 	}
 }

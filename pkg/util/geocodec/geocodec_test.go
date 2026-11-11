@@ -425,10 +425,9 @@ func TestMySQLFormat(t *testing.T) {
 	// Bytes from MySQL 9.7.2: HEX(ST_GeomFromText('POINT(1 2)', 4326)), latitude 1 and
 	// longitude 2, which MySQL holds longitude first, as the stored format does.
 	mysql4326 := mustHex(t, "E6100000 01 01000000 0000000000000040 000000000000F03F")
-	stored, srid, sum, err := MySQLToStored(mysql4326)
+	stored, srid, err := MySQLToStored(mysql4326)
 	require.NoError(t, err)
 	require.Equal(t, uint32(4326), srid)
-	require.Equal(t, Summary{Type: geom.TypePoint}, sum)
 
 	// The conversion rewrites the header only: the WKB body is the same bytes.
 	require.Equal(t, mustHex(t, "01 01 01000020 E6100000 0000000000000040 000000000000F03F"), stored)
@@ -438,7 +437,7 @@ func TestMySQLFormat(t *testing.T) {
 
 	// Any SRID passes through, since no SRS axis order is applied.
 	mysql12345 := mustHex(t, "39300000 01 01000000 000000000000F03F 0000000000000040")
-	stored, srid, _, err = MySQLToStored(mysql12345)
+	stored, srid, err = MySQLToStored(mysql12345)
 	require.NoError(t, err)
 	require.Equal(t, uint32(12345), srid)
 	back, err = StoredToMySQL(stored)
@@ -447,9 +446,8 @@ func TestMySQLFormat(t *testing.T) {
 
 	// The smallest valid value: GEOMETRYCOLLECTION EMPTY, 13 bytes.
 	smallest := mustHex(t, "00000000 01 07000000 00000000")
-	stored, _, sum, err = MySQLToStored(smallest)
+	stored, _, err = MySQLToStored(smallest)
 	require.NoError(t, err)
-	require.Equal(t, Summary{Type: geom.TypeGeometryCollection}, sum)
 	back, err = StoredToMySQL(stored)
 	require.NoError(t, err)
 	require.Equal(t, smallest, back)
@@ -478,7 +476,7 @@ func TestMySQLFormat(t *testing.T) {
 		"no geometry":            "E6100000",
 	}
 	for name, h := range rejects {
-		_, _, _, err := MySQLToStored(mustHex(t, h))
+		_, _, err := MySQLToStored(mustHex(t, h))
 		require.ErrorIs(t, err, ErrInvalid, name)
 	}
 }
@@ -530,7 +528,7 @@ func TestNotMySQLExpressible(t *testing.T) {
 		mysql, err := StoredToMySQL(stored)
 		require.NoError(t, err, wkt)
 		checkAgainstReference(t, stored)
-		again, _, _, err := MySQLToStored(mysql)
+		again, _, err := MySQLToStored(mysql)
 		require.NoError(t, err, wkt)
 		require.Equal(t, stored, again, wkt)
 	}
@@ -562,7 +560,7 @@ func TestDepthBound(t *testing.T) {
 		},
 		{mysqlChain(MaxDepth, point), storedChain(MaxDepth, 0, point)},
 	} {
-		stored, _, _, err := MySQLToStored(c.mysql)
+		stored, _, err := MySQLToStored(c.mysql)
 		require.NoError(t, err)
 		require.Equal(t, c.stored, stored)
 		back, err := StoredToMySQL(stored)
@@ -591,7 +589,7 @@ func TestDepthBound(t *testing.T) {
 		{nil, storedChain(MaxDepth+1, ewkbZ, mustHex(t, "01 01000080 000000000000F87F 000000000000F87F 000000000000F87F"))},
 	} {
 		if c.mysql != nil {
-			_, _, _, err := MySQLToStored(c.mysql)
+			_, _, err := MySQLToStored(c.mysql)
 			require.ErrorIs(t, err, ErrTooDeep)
 		}
 		_, err := StoredToMySQL(c.stored)
@@ -660,11 +658,11 @@ func TestTruncatedAndOverLong(t *testing.T) {
 			continue
 		}
 		for n := range mysql {
-			_, _, _, err := MySQLToStored(mysql[:n])
+			_, _, err := MySQLToStored(mysql[:n])
 			require.ErrorIs(t, err, ErrInvalid, "%s cut to %d", wkt, n)
 		}
 		for _, extra := range [][]byte{{0}, {1}, mysql[4:]} {
-			_, _, _, err := MySQLToStored(append(append([]byte{}, mysql...), extra...))
+			_, _, err := MySQLToStored(append(append([]byte{}, mysql...), extra...))
 			require.ErrorIs(t, err, ErrInvalid, wkt)
 		}
 	}
@@ -672,7 +670,7 @@ func TestTruncatedAndOverLong(t *testing.T) {
 
 func TestGarbage(t *testing.T) {
 	for _, s := range []string{"", "x", "POINT(1 2)", "\x00\x00\x00\x00", "\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"} {
-		_, _, _, err := MySQLToStored([]byte(s))
+		_, _, err := MySQLToStored([]byte(s))
 		require.Error(t, err)
 		_, err = StoredToMySQL([]byte(s))
 		require.Error(t, err)
@@ -692,7 +690,7 @@ func TestGarbage(t *testing.T) {
 				b[i] = alphabet[rnd.IntN(len(alphabet))]
 			}
 		}
-		if _, _, _, err := MySQLToStored(b); err != nil {
+		if _, _, err := MySQLToStored(b); err != nil {
 			require.True(t, errors.Is(err, ErrInvalid) || errors.Is(err, ErrTooDeep), "%X: %v", b, err)
 		}
 		stored := append([]byte{Version1}, b...)
@@ -916,11 +914,10 @@ func TestStoredToMySQLMatchesReference(t *testing.T) {
 				expressible++
 
 				// MySQL's format reads back as the same stored value.
-				again, gotSRID, sum, err := MySQLToStored(got)
+				again, gotSRID, err := MySQLToStored(got)
 				require.NoError(t, err, g.AsText())
 				require.Equal(t, stored, again, g.AsText())
 				require.Equal(t, srid, gotSRID)
-				requireSummary(t, g, sum)
 			}
 		}
 	}
@@ -967,7 +964,7 @@ func TestNestedCountsAllocs(t *testing.T) {
 	}
 	b = append(b, make([]byte, pad)...)
 	stored := storedFromMySQL(b)
-	_, _, _, err := MySQLToStored(b)
+	_, _, err := MySQLToStored(b)
 	require.ErrorIs(t, err, ErrInvalid)
 	_, err = StoredToMySQL(stored)
 	require.ErrorIs(t, err, ErrInvalid)
@@ -980,7 +977,7 @@ func TestNestedCountsAllocs(t *testing.T) {
 	})
 	require.Equal(t, 1.0, allocs)
 	allocs = testing.AllocsPerRun(1, func() {
-		_, _, _, _ = MySQLToStored(b)
+		_, _, _ = MySQLToStored(b)
 	})
 	require.Equal(t, 0.0, allocs)
 }
@@ -1009,7 +1006,7 @@ func FuzzMySQLToStored(f *testing.F) {
 	f.Add(mustHex(f, "00000000 01 07000000 02000000 01 01000000 000000000000F03F 0000000000000040"+
 		" 01 04000000 01000000 01 01000000 0000000000000840 0000000000001040"))
 	f.Fuzz(func(t *testing.T, b []byte) {
-		stored, _, _, err := MySQLToStored(b)
+		stored, _, err := MySQLToStored(b)
 		if err != nil {
 			return
 		}
@@ -1038,7 +1035,7 @@ func FuzzStoredToMySQL(f *testing.F) {
 			return
 		}
 		// What converts reads back, and converts again to the same bytes.
-		again, _, _, err := MySQLToStored(out)
+		again, _, err := MySQLToStored(out)
 		require.NoError(t, err)
 		out2, err := StoredToMySQL(again)
 		require.NoError(t, err)
