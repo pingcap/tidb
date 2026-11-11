@@ -1418,6 +1418,21 @@ fn check_columnar_index_process(
     Ok(false)
 }
 
+/// Go `checkColumnarIndexProcessFromTiKV` checks the backfill process of a
+/// columnar index from TiKV.
+pub(crate) fn check_columnar_index_process_from_tikv(table_id: i64, index_id: i64) -> Result<bool, DdlPlanError> {
+    use tidb_domain_infosync::tiflash_manager;
+    let tikv_stats = tiflash_manager::get_tiflash_stores_stat().map_err(DdlPlanError::Encode)?;
+    let tikv_stores: Vec<_> = tikv_stats
+        .stores
+        .into_iter()
+        .filter(|store| !tiflash_manager::is_tiflash_http_resp(&store.store))
+        .collect();
+    let progress = tiflash_manager::calculate_columnar_index_progress(table_id, index_id, &tikv_stores)
+        .map_err(DdlPlanError::Encode)?;
+    Ok(progress >= 1.0)
+}
+
 /// Go `checkColumnarIndexProcessOnce`: whether the build is done, and the
 /// rows not yet and already indexed.
 fn check_columnar_index_process_once(
@@ -1442,14 +1457,10 @@ fn check_columnar_index_process_once(
     let cse = &tidb_config::config_tree::config::get_global_config().cse;
     // If columnar store is enabled, Go checks the columnar index process
     // from TiKV (`CalculateColumnarIndexProgress`).
-    if cse.is_columnar_store_enabled() {
-        return Err(DdlPlanError::Encode(
-            "the columnar index progress of a columnar store is not supported by this node".to_owned(),
-        ));
-    }
+    let done = !cse.is_columnar_store_enabled() || check_columnar_index_process_from_tikv(table_id, index_id)?;
     // If TiFlash is not enabled, we return the result directly.
     if !cse.is_tiflash_enabled() {
-        return Ok((true, 0, 0));
+        return Ok((done, 0, 0));
     }
 
     // TODO: Support partition table

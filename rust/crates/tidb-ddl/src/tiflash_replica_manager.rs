@@ -43,7 +43,6 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use tidb_log::{Field, Value};
-use tidb_pd_client::{PdStore, PdStoreState};
 use tikv_client::pd_http;
 
 use tidb_store_driver_txn::cluster_http::block_on_pd_http;
@@ -75,7 +74,7 @@ const REFRESH_RULES_TICK: u64 = 10;
 /// One poller over the node's catalog and PD membership. It owns no transaction.
 pub struct TiFlashReplicaManager {
     catalog: Arc<tidb_infoschema_issyncer::catalog_watch::InfoCache>,
-    stores: Box<dyn Fn() -> Result<Vec<PdStore>, String> + Send + Sync>,
+    stores: Box<dyn Fn() -> Result<pd_http::StoresInfo, String> + Send + Sync>,
     ddl: Arc<dyn TiFlashReplicaControl>,
     /// Go `TiFlashReplicaManagerCtx.pdHTTPCli`.
     pd_http_client: pd_http::Client,
@@ -90,7 +89,9 @@ struct PollState {
     has_set_tiflash_group: bool,
     next_set_tiflash_group_time: Option<std::time::Instant>,
     counter: u64,
-    stores: Vec<PdStore>,
+    /// Go `TiFlashManagementContext.TiFlashStores` and `TiKVStores`.
+    tiflash_stores: Vec<pd_http::StoreInfo>,
+    tikv_stores: Vec<pd_http::StoreInfo>,
     backoff: HashMap<i64, BackoffElement>,
     pending: VecDeque<i64>,
 }
@@ -239,10 +240,7 @@ impl TiFlashReplicaManager {
         let stores_client = tidb_domain_infosync::pd_http::info_syncer_pd_http_client(&pd_http_client);
         let mut manager = Self::new(
             catalog,
-            move || {
-                let stores = block_on_pd_http(stores_client.get_stores())?;
-                decode_http_stores(&stores)
-            },
+            move || block_on_pd_http(stores_client.get_stores()),
             ddl,
             pd_http_client,
         )?;
@@ -257,7 +255,7 @@ impl TiFlashReplicaManager {
     /// `is.pdHTTPCli`.
     pub fn new(
         catalog: Arc<tidb_infoschema_issyncer::catalog_watch::InfoCache>,
-        stores: impl Fn() -> Result<Vec<PdStore>, String> + Send + Sync + 'static,
+        stores: impl Fn() -> Result<pd_http::StoresInfo, String> + Send + Sync + 'static,
         ddl: Arc<dyn TiFlashReplicaControl>,
         pd_http_client: pd_http::Client,
     ) -> Result<Self, String> {
@@ -343,16 +341,17 @@ impl TiFlashReplicaManager {
         let mut state = self.state.lock().expect("TiFlash poll state");
         if state.counter % 5 == 0 {
             match (self.stores)() {
-                Ok(stores) => {
-                    state.stores = stores
+                // Go `updateTiFlashWriteStores`: the TiFlash read nodes are
+                // ignored, every other store is a TiKV one.
+                Ok(tikv_stats) => {
+                    let is_tiflash = tidb_domain_infosync::tiflash_manager::is_tiflash_http_resp;
+                    let (tiflash_stores, tikv_stores): (Vec<_>, Vec<_>) = tikv_stats
+                        .stores
                         .into_iter()
-                        .filter(|store| {
-                            store
-                                .labels
-                                .iter()
-                                .any(|(key, value)| key == "engine" && value == "tiflash")
-                        })
-                        .collect()
+                        .filter(|store| !is_tiflash(&store.store) || is_tiflash_write_http_resp(&store.store))
+                        .partition(|store| is_tiflash(&store.store));
+                    state.tiflash_stores = tiflash_stores;
+                    state.tikv_stores = tikv_stores;
                 }
                 Err(error) => {
                     state.counter = 0;
@@ -361,7 +360,11 @@ impl TiFlashReplicaManager {
             }
         }
         state.counter += 1;
-        let stores = state.stores.clone();
+        let stores = state.tiflash_stores.clone();
+        let tikv_stores = state.tikv_stores.clone();
+        let cse = &tidb_config::config_tree::config::get_global_config().cse;
+        let check_tiflash = cse.is_tiflash_enabled();
+        let check_columnar = cse.is_columnar_store_enabled();
         // Collect EVERY replica-carrying table first: the rule pass needs the
         // full desired set (available tables keep their rule too), while the
         // progress pass only advances not-yet-available ones.
@@ -377,9 +380,31 @@ impl TiFlashReplicaManager {
             let Some(table) = replica_tables.iter().find(|table| table.id == id) else {
                 continue;
             };
-            if let Ok((_, progress)) = self.progress(id, table.count, &stores) {
-                self.record_progress(&mut state, id, progress);
+            let mut tiflash_progress = 1.0;
+            let mut columnar_progress = 1.0;
+            if check_tiflash {
+                match self.progress(id, table.count, &stores) {
+                    Ok((_, progress)) => tiflash_progress = progress,
+                    Err(_) => continue,
+                }
             }
+            if check_columnar {
+                match tidb_domain_infosync::tiflash_manager::calculate_columnar_progress(id, &tikv_stores) {
+                    Ok(progress) => columnar_progress = progress,
+                    Err(error) => {
+                        tidb_ddl_logutil::ddl_logger().error(
+                            "calculate columnar progress failed",
+                            &[
+                                zap_error(&error),
+                                Field::new("tableID", Value::I64(id)),
+                                Field::new("IsPartition", Value::Bool(table.is_partition)),
+                            ],
+                        );
+                        continue;
+                    }
+                }
+            }
+            self.record_progress(&mut state, id, tiflash_progress.min(columnar_progress));
         }
         let refill_pending = state.pending.is_empty();
 
@@ -403,9 +428,16 @@ impl TiFlashReplicaManager {
                 );
                 continue;
             }
-            let (one_replica_progress, full_progress) =
+            let mut tiflash_progress = 1.0;
+            let mut tiflash_avail_progress = 1.0;
+            let mut columnar_progress = 1.0;
+            if check_tiflash {
+                // Collect the replica progress for this table from TiFlash stores.
                 match self.progress(table_id, count, &stores) {
-                    Ok(progress) => progress,
+                    Ok((avail_progress, progress)) => {
+                        tiflash_avail_progress = avail_progress;
+                        tiflash_progress = progress;
+                    }
                     Err(error) => {
                         tidb_ddl_logutil::ddl_logger().error(
                             "get tiflash sync progress failed",
@@ -416,10 +448,29 @@ impl TiFlashReplicaManager {
                         );
                         continue;
                     }
-                };
+                }
+            }
+            if check_columnar {
+                match tidb_domain_infosync::tiflash_manager::calculate_columnar_progress(table_id, &tikv_stores) {
+                    Ok(progress) => columnar_progress = progress,
+                    Err(error) => {
+                        tidb_ddl_logutil::ddl_logger().error(
+                            "calculate columnar progress failed",
+                            &[
+                                zap_error(&error),
+                                Field::new("tableID", Value::I64(table_id)),
+                            ],
+                        );
+                        continue;
+                    }
+                }
+            }
+            let full_progress = tiflash_progress.min(columnar_progress);
+            let one_replica_progress = tiflash_avail_progress.min(columnar_progress);
             // Go ddl_tiflash_api.go:500: `avail = availProgress >= 1.0`,
-            // where availProgress is the ONE-replica progress: every
-            // region carries at least one learner peer.
+            // where availProgress is the ONE-replica progress (every
+            // region carries at least one learner peer) bounded by the
+            // columnar one.
             let available = one_replica_progress >= 1.0;
             self.record_progress(&mut state, table_id, full_progress);
             if full_progress == 1.0 {
@@ -543,7 +594,7 @@ impl TiFlashReplicaManager {
         &self,
         table_id: i64,
         replica_count: u64,
-        stores: &[tidb_pd_client::PdStore],
+        stores: &[pd_http::StoreInfo],
     ) -> Result<(f64, f64), String> {
         // Go `GetRegionCountFromPD`: `GetRegionStatusByKeyRange(.., true)`
         // over the escaped binary memcomparable keys.
@@ -564,7 +615,7 @@ impl TiFlashReplicaManager {
         for store in stores {
             let url = format!(
                 "{}://{}/tiflash/sync-status/keyspace/{NULL_KEYSPACE_ID}/table/{table_id}",
-                self.http_scheme, store.status_address,
+                self.http_scheme, store.store.status_address,
             );
             // CollectTiFlashStatusWithCtx parses the body regardless of HTTP status.
             let regions = self
@@ -572,10 +623,12 @@ impl TiFlashReplicaManager {
                 .and_then(|(_, body)| parse_sync_status(&body));
             let store_regions: std::collections::HashSet<_> = match regions {
                 Ok(regions) => regions.into_iter().collect(),
-                // Go skips failed Down/Offline/Tombstone stores; Up and
-                // Disconnected failures abort the calculation.
-                Err(_) if store.state == PdStoreState::Offline => continue,
-                Err(error) => return Err(error),
+                // Just skip down or offline or tombstone stores, because PD
+                // will migrate regions from these stores.
+                Err(error) if store.store.state_name == "Up" || store.store.state_name == "Disconnected" => {
+                    return Err(error)
+                }
+                Err(_) => continue,
             };
             peer_count += store_regions.len();
             regions_with_peer.extend(store_regions);
@@ -593,33 +646,14 @@ impl Drop for TiFlashReplicaManager {
     }
 }
 
-// Go `GetTiFlashStoresStat`'s `pd.StoresInfo` as the poller reads it.
-fn decode_http_stores(stores: &pd_http::StoresInfo) -> Result<Vec<PdStore>, String> {
-    stores
-        .stores
+/// Go `engine.IsTiFlashWriteHTTPResp`: a TiFlash node under the classic
+/// kernel or a TiFlash write node under the next-gen one, never a TiFlash
+/// compute node.
+fn is_tiflash_write_http_resp(store: &pd_http::MetaStore) -> bool {
+    store
+        .labels
         .iter()
-        .map(|entry| {
-            let store = &entry.store;
-            let name = store.state_name.as_str();
-            Ok(PdStore {
-                id: u64::try_from(store.id)
-                    .map_err(|_| format!("PD store has an invalid ID {}", store.id))?,
-                address: store.address.clone(),
-                status_address: store.status_address.clone(),
-                state: if name == "Up" || name == "Disconnected" {
-                    PdStoreState::Up
-                } else {
-                    PdStoreState::Offline
-                },
-                node_state: tidb_pd_client::PdNodeState::Serving,
-                labels: store
-                    .labels
-                    .iter()
-                    .map(|label| (label.key.clone(), label.value.clone()))
-                    .collect(),
-            })
-        })
-        .collect()
+        .any(|label| label.key == "engine" && label.value == "tiflash")
 }
 
 /// Go helper.ComputeTiFlashStatus: a count line followed by space-separated IDs.
@@ -717,7 +751,7 @@ mod tests {
             catalog,
             move || {
                 calls.fetch_add(1, Ordering::SeqCst);
-                Ok(vec![])
+                Ok(pd_http::StoresInfo::default())
             },
             ddl,
             pd_http_client("127.0.0.1:1"),
@@ -770,7 +804,7 @@ mod tests {
                 if attempt < 2 {
                     Err("PD unavailable".to_owned())
                 } else {
-                    Ok(vec![])
+                    Ok(pd_http::StoresInfo::default())
                 }
             },
             ddl,
@@ -1000,7 +1034,7 @@ mod tests {
         let poller = fixture_manager(&http, Arc::new(Ddl::default()), &[]);
         let mut store = http.store();
         assert!(poller.progress(7, 2, &[store.clone()]).is_err());
-        store.state = PdStoreState::Offline;
+        store.store.state_name = "Offline".to_owned();
         assert_eq!(poller.progress(7, 2, &[store]).unwrap(), (0.0, 0.0));
     }
 
@@ -1094,14 +1128,23 @@ mod tests {
             }
         }
 
-        fn store(&self) -> PdStore {
-            PdStore {
-                id: 1,
-                address: String::new(),
-                status_address: self.address.clone(),
-                state: PdStoreState::Up,
-                node_state: tidb_pd_client::PdNodeState::Serving,
-                labels: vec![("engine".into(), "tiflash".into())],
+        fn store(&self) -> pd_http::StoreInfo {
+            self.store_of("tiflash")
+        }
+
+        fn store_of(&self, engine: &str) -> pd_http::StoreInfo {
+            pd_http::StoreInfo {
+                store: pd_http::MetaStore {
+                    id: 1,
+                    status_address: self.address.clone(),
+                    state_name: "Up".to_owned(),
+                    labels: vec![pd_http::StoreLabel {
+                        key: "engine".to_owned(),
+                        value: engine.to_owned(),
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
             }
         }
     }
@@ -1165,7 +1208,12 @@ mod tests {
         let store = http.store();
         TiFlashReplicaManager::new(
             replica_catalog(tables),
-            move || Ok(vec![store.clone()]),
+            move || {
+                Ok(pd_http::StoresInfo {
+                    count: 1,
+                    stores: vec![store.clone()],
+                })
+            },
             ddl,
             pd_http_client(&http.address),
         )
@@ -1227,6 +1275,195 @@ mod tests {
                 .iter()
                 .any(|(path, _)| path.ends_with("/table/7")),
             "the first pass queues available progress for a later tick"
+        );
+    }
+
+    /// The TiKV status server of the Go probe these columnar tests are
+    /// pinned by (`helper.CollectColumnarStatus` and
+    /// `infosync.CalculateColumnar{,Index}Progress` over an httptest server).
+    fn columnar_response(path: &str) -> (u16, String) {
+        let Some(query) = path.strip_prefix("/kvengine/columnar_status?") else {
+            return successful_response(path);
+        };
+        let table_id = query.split('&').find_map(|pair| pair.strip_prefix("table_id=")).unwrap();
+        let (status, body) = match table_id {
+            "7" => (200, r#"{"ready":3,"vector-index-ready":1,"total":4}"#),
+            "8" => (200, r#"{"ready":4,"vector-index-ready":4,"total":4}"#),
+            "9" => (200, "{}"),
+            "10" => (503, "busy"),
+            "11" => (200, r#"{"ready":-1,"total":4}"#),
+            _ => (200, "not json"),
+        };
+        (status, body.to_owned())
+    }
+
+    #[test]
+    fn the_columnar_progress_is_read_from_the_tikv_status_api_like_go() {
+        use tidb_domain_infosync::tiflash_manager::{
+            calculate_columnar_index_progress, calculate_columnar_progress, collect_columnar_status,
+            ColumnarStatusResp,
+        };
+        let http = HttpFixture::new(columnar_response);
+        let security = tidb_pd_client::ClusterSecurity::default();
+        let collect = |table_id, index_id| collect_columnar_status(&security, &http.address, table_id, index_id);
+        let status = |ready, vector_index_ready, total| ColumnarStatusResp {
+            ready,
+            vector_index_ready,
+            total,
+        };
+        assert_eq!(collect(7, None), Ok(status(3, 1, 4)));
+        assert_eq!(collect(8, None), Ok(status(4, 4, 4)));
+        assert_eq!(collect(9, None), Ok(status(0, 0, 0)));
+        assert_eq!(
+            collect(10, None),
+            Err("TiKV columnar status API returned status 503: busy".to_owned())
+        );
+        assert_eq!(
+            collect(11, None),
+            Err("json: cannot unmarshal number -1 into Go struct field ColumnarStatusResp.ready of type uint".to_owned())
+        );
+        assert!(collect(12, None).is_err());
+        assert_eq!(collect(7, Some(3)), Ok(status(3, 1, 4)));
+        let paths: Vec<String> = http.requests.lock().unwrap().drain(..).map(|(path, _)| path).collect();
+        assert_eq!(paths[0], "/kvengine/columnar_status?keyspace_id=4294967295&table_id=7");
+        assert_eq!(paths[6], "/kvengine/columnar_status?keyspace_id=4294967295&table_id=7&index_id=3");
+
+        let store = |state: &str| {
+            let mut store = http.store_of("tikv");
+            store.store.state_name = state.to_owned();
+            store
+        };
+        let up = [store("Up"), store("Up")];
+        assert_eq!(calculate_columnar_progress(7, &up), Ok(0.75));
+        assert_eq!(calculate_columnar_index_progress(7, 3, &up), Ok(0.25));
+        assert_eq!(calculate_columnar_progress(8, &up), Ok(1.0));
+        assert_eq!(calculate_columnar_index_progress(8, 3, &up), Ok(1.0));
+        assert_eq!(calculate_columnar_progress(9, &up), Ok(0.0));
+        assert_eq!(calculate_columnar_index_progress(9, 3, &up), Ok(0.0));
+        assert_eq!(calculate_columnar_progress(7, &[]), Ok(0.0));
+        let paths: Vec<String> = http.requests.lock().unwrap().drain(..).map(|(path, _)| path).collect();
+        assert_eq!(paths.len(), 12);
+        assert_eq!(paths[2], "/kvengine/columnar_status?keyspace_id=4294967295&table_id=7&index_id=3");
+        // A failed store is an error unless it is a tombstone.
+        assert_eq!(calculate_columnar_progress(10, &[store("Tombstone")]), Ok(0.0));
+        for state in ["Up", "Offline", "Down", "Disconnected"] {
+            let failed = Err(format!(
+                "Failed to get columnar status from TiKV, store {} is {state}",
+                http.address
+            ));
+            assert_eq!(calculate_columnar_progress(10, &[store(state)]), failed);
+            assert_eq!(calculate_columnar_index_progress(10, 3, &[store(state)]), failed);
+        }
+    }
+
+    /// Go `updateTiFlashWriteStores` and `PollTiFlashReplicaStatus`: the
+    /// TiFlash write stores report the TiFlash progress, every non-TiFlash
+    /// store the columnar one, each read only under its `cse` store type,
+    /// and the table's progress is the smaller of the two.
+    #[test]
+    fn the_poller_bounds_the_tiflash_progress_by_the_columnar_one_like_go() {
+        use tidb_domain_infosync::tiflash_manager::get_tiflash_progress_from_cache;
+        let poll = |columnar_store_type: &str| {
+            tidb_config::config_tree::config::update_global(|config| {
+                config.cse.columnar_store_type = columnar_store_type.to_owned()
+            });
+            let http = HttpFixture::new(columnar_response);
+            let ddl = Arc::new(Ddl::default());
+            ddl.owner.store(true, Ordering::SeqCst);
+            let stores = vec![http.store_of("tiflash"), http.store_of("tiflash_compute"), http.store_of("tikv")];
+            let poller = TiFlashReplicaManager::new(
+                replica_catalog(&[(7, false)]),
+                move || {
+                    Ok(pd_http::StoresInfo {
+                        count: 3,
+                        stores: stores.clone(),
+                    })
+                },
+                ddl.clone(),
+                pd_http_client(&http.address),
+            )
+            .unwrap();
+            poller.poll_once().unwrap();
+            let asked = |prefix: &str| {
+                http.requests
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|(path, _)| path.starts_with(prefix))
+                    .count()
+            };
+            let seen = (
+                ddl.updates.lock().unwrap().clone(),
+                get_tiflash_progress_from_cache(7),
+                asked("/tiflash/sync-status/"),
+                asked("/kvengine/columnar_status?"),
+            );
+            drop(poller);
+            seen
+        };
+        // One TiFlash write store holds both regions once of two replicas
+        // (0.5, one replica everywhere); the TiKV store is 3/4 ready.
+        assert_eq!(poll("tiflash"), (vec![(7, true)], Some(0.5), 1, 0));
+        assert_eq!(poll("both"), (vec![(7, false)], Some(0.5), 1, 1));
+        assert_eq!(poll("columnar"), (vec![(7, false)], Some(0.75), 0, 1));
+        tidb_config::config_tree::config::update_global(|config| config.cse.columnar_store_type = "tiflash".to_owned());
+    }
+
+    /// Go `checkColumnarIndexProcessFromTiKV`: the vector-index progress of
+    /// the non-TiFlash stores, done once every one is ready.
+    #[test]
+    fn a_columnar_index_is_done_once_every_tikv_store_built_it_like_go() {
+        use tidb_domain_infosync::tiflash_manager::{init_tiflash_replica_manager, TiFlashReplicaManager};
+        struct Stores(pd_http::StoresInfo);
+        impl TiFlashReplicaManager for Stores {
+            fn set_tiflash_group_config(&self) -> Result<(), String> {
+                Ok(())
+            }
+            fn set_placement_rule(&self, _: &pd_http::Rule) -> Result<(), String> {
+                Ok(())
+            }
+            fn set_placement_rule_batch(&self, _: &[pd_http::Rule]) -> Result<(), String> {
+                Ok(())
+            }
+            fn post_accelerate_schedule_batch(&self, _: &[i64]) -> Result<(), String> {
+                Ok(())
+            }
+            fn get_placement_rule(&self, _: i64) -> Result<pd_http::Rule, String> {
+                Ok(pd_http::Rule::default())
+            }
+            fn update_tiflash_progress_cache(&self, _: i64, _: f64) {}
+            fn get_tiflash_progress_from_cache(&self, _: i64) -> Option<f64> {
+                None
+            }
+            fn delete_tiflash_progress_from_cache(&self, _: i64) {}
+            fn clean_tiflash_progress_cache(&self) {}
+            fn get_stores_stat(&self) -> Result<pd_http::StoresInfo, String> {
+                Ok(self.0.clone())
+            }
+            fn sync_tiflash_table_schema(&self, _: i64, _: &[pd_http::StoreInfo]) -> Result<(), String> {
+                Ok(())
+            }
+        }
+        let http = HttpFixture::new(columnar_response);
+        // The TiFlash stores serve no columnar status: asking one fails.
+        let mut tiflash = http.store_of("tiflash");
+        tiflash.store.status_address = "127.0.0.1:1".to_owned();
+        let mut compute = http.store_of("tiflash_compute");
+        compute.store.status_address = "127.0.0.1:1".to_owned();
+        init_tiflash_replica_manager(Some(Arc::new(Stores(pd_http::StoresInfo {
+            count: 3,
+            stores: vec![tiflash, http.store_of("tikv"), compute],
+        }))));
+        use crate::cluster_ddl::add_index::check_columnar_index_process_from_tikv;
+        assert!(check_columnar_index_process_from_tikv(8, 3).unwrap());
+        assert!(!check_columnar_index_process_from_tikv(7, 3).unwrap());
+        assert_eq!(
+            check_columnar_index_process_from_tikv(10, 3).unwrap_err().to_string(),
+            format!("Failed to get columnar status from TiKV, store {} is Up", http.address)
+        );
+        assert_eq!(
+            http.requests.lock().unwrap()[0].0,
+            "/kvengine/columnar_status?keyspace_id=4294967295&table_id=8&index_id=3"
         );
     }
 

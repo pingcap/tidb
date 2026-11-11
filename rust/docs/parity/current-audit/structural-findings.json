@@ -2,9 +2,9 @@
   "date": "2026-11-09",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 20,
+    "unresolved": 19,
     "open": 4,
-    "partial": 16
+    "partial": 15
   },
   "findings": [
     {
@@ -29,13 +29,6 @@
       "finding": "No ingest (fast-reorg) backfill: it falls back to the transactional merge (`tidb-ddl/src/cluster_ddl/add_index.rs`); with it the status port's `/ingest/*` routes (Go `IngestConcurrencyHandler` over `ingestctrl`'s rate-limit parameters) are absent, and so is the DXF add-index task's `autoPauseAddIndexJobOnKVDiskFull`, the one producer of the system pause a multi-schema change promotes (`promote_proxy_kv_disk_full_pause`); the DXF backfill executor's Top SQL attach (`attachTopProfilingInfo` in `backfilling_dist_executor.go`) goes with it",
       "rust_evidence": "`rust/crates/tidb-ddl/src/cluster_ddl/add_index.rs`",
       "go_owner": "`pkg/ddl/backfilling*.go`, `pkg/ddl/ingest`"
-    },
-    {
-      "id": "D05",
-      "status": "partial",
-      "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "Cancellation follows Go's `convertJob2RollbackJob` for every action the worker runs, and a columnar (vector, inverted, full-text) index runs Go's `ActionAddColumnarIndex` job (`add_index.rs` `on_create_columnar_index`: TiFlash schema sync, `checkColumnarIndexProcess`, `rollingbackAddColumanrIndex`). What is left is the columnar store of a CSE deployment: `checkColumnarIndexProcessFromTiKV` (`infosync.CalculateColumnarIndexProgress` over each TiKV store's columnar status) has no port, so `check_columnar_index_process_once` refuses when `cse.IsColumnarStoreEnabled`, as the replica-progress side (`ddl_tiflash_api.go` `checkColumnar`) does not read it either. Go's cancel of the job from a hook at its second `WriteReorganization` step (`testAddColumnarIndexRollback` case 2) has no test here",
-      "go_owner": "`pkg/ddl`"
     },
     {
       "id": "E10",
@@ -152,7 +145,7 @@
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
-  "unresolved": 20,
+  "unresolved": 19,
   "open": 4,
-  "partial": 16
+  "partial": 15
 }

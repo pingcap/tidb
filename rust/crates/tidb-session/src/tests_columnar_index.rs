@@ -455,15 +455,21 @@ fn add_columnar_index_simple_like_go() {
     assert_eq!(index_names(session, "t"), ["b|INVERTED", "a|BTREE", "a_2|INVERTED"]);
 }
 
-/// Go `testAddColumnarIndexRollback` (`pkg/ddl/index_modify_test.go`), the
-/// cases that need no job hook: no mock TiFlash, a failed build and a
-/// finished one.
+/// Go `testAddColumnarIndexRollback` (`pkg/ddl/index_modify_test.go`): no
+/// mock TiFlash, a job cancelled at its second `WriteReorganization` step
+/// (Go hooks `afterWaitSchemaSynced`; the step's other end,
+/// `beforeRunOneJobStep`, is the hook here), a failed build and a finished
+/// one.
 #[test]
 fn add_vector_index_rollback_like_go() {
     let mut session = Session::new_with_mock_tiflash(2);
     let session = &mut session;
     exec(session, "create table t1 (c1 int, b vector, c vector(3), unique key(c1));");
     exec(session, "alter table t1 set tiflash replica 2 location labels 'a','b';");
+    exec(
+        session,
+        "insert into t1 values (1, '[1,6.6]', '[1,8.88,9.99]'), (2, '[2,6.6]', '[2,8.88,9.99]'), (3, '[3,6.6]', '[3,8.88,9.99]'), (4, '[4,6.6]', '[4,8.88,9.99]')",
+    );
     exec(session, "set global tidb_ddl_error_count_limit = 5");
     let add = "alter table t1 add vector index v_idx((VEC_COSINE_DISTANCE(c))) USING HNSW";
     // Case1: add a vector index but tiflash is not accessible.
@@ -474,10 +480,42 @@ fn add_vector_index_rollback_like_go() {
     assert_eq!(last_job(session), "add columnar index|rollback done|0");
     assert_eq!(index_names(session, "t1"), ["c1|BTREE"]);
 
-    // Case3: add a vector index normally, but tiflash is failed to backfill.
+    // Case2: do 'admin cancel ddl job to rollback job.
     tidb_domain_infosync::tiflash_manager::set_mock_tiflash(std::sync::Arc::new(
         tidb_domain_infosync::tiflash_manager::MockTiFlash::new(),
     ));
+    {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Mutex};
+        let _mock = enable("MockCheckColumnarIndexProcess", "return(0)");
+        let domain = crate::domain::mock_store::domain_of(session).expect("a mock store session");
+        let times = AtomicUsize::new(1);
+        let cancelled = Arc::new(Mutex::new(Vec::new()));
+        let seen = cancelled.clone();
+        tidb_ddl::failpoint_call::enable_call(
+            "beforeRunOneJobStep",
+            Arc::new(move |job: &dyn std::any::Any| {
+                let job = job.downcast_ref::<tidb_model::Job>().expect("the step's job");
+                if job.schema_state != tidb_model::SchemaState::WRITE_REORGANIZATION {
+                    return;
+                }
+                if times.fetch_add(1, Ordering::SeqCst) == 2 {
+                    let mut tk1 = domain.new_session().expect("a second session");
+                    let result = rows(&mut tk1, &format!("admin cancel ddl jobs {}", job.id));
+                    seen.lock().unwrap().push(result[0][1].clone());
+                }
+            }),
+        );
+        let error = error_of(session, add);
+        tidb_ddl::failpoint_call::disable("beforeRunOneJobStep");
+        assert_eq!(error, (8214, "Cancelled DDL job".to_owned()));
+        assert_eq!(*cancelled.lock().unwrap(), ["successful"]);
+        assert_eq!(rows(session, "select count(1) from t1;"), [["4"]]);
+        assert_eq!(last_job(session), "add columnar index|rollback done|0");
+        assert_eq!(index_names(session, "t1"), ["c1|BTREE"]);
+    }
+
+    // Case3: add a vector index normally, but tiflash is failed to backfill.
     {
         let _mock = enable("MockCheckColumnarIndexProcess", "return(-1)");
         assert_eq!(

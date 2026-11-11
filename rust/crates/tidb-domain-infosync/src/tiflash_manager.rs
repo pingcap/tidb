@@ -54,6 +54,10 @@ pub trait TiFlashReplicaManager: Send + Sync {
     /// Go `SetMockTiFlash`'s type assertion: only the mock manager takes a
     /// mock TiFlash.
     fn set_mock_tiflash(&self, _tiflash: Arc<MockTiFlash>) {}
+    /// The cluster security Go's `util.InternalHTTPClient` is built from.
+    fn security(&self) -> tidb_pd_client::ClusterSecurity {
+        tidb_pd_client::ClusterSecurity::default()
+    }
 }
 
 /// Go `tiflashProgressCache` with the four methods both of Go's managers
@@ -210,6 +214,10 @@ impl TiFlashReplicaManager for TiFlashReplicaManagerCtx {
             self.sync_table_schema_to_tiflash(&store.store.status_address, table_id)?;
         }
         Ok(())
+    }
+
+    fn security(&self) -> tidb_pd_client::ClusterSecurity {
+        self.security.clone()
     }
 }
 
@@ -404,6 +412,130 @@ pub fn sync_tiflash_table_schema(table_id: i64) -> Result<(), String> {
         })
         .collect();
     manager.sync_tiflash_table_schema(table_id, &tiflash_stores)
+}
+
+/// Go `helper.ColumnarStatusResp`: the response from the TiKV's status API.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ColumnarStatusResp {
+    /// `ready`.
+    pub ready: u64,
+    /// `vector-index-ready`.
+    pub vector_index_ready: u64,
+    /// `total`.
+    pub total: u64,
+}
+
+/// Go `helper.CollectColumnarStatus`: collects the columnar status from the
+/// TiKV status API. This node serves the null keyspace (Go
+/// `is.tikvCodec.GetKeyspaceID()`).
+pub fn collect_columnar_status(
+    security: &tidb_pd_client::ClusterSecurity,
+    status_address: &str,
+    table_id: i64,
+    index_id: Option<i64>,
+) -> Result<ColumnarStatusResp, String> {
+    let schema = if security.is_tls_enabled() { "https" } else { "http" };
+    let mut stat_url = format!(
+        "{schema}://{status_address}/kvengine/columnar_status?keyspace_id={}&table_id={table_id}",
+        tikv_client::tikv::NULLSPACE_ID,
+    );
+    if let Some(index_id) = index_id {
+        stat_url.push_str(&format!("&index_id={index_id}"));
+    }
+    let client = tidb_store_driver_txn::cluster_http::internal_http_client(security)?;
+    let resp = client.get(stat_url).send().map_err(|error| error.to_string())?;
+    let status = resp.status().as_u16();
+    let body = resp.text().map_err(|error| error.to_string())?;
+    if status != 200 {
+        return Err(format!("TiKV columnar status API returned status {status}: {body}"));
+    }
+    let value: serde_json::Value = serde_json::from_str(&body).map_err(|error| error.to_string())?;
+    let field = |name: &str| match value.get(name) {
+        None | Some(serde_json::Value::Null) => Ok(0),
+        Some(count) => count
+            .as_u64()
+            .ok_or_else(|| format!("json: cannot unmarshal number {count} into Go struct field ColumnarStatusResp.{name} of type uint")),
+    };
+    let columnar_status = ColumnarStatusResp {
+        ready: field("ready")?,
+        vector_index_ready: field("vector-index-ready")?,
+        total: field("total")?,
+    };
+    if columnar_status.ready != columnar_status.total {
+        info(
+            "columnar status not ready",
+            &[
+                Field::new("ready", Value::U64(columnar_status.ready)),
+                Field::new("total", Value::U64(columnar_status.total)),
+            ],
+        );
+    }
+    Ok(columnar_status)
+}
+
+/// The loop Go's `calculateColumnarProgressWithCtx` and
+/// `CalculateColumnarIndexProgress` share: the `ready_of` count of every
+/// TiKV store over their total, a failed store an error unless it is a
+/// tombstone.
+fn columnar_progress(
+    table_id: i64,
+    index_id: Option<i64>,
+    tikv_stores: &[pd_http::StoreInfo],
+    ready_of: fn(&ColumnarStatusResp) -> u64,
+) -> Result<f64, String> {
+    let security = tiflash_replica_manager().security();
+    let mut ready = 0;
+    let mut total = 0;
+    for store_stat in tikv_stores {
+        let addr = &store_stat.store.status_address;
+        let Ok(columnar_status) = collect_columnar_status(&security, addr, table_id, index_id) else {
+            tidb_logutil::bg_logger().error(
+                "Fail to get columnar status from TiKV.",
+                &[
+                    Field::new("tableID", Value::I64(table_id)),
+                    Field::new("addr", Value::Str(addr.clone())),
+                ],
+            );
+            // If the store is not tombstone, return error
+            if store_stat.store.state_name != "Tombstone" {
+                return Err(format!(
+                    "Failed to get columnar status from TiKV, store {addr} is {}",
+                    store_stat.store.state_name
+                ));
+            }
+            continue;
+        };
+        ready += ready_of(&columnar_status);
+        total += columnar_status.total;
+    }
+    if total == 0 {
+        return Ok(0.0);
+    }
+    Ok(ready as f64 / total as f64)
+}
+
+/// Go `infosync.CalculateColumnarProgress` calculates columnar progress.
+pub fn calculate_columnar_progress(table_id: i64, tikv_stores: &[pd_http::StoreInfo]) -> Result<f64, String> {
+    columnar_progress(table_id, None, tikv_stores, |status| status.ready)
+}
+
+/// Go `infosync.CalculateColumnarIndexProgress` calculates columnar index
+/// progress.
+pub fn calculate_columnar_index_progress(
+    table_id: i64,
+    index_id: i64,
+    tikv_stores: &[pd_http::StoreInfo],
+) -> Result<f64, String> {
+    columnar_progress(table_id, Some(index_id), tikv_stores, |status| status.vector_index_ready)
+}
+
+/// Go `engine.IsTiFlashHTTPResp` tests whether the store is a TiFlash node
+/// from a PD HTTP response.
+pub fn is_tiflash_http_resp(store: &pd_http::MetaStore) -> bool {
+    store
+        .labels
+        .iter()
+        .any(|label| label.key == "engine" && (label.value == "tiflash_compute" || label.value == "tiflash"))
 }
 
 /// Go `infosync.UpdateTiFlashProgressCache`.
