@@ -19,6 +19,7 @@
 //! optimistic transaction that locks the rows it indexed, and is retried on a
 //! write conflict like Go's `kv.RunInNewTxn(..., retryable=true, ...)`.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use tidb_model::JobState;
 use tidb_txnkv::transaction::BufferMutation;
 
@@ -61,17 +62,37 @@ where
             reorg,
             &tables,
         )?,
-        ReorgStageRequest::Run(handle) => run_reorg(
-            opener,
-            timeout,
-            backfiller,
-            sess_pool.as_deref(),
-            reorg,
-            &tables,
-            handle,
-            check_owner,
-            &mut warnings,
-        )?,
+        ReorgStageRequest::Run(handle) => {
+            let step_cancelled = AtomicBool::new(false);
+            std::thread::scope(|scope| {
+                let (stop_checking_job_cancelled, stopped) = std::sync::mpsc::channel::<()>();
+                let (tables, step_cancelled) = (&tables, &step_cancelled);
+                let checker_pool = sess_pool.as_deref();
+                scope.spawn(move || {
+                    check_job_cancelled(
+                        reorg.job_id,
+                        || latest_job(opener, timeout, checker_pool, tables, reorg.job_id),
+                        CHECK_JOB_CANCELLED_INTERVAL,
+                        stopped,
+                        step_cancelled,
+                    )
+                });
+                let result = run_reorg(
+                    opener,
+                    timeout,
+                    backfiller,
+                    sess_pool.as_deref(),
+                    reorg,
+                    tables,
+                    handle,
+                    check_owner,
+                    step_cancelled,
+                    &mut warnings,
+                );
+                drop(stop_checking_job_cancelled);
+                result
+            })?
+        }
         ReorgStageRequest::Check(check) => {
             reorg_transaction(opener, timeout, &crate::job_ctx::internal_ddl_source(), |_, snapshot, buffer, _| {
                 let answer = backfiller.reorg_add_index(
@@ -461,29 +482,54 @@ where
     Ok(result)
 }
 
-/// Go `isReorgRunnable`: the job must still be running (not cancelling,
-/// pausing or paused) and this node its owner.
+/// Go `isReorgRunnable`: the step's context must not be cancelled and this
+/// node must be the owner.
 fn reorg_runnable(
-    meta: &mut SnapshotMetaSnapshot,
-    tables: &ReorgTables,
-    job_id: i64,
+    step_cancelled: &AtomicBool,
     check_owner: &(dyn Fn() -> Result<(), String> + Sync),
 ) -> Result<bool, ClusterDdlError> {
+    if step_cancelled.load(Ordering::SeqCst) {
+        return Ok(false);
+    }
     check_owner().map_err(ClusterDdlError::SchemaSync)?;
-    let job = tables
-        .jobs
-        .load_by_id(meta, job_id)
-        .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?;
-    Ok(match job {
-        Some(active) => {
-            let job = &active.job;
-            !(job.is_cancelling()
-                || job.is_pausing()
-                || job.is_paused()
-                || job.state == JobState::CANCELLED)
+    Ok(true)
+}
+
+/// The interval of Go `runOneJobStep`'s job-cancelled ticker.
+const CHECK_JOB_CANCELLED_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Go `runOneJobStep`'s job-cancelled checker: every two seconds it asks
+/// `sysTblMgr.GetJobByID` for the job and cancels the step's context once
+/// the job is cancelling, cancelled, pausing or paused; it ends with the
+/// step, or when the job is gone.
+fn check_job_cancelled(
+    job_id: i64,
+    get_job_by_id: impl Fn() -> Result<Option<tidb_model::Job>, ClusterDdlError>,
+    interval: Duration,
+    stopped: std::sync::mpsc::Receiver<()>,
+    step_cancelled: &AtomicBool,
+) {
+    while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = stopped.recv_timeout(interval) {
+        match get_job_by_id() {
+            Ok(Some(job)) => {
+                if matches!(
+                    job.state,
+                    JobState::CANCELLING | JobState::CANCELLED | JobState::PAUSING | JobState::PAUSED
+                ) {
+                    step_cancelled.store(true, Ordering::SeqCst);
+                    return;
+                }
+            }
+            Ok(None) => return,
+            Err(error) => tidb_ddl_logutil::ddl_logger().error(
+                "get job failed, will retry later",
+                &[
+                    tidb_log::Field::new("job_id", tidb_log::Value::I64(job_id)),
+                    zap_error(error),
+                ],
+            ),
         }
-        None => false,
-    })
+    }
 }
 
 /// Go `sysTblMgr.GetJobByID`: the job as `mysql.tidb_ddl_job` has it now,
@@ -536,6 +582,7 @@ fn run_reorg<S>(
     tables: &ReorgTables,
     handle: &ReorgHandle,
     check_owner: &(dyn Fn() -> Result<(), String> + Sync),
+    step_cancelled: &AtomicBool,
     warnings: &mut Vec<(u16, String, i64)>,
 ) -> Result<ReorgResult, ClusterDdlError>
 where
@@ -607,13 +654,13 @@ where
                     timeout,
                     backfiller,
                     reorg,
-                    tables,
                     handle.physical_id,
                     start,
                     end,
                     batch_size,
                     index_id,
                     check_owner,
+                    step_cancelled,
                 )
             };
             // Go `reorgInfo.UpdateConfigFromSysTbl`.
@@ -711,19 +758,19 @@ fn run_batch<S>(
     timeout: Duration,
     backfiller: &dyn IndexBackfiller,
     reorg: &AddIndexReorg,
-    tables: &ReorgTables,
     physical_id: i64,
     start: &[u8],
     end: &[u8],
     batch_size: usize,
     merge_index: Option<i64>,
     check_owner: &(dyn Fn() -> Result<(), String> + Sync),
+    step_cancelled: &AtomicBool,
 ) -> Result<BatchStep, ClusterDdlError>
 where
     S: StoreClient,
 {
-    reorg_transaction(opener, timeout, &crate::job_ctx::backfill_request_source(reorg.job_id), |meta, snapshot, buffer, _| {
-        if !reorg_runnable(meta, tables, reorg.job_id, check_owner)? {
+    reorg_transaction(opener, timeout, &crate::job_ctx::backfill_request_source(reorg.job_id), |_, snapshot, buffer, _| {
+        if !reorg_runnable(step_cancelled, check_owner)? {
             return Ok((BatchStep::Interrupted, Vec::new()));
         }
         let work = match merge_index {
@@ -823,5 +870,84 @@ fn update_reorg_meta<S>(
                 tidb_log::Field::new("error", tidb_log::Value::Str(error)),
             ],
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go `runOneJobStep`'s checker cancels the step's context for a job
+    /// that is cancelling, cancelled, pausing or paused, keeps polling a
+    /// job in any other state or one it failed to read, and ends when the
+    /// job is gone or the step is; `isReorgRunnable` refuses a cancelled
+    /// step before it asks for the owner.
+    #[test]
+    fn the_job_cancelled_checker_cancels_the_step_as_go() {
+        let job_in = |state| {
+            let mut job = tidb_model::Job::default();
+            job.state = state;
+            job
+        };
+        let run = |answers: Vec<Result<Option<tidb_model::Job>, ClusterDdlError>>| {
+            let polls = std::cell::Cell::new(0);
+            let answers = std::cell::RefCell::new(answers.into_iter());
+            let step_cancelled = AtomicBool::new(false);
+            let (stop, stopped) = std::sync::mpsc::channel::<()>();
+            check_job_cancelled(
+                7,
+                || {
+                    polls.set(polls.get() + 1);
+                    match answers.borrow_mut().next() {
+                        Some(answer) => answer,
+                        None => {
+                            // The step ends.
+                            let _ = stop.send(());
+                            Ok(Some(job_in(JobState::RUNNING)))
+                        }
+                    }
+                },
+                Duration::from_millis(1),
+                stopped,
+                &step_cancelled,
+            );
+            (step_cancelled.load(Ordering::SeqCst), polls.get())
+        };
+        for state in [
+            JobState::CANCELLING,
+            JobState::CANCELLED,
+            JobState::PAUSING,
+            JobState::PAUSED,
+        ] {
+            let answers = vec![
+                Ok(Some(job_in(JobState::RUNNING))),
+                Err(ClusterDdlError::Backfill("get job failed".to_owned())),
+                Ok(Some(job_in(state))),
+                Ok(Some(job_in(JobState::RUNNING))),
+            ];
+            assert_eq!(run(answers), (true, 3), "{state:?}");
+        }
+        for state in [
+            JobState::QUEUEING,
+            JobState::RUNNING,
+            JobState::ROLLINGBACK,
+            JobState::ROLLBACK_DONE,
+            JobState::DONE,
+            JobState::SYNCED,
+        ] {
+            assert_eq!(run(vec![Ok(Some(job_in(state)))]), (false, 2), "{state:?}");
+        }
+        assert_eq!(run(vec![Ok(None), Ok(Some(job_in(JobState::CANCELLING)))]), (false, 1));
+
+        let owner_asked = std::sync::atomic::AtomicUsize::new(0);
+        let check_owner = || {
+            owner_asked.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        };
+        let step_cancelled = AtomicBool::new(false);
+        assert!(reorg_runnable(&step_cancelled, &check_owner).unwrap());
+        step_cancelled.store(true, Ordering::SeqCst);
+        assert!(!reorg_runnable(&step_cancelled, &check_owner).unwrap());
+        assert_eq!(owner_asked.load(Ordering::SeqCst), 1);
     }
 }
