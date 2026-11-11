@@ -455,31 +455,31 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 		return ssElement.maxProcessedKeys
 	},
 	AvgRocksdbDeleteSkippedCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumRocksdbDeleteSkippedCount), ssElement.execCount)
+		return avgFloat4Uint(ssElement.sumRocksdbDeleteSkippedCount, ssElement.execCount)
 	},
 	MaxRocksdbDeleteSkippedCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return ssElement.maxRocksdbDeleteSkippedCount
 	},
 	AvgRocksdbKeySkippedCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumRocksdbKeySkippedCount), ssElement.execCount)
+		return avgFloat4Uint(ssElement.sumRocksdbKeySkippedCount, ssElement.execCount)
 	},
 	MaxRocksdbKeySkippedCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return ssElement.maxRocksdbKeySkippedCount
 	},
 	AvgRocksdbBlockCacheHitCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumRocksdbBlockCacheHitCount), ssElement.execCount)
+		return avgFloat4Uint(ssElement.sumRocksdbBlockCacheHitCount, ssElement.execCount)
 	},
 	MaxRocksdbBlockCacheHitCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return ssElement.maxRocksdbBlockCacheHitCount
 	},
 	AvgRocksdbBlockReadCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumRocksdbBlockReadCount), ssElement.execCount)
+		return avgFloat4Uint(ssElement.sumRocksdbBlockReadCount, ssElement.execCount)
 	},
 	MaxRocksdbBlockReadCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return ssElement.maxRocksdbBlockReadCount
 	},
 	AvgRocksdbBlockReadByteStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumRocksdbBlockReadByte), ssElement.execCount)
+		return avgFloat4Uint(ssElement.sumRocksdbBlockReadByte, ssElement.execCount)
 	},
 	MaxRocksdbBlockReadByteStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return ssElement.maxRocksdbBlockReadByte
@@ -599,7 +599,7 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 		return ssElement.prepared
 	},
 	AvgAffectedRowsStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgFloat(int64(ssElement.sumAffectedRows), ssElement.execCount)
+		return avgFloat4Uint(ssElement.sumAffectedRows, ssElement.execCount)
 	},
 	FirstSeenStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		firstSeen := ssElement.firstSeen
