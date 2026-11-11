@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -290,6 +291,229 @@ func WriteInsert(
 }
 
 // WriteInsertInCsv writes TableDataIR to a storage.ExternalFileWriter in csv type
+var emptyCSVBytes = []byte{}
+
+// csvRawBatch is a copied batch of raw column values. sql.RawBytes from the
+// driver alias the connection buffer, so the reader must copy them before
+// Rows.Next. Escaping happens later, on the writer goroutine.
+type csvRawBatch struct {
+	data   []byte
+	off    []int
+	ln     []int
+	nCols  int
+	nRows  int
+	rawLen int
+}
+
+var csvBatchPool = sync.Pool{New: func() any {
+	return &csvRawBatch{
+		data: make([]byte, 0, lengthLimit),
+		off:  make([]int, 0, 4096),
+		ln:   make([]int, 0, 4096),
+	}
+}}
+
+func newCSVRawBatch(nCols int) *csvRawBatch {
+	b := csvBatchPool.Get().(*csvRawBatch)
+	b.reset(nCols)
+	return b
+}
+
+func (b *csvRawBatch) reset(nCols int) {
+	b.data = b.data[:0]
+	b.off = b.off[:0]
+	b.ln = b.ln[:0]
+	b.nCols = nCols
+	b.nRows = 0
+	b.rawLen = 0
+}
+
+func (b *csvRawBatch) add(v []byte) {
+	if v == nil {
+		b.off = append(b.off, -1)
+		b.ln = append(b.ln, 0)
+		return
+	}
+	b.off = append(b.off, len(b.data))
+	b.ln = append(b.ln, len(v))
+	b.data = append(b.data, v...)
+	b.rawLen += len(v)
+}
+
+func (b *csvRawBatch) cell(row, col int) []byte {
+	i := row*b.nCols + col
+	off := b.off[i]
+	if off < 0 {
+		return nil
+	}
+	n := b.ln[i]
+	if n == 0 {
+		return emptyCSVBytes
+	}
+	return b.data[off : off+n]
+}
+
+func releaseCSVRawBatch(b *csvRawBatch) {
+	// Drop a huge backing array instead of pinning it in the pool.
+	if cap(b.data) > 8*lengthLimit {
+		b.data = nil
+	} else {
+		b.data = b.data[:0]
+	}
+	b.off = b.off[:0]
+	b.ln = b.ln[:0]
+	b.nRows = 0
+	b.rawLen = 0
+	csvBatchPool.Put(b)
+}
+
+func receiverRaw(rec RowReceiverStringer) []byte {
+	switch s := rec.(type) {
+	case *SQLTypeNumber:
+		return s.RawBytes
+	case *SQLTypeBytes:
+		return s.RawBytes
+	case *SQLTypeString:
+		return s.RawBytes
+	default:
+		raw := rec.GetRawBytes()
+		if len(raw) == 0 {
+			return nil
+		}
+		return raw[0]
+	}
+}
+
+func setReceiverRaw(rec RowReceiverStringer, v []byte) {
+	switch s := rec.(type) {
+	case *SQLTypeNumber:
+		s.RawBytes = v
+	case *SQLTypeBytes:
+		s.RawBytes = v
+	case *SQLTypeString:
+		s.RawBytes = v
+	default:
+		panic("csv encode: unsupported row receiver")
+	}
+}
+
+// csvEncodePipe reads copied raw rows from the dump goroutine and escapes them
+// on a separate goroutine so socket reads are not stalled by CSV escaping.
+type csvEncodePipe struct {
+	tctx        *tcontext.Context
+	w           storage.ExternalFileWriter
+	metrics     *metrics
+	opt         *csvOption
+	escape      bool
+	selected    bool
+	row         *RowReceiverArr
+	headerNames []string
+	headerCols  int
+	writeHeader bool
+
+	input  chan *csvRawBatch
+	errCh  chan error
+	closed chan struct{}
+
+	finished atomic.Uint64
+	current  atomic.Uint64
+}
+
+func (p *csvEncodePipe) run() {
+	defer close(p.closed)
+	bf := pool.Get().(*bytes.Buffer)
+	if bfCap := bf.Cap(); bfCap < lengthLimit {
+		bf.Grow(lengthLimit - bfCap)
+	}
+	defer func() {
+		bf.Reset()
+		pool.Put(bf)
+	}()
+
+	if p.writeHeader {
+		start := bf.Len()
+		for i, col := range p.headerNames {
+			bf.Write(p.opt.delimiter)
+			escapeCSV([]byte(col), bf, p.escape, p.opt)
+			bf.Write(p.opt.delimiter)
+			if i != p.headerCols-1 {
+				bf.Write(p.opt.separator)
+			}
+		}
+		bf.Write(p.opt.lineTerminator)
+		p.current.Add(uint64(bf.Len() - start))
+	}
+
+	errOccurs := false
+	for batch := range p.input {
+		if !errOccurs {
+			for r := 0; r < batch.nRows; r++ {
+				start := bf.Len()
+				if p.selected {
+					for c, rec := range p.row.receivers {
+						setReceiverRaw(rec, batch.cell(r, c))
+					}
+					p.row.WriteToBufferInCsv(bf, p.escape, p.opt)
+				}
+				bf.Write(p.opt.lineTerminator)
+				p.current.Add(uint64(bf.Len() - start))
+				if bf.Len() >= lengthLimit {
+					if err := p.flush(bf); err != nil {
+						errOccurs = true
+						select {
+						case p.errCh <- err:
+						default:
+						}
+					}
+				}
+			}
+		}
+		releaseCSVRawBatch(batch)
+	}
+	if !errOccurs && bf.Len() > 0 {
+		if err := p.flush(bf); err != nil {
+			select {
+			case p.errCh <- err:
+			default:
+			}
+		}
+	}
+}
+
+func (p *csvEncodePipe) flush(bf *bytes.Buffer) error {
+	if bf.Len() == 0 {
+		return nil
+	}
+	if err := writeBytes(p.tctx, p.w, bf.Bytes()); err != nil {
+		return err
+	}
+	n := uint64(bf.Len())
+	p.finished.Add(n)
+	AddGauge(p.metrics.finishedSizeGauge, float64(n))
+	bf.Reset()
+	return nil
+}
+
+func (p *csvEncodePipe) send(ctx *tcontext.Context, batch *csvRawBatch) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-p.errCh:
+		return err
+	case p.input <- batch:
+		return nil
+	}
+}
+
+func (p *csvEncodePipe) takeErr() error {
+	select {
+	case err := <-p.errCh:
+		return err
+	default:
+		return nil
+	}
+}
+
 func WriteInsertInCsv(
 	pCtx *tcontext.Context,
 	cfg *Config,
@@ -303,12 +527,6 @@ func WriteInsertInCsv(
 		return 0, fileRowIter.Error()
 	}
 
-	bf := pool.Get().(*bytes.Buffer)
-	if bfCap := bf.Cap(); bfCap < lengthLimit {
-		bf.Grow(lengthLimit - bfCap)
-	}
-
-	wp := newWriterPipe(w, cfg.FileSize, UnspecifiedSize, metrics, cfg.Labels)
 	opt := &csvOption{
 		nullValue:      cfg.CsvNullValue,
 		separator:      []byte(cfg.CsvSeparator),
@@ -316,109 +534,118 @@ func WriteInsertInCsv(
 		lineTerminator: []byte(cfg.CsvLineTerminator),
 		binaryFormat:   DialectBinaryFormatMap[cfg.CsvOutputDialect],
 	}
+	selectedFields := meta.SelectedField()
+	row := MakeRowReceiver(meta.ColumnTypes())
+	nCols := 0
+	if selectedFields != "" {
+		nCols = len(row.receivers)
+	}
+	writeHeader := !cfg.NoHeader && len(meta.ColumnNames()) != 0 && selectedFields != ""
 
-	// use context.Background here to make sure writerPipe can deplete all the chunks in pipeline
-	ctx, cancel := tcontext.Background().WithLogger(pCtx.L()).WithCancel()
+	// The encoder drains queued batches on its own goroutine. It does not use
+	// the caller context, so a cancel after the reader stops still flushes rows
+	// already copied off the connection.
+	pipe := &csvEncodePipe{
+		tctx:        tcontext.Background().WithLogger(pCtx.L()),
+		w:           w,
+		metrics:     metrics,
+		opt:         opt,
+		escape:      cfg.EscapeBackslash,
+		selected:    selectedFields != "",
+		row:         MakeRowReceiver(meta.ColumnTypes()),
+		headerNames: meta.ColumnNames(),
+		headerCols:  len(meta.ColumnTypes()),
+		writeHeader: writeHeader,
+		input:       make(chan *csvRawBatch, 8),
+		errCh:       make(chan error, 1),
+		closed:      make(chan struct{}),
+	}
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		wp.Run(ctx)
+		pipe.run()
 		wg.Done()
-	}()
-	defer func() {
-		cancel()
-		wg.Wait()
 	}()
 
 	var (
-		row             = MakeRowReceiver(meta.ColumnTypes())
-		counter         uint64
-		lastCounter     uint64
-		escapeBackslash = cfg.EscapeBackslash
-		selectedFields  = meta.SelectedField()
+		counter     uint64
+		lastCounter uint64
 	)
+	batch := newCSVRawBatch(nCols)
+	var closeOnce sync.Once
+	closeInput := func() {
+		closeOnce.Do(func() { close(pipe.input) })
+	}
 
 	defer func() {
+		closeInput()
+		wg.Wait()
+		finishedSize := pipe.finished.Load()
 		if err != nil {
 			pCtx.L().Warn("fail to dumping table(chunk), will revert some metrics and start a retry if possible",
 				zap.String("database", meta.DatabaseName()),
 				zap.String("table", meta.TableName()),
 				zap.Uint64("finished rows", lastCounter),
-				zap.Uint64("finished size", wp.finishedFileSize),
+				zap.Uint64("finished size", finishedSize),
 				log.ShortError(err))
 			SubGauge(metrics.finishedRowsGauge, float64(lastCounter))
-			SubGauge(metrics.finishedSizeGauge, float64(wp.finishedFileSize))
+			SubGauge(metrics.finishedSizeGauge, float64(finishedSize))
 		} else {
 			pCtx.L().Debug("finish dumping table(chunk)",
 				zap.String("database", meta.DatabaseName()),
 				zap.String("table", meta.TableName()),
 				zap.Uint64("finished rows", counter),
-				zap.Uint64("finished size", wp.finishedFileSize))
-			summary.CollectSuccessUnit(summary.TotalBytes, 1, wp.finishedFileSize)
+				zap.Uint64("finished size", finishedSize))
+			summary.CollectSuccessUnit(summary.TotalBytes, 1, finishedSize)
 			summary.CollectSuccessUnit("total rows", 1, counter)
 		}
 	}()
 
-	if !cfg.NoHeader && len(meta.ColumnNames()) != 0 && selectedFields != "" {
-		for i, col := range meta.ColumnNames() {
-			bf.Write(opt.delimiter)
-			escapeCSV([]byte(col), bf, escapeBackslash, opt)
-			bf.Write(opt.delimiter)
-			if i != len(meta.ColumnTypes())-1 {
-				bf.Write(opt.separator)
-			}
-		}
-		bf.Write(opt.lineTerminator)
-	}
-	wp.currentFileSize += uint64(bf.Len())
-
 	for fileRowIter.HasNext() {
-		lastBfSize := bf.Len()
 		// When all table columns are generated, selectedFields is empty.
 		// Dumpling still iterates source rows via SELECT '' and emits only
-		// line terminators here.
+		// line terminators here. Escaping runs on pipe.run, not this goroutine.
 		if selectedFields != "" {
 			if err = fileRowIter.Decode(row); err != nil {
 				return counter, errors.Trace(err)
 			}
-			row.WriteToBufferInCsv(bf, escapeBackslash, opt)
-		}
-		counter++
-		bf.Write(opt.lineTerminator)
-		wp.currentFileSize += uint64(bf.Len() - lastBfSize)
-		if bf.Len() >= lengthLimit {
-			select {
-			case <-pCtx.Done():
-				return counter, pCtx.Err()
-			case err = <-wp.errCh:
-				return counter, err
-			case wp.input <- bf:
-				bf = pool.Get().(*bytes.Buffer)
-				if bfCap := bf.Cap(); bfCap < lengthLimit {
-					bf.Grow(lengthLimit - bfCap)
-				}
-				AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
-				lastCounter = counter
+			for _, rec := range row.receivers {
+				batch.add(receiverRaw(rec))
 			}
+		}
+		batch.nRows++
+		counter++
+		if batch.rawLen >= lengthLimit || batch.nRows >= 8192 {
+			if err = pipe.send(pCtx, batch); err != nil {
+				return counter, err
+			}
+			AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
+			lastCounter = counter
+			batch = newCSVRawBatch(nCols)
 		}
 
 		fileRowIter.Next()
-		if wp.ShouldSwitchFile() {
+		if cfg.FileSize != UnspecifiedSize && pipe.current.Load() >= cfg.FileSize {
 			break
 		}
 	}
 
-	if bf.Len() > 0 {
-		wp.input <- bf
+	if batch.nRows > 0 {
+		if err = pipe.send(pCtx, batch); err != nil {
+			return counter, err
+		}
+		AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
+		lastCounter = counter
 	}
-	close(wp.input)
-	<-wp.closed
-	AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
-	lastCounter = counter
+	closeInput()
+	wg.Wait()
 	if err = fileRowIter.Error(); err != nil {
 		return counter, errors.Trace(err)
 	}
-	return counter, wp.Error()
+	if err = pipe.takeErr(); err != nil {
+		return counter, err
+	}
+	return counter, nil
 }
 
 func write(tctx *tcontext.Context, writer storage.ExternalFileWriter, str string) error {
