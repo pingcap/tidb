@@ -331,8 +331,8 @@ def go_deps():
         name = "com_github_apache_thrift",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/apache/thrift",
-        sum = "h1:wKR6YnefQSEnxpEfmgTPuJibNG4bF0p2TK34tHLWi3s=",
-        version = "v0.23.0",
+        sum = "h1:zy31L1a49QTNB2bG1BBfMXol3yJrTH975G3pPubQVLQ=",
+        version = "v0.24.0",
     )
     go_repository(
         name = "com_github_armon_circbuf",

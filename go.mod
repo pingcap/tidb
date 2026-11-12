@@ -237,7 +237,7 @@ require (
 	github.com/Masterminds/sprig/v3 v3.2.2 // indirect
 	github.com/VividCortex/ewma v1.2.0 // indirect
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
-	github.com/apache/thrift v0.23.0 // indirect
+	github.com/apache/thrift v0.24.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bmatcuk/doublestar/v2 v2.0.4 // indirect
 	github.com/cenkalti/backoff/v4 v4.2.1
