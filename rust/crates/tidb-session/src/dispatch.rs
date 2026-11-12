@@ -1942,6 +1942,9 @@ impl Session {
                     )? {
                         let cache_hit = execution.cache_hit();
                         let schema_version = execution.schema_version();
+                        // Go `PlanCacheParams`: the cached plan's markers read
+                        // this statement's literals.
+                        let ctx = ctx.clone().with_plan_cache_params(execution.parameters());
                         let result = execution.with_plan(|statement, physical| {
                             let Stmt::Query(query) = statement else {
                                 unreachable!("a retained SELECT owns a query statement")

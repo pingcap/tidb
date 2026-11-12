@@ -345,9 +345,7 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
             }
             active_attempts.insert(task.task_id, attempt_id);
         }
-        if logical_order.is_empty() {
-            return Err("region discovery produced no logical task".to_owned());
-        }
+        // Go's copIterator over no task answers no data.
         let timeout = if metadata.tikv_client_read_timeout_ms > 0 {
             Duration::from_millis(metadata.tikv_client_read_timeout_ms)
         } else {
@@ -408,7 +406,6 @@ fn request_ranges(metadata: &tidb_txnkv::KvRequestMetadata) -> Result<Vec<(Vec<u
     let ranges = ranges
         .partitions()
         .first()
-        .filter(|ranges| !ranges.is_empty())
         .ok_or_else(|| "missing_ranges".to_owned())?;
     Ok(ranges
         .iter()
@@ -1122,6 +1119,10 @@ impl<S: NativeCopStore + ?Sized> super::cop_iterator::CopWorkerSource for Native
     /// Go `copIterator.open`: one source per task for the worker pool, unless
     /// one worker would take them all in order anyway.
     fn into_tasks(mut self) -> Vec<Self> {
+        // Go's copIterator over no task has no worker to feed.
+        if self.logical_order.is_empty() {
+            return Vec::new();
+        }
         if self.metadata.concurrency <= 1
             && (self.metadata.request_source.internal || !self.runtime.has_small_tasks())
         {

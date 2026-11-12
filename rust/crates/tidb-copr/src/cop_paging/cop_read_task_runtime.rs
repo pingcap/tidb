@@ -1468,9 +1468,8 @@ pub(super) fn validate_request(metadata: &KvRequestMetadata) -> Result<(), CopRe
         .partitions()
         .first()
         .ok_or(CopReadTaskError::MissingRanges)?;
-    if ranges.is_empty() {
-        return Err(CopReadTaskError::MissingRanges);
-    }
+    // Go `buildCopTasks` over no ranges builds no task: the request reads
+    // nothing.
     if ranges.len() > MAX_RANGES_PER_TASK_BUILD {
         return Err(CopReadTaskError::TooManyRanges);
     }
@@ -1492,10 +1491,10 @@ fn ranges_are_strictly_monotonic(ranges: &[KeyRange]) -> bool {
     })
 }
 
+/// No region is a valid topology: a request over no range needs none (Go's
+/// `buildCopTasks` builds no task); one over a range is refused by
+/// `build_region_tasks`.
 fn validate_topology(topology: &[RegionTaskTopology]) -> Result<(), CopReadTaskError> {
-    if topology.is_empty() {
-        return Err(CopReadTaskError::InvalidTopology);
-    }
     let mut region_ids = BTreeSet::new();
     let mut previous_start: Option<&[u8]> = None;
     let mut previous_end: Option<&[u8]> = None;

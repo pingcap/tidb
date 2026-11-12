@@ -36,17 +36,15 @@ use tidb_planner_core_base::PlanError;
 use tidb_planner_core_operator_physicalop::fragment::{
     generate_root_mpp_tasks, Fragment, MppTaskGeneratorContext,
 };
-use tidb_planner_core_operator_physicalop::to_pb::BuildPbContext;
 use tidb_planner_core_operator_physicalop::{MppTask, PhysicalPlan, PhysicalTableScan};
 use tidb_proto::mpp::{ReportTaskStatusRequest, TaskMeta};
-use tidb_proto::tipb::{self, DagRequest, EncodeType, ExecType};
+use tidb_proto::tipb::{self, EncodeType, ExecType};
 use tidb_txnkv::{
     KeyRange, MppBuildTasksRequest, MppClient, MppContext, MppError, MppQueryId, MppRpcError,
     MppStoreTask, MppTaskLocation, MppVersion, QueryResponseError, QueryResultSubset,
     RegionBackoffBudget,
 };
 
-use crate::dag_request::DEFAULT_DIV_PRECISION_INCREMENT;
 use crate::mpp_coordinator::MppGatherResponse;
 use crate::mppcoordmanager::{CoordinatorUniqueId, MppCoordinator, INSTANCE_MPP_COORDINATOR_MANAGER};
 use crate::StatementMemory;
@@ -859,7 +857,8 @@ impl LocalMppCoordinator {
             .sink
             .as_ref()
             .ok_or_else(|| "the fragment has no sink".to_owned())?;
-        let mut dag_req = construct_dag_req(ctx, statement, sink)?;
+        let mut dag_req = crate::builder_utils::construct_dag_req(ctx, statement, &[sink], StoreType::TiFlash)
+            .map_err(|err| err.to_string())?;
         for i in 0..sink.schema().map_or(0, |schema| schema.columns.len()) {
             dag_req.output_offsets.push(i as u32);
         }
@@ -924,45 +923,6 @@ impl LocalMppCoordinator {
     }
 }
 
-/// Go `ConstructDAGReq(ctx, []PhysicalPlan{sink}, kv.TiFlash)`.
-pub(crate) fn construct_dag_req(
-    ctx: &crate::StmtContext,
-    statement: &PushdownStatementContext,
-    sink: &PhysicalPlan,
-) -> Result<DagRequest, String> {
-    let (time_zone_name, time_zone_offset) = statement.time_zone.dag_zone();
-    let pb_ctx = BuildPbContext {
-        expr_ctx: ctx,
-        tiflash_fast_scan: ctx.tiflash_fast_scan(),
-        tiflash_fine_grained_shuffle_batch_size: statement.tiflash_fine_grained_shuffle_batch_size,
-        group_concat_max_len: match tidb_exprctx::Columns::sysvar(ctx, None, "group_concat_max_len") {
-            Some(tidb_datatype::Datum::UInt(max_len)) => max_len,
-            _ => tidb_vardef::defaults::DEF_GROUP_CONCAT_MAX_LEN,
-        },
-        in_explain_stmt: ctx.in_explain_stmt(),
-        use_dynamic_partition_prune: !ctx.static_partition_prune(),
-    };
-    // Go `ConstructTreeBasedDistExec`.
-    let root_executor = sink.to_pb(&pb_ctx, StoreType::TiFlash).map_err(|err| err.to_string())?;
-    let endian = if tidb_distsql::system_endian() == tidb_distsql::SystemEndian::Little {
-        tipb::Endian::LittleEndian
-    } else {
-        tipb::Endian::BigEndian
-    };
-    Ok(DagRequest {
-        time_zone_name: Some(time_zone_name),
-        time_zone_offset: Some(time_zone_offset),
-        flags: Some(statement.push_down_flags),
-        collect_execution_summaries: ctx.cop_response_sink().is_some().then_some(true),
-        div_precision_increment: (statement.div_precision_increment != DEFAULT_DIV_PRECISION_INCREMENT)
-            .then_some(statement.div_precision_increment),
-        root_executor: Some(root_executor),
-        chunk_memory_layout: Some(tipb::ChunkMemoryLayout {
-            endian: Some(endian as i32),
-        }),
-        ..DagRequest::default()
-    })
-}
 
 /// Go `dispatchAll`: every task's `handleDispatchReq` on its own thread;
 /// `respChan` closes once they all end.

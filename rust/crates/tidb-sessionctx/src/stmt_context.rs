@@ -961,6 +961,9 @@ pub struct StmtContextData {
     /// Typed execute-time values. Clones within one execution share this
     /// immutable snapshot; later executions install a different snapshot.
     prepared_params: Option<Arc<[Datum]>>,
+    /// Go `ExecStmt.PsStmt != nil`: the parameters are a prepared
+    /// statement's, not a non-prepared plan cache's.
+    prepared_execution: bool,
     /// Go `PlanCtxExtended.readonlyUserVars`: the user variables the
     /// preprocessor found the statement only reads.
     readonly_user_vars: Arc<std::collections::HashSet<String>>,
@@ -2815,6 +2818,15 @@ context_configuration! {
     #[must_use]
     pub fn with_prepared_params(mut self, values: Arc<[Datum]>) -> Self {
         self.prepared_params = Some(values);
+        self.prepared_execution = true;
+        self
+    }
+
+    /// Go `SessionVars.PlanCacheParams` of a non-prepared plan cache
+    /// execution: the literals the cached plan's markers read.
+    #[must_use]
+    pub fn with_plan_cache_params(mut self, values: Arc<[Datum]>) -> Self {
+        self.prepared_params = Some(values);
         self
     }
 
@@ -3141,6 +3153,7 @@ impl StmtContext {
             builtin_function_usage_inc: None,
             user_vars: None,
             prepared_params: None,
+            prepared_execution: false,
             readonly_user_vars: Arc::default(),
             current_insert_values: Arc::default(),
             rand_seeded: Arc::default(),
@@ -5421,7 +5434,7 @@ impl StmtContext {
     /// supplied.
     #[must_use]
     pub fn is_prepared_execution(&self) -> bool {
-        self.prepared_params.is_some()
+        self.prepared_execution
     }
 
     /// Whether this statement plans against a pessimistic transaction.

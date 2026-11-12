@@ -7117,7 +7117,7 @@ fn build_cluster_table_reader(
         {
             // Go `buildTableReader`'s `getSnapshotTS`.
             let start_ts = ctx.txn_store().map_or(0, |store| store.start_ts());
-            return Ok(Box::new(crate::table_reader::TableReaderExecutor::new(
+            return Ok(Box::new(crate::table_reader::TiDbTableReaderExecutor::new(
                 meta,
                 ctx.clone(),
                 request,
@@ -7520,16 +7520,50 @@ fn build_reader_node(
             // Go `buildNoRangeTableReader` over the `kv.TiFlash` store: a
             // tree-based request, sent as `batchCop` or `cop`. A union scan
             // reads the buffer through its own mem table reader.
-            if reader.store_type == tidb_kv::store_type::StoreType::TiFlash && !state.reader_storage.is_mem_buffer() {
-                let executor = crate::table_reader::TiFlashTableReaderExecutor::build(
+            // The in-process engine has no coprocessor (Go has no such store):
+            // its TiKV readers keep the local path until the A<->B merge
+            // deletes it (`docs/tikv-reader-execplan.md`).
+            // A temporary table's rows are the session's (Go: a dummy reader
+            // under its UnionScan), which the local path reads until M4.
+            let has_coprocessor = ctx.txn_store().is_some_and(|store| store.client().is_some());
+            let temporary = reader
+                .table_plan
+                .as_deref()
+                .and_then(embedded_table_scan)
+                .is_some_and(|scan| scan.is_temporary);
+            if (reader.store_type == tidb_kv::store_type::StoreType::TiFlash
+                || (reader.store_type == tidb_kv::store_type::StoreType::TiKv && has_coprocessor && !temporary))
+                && !state.reader_storage.is_mem_buffer()
+            {
+                let executor = crate::table_reader::TableReaderExecutor::build(
                     meta(ctx, plan, plan_schema(plan)?),
                     ctx,
                     catalog,
                     reader,
+                    state.range_group.as_ref(),
                 )
                 .map_err(DriverError::from)?;
                 ctx.mark_physical_table_reader();
-                return Ok(executor);
+                if reader.store_type == tidb_kv::store_type::StoreType::TiFlash {
+                    return Ok(executor);
+                }
+                // Go `TableReaderExecutor.Close`'s
+                // `indexUsageReporter.ReportCopIndexUsageForHandle`.
+                let scan = reader
+                    .table_plan
+                    .as_deref()
+                    .and_then(embedded_table_scan)
+                    .ok_or_else(|| DriverError::unsupported("a TiKV table reader has no table scan"))?;
+                let table = catalog
+                    .physical_kv_table_by_id(scan.table_id)
+                    .ok_or_else(|| DriverError::unsupported("physical table ID is absent from the catalog"))?;
+                return Ok(Box::new(CopIndexUsageExec::new(
+                    executor,
+                    table.table_id(),
+                    crate::access_cost::load_table_stats(ctx, catalog, table.stats_physical_id()),
+                    ctx.index_usage_collector().cloned(),
+                    tidb_executor_internal_exec::index_usage_reporter::get_cluster_index_id(&table),
+                )));
             }
             let executor = build_reader(plan.id(), reader.table_plan.as_deref(), catalog, ctx, state)?;
             ctx.mark_physical_table_reader();

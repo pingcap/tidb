@@ -3566,14 +3566,21 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             })
             .collect::<Vec<_>>();
         if !generated_expressions.is_empty() {
-            let generated_schema = Schema::new(schema_columns.clone());
+            // Go rewrites against `ds.schema`'s own columns, so a generated
+            // column read by a later one carries its `VirtualExpr` there
+            // (`ExtractDependentColumns` follows it); a generated column
+            // reads only earlier ones, so rewriting in offset order over the
+            // schema built so far gives every reference its expression.
+            let mut generated_schema = Schema::new(schema_columns.clone());
             let no_markers = BTreeMap::new();
             for (offset, expression) in generated_expressions {
                 let original = self.allow_build_cast_array.replace(true);
                 let expression =
                     self.rewrite_scalar(&expression, &generated_schema, &names, &no_markers);
                 self.allow_build_cast_array.set(original);
-                schema_columns[offset].virtual_expr = Some(Box::new(expression?));
+                let expression = Some(Box::new(expression?));
+                generated_schema.columns[offset].virtual_expr.clone_from(&expression);
+                schema_columns[offset].virtual_expr = expression;
             }
         }
 

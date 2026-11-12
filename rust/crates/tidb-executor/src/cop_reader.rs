@@ -883,8 +883,10 @@ fn statement_scan_plan(
 
 /// What a `kv.TiFlash` table read adds to its request (Go
 /// `TableReaderExecutor.buildKVReq` / `buildKVReqForPartitionTableScan`).
-pub(crate) struct TiFlashRead {
-    /// Go `dagPB`: the tree-based request.
+pub(crate) struct TableRead {
+    /// Go `kv.Request.StoreType`.
+    pub store_type: tidb_kv::store_type::StoreType,
+    /// Go `dagPB`.
     pub dag: tidb_proto::tipb::DagRequest,
     /// Go `SetHandleRanges` / `SetKeyRanges`' ranges; empty for a partition
     /// table scan.
@@ -908,34 +910,60 @@ pub(crate) struct TiFlashRead {
     pub root_plan_id: isize,
 }
 
-/// Go `TableReaderExecutor.SelectResult` for a `kv.TiFlash` read: the request
-/// through `client` (a batch request goes to `CopClient.sendBatch`).
-pub(crate) fn open_tiflash_read(
+/// Go `TableReaderExecutor.SelectResult`: the request through `client` (a
+/// `kv.TiFlash` batch request goes to `CopClient.sendBatch`).
+pub(crate) fn open_table_read(
     client: &dyn tidb_txnkv::Client,
     statement: &tidb_distsql::remote_scan::PushdownStatementContext,
-    read: TiFlashRead,
+    read: TableRead,
 ) -> Result<SelectResponseIter, String> {
     let memory_tracker =
         (read.root_plan_id > 0).then(|| statement.memory.operator_tracker(read.root_plan_id as i64));
+    let envelope = dag_envelope(&read.dag);
     let plan = RemoteScanPlan {
         key_ranges: read.key_ranges,
         snapshot_ts: read.start_ts,
         keep_order: read.keep_order,
+        // Go `kv.Request.KeepOrder = false`: the copIterator answers each
+        // region's response as it completes.
+        allow_unordered: !read.keep_order,
         desc: read.desc,
         field_types: read.field_types,
         cop_plan_ids: read.cop_plan_ids,
         root_plan_id: read.root_plan_id,
         memory_tracker,
-        tiflash: Some(TiFlashRequest {
+        tiflash: (read.store_type == tidb_kv::store_type::StoreType::TiFlash).then(|| TiFlashRequest {
             partition_id_and_ranges: read.partition_id_and_ranges,
             batch_cop: read.batch_cop,
             schema_version: read.schema_version,
             connection_id: read.connection_id,
             connection_alias: read.connection_alias,
         }),
-        ..statement_scan_plan(statement, read.dag, RequestEnvelope::new(Vec::new()))
+        ..statement_scan_plan(statement, read.dag, envelope)
     };
     scan_result(|| open_scan(client, plan))
+}
+
+/// Go `RequestBuilder.SetDAGRequest`'s view of `dag`: its list executors'
+/// kinds and a Limit's count (a tree-based request has none).
+fn dag_envelope(dag: &tidb_proto::tipb::DagRequest) -> RequestEnvelope {
+    use tidb_proto::tipb::ExecType;
+    RequestEnvelope::new(
+        dag.executors
+            .iter()
+            .map(|executor| match executor.tp() {
+                ExecType::TypeTableScan => ExecutorShape::new(ExecutorKind::TableScan),
+                ExecType::TypeIndexScan => ExecutorShape::new(ExecutorKind::IndexScan),
+                ExecType::TypePartitionTableScan => ExecutorShape::new(ExecutorKind::PartitionTableScan),
+                ExecType::TypeIndexLookUp => ExecutorShape::new(ExecutorKind::IndexLookup),
+                ExecType::TypeLimit => ExecutorShape::limit(
+                    executor.limit.as_ref().map_or(0, |limit| limit.limit()),
+                    executor.parent_idx.map(|idx| idx as usize),
+                ),
+                _ => ExecutorShape::new(ExecutorKind::Other),
+            })
+            .collect(),
+    )
 }
 
 /// The `kv.TiFlash` side of a request.

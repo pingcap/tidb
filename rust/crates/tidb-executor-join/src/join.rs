@@ -3006,10 +3006,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             }
             pipeline.inputs_allocated += 1;
         }
+        // Go `probeChkResource{chk: exec.NewFirstChunk(fetcher.ProbeSideExec)}`:
+        // a probe chunk is never drawn from the AllocPool.
         Some(if probe_is_left {
-            self.left_exec().new_chunk()
+            self.left_exec().new_first_chunk()
         } else {
-            self.right_exec().new_chunk()
+            self.right_exec().new_first_chunk()
         })
     }
 
@@ -4017,7 +4019,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         } else {
             self.left_exec()
         };
-        let probe_chunk = probe.new_chunk();
+        // Go `probeChkResource{chk: exec.NewFirstChunk(fetcher.ProbeSideExec)}`.
+        let probe_chunk = probe.new_first_chunk();
         // The container's live state is only readable while it is open --
         // `close` deletes the spill file and detaches the disk tracker -- so
         // what the build side DID is latched here, at the moment the build

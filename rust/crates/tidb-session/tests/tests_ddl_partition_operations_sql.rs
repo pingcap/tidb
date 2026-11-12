@@ -69,7 +69,7 @@ fn drop_and_truncate_partition_drops_and_replaces_partition_bodies() {
         "p0/p1 gone, p2..p4 remain"
     );
     // the dropped partitions' rows are gone
-    tk.must_query("select c from t").check(["201", "301", "401"]);
+    tk.must_query("select c from t").sort().check(["201", "301", "401"]);
 
     // truncate p3 and p4: names stay, physical ids are fresh
     let before = partition_defs(&tk, "t");
@@ -96,5 +96,5 @@ fn drop_and_truncate_partition_drops_and_replaces_partition_bodies() {
         }
     }
     // the truncated partitions' rows are gone
-    tk.must_query("select c from t").check(["201"]);
+    tk.must_query("select c from t").sort().check(["201"]);
 }

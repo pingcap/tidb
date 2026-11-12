@@ -17,9 +17,10 @@
 //! `distsql.SelectWithRuntimeStats`, to every TiDB the store's client lists,
 //! and the reader's rows are the select result's.
 //!
-//! [`TiFlashTableReaderExecutor`] is the same executor for a reader on the
-//! `kv.TiFlash` store that is not an MPP gather: a tree-based request, sent
-//! as a batch coprocessor request (`batchCop`) or region by region (`cop`).
+//! [`TableReaderExecutor`] is the same executor for a reader on the `kv.TiKV`
+//! store (a list-based request) and on the `kv.TiFlash` store when it is not
+//! an MPP gather (a tree-based request, sent as a batch coprocessor request,
+//! `batchCop`, or region by region, `cop`).
 
 use std::sync::Arc;
 
@@ -54,8 +55,10 @@ pub struct TiDbStoreReader {
     pub ddl_owner_server_id: Option<Arc<dyn Fn() -> Result<u64, String> + Send + Sync>>,
 }
 
-/// Go `TableReaderExecutor` over the `kv.TiDB` store.
-pub struct TableReaderExecutor {
+/// Go `TableReaderExecutor` over the `kv.TiDB` store, its request built by
+/// [`crate::builder_utils::build_tidb_cop_request`] until that store's scan
+/// has its `ToPB` (`docs/tikv-reader-execplan.md`).
+pub struct TiDbTableReaderExecutor {
     meta: ExecutorMeta,
     ctx: crate::StmtContext,
     request: Arc<TiDBCopRequest>,
@@ -67,7 +70,7 @@ pub struct TableReaderExecutor {
     exhausted: bool,
 }
 
-impl TableReaderExecutor {
+impl TiDbTableReaderExecutor {
     /// The reader of `request` through `reader`, at `start_ts`.
     #[must_use]
     pub fn new(
@@ -186,7 +189,7 @@ fn executor_shapes(dag: &tipb::DagRequest) -> RequestEnvelope {
     )
 }
 
-impl Executor for TableReaderExecutor {
+impl Executor for TiDbTableReaderExecutor {
     fn open(&mut self) -> Result<(), ExecError> {
         self.result = Some(self.build_resp()?);
         self.exhausted = false;
@@ -263,11 +266,16 @@ fn table_handle_ranges_to_kv_ranges(
     ranges.map_err(|error| ExecError::Internal(format!("{error:?}").into()))
 }
 
-/// Go `TableReaderExecutor` over the `kv.TiFlash` store, for a reader that
-/// is not an MPP gather.
-pub struct TiFlashTableReaderExecutor {
+/// Go `TableReaderExecutor` over the `kv.TiKV` store, or over the
+/// `kv.TiFlash` store for a reader that is not an MPP gather.
+pub struct TableReaderExecutor {
     meta: ExecutorMeta,
     ctx: crate::StmtContext,
+    /// Go `storeType`.
+    store_type: tidb_kv::store_type::StoreType,
+    /// Go `netDataSize` (`v.GetNetDataSize()`), the closest-replica
+    /// adjuster's estimate.
+    net_data_size: f64,
     /// Go `dctx.Client`.
     client: Arc<dyn tidb_txnkv::Client>,
     /// Go `tablePlan`.
@@ -300,13 +308,16 @@ pub struct TiFlashTableReaderExecutor {
     virtual_column_ret_field_types: Vec<FieldType>,
     /// Go `resultHandler`: the select results, read one after another.
     results: std::collections::VecDeque<SelectResponseIter>,
+    /// Go `serialSelectResults.cur`.
+    cur: usize,
     /// Go `kvRanges`.
     kv_ranges: Vec<tidb_txnkv::KeyRange>,
 }
 
-impl TiFlashTableReaderExecutor {
-    /// Go `buildTableReader` for a `kv.TiFlash` reader `useMPPExecution`
-    /// refuses: `buildNoRangeTableReader`, then the reader's ranges and, for
+impl TableReaderExecutor {
+    /// Go `buildTableReader` for a `kv.TiKV` reader or a `kv.TiFlash` one
+    /// `useMPPExecution` refuses: `buildNoRangeTableReader`, then the
+    /// reader's ranges and, for
     /// a dynamically pruned partitioned table, its partitions -- a
     /// `TableDualExec` when none survive.
     ///
@@ -318,11 +329,12 @@ impl TiFlashTableReaderExecutor {
         ctx: &crate::StmtContext,
         is: &tidb_infoschema::SessionExtendedInfoSchema,
         v: &PhysicalTableReader,
+        range_group: Option<&tidb_ranger::types::Ranges>,
     ) -> Result<Box<dyn Executor>, ExecError> {
         let table_plan = v
             .table_plan
             .as_deref()
-            .ok_or_else(|| ExecError::Internal("the TiFlash reader has no plan".into()))?;
+            .ok_or_else(|| ExecError::Internal("the table reader has no plan".into()))?;
         let mut table_scans = Vec::new();
         crate::mpp_gather::get_table_scans(table_plan, &mut table_scans);
         let [ts] = table_scans[..] else {
@@ -331,17 +343,26 @@ impl TiFlashTableReaderExecutor {
         let table = ts
             .table
             .as_ref()
-            .ok_or_else(|| ExecError::Internal("the TiFlash reader's scan has no table".into()))?
+            .ok_or_else(|| ExecError::Internal("the table reader's scan has no table".into()))?
             .read()
             .clone();
         let store = ctx
             .txn_store()
-            .ok_or_else(|| ExecError::Internal("the TiFlash reader has no store".into()))?;
+            .ok_or_else(|| ExecError::Internal("the table reader has no store".into()))?;
         let client = store
             .client()
             .ok_or_else(|| ExecError::Internal("the store has no coprocessor client".into()))?;
+        // Go `getPhysicalPlanIDs(e.plans)`: a list request's summaries come
+        // in `v.TablePlans` order, the scan first.
         let mut plan_ids = Vec::new();
-        crate::mpp_gather::collect_plan_ids(table_plan, &mut plan_ids);
+        if v.store_type == tidb_kv::store_type::StoreType::TiFlash {
+            crate::mpp_gather::collect_plan_ids(table_plan, &mut plan_ids);
+        } else {
+            plan_ids = crate::builder_utils::flatten_table_plan(table_plan)
+                .into_iter()
+                .map(|plan| plan.id() as isize)
+                .collect();
+        }
         let (virtual_column_index, virtual_column_ret_field_types) =
             crate::mpp_gather::build_virtual_column_info(meta.schema(), &ts.columns);
         // Go `ts.IsPartition()`: a statically pruned scan reads its partition.
@@ -350,7 +371,7 @@ impl TiFlashTableReaderExecutor {
         if !ctx.static_partition_prune() && !is_partition {
             if let Some(pi) = table.get_partition_info() {
                 let info = v.plan_part_info.as_ref().ok_or_else(|| {
-                    ExecError::Internal("a partitioned TiFlash reader has no partition info".into())
+                    ExecError::Internal("a partitioned table reader has no partition info".into())
                 })?;
                 let partition_names: Vec<String> =
                     info.partition_names.iter().map(|name| name.original.clone()).collect();
@@ -374,15 +395,22 @@ impl TiFlashTableReaderExecutor {
                 partitions = Some(pids);
             }
         }
-        Ok(Box::new(Self {
+        let reader = Self {
             meta,
             ctx: ctx.clone(),
+            store_type: v.store_type,
+            net_data_size: table_plan.cop_net_data_size(
+                false,
+                tidb_config::tikvcfg::get_global_config().tikv_client.enable_chunk_rpc,
+            ),
             client,
             table_plan: table_plan.clone(),
             plan_ids,
             physical_table_id: ts.table_id,
             is_common_handle: table.is_common_handle,
-            ranges: ts.ranges.clone(),
+            // Go `buildRespForGroupedRanges`' one group, read as its own
+            // reader under the grouped-range merge.
+            ranges: range_group.unwrap_or(&ts.ranges).clone(),
             range_rebuild: crate::driver::physical_builder::correlated_table_range_rebuilder(ts, ctx),
             partitions,
             keep_order: ts.keep_order,
@@ -394,8 +422,82 @@ impl TiFlashTableReaderExecutor {
             virtual_column_index,
             virtual_column_ret_field_types,
             results: std::collections::VecDeque::new(),
+            cur: 0,
             kv_ranges: Vec::new(),
-        }))
+        };
+        match &reader.partitions {
+            // Go `buildKVReqSeparately` under `NewSortedSelectResults`: a
+            // keep-order read of several TiKV partitions reads each partition
+            // as its own request and merges them by the scan's `ByItems`.
+            Some(partitions)
+                if reader.store_type != tidb_kv::store_type::StoreType::TiFlash
+                    && partitions.len() > 1
+                    && !ts.by_items.is_empty() =>
+            {
+                reader.sorted_partition_results(&ts.by_items)
+            }
+            _ => Ok(Box::new(reader)),
+        }
+    }
+
+    /// Go `distsql.NewSortedSelectResults` over one reader a partition: the
+    /// merge reads each key column of the reader's output.
+    fn sorted_partition_results(
+        self,
+        by_items: &[tidb_expression_aggregation::ByItems],
+    ) -> Result<Box<dyn Executor>, ExecError> {
+        let schema = self.meta.schema().clone();
+        let by_items = by_items
+            .iter()
+            .map(|item| {
+                let tidb_expr::expression::Expression::Column(column) = &item.expr else {
+                    return Err(ExecError::Internal("a sorted partition read orders by a non-column".into()));
+                };
+                // Go `buildKeyColumns`: `schema.ColumnIndex(col)`.
+                let position = usize::try_from(schema.column_index(column))
+                    .map_err(|_| ExecError::Internal("a sorted partition read's key is absent from its schema".into()))?;
+                let mut column = schema.columns[position].clone();
+                column.index = i64::try_from(position).unwrap_or(i64::MAX);
+                Ok(tidb_executor_sortexec::SortByItem {
+                    expr: tidb_expr::expression::Expression::Column(column),
+                    desc: item.desc,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let partitions = self.partitions.clone().unwrap_or_default();
+        let meta = self.meta.clone();
+        let ctx = self.ctx.clone();
+        let children = partitions
+            .into_iter()
+            .map(|pid| {
+                Box::new(Self {
+                    meta: self.meta.clone(),
+                    ctx: self.ctx.clone(),
+                    store_type: self.store_type,
+                    net_data_size: self.net_data_size,
+                    client: Arc::clone(&self.client),
+                    table_plan: self.table_plan.clone(),
+                    plan_ids: self.plan_ids.clone(),
+                    physical_table_id: self.physical_table_id,
+                    is_common_handle: self.is_common_handle,
+                    ranges: self.ranges.clone(),
+                    range_rebuild: self.range_rebuild.clone(),
+                    partitions: Some(vec![pid]),
+                    keep_order: self.keep_order,
+                    desc: self.desc,
+                    batch_cop: self.batch_cop,
+                    start_ts: self.start_ts,
+                    schema_version: self.schema_version,
+                    columns: self.columns.clone(),
+                    virtual_column_index: self.virtual_column_index.clone(),
+                    virtual_column_ret_field_types: self.virtual_column_ret_field_types.clone(),
+                    results: std::collections::VecDeque::new(),
+                    cur: 0,
+                    kv_ranges: Vec::new(),
+                }) as Box<dyn Executor>
+            })
+            .collect();
+        Ok(Box::new(crate::range_group_merge::SortedSelectResults::new(meta, by_items, children, ctx)?))
     }
 
     /// Go `kvRanges`.
@@ -412,10 +514,11 @@ impl TiFlashTableReaderExecutor {
         key_ranges: Vec<tidb_txnkv::KeyRange>,
         partition_id_and_ranges: Vec<tidb_txnkv::PartitionIdAndRanges>,
     ) -> Result<SelectResponseIter, ExecError> {
-        crate::cop_reader::open_tiflash_read(
+        crate::cop_reader::open_table_read(
             self.client.as_ref(),
             statement,
-            crate::cop_reader::TiFlashRead {
+            crate::cop_reader::TableRead {
+                store_type: self.store_type,
                 dag,
                 key_ranges,
                 partition_id_and_ranges,
@@ -432,6 +535,7 @@ impl TiFlashTableReaderExecutor {
             },
         )
         .map_err(|error| ExecError::Internal(error.into()))
+        .inspect(|_| tidb_kv::storage::note_storage_op(|ops| ops.cop_scans += 1))
     }
 
     /// Go `buildRespForGroupedRanges` over the reader's one range group: a
@@ -453,6 +557,18 @@ impl TiFlashTableReaderExecutor {
             self.results.push_back(result);
             return Ok(());
         };
+        if self.store_type != tidb_kv::store_type::StoreType::TiFlash {
+            // Go `buildKVReq` over `kvRangeBuilderFromRangeAndPartition`: one
+            // request over every partition's ranges.
+            let mut key_ranges = Vec::new();
+            for pid in partitions {
+                key_ranges.extend(table_handle_ranges_to_kv_ranges(zone, pid, self.is_common_handle, ranges)?);
+            }
+            self.kv_ranges.extend(key_ranges.iter().cloned());
+            let result = self.select_result(statement, dag.clone(), key_ranges, Vec::new())?;
+            self.results.push_back(result);
+            return Ok(());
+        }
         let update = |dag: &mut tipb::DagRequest, pids: &[i64]| {
             crate::local_mpp_coordinator::update_executor_table_id(dag.root_executor.as_mut(), true, pids)
                 .map_err(|error| ExecError::Internal(error.into()))
@@ -482,21 +598,37 @@ impl TiFlashTableReaderExecutor {
     }
 }
 
-impl Executor for TiFlashTableReaderExecutor {
+/// Go `RuntimeStatsColl.GetCopCountAndRows(e.plans[0].ID())`, which the
+/// reader's index usage report reads.
+impl tidb_executor_internal_exec::table_access::TableAccess for TableReaderExecutor {
+    fn cop_count_and_rows(&self) -> Option<(u64, u64)> {
+        let scan_id = *self.plan_ids.first()?;
+        Some(self.results.iter().fold((0, 0), |(requests, rows), result| {
+            let (more_requests, more_rows) = result.runtime_stats().get_cop_count_and_rows(scan_id);
+            (requests + more_requests, rows + more_rows)
+        }))
+    }
+}
+
+impl Executor for TableReaderExecutor {
+    fn table_access(&mut self) -> Option<&mut dyn tidb_executor_internal_exec::table_access::TableAccess> {
+        Some(self)
+    }
+
     /// Go `TableReaderExecutor.Open`.
     fn open(&mut self) -> Result<(), ExecError> {
-        let statement = crate::remote_scan::pushdown_statement_context(&self.ctx);
-        // Go `buildNoRangeTableReader`'s `ConstructDAGReq` (rebuilt here, so
-        // a correlated filter reads the outer row as `corColInFilter` does).
-        let mut dag = crate::local_mpp_coordinator::construct_dag_req(&self.ctx, &statement, &self.table_plan)
-            .map_err(|error| ExecError::Internal(error.into()))?;
-        // Go `distsql.SetEncodeType`.
-        if tidb_config::tikvcfg::get_global_config().tikv_client.enable_chunk_rpc {
-            dag.encode_type = Some(tipb::EncodeType::TypeChunk as i32);
+        let statement = crate::remote_scan::pushdown_statement_context(&self.ctx)
+            .with_estimated_net_bytes(self.net_data_size);
+        // Go `buildNoRangeTableReader`'s `ConstructDAGReq` over `v.TablePlans`
+        // (the table plan itself for `kv.TiFlash`), rebuilt here, so a
+        // correlated filter reads the outer row as `corColInFilter` does.
+        let plans = if self.store_type == tidb_kv::store_type::StoreType::TiFlash {
+            vec![&self.table_plan]
         } else {
-            dag.encode_type = Some(tipb::EncodeType::TypeDefault as i32);
-            dag.chunk_memory_layout = None;
-        }
+            crate::builder_utils::flatten_table_plan(&self.table_plan)
+        };
+        let mut dag = crate::builder_utils::construct_dag_req(&self.ctx, &statement, &plans, self.store_type)
+            .map_err(|error| ExecError::Internal(error.to_string().into()))?;
         dag.output_offsets = (0..self.meta.schema().columns.len() as u32).collect();
         let ranges = match &self.range_rebuild {
             Some(rebuild) => rebuild().map_err(|error| ExecError::Internal(format!("{error:?}").into()))?,
@@ -504,6 +636,7 @@ impl Executor for TiFlashTableReaderExecutor {
         };
         self.kv_ranges.clear();
         self.results.clear();
+        self.cur = 0;
         // Treat temporary table as dummy table, avoid sending distsql request
         // to TiKV. In a test case IndexLookupJoin, there is a case that
         // TableReaderExecutor.Open is called with nil kvRanges.
@@ -524,20 +657,20 @@ impl Executor for TiFlashTableReaderExecutor {
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
         let required = req.required_rows().max(1);
-        while let Some(result) = self.results.front_mut() {
+        // Go `serialSelectResults.Next`: the results one after another; each
+        // stays open until the reader's `Close`.
+        while let Some(result) = self.results.get_mut(self.cur) {
             if !result
                 .fill_chunk_with_required_rows(required, req)
                 .map_err(|error| ExecError::from(crate::cop_reader::select_response_error(error)))?
             {
                 req.reset();
-                if let Some(mut finished) = self.results.pop_front() {
-                    finished
-                        .close()
-                        .map_err(|error| ExecError::from(crate::cop_reader::select_response_error(error)))?;
-                }
+                self.cur += 1;
                 continue;
             }
             if req.num_rows() > 0 {
+                let rows = req.num_rows() as u64;
+                tidb_kv::storage::note_storage_op(|ops| ops.cop_rows += rows);
                 return crate::mpp_gather::fill_virtual_column_value(
                     &self.ctx,
                     self.meta.schema(),
