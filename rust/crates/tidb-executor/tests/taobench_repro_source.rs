@@ -236,10 +236,9 @@ impl tidb_txnkv::Response for OneAnswer {
 }
 
 impl tidb_txnkv::Client for CapturingRegion {
-    fn send(
-        &self,
-        request: &tidb_txnkv::TransportRequest,
-    ) -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
+    fn send(&self, request: &tidb_txnkv::TransportRequest) -> Box<dyn tidb_txnkv::Response + Send> {
+        // Go `Send` answers every failure as a response (`copErrorResponse`).
+        (|| -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
         let metadata = request.metadata();
         let data = metadata.data.clone().expect("a DAG request");
         let dag = DagRequest::decode(data.as_slice()).map_err(|error| error.to_string())?;
@@ -297,6 +296,8 @@ impl tidb_txnkv::Client for CapturingRegion {
             data: response.data.to_vec().into(),
             runtime: None,
         }))))
+    })()
+        .unwrap_or_else(|error| tidb_txnkv::CopErrorResponse::boxed(tidb_txnkv::QueryResponseError::Source(error)))
     }
     fn is_request_type_supported(&self, _request_type: i64, _sub_type: i64) -> bool {
         true

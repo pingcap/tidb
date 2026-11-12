@@ -6835,10 +6835,9 @@ mod remote_cursor_tests {
     }
 
     impl tidb_txnkv::Client for CaptureRegion {
-        fn send(
-            &self,
-            request: &tidb_txnkv::TransportRequest,
-        ) -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
+        fn send(&self, request: &tidb_txnkv::TransportRequest) -> Box<dyn tidb_txnkv::Response + Send> {
+        // Go `Send` answers every failure as a response (`copErrorResponse`).
+        (|| -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
             let sent = crate::test_region::SentRequest::decode(request);
             let table_id = sent.table_id();
             if let Some(last) = &self.last {
@@ -6856,7 +6855,9 @@ mod remote_cursor_tests {
                 Vec::new(),
                 Some(std::sync::Arc::clone(&self.closed)),
             ))
-        }
+        })()
+        .unwrap_or_else(|error| tidb_txnkv::CopErrorResponse::boxed(tidb_txnkv::QueryResponseError::Source(error)))
+    }
 
         fn is_request_type_supported(&self, _request_type: i64, _sub_type: i64) -> bool {
             true
@@ -7899,22 +7900,28 @@ mod remote_cursor_tests {
         *table.read_partitions_mut() = None;
         // A region cannot refuse a request (that is the lowering's answer,
         // before any send), so the failing send is what remains to pin: the
-        // task's one request over both partitions fails as a whole.
+        // task's one request over both partitions fails as a whole, at its
+        // first read (Go's `copErrorResponse` answers the send's error at
+        // `Next`).
         let capture = RequestCapture {
             reject_table: Some(91),
             ..RequestCapture::default()
         };
         let store = capture;
-        let result = table.build_table_reader_from_routed_handles(&mut *store.clone_box(), 
-            &handles,
-            Some(&[101, 102]),
-            &[0],
-            &[],
-            &context,
-            &statement,
-            2,
-        );
-        assert!(result.is_err());
+        let staged = table
+            .build_table_reader_from_routed_handles(
+                &mut *store.clone_box(),
+                &handles,
+                Some(&[101, 102]),
+                &[0],
+                &[],
+                &context,
+                &statement,
+                2,
+            )
+            .unwrap()
+            .expect("the table probe remains remote");
+        assert!(TableCommon::finish_routed_rows_by_handles(&handles, staged).is_err());
     }
 
 /// Go's `PhysicalIndexReader.ToPB` names the clustered primary's column

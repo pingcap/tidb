@@ -581,10 +581,9 @@ mod tests {
     }
 
     impl tidb_txnkv::Client for Regions {
-        fn send(
-            &self,
-            request: &TransportRequest,
-        ) -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
+        fn send(&self, request: &tidb_txnkv::TransportRequest) -> Box<dyn tidb_txnkv::Response + Send> {
+        // Go `Send` answers every failure as a response (`copErrorResponse`).
+        (|| -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
             assert_eq!(
                 request.metadata().request_type,
                 tidb_txnkv::RequestType::Checksum
@@ -592,7 +591,9 @@ mod tests {
             Ok(Box::new(Responses(
                 self.0.iter().map(Message::encode_to_vec).collect(),
             )))
-        }
+        })()
+        .unwrap_or_else(|error| tidb_txnkv::CopErrorResponse::boxed(tidb_txnkv::QueryResponseError::Source(error)))
+    }
 
         fn is_request_type_supported(&self, _request_type: i64, _sub_type: i64) -> bool {
             true

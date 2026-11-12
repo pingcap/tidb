@@ -80,10 +80,9 @@ where
     F: RealTiKvSessionTransportFactory + 'static,
     <F::Transport as QueryTransport>::Response: Send + 'static,
 {
-    fn send(
-        &self,
-        request: &TransportRequest,
-    ) -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
+    fn send(&self, request: &tidb_txnkv::TransportRequest) -> Box<dyn tidb_txnkv::Response + Send> {
+        // Go `Send` answers every failure as a response (`copErrorResponse`).
+        (|| -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
         let operation = QueryOperation::for_request_type(request.metadata().request_type).ok_or_else(|| {
             format!(
                 "unsupported coprocessor request type {:?}",
@@ -104,6 +103,8 @@ where
         let response = send_request(&mut transport, request, operation, None, None)
             .map_err(|error| error.to_string())?;
         Ok(Box::new(response))
+    })()
+        .unwrap_or_else(|error| tidb_txnkv::CopErrorResponse::boxed(tidb_txnkv::QueryResponseError::Source(error)))
     }
 
     fn is_request_type_supported(&self, request_type: i64, sub_type: i64) -> bool {

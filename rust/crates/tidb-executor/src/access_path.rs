@@ -7820,10 +7820,9 @@ use std::collections::HashMap;
     }
 
     impl tidb_txnkv::Client for CoveringIndexRegion {
-        fn send(
-            &self,
-            request: &tidb_txnkv::TransportRequest,
-        ) -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
+        fn send(&self, request: &tidb_txnkv::TransportRequest) -> Box<dyn tidb_txnkv::Response + Send> {
+        // Go `Send` answers every failure as a response (`copErrorResponse`).
+        (|| -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
             use prost::Message;
             let sent = crate::test_region::SentRequest::decode(request);
             let failure = self
@@ -7894,7 +7893,9 @@ use std::collections::HashMap;
                 inner: crate::test_region::Subsets::new(subsets, None),
                 closed: watched,
             }))
-        }
+        })()
+        .unwrap_or_else(|error| tidb_txnkv::CopErrorResponse::boxed(tidb_txnkv::QueryResponseError::Source(error)))
+    }
 
         fn is_request_type_supported(&self, _request_type: i64, _sub_type: i64) -> bool {
             true

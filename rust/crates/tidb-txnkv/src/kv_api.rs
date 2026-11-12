@@ -178,12 +178,35 @@ impl<W> Default for ClientSendOption<W> {
 pub trait Client: fmt::Debug + Send + Sync {
     /// Go `Client.Send`: sends one already-built request and returns its
     /// response. The request is claimed for this send (its request-local
-    /// cancellation is minted here); an `Err` is a failure before any
-    /// response existed, carried as its rendered message.
-    fn send(&self, request: &TransportRequest) -> Result<Box<dyn Response + Send>, String>;
+    /// cancellation is minted here); a failure before any response existed
+    /// is a [`CopErrorResponse`], whose `next` answers it.
+    fn send(&self, request: &TransportRequest) -> Box<dyn Response + Send>;
 
     /// Go `Client.IsRequestTypeSupported`.
     fn is_request_type_supported(&self, request_type: i64, sub_type: i64) -> bool;
+}
+
+/// Go `copErrorResponse`: the response of a request that failed before any
+/// response existed; every `Next` answers the error.
+#[derive(Debug)]
+pub struct CopErrorResponse(QueryResponseError);
+
+impl CopErrorResponse {
+    /// The response of a send that failed with `error`.
+    #[must_use]
+    pub fn boxed(error: QueryResponseError) -> Box<dyn Response + Send> {
+        Box::new(Self(error))
+    }
+}
+
+impl Response for CopErrorResponse {
+    fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
+        Err(self.0.clone())
+    }
+
+    fn close(&mut self) -> Result<(), QueryResponseError> {
+        Ok(())
+    }
 }
 
 /// Go `kv.StagingHandle`: the reference of one staging buffer.

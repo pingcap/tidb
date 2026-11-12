@@ -252,7 +252,7 @@ pub fn select_with_runtime_stats_over_client(
         cop_plan_ids,
         root_plan_id,
     );
-    let response = client.send(request).map_err(QueryRuntimeError::Transport)?;
+    let response = client.send(request);
     Ok(QuerySelectResult::new(
         response,
         metadata,
@@ -309,7 +309,7 @@ pub fn checksum(
     client: &dyn tidb_txnkv::Client,
     request: &TransportRequest,
 ) -> Result<QuerySelectResult<Box<dyn tidb_txnkv::Response + Send>>, String> {
-    let response = client.send(request)?;
+    let response = client.send(request);
     let context = QueryResultContext::new(Vec::new(), WarningCollector::new());
     Ok(QuerySelectResult::new(
         response,

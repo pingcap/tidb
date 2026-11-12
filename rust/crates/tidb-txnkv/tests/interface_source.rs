@@ -449,8 +449,12 @@ impl Response for MockResponse {
 struct MockClient;
 
 impl Client for MockClient {
-    fn send(&self, _: &TransportRequest) -> Result<Box<dyn Response + Send>, String> {
+    fn send(&self, _: &tidb_txnkv::TransportRequest) -> Box<dyn tidb_txnkv::Response + Send> {
+        // Go `Send` answers every failure as a response (`copErrorResponse`).
+        (|| -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
         Ok(Box::new(MockResponse))
+    })()
+        .unwrap_or_else(|error| tidb_txnkv::CopErrorResponse::boxed(tidb_txnkv::QueryResponseError::Source(error)))
     }
     fn is_request_type_supported(&self, request_type: i64, sub_type: i64) -> bool {
         RequestTypeSupportedChecker.is_request_type_supported(request_type, sub_type)

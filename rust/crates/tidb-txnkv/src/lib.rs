@@ -104,6 +104,7 @@ pub use key::{key_range_slice_mem_usage, Entry, Key, KeyRange};
 pub use key_flags::{AssertionState, FlagsOp, KeyFlags};
 pub use keyspace::{is_system_keyspace, is_user_keyspace, KernelType, SYSTEM_KEYSPACE};
 pub use kv_api::{
+    CopErrorResponse,
     batch_get_value, get_value, Client, ClientSendOption, Driver, EmptyIterator, EmptyRetriever,
     EmptyRetrieverError, EtcdBackend, FairLockingController, MemBuffer, Mutator, Response,
     ResultSubset, Retriever, RetrieverMutator, Snapshot, SnapshotInterceptor, SplittableStore,
