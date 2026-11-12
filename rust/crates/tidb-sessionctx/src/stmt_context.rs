@@ -6387,6 +6387,13 @@ impl StmtContext {
         &self.staged_writes
     }
 
+    /// Go `GetSessionVars().TemporaryTableData`: the session's local
+    /// temporary tables' rows, once it has any.
+    #[must_use]
+    pub fn temporary_table_data(&self) -> Option<&tidb_variable::temporary_table_data::SessionData> {
+        self.temporary_table_data.as_ref()
+    }
+
     /// Go `sctx.Txn()`: a handle on the store the session's tables read and
     /// write through; `None` for a statement no session runs.
     #[must_use]

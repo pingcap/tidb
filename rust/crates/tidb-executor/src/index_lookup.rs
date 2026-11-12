@@ -247,6 +247,9 @@ impl IndexLookUpExecutor {
             .physical_kv_table_by_id(scan.table_id)
             .ok_or_else(|| internal("the index lookup's table is absent from the catalog"))?;
         let table_info = table.meta().read().clone();
+        // Go: a temporary table's lookup is a dummy; its rows are the union
+        // scan's.
+        let dummy = table_info.temp_table_type != tidb_model::TempTableType::NONE;
         let index = table_info
             .indices
             .iter_deref()
@@ -423,7 +426,7 @@ impl IndexLookUpExecutor {
             result_curr: None,
             workers: Vec::new(),
             worker_started: false,
-            dummy: false,
+            dummy,
         }))
     }
 

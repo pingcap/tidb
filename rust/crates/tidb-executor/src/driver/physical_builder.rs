@@ -7832,8 +7832,6 @@ fn build_reader_node(
             // The in-process engine has no coprocessor (Go has no such store):
             // its TiKV readers keep the local path until the A<->B merge
             // deletes it (`docs/tikv-reader-execplan.md`).
-            // A temporary table's rows are the session's (Go: a dummy reader
-            // under its UnionScan), which the local path reads until M4.
             if is_go_table_reader(reader, ctx, state) {
                 let executor: Box<dyn Executor> = if state.dummy_reader {
                     let mut e = crate::table_reader::TableReaderExecutor::build_no_range(
@@ -7883,7 +7881,7 @@ fn build_reader_node(
         }
         PhysicalPlan::IndexReader(reader) => {
             // Go `buildIndexReader` on a store with a coprocessor client (the
-            // in-process engine and a temporary table keep the local path,
+            // in-process engine keeps the local path,
             // `docs/tikv-reader-execplan.md`).
             let scan = reader.index_plan.as_deref().and_then(embedded_index_scan);
             if let Some(scan) = scan.filter(|_| is_go_index_reader(plan, ctx, state)) {
@@ -8006,8 +8004,8 @@ fn build_reader_node(
         }
         PhysicalPlan::IndexLookUpReader(reader) => {
             // Go `buildIndexLookUpReader` on a store with a coprocessor client
-            // (the in-process engine, a temporary table and the TiKV-side
-            // lookup keep the local path, `docs/tikv-reader-execplan.md`).
+            // (the in-process engine and the TiKV-side lookup keep the local
+            // path, `docs/tikv-reader-execplan.md`).
             let scan = reader.index_plans.first().and_then(|plan| match plan {
                 PhysicalPlan::IndexScan(scan) => Some(scan),
                 _ => None,
@@ -8111,20 +8109,15 @@ fn is_go_table_reader(
     state: &BuildState,
 ) -> bool {
     let has_coprocessor = ctx.txn_store().is_some_and(|store| store.client().is_some());
-    let temporary = reader
-        .table_plan
-        .as_deref()
-        .and_then(embedded_table_scan)
-        .is_some_and(|scan| scan.is_temporary);
     (reader.store_type == tidb_kv::store_type::StoreType::TiFlash
-        || (reader.store_type == tidb_kv::store_type::StoreType::TiKv && has_coprocessor && !temporary))
+        || (reader.store_type == tidb_kv::store_type::StoreType::TiKv && has_coprocessor))
         && !state.reader_storage.is_mem_buffer()
 }
 
 /// Whether an index reader or lookup is Go's (`index_reader.rs`,
 /// `index_lookup.rs`) on a store with a coprocessor client; the in-process
-/// engine's readers, a temporary table's, the TiKV-side lookup and a reader
-/// over the buffer are the local path's.
+/// engine's readers, the TiKV-side lookup and a reader over the buffer are
+/// the local path's.
 fn is_go_index_reader(plan: &PhysicalPlan, ctx: &crate::StmtContext, state: &BuildState) -> bool {
     let index_plan = match plan {
         PhysicalPlan::IndexReader(reader) => reader.index_plan.as_deref(),
@@ -8133,7 +8126,7 @@ fn is_go_index_reader(plan: &PhysicalPlan, ctx: &crate::StmtContext, state: &Bui
     };
     ctx.txn_store().is_some_and(|store| store.client().is_some())
         && !state.reader_storage.is_mem_buffer()
-        && index_plan.and_then(embedded_index_scan).is_some_and(|scan| !scan.is_temporary)
+        && index_plan.and_then(embedded_index_scan).is_some()
 }
 
 /// The local path's `buildRespForGroupedRanges`: a reader whose ranges pin
@@ -9362,6 +9355,29 @@ fn union_cache_under_buffer(
     Arc::new(tidb_kv::mem_buffer::MemBufferSnapshot { entries })
 }
 
+/// Go `getSnapIter`'s `TemporaryTableData`: the session's temporary-table
+/// entries over `ranges`, when the session has any.
+fn temporary_table_snapshot(
+    ctx: &crate::StmtContext,
+    ranges: &[(tidb_txnkv::Key, tidb_txnkv::Key)],
+) -> Result<Option<Arc<tidb_kv::mem_buffer::MemBufferSnapshot>>, DriverError> {
+    let Some(data) = ctx.temporary_table_data() else {
+        return Ok(None);
+    };
+    let storage_err = |error: tidb_kv::storage::StorageError| DriverError::unsupported(format!("{error:?}"));
+    let mut data = data.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut entries = std::collections::BTreeMap::new();
+    for (start, end) in ranges {
+        let mut iter = data.iter(Some(start), Some(end)).map_err(storage_err)?;
+        while iter.valid() {
+            entries.insert(iter.key().as_bytes().to_vec(), iter.value().to_vec());
+            iter.next().map_err(storage_err)?;
+        }
+        iter.close();
+    }
+    Ok(Some(Arc::new(tidb_kv::mem_buffer::MemBufferSnapshot { entries })))
+}
+
 fn build_union_scan(
     plan: &PhysicalPlan,
     union_scan: &tidb_planner_core_operator_physicalop::PhysicalUnionScan,
@@ -9452,42 +9468,36 @@ fn build_union_scan(
             PhysicalPlan::TableReader(table_reader) => {
                 table_reader.store_type == tidb_kv::store_type::StoreType::TiKv
                     && !crate::mpp_gather::use_mpp_execution(ctx, table_reader)
-                    && table_reader.table_plan.as_deref().and_then(embedded_table_scan).is_some_and(|scan| !scan.is_temporary)
             }
-            PhysicalPlan::IndexReader(index_reader) => index_reader
-                .index_plan
-                .as_deref()
-                .and_then(embedded_index_scan)
-                .is_some_and(|scan| !scan.is_temporary),
-            PhysicalPlan::IndexLookUpReader(lookup) => {
-                !lookup.index_lookup_push_down
-                    && lookup.index_plan.as_deref().and_then(embedded_index_scan).is_some_and(|scan| !scan.is_temporary)
-            }
+            PhysicalPlan::IndexReader(_) => true,
+            PhysicalPlan::IndexLookUpReader(lookup) => !lookup.index_lookup_push_down,
             _ => false,
         };
     let go_table_reader = go_reader && matches!(reader_plan, PhysicalPlan::TableReader(_));
     let go_index_reader = go_reader && matches!(reader_plan, PhysicalPlan::IndexReader(_));
     let go_index_lookup = go_reader && matches!(reader_plan, PhysicalPlan::IndexLookUpReader(_));
-    let (child, mem_snapshot) = match &cache_table {
+    let child = match &cache_table {
         // Go `handleCachedTable`: the reader is a dummy that only provides
         // its KV ranges, and the mem reader reads the cache under the buffer.
-        Some(cache) if go_reader => {
+        Some(_) if go_reader => {
             let previous = std::mem::replace(&mut state.dummy_reader, true);
             let built = build_with_state(child_plan, catalog, ctx, state);
             state.dummy_reader = previous;
-            (built?, union_cache_under_buffer(cache, &snapshot))
+            built?
         }
-        Some(cache) => (
-            Box::new(crate::table_dual::TableDualExec::new(
-                meta(ctx, child_plan, plan_schema(child_plan)?),
-                0,
-            )) as Box<dyn Executor>,
-            union_cache_under_buffer(cache, &snapshot),
-        ),
-        None => (
-            build_with_state(child_plan, catalog, ctx, state)?,
-            Arc::clone(&snapshot),
-        ),
+        Some(_) => Box::new(crate::table_dual::TableDualExec::new(
+            meta(ctx, child_plan, plan_schema(child_plan)?),
+            0,
+        )) as Box<dyn Executor>,
+        None => build_with_state(child_plan, catalog, ctx, state)?,
+    };
+    // Go `getSnapIter`: the session's temporary table data, when it has any,
+    // or else the table's cache, read under the buffer. (The in-process
+    // engine's readers read the temporary data themselves.)
+    let temporary_table_data = if go_reader { temporary_table_snapshot(ctx, &ranges)? } else { None };
+    let mem_snapshot = match temporary_table_data.as_ref().or(cache_table.as_ref()) {
+        Some(snap_cache) => union_cache_under_buffer(snap_cache, &snapshot),
+        None => Arc::clone(&snapshot),
     };
     let mem_reader = if go_table_reader || go_index_reader || go_index_lookup {
         None

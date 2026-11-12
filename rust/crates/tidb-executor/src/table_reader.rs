@@ -564,7 +564,9 @@ impl TableReaderExecutor {
             paging: crate::remote_scan::pushdown_statement_context(ctx).paging,
             mem_tracker: None,
             dag_size: 0,
-            dummy: false,
+            // Go: a temporary table's reader is a dummy; its rows are the
+            // union scan's.
+            dummy: table.temp_table_type != tidb_model::TempTableType::NONE,
         }))
     }
 

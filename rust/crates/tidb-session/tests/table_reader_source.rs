@@ -260,6 +260,36 @@ fn a_union_scan_reads_a_partitioned_tables_readers() {
     tk.must_exec("rollback");
 }
 
+/// A temporary table's readers are Go's dummies (`e.dummy` for a
+/// `TempTableType` other than none): the union scan above reads the session's
+/// temporary table data under the buffer (`getSnapIter`), and a global
+/// temporary table's rows are the transaction's alone. Go's rows (gorun).
+#[test]
+fn a_temporary_tables_readers_read_through_the_union_scan() {
+    let mut tk = TestKit::new();
+    tk.must_exec("create temporary table lt (a int primary key, b int, index ib(b))");
+    tk.must_exec("insert into lt values (1,30),(2,20),(3,10)");
+    tk.must_query("select * from lt order by a").check(["1 30", "2 20", "3 10"]);
+    tk.must_query("select b from lt where b > 0 order by b").check(["10", "20", "30"]);
+    tk.must_query("select * from lt use index(ib) where b > 0 order by b desc").check(["1 30", "2 20", "3 10"]);
+    tk.must_exec("begin");
+    tk.must_exec("insert into lt values (4,25)");
+    tk.must_exec("update lt set b=5 where a=1");
+    tk.must_exec("delete from lt where a=2");
+    tk.must_query("select * from lt order by a").check(["1 5", "3 10", "4 25"]);
+    tk.must_query("select b from lt where b > 0 order by b").check(["5", "10", "25"]);
+    tk.must_query("select * from lt use index(ib) where b > 0 order by b desc").check(["4 25", "3 10", "1 5"]);
+    tk.must_exec("rollback");
+    tk.must_query("select * from lt order by a").check(["1 30", "2 20", "3 10"]);
+    tk.must_exec("create global temporary table gt (a int primary key, b int, index ib(b)) on commit delete rows");
+    tk.must_exec("begin");
+    tk.must_exec("insert into gt values (1,30),(2,20)");
+    tk.must_query("select * from gt order by a").check(["1 30", "2 20"]);
+    tk.must_query("select * from gt use index(ib) where b > 0 order by b").check(["2 20", "1 30"]);
+    tk.must_exec("commit");
+    tk.must_query("select * from gt").check(Vec::<&str>::new());
+}
+
 /// Go `buildRespForGroupedRanges` assigns `e.kvRanges` on each call, so a
 /// keep-order read of an unsigned handle whose ranges straddle the int64
 /// boundary keeps only the second part's KV ranges, and the union scan over

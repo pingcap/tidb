@@ -241,7 +241,9 @@ impl IndexReaderExecutor {
             mem_tracker: None,
             partition_id_map,
             kv_ranges: Vec::new(),
-            dummy: false,
+            // Go: a temporary table's reader is a dummy; its rows are the
+            // union scan's.
+            dummy: table_info.temp_table_type != tidb_model::TempTableType::NONE,
         }))
     }
 

@@ -157,8 +157,11 @@ reader built by Go's `buildTableReader` / `buildIndexReader` /
   union scan misses the buffered rows of the first (pinned in
   `table_reader_source.rs`). A dynamically pruned partitioned
   table's readers followed, unchanged (pinned by
-  `a_union_scan_reads_a_partitioned_tables_readers`). Left: temporary
-  tables, then the per-task union scan of the index join.
+  `a_union_scan_reads_a_partitioned_tables_readers`). A global index keeps
+  Go's `partitionIDMap` for the mem index readers. Temporary tables
+  followed: their readers are Go's dummies and the union scan reads the
+  session's temporary table data under the buffer (`getSnapIter`). Left:
+  the per-task union scan of the index join.
 - 2026-11-12 (M3): `TableRead` now takes Go's `SetMemTracker` and
   `SetPaging` from its caller. The TableReader and IndexReader still hand
   each select result a fresh operator tracker under the statement's, where
