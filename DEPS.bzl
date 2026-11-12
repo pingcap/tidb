@@ -184,8 +184,8 @@ def go_deps():
         name = "com_github_apache_thrift",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/apache/thrift",
-        sum = "h1:wKR6YnefQSEnxpEfmgTPuJibNG4bF0p2TK34tHLWi3s=",
-        version = "v0.23.0",
+        sum = "h1:zy31L1a49QTNB2bG1BBfMXol3yJrTH975G3pPubQVLQ=",
+        version = "v0.24.0",
     )
     go_repository(
         name = "com_github_armon_consul_api",
@@ -1445,8 +1445,8 @@ def go_deps():
         name = "com_github_go_jose_go_jose_v4",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/go-jose/go-jose/v4",
-        sum = "h1:moDMcTHmvE6Groj34emNPLs/qtYXRVcd6S7NHbHz3kA=",
-        version = "v4.1.4",
+        sum = "h1:sNRkftxFJxwsILiQukqp5z83QBSmntVwmgRY7AqBDO4=",
+        version = "v4.1.6",
     )
     go_repository(
         name = "com_github_go_kit_log",
@@ -2723,8 +2723,8 @@ def go_deps():
         name = "com_github_klauspost_compress",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/klauspost/compress",
-        sum = "h1:/h1gH5Ce+VWNLSWqPzOVn6XBO+vJbCNGvjoaGBFW2IE=",
-        version = "v1.18.5",
+        sum = "h1:aUyZsS4kH3QTKurYhAOwAHxllVPnOthb3vPfnF1Ehjw=",
+        version = "v1.18.7",
     )
     go_repository(
         name = "com_github_klauspost_cpuid",
