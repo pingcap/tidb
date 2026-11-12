@@ -377,7 +377,11 @@ func recursiveRemoveRedundantORBranch(sctx base.PlanContext, predicate expressio
 	orFunc := predicate.(*expression.ScalarFunction)
 	orList := expression.SplitDNFItems(orFunc)
 
-	dedupMap := make(map[string]struct{}, len(orList))
+	// dedupMap buckets the kept predicates by HashCode(). HashCode() alone cannot tell expressions
+	// apart when they differ only in collation (e.g. `s = 'a' COLLATE utf8mb4_bin` vs
+	// `s = 'a' COLLATE utf8mb4_general_ci`, or their constant-folded `CAST('a' AS BINARY)` variants
+	// hash identically), so a hash hit is confirmed with Equals() before removing a branch.
+	dedupMap := make(map[string][]expression.Expression, len(orList))
 	newORList := make([]expression.Expression, 0, len(orList))
 
 	for _, orItem := range orList {
@@ -389,11 +393,11 @@ func recursiveRemoveRedundantORBranch(sctx base.PlanContext, predicate expressio
 			removeRedundantORBranch(sctx, andList)
 			newORList = append(newORList, expression.ComposeCNFCondition(sctx.GetExprCtx(), andList...))
 		} else {
-			// 2. Otherwise, we check if it's a duplicate predicate by checking HashCode().
+			// 2. Otherwise, we check if it's a duplicate predicate by checking HashCode() and Equals().
 			hashCode := string(orItem.HashCode())
 			// 2-1. If it's not a duplicate, we need to keep this predicate.
-			if _, ok := dedupMap[hashCode]; !ok {
-				dedupMap[hashCode] = struct{}{}
+			if !containsEqualExpr(dedupMap[hashCode], orItem) {
+				dedupMap[hashCode] = append(dedupMap[hashCode], orItem)
 				newORList = append(newORList, orItem)
 			} else if expression.IsMutableEffectsExpr(orItem) {
 				// 2-2. If it's a duplicate, but it's nondeterministic or has side effects, we also need to keep it.
@@ -403,6 +407,17 @@ func recursiveRemoveRedundantORBranch(sctx base.PlanContext, predicate expressio
 		}
 	}
 	return expression.ComposeDNFCondition(sctx.GetExprCtx(), newORList...)
+}
+
+// containsEqualExpr reports whether target equals (by Equals(), which is collation-sensitive,
+// unlike HashCode()) any expression in exprs.
+func containsEqualExpr(exprs []expression.Expression, target expression.Expression) bool {
+	for _, e := range exprs {
+		if e.Equals(target) {
+			return true
+		}
+	}
+	return false
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.

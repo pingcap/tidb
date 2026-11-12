@@ -373,13 +373,35 @@ IndexMerge	29.98	root		type: union
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t3, index:ia(a)	range:["\x00A","\x00A"], keep order:false, stats:pseudo
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t3, index:ia(a)	range:["\x00A","\x00A"], keep order:false, stats:pseudo
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t3, index:ib(b)	range:["b","b"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t3, index:ib(b)	range:["b","b"], keep order:false, stats:pseudo
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t3, index:ib(b)	range:["B","B"], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	29.98	cop[tikv]	table:t3	keep order:false, stats:pseudo
 explain format=brief select * from t3 where a = _utf8mb4'a' collate utf8mb4_unicode_ci or a = _utf8mb4'a' collate utf8mb4_0900_ai_ci or a = 'A' or b = 'b' or b = 'b' or b = 'B';
 id	estRows	task	access object	operator info
-TableReader	8006.00	root		data:Selection
-└─Selection	8006.00	cop[tikv]		or(or(eq(planner__core__casetest__predicate_simplification.t3.a, "a"), eq(planner__core__casetest__predicate_simplification.t3.a, "A")), or(eq(planner__core__casetest__predicate_simplification.t3.b, "b"), eq(planner__core__casetest__predicate_simplification.t3.b, "B")))
+TableReader	9601.20	root		data:Selection
+└─Selection	9601.20	cop[tikv]		or(or(eq(planner__core__casetest__predicate_simplification.t3.a, "a"), eq(planner__core__casetest__predicate_simplification.t3.a, "a")), or(eq(planner__core__casetest__predicate_simplification.t3.a, "A"), or(eq(planner__core__casetest__predicate_simplification.t3.b, "b"), eq(planner__core__casetest__predicate_simplification.t3.b, "B"))))
   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+insert into t3 values ('a', 'x'), ('A', 'y');
+explain format=brief select * from t3 where a = 'a' collate utf8mb4_bin or a = 'a' collate utf8mb4_general_ci;
+id	estRows	task	access object	operator info
+IndexLookUp	8.00	root		
+├─Selection(Build)	8.00	cop[tikv]		or(eq(planner__core__casetest__predicate_simplification.t3.a, "a"), eq(planner__core__casetest__predicate_simplification.t3.a, "a"))
+│ └─IndexRangeScan	10.00	cop[tikv]	table:t3, index:ia(a)	range:["\x00A","\x00A"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	8.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+select * from t3 where a = 'a' collate utf8mb4_bin or a = 'a' collate utf8mb4_general_ci order by b;
+a	b
+a	x
+A	y
+explain format=brief select * from t3 where a = cast('a' as binary) or a = 'a';
+id	estRows	task	access object	operator info
+IndexLookUp	8.00	root		
+├─Selection(Build)	8.00	cop[tikv]		or(eq(planner__core__casetest__predicate_simplification.t3.a, "a"), eq(planner__core__casetest__predicate_simplification.t3.a, "a"))
+│ └─IndexRangeScan	10.00	cop[tikv]	table:t3, index:ia(a)	range:["\x00A","\x00A"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	8.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+select * from t3 where a = cast('a' as binary) or a = 'a' order by b;
+a	b
+a	x
+A	y
 drop table if exists t4;
 create table t4(a int, b int, c int, d int, index iab(a,b), index iac(a,c), index iad(a,d));
 explain format=brief select /*+ use_index_merge(t4) */ * from t4 where a = 1 and (b = 2 or c = 4 or b = 12 or c = 5 or d = 6 or c = 4 or c = 5 or d = 6);
