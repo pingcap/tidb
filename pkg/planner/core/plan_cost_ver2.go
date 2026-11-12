@@ -21,8 +21,10 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -72,15 +74,68 @@ func getPlanCostVer24PhysicalSelection(pp base.PhysicalPlan, taskType property.T
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
 	filterCost := filterCostVer2(option, inputRows, p.Conditions, cpuFactor)
+	matchCost := localMatchCostVer2(option, p, inputRows, cpuFactor)
 
 	childCost, err := p.Children()[0].GetPlanCostVer2(taskType, option, isChildOfINL...)
 	if err != nil {
 		return costusage.ZeroCostVer2, err
 	}
 
-	p.PlanCostVer2 = costusage.SumCostVer2(filterCost, childCost)
+	p.PlanCostVer2 = costusage.SumCostVer2(filterCost, matchCost, childCost)
 	p.PlanCostInit = true
 	return p.PlanCostVer2, nil
+}
+
+// localMatchCostVer2 returns what evaluating the MATCH ... AGAINST conditions
+// of a Selection in TiDB costs beyond the constant a filter is charged, which
+// is:
+// match-cost = input-rows * document-bytes * match-cost-per-byte * cpu-factor
+// A locally evaluated MATCH analyzes the document of every row it is given,
+// which costs in proportion to the size of the document, far more than an
+// ordinary function. Without this charge a plan that evaluates the MATCH on
+// every row of a scan would look nearly as cheap as one that reads only the
+// matching rows from a FULLTEXT index.
+func localMatchCostVer2(option *costusage.PlanCostOption, p *physicalop.PhysicalSelection, inputRows float64, cpuFactor costusage.CostVer2Factor) costusage.CostVer2 {
+	var columns []*expression.Column
+	for _, cond := range p.Conditions {
+		columns = appendLocalMatchColumns(columns, cond)
+	}
+	if len(columns) == 0 {
+		return costusage.ZeroCostVer2
+	}
+	docBytes := 32.0 // a short document, when there are no statistics to say
+	if stats := p.Children()[0].StatsInfo(); stats != nil && stats.HistColl != nil {
+		docBytes = cardinality.GetAvgRowSize(p.SCtx(), stats.HistColl, columns, false, false)
+	}
+	return costusage.NewCostVer2(option, cpuFactor,
+		inputRows*docBytes*fulltext.DocumentMatchCostPerByte*cpuFactor.Value,
+		func() string {
+			return fmt.Sprintf("match(%v*docbytes(%v)*%v*%v)", inputRows, docBytes, fulltext.DocumentMatchCostPerByte, cpuFactor)
+		})
+}
+
+// appendLocalMatchColumns appends the columns of every locally evaluated
+// MATCH ... AGAINST in expr, one per MATCH and column, since each MATCH
+// analyzes its columns on its own.
+func appendLocalMatchColumns(columns []*expression.Column, expr expression.Expression) []*expression.Column {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return columns
+	}
+	if sf.FuncName.L == ast.FTSMysqlMatchAgainst {
+		if _, local := expression.FTSMysqlMatchAgainstLocalEvalInfo(sf); local {
+			for _, arg := range sf.GetArgs()[1:] {
+				if col, ok := arg.(*expression.Column); ok {
+					columns = append(columns, col)
+				}
+			}
+		}
+		return columns
+	}
+	for _, arg := range sf.GetArgs() {
+		columns = appendLocalMatchColumns(columns, arg)
+	}
+	return columns
 }
 
 // getPlanCostVer24PhysicalProjection returns the plan-cost of this sub-plan, which is:
