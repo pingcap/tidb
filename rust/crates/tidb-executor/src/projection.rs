@@ -424,6 +424,20 @@ impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
     }
 }
 
+impl<C: ProjectionContext> ProjectionExec<C> {
+    /// Go `ProjectionExec.open`: the executor's own state over a child that
+    /// is already open (`buildProjectionForIndexJoin`).
+    pub(crate) fn open_self(&mut self) -> Result<(), ExecError> {
+        self.parallel = None;
+        self.child_chunk.reset();
+        if self.is_unparallel_exec() {
+            self.child_chunk = self.child.new_chunk();
+            self.consume(self.child_chunk.memory_usage());
+        }
+        Ok(())
+    }
+}
+
 impl<C: ProjectionContext> Executor for ProjectionExec<C> {
     fn open(&mut self) -> Result<(), ExecError> {
         self.parallel = None;

@@ -257,6 +257,20 @@ impl FastSelectionFilter {
     }
 }
 
+impl<C: Columns + Send> SelectionExec<C> {
+    /// Go `SelectionExec.open`: the executor's own state over a child that
+    /// is already open (`buildExecutorForIndexJoinInternal`).
+    pub(crate) fn open_self(&mut self) -> Result<(), ExecError> {
+        self.release_child_chunk();
+        let child_chunk = self.child.new_chunk();
+        self.tracker.replace_bytes_used(child_chunk.memory_usage());
+        self.child_chunk = Some(child_chunk);
+        self.input_row = 0;
+        self.selected.clear();
+        Ok(())
+    }
+}
+
 impl<C: Columns + Send> Executor for SelectionExec<C> {
     fn open(&mut self) -> Result<(), ExecError> {
         self.release_child_chunk();

@@ -108,4 +108,16 @@ fn an_index_join_reads_its_covering_inner_side_per_task() {
     tk.must_exec("insert into k values (1, 1, 11), (2, 2, 22), (2, 3, 23), (4, 4, 44)");
     tk.must_query("select /*+ inl_join(k) */ o.a, k.v from o join k on o.a = k.a order by o.a, o.c, k.v")
         .check(["1 11", "2 22", "2 23", "2 22", "2 23", "4 44"]);
+    // A condition the store cannot evaluate stays a Selection above the
+    // task's reader, and a computed column a Projection
+    // (`buildExecutorForIndexJoinInternal`'s Selection arm,
+    // `buildProjectionForIndexJoin`).
+    tk.must_exec("insert into mysql.expr_pushdown_blacklist values ('lt', 'tikv', '')");
+    tk.must_exec("admin reload expr_pushdown_blacklist");
+    tk.must_query("select /*+ inl_join(i) */ o.a, i.d from o join i on o.a = i.b where i.d < 300 order by o.a, o.c, i.d")
+        .check(["1 101", "1 111", "2 206", "2 221", "2 206", "2 221"]);
+    tk.must_exec("delete from mysql.expr_pushdown_blacklist");
+    tk.must_exec("admin reload expr_pushdown_blacklist");
+    tk.must_query("select /*+ inl_join(x) */ o.a, x.e from o join (select b, d + 1 as e from i) x on o.a = x.b order by o.a, o.c, x.e")
+        .check(["1 102", "1 112", "2 207", "2 222", "2 207", "2 222", "3 330", "3 332"]);
 }
