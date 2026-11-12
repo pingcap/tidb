@@ -14,7 +14,7 @@ go_test(
         "//pkg/config",
         "//pkg/domain",
         "//pkg/executor",
-        "//pkg/executor/importer",
+        "//pkg/importer",
         "//pkg/kv",
         "//pkg/lightning/mydump",
         "//pkg/meta/autoid",

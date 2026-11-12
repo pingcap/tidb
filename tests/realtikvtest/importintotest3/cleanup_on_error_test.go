@@ -35,7 +35,7 @@ func (s *mockGCSSuite) TestCleanupOnDataEngineImportError() {
 	s.NoError(os.WriteFile(dataPath, content, 0o644))
 
 	var enterCnt atomic.Int32
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/mockDataEngineImportErr", func(errP *error) {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/importer/mockDataEngineImportErr", func(errP *error) {
 		if enterCnt.Add(1) == 1 {
 			*errP = drivererr.ErrPDServerTimeout
 		}

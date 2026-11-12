@@ -24,7 +24,7 @@ go_test(
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/importinto/taskinfo",
         "//pkg/executor",
-        "//pkg/executor/importer",
+        "//pkg/importer",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta",

@@ -36,9 +36,9 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	fstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
-	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -2853,7 +2853,7 @@ func (e *ShowExec) fetchShowImportGroups(ctx context.Context) error {
 			gInfo.updateTime = updateTime
 		}
 
-		// See pkg/executor/importer/job.go for job status
+		// See pkg/importer/job.go for job status
 		gInfo.jobCount++
 		switch info.Status {
 		case "pending":

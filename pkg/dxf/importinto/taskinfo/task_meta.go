@@ -16,7 +16,7 @@ package taskinfo
 
 import (
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/importer"
 )
 
 // TaskMeta is the task of IMPORT INTO.

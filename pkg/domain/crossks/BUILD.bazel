@@ -75,7 +75,7 @@ go_test(
         "//pkg/domain/sqlsvrapi",
         "//pkg/dxf/framework/storage",
         "//pkg/executor",
-        "//pkg/executor/importer",
+        "//pkg/importer",
         "//pkg/infoschema",
         "//pkg/infoschema/validatorapi",
         "//pkg/keyspace",

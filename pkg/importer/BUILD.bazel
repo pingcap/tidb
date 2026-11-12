@@ -15,7 +15,7 @@ go_library(
         "sampler.go",
         "table_import.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/executor/importer",
+    importpath = "github.com/pingcap/tidb/pkg/importer",
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/streamhelper",

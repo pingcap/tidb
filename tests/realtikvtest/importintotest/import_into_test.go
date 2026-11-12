@@ -45,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -1020,7 +1020,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	switcher.EXPECT().ToNormalMode(gomock.Any(), gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/beforeSortChunk", "sleep(3000)")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/errorWhenSortChunk", "return(true)")
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/importer/setLastImportJobID", `return(true)`)
 
 	sql = fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s'`, gcsEndpoint)
 	err = s.tk.QueryToErr(sql)
@@ -1322,7 +1322,7 @@ func (s *mockGCSSuite) TestDiskQuotaFromSelect() {
 			// Only successful quota imports should trigger the hook. A final engine
 			// import can still populate dst even if every quota import failed.
 			diskQuotaImported := atomic.NewBool(false)
-			testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/afterDiskQuotaImport", func() {
+			testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/importer/afterDiskQuotaImport", func() {
 				diskQuotaImported.Store(true)
 			})
 
@@ -1491,7 +1491,7 @@ func (s *mockGCSSuite) TestImportIntoWithMockDataSize() {
 	for _, tc := range testCases {
 		s.T().Run(tc.tblName, func(t *testing.T) {
 			s.tk.MustExec("create table import_into." + tc.tblName + " (a int, b int);")
-			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/amplifyRealSize", fmt.Sprintf("return(%d)", tc.factor))
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/importer/amplifyRealSize", fmt.Sprintf("return(%d)", tc.factor))
 			sql := fmt.Sprintf(`IMPORT INTO import_into.%s FROM 'gs://mock-datasize-test/t.csv?endpoint=%s'`, tc.tblName, gcsEndpoint)
 			rows := s.tk.MustQuery(sql).Rows()
 			require.Len(t, rows, 1)
@@ -1505,7 +1505,7 @@ func (s *mockGCSSuite) TestImportIntoWithMockDataSize() {
 	s.T().Run("multiple files", func(t *testing.T) {
 		setAmplifyFactorFn(1)
 		s.tk.MustExec("create table import_into.t_files(a int, b int);")
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/amplifyRealSize", fmt.Sprintf("return(%d)", 10*units.GiB))
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/importer/amplifyRealSize", fmt.Sprintf("return(%d)", 10*units.GiB))
 		sql := fmt.Sprintf(`IMPORT INTO import_into.t_files FROM 'gs://mock-datasize-test/*.csv?endpoint=%s'`, gcsEndpoint)
 		rows := s.tk.MustQuery(sql).Rows()
 		require.Len(t, rows, 1)
@@ -1577,13 +1577,13 @@ func (s *mockGCSSuite) TestTableMode() {
 
 	// Test occur retryable error when checksum
 	s.tk.MustExec("truncate table table_mode")
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/retryableError", `return`)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/importer/retryableError", `return`)
 	getError := false
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask",
 		func(e taskexecutor.TaskExecutor, errP *error, _ context.Context) {
 			if errP != nil && *errP == common.ErrWriteTooSlow {
 				getError = true
-				testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/retryableError")
+				testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/importer/retryableError")
 			}
 		},
 	)

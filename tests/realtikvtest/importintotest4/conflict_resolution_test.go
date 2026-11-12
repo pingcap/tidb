@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -573,7 +573,7 @@ func (s *mockGCSSuite) TestGlobalSortMultiValuedUniqueIndexCountsConflictedRowOn
 	// collectors are exercised.
 	testfailpoint.Enable(
 		s.T(),
-		"github.com/pingcap/tidb/pkg/executor/importer/amplifyRealSize",
+		"github.com/pingcap/tidb/pkg/importer/amplifyRealSize",
 		fmt.Sprintf("return(%d)", 2*units.GiB),
 	)
 
