@@ -68,8 +68,9 @@ func buildOutputLogModifyJob(t *testing.T, tk *testkit.TestKit, is infoschema.In
 	base, err := is.TableByName(context.Background(), schema.Name, ast.NewCIStr("t_output_batch"))
 	require.NoError(t, err)
 	var jobW *ddl.JobWrapper
-	var subJobs []*model.SubJob
-	for _, spec := range stmt.(*ast.AlterTableStmt).Specs {
+	specs := stmt.(*ast.AlterTableStmt).Specs
+	subJobs := make([]*model.SubJob, 0, len(specs))
+	for _, spec := range specs {
 		columnJob, err := ddl.GetModifiableColumnJob(ctx, tk.Session(), is,
 			ast.Ident{Schema: schema.Name, Name: base.Meta().Name}, spec.NewColumns[0].Name.Name, schema, base, spec)
 		require.NoError(t, err)
@@ -199,8 +200,9 @@ func TestMaterializedViewOutputLogModifyColumnBatchRollback(t *testing.T) {
 	tk.MustExec("create materialized view log on mv_output_batch (k, l)")
 	schema, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
-	var tableIDs []int64
-	for _, name := range []string{"t_output_batch", "$mlog$t_output_batch", "mv_output_batch", "$mlog$mv_output_batch"} {
+	names := []string{"t_output_batch", "$mlog$t_output_batch", "mv_output_batch", "$mlog$mv_output_batch"}
+	tableIDs := make([]int64, 0, len(names))
+	for _, name := range names {
 		tbl, err := dom.InfoSchema().TableByName(context.Background(), schema.Name, ast.NewCIStr(name))
 		require.NoError(t, err)
 		tableIDs = append(tableIDs, tbl.Meta().ID)
