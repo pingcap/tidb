@@ -1152,6 +1152,7 @@ fn open_scan(
     } else {
         builder.set_non_partitioned_key_ranges(plan.key_ranges);
     }
+    let is_tiflash = plan.tiflash.is_some();
     if let Some(tiflash) = plan.tiflash {
         builder
             .set_store_type(tidb_txnkv::StoreType::TiFlash)
@@ -1174,6 +1175,16 @@ fn open_scan(
         .with_session_mem_tracker(plan.session_mem_tracker, plan.enabled_rate_limit_action)
         .with_rpc_interceptor(plan.rpc_interceptor)
         .with_kv_context(plan.kv_context);
+    // Go `distsql.Select`: `if kvReq.StoreType == kv.TiFlash {
+    // option.AppendWarning = dctx.AppendWarning }`.
+    let request = if is_tiflash {
+        let warnings = plan.warnings.clone();
+        request.with_append_warning(tidb_txnkv::AppendWarning(Arc::new(move |warning| {
+            warnings.append_warning(warning);
+        })))
+    } else {
+        request
+    };
     let result = tidb_distsql::select_with_runtime_stats_over_client(
         client,
         &request,

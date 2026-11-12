@@ -19,9 +19,6 @@
 //! The tasks are `buildBatchCopTasksCore`'s ([`crate::batch_cop_tasks`]); a
 //! worker per task sends it, rebuilds it when its store cannot be reached,
 //! and feeds every response to the iterator's channel.
-//!
-//! Go's `option.AppendWarning` has no carrier on `Client::send`, so the task
-//! builder's warnings are not published.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -87,6 +84,8 @@ struct BatchCopWorker<S: tikv_client::PdClient> {
     ctx: Arc<dyn MppContext>,
     /// Go `respChan`.
     resp_chan: tokio::sync::mpsc::Sender<Result<QueryResultSubset, QueryResponseError>>,
+    /// Go `appendWarning`.
+    append_warning: Option<tidb_txnkv::AppendWarning>,
 }
 
 use crate::batch_cop_tasks::Ranges;
@@ -101,8 +100,8 @@ async fn build_batch_cop_tasks<S: tikv_client::PdClient>(
     kv_context: &tidb_txnkv::StatementKvContext,
     ranges_for_each_physical_table: &[Ranges],
     partition_ids: &[i64],
-) -> Result<Vec<MppStoreTask>, String> {
-    let (tasks, _warnings) = crate::batch_cop_tasks::build_batch_cop_tasks(
+) -> Result<(Vec<MppStoreTask>, Vec<String>), String> {
+    crate::batch_cop_tasks::build_batch_cop_tasks(
         store,
         ranges_for_each_physical_table,
         partition_ids,
@@ -115,8 +114,14 @@ async fn build_batch_cop_tasks<S: tikv_client::PdClient>(
         kv_context,
     )
     .await
-    .map_err(|error| error.to_string())?;
-    Ok(tasks)
+    .map_err(|error| error.to_string())
+}
+
+/// Go `appendWarning(warn)` for each of a task build's warnings.
+fn append_warnings(append_warning: Option<&tidb_txnkv::AppendWarning>, warnings: Vec<String>) {
+    if let Some(append_warning) = append_warning {
+        warnings.into_iter().for_each(|warning| (append_warning.0)(warning));
+    }
 }
 
 /// Go `CopClient.sendBatch`.
@@ -170,6 +175,9 @@ pub fn send_batch<S: tikv_client::PdClient + 'static>(
             .await
             .unwrap_or_else(|_| Err("context deadline exceeded".to_owned()))
     })?;
+    let append_warning = request.append_warning();
+    let (tasks, warnings) = tasks;
+    append_warnings(append_warning.as_ref(), warnings);
     let (resp_chan, receiver) = tokio::sync::mpsc::channel(RESP_CHAN_SIZE);
     let worker = Arc::new(BatchCopWorker {
         store: store.clone(),
@@ -179,6 +187,7 @@ pub fn send_batch<S: tikv_client::PdClient + 'static>(
         cancellation: Arc::clone(&cancellation),
         ctx,
         resp_chan,
+        append_warning,
     });
     // Go `batchCopIterator.run`: a goroutine per task; the channel closes
     // when the last of them returns.
@@ -270,6 +279,10 @@ impl<S: tikv_client::PdClient> BatchCopWorker<S> {
             &partition_ids,
         )
         .await
+        .map(|(tasks, warnings)| {
+            append_warnings(self.append_warning.as_ref(), warnings);
+            tasks
+        })
         .map_err(QueryResponseError::Source)
     }
 

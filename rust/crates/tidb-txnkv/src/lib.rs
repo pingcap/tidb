@@ -117,7 +117,7 @@ pub use kv_contract::{
     DEFAULT_TXN_TOTAL_SIZE_LIMIT, GLOBAL_REPLICA_SCOPE, UNCOMMITTED_INDEX_KV_FLAG,
 };
 pub use kv_request::{
-    KvRequestMetadata, TransportBinding, TransportRequest, TransportRequestError,
+    AppendWarning, KvRequestMetadata, TransportBinding, TransportRequest, TransportRequestError,
 };
 pub use kv_response::{
     CopInfo, LimiterWaitStats, StoreBatchCounts, QueryResponseError, QueryResultSubset, RequestStatsSample,

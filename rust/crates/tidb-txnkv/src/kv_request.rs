@@ -165,10 +165,22 @@ pub struct TransportRequest {
     /// `rateLimitAction` joins, and whether that action may act.
     session_mem_tracker: Option<SessionMemTracker>,
     enabled_rate_limit_action: bool,
+    /// Go `kv.ClientSendOption.AppendWarning`.
+    append_warning: Option<AppendWarning>,
     execution_cancellation: Arc<CancelHandle>,
     request_cancellation: Option<Arc<CancelHandle>>,
     bound_at: Option<Instant>,
     binding: Option<TransportBinding>,
+}
+
+/// Go `kv.ClientSendOption.AppendWarning`: the statement's warning sink.
+#[derive(Clone)]
+pub struct AppendWarning(pub Arc<dyn Fn(String) + Send + Sync>);
+
+impl std::fmt::Debug for AppendWarning {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("AppendWarning")
+    }
 }
 
 impl TransportRequest {
@@ -182,11 +194,25 @@ impl TransportRequest {
             cop_lite_worker: None,
             session_mem_tracker: None,
             enabled_rate_limit_action: false,
+            append_warning: None,
             execution_cancellation,
             request_cancellation: None,
             bound_at: None,
             binding: None,
         }
+    }
+
+    /// Go `option.AppendWarning = dctx.AppendWarning` (a `kv.TiFlash`
+    /// request's).
+    #[must_use]
+    pub fn with_append_warning(mut self, append_warning: AppendWarning) -> Self {
+        self.append_warning = Some(append_warning);
+        self
+    }
+
+    /// Go `option.AppendWarning(warn)`; nothing without a sink.
+    pub fn append_warning(&self) -> Option<AppendWarning> {
+        self.append_warning.clone()
     }
 
     /// Shares Go's statement-scoped TryCopLiteWorker across this statement's
@@ -322,6 +348,7 @@ impl TransportRequest {
             cop_lite_worker: self.cop_lite_worker.clone(),
             session_mem_tracker: self.session_mem_tracker.clone(),
             enabled_rate_limit_action: self.enabled_rate_limit_action,
+            append_warning: self.append_warning.clone(),
             execution_cancellation: Arc::clone(&self.execution_cancellation),
             request_cancellation: Some(self.execution_cancellation.request_child()),
             bound_at: Some(Instant::now()),
@@ -352,6 +379,7 @@ impl TransportRequest {
             cop_lite_worker: self.cop_lite_worker.clone(),
             session_mem_tracker: self.session_mem_tracker.clone(),
             enabled_rate_limit_action: self.enabled_rate_limit_action,
+            append_warning: self.append_warning.clone(),
             execution_cancellation: Arc::clone(&self.execution_cancellation),
             request_cancellation: Some(self.execution_cancellation.request_child()),
             bound_at: Some(Instant::now()),

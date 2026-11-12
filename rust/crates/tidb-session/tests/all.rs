@@ -81,6 +81,7 @@ mod parallel_apply_source;
 mod stmt_node_counter_source;
 mod telemetry_test_source;
 mod tiflash_replica_test_source;
+mod tiflashtest_disaggregated_source;
 mod update_accounting_source;
 mod update_order_limit_multi_source;
 mod update_subquery_source;

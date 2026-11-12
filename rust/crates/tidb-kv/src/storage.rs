@@ -77,8 +77,8 @@ impl fmt::Display for StorageError {
             StorageError::Sql(error) => error.fmt(f),
             StorageError::NotFound => f.write_str("key not found"),
             StorageError::InvalidIterator => f.write_str("iterator is exhausted"),
-            StorageError::Backend(message) => write!(f, "storage error: {message}"),
-            StorageError::Retryable(message) => write!(f, "retryable storage error: {message}"),
+            // Go passes a storage error up as it is: its text is its own.
+            StorageError::Backend(message) | StorageError::Retryable(message) => f.write_str(message),
         }
     }
 }

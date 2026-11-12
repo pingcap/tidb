@@ -2034,9 +2034,8 @@ fn test_store_err() {
 
     tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopCancelled", "1*return(true)").unwrap();
     let (_, message) = query_error(&mut session, "select count(*) from t");
-    // Go `errors.Cause(err) == context.Canceled`, under this tree's storage
-    // error text.
-    assert_eq!(message, "storage error: context canceled");
+    // Go `errors.Cause(err) == context.Canceled`.
+    assert_eq!(message, "context canceled");
 
     tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0", "1*return(\"tiflash0\")").unwrap();
     check(&mut session, "select count(*) from t", &[&["1"]]);
