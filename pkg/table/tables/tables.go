@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -985,6 +986,11 @@ func genIndexKeyStrs(colVals []types.Datum) ([]string, error) {
 			if err != nil {
 				return nil, err
 			}
+			// Chunk readers represent binary columns as strings with the binary collation.
+			if cv.Kind() == types.KindBytes || cv.Kind() == types.KindMysqlBit || cv.Kind() == types.KindBinaryLiteral ||
+				(cv.Kind() == types.KindString && cv.Collation() == charset.CollationBin) {
+				cvs = util.FmtNonASCIIPrintableCharToHex(cvs)
+			}
 		}
 		strVals = append(strVals, cvs)
 	}
@@ -1022,20 +1028,18 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 		if err != nil {
 			return nil, err
 		}
-		var dupErr error
 		if !skipCheck && v.Meta().Unique {
 			// Make error message consistent with MySQL.
 			tablecodec.TruncateIndexValues(t.meta, v.Meta(), indexVals)
-			colStrVals, err := genIndexKeyStrs(indexVals)
-			if err != nil {
-				return nil, err
-			}
-			dupErr = kv.GenKeyExistsErr(colStrVals, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
 		}
 		rsData := TryGetHandleRestoredDataWrapper(t.meta, r, nil, v.Meta())
 		if dupHandle, err := asIndex(v).create(sctx, txn, indexVals, recordID, rsData, false, opt); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
-				return dupHandle, dupErr
+				colStrVals, err := genIndexKeyStrs(indexVals)
+				if err != nil {
+					return nil, err
+				}
+				return dupHandle, kv.GenKeyExistsErr(colStrVals, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
 			}
 			return nil, err
 		}
