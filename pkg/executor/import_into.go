@@ -636,17 +636,7 @@ func (e *ImportIntoExec) prepareQuery(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e.controller.Plan.QuerySource = query
-	// TODO: split I/O-bound single-table queries into range subtasks, and remove
-	// this cap, which also keeps the later steps on one node.
-	e.controller.Plan.MaxNodeCnt = 1
-	// The query takes all slots of a DXF node.
-	cpuCnt, err := handle.GetCPUCountOfNode(ctx)
-	if err != nil {
-		return err
-	}
-	e.controller.Plan.ThreadCnt = cpuCnt
-	return nil
+	return e.controller.SetQuerySource(ctx, query)
 }
 
 // fillQueryInfo preserves the affected-row response of IMPORT FROM SELECT.

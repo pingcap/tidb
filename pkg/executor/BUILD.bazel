@@ -422,6 +422,7 @@ go_test(
         "pkg_test.go",
         "point_get_test.go",
         "prepared_test.go",
+        "query_import_test.go",
         "resource_tag_test.go",
         "revoke_test.go",
         "sample_test.go",
