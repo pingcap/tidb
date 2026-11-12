@@ -688,6 +688,23 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			}
 		}
 		if substituted {
+			if v.FuncName.L == ast.FTSMysqlMatchAgainst {
+				// MATCH searches the text of columns: it takes one renamed
+				// for another, but not the expression or constant an
+				// equality ties a column to, which matches the column under
+				// its collation and need not hold the same words.
+				for _, arg := range refExprArr.Result()[1:] {
+					if _, ok := arg.(*Column); !ok {
+						return true, true, v
+					}
+				}
+				// MATCH ... AGAINST keeps planner-initialized local evaluation state
+				// in its signature, so rebuild it by cloning and replacing all args.
+				cloned := v.Clone().(*ScalarFunction)
+				copy(cloned.Function.getArgs(), refExprArr.Result())
+				cloned.CleanHashCode()
+				return true, hasFail, cloned
+			}
 			var newFunc Expression
 			var err error
 			switch v.FuncName.L {
@@ -802,6 +819,11 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 			newSf = x.Clone()
 			sf := newSf.(*ScalarFunction)
 			sf.GetArgs()[0] = newArgs[0]
+			sf.CleanHashCode()
+		} else if x.FuncName.L == ast.FTSMysqlMatchAgainst {
+			newSf = x.Clone()
+			sf := newSf.(*ScalarFunction)
+			copy(sf.Function.getArgs(), newArgs)
 			sf.CleanHashCode()
 		} else {
 			newSf, err = NewFunction(ctx, x.FuncName.L, x.GetType(ctx.GetEvalCtx()), newArgs...)
