@@ -22,10 +22,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/pingcap/errors"
@@ -205,6 +207,7 @@ func TestAzblob(t *testing.T) {
 }
 
 func TestNewAzblobStorage(t *testing.T) {
+	t.Setenv("AZURE_FEDERATED_TOKEN_FILE", "")
 	{
 		options := &backuppb.AzureBlobStorage{
 			Endpoint:    "http://127.0.0.1:1000",
@@ -357,6 +360,148 @@ func TestNewAzblobStorage(t *testing.T) {
 		require.Equal(t, "user", b.GetAccountName())
 		require.Equal(t, "http://127.0.0.1:1000", b.serviceURL)
 	}
+}
+
+func TestAzureWorkloadIdentity(t *testing.T) {
+	t.Setenv("AZURE_CLIENT_ID", "workload-client")
+	t.Setenv("AZURE_TENANT_ID", "workload-tenant")
+	t.Setenv("AZURE_CLIENT_SECRET", "")
+	t.Setenv("AZURE_FEDERATED_TOKEN_FILE", filepath.Join(t.TempDir(), "token"))
+	t.Setenv("AZURE_STORAGE_ACCOUNT", "envaccount")
+	t.Setenv("AZURE_STORAGE_KEY", "")
+	t.Setenv("AZURE_AUTHORITY_HOST", "")
+
+	for _, sendCredentials := range []bool{false, true} {
+		t.Run(fmt.Sprintf("send credentials %t", sendCredentials), func(t *testing.T) {
+			options := &backuppb.AzureBlobStorage{Bucket: "test"}
+			builder, err := getAzureServiceClientBuilder(options, &storeapi.Options{SendCredentials: sendCredentials})
+			require.NoError(t, err)
+			require.IsType(t, &tokenClientBuilder{}, builder)
+			require.IsType(t, &azidentity.WorkloadIdentityCredential{}, builder.(*tokenClientBuilder).cred)
+			require.Equal(t, "envaccount", builder.GetAccountName())
+			require.Equal(t, "https://envaccount.blob.core.windows.net", builder.GetServiceURL())
+			if sendCredentials {
+				require.Equal(t, "envaccount", options.AccountName)
+			} else {
+				require.Empty(t, options.AccountName)
+			}
+			require.Empty(t, options.SharedKey)
+			require.Empty(t, options.AccessSig)
+			_, err = builder.GetServiceClient()
+			require.NoError(t, err)
+		})
+	}
+
+	t.Run("account and endpoint options", func(t *testing.T) {
+		options := &backuppb.AzureBlobStorage{
+			Bucket: "test", AccountName: "account", Endpoint: "https://account.example.com",
+		}
+		builder, err := getAzureServiceClientBuilder(options, nil)
+		require.NoError(t, err)
+		require.IsType(t, &tokenClientBuilder{}, builder)
+		require.Equal(t, options.AccountName, builder.GetAccountName())
+		require.Equal(t, options.Endpoint, builder.GetServiceURL())
+	})
+
+	t.Run("credential precedence", func(t *testing.T) {
+		t.Setenv("AZURE_STORAGE_KEY", "cGFzc3dk")
+		options := &backuppb.AzureBlobStorage{Bucket: "test", AccountName: "account"}
+		builder, err := getAzureServiceClientBuilder(options, nil)
+		require.NoError(t, err)
+		require.IsType(t, &tokenClientBuilder{}, builder)
+		require.IsType(t, &azidentity.WorkloadIdentityCredential{}, builder.(*tokenClientBuilder).cred)
+
+		t.Setenv("AZURE_CLIENT_SECRET", "secret")
+		builder, err = getAzureServiceClientBuilder(options, nil)
+		require.NoError(t, err)
+		require.IsType(t, &tokenClientBuilder{}, builder)
+		require.IsType(t, &azidentity.ClientSecretCredential{}, builder.(*tokenClientBuilder).cred)
+
+		options.SharedKey = "cGFzc3dk"
+		builder, err = getAzureServiceClientBuilder(options, nil)
+		require.NoError(t, err)
+		require.IsType(t, &sharedKeyClientBuilder{}, builder)
+
+		options.AccessSig = "sig=test"
+		builder, err = getAzureServiceClientBuilder(options, nil)
+		require.NoError(t, err)
+		require.IsType(t, &sasClientBuilder{}, builder)
+	})
+
+	t.Run("invalid tenant", func(t *testing.T) {
+		t.Setenv("AZURE_TENANT_ID", "invalid tenant")
+		// A configured workload identity must not silently fall back to a storage key.
+		t.Setenv("AZURE_STORAGE_KEY", "cGFzc3dk")
+		builder, err := getAzureServiceClientBuilder(&backuppb.AzureBlobStorage{Bucket: "test"}, nil)
+		require.ErrorContains(t, err, "Failed to get azure workload identity credential")
+		require.Nil(t, builder)
+	})
+
+	for _, name := range []string{"AZURE_CLIENT_ID", "AZURE_TENANT_ID"} {
+		t.Run("missing "+name, func(t *testing.T) {
+			t.Setenv(name, "")
+			require.NoError(t, os.Unsetenv(name))
+			builder, err := getAzureServiceClientBuilder(&backuppb.AzureBlobStorage{Bucket: "test"}, nil)
+			require.ErrorContains(t, err, "Failed to get azure workload identity credential")
+			require.Nil(t, builder)
+		})
+	}
+}
+
+type azureWorkloadIdentityTransport func(*http.Request) (*http.Response, error)
+
+func (f azureWorkloadIdentityTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestAzureWorkloadIdentityAuthentication(t *testing.T) {
+	t.Setenv("AZURE_CLIENT_ID", "workload-client")
+	t.Setenv("AZURE_TENANT_ID", "workload-tenant")
+	t.Setenv("AZURE_CLIENT_SECRET", "")
+	t.Setenv("AZURE_STORAGE_KEY", "")
+	t.Setenv("AZURE_AUTHORITY_HOST", "https://login.microsoftonline.com/")
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	require.NoError(t, os.WriteFile(tokenFile, []byte("federated-token"), 0600))
+	t.Setenv("AZURE_FEDERATED_TOKEN_FILE", tokenFile)
+
+	tokenRequests, storageRequests := 0, 0
+	client := &http.Client{Transport: azureWorkloadIdentityTransport(func(req *http.Request) (*http.Response, error) {
+		body := ""
+		switch req.URL.Path {
+		case "/common/discovery/instance":
+			body = `{"tenant_discovery_endpoint":"https://login.microsoftonline.com/workload-tenant/v2.0/.well-known/openid-configuration","metadata":[{"preferred_network":"login.microsoftonline.com","preferred_cache":"login.microsoftonline.com","aliases":["login.microsoftonline.com"]}]}`
+		case "/workload-tenant/v2.0/.well-known/openid-configuration":
+			body = `{"authorization_endpoint":"https://login.microsoftonline.com/workload-tenant/oauth2/v2.0/authorize","token_endpoint":"https://login.microsoftonline.com/workload-tenant/oauth2/v2.0/token","issuer":"https://login.microsoftonline.com/workload-tenant/v2.0"}`
+		case "/workload-tenant/oauth2/v2.0/token":
+			require.NoError(t, req.ParseForm())
+			require.Equal(t, "workload-client", req.Form.Get("client_id"))
+			require.Equal(t, "federated-token", req.Form.Get("client_assertion"))
+			require.Equal(t, "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", req.Form.Get("client_assertion_type"))
+			require.Equal(t, "client_credentials", req.Form.Get("grant_type"))
+			require.Contains(t, strings.Fields(req.Form.Get("scope")), "https://storage.azure.com/.default")
+			body = `{"access_token":"access-token","expires_in":3600,"token_type":"Bearer"}`
+			tokenRequests++
+		case "/test":
+			require.Equal(t, http.MethodGet, req.Method)
+			require.Equal(t, "container", req.URL.Query().Get("restype"))
+			require.Equal(t, "Bearer access-token", req.Header.Get("Authorization"))
+			storageRequests++
+		default:
+			t.Fatalf("unexpected request: %s", req.URL.Redacted())
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})}
+	_, err := newAzureBlobStorage(context.Background(), &backuppb.AzureBlobStorage{
+		Bucket: "test", AccountName: "account",
+	}, &storeapi.Options{HTTPClient: client})
+	require.NoError(t, err)
+	require.Equal(t, 1, tokenRequests)
+	require.Equal(t, 1, storageRequests)
 }
 
 type fakeClientBuilder struct {
