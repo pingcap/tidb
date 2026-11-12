@@ -863,8 +863,11 @@ mod tests {
             ops.cop_scans, 2,
             "both unsigned value-order groups remain remote"
         );
-        let mut descending = rows.clone();
-        descending.reverse();
+        // Go's descending read sends the unsigned part first, and
+        // `buildRespForGroupedRanges` assigns `kvRanges` on each part, so the
+        // union scan reads the buffer over the signed part alone and the
+        // updated `u64::MAX` row is lost (Go's rows, gorun).
+        let descending = vec![vec![Datum::UInt(1), Datum::Int(20)], vec![Datum::UInt(0), Datum::Int(10)]];
         assert_eq!(
             run_select_on("SELECT * FROM t ORDER BY a DESC", &catalog, &ctx()).unwrap(),
             descending
@@ -875,7 +878,7 @@ mod tests {
         );
         assert_eq!(
             run_select_on("SELECT * FROM t ORDER BY a DESC LIMIT 2", &catalog, &ctx()).unwrap(),
-            descending[..2]
+            descending
         );
         assert_eq!(
             run_select_on("SELECT b FROM t WHERE a>=1 ORDER BY a", &catalog, &ctx()).unwrap(),

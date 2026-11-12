@@ -42,27 +42,78 @@ struct HeapRow {
     key: Vec<Datum>,
 }
 
+/// Go `distsql.SelectResult`'s `Next` and `Close`, through which
+/// `sortedSelectResults` reads its inputs.
+pub trait SelectResult: Send {
+    /// Opens an input that is an executor; a select result is sent when it
+    /// is built.
+    fn open(&mut self) -> Result<(), ExecError> {
+        Ok(())
+    }
+
+    /// Go `Next`: an empty chunk when the input is drained.
+    fn next(&mut self, chk: &mut Chunk) -> Result<(), ExecError>;
+
+    /// Go `Close`.
+    fn close(&mut self) -> Result<(), ExecError>;
+}
+
+impl SelectResult for Box<dyn Executor> {
+    fn open(&mut self) -> Result<(), ExecError> {
+        Executor::open(&mut **self)
+    }
+
+    fn next(&mut self, chk: &mut Chunk) -> Result<(), ExecError> {
+        Executor::next(&mut **self, chk)
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        Executor::close(&mut **self)
+    }
+}
+
+impl SelectResult for tidb_distsql::select_response::SelectResponseIter {
+    fn next(&mut self, chk: &mut Chunk) -> Result<(), ExecError> {
+        let required = chk.required_rows().max(1);
+        if !self
+            .fill_chunk_with_required_rows(required, chk)
+            .map_err(|error| ExecError::from(crate::cop_reader::select_response_error(error)))?
+        {
+            chk.reset();
+        }
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        tidb_distsql::select_response::SelectResponseIter::close(self)
+            .map_err(|error| ExecError::from(crate::cop_reader::select_response_error(error)))
+    }
+}
+
 /// Go `distsql.sortedSelectResults` over already-built group readers.
-pub struct SortedSelectResults<C: Columns> {
+pub struct SortedSelectResults<C: Columns, R: SelectResult = Box<dyn Executor>> {
     meta: ExecutorMeta,
     by_items: Vec<SortByItem>,
-    children: Vec<Box<dyn Executor>>,
+    children: Vec<R>,
     ctx: C,
     /// Go `cachedChunks`: each group's current chunk.
     cached: Vec<Option<Chunk>>,
     heap: Vec<HeapRow>,
+    /// Go `memTracker`: the cached chunks' memory.
+    mem_tracker: Option<std::sync::Arc<tidb_memory::Tracker>>,
 }
 
-impl<C> SortedSelectResults<C>
+impl<C, R> SortedSelectResults<C, R>
 where
     C: Columns + Clone + Send + Sync + 'static,
+    R: SelectResult,
 {
     /// Builds the merge. `by_items` must be direct columns of the children's
     /// (shared) output schema, as Go's `buildKeyColumns` requires.
     pub fn new(
         meta: ExecutorMeta,
         by_items: Vec<SortByItem>,
-        children: Vec<Box<dyn Executor>>,
+        children: Vec<R>,
         ctx: C,
     ) -> Result<Self, ExecError> {
         build_key_columns(&by_items)?;
@@ -74,7 +125,26 @@ where
             ctx,
             cached,
             heap: Vec::new(),
+            mem_tracker: None,
         })
+    }
+
+    /// Go `NewSortedSelectResults`' `memTracker`.
+    #[must_use]
+    pub fn with_mem_tracker(mut self, mem_tracker: Option<std::sync::Arc<tidb_memory::Tracker>>) -> Self {
+        self.mem_tracker = mem_tracker;
+        self
+    }
+
+    /// Go `selectResult`: the inputs, whose runtime stats their reader reads.
+    pub fn select_results(&self) -> &[R] {
+        &self.children
+    }
+
+    fn consume(&self, bytes: i64) {
+        if let Some(tracker) = &self.mem_tracker {
+            tracker.consume(bytes);
+        }
     }
 
     fn row_key(&self, child: usize, row: usize) -> Result<Vec<Datum>, ExecError> {
@@ -112,8 +182,11 @@ where
         let chunk = self.cached[child]
             .as_mut()
             .expect("a child's chunk exists before it is fetched");
+        let prev_mem_usage = chunk.memory_usage();
         self.children[child].next(chunk)?;
-        if chunk.num_rows() == 0 {
+        let (mem_usage, rows) = (chunk.memory_usage(), chunk.num_rows());
+        self.consume(mem_usage - prev_mem_usage);
+        if rows == 0 {
             return Ok(());
         }
         let key = self.row_key(child, 0)?;
@@ -133,9 +206,10 @@ fn ordering_is_less(result: Result<Ordering, ExecError>, error: &mut Option<Exec
     }
 }
 
-impl<C> Executor for SortedSelectResults<C>
+impl<C, R> Executor for SortedSelectResults<C, R>
 where
     C: Columns + Clone + Send + Sync + 'static,
+    R: SelectResult,
 {
     fn open(&mut self) -> Result<(), ExecError> {
         self.heap.clear();
@@ -143,16 +217,19 @@ where
             *chunk = None;
         }
         for child in &mut self.children {
-            child.open()?;
+            SelectResult::open(child)?;
         }
         Ok(())
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
-        for (child, chunk) in self.children.iter().zip(&mut self.cached) {
-            if chunk.is_none() {
-                *chunk = Some(child.new_chunk());
+        // Go `c.CopyConstruct()`: each input's chunk is shaped as the caller's.
+        for index in 0..self.cached.len() {
+            if self.cached[index].is_none() {
+                let chunk = req.copy_construct();
+                self.consume(chunk.memory_usage());
+                self.cached[index] = Some(chunk);
             }
         }
         if self.heap.is_empty() {
@@ -191,7 +268,7 @@ where
         }
         let mut first_error = None;
         for child in &mut self.children {
-            if let Err(error) = child.close() {
+            if let Err(error) = SelectResult::close(child) {
                 first_error.get_or_insert(error);
             }
         }
@@ -216,5 +293,36 @@ where
 
     fn new_chunk(&self) -> Chunk {
         self.meta.new_chunk()
+    }
+}
+
+/// Go `distsql.SelectResult` as the reader holds it: one request's result,
+/// or `NewSortedSelectResults` over a part's requests.
+pub(crate) enum ReaderResult {
+    One(tidb_distsql::select_response::SelectResponseIter),
+    Sorted(SortedSelectResults<crate::StmtContext, tidb_distsql::select_response::SelectResponseIter>),
+}
+
+impl ReaderResult {
+    /// The requests' results, whose runtime stats the reader reads.
+    pub(crate) fn select_results(&self) -> &[tidb_distsql::select_response::SelectResponseIter] {
+        match self {
+            Self::One(result) => std::slice::from_ref(result),
+            Self::Sorted(merged) => merged.select_results(),
+        }
+    }
+
+    pub(crate) fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        match self {
+            Self::One(result) => SelectResult::next(result, req),
+            Self::Sorted(merged) => Executor::next(merged, req),
+        }
+    }
+
+    pub(crate) fn close(&mut self) -> Result<(), ExecError> {
+        match self {
+            Self::One(result) => SelectResult::close(result),
+            Self::Sorted(merged) => Executor::close(merged),
+        }
     }
 }

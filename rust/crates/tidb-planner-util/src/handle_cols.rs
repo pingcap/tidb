@@ -325,3 +325,264 @@ mod tests {
         assert!(!nil.equals(&present));
     }
 }
+
+/// Go `HandleCols`' execution half (`pkg/planner/util/handle_cols.go`): the
+/// handle columns of a table read, and how a row's handle is built from
+/// them.
+#[derive(Clone, Debug)]
+pub enum HandleCols {
+    /// Go `IntHandleCols`.
+    Int(IntHandleCols),
+    /// Go `CommonHandleCols`.
+    Common(CommonHandleCols),
+}
+
+/// Go `IntHandleCols`.
+#[derive(Clone, Debug)]
+pub struct IntHandleCols {
+    /// Go `col`.
+    pub col: tidb_expr::column::Column,
+}
+
+/// Go `CommonHandleCols`.
+#[derive(Clone, Debug)]
+pub struct CommonHandleCols {
+    /// Go `tblInfo`.
+    pub tbl_info: std::sync::Arc<tidb_model::TableInfo>,
+    /// Go `idxInfo`: the clustered primary key.
+    pub idx_info: std::sync::Arc<tidb_model::IndexInfo>,
+    /// Go `columns`.
+    pub columns: Vec<tidb_expr::column::Column>,
+}
+
+/// The error Go's `sc.HandleError(err)` passes on from encoding a handle.
+pub type HandleColsError = tidb_codec::CodecError;
+
+impl CommonHandleCols {
+    /// Go `NewCommonHandleCols`: the primary key's columns among
+    /// `table_columns`, one per key column, by the key column's offset.
+    #[must_use]
+    pub fn new(
+        tbl_info: std::sync::Arc<tidb_model::TableInfo>,
+        idx_info: std::sync::Arc<tidb_model::IndexInfo>,
+        table_columns: &[tidb_expr::column::Column],
+    ) -> Self {
+        let columns = idx_info
+            .columns
+            .iter_deref()
+            .map(|ic| table_columns[ic.read().offset as usize].clone())
+            .collect();
+        Self {
+            tbl_info,
+            idx_info,
+            columns,
+        }
+    }
+
+    /// Go `buildHandleByDatumsBuffer`: `TruncateIndexValues` over the primary
+    /// key, `codec.EncodeKey`, `kv.NewCommonHandle`.
+    fn build_handle_by_datums_buffer(
+        &self,
+        zone: &tidb_datatype::SessionTimeZone,
+        mut datum_buf: Vec<tidb_datatype::Datum>,
+    ) -> Result<tidb_txnkv::Handle, HandleColsError> {
+        let table_columns: Vec<_> = self.tbl_info.columns.iter_deref().collect();
+        for (datum, ic) in datum_buf.iter_mut().zip(self.idx_info.columns.iter_deref()) {
+            let ic = ic.read();
+            tidb_tablecodec::cut_datum_by_prefix_len(
+                datum,
+                ic.length,
+                &table_columns[ic.offset as usize].read().field_type,
+            );
+        }
+        let handle_bytes = tidb_codec::encode_key_in_timezone(zone, &datum_buf)?;
+        Ok(tidb_txnkv::Handle::Common(tidb_txnkv::CommonHandle::new(handle_bytes)?))
+    }
+
+    fn ret_type(&self, i: usize) -> tidb_datatype::FieldType {
+        self.columns[i]
+            .ret_type
+            .clone()
+            .unwrap_or_else(|| tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Null))
+    }
+}
+
+impl HandleCols {
+    /// Go `BuildHandle`: the handle of a row of the table read's schema.
+    ///
+    /// # Errors
+    /// The handle does not encode.
+    pub fn build_handle(
+        &self,
+        zone: &tidb_datatype::SessionTimeZone,
+        row: tidb_chunk::row::Row<'_>,
+    ) -> Result<tidb_txnkv::Handle, HandleColsError> {
+        match self {
+            Self::Int(ib) => Ok(int_handle(row.get_int64(ib.col.index as usize))),
+            Self::Common(cb) => {
+                let datum_buf = cb
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, col)| row.get_datum(col.index as usize, &cb.ret_type(i)))
+                    .collect();
+                cb.build_handle_by_datums_buffer(zone, datum_buf)
+            }
+        }
+    }
+
+    /// Go `BuildHandleFromIndexRow`: the handle an index row carries last.
+    ///
+    /// # Errors
+    /// The handle does not encode.
+    pub fn build_handle_from_index_row(
+        &self,
+        zone: &tidb_datatype::SessionTimeZone,
+        row: tidb_chunk::row::Row<'_>,
+    ) -> Result<tidb_txnkv::Handle, HandleColsError> {
+        match self {
+            Self::Int(_) => Ok(int_handle(row.get_int64(row.len() - 1))),
+            Self::Common(cb) => {
+                let n = cb.columns.len();
+                let datum_buf =
+                    (0..n).map(|i| row.get_datum(row.len() - n + i, &cb.ret_type(i))).collect();
+                cb.build_handle_by_datums_buffer(zone, datum_buf)
+            }
+        }
+    }
+
+    /// Go `BuildPartitionHandleFromIndexRow`: the handle an index row carries
+    /// before its last column, the physical table id.
+    ///
+    /// # Errors
+    /// The handle does not encode.
+    pub fn build_partition_handle_from_index_row(
+        &self,
+        zone: &tidb_datatype::SessionTimeZone,
+        row: tidb_chunk::row::Row<'_>,
+    ) -> Result<tidb_txnkv::Handle, HandleColsError> {
+        let handle = match self {
+            Self::Int(_) => int_handle(row.get_int64(row.len() - 2)),
+            Self::Common(cb) => {
+                let n = cb.columns.len();
+                let datum_buf =
+                    (0..n).map(|i| row.get_datum(row.len() - 1 - n + i, &cb.ret_type(i))).collect();
+                cb.build_handle_by_datums_buffer(zone, datum_buf)?
+            }
+        };
+        Ok(tidb_txnkv::Handle::Partition(tidb_txnkv::PartitionHandle::new(
+            row.get_int64(row.len() - 1),
+            Some(handle),
+        )))
+    }
+
+    /// Go `BuildHandleByDatums`.
+    ///
+    /// # Errors
+    /// The handle does not encode.
+    pub fn build_handle_by_datums(
+        &self,
+        zone: &tidb_datatype::SessionTimeZone,
+        row: &[tidb_datatype::Datum],
+    ) -> Result<tidb_txnkv::Handle, HandleColsError> {
+        match self {
+            Self::Int(ib) => Ok(int_handle(row[ib.col.index as usize].get_int64())),
+            Self::Common(cb) => {
+                let datum_buf = cb.columns.iter().map(|col| row[col.index as usize].clone()).collect();
+                cb.build_handle_by_datums_buffer(zone, datum_buf)
+            }
+        }
+    }
+
+    /// Go `Compare(a, b, ctors, tpCtx)`: two rows ordered by the handle
+    /// columns. As Go, an integer handle compares under the row's collator
+    /// at its offset, a common handle under `ctors[i]` for its `i`-th
+    /// column.
+    ///
+    /// # Errors
+    /// Two values do not compare.
+    pub fn compare(
+        &self,
+        a: &[tidb_datatype::Datum],
+        b: &[tidb_datatype::Datum],
+        ctors: &[tidb_charset::Collation],
+    ) -> Result<std::cmp::Ordering, String> {
+        let compare = |offset: usize, collator: tidb_charset::Collation| {
+            a[offset].compare(&b[offset], collator).map_err(|error| format!("{error:?}"))
+        };
+        match self {
+            Self::Int(ib) => compare(ib.col.index as usize, ctors[ib.col.index as usize]),
+            Self::Common(cb) => {
+                for (i, col) in cb.columns.iter().enumerate() {
+                    let cmp = compare(col.index as usize, ctors[i])?;
+                    if cmp != std::cmp::Ordering::Equal {
+                        return Ok(cmp);
+                    }
+                }
+                Ok(std::cmp::Ordering::Equal)
+            }
+        }
+    }
+
+    /// Go `IsInt`.
+    #[must_use]
+    pub fn is_int(&self) -> bool {
+        matches!(self, Self::Int(_))
+    }
+
+    /// Go `NumCols`.
+    #[must_use]
+    pub fn num_cols(&self) -> usize {
+        match self {
+            Self::Int(_) => 1,
+            Self::Common(cb) => cb.columns.len(),
+        }
+    }
+
+    /// Go `GetCol`.
+    #[must_use]
+    pub fn get_col(&self, idx: usize) -> &tidb_expr::column::Column {
+        match self {
+            Self::Int(ib) => &ib.col,
+            Self::Common(cb) => &cb.columns[idx],
+        }
+    }
+
+    /// Go `GetFieldsTypes`: the integer handle's `LONGLONG`, or the common
+    /// handle columns' types.
+    #[must_use]
+    pub fn get_fields_types(&self) -> Vec<tidb_datatype::FieldType> {
+        match self {
+            Self::Int(_) => vec![tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)],
+            Self::Common(cb) => (0..cb.columns.len()).map(|i| cb.ret_type(i)).collect(),
+        }
+    }
+
+    /// Go `ResolveIndices`: the columns' offsets in `schema`.
+    ///
+    /// # Errors
+    /// A handle column is absent from `schema`.
+    pub fn resolve_indices(&self, schema: &tidb_expr::schema::Schema) -> Result<Self, String> {
+        let resolve = |col: &tidb_expr::column::Column| {
+            let index = schema.column_index(col);
+            if index < 0 {
+                return Err(format!("Can't find column {} in schema", col.unique_id));
+            }
+            let mut col = col.clone();
+            col.index = index as i64;
+            Ok(col)
+        };
+        Ok(match self {
+            Self::Int(ib) => Self::Int(IntHandleCols { col: resolve(&ib.col)? }),
+            Self::Common(cb) => Self::Common(CommonHandleCols {
+                tbl_info: cb.tbl_info.clone(),
+                idx_info: cb.idx_info.clone(),
+                columns: cb.columns.iter().map(resolve).collect::<Result<_, _>>()?,
+            }),
+        })
+    }
+}
+
+fn int_handle(value: i64) -> tidb_txnkv::Handle {
+    tidb_txnkv::Handle::Int(tidb_txnkv::IntHandle::new(value))
+}

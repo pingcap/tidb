@@ -57,6 +57,17 @@ reader built by Go's `buildTableReader` / `buildIndexReader` /
   (`index_merge_reader.rs`, `fetchLoopUnion` / `fetchLoopIntersection`) is
   already Go's, but its partial sources and table side are the offer path's
   (`PartialHandleSource` over `access_path`, `TableCommon` and its storage).
+  Steps: (a) Go's `HandleCols` (`pkg/planner/util/handle_cols.go`) whole --
+  `IntHandleCols` / `CommonHandleCols` with `BuildHandle*`, `Compare`,
+  `GetFieldsTypes` over the model's table and index -- in place of the
+  fragments (`tidb-planner-util` identities, the plan builder's enum,
+  `union_scan.rs`'s trait, `index_lookup.rs`'s `get_handle`); (b) the
+  physical plans carry it (`PhysicalIndexMergeReader.HandleCols`,
+  `PhysicalUnionScan.HandleCols`, P01); (c) `partialIndexWorker` /
+  `partialTableWorker` as `PartialHandleSource`s over Go's request (one
+  select result a key-range group, `NewSortedSelectResults` when ordered,
+  `extractTaskHandles`); (d) `buildFinalTableReader` through
+  `TableReaderExecutor::build_table_reader_from_handles`.
 - [ ] Milestone 4: the index join's inner side is Go's
   `dataReaderBuilder.BuildExecutorForIndexJoin`, and a union scan there is
   `buildUnionScanForIndexJoin`'s `UnionScanExec` over the task's reader; the
@@ -134,13 +145,19 @@ reader built by Go's `buildTableReader` / `buildIndexReader` /
   KV ranges, no request) under a union scan reading the cache under the
   buffer (`handleCachedTable`). Porting it exposed that a union scan's
   conditions were invisible to an Apply's correlated-column binding (Go
-  `PhysicalUnionScan.ExtractCorrelatedCols`). Left: partitioned tables
-  (Go's mem table reader does not decode `_tidb_tid`; the partition merge
-  of a keep-order read lives outside `TableReaderExecutor` here, inside it
-  in Go), grouped ranges (`build_range_grouped_reader` builds one reader a
-  range group under a merge, where Go's reader keeps `groupedRanges` /
-  `groupedKVRanges` itself), temporary tables, then the per-task union scan
-  of the index join.
+  `PhysicalUnionScan.ExtractCorrelatedCols`). The three readers then took
+  their range groups inside, as Go's `Open` does: `TableReaderExecutor`'s
+  `buildRespForGroupedRanges` (with its partitions' keep-order merge,
+  `buildKVReqSeparately`, `sortAndGetKVRangesFromReqs` and
+  `NewSortedSelectResults` over its select results), the index reader's
+  `buildKVRangesForIndexReader` and the lookup's `buildTableKeyRanges`, so
+  a union scan reads a grouped reader's ranges; `build_range_grouped_reader`
+  is left to the in-process engine. Go assigns `kvRanges` per part, so
+  after the unsigned-handle second part they are that part's alone and the
+  union scan misses the buffered rows of the first (pinned in
+  `table_reader_source.rs`). Left: partitioned tables (Go's mem table
+  reader does not decode `_tidb_tid`), temporary tables, then the per-task
+  union scan of the index join.
 - 2026-11-12 (M3): `TableRead` now takes Go's `SetMemTracker` and
   `SetPaging` from its caller. The TableReader and IndexReader still hand
   each select result a fresh operator tracker under the statement's, where

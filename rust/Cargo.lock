@@ -6763,6 +6763,9 @@ name = "tidb-planner-util"
 version = "0.0.0"
 dependencies = [
  "tidb-ast",
+ "tidb-charset",
+ "tidb-chunk",
+ "tidb-codec",
  "tidb-datatype",
  "tidb-expr",
  "tidb-exprctx",
@@ -6773,6 +6776,8 @@ dependencies = [
  "tidb-planner-cascades-base",
  "tidb-ranger",
  "tidb-stats",
+ "tidb-tablecodec",
+ "tidb-txnkv",
 ]
 
 [[package]]

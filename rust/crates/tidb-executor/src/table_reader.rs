@@ -39,6 +39,7 @@ use tidb_planner_core_operator_physicalop::{PhysicalPlan, PhysicalTableReader};
 use tidb_proto::tipb;
 
 use crate::builder_utils::TiDBCopRequest;
+use crate::range_group_merge::ReaderResult;
 
 /// What a reader on the `kv.TiDB` store sends through: Go `dctx.Client`
 /// (copr's `CopClient`, whose `Send` builds `buildTiDBMemCopTasks`' tasks)
@@ -306,9 +307,15 @@ pub struct TableReaderExecutor {
     /// Go `virtualColumnIndex` / `virtualColumnRetFieldTypes`.
     virtual_column_index: Vec<usize>,
     virtual_column_ret_field_types: Vec<FieldType>,
-    /// Go `resultHandler`: the select results, read one after another.
-    results: std::collections::VecDeque<SelectResponseIter>,
-    /// Go `serialSelectResults.cur`.
+    /// Go `groupByColIdxs`: the columns whose values group `ranges` into
+    /// `groupedRanges`, one request a group merged by `by_items`.
+    group_by_col_idxs: Vec<usize>,
+    /// Go `byItems`.
+    by_items: Vec<tidb_expression_aggregation::ByItems>,
+    /// Go `resultHandler`: the select results, read one after another
+    /// (`tableResultHandler` over `NewSerialSelectResults`).
+    results: Vec<ReaderResult>,
+    /// The result being read.
     cur: usize,
     /// Go `kvRanges`.
     kv_ranges: Vec<tidb_txnkv::KeyRange>,
@@ -383,7 +390,9 @@ impl TableReaderExecutor {
             columns: e.columns,
             virtual_column_index,
             virtual_column_ret_field_types,
-            results: std::collections::VecDeque::new(),
+            group_by_col_idxs: Vec::new(),
+            by_items: Vec::new(),
+            results: Vec::new(),
             cur: 0,
             kv_ranges: kv_ranges.clone(),
             paging: false,
@@ -394,8 +403,11 @@ impl TableReaderExecutor {
         };
         let statement = crate::remote_scan::pushdown_statement_context(&reader.ctx)
             .with_estimated_net_bytes(reader.net_data_size);
-        let result = reader.select_result(&statement, e.dag, kv_ranges, hints, Vec::new())?;
-        reader.results.push_back(result);
+        let result = reader.select_result(
+            &statement,
+            KvReq { dag: e.dag, key_ranges: kv_ranges, key_range_hints: hints, partition_id_and_ranges: Vec::new() },
+        )?;
+        reader.results.push(ReaderResult::One(result));
         Ok(reader)
     }
 
@@ -437,30 +449,12 @@ impl TableReaderExecutor {
         ctx: &crate::StmtContext,
         is: &tidb_infoschema::SessionExtendedInfoSchema,
         v: &PhysicalTableReader,
-        range_group: Option<&tidb_ranger::types::Ranges>,
     ) -> Result<Box<dyn Executor>, ExecError> {
         let dual = meta.clone();
-        let Some(reader) = Self::build_no_range(meta, ctx, is, v, range_group)? else {
+        let Some(reader) = Self::build_no_range(meta, ctx, is, v)? else {
             return Ok(Box::new(crate::table_dual::TableDualExec::new(dual, 0)));
         };
-        let by_items = v.table_plan.as_deref().and_then(|plan| {
-            let mut scans = Vec::new();
-            crate::mpp_gather::get_table_scans(plan, &mut scans);
-            scans.first().map(|ts| ts.by_items.clone())
-        });
-        match (&reader.partitions, by_items) {
-            // Go `buildKVReqSeparately` under `NewSortedSelectResults`: a
-            // keep-order read of several TiKV partitions reads each partition
-            // as its own request and merges them by the scan's `ByItems`.
-            (Some(partitions), Some(by_items))
-                if reader.store_type != tidb_kv::store_type::StoreType::TiFlash
-                    && partitions.len() > 1
-                    && !by_items.is_empty() =>
-            {
-                reader.sorted_partition_results(&by_items)
-            }
-            _ => Ok(Box::new(reader)),
-        }
+        Ok(Box::new(reader))
     }
 
     /// Go `buildNoRangeTableReader` and `buildTableReader`'s partition
@@ -473,7 +467,6 @@ impl TableReaderExecutor {
         ctx: &crate::StmtContext,
         is: &tidb_infoschema::SessionExtendedInfoSchema,
         v: &PhysicalTableReader,
-        range_group: Option<&tidb_ranger::types::Ranges>,
     ) -> Result<Option<Self>, ExecError> {
         let table_plan = v
             .table_plan
@@ -552,9 +545,7 @@ impl TableReaderExecutor {
             plan_ids,
             physical_table_id: ts.table_id,
             is_common_handle: table.is_common_handle,
-            // Go `buildRespForGroupedRanges`' one group, read as its own
-            // reader under the grouped-range merge.
-            ranges: range_group.unwrap_or(&ts.ranges).clone(),
+            ranges: ts.ranges.clone(),
             range_rebuild: crate::driver::physical_builder::correlated_table_range_rebuilder(ts, ctx),
             partitions,
             keep_order: ts.keep_order,
@@ -565,7 +556,9 @@ impl TableReaderExecutor {
             columns: ts.columns.clone(),
             virtual_column_index,
             virtual_column_ret_field_types,
-            results: std::collections::VecDeque::new(),
+            group_by_col_idxs: ts.group_by_col_idxs.clone(),
+            by_items: ts.by_items.clone(),
+            results: Vec::new(),
             cur: 0,
             kv_ranges: Vec::new(),
             paging: crate::remote_scan::pushdown_statement_context(ctx).paging,
@@ -597,8 +590,11 @@ impl TableReaderExecutor {
         self.kv_ranges.clone_from(&kv_ranges);
         self.results.clear();
         self.cur = 0;
-        let result = self.select_result(&statement, dag, kv_ranges, key_range_hints, Vec::new())?;
-        self.results.push_back(result);
+        let result = self.select_result(
+            &statement,
+            KvReq { dag, key_ranges: kv_ranges, key_range_hints, partition_id_and_ranges: Vec::new() },
+        )?;
+        self.results.push(ReaderResult::One(result));
         Ok(())
     }
 
@@ -612,22 +608,18 @@ impl TableReaderExecutor {
         (self.physical_table_id, self.is_common_handle)
     }
 
-    /// Go `distsql.NewSortedSelectResults` over one reader a partition: the
-    /// merge reads each key column of the reader's output.
-    fn sorted_partition_results(
-        self,
-        by_items: &[tidb_expression_aggregation::ByItems],
-    ) -> Result<Box<dyn Executor>, ExecError> {
-        let schema = self.meta.schema().clone();
-        let by_items = by_items
+    /// Go `NewSortedSelectResults`' `buildKeyColumns` over `byItems`: each
+    /// item's column at its position in the reader's schema.
+    fn sort_by_items(&self) -> Result<Vec<tidb_executor_sortexec::SortByItem>, ExecError> {
+        let schema = self.meta.schema();
+        self.by_items
             .iter()
             .map(|item| {
                 let tidb_expr::expression::Expression::Column(column) = &item.expr else {
-                    return Err(ExecError::Internal("a sorted partition read orders by a non-column".into()));
+                    return Err(ExecError::Internal("a sorted table read orders by a non-column".into()));
                 };
-                // Go `buildKeyColumns`: `schema.ColumnIndex(col)`.
                 let position = usize::try_from(schema.column_index(column))
-                    .map_err(|_| ExecError::Internal("a sorted partition read's key is absent from its schema".into()))?;
+                    .map_err(|_| ExecError::Internal("a sorted table read's key is absent from its schema".into()))?;
                 let mut column = schema.columns[position].clone();
                 column.index = i64::try_from(position).unwrap_or(i64::MAX);
                 Ok(tidb_executor_sortexec::SortByItem {
@@ -635,45 +627,7 @@ impl TableReaderExecutor {
                     desc: item.desc,
                 })
             })
-            .collect::<Result<Vec<_>, _>>()?;
-        let partitions = self.partitions.clone().unwrap_or_default();
-        let meta = self.meta.clone();
-        let ctx = self.ctx.clone();
-        let children = partitions
-            .into_iter()
-            .map(|pid| {
-                Box::new(Self {
-                    meta: self.meta.clone(),
-                    ctx: self.ctx.clone(),
-                    store_type: self.store_type,
-                    net_data_size: self.net_data_size,
-                    client: Arc::clone(&self.client),
-                    table_plan: self.table_plan.clone(),
-                    plan_ids: self.plan_ids.clone(),
-                    physical_table_id: self.physical_table_id,
-                    is_common_handle: self.is_common_handle,
-                    ranges: self.ranges.clone(),
-                    range_rebuild: self.range_rebuild.clone(),
-                    partitions: Some(vec![pid]),
-                    keep_order: self.keep_order,
-                    desc: self.desc,
-                    batch_cop: self.batch_cop,
-                    start_ts: self.start_ts,
-                    schema_version: self.schema_version,
-                    columns: self.columns.clone(),
-                    virtual_column_index: self.virtual_column_index.clone(),
-                    virtual_column_ret_field_types: self.virtual_column_ret_field_types.clone(),
-                    results: std::collections::VecDeque::new(),
-                    cur: 0,
-                    kv_ranges: Vec::new(),
-                    paging: self.paging,
-                    mem_tracker: None,
-                    dag_size: 0,
-                    dummy: false,
-                }) as Box<dyn Executor>
-            })
-            .collect();
-        Ok(Box::new(crate::range_group_merge::SortedSelectResults::new(meta, by_items, children, ctx)?))
+            .collect()
     }
 
     /// Go `columns`.
@@ -687,14 +641,11 @@ impl TableReaderExecutor {
         &self.kv_ranges
     }
 
-    /// Go `SelectResult` over one request of `dag`.
+    /// Go `SelectResult` over one request.
     fn select_result(
         &self,
         statement: &tidb_distsql::remote_scan::PushdownStatementContext,
-        dag: tipb::DagRequest,
-        key_ranges: Vec<tidb_txnkv::KeyRange>,
-        key_range_hints: Vec<usize>,
-        partition_id_and_ranges: Vec<tidb_txnkv::PartitionIdAndRanges>,
+        KvReq { dag, key_ranges, key_range_hints, partition_id_and_ranges }: KvReq,
     ) -> Result<SelectResponseIter, ExecError> {
         crate::cop_reader::open_table_read(
             self.client.as_ref(),
@@ -725,64 +676,167 @@ impl TableReaderExecutor {
         .inspect(|_| tidb_kv::storage::note_storage_op(|ops| ops.cop_scans += 1))
     }
 
-    /// Go `buildRespForGroupedRanges` over the reader's one range group: a
-    /// partitioned table's `buildKVReqSeparately` (one request a partition,
-    /// read serially) or, for a batch request, its
-    /// `buildKVReqForPartitionTableScan`; any other table's `buildKVReq`.
-    fn build_resp(
+    /// Go `buildRespForGroupedRanges`: the results of one part of the
+    /// reader's range groups.
+    fn build_resp_for_grouped_ranges(
         &mut self,
         statement: &tidb_distsql::remote_scan::PushdownStatementContext,
         dag: &tipb::DagRequest,
+        grouped_ranges: &[Vec<tidb_ranger::types::Range>],
+    ) -> Result<Vec<ReaderResult>, ExecError> {
+        // Accessing partitioned table on TiFlash is slightly different right
+        // now, we use a different code path for it.
+        if self.store_type == tidb_kv::store_type::StoreType::TiFlash
+            && self.partitions.is_some()
+            && grouped_ranges.len() == 1
+            && self.group_by_col_idxs.is_empty()
+        {
+            let ranges = &grouped_ranges[0];
+            let mut kv_reqs = if self.batch_cop {
+                // Use PartitionTable Scan
+                vec![self.build_kv_req_for_partition_table_scan(statement, dag, ranges)?]
+            } else {
+                // TiFlash cannot support to access multiple tables/partitions
+                // within one KVReq, so we have to build KVReq for each
+                // partition separately.
+                self.build_kv_req_separately(statement, dag, ranges)?
+            };
+            self.kv_ranges = sort_and_get_kv_ranges_from_reqs(&mut kv_reqs);
+            return kv_reqs
+                .into_iter()
+                .map(|kv_req| self.select_result(statement, kv_req).map(ReaderResult::One))
+                .collect();
+        }
+        let mut kv_reqs = self.build_kv_req_separately_for_grouped_ranges(statement, dag, grouped_ranges)?;
+        // Even if it's an empty request, we still need to build a kvReq to
+        // make the following execution logic work.
+        if kv_reqs.is_empty() {
+            kv_reqs.push(self.build_kv_req(statement, dag, &[])?);
+        }
+        self.kv_ranges = sort_and_get_kv_ranges_from_reqs(&mut kv_reqs);
+        let mut results = kv_reqs
+            .into_iter()
+            .map(|kv_req| self.select_result(statement, kv_req))
+            .collect::<Result<Vec<_>, _>>()?;
+        if results.len() == 1 {
+            return Ok(results.drain(..).map(ReaderResult::One).collect());
+        }
+        let merged = crate::range_group_merge::SortedSelectResults::new(
+            self.meta.clone(),
+            self.sort_by_items()?,
+            results,
+            self.ctx.clone(),
+        )?
+        .with_mem_tracker(self.mem_tracker.clone());
+        Ok(vec![ReaderResult::Sorted(merged)])
+    }
+
+    /// Go `buildKVReqSeparatelyForGroupedRanges`.
+    fn build_kv_req_separately_for_grouped_ranges(
+        &self,
+        statement: &tidb_distsql::remote_scan::PushdownStatementContext,
+        dag: &tipb::DagRequest,
+        grouped_ranges: &[Vec<tidb_ranger::types::Range>],
+    ) -> Result<Vec<KvReq>, ExecError> {
+        let mut kv_reqs = Vec::new();
+        for ranges in grouped_ranges {
+            if self.partitions.is_some() && !self.by_items.is_empty() {
+                kv_reqs.extend(self.build_kv_req_separately(statement, dag, ranges)?);
+            } else {
+                kv_reqs.push(self.build_kv_req(statement, dag, ranges)?);
+            }
+        }
+        Ok(kv_reqs)
+    }
+
+    /// Go `buildKVReqSeparately`: one request a partition, its DAG's table
+    /// scan reading that partition.
+    fn build_kv_req_separately(
+        &self,
+        statement: &tidb_distsql::remote_scan::PushdownStatementContext,
+        dag: &tipb::DagRequest,
         ranges: &[tidb_ranger::types::Range],
-    ) -> Result<(), ExecError> {
+    ) -> Result<Vec<KvReq>, ExecError> {
         let zone = &statement.time_zone;
-        let Some(partitions) = self.partitions.clone() else {
-            let key_ranges =
-                table_handle_ranges_to_kv_ranges(zone, self.physical_table_id, self.is_common_handle, ranges)?;
-            self.kv_ranges.extend(key_ranges.iter().cloned());
-            let result = self.select_result(statement, dag.clone(), key_ranges, Vec::new(), Vec::new())?;
-            self.results.push_back(result);
-            return Ok(());
-        };
-        if self.store_type != tidb_kv::store_type::StoreType::TiFlash {
-            // Go `buildKVReq` over `kvRangeBuilderFromRangeAndPartition`: one
-            // request over every partition's ranges.
-            let mut key_ranges = Vec::new();
-            for pid in partitions {
-                key_ranges.extend(table_handle_ranges_to_kv_ranges(zone, pid, self.is_common_handle, ranges)?);
-            }
-            self.kv_ranges.extend(key_ranges.iter().cloned());
-            let result = self.select_result(statement, dag.clone(), key_ranges, Vec::new(), Vec::new())?;
-            self.results.push_back(result);
-            return Ok(());
-        }
-        let update = |dag: &mut tipb::DagRequest, pids: &[i64]| {
-            crate::local_mpp_coordinator::update_executor_table_id(dag.root_executor.as_mut(), true, pids)
-                .map_err(|error| ExecError::Internal(error.into()))
-        };
-        if !self.batch_cop {
-            for pid in partitions {
-                let key_ranges = table_handle_ranges_to_kv_ranges(zone, pid, self.is_common_handle, ranges)?;
-                self.kv_ranges.extend(key_ranges.iter().cloned());
-                let mut dag = dag.clone();
-                update(&mut dag, &[pid])?;
-                let result = self.select_result(statement, dag, key_ranges, Vec::new(), Vec::new())?;
-                self.results.push_back(result);
-            }
-            return Ok(());
-        }
-        let mut partition_id_and_ranges = Vec::with_capacity(partitions.len());
-        for &pid in &partitions {
+        let partitions = self.partitions.as_deref().unwrap_or_default();
+        let mut kv_reqs = Vec::with_capacity(partitions.len());
+        for &pid in partitions {
             let key_ranges = table_handle_ranges_to_kv_ranges(zone, pid, self.is_common_handle, ranges)?;
-            self.kv_ranges.extend(key_ranges.iter().cloned());
+            let mut dag = dag.clone();
+            update_executor_table_id(&mut dag, &[pid])?;
+            kv_reqs.push(KvReq { dag, key_ranges, key_range_hints: Vec::new(), partition_id_and_ranges: Vec::new() });
+        }
+        Ok(kv_reqs)
+    }
+
+    /// Go `buildKVReqForPartitionTableScan`: one batch request over every
+    /// partition's ranges.
+    fn build_kv_req_for_partition_table_scan(
+        &self,
+        statement: &tidb_distsql::remote_scan::PushdownStatementContext,
+        dag: &tipb::DagRequest,
+        ranges: &[tidb_ranger::types::Range],
+    ) -> Result<KvReq, ExecError> {
+        let zone = &statement.time_zone;
+        let pids = self.partitions.clone().unwrap_or_default();
+        let mut partition_id_and_ranges = Vec::with_capacity(pids.len());
+        for &pid in &pids {
+            let key_ranges = table_handle_ranges_to_kv_ranges(zone, pid, self.is_common_handle, ranges)?;
             partition_id_and_ranges.push(tidb_txnkv::PartitionIdAndRanges { id: pid, key_ranges });
         }
         let mut dag = dag.clone();
-        update(&mut dag, &partitions)?;
-        let result = self.select_result(statement, dag, Vec::new(), Vec::new(), partition_id_and_ranges)?;
-        self.results.push_back(result);
-        Ok(())
+        update_executor_table_id(&mut dag, &pids)?;
+        Ok(KvReq { dag, key_ranges: Vec::new(), key_range_hints: Vec::new(), partition_id_and_ranges })
     }
+
+    /// Go `buildKVReq`: one request over the ranges, of every partition
+    /// (`kvRangeBuilder`) or of the table.
+    fn build_kv_req(
+        &self,
+        statement: &tidb_distsql::remote_scan::PushdownStatementContext,
+        dag: &tipb::DagRequest,
+        ranges: &[tidb_ranger::types::Range],
+    ) -> Result<KvReq, ExecError> {
+        let zone = &statement.time_zone;
+        let mut key_ranges = Vec::new();
+        for &pid in self.partitions.as_deref().unwrap_or(std::slice::from_ref(&self.physical_table_id)) {
+            key_ranges.extend(table_handle_ranges_to_kv_ranges(zone, pid, self.is_common_handle, ranges)?);
+        }
+        Ok(KvReq { dag: dag.clone(), key_ranges, key_range_hints: Vec::new(), partition_id_and_ranges: Vec::new() })
+    }
+}
+
+/// Go `kv.Request` as the reader builds it: its DAG over its ranges (with
+/// `SetTableHandles`' hints), or a batch request's partitions.
+struct KvReq {
+    dag: tipb::DagRequest,
+    key_ranges: Vec<tidb_txnkv::KeyRange>,
+    key_range_hints: Vec<usize>,
+    partition_id_and_ranges: Vec<tidb_txnkv::PartitionIdAndRanges>,
+}
+
+/// Go `sortAndGetKVRangesFromReqs`: each request's ranges sorted in place,
+/// then all of them, sorted.
+fn sort_and_get_kv_ranges_from_reqs(kv_reqs: &mut [KvReq]) -> Vec<tidb_txnkv::KeyRange> {
+    let by_start_key = |a: &tidb_txnkv::KeyRange, b: &tidb_txnkv::KeyRange| a.start_key.cmp(&b.start_key);
+    let mut kv_ranges = Vec::new();
+    for kv_req in kv_reqs {
+        kv_req.key_ranges.sort_by(by_start_key);
+        kv_ranges.extend(kv_req.key_ranges.iter().cloned());
+        for partition in &mut kv_req.partition_id_and_ranges {
+            partition.key_ranges.sort_by(by_start_key);
+            kv_ranges.extend(partition.key_ranges.iter().cloned());
+        }
+    }
+    kv_ranges.sort_by(by_start_key);
+    kv_ranges
+}
+
+/// Go `internalutil.UpdateExecutorTableID` over the DAG's root executor (a
+/// list-based TiKV request has none).
+fn update_executor_table_id(dag: &mut tipb::DagRequest, pids: &[i64]) -> Result<(), ExecError> {
+    crate::local_mpp_coordinator::update_executor_table_id(dag.root_executor.as_mut(), true, pids)
+        .map_err(|error| ExecError::Internal(error.into()))
 }
 
 /// Go `RuntimeStatsColl.GetCopCountAndRows(e.plans[0].ID())`, which the
@@ -790,7 +844,7 @@ impl TableReaderExecutor {
 impl tidb_executor_internal_exec::table_access::TableAccess for TableReaderExecutor {
     fn cop_count_and_rows(&self) -> Option<(u64, u64)> {
         let scan_id = *self.plan_ids.first()?;
-        Some(self.results.iter().fold((0, 0), |(requests, rows), result| {
+        Some(self.results.iter().flat_map(ReaderResult::select_results).fold((0, 0), |(requests, rows), result| {
             let (more_requests, more_rows) = result.runtime_stats().get_cop_count_and_rows(scan_id);
             (requests + more_requests, rows + more_rows)
         }))
@@ -840,38 +894,59 @@ impl Executor for TableReaderExecutor {
         self.kv_ranges.clear();
         self.results.clear();
         self.cur = 0;
+        // To make the code more clean, we use a unified `groupedRanges` to
+        // represent the ranges to be read, no matter whether they are from
+        // `e.ranges` or `e.groupedRanges` (Go `GroupRangesByCols`, rebuilt
+        // with the ranges).
+        let grouped_ranges = if !self.group_by_col_idxs.is_empty() {
+            tidb_planner::find_best_task::dispatch::group_ranges_by_cols(&ranges, &self.group_by_col_idxs)
+                .map_err(|error| ExecError::Internal(error.into()))?
+        } else if !ranges.is_empty() {
+            vec![ranges]
+        } else {
+            Vec::new()
+        };
+        let (mut first_part_grouped_ranges, mut second_part_grouped_ranges) = (Vec::new(), Vec::new());
+        for ranges in grouped_ranges {
+            let (signed_ranges, unsigned_ranges) = tidb_distsql::split_ranges_across_int64_boundary(
+                ranges,
+                self.keep_order,
+                self.desc,
+                self.is_common_handle,
+            );
+            if !signed_ranges.is_empty() {
+                first_part_grouped_ranges.push(signed_ranges);
+            }
+            if !unsigned_ranges.is_empty() {
+                second_part_grouped_ranges.push(unsigned_ranges);
+            }
+        }
         // Treat temporary table as dummy table, avoid sending distsql request
-        // to TiKV. In a test case IndexLookupJoin, there is a case that
-        // TableReaderExecutor.Open is called with nil kvRanges.
-        let (first_part_ranges, second_part_ranges) = tidb_distsql::split_ranges_across_int64_boundary(
-            ranges,
-            self.keep_order,
-            self.desc,
-            self.is_common_handle,
-        );
-        // Go: a dummy reader only calculates the KV ranges the union scan
-        // relies on, the parts swapped for a descending read (the union scan
-        // reads them forward and reverses its rows).
+        // to TiKV. Calculate the kv ranges here, UnionScan rely on this kv
+        // ranges. cached table and temporary table are similar
         if self.dummy {
-            let (first, second) = if self.desc && !second_part_ranges.is_empty() {
-                (second_part_ranges, first_part_ranges)
-            } else {
-                (first_part_ranges, second_part_ranges)
-            };
-            let zone = &statement.time_zone;
-            for ranges in [first, second] {
-                for pid in self.partitions.clone().unwrap_or_else(|| vec![self.physical_table_id]) {
-                    self.kv_ranges
-                        .extend(table_handle_ranges_to_kv_ranges(zone, pid, self.is_common_handle, &ranges)?);
-                }
+            if self.desc && !second_part_grouped_ranges.is_empty() {
+                // TiKV support reverse scan and the `resultHandler` process
+                // the range order. While in UnionScan, it doesn't use reverse
+                // scan and reverse the final result rows manually. So things
+                // are differ, we need to reverse the kv range here.
+                std::mem::swap(&mut first_part_grouped_ranges, &mut second_part_grouped_ranges);
+            }
+            for ranges in first_part_grouped_ranges.iter().chain(&second_part_grouped_ranges) {
+                let kv_req = self.build_kv_req(&statement, &dag, ranges)?;
+                self.kv_ranges.extend(kv_req.key_ranges);
             }
             return Ok(());
         }
-        self.build_resp(&statement, &dag, &first_part_ranges)?;
-        if !second_part_ranges.is_empty() {
-            self.build_resp(&statement, &dag, &second_part_ranges)?;
+        // Go `buildRespForGroupedRanges` assigns `e.kvRanges` on each call,
+        // so after a second part they are that part's alone.
+        let first_result = self.build_resp_for_grouped_ranges(&statement, &dag, &first_part_grouped_ranges)?;
+        self.results.extend(first_result);
+        if second_part_grouped_ranges.is_empty() {
+            return Ok(());
         }
-        self.kv_ranges.sort_by(|a, b| a.start_key.cmp(&b.start_key));
+        let second_result = self.build_resp_for_grouped_ranges(&statement, &dag, &second_part_grouped_ranges)?;
+        self.results.extend(second_result);
         Ok(())
     }
 
@@ -880,30 +955,25 @@ impl Executor for TableReaderExecutor {
         if self.dummy {
             return Ok(());
         }
-        let required = req.required_rows().max(1);
-        // Go `serialSelectResults.Next`: the results one after another; each
-        // stays open until the reader's `Close`.
+        // Go `tableResultHandler.nextChunk` over `serialSelectResults`: the
+        // results one after another; each stays open until the reader's
+        // `Close`.
         while let Some(result) = self.results.get_mut(self.cur) {
-            if !result
-                .fill_chunk_with_required_rows(required, req)
-                .map_err(|error| ExecError::from(crate::cop_reader::select_response_error(error)))?
-            {
-                req.reset();
+            result.next(req)?;
+            if req.num_rows() == 0 {
                 self.cur += 1;
                 continue;
             }
-            if req.num_rows() > 0 {
-                let rows = req.num_rows() as u64;
-                tidb_kv::storage::note_storage_op(|ops| ops.cop_rows += rows);
-                return crate::mpp_gather::fill_virtual_column_value(
-                    &self.ctx,
-                    self.meta.schema(),
-                    &self.columns,
-                    &self.virtual_column_index,
-                    &self.virtual_column_ret_field_types,
-                    req,
-                );
-            }
+            let rows = req.num_rows() as u64;
+            tidb_kv::storage::note_storage_op(|ops| ops.cop_rows += rows);
+            return crate::mpp_gather::fill_virtual_column_value(
+                &self.ctx,
+                self.meta.schema(),
+                &self.columns,
+                &self.virtual_column_index,
+                &self.virtual_column_ret_field_types,
+                req,
+            );
         }
         Ok(())
     }
@@ -911,9 +981,7 @@ impl Executor for TableReaderExecutor {
     fn close(&mut self) -> Result<(), ExecError> {
         let mut first_error = Ok(());
         for mut result in self.results.drain(..) {
-            let closed = result
-                .close()
-                .map_err(|error| ExecError::from(crate::cop_reader::select_response_error(error)));
+            let closed = result.close();
             if first_error.is_ok() {
                 first_error = closed;
             }

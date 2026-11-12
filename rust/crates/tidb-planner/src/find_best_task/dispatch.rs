@@ -2128,7 +2128,7 @@ fn match_sort_items(
     if group_by_col_idxs.is_empty() {
         return matched();
     }
-    match range_group_count(ranges.into_iter().flatten(), &group_by_col_idxs) {
+    match range_group_count(ranges.map_or(&[][..], |ranges| &ranges[..]), &group_by_col_idxs) {
         None => OrderMatch::NOT_MATCHED,
         Some(0) => matched(),
         Some(_) => OrderMatch {
@@ -2144,20 +2144,47 @@ fn match_sort_items(
 /// ignored). `None` means the path cannot take the merge sort -- the
 /// encoding failed, or Go's cap is exceeded. Multiple ranges fit one cop
 /// task but groups are forced apart, so the cap bounds that overhead.
-pub(super) fn range_group_count<'a>(
-    ranges: impl IntoIterator<Item = &'a tidb_ranger::types::Range>,
+pub(super) fn range_group_count(
+    ranges: &[tidb_ranger::types::Range],
     group_by_col_idxs: &[usize],
 ) -> Option<usize> {
+    // Multiple ranges can be put into one cop task. But when we group them,
+    // they are forced to be split into multiple cop tasks. This can cause
+    // large overhead besides the merge sort operation itself.
     const MAX_GROUP_COUNT: usize = 2048;
-    let mut groups = std::collections::HashSet::new();
+    let groups = group_ranges_by_cols(ranges, group_by_col_idxs).ok()?;
+    (groups.len() <= MAX_GROUP_COUNT).then_some(groups.len())
+}
+
+/// Go `GroupRangesByCols`: ranges that agree on the group-by columns form
+/// one group. Go collects a map's values, so its group order is
+/// unspecified; the first-appearance order used here is one valid order.
+///
+/// # Errors
+/// A range narrower than its group columns (Go's index panics), or a value
+/// that does not encode.
+pub fn group_ranges_by_cols(
+    ranges: &[tidb_ranger::types::Range],
+    group_by_col_idxs: &[usize],
+) -> Result<Vec<tidb_ranger::types::Ranges>, String> {
+    let mut positions: std::collections::HashMap<Vec<u8>, usize> = std::collections::HashMap::new();
+    let mut groups: Vec<tidb_ranger::types::Ranges> = Vec::new();
     for range in ranges {
         let datums = group_by_col_idxs
             .iter()
-            .map(|index| range.low_val.get(*index).cloned())
-            .collect::<Option<Vec<_>>>()?;
-        groups.insert(tidb_codec::encode_value(&datums).ok()?);
+            .map(|index| {
+                range.low_val.get(*index).cloned().ok_or_else(|| "a grouped range is narrower than its group columns".to_owned())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // We just use it to group the values, so any time zone is ok.
+        let key = tidb_codec::encode_value(&datums).map_err(|error| format!("{error:?}"))?;
+        let position = *positions.entry(key).or_insert_with(|| {
+            groups.push(Vec::new());
+            groups.len() - 1
+        });
+        groups[position].push(range.clone());
     }
-    (groups.len() <= MAX_GROUP_COUNT).then_some(groups.len())
+    Ok(groups)
 }
 
 /// The ranges Case 3 may group. A correlated access condition's ranges are

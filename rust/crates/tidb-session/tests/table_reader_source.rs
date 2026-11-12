@@ -170,6 +170,83 @@ fn a_union_scan_reads_the_buffer_over_its_table_readers_ranges() {
     tk.must_query("select a, b from p order by a").check(["1 10", "2 20", "3 30"]);
 }
 
+/// Go `TableReaderExecutor.Open` reads a clustered table's range groups
+/// itself (`groupedRanges`, `buildRespForGroupedRanges` merging the groups
+/// by `byItems`), and the union scan above it reads the buffer over the
+/// reader's `kvRanges`; Go's rows (gorun).
+#[test]
+fn a_union_scan_over_a_table_readers_range_groups_reads_its_kv_ranges() {
+    let mut tk = TestKit::new();
+    tk.must_exec("create table tc (a int, b int, c int, primary key(a,b) clustered)");
+    tk.must_exec("insert into tc values (1,5,0),(2,3,0),(1,1,0),(3,2,0),(2,8,0)");
+    tk.must_query("select * from tc where a in (1,2) order by b")
+        .check(["1 1 0", "2 3 0", "1 5 0", "2 8 0"]);
+    tk.must_exec("begin");
+    tk.must_exec("insert into tc values (1,4,1),(2,2,1),(3,1,1),(2,9,1)");
+    tk.must_query("select * from tc where a in (1,2) order by b")
+        .check(["1 1 0", "2 2 1", "2 3 0", "1 4 1", "1 5 0", "2 8 0", "2 9 1"]);
+    tk.must_query("select * from tc where a in (1,2) order by b desc")
+        .check(["2 9 1", "2 8 0", "1 5 0", "1 4 1", "2 3 0", "2 2 1", "1 1 0"]);
+    tk.must_exec("rollback");
+}
+
+/// Go `IndexLookUpExecutor.buildTableKeyRanges` builds one key-range group a
+/// range group (`groupedKVRanges`) and merges the index side across them by
+/// `byItems`; the union scan above reads the buffer over those groups
+/// (`buildMemIndexLookUpReader`). Go's rows (gorun).
+#[test]
+fn an_index_lookup_reads_its_range_groups_under_a_union_scan() {
+    let mut tk = TestKit::new();
+    tk.must_exec("create table tl (a int, b int, c int, d int, index iab(a,b))");
+    tk.must_exec("insert into tl values (1,5,0,0),(2,3,0,0),(1,1,0,0),(3,2,0,0),(2,8,0,0)");
+    tk.must_query("select * from tl where a in (1,2) order by b")
+        .check(["1 1 0 0", "2 3 0 0", "1 5 0 0", "2 8 0 0"]);
+    tk.must_exec("begin");
+    tk.must_exec("insert into tl values (1,4,1,1),(2,2,1,1),(3,1,1,1),(2,9,1,1)");
+    tk.must_query("select * from tl where a in (1,2) order by b").check([
+        "1 1 0 0", "2 2 1 1", "2 3 0 0", "1 4 1 1", "1 5 0 0", "2 8 0 0", "2 9 1 1",
+    ]);
+    tk.must_query("select * from tl where a in (1,2) order by b desc").check([
+        "2 9 1 1", "2 8 0 0", "1 5 0 0", "1 4 1 1", "2 3 0 0", "2 2 1 1", "1 1 0 0",
+    ]);
+    tk.must_exec("rollback");
+}
+
+/// Go `IndexReaderExecutor.buildKVRangesForIndexReader` builds the key ranges
+/// of each range group, and `open` merges one request a key range by
+/// `byItems` (`needMergeSort`); the union scan above reads the buffer over
+/// them (`buildMemIndexReader`). Go's rows (gorun).
+#[test]
+fn an_index_reader_reads_its_range_groups_under_a_union_scan() {
+    let mut tk = TestKit::new();
+    tk.must_exec("create table tl (a int, b int, c int, d int, index iab(a,b))");
+    tk.must_exec("insert into tl values (1,5,0,0),(2,3,0,0),(1,1,0,0),(3,2,0,0),(2,8,0,0)");
+    tk.must_query("select a, b from tl where a in (1,2) order by b").check(["1 1", "2 3", "1 5", "2 8"]);
+    tk.must_exec("begin");
+    tk.must_exec("insert into tl values (1,4,1,1),(2,2,1,1),(3,1,1,1),(2,9,1,1)");
+    tk.must_query("select a, b from tl where a in (1,2) order by b")
+        .check(["1 1", "2 2", "2 3", "1 4", "1 5", "2 8", "2 9"]);
+    tk.must_query("select a, b from tl where a in (1,2) order by b desc")
+        .check(["2 9", "2 8", "1 5", "1 4", "2 3", "2 2", "1 1"]);
+    tk.must_exec("rollback");
+}
+
+/// Go `buildRespForGroupedRanges` assigns `e.kvRanges` on each call, so a
+/// keep-order read of an unsigned handle whose ranges straddle the int64
+/// boundary keeps only the second part's KV ranges, and the union scan over
+/// it never reads the buffered row in the first part (`2`); Go's rows
+/// (gorun).
+#[test]
+fn a_union_scan_reads_the_buffer_over_the_last_part_of_an_unsigned_handles_ranges() {
+    let mut tk = TestKit::new();
+    tk.must_exec("create table tu (a bigint unsigned primary key clustered)");
+    tk.must_exec("insert into tu values (1),(18446744073709551000)");
+    tk.must_exec("begin");
+    tk.must_exec("insert into tu values (2),(18446744073709551001)");
+    tk.must_query("select a from tu where a > 0 order by a")
+        .check(["1", "18446744073709551000", "18446744073709551001"]);
+    tk.must_exec("rollback");
+}
 /// A union scan over a reader of grouped ranges (Go
 /// `PropMatchedNeedMergeSort`, `tests/integrationtest/t/planner/core/
 /// grouped_ranges_order_by.test`): the transaction's rows merge into the

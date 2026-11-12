@@ -156,6 +156,9 @@ pub struct IndexLookUpExecutor {
     partition_table_mode: bool,
     /// Go `ranges`.
     ranges: Vec<tidb_ranger::types::Range>,
+    /// Go `is.GroupByColIdxs`: the columns whose values group `ranges` into
+    /// `groupedRanges`.
+    group_by_col_idxs: Vec<usize>,
     /// Go `corColInAccess`'s `rebuildIndexRanges`.
     range_rebuild: Option<crate::access_path::RangeRebuilder>,
     desc: bool,
@@ -203,10 +206,9 @@ impl IndexLookUpExecutor {
         ctx: &crate::StmtContext,
         is: &tidb_infoschema::SessionExtendedInfoSchema,
         v: &PhysicalIndexLookUpReader,
-        range_group: Option<&tidb_ranger::types::Ranges>,
     ) -> Result<Box<dyn Executor>, ExecError> {
         let dual = meta.clone();
-        Ok(match Self::build_no_range(meta, ctx, is, v, range_group)? {
+        Ok(match Self::build_no_range(meta, ctx, is, v)? {
             Some(lookup) => Box::new(lookup),
             None => Box::new(crate::table_dual::TableDualExec::new(dual, 0)),
         })
@@ -222,7 +224,6 @@ impl IndexLookUpExecutor {
         ctx: &crate::StmtContext,
         is: &tidb_infoschema::SessionExtendedInfoSchema,
         v: &PhysicalIndexLookUpReader,
-        range_group: Option<&tidb_ranger::types::Ranges>,
     ) -> Result<Option<Self>, ExecError> {
         let internal = |message: &'static str| ExecError::Internal(message.into());
         // Go `IndexPlans` / `TablePlans`, flattened from the plans
@@ -411,7 +412,8 @@ impl IndexLookUpExecutor {
             index_id: index.id,
             table_ids,
             partition_table_mode,
-            ranges: range_group.unwrap_or(&scan.ranges).clone(),
+            ranges: scan.ranges.clone(),
+            group_by_col_idxs: scan.group_by_col_idxs.clone(),
             range_rebuild: crate::driver::physical_builder::correlated_index_range_rebuilder(scan, ctx),
             desc: scan.desc,
             by_items,
@@ -485,28 +487,40 @@ impl IndexLookUpExecutor {
         (self.shared.physical_table_id, self.index_id)
     }
 
-    /// Go `buildTableKeyRanges`: one key-range group a physical table.
+    /// Go `buildTableKeyRanges`: one key-range group a range group and
+    /// physical table.
     fn build_table_key_ranges(&self) -> Result<Vec<Vec<tidb_txnkv::KeyRange>>, ExecError> {
         let ranges = match &self.range_rebuild {
             Some(rebuild) => rebuild().map_err(|error| ExecError::Internal(format!("{error:?}").into()))?,
             None => self.ranges.clone(),
         };
+        // Go `groupedRanges`, rebuilt with the ranges (`GroupRangesByCols`),
+        // or the ranges as one group.
+        let grouped_ranges = if self.group_by_col_idxs.is_empty() {
+            vec![ranges]
+        } else {
+            tidb_planner::find_best_task::dispatch::group_ranges_by_cols(&ranges, &self.group_by_col_idxs)
+                .map_err(|error| ExecError::Internal(error.into()))?
+        };
         let zone = tidb_exprctx::Columns::time_zone(&self.shared.ctx);
-        // Go `buildKeyRanges`: `IndexRangesToKVRangesWithInterruptSignal`
-        // per physical table, charging `memTracker`.
-        self.table_ids
-            .iter()
-            .map(|&physical_id| {
-                tidb_distsql::index_ranges_to_kv_ranges_with_mem_tracker(
-                    Some(&zone),
-                    physical_id,
-                    self.index_id,
-                    &ranges,
-                    &self.shared.mem_tracker,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| ExecError::Internal(format!("{error:?}").into()))
+        let mut kv_ranges = Vec::with_capacity(grouped_ranges.len() * self.table_ids.len());
+        for ranges in &grouped_ranges {
+            // Go `buildKeyRanges`: `IndexRangesToKVRangesWithInterruptSignal`
+            // per physical table, charging `memTracker`.
+            for &physical_id in &self.table_ids {
+                kv_ranges.push(
+                    tidb_distsql::index_ranges_to_kv_ranges_with_mem_tracker(
+                        Some(&zone),
+                        physical_id,
+                        self.index_id,
+                        ranges,
+                        &self.shared.mem_tracker,
+                    )
+                    .map_err(|error| ExecError::Internal(format!("{error:?}").into()))?,
+                );
+            }
+        }
+        Ok(kv_ranges)
     }
 
     /// Go `calculateBatchSize`.

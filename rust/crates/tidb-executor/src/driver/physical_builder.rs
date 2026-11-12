@@ -4521,14 +4521,14 @@ impl DataReaderBuilder {
         };
         let reader: Box<dyn Executor> = match plan {
             PhysicalPlan::IndexReader(v) => {
-                let mut e = crate::index_reader::IndexReaderExecutor::build_no_range(meta, &self.ctx, &self.is, v, None)?
+                let mut e = crate::index_reader::IndexReaderExecutor::build_no_range(meta, &self.ctx, &self.is, v)?
                     .ok_or_else(lost)?;
                 let ids = e.physical_table_id_and_index_id();
                 e.open_with_kv_ranges(kv_ranges(ids)?)?;
                 Box::new(e)
             }
             PhysicalPlan::IndexLookUpReader(v) => {
-                let mut e = crate::index_lookup::IndexLookUpExecutor::build_no_range(meta, &self.ctx, &self.is, v, None)?
+                let mut e = crate::index_lookup::IndexLookUpExecutor::build_no_range(meta, &self.ctx, &self.is, v)?
                     .ok_or_else(lost)?;
                 let ids = e.physical_table_id_and_index_id();
                 e.open_with_kv_ranges(kv_ranges(ids)?)?;
@@ -4539,7 +4539,7 @@ impl DataReaderBuilder {
             // (`dedupHandles`, `buildTableReaderFromHandles` with
             // `canReorderHandles`).
             PhysicalPlan::TableReader(v) => {
-                let mut e = crate::table_reader::TableReaderExecutor::build_no_range(meta, &self.ctx, &self.is, v, None)?
+                let mut e = crate::table_reader::TableReaderExecutor::build_no_range(meta, &self.ctx, &self.is, v)?
                     .ok_or_else(lost)?;
                 let (table_id, common_handle) = e.physical_table_id_and_common_handle();
                 if common_handle {
@@ -7163,7 +7163,7 @@ fn partial_range_groups(
         .or_else(|| embedded_table_scan(partial).map(|scan| (&scan.group_by_col_idxs, &scan.ranges)));
     match grouped {
         Some((idxs, ranges)) if !idxs.is_empty() => {
-            Ok(Some(group_ranges_by_cols(ranges, idxs)?))
+            Ok(Some(tidb_planner::find_best_task::dispatch::group_ranges_by_cols(ranges, idxs).map_err(DriverError::unsupported)?))
         }
         _ => Ok(None),
     }
@@ -7834,23 +7834,13 @@ fn build_reader_node(
             // deletes it (`docs/tikv-reader-execplan.md`).
             // A temporary table's rows are the session's (Go: a dummy reader
             // under its UnionScan), which the local path reads until M4.
-            let has_coprocessor = ctx.txn_store().is_some_and(|store| store.client().is_some());
-            let temporary = reader
-                .table_plan
-                .as_deref()
-                .and_then(embedded_table_scan)
-                .is_some_and(|scan| scan.is_temporary);
-            if (reader.store_type == tidb_kv::store_type::StoreType::TiFlash
-                || (reader.store_type == tidb_kv::store_type::StoreType::TiKv && has_coprocessor && !temporary))
-                && !state.reader_storage.is_mem_buffer()
-            {
+            if is_go_table_reader(reader, ctx, state) {
                 let executor: Box<dyn Executor> = if state.dummy_reader {
                     let mut e = crate::table_reader::TableReaderExecutor::build_no_range(
                         meta(ctx, plan, plan_schema(plan)?),
                         ctx,
                         catalog,
                         reader,
-                        state.range_group.as_ref(),
                     )
                     .map_err(DriverError::from)?
                     .ok_or_else(|| DriverError::unsupported("a dummy reader's table has no partition to read"))?;
@@ -7862,7 +7852,6 @@ fn build_reader_node(
                         ctx,
                         catalog,
                         reader,
-                        state.range_group.as_ref(),
                     )
                     .map_err(DriverError::from)?
                 };
@@ -7897,18 +7886,13 @@ fn build_reader_node(
             // in-process engine and a temporary table keep the local path,
             // `docs/tikv-reader-execplan.md`).
             let scan = reader.index_plan.as_deref().and_then(embedded_index_scan);
-            if ctx.txn_store().is_some_and(|store| store.client().is_some())
-                && !state.reader_storage.is_mem_buffer()
-                && scan.is_some_and(|scan| !scan.is_temporary)
-            {
-                let scan = scan.expect("checked above");
+            if let Some(scan) = scan.filter(|_| is_go_index_reader(plan, ctx, state)) {
                 let executor: Box<dyn Executor> = if state.dummy_reader {
                     let mut e = crate::index_reader::IndexReaderExecutor::build_no_range(
                         meta(ctx, plan, plan_schema(plan)?),
                         ctx,
                         catalog,
                         reader,
-                        state.range_group.as_ref(),
                     )
                     .map_err(DriverError::from)?
                     .ok_or_else(|| DriverError::unsupported("a dummy reader's table has no partition to read"))?;
@@ -7920,7 +7904,6 @@ fn build_reader_node(
                         ctx,
                         catalog,
                         reader,
-                        state.range_group.as_ref(),
                     )
                     .map_err(DriverError::from)?
                 };
@@ -8029,19 +8012,13 @@ fn build_reader_node(
                 PhysicalPlan::IndexScan(scan) => Some(scan),
                 _ => None,
             });
-            if ctx.txn_store().is_some_and(|store| store.client().is_some())
-                && !state.reader_storage.is_mem_buffer()
-                && !reader.index_lookup_push_down
-                && scan.is_some_and(|scan| !scan.is_temporary)
-            {
-                let scan = scan.expect("checked above");
+            if let Some(scan) = scan.filter(|_| is_go_index_reader(plan, ctx, state)) {
                 let executor: Box<dyn Executor> = if state.dummy_reader {
                     let mut e = crate::index_lookup::IndexLookUpExecutor::build_no_range(
                         meta(ctx, plan, plan_schema(plan)?),
                         ctx,
                         catalog,
                         reader,
-                        state.range_group.as_ref(),
                     )
                     .map_err(DriverError::from)?
                     .ok_or_else(|| DriverError::unsupported("a dummy reader's table has no partition to read"))?;
@@ -8053,7 +8030,6 @@ fn build_reader_node(
                         ctx,
                         catalog,
                         reader,
-                        state.range_group.as_ref(),
                     )
                     .map_err(DriverError::from)?
                 };
@@ -8099,35 +8075,6 @@ fn build_reader_node(
     }
 }
 
-/// Go `GroupRangesByCols`: ranges that agree on the group-by columns form one
-/// group. Go collects a map's values, so its group order is unspecified; the
-/// first-appearance order used here is one valid order.
-fn group_ranges_by_cols(
-    ranges: &tidb_ranger::types::Ranges,
-    group_by_col_idxs: &[usize],
-) -> Result<Vec<tidb_ranger::types::Ranges>, DriverError> {
-    let mut positions: HashMap<Vec<u8>, usize> = HashMap::new();
-    let mut groups: Vec<tidb_ranger::types::Ranges> = Vec::new();
-    for range in ranges {
-        let datums = group_by_col_idxs
-            .iter()
-            .map(|index| {
-                range.low_val.get(*index).cloned().ok_or_else(|| {
-                    DriverError::unsupported("a grouped range is narrower than its group columns")
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let key = tidb_codec::encode_value(&datums)
-            .map_err(|error| DriverError::unsupported(format!("{error:?}")))?;
-        let position = *positions.entry(key).or_insert_with(|| {
-            groups.push(Vec::new());
-            groups.len() - 1
-        });
-        groups[position].push(range.clone());
-    }
-    Ok(groups)
-}
-
 /// The scan of a reader that carries Go's `GroupByColIdxs`, with the property
 /// the planner built it under.
 fn range_grouped_scan(
@@ -8154,10 +8101,45 @@ fn range_grouped_scan(
     (!leaf.0.is_empty()).then_some(leaf)
 }
 
-/// Go `TableReaderExecutor.buildRespForGroupedRanges` and the index readers'
-/// equivalents: a reader whose ranges pin the group-by columns reads each
-/// range group as its own request, and the group results merge-sort by the
-/// scan property's items (`NewSortedSelectResults`).
+/// Whether a table reader is Go's `TableReaderExecutor`
+/// (`table_reader.rs`), which reads its range groups itself; the
+/// in-process engine's readers and a reader over the buffer are the local
+/// path's.
+fn is_go_table_reader(
+    reader: &tidb_planner_core_operator_physicalop::PhysicalTableReader,
+    ctx: &crate::StmtContext,
+    state: &BuildState,
+) -> bool {
+    let has_coprocessor = ctx.txn_store().is_some_and(|store| store.client().is_some());
+    let temporary = reader
+        .table_plan
+        .as_deref()
+        .and_then(embedded_table_scan)
+        .is_some_and(|scan| scan.is_temporary);
+    (reader.store_type == tidb_kv::store_type::StoreType::TiFlash
+        || (reader.store_type == tidb_kv::store_type::StoreType::TiKv && has_coprocessor && !temporary))
+        && !state.reader_storage.is_mem_buffer()
+}
+
+/// Whether an index reader or lookup is Go's (`index_reader.rs`,
+/// `index_lookup.rs`) on a store with a coprocessor client; the in-process
+/// engine's readers, a temporary table's, the TiKV-side lookup and a reader
+/// over the buffer are the local path's.
+fn is_go_index_reader(plan: &PhysicalPlan, ctx: &crate::StmtContext, state: &BuildState) -> bool {
+    let index_plan = match plan {
+        PhysicalPlan::IndexReader(reader) => reader.index_plan.as_deref(),
+        PhysicalPlan::IndexLookUpReader(reader) if !reader.index_lookup_push_down => reader.index_plan.as_deref(),
+        _ => None,
+    };
+    ctx.txn_store().is_some_and(|store| store.client().is_some())
+        && !state.reader_storage.is_mem_buffer()
+        && index_plan.and_then(embedded_index_scan).is_some_and(|scan| !scan.is_temporary)
+}
+
+/// The local path's `buildRespForGroupedRanges`: a reader whose ranges pin
+/// the group-by columns reads each range group as its own request, and the
+/// group results merge-sort by the scan property's items
+/// (`NewSortedSelectResults`). Go's readers keep their groups themselves.
 fn build_range_grouped_reader(
     plan: &PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
@@ -8167,7 +8149,15 @@ fn build_range_grouped_reader(
     let Some((group_by_col_idxs, ranges, prop)) = range_grouped_scan(plan) else {
         return build_reader_node(plan, catalog, ctx, state);
     };
-    let groups = group_ranges_by_cols(ranges, group_by_col_idxs)?;
+    let go_reader = match plan {
+        PhysicalPlan::TableReader(reader) => is_go_table_reader(reader, ctx, state),
+        _ => is_go_index_reader(plan, ctx, state),
+    };
+    if go_reader {
+        return build_reader_node(plan, catalog, ctx, state);
+    }
+    let groups = tidb_planner::find_best_task::dispatch::group_ranges_by_cols(ranges, group_by_col_idxs)
+        .map_err(DriverError::unsupported)?;
     if groups.len() <= 1 {
         // One group is read in range order, which is already the property's.
         return build_reader_node(plan, catalog, ctx, state);
@@ -9248,69 +9238,6 @@ fn union_scan_reader(plan: &PhysicalPlan) -> Result<Option<UnionScanReader>, Dri
     })
 }
 
-/// Go `plannerutil.HandleCols` as `UnionScanExec` uses it: the handle of a
-/// row, built from the union scan's handle columns the way the table writes
-/// its record keys.
-struct UnionScanHandleCols {
-    /// The handle columns' offsets in the row, in the handle's order.
-    offsets: Vec<usize>,
-    /// The row's types.
-    types: Vec<FieldType>,
-    /// The table, for a common handle (`CommonHandleCols.BuildHandle`);
-    /// `None` for an integer handle (`IntHandleCols`).
-    common: Option<Arc<crate::TableCommon>>,
-    zone: tidb_datatype::SessionTimeZone,
-}
-
-impl crate::union_scan::HandleCols for UnionScanHandleCols {
-    fn build_handle(
-        &self,
-        row: tidb_chunk::row::Row<'_>,
-    ) -> Result<tidb_table::tables::TableHandle, crate::ExecError> {
-        match &self.common {
-            None => Ok(tidb_table::tables::TableHandle::Int(
-                row.get_int64(self.offsets[0]),
-            )),
-            Some(table) => {
-                let values = self
-                    .offsets
-                    .iter()
-                    .map(|&offset| row.get_datum(offset, &self.types[offset]))
-                    .collect::<Vec<_>>();
-                table
-                    .common_handle_of_values(&values, &self.zone)
-                    .map_err(|error| crate::ExecError::internal(format!("{error:?}")))
-            }
-        }
-    }
-
-    fn compare_handles(
-        &self,
-        left: &[tidb_datatype::Datum],
-        right: &[tidb_datatype::Datum],
-        collators: &[tidb_charset::Collation],
-    ) -> Result<std::cmp::Ordering, crate::ExecError> {
-        for &offset in &self.offsets {
-            // Go `IntHandleCols.Compare` compares with the binary collator,
-            // `CommonHandleCols.Compare` with each column's own.
-            let collation = match self.common {
-                None => tidb_charset::Collation::Binary,
-                Some(_) => collators
-                    .get(offset)
-                    .copied()
-                    .unwrap_or(tidb_charset::Collation::Binary),
-            };
-            let ordering = left[offset]
-                .compare(&right[offset], collation)
-                .map_err(|error| crate::ExecError::internal(format!("{error:?}")))?;
-            if ordering != std::cmp::Ordering::Equal {
-                return Ok(ordering);
-            }
-        }
-        Ok(std::cmp::Ordering::Equal)
-    }
-}
-
 /// Go `memRowsIter`: a union scan's mem reader -- here the reader itself over
 /// the buffered entries -- pulled one row at a time. It opens on the first
 /// pull and closes with the union scan, so a re-opened union scan (an
@@ -9510,12 +9437,8 @@ fn build_union_scan(
     // Go's readers (`docs/tikv-reader-execplan.md` M4): a TiKV reader of a
     // table that is not partitioned, whose added rows Go's mem readers build
     // in `open` from its ranges.
-    // A reader of grouped ranges is built here as one reader a group under a
-    // merge (Go keeps the groups inside the reader, `groupedRanges`), so it
-    // keeps the buffer-built reader for now.
     let go_reader = ctx.txn_store().is_some_and(|store| store.client().is_some())
         && table.meta().read().get_partition_info().is_none()
-        && range_grouped_scan(reader_plan).is_none()
         && match reader_plan {
             PhysicalPlan::TableReader(table_reader) => {
                 table_reader.store_type == tidb_kv::store_type::StoreType::TiKv
@@ -9621,11 +9544,36 @@ fn build_union_scan(
     } else {
         used_index
     };
-    let handle_cols = UnionScanHandleCols {
-        offsets: handle_offsets,
-        types: types.clone(),
-        common: (!table.common_handle_offsets().is_empty()).then(|| Arc::clone(&table)),
-        zone: ctx.session_zone(),
+    // Go `us.handleCols = v.HandleCols`, its columns at their offsets in
+    // the reader's row.
+    let handle_columns = union_scan
+        .handle_cols
+        .iter()
+        .zip(&handle_offsets)
+        .map(|(column, offset)| {
+            let mut column = column.clone();
+            column.index = *offset as i64;
+            column.ret_type = Some(types[*offset].clone());
+            column
+        })
+        .collect::<Vec<_>>();
+    let table_info = table.meta().read().clone();
+    let handle_cols = if table_info.is_common_handle {
+        let primary = tidb_table::tables::scan_from_infos::find_primary_index(&table_info)
+            .map(|index| Arc::new(index.read().clone()))
+            .ok_or_else(|| DriverError::unsupported("a clustered table has no primary index"))?;
+        tidb_planner_util::handle_cols::HandleCols::Common(tidb_planner_util::handle_cols::CommonHandleCols {
+            tbl_info: Arc::new(table_info),
+            idx_info: primary,
+            columns: handle_columns,
+        })
+    } else {
+        tidb_planner_util::handle_cols::HandleCols::Int(tidb_planner_util::handle_cols::IntHandleCols {
+            col: handle_columns
+                .into_iter()
+                .next()
+                .ok_or_else(|| DriverError::unsupported("a union scan has no handle column"))?,
+        })
     };
     let conditions_with_vir_col = union_scan
         .conditions
@@ -9741,7 +9689,7 @@ fn build_union_scan(
                 used_index,
                 desc: reader.desc,
                 need_extra_sorting,
-                handle_cols: Box::new(handle_cols),
+                handle_cols,
             },
             ctx: ctx.clone(),
             stmt: ctx.clone(),

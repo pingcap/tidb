@@ -187,6 +187,7 @@ tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-planner = { path = "../tidb-planner" }
+tidb-planner-util = { path = "../tidb-planner-util" }
 tidb-telemetry = { path = "../tidb-telemetry" }
 tidb-metrics = { path = "../tidb-metrics" }
 tidb-proto = { path = "../tidb-proto" }
@@ -205,7 +206,6 @@ tracing = "0.1"
 
 [dev-dependencies]
 tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
-tidb-planner-util = { path = "../tidb-planner-util" }
 tidb-metabuild = { path = "../tidb-metabuild" }
 tidb-session = { path = "../tidb-session" }
 tidb-sessionctx = { path = "../tidb-sessionctx", features = ["test-util"] }

@@ -27,6 +27,8 @@ use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_expr::schema::Schema;
 use tidb_planner_core_operator_physicalop::{PhysicalIndexReader, PhysicalPlan};
 
+use crate::range_group_merge::ReaderResult;
+
 /// Go `IndexReaderExecutor`.
 pub struct IndexReaderExecutor {
     meta: ExecutorMeta,
@@ -44,11 +46,14 @@ pub struct IndexReaderExecutor {
     index_id: i64,
     /// Go `ranges`.
     ranges: Vec<tidb_ranger::types::Range>,
+    /// Go `is.GroupByColIdxs`: the columns whose values group `ranges` into
+    /// `groupedRanges`.
+    group_by_col_idxs: Vec<usize>,
     /// Go `corColInAccess`: the ranges rebuilt over the outer row
     /// (`rebuildIndexRanges`).
     range_rebuild: Option<crate::access_path::RangeRebuilder>,
-    /// Go `kvRanges` this reader reads instead of its ranges': one key range
-    /// of a merged keep-order read.
+    /// Go `open(ctx, kvRanges)`'s key ranges, which its caller built
+    /// (`buildIndexReaderForIndexJoin`).
     fixed_kv_ranges: Option<Vec<tidb_txnkv::KeyRange>>,
     keep_order: bool,
     desc: bool,
@@ -61,10 +66,11 @@ pub struct IndexReaderExecutor {
     output_offsets: Vec<u32>,
     /// Go `netDataSize`.
     net_data_size: f64,
-    /// Go `result`.
-    result: Option<SelectResponseIter>,
-    /// Go `NewSortedSelectResults`: one reader a key range, merged.
-    merged: Option<Box<dyn Executor>>,
+    /// Go `result`: one request's, or `NewSortedSelectResults` over one
+    /// request a key range.
+    result: Option<ReaderResult>,
+    /// Go `memTracker`, made on `open`.
+    mem_tracker: Option<Arc<tidb_memory::Tracker>>,
     /// Go `kvRanges`.
     kv_ranges: Vec<tidb_txnkv::KeyRange>,
     /// Go `dummy`: not a real reader, only the KV ranges a union scan reads
@@ -85,10 +91,9 @@ impl IndexReaderExecutor {
         ctx: &crate::StmtContext,
         is: &tidb_infoschema::SessionExtendedInfoSchema,
         v: &PhysicalIndexReader,
-        range_group: Option<&tidb_ranger::types::Ranges>,
     ) -> Result<Box<dyn Executor>, ExecError> {
         let dual = meta.clone();
-        Ok(match Self::build_no_range(meta, ctx, is, v, range_group)? {
+        Ok(match Self::build_no_range(meta, ctx, is, v)? {
             Some(reader) => Box::new(reader),
             None => Box::new(crate::table_dual::TableDualExec::new(dual, 0)),
         })
@@ -104,7 +109,6 @@ impl IndexReaderExecutor {
         ctx: &crate::StmtContext,
         is: &tidb_infoschema::SessionExtendedInfoSchema,
         v: &PhysicalIndexReader,
-        range_group: Option<&tidb_ranger::types::Ranges>,
     ) -> Result<Option<Self>, ExecError> {
         let index_plan = v
             .index_plan
@@ -197,7 +201,8 @@ impl IndexReaderExecutor {
             plan_ids: plans.iter().map(|plan| plan.id() as isize).collect(),
             table_ids,
             index_id: scan.index_id,
-            ranges: range_group.unwrap_or(&scan.ranges).clone(),
+            ranges: scan.ranges.clone(),
+            group_by_col_idxs: scan.group_by_col_idxs.clone(),
             range_rebuild: crate::driver::physical_builder::correlated_index_range_rebuilder(scan, ctx),
             fixed_kv_ranges: None,
             keep_order: scan.keep_order,
@@ -210,7 +215,7 @@ impl IndexReaderExecutor {
                 tidb_config::tikvcfg::get_global_config().tikv_client.enable_chunk_rpc,
             ),
             result: None,
-            merged: None,
+            mem_tracker: None,
             kv_ranges: Vec::new(),
             dummy: false,
         }))
@@ -250,10 +255,22 @@ impl IndexReaderExecutor {
             Some(rebuild) => rebuild().map_err(|error| ExecError::Internal(format!("{error:?}").into()))?,
             None => self.ranges.clone(),
         };
+        // Go `groupedRanges`, rebuilt with the ranges (`GroupRangesByCols`),
+        // or the ranges as one group.
+        let grouped_ranges = if self.group_by_col_idxs.is_empty() {
+            vec![ranges]
+        } else {
+            tidb_planner::find_best_task::dispatch::group_ranges_by_cols(&ranges, &self.group_by_col_idxs)
+                .map_err(|error| ExecError::Internal(error.into()))?
+        };
         let zone = tidb_exprctx::Columns::time_zone(&self.ctx);
-        let kv_ranges = tidb_distsql::index_ranges_to_kv_ranges(Some(&zone), &self.table_ids, self.index_id, &ranges)
-            .map_err(|error| ExecError::Internal(format!("{error:?}").into()))?;
-        Ok(kv_ranges.into_iter().flatten().collect())
+        let mut results = Vec::new();
+        for ranges in &grouped_ranges {
+            let kv_ranges = tidb_distsql::index_ranges_to_kv_ranges(Some(&zone), &self.table_ids, self.index_id, ranges)
+                .map_err(|error| ExecError::Internal(format!("{error:?}").into()))?;
+            results.extend(kv_ranges.into_iter().flatten());
+        }
+        Ok(results)
     }
 
     /// Go `SelectResult` over the key ranges `kv_ranges`.
@@ -284,38 +301,11 @@ impl IndexReaderExecutor {
                 field_types: self.meta.ret_field_types().to_vec(),
                 cop_plan_ids: self.plan_ids.clone(),
                 root_plan_id: isize::try_from(self.meta.id()).unwrap_or(0),
-                // Go `memTracker`, `NewTracker(e.ID(), -1)` under the statement's.
-                mem_tracker: (self.meta.id() > 0).then(|| statement.memory.operator_tracker(self.meta.id())),
+                mem_tracker: self.mem_tracker.clone(),
             },
         )
         .map_err(|error| ExecError::Internal(error.into()))
         .inspect(|_| tidb_kv::storage::note_storage_op(|ops| ops.cop_scans += 1))
-    }
-
-    /// One reader of the merge, reading `kv_range` alone.
-    fn reader_of(&self, kv_range: tidb_txnkv::KeyRange) -> Box<dyn Executor> {
-        Box::new(Self {
-            meta: self.meta.clone(),
-            ctx: self.ctx.clone(),
-            client: Arc::clone(&self.client),
-            index_plan: self.index_plan.clone(),
-            plan_ids: self.plan_ids.clone(),
-            table_ids: self.table_ids.clone(),
-            index_id: self.index_id,
-            ranges: Vec::new(),
-            range_rebuild: None,
-            fixed_kv_ranges: Some(vec![kv_range]),
-            keep_order: self.keep_order,
-            desc: self.desc,
-            by_items: Vec::new(),
-            start_ts: self.start_ts,
-            output_offsets: self.output_offsets.clone(),
-            net_data_size: self.net_data_size,
-            result: None,
-            merged: None,
-            kv_ranges: Vec::new(),
-            dummy: false,
-        })
     }
 }
 
@@ -324,11 +314,10 @@ impl IndexReaderExecutor {
 impl tidb_executor_internal_exec::table_access::TableAccess for IndexReaderExecutor {
     fn cop_count_and_rows(&self) -> Option<(u64, u64)> {
         let scan_id = *self.plan_ids.first()?;
-        Some(
-            self.result
-                .as_ref()
-                .map_or((0, 0), |result| result.runtime_stats().get_cop_count_and_rows(scan_id)),
-        )
+        Some(self.result.iter().flat_map(ReaderResult::select_results).fold((0, 0), |(requests, rows), result| {
+            let (more_requests, more_rows) = result.runtime_stats().get_cop_count_and_rows(scan_id);
+            (requests + more_requests, rows + more_rows)
+        }))
     }
 }
 
@@ -357,65 +346,64 @@ impl Executor for IndexReaderExecutor {
         )
         .map_err(|error| ExecError::Internal(error.to_string().into()))?;
         dag.output_offsets.clone_from(&self.output_offsets);
+        self.result = None;
+        // Treat temporary table as dummy table, avoid sending distsql request
+        // to TiKV (its KV ranges are left in build order).
+        if self.dummy {
+            self.kv_ranges = kv_ranges;
+            return Ok(());
+        }
+        // Go `memTracker`, reset or made (`NewTracker(e.ID(), -1)`), under
+        // the statement's.
+        self.mem_tracker = match self.mem_tracker.take() {
+            Some(tracker) => {
+                tracker.reset();
+                tracker.attach_to(statement.memory.stmt_tracker());
+                Some(tracker)
+            }
+            None => (self.meta.id() > 0).then(|| statement.memory.operator_tracker(self.meta.id())),
+        };
         kv_ranges.sort_by(|a, b| a.start_key.cmp(&b.start_key));
         self.kv_ranges.clone_from(&kv_ranges);
-        self.result = None;
-        self.merged = None;
-        // Go: avoid sending a request for a dummy reader.
-        if self.dummy {
-            return Ok(());
-        }
-        // Go `needMergeSort(e.byItems, len(kvRanges))`.
+        // Go `needMergeSort(e.byItems, len(kvRanges))`: one request a key
+        // range, merged by `byItems`.
         if !self.by_items.is_empty() && kv_ranges.len() > 1 {
-            let children = kv_ranges.into_iter().map(|kv_range| self.reader_of(kv_range)).collect();
-            let mut merged = crate::range_group_merge::SortedSelectResults::new(
+            let results = kv_ranges
+                .into_iter()
+                .map(|kv_range| self.select_result(&statement, dag.clone(), vec![kv_range]))
+                .collect::<Result<Vec<_>, _>>()?;
+            let merged = crate::range_group_merge::SortedSelectResults::new(
                 self.meta.clone(),
                 self.by_items.clone(),
-                children,
+                results,
                 self.ctx.clone(),
-            )?;
-            merged.open()?;
-            self.merged = Some(Box::new(merged));
+            )?
+            .with_mem_tracker(self.mem_tracker.clone());
+            self.result = Some(ReaderResult::Sorted(merged));
             return Ok(());
         }
-        self.result = Some(self.select_result(&statement, dag, kv_ranges)?);
+        self.result = Some(ReaderResult::One(self.select_result(&statement, dag, kv_ranges)?));
         Ok(())
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        req.reset();
         if self.dummy {
-            req.reset();
             return Ok(());
         }
-        if let Some(merged) = self.merged.as_mut() {
-            return merged.next(req);
-        }
-        req.reset();
         let Some(result) = self.result.as_mut() else {
             return Ok(());
         };
-        let required = req.required_rows().max(1);
-        if !result
-            .fill_chunk_with_required_rows(required, req)
-            .map_err(|error| ExecError::from(crate::cop_reader::select_response_error(error)))?
-        {
-            req.reset();
-            return Ok(());
-        }
+        result.next(req)?;
         let rows = req.num_rows() as u64;
         tidb_kv::storage::note_storage_op(|ops| ops.cop_rows += rows);
         Ok(())
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
-        if let Some(mut merged) = self.merged.take() {
-            merged.close()?;
-        }
         self.kv_ranges.clear();
         match self.result.take() {
-            Some(mut result) => result
-                .close()
-                .map_err(|error| ExecError::from(crate::cop_reader::select_response_error(error))),
+            Some(mut result) => result.close(),
             None => Ok(()),
         }
     }

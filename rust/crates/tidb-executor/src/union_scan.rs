@@ -124,9 +124,6 @@
 //!
 //! # Narrowings, every one named
 //!
-//! * **`plannerutil.HandleCols`** (`pkg/planner/util/handle_cols.go`) is
-//!   [`HandleCols`]: `BuildHandle` (:261) and `Compare` (:327) are its two
-//!   uses, and it is a planner type, outside this Go package.
 //! * **`kv.MemBuffer.SnapshotGetter()`** (`pkg/kv/kv.go:224`, implemented in
 //!   `pkg/store/driver/txn/unionstore_driver.go:138`) is
 //!   [`MemBufferSnapshotGetter`]. `us.memBuf` itself (:41) is only ever used
@@ -175,7 +172,6 @@ use std::collections::BTreeSet;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::mutrow::MutRow;
-use tidb_chunk::row::Row;
 use tidb_datatype::{Datum, FieldType, FieldTypeFlags};
 use tidb_charset::Collation;
 use tidb_expr::expression::Expression;
@@ -209,31 +205,6 @@ fn from_mem_reader_error(error: MemReaderError) -> ExecError {
         }
         MemReaderError::Unsupported(reason) => ExecError::unsupported(reason),
     }
-}
-
-/// boundary: Go `plannerutil.HandleCols`
-/// (`pkg/planner/util/handle_cols.go`), reached as `compareExec.handleCols`
-/// (`pkg/executor/union_scan.go:307`).
-///
-/// The handle is the identity a union scan merges on, but how a row's handle
-/// is spelled -- one `PKIsHandle` column, a clustered tuple, or the hidden
-/// `_tidb_rowid` -- is a planner fact carried down with the plan. Only the two
-/// methods `union_scan.go` calls are declared.
-pub trait HandleCols: Send {
-    /// Go `HandleCols.BuildHandle(sc, row)`
-    /// (`pkg/executor/union_scan.go:261`): the handle of a CHILD chunk row.
-    fn build_handle(&self, row: Row<'_>) -> Result<TableHandle, ExecError>;
-
-    /// Go `HandleCols.Compare(a, b, collators, typeCtx)`
-    /// (`pkg/executor/union_scan.go:327`): orders two full datum rows by their
-    /// handle columns alone. `collators` is the FULL-row collator slice, as in
-    /// Go.
-    fn compare_handles(
-        &self,
-        left: &[Datum],
-        right: &[Datum],
-        collators: &[Collation],
-    ) -> Result<Ordering, ExecError>;
 }
 
 /// boundary: Go `kv.MemBuffer.SnapshotGetter()` (`pkg/kv/kv.go:224`),
@@ -273,7 +244,7 @@ pub struct CompareExec {
     /// `PropMatchedNeedMergeSort`). READ by `mem_reader.go`, not by this file.
     pub need_extra_sorting: bool,
     /// Go `handleCols`: "the handle's position of the below scan plan."
-    pub handle_cols: Box<dyn HandleCols>,
+    pub handle_cols: tidb_planner_util::handle_cols::HandleCols,
 }
 
 impl CompareExec {
@@ -306,7 +277,8 @@ impl CompareExec {
         }
         let ordering = self
             .handle_cols
-            .compare_handles(left, right, &self.collators)?;
+            .compare(left, right, &self.collators)
+            .map_err(ExecError::internal)?;
         if self.desc {
             return Ok(ordering.reverse());
         }
@@ -570,7 +542,15 @@ impl<C: Columns> UnionScanExec<C> {
         for index in 0..buffer.num_rows() {
             let row = buffer.get_row(index);
             // :261.
-            let snapshot_handle = self.compare_exec.handle_cols.build_handle(row)?;
+            let snapshot_handle = match self
+                .compare_exec
+                .handle_cols
+                .build_handle(&self.ctx.time_zone(), row)
+                .map_err(|error| ExecError::internal(format!("{error:?}")))?
+            {
+                tidb_txnkv::Handle::Int(handle) => TableHandle::Int(handle.value()),
+                handle => TableHandle::Common(handle.encoded().to_vec()),
+            };
             // :265-271.
             let check_key = if self.phys_tbl_id_idx >= 0 {
                 let table_id =
@@ -825,23 +805,10 @@ mod tests {
     }
 
     /// Column 0 is the handle: Go's `PKIsHandle` shape.
-    struct FirstColumnHandle;
-
-    impl HandleCols for FirstColumnHandle {
-        fn build_handle(&self, row: Row<'_>) -> Result<TableHandle, ExecError> {
-            Ok(TableHandle::Int(row.get_int64(0)))
-        }
-
-        fn compare_handles(
-            &self,
-            left: &[Datum],
-            right: &[Datum],
-            _collators: &[Collation],
-        ) -> Result<Ordering, ExecError> {
-            Ok(left[0]
-                .compare(&right[0], Collation::Binary)
-                .expect("int handles compare"))
-        }
+    fn first_column_handle() -> tidb_planner_util::handle_cols::HandleCols {
+        let mut col = tidb_expr::column::Column::new(0, FieldType::new(tidb_datatype::FieldTypeCode::LongLong));
+        col.index = 0;
+        tidb_planner_util::handle_cols::HandleCols::Int(tidb_planner_util::handle_cols::IntHandleCols { col })
     }
 
     /// The membuffer keys this transaction has written.
@@ -880,7 +847,7 @@ mod tests {
             used_index: vec![0],
             desc,
             need_extra_sorting: false,
-            handle_cols: Box::new(FirstColumnHandle),
+            handle_cols: first_column_handle(),
         }
     }
 
@@ -1044,7 +1011,7 @@ mod tests {
             used_index: vec![1],
             desc: false,
             need_extra_sorting: false,
-            handle_cols: Box::new(FirstColumnHandle),
+            handle_cols: first_column_handle(),
         };
         // Column 1 decides.
         assert_eq!(
@@ -1062,7 +1029,7 @@ mod tests {
             used_index: vec![1],
             desc: true,
             need_extra_sorting: false,
-            handle_cols: Box::new(FirstColumnHandle),
+            handle_cols: first_column_handle(),
         };
         assert_eq!(
             descending.compare(&row(9, 1), &row(2, 5)).expect("compare"),
