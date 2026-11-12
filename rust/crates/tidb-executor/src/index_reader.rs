@@ -140,12 +140,11 @@ impl IndexReaderExecutor {
             .output_columns
             .iter()
             .map(|output| {
-                schema
-                    .columns
-                    .iter()
-                    .position(|column| column.unique_id == output.unique_id)
-                    .map(|position| position as u32)
-                    .ok_or_else(|| ExecError::Internal("an index reader output column is absent from its plans".into()))
+                // Go `ResolveIndices` -> `Schema.ColumnIndex`, which passes over
+                // a prefix index column for the full one (a clustered table's
+                // common handle carries it).
+                u32::try_from(schema.column_index(output))
+                    .map_err(|_| ExecError::Internal("an index reader output column is absent from its plans".into()))
             })
             .collect::<Result<Vec<_>, _>>()?;
         let by_items = scan
