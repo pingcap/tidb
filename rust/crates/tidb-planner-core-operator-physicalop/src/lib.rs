@@ -1935,8 +1935,8 @@ pub struct PhysicalLock {
     pub lock_type: tidb_planner_core_operator_logicalop::SelectLockType,
     /// Go `Lock.WaitSec`.
     pub wait_sec: u64,
-    /// Go `TblID2Handle`, as handle columns per table id.
-    pub tbl_id_to_handle_cols: std::collections::BTreeMap<i64, Vec<tidb_expr::column::Column>>,
+    /// Go `TblID2Handle`: each table's handles.
+    pub tbl_id_to_handle: std::collections::BTreeMap<i64, Vec<tidb_planner_util::handle_cols::HandleCols>>,
     /// Go `TblID2PhysTblIDCol`.
     pub tbl_id_to_phys_tbl_id_col: std::collections::BTreeMap<i64, tidb_expr::column::Column>,
 }
@@ -1980,7 +1980,7 @@ pub fn exhaust_physical_plans_4_logical_lock(
         base,
         lock_type: p.lock_type,
         wait_sec: p.wait_sec,
-        tbl_id_to_handle_cols: p.tbl_id_to_handle_cols.clone(),
+        tbl_id_to_handle: p.tbl_id_to_handle.clone(),
         tbl_id_to_phys_tbl_id_col: p.tbl_id_to_phys_tbl_id_col.clone(),
     })]
 }
@@ -5254,7 +5254,7 @@ impl PhysicalPlan {
                 base: base_of(&op.base),
                 lock_type: op.lock_type,
                 wait_sec: op.wait_sec,
-                tbl_id_to_handle_cols: op.tbl_id_to_handle_cols.clone(),
+                tbl_id_to_handle: op.tbl_id_to_handle.clone(),
                 tbl_id_to_phys_tbl_id_col: op.tbl_id_to_phys_tbl_id_col.clone(),
             }),
             Self::UnionAll(op) => Self::UnionAll(PhysicalUnionAll {

@@ -542,6 +542,22 @@ impl HandleCols {
         }
     }
 
+    /// Go `MemoryUsage`: an integer handle's column, or
+    /// `emptyCommonHandleColsSize` (two pointers and a slice) and the common
+    /// handle's column pointers and columns.
+    #[must_use]
+    pub fn memory_usage(&self) -> i64 {
+        match self {
+            Self::Int(ib) => ib.col.memory_usage(),
+            Self::Common(cb) => {
+                const EMPTY_COMMON_HANDLE_COLS_SIZE: i64 = 8 + 8 + 24;
+                EMPTY_COMMON_HANDLE_COLS_SIZE
+                    + cb.columns.capacity() as i64 * 8
+                    + cb.columns.iter().map(tidb_expr::column::Column::memory_usage).sum::<i64>()
+            }
+        }
+    }
+
     /// Go `GetCol`.
     #[must_use]
     pub fn get_col(&self, idx: usize) -> &tidb_expr::column::Column {

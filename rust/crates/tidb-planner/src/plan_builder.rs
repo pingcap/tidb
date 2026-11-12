@@ -3668,7 +3668,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut handle_map = HandleColMap::new();
         handle_map.insert(
             table.table_id(),
-            vec![self.plan_handle_cols(&handle_cols, handle_is_int)],
+            self.plan_handle_cols(table, &handle_cols, handle_is_int).into_iter().collect(),
         );
         self.handle_helper.push_map(handle_map);
 
@@ -3985,17 +3985,23 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         format!("map[{}]", engines.join(" "))
     }
 
-    fn plan_handle_cols(&self, handle_cols: &[Column], handle_is_int: bool) -> HandleCols {
-        use tidb_planner_util::handle_cols::{CommonHandleIdentity, HandleColumnIdentity, IntHandleIdentity};
-        let identities: Vec<HandleColumnIdentity> = handle_cols
-            .iter()
-            .map(|column| HandleColumnIdentity::new(column.id, column.unique_id, column.index))
-            .collect();
+    /// Go `buildDataSource`'s `handleCols`: `NewIntHandleCols` over the
+    /// integer handle's column, or `NewCommonHandleCols(tableInfo,
+    /// primaryIdx, ...)` over the clustered key's columns; none for a table
+    /// without one (a cluster table).
+    fn plan_handle_cols(
+        &self,
+        table: &tidb_infoschema::table_source::SourceTable,
+        handle_cols: &[Column],
+        handle_is_int: bool,
+    ) -> Option<HandleCols> {
+        use tidb_planner_util::handle_cols::{CommonHandleCols, IntHandleCols};
         if handle_is_int {
-            HandleCols::Int(IntHandleIdentity::new(identities.first().cloned()))
-        } else {
-            HandleCols::Common(CommonHandleIdentity::new(None, None, Some(identities)))
+            return handle_cols.first().map(|col| HandleCols::Int(IntHandleCols { col: col.clone() }));
         }
+        let tbl_info = table.table_info.clone()?;
+        let idx_info = tidb_table::tables::scan_from_infos::find_primary_index(&tbl_info.read())?;
+        Some(HandleCols::Common(CommonHandleCols { tbl_info, idx_info, columns: handle_cols.to_vec() }))
     }
 
     fn table_field_name(
@@ -5835,11 +5841,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                             } else {
                                 return None;
                             };
-                            let table_id = operator.tbl_id_to_handle_cols.iter().find_map(
+                            let table_id = operator.tbl_id_to_handle.iter().find_map(
                                 |(id, handles)| {
                                     handles
                                         .iter()
-                                        .any(|handle| handle.unique_id == column.unique_id)
+                                        .any(|handle| {
+                                            (0..handle.num_cols())
+                                                .any(|i| handle.get_col(i).unique_id == column.unique_id)
+                                        })
                                         .then_some(*id)
                                 },
                             )?;
@@ -5877,7 +5886,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     }
                 }
                 operator
-                    .tbl_id_to_handle_cols
+                    .tbl_id_to_handle
                     .retain(|id, _| table_ids.contains(id));
             }
         }

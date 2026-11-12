@@ -6579,14 +6579,13 @@ fn select_lock_executor(
         }
         _ => selected.default_wait(),
     };
-    let types = child.ret_field_types().to_vec();
     let mut expressions: Vec<SelectedRecordKey> = Vec::new();
     // Go `buildSelectLock` removes the temporary tables from `tblID2Handle`;
     // `SelectLockExec.Next` locks through the statement's transaction.
     let mut locked_table_ids = Vec::new();
     // The statement's snapshot, reached through any non-temporary table.
     let mut lock_store = None;
-    for (table_id, columns) in &lock.tbl_id_to_handle_cols {
+    for (table_id, handle_cols) in &lock.tbl_id_to_handle {
         let table = catalog.kv_table_by_id(*table_id).ok_or_else(|| {
             DriverError::unsupported("SelectLock table ID is absent from the catalog")
         })?;
@@ -6595,12 +6594,6 @@ fn select_lock_executor(
         }
         locked_table_ids.push(*table_id);
         lock_store.get_or_insert_with(|| crate::statement_store(ctx));
-        let width = table.common_handle_offsets().len().max(1);
-        if columns.len() % width != 0 {
-            return Err(DriverError::unsupported(
-                "SelectLock has an incomplete handle",
-            ));
-        }
         let partition_offset = lock
             .tbl_id_to_phys_tbl_id_col
             .get(table_id)
@@ -6615,51 +6608,28 @@ fn select_lock_executor(
                 "SelectLock requires its physical partition ID",
             ));
         }
-        for handle_columns in columns.chunks(width) {
-            let offsets = handle_columns
-                .iter()
-                .map(|column| {
-                    usize::try_from(child.schema().column_index(column)).map_err(|_| {
-                        DriverError::unsupported("SelectLock lost its record handle")
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let table = table.clone();
-            let types = types.clone();
+        let table_id = *table_id;
+        // Go `SelectLockExec.Next`: each handle of the table is built from
+        // the row (`col.BuildHandle`) and locked under the row's partition,
+        // skipping a partition id of 0 (a left join's NULL side).
+        for col in handle_cols {
+            let col = col.clone();
             let context = ctx.clone();
             expressions.push(Box::new(move |row| {
-                use tidb_datatype::Datum;
-                let values = offsets
-                    .iter()
-                    .map(|offset| row.get_datum(*offset, &types[*offset]))
-                    .collect::<Vec<_>>();
-                if values.iter().all(Datum::is_null) {
-                    return Ok(None);
-                }
-                let handle = if table.common_handle_offsets().is_empty() {
-                    match values[0] {
-                        Datum::Int(id) => TableHandle::Int(id),
-                        Datum::UInt(id) => TableHandle::Int(id as i64),
-                        _ => {
-                            return Err(crate::ExecError::internal(
-                                "invalid integer lock handle",
-                            ));
-                        }
+                let handle = col
+                    .build_handle(&context.session_zone(), row)
+                    .map_err(|error| crate::ExecError::internal(format!("{error:?}")))?;
+                let mut phys_tbl_id = table_id;
+                if let Some(phys_tbl_col_idx) = partition_offset {
+                    phys_tbl_id = row.get_int64(phys_tbl_col_idx);
+                    if phys_tbl_id == 0 {
+                        // select * from t1 left join t2 on t1.c = t2.c for update
+                        // The join right side might be added NULL in left join
+                        // In that case, physTblID is 0, so skip adding the lock.
+                        return Ok(None);
                     }
-                } else {
-                    table
-                        .common_handle_from_values(&values, &context.session_zone())
-                        .map_err(|error| crate::ExecError::internal(format!("{error:?}")))?
-                };
-                let physical_id =
-                    partition_offset.map_or(table.table_id(), |offset| row.get_int64(offset));
-                if physical_id == 0 {
-                    return Ok(None);
                 }
-                Ok(Some(tidb_tablecodec::table_key::encode_row_key_with_handle(
-                    physical_id,
-                    &handle.record_handle(),
-                )))
+                Ok(Some(tidb_tablecodec::table_key::encode_row_key(phys_tbl_id, &handle.encoded())))
             }));
         }
     }
@@ -6743,11 +6713,28 @@ fn with_select_lock(
         .base
         .set_schema(Some(widened.clone()));
     let child = build(&widened_plan)?;
+    // Go's lock reads the handle by its resolved index (`ResolveIndices`).
+    let handle_cols = if table.common_handle_offsets().is_empty() {
+        tidb_planner_util::handle_cols::HandleCols::Int(tidb_planner_util::handle_cols::IntHandleCols {
+            col: handle_columns[0].clone(),
+        })
+    } else {
+        let tbl_info = table.meta().clone();
+        let idx_info = tidb_table::tables::scan_from_infos::find_primary_index(&tbl_info.read())
+            .ok_or_else(|| DriverError::unsupported("a common handle table has no primary index"))?;
+        tidb_planner_util::handle_cols::HandleCols::Common(tidb_planner_util::handle_cols::CommonHandleCols {
+            tbl_info,
+            idx_info,
+            columns: handle_columns,
+        })
+    }
+    .resolve_indices(&widened)
+    .map_err(DriverError::unsupported)?;
     let lock = tidb_planner_core_operator_physicalop::PhysicalLock {
         base: tidb_planner_core_operator_physicalop::BasePhysicalPlan::default(),
         lock_type,
         wait_sec,
-        tbl_id_to_handle_cols: std::collections::BTreeMap::from([(table_id, handle_columns)]),
+        tbl_id_to_handle: std::collections::BTreeMap::from([(table_id, vec![handle_cols])]),
         tbl_id_to_phys_tbl_id_col: phys_column
             .into_iter()
             .map(|column| (table_id, column))

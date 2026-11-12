@@ -111,8 +111,8 @@ pub struct LogicalLock {
     pub lock_type: SelectLockType,
     /// Go `Lock.WaitSec`, which `ForUpdateWaitN` carries.
     pub wait_sec: u64,
-    /// Go `TblID2Handle`, as the handle COLUMNS per table id.
-    pub tbl_id_to_handle_cols: BTreeMap<i64, Vec<Column>>,
+    /// Go `TblID2Handle`: each table's handles.
+    pub tbl_id_to_handle: BTreeMap<i64, Vec<tidb_planner_util::handle_cols::HandleCols>>,
     /// Go `TblID2PhysTblIDCol`: for a partitioned table, "the child executor
     /// need to return an extra column containing the Physical Table ID (i.e.
     /// from which partition the row came from)".
@@ -131,7 +131,7 @@ impl LogicalLock {
             base,
             lock_type,
             wait_sec: 0,
-            tbl_id_to_handle_cols: BTreeMap::new(),
+            tbl_id_to_handle: BTreeMap::new(),
             tbl_id_to_phys_tbl_id_col: BTreeMap::new(),
         }
     }
@@ -149,8 +149,10 @@ impl LogicalLock {
         if !is_supported_select_lock_type(self.lock_type) {
             return used;
         }
-        for (table_id, handle_cols) in &self.tbl_id_to_handle_cols {
-            used.extend(handle_cols.iter().cloned());
+        for (table_id, handle_cols) in &self.tbl_id_to_handle {
+            for cols in handle_cols {
+                used.extend((0..cols.num_cols()).map(|i| cols.get_col(i).clone()));
+            }
             if let Some(phys_col) = self.tbl_id_to_phys_tbl_id_col.get(table_id) {
                 used.push(phys_col.clone());
             }
@@ -176,7 +178,7 @@ impl LogicalLock {
             base: self.base.shell(),
             lock_type: self.lock_type,
             wait_sec: self.wait_sec,
-            tbl_id_to_handle_cols: self.tbl_id_to_handle_cols.clone(),
+            tbl_id_to_handle: self.tbl_id_to_handle.clone(),
             tbl_id_to_phys_tbl_id_col: self.tbl_id_to_phys_tbl_id_col.clone(),
         }
     }

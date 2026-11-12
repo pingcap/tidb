@@ -333,13 +333,13 @@ pub(super) fn go_node_memory_usage(node: &PhysicalPlan) -> i64 {
                 + SIZE_OF_POINTER
                 + SIZE_OF_MAP * 2
                 + GO_SELECT_LOCK_INFO_SIZE
-                + op.tbl_id_to_handle_cols
+                + op.tbl_id_to_handle
                     .values()
-                    .map(|cols| {
+                    .map(|vals| {
                         tidb_size::SIZE_OF_INT64
                             + SIZE_OF_SLICE
-                            + cols.len() as i64 * SIZE_OF_INTERFACE
-                            + columns_memory_usage(cols)
+                            + vals.capacity() as i64 * SIZE_OF_INTERFACE
+                            + vals.iter().map(tidb_planner_util::handle_cols::HandleCols::memory_usage).sum::<i64>()
                     })
                     .sum::<i64>()
                 + op.tbl_id_to_phys_tbl_id_col

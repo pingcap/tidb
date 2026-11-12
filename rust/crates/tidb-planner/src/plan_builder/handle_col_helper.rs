@@ -41,42 +41,11 @@
 //!
 //! # The element type
 //!
-//! Go's value is `util.HandleCols`, an interface over an int handle and a
-//! common handle. [`tidb_planner_util::handle_cols`] already models both identities, so
-//! [`HandleCols`] is the two-variant sum of them rather than a third
-//! spelling. That keeps the `Hash64`/`Equals` behaviour the cascades memo
-//! needs on the same values the helper stores.
+//! Go's value is `util.HandleCols`, [`tidb_planner_util::handle_cols::HandleCols`].
 
 use std::collections::BTreeMap;
 
-use tidb_planner_util::handle_cols::{CommonHandleIdentity, IntHandleIdentity};
-
-/// Go `util.HandleCols`, as the closed sum of the two implementations
-/// [`tidb_planner_util::handle_cols`] already carries.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum HandleCols {
-    /// Go `util.IntHandleCols`.
-    Int(IntHandleIdentity),
-    /// Go `util.CommonHandleCols`.
-    Common(CommonHandleIdentity),
-}
-
-impl HandleCols {
-    /// Go `HandleCols.IsInt()`.
-    #[must_use]
-    pub const fn is_int(&self) -> bool {
-        matches!(self, Self::Int(_))
-    }
-
-    /// Go `HandleCols.Hash64(h)`, dispatched to the identity that owns it.
-    #[must_use]
-    pub fn hash64(&self) -> u64 {
-        match self {
-            Self::Int(identity) => identity.hash64(),
-            Self::Common(identity) => identity.hash64(),
-        }
-    }
-}
+pub use tidb_planner_util::handle_cols::HandleCols;
 
 /// Go's `map[int64][]util.HandleCols`: table id to that table's handles.
 ///
@@ -160,20 +129,22 @@ impl HandleColHelper {
 #[cfg(test)]
 mod tests {
     use super::{HandleColHelper, HandleColMap, HandleCols};
-    use tidb_planner_util::handle_cols::{CommonHandleIdentity, HandleColumnIdentity, IntHandleIdentity};
+    use tidb_planner_util::handle_cols::{CommonHandleCols, IntHandleCols};
+
+    fn column(unique_id: i64) -> tidb_expr::column::Column {
+        tidb_expr::column::Column::new(unique_id, tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong))
+    }
 
     fn int_handle(unique_id: i64) -> HandleCols {
-        HandleCols::Int(IntHandleIdentity::new(Some(HandleColumnIdentity::new(
-            1, unique_id, 0,
-        ))))
+        HandleCols::Int(IntHandleCols { col: column(unique_id) })
     }
 
     fn common_handle(unique_id: i64) -> HandleCols {
-        HandleCols::Common(CommonHandleIdentity::new(
-            None,
-            None,
-            Some(vec![HandleColumnIdentity::new(1, unique_id, 0)]),
-        ))
+        HandleCols::Common(CommonHandleCols {
+            tbl_info: tidb_model::GoShared::new(tidb_model::TableInfo::default()),
+            idx_info: tidb_model::GoShared::new(tidb_model::IndexInfo::default()),
+            columns: vec![column(unique_id)],
+        })
     }
 
     fn map_of(entries: &[(i64, HandleCols)]) -> HandleColMap {

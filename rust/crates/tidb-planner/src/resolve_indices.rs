@@ -513,9 +513,9 @@ impl ResolveIndicesItself for PhysicalPlan {
                 // and a semi join drops that one; `SelectLockExec.Open` finds
                 // the ones its schema still carries by unique ID.
                 let input = child_schema(&op.base, 0)?;
-                for columns in op.tbl_id_to_handle_cols.values_mut() {
-                    for column in columns {
-                        bind_column(column, input)?;
+                for handle_cols in op.tbl_id_to_handle.values_mut() {
+                    for cols in handle_cols {
+                        *cols = cols.resolve_indices(input).map_err(PlanError::internal)?;
                     }
                 }
             }

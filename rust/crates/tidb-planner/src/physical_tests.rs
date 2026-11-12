@@ -2695,7 +2695,7 @@ fn lock_over(id: i32, child: PhysicalPlan, lock_type: tidb_planner_core_operator
         base,
         lock_type,
         wait_sec: 0,
-        tbl_id_to_handle_cols: Default::default(),
+        tbl_id_to_handle: Default::default(),
         tbl_id_to_phys_tbl_id_col: Default::default(),
     })
 }
