@@ -202,6 +202,25 @@ impl IndexLookUpExecutor {
         v: &PhysicalIndexLookUpReader,
         range_group: Option<&tidb_ranger::types::Ranges>,
     ) -> Result<Box<dyn Executor>, ExecError> {
+        let dual = meta.clone();
+        Ok(match Self::build_no_range(meta, ctx, is, v, range_group)? {
+            Some(lookup) => Box::new(lookup),
+            None => Box::new(crate::table_dual::TableDualExec::new(dual, 0)),
+        })
+    }
+
+    /// Go `buildNoRangeIndexLookUpReader` and `buildIndexLookUpReader`'s
+    /// partition pruning: the lookup, or `None` when no partition survives.
+    ///
+    /// # Errors
+    /// As [`Self::build`].
+    pub(crate) fn build_no_range(
+        meta: ExecutorMeta,
+        ctx: &crate::StmtContext,
+        is: &tidb_infoschema::SessionExtendedInfoSchema,
+        v: &PhysicalIndexLookUpReader,
+        range_group: Option<&tidb_ranger::types::Ranges>,
+    ) -> Result<Option<Self>, ExecError> {
         let internal = |message: &'static str| ExecError::Internal(message.into());
         // Go `IndexPlans` / `TablePlans`, flattened from the plans
         // themselves: the reader's flattened copies predate the rewrites
@@ -265,7 +284,7 @@ impl IndexLookUpExecutor {
                 )
                 .map_err(|error| ExecError::Internal(error.to_string().into()))?;
                 if idx_arr.is_empty() {
-                    return Ok(Box::new(crate::table_dual::TableDualExec::new(meta, 0)));
+                    return Ok(None);
                 }
                 let definitions = pi.read().definitions.snapshot();
                 table_ids = idx_arr.iter().map(|&idx| definitions[idx].id).collect();
@@ -380,7 +399,7 @@ impl IndexLookUpExecutor {
                 }
             }),
         };
-        Ok(Box::new(Self {
+        Ok(Some(Self {
             index_root_plan_id: *index_plan_ids.last().unwrap_or(&(meta.id() as isize)),
             meta,
             shared: Arc::new(shared),
@@ -408,6 +427,32 @@ impl IndexLookUpExecutor {
             workers: Vec::new(),
             worker_started: false,
         }))
+    }
+
+    /// Go `IndexLookUpExecutor.open`: `memTracker` reset and attached again,
+    /// and a fresh `finished`.
+    fn open_inner(&mut self) -> Result<(), ExecError> {
+        self.shared.mem_tracker.reset();
+        self.shared.mem_tracker.attach_to(&self.stmt_mem_tracker);
+        // Go `open`'s `e.finished = make(chan struct{})`.
+        self.shared.finished.store(false, Ordering::Release);
+        *self.shared.index_cop_count_and_rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = (0, 0);
+        Ok(())
+    }
+
+    /// Go `buildIndexLookUpReaderForIndexJoin`'s `e.groupedKVRanges =
+    /// [{PhysicalTableID, kvRange}]` then `e.open(ctx)`.
+    ///
+    /// # Errors
+    /// As [`Executor::open`].
+    pub(crate) fn open_with_kv_ranges(&mut self, kv_ranges: Vec<tidb_txnkv::KeyRange>) -> Result<(), ExecError> {
+        self.kv_ranges = vec![kv_ranges];
+        self.open_inner()
+    }
+
+    /// Go `getPhysicalTableID(e.table)` and `e.index.ID`.
+    pub(crate) fn physical_table_id_and_index_id(&self) -> (i64, i64) {
+        (self.shared.physical_table_id, self.index_id)
     }
 
     /// Go `buildTableKeyRanges`: one key-range group a physical table.
@@ -1098,12 +1143,7 @@ impl Executor for IndexLookUpExecutor {
         self.shared.mem_tracker.reset();
         self.shared.mem_tracker.attach_to(&self.stmt_mem_tracker);
         self.kv_ranges = self.build_table_key_ranges()?;
-        self.shared.mem_tracker.reset();
-        self.shared.mem_tracker.attach_to(&self.stmt_mem_tracker);
-        // Go `open`'s `e.finished = make(chan struct{})`.
-        self.shared.finished.store(false, Ordering::Release);
-        *self.shared.index_cop_count_and_rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = (0, 0);
-        Ok(())
+        self.open_inner()
     }
 
     /// Go `IndexLookUpExecutor.Next`.

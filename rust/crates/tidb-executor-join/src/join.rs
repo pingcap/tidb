@@ -625,13 +625,17 @@ pub enum IndexLookupSource {
         exec: Box<dyn Executor>,
         probes: std::sync::Arc<std::sync::Mutex<crate::index_lookup::SharedIndexJoinProbes>>,
     },
+    /// Go's `readerBuilder`: the lookup side built for each task
+    /// (`BuildExecutorForIndexJoin`).
+    Builder(std::sync::Arc<dyn crate::index_lookup::IndexJoinReaderBuilder>),
 }
 
 impl IndexLookupSource {
-    fn executor(&mut self) -> &mut dyn Executor {
+    fn executor(&mut self) -> Result<&mut dyn Executor, ExecError> {
         match self {
-            Self::Leaf(source) => source.as_mut(),
-            Self::Composite { exec, .. } => exec.as_mut(),
+            Self::Leaf(source) => Ok(source.as_mut()),
+            Self::Composite { exec, .. } => Ok(exec.as_mut()),
+            Self::Builder(_) => Err(ExecError::internal("an index join's reader builder has no shared reader")),
         }
     }
 
@@ -646,6 +650,7 @@ impl IndexLookupSource {
                 shared.lock().unwrap().publish(probes);
                 exec.open()
             }
+            Self::Builder(_) => Err(ExecError::internal("an index join's reader builder takes no probes")),
         }
     }
 
@@ -653,6 +658,7 @@ impl IndexLookupSource {
         match self {
             Self::Leaf(source) => source.open(),
             Self::Composite { exec, .. } => exec.open(),
+            Self::Builder(_) => Ok(()),
         }
     }
 
@@ -660,6 +666,7 @@ impl IndexLookupSource {
         match self {
             Self::Leaf(source) => source.close(),
             Self::Composite { exec, .. } => exec.close(),
+            Self::Builder(_) => Ok(()),
         }
     }
 
@@ -667,6 +674,7 @@ impl IndexLookupSource {
         match self {
             Self::Leaf(source) => source.ret_field_types(),
             Self::Composite { exec, .. } => exec.ret_field_types(),
+            Self::Builder(builder) => builder.ret_field_types(),
         }
     }
 }

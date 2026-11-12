@@ -435,6 +435,42 @@ impl TableReaderExecutor {
         v: &PhysicalTableReader,
         range_group: Option<&tidb_ranger::types::Ranges>,
     ) -> Result<Box<dyn Executor>, ExecError> {
+        let dual = meta.clone();
+        let Some(reader) = Self::build_no_range(meta, ctx, is, v, range_group)? else {
+            return Ok(Box::new(crate::table_dual::TableDualExec::new(dual, 0)));
+        };
+        let by_items = v.table_plan.as_deref().and_then(|plan| {
+            let mut scans = Vec::new();
+            crate::mpp_gather::get_table_scans(plan, &mut scans);
+            scans.first().map(|ts| ts.by_items.clone())
+        });
+        match (&reader.partitions, by_items) {
+            // Go `buildKVReqSeparately` under `NewSortedSelectResults`: a
+            // keep-order read of several TiKV partitions reads each partition
+            // as its own request and merges them by the scan's `ByItems`.
+            (Some(partitions), Some(by_items))
+                if reader.store_type != tidb_kv::store_type::StoreType::TiFlash
+                    && partitions.len() > 1
+                    && !by_items.is_empty() =>
+            {
+                reader.sorted_partition_results(&by_items)
+            }
+            _ => Ok(Box::new(reader)),
+        }
+    }
+
+    /// Go `buildNoRangeTableReader` and `buildTableReader`'s partition
+    /// pruning: the reader, or `None` when no partition survives.
+    ///
+    /// # Errors
+    /// As [`Self::build`].
+    pub(crate) fn build_no_range(
+        meta: ExecutorMeta,
+        ctx: &crate::StmtContext,
+        is: &tidb_infoschema::SessionExtendedInfoSchema,
+        v: &PhysicalTableReader,
+        range_group: Option<&tidb_ranger::types::Ranges>,
+    ) -> Result<Option<Self>, ExecError> {
         let table_plan = v
             .table_plan
             .as_deref()
@@ -489,7 +525,7 @@ impl TableReaderExecutor {
                 )
                 .map_err(|error| ExecError::Internal(error.to_string().into()))?;
                 if idx_arr.is_empty() {
-                    return Ok(Box::new(crate::table_dual::TableDualExec::new(meta, 0)));
+                    return Ok(None);
                 }
                 let definitions = pi.read().definitions.snapshot();
                 // Sort the partition is necessary to make the final
@@ -499,7 +535,7 @@ impl TableReaderExecutor {
                 partitions = Some(pids);
             }
         }
-        let reader = Self {
+        Ok(Some(Self {
             meta,
             ctx: ctx.clone(),
             store_type: v.store_type,
@@ -531,20 +567,39 @@ impl TableReaderExecutor {
             paging: crate::remote_scan::pushdown_statement_context(ctx).paging,
             mem_tracker: None,
             dag_size: 0,
-        };
-        match &reader.partitions {
-            // Go `buildKVReqSeparately` under `NewSortedSelectResults`: a
-            // keep-order read of several TiKV partitions reads each partition
-            // as its own request and merges them by the scan's `ByItems`.
-            Some(partitions)
-                if reader.store_type != tidb_kv::store_type::StoreType::TiFlash
-                    && partitions.len() > 1
-                    && !ts.by_items.is_empty() =>
-            {
-                reader.sorted_partition_results(&ts.by_items)
-            }
-            _ => Ok(Box::new(reader)),
-        }
+        }))
+    }
+
+    /// Go `buildTableReaderBase` over a reader `buildNoRangeTableReader`
+    /// built: its request over `kv_ranges` (with `SetTableHandles`' hints
+    /// when they come from handles) sent at once; the reader is never
+    /// opened (`buildTableReaderFromHandles` / `buildTableReaderFromKvRanges`).
+    ///
+    /// # Errors
+    /// The request could not be built or sent.
+    pub(crate) fn build_table_reader_base(
+        &mut self,
+        kv_ranges: Vec<tidb_txnkv::KeyRange>,
+        key_range_hints: Vec<usize>,
+    ) -> Result<(), ExecError> {
+        let statement = crate::remote_scan::pushdown_statement_context(&self.ctx)
+            .with_estimated_net_bytes(self.net_data_size);
+        let plans = crate::builder_utils::flatten_table_plan(&self.table_plan);
+        let mut dag = crate::builder_utils::construct_dag_req(&self.ctx, &statement, &plans, self.store_type)
+            .map_err(|error| ExecError::Internal(error.to_string().into()))?;
+        dag.output_offsets = (0..self.meta.schema().columns.len() as u32).collect();
+        self.dag_size = prost::Message::encoded_len(&dag);
+        self.kv_ranges.clone_from(&kv_ranges);
+        self.results.clear();
+        self.cur = 0;
+        let result = self.select_result(&statement, dag, kv_ranges, key_range_hints, Vec::new())?;
+        self.results.push_back(result);
+        Ok(())
+    }
+
+    /// Go `physicalTableID` and whether the table has a common handle.
+    pub(crate) fn physical_table_id_and_common_handle(&self) -> (i64, bool) {
+        (self.physical_table_id, self.is_common_handle)
     }
 
     /// Go `distsql.NewSortedSelectResults` over one reader a partition: the

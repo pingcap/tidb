@@ -765,6 +765,51 @@ pub struct ColWithCmpFuncManager {
 }
 
 impl ColWithCmpFuncManager {
+    /// Go `ColWithCmpFuncManager.BuildRangesByRow`, over the values the
+    /// `opArg`s take on one outer row (the index join evaluates them when it
+    /// builds the task's lookup contents): `TargetCol op TmpConstant` for
+    /// each op, through `ranger.BuildColumnRange` with no memory limit.
+    ///
+    /// # Errors
+    /// The values do not align with the ops, or the range cannot be built.
+    pub fn build_ranges_by_row(
+        &self,
+        args: &[tidb_datatype::Datum],
+    ) -> Result<tidb_ranger::types::Ranges, PlanError> {
+        if args.len() != self.ops.len() {
+            return Err(PlanError::internal("an index join's comparison values do not align with its operators"));
+        }
+        let target_type = self
+            .target_col
+            .ret_type
+            .clone()
+            .ok_or_else(|| PlanError::internal("an index join's comparison target has no type"))?;
+        let target = tidb_expr::expression::Expression::Column(self.target_col.clone());
+        let exprs = self
+            .ops
+            .iter()
+            .zip(args)
+            .map(|(op, value)| {
+                tidb_expr::new_function_base(
+                    &tidb_exprctx::NoColumns,
+                    op.go_name(),
+                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Tiny),
+                    vec![
+                        target.clone(),
+                        tidb_expr::expression::Expression::Constant(tidb_expr::constant::Constant::new(
+                            value.clone(),
+                            target_type.clone(),
+                        )),
+                    ],
+                )
+                .map_err(|error| PlanError::internal(format!("{error:?}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let ranges = tidb_ranger::ranger::build_column_range(&exprs, &target_type, self.col_length, 0)
+            .map_err(|error| PlanError::internal(format!("{error:?}")))?;
+        Ok(ranges.ranges)
+    }
+
     /// Go `ColWithCmpFuncManager.MemoryUsage` (`physical_index_join.go:335-358`).
     ///
     /// Go's manager also keeps what `AppendNewExpr` (`:261-272`) built for

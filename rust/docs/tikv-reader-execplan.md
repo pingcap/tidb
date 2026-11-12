@@ -65,6 +65,14 @@ reader built by Go's `buildTableReader` / `buildIndexReader` /
   ranges, `ColWithCmpFuncManager.BuildRangesByRow`, `UnionRanges`); (d) the
   probe-offer leaf (`IndexJoinLookupExec`, `SharedIndexJoinProbes`) is
   deleted with its tests' Go-pinned cases moved to the session suite.
+  Done (2026-11-12): (a); (b) `IndexJoinReaderBuilder` and
+  `IndexLookupSource::Builder`; (c) for an inner `IndexReader`,
+  `IndexLookUp` and TiKV `TableReader` over a table that is not
+  dynamically partitioned (`DataReaderBuilder` in `physical_builder.rs`,
+  `index_join_reader.rs`, `ColWithCmpFuncManager::build_ranges_by_row`).
+  Left in (c): the Selection / Projection / aggregate / hash-join /
+  union-scan arms and dynamically pruned partitions, which still take the
+  probe-seeded leaf.
 - [ ] Milestone 5: the offer machinery is deleted; E15 leaves the register.
 
 ## Surprises & Discoveries

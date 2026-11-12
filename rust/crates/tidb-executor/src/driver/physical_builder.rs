@@ -4294,6 +4294,9 @@ fn build_index_lookup_source(
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<IndexLookupSource, DriverError> {
+    if let Some(builder) = DataReaderBuilder::new(inner, join, catalog, ctx, state)? {
+        return Ok(IndexLookupSource::Builder(Arc::new(builder)));
+    }
     if index_inner_reader_payload(inner).is_some() && index_inner_partial_aggregate(inner).is_none()
     {
         let leaf = build_index_inner_reader(
@@ -4332,6 +4335,242 @@ fn build_index_lookup_source(
     let probes = std::sync::Arc::new(std::sync::Mutex::new(SharedIndexJoinProbes::default()));
     let exec = build_index_inner_subtree(inner, join, probe_parts, &probes, catalog, ctx, state)?;
     Ok(IndexLookupSource::Composite { exec, probes })
+}
+
+/// Go `dataReaderBuilder` for an index join's inner side
+/// (`BuildExecutorForIndexJoin`) on a store with a coprocessor client: the
+/// inner reader built anew for each task over `buildKvRangesForIndexJoin`
+/// (`docs/tikv-reader-execplan.md` M4). The shapes it does not build yet keep
+/// the probe-seeded leaf.
+struct DataReaderBuilder {
+    plan: PhysicalPlan,
+    meta: ExecutorMeta,
+    ctx: crate::StmtContext,
+    is: SessionExtendedInfoSchema,
+    /// Go `PhysicalIndexJoin.Ranges`, `KeyOff2IdxOff` and `CompareFilters`.
+    ranges: tidb_ranger::types::Ranges,
+    key_off2_idx_off: Vec<i64>,
+    compare_filters: Option<tidb_planner_core_operator_physicalop::ColWithCmpFuncManager>,
+    /// The inner table's id, the index and the statistics `Close` reports
+    /// the index usage under.
+    logical_table_id: i64,
+    usage_index_id: Option<i64>,
+    stats: Option<tidb_stmtctx::used_stats::UsedStatsInfoForTable>,
+    runtime_stats: Option<IndexJoinInnerStats>,
+    ruv2: Option<tidb_executor_internal_exec::ruv2::Ruv2NextCache>,
+}
+
+impl DataReaderBuilder {
+    /// The builder of `inner`, or `None` for a shape it does not build.
+    fn new(
+        inner: &PhysicalPlan,
+        join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
+        catalog: &SessionExtendedInfoSchema,
+        ctx: &crate::StmtContext,
+        state: &BuildState,
+    ) -> Result<Option<Self>, DriverError> {
+        let index_plan = match inner {
+            PhysicalPlan::IndexReader(reader) => reader.index_plan.as_deref(),
+            PhysicalPlan::IndexLookUpReader(reader) if !reader.index_lookup_push_down => reader.index_plan.as_deref(),
+            _ => None,
+        };
+        // The scanned table, whether it is a temporary one, and the index
+        // whose usage `Close` reports.
+        let (table_id, temporary, usage_index_id) = match (inner, index_plan.and_then(embedded_index_scan)) {
+            (_, Some(scan)) => (scan.table_id, scan.is_temporary, Some(scan.index_id)),
+            (PhysicalPlan::TableReader(reader), None) if reader.store_type == tidb_kv::store_type::StoreType::TiKv => {
+                let Some(ts) = reader.table_plan.as_deref().and_then(embedded_table_scan) else {
+                    return Ok(None);
+                };
+                (ts.table_id, ts.is_temporary, None)
+            }
+            _ => return Ok(None),
+        };
+        if !ctx.txn_store().is_some_and(|store| store.client().is_some())
+            || !matches!(state.reader_storage, ReaderStorage::Snapshot)
+            || temporary
+        {
+            return Ok(None);
+        }
+        let table = catalog
+            .physical_kv_table_by_id(table_id)
+            .ok_or_else(|| DriverError::unsupported("physical table ID is absent from the catalog"))?;
+        let usage_index_id = usage_index_id
+            .or_else(|| tidb_executor_internal_exec::index_usage_reporter::get_cluster_index_id(&table));
+        // Go `buildIndexReaderForIndexJoin`'s dynamically pruned partitions
+        // are built by the probe-seeded leaf for now.
+        if table.meta().read().get_partition_info().is_some() && !ctx.static_partition_prune() {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            plan: inner.clone(),
+            meta: meta(ctx, inner, plan_schema(inner)?),
+            ctx: ctx.clone(),
+            is: catalog.clone(),
+            ranges: join.ranges.clone(),
+            key_off2_idx_off: join.key_off2_idx_off.clone(),
+            compare_filters: join.compare_filters.clone(),
+            logical_table_id: table.table_id(),
+            usage_index_id,
+            stats: crate::access_cost::load_table_stats(ctx, catalog, table.stats_physical_id()),
+            runtime_stats: (!state.untraced)
+                .then(|| ctx.executor_runtime_stats_source())
+                .flatten()
+                .map(|source| IndexJoinInnerStats::new(Arc::clone(source), i64::from(inner.id()))),
+            ruv2: go_executor_next_region(inner).and_then(|region| {
+                tidb_executor_internal_exec::ruv2::Ruv2NextCache::new(region.trim_end_matches(".Next"), ctx.ruv2_metrics())
+            }),
+        }))
+    }
+}
+
+impl tidb_executor_join::index_lookup::IndexJoinReaderBuilder for DataReaderBuilder {
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+
+    /// Go `buildIndexReaderForIndexJoin` / `buildIndexLookUpReaderForIndexJoin`:
+    /// the no-range reader, opened over the task's
+    /// `buildKvRangesForIndexJoin`.
+    fn build_executor_for_index_join(
+        &self,
+        probes: tidb_executor_join::index_lookup::IndexJoinProbes,
+    ) -> Result<Box<dyn Executor>, crate::ExecError> {
+        let lost = || crate::ExecError::internal("a statically pruned reader lost its partition");
+        let kv_ranges = |(table_id, index_id)| {
+            crate::index_join_reader::build_kv_ranges_for_index_join(
+                &tidb_exprctx::Columns::time_zone(&self.ctx),
+                table_id,
+                index_id,
+                &probes,
+                &self.ranges,
+                &self.key_off2_idx_off,
+                self.compare_filters.as_ref(),
+                probes.mem_tracker.as_ref(),
+            )
+        };
+        let reader: Box<dyn Executor> = match &self.plan {
+            PhysicalPlan::IndexReader(v) => {
+                let mut e =
+                    crate::index_reader::IndexReaderExecutor::build_no_range(self.meta.clone(), &self.ctx, &self.is, v, None)?
+                        .ok_or_else(lost)?;
+                let ids = e.physical_table_id_and_index_id();
+                e.open_with_kv_ranges(kv_ranges(ids)?)?;
+                Box::new(e)
+            }
+            PhysicalPlan::IndexLookUpReader(v) => {
+                let mut e =
+                    crate::index_lookup::IndexLookUpExecutor::build_no_range(self.meta.clone(), &self.ctx, &self.is, v, None)?
+                        .ok_or_else(lost)?;
+                let ids = e.physical_table_id_and_index_id();
+                e.open_with_kv_ranges(kv_ranges(ids)?)?;
+                Box::new(e)
+            }
+            // Go `buildTableReaderForIndexJoin`: a common handle reads the
+            // ranges of its keys (`buildTableReaderFromKvRanges`), an integer
+            // one its handles (`dedupHandles`, `buildTableReaderFromHandles`
+            // with `canReorderHandles`).
+            PhysicalPlan::TableReader(v) => {
+                let mut e =
+                    crate::table_reader::TableReaderExecutor::build_no_range(self.meta.clone(), &self.ctx, &self.is, v, None)?
+                        .ok_or_else(lost)?;
+                let (table_id, common_handle) = e.physical_table_id_and_common_handle();
+                if common_handle {
+                    e.build_table_reader_base(kv_ranges((table_id, -1))?, Vec::new())?;
+                } else {
+                    let mut handles = probes
+                        .keys
+                        .iter()
+                        .filter_map(|keys| {
+                            let handle = keys.first()?.get_int64();
+                            keys.iter()
+                                .all(|key| key.get_int64() == handle)
+                                .then(|| tidb_txnkv::Handle::Int(tidb_txnkv::IntHandle::new(handle)))
+                        })
+                        .collect::<Vec<_>>();
+                    handles.sort_by(|a, b| a.clone().compare(b).unwrap_or(std::cmp::Ordering::Equal));
+                    let (kv_ranges, hints) = tidb_distsql::table_handles_to_kv_ranges(table_id, &handles);
+                    e.build_table_reader_base(kv_ranges, hints)?;
+                }
+                Box::new(e)
+            }
+            _ => return Err(crate::ExecError::internal("an index join's reader builder holds no reader")),
+        };
+        // Go `Close`'s `indexUsageReporter.ReportCopIndexUsageForTable`.
+        let reader = CopIndexUsageExec::new(
+            reader,
+            self.logical_table_id,
+            self.stats.clone(),
+            self.ctx.index_usage_collector().cloned(),
+            self.usage_index_id,
+        );
+        // Go's task reader is a new executor: its own basic stats under the
+        // plan (`initNewExecutorStats`, so tasks after the first make them
+        // `total_`).
+        Ok(Box::new(MeteredIndexJoinInner {
+            inner: Box::new(reader),
+            runtime_stats: self
+                .runtime_stats
+                .as_ref()
+                .map(|stats| IndexJoinInnerStats::new(Arc::clone(&stats.source), stats.plan_id)),
+            ruv2: self.ruv2.clone(),
+        }))
+    }
+}
+
+/// A task's inner executor built by [`DataReaderBuilder`], with Go's
+/// `exec.Next` / `exec.Close` stats and RU v2 of the inner plan (Go opens it
+/// directly, so no open time).
+struct MeteredIndexJoinInner {
+    inner: Box<dyn Executor>,
+    runtime_stats: Option<IndexJoinInnerStats>,
+    ruv2: Option<tidb_executor_internal_exec::ruv2::Ruv2NextCache>,
+}
+
+impl Executor for MeteredIndexJoinInner {
+    fn open(&mut self) -> Result<(), crate::ExecError> {
+        self.inner.open()
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), crate::ExecError> {
+        let start = Instant::now();
+        let inner = &mut self.inner;
+        let result =
+            tidb_executor_internal_exec::ruv2::next_with_ruv2(self.ruv2.as_ref(), 0, req, |req| inner.next(req));
+        if let Some(stats) = self.runtime_stats.as_ref().and_then(IndexJoinInnerStats::get) {
+            stats.record_next(start.elapsed(), i64::try_from(req.num_rows()).unwrap_or(i64::MAX));
+        }
+        result
+    }
+
+    fn close(&mut self) -> Result<(), crate::ExecError> {
+        let start = Instant::now();
+        let result = self.inner.close();
+        if let Some(stats) = self.runtime_stats.as_ref().and_then(IndexJoinInnerStats::get) {
+            stats.record_close(start.elapsed());
+        }
+        result
+    }
+
+    fn schema(&self) -> &Schema {
+        self.inner.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.inner.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.inner.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.inner.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.inner.new_chunk()
+    }
 }
 
 /// Go's per-task inner reader stats for an index join's leaf

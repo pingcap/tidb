@@ -75,3 +75,37 @@ fn an_index_lookup_fills_the_virtual_columns_its_filter_reads() {
         }
     }
 }
+
+/// Go `dataReaderBuilder.buildIndexReaderForIndexJoin`: an index join's
+/// covering inner side is an `IndexReaderExecutor` built for each task over
+/// `buildKvRangesForIndexJoin` -- the outer keys written into the join's
+/// ranges, and with a next-column comparison (`ColWithCmpFuncManager`) each
+/// outer row's range of the next column, unioned across the task.
+#[test]
+fn an_index_join_reads_its_covering_inner_side_per_task() {
+    let mut tk = TestKit::new();
+    tk.must_exec("create table o (a int, c int)");
+    tk.must_exec("insert into o values (1, 10), (2, 20), (3, 30), (2, 5), (4, 0)");
+    tk.must_exec("create table i (b int, c int, d int, index bc(b, c))");
+    tk.must_exec("insert into i values (1, 1, 0), (1, 11, 0), (2, 6, 0), (2, 21, 0), (3, 29, 0), (3, 31, 0), (5, 5, 0)");
+    tk.must_query("select /*+ inl_join(i) */ o.a, i.c from o join i on o.a = i.b order by o.a, i.c")
+        .check(["1 1", "1 11", "2 6", "2 6", "2 21", "2 21", "3 29", "3 31"]);
+    tk.must_query("select /*+ inl_join(i) */ o.a, o.c, i.c from o join i on o.a = i.b and i.c > o.c order by o.a, o.c, i.c")
+        .check(["1 10 11", "2 5 6", "2 5 21", "2 20 21", "3 30 31"]);
+    // `i.d` is not in the index: the inner side is an index lookup
+    // (`buildIndexLookUpReaderForIndexJoin`).
+    tk.must_exec("update i set d = b * 100 + c");
+    tk.must_query("select /*+ inl_join(i) */ o.a, i.d from o join i on o.a = i.b and i.c > o.c order by o.a, o.c, i.d")
+        .check(["1 111", "2 206", "2 221", "2 221", "3 331"]);
+    // A table reader over the inner handles (`buildTableReaderForIndexJoin`):
+    // an integer handle reads them (`dedupHandles`), a clustered common
+    // handle the ranges of its keys.
+    tk.must_exec("create table h (a int primary key, v int)");
+    tk.must_exec("insert into h values (1, 100), (3, 300), (5, 500)");
+    tk.must_query("select /*+ inl_join(h) */ o.a, h.v from o join h on o.a = h.a order by o.a, o.c")
+        .check(["1 100", "3 300"]);
+    tk.must_exec("create table k (a int, b int, v int, primary key (a, b) clustered)");
+    tk.must_exec("insert into k values (1, 1, 11), (2, 2, 22), (2, 3, 23), (4, 4, 44)");
+    tk.must_query("select /*+ inl_join(k) */ o.a, k.v from o join k on o.a = k.a order by o.a, o.c, k.v")
+        .check(["1 11", "2 22", "2 23", "2 22", "2 23", "4 44"]);
+}

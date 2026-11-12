@@ -165,7 +165,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> IndexLookUpJoinParts<C> {
             .map(|_| Arc::new(IndexLookUpJoinRuntimeStats::new(concurrency)));
         let template = match &plan.source {
             IndexLookupSource::Leaf(leaf) => leaf.fork_template(),
-            IndexLookupSource::Composite { .. } => None,
+            IndexLookupSource::Composite { .. } | IndexLookupSource::Builder(_) => None,
         };
         let shared = Arc::new(IndexTaskShared {
             build_lookup_map,
@@ -472,6 +472,21 @@ pub(super) fn handle_lookup<C: Columns>(
                 inner = Some(window);
             }
         };
+        // Go `fetchInnerResults`: the task's inner executor, built for its
+        // lookup contents and read to the end (which closes it).
+        let builder = match &*source.lock().unwrap() {
+            IndexLookupSource::Builder(builder) => Some(Arc::clone(builder)),
+            _ => None,
+        };
+        if let Some(builder) = builder {
+            let (keys, bound_values) = probes.into_iter().map(|probe| (probe.key, probe.bounds)).unzip();
+            let mut inner_exec = builder.build_executor_for_index_join(crate::index_lookup::IndexJoinProbes {
+                keys,
+                bound_values,
+                mem_tracker,
+            })?;
+            return Ok(fetch(inner_exec.as_mut(), outer)?.0);
+        }
         match open_index_task(shared, probes, mem_tracker)? {
             Ok(mut task) => {
                 let (inner, inner_rows) = fetch(task.as_mut(), outer)?;
@@ -494,7 +509,7 @@ pub(super) fn handle_lookup<C: Columns>(
                     bound_values,
                     mem_tracker: outer.take_kv_range_tracker(false),
                 })?;
-                Ok(fetch(source.executor(), outer)?.0)
+                Ok(fetch(source.executor()?, outer)?.0)
             }
         }
     })();

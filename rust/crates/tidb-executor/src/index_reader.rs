@@ -84,6 +84,25 @@ impl IndexReaderExecutor {
         v: &PhysicalIndexReader,
         range_group: Option<&tidb_ranger::types::Ranges>,
     ) -> Result<Box<dyn Executor>, ExecError> {
+        let dual = meta.clone();
+        Ok(match Self::build_no_range(meta, ctx, is, v, range_group)? {
+            Some(reader) => Box::new(reader),
+            None => Box::new(crate::table_dual::TableDualExec::new(dual, 0)),
+        })
+    }
+
+    /// Go `buildNoRangeIndexReader` and `buildIndexReader`'s partition
+    /// pruning: the reader, or `None` when no partition survives.
+    ///
+    /// # Errors
+    /// As [`Self::build`].
+    pub(crate) fn build_no_range(
+        meta: ExecutorMeta,
+        ctx: &crate::StmtContext,
+        is: &tidb_infoschema::SessionExtendedInfoSchema,
+        v: &PhysicalIndexReader,
+        range_group: Option<&tidb_ranger::types::Ranges>,
+    ) -> Result<Option<Self>, ExecError> {
         let index_plan = v
             .index_plan
             .as_deref()
@@ -127,7 +146,7 @@ impl IndexReaderExecutor {
                 )
                 .map_err(|error| ExecError::Internal(error.to_string().into()))?;
                 if idx_arr.is_empty() {
-                    return Ok(Box::new(crate::table_dual::TableDualExec::new(meta, 0)));
+                    return Ok(None);
                 }
                 let definitions = pi.read().definitions.snapshot();
                 table_ids = idx_arr.iter().map(|&idx| definitions[idx].id).collect();
@@ -167,7 +186,7 @@ impl IndexReaderExecutor {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Box::new(Self {
+        Ok(Some(Self {
             meta,
             ctx: ctx.clone(),
             client,
@@ -191,6 +210,21 @@ impl IndexReaderExecutor {
             merged: None,
             kv_ranges: Vec::new(),
         }))
+    }
+
+    /// Go `IndexReaderExecutor.open(ctx, kvRanges)` over the key ranges its
+    /// caller built (`buildIndexReaderForIndexJoin`).
+    ///
+    /// # Errors
+    /// As [`Executor::open`].
+    pub(crate) fn open_with_kv_ranges(&mut self, kv_ranges: Vec<tidb_txnkv::KeyRange>) -> Result<(), ExecError> {
+        self.fixed_kv_ranges = Some(kv_ranges);
+        self.open()
+    }
+
+    /// Go `physicalTableID` and `index.ID`.
+    pub(crate) fn physical_table_id_and_index_id(&self) -> (i64, i64) {
+        (self.table_ids[0], self.index_id)
     }
 
     /// Go `buildKVRangesForIndexReader`.

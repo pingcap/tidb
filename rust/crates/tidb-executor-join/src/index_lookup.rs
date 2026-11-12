@@ -92,6 +92,18 @@ impl SharedIndexJoinProbes {
 }
 
 /// One base-table lookup reader on an index join's inner side.
+/// Go `IndexLookUpJoin`'s `innerCtx.readerBuilder` (`*dataReaderBuilder`):
+/// the inner side, built anew for each task's lookup contents.
+pub trait IndexJoinReaderBuilder: Send + Sync {
+    /// Go `innerCtx.rowTypes`.
+    fn ret_field_types(&self) -> &[tidb_datatype::FieldType];
+
+    /// Go `BuildExecutorForIndexJoin`: the inner executor over one task's
+    /// lookup contents, already opened; the inner worker reads it to the end
+    /// and closes it.
+    fn build_executor_for_index_join(&self, probes: IndexJoinProbes) -> Result<Box<dyn Executor>, ExecError>;
+}
+
 pub trait IndexJoinLookup: Executor {
     /// Seeds the reader with one outer batch's probes.
     fn set_probes(&mut self, probes: IndexJoinProbes) -> Result<(), ExecError>;
