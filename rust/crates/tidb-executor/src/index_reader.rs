@@ -29,6 +29,38 @@ use tidb_planner_core_operator_physicalop::{PhysicalIndexReader, PhysicalPlan};
 
 use crate::range_group_merge::ReaderResult;
 
+/// Go `getPartitionIDsAfterPruning` (with `partitionPruning`'s ordinals
+/// mapped to the definitions' IDs): the partitions a dynamically pruned
+/// reader of `table_info` reaches, in definition order.
+///
+/// # Errors
+/// The reader has no partition info, or pruning fails.
+pub(crate) fn get_partition_ids_after_pruning(
+    is: &tidb_infoschema::SessionExtendedInfoSchema,
+    table_info: &tidb_model::TableInfo,
+    info: Option<&tidb_planner_core_operator_physicalop::PhysPlanPartInfo>,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<i64>, ExecError> {
+    let info = info.ok_or_else(|| {
+        ExecError::Internal("physPlanPartInfo in getPartitionIDsAfterPruning must not be nil".into())
+    })?;
+    let partition_names: Vec<String> = info.partition_names.iter().map(|name| name.original.clone()).collect();
+    let idx_arr = crate::driver::planner_bridge::partition_pruning(
+        is,
+        table_info.id,
+        &info.pruning_conds,
+        &partition_names,
+        &info.columns,
+        ctx,
+    )
+    .map_err(|error| ExecError::Internal(error.to_string().into()))?;
+    let Some(pi) = table_info.get_partition_info() else {
+        return Ok(Vec::new());
+    };
+    let definitions = pi.read().definitions.snapshot();
+    Ok(idx_arr.iter().map(|&idx| definitions[idx].id).collect())
+}
+
 /// Go `IndexReaderExecutor`.
 pub struct IndexReaderExecutor {
     meta: ExecutorMeta,
@@ -71,6 +103,8 @@ pub struct IndexReaderExecutor {
     result: Option<ReaderResult>,
     /// Go `memTracker`, made on `open`.
     mem_tracker: Option<Arc<tidb_memory::Tracker>>,
+    /// Go `partitionIDMap`: a global index's pruned partitions.
+    partition_id_map: std::collections::BTreeSet<i64>,
     /// Go `kvRanges`.
     kv_ranges: Vec<tidb_txnkv::KeyRange>,
     /// Go `dummy`: not a real reader, only the KV ranges a union scan reads
@@ -134,29 +168,18 @@ impl IndexReaderExecutor {
             .find(|index| index.read().id == scan.index_id)
             .is_some_and(|index| index.read().global);
         let mut table_ids = vec![scan.table_id];
+        let mut partition_id_map = std::collections::BTreeSet::new();
         // Go `buildIndexReader`: a dynamically pruned partitioned table reads
-        // its pruned partitions (a global index reads the table itself).
-        if !ctx.static_partition_prune() && !global && scan.table_id == table_info.id {
-            if let Some(pi) = table_info.get_partition_info() {
-                let info = v.plan_part_info.as_ref().ok_or_else(|| {
-                    ExecError::Internal("a partitioned index reader has no partition info".into())
-                })?;
-                let partition_names: Vec<String> =
-                    info.partition_names.iter().map(|name| name.original.clone()).collect();
-                let idx_arr = crate::driver::planner_bridge::partition_pruning(
-                    is,
-                    table_info.id,
-                    &info.pruning_conds,
-                    &partition_names,
-                    &info.columns,
-                    ctx,
-                )
-                .map_err(|error| ExecError::Internal(error.to_string().into()))?;
-                if idx_arr.is_empty() {
-                    return Ok(None);
-                }
-                let definitions = pi.read().definitions.snapshot();
-                table_ids = idx_arr.iter().map(|&idx| definitions[idx].id).collect();
+        // its pruned partitions; a global index reads the table itself and
+        // keeps its entries of the pruned partitions (`partitionIDMap`).
+        if !ctx.static_partition_prune() && scan.table_id == table_info.id && table_info.get_partition_info().is_some() {
+            let pids = get_partition_ids_after_pruning(is, &table_info, v.plan_part_info.as_deref(), ctx)?;
+            if global {
+                partition_id_map = pids.into_iter().collect();
+            } else if pids.is_empty() {
+                return Ok(None);
+            } else {
+                table_ids = pids;
             }
         }
         let schema = index_plan
@@ -216,6 +239,7 @@ impl IndexReaderExecutor {
             ),
             result: None,
             mem_tracker: None,
+            partition_id_map,
             kv_ranges: Vec::new(),
             dummy: false,
         }))
@@ -239,6 +263,11 @@ impl IndexReaderExecutor {
     /// Go `kvRanges` and `outputColumns`' indices (`buildMemIndexReader`).
     pub(crate) fn kv_ranges_and_output_offsets(&self) -> (&[tidb_txnkv::KeyRange], &[u32]) {
         (&self.kv_ranges, &self.output_offsets)
+    }
+
+    /// Go `partitionIDMap`, which the union scan above reads.
+    pub(crate) fn partition_id_map(&self) -> &std::collections::BTreeSet<i64> {
+        &self.partition_id_map
     }
 
     /// Go `physicalTableID` and `index.ID`.

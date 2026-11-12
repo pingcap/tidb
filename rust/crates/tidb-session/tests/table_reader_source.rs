@@ -231,6 +231,35 @@ fn an_index_reader_reads_its_range_groups_under_a_union_scan() {
     tk.must_exec("rollback");
 }
 
+/// A union scan over a dynamically pruned partitioned table's readers:
+/// Go's mem readers read the buffer over the readers' ranges of every
+/// partition, and the keep-order reads merge the partitions by `byItems`.
+/// Go's rows (gorun), the descending index lookup's buffered row last
+/// included.
+#[test]
+fn a_union_scan_reads_a_partitioned_tables_readers() {
+    let mut tk = TestKit::new();
+    tk.must_exec("create table tp (a int primary key clustered, b int, c int, index ib(b)) partition by hash(a) partitions 3");
+    tk.must_exec("insert into tp values (1,10,1),(2,20,2),(3,30,3),(4,40,4),(5,50,5)");
+    tk.must_exec("begin");
+    tk.must_exec("insert into tp values (6,60,6),(7,5,7)");
+    tk.must_exec("update tp set b=b+1 where a=2");
+    tk.must_exec("delete from tp where a=4");
+    tk.must_query("select * from tp order by a")
+        .check(["1 10 1", "2 21 2", "3 30 3", "5 50 5", "6 60 6", "7 5 7"]);
+    tk.must_query("select * from tp order by a desc limit 3").check(["7 5 7", "6 60 6", "5 50 5"]);
+    tk.must_query("select a, b from tp where a > 1 order by a desc")
+        .check(["7 5", "6 60", "5 50", "3 30", "2 21"]);
+    tk.must_query("select b from tp where b > 0 order by b").check(["5", "10", "21", "30", "50", "60"]);
+    tk.must_query("select * from tp where b > 0 order by b")
+        .check(["7 5 7", "1 10 1", "2 21 2", "3 30 3", "5 50 5", "6 60 6"]);
+    tk.must_query("select * from tp use index(ib) where b > 0 order by b")
+        .check(["7 5 7", "1 10 1", "2 21 2", "3 30 3", "5 50 5", "6 60 6"]);
+    tk.must_query("select * from tp use index(ib) where b > 0 order by b desc")
+        .check(["6 60 6", "5 50 5", "3 30 3", "2 21 2", "1 10 1", "7 5 7"]);
+    tk.must_exec("rollback");
+}
+
 /// Go `buildRespForGroupedRanges` assigns `e.kvRanges` on each call, so a
 /// keep-order read of an unsigned handle whose ranges straddle the int64
 /// boundary keeps only the second part's KV ranges, and the union scan over

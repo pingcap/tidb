@@ -9035,7 +9035,8 @@ fn build_mem_index_reader(
             kv_ranges.iter().map(|range| (range.start_key.clone(), range.end_key.clone())).collect(),
             output_offsets.iter().map(|offset| *offset as usize).collect(),
             phys_tbl_id_idx,
-            std::collections::BTreeSet::new(),
+            // Go `us.partitionIDMap = x.partitionIDMap`.
+            reader.partition_id_map().clone(),
             conditions.clone(),
             ctx.clone(),
             ctx.session_zone(),
@@ -9079,15 +9080,17 @@ fn build_mem_index_lookup_reader(
             .union_scan_reader()
             .and_then(|reader| reader.downcast_mut::<crate::index_lookup::IndexLookUpExecutor>())
             .ok_or_else(|| crate::ExecError::internal("unexpected union scan children"))?;
+        let partition_id_map = reader.partition_id_map().clone();
         let (groups, columns) = reader.grouped_kv_ranges_and_columns();
         // Go's `memIdxReader`: the index entries' handles (`outputOffset`
-        // is the handle's), no conditions, ascending.
+        // is the handle's), no conditions, ascending, a global index's of
+        // the union scan's `partitionIDMap`.
         let mut idx_reader = crate::mem_reader::MemIndexReader::new(
             meta.clone(),
             Vec::new(),
             vec![meta.index_columns],
             None,
-            std::collections::BTreeSet::new(),
+            partition_id_map,
             Vec::new(),
             ctx.clone(),
             ctx.session_zone(),
@@ -9104,15 +9107,23 @@ fn build_mem_index_lookup_reader(
                 continue;
             }
             num_handles += handles.len();
+            // A global index's handle is Go's `PartitionHandle`, whose rows
+            // `TableHandlesToKVRanges` reads in its partition.
             let handles = handles
                 .into_iter()
-                .map(|handle| match handle.handle {
-                    tidb_table::tables::TableHandle::Int(value) => Ok(tidb_txnkv::Handle::Int(tidb_txnkv::IntHandle::new(value))),
-                    tidb_table::tables::TableHandle::Common(encoded) => tidb_txnkv::CommonHandle::new(encoded)
-                        .map(tidb_txnkv::Handle::Common)
-                        .map_err(|error| crate::ExecError::internal(format!("{error:?}"))),
+                .map(|handle| {
+                    let inner = match handle.handle {
+                        tidb_table::tables::TableHandle::Int(value) => tidb_txnkv::Handle::Int(tidb_txnkv::IntHandle::new(value)),
+                        tidb_table::tables::TableHandle::Common(encoded) => tidb_txnkv::CommonHandle::new(encoded)
+                            .map(tidb_txnkv::Handle::Common)
+                            .map_err(|error| crate::ExecError::internal(format!("{error:?}")))?,
+                    };
+                    Ok(match handle.partition_id {
+                        Some(partition_id) => tidb_txnkv::Handle::Partition(tidb_txnkv::PartitionHandle::new(partition_id, Some(inner))),
+                        None => inner,
+                    })
                 })
-                .collect::<Result<Vec<_>, _>>()?;
+                .collect::<Result<Vec<_>, crate::ExecError>>()?;
             let (ranges, _) = tidb_distsql::table_handles_to_kv_ranges(physical_table_id, &handles);
             tbl_kv_ranges.extend(ranges.into_iter().map(|range| (range.start_key, range.end_key)));
         }
@@ -9434,11 +9445,9 @@ fn build_union_scan(
     // in-memory copy, which `getSnapIter` unions under the buffer, and its
     // reader is a dummy (`setDummy`).
     let cache_table = cached_table_data(&table, ctx, true);
-    // Go's readers (`docs/tikv-reader-execplan.md` M4): a TiKV reader of a
-    // table that is not partitioned, whose added rows Go's mem readers build
-    // in `open` from its ranges.
+    // Go's readers (`docs/tikv-reader-execplan.md` M4): a TiKV reader, whose
+    // added rows Go's mem readers build in `open` from its ranges.
     let go_reader = ctx.txn_store().is_some_and(|store| store.client().is_some())
-        && table.meta().read().get_partition_info().is_none()
         && match reader_plan {
             PhysicalPlan::TableReader(table_reader) => {
                 table_reader.store_type == tidb_kv::store_type::StoreType::TiKv

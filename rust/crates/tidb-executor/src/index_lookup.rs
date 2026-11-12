@@ -154,6 +154,8 @@ pub struct IndexLookUpExecutor {
     table_ids: Vec<i64>,
     /// Go `partitionTableMode`.
     partition_table_mode: bool,
+    /// Go `partitionIDMap`: a global index's pruned partitions.
+    partition_id_map: std::collections::BTreeSet<i64>,
     /// Go `ranges`.
     ranges: Vec<tidb_ranger::types::Range>,
     /// Go `is.GroupByColIdxs`: the columns whose values group `ranges` into
@@ -270,28 +272,17 @@ impl IndexLookUpExecutor {
         // (not through a global index) reads its pruned partitions.
         let mut table_ids = vec![scan.table_id];
         let mut partition_table_mode = false;
-        if !ctx.static_partition_prune() && !index.global && scan.table_id == table_info.id {
-            if let Some(pi) = table_info.get_partition_info() {
-                let info = v
-                    .plan_part_info
-                    .as_ref()
-                    .ok_or_else(|| internal("a partitioned index lookup has no partition info"))?;
-                let partition_names: Vec<String> =
-                    info.partition_names.iter().map(|name| name.original.clone()).collect();
-                let idx_arr = crate::driver::planner_bridge::partition_pruning(
-                    is,
-                    table_info.id,
-                    &info.pruning_conds,
-                    &partition_names,
-                    &info.columns,
-                    ctx,
-                )
-                .map_err(|error| ExecError::Internal(error.to_string().into()))?;
-                if idx_arr.is_empty() {
-                    return Ok(None);
-                }
-                let definitions = pi.read().definitions.snapshot();
-                table_ids = idx_arr.iter().map(|&idx| definitions[idx].id).collect();
+        // A global index keeps its entries of the pruned partitions (Go
+        // `partitionIDMap`).
+        let mut partition_id_map = std::collections::BTreeSet::new();
+        if !ctx.static_partition_prune() && scan.table_id == table_info.id && table_info.get_partition_info().is_some() {
+            let pids = crate::index_reader::get_partition_ids_after_pruning(is, &table_info, v.plan_part_info.as_deref(), ctx)?;
+            if index.global {
+                partition_id_map = pids.into_iter().collect();
+            } else if pids.is_empty() {
+                return Ok(None);
+            } else {
+                table_ids = pids;
                 partition_table_mode = true;
             }
         }
@@ -412,6 +403,7 @@ impl IndexLookUpExecutor {
             index_id: index.id,
             table_ids,
             partition_table_mode,
+            partition_id_map,
             ranges: scan.ranges.clone(),
             group_by_col_idxs: scan.group_by_col_idxs.clone(),
             range_rebuild: crate::driver::physical_builder::correlated_index_range_rebuilder(scan, ctx),
@@ -480,6 +472,11 @@ impl IndexLookUpExecutor {
             })
             .collect();
         (groups, &self.shared.columns)
+    }
+
+    /// Go `partitionIDMap`, which the union scan above reads.
+    pub(crate) fn partition_id_map(&self) -> &std::collections::BTreeSet<i64> {
+        &self.partition_id_map
     }
 
     /// Go `getPhysicalTableID(e.table)` and `e.index.ID`.
