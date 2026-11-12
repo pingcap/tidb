@@ -210,26 +210,17 @@ go_test(
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
-<<<<<<< HEAD
-=======
         "@com_github_pingcap_kvproto//pkg/tikvpb",
-        "@com_github_prometheus_client_golang//prometheus",
->>>>>>> 1d27d913a4e (server: return unimplemented for unsupported TiKV RPCs (#71320))
         "@com_github_prometheus_client_golang//prometheus/testutil",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//error",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
-<<<<<<< HEAD
-=======
-        "@com_github_tikv_client_go_v2//tikvrpc",
-        "@com_github_tikv_client_go_v2//util",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
-        "@org_uber_go_atomic//:atomic",
->>>>>>> 1d27d913a4e (server: return unimplemented for unsupported TiKV RPCs (#71320))
         "@org_uber_go_goleak//:goleak",
     ],
 )
