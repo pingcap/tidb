@@ -123,7 +123,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.142
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20261110011724-6c35defb4871
+	github.com/tikv/client-go/v2 v2.0.8-0.20261112033857-5515e20451af
 	github.com/tikv/pd/client v0.0.0-20261111082856-0157174063fa
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
@@ -376,5 +376,3 @@ replace (
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
-
-replace github.com/tikv/client-go/v2 => github.com/JmPotato/client-go/v2 v2.0.0-20261111092331-7bd7e2fc6d0d
