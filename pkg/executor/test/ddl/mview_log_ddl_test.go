@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
@@ -1340,6 +1341,195 @@ func TestCreateMaterializedViewLogRefreshLockLifetime(t *testing.T) {
 				tk.MustExec("create materialized view log on mv_mlog_lock (a, s, cnt)")
 			}
 		})
+	}
+}
+
+func TestAlterMaterializedViewLogAddColumnRefreshConflict(t *testing.T) {
+	for _, mode := range []string{"fast", "complete delta apply", "complete out of place"} {
+		for _, columns := range []string{"s", "s, cnt"} {
+			t.Run(mode+"/"+columns, func(t *testing.T) {
+				store, dom := testkit.CreateMockStoreAndDomain(t)
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("use test")
+				tk.MustExec("create table t_alter_mlog (a int not null, b int not null)")
+				tk.MustExec("insert into t_alter_mlog values (1, 10)")
+				tk.MustExec("create materialized view log on t_alter_mlog (a, b)")
+				tk.MustExec("create materialized view mv_alter_mlog (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_alter_mlog group by a")
+				tk.MustExec("create materialized view log on mv_alter_mlog (a)")
+				tk.MustExec("insert into t_alter_mlog values (2, 20)")
+
+				paused := make(chan struct{})
+				resume := make(chan struct{})
+				pause := func() { close(paused); <-resume }
+				release := func() {
+					select {
+					case <-resume:
+					default:
+						close(resume)
+					}
+				}
+				pauseFailpoint := "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterDataChanges"
+				if mode == "complete out of place" {
+					pauseFailpoint = "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceAfterBuildDataLoad"
+					testfailpoint.EnableCall(t, pauseFailpoint, func(uint64) { pause() })
+				} else {
+					testfailpoint.EnableCall(t, pauseFailpoint, pause)
+				}
+				tkRefresh := testkit.NewTestKit(t, store)
+				tkRefresh.MustExec("use test")
+				refreshDone := make(chan error, 1)
+				go func() { refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv_alter_mlog " + mode) }()
+				refreshFinished := false
+				defer func() {
+					release()
+					if !refreshFinished {
+						select {
+						case <-refreshDone:
+						case <-time.After(15 * time.Second):
+							t.Error("timeout cleaning up refresh")
+						}
+					}
+				}()
+				select {
+				case <-paused:
+				case <-time.After(15 * time.Second):
+					t.Fatal("timeout waiting for refresh")
+				}
+
+				alterSQL := "alter materialized view log on mv_alter_mlog add column (" + columns + ")"
+				ddlDone := make(chan error, 1)
+				go func() { ddlDone <- tk.ExecToErr(alterSQL) }()
+				ddlFinished := false
+				defer func() {
+					release()
+					if !ddlFinished {
+						select {
+						case <-ddlDone:
+						case <-time.After(15 * time.Second):
+							t.Error("timeout cleaning up ADD COLUMN")
+						}
+					}
+				}()
+				select {
+				case err := <-ddlDone:
+					ddlFinished = true
+					require.Error(t, err, "ADD COLUMN must not complete while refresh holds its lock")
+					require.True(t, exeerrors.ErrMVAdvisoryLockConflict.Equal(err), "%v", err)
+					require.ErrorContains(t, err, "materialized view refresh is running")
+				case <-time.After(15 * time.Second):
+					t.Fatal("ADD COLUMN must terminate without blocking refresh cutover")
+				}
+				mlog, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$mv_alter_mlog"))
+				require.NoError(t, err)
+				require.Equal(t, []pmodel.CIStr{pmodel.NewCIStr("a")}, mlog.Meta().MaterializedViewLog.Columns)
+				require.Len(t, mlog.Meta().Columns, 3, "a rejected ADD COLUMN must leave no intermediate columns")
+
+				release()
+				select {
+				case err := <-refreshDone:
+					refreshFinished = true
+					require.NoError(t, err)
+				case <-time.After(15 * time.Second):
+					t.Fatal("timeout waiting for refresh completion")
+				}
+				tk.MustExec(alterSQL)
+				tk.MustExec("insert into t_alter_mlog values (3, 30)")
+				testfailpoint.Disable(t, pauseFailpoint)
+				tk.MustExec("refresh materialized view mv_alter_mlog fast")
+				tk.MustQuery("select a, s from `$mlog$mv_alter_mlog` where a = 3").Check(testkit.Rows("3 30"))
+				tk.MustExec("update t_alter_mlog set b = 31 where a = 3")
+				tk.MustExec("refresh materialized view mv_alter_mlog fast")
+				tk.MustQuery("select s from `$mlog$mv_alter_mlog` where a = 3 and `_MLOG$_DML_TYPE` = 'U'").Sort().Check(testkit.Rows("30", "31"))
+			})
+		}
+	}
+}
+
+func TestAlterMaterializedViewLogAddColumnRefreshLockLifetime(t *testing.T) {
+	for _, columns := range []string{"s", "s, cnt"} {
+		for _, rollback := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/rollback=%t", columns, rollback), func(t *testing.T) {
+				store, dom := testkit.CreateMockStoreAndDomain(t)
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("use test")
+				tk.MustExec("create table t_alter_mlog_lock (a int not null, b int not null)")
+				tk.MustExec("create materialized view log on t_alter_mlog_lock (a, b)")
+				tk.MustExec("create materialized view mv_alter_mlog_lock (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_alter_mlog_lock group by a")
+				tk.MustExec("create materialized view log on mv_alter_mlog_lock (a)")
+				mv, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_alter_mlog_lock"))
+				require.NoError(t, err)
+				lockName := fmt.Sprintf("mv_refresh_%d_%d", mv.Meta().DBID, mv.Meta().ID)
+
+				if rollback {
+					cancelTK := testkit.NewTestKit(t, store)
+					var cancelled atomic.Bool
+					testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *metamodel.Job) {
+						if job.TableName != "$mlog$mv_alter_mlog_lock" || !cancelled.CompareAndSwap(false, true) {
+							return
+						}
+						errs, err := ddl.CancelJobs(context.Background(), cancelTK.Session(), []int64{job.ID})
+						require.NoError(t, err)
+						require.Len(t, errs, 1)
+						require.NoError(t, errs[0])
+					})
+				}
+				paused := make(chan struct{})
+				resume := make(chan struct{})
+				var signalled atomic.Bool
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaChanged", func(job *metamodel.Job, _ int64) {
+					if job.TableName == "$mlog$mv_alter_mlog_lock" &&
+						(job.IsDone() || job.IsRollbackDone()) && signalled.CompareAndSwap(false, true) {
+						close(paused)
+						<-resume
+					}
+				})
+				ddlDone := make(chan error, 1)
+				go func() {
+					ddlDone <- tk.ExecToErr("alter materialized view log on mv_alter_mlog_lock add column (" + columns + ")")
+				}()
+				finished := false
+				release := func() {
+					select {
+					case <-resume:
+					default:
+						close(resume)
+					}
+				}
+				defer func() {
+					release()
+					if !finished {
+						select {
+						case <-ddlDone:
+						case <-time.After(15 * time.Second):
+							t.Error("timeout cleaning up ADD COLUMN")
+						}
+					}
+				}()
+				select {
+				case <-paused:
+				case <-time.After(15 * time.Second):
+					t.Fatal("timeout waiting for ADD COLUMN schema sync")
+				}
+				tkLock := testkit.NewTestKit(t, store)
+				tkLock.MustExec("use test")
+				tkLock.MustGetErrCode("refresh materialized view mv_alter_mlog_lock fast", errno.ErrMVAdvisoryLockConflict)
+				release()
+				select {
+				case err = <-ddlDone:
+					finished = true
+				case <-time.After(15 * time.Second):
+					t.Fatal("timeout waiting for ADD COLUMN completion")
+				}
+				if rollback {
+					require.ErrorContains(t, err, "Cancelled DDL job")
+				} else {
+					require.NoError(t, err)
+				}
+				require.NoError(t, tkLock.Session().GetAdvisoryLock(lockName, 1), "the worker must release the lock before reuse")
+				require.True(t, tkLock.Session().ReleaseAdvisoryLock(lockName))
+				tkLock.MustExec("refresh materialized view mv_alter_mlog_lock fast")
+			})
+		}
 	}
 }
 
