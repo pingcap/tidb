@@ -169,6 +169,11 @@ func (e *HashJoinV1Exec) Close() error {
 	if e.stats != nil && e.RowContainer != nil {
 		e.stats.hashStat = *e.RowContainer.stat
 	}
+	defer func() {
+		for _, w := range e.ProbeWorkers {
+			w.Joiner.registerJoinedRows(e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl, e.ID())
+		}
+	}()
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
@@ -213,6 +218,9 @@ func (e *HashJoinV1Exec) OpenSelf() error {
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
 
+	for _, w := range e.ProbeWorkers {
+		w.Joiner.resetJoinedRows(e.RuntimeStats() != nil)
+	}
 	if e.RuntimeStats() != nil {
 		e.stats = &hashJoinRuntimeStats{
 			concurrent: int(e.Concurrency),
