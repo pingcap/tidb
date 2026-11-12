@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -141,4 +142,21 @@ func TestMergeDMLFilesByTableStopsOnCancel(t *testing.T) {
 	require.Nil(t, got)
 	require.Zero(t, count)
 	require.Less(t, seen, len(files))
+}
+
+func TestMergeDMLFilesByTableStopsOnCancelWhileDraining(t *testing.T) {
+	r := rand.New(rand.NewSource(13))
+	files := randomDMLFiles(r, 20000)
+	rules := map[int64]*restoreutils.RewriteRules{}
+	for _, f := range files {
+		rules[f.TableId] = &restoreutils.RewriteRules{}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/br/pkg/restore/log_client/pre-split-merge-before-wait", cancel)
+	got, count, err := logclient.MergeDMLFilesByTable(ctx, iter.FromSlice(files), rules, 2)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, got)
+	require.Zero(t, count)
 }

@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 )
@@ -130,13 +131,14 @@ func mergeDMLFilesByTable(
 	for i := 0; iterErr == nil && i < workers; i++ {
 		iterErr = flush(i)
 	}
-	if iterErr == nil {
-		iterErr = ctx.Err()
-	}
+	failpoint.InjectCall("pre-split-merge-before-wait")
 	for _, queue := range queues {
 		close(queue)
 	}
 	wg.Wait()
+	if iterErr == nil {
+		iterErr = ctx.Err()
+	}
 	if iterErr != nil {
 		return nil, 0, iterErr
 	}
