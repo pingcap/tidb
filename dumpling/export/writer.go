@@ -257,7 +257,9 @@ func (w *Writer) tryToWriteTableData(tctx, readCtx *tcontext.Context, cancel fun
 		return err
 	}
 	reader := newTableDataReader(readCtx, cancel, meta, ir)
-	defer reader.Close()
+	defer func() {
+		_ = reader.Close()
+	}()
 	ir = reader
 
 	var wo *storeapi.WriterOption
