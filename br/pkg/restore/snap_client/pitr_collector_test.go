@@ -38,12 +38,22 @@ type capturedLockWrite struct {
 }
 
 type lockCaptureStorage struct {
+<<<<<<< HEAD
 	storage.ExternalStorage
 	mu     sync.Mutex
 	writes []capturedLockWrite
+=======
+	storeapi.Storage
+	failWritePath string
+	mu            sync.Mutex
+	writes        []capturedLockWrite
+>>>>>>> 3d6bcab71fb (br: persist PiTR metadata before publishing migration references (#71326))
 }
 
 func (s *lockCaptureStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	if name == s.failWritePath {
+		return fmt.Errorf("injected metadata write failure: %s", name)
+	}
 	s.captureLockWrite(name, data)
 	return s.ExternalStorage.WriteFile(ctx, name, data)
 }
@@ -191,6 +201,53 @@ func newPiTRCollForTest(t *testing.T) pitrCollectorT {
 }
 
 func TestPiTRCollectorPrepareMigWritesOperationMetadata(t *testing.T) {
+	t.Run("failed metadata publication", func(t *testing.T) {
+		coll := newPiTRCollForTest(t)
+		defer coll.coll.writerRoutine.close()
+		coll.coll.taskStorage = &lockCaptureStorage{
+			Storage: coll.coll.taskStorage, failWritePath: coll.coll.metaPath(),
+		}
+		err := coll.coll.prepareMig(coll.cx)
+		require.ErrorContains(t, err, "injected metadata write failure")
+		ext := stream.MigrationExtension(coll.coll.taskStorage)
+		migrations, err := ext.Load(coll.cx)
+		require.NoError(t, err)
+		for _, migration := range migrations.ListAll() {
+			require.Empty(t, migration.IngestedSstPaths)
+		}
+		coll.Reopen()
+		defer coll.Done()
+		require.NoError(t, coll.coll.prepareMig(coll.cx))
+		require.Len(t, coll.ExtFullBkups(), 1)
+	})
+	t.Run("retry failed preparation on the next batch", func(t *testing.T) {
+		coll := newPiTRCollForTest(t)
+		defer coll.Done()
+		storage := &lockCaptureStorage{
+			Storage: coll.coll.taskStorage, failWritePath: coll.coll.metaPath(),
+		}
+		coll.coll.taskStorage = storage
+		batch := restore.BatchBackupFileSet{backupFileSet(withRewriteRule(remap(1, 10)))}
+		complete, err := coll.StartRestoreBatch(batch)
+		require.ErrorContains(t, err, "injected metadata write failure")
+		require.Nil(t, complete)
+		require.Empty(t, coll.ExtFullBkups())
+
+		storage.failWritePath = ""
+		complete = coll.MustStartRestoreBatch(batch)
+		require.NoError(t, complete())
+		ext := coll.ExtFullBkups()
+		require.Len(t, ext, 1)
+		coll.RequireRewrite(ext[0], remap(1, 10))
+
+		complete = coll.MustStartRestoreBatch(restore.BatchBackupFileSet{
+			backupFileSet(withRewriteRule(remap(2, 20))),
+		})
+		require.NoError(t, complete())
+		ext = coll.ExtFullBkups()
+		require.Len(t, ext, 1)
+		coll.RequireRewrite(ext[0], remap(1, 10), remap(2, 20))
+	})
 	coll := newPiTRCollForTest(t)
 	defer coll.Done()
 	capturingStorage := &lockCaptureStorage{ExternalStorage: coll.coll.taskStorage}
