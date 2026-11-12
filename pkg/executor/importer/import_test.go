@@ -33,7 +33,6 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/dumpformat/testutils"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -542,11 +541,17 @@ func newParquetPlanAndControllerForTest(ctx context.Context, t *testing.T, sctx 
 	t.Helper()
 	sctx.Store = keyspaceOnlyStore{}
 
-	node, err := parser.New().ParseOneStmt("create table t(a timestamp)", "", "")
-	require.NoError(t, err)
-	tblInfo, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 1)
-	require.NoError(t, err)
-	tblInfo.State = model.StatePublic
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{{
+			ID:        1,
+			Name:      ast.NewCIStr("a"),
+			State:     model.StatePublic,
+			FieldType: *types.NewFieldType(mysql.TypeTimestamp),
+		}},
+	}
 	table := tables.MockTableFromMeta(tblInfo)
 
 	fileName := filepath.Join(t.TempDir(), "data.parquet")

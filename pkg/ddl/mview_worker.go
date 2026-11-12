@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	goerrors "errors"
 	"strings"
 	"time"
 
@@ -24,6 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -253,12 +257,36 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
+		if w.usesMViewDistTask() {
+			if err = w.createMViewBuildImportJob(jobCtx.stepCtx, job, mviewTableInfo); err != nil {
+				job.State = model.JobStateRollingback
+				return ver, errors.Trace(err)
+			}
+		}
 		job.SchemaState = model.StateWriteReorganization
 		job.State = model.JobStateRunning
 		return ver, nil
 
 	case model.StateWriteReorganization:
-		if w.getReorgCtx(job.ID) == nil {
+		hasTask := false
+		if w.getReorgCtx(job.ID) == nil && w.usesMViewDistTask() {
+			importJobID, err := getMViewBuildImportJobID(jobCtx.stepCtx, w.sess.GetSQLExecutor(), job.ID, mviewTableInfo.ID)
+			if err != nil {
+				return ver, err
+			}
+			if importJobID != 0 {
+				mgr, err := storage.GetDXFSvcTaskMgr()
+				if err != nil {
+					return ver, err
+				}
+				task, err := mgr.GetTaskByKeyWithHistory(jobCtx.stepCtx, taskkey.ForJob(importJobID))
+				if err != nil && !goerrors.Is(err, storage.ErrTaskNotFound) {
+					return ver, err
+				}
+				hasTask = task != nil
+			}
+		}
+		if w.getReorgCtx(job.ID) == nil && !hasTask {
 			hasRows, checkErr := w.hasCreateMaterializedViewBuildRows(jobCtx.stepCtx, job.SchemaName, mviewTableInfo.Name.O)
 			if checkErr != nil {
 				job.State = model.JobStateRollingback
@@ -284,6 +312,9 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			if isCreateMaterializedViewCancelledErr(jobCtx, err) {
 				job.State = model.JobStateRollingback
 				return ver, nil
+			}
+			if jobCtx.stepCtx.Err() != nil || dbterror.ErrNotOwner.Equal(err) {
+				return ver, errors.Trace(err)
 			}
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
@@ -356,6 +387,11 @@ func isCreateMaterializedViewPausedErr(jobCtx *jobContext, err error) bool {
 }
 
 func (w *worker) rollbackCreateMaterializedView(jobCtx *jobContext, job *model.Job, mviewTableInfo *model.TableInfo) (ver int64, _ error) {
+	if w.usesMViewDistTask() {
+		if err := w.stopMViewDistTask(jobCtx.stepCtx, job); err != nil {
+			return ver, err
+		}
+	}
 	droppingTblInfo := mviewTableInfo
 	actualTblInfo, err := getTableInfo(jobCtx.metaMut, job.TableID, job.SchemaID)
 	if err == nil {
@@ -637,6 +673,9 @@ func (w *worker) setCreateMaterializedViewBuildReadTSInReorgCtx(jobID int64, rea
 }
 
 func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, job *model.Job, mviewTableInfo *model.TableInfo) error {
+	if w.usesMViewDistTask() {
+		return w.executeMViewDistTask(ctx, job, mviewTableInfo)
+	}
 	sessCtx, err := w.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
@@ -694,6 +733,14 @@ func (w *worker) buildCreateMaterializedViewData(ctx context.Context, storeName 
 		ctx = w.workCtx
 	}
 	failpoint.Inject("pauseCreateMaterializedViewBuild", func() {})
+	// The DXF path needs real TiKV, but tests can still prepare its task in this session pool.
+	failpoint.InjectCall("prepareCreateMaterializedViewBuildTask", func() (*proto.Task, error) {
+		importJobID, err := w.getMViewBuildImportJobIDInNewSession(ctx, job.ID, mviewTableInfo.ID)
+		if err != nil {
+			return nil, err
+		}
+		return w.prepareMViewBuildTask(ctx, job, mviewTableInfo, importJobID)
+	})
 	failpoint.Inject("mockCreateMaterializedViewBuildErr", func(val failpoint.Value) {
 		if msg, ok := val.(string); ok && msg == "context-canceled" {
 			failpoint.Return(context.Canceled)

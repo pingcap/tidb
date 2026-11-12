@@ -119,6 +119,7 @@ go_test(
     srcs = [
         "chunk_process_internal_test.go",
         "chunk_process_testkit_test.go",
+        "export_test.go",
         "import_test.go",
         "importer_testkit_test.go",
         "job_test.go",
@@ -128,6 +129,7 @@ go_test(
         "precheck_test.go",
         "query_source_test.go",
         "runtime_info_test.go",
+        "sampler_internal_test.go",
         "sampler_test.go",
         "table_import_test.go",
         "table_import_testkit_test.go",

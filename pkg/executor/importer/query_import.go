@@ -39,6 +39,9 @@ type QueryImportRequest struct {
 	Table  table.Table
 	// SourceTableIDs must list every table the SELECT reads, all in DBID.
 	SourceTableIDs []int64
+	// JobID is the import job the import belongs to, if the caller already
+	// created it. The precheck for active jobs on the table ignores it.
+	JobID int64
 }
 
 // PrepareQueryImport prepares and checks the plan of a query import in sctx
@@ -79,6 +82,7 @@ func PrepareQueryImport(ctx context.Context, sctx sessionctx.Context, req *Query
 	if err != nil {
 		return nil, err
 	}
+	controller.importJobID = req.JobID
 	if controller.IsLocalSort() {
 		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("IMPORT INTO FROM SELECT without global sort storage")
 	}

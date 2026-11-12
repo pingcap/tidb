@@ -458,6 +458,9 @@ type LoadDataController struct {
 	globalSortStore storeapi.Storage
 	// ExecuteNodesCnt is the count of execute nodes.
 	ExecuteNodesCnt int
+	// importJobID is the import job that already exists for this import, if
+	// any. It is not counted as an active job on the table.
+	importJobID int64
 }
 
 // GetImportantSysVars returns the system variables that affect data encoding.
