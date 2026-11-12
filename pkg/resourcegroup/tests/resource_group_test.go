@@ -306,7 +306,9 @@ func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name stri
 }
 
 func TestResourceGroupRunaway(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(1)`))
+	// Keep GC fast enough for this test, but not so aggressive that records disappear
+	// before assertions can observe them on loaded CI.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(2500)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 	}()
@@ -379,10 +381,15 @@ func TestResourceGroupRunaway(t *testing.T) {
 	tk.MustGetErrCode("select /*+ resource_group(rg3) */ * from t", mysql.ErrResourceGroupQueryRunawayQuarantine)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/sleepCoprRequest"))
 
+<<<<<<< HEAD
 	tk.MustExec("create resource group rg4 BURSTABLE RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT)")
 	// Keep the successful check below the deadline; sleeping for exactly 50ms
 	// leaves no allowance for execution overhead on loaded CI workers.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/checkThresholds", "return(0)"))
+=======
+	tk.MustExec("create resource group rg4 BURSTABLE=UNLIMITED RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/checkThresholds", fmt.Sprintf("return(%d)", 20)))
+>>>>>>> 52d01c6b8c2 (pkg/resourcegroup/tests: harden runaway flaky assertions (#67691))
 	tk.MustQuery("select /*+ resource_group(rg4) */ * from t").Check(testkit.Rows("1"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/checkThresholds"))
 
@@ -524,7 +531,8 @@ func TestRunawayRecordFlushLoopAddAndFlush(t *testing.T) {
 }
 
 func TestResourceGroupRunawayFlood(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(1)`))
+	// Avoid 1ms retention: it can make observation windows too short under CI load.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(2500)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 	}()
@@ -536,7 +544,10 @@ func TestResourceGroupRunawayFlood(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1)")
 	tk.MustExec("set global tidb_enable_resource_control='on'")
+<<<<<<< HEAD
 	// Warm up the query before applying the short execution deadline.
+=======
+>>>>>>> 52d01c6b8c2 (pkg/resourcegroup/tests: harden runaway flaky assertions (#67691))
 	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=()")
 	tk.MustQuery("select /*+ resource_group(rg1) */ * from t").Check(testkit.Rows("1"))
 	tk.MustExec("alter resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
