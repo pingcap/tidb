@@ -1,0 +1,22 @@
+[package]
+name = "tidb-failpoint"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go github.com/pingcap/failpoint and pkg/testkit/testfailpoint as the rewrite uses them."
+
+[lints]
+workspace = true
+
+[features]
+# Go's failpoint build (failpoint-ctl enable): without it every failpoint is
+# compiled out.
+failpoints = []
+
+[dependencies]
+fail = "0.4"
+
+[dev-dependencies]
+tidb-failpoint = { path = ".", features = ["failpoints"] }

@@ -205,6 +205,8 @@ tidb-syssession = { path = "../tidb-syssession" }
 tidb-resolve = { path = "../tidb-resolve" }
 
 [dev-dependencies]
+tidb-tiflashcompute = { path = "../tidb-tiflashcompute" }
+tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
 tidb-config-deploymode = { path = "../tidb-config-deploymode" }
 tidb-dxf = { path = "../tidb-dxf" }
 tidb-dxf-execute = { path = "../tidb-dxf-execute" }

@@ -367,13 +367,13 @@ fn test_mpp_union_all() {
         &[&["29"]],
     );
     rows(&mut session, "set @@session.tidb_broadcast_join_threshold_count=100000");
-    tidb_executor::local_mpp_coordinator::mock::set_check_total_mpp_tasks(Some(6));
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/checkTotalMPPTasks", "return(6)").unwrap();
     check(
         &mut session,
         "select count(*) from (select * from x1 union all select * from x2 union all select * from x3) x join (select * from x1 union all select * from x2 union all select * from x3) y on x.a = y.b",
         &[&["29"]],
     );
-    tidb_executor::local_mpp_coordinator::mock::set_check_total_mpp_tasks(None);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/checkTotalMPPTasks");
 
     rows(&mut session, "drop table if exists x4");
     rows(&mut session, "create table x4(a int not null, b int not null);");
@@ -1566,8 +1566,6 @@ fn test_union_scan() {
 /// dispatches under dynamic pruning.
 #[test]
 fn test_partition_table() {
-    use tidb_executor::local_mpp_coordinator::mock::set_check_total_mpp_tasks;
-    use tidb_executor::mpp_gather::mock::set_check_use_mpp;
     let (stack, mut session) = tiflash_session(2, 2191);
     rows(&mut session, "drop table if exists t");
     rows(&mut session, "drop table if exists t1");
@@ -1579,16 +1577,16 @@ fn test_partition_table() {
     rows(&mut session, "insert into t values(2,0)");
     rows(&mut session, "insert into t values(3,0)");
     rows(&mut session, "insert into t values(4,0)");
-    set_check_use_mpp(Some(true));
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/executor/checkUseMPP", "return(true)").unwrap();
     rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
     rows(&mut session, "set @@session.tidb_allow_mpp=ON");
     rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=OFF");
     // mock executor does not support use outer table as build side for outer
     // join, so need to force the inner table as build side
     rows(&mut session, "set tidb_opt_mpp_outer_join_fixed_build_side=1");
-    set_check_total_mpp_tasks(Some(2));
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/checkTotalMPPTasks", "return(2)").unwrap();
     check(&mut session, "select count(*) from t", &[&["4"]]);
-    set_check_total_mpp_tasks(None);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/checkTotalMPPTasks");
     rows(&mut session, "set @@session.tidb_partition_prune_mode='static-only'");
     check(&mut session, "select count(*) from t", &[&["4"]]);
     rows(&mut session, "set @@session.tidb_partition_prune_mode='dynamic-only'");
@@ -1604,12 +1602,12 @@ fn test_partition_table() {
     rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
     rows(&mut session, "set @@session.tidb_allow_mpp=ON");
     // test if it is really work.
-    set_check_total_mpp_tasks(Some(4));
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/checkTotalMPPTasks", "return(4)").unwrap();
     check(&mut session, "select count(*) from t1 , t where t1.a = t.a", &[&["4"]]);
     // test partition prune
     check(&mut session, "select count(*) from t1 , t where t1.a = t.a and t1.a < 2 and t.a < 2", &[&["1"]]);
     check(&mut session, "select count(*) from t1 , t where t1.a = t.a and t1.a < -1 and t.a < 2", &[&["0"]]);
-    set_check_total_mpp_tasks(None);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/checkTotalMPPTasks");
     // test multi-way join
     rows(&mut session, "create table t2(a int not null primary key, b int not null)");
     rows(&mut session, "alter table t2 set tiflash replica 2");
@@ -1620,9 +1618,9 @@ fn test_partition_table() {
     rows(&mut session, "insert into t2 values(3,0)");
     rows(&mut session, "insert into t2 values(4,0)");
     // test with no partition table
-    set_check_total_mpp_tasks(Some(5));
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/checkTotalMPPTasks", "return(5)").unwrap();
     check(&mut session, "select count(*) from t1 , t, t2 where t1.a = t.a and t2.a = t.a", &[&["4"]]);
-    set_check_total_mpp_tasks(None);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/checkTotalMPPTasks");
 
     rows(
         &mut session,
@@ -1641,12 +1639,12 @@ fn test_partition_table() {
     rows(&mut session, "insert into t3 values(3,4)");
     rows(&mut session, "insert into t3 values(4,6)");
 
-    set_check_total_mpp_tasks(Some(4));
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/checkTotalMPPTasks", "return(4)").unwrap();
     check(&mut session, "select count(*) from t, t3 where t3.a = t.a and t3.b <= 4", &[&["3"]]);
-    set_check_total_mpp_tasks(Some(3));
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/checkTotalMPPTasks", "return(3)").unwrap();
     check(&mut session, "select count(*) from t, t3 where t3.a = t.a and t3.b > 10", &[&["0"]]);
-    set_check_total_mpp_tasks(None);
-    set_check_use_mpp(None);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/checkTotalMPPTasks");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/executor/checkUseMPP");
 }
 
 /// Go `TestMppAggShouldAlignFinalMode`: the modes of a statically pruned
@@ -1661,7 +1659,7 @@ fn test_mpp_agg_should_align_final_mode() {
     rows(&mut session, "alter table t set tiflash replica 1");
     replica_available(&stack, &mut session, "t");
     rows(&mut session, "set tidb_partition_prune_mode='static';");
-    tidb_expression_aggregation::mock::set_show_agg_mode(true);
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/expression/aggregation/show-agg-mode", "return(true)").unwrap();
 
     // unistore does not support later materialization
     rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
@@ -1694,7 +1692,7 @@ fn test_mpp_agg_should_align_final_mode() {
         ]
     );
 
-    tidb_expression_aggregation::mock::set_show_agg_mode(false);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/expression/aggregation/show-agg-mode");
 }
 
 /// Go `TestIssue59703`: a coordinator whose `Execute` fails is unregistered.
@@ -1712,7 +1710,7 @@ fn test_issue_59703() {
     rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
     rows(&mut session, "set @@session.tidb_allow_mpp=ON");
 
-    tidb_executor::mpp_gather::mock::set_mpp_coordinator_execute_err(true);
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_coordinator_execute_err", "return").unwrap();
 
     let (_, message) = query_error(&mut session, "select count(*) from t");
     assert!(message.contains("mock mpp error"), "{message}");
@@ -1720,7 +1718,7 @@ fn test_issue_59703() {
         tidb_executor::mppcoordmanager::INSTANCE_MPP_COORDINATOR_MANAGER.get_coord_count(),
         0
     );
-    tidb_executor::mpp_gather::mock::set_mpp_coordinator_execute_err(false);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_coordinator_execute_err");
 }
 
 /// The table of Go's `TestDispatchTaskRetry` and `TestMppVersionError`.
@@ -1743,9 +1741,9 @@ fn dispatch_retry_table(connection_id: u64) -> (UnistoreClusterStack, Session) {
 #[test]
 fn test_dispatch_task_retry() {
     let (_stack, mut session) = dispatch_retry_table(2194);
-    tidb_unistore::rpc::mock::set_mpp_dispatch_timeout(3);
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/mppDispatchTimeout", "3*return(true)").unwrap();
     check(&mut session, "select count(*) from t group by b", &[&["4"]]);
-    tidb_unistore::rpc::mock::set_mpp_dispatch_timeout(0);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/mppDispatchTimeout");
 }
 
 /// Go `TestTiFlashFallback`'s MPP dispatch arm: a dispatch that keeps
@@ -1754,8 +1752,8 @@ fn test_dispatch_task_retry() {
 #[test]
 fn test_tiflash_fallback_mpp_dispatch() {
     let (_stack, mut session) = dispatch_retry_table(2198);
-    tidb_executor::local_mpp_coordinator::mock::set_reduce_cop_next_max_backoff(true);
-    tidb_unistore::rpc::mock::set_mpp_dispatch_timeout(usize::MAX);
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/ReduceCopNextMaxBackoff", "return(true)").unwrap();
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/mppDispatchTimeout", "return(true)").unwrap();
     let sql = "select * from t t1 join t t2 on t1.a = t2.a";
     rows(&mut session, "set @@tidb_allow_fallback_to_tikv=''");
     let (code, _) = query_error(&mut session, sql);
@@ -1763,8 +1761,8 @@ fn test_tiflash_fallback_mpp_dispatch() {
     rows(&mut session, "set @@tidb_allow_fallback_to_tikv='tiflash'");
     let (code, _) = query_error(&mut session, sql);
     assert_eq!(code, tidb_errno::errcode::ErrTiFlashServerTimeout);
-    tidb_unistore::rpc::mock::set_mpp_dispatch_timeout(0);
-    tidb_executor::local_mpp_coordinator::mock::set_reduce_cop_next_max_backoff(false);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/mppDispatchTimeout");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/ReduceCopNextMaxBackoff");
 }
 
 /// Go `physicalplantest`'s case loop over `plan_suite_out.json`: a `set` or
@@ -1873,12 +1871,12 @@ fn test_mpp_bcj_model_one_tiflash() {
 fn test_mpp_version_error() {
     let (_stack, mut session) = dispatch_retry_table(2195);
     let newest = tidb_txnkv::MppVersion::NEWEST.as_i64();
-    tidb_unistore::rpc::mock::set_mpp_version_error(Some(newest + 1));
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/MppVersionError", &format!("return({})", newest + 1)).unwrap();
     query_error(&mut session, "select count(*) from t group by b");
-    tidb_unistore::rpc::mock::set_mpp_version_error(None);
-    tidb_unistore::rpc::mock::set_mpp_version_error(Some(newest));
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/MppVersionError");
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/MppVersionError", &format!("return({})", newest)).unwrap();
     check(&mut session, "select count(*) from t group by b", &[&["4"]]);
-    tidb_unistore::rpc::mock::set_mpp_version_error(None);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/MppVersionError");
 }
 
 /// Go `TestCancelMppTasks`: a kill ends a query whose root stream hangs.
@@ -1900,7 +1898,7 @@ fn test_cancel_mpp_tasks() {
     // mock executor does not support use outer table as build side for outer
     // join, so need to force the inner table as build side
     rows(&mut session, "set tidb_opt_mpp_outer_join_fixed_build_side=1");
-    tidb_unistore::rpc::mock::set_mpp_recv_hang(true);
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/mppRecvHang", "return(true)").unwrap();
     let killer = session.routed_statement_memory().sql_killer().clone();
     let kill = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(1));
@@ -1909,7 +1907,7 @@ fn test_cancel_mpp_tasks() {
     let (code, _) = query_error(&mut session, "select count(*) from t as t1 , t where t1.a = t.a");
     assert_eq!(code, tidb_errno::errcode::ErrQueryInterrupted);
     kill.join().unwrap();
-    tidb_unistore::rpc::mock::set_mpp_recv_hang(false);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/mppRecvHang");
 }
 
 /// Go `TestMPPMemoryTracker`: a response waiting for the gather is charged
@@ -1925,9 +1923,9 @@ fn test_mpp_memory_tracker() {
     replica_available(&stack, &mut session, "t");
     rows(&mut session, "set tidb_enforce_mpp = on;");
     assert_eq!(displayed(rows(&mut session, "select * from t")), [["1"]]);
-    tidb_executor::local_mpp_coordinator::mock::set_test_mpp_oom_panic(true);
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/testMPPOOMPanic", "return(true)").unwrap();
     let (code, _) = query_error(&mut session, "select * from t");
-    tidb_executor::local_mpp_coordinator::mock::set_test_mpp_oom_panic(false);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/testMPPOOMPanic");
     assert_eq!(code, tidb_errno::errcode::ErrMemoryExceedForQuery);
 }
 
@@ -1950,9 +1948,9 @@ fn test_no_alive_tiflash_retry() {
     }
     rows(&mut session, &dml);
 
-    tidb_copr::batch_cop_tasks::mock::set_mock_no_alive_tiflash(Some(true));
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/copr/mockNoAliveTiFlash", "return(true)").unwrap();
     let count = displayed(rows(&mut session, "select count(*) from t"));
-    tidb_copr::batch_cop_tasks::mock::set_mock_no_alive_tiflash(None);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/store/copr/mockNoAliveTiFlash");
     assert_eq!(count, [["50"]]);
 }
 
@@ -2032,24 +2030,23 @@ fn store_err_table(stores: usize, connection_id: u64) -> (UnistoreClusterStack, 
 /// failing is the statement's error.
 #[test]
 fn test_store_err() {
-    use tidb_unistore::rpc::mock::{set_batch_cop_cancelled, set_batch_cop_rpc_err};
     let (_stack, mut session) = store_err_table(1, 2233);
 
-    set_batch_cop_cancelled(1);
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopCancelled", "1*return(true)").unwrap();
     let (_, message) = query_error(&mut session, "select count(*) from t");
     // Go `errors.Cause(err) == context.Canceled`, under this tree's storage
     // error text.
     assert_eq!(message, "storage error: context canceled");
 
-    set_batch_cop_rpc_err("tiflash0", 1);
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0", "1*return(\"tiflash0\")").unwrap();
     check(&mut session, "select count(*) from t", &[&["1"]]);
 
-    set_batch_cop_rpc_err("tiflash0", usize::MAX);
-    tidb_copr::batch_coprocessor::mock::set_reduce_cop_next_max_backoff(true);
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")").unwrap();
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/copr/ReduceCopNextMaxBackoff", "return(true)").unwrap();
     let (code, _) = query_error(&mut session, "select count(*) from t");
     assert_eq!(code, tidb_errno::errcode::ErrTiFlashServerTimeout);
-    tidb_copr::batch_coprocessor::mock::set_reduce_cop_next_max_backoff(false);
-    set_batch_cop_rpc_err("tiflash0", 0);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/store/copr/ReduceCopNextMaxBackoff");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0");
 }
 
 /// Go `TestStoreSwitchPeer`: a batch cop task whose store keeps failing is
@@ -2057,19 +2054,18 @@ fn test_store_err() {
 /// fails too.
 #[test]
 fn test_store_switch_peer() {
-    use tidb_unistore::rpc::mock::set_batch_cop_rpc_err;
     let (_stack, mut session) = store_err_table(2, 2234);
 
-    set_batch_cop_rpc_err("tiflash0", usize::MAX);
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")").unwrap();
     check(&mut session, "select count(*) from t", &[&["1"]]);
 
-    set_batch_cop_rpc_err("tiflash1", usize::MAX);
-    tidb_copr::batch_coprocessor::mock::set_reduce_cop_next_max_backoff(true);
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash1", "return(\"tiflash1\")").unwrap();
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/copr/ReduceCopNextMaxBackoff", "return(true)").unwrap();
     let (code, _) = query_error(&mut session, "select count(*) from t");
     assert_eq!(code, tidb_errno::errcode::ErrTiFlashServerTimeout);
-    tidb_copr::batch_coprocessor::mock::set_reduce_cop_next_max_backoff(false);
-    set_batch_cop_rpc_err("tiflash0", 0);
-    set_batch_cop_rpc_err("tiflash1", 0);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/store/copr/ReduceCopNextMaxBackoff");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash1");
 }
 
 /// Go server `TestTiFlashFallback`'s batch cop arm (`testFallbackWork`): a
@@ -2078,7 +2074,6 @@ fn test_store_switch_peer() {
 /// on with it, and the re-run without TiFlash answers from TiKV.
 #[test]
 fn test_tiflash_fallback_batch_cop() {
-    use tidb_unistore::rpc::mock::set_batch_cop_rpc_err;
     let (stack, mut session) = tiflash_session(1, 2235);
     rows(&mut session, "set @@session.tidb_allow_tiflash_cop=ON");
     rows(&mut session, "set tidb_cost_model_version=1");
@@ -2089,10 +2084,10 @@ fn test_tiflash_fallback_batch_cop() {
     rows(&mut session, &format!("insert into t values{}", values.join(",")));
     check(&mut session, "select count(*) from t", &[&["50"]]);
 
-    tidb_copr::batch_coprocessor::mock::set_reduce_cop_next_max_backoff(true);
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/copr/ReduceCopNextMaxBackoff", "return(true)").unwrap();
     rows(&mut session, "set @@tidb_allow_batch_cop=1");
     rows(&mut session, "set @@tidb_allow_mpp=0");
-    set_batch_cop_rpc_err("tiflash0", usize::MAX);
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")").unwrap();
     let sql = "select count(*) from t";
     rows(&mut session, "set @@tidb_allow_fallback_to_tikv=''");
     let (code, _) = query_error(&mut session, sql);
@@ -2104,11 +2099,11 @@ fn test_tiflash_fallback_batch_cop() {
     session.set_tiflash_fallback(true);
     check(&mut session, sql, &[&["50"]]);
     session.set_tiflash_fallback(false);
-    set_batch_cop_rpc_err("tiflash0", 0);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0");
 
     // Go `batchCopRecvTimeout`: a stream that ends in an error is the same
     // timeout.
-    tidb_unistore::rpc::mock::set_batch_cop_recv_timeout(true);
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/batchCopRecvTimeout", "return(true)").unwrap();
     rows(&mut session, "set @@tidb_allow_fallback_to_tikv=''");
     let (code, _) = query_error(&mut session, sql);
     assert!(!session.tiflash_fallback_allowed(code));
@@ -2118,8 +2113,8 @@ fn test_tiflash_fallback_batch_cop() {
     session.set_tiflash_fallback(true);
     check(&mut session, sql, &[&["50"]]);
     session.set_tiflash_fallback(false);
-    tidb_unistore::rpc::mock::set_batch_cop_recv_timeout(false);
-    tidb_copr::batch_coprocessor::mock::set_reduce_cop_next_max_backoff(false);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/batchCopRecvTimeout");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/store/copr/ReduceCopNextMaxBackoff");
 }
 
 /// Go `handleTaskOnce` and `handleStreamedBatchCopResponse`'s caller: a
@@ -2181,7 +2176,6 @@ fn a_tiflash_request_names_no_resource_group_without_resource_control_like_go() 
 /// re-executed, at most three times, and never under the TiFlash fallback.
 #[test]
 fn test_mpp_recovery() {
-    use tidb_executor::mpp_coordinator::mock;
 
     let (stack, mut session) = tiflash_session(2, 2207);
     rows(&mut session, "create table t(a int, b int)");
@@ -2200,58 +2194,58 @@ fn test_mpp_recovery() {
     rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
     let sql = "select * from t order by 1, 2";
 
-    mock::set_mpp_recovery_test_mock_enable(true);
-    mock::set_mpp_recovery_test_ignore_recovery_err(true);
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_recovery_test_mock_enable", "return").unwrap();
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_recovery_test_ignore_recovery_err", "return").unwrap();
     // Test different chunk size. And force one mpp err.
     {
-        mock::set_mpp_recovery_test_max_err_times(Some(1));
+        tidb_failpoint::enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_recovery_test_max_err_times", "return(1)").unwrap();
 
         rows(&mut session, "set @@tidb_max_chunk_size = default");
         assert_eq!(displayed(rows(&mut session, sql)), check_strs);
         rows(&mut session, "set @@tidb_max_chunk_size = 32");
         assert_eq!(displayed(rows(&mut session, sql)), check_strs);
 
-        mock::set_mpp_recovery_test_max_err_times(None);
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_recovery_test_max_err_times");
     }
 
     // Test exceeds max recovery times. Default max times is 3.
     {
-        mock::set_mpp_recovery_test_max_err_times(Some(5));
+        tidb_failpoint::enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_recovery_test_max_err_times", "return(5)").unwrap();
 
         rows(&mut session, "set @@tidb_max_chunk_size = 32");
         let (_, message) = query_error(&mut session, sql);
         assert!(message.contains("mock mpp err"), "{message}");
 
-        mock::set_mpp_recovery_test_max_err_times(None);
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_recovery_test_max_err_times");
     }
 
     {
         // When AllowFallbackToTiKV, mpp err recovery should be disabled.
         // So event we inject mock err multiple times, the query should be ok.
         rows(&mut session, "set @@tidb_allow_fallback_to_tikv = \"tiflash\"");
-        mock::set_mpp_recovery_test_max_err_times(Some(5));
+        tidb_failpoint::enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_recovery_test_max_err_times", "return(5)").unwrap();
 
         rows(&mut session, "set @@tidb_max_chunk_size = 32");
         assert_eq!(displayed(rows(&mut session, sql)), check_strs);
 
         rows(&mut session, "set @@tidb_allow_fallback_to_tikv = default");
-        mock::set_mpp_recovery_test_max_err_times(None);
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_recovery_test_max_err_times");
     }
 
     // Test hold logic. Default hold 4 * MaxChunkSize rows.
     {
-        mock::set_mpp_recovery_test_max_err_times(Some(0));
+        tidb_failpoint::enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_recovery_test_max_err_times", "return(0)").unwrap();
 
         rows(&mut session, "set @@tidb_max_chunk_size = 32");
         let expected_hold_size = 2;
-        mock::set_mpp_recovery_test_hold_size(Some(expected_hold_size));
+        tidb_failpoint::enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_recovery_test_hold_size", &format!("1*return({})", expected_hold_size)).unwrap();
         assert_eq!(displayed(rows(&mut session, sql)), check_strs);
-        mock::set_mpp_recovery_test_hold_size(None);
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_recovery_test_hold_size");
 
-        mock::set_mpp_recovery_test_max_err_times(None);
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_recovery_test_max_err_times");
     }
-    mock::set_mpp_recovery_test_ignore_recovery_err(false);
-    mock::set_mpp_recovery_test_mock_enable(false);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_recovery_test_ignore_recovery_err");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_recovery_test_mock_enable");
 
     {
         // We have 2 mock tiflash, but the table is small, so only 1 tiflash node is in computation.
@@ -2288,14 +2282,14 @@ fn test_mpp_goroutines_exit_from_errors() {
     // mock executor does not support use outer table as build side for outer
     // join, so need to force the inner table as build side
     rows(&mut session, "set tidb_opt_mpp_outer_join_fixed_build_side=1");
-    tidb_executor::local_mpp_coordinator::mock::set_mpp_non_root_task_error(true);
-    tidb_unistore::rpc::mock::set_mpp_recv_hang(true);
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mppNonRootTaskError", "return(true)").unwrap();
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/mppRecvHang", "return(true)").unwrap();
 
     // generate 2 root tasks, one will hang and another will return errors
     let (code, _) = query_error(&mut session, "select count(*) from t as t1 , t where t1.a = t.a");
     assert_eq!(code, tidb_errno::errcode::ErrTiFlashServerTimeout);
-    tidb_executor::local_mpp_coordinator::mock::set_mpp_non_root_task_error(false);
-    tidb_unistore::rpc::mock::set_mpp_recv_hang(false);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mppNonRootTaskError");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/mppRecvHang");
 }
 
 /// Go `TestTiflashPartitionTableScan`.
@@ -2327,10 +2321,10 @@ fn test_tiflash_partition_table_scan() {
 
     // test retry batch cop
     let busy_for_100ms = || {
-        tidb_unistore::rpc::mock::set_rpc_server_busy(true);
+        tidb_failpoint::enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcServerBusy", "return(true)").unwrap();
         std::thread::spawn(|| {
             std::thread::sleep(std::time::Duration::from_millis(100));
-            tidb_unistore::rpc::mock::set_rpc_server_busy(false);
+            tidb_failpoint::disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcServerBusy");
         })
     };
     // MPP
@@ -2345,4 +2339,139 @@ fn test_tiflash_partition_table_scan() {
     rows(&mut session, "set @@tidb_allow_batch_cop = 2;");
     assert_eq!(count(&mut session), two);
     wg.join().unwrap();
+}
+
+/// Go `config.UpdateGlobal` to a disaggregated TiFlash (with or without the
+/// AutoScaler) and its deferred restore.
+struct DisaggregatedTiFlash(std::sync::Arc<tidb_config::config_tree::config::Config>);
+
+impl DisaggregatedTiFlash {
+    fn update_global(use_auto_scaler: bool) -> Self {
+        let previous = tidb_config::config_tree::config::get_global_config();
+        let mut conf = (*previous).clone();
+        conf.disaggregated_tiflash = true;
+        conf.use_auto_scaler = use_auto_scaler;
+        tidb_config::config_tree::config::store_global_config(conf);
+        Self(previous)
+    }
+}
+
+impl Drop for DisaggregatedTiFlash {
+    fn drop(&mut self) {
+        tidb_config::config_tree::config::store_global_config((*self.0).clone());
+    }
+}
+
+/// The table Go's disaggregated tests read through TiFlash only.
+fn disaggregated_table(stack: &UnistoreClusterStack, session: &mut Session) {
+    rows(session, "drop table if exists t");
+    rows(session, "create table t(c1 int)");
+    rows(session, "alter table t set tiflash replica 1");
+    replica_available(stack, session, "t");
+    rows(session, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
+    // unistore does not support later materialization
+    rows(session, "set @@session.tidb_opt_enable_late_materialization=0");
+}
+
+/// Go `TestDisaggregatedTiFlash`.
+#[test]
+fn test_disaggregated_tiflash() {
+    let _config = DisaggregatedTiFlash::update_global(true);
+    tidb_tiflashcompute::init_global_topo_fetcher(tidb_config::tiflash::TEST_AS_STR, "tmpAddr", "tmpClusterID", false)
+        .unwrap();
+    let (stack, mut session) = tiflash_session(2, 2236);
+    disaggregated_table(&stack, &mut session);
+
+    let (_, message) = query_error(&mut session, "select * from t;");
+    // Expect error, because TestAutoScaler return empty topo.
+    assert!(
+        message.contains("Cannot find proper topo to dispatch MPPTask: topo from AutoScaler is empty"),
+        "{message}"
+    );
+
+    tidb_tiflashcompute::init_global_topo_fetcher(tidb_config::tiflash::AWS_AS_STR, "tmpAddr", "tmpClusterID", false)
+        .unwrap();
+    let (code, message) = query_error(&mut session, "select * from t;");
+    // Expect error, because AWSAutoScaler is not setup, so http request will fail.
+    // Go's `[util:1815]Internal : ...` is its terror's text; the wire carries
+    // the code and the message.
+    assert_eq!((code, message.as_str()), (1815, "Internal : get tiflash_compute topology failed"));
+}
+
+/// Go `TestDisaggregatedTiFlashNonAutoScaler`.
+#[test]
+fn test_disaggregated_tiflash_non_auto_scaler() {
+    let _config = DisaggregatedTiFlash::update_global(false);
+    // Setting globalTopoFetcher to nil to can make sure cannot fetch topo from AutoScaler.
+    let err = tidb_tiflashcompute::init_global_topo_fetcher(
+        tidb_config::tiflash::INVALID_AS_STR,
+        "tmpAddr",
+        "tmpClusterID",
+        false,
+    )
+    .unwrap_err();
+    assert!(err.contains("unexpected topo fetch type. expect: mock or aws or gcp, got invalid"), "{err}");
+
+    let (stack, mut session) = tiflash_session(2, 2237);
+    disaggregated_table(&stack, &mut session);
+    let (_, message) = query_error(&mut session, "select * from t;");
+    // This error message means we use PD instead of AutoScaler.
+    assert!(message.contains("tiflash_compute node is unavailable"), "{message}");
+}
+
+/// Go `TestTiFlashComputeDispatchPolicy`.
+#[test]
+fn test_tiflash_compute_dispatch_policy() {
+    let _config = DisaggregatedTiFlash::update_global(false);
+    let (stack, mut session) = tiflash_session(2, 2238);
+
+    // Default policy is 'consistent_hash'
+    check(&mut session, "select @@tiflash_compute_dispatch_policy", &[&["consistent_hash"]]);
+
+    // tiflash_compute_dispatch_policy is global variable.
+    rows(&mut session, "set @@session.tiflash_compute_dispatch_policy = 'consistent_hash';");
+    check(&mut session, "select @@tiflash_compute_dispatch_policy", &[&["consistent_hash"]]);
+    rows(&mut session, "set @@session.tiflash_compute_dispatch_policy = 'round_robin';");
+    check(&mut session, "select @@tiflash_compute_dispatch_policy", &[&["round_robin"]]);
+    let invalid = "unexpected tiflash_compute dispatch policy, expect [consistent_hash round_robin], got ";
+    let (_, message) = query_error(&mut session, "set @@session.tiflash_compute_dispatch_policy = 'error_dispatch_policy';");
+    assert_eq!(message, format!("{invalid}error_dispatch_policy"));
+
+    // Invalid values.
+    let (_, message) = query_error(&mut session, "set global tiflash_compute_dispatch_policy = 'error_dispatch_policy';");
+    assert_eq!(message, format!("{invalid}error_dispatch_policy"));
+    let (_, message) = query_error(&mut session, "set global tiflash_compute_dispatch_policy = '';");
+    assert_eq!(message, invalid);
+    let (_, message) = query_error(&mut session, "set global tiflash_compute_dispatch_policy = 100;");
+    assert_eq!(message, format!("{invalid}100"));
+
+    disaggregated_table(&stack, &mut session);
+    tidb_tiflashcompute::init_global_topo_fetcher(tidb_config::tiflash::TEST_AS_STR, "tmpAddr", "tmpClusterID", false)
+        .unwrap();
+
+    // Valid values.
+    let which = "github.com/pingcap/tidb/pkg/store/copr/testWhichDispatchPolicy";
+    for (connection_id, use_as) in [(2239, true), (2240, false)] {
+        let _config = DisaggregatedTiFlash::update_global(use_as);
+        for p in tidb_tiflashcompute::DispatchPolicy::valid_names() {
+            rows(&mut session, &format!("set global tiflash_compute_dispatch_policy = '{p}';"));
+            let mut tk1 = stack.factory.open_session(session_context(connection_id)).unwrap();
+            rows(&mut tk1, "use test");
+            check(&mut tk1, "select @@tiflash_compute_dispatch_policy", &[&[p]]);
+            let _fp = tidb_failpoint::enable_for_test(which, &format!("return(\"{p}\")"));
+            rows(&mut tk1, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
+            rows(&mut tk1, "set @@session.tidb_opt_enable_late_materialization=0");
+            let (_, message) = query_error(&mut tk1, "select * from t;");
+            if use_as {
+                // Expect error, because TestAutoScaler return empty topo.
+                assert!(
+                    message.contains("Cannot find proper topo to dispatch MPPTask: topo from AutoScaler is empty"),
+                    "{message}"
+                );
+            } else {
+                // This error message means we use PD instead of AutoScaler.
+                assert!(message.contains("tiflash_compute node is unavailable"), "{message}");
+            }
+        }
+    }
 }

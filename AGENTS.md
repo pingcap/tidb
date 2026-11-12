@@ -49,5 +49,6 @@ Go unit tests in a package that uses failpoints MUST enable failpoints before th
 
 - Multi-step work uses an ExecPlan (`PLANS.md`), kept current as work proceeds.
 - `docs/agents/architecture-index.md` maps subsystems to paths. Skills live in `.agents/skills`.
+- Rust ports of Go failpoints use `tidb-failpoint` with Go's full failpoint path (`github.com/pingcap/tidb/pkg/<pkg>/<name>`): `tidb_failpoint::eval`/`inject` at the Go `Inject` site, `tidb_failpoint::enable_for_test(path, terms)` with Go's terms in the test. Do not hand-write seam modules.
 - DDL changes: treat `docs/agents/ddl/*` as hypotheses to verify in code, and update them when the code differs.
 - When finishing, report what changed, the exact verification commands, and what was not verified.

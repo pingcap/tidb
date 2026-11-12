@@ -15,6 +15,7 @@ workspace = true
 test-util = []
 
 [dependencies]
+tidb-failpoint = { path = "../tidb-failpoint" }
 tidb-domain-infosync = { path = "../tidb-domain-infosync" }
 tidb-unistore-tikv = { path = "../tidb-unistore-tikv" }
 tidb-unistore-cophandler = { path = "../tidb-unistore-cophandler" }

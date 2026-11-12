@@ -495,70 +495,6 @@ impl MppGatherResponse for MppTaskResponses {
 pub type MppReopen = Box<dyn FnMut() -> Result<Box<dyn MppGatherResponse>, QueryResponseError> + Send>;
 pub use crate::recovery_handler::MppRecover;
 
-/// Go's failpoints in `executor_with_retry.go`, as seams.
-#[cfg(any(test, feature = "test-util"))]
-pub mod mock {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Mutex, PoisonError};
-
-    static MPP_RECOVERY_TEST_MOCK_ENABLE: AtomicBool = AtomicBool::new(false);
-
-    /// Go `failpoint.Enable("mpp_recovery_test_mock_enable", "return()")`:
-    /// recovery is enabled wherever the TiFlash fallback is not allowed.
-    pub fn set_mpp_recovery_test_mock_enable(enabled: bool) {
-        MPP_RECOVERY_TEST_MOCK_ENABLE.store(enabled, Ordering::Release);
-    }
-
-    pub(super) fn mpp_recovery_test_mock_enable() -> bool {
-        MPP_RECOVERY_TEST_MOCK_ENABLE.load(Ordering::Acquire)
-    }
-
-    static MPP_RECOVERY_TEST_IGNORE_RECOVERY_ERR: AtomicBool = AtomicBool::new(false);
-
-    /// Go `failpoint.Enable("mpp_recovery_test_ignore_recovery_err",
-    /// "return()")`: a mocked mpp error's missing handler is a recovery.
-    pub fn set_mpp_recovery_test_ignore_recovery_err(enabled: bool) {
-        MPP_RECOVERY_TEST_IGNORE_RECOVERY_ERR.store(enabled, Ordering::Release);
-    }
-
-    pub(super) fn mpp_recovery_test_ignore_recovery_err() -> bool {
-        MPP_RECOVERY_TEST_IGNORE_RECOVERY_ERR.load(Ordering::Acquire)
-    }
-
-    static MPP_RECOVERY_TEST_MAX_ERR_TIMES: Mutex<Option<u32>> = Mutex::new(None);
-
-    /// Go `failpoint.Enable("mpp_recovery_test_max_err_times", "return(n)")`:
-    /// every held read fails until `n` recoveries ran.
-    pub fn set_mpp_recovery_test_max_err_times(times: Option<u32>) {
-        *MPP_RECOVERY_TEST_MAX_ERR_TIMES
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = times;
-    }
-
-    pub(super) fn mpp_recovery_test_max_err_times() -> Option<u32> {
-        *MPP_RECOVERY_TEST_MAX_ERR_TIMES
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    static MPP_RECOVERY_TEST_HOLD_SIZE: Mutex<Option<usize>> = Mutex::new(None);
-
-    /// Go `failpoint.Enable("mpp_recovery_test_hold_size", "1*return(n)")`:
-    /// the next hold must end with `n` responses. It executes once.
-    pub fn set_mpp_recovery_test_hold_size(size: Option<usize>) {
-        *MPP_RECOVERY_TEST_HOLD_SIZE
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = size;
-    }
-
-    pub(super) fn mpp_recovery_test_hold_size() -> Option<usize> {
-        MPP_RECOVERY_TEST_HOLD_SIZE
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take()
-    }
-}
-
 /// Go `ExecutorWithRetry`: recovers an mpp error if possible and retries the
 /// MPP task. It attempts to hold the results of MPP; while it holds, an
 /// error starts a recovery, which discards the held results and re-executes
@@ -599,8 +535,7 @@ impl ExecutorWithRetry {
         #[allow(unused_mut)]
         let mut enable_mpp_recovery = disagg_tiflash_with_auto_scaler && !allow_tiflash_fallback;
 
-        #[cfg(any(test, feature = "test-util"))]
-        if mock::mpp_recovery_test_mock_enable() && !allow_tiflash_fallback {
+        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_recovery_test_mock_enable").is_some() && !allow_tiflash_fallback {
             enable_mpp_recovery = true;
         }
 
@@ -642,9 +577,8 @@ impl ExecutorWithRetry {
             let mut resp = self.coord.next();
 
             // Mock recovery n times.
-            #[cfg(any(test, feature = "test-util"))]
-            if mock::mpp_recovery_test_max_err_times()
-                .is_some_and(|force_err_cnt| self.mpp_err_recovery.recovery_cnt() < force_err_cnt)
+            if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_recovery_test_max_err_times")
+                .is_some_and(|force_err_cnt| i64::from(self.mpp_err_recovery.recovery_cnt()) < force_err_cnt.int())
             {
                 resp = Err(QueryResponseError::Source("mock mpp error".to_owned()));
             }
@@ -653,7 +587,6 @@ impl ExecutorWithRetry {
                 Err(mpp_err) => {
                     // The statement's own quota or KILL is terminal.
                     mpp_memory_error(&self.memory)?;
-                    #[allow(unused_mut)]
                     let mut recovery_err = self
                         .mpp_err_recovery
                         .recovery(&RecoveryInfo {
@@ -663,8 +596,7 @@ impl ExecutorWithRetry {
                         .err();
 
                     // Mock recovery succeed, ignore no recovery handler err.
-                    #[cfg(any(test, feature = "test-util"))]
-                    if mock::mpp_recovery_test_ignore_recovery_err() {
+                    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_recovery_test_ignore_recovery_err").is_some() {
                         let recovery = recovery_err
                             .as_deref()
                             .expect("mocked mpp err should got recovery err");
@@ -692,11 +624,10 @@ impl ExecutorWithRetry {
             }
         }
 
-        #[cfg(any(test, feature = "test-util"))]
-        if let Some(num) = mock::mpp_recovery_test_hold_size() {
+        if let Some(num) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_recovery_test_hold_size") {
             // Note: this failpoint only execute once.
             let cur_rows = self.mpp_err_recovery.num_hold_resp();
-            assert!(cur_rows == num, "unexpected holding rows, cur: {cur_rows}");
+            assert!(cur_rows as i64 == num.int(), "unexpected holding rows, cur: {cur_rows}");
         }
         Ok(())
     }

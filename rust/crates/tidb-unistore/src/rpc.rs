@@ -49,136 +49,8 @@ use crate::cluster::Cluster;
 use tidb_unistore_cophandler::mpp_task::{MppCtx, MppRpcClient, MppTaskHandler};
 use tidb_unistore_tikv::kv_handler::{KvHandler, SharedDbReader};
 
-/// Go's `failpoint.Inject` sites of `SendRequest` and
-/// `mockMPPConnectionClient.Recv`.
-#[cfg(any(test, feature = "test-util"))]
-pub mod mock {
-    use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
-
-    static MPP_DISPATCH_TIMEOUT: AtomicUsize = AtomicUsize::new(0);
-    static MPP_CONN_TIMEOUT: AtomicBool = AtomicBool::new(false);
-    static MPP_VERSION_ERROR: AtomicI64 = AtomicI64::new(i64::MIN);
-    static MPP_RECV_TIMEOUT: AtomicI64 = AtomicI64::new(i64::MIN);
-    static MPP_RECV_HANG: AtomicBool = AtomicBool::new(false);
-    static RPC_SERVER_BUSY: AtomicBool = AtomicBool::new(false);
-    static BATCH_COP_CANCELLED: AtomicUsize = AtomicUsize::new(0);
-    static BATCH_COP_RPC_ERR: std::sync::Mutex<Vec<(String, usize)>> = std::sync::Mutex::new(Vec::new());
-
-    /// Go `failpoint.Enable("rpcServerBusy", "return(true)")`: every request
-    /// answers `GenRegionErrorResp(req, ServerIsBusy)`.
-    pub fn set_rpc_server_busy(enabled: bool) {
-        RPC_SERVER_BUSY.store(enabled, Ordering::Release);
-    }
-
-    pub(super) fn rpc_server_busy() -> bool {
-        RPC_SERVER_BUSY.load(Ordering::Acquire)
-    }
-
-    /// Go `failpoint.Enable("BatchCopCancelled", "<times>*return(true)")`:
-    /// the next `times` batch coprocessor requests are canceled; zero
-    /// disables it.
-    pub fn set_batch_cop_cancelled(times: usize) {
-        BATCH_COP_CANCELLED.store(times, Ordering::Release);
-    }
-
-    pub(super) fn batch_cop_cancelled() -> bool {
-        BATCH_COP_CANCELLED
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |times| times.checked_sub(1))
-            .is_ok()
-    }
-
-    static BATCH_COP_RECV_TIMEOUT: AtomicBool = AtomicBool::new(false);
-
-    /// Go `failpoint.Enable("batchCopRecvTimeout", "return(true)")`: a batch
-    /// coprocessor stream's `Recv` answers `context.Canceled` once its
-    /// responses are read, where it would answer `io.EOF`.
-    pub fn set_batch_cop_recv_timeout(enabled: bool) {
-        BATCH_COP_RECV_TIMEOUT.store(enabled, Ordering::Release);
-    }
-
-    pub(super) fn batch_cop_recv_timeout() -> bool {
-        BATCH_COP_RECV_TIMEOUT.load(Ordering::Acquire)
-    }
-
-    /// Go `failpoint.Enable("BatchCopRpcErr<addr>", "<times>*return(\"<addr>\")")`:
-    /// the next `times` batch coprocessor requests to the store at `addr`
-    /// fail with "rpc error"; `usize::MAX` is the uncounted `return`, zero
-    /// disables it.
-    pub fn set_batch_cop_rpc_err(addr: &str, times: usize) {
-        let mut stores = BATCH_COP_RPC_ERR.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        stores.retain(|(store, _)| store != addr);
-        stores.push((addr.to_owned(), times));
-    }
-
-    pub(super) fn batch_cop_rpc_err(addr: &str) -> bool {
-        let mut stores = BATCH_COP_RPC_ERR.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let Some((_, times)) = stores.iter_mut().find(|(store, times)| store == addr && *times > 0) else {
-            return false;
-        };
-        if *times != usize::MAX {
-            *times -= 1;
-        }
-        true
-    }
-
-    /// Go `failpoint.Enable("mppDispatchTimeout", "<times>*return(true)")`:
-    /// the next `times` dispatches fail with "rpc error"; zero disables it.
-    pub fn set_mpp_dispatch_timeout(times: usize) {
-        MPP_DISPATCH_TIMEOUT.store(times, Ordering::Release);
-    }
-
-    pub(super) fn mpp_dispatch_timeout() -> bool {
-        MPP_DISPATCH_TIMEOUT
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |times| times.checked_sub(1))
-            .is_ok()
-    }
-
-    /// Go `failpoint.Enable("mppConnTimeout", "return(true)")`: every
-    /// connection fails with "rpc error".
-    pub fn set_mpp_conn_timeout(enabled: bool) {
-        MPP_CONN_TIMEOUT.store(enabled, Ordering::Release);
-    }
-
-    pub(super) fn mpp_conn_timeout() -> bool {
-        MPP_CONN_TIMEOUT.load(Ordering::Acquire)
-    }
-
-    /// Go `failpoint.Enable("MppVersionError", "return(<version>)")`: a
-    /// dispatch or connection whose task's MPP version is below `version`
-    /// is canceled.
-    pub fn set_mpp_version_error(version: Option<i64>) {
-        MPP_VERSION_ERROR.store(version.unwrap_or(i64::MIN), Ordering::Release);
-    }
-
-    pub(super) fn mpp_version_error(versions: &[i64]) -> bool {
-        let v = MPP_VERSION_ERROR.load(Ordering::Acquire);
-        versions.iter().any(|version| v > *version)
-    }
-
-    /// Go `failpoint.Enable("mppRecvTimeout", "return(<task id>)")`: the
-    /// stream of that sender task is canceled.
-    pub fn set_mpp_recv_timeout(task_id: Option<i64>) {
-        MPP_RECV_TIMEOUT.store(task_id.unwrap_or(i64::MIN), Ordering::Release);
-    }
-
-    pub(super) fn mpp_recv_timeout(task_id: i64) -> bool {
-        MPP_RECV_TIMEOUT.load(Ordering::Acquire) == task_id
-    }
-
-    /// Go `failpoint.Enable("mppRecvHang", "return(true)")`: every stream
-    /// hangs until its context is done.
-    pub fn set_mpp_recv_hang(enabled: bool) {
-        MPP_RECV_HANG.store(enabled, Ordering::Release);
-    }
-
-    pub(super) fn mpp_recv_hang() -> bool {
-        MPP_RECV_HANG.load(Ordering::Acquire)
-    }
-}
-
 /// Client-go `tikvrpc.GenRegionErrorResp`: the response of `req`'s command
 /// carrying only `e`; a command outside its switch is an error.
-#[cfg(any(test, feature = "test-util"))]
 fn gen_region_error_resp(
     req: &dyn Request,
     e: tikv_client::proto::errorpb::Error,
@@ -510,8 +382,7 @@ impl MppRpcClient for RpcClient {
 impl tikv_client::tikv::Client for RpcClient {
     /// Go `RPCClient.SendRequest`.
     async fn dispatch(&self, req: &dyn Request) -> Result<Box<dyn Any>> {
-        #[cfg(any(test, feature = "test-util"))]
-        if mock::rpc_server_busy() {
+        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcServerBusy").is_some_and(|val| val.bool()) {
             use tikv_client::proto::errorpb;
             return gen_region_error_resp(
                 req,
@@ -607,12 +478,12 @@ impl tikv_client::tikv::Client for RpcClient {
         }
         serve!(kvrpcpb::BufferBatchGetRequest, kv_buffer_batch_get);
         if let Some(request) = any.downcast_ref::<BatchCoprocessorStreamRequest>() {
-            #[cfg(any(test, feature = "test-util"))]
-            if mock::batch_cop_cancelled() {
+            if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopCancelled").is_some_and(|val| val.bool()) {
                 return Err(Error::ContextCanceled);
             }
-            #[cfg(any(test, feature = "test-util"))]
-            if mock::batch_cop_rpc_err(&self.addr) {
+            if tidb_failpoint::eval(&format!("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErr{}", self.addr))
+                .is_some_and(|value| value.string() == self.addr)
+            {
                 return Err(Error::StringError("rpc error".to_owned()));
             }
             // Go `handleBatchCop`: the server's responses, collected while it
@@ -625,25 +496,24 @@ impl tikv_client::tikv::Client for RpcClient {
             if batch_responses.is_empty() {
                 return Err(Error::StringError("EOF".to_owned()));
             }
-            #[cfg_attr(not(any(test, feature = "test-util")), allow(unused_mut))]
             let mut response = BatchCoprocessorStreamResponse::from_responses(batch_responses);
-            #[cfg(any(test, feature = "test-util"))]
-            if mock::batch_cop_recv_timeout() {
+            if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/store/mockstore/unistore/batchCopRecvTimeout").is_some_and(|val| val.bool()) {
                 response = response.with_recv_err(Error::ContextCanceled);
             }
             return Ok(Box::new(response));
         }
         if let Some(request) = any.downcast_ref::<MppStreamRequest>() {
-            #[cfg(any(test, feature = "test-util"))]
             {
                 let version = |meta: &Option<mpp::TaskMeta>| meta.as_ref().map_or(0, |meta| meta.mpp_version);
-                if mock::mpp_conn_timeout() {
+                if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/store/mockstore/unistore/mppConnTimeout").is_some_and(|val| val.bool()) {
                     return Err(Error::StringError("rpc error".to_owned()));
                 }
-                if mock::mpp_version_error(&[version(&request.0.receiver_meta), version(&request.0.sender_meta)]) {
+                if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/store/mockstore/unistore/MppVersionError").is_some_and(|val| {
+                    val.int() > version(&request.0.receiver_meta) || val.int() > version(&request.0.sender_meta)
+                }) {
                     return Err(Error::ContextCanceled);
                 }
-                if mock::mpp_recv_hang() {
+                if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/store/mockstore/unistore/mppRecvHang").is_some_and(|val| val.bool()) {
                     // Go loops until `ctx.Done()`: the caller dropping this
                     // send is the context's end.
                     return std::future::pending().await;
@@ -660,22 +530,23 @@ impl tikv_client::tikv::Client for RpcClient {
             .await
             .map_err(|error| Error::StringError(error.to_string()))?
             .map_err(Error::StringError)?;
-            #[cfg_attr(not(any(test, feature = "test-util")), allow(unused_mut))]
             let mut response = MppStreamResponse::from_packets(packets);
             // Go `mockMPPConnectionClient.Recv`: once the packets are read.
-            #[cfg(any(test, feature = "test-util"))]
-            if mock::mpp_recv_timeout(request.sender_meta.as_ref().map_or(0, |meta| meta.task_id)) {
+            if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/store/mockstore/unistore/mppRecvTimeout")
+                .is_some_and(|val| val.int() == request.sender_meta.as_ref().map_or(0, |meta| meta.task_id))
+            {
                 response = response.with_recv_err(Error::ContextCanceled);
             }
             return Ok(Box::new(response));
         }
         if let Some(request) = any.downcast_ref::<mpp::DispatchTaskRequest>() {
-            #[cfg(any(test, feature = "test-util"))]
             {
-                if mock::mpp_dispatch_timeout() {
+                if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/store/mockstore/unistore/mppDispatchTimeout").is_some_and(|val| val.bool()) {
                     return Err(Error::StringError("rpc error".to_owned()));
                 }
-                if mock::mpp_version_error(&[request.meta.as_ref().map_or(0, |meta| meta.mpp_version)]) {
+                if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/store/mockstore/unistore/MppVersionError")
+                    .is_some_and(|val| val.int() > request.meta.as_ref().map_or(0, |meta| meta.mpp_version))
+                {
                     return Err(Error::ContextCanceled);
                 }
             }

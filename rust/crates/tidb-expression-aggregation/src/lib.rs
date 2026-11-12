@@ -224,8 +224,6 @@ pub use agg_to_pb::{agg_func_to_pb_expr, agg_function_mode_to_pb, pb_agg_func_mo
 pub use base_func::{approx_percentile_percent, AggDescError, BaseFuncDesc};
 pub use descriptor::{AggFuncDesc, ByItems};
 pub use dist::{DistAggregate, DistAggregateError, DistAggregateState, DistAggregator};
-#[cfg(any(test, feature = "test-util"))]
-pub use explain::mock;
 pub use explain::{explain_agg_func_normalized, show_agg_mode};
 pub use window_func::{need_frame, use_default_frame, WindowFrameDefault, WindowFuncDesc};
 

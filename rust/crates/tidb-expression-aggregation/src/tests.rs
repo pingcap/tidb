@@ -1221,9 +1221,9 @@ fn explain_renders_distinct_order_by_and_the_separator() {
 #[test]
 fn explain_agg_func_shows_the_mode_under_show_agg_mode() {
     let count = desc(names::COUNT, vec![col(0, FieldTypeCode::Long)]);
-    crate::mock::set_show_agg_mode(true);
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/expression/aggregation/show-agg-mode", "return(true)").unwrap();
     assert!(explain_agg_func_normalized(&count).starts_with("count(complete,"));
-    crate::mock::set_show_agg_mode(false);
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/expression/aggregation/show-agg-mode");
 }
 
 // ---------------------------------------------------------------------

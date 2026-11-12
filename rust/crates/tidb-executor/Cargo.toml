@@ -19,6 +19,7 @@ test-util = [
 ]
 
 [dependencies]
+tidb-failpoint = { path = "../tidb-failpoint" }
 tidb-cpuprofile = { path = "../tidb-cpuprofile" }
 tidb-temptable = { path = "../tidb-temptable" }
 tidb-planner-core-rule = { path = "../tidb-planner-core-rule" }
@@ -203,6 +204,7 @@ tidb-vardef = { path = "../tidb-vardef" }
 tracing = "0.1"
 
 [dev-dependencies]
+tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
 tidb-planner-util = { path = "../tidb-planner-util" }
 tidb-metabuild = { path = "../tidb-metabuild" }
 tidb-session = { path = "../tidb-session" }

@@ -64,24 +64,6 @@ impl MppContext for RequestContext {
     fn consume(&self, _bytes: i64) {}
 }
 
-/// Go's `failpoint.Inject` sites of the batch coprocessor iterator.
-#[cfg(any(test, feature = "test-util"))]
-pub mod mock {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    static REDUCE_COP_NEXT_MAX_BACKOFF: AtomicBool = AtomicBool::new(false);
-
-    /// Go `failpoint.Enable("ReduceCopNextMaxBackoff", "return(true)")`: a
-    /// batch task's backoffer has two milliseconds of sleep.
-    pub fn set_reduce_cop_next_max_backoff(enabled: bool) {
-        REDUCE_COP_NEXT_MAX_BACKOFF.store(enabled, Ordering::Release);
-    }
-
-    pub(super) fn reduce_cop_next_max_backoff() -> bool {
-        REDUCE_COP_NEXT_MAX_BACKOFF.load(Ordering::Acquire)
-    }
-}
-
 /// A registered storage error as the response carries it.
 fn sql_error(error: &tidb_terror::TerrorError) -> QueryResponseError {
     QueryResponseError::Sql {
@@ -107,12 +89,11 @@ struct BatchCopWorker<S: tikv_client::PdClient> {
     resp_chan: tokio::sync::mpsc::Sender<Result<QueryResultSubset, QueryResponseError>>,
 }
 
-/// One physical table's ranges as the task builder takes them.
-type Ranges = Vec<(tidb_txnkv::Key, tidb_txnkv::Key)>;
+use crate::batch_cop_tasks::Ranges;
 
 /// Go `buildBatchCopTasksForNonPartitionedTable` (`partition_ids` empty) or
 /// `buildBatchCopTasksForPartitionedTable` as the batch coprocessor calls
-/// them: not MPP, no continuity balance.
+/// them: not MPP, no continuity balance, Go's `DispatchPolicyInvalid`.
 async fn build_batch_cop_tasks<S: tikv_client::PdClient>(
     store: &TikvStore<S>,
     req: &KvRequestMetadata,
@@ -121,21 +102,21 @@ async fn build_batch_cop_tasks<S: tikv_client::PdClient>(
     ranges_for_each_physical_table: &[Ranges],
     partition_ids: &[i64],
 ) -> Result<Vec<MppStoreTask>, String> {
-    let (tasks, _warnings) = crate::cop_store::with_statement_kv_context(
+    let (tasks, _warnings) = crate::batch_cop_tasks::build_batch_cop_tasks(
+        store,
+        ranges_for_each_physical_table,
+        partition_ids,
+        ctx,
+        false,
+        false,
+        0,
+        tidb_tiflashcompute::DispatchPolicy::Invalid,
+        req.tiflash_replica_read,
         kv_context,
-        crate::batch_cop_tasks::build_batch_cop_tasks_core(
-            store,
-            ranges_for_each_physical_table,
-            ctx,
-            false,
-            false,
-            0,
-            req.tiflash_replica_read,
-            kv_context,
-        ),
     )
-    .await?;
-    Ok(crate::batch_cop_tasks::store_tasks(tasks, partition_ids))
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(tasks)
 }
 
 /// Go `CopClient.sendBatch`.
@@ -231,8 +212,7 @@ impl<S: tikv_client::PdClient> BatchCopWorker<S> {
     async fn handle_task(&self, task: MppStoreTask) {
         // Go `backoff.NewBackofferWithVars(ctx, CopNextMaxBackoff, b.vars)`.
         let mut bo = RegionBackoffBudget::campaign_default();
-        #[cfg(any(test, feature = "test-util"))]
-        if mock::reduce_cop_next_max_backoff() {
+        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/store/copr/ReduceCopNextMaxBackoff").is_some_and(|val| val.bool()) {
             bo = RegionBackoffBudget::new(std::time::Duration::from_millis(2));
         }
         let mut tasks = vec![task];

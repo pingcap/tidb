@@ -25,11 +25,16 @@
 //! * Partitioned tables (`buildBatchCopTasksForPartitionedTable`): the MPP
 //!   lowering reads one physical table, so every region has partition index
 //!   zero.
-//! * Disaggregated TiFlash (`buildBatchCopTasksConsistentHash`) lives in
-//!   `mpp_client`.
+//! * Disaggregated TiFlash (`buildBatchCopTasksConsistentHash` and
+//!   `buildBatchCopTasksConsistentHashForPD`): each region goes to the
+//!   tiflash_compute node the dispatch policy picks.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::Arc;
 use std::time::Duration;
+
+use tidb_tiflashcompute::{DispatchPolicy, TopologyError};
+use tidb_txnkv::MppContext;
 
 use tidb_txnkv::driver::tikv_store::TikvStore;
 use tidb_txnkv::retry::RegionBackoffBudget;
@@ -39,6 +44,12 @@ use tikv_client::TiFlashLabelFilter;
 
 /// Go `copBuildTaskMaxBackoff`.
 const COP_BUILD_TASK_MAX_BACKOFF: Duration = Duration::from_millis(5_000);
+
+/// Go `fetchTopoMaxBackoff`.
+const FETCH_TOPO_MAX_BACKOFF: Duration = Duration::from_millis(20_000);
+
+/// One physical table's ranges as the task builder takes them.
+pub(crate) type Ranges = Vec<(tidb_txnkv::Key, tidb_txnkv::Key)>;
 
 /// Go `balanceContinuousRegionCount` as `ConstructMPPTasks` passes it.
 pub(crate) const BALANCE_CONTINUOUS_REGION_COUNT: usize = 20;
@@ -89,16 +100,273 @@ pub(crate) struct LocatedRegion {
     pub(crate) partition_index: i64,
 }
 
+/// Go `buildBatchCopTasksForNonPartitionedTable` (`partition_ids` empty) and
+/// `buildBatchCopTasksForPartitionedTable`: the tasks over each physical
+/// table's ranges, and the warnings Go's `appendWarning` receives.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn build_batch_cop_tasks<S: tikv_client::PdClient>(
+    store: &TikvStore<S>,
+    ranges_for_each_physical_table: &[Ranges],
+    partition_ids: &[i64],
+    memory: &Arc<dyn MppContext>,
+    is_mpp: bool,
+    balance_with_continuity: bool,
+    balance_continuous_region_count: usize,
+    dispatch_policy: DispatchPolicy,
+    tiflash_replica_read_policy: ReplicaRead,
+    kv_context: &tidb_txnkv::StatementKvContext,
+) -> Result<(Vec<tidb_txnkv::MppStoreTask>, Vec<String>), TopologyError> {
+    let config = tidb_config::config_tree::config::get_global_config();
+    let build = async {
+        if !config.disaggregated_tiflash {
+            return Ok(build_batch_cop_tasks_core(
+                store,
+                ranges_for_each_physical_table,
+                memory,
+                is_mpp,
+                balance_with_continuity,
+                balance_continuous_region_count,
+                tiflash_replica_read_policy,
+                kv_context,
+            )
+            .await?);
+        }
+        let tasks = if config.use_auto_scaler {
+            build_batch_cop_tasks_consistent_hash(
+                store,
+                ranges_for_each_physical_table,
+                memory,
+                kv_context,
+                dispatch_policy,
+            )
+            .await?
+        } else {
+            // todo: remove this after AutoScaler is stable.
+            build_batch_cop_tasks_consistent_hash_for_pd(
+                store,
+                ranges_for_each_physical_table,
+                memory,
+                kv_context,
+                dispatch_policy,
+            )
+            .await?
+        };
+        Ok::<_, TopologyError>((tasks, Vec::new()))
+    };
+    let (tasks, warnings) = crate::cop_store::with_statement_kv_context(kv_context, build).await?;
+    Ok((store_tasks(tasks, partition_ids), warnings))
+}
+
+/// Go `bo.Backoff(tikv.BoTiFlashRPC(), err)`: `err` once the budget is spent
+/// or the statement stops.
+async fn backoff_tiflash_rpc(
+    bo: &mut RegionBackoffBudget,
+    memory: &dyn MppContext,
+    err: String,
+) -> Result<(), String> {
+    let delay = bo.next_delay(tikv_client::retry::BO_TIFLASH_RPC).map_err(|_| err)?;
+    let waited = crate::mpp_client::mpp_retry_wait(memory, delay).await;
+    bo.finish_wait(waited.is_ok());
+    waited
+}
+
+/// Go's `SplitKeyRangesByLocations` loop of the consistent-hash builders:
+/// each physical table's regions, tagged with the table's index.
+fn split_ranges_for_each_physical_table<S: tikv_client::PdClient>(
+    store: &TikvStore<S>,
+    ranges_for_each_physical_table: &[Ranges],
+    memory: &Arc<dyn MppContext>,
+    kv_context: &tidb_txnkv::StatementKvContext,
+) -> Result<Vec<LocatedRegion>, String> {
+    let mut tasks = Vec::new();
+    for (i, ranges) in ranges_for_each_physical_table.iter().enumerate() {
+        let locations =
+            crate::mpp_client::split_key_ranges_by_locations(store, ranges, memory.as_ref(), kv_context)?;
+        for mut lo in locations {
+            lo.partition_index = i as i64;
+            tasks.push(lo);
+        }
+    }
+    Ok(tasks)
+}
+
+/// Go `getTiFlashComputeRPCContextByConsistentHash`: each region's
+/// rendezvous-hash node.
+fn get_tiflash_compute_rpc_context_by_consistent_hash(ids: &[u64], stores_str: &[String]) -> Vec<String> {
+    ids.iter()
+        .map(|id| {
+            let mut max_hash = 0;
+            let mut max_hash_store = String::new();
+            for store in stores_str {
+                let h = tidb_murmur3::sum32(format!("{store}-{id}").as_bytes());
+                if h > max_hash {
+                    max_hash = h;
+                    max_hash_store.clone_from(store);
+                }
+            }
+            max_hash_store
+        })
+        .collect()
+}
+
+/// Go `getTiFlashComputeRPCContextByRoundRobin`.
+fn get_tiflash_compute_rpc_context_by_round_robin(ids: &[u64], stores_str: &[String]) -> Vec<String> {
+    let mut start_idx = tidb_fastrand::uint64_n(stores_str.len() as u64) as usize;
+    ids.iter()
+        .map(|_| {
+            let addr = stores_str[start_idx % stores_str.len()].clone();
+            start_idx += 1;
+            addr
+        })
+        .collect()
+}
+
+/// The dispatch policy's node for each region.
+fn get_tiflash_compute_rpc_contexts(
+    dispatch_policy: DispatchPolicy,
+    tasks: &[LocatedRegion],
+    stores_str: &[String],
+) -> Result<Vec<String>, TopologyError> {
+    let region_ids: Vec<u64> = tasks.iter().map(|task| task.info.region_id).collect();
+    match dispatch_policy {
+        DispatchPolicy::RoundRobin => Ok(get_tiflash_compute_rpc_context_by_round_robin(&region_ids, stores_str)),
+        DispatchPolicy::ConsistentHash => {
+            Ok(get_tiflash_compute_rpc_context_by_consistent_hash(&region_ids, stores_str))
+        }
+        DispatchPolicy::Invalid => Err("unexpected dispatch policy 2".into()),
+    }
+}
+
+/// The consistent-hash builders' grouping: all regions sent to one
+/// tiflash_compute node are one batch task, in first-use order.
+fn batch_cop_tasks_by_addr(tasks: Vec<LocatedRegion>, rpc_ctxs: Vec<String>) -> Vec<BatchCopTask> {
+    let mut res: Vec<BatchCopTask> = Vec::new();
+    let mut task_map: HashMap<String, usize> = HashMap::new();
+    for (task, addr) in tasks.into_iter().zip(rpc_ctxs) {
+        // tasks and rpcCtxs are correspond to each other.
+        let region_info = RegionInfo {
+            region: task.region,
+            info: task.info,
+            all_stores: Vec::new(),
+            partition_index: task.partition_index,
+        };
+        if let Some(&i) = task_map.get(&addr) {
+            res[i].region_infos.push(region_info);
+        } else {
+            task_map.insert(addr.clone(), res.len());
+            res.push(BatchCopTask {
+                store_id: 0,
+                store_addr: addr,
+                region_infos: vec![region_info],
+            });
+        }
+    }
+    res
+}
+
+/// Go `buildBatchCopTasksConsistentHash`: the regions over the alive
+/// tiflash_compute nodes of the AutoScaler's topology.
+async fn build_batch_cop_tasks_consistent_hash<S: tikv_client::PdClient>(
+    store: &TikvStore<S>,
+    ranges_for_each_physical_table: &[Ranges],
+    memory: &Arc<dyn MppContext>,
+    kv_context: &tidb_txnkv::StatementKvContext,
+    dispatch_policy: DispatchPolicy,
+) -> Result<Vec<BatchCopTask>, TopologyError> {
+    failpoint_check_which_policy(dispatch_policy);
+    let mut fetch_topo_bo = RegionBackoffBudget::new(FETCH_TOPO_MAX_BACKOFF);
+    let tasks = split_ranges_for_each_physical_table(store, ranges_for_each_physical_table, memory, kv_context)?;
+    let mut retry_num = 0;
+    let stores_str = loop {
+        retry_num += 1;
+        let fetcher = tidb_tiflashcompute::global_topo_fetcher()
+            .ok_or_else(|| TopologyError::from("TiFlash compute topology fetcher is not initialized"))?;
+        let stores_str = tokio::task::spawn_blocking(move || fetcher.fetch_and_get_topo())
+            .await
+            .map_err(|error| TopologyError::from(error.to_string()))??;
+        let stores_bef_filter = stores_str.len();
+        let stores_str = crate::mpp_client::filter_alive_stores_str(store, &stores_str, memory).await;
+        if stores_str.is_empty() {
+            let err_msg = format!(
+                "Cannot find proper topo to dispatch MPPTask: {}",
+                if stores_bef_filter == 0 {
+                    "topo from AutoScaler is empty"
+                } else {
+                    "detect aliveness failed, no alive ComputeNode"
+                }
+            );
+            if tidb_intest::IN_TEST && retry_num > 3 {
+                return Err(err_msg.into());
+            }
+            backoff_tiflash_rpc(&mut fetch_topo_bo, memory.as_ref(), err_msg).await?;
+            continue;
+        }
+        break stores_str;
+    };
+    let rpc_ctxs = get_tiflash_compute_rpc_contexts(dispatch_policy, &tasks, &stores_str)?;
+    Ok(batch_cop_tasks_by_addr(tasks, rpc_ctxs))
+}
+
+/// Go `buildBatchCopTasksConsistentHashForPD`: the regions over PD's alive
+/// tiflash_compute stores. Only called when UseAutoScaler is false.
+async fn build_batch_cop_tasks_consistent_hash_for_pd<S: tikv_client::PdClient>(
+    store: &TikvStore<S>,
+    ranges_for_each_physical_table: &[Ranges],
+    memory: &Arc<dyn MppContext>,
+    kv_context: &tidb_txnkv::StatementKvContext,
+    dispatch_policy: DispatchPolicy,
+) -> Result<Vec<BatchCopTask>, TopologyError> {
+    failpoint_check_which_policy(dispatch_policy);
+    let pd = store.store().pd_client();
+    let mut bo = RegionBackoffBudget::new(COP_BUILD_TASK_MAX_BACKOFF);
+    loop {
+        let tasks = split_ranges_for_each_physical_table(store, ranges_for_each_physical_table, memory, kv_context)?;
+        let stores = pd
+            .get_tiflash_compute_stores()
+            .await
+            .map_err(|error| TopologyError::from(error.to_string()))?;
+        let stores = crate::mpp_client::filter_alive_stores(store, &stores, memory).await;
+        if stores.is_empty() {
+            if tidb_intest::IN_TEST {
+                // To avoid keep retrying, which makes CI slow.
+                return Err("tiflash_compute node is unavailable".into());
+            }
+            pd.invalidate_tiflash_compute_stores();
+            backoff_tiflash_rpc(&mut bo, memory.as_ref(), "tiflash_compute node is unavailable".to_owned()).await?;
+            continue;
+        }
+        let stores_str: Vec<String> = stores.into_iter().map(|store| store.address).collect();
+        let rpc_ctxs = get_tiflash_compute_rpc_contexts(dispatch_policy, &tasks, &stores_str)?;
+        if rpc_ctxs.is_empty() {
+            backoff_tiflash_rpc(&mut bo, memory.as_ref(), "Cannot find region with TiFlash peer".to_owned()).await?;
+            continue;
+        }
+        return Ok(batch_cop_tasks_by_addr(tasks, rpc_ctxs));
+    }
+}
+
+/// Go `failpointCheckWhichPolicy`.
+fn failpoint_check_which_policy(act: DispatchPolicy) {
+    tidb_failpoint::inject("github.com/pingcap/tidb/pkg/store/copr/testWhichDispatchPolicy", |exp| {
+        let exp_str = exp.string();
+        let act_str = act.as_str();
+        assert!(
+            act_str == exp_str,
+            "tiflash_compute dispatch should be {exp_str}, but got {act_str}"
+        );
+    });
+}
+
 /// Go `buildBatchCopTasksCore` on classic TiFlash over the regions covering
 /// each physical table's ranges (`rangesForEachPhysicalTable`), each region
 /// tagged with its table's index. Go's `ttl` is zero at every caller (the
 /// deprecated `tidb_mpp_store_fail_ttl`). Answers the tasks and the warnings
 /// Go's `appendWarning` receives.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
+async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
     store: &TikvStore<S>,
     ranges_for_each_physical_table: &[Vec<(tidb_txnkv::Key, tidb_txnkv::Key)>],
-    memory: &std::sync::Arc<dyn tidb_txnkv::MppContext>,
+    memory: &Arc<dyn MppContext>,
     is_mpp: bool,
     balance_with_continuity: bool,
     balance_continuous_region_count: usize,
@@ -200,12 +468,7 @@ pub(crate) async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
             }
         }
         if need_retry {
-            let delay = budget
-                .next_delay(tikv_client::retry::BO_TIFLASH_RPC)
-                .map_err(|_| "Cannot find region with TiFlash peer".to_owned())?;
-            let waited = crate::mpp_client::mpp_retry_wait(memory.as_ref(), delay).await;
-            budget.finish_wait(waited.is_ok());
-            waited?;
+            backoff_tiflash_rpc(&mut budget, memory.as_ref(), "Cannot find region with TiFlash peer".to_owned()).await?;
             continue;
         }
 
@@ -432,7 +695,6 @@ fn check_alive_store(
 /// Go `canSkipCheckAliveStores`, the fast path for `checkAliveStore`: if
 /// minReplicaNum > deadStoreNum, there is at least one alive store for each
 /// region, and the check is skipped.
-#[cfg_attr(not(any(test, feature = "test-util")), allow(unused_variables))]
 fn can_skip_check_alive_stores(
     alive_stores: &mut AliveStores,
     used_tiflash_stores_map: &BTreeSet<u64>,
@@ -440,12 +702,10 @@ fn can_skip_check_alive_stores(
     retry_num: usize,
     min_replica_num: u64,
 ) -> bool {
-    #[cfg_attr(not(any(test, feature = "test-util")), allow(unused_mut))]
     let mut skip_check = tidb_intest::IN_TEST;
-    #[cfg(any(test, feature = "test-util"))]
-    if let Some(val) = mock::mock_no_alive_tiflash() {
+    if let Some(val) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/store/copr/mockNoAliveTiFlash") {
         skip_check = false;
-        if val && retry_num <= 1 {
+        if val.bool() && retry_num <= 1 {
             alive_stores.stores_in_all_zones = Vec::new();
         }
     }
@@ -463,30 +723,6 @@ fn can_skip_check_alive_stores(
     // For closest_replica, need to recompute minReplicaNum and other infos,
     // which is duplicated with the logic in checkAliveStore(), so return false directly.
     false
-}
-
-/// Go's failpoints in `batch_coprocessor.go`, as seams.
-#[cfg(any(test, feature = "test-util"))]
-pub mod mock {
-    use std::sync::atomic::{AtomicU8, Ordering};
-
-    /// 0 is a disabled failpoint, 1 `return(false)`, 2 `return(true)`.
-    static MOCK_NO_ALIVE_TIFLASH: AtomicU8 = AtomicU8::new(0);
-
-    /// Go `failpoint.Enable("mockNoAliveTiFlash", ...)`: an enabled
-    /// failpoint runs the alive-store check an in-test build skips, and
-    /// `return(true)` makes the first build of a request's batch tasks find
-    /// no alive TiFlash store. `None` is `failpoint.Disable`.
-    pub fn set_mock_no_alive_tiflash(val: Option<bool>) {
-        MOCK_NO_ALIVE_TIFLASH.store(val.map_or(0, |val| 1 + u8::from(val)), Ordering::Release);
-    }
-
-    pub(super) fn mock_no_alive_tiflash() -> Option<bool> {
-        match MOCK_NO_ALIVE_TIFLASH.load(Ordering::Acquire) {
-            0 => None,
-            val => Some(val == 2),
-        }
-    }
 }
 
 /// Go `filterAllStoresAccordingToTiFlashReplicaRead`: the stores the policy
@@ -925,9 +1161,9 @@ mod tests {
     /// Go `TestAliveStoreSkipCheck`.
     #[test]
     fn test_alive_store_skip_check() {
-        mock::set_mock_no_alive_tiflash(Some(false));
+        let _fp = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/store/copr/mockNoAliveTiFlash", "return(false)");
         let used_tiflash_stores_map = BTreeSet::from([1, 2, 3]);
-        let mut can_skip = |alive_stores: &mut AliveStores, policy, min_replica_num| {
+        let can_skip = |alive_stores: &mut AliveStores, policy, min_replica_num| {
             can_skip_check_alive_stores(alive_stores, &used_tiflash_stores_map, policy, 2, min_replica_num)
         };
 
@@ -969,7 +1205,7 @@ mod tests {
     /// Go `TestCheckAliveStore`.
     #[test]
     fn test_check_alive_store() {
-        mock::set_mock_no_alive_tiflash(Some(false));
+        let _fp = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/store/copr/mockNoAliveTiFlash", "return(false)");
         let used_tiflash_stores_map = BTreeSet::from([1, 2, 3]);
         let used_tiflash_stores = [
             vec![1, 2], // region-1

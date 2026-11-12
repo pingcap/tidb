@@ -3716,6 +3716,7 @@ dependencies = [
  "tidb-cpu",
  "tidb-disk",
  "tidb-encrypt",
+ "tidb-failpoint",
  "tidb-intest",
  "tidb-israce",
  "tidb-logutil",
@@ -3919,6 +3920,7 @@ dependencies = [
  "tidb-executor",
  "tidb-expr",
  "tidb-exprctx",
+ "tidb-failpoint",
  "tidb-fastrand",
  "tidb-go-strconv",
  "tidb-hack",
@@ -5023,6 +5025,7 @@ dependencies = [
  "tidb-expr",
  "tidb-exprctx",
  "tidb-expression-aggregation",
+ "tidb-failpoint",
  "tidb-filter",
  "tidb-fixcontrol",
  "tidb-format",
@@ -5458,6 +5461,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-expr",
  "tidb-exprctx",
+ "tidb-failpoint",
  "tidb-kv",
  "tidb-mysql",
  "tidb-parser-types",
@@ -5510,6 +5514,14 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tidb-log",
+]
+
+[[package]]
+name = "tidb-failpoint"
+version = "0.0.0"
+dependencies = [
+ "fail",
+ "tidb-failpoint",
 ]
 
 [[package]]
@@ -7436,6 +7448,7 @@ dependencies = [
  "tidb-expr",
  "tidb-exprctx",
  "tidb-expression-aggregation",
+ "tidb-failpoint",
  "tidb-fastrand",
  "tidb-fixcontrol",
  "tidb-gcutil",
@@ -7532,6 +7545,7 @@ dependencies = [
  "tidb-temptable",
  "tidb-terror",
  "tidb-test-isolation",
+ "tidb-tiflashcompute",
  "tidb-tikvutil",
  "tidb-timer",
  "tidb-timer-tablestore",
@@ -8989,6 +9003,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-domain",
  "tidb-domain-infosync",
+ "tidb-failpoint",
  "tidb-proto",
  "tidb-store-driver-txn",
  "tidb-tablecodec",

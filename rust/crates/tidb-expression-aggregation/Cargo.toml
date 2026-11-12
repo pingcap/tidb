@@ -15,6 +15,7 @@ workspace = true
 test-util = []
 
 [dependencies]
+tidb-failpoint = { path = "../tidb-failpoint" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-expr = { path = "../tidb-expr" }
@@ -26,3 +27,6 @@ tidb-chunk = { path = "../tidb-chunk" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-proto = { path = "../tidb-proto" }
+
+[dev-dependencies]
+tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }

@@ -232,44 +232,6 @@ impl<S: tikv_client::PdClient> MPPClient<S> {
     /// empty, one range set) or `buildBatchCopTasksForPartitionedTable` (a
     /// range set per partition, then `convertRegionInfosToPartitionTableRegions`)
     /// on classic TiFlash.
-    fn classic_tasks(
-        &self,
-        ctx: &Arc<dyn MppContext>,
-        ranges_for_each_physical_table: &[Vec<(tidb_txnkv::Key, tidb_txnkv::Key)>],
-        partition_ids: &[i64],
-        replica_read: tidb_tiflash::ReplicaRead,
-        kv_context: &tidb_txnkv::StatementKvContext,
-        append_warning: &mut dyn FnMut(String),
-    ) -> Result<Vec<MppStoreTask>, String> {
-        let (tasks, warnings) =
-            self.store
-                .block_on(crate::cop_store::with_statement_kv_context(
-                    kv_context,
-                    crate::batch_cop_tasks::build_batch_cop_tasks_core(
-                        &self.store,
-                        ranges_for_each_physical_table,
-                        ctx,
-                        true,
-                        true,
-                        crate::batch_cop_tasks::BALANCE_CONTINUOUS_REGION_COUNT,
-                        replica_read,
-                        kv_context,
-                    ),
-                ))?;
-        for warning in warnings {
-            append_warning(warning);
-        }
-        Ok(crate::batch_cop_tasks::store_tasks(tasks, partition_ids))
-    }
-
-    /// Go `RegionCache.InvalidateTiFlashComputeStores`.
-    fn invalidate_compute_stores(&self) {
-        self.store
-            .store()
-            .pd_client()
-            .invalidate_tiflash_compute_stores();
-    }
-
     /// The store a task at `address` runs on: Go `getEndPointType(kv.TiFlash)`
     /// and whether a send failure invalidates the compute-store cache.
     fn target(
@@ -278,100 +240,6 @@ impl<S: tikv_client::PdClient> MPPClient<S> {
         rpc_interceptor: &tidb_txnkv::RpcInterceptorOption,
     ) -> MppTarget<S> {
         MppTarget::new(&self.store, address, rpc_interceptor)
-    }
-
-    fn compute_addresses(
-        &self,
-        auto_scaler: bool,
-        memory: &Arc<dyn MppContext>,
-    ) -> Result<Vec<String>, tidb_tiflashcompute::TopologyError> {
-        let mut budget = RegionBackoffBudget::new(std::time::Duration::from_secs(20));
-        loop {
-            mpp_memory_error(memory.as_ref()).map_err(|error| error.to_string())?;
-            let stores = if auto_scaler {
-                tidb_tiflashcompute::global_topo_fetcher()
-                    .ok_or_else(|| {
-                        "TiFlash compute topology fetcher is not initialized".to_owned()
-                    })?
-                    .fetch_and_get_topo()?
-            } else {
-                // Go `RegionCache.GetTiFlashComputeStores`.
-                let pd = self.store.store().pd_client();
-                self.store
-                    .block_on(async move { pd.get_tiflash_compute_stores().await })
-                    .map_err(|error| error.to_string())?
-                    .into_iter()
-                    .map(|store| store.address)
-                    .collect()
-            };
-            let was_empty = stores.is_empty();
-            let alive = self.store.block_on(async {
-                let mut probes = tokio::task::JoinSet::new();
-                for address in stores {
-                    let store = self.store.clone();
-                    let memory = memory.clone();
-                    probes.spawn(tidb_cpuprofile::labels::inherit_future(async move {
-                        let prober = crate::mpp_probe::global_mpp_failed_store_prober();
-                        // Go deprecated tidb_mpp_store_fail_ttl is always zero.
-                        if !prober.is_recovery(&address, std::time::Duration::ZERO) {
-                            return None;
-                        }
-                        match probe_mpp_store(
-                            &address,
-                            memory.as_ref(),
-                            &store,
-                            crate::mpp_probe::DETECT_TIMEOUT_LIMIT,
-                        )
-                        .await
-                        {
-                            Ok(true) => Some(address),
-                            _ => {
-                                // Statement cancellation is not evidence that a store failed.
-                                if memory.check().is_ok() {
-                                    prober.add(address, Arc::new(MppHealthClient(store)));
-                                }
-                                None
-                            }
-                        }
-                    }));
-                }
-                let mut alive = Vec::new();
-                while let Some(result) = probes.join_next().await {
-                    mpp_memory_error(memory.as_ref()).map_err(|error| error.to_string())?;
-                    if let Some(address) = result.map_err(|error| error.to_string())? {
-                        alive.push(address);
-                    }
-                }
-                Ok::<_, String>(alive)
-            })?;
-            if !alive.is_empty() {
-                return Ok(alive);
-            }
-            if !auto_scaler {
-                self.invalidate_compute_stores();
-            }
-            let error = if !auto_scaler {
-                "tiflash_compute node is unavailable"
-            } else if was_empty {
-                "Cannot find proper topo to dispatch MPPTask: topo from AutoScaler is empty"
-            } else {
-                "Cannot find proper topo to dispatch MPPTask: detect aliveness failed, no alive ComputeNode"
-            };
-            let delay = budget
-                .next_delay(tikv_client::retry::BO_TIFLASH_RPC)
-                .map_err(|_| error.to_owned())?;
-            let waited = self.store.block_on(mpp_setup(
-                Some(memory.as_ref()),
-                None,
-                "compute topology retry",
-                async {
-                    tokio::time::sleep(delay).await;
-                    Ok(())
-                },
-            ));
-            budget.finish_wait(waited.is_ok());
-            waited.map_err(|error| error.to_string())?;
-        }
     }
 
 }
@@ -423,59 +291,45 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for MPPClient<S> 
                 .map(|range| (range.start_key.clone(), range.end_key.clone()))
                 .collect()
         };
-        let config = tidb_config::config_tree::config::get_global_config();
-        if !config.disaggregated_tiflash {
-            // Go `ConstructMPPTasks`: a partitioned request builds a range set
-            // per partition; otherwise its key ranges must be set.
-            let (ranges_for_each_physical_table, partition_ids): (Vec<_>, Vec<_>) =
-                if request.partition_id_and_ranges.is_empty() {
-                    let Some(key_ranges) = request.key_ranges.as_ref() else {
-                        return Err(refuse("KeyRanges in MPPBuildTasksRequest is nil".to_owned()));
-                    };
-                    (vec![to_pairs(key_ranges)], Vec::new())
-                } else {
-                    request
-                        .partition_id_and_ranges
-                        .iter()
-                        .map(|partition| (to_pairs(&partition.key_ranges), partition.id))
-                        .unzip()
+        // Go `ConstructMPPTasks`: a partitioned request builds a range set
+        // per partition; otherwise its key ranges must be set.
+        let (ranges_for_each_physical_table, partition_ids): (Vec<_>, Vec<_>) =
+            if request.partition_id_and_ranges.is_empty() {
+                let Some(key_ranges) = request.key_ranges.as_ref() else {
+                    return Err(refuse("KeyRanges in MPPBuildTasksRequest is nil".to_owned()));
                 };
-            return self
-                .classic_tasks(
-                    ctx,
-                    &ranges_for_each_physical_table,
-                    &partition_ids,
-                    replica_read,
-                    kv_context,
-                    append_warning,
-                )
-                .map_err(|message| {
-                    MppError::after_stop(ctx.as_ref(), format!("tiflash mpp: {message}"))
-                });
-        }
-        let ranges: Vec<(tidb_txnkv::Key, tidb_txnkv::Key)> =
-            to_pairs(request.key_ranges.as_deref().unwrap_or_default());
-        let regions = locate_mpp_region_infos(&self.store, &ranges, ctx.as_ref(), kv_context)
-            .map_err(refuse)?;
-        if regions.is_empty() {
-            return Err(refuse("no region covers the table's record range".to_owned()));
-        }
-        let stores = self
-            .compute_addresses(config.use_auto_scaler, ctx)
-            .map_err(|error| match ctx.check() {
-                Err(stop) => MppError::Sql(stop),
-                Ok(()) => MppError::Sql(tidb_terror::MysqlError::sql_error(
-                    error.code,
-                    error.message,
-                )),
+                (vec![to_pairs(key_ranges)], Vec::new())
+            } else {
+                request
+                    .partition_id_and_ranges
+                    .iter()
+                    .map(|partition| (to_pairs(&partition.key_ranges), partition.id))
+                    .unzip()
+            };
+        let (tasks, warnings) = self
+            .store
+            .block_on(crate::batch_cop_tasks::build_batch_cop_tasks(
+                &self.store,
+                &ranges_for_each_physical_table,
+                &partition_ids,
+                ctx,
+                true,
+                true,
+                crate::batch_cop_tasks::BALANCE_CONTINUOUS_REGION_COUNT,
+                dispatch_policy,
+                replica_read,
+                kv_context,
+            ))
+            .map_err(|error| match (ctx.check(), error.code) {
+                (Err(stop), _) => MppError::Sql(stop),
+                (Ok(()), 1105) => refuse(error.message),
+                // Go's terror keeps its code.
+                (Ok(()), code) => MppError::Sql(tidb_terror::MysqlError::sql_error(code, error.message)),
             })?;
-        compute_region_tasks(
-            regions,
-            &stores,
-            dispatch_policy,
-            tidb_fastrand::uint64_n(stores.len() as u64) as usize,
-        )
-        .map_err(refuse)
+        for warning in warnings {
+            append_warning(warning);
+        }
+        Ok(tasks)
     }
 
     fn dispatch_mpp_task(
@@ -587,54 +441,6 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for MPPClient<S> 
     }
 }
 
-// Go buildBatchCopTasksConsistentHash groups clipped regions in encounter order.
-fn compute_region_tasks(
-    regions: Vec<tidb_proto::coprocessor::RegionInfo>,
-    stores: &[String],
-    policy: tidb_tiflashcompute::DispatchPolicy,
-    start: usize,
-) -> Result<Vec<MppStoreTask>, String> {
-    use tidb_tiflashcompute::DispatchPolicy;
-    if stores.is_empty() {
-        return Err("tiflash_compute node is unavailable".into());
-    }
-    let mut tasks: Vec<MppStoreTask> = Vec::new();
-    for (index, region) in regions.into_iter().enumerate() {
-        let address = match policy {
-            DispatchPolicy::RoundRobin => {
-                stores[(start % stores.len() + index % stores.len()) % stores.len()].clone()
-            }
-            DispatchPolicy::ConsistentHash => {
-                let mut max_hash = 0;
-                let mut selected = String::new();
-                for store in stores {
-                    let hash = tidb_murmur3::sum32(
-                        format!("{store}-{}", region.region_id).as_bytes(),
-                    );
-                    if hash > max_hash {
-                        max_hash = hash;
-                        selected.clone_from(store);
-                    }
-                }
-                selected
-            }
-            DispatchPolicy::Invalid => return Err("unexpected dispatch policy 2".into()),
-        };
-        if let Some(task) = tasks.iter_mut().find(|task| task.address == address) {
-            task.regions.push(region);
-        } else {
-            tasks.push(MppStoreTask {
-                address,
-                regions: vec![region],
-                partition_table_regions: Vec::new(),
-                store_id: 0,
-                region_peers: Vec::new(),
-            });
-        }
-    }
-    Ok(tasks)
-}
-
 fn mpp_region_infos(
     ranges: &[(tidb_txnkv::Key, tidb_txnkv::Key)],
     regions: &[tikv_client::RegionWithLeader],
@@ -668,30 +474,6 @@ fn mpp_region_infos(
             })
         })
         .collect()
-}
-
-/// The regions covering `ranges`, from the store's region cache (Go
-/// `buildBatchCopTasks`' `SplitKeyRangesByLocations`), located under the
-/// task building's ctx `kv_context`.
-fn locate_mpp_region_infos<S: tikv_client::PdClient>(
-    store: &TikvStore<S>,
-    ranges: &[(tidb_txnkv::Key, tidb_txnkv::Key)],
-    memory: &dyn MppContext,
-    kv_context: &tidb_txnkv::StatementKvContext,
-) -> Result<Vec<tidb_proto::coprocessor::RegionInfo>, String> {
-    use crate::cop_store::NativeCopStore;
-    if ranges.is_empty() {
-        return Err("the scan carries no key ranges".to_owned());
-    }
-    mpp_memory_error(memory).map_err(|error| error.to_string())?;
-    let keys = ranges
-        .iter()
-        .map(|(start, end)| (start.as_slice().to_vec(), end.as_slice().to_vec()))
-        .collect::<Vec<_>>();
-    let regions = store
-        .locate(&keys, kv_context)
-        .map_err(|error| error.to_string())?;
-    Ok(mpp_region_infos(ranges, &regions))
 }
 
 /// Go `SplitKeyRangesByLocations` for a batch task: every region covering
@@ -734,14 +516,14 @@ pub(crate) fn split_key_ranges_by_locations<S: tikv_client::PdClient>(
 /// Go `filterAliveStoresHelper`: the stores the failed-store prober has not
 /// written off whose `IsAlive` answers, probed concurrently; a store that
 /// does not answer goes to the prober.
-pub(crate) async fn filter_alive_stores<S: tikv_client::PdClient>(
+async fn filter_alive_stores_helper<S: tikv_client::PdClient>(
     store: &TikvStore<S>,
-    stores: &[tidb_proto::metapb::Store],
+    stores: &[String],
     memory: &Arc<dyn MppContext>,
-) -> Vec<tidb_proto::metapb::Store> {
+) -> Vec<usize> {
     let mut probes = tokio::task::JoinSet::new();
-    for (index, candidate) in stores.iter().enumerate() {
-        let address = candidate.address.clone();
+    for (index, address) in stores.iter().enumerate() {
+        let address = address.clone();
         let store = store.clone();
         let memory = memory.clone();
         probes.spawn(tidb_cpuprofile::labels::inherit_future(async move {
@@ -770,8 +552,32 @@ pub(crate) async fn filter_alive_stores<S: tikv_client::PdClient>(
     }
     alive.sort_unstable();
     alive
+}
+
+/// Go `filterAliveStores`.
+pub(crate) async fn filter_alive_stores<S: tikv_client::PdClient>(
+    store: &TikvStore<S>,
+    stores: &[tidb_proto::metapb::Store],
+    memory: &Arc<dyn MppContext>,
+) -> Vec<tidb_proto::metapb::Store> {
+    let stores_str: Vec<String> = stores.iter().map(|store| store.address.clone()).collect();
+    filter_alive_stores_helper(store, &stores_str, memory)
+        .await
         .into_iter()
         .map(|index| stores[index].clone())
+        .collect()
+}
+
+/// Go `filterAliveStoresStr`.
+pub(crate) async fn filter_alive_stores_str<S: tikv_client::PdClient>(
+    store: &TikvStore<S>,
+    stores_str: &[String],
+    memory: &Arc<dyn MppContext>,
+) -> Vec<String> {
+    filter_alive_stores_helper(store, stores_str, memory)
+        .await
+        .into_iter()
+        .map(|index| stores_str[index].clone())
         .collect()
 }
 
@@ -2512,7 +2318,11 @@ mod mpp_read_batch_tests {
         ];
         let memory = tidb_variable::mem_quota::StatementMemory::default();
         let kv_context = tidb_txnkv::StatementKvContext::default();
-        let infos = locate_mpp_region_infos(&store, &ranges, &memory, &kv_context).unwrap();
+        let infos = split_key_ranges_by_locations(&store, &ranges, &memory, &kv_context)
+            .unwrap()
+            .into_iter()
+            .map(|lo| lo.info)
+            .collect::<Vec<_>>();
         assert_eq!(
             infos.iter().map(|info| info.region_id).collect::<Vec<_>>(),
             region_ids
@@ -2531,7 +2341,11 @@ mod mpp_read_batch_tests {
             }],
         ));
         assert_eq!(
-            locate_mpp_region_infos(&store, &ranges, &memory, &kv_context).unwrap(),
+            split_key_ranges_by_locations(&store, &ranges, &memory, &kv_context)
+            .unwrap()
+            .into_iter()
+            .map(|lo| lo.info)
+            .collect::<Vec<_>>(),
             infos
         );
     }
@@ -2545,59 +2359,5 @@ mod mpp_read_batch_tests {
         remote.memory.stmt_tracker().consume(17);
         assert_eq!(memory.bytes_consumed(), 17);
         remote.memory.stmt_tracker().consume(-17);
-    }
-}
-
-#[cfg(test)]
-mod compute_topology_batch_tests {
-    use super::*;
-    use tidb_tiflashcompute::DispatchPolicy;
-
-    #[test]
-    fn compute_topology_batch_region_grouping() {
-        let regions: Vec<_> = (1..=8)
-            .map(|region_id| tidb_proto::coprocessor::RegionInfo {
-                region_id,
-                ranges: vec![tidb_proto::coprocessor::KeyRange {
-                    start: vec![region_id as u8],
-                    end: vec![region_id as u8 + 1],
-                }],
-                ..Default::default()
-            })
-            .collect();
-        let stores = vec!["a:3930".into(), "b:3930".into(), "c:3930".into()];
-        let rr =
-            compute_region_tasks(regions.clone(), &stores, DispatchPolicy::RoundRobin, 1).unwrap();
-        assert_eq!(
-            rr.iter()
-                .map(|task| (
-                    task.address.as_str(),
-                    task.regions.iter().map(|r| r.region_id).collect::<Vec<_>>()
-                ))
-                .collect::<Vec<_>>(),
-            vec![
-                ("b:3930", vec![1, 4, 7]),
-                ("c:3930", vec![2, 5, 8]),
-                ("a:3930", vec![3, 6])
-            ]
-        );
-        let hash =
-            compute_region_tasks(regions.clone(), &stores, DispatchPolicy::ConsistentHash, 0)
-                .unwrap();
-        let reordered = compute_region_tasks(
-            regions.clone(),
-            &stores.iter().rev().cloned().collect::<Vec<_>>(),
-            DispatchPolicy::ConsistentHash,
-            0,
-        )
-        .unwrap();
-        assert_eq!(hash, reordered);
-        let mut flattened = hash.into_iter().flat_map(|task| task.regions).collect::<Vec<_>>();
-        flattened.sort_by_key(|r| r.region_id);
-        assert_eq!(flattened, regions);
-        assert!(
-            compute_region_tasks(regions.clone(), &[], DispatchPolicy::ConsistentHash, 0).is_err()
-        );
-        assert!(compute_region_tasks(regions, &stores, DispatchPolicy::Invalid, 0).is_err());
     }
 }

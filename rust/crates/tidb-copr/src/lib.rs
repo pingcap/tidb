@@ -15,6 +15,10 @@
 //! Go `pkg/store/copr`: the store's coprocessor client (`CopClient`), the
 //! batch-cop task building for TiFlash, and the MPP client (`MPPClient`).
 
+// The batch coprocessor's spawned task nests the task builders' futures
+// past the default depth of the `Send` check.
+#![recursion_limit = "256"]
+
 pub mod key_ranges;
 pub mod range_diagnostics;
 pub mod mpp_probe;

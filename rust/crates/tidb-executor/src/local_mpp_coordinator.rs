@@ -50,60 +50,13 @@ use crate::dag_request::DEFAULT_DIV_PRECISION_INCREMENT;
 use crate::mpp_coordinator::MppGatherResponse;
 use crate::mppcoordmanager::{CoordinatorUniqueId, MppCoordinator, INSTANCE_MPP_COORDINATOR_MANAGER};
 use crate::StatementMemory;
+use tidb_driver_error::ExecError;
 
-/// What Go's `checkTotalMPPTasks` failpoint replaces.
-#[cfg(any(test, feature = "test-util"))]
-pub mod mock {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Mutex, PoisonError};
-
-    static CHECK_TOTAL_MPP_TASKS: Mutex<Option<usize>> = Mutex::new(None);
-
-    /// Go `failpoint.Enable("checkTotalMPPTasks", "return(n)")`: the number
-    /// of tasks every coordinator must dispatch.
-    pub fn set_check_total_mpp_tasks(tasks: Option<usize>) {
-        *CHECK_TOTAL_MPP_TASKS.lock().unwrap_or_else(PoisonError::into_inner) = tasks;
-    }
-
-    pub(super) fn check_total_mpp_tasks() -> Option<usize> {
-        *CHECK_TOTAL_MPP_TASKS.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    static MPP_NON_ROOT_TASK_ERROR: AtomicBool = AtomicBool::new(false);
-
-    /// Go `failpoint.Enable("mppNonRootTaskError", "return(true)")`: every
-    /// dispatched non-root task fails with a TiFlash server timeout a second
-    /// after its dispatch.
-    pub fn set_mpp_non_root_task_error(enabled: bool) {
-        MPP_NON_ROOT_TASK_ERROR.store(enabled, Ordering::Release);
-    }
-
-    pub(super) fn mpp_non_root_task_error() -> bool {
-        MPP_NON_ROOT_TASK_ERROR.load(Ordering::Acquire)
-    }
-
-    static TEST_MPP_OOM_PANIC: AtomicBool = AtomicBool::new(false);
-
-    /// Go `failpoint.Enable("testMPPOOMPanic", "return(true)")`: a response
-    /// that holds a packet is charged a gigabyte.
-    pub fn set_test_mpp_oom_panic(enabled: bool) {
-        TEST_MPP_OOM_PANIC.store(enabled, Ordering::Release);
-    }
-
-    pub(super) fn test_mpp_oom_panic() -> bool {
-        TEST_MPP_OOM_PANIC.load(Ordering::Acquire)
-    }
-
-    static REDUCE_COP_NEXT_MAX_BACKOFF: AtomicBool = AtomicBool::new(false);
-
-    /// Go `failpoint.Enable("ReduceCopNextMaxBackoff", "return(true)")`: a
-    /// task's backoff budget is two milliseconds.
-    pub fn set_reduce_cop_next_max_backoff(enabled: bool) {
-        REDUCE_COP_NEXT_MAX_BACKOFF.store(enabled, Ordering::Release);
-    }
-
-    pub(super) fn reduce_cop_next_max_backoff() -> bool {
-        REDUCE_COP_NEXT_MAX_BACKOFF.load(Ordering::Acquire)
+/// A task generation error as Go returns it: a terror keeps its code.
+fn exec_error(err: PlanError) -> ExecError {
+    match err.kind() {
+        tidb_planner_core_base::PlanErrorKind::Mysql(err) => ExecError::Mysql(err.clone()),
+        _ => ExecError::Internal(err.to_string().into()),
     }
 }
 
@@ -478,7 +431,11 @@ impl MppTaskGeneratorContext for GeneratorContext<'_> {
                 self.statement.tiflash_replica_read,
                 &mut |warning| self.statement.warnings.append_warning(warning),
             )
-            .map_err(|err| PlanError::internal(err.to_string()))?;
+            .map_err(|err| match err {
+                // Go returns the client's error as it is: a terror keeps its code.
+                MppError::Sql(err) => PlanError::from(err),
+                err => PlanError::internal(err.to_string()),
+            })?;
         Ok(tasks
             .into_iter()
             .map(|task| Arc::new(task) as Arc<dyn MppTaskLocation>)
@@ -719,7 +676,7 @@ impl LocalMppCoordinator {
         catalog: &tidb_infoschema::SessionExtendedInfoSchema,
         client: &Arc<dyn MppClient>,
         sender: &PhysicalPlan,
-    ) -> Result<Vec<KeyRange>, String> {
+    ) -> Result<Vec<KeyRange>, ExecError> {
         let (start_ts, mpp_query_id, gather_id) = (self.start_ts, self.mpp_query_id, self.gather_id);
         let statement = crate::remote_scan::pushdown_statement_context(ctx);
         let closed = Arc::clone(&self.reports.closed);
@@ -737,7 +694,7 @@ impl LocalMppCoordinator {
         };
         let (frags, kv_ranges, node_info) =
             generate_root_mpp_tasks(&gen_ctx, start_ts, gather_id, mpp_query_id, sender)
-                .map_err(|err| err.to_string())?;
+                .map_err(exec_error)?;
         let mut all_tiflash_store_info = HashMap::new();
         for tiflash_store in client.tiflash_stores() {
             add_tiflash_store_info(&mut all_tiflash_store_info, &tiflash_store);
@@ -749,14 +706,17 @@ impl LocalMppCoordinator {
         }
         let mut mpp_reqs = Vec::new();
         for frag in &frags {
-            self.append_mpp_dispatch_req(ctx, &statement, frag, &all_tiflash_store_info, &mut mpp_reqs)?;
+            self.append_mpp_dispatch_req(ctx, &statement, frag, &all_tiflash_store_info, &mut mpp_reqs)
+                .map_err(|err| ExecError::Internal(err.into()))?;
         }
-        #[cfg(any(test, feature = "test-util"))]
-        if let Some(val) = mock::check_total_mpp_tasks() {
+        if let Some(val) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/internal/mpp/checkTotalMPPTasks").map(|val| val.int() as usize) {
             if val != mpp_reqs.len() {
-                return Err(format!(
-                    "The number of tasks is not right, expect {val} tasks but actually there are {} tasks",
-                    mpp_reqs.len()
+                return Err(ExecError::Internal(
+                    format!(
+                        "The number of tasks is not right, expect {val} tasks but actually there are {} tasks",
+                        mpp_reqs.len()
+                    )
+                    .into(),
                 ));
             }
         }
@@ -1089,8 +1049,7 @@ fn handle_dispatch_req(
         });
     // Go `backoff.NewBackoffer(ctx, copr.CopNextMaxBackoff)`.
     let mut bo = RegionBackoffBudget::campaign_default();
-    #[cfg(any(test, feature = "test-util"))]
-    if mock::reduce_cop_next_max_backoff() {
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/internal/mpp/ReduceCopNextMaxBackoff").is_some_and(|val| val.bool()) {
         bo = RegionBackoffBudget::new(std::time::Duration::from_millis(2));
     }
     let rpc_resp = loop {
@@ -1136,8 +1095,7 @@ fn handle_dispatch_req(
         send_error(resp_tx, &MppError::Other(error.msg));
         return;
     }
-    #[cfg(any(test, feature = "test-util"))]
-    if mock::mpp_non_root_task_error() && !req.is_root {
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/internal/mpp/mppNonRootTaskError").is_some_and(|val| val.bool()) && !req.is_root {
         std::thread::sleep(Duration::from_secs(1));
         reports.dispatch_failed.store(true, Ordering::Release);
         send_error(
@@ -1294,8 +1252,7 @@ fn send_to_resp_ch(
     resp: tidb_txnkv::QueryResultSubset,
     resp_size: i64,
 ) -> bool {
-    #[cfg(any(test, feature = "test-util"))]
-    let resp_size = if mock::test_mpp_oom_panic() && resp_size != 0 {
+    let resp_size = if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/internal/mpp/testMPPOOMPanic").is_some_and(|val| val.bool()) && resp_size != 0 {
         1 << 30
     } else {
         resp_size

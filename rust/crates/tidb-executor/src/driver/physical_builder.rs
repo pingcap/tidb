@@ -7488,8 +7488,7 @@ fn build_reader_node(
 ) -> Result<Box<dyn Executor>, DriverError> {
     match plan {
         PhysicalPlan::TableReader(reader) => {
-            #[cfg(any(test, feature = "test-util"))]
-            if let Some(val) = crate::mpp_gather::mock::check_use_mpp() {
+            if let Some(val) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/checkUseMPP").map(|val| val.bool()) {
                 if !ctx.request_source().internal && val != crate::mpp_gather::use_mpp_execution(ctx, reader) {
                     return Err(DriverError::unsupported(if val {
                         "expect mpp but not used"

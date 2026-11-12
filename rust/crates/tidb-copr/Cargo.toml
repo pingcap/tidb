@@ -13,6 +13,7 @@ autotests = false
 test-util = []
 
 [dependencies]
+tidb-failpoint = { path = "../tidb-failpoint" }
 tidb-cpuprofile = { path = "../tidb-cpuprofile" }
 tidb-go-strconv = { path = "../tidb-go-strconv" }
 tidb-intest = { path = "../tidb-intest" }
@@ -52,6 +53,7 @@ tonic.workspace = true
 tokio-stream = { workspace = true, features = ["net"] }
 
 [dev-dependencies]
+tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-variable = { path = "../tidb-variable" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
