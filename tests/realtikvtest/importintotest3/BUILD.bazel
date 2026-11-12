@@ -22,7 +22,7 @@ go_test(
         "//pkg/dxf/framework/storage",
         "//pkg/dxf/framework/taskexecutor/execute",
         "//pkg/dxf/framework/testutil",
-        "//pkg/dxf/importinto",
+        "//pkg/dxf/importinto/taskkey",
         "//pkg/executor/importer",
         "//pkg/keyspace",
         "//pkg/kv",

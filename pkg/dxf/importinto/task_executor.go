@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
@@ -447,7 +448,7 @@ func (s *importStepExecutor) readQuery(
 		}
 	}()
 
-	return importer.RunImportQuery(
+	return executor.RunImportQuery(
 		ctx, se, s.taskMeta.Plan.QuerySource, s.taskMeta.Stmt,
 		int64(float64(s.GetResource().Mem.Capacity())*queryMemBudgetRatio), selected)
 }

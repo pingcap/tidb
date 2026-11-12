@@ -20,14 +20,20 @@ import (
 	goerrors "errors"
 	"fmt"
 
+	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	dxfstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -36,6 +42,7 @@ import (
 	litkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -127,7 +134,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return e.importFromSelect(ctx)
 	}
 
-	useAsyncPrepare := importinto.ShouldUseAsyncPrepare(e.controller.Plan)
+	useAsyncPrepare := importer.ShouldUseAsyncPrepare(e.controller.Plan)
 	if e.controller.DataSourceType == importer.DataSourceTypeFile && !useAsyncPrepare {
 		if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
 			return err2
@@ -255,14 +262,167 @@ func (e *ImportIntoExec) submitTask(ctx context.Context) (int64, *proto.TaskBase
 			if err != nil {
 				return 0, nil, err
 			}
-			return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, chunkMap)
+			return SubmitStandaloneImportTask(ctx, e.controller.Plan, e.stmt, chunkMap)
 		}
 	}
 	// if tidb_enable_dist_task=true, we import distributively, otherwise we import on current node.
 	if vardef.EnableDistTask.Load() {
-		return importinto.SubmitTask(ctx, e.controller.Plan, e.stmt)
+		return SubmitImportTask(ctx, e.controller.Plan, e.stmt)
 	}
-	return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, nil)
+	return SubmitStandaloneImportTask(ctx, e.controller.Plan, e.stmt, nil)
+}
+
+// SubmitStandaloneImportTask submits a task to the distribute framework that only runs on the current node.
+// when import from server-disk, pass engine chunks too, as scheduler might run on another
+// node where we can't access the data files.
+func SubmitStandaloneImportTask(ctx context.Context, plan *importer.Plan, stmt string, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return 0, nil, err
+	}
+	return doSubmitImportTask(ctx, plan, stmt, serverInfo, chunkMap)
+}
+
+// SubmitImportTask submits a task to the distribute framework that runs on all managed nodes.
+func SubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string) (int64, *proto.TaskBase, error) {
+	return doSubmitImportTask(ctx, plan, stmt, nil, nil)
+}
+
+func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, instance *serverinfo.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
+	var instances []*serverinfo.ServerInfo
+	if instance != nil {
+		instances = append(instances, instance)
+	}
+	// we use taskManager to submit task, user might not have the privilege to system tables.
+	taskManager, err := dxfstorage.GetTaskManager()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	taskMeta := &importer.TaskMeta{
+		Plan:              *plan,
+		Stmt:              stmt,
+		EligibleInstances: instances,
+		ChunkMap:          chunkMap,
+	}
+	extraParams := proto.ExtraParams{ManualRecovery: plan.ManualRecovery}
+	asyncPrepare := importer.ShouldUseAsyncPrepare(plan)
+	if asyncPrepare {
+		extraParams.PrepareMode = proto.PrepareModeRequired
+		// below params will be filled later in async prepare, init to 1 temporarily.
+		plan.ThreadCnt = 1
+		plan.MaxNodeCnt = 1
+	}
+	planCtx := planner.PlanCtx{
+		Ctx:        ctx,
+		TaskType:   proto.ImportInto,
+		ThreadCnt:  plan.ThreadCnt,
+		MaxNodeCnt: plan.MaxNodeCnt,
+	}
+	var (
+		jobID, taskID int64
+	)
+	var runningOnUserKS bool
+	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		runningOnUserKS = kv.IsUserKS(se.GetStore())
+		var err2 error
+		exec := se.GetSQLExecutor()
+		jobID, err2 = importer.CreateJob(ctx, exec, plan.DBName, plan.TableInfo.Name.L, plan.TableInfo.ID,
+			plan.User, plan.GroupKey, plan.Parameters, plan.TotalFileSize)
+		if err2 != nil {
+			return err2
+		}
+		if kerneltype.IsClassic() {
+			err2 = ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeImport, plan.DBID, plan.TableInfo.ID)
+			if err2 != nil {
+				return err2
+			}
+		}
+		// in classical kernel or if we are inside SYSTEM keyspace itself, we
+		// submit the task to DXF in the same transaction as creating the job.
+		if kerneltype.IsClassic() || kv.IsSystemKS(se.GetStore()) {
+			taskMeta.JobID = jobID
+			planCtx.SessionCtx = se
+			planCtx.TaskKey = taskkey.ForJob(jobID)
+			planCtx.Keyspace = plan.Keyspace
+			if taskID, err2 = submitTask2DXF(taskMeta, extraParams, planCtx, taskManager); err2 != nil {
+				return err2
+			}
+		}
+		return nil
+	}); err != nil {
+		return 0, nil, err
+	}
+	// in next-gen kernel and we are not running in SYSTEM KS, we submit the task
+	// to DXF service after creating the job, as DXF service runs in SYSTEM keyspace.
+	// TODO: we need to cleanup the job, if we failed to submit the task to DXF service.
+	dxfTaskMgr := taskManager
+	if runningOnUserKS {
+		failpoint.InjectCall("afterUserImportJobCreatedBeforeDXFTask", jobID)
+		var err2 error
+		dxfTaskMgr, err2 = dxfstorage.GetDXFSvcTaskMgr()
+		if err2 != nil {
+			return 0, nil, err2
+		}
+		if err2 = dxfTaskMgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			taskMeta.JobID = jobID
+			planCtx.SessionCtx = se
+			planCtx.TaskKey = taskkey.ForJob(jobID)
+			planCtx.Keyspace = plan.Keyspace
+			var err2 error
+			if taskID, err2 = submitTask2DXF(taskMeta, extraParams, planCtx, dxfTaskMgr); err2 != nil {
+				return err2
+			}
+			return nil
+		}); err2 != nil {
+			return 0, nil, err2
+		}
+	}
+	handle.NotifyTaskChange()
+	task, err := dxfTaskMgr.GetTaskBaseByID(ctx, taskID)
+	if err != nil {
+		return 0, nil, err
+	}
+	logFields := []zap.Field{
+		zap.Int64("job-id", jobID),
+		zap.String("task-key", task.Key),
+		zap.Int64("task-id", task.ID),
+		zap.Bool("global-sort", plan.IsGlobalSort()),
+		zap.Bool("async-prepare", asyncPrepare),
+	}
+	if !asyncPrepare {
+		logFields = append(logFields,
+			zap.String("data-size", units.BytesSize(float64(plan.TotalFileSize))),
+			zap.Int("thread-cnt", plan.ThreadCnt),
+			zap.Int("max-node-cnt", plan.MaxNodeCnt),
+		)
+	}
+	logutil.BgLogger().Info("job submitted to task queue", logFields...)
+
+	return jobID, task, nil
+}
+
+func submitTask2DXF(taskMeta *importer.TaskMeta, extraParams proto.ExtraParams, planCtx planner.PlanCtx,
+	taskMgr *dxfstorage.TaskManager) (int64, error) {
+	meta, err := json.Marshal(taskMeta)
+	if err != nil {
+		return 0, err
+	}
+	// Use the supplied session and task manager to preserve the caller's
+	// transaction boundary.
+	return taskMgr.CreateTaskWithSession(
+		planCtx.Ctx,
+		planCtx.SessionCtx,
+		planCtx.TaskKey,
+		planCtx.TaskType,
+		planCtx.Keyspace,
+		planCtx.ThreadCnt,
+		handle.GetTargetScope(),
+		planCtx.MaxNodeCnt,
+		extraParams,
+		meta,
+	)
 }
 
 // waitTask waits for the task to finish.
@@ -409,7 +569,7 @@ func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
 	if err != nil {
 		return err
 	}
-	taskKey := importinto.TaskKey(jobID)
+	taskKey := taskkey.ForJob(jobID)
 	_, err = manager.GetTaskBaseByKeyWithHistory(ctx, taskKey)
 	if err == nil {
 		if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
