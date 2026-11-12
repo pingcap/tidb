@@ -2777,17 +2777,17 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	}
 	if newpass != nil {
 		fakeResp.Auth = newpass
-		// SHA-2 and SM3 switch responses need full authentication before verification.
-		switch fakeResp.AuthPlugin {
-		case mysql.AuthCachingSha2Password:
-			fakeResp.Auth, err = cc.authSha(ctx, *fakeResp)
-		case mysql.AuthTiDBSM3Password:
-			fakeResp.Auth, err = cc.authSM3(ctx, *fakeResp)
-		}
-		if err != nil {
-			restoreOldSession()
-			return err
-		}
+	}
+	// SHA-2 and SM3 need full authentication even when no plugin switch occurs.
+	switch fakeResp.AuthPlugin {
+	case mysql.AuthCachingSha2Password:
+		fakeResp.Auth, err = cc.authSha(ctx, *fakeResp)
+	case mysql.AuthTiDBSM3Password:
+		fakeResp.Auth, err = cc.authSM3(ctx, *fakeResp)
+	}
+	if err != nil {
+		restoreOldSession()
+		return err
 	}
 	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin, fakeResp.ZstdLevel); err != nil {
 		restoreOldSession()
