@@ -144,9 +144,10 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	// LockKeys calls: the unique-index key first, then the _tidb_rowid row key. A
 	// batch point get (for example the stats delta dump, table_id IN (...)) uses
 	// one LockKeys call. The executor appends row keys and then index keys, but
-	// client-go sorts before sending. Index keys sort before row keys. The
-	// smallest key is the primary and that batch is locked to completion first;
-	// the remaining region batches are locked in parallel.
+	// client-go sorts before sending. Index keys sort before row keys. If the
+	// transaction has no primary yet, the smallest key is selected. The batch
+	// containing the primary is locked first; the remaining region batches are
+	// then locked in parallel.
 	//
 	// Take a point get of table_id 2 concurrent with a batch point get of
 	// table_id IN (1, 2). The batch primary is index(1). This deadlocks when
@@ -426,7 +427,8 @@ func SaveMetaToStorage(
 // and insert a bucket to stats_buckets with default value. This operation also
 // updates version. It locks mysql.stats_meta before those histogram rows, matching
 // the lock order of SaveAnalyzeResultToStorage. On clusters bootstrapped before
-// v8.5.7, locking only table_id can still deadlock with that analyze save.
+// v8.5.7, a point get for a single table ID can still deadlock with that
+// analyze save.
 func InsertColStats2KV(
 	ctx context.Context,
 	sctx sessionctx.Context,
@@ -442,10 +444,12 @@ func InsertColStats2KV(
 	// SaveAnalyzeResultToStorage already takes that order. Inserting the histogram
 	// first deadlocks with ANALYZE: this transaction holds the new histogram row and
 	// waits for stats_meta, while ANALYZE holds stats_meta and waits for the histogram.
-	// Before v8.5.7, mysql.stats_meta is a non-clustered table with a unique key on
-	// table_id. Querying only table_id can deadlock with the analyze batch point get,
-	// as explained in SaveAnalyzeResultToStorage.
-	// TODO: fix this later after discussing whether it should be fixed on the transaction side.
+	// On clusters bootstrapped before v8.5.7, mysql.stats_meta is a non-clustered
+	// table with a unique key on table_id. A point get for a single table ID can
+	// deadlock with the analyze batch point get, as explained in
+	// SaveAnalyzeResultToStorage.
+	// TODO: Resolve the point-get/batch-point-get deadlock on non-clustered
+	// stats_meta tables, possibly in the transaction layer.
 	var rs sqlexec.RecordSet
 	rs, err = util.ExecWithCtx(
 		ctx, sctx,
