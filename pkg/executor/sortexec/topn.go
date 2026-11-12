@@ -164,14 +164,17 @@ func (e *TopNExec) Close() error {
 	close(e.finishCh)
 	if e.fetched.CompareAndSwap(false, true) {
 		close(e.resultChannel)
-		return exec.Close(e.Children(0))
+	} else {
+		// Wait for all workers before releasing their spill resources.
+		channel.Clear(e.resultChannel)
 	}
 
-	// Wait for the finish of all tasks
-	channel.Clear(e.resultChannel)
-
+	if e.spillAction != nil {
+		e.spillAction.SetFinished()
+		e.Ctx().GetSessionVars().MemTracker.UnbindActionFromHardLimit(e.spillAction)
+		e.spillAction = nil
+	}
 	e.chkHeap = nil
-	e.spillAction = nil
 
 	if e.spillHelper != nil {
 		e.spillHelper.close()
@@ -180,6 +183,13 @@ func (e *TopNExec) Close() error {
 
 	if e.memTracker != nil {
 		e.memTracker.ReplaceBytesUsed(0)
+		// EXPLAIN ANALYZE reads the per-operator tracker tree after Close.
+		if !e.Ctx().GetSessionVars().StmtCtx.InExplainAnalyzeStmt {
+			e.memTracker.Detach()
+		}
+	}
+	if e.diskTracker != nil && !e.Ctx().GetSessionVars().StmtCtx.InExplainAnalyzeStmt {
+		e.diskTracker.Detach()
 	}
 
 	return exec.Close(e.Children(0))

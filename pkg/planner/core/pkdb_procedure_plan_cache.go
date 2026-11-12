@@ -196,7 +196,10 @@ func executeWithProcedurePlanCacheWarningIsolation(vars *variable.SessionVars, f
 }
 
 func filterProcedurePlanCacheWarnings(base, current []stmtctx.SQLWarn) []stmtctx.SQLWarn {
-	filtered := append([]stmtctx.SQLWarn(nil), base...)
+	// The caller already owns a snapshot of the original warnings. Reuse it
+	// instead of copying the entire accumulated diagnostic history again for
+	// every internal statement of a stored function.
+	filtered := base
 	if len(current) <= len(base) {
 		return filtered
 	}

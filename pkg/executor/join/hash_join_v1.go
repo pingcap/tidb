@@ -172,6 +172,14 @@ func (e *HashJoinV1Exec) Close() error {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
 
+	// A stored function can build thousands of joins within one statement.
+	// Release the probe-side accounting as well as the row container; otherwise
+	// closed joins remain attached to the outer statement until it finishes.
+	// EXPLAIN ANALYZE reads the per-operator tracker tree after Close.
+	if !e.Ctx().GetSessionVars().StmtCtx.InExplainAnalyzeStmt {
+		e.HashJoinCtxV1.memTracker.Detach()
+		e.HashJoinCtxV1.diskTracker.Detach()
+	}
 	IsChildCloseCalledForTest.Store(true)
 	return e.BaseExecutor.Close()
 }

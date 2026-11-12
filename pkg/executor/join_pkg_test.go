@@ -114,6 +114,13 @@ func TestJoinExec(t *testing.T) {
 		dataSource2.PrepareChunks()
 
 		executor := prepare4HashJoin(casTest, dataSource1, dataSource2)
+		checkReleased := func() {
+			sc := casTest.ctx.GetSessionVars().StmtCtx
+			require.Zero(t, sc.MemTracker.BytesConsumed())
+			require.Zero(t, sc.DiskTracker.BytesConsumed())
+			require.Empty(t, sc.MemTracker.GetChildrenForTest())
+			require.Empty(t, sc.DiskTracker.GetChildrenForTest())
+		}
 		result := exec.NewFirstChunk(executor)
 		{
 			ctx := context.Background()
@@ -131,6 +138,7 @@ func TestJoinExec(t *testing.T) {
 			require.Equal(t, casTest.disk, executor.RowContainer.AlreadySpilledSafeForTest())
 			err = executor.Close()
 			require.NoError(t, err)
+			checkReleased()
 		}
 
 		require.Equal(t, 4, result.NumCols())
@@ -145,6 +153,16 @@ func TestJoinExec(t *testing.T) {
 		}
 		for i := 0; i < casTest.rows; i++ {
 			require.True(t, visit[int64(i)])
+		}
+		// Reopen the executor and stop before fetching, or after one chunk.
+		// Neither path may leave probe accounting attached to the statement.
+		for _, fetch := range []bool{false, true} {
+			require.NoError(t, executor.Open(context.Background()))
+			if fetch {
+				require.NoError(t, executor.Next(context.Background(), exec.NewFirstChunk(executor)))
+			}
+			require.NoError(t, executor.Close())
+			checkReleased()
 		}
 	}
 

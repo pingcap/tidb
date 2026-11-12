@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -390,6 +391,39 @@ func TestGenerateTopNResultsWhenSpillOnlyOnce(t *testing.T) {
 	oneChunkInDiskCase(t, topnExec)
 	severalChunksInDiskCase(t, topnExec)
 	util.CheckNoLeakFiles(t, testFuncName)
+}
+
+// Repeated nested statements must not retain closed executors through the
+// session's spill action chain, including when execution stops before Next.
+func TestTopNCloseReleasesSpillAction(t *testing.T) {
+	old := variable.EnableTmpStorageOnOOM.Load()
+	variable.EnableTmpStorageOnOOM.Store(true)
+	defer variable.EnableTmpStorageOnOOM.Store(old)
+	for _, fetch := range []bool{false, true} {
+		ctx := mock.NewContext()
+		ctx.GetSessionVars().InitChunkSize = 32
+		ctx.GetSessionVars().MaxChunkSize = 32
+		ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+		stmtTracker := memory.NewTracker(memory.LabelForSQLText, -1)
+		ctx.GetSessionVars().StmtCtx.MemTracker = stmtTracker
+		stmtTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+		fallback := new(testutil.MockActionOnExceed)
+		ctx.GetSessionVars().MemTracker.SetActionOnExceed(fallback)
+		for range 3 {
+			topNCase := &testutil.SortCase{Rows: 64, OrderByIdx: []int{0}, Ndvs: []int{0}, Ctx: ctx}
+			schema := expression.NewSchema(topNCase.Columns()...)
+			exe := buildTopNExec(topNCase, buildDataSource(topNCase, schema), 0, 10)
+			require.NoError(t, exe.Open(context.Background()))
+			require.NotSame(t, fallback, ctx.GetSessionVars().MemTracker.GetFallbackForTest(false))
+			if fetch {
+				require.NoError(t, exe.Next(context.Background(), exec.NewFirstChunk(exe)))
+			}
+			require.NoError(t, exe.Close())
+			require.Same(t, fallback, ctx.GetSessionVars().MemTracker.GetFallbackForTest(false))
+			require.Empty(t, stmtTracker.GetChildrenForTest())
+			require.Zero(t, stmtTracker.BytesConsumed())
+		}
+	}
 }
 
 func TestTopNSpillDisk(t *testing.T) {

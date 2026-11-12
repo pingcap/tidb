@@ -357,6 +357,18 @@ func TestSelectIntoUpperCaseUserVar(t *testing.T) {
 	tk.MustQuery("select @a").Check(testkit.Rows("1"))
 	tk.MustQuery("select @A").Check(testkit.Rows("1"))
 
+	// Closing SELECT INTO variables must close the child TopN too, on both
+	// normal completion and the multiple-row error path.
+	tk.MustExec("create table into_close(a int)")
+	tk.MustExec("insert into into_close values (1),(2),(3)")
+	tk.MustExec("select a into @A from into_close order by a limit 1")
+	require.Zero(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
+	tk.MustQuery("select @A").Check(testkit.Rows("1"))
+	tk.MustGetErrMsg("select a into @A from into_close order by a limit 2", "ERROR 1172 (42000): Result consisted of more than one row")
+	require.Zero(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
+	tk.MustExec("select a into @A from into_close where a>3 order by a limit 1")
+	require.Zero(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
+
 	tk.MustExec("set @B = 2")
 	tp, ok := tk.Session().GetSessionVars().GetUserVarType("B")
 	require.True(t, ok)

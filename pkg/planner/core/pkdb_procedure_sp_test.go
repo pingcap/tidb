@@ -4,12 +4,14 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -975,5 +977,37 @@ func TestSetDefaultLengthAndCharsetUsesDefaultPrecisionForZeroWidthNumerics(t *t
 			require.Equal(t, expectedFlen, got.GetFlen())
 			require.Equal(t, expectedDecimal, got.GetDecimal())
 		})
+	}
+}
+
+func TestProcedurePlanCacheWarningIsolation(t *testing.T) {
+	vars := MockContext().GetSessionVars()
+	old := stmtctx.SQLWarn{Level: "Warning", Err: errors.New("existing warning")}
+	added := stmtctx.SQLWarn{Level: "Warning", Err: errors.New("execution warning")}
+	skip := stmtctx.SQLWarn{Level: "Warning", Err: errors.New(procedurePlanCacheWarningPrefix + "test")}
+	for _, replaceContext := range []bool{false, true} {
+		for _, fail := range []bool{false, true} {
+			vars.StmtCtx.SetWarnings([]stmtctx.SQLWarn{old})
+			vars.StmtCtx.SetExtraWarnings([]stmtctx.SQLWarn{old})
+			var wantErr error
+			if fail {
+				wantErr = errors.New("statement failed")
+			}
+			err := executeWithProcedurePlanCacheWarningIsolation(vars, func() error {
+				if replaceContext {
+					vars.StmtCtx = stmtctx.NewStmtCtx()
+				}
+				vars.StmtCtx.AppendWarnings([]stmtctx.SQLWarn{skip, added})
+				vars.StmtCtx.ExtraWarnHandler.AppendWarnings([]stmtctx.SQLWarn{skip, added})
+				return wantErr
+			})
+			require.ErrorIs(t, err, wantErr)
+			want := []stmtctx.SQLWarn{old, added}
+			if replaceContext {
+				want = []stmtctx.SQLWarn{added}
+			}
+			require.Equal(t, want, vars.StmtCtx.GetWarnings())
+			require.Equal(t, want, vars.StmtCtx.GetExtraWarnings())
+		}
 	}
 }

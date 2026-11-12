@@ -435,3 +435,30 @@ where table_schema = 'test' and table_name = 'v_sf_view_info_schema'
 order by ordinal_position`).Check(testkit.Rows("id", "newf2"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
+
+// Internal joins and TopN must release resources before the next function call,
+// rather than relying on the outer SELECT to reset the statement tracker.
+func TestStoredFunctionRepeatedSQLMemory(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_hash_join_version=legacy")
+	tk.MustExec("create table sf_mem_data(id int)")
+	tk.MustExec("insert into sf_mem_data values (0),(1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12),(13),(14),(15)")
+	tk.MustExec(`create function sf_mem(p int) returns int begin
+		declare v int;
+		select /*+ HASH_JOIN(a,b) */ a.id into v from sf_mem_data a join sf_mem_data b on a.id=b.id
+		where a.id>=p order by a.id limit 1;
+		return v;
+	end`)
+	for _, cache := range []string{"OFF", "ON"} {
+		tk.MustExec("set tidb_enable_sp_plan_cache=" + cache)
+		tk.MustExec("set tidb_mem_quota_query=8388608")
+		for range 2 {
+			tk.MustQuery("select sum(sf_mem(a.id)) from sf_mem_data a cross join sf_mem_data b").Check(testkit.Rows("1920"))
+			require.Less(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), int64(8388608))
+			require.Zero(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
+		}
+	}
+}

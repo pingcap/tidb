@@ -59,7 +59,6 @@ func (s *SelectIntoExec) Open(ctx context.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		s.started = true
 		s.dstFile = f
 		s.writer = bufio.NewWriter(s.dstFile)
 		s.chk = exec.TryNewCacheChunk(s.Children(0))
@@ -79,6 +78,7 @@ func (s *SelectIntoExec) Open(ctx context.Context) error {
 		return errors.New("unsupported SelectInto type")
 	}
 
+	s.started = true
 	return s.BaseExecutor.Open(ctx)
 }
 
@@ -245,10 +245,12 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 
 // Close implements the Executor Close interface.
 func (s *SelectIntoExec) Close() error {
+	if !s.started {
+		return nil
+	}
+	s.started = false
+	defer func() { s.chk = nil }()
 	if s.intoOpt.Tp == ast.SelectIntoOutfile {
-		if !s.started {
-			return nil
-		}
 		err1 := s.writer.Flush()
 		err2 := s.dstFile.Close()
 		err3 := s.BaseExecutor.Close()
@@ -259,7 +261,10 @@ func (s *SelectIntoExec) Close() error {
 		}
 		return err3
 	}
-	return nil
+	// SELECT INTO variables opens the same child executor tree as OUTFILE.
+	// Stored functions may execute it once per row of an outer statement, so
+	// deferring cleanup until the outer statement finishes leaks its resources.
+	return s.BaseExecutor.Close()
 }
 
 const (
