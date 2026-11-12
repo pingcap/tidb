@@ -24,7 +24,6 @@ go_library(
         "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/domain",
-        "//pkg/domain/serverinfo",
         "//pkg/domain/sqlsvrapi",
         "//pkg/dumpformat/parquetfile",
         "//pkg/dxf/framework/dxfmetric",
@@ -113,7 +112,7 @@ go_test(
     ],
     embed = [":importinto"],
     flaky = True,
-    shard_count = 33,
+    shard_count = 34,
     deps = [
         "//br/pkg/utils",
         "//pkg/config",

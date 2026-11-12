@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -52,15 +51,8 @@ var (
 
 // LogicalPlan represents a logical plan for import into.
 type LogicalPlan struct {
-	JobID             int64
-	Plan              importer.Plan
-	Stmt              string
-	EligibleInstances []*serverinfo.ServerInfo
-	ChunkMap          map[int32][]importer.Chunk
-	// PreparedChunkMapExternalPath points to externally persisted chunk
-	// metadata produced during framework prepare stage.
-	PreparedChunkMapExternalPath string
-	Logger                       *zap.Logger
+	importer.TaskMeta
+	Logger *zap.Logger
 
 	// summary for next step
 	summary importer.StepSummary
@@ -75,29 +67,19 @@ func (p *LogicalPlan) GetTaskExtraParams() proto.ExtraParams {
 
 // ToTaskMeta converts the logical plan to task meta.
 func (p *LogicalPlan) ToTaskMeta() ([]byte, error) {
-	taskMeta := importer.TaskMeta{
-		JobID:                    p.JobID,
-		Plan:                     p.Plan,
-		Stmt:                     p.Stmt,
-		EligibleInstances:        p.EligibleInstances,
-		ChunkMap:                 p.ChunkMap,
-		PreparedMetaExternalPath: p.PreparedChunkMapExternalPath,
-	}
-	return json.Marshal(taskMeta)
+	meta := p.TaskMeta
+	// The scheduler keeps the summary in the persisted task meta, and the
+	// logical plan does not carry it.
+	meta.Summary = importer.Summary{}
+	return json.Marshal(&meta)
 }
 
 // FromTaskMeta converts the task meta to logical plan.
 func (p *LogicalPlan) FromTaskMeta(bs []byte) error {
-	var taskMeta importer.TaskMeta
-	if err := json.Unmarshal(bs, &taskMeta); err != nil {
+	if err := json.Unmarshal(bs, &p.TaskMeta); err != nil {
 		return errors.Trace(err)
 	}
-	p.JobID = taskMeta.JobID
-	p.Plan = taskMeta.Plan
-	p.Stmt = taskMeta.Stmt
-	p.EligibleInstances = taskMeta.EligibleInstances
-	p.ChunkMap = taskMeta.ChunkMap
-	p.PreparedChunkMapExternalPath = taskMeta.PreparedMetaExternalPath
+	p.Summary = importer.Summary{}
 	return nil
 }
 
@@ -381,9 +363,9 @@ func buildControllerForPlan(p *LogicalPlan) (*importer.LoadDataController, error
 
 func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
 	var chunkMap map[int32][]importer.Chunk
-	if p.PreparedChunkMapExternalPath != "" {
+	if p.PreparedMetaExternalPath != "" {
 		var err error
-		chunkMap, err = readPreparedChunkMap(pCtx.Ctx, &p.Plan, p.PreparedChunkMapExternalPath)
+		chunkMap, err = readPreparedChunkMap(pCtx.Ctx, &p.Plan, p.PreparedMetaExternalPath)
 		if err != nil {
 			return nil, err
 		}
