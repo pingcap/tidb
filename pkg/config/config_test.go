@@ -2349,3 +2349,47 @@ func TestMetering(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenTelemetryConfig(t *testing.T) {
+	conf := NewConfig()
+	require.False(t, conf.OpenTelemetry.Enable)
+	require.Equal(t, 1.0, conf.OpenTelemetry.SampleRatio)
+	require.False(t, conf.TracingEnabled())
+	require.False(t, conf.GetTiKVConfig().OpenTracingEnable)
+
+	f, err := os.CreateTemp(t.TempDir(), "tidb-otel-*.toml")
+	require.NoError(t, err)
+	_, err = f.WriteString(`
+[opentelemetry]
+enable = true
+endpoint = "http://otel-collector:4317"
+insecure = true
+sample-ratio = 0.25
+`)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	require.NoError(t, conf.Load(f.Name()))
+	require.Equal(t, OpenTelemetry{
+		Enable:      true,
+		Endpoint:    "http://otel-collector:4317",
+		Insecure:    true,
+		SampleRatio: 0.25,
+	}, conf.OpenTelemetry)
+	require.NoError(t, conf.Valid())
+	// Spans are created, and client-go traces its RPCs, when either exporter is enabled.
+	require.True(t, conf.TracingEnabled())
+	require.True(t, conf.GetTiKVConfig().OpenTracingEnable)
+
+	conf.OpenTracing.Enable = true
+	require.EqualError(t, conf.Valid(), "opentracing.enable and opentelemetry.enable can't both be true, choose one tracing exporter")
+	conf.OpenTracing.Enable = false
+
+	for _, ratio := range []float64{-0.1, 1.1} {
+		conf.OpenTelemetry.SampleRatio = ratio
+		require.ErrorContains(t, conf.Valid(), "opentelemetry.sample-ratio should be between 0 and 1")
+	}
+	for _, ratio := range []float64{0, 1} {
+		conf.OpenTelemetry.SampleRatio = ratio
+		require.NoError(t, conf.Valid())
+	}
+}
