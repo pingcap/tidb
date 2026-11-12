@@ -51,6 +51,40 @@ func newAdaptiveLimitControllerForTest(
 }
 
 func TestAdaptiveLimitControllerOuterOnly(t *testing.T) {
+	t.Run("zero output with in-flight work", func(t *testing.T) {
+		controller := NewAdaptiveLimitOuterJoinController(AdaptiveLimitConfig{
+			DemandRows: 32000, InitialOuterWindow: 32000, MaxOuterWindow: 125000,
+		})
+		admit := func(rows int) {
+			t.Helper()
+			reserved, ok := reserveOuterForTest(t, controller, 25000)
+			require.True(t, ok)
+			require.Equal(t, rows, reserved)
+			controller.CommitOuter(reserved, reserved)
+		}
+
+		admit(25000)
+		admit(7000)
+		controller.ObserveJoinProgress(25000, 0)
+		admit(25000)
+		controller.ObserveJoinProgress(7000, 0)
+		require.Equal(t, uint64(64000), controller.Snapshot().OuterWindow)
+
+		admit(25000)
+		// With 50,000 rows outstanding, wait for a full batch of room.
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		_, _, err := controller.ReserveOuter(ctx, 25000)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.Positive(t, controller.Snapshot().OuterAdmissionBlocked)
+
+		controller.ObserveJoinProgress(25000, 0)
+		admit(25000)
+		controller.Reset()
+		admit(25000)
+		admit(7000)
+	})
+
 	controller := NewAdaptiveLimitOuterJoinController(AdaptiveLimitConfig{
 		DemandRows: 3, InitialOuterWindow: 3, MaxOuterWindow: 12,
 		InitialLookupWindow: 4, MaxLookupWindow: 8,
@@ -69,12 +103,13 @@ func TestAdaptiveLimitControllerOuterOnly(t *testing.T) {
 	require.Equal(t, 3, reserved)
 	controller.CommitOuter(reserved, reserved)
 	controller.ObserveJoinProgress(reserved, 0)
-	require.Equal(t, uint64(6), controller.Snapshot().OuterWindow)
+	require.Equal(t, uint64(3), controller.Snapshot().OuterWindow)
 
 	reserved, ok = reserveOuterForTest(t, controller, 12)
 	require.True(t, ok)
-	controller.CommitOuter(reserved, 1)
-	controller.ObserveJoinProgress(1, 3)
+	require.Equal(t, 3, reserved)
+	controller.CommitOuter(reserved, reserved)
+	controller.ObserveJoinProgress(reserved, 3)
 	require.True(t, controller.Snapshot().Stopped)
 
 	controller.Reset()

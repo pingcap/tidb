@@ -456,6 +456,15 @@ func TestAdaptiveLimitSingleReadIndexJoin(t *testing.T) {
 		})
 	}
 
+	t.Run("one empty outer batch", func(t *testing.T) {
+		tk.MustExec("set tidb_enable_adaptive_limit_scan = on")
+		sql := `select /*+ inl_join(i) */ o.id from adaptive_single_outer o use index(primary)
+			join adaptive_single_inner i on i.id = o.join_key where o.id between 3 and 5 order by o.id limit 1`
+		tk.MustQuery(sql).Check(testkit.Rows("4"))
+		analyze := fmt.Sprint(tk.MustQuery("explain analyze " + sql).Rows())
+		require.Contains(t, analyze, "adaptive:{outer:2/2, outstanding:0,")
+	})
+
 	var outerValues []string
 	for id := 7; id <= 128; id++ {
 		outerValues = append(outerValues, fmt.Sprintf("(%d,%d,%d)", id, id+100, id+100))

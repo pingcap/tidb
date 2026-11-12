@@ -81,14 +81,11 @@ func (w *adaptiveYieldWindow) totals() (input, output uint64) {
 // AdaptiveLimitSnapshot is a point-in-time view of an AdaptiveLimitController.
 // Outer fields are measured in outer rows. Lookup reservation, handle, window,
 // and batch fields are measured in handles; LookupRows is measured in table
-// rows. DemandRows and OutputRows are measured in final output rows. For an
-// IndexJoin, output rows are observed by the join; for a direct IndexLookUp,
-// they are observed when a lookup task is fully consumed.
+// rows. OutputRows counts final output observed by the join or, for a direct
+// IndexLookUp, when a lookup task is fully consumed.
 // AdmissionBlocked fields are wall-clock durations with overlapping waits in
 // the same stage counted once.
 type AdaptiveLimitSnapshot struct {
-	// DemandRows is the final-row demand derived from LIMIT offset plus count.
-	DemandRows uint64
 	// OutputRows is the cumulative number of final rows observed by the controller.
 	OutputRows uint64
 	// OuterFetched is the cumulative number of committed IndexJoin outer rows.
@@ -172,7 +169,7 @@ type AdaptiveLimitController struct {
 	// outerChanged wakes outer reservers after capacity or lifecycle changes.
 	// Its single buffered signal coalesces duplicate notifications.
 	outerChanged chan struct{}
-	// stopCh is closed when the controller stops so all blocked producers wake up.
+	// Stop closes stopCh to wake blocked producers and sets it to nil until Reset.
 	stopCh chan struct{}
 	// lookupChanged wakes lookup reservers after capacity or lifecycle changes.
 	// Its single buffered signal coalesces duplicate notifications.
@@ -241,8 +238,9 @@ type AdaptiveLimitController struct {
 	outputRows uint64
 	// mu protects lifecycle state, counters, feedback windows, and wait statistics.
 	mu sync.Mutex
-	// stopped indicates that future admission must fail and stopCh has been closed.
-	stopped bool
+	// outerPreferFullBatch coalesces admissions during sustained zero output
+	// for a single-read IndexJoin.
+	outerPreferFullBatch bool
 	// lookupInNoOutputPhase suppresses productive lookup-yield adjustment until
 	// a subsequent lookup task returns rows.
 	lookupInNoOutputPhase bool
@@ -338,6 +336,7 @@ func (c *AdaptiveLimitController) Reset() {
 	c.pendingOuterOutput = 0
 	c.recentOuterYield = adaptiveYieldWindow{}
 	c.outerNoOutputRows = 0
+	c.outerPreferFullBatch = false
 	c.outerWindow = c.initialOuterWindow
 	c.outerGrowthBarrier = 0
 	c.lookupReserved = 0
@@ -351,7 +350,6 @@ func (c *AdaptiveLimitController) Reset() {
 	c.lookupGrowthProgress = 0
 	c.lookupOutstandingAtStop = 0
 	c.lookupAdmissionBlocked = admissionBlockStats{}
-	c.stopped = false
 	c.outerChanged = make(chan struct{}, 1)
 	c.lookupChanged = make(chan struct{}, 1)
 	c.stopCh = make(chan struct{})
@@ -400,7 +398,7 @@ func (c *AdaptiveLimitController) reserve(
 			c.mu.Unlock()
 			return 0, false, err
 		}
-		if c.stopped {
+		if c.stopCh == nil {
 			if waiting {
 				c.endAdmissionBlockedLocked(stage, time.Now())
 			}
@@ -410,14 +408,20 @@ func (c *AdaptiveLimitController) reserve(
 		window := c.lookupPhysicalWindowLocked()
 		outstanding := c.lookupReserved
 		changed := c.lookupChanged
+		minUnits := uint64(1)
 		if stage == adaptiveOuterRowsAdmission {
 			window = c.outerWindow
 			// Fetched-but-unconsumed rows and uncommitted reservations both
 			// consume outer admission capacity.
 			outstanding = c.outerFetched - min(c.outerFetched, c.outerConsumed) + c.outerReserved
 			changed = c.outerChanged
+			// An in-flight task can free enough room for a full batch. With no
+			// task to consume, admit a partial batch to guarantee progress.
+			if c.outerPreferFullBatch && outstanding != 0 {
+				minUnits = uint64(maxUnits)
+			}
 		}
-		if outstanding < window {
+		if outstanding < window && window-outstanding >= minUnits {
 			if waiting {
 				c.endAdmissionBlockedLocked(stage, time.Now())
 			}
@@ -547,6 +551,7 @@ func (c *AdaptiveLimitController) ObserveJoinProgress(consumedRows, outputRows i
 	if pairedOutput > 0 {
 		c.recentOuterYield.add(consumed, pairedOutput)
 		c.outerNoOutputRows = 0
+		c.outerPreferFullBatch = false
 		c.recomputeOuterWindowLocked()
 		c.recomputeLookupWindowLocked()
 	} else {
@@ -554,7 +559,7 @@ func (c *AdaptiveLimitController) ObserveJoinProgress(consumedRows, outputRows i
 			c.recentOuterYield = adaptiveYieldWindow{}
 		}
 		c.outerNoOutputRows = saturatingAdd(c.outerNoOutputRows, consumed)
-		c.growOuterWindowIfDrainedLocked()
+		c.growOuterWindowOnNoOutputLocked()
 	}
 	c.notifyAllLocked()
 	c.mu.Unlock()
@@ -568,7 +573,7 @@ func (c *AdaptiveLimitController) CompleteLookup(reserved, handles, rows int) {
 		return
 	}
 	c.mu.Lock()
-	if c.stopped || uint64(reserved) > c.lookupReserved {
+	if c.stopCh == nil || uint64(reserved) > c.lookupReserved {
 		c.mu.Unlock()
 		return
 	}
@@ -627,9 +632,7 @@ func (c *AdaptiveLimitController) SuggestedBatchSize(ceiling int) int {
 // Stop prevents future admission and wakes all blocked producers.
 func (c *AdaptiveLimitController) Stop() {
 	c.mu.Lock()
-	if !c.stopped {
-		c.stopLocked()
-	}
+	c.stopLocked()
 	c.mu.Unlock()
 }
 
@@ -639,7 +642,6 @@ func (c *AdaptiveLimitController) Snapshot() AdaptiveLimitSnapshot {
 	defer c.mu.Unlock()
 	return AdaptiveLimitSnapshot{
 		HasLookupStage:          c.HasLookupStage(),
-		DemandRows:              c.demandRows,
 		OutputRows:              c.outputRows,
 		OuterFetched:            c.outerFetched,
 		OuterConsumed:           c.outerConsumed,
@@ -655,7 +657,7 @@ func (c *AdaptiveLimitController) Snapshot() AdaptiveLimitSnapshot {
 		LookupOutstandingAtStop: c.lookupOutstandingAtStop,
 		OuterAdmissionBlocked:   c.admissionBlockedTimeLocked(adaptiveOuterRowsAdmission),
 		LookupAdmissionBlocked:  c.admissionBlockedTimeLocked(adaptiveLookupHandlesAdmission),
-		Stopped:                 c.stopped,
+		Stopped:                 c.stopCh == nil,
 	}
 }
 
@@ -748,12 +750,22 @@ func (c *AdaptiveLimitController) recomputeDirectLookupWindowLocked() {
 	}
 }
 
-func (c *AdaptiveLimitController) growOuterWindowIfDrainedLocked() {
-	// A zero-output phase has no usable yield ratio. Grow only after the current
-	// window produced no output and all outstanding work drained, which
-	// guarantees progress without jumping to the maximum after one empty task.
+func (c *AdaptiveLimitController) growOuterWindowOnNoOutputLocked() {
+	if c.outerNoOutputRows < c.outerWindow {
+		return
+	}
 	outstanding := c.outerFetched - min(c.outerFetched, c.outerConsumed) + c.outerReserved
-	if outstanding != 0 || c.outerNoOutputRows < c.outerWindow {
+	if c.mode == adaptiveLimitIndexJoinOuterOnly {
+		// Retry the first empty window at its original size in case matches
+		// begin in the next batch. After that, use newly consumed input to
+		// grow even when the producer keeps the window partially occupied.
+		if c.outputRows == 0 && c.outerConsumed == c.initialOuterWindow && outstanding == 0 {
+			c.outerNoOutputRows = 0
+			return
+		}
+		c.outerPreferFullBatch = true
+	} else if outstanding != 0 {
+		// With a lookup stage, keep the existing coordinated growth rule.
 		return
 	}
 	nextWindow := growAdaptiveWindow(c.outerWindow, c.maxOuterWindow)
@@ -794,10 +806,9 @@ func (c *AdaptiveLimitController) lookupPhysicalWindowLocked() uint64 {
 }
 
 func (c *AdaptiveLimitController) stopLocked() {
-	if c.stopped {
+	if c.stopCh == nil {
 		return
 	}
-	c.stopped = true
 	now := time.Now()
 	c.finishAdmissionBlockedLocked(adaptiveOuterRowsAdmission, now)
 	c.finishAdmissionBlockedLocked(adaptiveLookupHandlesAdmission, now)
@@ -812,6 +823,7 @@ func (c *AdaptiveLimitController) stopLocked() {
 	c.lookupWindow = 0
 	c.lookupBatchSize = 0
 	close(c.stopCh)
+	c.stopCh = nil
 }
 
 func (c *AdaptiveLimitController) admissionBlockedTimeLocked(stage adaptiveAdmissionStage) time.Duration {

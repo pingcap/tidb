@@ -60,7 +60,6 @@ func TestIndexJoinRuntimeStats(t *testing.T) {
 
 	stats.adaptiveLimitSnapshot = &exec.AdaptiveLimitSnapshot{
 		HasLookupStage:          true,
-		DemandRows:              1000,
 		OutputRows:              1000,
 		OuterFetched:            1413,
 		OuterConsumed:           1000,

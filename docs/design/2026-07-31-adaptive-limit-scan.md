@@ -281,7 +281,9 @@ The cumulative and recent lookup estimates are computed independently, and the l
 
 The logical lookup window does not shrink below its statement-derived initial value. The execution batch is tracked independently, so shrinking the logical window does not create row-at-a-time table RPCs. Rounding the logical window to the execution batch intentionally permits less than one batch of physical over-admission.
 
-If a stage produces no output, a ratio cannot estimate the next target. The controller waits until that stage has no outstanding reservation and the zero-output input reaches the current logical window. For the lookup stage, it then doubles both the logical window and execution batch up to their separate configured maxima. This guarantees progress without jumping directly to the maximum after one empty task, while avoiding a long sequence of tiny tasks for a small LIMIT.
+If a stage produces no output, a ratio cannot estimate the next target. For a double read, the controller grows the window when the stage drains and the consumed input without output reaches the current logical window. For the lookup stage, it then doubles both the logical window and execution batch up to their separate configured maxima.
+
+For an IndexLookUpJoin with a single-read outer input, the controller retries the initial window at the same size if it drains without a match. With sustained misses, the controller grows the window as the join consumes each window's worth of input, even with tasks still in flight. During this phase, an in-flight task can free space for a full batch. If no task is in flight, a partial batch can still be admitted. Productive join feedback restores ordinary admission.
 
 ### Batch Size and DistSQL Behavior
 
@@ -627,7 +629,7 @@ This bounds concurrent prefetch but can substantially regress multi-Region laten
 
 ### Consumer-Starvation-Based Growth
 
-Growing concurrency whenever the result queue is temporarily empty confuses normal pipeline gaps with genuine starvation. During system jitter, this can create the same positive feedback that the feature is intended to avoid. The current design does not adapt DistSQL concurrency. Consumed row progress and drained zero-output phases change only logical admission windows and lookup task sizes.
+Growing concurrency whenever the result queue is temporarily empty confuses normal pipeline gaps with genuine starvation. During system jitter, this can create the same positive feedback that the feature is intended to avoid. The current design does not adapt DistSQL concurrency. Consumed row progress and zero-output feedback adjust the logical admission windows and lookup task sizes.
 
 ### Request-Level Scan Budget
 
