@@ -660,6 +660,12 @@ impl ResolveIndicesItself for PhysicalPlan {
                 for plan in &mut op.partial_plans_raw {
                     plan.resolve_indices()?;
                 }
+                if let (Some(handle_cols), true) = (&op.handle_cols, op.keep_order) {
+                    let schema = op.base.base.schema().ok_or_else(|| {
+                        PlanError::internal("IndexMergeReader has no output schema")
+                    })?;
+                    op.handle_cols = Some(handle_cols.resolve_indices(schema).map_err(PlanError::internal)?);
+                }
             }
             Self::Dml(op) => {
                 if let Some(plan) = &mut op.select_plan {

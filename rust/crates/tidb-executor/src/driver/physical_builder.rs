@@ -7589,8 +7589,8 @@ fn build_index_merge_reader(
         .as_ref()
         .map(|_| {
             reader
-                .handle_cols()
-                .cloned()
+                .handle_cols
+                .clone()
                 .ok_or_else(|| DriverError::unsupported("an index merge's table scan has no handle columns"))
         })
         .transpose()?;
@@ -7918,12 +7918,11 @@ fn build_index_merge_reader(
     if let (Some(client), ReaderStorage::Snapshot, PhysicalPlan::TableScan(ts)) = (client, &state.reader_storage, table_scan) {
         let table_info = table.meta().read().clone();
         let keep_order = if reader.keep_order {
-            // Go `p.HandleCols.ResolveIndices(p.Schema())` when `KeepOrder`.
+            // Go `v.HandleCols`, resolved over the reader's schema.
             let handle_cols = reader
-                .handle_cols()
-                .ok_or_else(|| DriverError::unsupported("an index merge's table scan has no handle columns"))?
-                .resolve_indices(&schema)
-                .map_err(DriverError::unsupported)?;
+                .handle_cols
+                .clone()
+                .ok_or_else(|| DriverError::unsupported("an index merge's table scan has no handle columns"))?;
             let phys_tbl_id_idx =
                 schema.columns.iter().position(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID);
             Some((handle_cols, phys_tbl_id_idx))

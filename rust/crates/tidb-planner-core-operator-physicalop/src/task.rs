@@ -979,6 +979,7 @@ impl CopTask {
                 first.query_block_offset(),
             );
             let table_plan = self.table_plan.take();
+            let handle_cols = crate::PhysicalIndexMergeReader::table_plan_handle_cols(table_plan.as_deref());
             let receipt = table_plan.as_deref().unwrap_or(first);
             base.base.set_stats(receipt.stats_info().cloned());
             base.base.set_schema(receipt.schema().cloned());
@@ -999,6 +1000,7 @@ impl CopTask {
                     },
                     keep_order: self.keep_order,
                     plan_part_info: self.phys_plan_part_info.clone(),
+                    handle_cols,
                 });
             let reader = if self.need_extra_proj {
                 Self::project_origin_schema(reader, self.origin_schema.take(), allocator)?

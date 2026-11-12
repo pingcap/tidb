@@ -2919,17 +2919,20 @@ pub struct PhysicalIndexMergeReader {
     pub keep_order: bool,
     /// Go `PlanPartInfo`.
     pub plan_part_info: Option<std::sync::Arc<PhysPlanPartInfo>>,
+    /// Go `HandleCols`: the table scan's (`Init`), resolved over the
+    /// reader's schema when `KeepOrder` (`ResolveIndices`).
+    pub handle_cols: Option<tidb_planner_util::handle_cols::HandleCols>,
 }
 
 impl PhysicalIndexMergeReader {
-    /// Go `HandleCols`, which `Init` takes from the table scan
-    /// (`p.TablePlans[0].(*PhysicalTableScan).HandleCols`).
+    /// Go `Init`'s `p.TablePlans[0].(*PhysicalTableScan).HandleCols`: the
+    /// handle columns of the table plan's scan.
     #[must_use]
-    pub fn handle_cols(&self) -> Option<&tidb_planner_util::handle_cols::HandleCols> {
-        let mut plan = self.table_plan.as_deref()?;
+    pub fn table_plan_handle_cols(table_plan: Option<&PhysicalPlan>) -> Option<tidb_planner_util::handle_cols::HandleCols> {
+        let mut plan = table_plan?;
         loop {
             match plan {
-                PhysicalPlan::TableScan(ts) => return ts.handle_cols.as_ref(),
+                PhysicalPlan::TableScan(ts) => return ts.handle_cols.clone(),
                 _ => plan = plan.children().first()?,
             }
         }
@@ -5340,6 +5343,7 @@ impl PhysicalPlan {
                 by_items: op.by_items.clone(),
                 keep_order: op.keep_order,
                 plan_part_info: op.plan_part_info.clone(),
+                handle_cols: op.handle_cols.clone(),
             }),
             Self::Dml(op) => Self::Dml(PhysicalDmlRoot {
                 base: base_of(&op.base),
