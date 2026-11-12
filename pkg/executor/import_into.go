@@ -262,20 +262,20 @@ func (e *ImportIntoExec) submitTask(ctx context.Context) (int64, *proto.TaskBase
 			if err != nil {
 				return 0, nil, err
 			}
-			return SubmitStandaloneImportTask(ctx, e.controller.Plan, e.stmt, chunkMap)
+			return submitStandaloneImportTask(ctx, e.controller.Plan, e.stmt, chunkMap)
 		}
 	}
 	// if tidb_enable_dist_task=true, we import distributively, otherwise we import on current node.
 	if vardef.EnableDistTask.Load() {
 		return SubmitImportTask(ctx, e.controller.Plan, e.stmt)
 	}
-	return SubmitStandaloneImportTask(ctx, e.controller.Plan, e.stmt, nil)
+	return submitStandaloneImportTask(ctx, e.controller.Plan, e.stmt, nil)
 }
 
-// SubmitStandaloneImportTask submits a task to the distribute framework that only runs on the current node.
+// submitStandaloneImportTask submits a task to the distribute framework that only runs on the current node.
 // when import from server-disk, pass engine chunks too, as scheduler might run on another
 // node where we can't access the data files.
-func SubmitStandaloneImportTask(ctx context.Context, plan *importer.Plan, stmt string, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
+func submitStandaloneImportTask(ctx context.Context, plan *importer.Plan, stmt string, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {
 		return 0, nil, err

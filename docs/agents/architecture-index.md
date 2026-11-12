@@ -37,7 +37,7 @@ Hard requirements remain in the repository root `AGENTS.md`.
 - `pkg/dxf/importinto/`: distributed import scheduling and step execution.
 - `pkg/executor/importer/job.go`, `pkg/executor/importer/runtime_info.go`: import job rows, and job progress read from the DXF task.
 - `pkg/executor/import_into.go`: IMPORT INTO task submission; `pkg/executor` must not import `pkg/dxf/importinto`.
-- First tests: importer metadata/option tests, `pkg/executor/importer/runtime_info_test.go` and `pkg/executor/import_into_submit_test.go`.
+- First tests: importer metadata/option tests, `pkg/executor/importer/runtime_info_test.go` and `pkg/executor/import_into_test.go`.
 
 ### Session, variables, protocol
 - `pkg/session/`
