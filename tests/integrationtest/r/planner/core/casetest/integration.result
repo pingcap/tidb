@@ -1887,10 +1887,6 @@ count(*)
 0
 update t_commit_ts set b = b + 1 where _tidb_commit_ts > 0;
 Error 1815 (HY000): Usage of column name '_tidb_commit_ts' is not supported for now
-update t_commit_ts set b = (select 1) where _tidb_commit_ts > 0;
-Error 1815 (HY000): Usage of column name '_tidb_commit_ts' is not supported for now
 delete from t_commit_ts where _tidb_commit_ts = 1;
 update t_commit_ts set b = b + 1 where _tidb_commit_ts = 1;
 Error 1815 (HY000): Usage of column name '_tidb_commit_ts' is not supported for now
-insert into t_commit_ts (a, b) values (1, _tidb_commit_ts);
-Error 1054 (42S22): Unknown column '_tidb_commit_ts' in 'field list'

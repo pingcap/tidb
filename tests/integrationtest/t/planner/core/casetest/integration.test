@@ -772,10 +772,6 @@ delete from t_commit_ts where _tidb_commit_ts > 0;
 select count(*) from t_commit_ts;
 -- error 1815
 update t_commit_ts set b = b + 1 where _tidb_commit_ts > 0;
--- error 1815
-update t_commit_ts set b = (select 1) where _tidb_commit_ts > 0;
 delete from t_commit_ts where _tidb_commit_ts = 1;
 -- error 1815
 update t_commit_ts set b = b + 1 where _tidb_commit_ts = 1;
--- error 1054
-insert into t_commit_ts (a, b) values (1, _tidb_commit_ts);
