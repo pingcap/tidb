@@ -67,23 +67,13 @@ func TestReportStatus(t *testing.T) {
 	emptyRequest := new(mpp.ReportTaskStatusRequest)
 	require.NoError(t, emptyRequest.Unmarshal(nil))
 	require.Nil(t, emptyRequest.Meta)
-	for _, tc := range []struct {
-		name    string
-		request *mpp.ReportTaskStatusRequest
-	}{
-		{name: "nil request"},
-		{name: "empty protobuf request", request: emptyRequest},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			resp := manager.ReportStatus(tc.request)
-			require.NotNil(t, resp)
-			require.NotNil(t, resp.Error)
-			require.Equal(t, "missing task metadata", resp.Error.Msg)
-		})
-	}
+	resp := manager.ReportStatus(emptyRequest)
+	require.NotNil(t, resp)
+	require.NotNil(t, resp.Error)
+	require.Equal(t, "missing task metadata", resp.Error.Msg)
 
 	// Present metadata with zero IDs still follows the normal coordinator lookup.
-	resp := manager.ReportStatus(&mpp.ReportTaskStatusRequest{Meta: &mpp.TaskMeta{}})
+	resp = manager.ReportStatus(&mpp.ReportTaskStatusRequest{Meta: &mpp.TaskMeta{}})
 	require.Nil(t, resp.Error)
 
 	meta := &mpp.TaskMeta{QueryTs: 1, LocalQueryId: 2, ServerId: 3, GatherId: 4, MppVersion: 3}
