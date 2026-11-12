@@ -168,15 +168,20 @@ func TestWriterCSVReusedRowsAcrossFiles(t *testing.T) {
 	conf.FileSize = 1
 	w := createTestWriter(conf, t)
 	meta := newMockTableIR("test", "reused", nil, nil, []string{"TEXT"})
+	// Both rows fit individually, but together overflow a partially filled batch.
+	largeFirst := strings.Repeat("x", 3*readBatchBytes/4)
+	largeSecond := strings.Repeat("y", readBatchBytes/2)
 	data := &workerTestTableData{
 		mockTableIR: meta,
 		newIter: func(_ int) *workerTestRowIter {
-			return &workerTestRowIter{values: [][]byte{[]byte("first"), nil, {}, []byte("last")}}
+			return &workerTestRowIter{values: [][]byte{[]byte("first"), nil, {}, []byte(largeFirst), []byte(largeSecond), []byte("last")}}
 		},
 	}
 
 	require.NoError(t, runWorkerTestTask(w, meta, data))
-	require.Equal(t, []string{"\"first\"\n", "\\N\n", "\"\"\n", "\"last\"\n"}, workerTestOutput(t, conf.OutputDirPath))
+	require.Equal(t, []string{
+		"\"first\"\n", "\\N\n", "\"\"\n", "\"" + largeFirst + "\"\n", "\"" + largeSecond + "\"\n", "\"last\"\n",
+	}, workerTestOutput(t, conf.OutputDirPath))
 	require.True(t, data.iter.closed, "the source must be closed before the worker returns")
 }
 

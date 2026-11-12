@@ -5,6 +5,7 @@ package export
 import (
 	"database/sql"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/pkg/util"
@@ -13,7 +14,7 @@ import (
 const (
 	readBatchCount = 3
 	readBatchRows  = 256
-	readBatchBytes = 1 << 20
+	readBatchBytes = units.MiB
 )
 
 type readBatchValue struct {
@@ -143,51 +144,34 @@ func (r *tableDataReader) read(decode bool) {
 	}
 	iter := r.TableDataIR.Rows()
 	row := &RowReceiverArr{data: make([]sql.RawBytes, r.columnCount)}
-	var batch *readBatch
+	batches := readBatchBuilder{reader: r}
 	for {
 		if r.tctx.Err() != nil {
 			return
 		}
 		if !iter.HasNext() {
-			r.finish(batch, readResult{terminalErr: iter.Error()})
+			batches.finish(readResult{terminalErr: iter.Error()})
 			return
 		}
-		if batch == nil {
-			batch = r.takeBatch()
-			if batch == nil {
-				return
-			}
+		if !batches.ensureBatch() {
+			return
 		}
 		var values []sql.RawBytes
-		var rowBytes int
 		if decode {
 			if err := iter.Decode(row); err != nil {
 				// Keep a decode failure on its own logical row. In particular,
 				// the preceding file's Error check must not observe it.
-				r.finish(batch, readResult{decodeErr: err})
+				batches.finish(readResult{decodeErr: err})
 				return
 			}
 			values = row.data
-			for _, value := range values {
-				rowBytes += len(value)
-			}
 		}
-		if batch.wouldOverflow(rowBytes) {
-			if !r.publishBatch(batch) {
-				return
-			}
-			batch = r.takeBatch()
-			if batch == nil {
-				return
-			}
+		if !batches.appendRow(values) {
+			return
 		}
-		batch.appendRow(values, rowBytes)
 		iter.Next()
-		if batch.full() {
-			if !r.publishBatch(batch) {
-				return
-			}
-			batch = nil
+		if !batches.flushIfFull() {
+			return
 		}
 	}
 }
@@ -210,19 +194,62 @@ func (r *tableDataReader) send(result readResult) bool {
 	}
 }
 
-func (r *tableDataReader) publishBatch(batch *readBatch) bool {
-	if batch == nil || batch.rows == 0 {
-		return true
-	}
-	return r.send(readResult{batch: batch})
+// readBatchBuilder owns the producer's current batch. Flushing transfers that
+// ownership to the consumer, which alone may reset and recycle the batch.
+type readBatchBuilder struct {
+	reader *tableDataReader
+	batch  *readBatch
 }
 
-func (r *tableDataReader) finish(batch *readBatch, result readResult) {
-	if !r.publishBatch(batch) {
+func (b *readBatchBuilder) ensureBatch() bool {
+	if b.batch == nil {
+		b.batch = b.reader.takeBatch()
+	}
+	return b.batch != nil
+}
+
+// appendRow requires an acquired batch and copies values before source advance.
+func (b *readBatchBuilder) appendRow(values []sql.RawBytes) bool {
+	var rowBytes int
+	for _, value := range values {
+		rowBytes += len(value)
+	}
+	if b.batch.wouldOverflow(rowBytes) {
+		if !b.flush() {
+			return false
+		}
+		if !b.ensureBatch() {
+			return false
+		}
+	}
+	b.batch.appendRow(values, rowBytes)
+	return true
+}
+
+// flushIfFull is called after advancing the source, preserving publication timing.
+func (b *readBatchBuilder) flushIfFull() bool {
+	if !b.batch.full() {
+		return true
+	}
+	return b.flush()
+}
+
+func (b *readBatchBuilder) flush() bool {
+	if b.batch != nil && b.batch.rows > 0 {
+		if !b.reader.send(readResult{batch: b.batch}) {
+			return false
+		}
+	}
+	b.batch = nil
+	return true
+}
+
+func (b *readBatchBuilder) finish(result readResult) {
+	if !b.flush() {
 		return
 	}
 	// Errors are ordered after all copied rows, including at file boundaries.
-	r.send(result)
+	b.reader.send(result)
 }
 
 func (r *tableDataReader) Rows() SQLRowIter { return r }
