@@ -1084,6 +1084,15 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 		require.True(t, exist)
 	}
 
+	// Partitioned column jobs also clean index keys under the logical table ID.
+	qargs = <-midr.queryCh
+	require.Len(t, qargs.ParamsList, 2)
+	for i, indexID := range []int64{2, 3} {
+		require.Equal(t, encodeTableIndexKey(mDDLJobTable0NewID, indexID), qargs.ParamsList[i].StartKey)
+		require.Equal(t, encodeTableIndexKey(mDDLJobTable0NewID, indexID+1), qargs.ParamsList[i].EndKey)
+	}
+	require.Empty(t, midr.queryCh)
+
 	// drop column for table1
 	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(dropTable1ColumnJob)
 	require.NoError(t, err)
@@ -1114,6 +1123,15 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 		_, exist = mDDLJobALLNewPartitionIndex3KeySet[qargs.ParamsList[1].StartKey]
 		require.True(t, exist)
 	}
+
+	// Partitioned column jobs also clean index keys under the logical table ID.
+	qargs = <-midr.queryCh
+	require.Len(t, qargs.ParamsList, 2)
+	for i, indexID := range []int64{2, 3} {
+		require.Equal(t, encodeTableIndexKey(mDDLJobTable0NewID, indexID), qargs.ParamsList[i].StartKey)
+		require.Equal(t, encodeTableIndexKey(mDDLJobTable0NewID, indexID+1), qargs.ParamsList[i].EndKey)
+	}
+	require.Empty(t, midr.queryCh)
 
 	// modify column for table1
 	err = schemaReplace.processIngestIndexAndDeleteRangeFromJob(modifyTable1ColumnJob)
