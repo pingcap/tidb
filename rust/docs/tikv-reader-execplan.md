@@ -80,8 +80,13 @@ reader built by Go's `buildTableReader` / `buildIndexReader` /
   `buildPartialWorkerKVRanges`, `extractTaskHandles` and its `retChk` of
   the whole index rows); it exposed that the planner never gave an ordered
   merge's partial scans their `ByItems` (`ConvertToPartialIndexScan`,
-  `convertToPartialTableScan`). Left in (c): the table partials
-  (`partialTableWorker` over a `TableReaderExecutor` of the partial plan).
+  `convertToPartialTableScan`). The table partials followed:
+  `PartialTableWorker` (Go `partialTableWorker` over a
+  `TableReaderExecutor` of the partial plan, `over_plan` split from
+  `build_no_range`, opened once a table of `tbls`). Left in M3b: (b) the
+  plans carrying `HandleCols` (the executor derives Go's `ts.HandleCols`
+  from the table metadata) and the in-process engine's sources, which go
+  with the A<->B merge.
 - [ ] Milestone 4: the index join's inner side is Go's
   `dataReaderBuilder.BuildExecutorForIndexJoin`, and a union scan there is
   `buildUnionScanForIndexJoin`'s `UnionScanExec` over the task's reader; the

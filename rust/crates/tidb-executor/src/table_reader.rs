@@ -472,39 +472,10 @@ impl TableReaderExecutor {
             .table_plan
             .as_deref()
             .ok_or_else(|| ExecError::Internal("the table reader has no plan".into()))?;
-        let mut table_scans = Vec::new();
-        crate::mpp_gather::get_table_scans(table_plan, &mut table_scans);
-        let [ts] = table_scans[..] else {
-            return Err(ExecError::Internal("TableReader should only contain 1 table scan".into()));
-        };
-        let table = ts
-            .table
-            .as_ref()
-            .ok_or_else(|| ExecError::Internal("the table reader's scan has no table".into()))?
-            .read()
-            .clone();
-        let store = ctx
-            .txn_store()
-            .ok_or_else(|| ExecError::Internal("the table reader has no store".into()))?;
-        let client = store
-            .client()
-            .ok_or_else(|| ExecError::Internal("the store has no coprocessor client".into()))?;
-        // Go `getPhysicalPlanIDs(e.plans)`: a list request's summaries come
-        // in `v.TablePlans` order, the scan first.
-        let mut plan_ids = Vec::new();
-        if v.store_type == tidb_kv::store_type::StoreType::TiFlash {
-            crate::mpp_gather::collect_plan_ids(table_plan, &mut plan_ids);
-        } else {
-            plan_ids = crate::builder_utils::flatten_table_plan(table_plan)
-                .into_iter()
-                .map(|plan| plan.id() as isize)
-                .collect();
-        }
-        let (virtual_column_index, virtual_column_ret_field_types) =
-            crate::mpp_gather::build_virtual_column_info(meta.schema(), &ts.columns);
+        let mut reader = Self::over_plan(meta, ctx, is, table_plan, v.store_type, v.read_req_type == ReadReqType::BatchCop)?;
+        let table = reader.table_info()?;
         // Go `ts.IsPartition()`: a statically pruned scan reads its partition.
-        let is_partition = ts.table_id != table.id;
-        let mut partitions = None;
+        let is_partition = reader.physical_table_id != table.id;
         if !ctx.static_partition_prune() && !is_partition {
             if let Some(pi) = table.get_partition_info() {
                 let info = v.plan_part_info.as_ref().ok_or_else(|| {
@@ -529,13 +500,76 @@ impl TableReaderExecutor {
                 // multiple partition key ranges ordered.
                 let mut pids: Vec<i64> = idx_arr.iter().map(|&idx| definitions[idx].id).collect();
                 pids.sort_unstable();
-                partitions = Some(pids);
+                reader.partitions = Some(pids);
             }
         }
-        Ok(Some(Self {
+        Ok(Some(reader))
+    }
+
+    /// The scan's table metadata.
+    fn table_info(&self) -> Result<tidb_model::TableInfo, ExecError> {
+        let mut table_scans = Vec::new();
+        crate::mpp_gather::get_table_scans(&self.table_plan, &mut table_scans);
+        let [ts] = table_scans[..] else {
+            return Err(ExecError::Internal("TableReader should only contain 1 table scan".into()));
+        };
+        Ok(ts
+            .table
+            .as_ref()
+            .ok_or_else(|| ExecError::Internal("the table reader's scan has no table".into()))?
+            .read()
+            .clone())
+    }
+
+    /// Go's `TableReaderExecutor` over `table_plan` (a reader's
+    /// `TablePlans`, or an index merge's partial plan) reading the scan's
+    /// own table: its DAG built on `Open`, its ranges, order and columns
+    /// the scan's.
+    ///
+    /// # Errors
+    /// A plan without exactly one table scan, or a store without a client.
+    pub(crate) fn over_plan(
+        meta: ExecutorMeta,
+        ctx: &crate::StmtContext,
+        is: &tidb_infoschema::SessionExtendedInfoSchema,
+        table_plan: &PhysicalPlan,
+        store_type: tidb_kv::store_type::StoreType,
+        batch_cop: bool,
+    ) -> Result<Self, ExecError> {
+        let mut table_scans = Vec::new();
+        crate::mpp_gather::get_table_scans(table_plan, &mut table_scans);
+        let [ts] = table_scans[..] else {
+            return Err(ExecError::Internal("TableReader should only contain 1 table scan".into()));
+        };
+        let table = ts
+            .table
+            .as_ref()
+            .ok_or_else(|| ExecError::Internal("the table reader's scan has no table".into()))?
+            .read()
+            .clone();
+        let store = ctx
+            .txn_store()
+            .ok_or_else(|| ExecError::Internal("the table reader has no store".into()))?;
+        let client = store
+            .client()
+            .ok_or_else(|| ExecError::Internal("the store has no coprocessor client".into()))?;
+        // Go `getPhysicalPlanIDs(e.plans)`: a list request's summaries come
+        // in `v.TablePlans` order, the scan first.
+        let mut plan_ids = Vec::new();
+        if store_type == tidb_kv::store_type::StoreType::TiFlash {
+            crate::mpp_gather::collect_plan_ids(table_plan, &mut plan_ids);
+        } else {
+            plan_ids = crate::builder_utils::flatten_table_plan(table_plan)
+                .into_iter()
+                .map(|plan| plan.id() as isize)
+                .collect();
+        }
+        let (virtual_column_index, virtual_column_ret_field_types) =
+            crate::mpp_gather::build_virtual_column_info(meta.schema(), &ts.columns);
+        Ok(Self {
             meta,
             ctx: ctx.clone(),
-            store_type: v.store_type,
+            store_type,
             net_data_size: table_plan.cop_net_data_size(
                 false,
                 tidb_config::tikvcfg::get_global_config().tikv_client.enable_chunk_rpc,
@@ -547,10 +581,10 @@ impl TableReaderExecutor {
             is_common_handle: table.is_common_handle,
             ranges: ts.ranges.clone(),
             range_rebuild: crate::driver::physical_builder::correlated_table_range_rebuilder(ts, ctx),
-            partitions,
+            partitions: None,
             keep_order: ts.keep_order,
             desc: ts.desc,
-            batch_cop: v.read_req_type == ReadReqType::BatchCop,
+            batch_cop,
             start_ts: store.start_ts(),
             schema_version: is.metadata_version() as i64,
             columns: ts.columns.clone(),
@@ -567,7 +601,15 @@ impl TableReaderExecutor {
             // Go: a temporary table's reader is a dummy; its rows are the
             // union scan's.
             dummy: table.temp_table_type != tidb_model::TempTableType::NONE,
-        }))
+        })
+    }
+
+    /// Go `partialTableReader.table = tbl` (and its `kvRangeBuilder`): the
+    /// physical table an index merge's partial table worker reads next, or
+    /// the partitions it merges by `byItems`.
+    pub(crate) fn set_table(&mut self, physical_table_id: i64, partitions: Option<Vec<i64>>) {
+        self.physical_table_id = physical_table_id;
+        self.partitions = partitions;
     }
 
     /// Go `buildTableReaderBase` over a reader `buildNoRangeTableReader`

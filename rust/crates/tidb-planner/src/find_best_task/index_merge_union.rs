@@ -481,12 +481,16 @@ pub(super) fn build_converged_union_index_merge_task(
                 ),
                 ctx,
             )));
+            // Go `overwritePartialTableScanSchema`: the scan reads its handle
+            // columns (`ts.Columns = infoCols`), and the partition id
+            // `AddExtraPhysTblIDColumn` appends.
+            let columns = schema_column_infos(ds, &schema_columns);
             base.base
                 .set_schema(Some(tidb_expr::schema::Schema::new(schema_columns)));
             partial_plans_raw.push(PhysicalPlan::TableScan(
                 tidb_planner_core_operator_physicalop::PhysicalTableScan {
                     table: ds.table_info.clone(),
-                    columns: ds.columns.clone(),
+                    columns,
                     is_mpp_or_batch_cop: false,
                     // Go `convertToPartialTableScan`: `ts.ByItems = byItems`
                     // when the order matches.
@@ -736,6 +740,30 @@ pub(super) fn build_converged_union_index_merge_task(
         common_handle_cols: ds.common_handle_cols.clone(),
         ..Default::default()
     }))
+}
+
+/// The column infos of `columns`: the table's own, `_tidb_rowid`'s
+/// (`NewExtraHandleColInfo`) or `_tidb_tid`'s (`NewExtraPhysTblIDColInfo`).
+fn schema_column_infos(
+    ds: &DataSource,
+    columns: &[tidb_expr::column::Column],
+) -> Vec<tidb_model::GoShared<tidb_model::ColumnInfo>> {
+    columns
+        .iter()
+        .filter_map(|column| match column.id {
+            tidb_planner_core_operator_logicalop::data_source::EXTRA_HANDLE_ID => {
+                Some(tidb_model::GoShared::new(tidb_model::ColumnInfo::new_extra_handle_col_info()))
+            }
+            tidb_model::column::EXTRA_PHYS_TBL_ID => {
+                Some(tidb_model::GoShared::new(tidb_model::ColumnInfo::new_extra_phys_tbl_id_col_info()))
+            }
+            id => ds
+                .table_info
+                .as_ref()
+                .and_then(|table| table.read().columns.iter_deref().find(|info| info.read().id == id))
+                .map(|info| tidb_model::GoShared::new(info.read().clone())),
+        })
+        .collect()
 }
 
 /// Go `BuildIndexMergeTableScan`'s ordered-scan columns: the handle the merge

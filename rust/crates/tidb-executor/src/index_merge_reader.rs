@@ -3514,3 +3514,183 @@ impl PartialHandleSource for PartialIndexWorker {
         first_error
     }
 }
+
+/// Go `partialTableWorker` (:663) with `startPartialTableWorker` (:518) on a
+/// store with a coprocessor client: Go's `TableReaderExecutor` over the
+/// partial plan, opened once a table (`tbls`: each pruned partition, or the
+/// table -- its pruned partitions merged by `byItems`), read by
+/// `extractTaskHandles`.
+pub(crate) struct PartialTableWorker {
+    pub reader: crate::table_reader::TableReaderExecutor,
+    /// Go `tbls`: each pass's physical table and the partitions it merges.
+    pub tables: Vec<(i64, Option<Vec<i64>>)>,
+    /// Go `exec.RetTypes(w.tableReader)`.
+    pub ret_types: Vec<FieldType>,
+    /// Go `e.handleCols`.
+    pub handle_cols: tidb_planner_util::handle_cols::HandleCols,
+    /// Go `needPartitionHandle`: `partitionTableMode && len(w.byItems) > 0`.
+    pub need_partition_handle: bool,
+    /// Go `pruneTableWorkerTaskIdxRows`: the by-item columns of the
+    /// reader's rows (`retChk`), empty when the partial is not ordered.
+    pub sort_key_columns: Vec<usize>,
+    /// The physical IDs `HandleRef::partition_index` names; empty for a table
+    /// that is not partitioned.
+    pub physical_ids: Vec<i64>,
+    pub max_batch_size: usize,
+    pub max_chunk_size: usize,
+    pub ctx: crate::StmtContext,
+    /// The index merge reader's plan ID: Go's `e.memTracker`.
+    pub memory_label: i64,
+    pub memory: Option<MergeReaderMemory>,
+    pub batch_size: usize,
+    pub cur: usize,
+    pub opened: bool,
+    pub chunk: Option<Chunk>,
+    /// What `Close` reports the clustered index's usage of
+    /// (`ReportCopIndexUsageForHandle`), with the readers' cop counts.
+    pub table: TableCommon,
+    pub stats: Option<tidb_stmtctx::used_stats::UsedStatsInfoForTable>,
+    pub cop_count_and_rows: (u64, u64),
+    pub reported: bool,
+}
+
+impl PartialTableWorker {
+    /// Go `exec.Close(worker.tableReader)`, its cop counts kept for the
+    /// index usage report.
+    fn close_reader(&mut self) -> Result<(), ExecError> {
+        use tidb_executor_internal_exec::table_access::TableAccess;
+        if let Some((requests, rows)) = self.reader.cop_count_and_rows() {
+            self.cop_count_and_rows.0 += requests;
+            self.cop_count_and_rows.1 += rows;
+        }
+        self.reader.close()
+    }
+
+    /// Go `extractTaskHandles` (:733) over the open table, an ordered
+    /// partial's rows into `sort_keys` (Go `retChk`).
+    fn extract_task_handles(&mut self, maximum: usize, sort_keys: &mut MergeSortKeys) -> Result<Vec<HandleRef>, ExecError> {
+        let zone = tidb_exprctx::Columns::time_zone(&self.ctx);
+        let target = self.batch_size.min(maximum);
+        let mut handles = Vec::with_capacity(target);
+        let mut chunk = self.chunk.take().expect("partial worker is open");
+        let pass_pid = self.tables[self.cur].0;
+        let read = (|| {
+            while handles.len() < target {
+                chunk.set_required_rows((target - handles.len()) as isize, self.max_chunk_size);
+                self.reader.next(&mut chunk)?;
+                if chunk.num_rows() == 0 {
+                    break;
+                }
+                self.memory.as_ref().expect("partial worker is open").consume_chunk(chunk.memory_usage())?;
+                for row_index in 0..chunk.num_rows().min(maximum - handles.len()) {
+                    let row = chunk.get_row(row_index);
+                    let handle = if self.need_partition_handle {
+                        self.handle_cols.build_partition_handle_from_index_row(&zone, row)
+                    } else {
+                        self.handle_cols.build_handle_from_index_row(&zone, row)
+                    }
+                    .map_err(|error| ExecError::internal(format!("{error:?}")))?;
+                    let (pid, handle) = match handle {
+                        tidb_txnkv::Handle::Partition(partition) => (partition.partition_id(), partition.inner().clone()),
+                        handle => (pass_pid, handle),
+                    };
+                    let partition_index = if self.physical_ids.is_empty() {
+                        0
+                    } else {
+                        self.physical_ids
+                            .iter()
+                            .position(|id| *id == pid)
+                            .ok_or_else(|| ExecError::internal("index-merge partial read an unknown partition"))?
+                    };
+                    let handle = match handle {
+                        tidb_txnkv::Handle::Int(handle) => TableHandle::Int(handle.value()),
+                        handle => TableHandle::Common(handle.encoded().to_vec()),
+                    };
+                    handles.push(HandleRef { handle, partition_index });
+                    if let MergeSortKeys::Typed { chunk: keys, .. } = sort_keys {
+                        keys.append_row_by_col_idxs(row, Some(&self.sort_key_columns));
+                    }
+                }
+            }
+            Ok::<(), ExecError>(())
+        })();
+        self.chunk = Some(chunk);
+        read?;
+        Ok(handles)
+    }
+}
+
+impl PartialHandleSource for PartialTableWorker {
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.cur = 0;
+        self.opened = false;
+        self.reported = false;
+        self.cop_count_and_rows = (0, 0);
+        self.memory = Some(MergeReaderMemory::new(&self.ctx.statement_memory(), self.memory_label));
+        // Go `w.tableReader.NewChunkWithCapacity(w.getRetTpsForTableScan(),
+        // w.maxChunkSize, w.maxBatchSize)`.
+        self.chunk = Some(Chunk::new(&self.ret_types, self.max_chunk_size, self.max_batch_size));
+        Ok(())
+    }
+
+    fn next_batch(&mut self) -> Result<Option<PartialHandleBatch>, ExecError> {
+        self.next_batch_with_max_handles(usize::MAX)
+    }
+
+    fn next_batch_with_max_handles(&mut self, maximum: usize) -> Result<Option<PartialHandleBatch>, ExecError> {
+        if maximum == 0 {
+            return Ok(None);
+        }
+        loop {
+            if !self.opened {
+                let Some((physical_table_id, partitions)) = self.tables.get(self.cur).cloned() else {
+                    return Ok(None);
+                };
+                // Go `partialTableReader.table = tbl`, `exec.Open`, and the
+                // batch size reset for each table.
+                self.reader.set_table(physical_table_id, partitions);
+                self.reader.open()?;
+                self.opened = true;
+                self.batch_size = self.max_chunk_size.min(self.max_batch_size);
+            }
+            // Go's `retChk` (`exec.RetTypes(w.tableReader)`, capacity
+            // `batchSize`) of an ordered partial, pruned to its by-item
+            // columns (`pruneTableWorkerTaskIdxRows`).
+            let mut sort_keys = if self.sort_key_columns.is_empty() {
+                MergeSortKeys::default()
+            } else {
+                MergeSortKeys::typed(
+                    self.sort_key_columns.iter().map(|column| self.ret_types[*column].clone()).collect(),
+                    self.batch_size,
+                )
+            };
+            let handles = self.extract_task_handles(maximum, &mut sort_keys)?;
+            if handles.is_empty() {
+                self.close_reader()?;
+                self.opened = false;
+                self.cur += 1;
+                continue;
+            }
+            if handles.len() >= self.batch_size {
+                self.batch_size = self.batch_size.saturating_mul(2).min(self.max_batch_size);
+            }
+            return Ok(Some(PartialHandleBatch { handles, sort_keys }));
+        }
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        self.memory = None;
+        self.chunk = None;
+        let closed = if std::mem::take(&mut self.opened) { self.close_reader() } else { Ok(()) };
+        // Go `IndexMergeReaderExecutor.Close`'s
+        // `ReportCopIndexUsageForHandle(e.table, p.ID())`.
+        if !std::mem::replace(&mut self.reported, true) {
+            if let Some(index_id) = tidb_executor_internal_exec::index_usage_reporter::get_cluster_index_id(&self.table) {
+                let (requests, rows) = std::mem::take(&mut self.cop_count_and_rows);
+                tidb_executor_internal_exec::index_usage_reporter::IndexUsageReporter::new(self.ctx.index_usage_collector())
+                    .report_cop_index_usage_for_table(&self.table, self.stats.as_ref(), index_id, requests, rows);
+            }
+        }
+        closed
+    }
+}

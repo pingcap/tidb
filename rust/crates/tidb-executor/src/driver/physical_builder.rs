@@ -7450,6 +7450,87 @@ fn build_partial_index_worker(
     })
 }
 
+/// Go `startPartialTableWorker`'s worker over `partial`, whose table scan
+/// is `scan`: a `TableReaderExecutor` over the partial plan and the tables
+/// it reads one after another (`tbls`).
+#[allow(clippy::too_many_arguments)]
+fn build_partial_table_worker(
+    plan: &PhysicalPlan,
+    partial: &PhysicalPlan,
+    scan: &PhysicalTableScan,
+    reader: &tidb_planner_core_operator_physicalop::PhysicalIndexMergeReader,
+    table: &tidb_table::tables::TableCommon,
+    table_info: &tidb_model::TableInfo,
+    selected: &[usize],
+    physical_ids: &[i64],
+    handle_cols: tidb_planner_util::handle_cols::HandleCols,
+    catalog: &SessionExtendedInfoSchema,
+    ctx: &crate::StmtContext,
+) -> Result<crate::index_merge_reader::PartialTableWorker, DriverError> {
+    let partial_schema = plan_schema(partial)?;
+    let partial_reader = crate::table_reader::TableReaderExecutor::over_plan(
+        meta(ctx, partial, partial_schema),
+        ctx,
+        catalog,
+        partial,
+        tidb_kv::store_type::StoreType::TiKv,
+        false,
+    )
+    .map_err(DriverError::from)?;
+    let partitioned = table_info.get_partition_info().is_some();
+    // Go `e.partitionTableMode`.
+    let partition_table_mode = partitioned && !ctx.static_partition_prune() && scan.table_id == table_info.id;
+    let pruned: Vec<i64> = selected.iter().map(|index| physical_ids[*index]).collect();
+    // Go `tbls`: each pruned partition of an unordered merge, else the table
+    // (its pruned partitions, sorted, merged by `byItems`).
+    let tables = if partition_table_mode && reader.by_items.is_empty() {
+        pruned.into_iter().map(|pid| (pid, None)).collect()
+    } else if partition_table_mode {
+        let mut pruned = pruned;
+        pruned.sort_unstable();
+        vec![(scan.table_id, Some(pruned))]
+    } else {
+        vec![(scan.table_id, None)]
+    };
+    let ret_types = partial_reader.ret_field_types().to_vec();
+    // Go `pruneTableWorkerTaskIdxRows`: each by-item column's index in the
+    // partial scan's schema.
+    let schema = plan_schema(partial)?;
+    let sort_key_columns = scan
+        .by_items
+        .iter()
+        .map(|item| {
+            let Expression::Column(column) = &item.expr else {
+                return Err(DriverError::unsupported("Not support non-column in orderBy pushed down"));
+            };
+            usize::try_from(schema.column_index(column))
+                .map_err(|_| DriverError::unsupported("an index-merge table partial's order column is absent from its scan"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(crate::index_merge_reader::PartialTableWorker {
+        reader: partial_reader,
+        tables,
+        ret_types,
+        handle_cols,
+        need_partition_handle: partition_table_mode && !scan.by_items.is_empty(),
+        sort_key_columns,
+        physical_ids: if partitioned { physical_ids.to_vec() } else { Vec::new() },
+        max_batch_size: ctx.index_lookup_size(),
+        max_chunk_size: ctx.executor_chunk_sizes().1,
+        ctx: ctx.clone(),
+        memory_label: i64::from(plan.id()),
+        memory: None,
+        batch_size: 0,
+        cur: 0,
+        opened: false,
+        chunk: None,
+        table: table.clone(),
+        stats: crate::access_cost::load_table_stats(ctx, catalog, table.stats_physical_id()),
+        cop_count_and_rows: (0, 0),
+        reported: false,
+    })
+}
+
 fn build_index_merge_reader(
     plan: &PhysicalPlan,
     reader: &tidb_planner_core_operator_physicalop::PhysicalIndexMergeReader,
@@ -7525,6 +7606,24 @@ fn build_index_merge_reader(
             )?;
             built_ids.push(Some(i64::from(partial.id())));
             built.push((matches!(partial, PhysicalPlan::IndexScan(_)) && reader.by_items.is_empty(), Box::new(worker)));
+            continue;
+        }
+        if let (Some(handle_cols), Some(scan)) = (merge_handle_cols.as_ref(), embedded_table_scan(partial)) {
+            let worker = build_partial_table_worker(
+                plan,
+                partial,
+                scan,
+                reader,
+                &table,
+                &table_info,
+                &selected,
+                &physical_ids,
+                handle_cols.clone(),
+                catalog,
+                ctx,
+            )?;
+            built_ids.push(Some(i64::from(partial.id())));
+            built.push((false, Box::new(worker)));
             continue;
         }
         if let PhysicalPlan::IndexScan(scan) = partial {
