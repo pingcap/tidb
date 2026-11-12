@@ -17,6 +17,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/dumpformat/parquetfile",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config",
         "//pkg/dumpformat/parsedef",
         "//pkg/ingestor/simplesst",
         "//pkg/lightning/common",
@@ -59,8 +60,9 @@ go_test(
     data = glob(["testfiles/**"]),
     embed = [":parquetfile"],
     flaky = True,
-    shard_count = 29,
+    shard_count = 30,
     deps = [
+        "//pkg/dumpformat/parsedef",
         "//pkg/dumpformat/testutils",
         "//pkg/objstore",
         "//pkg/objstore/compressedio",

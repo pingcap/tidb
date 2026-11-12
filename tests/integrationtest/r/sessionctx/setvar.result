@@ -1097,28 +1097,36 @@ set @@tidb_max_paging_size=default;
 select @@tidb_max_paging_size;
 @@tidb_max_paging_size
 50000
+set @original_paging_size_bytes = @@global.tidb_paging_size_bytes;
+set global tidb_paging_size_bytes=4194304;
+select @@global.tidb_paging_size_bytes, @@tidb_paging_size_bytes;
+@@global.tidb_paging_size_bytes	@@tidb_paging_size_bytes
+4194304	4194304
+set session tidb_paging_size_bytes=0;
+Error 1229 (HY000): Variable 'tidb_paging_size_bytes' is a GLOBAL variable and should be set with SET GLOBAL
+set @@tidb_paging_size_bytes=0;
+Error 1229 (HY000): Variable 'tidb_paging_size_bytes' is a GLOBAL variable and should be set with SET GLOBAL
 select /*+ set_var(tidb_paging_size_bytes=1048576) */ @@tidb_paging_size_bytes;
 @@tidb_paging_size_bytes
-1048576
-select @@tidb_paging_size_bytes;
-@@tidb_paging_size_bytes
-0
-set @@tidb_paging_size_bytes=default;
-select @@tidb_paging_size_bytes;
-@@tidb_paging_size_bytes
-0
-set @@tidb_paging_size_bytes=0;
-select @@tidb_paging_size_bytes;
-@@tidb_paging_size_bytes
-0
-set @@tidb_paging_size_bytes=4194304;
-select @@tidb_paging_size_bytes;
-@@tidb_paging_size_bytes
 4194304
-set @@tidb_paging_size_bytes=default;
+show warnings;
+Level	Code	Message
+Warning	3637	Variable 'tidb_paging_size_bytes' might not be affected by SET_VAR hint.
+Warning	1229	Variable 'tidb_paging_size_bytes' is a GLOBAL variable and should be set with SET GLOBAL
+Warning	1229	Variable 'tidb_paging_size_bytes' is a GLOBAL variable and should be set with SET GLOBAL
+select @@global.tidb_paging_size_bytes;
+@@global.tidb_paging_size_bytes
+4194304
+set global tidb_paging_size_bytes=default;
 select @@tidb_paging_size_bytes;
 @@tidb_paging_size_bytes
 0
+set global tidb_paging_size_bytes=4194304;
+set global tidb_paging_size_bytes=0;
+select @@tidb_paging_size_bytes;
+@@tidb_paging_size_bytes
+0
+set global tidb_paging_size_bytes=@original_paging_size_bytes;
 select /*+ set_var(tidb_enable_cascades_planner=0) */ @@tidb_enable_cascades_planner;
 @@tidb_enable_cascades_planner
 0

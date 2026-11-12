@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -139,6 +140,47 @@ func skipIfNotStarterForFTS(t *testing.T) {
 	if !deploymode.IsStarter() {
 		t.Skip("full text search is only supported in starter deployment mode")
 	}
+}
+
+func TestSoundex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("select soundex('Hello'), soundex('Quadratically'), soundex('Tymczak'), soundex('a'), soundex('')").Check(
+		testkit.Rows("H400 Q36324 T520 A000 "))
+	tk.MustQuery("select soundex(null), soundex(12345), soundex('日本語')").Check(testkit.Rows("<nil>  日000"))
+	tk.MustQuery("select soundex(_binary 'Hello'), hex(soundex(_binary 0xE9616263))").Check(testkit.Rows("H400 41313230"))
+	tk.MustQuery("select charset(soundex('a')), charset(soundex(_binary 'a'))").Check(testkit.Rows("utf8mb4 binary"))
+
+	// A Latin-1 argument is read byte by byte and its letters are kept as they are, as MySQL 8.0.46 does.
+	tk.MustQuery("select hex(soundex(_latin1 0xE9616263)), hex(soundex(_latin1 0xC3A9616263)), hex(soundex(_latin1 0x61E9626364))").Check(
+		testkit.Rows("E9313230 C3313230 41313233"))
+	tk.MustExec("create table l (a varchar(10) character set latin1)")
+	tk.MustExec("insert into l values (0xE9616263), (0xC3A9616263), (0x61E9626364), ('abc')")
+	tk.MustQuery("select hex(soundex(a)) from l order by a").Check(testkit.Rows("41313230", "41313233", "C3313230", "E9313230"))
+
+	// MySQL classifies Latin-1 bytes with its own table: 0xD7 and 0xF7 are signs, not letters, and 0x8A and 0x9F are letters.
+	tk.MustQuery("select hex(soundex(_latin1 0xD7616263)), hex(soundex(_latin1 0xF7616263)), hex(soundex(_latin1 0x8A616263)), hex(soundex(_latin1 0x9F616263)), hex(soundex(_latin1 0x80616263))").Check(
+		testkit.Rows("41313230 41313230 8A313230 9F313230 41313230"))
+	tk.MustExec("create table l2 (id int primary key, a varchar(10) character set latin1)")
+	tk.MustExec("insert into l2 values (1, 0xD7616263), (2, 0xF7616263), (3, 0x8A616263), (4, 0x9F616263), (5, 0xD8616263)")
+	tk.MustQuery("select id, hex(soundex(a)) from l2 order by id").Check(
+		testkit.Rows("1 41313230", "2 41313230", "3 8A313230", "4 9F313230", "5 D8313230"))
+
+	// The collation of the result comes from the argument.
+	tk.MustQuery("select collation(soundex(_utf8mb4'abc' collate utf8mb4_unicode_ci)), coercibility(soundex(_utf8mb4'abc' collate utf8mb4_unicode_ci))").Check(
+		testkit.Rows("utf8mb4_unicode_ci 0"))
+	tk.MustQuery("select collation(soundex(_latin1'abc')), charset(soundex(_latin1'abc'))").Check(testkit.Rows("latin1_bin latin1"))
+
+	tk.MustExec("create table t (id int primary key, a varchar(100) character set utf8 collate utf8_unicode_ci)")
+	tk.MustExec("insert into t values (1, 'Test'), (2, 'Text'), (3, 'Other'), (4, null)")
+	tk.MustQuery("select id from t where soundex(a) = soundex('Test') order by id").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select id, soundex(a) from t order by id").Check(testkit.Rows("1 T230", "2 T230", "3 O360", "4 <nil>"))
+	tk.MustQuery("select collation(soundex(a)), coercibility(soundex(a)) from t limit 1").Check(testkit.Rows("utf8_unicode_ci 2"))
+
+	tk.MustGetErrCode("select soundex()", errno.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select soundex('a', 'b')", errno.ErrWrongParamcountToNativeFct)
 }
 
 func TestFTSParser(t *testing.T) {
@@ -1572,14 +1614,62 @@ func TestGetLock(t *testing.T) {
 
 	// Test someone else has the lock with short timeout.
 	tk2 := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
+	// Keep an unrelated checkout registered so the test cannot rely on a global count.
+	backgroundSession, err := dom.SysSessionPool().Get()
+	require.NoError(t, err)
+	defer dom.SysSessionPool().Put(backgroundSession)
+	sessionManager := dom.InfoSyncer().GetSessionManager()
+	type lockSession struct {
+		session  any
+		returned bool
+	}
+	var mu sync.Mutex
+	var sessions []*lockSession
+	active := make(map[any]*lockSession)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/afterGetAdvisoryLockSession", func(owner, internal any) {
+		if owner != tk.Session() && owner != tk2.Session() {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		tracked := &lockSession{session: internal}
+		sessions = append(sessions, tracked)
+		active[internal] = tracked
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/testkit/afterDeleteInternalSession", func(internal any) {
+		mu.Lock()
+		defer mu.Unlock()
+		if tracked := active[internal]; tracked != nil {
+			tracked.returned = true
+			delete(active, internal)
+		}
+	})
+	checkSessions := func(returned ...bool) {
+		t.Helper()
+		mu.Lock()
+		defer mu.Unlock()
+		require.Len(t, sessions, len(returned))
+		for i, expected := range returned {
+			require.Equal(t, expected, sessions[i].returned, "advisory lock attempt %d", i+1)
+			if !expected {
+				require.True(t, sessionManager.ContainsInternalSession(sessions[i].session))
+			}
+		}
+	}
 	tk2.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("1"))
-	tk.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("0"))  // someone else has the lock
+	checkSessions(false)
+	tk.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("0")) // someone else has the lock
+	checkSessions(false, true)
 	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0")) // never had the lock
 	// try again
-	tk.MustQuery("SELECT get_lock('mygloballock', 0)").Check(testkit.Rows("0"))  // someone else has the lock
+	tk.MustQuery("SELECT get_lock('mygloballock', 0)").Check(testkit.Rows("0")) // someone else has the lock
+	checkSessions(false, true, true)
 	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0")) // never had the lock
 	// release it
 	tk2.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("1")) // works
+	// The deletion event is recorded before the session becomes available for reuse.
+	checkSessions(true, true, true)
 
 	// Confirm all locks are released
 	tk2.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
@@ -4498,6 +4588,50 @@ func TestIssue57608(t *testing.T) {
 			"<nil> <nil> <nil>",
 		))
 	}
+}
+
+func TestMaterializedScheduleRuntimeEvalUsesScheduleSQLMode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	evalTK := testkit.NewTestKit(t, store)
+
+	allowInvalidDatesMode, err := mysql.GetSQLMode("ALLOW_INVALID_DATES")
+	require.NoError(t, err)
+	strictMode, err := mysql.GetSQLMode("STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO")
+	require.NoError(t, err)
+
+	nextExpr := "CAST('2026-02-31' AS DATE)"
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMViewMaintenance)
+	evalTK.MustExec("set @@session.sql_mode='STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO'")
+	nextAt, shouldUpdate, err := expression.DeriveMaterializedScheduleNextTime(
+		ctx,
+		evalTK.Session(),
+		nextExpr,
+		allowInvalidDatesMode,
+	)
+	require.NoError(t, err)
+	require.True(t, shouldUpdate)
+	require.NotNil(t, nextAt)
+
+	evalTK.MustExec("set @@session.sql_mode='ALLOW_INVALID_DATES'")
+	_, _, err = expression.DeriveMaterializedScheduleNextTime(
+		ctx,
+		evalTK.Session(),
+		"'2026-02-31 00:00:00'",
+		strictMode,
+	)
+	require.ErrorContains(t, err, "expected DATE/DATETIME/TIMESTAMP")
+
+	dateExpr := "CAST('2026-02-28' AS DATE)"
+	nextAt, shouldUpdate, err = expression.DeriveMaterializedScheduleNextTime(
+		ctx,
+		evalTK.Session(),
+		dateExpr,
+		strictMode,
+	)
+	require.NoError(t, err)
+	require.True(t, shouldUpdate)
+	require.NotNil(t, nextAt)
+	require.Equal(t, mysql.TypeDate, nextAt.Type())
 }
 
 // This is a testcase for issue #57608, which is to ensure that the return type

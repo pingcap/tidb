@@ -1153,3 +1153,19 @@ func TestAssumedServerInfoSyncer(t *testing.T) {
 	require.Equal(t, info.AssumedKeyspace, decoded.AssumedKeyspace)
 	require.Equal(t, uint64(1), decoded.JSONServerID)
 }
+
+func TestCanServeTiDBRPC(t *testing.T) {
+	var info StaticInfo
+	require.False(t, info.IsDisableRPC())
+
+	info.DisableRPC = false
+	require.False(t, info.IsDisableRPC())
+
+	info.DisableRPC = true
+	require.True(t, info.IsDisableRPC())
+
+	syncer := NewSyncer("br", func() uint64 { return 1 }, nil, nil, WithDisableRPC())
+	require.True(t, syncer.GetLocalServerInfo().IsDisableRPC())
+	plain := NewSyncer("tidb", func() uint64 { return 1 }, nil, nil)
+	require.False(t, plain.GetLocalServerInfo().IsDisableRPC())
+}

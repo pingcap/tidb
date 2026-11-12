@@ -24,13 +24,16 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -45,6 +48,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -55,6 +60,219 @@ var LoadPlanReplayerForExplainExplore func(sessionctx.Context, string) (string, 
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
 	physicalop.SimpleSchemaProducer
+}
+
+// DataReaderSnapshot binds a read timestamp to the infoschema used for planning.
+type DataReaderSnapshot struct {
+	TS         uint64
+	InfoSchema infoschema.InfoSchema
+}
+
+// MViewDeltaMerge represents the physical fast-refresh merge operator.
+type MViewDeltaMerge struct {
+	physicalop.SimpleSchemaProducer
+	Source                      base.PhysicalPlan
+	FullUpdateInnerSource       base.PhysicalPlan
+	FullUpdateInnerColumnCount  int
+	FullUpdateIndexRanges       ranger.MutableRanges
+	FullUpdateKeyOff2IdxOff     []int
+	FullUpdateKeyResultColIdxes []int
+	FullUpdateOutputMVOffsets   []int
+	FullUpdateSnapshot          *DataReaderSnapshot
+	MVTableID                   int64
+	BaseTableID                 int64
+	MLogTableID                 int64
+	MVColumnCount               int
+	DeltaColumnCount            int
+	MVTablePKCols               util.HandleCols
+	GroupKeyMVOffsets           []int
+	CountStarMVOffset           int
+	AggInfos                    []mview.AggInfo
+	// RegisteredMLogIDs is the immutable input-log baseline captured before execution.
+	RegisteredMLogIDs []int64 `plan-cache-clone:"shallow"`
+	// MLogEmpty means the optimizer proved that the mlog input produces no rows.
+	// MIN/MAX recomputation is unreachable, so its lookup template can be omitted.
+	MLogEmpty bool
+}
+
+// ExplainInfo returns the aggregate dependencies and lookup strategy of the merge operator.
+func (p *MViewDeltaMerge) ExplainInfo() string {
+	if len(p.AggInfos) == 0 {
+		return "agg_deps:[]"
+	}
+	var b strings.Builder
+	b.WriteString("agg_deps:[")
+	for i, info := range p.AggInfos {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(formatMViewDeltaMergeAggDependency(info))
+	}
+	b.WriteByte(']')
+	if p.FullUpdateInnerSource != nil {
+		b.WriteString(", full_update:index_lookup")
+	}
+	return b.String()
+}
+
+// MemoryUsage returns the memory usage of MViewDeltaMerge.
+func (p *MViewDeltaMerge) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface*4 + size.SizeOfInt64*3 + size.SizeOfPointer + size.SizeOfInt*4 + size.SizeOfSlice*6 + size.SizeOfBool
+	sum += int64(cap(p.RegisteredMLogIDs)) * size.SizeOfInt64
+	sum += int64(cap(p.GroupKeyMVOffsets)) * size.SizeOfInt
+	sum += int64(cap(p.AggInfos)) * size.SizeOfInterface
+	sum += int64(cap(p.FullUpdateKeyOff2IdxOff)) * size.SizeOfInt
+	sum += int64(cap(p.FullUpdateKeyResultColIdxes)) * size.SizeOfInt
+	sum += int64(cap(p.FullUpdateOutputMVOffsets)) * size.SizeOfInt
+	if p.FullUpdateSnapshot != nil {
+		sum += size.SizeOfUint64 + size.SizeOfInterface
+	}
+	if p.Source != nil {
+		sum += p.Source.MemoryUsage()
+	}
+	if p.FullUpdateInnerSource != nil {
+		sum += p.FullUpdateInnerSource.MemoryUsage()
+	}
+	if p.FullUpdateIndexRanges != nil {
+		sum += p.FullUpdateIndexRanges.Range().MemUsage()
+	}
+	return
+}
+
+func formatMViewDeltaMergeAggDependency(aggInfo mview.AggInfo) string {
+	return fmt.Sprintf(
+		"%s@%d->%s",
+		formatMViewDeltaMergeAggName(aggInfo),
+		aggInfo.MVOffset,
+		formatMViewDeltaMergeOffsets(aggInfo.Dependencies),
+	)
+}
+
+func formatMViewDeltaMergeAggName(aggInfo mview.AggInfo) string {
+	if aggInfo.Kind == mview.AggCountStar {
+		return "count(*)"
+	}
+	name := formatMViewDeltaMergeAggKind(aggInfo.Kind)
+	if aggInfo.ArgColName != "" {
+		name += "(" + aggInfo.ArgColName + ")"
+	}
+	return name
+}
+
+func formatMViewDeltaMergeOffsets(offsets []int) string {
+	if len(offsets) == 0 {
+		return "[]"
+	}
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, offset := range offsets {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(strconv.Itoa(offset))
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+func formatMViewDeltaMergeAggKind(kind mview.AggKind) string {
+	switch kind {
+	case mview.AggCount:
+		return "count"
+	case mview.AggSum:
+		return "sum"
+	case mview.AggMin:
+		return "min"
+	case mview.AggMax:
+		return "max"
+	default:
+		return fmt.Sprintf("agg(%d)", kind)
+	}
+}
+
+// MViewCompleteDeltaApply represents the COMPLETE DELTA APPLY sink.
+type MViewCompleteDeltaApply struct {
+	physicalop.SimpleSchemaProducer
+	Source                   base.PhysicalPlan
+	MVTableID                int64
+	MVColumnCount            int
+	OpColID                  int
+	MarkerMVOffset           int
+	GroupKeyMVOffsets        []int
+	CurrentHandleCols        util.HandleCols
+	CurrentRowInputColIDs    []int
+	RecomputedRowInputColIDs []int
+	// Executor construction overwrites these computation inputs on every retry.
+	RefreshReadTSO uint64
+	RefreshSources []model.MViewRefreshSource `plan-cache-clone:"shallow"`
+}
+
+// ExplainInfo returns the row-diff layout used by the complete delta-apply operator.
+func (p *MViewCompleteDeltaApply) ExplainInfo() string {
+	return fmt.Sprintf(
+		"op_offset:%d, current_marker_offset:%d, recomputed_marker_offset:%d, current_group_keys_offset:%s, recomputed_group_keys_offset:%s, current_handle_offset:%s, current_row_offset:%s, recomputed_row_offset:%s",
+		p.OpColID,
+		inputOffsetAtMVOffset(p.CurrentRowInputColIDs, p.MarkerMVOffset),
+		inputOffsetAtMVOffset(p.RecomputedRowInputColIDs, p.MarkerMVOffset),
+		formatMViewDeltaMergeOffsets(inputOffsetsAtMVOffsets(p.CurrentRowInputColIDs, p.GroupKeyMVOffsets)),
+		formatMViewDeltaMergeOffsets(inputOffsetsAtMVOffsets(p.RecomputedRowInputColIDs, p.GroupKeyMVOffsets)),
+		formatHandleColsInputOffsets(p.CurrentHandleCols),
+		formatMViewDeltaMergeOffsets(p.CurrentRowInputColIDs),
+		formatMViewDeltaMergeOffsets(p.RecomputedRowInputColIDs),
+	)
+}
+
+// MemoryUsage returns the memory usage of MViewCompleteDeltaApply.
+func (p *MViewCompleteDeltaApply) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfInt64 + size.SizeOfUint64 + size.SizeOfInt*3 + size.SizeOfSlice*4
+	sum += int64(cap(p.RefreshSources)) * size.SizeOfInt64 * 2
+	sum += int64(cap(p.GroupKeyMVOffsets)) * size.SizeOfInt
+	sum += int64(cap(p.CurrentRowInputColIDs)) * size.SizeOfInt
+	sum += int64(cap(p.RecomputedRowInputColIDs)) * size.SizeOfInt
+	if p.Source != nil {
+		sum += p.Source.MemoryUsage()
+	}
+	return
+}
+
+func inputOffsetAtMVOffset(inputColIDs []int, mvOffset int) int {
+	if mvOffset < 0 || mvOffset >= len(inputColIDs) {
+		return -1
+	}
+	return inputColIDs[mvOffset]
+}
+
+func inputOffsetsAtMVOffsets(inputColIDs, mvOffsets []int) []int {
+	if len(mvOffsets) == 0 {
+		return nil
+	}
+	offsets := make([]int, 0, len(mvOffsets))
+	for _, mvOffset := range mvOffsets {
+		offsets = append(offsets, inputOffsetAtMVOffset(inputColIDs, mvOffset))
+	}
+	return offsets
+}
+
+func formatHandleColsInputOffsets(handleCols util.HandleCols) string {
+	if handleCols == nil {
+		return "[]"
+	}
+	offsets := make([]int, 0, handleCols.NumCols())
+	for i := range handleCols.NumCols() {
+		col := handleCols.GetCol(i)
+		if col != nil {
+			offsets = append(offsets, col.Index)
+		}
+	}
+	return formatMViewDeltaMergeOffsets(offsets)
 }
 
 // ShowSlow is for showing slow queries.
@@ -347,6 +565,13 @@ type Simple struct {
 	ResolveCtx *resolve.Context
 }
 
+// PurgeMaterializedViewLog represents a "PURGE MATERIALIZED VIEW LOG" plan.
+type PurgeMaterializedViewLog struct {
+	physicalop.SimpleSchemaProducer
+
+	Statement *ast.PurgeMaterializedViewLogStmt
+}
+
 // PhysicalPlanWrapper is a wrapper to wrap any Plan to a PhysicalPlan.
 //
 //	Used for simple statements executing in coprocessor.
@@ -555,57 +780,31 @@ type DDL struct {
 	Statement ast.DDLNode
 }
 
+// RefreshMaterializedView represents a REFRESH MATERIALIZED VIEW statement.
+type RefreshMaterializedView struct {
+	physicalop.SimpleSchemaProducer
+	Statement *ast.RefreshMaterializedViewStmt
+}
+
+// DryRunRefreshMaterializedView represents a refresh dry-run statement.
+type DryRunRefreshMaterializedView struct {
+	physicalop.SimpleSchemaProducer
+	Statement *ast.RefreshMaterializedViewStmt
+}
+
+// ProfileRefreshMaterializedView represents a refresh profile statement.
+type ProfileRefreshMaterializedView struct {
+	physicalop.SimpleSchemaProducer
+	Statement *ast.RefreshMaterializedViewStmt
+}
+
 // SelectInto represents a select-into plan.
 type SelectInto struct {
 	physicalop.SimpleSchemaProducer
 
 	TargetPlan base.Plan
 	IntoOpt    *ast.SelectIntoOption
-	LineFieldsInfo
-}
-
-// LineFieldsInfo used in load-data/select-into/index-advise stmt.
-type LineFieldsInfo struct {
-	FieldsTerminatedBy string
-	FieldsEnclosedBy   string // length always <= 1, see parser.y
-	FieldsEscapedBy    string // length always <= 1, see parser.y
-	FieldsOptEnclosed  bool
-	LinesStartingBy    string
-	LinesTerminatedBy  string
-}
-
-// NewLineFieldsInfo new LineFieldsInfo from FIELDS/LINES info.
-func NewLineFieldsInfo(fieldsInfo *ast.FieldsClause, linesInfo *ast.LinesClause) LineFieldsInfo {
-	e := LineFieldsInfo{
-		FieldsTerminatedBy: "\t",
-		FieldsEnclosedBy:   "",
-		FieldsEscapedBy:    "\\",
-		FieldsOptEnclosed:  false,
-		LinesStartingBy:    "",
-		LinesTerminatedBy:  "\n",
-	}
-
-	if fieldsInfo != nil {
-		if fieldsInfo.Terminated != nil {
-			e.FieldsTerminatedBy = *fieldsInfo.Terminated
-		}
-		if fieldsInfo.Enclosed != nil {
-			e.FieldsEnclosedBy = *fieldsInfo.Enclosed
-		}
-		if fieldsInfo.Escaped != nil {
-			e.FieldsEscapedBy = *fieldsInfo.Escaped
-		}
-		e.FieldsOptEnclosed = fieldsInfo.OptEnclosed
-	}
-	if linesInfo != nil {
-		if linesInfo.Starting != nil {
-			e.LinesStartingBy = *linesInfo.Starting
-		}
-		if linesInfo.Terminated != nil {
-			e.LinesTerminatedBy = *linesInfo.Terminated
-		}
-	}
-	return e
+	importdef.LineFieldsInfo
 }
 
 // ExplainInfoForEncode store explain info for JSON encode
@@ -1742,4 +1941,11 @@ func IsAutoCommitTxn(vars *variable.SessionVars) bool {
 // AdminShowBDRRole represents a show bdr role plan.
 type AdminShowBDRRole struct {
 	physicalop.SimpleSchemaProducer
+}
+
+// CompareMaterializedView represents a "COMPARE MATERIALIZED VIEW ..." plan.
+type CompareMaterializedView struct {
+	physicalop.SimpleSchemaProducer
+
+	Statement *ast.CompareMaterializedViewStmt
 }

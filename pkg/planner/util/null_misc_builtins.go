@@ -128,6 +128,7 @@ var nullRejectNullPreservingFunctions = map[string]struct{}{
 	ast.Right:           {},
 	ast.Rpad:            {},
 	ast.RTrim:           {},
+	ast.Soundex:         {},
 	ast.Space:           {},
 	ast.Substr:          {},
 	ast.Substring:       {},

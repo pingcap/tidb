@@ -16,8 +16,10 @@ package executor_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -28,17 +30,26 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/stretchr/testify/require"
@@ -118,7 +129,7 @@ func TestClassicS3ExternalID(t *testing.T) {
 				t.Cleanup(func() {
 					fns[1](t, tk)
 				})
-				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/NewImportPlan", func(plan *plannercore.ImportInto) {
 					u, err := url.Parse(plan.Path)
 					require.NoError(t, err)
 					require.Contains(t, u.Query(), s3like.S3ExternalID)
@@ -133,7 +144,7 @@ func TestClassicS3ExternalID(t *testing.T) {
 
 	t.Run("SEM disabled, explicit external ID is also allowed, and we don't change it", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/NewImportPlan", func(plan *plannercore.ImportInto) {
 			u, err := url.Parse(plan.Path)
 			require.NoError(t, err)
 			require.Contains(t, u.Query(), s3like.S3ExternalID)
@@ -205,7 +216,7 @@ func TestNextGenS3ExternalID(t *testing.T) {
 				t.Cleanup(func() {
 					fns[1](t, tk)
 				})
-				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/NewImportPlan", func(plan *plannercore.ImportInto) {
 					u, err := url.Parse(plan.Path)
 					require.NoError(t, err)
 					require.Contains(t, u.Query(), s3like.S3ExternalID)
@@ -232,7 +243,7 @@ func TestNextGenS3ExternalID(t *testing.T) {
 				conf.KeyspaceName = bak
 			})
 		})
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/NewImportPlan", func(plan *plannercore.ImportInto) {
 			u, err := url.Parse(plan.Path)
 			require.NoError(t, err)
 			require.Contains(t, u.Query(), s3like.S3ExternalID)
@@ -285,7 +296,7 @@ func TestNextGenS3ExternalID(t *testing.T) {
 					{name: "alias", param: "EXTERNAL_ID", value: "caller-provided"},
 				} {
 					t.Run(tc.name, func(t *testing.T) {
-						testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+						testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/NewImportPlan", func(plan *plannercore.ImportInto) {
 							u, err := url.Parse(plan.Path)
 							require.NoError(t, err)
 							require.Equal(t, []string{tc.value}, u.Query()[tc.param])
@@ -307,7 +318,7 @@ func TestNextGenS3ExternalID(t *testing.T) {
 			require.NoError(t, deploymode.Set(deploymode.Premium))
 		})
 		tk := testkit.NewTestKit(t, store)
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/NewImportPlan", func(plan *plannercore.ImportInto) {
 			u, err := url.Parse(plan.Path)
 			require.NoError(t, err)
 			require.NotContains(t, u.Query(), s3like.S3ExternalID)
@@ -405,12 +416,12 @@ func TestCancelImportJobWithoutDXFTask(t *testing.T) {
 }
 
 func testNextGenUnsupportedLocalSortAndOptions(t *testing.T, store kv.Storage, initFn func(t *testing.T, tk *testkit.TestKit)) {
-	t.Run("import from select", func(t *testing.T) {
+	t.Run("import from select requires global sort", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		initFn(t, tk)
 		err := tk.ExecToErr("IMPORT INTO test.t FROM select 1")
 		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
-		require.ErrorContains(t, err, "IMPORT INTO from select")
+		require.ErrorContains(t, err, "IMPORT INTO with local sort")
 	})
 
 	t.Run("local sort", func(t *testing.T) {
@@ -526,6 +537,15 @@ func TestImportIntoChildSessionInheritsMaintenanceFlag(t *testing.T) {
 	tk.MustExec("create table src (a int)")
 	tk.MustExec("insert into src values (1), (2)")
 	tk.MustExec("create table dst (a int)")
+	previousURI := vardef.CloudStorageURI.Load()
+	t.Cleanup(func() { vardef.CloudStorageURI.Store(previousURI) })
+	vardef.CloudStorageURI.Store("")
+	expectedError := "mock import from select setup error"
+	if kerneltype.IsNextGen() {
+		vardef.CloudStorageURI.Store("s3://maintenance-flag-test")
+		tk.MustExec("insert into dst values (0)")
+		expectedError = "target table is not empty"
+	}
 
 	sessionVars := tk.Session().GetSessionVars()
 	origRestricted := sessionVars.InRestrictedSQL
@@ -545,7 +565,7 @@ func TestImportIntoChildSessionInheritsMaintenanceFlag(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockImportFromSelectSetupErr", `return(true)`)
 
 	err := tk.ExecToErr("import into dst from select * from src with disable_precheck")
-	require.ErrorContains(t, err, "mock import from select setup error")
+	require.ErrorContains(t, err, expectedError)
 	require.True(t, invoked)
 	require.True(t, childMaintenance)
 }
@@ -561,4 +581,94 @@ func TestImportIntoRejectsMaterializedViewLogBaseTable(t *testing.T) {
 
 	err := tk.ExecToErr("import into dst from select * from src with disable_precheck")
 	require.ErrorContains(t, err, "IMPORT INTO on tables with materialized view log")
+}
+
+func TestImportQueryRouting(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table query_route_src(id int)")
+	tk.MustExec("create table query_route_dst(id int)")
+	previousURI := vardef.CloudStorageURI.Load()
+	t.Cleanup(func() { vardef.CloudStorageURI.Store(previousURI) })
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockImportFromSelectSetupErr", `return(true)`)
+	sql := "import into query_route_dst from select id from query_route_src with disable_precheck"
+	vars := tk.Session().GetSessionVars()
+	if kerneltype.IsNextGen() {
+		vardef.CloudStorageURI.Store("s3://query-sort")
+		require.ErrorContains(t, tk.ExecToErr(sql), "IMPORT INTO FROM SELECT outside materialized view maintenance")
+	}
+	vars.InMViewMaintenance = true
+	t.Cleanup(func() { vars.InMViewMaintenance = false })
+	if kerneltype.IsClassic() {
+		// Classic FROM SELECT runs locally.
+		require.ErrorContains(t, tk.ExecToErr(sql), "mock import from select setup error")
+		return
+	}
+	vardef.CloudStorageURI.Store("")
+	require.ErrorContains(t, tk.ExecToErr(sql), "IMPORT INTO FROM SELECT without global sort storage")
+	// With a sort store, the query is captured and the import reaches the prechecks.
+	vardef.CloudStorageURI.Store("s3://query-sort")
+	tk.MustExec("insert into query_route_dst values (1)")
+	require.ErrorContains(t, tk.ExecToErr(sql), "target table is not empty")
+}
+
+type importPlanKeyspaceStore struct {
+	kv.Storage
+}
+
+func (importPlanKeyspaceStore) GetKeyspace() string {
+	return ""
+}
+
+func TestNewImportPlanMatchesResolvedInput(t *testing.T) {
+	ctx := context.Background()
+	sctx := mock.NewContext()
+	defer sctx.Close()
+	sctx.Store = importPlanKeyspaceStore{}
+	tblInfo := &model.TableInfo{ID: 42, Name: ast.NewCIStr("t"), State: model.StatePublic}
+	tbl := tables.MockTableFromMeta(tblInfo)
+	format := importer.DataFormatCSV
+	value := &expression.Constant{Value: types.NewIntDatum(2), RetType: types.NewFieldType(mysql.TypeLonglong)}
+	for _, sourceType := range []importer.DataSourceType{importer.DataSourceTypeFile, importer.DataSourceTypeQuery} {
+		t.Run(sourceType.String(), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "data.csv")
+			input := &importer.Input{
+				DBName: "test", DBID: 7, TableInfo: tblInfo,
+				Path: path, Format: &format, DataSourceType: sourceType,
+				Options: []*importer.ImportOption{{Name: "thread", Value: value}},
+			}
+			physical := &plannercore.ImportInto{
+				Table: &resolve.TableNameW{
+					TableName: &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("t")},
+					DBInfo:    &model.DBInfo{ID: 7, Name: ast.NewCIStr("test")},
+				},
+				Path: path, Format: &format,
+				Options: []*plannercore.LoadDataOpt{{Name: "thread", Value: value}},
+			}
+			if sourceType == importer.DataSourceTypeQuery {
+				physical.SelectPlan = &physicalop.PhysicalSelection{}
+			}
+			fromSQL, err := executor.NewImportPlan(ctx, sctx, physical, tbl)
+			require.NoError(t, err)
+			require.Equal(t, sourceType, fromSQL.DataSourceType)
+			direct, err := importer.NewImportPlanFromInput(ctx, sctx, input)
+			require.NoError(t, err)
+			require.Equal(t, fromSQL, direct)
+			encoded, err := json.Marshal(fromSQL)
+			require.NoError(t, err)
+			directEncoded, err := json.Marshal(direct)
+			require.NoError(t, err)
+			require.JSONEq(t, string(encoded), string(directEncoded))
+
+			// Both entrypoints reject the same invalid numeric option.
+			bad := &expression.Constant{Value: types.NewStringDatum("bad"), RetType: types.NewFieldType(mysql.TypeVarString)}
+			input.Options[0].Value = bad
+			physical.Options[0].Value = bad
+			_, sqlErr := executor.NewImportPlan(ctx, sctx, physical, tbl)
+			_, directErr := importer.NewImportPlanFromInput(ctx, sctx, input)
+			require.Error(t, sqlErr)
+			require.EqualError(t, directErr, sqlErr.Error())
+		})
+	}
 }

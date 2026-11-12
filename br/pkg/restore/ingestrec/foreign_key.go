@@ -43,14 +43,14 @@ func newForeignKeyRecordKey(
 	fk *model.FKInfo,
 ) (ForeignKeyRecordKey, *ForeignKeyRecord) {
 	return ForeignKeyRecordKey{
-			ChildSchemaNameO: childSchemaNameO,
-			ChildTableNameO:  childTableNameO,
-			FKNameO:          fk.Name.O,
-		}, &ForeignKeyRecord{
-			FKInfo:           *fk,
-			ChildSchemaNameO: childSchemaNameO,
-			ChildTableNameO:  childTableNameO,
-		}
+		ChildSchemaNameO: childSchemaNameO,
+		ChildTableNameO:  childTableNameO,
+		FKNameO:          fk.Name.O,
+	}, &ForeignKeyRecord{
+		FKInfo:           *fk,
+		ChildSchemaNameO: childSchemaNameO,
+		ChildTableNameO:  childTableNameO,
+	}
 }
 
 type ForeignKeyRecordManager struct {

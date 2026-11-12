@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -77,6 +78,41 @@ func TestAggFunc2Pb(t *testing.T) {
 			js, err := json.Marshal(pbExpr)
 			require.NoError(t, err)
 			require.Equal(t, fmt.Sprintf(jsons[i], hasDistinct), string(js))
+		}
+	}
+}
+
+func TestNumericBinaryLiteralToPB(t *testing.T) {
+	ctx := mock.NewContext()
+	ft := types.NewFieldType(mysql.TypeVarString)
+	types.SetBinChsClnFlag(ft)
+	bitLiteral, err := types.ParseBitStr("b'101010'")
+	require.NoError(t, err)
+	require.Equal(t, types.BinaryLiteral{0x2a}, bitLiteral)
+	pushCtx := expression.NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), new(mock.Client))
+	for _, tc := range []struct {
+		value   types.BinaryLiteral
+		numeric float64
+	}{
+		{types.BinaryLiteral{'1'}, 49},
+		{bitLiteral, 42},
+	} {
+		literal := &expression.Constant{Value: types.NewBinaryLiteralDatum(tc.value), RetType: ft}
+		for _, name := range []string{ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncMin, ast.AggFuncCount} {
+			agg, err := NewAggFuncDesc(ctx, name, []expression.Expression{literal}, false)
+			require.NoError(t, err)
+			pb, err := AggFuncToPBExpr(pushCtx, agg, kv.TiKV)
+			require.NoError(t, err)
+			if name == ast.AggFuncSum || name == ast.AggFuncAvg {
+				require.Equal(t, tipb.ExprType_Float64, pb.Children[0].Tp)
+				require.Equal(t, codec.EncodeFloat(nil, tc.numeric), pb.Children[0].Val)
+				require.Equal(t, tc.numeric, agg.Args[0].(*expression.Constant).Value.GetFloat64())
+			} else {
+				require.Equal(t, tipb.ExprType_String, pb.Children[0].Tp)
+				require.Equal(t, []byte(tc.value), pb.Children[0].Val)
+			}
+			require.True(t, expression.IsBinaryLiteral(literal))
+			require.Equal(t, tc.value, literal.Value.GetBinaryLiteral())
 		}
 	}
 }

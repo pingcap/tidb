@@ -42,27 +42,21 @@ PARQUET_DB="e2e_parquet"
 PARQUET_TABLE_NAME="t_types"
 
 run_dumpling_parquet() {
+    # Parquet cases in this script build their source on MySQL. Fail if a previous
+    # TiDB cleanup left DUMPLING_TEST_PORT at 4000.
+    if [ "${DUMPLING_TEST_PORT-}" != "3306" ]; then
+        echo "parquet export must read MySQL on port 3306, got '${DUMPLING_TEST_PORT-}'" && exit 1
+    fi
     parquet_dump_log="$DUMPLING_OUTPUT_DIR/dumpling_parquet.log"
     if ! run_dumpling "$@" > "$parquet_dump_log" 2>&1; then
-        # Compatibility fallback: in some test setups Dumpling cannot infer PD and
-        # fails with "requires --pd". Retry once with PD discovered from TiDB /settings.
-        # Remove this branch when the test environment always exposes PD to Dumpling.
-        if grep -q "requires --pd" "$parquet_dump_log"; then
-            pd_addr=$(curl -sf "http://127.0.0.1:10080/settings" | sed -n 's/.*"path": "\([^"]*\)".*/\1/p' | head -n1)
-            [ -n "$pd_addr" ]
-            if ! run_dumpling "$@" --pd "$pd_addr" > "$parquet_dump_log" 2>&1; then
-                cat "$parquet_dump_log"
-                exit 1
-            fi
-        else
-            cat "$parquet_dump_log"
-            exit 1
-        fi
+        cat "$parquet_dump_log"
+        exit 1
     fi
 }
 
 verify_parquet_import() {
     # clear target db on TiDB to avoid duplicate-key failures when importing repeatedly.
+    orig_test_port="${DUMPLING_TEST_PORT-}"
     export DUMPLING_TEST_PORT=4000
     orig_test_db="${DUMPLING_TEST_DATABASE-}"
     export DUMPLING_TEST_DATABASE=""
@@ -105,6 +99,9 @@ user = "root"
 password = ""
 EOF
     check_sync_diff "$parquet_diff_config"
+    # This function points DUMPLING_TEST_PORT at TiDB. Put the caller's source back
+    # so the next parquet export still reads MySQL.
+    export DUMPLING_TEST_PORT="$orig_test_port"
 }
 
 export DUMPLING_TEST_PORT=3306

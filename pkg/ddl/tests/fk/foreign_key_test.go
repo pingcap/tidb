@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
@@ -884,6 +885,36 @@ func TestTruncateOrDropTableWithForeignKeyReferred(t *testing.T) {
 			tk.MustExec(sql)
 		}
 	}
+
+	tk.MustExec("drop table if exists c, c_survivor, p")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("create table p (id int primary key)")
+	tk.MustExec("create table c (id int primary key, pid int, foreign key (pid) references p(id))")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	var renameErr error
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDropTableObject", func(tableName string) {
+		if tableName == "p" {
+			renameErr = tk2.ExecToErr("rename table c to c_survivor")
+		}
+	})
+	tk.MustExec("drop table if exists p, c")
+	require.Error(t, renameErr)
+	tk.MustGetErrCode("show create table p", errno.ErrNoSuchTable)
+	tk.MustGetErrCode("show create table c", errno.ErrNoSuchTable)
+	tk.MustGetErrCode("show create table c_survivor", errno.ErrNoSuchTable)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterDropTableObject")
+
+	// A cycle cannot be safely dropped through independent jobs while FK
+	// checks are enabled. Reject it without making either parent disappear.
+	tk.MustExec("create table cycle_a (id int primary key, pid int)")
+	tk.MustExec("create table cycle_b (id int primary key, pid int, foreign key(pid) references cycle_a(id))")
+	tk.MustExec("alter table cycle_a add foreign key(pid) references cycle_b(id)")
+	require.Error(t, tk.ExecToErr("drop table cycle_a, cycle_b"))
+	tk.MustQuery("select count(*) from cycle_a").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from cycle_b").Check(testkit.Rows("0"))
+	tk.MustExec("set @@foreign_key_checks=0")
+	tk.MustExec("drop table cycle_a, cycle_b")
 }
 
 func TestDropIndexNeededInForeignKey(t *testing.T) {
@@ -1217,6 +1248,34 @@ func TestAddForeignKey(t *testing.T) {
 	tk.MustExec("insert into t1 values (1, 10);")
 	tk.MustExec("insert into t2 values (1, 10);")
 	tk.MustGetDBError("insert into t2 values (2, 20)", plannererrors.ErrNoReferencedRow2)
+
+	// Test adding a foreign key rejects orphan child rows even when the
+	// referenced key contains NULL values.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int key, business_key int, unique key uk_business_key(business_key));")
+	tk.MustExec("create table t2 (id int key, parent_key int, index idx_parent_key(parent_key));")
+	tk.MustExec("insert into t1 values (1, 1), (2, null);")
+	tk.MustExec("insert into t2 values (1, 1), (2, 2);")
+	tk.MustGetErrCode("alter table t2 add constraint fk_parent foreign key (parent_key) references t1(business_key)", 1452)
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 0, len(tbl2Info.ForeignKeys))
+
+	// Control: a NULL child key is exempt, and every non-NULL child key has a match.
+	tk.MustExec("delete from t2 where parent_key = 2;")
+	tk.MustExec("insert into t2 values (2, null);")
+	tk.MustExec("alter table t2 add constraint fk_parent foreign key (parent_key) references t1(business_key)")
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys))
+
+	// Test the composite-key case with a NULL component in the referenced key.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int key, a int, b int, unique key uk_ab(a, b));")
+	tk.MustExec("create table t2 (id int key, x int, y int, index idx_xy(x, y));")
+	tk.MustExec("insert into t1 values (1, 1, 1), (2, 2, null);")
+	tk.MustExec("insert into t2 values (1, 1, 1), (2, 2, 2);")
+	tk.MustGetErrCode("alter table t2 add constraint fk_xy foreign key (x, y) references t1(a, b)", 1452)
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 0, len(tbl2Info.ForeignKeys))
 }
 
 func TestAlterTableAddForeignKeyError(t *testing.T) {
@@ -1567,6 +1626,38 @@ func TestRenameTablesWithForeignKey(t *testing.T) {
 		"  KEY `b` (`b`),\n" +
 		"  CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `test1`.`tt1` (`id`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table p1 (id int primary key)")
+	tk.MustExec("create table p2 (id int primary key)")
+	tk.MustExec("create table p3 (id int primary key)")
+	tk.MustExec("create table c1 (id int primary key, pid int, index(pid), constraint fk_c1 foreign key(pid) references p1(id))")
+	tk.MustExec("insert into p1 values (1)")
+	tk.MustExec("insert into p3 values (3)")
+	tk.MustExec("insert into c1 values (1, 1)")
+
+	tk.MustExec("rename table p1 to tmp, p2 to p1, tmp to p2, p3 to tmp")
+	tk.MustQuery("select referenced_table_name from information_schema.referential_constraints where constraint_schema = 'test' and constraint_name = 'fk_c1'").Check(testkit.Rows("p2"))
+	tk.MustGetDBError("insert into c1 values (3, 3)", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("delete from p2 where id = 1", plannererrors.ErrRowIsReferenced2)
+	tk.MustQuery("select * from c1").Check(testkit.Rows("1 1"))
+
+	// Move both the parent and its child through reused intermediate names.
+	tk.MustExec("rename table p2 to tmp_parent, c1 to tmp_child, tmp_parent to p2_final, tmp_child to c1_final")
+	child := getTableInfo(t, dom, "test", "c1_final")
+	require.Equal(t, "test", child.ForeignKeys[0].RefSchema.L)
+	require.Equal(t, "p2_final", child.ForeignKeys[0].RefTable.L)
+	tk.MustGetDBError("insert into c1_final values (3, 3)", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("delete from p2_final where id = 1", plannererrors.ErrRowIsReferenced2)
+
+	tk.MustExec("create table self_ref (id int primary key, pid int, foreign key(pid) references self_ref(id))")
+	tk.MustExec("insert into self_ref values (1, null), (2, 1)")
+	tk.MustExec("rename table self_ref to self_tmp, self_tmp to self_final")
+	self := getTableInfo(t, dom, "test", "self_final")
+	require.Equal(t, "test", self.ForeignKeys[0].RefSchema.L)
+	require.Equal(t, "self_final", self.ForeignKeys[0].RefTable.L)
+	tk.MustGetDBError("delete from self_final where id = 1", plannererrors.ErrRowIsReferenced2)
 }
 
 func getLatestSchemaDiff(t *testing.T, tk *testkit.TestKit) *model.SchemaDiff {

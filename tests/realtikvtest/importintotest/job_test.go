@@ -150,7 +150,7 @@ func (s *mockGCSSuite) TestShowJob() {
 		TableID:     tableID1,
 		CreatedBy:   "test_show_job1@localhost",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test-show-job/t.csv?access-key=xxxxxx&secret-access-key=xxxxxx&endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test-show-job/t.csv?access-key=xxxxxx&secret-access-key=xxxxxx&endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -174,7 +174,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	jobInfo.TableName = "t2"
 	jobInfo.TableID = tableID2
 	jobInfo.CreatedBy = "test_show_job2@localhost"
-	jobInfo.Parameters.FileLocation = fmt.Sprintf(`gs://test-show-job/t.csv?endpoint=%s`, gcsEndpoint)
+	jobInfo.Parameters.FileLocation = `gs://test-show-job/t.csv?endpoint=xxxxxx`
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 	rows = s.tk.MustQuery("show import jobs").Rows()
 	s.Len(rows, 1)
@@ -207,7 +207,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	jobInfo.TableName = "t2"
 	jobInfo.TableID = tableID2
 	jobInfo.CreatedBy = "test_show_job2@localhost"
-	jobInfo.Parameters.FileLocation = fmt.Sprintf(`gs://test-show-job/t.csv?endpoint=%s`, gcsEndpoint)
+	jobInfo.Parameters.FileLocation = `gs://test-show-job/t.csv?endpoint=xxxxxx`
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 
 	// grant SUPER to test_show_job2, now it can see all jobs
@@ -230,7 +230,7 @@ func (s *mockGCSSuite) TestShowJob() {
 					TableID:     tableID3,
 					CreatedBy:   "test_show_job2@localhost",
 					Parameters: importer.ImportParameters{
-						FileLocation: fmt.Sprintf(`gs://test-show-job/t*.csv?access-key=xxxxxx&secret-access-key=xxxxxx&endpoint=%s`, gcsEndpoint),
+						FileLocation: `gs://test-show-job/t*.csv?access-key=xxxxxx&secret-access-key=xxxxxx&endpoint=xxxxxx`,
 						Format:       importer.DataFormatCSV,
 					},
 					SourceFileSize: 6,
@@ -303,7 +303,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 		TableID:     tableID1,
 		CreatedBy:   "root@%",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test-show-detached-job/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test-show-detached-job/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -345,7 +345,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 		TableID:     tableID2,
 		CreatedBy:   "root@%",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test-show-detached-job/t2.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test-show-detached-job/t2.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -378,7 +378,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 		TableID:     tableID3,
 		CreatedBy:   "root@%",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test-show-detached-job/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test-show-detached-job/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -508,7 +508,7 @@ func (s *mockGCSSuite) TestShowImportJobTimingAroundPrepare() {
 		TableID:     tableID,
 		CreatedBy:   createdBy,
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://show-job-prepare-timing-source/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://show-job-prepare-timing-source/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -713,7 +713,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 		TableID:     tableID1,
 		CreatedBy:   "test_cancel_job1@localhost",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test_cancel_job/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test_cancel_job/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -775,7 +775,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 		TableID:     tableID2,
 		CreatedBy:   "test_cancel_job2@localhost",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test_cancel_job/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test_cancel_job/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -843,7 +843,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 		TableID:     tableID2,
 		CreatedBy:   "test_cancel_job2@localhost",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test_cancel_job/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test_cancel_job/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -871,7 +871,7 @@ func (s *mockGCSSuite) TestJobFailWhenDispatchSubtask() {
 		TableID:     tableID1,
 		CreatedBy:   "root@%",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://fail_job_after_import/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://fail_job_after_import/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,

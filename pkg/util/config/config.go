@@ -29,6 +29,13 @@ import (
 
 var ignoredSystemVariablesForPlanReplayerLoad = map[string]struct{}{
 	vardef.InnodbLockWaitTimeout: {}, // It is unnecessary to load this variable for plan replayer.
+	// The following variables override the read timestamp of the loading session.
+	// They do not affect the plan, but they make the load itself fail (DDL is
+	// rejected under tidb_low_resolution_tso / tidb_snapshot) or make the loaded
+	// schema invisible to the stale infoschema the session would read afterwards.
+	vardef.TiDBLowResolutionTSO: {},
+	vardef.TiDBSnapshot:         {},
+	vardef.TiDBReadStaleness:    {},
 }
 
 // LoadConfigForPlanReplayerLoad loads system variables from a toml reader. it is only for plan replayer and test.

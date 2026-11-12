@@ -53,16 +53,23 @@ import (
 )
 
 func TestMySQLDBTables(t *testing.T) {
+	require.False(t, metadef.IsBuiltinSystemTable(mysql.SystemDB, "schema_index_usage"))
+	require.False(t, metadef.IsBuiltinSystemTable(mysql.SystemDB, "tidb_mdl_view"))
+	require.False(t, metadef.IsBuiltinSystemTable(mysql.SysDB, "schema_unused_indexes"))
 	require.Len(t, systemTablesOfBaseNextGenVersion, 52, "DO NOT CHANGE IT")
 	for _, verBoot := range versionedBootstrapSchemas {
 		for _, schInfo := range verBoot.databases {
 			testTableBasicInfoSlice(t, schInfo.Tables, "IF NOT EXISTS mysql.%s (")
+			for _, tbl := range schInfo.Tables {
+				require.True(t, metadef.IsBuiltinSystemTable(schInfo.Name, tbl.Name), "missing built-in %s.%s", schInfo.Name, tbl.Name)
+			}
 		}
 	}
 	reservedIDs := make([]int64, 0, len(ddlTableVersionTables)*2)
 	for _, v := range ddlTableVersionTables {
 		for _, tbl := range v.tables {
 			reservedIDs = append(reservedIDs, tbl.ID)
+			require.True(t, metadef.IsBuiltinSystemTable(mysql.SystemDB, tbl.Name), "missing built-in mysql.%s", tbl.Name)
 		}
 	}
 	for _, verBoot := range versionedBootstrapSchemas {
@@ -1937,7 +1944,7 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 	})
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-		return meta.NewMutator(txn).SetNextGenBootTableVersion(meta.MaterializedViewNextGenBootTableVersion)
+		return meta.NewMutator(txn).SetNextGenBootTableVersion(meta.StorageClassTransitionNextGenBootTableVersion - 1)
 	}))
 	require.NoError(t, bootstrapSchemas(store))
 	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
@@ -1954,6 +1961,34 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 		}))
 		return nil
 	}))
+
+	t.Run("materialized_view_refresh_source", func(t *testing.T) {
+		store, err := mockstore.NewMockStore()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, store.Close())
+		})
+		require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+			m := meta.NewMutator(txn)
+			require.NoError(t, m.CreateSysDatabaseByIDIfNotExists(mysql.SystemDB, metadef.SystemDatabaseID))
+			return m.SetNextGenBootTableVersion(meta.MaterializedViewNextGenBootTableVersion)
+		}))
+		// A cluster that already created the MV maintenance tables must still
+		// create the refresh-source table under a new bootstrap table version.
+		require.NoError(t, bootstrapSchemas(store))
+		require.NoError(t, bootstrapSchemas(store))
+		require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+			m := meta.NewMutator(txn)
+			table, err := m.GetTable(metadef.SystemDatabaseID, metadef.TiDBMViewFastRefreshSourceInfoTableID)
+			require.NoError(t, err)
+			require.NotNil(t, table)
+			require.Equal(t, metadef.TiDBMViewFastRefreshSourceInfoTableName, table.Name.O)
+			ver, err := m.GetNextGenBootTableVersion()
+			require.NoError(t, err)
+			require.Greater(t, ver, meta.MaterializedViewNextGenBootTableVersion)
+			return nil
+		}))
+	})
 }
 
 func TestCheckSystemTableConstraint(t *testing.T) {

@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "mviewrefreshsource_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "mview_refresh_source_test.go",
+    ],
+    flaky = True,
+    shard_count = 7,
+    deps = [
+        "//pkg/config",
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/meta/autoid",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/planner/core",
+        "//pkg/planner/core/base",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/vardef",
+        "//pkg/table",
+        "//pkg/table/tables",
+        "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

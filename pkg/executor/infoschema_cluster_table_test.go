@@ -237,17 +237,35 @@ func (s *mockStore) StartGCWorker() error          { panic("not implemented") }
 func (s *mockStore) Name() string                  { return "mockStore" }
 func (s *mockStore) Describe() string              { return "" }
 
-func TestSkipEmptyIPNodesForTiDBTypeCoprocessor(t *testing.T) {
-	originIP := config.GetGlobalConfig().AdvertiseAddress
-	config.GetGlobalConfig().AdvertiseAddress = config.UnavailableIP
-	defer func() { config.GetGlobalConfig().AdvertiseAddress = originIP }()
+func TestSkipNonServingTiDBRPCNodesForTiDBTypeCoprocessor(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+
+	bytes, err := json.Marshal(map[string]any{
+		"br": map[string]any{
+			"ddl_id":         "br",
+			"ip":             "",
+			"listening_port": 4000,
+			"status_port":    10080,
+			"version":        "8.0.11-TiDB-v8.5.0",
+			"disable_rpc":    true,
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, failpoint.Enable(
+		"github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo",
+		fmt.Sprintf("return(`%s`)", string(bytes)),
+	))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo"))
+	})
+
 	rows := tk.MustQuery("select * from information_schema.cluster_slow_query").Rows()
-	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(0))
-	// the TiDB node is skipped because it does not has IP
+	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	require.Equal(t, 0, len(rows))
+	// cluster_info is the address source for config/log/metrics fanout.
+	tk.MustQuery("select instance from information_schema.cluster_info where type = 'tidb'").Check(testkit.Rows())
 }
 
 func TestTiDBClusterInfo(t *testing.T) {
@@ -382,6 +400,12 @@ func TestTikvRegionStatus(t *testing.T) {
 		"test test_t2 0 <nil> <nil> 1 p0",
 		"test test_t2 0 <nil> <nil> 1 p1",
 	))
+	partitionTableID := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA = 'test' and TABLE_NAME = 'test_t2'").Rows()[0][0]
+	// The logical prefix has no global-index mapping. An extracted TABLE_ID predicate must not return its NULL row.
+	tk.MustQuery(fmt.Sprintf("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where TABLE_ID = %v order by IS_INDEX, PARTITION_NAME", partitionTableID)).Check(testkit.Rows(
+		"test test_t2 0 <nil> 1 p0",
+		"test test_t2 0 <nil> 1 p1",
+	))
 
 	tk.MustExec("alter table test_t2 add index p_a (a)")
 	tk.MustQuery("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by IS_INDEX, PARTITION_NAME").Check(testkit.Rows(
@@ -390,6 +414,17 @@ func TestTikvRegionStatus(t *testing.T) {
 		"test test_t2 1 p_a 1 p0",
 		"test test_t2 1 p_a 1 p1",
 	))
+	tk.MustQuery(fmt.Sprintf("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where TABLE_ID = %v order by IS_INDEX, PARTITION_NAME", partitionTableID)).Check(testkit.Rows(
+		"test test_t2 0 <nil> 1 p0",
+		"test test_t2 0 <nil> 1 p1",
+		"test test_t2 1 p_a 1 p0",
+		"test test_t2 1 p_a 1 p1",
+	))
+	// Two distinct IDs exercise IN extraction rather than a single-value IN folded into equality.
+	nameFilteredRegions := tk.MustQuery("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME in ('test_t1', 'test_t2') order by TABLE_NAME, IS_INDEX, INDEX_NAME, PARTITION_NAME").Rows()
+	inPlan := tk.MustQueryWithContext(t.Context(), fmt.Sprintf("explain select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where TABLE_ID in (%v, %v) order by TABLE_NAME, IS_INDEX, INDEX_NAME, PARTITION_NAME", tableID, partitionTableID)).String()
+	require.True(t, strings.Contains(inPlan, fmt.Sprintf("table_id in {%v,%v}", tableID, partitionTableID)) || strings.Contains(inPlan, fmt.Sprintf("table_id in {%v,%v}", partitionTableID, tableID)), inPlan)
+	tk.MustQuery(fmt.Sprintf("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where TABLE_ID in (%v, %v) order by TABLE_NAME, IS_INDEX, INDEX_NAME, PARTITION_NAME", tableID, partitionTableID)).Check(nameFilteredRegions)
 
 	tk.MustExec("alter table test_t2 add unique p_b (b) global")
 	tk.MustQuery("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by IS_INDEX, IS_PARTITION desc, PARTITION_NAME").Check(testkit.Rows(
