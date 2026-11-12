@@ -81,9 +81,12 @@ var (
 )
 
 // CallWithSCtx allocates a sctx from the pool and call the f().
-<<<<<<< HEAD
 func CallWithSCtx(pool util.DestroyableSessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
-	defer util.Recover(metrics.LabelStats, "CallWithSCtx", nil, false)
+	// Return a panic as an error, because callers use the results of f when the error is nil.
+	// For example, TableStatsFromStorage would return the cached table as newly loaded stats.
+	defer util.Recover(metrics.LabelStats, "CallWithSCtx", func() {
+		err = errors.New("panic in CallWithSCtx")
+	}, false)
 	se, err := pool.Get()
 	if err != nil {
 		return errors.Trace(err)
@@ -100,21 +103,6 @@ func CallWithSCtx(pool util.DestroyableSessionPool, f func(sctx sessionctx.Conte
 	if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
 		return errors.Trace(err)
 	}
-=======
-func CallWithSCtx(pool syssession.Pool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
-	// Return a panic as an error, because callers use the results of f when the error is nil.
-	// For example, TableStatsFromStorage would return the cached table as newly loaded stats.
-	defer util.Recover(metrics.LabelStats, "CallWithSCtx", func() {
-		err = errors.New("panic in CallWithSCtx")
-	}, false)
-	return pool.WithSession(func(se *syssession.Session) error {
-		return se.WithSessionContext(func(sctx sessionctx.Context) error {
-			restoreStatsVars, err := UpdateSCtxVarsForStats(sctx)
-			if err != nil { // update stats variables automatically
-				return errors.Trace(err)
-			}
-			defer restoreStatsVars()
->>>>>>> 12d84a92765 (statistics, domain: keep stats workers running after a panic (#72768))
 
 	wrapTxn := false
 	for _, flag := range flags {

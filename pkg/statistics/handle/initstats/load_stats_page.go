@@ -90,11 +90,7 @@ func (ls *RangeWorker) LoadStats() {
 
 func (ls *RangeWorker) loadStats() {
 	for task := range ls.taskChan {
-<<<<<<< HEAD
-		if err := ls.dealFunc(task); err != nil {
-=======
 		if err := ls.processTaskWithRecover(task); err != nil {
->>>>>>> 12d84a92765 (statistics, domain: keep stats workers running after a panic (#72768))
 			logutil.BgLogger().Error("load stats failed", zap.Error(err))
 		}
 		if ls.logger != nil {
@@ -112,7 +108,7 @@ func (ls *RangeWorker) processTaskWithRecover(task Task) (err error) {
 	defer util.Recover(metrics.LabelStats, "RangeWorker.processTask", func() {
 		err = errors.Errorf("panic in loading %s for table IDs [%d, %d)", ls.taskName, task.StartTid, task.EndTid)
 	}, false)
-	return ls.processTask(task)
+	return ls.dealFunc(task)
 }
 
 // SendTask sends a task to the load stats worker.

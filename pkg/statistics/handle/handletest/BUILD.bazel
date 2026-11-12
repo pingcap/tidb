@@ -13,13 +13,8 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/domain",
-<<<<<<< HEAD
-        "//pkg/parser/model",
-=======
         "//pkg/infoschema",
-        "//pkg/meta/model",
-        "//pkg/parser/ast",
->>>>>>> 12d84a92765 (statistics, domain: keep stats workers running after a panic (#72768))
+        "//pkg/parser/model",
         "//pkg/planner/cardinality",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
