@@ -2230,7 +2230,7 @@ func onDropIndex(sctx sessionctx.Context, jobCtx *jobContext, job *model.Job) (v
 			// Convert drop index args to finished add index args again to finish add index job.
 			// Only rolled back add index jobs will get here, since drop index jobs can only be cancelled, not rolled back.
 			addIndexArgs := &model.ModifyIndexArgs{
-				PartitionIDs: dropArgs.PartitionIDs,
+				PartitionIDs: getPartitionIDs(tblInfo),
 				OpType:       model.OpAddIndex,
 			}
 			for i, indexID := range indexIDs {
