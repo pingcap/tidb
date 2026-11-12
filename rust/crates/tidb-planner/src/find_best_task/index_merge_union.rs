@@ -450,10 +450,13 @@ pub(super) fn build_converged_union_index_merge_task(
             let rows = &lead.count_after_access().unwrap_or(0.0);
             let ranges = &lead.ranges;
             let mut schema_columns = partial_handle_columns(ds, ctx)?;
+            // Go `overwritePartialTableScanSchema`: the scan reads its handle
+            // columns (`ts.Columns = infoCols`).
+            let mut columns = schema_column_infos(ds, &schema_columns);
             // Go `convertToPartialTableScan`: the partition id rides
             // along an ordered partial of a dynamically pruned table.
             if matched.matched() && keeps_phys_tbl_id(ds) {
-                super::dispatch::add_extra_phys_tbl_id_column(&mut schema_columns, ctx);
+                super::dispatch::add_extra_phys_tbl_id_column(ctx, &mut columns, &mut schema_columns);
             }
             // Go PhysicalTableScan.TP: IsFullScan holds for no ranges too.
             let unsigned_int_handle = ds.pk_is_handle()
@@ -481,10 +484,6 @@ pub(super) fn build_converged_union_index_merge_task(
                 ),
                 ctx,
             )));
-            // Go `overwritePartialTableScanSchema`: the scan reads its handle
-            // columns (`ts.Columns = infoCols`), and the partition id
-            // `AddExtraPhysTblIDColumn` appends.
-            let columns = schema_column_infos(ds, &schema_columns);
             base.base
                 .set_schema(Some(tidb_expr::schema::Schema::new(schema_columns)));
             partial_plans_raw.push(PhysicalPlan::TableScan(
@@ -865,18 +864,14 @@ fn append_index_merge_scan_columns(
             added = true;
         }
     }
-    if keeps_phys_tbl_id(ds) {
-        added |= super::dispatch::add_extra_phys_tbl_id_column(&mut schema.columns, ctx);
-    }
     // Go appends each added column's info to `ts.Columns` (the table
-    // column, `NewExtraHandleColInfo`, `AddExtraPhysTblIDColumn`'s).
+    // column, `NewExtraHandleColInfo`), then `AddExtraPhysTblIDColumn`'s.
     if let tidb_planner_core_operator_physicalop::PhysicalPlan::TableScan(ts) = &mut *scan {
         for column in &schema.columns[original_len..] {
             let info = match column.id {
                 tidb_planner_core_operator_logicalop::data_source::EXTRA_HANDLE_ID => {
                     tidb_model::ColumnInfo::new_extra_handle_col_info()
                 }
-                tidb_model::column::EXTRA_PHYS_TBL_ID => tidb_model::ColumnInfo::new_extra_phys_tbl_id_col_info(),
                 id => match ds
                     .table_info
                     .as_ref()
@@ -888,9 +883,17 @@ fn append_index_merge_scan_columns(
             };
             ts.columns.push(tidb_model::GoShared::new(info));
         }
+        if keeps_phys_tbl_id(ds) {
+            added |= super::dispatch::add_extra_phys_tbl_id_column(ctx, &mut ts.columns, &mut schema.columns);
+        }
     }
     scan.base_mut().base.set_schema(Some(schema));
     added
+}
+
+/// Go `GetOriginalPhysicalIndexScan`'s `Columns: sliceutil.DeepClone(ds.Columns)`.
+pub(super) fn data_source_column_infos(ds: &DataSource) -> Vec<tidb_model::GoShared<tidb_model::ColumnInfo>> {
+    ds.columns.iter().map(|column| tidb_model::GoShared::new(column.read().clone())).collect()
 }
 
 /// Go `ts.Table.GetPartitionInfo() != nil && UseDynamicPartitionPrune()`.
@@ -920,8 +923,9 @@ fn push_index_partial(
     // Go `ConvertToPartialIndexScan`: an ordered partial of a dynamically
     // pruned partitioned table also reads each entry's partition id, unless
     // a global index already carries it.
+    let mut columns = data_source_column_infos(ds);
     if matched && keeps_phys_tbl_id(ds) && !source_index.read().global {
-        super::dispatch::add_extra_phys_tbl_id_column(&mut schema_columns, ctx);
+        super::dispatch::add_extra_phys_tbl_id_column(ctx, &mut columns, &mut schema_columns);
     }
     // Go GetScanRowSize prices the physical index schema once.
     let cost_columns = schema_columns.clone();
@@ -936,6 +940,8 @@ fn push_index_partial(
     partial_plans_raw.push(PhysicalPlan::IndexScan(tidb_planner_core_operator_physicalop::PhysicalIndexScan {
         table: ds.table_info.clone(),
         index: Some(source_index.clone()),
+        columns,
+        need_common_handle: ds.is_common_handle(),
         // Go `ConvertToPartialIndexScan`: "Add sort items for index scan for
         // merge-sort operation between partitions or range groups."
         by_items: if matched { by_items.to_vec() } else { Vec::new() },

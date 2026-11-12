@@ -2292,25 +2292,28 @@ pub(super) fn index_path_matches_order(
 }
 
 /// Go `AddExtraPhysTblIDColumn`: appends the partition id an index entry or
-/// row belongs to, unless the schema already carries it. Reports whether a
-/// column was added.
+/// row belongs to -- its info to `columns`, its column to `schema` -- unless
+/// `columns` already holds it. Reports whether a column was added.
 pub(super) fn add_extra_phys_tbl_id_column(
-    columns: &mut Vec<tidb_expr::column::Column>,
     ctx: &DispatchContext<'_>,
+    columns: &mut Vec<tidb_model::GoShared<tidb_model::ColumnInfo>>,
+    schema: &mut Vec<tidb_expr::column::Column>,
 ) -> bool {
+    // Not adding the ExtraPhysTblID if already exists
     if columns
         .iter()
-        .any(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID)
+        .any(|column| column.read().id == tidb_model::column::EXTRA_PHYS_TBL_ID)
     {
         return false;
     }
+    columns.push(tidb_model::GoShared::new(tidb_model::ColumnInfo::new_extra_phys_tbl_id_col_info()));
     let mut column = tidb_expr::column::Column::new(
         ctx.column_ids.map(|ids| ids.alloc()).unwrap_or_default(),
         tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
     );
     column.id = tidb_model::column::EXTRA_PHYS_TBL_ID;
     column.orig_name = "_tidb_tid".to_owned();
-    columns.push(column);
+    schema.push(column);
     true
 }
 
@@ -4654,8 +4657,9 @@ fn find_best_task_4_logical_data_source_paths(
                     && !single_scan
                     && !ds.partition_definition_ids().is_empty()
                     && ds.dynamic_partition_access.is_some();
+                let mut index_columns = super::index_merge_union::data_source_column_infos(ds);
                 if keeps_phys_tbl_id && !source_index.read().global {
-                    add_extra_phys_tbl_id_column(&mut index_schema, ctx);
+                    add_extra_phys_tbl_id_column(ctx, &mut index_columns, &mut index_schema);
                 }
                 // Go `is.SetNoncacheableReason(path.NoncacheableReason)`.
                 let noncacheable_reason = ds
@@ -5011,6 +5015,9 @@ fn find_best_task_4_logical_data_source_paths(
                     base,
                     table: ds.table_info.clone(),
                     index: Some(source_index.clone()),
+                    columns: index_columns,
+                    // Go `InitSchema`'s `p.NeedCommonHandle = p.Table.IsCommonHandle`.
+                    need_common_handle: ds.is_common_handle(),
                     table_id: ds.physical_table_id,
                     table_as_name: ds.table_as_name.clone(),
                     dynamic_partition_access: ds.dynamic_partition_access.clone(),
@@ -5323,13 +5330,8 @@ fn find_best_task_4_logical_data_source_paths(
                 if keeps_phys_tbl_id {
                     if let Some(PhysicalPlan::TableScan(ts)) = table_side.as_deref_mut() {
                         let mut schema = ts.base.base.schema().cloned().unwrap_or_default();
-                        extra_phys_tbl_id_proj = add_extra_phys_tbl_id_column(&mut schema.columns, ctx);
-                        if extra_phys_tbl_id_proj {
-                            ts.base.base.set_schema(Some(schema));
-                            ts.columns.push(tidb_model::GoShared::new(
-                                tidb_model::ColumnInfo::new_extra_phys_tbl_id_col_info(),
-                            ));
-                        }
+                        extra_phys_tbl_id_proj = add_extra_phys_tbl_id_column(ctx, &mut ts.columns, &mut schema.columns);
+                        ts.base.base.set_schema(Some(schema));
                     }
                 }
                 let mut cop = tidb_planner_core_operator_physicalop::task::CopTask {

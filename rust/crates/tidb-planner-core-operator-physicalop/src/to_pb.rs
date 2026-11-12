@@ -452,8 +452,7 @@ impl crate::PhysicalIndexScan {
                 id => tidb_model::column::find_column_info_by_id(&table.columns, id).ok_or_else(|| no("column")),
             })
             .collect::<Result<Vec<_>, _>>()?;
-        // Go `InitSchema`'s `p.NeedCommonHandle = p.Table.IsCommonHandle`.
-        let pk_col_ids = if table.is_common_handle {
+        let pk_col_ids = if self.need_common_handle {
             tidb_table::tables::scan_from_infos::try_get_common_pk_column_ids(&table)
         } else {
             Vec::new()

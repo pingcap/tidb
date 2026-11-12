@@ -58,6 +58,8 @@ pub(super) fn build_prepared_index_merge_task(
         let mut partial_plan = PhysicalPlan::IndexScan(tidb_planner_core_operator_physicalop::PhysicalIndexScan {
         table: ds.table_info.clone(),
         index: Some(source_index.clone()),
+        columns: crate::find_best_task::index_merge_union::data_source_column_infos(ds),
+        need_common_handle: ds.is_common_handle(),
             by_items: Vec::new(),
             group_by_col_idxs: Vec::new(),
             grouped_ranges: Vec::new(),

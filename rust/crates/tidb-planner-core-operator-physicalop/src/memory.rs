@@ -217,11 +217,7 @@ fn index_scan_usage(scan: &super::PhysicalIndexScan) -> i64 {
         // `IdxColLens`.
         + scan.idx_col_lens.len() as i64 * SIZE_OF_INT
         + ci_str_memory_usage(&scan.db_name)
-        // `Columns`: one `ColumnInfo` per data-source column.
-        + scan
-            .data_source_schema
-            .as_ref()
-            .map_or(0, |schema| schema.columns.len() as i64 * GO_EMPTY_COLUMN_INFO_SIZE)
+        + scan.columns.len() as i64 * GO_EMPTY_COLUMN_INFO_SIZE
         + table_as_name_memory_usage(scan.table_as_name.as_deref())
         + scan.pk_is_handle_col.as_ref().map_or(0, Column::memory_usage)
         + prop_memory_usage(scan.prop.as_ref())

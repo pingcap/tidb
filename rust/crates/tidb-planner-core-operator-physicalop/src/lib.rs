@@ -2538,6 +2538,11 @@ pub struct PhysicalIndexScan {
     pub table: Option<tidb_model::GoShared<tidb_model::TableInfo>>,
     /// Go `Index`: the scanned index's metadata.
     pub index: Option<tidb_model::GoShared<tidb_model::IndexInfo>>,
+    /// Go `Columns`: the data source's column infos, and the partition id's
+    /// when `AddExtraPhysTblIDColumn` appended it.
+    pub columns: Vec<tidb_model::GoShared<tidb_model::ColumnInfo>>,
+    /// Go `NeedCommonHandle`: `InitSchema`'s `p.Table.IsCommonHandle`.
+    pub need_common_handle: bool,
     /// The shared physical base.
     pub base: BasePhysicalPlan,
     /// Go `Table.ID`.
@@ -5307,6 +5312,8 @@ impl PhysicalPlan {
                 tasks: Vec::new(),
             }),
             Self::IndexScan(op) => Self::IndexScan(PhysicalIndexScan {
+                columns: op.columns.clone(),
+                need_common_handle: op.need_common_handle,
                 table: op.table.clone(),
                 index: op.index.clone(),
                 group_by_col_idxs: op.group_by_col_idxs.clone(),
