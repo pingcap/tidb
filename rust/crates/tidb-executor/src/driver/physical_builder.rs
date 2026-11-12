@@ -4371,8 +4371,8 @@ struct DataReaderBuilder {
 
 impl DataReaderBuilder {
     /// The builder of `inner`, or `None` for a shape it does not build: Go
-    /// `buildExecutorForIndexJoinInternal`'s Selection and Projection arms
-    /// over a reader.
+    /// `buildExecutorForIndexJoinInternal`'s Selection, Projection and
+    /// UnionScan arms over a reader.
     fn new(
         inner: &PhysicalPlan,
         join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
@@ -4381,7 +4381,7 @@ impl DataReaderBuilder {
         state: &BuildState,
     ) -> Result<Option<Self>, DriverError> {
         let mut leaf = inner;
-        while let PhysicalPlan::Selection(_) | PhysicalPlan::Projection(_) = leaf {
+        while let PhysicalPlan::Selection(_) | PhysicalPlan::Projection(_) | PhysicalPlan::UnionScan(_) = leaf {
             leaf = only_child(leaf)?;
         }
         let index_plan = match leaf {
@@ -4389,21 +4389,19 @@ impl DataReaderBuilder {
             PhysicalPlan::IndexLookUpReader(reader) if !reader.index_lookup_push_down => reader.index_plan.as_deref(),
             _ => None,
         };
-        // The scanned table, whether it is a temporary one, and the index
-        // whose usage `Close` reports.
-        let (table_id, temporary, usage_index_id) = match (leaf, index_plan.and_then(embedded_index_scan)) {
-            (_, Some(scan)) => (scan.table_id, scan.is_temporary, Some(scan.index_id)),
+        // The scanned table and the index whose usage `Close` reports.
+        let (table_id, usage_index_id) = match (leaf, index_plan.and_then(embedded_index_scan)) {
+            (_, Some(scan)) => (scan.table_id, Some(scan.index_id)),
             (PhysicalPlan::TableReader(reader), None) if reader.store_type == tidb_kv::store_type::StoreType::TiKv => {
                 let Some(ts) = reader.table_plan.as_deref().and_then(embedded_table_scan) else {
                     return Ok(None);
                 };
-                (ts.table_id, ts.is_temporary, None)
+                (ts.table_id, None)
             }
             _ => return Ok(None),
         };
         if !ctx.txn_store().is_some_and(|store| store.client().is_some())
             || !matches!(state.reader_storage, ReaderStorage::Snapshot)
-            || temporary
         {
             return Ok(None);
         }
@@ -4473,6 +4471,28 @@ impl DataReaderBuilder {
                     self.ctx.clone(),
                     self.ctx.statement_memory(),
                 );
+                e.open_self()?;
+                Ok(self.metered(plan, Box::new(e), 1))
+            }
+            // Go `buildUnionScanForIndexJoin`: the union scan over the task's
+            // reader (`buildUnionScanFromReader`, whose `handleCachedTable`
+            // makes a cached table's reader a dummy), opened over it.
+            PhysicalPlan::UnionScan(union_scan) => {
+                let child_plan = only_child(plan).map_err(driver)?;
+                let reader_plan = match child_plan {
+                    PhysicalPlan::Selection(_) => only_child(child_plan).map_err(driver)?,
+                    other => other,
+                };
+                let source = union_scan_source(plan, union_scan, reader_plan, &self.is, &self.ctx)
+                    .map_err(driver)?
+                    .filter(|source| source.go_reader)
+                    .ok_or_else(|| crate::ExecError::internal("an index join's union scan reads no Go reader"))?;
+                let mut child = self.build_internal(child_plan, probes)?;
+                if source.cache_table.is_some() {
+                    set_reader_dummy(child.as_mut());
+                }
+                let mut e = build_union_scan_from_reader(plan, union_scan, reader_plan, source, child, None, &self.ctx)
+                    .map_err(driver)?;
                 e.open_self()?;
                 Ok(self.metered(plan, Box::new(e), 1))
             }
@@ -4586,6 +4606,20 @@ impl tidb_executor_join::index_lookup::IndexJoinReaderBuilder for DataReaderBuil
     }
 }
 
+/// Go `setDummy` on the reader below `executor`'s wrappers.
+fn set_reader_dummy(executor: &mut dyn Executor) {
+    let Some(reader) = executor.union_scan_reader() else {
+        return;
+    };
+    if let Some(reader) = reader.downcast_mut::<crate::table_reader::TableReaderExecutor>() {
+        reader.set_dummy();
+    } else if let Some(reader) = reader.downcast_mut::<crate::index_reader::IndexReaderExecutor>() {
+        reader.set_dummy();
+    } else if let Some(reader) = reader.downcast_mut::<crate::index_lookup::IndexLookUpExecutor>() {
+        reader.set_dummy();
+    }
+}
+
 /// A task's inner executor built by [`DataReaderBuilder`], with Go's
 /// `exec.Next` / `exec.Close` stats and RU v2 of the inner plan (Go opens it
 /// directly, so no open time).
@@ -4600,6 +4634,10 @@ struct MeteredIndexJoinInner {
 impl Executor for MeteredIndexJoinInner {
     fn open(&mut self) -> Result<(), crate::ExecError> {
         self.inner.open()
+    }
+
+    fn union_scan_reader(&mut self) -> Option<&mut dyn std::any::Any> {
+        self.inner.union_scan_reader()
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), crate::ExecError> {
@@ -9378,45 +9416,35 @@ fn temporary_table_snapshot(
     Ok(Some(Arc::new(tidb_kv::mem_buffer::MemBufferSnapshot { entries })))
 }
 
-fn build_union_scan(
+/// What Go's `buildUnionScanFromReader` and `UnionScanExec.open` read
+/// besides the reader: its descriptor and table, the handle columns'
+/// offsets, the statement's buffer, and the buffer over the snapshot Go's
+/// `getSnapIter` unions under it (temporary table data or the table's
+/// cache).
+struct UnionScanSource {
+    reader: UnionScanReader,
+    table: Arc<tidb_table::tables::TableCommon>,
+    handle_offsets: Vec<usize>,
+    snapshot: Arc<tidb_kv::mem_buffer::MemBufferSnapshot>,
+    cache_table: Option<Arc<tidb_kv::mem_buffer::MemBufferSnapshot>>,
+    mem_snapshot: Arc<tidb_kv::mem_buffer::MemBufferSnapshot>,
+    /// Go's readers (`docs/tikv-reader-execplan.md` M4) below the union
+    /// scan, whose added rows Go's mem readers build in `open`; otherwise
+    /// the buffer-built reader's.
+    go_reader: bool,
+}
+
+/// The [`UnionScanSource`] of a union scan over `reader_plan`, or `None`
+/// when the union scan reads the merged storage's reader.
+fn union_scan_source(
     plan: &PhysicalPlan,
     union_scan: &tidb_planner_core_operator_physicalop::PhysicalUnionScan,
+    reader_plan: &PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
-    state: &mut BuildState,
-) -> Result<Box<dyn Executor>, DriverError> {
-    let child_plan = only_child(plan)?;
-    // Go: "If the push-downed condition contains virtual column, we may
-    // build a selection upon reader."
-    let reader_plan = match child_plan {
-        PhysicalPlan::Selection(_) => only_child(child_plan)?,
-        other => other,
-    };
-    let merged = |state: &mut BuildState| {
-        let previous = match state.reader_storage {
-            ReaderStorage::Snapshot => Some(std::mem::replace(
-                &mut state.reader_storage,
-                ReaderStorage::Merged,
-            )),
-            _ => None,
-        };
-        let built = build_with_state(child_plan, catalog, ctx, state);
-        if let Some(previous) = previous {
-            state.reader_storage = previous;
-        }
-        built
-    };
-    if matches!(
-        reader_plan,
-        PhysicalPlan::PointGet(_)
-            | PhysicalPlan::BatchPointGet(_)
-            | PhysicalPlan::TableDual(_)
-            | PhysicalPlan::TableSample(_)
-    ) {
-        return build_with_state(child_plan, catalog, ctx, state);
-    }
+) -> Result<Option<UnionScanSource>, DriverError> {
     let Some(reader) = union_scan_reader(reader_plan)? else {
-        return merged(state);
+        return Ok(None);
     };
     let table = catalog
         .physical_kv_table_by_id(reader.table_id)
@@ -9429,12 +9457,11 @@ fn build_union_scan(
         .iter()
         .map(|column| usize::try_from(schema.column_index(column)).ok())
         .collect::<Option<Vec<_>>>();
-    let (Some(handle_offsets), ReaderStorage::Snapshot) = (handle_offsets, &state.reader_storage)
-    else {
-        return merged(state);
+    let Some(handle_offsets) = handle_offsets else {
+        return Ok(None);
     };
     if handle_offsets.is_empty() || crate::statement_store(ctx).snapshot_reader().is_none() {
-        return merged(state);
+        return Ok(None);
     }
     // The buffered entries of every physical table the reader can reach,
     // and of the logical table a global index is keyed under.
@@ -9473,24 +9500,6 @@ fn build_union_scan(
             PhysicalPlan::IndexLookUpReader(lookup) => !lookup.index_lookup_push_down,
             _ => false,
         };
-    let go_table_reader = go_reader && matches!(reader_plan, PhysicalPlan::TableReader(_));
-    let go_index_reader = go_reader && matches!(reader_plan, PhysicalPlan::IndexReader(_));
-    let go_index_lookup = go_reader && matches!(reader_plan, PhysicalPlan::IndexLookUpReader(_));
-    let child = match &cache_table {
-        // Go `handleCachedTable`: the reader is a dummy that only provides
-        // its KV ranges, and the mem reader reads the cache under the buffer.
-        Some(_) if go_reader => {
-            let previous = std::mem::replace(&mut state.dummy_reader, true);
-            let built = build_with_state(child_plan, catalog, ctx, state);
-            state.dummy_reader = previous;
-            built?
-        }
-        Some(_) => Box::new(crate::table_dual::TableDualExec::new(
-            meta(ctx, child_plan, plan_schema(child_plan)?),
-            0,
-        )) as Box<dyn Executor>,
-        None => build_with_state(child_plan, catalog, ctx, state)?,
-    };
     // Go `getSnapIter`: the session's temporary table data, when it has any,
     // or else the table's cache, read under the buffer. (The in-process
     // engine's readers read the temporary data themselves.)
@@ -9499,17 +9508,25 @@ fn build_union_scan(
         Some(snap_cache) => union_cache_under_buffer(snap_cache, &snapshot),
         None => Arc::clone(&snapshot),
     };
-    let mem_reader = if go_table_reader || go_index_reader || go_index_lookup {
-        None
-    } else {
-        let mut mem_state = BuildState {
-            reader_storage: ReaderStorage::MemBuffer(Arc::clone(&mem_snapshot)),
-            untraced: true,
-            has_lock: state.has_lock,
-            ..BuildState::default()
-        };
-        Some(build_with_state(child_plan, catalog, ctx, &mut mem_state)?)
-    };
+    Ok(Some(UnionScanSource { reader, table, handle_offsets, snapshot, cache_table, mem_snapshot, go_reader }))
+}
+
+/// Go `buildUnionScanFromReader`: the union scan over `child`, the reader
+/// built for `reader_plan` (or, off Go's readers, `mem_reader` reading the
+/// buffer).
+fn build_union_scan_from_reader(
+    plan: &PhysicalPlan,
+    union_scan: &tidb_planner_core_operator_physicalop::PhysicalUnionScan,
+    reader_plan: &PhysicalPlan,
+    source: UnionScanSource,
+    child: Box<dyn Executor>,
+    mem_reader: Option<Box<dyn Executor>>,
+    ctx: &crate::StmtContext,
+) -> Result<crate::union_scan::UnionScanExec<crate::StmtContext>, DriverError> {
+    let UnionScanSource { reader, table, handle_offsets, snapshot, cache_table, mem_snapshot, go_reader } = source;
+    let go_table_reader = go_reader && matches!(reader_plan, PhysicalPlan::TableReader(_));
+    let go_index_reader = go_reader && matches!(reader_plan, PhysicalPlan::IndexReader(_));
+    let go_index_lookup = go_reader && matches!(reader_plan, PhysicalPlan::IndexLookUpReader(_));
     let schema = child.schema().clone();
     if schema.len() != plan_schema(plan)?.len()
         || mem_reader.as_ref().is_some_and(|mem_reader| mem_reader.schema().len() != schema.len())
@@ -9681,7 +9698,7 @@ fn build_union_scan(
             })
             .transpose()?
     };
-    Ok(Box::new(crate::union_scan::UnionScanExec::new(
+    Ok(crate::union_scan::UnionScanExec::new(
         crate::union_scan::UnionScanSpec {
             meta: meta(ctx, plan, schema),
             child,
@@ -9713,7 +9730,79 @@ fn build_union_scan(
             ctx: ctx.clone(),
             stmt: ctx.clone(),
         },
-    )))
+    ))
+}
+
+fn build_union_scan(
+    plan: &PhysicalPlan,
+    union_scan: &tidb_planner_core_operator_physicalop::PhysicalUnionScan,
+    catalog: &SessionExtendedInfoSchema,
+    ctx: &crate::StmtContext,
+    state: &mut BuildState,
+) -> Result<Box<dyn Executor>, DriverError> {
+    let child_plan = only_child(plan)?;
+    // Go: "If the push-downed condition contains virtual column, we may
+    // build a selection upon reader."
+    let reader_plan = match child_plan {
+        PhysicalPlan::Selection(_) => only_child(child_plan)?,
+        other => other,
+    };
+    let merged = |state: &mut BuildState| {
+        let previous = match state.reader_storage {
+            ReaderStorage::Snapshot => Some(std::mem::replace(
+                &mut state.reader_storage,
+                ReaderStorage::Merged,
+            )),
+            _ => None,
+        };
+        let built = build_with_state(child_plan, catalog, ctx, state);
+        if let Some(previous) = previous {
+            state.reader_storage = previous;
+        }
+        built
+    };
+    if matches!(
+        reader_plan,
+        PhysicalPlan::PointGet(_)
+            | PhysicalPlan::BatchPointGet(_)
+            | PhysicalPlan::TableDual(_)
+            | PhysicalPlan::TableSample(_)
+    ) {
+        return build_with_state(child_plan, catalog, ctx, state);
+    }
+    if !matches!(state.reader_storage, ReaderStorage::Snapshot) {
+        return merged(state);
+    }
+    let Some(source) = union_scan_source(plan, union_scan, reader_plan, catalog, ctx)? else {
+        return merged(state);
+    };
+    let child = match &source.cache_table {
+        // Go `handleCachedTable`: the reader is a dummy that only provides
+        // its KV ranges, and the mem reader reads the cache under the buffer.
+        Some(_) if source.go_reader => {
+            let previous = std::mem::replace(&mut state.dummy_reader, true);
+            let built = build_with_state(child_plan, catalog, ctx, state);
+            state.dummy_reader = previous;
+            built?
+        }
+        Some(_) => Box::new(crate::table_dual::TableDualExec::new(
+            meta(ctx, child_plan, plan_schema(child_plan)?),
+            0,
+        )) as Box<dyn Executor>,
+        None => build_with_state(child_plan, catalog, ctx, state)?,
+    };
+    let mem_reader = if source.go_reader {
+        None
+    } else {
+        let mut mem_state = BuildState {
+            reader_storage: ReaderStorage::MemBuffer(Arc::clone(&source.mem_snapshot)),
+            untraced: true,
+            has_lock: state.has_lock,
+            ..BuildState::default()
+        };
+        Some(build_with_state(child_plan, catalog, ctx, &mut mem_state)?)
+    };
+    Ok(Box::new(build_union_scan_from_reader(plan, union_scan, reader_plan, source, child, mem_reader, ctx)?))
 }
 
 pub(super) fn build(

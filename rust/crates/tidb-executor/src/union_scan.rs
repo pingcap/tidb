@@ -624,10 +624,14 @@ impl<C: Columns> UnionScanExec<C> {
     }
 }
 
-impl<C: Columns + Send> Executor for UnionScanExec<C> {
-    /// Go `Open` (:75) plus `open` (:85), minus the reader type switch.
-    fn open(&mut self) -> Result<(), ExecError> {
-        self.child.open()?;
+impl<C: Columns + Send> UnionScanExec<C> {
+    /// Go `open` (:85) over the open reader below (Go's reader type switch
+    /// is [`UnionScanSpec::build_added_rows`]), which an index join's
+    /// `buildUnionScanForIndexJoin` calls on its task's reader.
+    ///
+    /// # Errors
+    /// The added rows could not be built.
+    pub fn open_self(&mut self) -> Result<(), ExecError> {
         // :117-131. The added rows of the reader below, over its ranges.
         if let Some(build) = self.build_added_rows.as_mut() {
             self.added_rows_iter = build(self.child.as_mut(), &self.compare_exec)?;
@@ -652,6 +656,14 @@ impl<C: Columns + Send> Executor for UnionScanExec<C> {
             self.meta.max_chunk_size(),
         ));
         Ok(())
+    }
+}
+
+impl<C: Columns + Send> Executor for UnionScanExec<C> {
+    /// Go `Open` (:75): the reader below, then [`UnionScanExec::open_self`].
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.child.open()?;
+        self.open_self()
     }
 
     /// Go `Next` (:139).

@@ -88,8 +88,10 @@ reader built by Go's `buildTableReader` / `buildIndexReader` /
   `IndexLookUp` and TiKV `TableReader` over a table that is not
   dynamically partitioned (`DataReaderBuilder` in `physical_builder.rs`,
   `index_join_reader.rs`, `ColWithCmpFuncManager::build_ranges_by_row`).
-  The Selection and Projection arms over them followed. Left in (c): the
-  aggregate / hash-join / union-scan arms and dynamically pruned
+  The Selection, Projection and UnionScan arms over them followed (the
+  last Go's `buildUnionScanForIndexJoin`: `build_union_scan_from_reader`
+  over the task's reader, then `UnionScanExec::open_self`, Go's `open`).
+  Left in (c): the aggregate / hash-join arms and dynamically pruned
   partitions, which still take the probe-seeded leaf.
 - [ ] Milestone 5: the offer machinery is deleted; E15 leaves the register.
 
@@ -160,8 +162,8 @@ reader built by Go's `buildTableReader` / `buildIndexReader` /
   `a_union_scan_reads_a_partitioned_tables_readers`). A global index keeps
   Go's `partitionIDMap` for the mem index readers. Temporary tables
   followed: their readers are Go's dummies and the union scan reads the
-  session's temporary table data under the buffer (`getSnapIter`). Left:
-  the per-task union scan of the index join.
+  session's temporary table data under the buffer (`getSnapIter`). The
+  index join's per-task union scan followed (M4 (c)).
 - 2026-11-12 (M3): `TableRead` now takes Go's `SetMemTracker` and
   `SetPaging` from its caller. The TableReader and IndexReader still hand
   each select result a fresh operator tracker under the statement's, where

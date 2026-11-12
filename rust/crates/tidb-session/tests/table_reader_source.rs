@@ -290,6 +290,30 @@ fn a_temporary_tables_readers_read_through_the_union_scan() {
     tk.must_query("select * from gt").check(Vec::<&str>::new());
 }
 
+/// Go `buildUnionScanForIndexJoin`: an index join whose inner table the
+/// transaction wrote builds, for each task, the union scan over the task's
+/// reader (`buildUnionScanFromReader`) and opens it, so the inner rows merge
+/// the buffer over the task's ranges -- through a table reader, an index
+/// reader and an index lookup. Go's rows (gorun).
+#[test]
+fn an_index_joins_inner_union_scan_reads_the_buffer_per_task() {
+    let mut tk = TestKit::new();
+    tk.must_exec("create table o (a int, b int)");
+    tk.must_exec("create table i (a int primary key, b int, c int, index ib(b))");
+    tk.must_exec("insert into o values (1,10),(2,20),(3,30),(4,40)");
+    tk.must_exec("insert into i values (1,10,100),(3,30,300)");
+    tk.must_exec("begin");
+    tk.must_exec("insert into i values (2,20,200),(4,40,400)");
+    tk.must_exec("update i set c=301 where a=3");
+    tk.must_query("select /*+ INL_JOIN(i) */ o.a, i.c from o join i on o.a=i.a order by o.a")
+        .check(["1 100", "2 200", "3 301", "4 400"]);
+    tk.must_query("select /*+ INL_JOIN(i) */ o.a, i.a from o join i on o.b=i.b order by o.a")
+        .check(["1 1", "2 2", "3 3", "4 4"]);
+    tk.must_query("select /*+ INL_JOIN(i) */ o.a, i.c from o join i on o.b=i.b order by o.a")
+        .check(["1 100", "2 200", "3 301", "4 400"]);
+    tk.must_exec("rollback");
+}
+
 /// Go `buildRespForGroupedRanges` assigns `e.kvRanges` on each call, so a
 /// keep-order read of an unsigned handle whose ranges straddle the int64
 /// boundary keeps only the second part's KV ranges, and the union scan over
