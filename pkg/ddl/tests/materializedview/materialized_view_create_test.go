@@ -507,6 +507,24 @@ func TestCreateMaterializedViewCancelRollback(t *testing.T) {
 	tkCancel := newMViewTestKit(t, store)
 	tkCancel.MustExec("use test")
 
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMViewBuildImportJob", "return")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateProgressIntervalInMs", "return(10)")
+	rollbackStep := false
+	rollbackState := make(chan model.JobState, 1)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionCreateMaterializedView {
+			rollbackStep = job.IsRollingback()
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionCreateMaterializedView && rollbackStep {
+			select {
+			case rollbackState <- job.State:
+			default:
+			}
+		}
+	})
+
 	const pauseBuildFailpoint = "github.com/pingcap/tidb/pkg/ddl/pauseCreateMaterializedViewBuild"
 	require.NoError(t, failpoint.Enable(pauseBuildFailpoint, "pause"))
 	enabled := true
@@ -534,6 +552,13 @@ func TestCreateMaterializedViewCancelRollback(t *testing.T) {
 	}, 30*time.Second, 100*time.Millisecond)
 
 	tkCancel.MustExec("admin cancel ddl jobs " + jobID)
+	// A rollback step must leave the table intact while the build is still running.
+	select {
+	case state := <-rollbackState:
+		require.Equal(t, model.JobStateRollingback, state)
+	case <-time.After(30 * time.Second):
+		t.Fatal("rollback did not check the running build")
+	}
 	require.NoError(t, failpoint.Disable(pauseBuildFailpoint))
 	enabled = false
 

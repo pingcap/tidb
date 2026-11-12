@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -82,8 +83,9 @@ func (e *LoadDataController) checkRequirements(ctx context.Context, se sessionct
 	}
 
 	conn := se.GetSQLExecutor()
-	// Only imports that create an import job can conflict with an active one.
-	if e.DataSourceType == DataSourceTypeFile || kerneltype.IsNextGen() {
+	// DDL owns the import job of a building MV and serializes its creation.
+	isMViewBuild := tableInfo.MaterializedView != nil && tableInfo.MaterializedView.GetInitBuildState() == model.MViewInitBuildBuilding
+	if !isMViewBuild && (e.DataSourceType == DataSourceTypeFile || kerneltype.IsNextGen()) {
 		cnt, err := GetActiveJobCnt(ctx, conn, e.Plan.DBName, e.Plan.TableInfo.Name.L)
 		if err != nil {
 			return errors.Trace(err)
