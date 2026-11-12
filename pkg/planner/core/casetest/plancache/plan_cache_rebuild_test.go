@@ -40,8 +40,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestInstancePlanCachePointGetLiteralHandle(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+func TestInstancePlanCachePointGetLiteral(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	original := tk1.MustQuery("select @@global.tidb_enable_instance_plan_cache").Rows()[0][0]
@@ -50,28 +50,45 @@ func TestInstancePlanCachePointGetLiteralHandle(t *testing.T) {
 	})
 	tk1.MustExec("set global tidb_enable_instance_plan_cache=1")
 	tk1.MustExec("use test")
-	tk1.MustExec("create table t_point_get_literal (a int primary key)")
-	tk1.MustExec("insert into t_point_get_literal values (1), (2)")
+	tk1.MustExec("create table t_int_handle (a int primary key)")
+	tk1.MustExec("insert into t_int_handle values (1), (2)")
+	tk1.MustExec("create table t_common_handle (a int, b varchar(10), c decimal(10,2), primary key (a, b, c) clustered)")
+	tk1.MustExec("insert into t_common_handle values (1, 'x', 1.5), (1, 'y', 1.5)")
 
+	mustExecute := func(tk *testkit.TestKit, stmt, row string, fromCache int) {
+		tk.MustQuery("execute " + stmt).Check(testkit.Rows(row))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(fmt.Sprint(fromCache)))
+	}
 	for i, tk := range []*testkit.TestKit{tk1, tk2} {
 		tk.MustExec("use test")
-		tk.MustExec("prepare literal_stmt from 'select * from t_point_get_literal where a=1'")
-		tk.MustExec("prepare param_stmt from 'select * from t_point_get_literal where a=?'")
-		tk.MustQuery("execute literal_stmt").Check(testkit.Rows("1"))
-		// The second session should reuse the first session's instance cache entry.
-		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(fmt.Sprint(i)))
-		tk.MustExec("set @a=1")
-		tk.MustQuery("execute param_stmt using @a").Check(testkit.Rows("1"))
-		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(fmt.Sprint(i)))
+		tk.MustExec("prepare int_literal from 'select * from t_int_handle where a=1'")
+		tk.MustExec("prepare int_param from 'select * from t_int_handle where a=?'")
+		tk.MustExec(`prepare common_literal from 'select * from t_common_handle where a=1 and b="x" and c=1.5'`)
+		tk.MustExec("prepare common_param from 'select * from t_common_handle where a=1 and b=? and c=1.5'")
+		tk.MustExec("set @a=1, @b='x'")
+		// The second session should reuse the first session's instance cache entries.
+		mustExecute(tk, "int_literal", "1", i)
+		mustExecute(tk, "int_param using @a", "1", i)
+		mustExecute(tk, "common_literal", "1 x 1.50", i)
+		mustExecute(tk, "common_param using @b", "1 x 1.50", i)
 
-		for _, value := range []int{2, 1, 2} {
-			tk.MustExec(fmt.Sprintf("set @a=%d", value))
-			tk.MustQuery("execute param_stmt using @a").Check(testkit.Rows(fmt.Sprint(value)))
-			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-			tk.MustQuery("execute literal_stmt").Check(testkit.Rows("1"))
-			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		for _, v := range []struct{ a, b string }{{"2", "y"}, {"1", "x"}, {"2", "y"}} {
+			tk.MustExec(fmt.Sprintf("set @a=%s, @b='%s'", v.a, v.b))
+			mustExecute(tk, "int_param using @a", v.a, 1)
+			mustExecute(tk, "int_literal", "1", 1)
+			mustExecute(tk, "common_param using @b", "1 "+v.b+" 1.50", 1)
+			mustExecute(tk, "common_literal", "1 x 1.50", 1)
 		}
 	}
+
+	// The cached plan is shared by all sessions, so the fast clone must not point at its literal values.
+	stmt, err := parser.New().ParseOneStmt(`select * from t_common_handle where a=1 and b="x" and c=1.5`, "", "")
+	require.NoError(t, err)
+	plan, _, err := planner.Optimize(context.Background(), tk1.Session(), resolve.NewNodeW(stmt), dom.InfoSchema())
+	require.NoError(t, err)
+	src := plan.(*physicalop.PointGetPlan)
+	dst := core.FastClonePointGetForPlanCache(tk1.Session().GetPlanCtx(), src, nil)
+	require.NoError(t, checkUnclearPlanCacheClone(src.IndexValues, dst.IndexValues))
 }
 
 func TestPlanCacheClone(t *testing.T) {
