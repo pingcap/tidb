@@ -147,7 +147,7 @@ func (m *MPPCoordinatorManager) GetCoordCount() int {
 
 // ReportStatus reports mpp task execution status to specific coordinator
 func (m *MPPCoordinatorManager) ReportStatus(request *mpp.ReportTaskStatusRequest) *mpp.ReportTaskStatusResponse {
-	if request == nil || request.Meta == nil {
+	if request.Meta == nil {
 		return &mpp.ReportTaskStatusResponse{Error: &mpp.Error{Msg: "missing task metadata"}}
 	}
 
