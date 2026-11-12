@@ -91,7 +91,9 @@ reader built by Go's `buildTableReader` / `buildIndexReader` /
   The Selection, Projection and UnionScan arms over them followed (the
   last Go's `buildUnionScanForIndexJoin`: `build_union_scan_from_reader`
   over the task's reader, then `UnionScanExec::open_self`, Go's `open`).
-  Left in (c): the aggregate / hash-join arms and dynamically pruned
+  The HashAgg and StreamAgg arms followed (`buildHashAggFromChildExec` /
+  `buildStreamAggFromChildExec` over the task's executor, then their
+  `OpenSelf`). Left in (c): the hash-join arm and dynamically pruned
   partitions, which still take the probe-seeded leaf.
 - [ ] Milestone 5: the offer machinery is deleted; E15 leaves the register.
 

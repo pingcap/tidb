@@ -2049,6 +2049,26 @@ fn build_aggregation(
     build_agg_from_child_exec(plan, descriptors, group_by, stream, child, ctx, register)
 }
 
+/// [`build_stream_agg_from_child_exec`] or [`build_hash_agg_from_child_exec`],
+/// boxed.
+fn agg_from_child_exec(
+    plan: &PhysicalPlan,
+    descriptors: &[AggFuncDesc],
+    group_by: &[Expression],
+    stream: bool,
+    child: &Box<dyn Executor>,
+    ctx: &crate::StmtContext,
+    register: bool,
+) -> Result<Option<Box<dyn FnOnce(Box<dyn Executor>) -> Box<dyn Executor>>>, DriverError> {
+    Ok(if stream {
+        build_stream_agg_from_child_exec(plan, descriptors, group_by, child, ctx)?
+            .map(|build| Box::new(move |child| Box::new(build(child)) as Box<dyn Executor>) as Box<dyn FnOnce(_) -> _>)
+    } else {
+        build_hash_agg_from_child_exec(plan, descriptors, group_by, child, ctx, register)?
+            .map(|build| Box::new(move |child| Box::new(build(child)) as Box<dyn Executor>) as Box<dyn FnOnce(_) -> _>)
+    })
+}
+
 /// Go `buildStreamAggFromChildExec` / `buildHashAggFromChildExec`: a
 /// TiDB-tier aggregate over an already built child.
 fn build_agg_from_child_exec(
@@ -2060,12 +2080,7 @@ fn build_agg_from_child_exec(
     ctx: &crate::StmtContext,
     register: bool,
 ) -> Result<Box<dyn Executor>, DriverError> {
-    let executor = if stream {
-        build_stream_agg_from_child_exec(plan, descriptors, group_by, &child, ctx)?
-    } else {
-        build_hash_agg_from_child_exec(plan, descriptors, group_by, &child, ctx, register)?
-    };
-    match executor {
+    match agg_from_child_exec(plan, descriptors, group_by, stream, &child, ctx, register)? {
         Some(executor) => Ok(executor(child)),
         None => build_aggregation_over_child(plan, descriptors, group_by, stream, child, ctx, register),
     }
@@ -2130,7 +2145,10 @@ fn build_hash_agg_from_child_exec(
     child: &Box<dyn Executor>,
     ctx: &crate::StmtContext,
     register_runtime_stats: bool,
-) -> Result<Option<Box<dyn FnOnce(Box<dyn Executor>) -> Box<dyn Executor>>>, DriverError> {
+) -> Result<
+    Option<Box<dyn FnOnce(Box<dyn Executor>) -> tidb_executor_aggregate::agg_hash_executor::HashAggExec<crate::StmtContext>>>,
+    DriverError,
+> {
     let output_schema = plan_schema(plan)?;
     if output_schema.len() != descriptors.len() {
         return Ok(None);
@@ -2221,7 +2239,7 @@ fn build_hash_agg_from_child_exec(
             },
         );
         executor.set_runtime_stats(runtime_stats, plan_id);
-        Box::new(executor)
+        executor
     })))
 }
 
@@ -2250,7 +2268,10 @@ fn build_stream_agg_from_child_exec(
     group_by: &[Expression],
     child: &Box<dyn Executor>,
     ctx: &crate::StmtContext,
-) -> Result<Option<Box<dyn FnOnce(Box<dyn Executor>) -> Box<dyn Executor>>>, DriverError> {
+) -> Result<
+    Option<Box<dyn FnOnce(Box<dyn Executor>) -> tidb_executor_aggregate::agg_stream_executor::StreamAggExec<crate::StmtContext>>>,
+    DriverError,
+> {
     let output_schema = plan_schema(plan)?;
     if output_schema.len() != descriptors.len() {
         return Ok(None);
@@ -2284,7 +2305,7 @@ fn build_stream_agg_from_child_exec(
     let group_checker = tidb_executor_internal_vecgroupchecker::VecGroupChecker::new(group_by);
     let ctx = ctx.clone();
     Ok(Some(Box::new(move |child| {
-        Box::new(tidb_executor_aggregate::agg_stream_executor::StreamAggExec::new(
+        tidb_executor_aggregate::agg_stream_executor::StreamAggExec::new(
             executor_meta,
             child,
             ctx,
@@ -2293,7 +2314,7 @@ fn build_stream_agg_from_child_exec(
             default_val,
             mem_tracker,
             stmt_mem_tracker,
-        ))
+        )
     })))
 }
 
@@ -2347,11 +2368,7 @@ fn build_aggregation_over_child(
     // A cop-side aggregate with no pushed form, or one the coprocessor of
     // this tier stands in for (a TiFlash fragment's), runs as Go's
     // TiDB-tier executor does.
-    let executor = if stream {
-        build_stream_agg_from_child_exec(plan, descriptors, group_by_items, &child, ctx)?
-    } else {
-        build_hash_agg_from_child_exec(plan, descriptors, group_by_items, &child, ctx, register_runtime_stats)?
-    };
+    let executor = agg_from_child_exec(plan, descriptors, group_by_items, stream, &child, ctx, register_runtime_stats)?;
     executor.map(|executor| executor(child)).ok_or_else(|| {
         DriverError::unsupported("an aggregate function has no Go aggfuncs implementation")
     })
@@ -4371,8 +4388,8 @@ struct DataReaderBuilder {
 
 impl DataReaderBuilder {
     /// The builder of `inner`, or `None` for a shape it does not build: Go
-    /// `buildExecutorForIndexJoinInternal`'s Selection, Projection and
-    /// UnionScan arms over a reader.
+    /// `buildExecutorForIndexJoinInternal`'s Selection, Projection,
+    /// UnionScan, HashAgg and StreamAgg arms over a reader.
     fn new(
         inner: &PhysicalPlan,
         join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
@@ -4381,7 +4398,12 @@ impl DataReaderBuilder {
         state: &BuildState,
     ) -> Result<Option<Self>, DriverError> {
         let mut leaf = inner;
-        while let PhysicalPlan::Selection(_) | PhysicalPlan::Projection(_) | PhysicalPlan::UnionScan(_) = leaf {
+        while let PhysicalPlan::Selection(_)
+        | PhysicalPlan::Projection(_)
+        | PhysicalPlan::UnionScan(_)
+        | PhysicalPlan::HashAgg(_)
+        | PhysicalPlan::StreamAgg(_) = leaf
+        {
             leaf = only_child(leaf)?;
         }
         let index_plan = match leaf {
@@ -4494,6 +4516,34 @@ impl DataReaderBuilder {
                 let mut e = build_union_scan_from_reader(plan, union_scan, reader_plan, source, child, None, &self.ctx)
                     .map_err(driver)?;
                 e.open_self()?;
+                Ok(self.metered(plan, Box::new(e), 1))
+            }
+            // Go `buildHashAggFromChildExec` over the task's inner
+            // executor, then `OpenSelf`.
+            PhysicalPlan::HashAgg(agg) => {
+                let child = self.build_internal(only_child(plan).map_err(driver)?, probes)?;
+                let build = build_hash_agg_from_child_exec(
+                    plan,
+                    &agg.agg_funcs,
+                    &agg.group_by_items,
+                    &child,
+                    &self.ctx,
+                    self.runtime_stats.is_some(),
+                )
+                .map_err(driver)?
+                .ok_or_else(|| crate::ExecError::internal("an index join's inner aggregate has no Go aggfuncs"))?;
+                let mut e = build(child);
+                e.open_self()?;
+                Ok(self.metered(plan, Box::new(e), 1))
+            }
+            // Go `buildStreamAggFromChildExec`, then `OpenSelf`.
+            PhysicalPlan::StreamAgg(agg) => {
+                let child = self.build_internal(only_child(plan).map_err(driver)?, probes)?;
+                let build = build_stream_agg_from_child_exec(plan, &agg.agg_funcs, &agg.group_by_items, &child, &self.ctx)
+                    .map_err(driver)?
+                    .ok_or_else(|| crate::ExecError::internal("an index join's inner aggregate has no Go aggfuncs"))?;
+                let mut e = build(child);
+                e.open_self();
                 Ok(self.metered(plan, Box::new(e), 1))
             }
             // Go `buildProjectionForIndexJoin`.

@@ -314,6 +314,37 @@ fn an_index_joins_inner_union_scan_reads_the_buffer_per_task() {
     tk.must_exec("rollback");
 }
 
+/// Go `buildExecutorForIndexJoinInternal`'s HashAgg and StreamAgg arms: an
+/// index join into an aggregate (`tidb_enable_inl_join_inner_multi_pattern`)
+/// builds, for each task, the aggregate over the task's inner executor
+/// (`buildHashAggFromChildExec` / `buildStreamAggFromChildExec`) and opens it
+/// with `OpenSelf`, a dirty transaction's rows included through the union
+/// scan. Go's plans and rows (gorun).
+#[test]
+fn an_index_joins_inner_aggregate_is_built_per_task() {
+    let mut tk = TestKit::new();
+    tk.must_exec("set tidb_enable_inl_join_inner_multi_pattern=on");
+    tk.must_exec("create table o (a int, b int)");
+    tk.must_exec("create table i (a int, b int, c int, index ia(a))");
+    tk.must_exec("insert into o values (1,10),(2,20),(3,30)");
+    tk.must_exec("insert into i values (1,1,100),(1,2,101),(2,3,200),(3,4,300),(3,5,301),(3,6,302)");
+    let stream = "select /*+ INL_JOIN(t2) */ o.a, t2.s from o join (select a, sum(c) s from i group by a) t2 on o.a=t2.a order by o.a";
+    let hash = "select /*+ INL_JOIN(t2) */ o.a, t2.s from o join (select /*+ HASH_AGG() */ a, sum(c) s from i group by a) t2 on o.a=t2.a order by o.a";
+    assert!(tk.must_query(&format!("explain {stream}")).rows().iter().any(|row| row[0].contains("StreamAgg") && row[0].contains("(Probe)")));
+    assert!(tk.must_query(&format!("explain {hash}")).rows().iter().any(|row| row[0].contains("HashAgg") && row[0].contains("(Probe)")));
+    tk.must_query(stream).check(["1 201", "2 200", "3 903"]);
+    tk.must_query(hash).check(["1 201", "2 200", "3 903"]);
+    tk.must_query(
+        "select /*+ INL_JOIN(t2) */ o.a, t2.s, t2.n from o join (select a, sum(c) s, count(*) n from i where b > 1 group by a) t2 on o.a=t2.a order by o.a",
+    )
+    .check(["1 101 1", "2 200 1", "3 903 3"]);
+    tk.must_exec("begin");
+    tk.must_exec("insert into i values (2,7,250)");
+    tk.must_query(stream).check(["1 201", "2 450", "3 903"]);
+    tk.must_query(hash).check(["1 201", "2 450", "3 903"]);
+    tk.must_exec("rollback");
+}
+
 /// Go `buildRespForGroupedRanges` assigns `e.kvRanges` on each call, so a
 /// keep-order read of an unsigned handle whose ranges straddle the int64
 /// boundary keeps only the second part's KV ranges, and the union scan over

@@ -99,8 +99,9 @@ impl<C: Columns + 'static> StreamAggExec<C> {
         }
     }
 
-    /// Go `OpenSelf`.
-    fn open_self(&mut self) {
+    /// Go `OpenSelf`: the executor opened over its already open child
+    /// (Go's index join builds one over each task's reader).
+    pub fn open_self(&mut self) {
         self.child_result = self.child.new_chunk();
         self.executed = false;
         self.is_child_return_empty = true;

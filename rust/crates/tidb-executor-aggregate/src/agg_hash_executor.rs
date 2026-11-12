@@ -212,8 +212,12 @@ impl<C: Columns + Send + Sync + 'static> HashAggExec<C> {
         self.child.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Go `OpenSelf`.
-    fn open_self(&mut self) -> Result<(), ExecError> {
+    /// Go `OpenSelf`: the executor opened over its already open child
+    /// (Go's index join builds one over each task's reader).
+    ///
+    /// # Errors
+    /// As Go's.
+    pub fn open_self(&mut self) -> Result<(), ExecError> {
         self.prepared = false;
         self.mem_tracker.reset();
         if self.track_aggregate_memory_usage {
