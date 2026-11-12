@@ -510,7 +510,7 @@ pub(super) fn build_converged_union_index_merge_task(
                     tikv_pushdown: None,
                     db_name: ds.db_name.clone(),
                     table_name: ds.table_name(),
-                    handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
+                    handle_cols: super::dispatch::data_source_handle_cols(ds),
                     is_temporary: ds.is_temporary(),
                     prop: None,
                     plan_part_info: None,
@@ -658,7 +658,7 @@ pub(super) fn build_converged_union_index_merge_task(
                 tikv_pushdown: None,
                 db_name: ds.db_name.clone(),
                 table_name: ds.table_name(),
-                handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
+                handle_cols: index_merge_table_scan_handle_cols(ds, ctx),
                 is_temporary: ds.is_temporary(),
                 prop: None,
                 plan_part_info: None,
@@ -742,6 +742,53 @@ pub(super) fn build_converged_union_index_merge_task(
     }))
 }
 
+/// Go `setIndexMergeTableScanHandleCols`: the data source's handle columns,
+/// or, once column pruning dropped them, the primary key's (Go
+/// `UnMutableHandleCols`), else a fresh `_tidb_rowid`
+/// (`NewExtraHandleSchemaCol`); a cluster table without a handle has none.
+pub(super) fn index_merge_table_scan_handle_cols(
+    ds: &DataSource,
+    ctx: &DispatchContext<'_>,
+) -> Option<tidb_planner_util::handle_cols::HandleCols> {
+    if let Some(handle_cols) = super::dispatch::data_source_handle_cols(ds) {
+        return Some(handle_cols);
+    }
+    let table_info = ds.table_info.as_ref()?.read().clone();
+    let by_id = |id: i64| ds.table_columns.iter().find(|column| column.id == id).cloned();
+    if table_info.pk_is_handle {
+        let pk = table_info.get_pk_col_info()?;
+        let id = pk.read().id;
+        return Some(tidb_planner_util::handle_cols::HandleCols::Int(tidb_planner_util::handle_cols::IntHandleCols {
+            col: by_id(id)?,
+        }));
+    }
+    if table_info.is_common_handle {
+        let primary = table_info.indices.iter_deref().find(|index| index.read().primary)?;
+        let columns = primary
+            .read()
+            .columns
+            .iter_deref()
+            .map(|index_column| {
+                let offset = usize::try_from(index_column.read().offset).ok()?;
+                let id = table_info.columns.get(offset)?.read().id;
+                by_id(id)
+            })
+            .collect::<Option<Vec<_>>>()?;
+        return super::dispatch::common_handle_cols(ds, columns);
+    }
+    if ds.is_cluster_table {
+        return None;
+    }
+    let mut extra = tidb_expr::column::Column::new(
+        ctx.column_ids.map(|ids| ids.alloc()).unwrap_or_default(),
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+            .with_flags(tidb_datatype::FieldTypeFlags::NOT_NULL | tidb_datatype::FieldTypeFlags::PRI_KEY),
+    );
+    extra.id = tidb_planner_core_operator_logicalop::data_source::EXTRA_HANDLE_ID;
+    extra.orig_name = "_tidb_rowid".to_owned();
+    Some(tidb_planner_util::handle_cols::HandleCols::Int(tidb_planner_util::handle_cols::IntHandleCols { col: extra }))
+}
+
 /// The column infos of `columns`: the table's own, `_tidb_rowid`'s
 /// (`NewExtraHandleColInfo`) or `_tidb_tid`'s (`NewExtraPhysTblIDColInfo`).
 fn schema_column_infos(
@@ -803,28 +850,13 @@ fn append_index_merge_scan_columns(
                 added = true;
             }
         }
-    } else {
-        // Go `setIndexMergeTableScanHandleCols`: the scan's handle is the
-        // data source's, or, once column pruning dropped it, a fresh
-        // `_tidb_rowid` (`NewExtraHandleSchemaCol`); the ordered scan reads
-        // it (`ts.HandleCols.GetCol(0)`).
-        let handle = match ds.handle_cols.first() {
-            Some(handle) => handle.clone(),
-            None => {
-                let mut extra = tidb_expr::column::Column::new(
-                    ctx.column_ids.map(|ids| ids.alloc()).unwrap_or_default(),
-                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong).with_flags(
-                        tidb_datatype::FieldTypeFlags::NOT_NULL | tidb_datatype::FieldTypeFlags::PRI_KEY,
-                    ),
-                );
-                extra.id = tidb_planner_core_operator_logicalop::data_source::EXTRA_HANDLE_ID;
-                extra.orig_name = "_tidb_rowid".to_owned();
-                extra
-            }
-        };
-        if let tidb_planner_core_operator_physicalop::PhysicalPlan::TableScan(ts) = &mut *scan {
-            ts.handle_col_unique_id = Some(handle.unique_id);
+    } else if let Some(handle) = match &*scan {
+        // Go `ts.HandleCols != nil && !ts.Schema().Contains(ts.HandleCols.GetCol(0))`.
+        tidb_planner_core_operator_physicalop::PhysicalPlan::TableScan(ts) => {
+            ts.handle_cols.as_ref().map(|handle_cols| handle_cols.get_col(0).clone())
         }
+        _ => None,
+    } {
         if !contains(&schema, &handle) {
             schema.columns.push(handle);
             added = true;

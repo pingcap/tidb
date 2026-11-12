@@ -7584,7 +7584,15 @@ fn build_index_merge_reader(
         .and_then(|store| store.client())
         .filter(|_| matches!(state.reader_storage, ReaderStorage::Snapshot));
     let table_info = table.meta().read().clone();
-    let merge_handle_cols = go_client.as_ref().map(|_| table_handle_cols(&table_info)).transpose()?;
+    // Go `v.HandleCols`: the table scan's (`setIndexMergeTableScanHandleCols`).
+    let merge_handle_cols = go_client
+        .as_ref()
+        .map(|_| {
+            embedded_table_scan(table_plan)
+                .and_then(|ts| ts.handle_cols.clone())
+                .ok_or_else(|| DriverError::unsupported("an index merge's table scan has no handle columns"))
+        })
+        .transpose()?;
     for partial in &reader.partial_plans_raw {
         let partial_schema = plan_schema(partial)?;
         let selected = index_merge_partition_indexes(partial, &table)?;
@@ -7909,37 +7917,16 @@ fn build_index_merge_reader(
     if let (Some(client), ReaderStorage::Snapshot, PhysicalPlan::TableScan(ts)) = (client, &state.reader_storage, table_scan) {
         let table_info = table.meta().read().clone();
         let keep_order = if reader.keep_order {
-            // Go `p.HandleCols.ResolveIndices(p.Schema())` when `KeepOrder`:
-            // the table scan's handle columns (its integer handle, or the
-            // clustered primary key's columns) in the reader's schema.
-            let absent = || DriverError::unsupported("an index merge's handle column is absent from its schema");
-            let positions: Vec<usize> = if table_info.is_common_handle {
-                let primary = tidb_table::tables::scan_from_infos::find_primary_index(&table_info)
-                    .ok_or_else(|| DriverError::unsupported("a clustered table has no primary index"))?;
-                let primary = primary.read();
-                primary
-                    .columns
-                    .iter_deref()
-                    .map(|index_column| {
-                        let id = usize::try_from(index_column.read().offset).ok().and_then(|offset| table_info.columns.get(offset)).ok_or_else(absent)?.read().id;
-                        schema.columns.iter().position(|column| column.id == id).ok_or_else(absent)
-                    })
-                    .collect::<Result<_, _>>()?
-            } else {
-                let unique_id = ts.handle_col_unique_id.ok_or_else(absent)?;
-                vec![schema.columns.iter().position(|column| column.unique_id == unique_id).ok_or_else(absent)?]
-            };
-            let columns = positions
-                .into_iter()
-                .map(|index| {
-                    let mut column = schema.columns[index].clone();
-                    column.index = index as i64;
-                    column
-                })
-                .collect::<Vec<_>>();
+            // Go `p.HandleCols.ResolveIndices(p.Schema())` when `KeepOrder`.
+            let handle_cols = ts
+                .handle_cols
+                .as_ref()
+                .ok_or_else(|| DriverError::unsupported("an index merge's table scan has no handle columns"))?
+                .resolve_indices(&schema)
+                .map_err(DriverError::unsupported)?;
             let phys_tbl_id_idx =
                 schema.columns.iter().position(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID);
-            Some((exec_handle_cols(&table_info, columns)?, phys_tbl_id_idx))
+            Some((handle_cols, phys_tbl_id_idx))
         } else {
             None
         };
@@ -8920,16 +8907,15 @@ fn range_grouped_scan(
 /// clustered table's `CommonHandleCols` under its primary index, else
 /// `IntHandleCols`.
 fn exec_handle_cols(
-    table_info: &tidb_model::TableInfo,
+    table_info: &tidb_model::GoShared<tidb_model::TableInfo>,
     columns: Vec<Column>,
 ) -> Result<tidb_planner_util::handle_cols::HandleCols, DriverError> {
-    if table_info.is_common_handle {
-        let primary = tidb_table::tables::scan_from_infos::find_primary_index(table_info)
-            .map(|index| Arc::new(index.read().clone()))
+    if table_info.read().is_common_handle {
+        let primary = tidb_table::tables::scan_from_infos::find_primary_index(&table_info.read())
             .ok_or_else(|| DriverError::unsupported("a clustered table has no primary index"))?;
         return Ok(tidb_planner_util::handle_cols::HandleCols::Common(
             tidb_planner_util::handle_cols::CommonHandleCols {
-                tbl_info: Arc::new(table_info.clone()),
+                tbl_info: table_info.clone(),
                 idx_info: primary,
                 columns,
             },
@@ -8941,40 +8927,6 @@ fn exec_handle_cols(
             .next()
             .ok_or_else(|| DriverError::unsupported("a table has no handle column"))?,
     }))
-}
-
-/// Go `ts.HandleCols` of a table scan as the table's metadata defines it:
-/// the clustered primary key's columns, the integer primary key, or
-/// `_tidb_rowid` (`setIndexMergeTableScanHandleCols`).
-fn table_handle_cols(table_info: &tidb_model::TableInfo) -> Result<tidb_planner_util::handle_cols::HandleCols, DriverError> {
-    let column_of = |info: &tidb_model::ColumnInfo, index: usize| {
-        let mut column = Column::new(0, info.field_type.clone());
-        column.id = info.id;
-        column.index = index as i64;
-        column
-    };
-    let columns = if table_info.is_common_handle {
-        let primary = tidb_table::tables::scan_from_infos::find_primary_index(table_info)
-            .ok_or_else(|| DriverError::unsupported("a clustered table has no primary index"))?;
-        let primary = primary.read();
-        primary
-            .columns
-            .iter_deref()
-            .enumerate()
-            .map(|(index, index_column)| {
-                usize::try_from(index_column.read().offset)
-                    .ok()
-                    .and_then(|offset| table_info.columns.get(offset))
-                    .map(|info| column_of(&info.read(), index))
-                    .ok_or_else(|| DriverError::unsupported("a primary key column is absent from its table"))
-            })
-            .collect::<Result<Vec<_>, _>>()?
-    } else if let Some(pk) = table_info.get_pk_col_info().filter(|_| table_info.pk_is_handle) {
-        vec![column_of(&pk.read(), 0)]
-    } else {
-        vec![column_of(&tidb_model::ColumnInfo::new_extra_handle_col_info(), 0)]
-    };
-    exec_handle_cols(table_info, columns)
 }
 
 /// Whether a table reader is Go's `TableReaderExecutor`
@@ -9117,7 +9069,7 @@ fn build_cluster_table_scan(
     let handle_position = scan
         .keep_order
         .then(|| {
-            scan.handle_col_unique_id.and_then(|unique_id| {
+            scan.handle_cols.as_ref().map(|handle_cols| handle_cols.get_col(0).unique_id).and_then(|unique_id| {
                 schema
                     .columns
                     .iter()
@@ -10413,7 +10365,7 @@ fn build_union_scan_from_reader(
             column
         })
         .collect::<Vec<_>>();
-    let handle_cols = exec_handle_cols(&table.meta().read(), handle_columns)?;
+    let handle_cols = exec_handle_cols(&table.meta(), handle_columns)?;
     let conditions_with_vir_col = union_scan
         .conditions
         .iter()

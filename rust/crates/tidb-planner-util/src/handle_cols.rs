@@ -348,9 +348,9 @@ pub struct IntHandleCols {
 #[derive(Clone, Debug)]
 pub struct CommonHandleCols {
     /// Go `tblInfo`.
-    pub tbl_info: std::sync::Arc<tidb_model::TableInfo>,
+    pub tbl_info: tidb_model::GoShared<tidb_model::TableInfo>,
     /// Go `idxInfo`: the clustered primary key.
-    pub idx_info: std::sync::Arc<tidb_model::IndexInfo>,
+    pub idx_info: tidb_model::GoShared<tidb_model::IndexInfo>,
     /// Go `columns`.
     pub columns: Vec<tidb_expr::column::Column>,
 }
@@ -363,11 +363,12 @@ impl CommonHandleCols {
     /// `table_columns`, one per key column, by the key column's offset.
     #[must_use]
     pub fn new(
-        tbl_info: std::sync::Arc<tidb_model::TableInfo>,
-        idx_info: std::sync::Arc<tidb_model::IndexInfo>,
+        tbl_info: tidb_model::GoShared<tidb_model::TableInfo>,
+        idx_info: tidb_model::GoShared<tidb_model::IndexInfo>,
         table_columns: &[tidb_expr::column::Column],
     ) -> Self {
         let columns = idx_info
+            .read()
             .columns
             .iter_deref()
             .map(|ic| table_columns[ic.read().offset as usize].clone())
@@ -386,8 +387,10 @@ impl CommonHandleCols {
         zone: &tidb_datatype::SessionTimeZone,
         mut datum_buf: Vec<tidb_datatype::Datum>,
     ) -> Result<tidb_txnkv::Handle, HandleColsError> {
-        let table_columns: Vec<_> = self.tbl_info.columns.iter_deref().collect();
-        for (datum, ic) in datum_buf.iter_mut().zip(self.idx_info.columns.iter_deref()) {
+        let tbl_info = self.tbl_info.read();
+        let idx_info = self.idx_info.read();
+        let table_columns: Vec<_> = tbl_info.columns.iter_deref().collect();
+        for (datum, ic) in datum_buf.iter_mut().zip(idx_info.columns.iter_deref()) {
             let ic = ic.read();
             tidb_tablecodec::cut_datum_by_prefix_len(
                 datum,

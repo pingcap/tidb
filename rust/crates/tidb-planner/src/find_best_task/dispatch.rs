@@ -2308,6 +2308,35 @@ pub(super) fn add_extra_phys_tbl_id_column(
     true
 }
 
+/// Go `ds.HandleCols` as `util.HandleCols`: the integer handle's column, or
+/// the clustered key's columns under the table's primary index; `None` once
+/// column pruning dropped the handle.
+pub(crate) fn data_source_handle_cols(
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
+) -> Option<tidb_planner_util::handle_cols::HandleCols> {
+    let first = ds.handle_cols.first()?;
+    if ds.handle_is_int {
+        return Some(tidb_planner_util::handle_cols::HandleCols::Int(tidb_planner_util::handle_cols::IntHandleCols {
+            col: first.clone(),
+        }));
+    }
+    common_handle_cols(ds, ds.handle_cols.clone())
+}
+
+/// Go `util.NewCommonHandleCols` over the table's primary index.
+pub(crate) fn common_handle_cols(
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
+    columns: Vec<tidb_expr::column::Column>,
+) -> Option<tidb_planner_util::handle_cols::HandleCols> {
+    let tbl_info = ds.table_info.clone()?;
+    let idx_info = tbl_info.read().indices.iter_deref().find(|index| index.read().primary)?;
+    Some(tidb_planner_util::handle_cols::HandleCols::Common(tidb_planner_util::handle_cols::CommonHandleCols {
+        tbl_info,
+        idx_info,
+        columns,
+    }))
+}
+
 /// Go `hasV0NewCollationStringHandle`.
 fn has_v0_new_collation_string_handle(ds: &tidb_planner_core_operator_logicalop::DataSource) -> bool {
     if ds.common_handle_version() != 0 || !tidb_datatype::new_collation_enabled() {
@@ -4046,7 +4075,7 @@ fn find_best_task_4_logical_data_source_paths(
                     tikv_pushdown: None,
                     db_name: ds.db_name.clone(),
                     table_name: ds.table_name(),
-                    handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
+                    handle_cols: data_source_handle_cols(ds),
                     is_temporary: ds.is_temporary(),
                     prop: Some(Box::new(prop.clone())),
                     resolved_descriptor: Some(tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor::new(
@@ -4236,7 +4265,7 @@ fn find_best_task_4_logical_data_source_paths(
                     tikv_pushdown: None,
                     db_name: ds.db_name.clone(),
                     table_name: ds.table_name(),
-                    handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
+                    handle_cols: data_source_handle_cols(ds),
                     is_temporary: ds.is_temporary(),
                     prop: None,
                     plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
@@ -5086,7 +5115,7 @@ fn find_best_task_4_logical_data_source_paths(
                             tikv_pushdown: None,
                             db_name: ds.db_name.clone(),
                             table_name: ds.table_name(),
-                            handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
+                            handle_cols: data_source_handle_cols(ds),
                             is_temporary: ds.is_temporary(),
                             prop: None,
                             plan_part_info: None,

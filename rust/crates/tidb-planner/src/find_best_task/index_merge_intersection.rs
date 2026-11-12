@@ -144,7 +144,7 @@ pub(super) fn build_prepared_index_merge_task(
         tikv_pushdown: None,
         db_name: ds.db_name.clone(),
         table_name: ds.table_name(),
-        handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
+        handle_cols: super::index_merge_union::index_merge_table_scan_handle_cols(ds, ctx),
         is_temporary: ds.is_temporary(),
         prop: None,
         plan_part_info: None,

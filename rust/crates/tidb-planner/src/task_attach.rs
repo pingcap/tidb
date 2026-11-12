@@ -911,7 +911,7 @@ fn push_limit_down_to_tidb_cop(
             return Ok(Err(cop));
         };
         // "For cluster tables, HandleCols may be nil."
-        let Some(handle) = scan.handle_col_unique_id else {
+        let Some(handle) = scan.handle_cols.as_ref().map(|handle_cols| handle_cols.get_col(0).unique_id) else {
             return Ok(Err(cop));
         };
         let [item] = sort_items.as_slice() else {

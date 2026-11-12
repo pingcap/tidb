@@ -1333,10 +1333,11 @@ pub struct PhysicalTableScan {
     /// Go `Table.Name.O`: the scan's own table spelling, which a cluster
     /// (TiDB-store) scan prints as its access object.
     pub table_name: String,
-    /// Go `HandleCols.GetCol(0)`, by unique id: `pushLimitDownToTiDBCop`
-    /// compares the TopN's sort column to it. `None` when the table has no
-    /// handle (a cluster table without a primary key).
-    pub handle_col_unique_id: Option<i64>,
+    /// Go `HandleCols`: the data source's handle columns (an index merge's
+    /// table scan always has them, `setIndexMergeTableScanHandleCols`).
+    /// `None` when the table has no usable handle (pruned away, or a cluster
+    /// table without a primary key).
+    pub handle_cols: Option<tidb_planner_util::handle_cols::HandleCols>,
     /// Go `Prop`: the property the scan was planned under (nil for a lookup's
     /// row-id side).
     pub prop: Option<Box<PhysicalProperty>>,
@@ -5112,7 +5113,7 @@ impl PhysicalPlan {
                 used_columnar_indexes: op.used_columnar_indexes.clone(),
                 db_name: op.db_name.clone(),
                 table_name: op.table_name.clone(),
-                handle_col_unique_id: op.handle_col_unique_id,
+                handle_cols: op.handle_cols.clone(),
                 prop: op.prop.clone(),
                 is_temporary: op.is_temporary,
             }),
