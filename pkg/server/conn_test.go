@@ -716,6 +716,12 @@ func TestDispatch(t *testing.T) {
 			out: nil,
 		},
 		{
+			com: mysql.ComRefresh, // without the sub-command byte
+			in:  nil,
+			err: mysql.ErrMalformPacket,
+			out: nil,
+		},
+		{
 			com: mysql.ComQuit,
 			in:  nil,
 			err: io.EOF,

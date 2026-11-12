@@ -154,7 +154,11 @@ func (iter *lazyRowIterator) Next(ctx context.Context) chunk.Row {
 		// Reached the end, update the chunk
 		err := iter.rs.Next(ctx, iter.chk)
 		if err != nil {
+			// The chunk may hold part of a batch. Drop it, so that Current reports the end
+			// instead of a row at an index the chunk does not have.
 			iter.err = err
+			iter.chk.Reset()
+			iter.idxInChk = 0
 			return chunk.Row{}
 		}
 
