@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
@@ -46,11 +47,13 @@ import (
 
 func TestLogicalPlan(t *testing.T) {
 	logicalPlan := &LogicalPlan{
-		JobID:             1,
-		Plan:              importer.Plan{},
-		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-		EligibleInstances: []*serverinfo.ServerInfo{{StaticInfo: serverinfo.StaticInfo{ID: "1"}}},
-		ChunkMap:          map[int32][]importer.Chunk{1: {{Path: "gs://test-load/1.csv"}}},
+		TaskMeta: taskinfo.TaskMeta{
+			JobID:             1,
+			Plan:              importer.Plan{},
+			Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
+			EligibleInstances: []*serverinfo.ServerInfo{{StaticInfo: serverinfo.StaticInfo{ID: "1"}}},
+			ChunkMap:          map[int32][]importer.Chunk{1: {{Path: "gs://test-load/1.csv"}}},
+		},
 	}
 	bs, err := logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
@@ -59,19 +62,42 @@ func TestLogicalPlan(t *testing.T) {
 	require.Equal(t, logicalPlan, plan)
 }
 
+func TestLogicalPlanDoesNotCarrySummary(t *testing.T) {
+	logicalPlan := &LogicalPlan{TaskMeta: taskinfo.TaskMeta{
+		JobID:   1,
+		Stmt:    "import into t from 'gs://test-load/*.csv'",
+		Summary: importer.Summary{ImportedRows: 10},
+	}}
+	bs, err := logicalPlan.ToTaskMeta()
+	require.NoError(t, err)
+	// The task meta is what the field-by-field copy produced before.
+	expected, err := json.Marshal(taskinfo.TaskMeta{JobID: 1, Stmt: logicalPlan.Stmt})
+	require.NoError(t, err)
+	require.JSONEq(t, string(expected), string(bs))
+
+	withSummary, err := json.Marshal(logicalPlan.TaskMeta)
+	require.NoError(t, err)
+	plan := &LogicalPlan{}
+	require.NoError(t, plan.FromTaskMeta(withSummary))
+	require.Zero(t, plan.Summary)
+	require.EqualValues(t, 1, plan.JobID)
+}
+
 func TestToPhysicalPlan(t *testing.T) {
 	chunkID := int32(1)
 	logicalPlan := &LogicalPlan{
-		JobID: 1,
-		Plan: importer.Plan{
-			DBName: "db",
-			TableInfo: &model.TableInfo{
-				Name: ast.NewCIStr("tb"),
+		TaskMeta: taskinfo.TaskMeta{
+			JobID: 1,
+			Plan: importer.Plan{
+				DBName: "db",
+				TableInfo: &model.TableInfo{
+					Name: ast.NewCIStr("tb"),
+				},
 			},
+			Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
+			EligibleInstances: []*serverinfo.ServerInfo{{StaticInfo: serverinfo.StaticInfo{ID: "1"}}},
+			ChunkMap:          map[int32][]importer.Chunk{chunkID: {{Path: "gs://test-load/1.csv"}}},
 		},
-		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-		EligibleInstances: []*serverinfo.ServerInfo{{StaticInfo: serverinfo.StaticInfo{ID: "1"}}},
-		ChunkMap:          map[int32][]importer.Chunk{chunkID: {{Path: "gs://test-load/1.csv"}}},
 	}
 	planCtx := planner.PlanCtx{
 		NextTaskStep: proto.ImportStepImport,
@@ -160,13 +186,15 @@ func TestToPhysicalPlan(t *testing.T) {
 		require.NoError(t, preparedMeta.WriteJSONToExternalStorage(context.Background(), store, preparedMeta))
 
 		specs, err := generateImportSpecs(planner.PlanCtx{Ctx: context.Background()}, &LogicalPlan{
-			Plan: importer.Plan{
-				CloudStorageURI: cloudStorageURI,
+			TaskMeta: taskinfo.TaskMeta{
+				Plan: importer.Plan{
+					CloudStorageURI: cloudStorageURI,
+				},
+				ChunkMap: map[int32][]importer.Chunk{
+					2: {{Path: "gs://test-load/ignored.csv"}},
+				},
+				PreparedMetaExternalPath: externalPath,
 			},
-			ChunkMap: map[int32][]importer.Chunk{
-				2: {{Path: "gs://test-load/ignored.csv"}},
-			},
-			PreparedChunkMapExternalPath: externalPath,
 		})
 		require.NoError(t, err)
 		require.Len(t, specs, 1)
@@ -238,19 +266,21 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 		ThreadCnt: 16,
 	}
 	p := &LogicalPlan{
-		Plan: importer.Plan{
-			CloudStorageURI: "noop://sort",
-			DBName:          "db",
-			TableInfo: &model.TableInfo{
-				Name:  ast.NewCIStr("tb"),
-				State: model.StatePublic,
+		TaskMeta: taskinfo.TaskMeta{
+			Plan: importer.Plan{
+				CloudStorageURI: "noop://sort",
+				DBName:          "db",
+				TableInfo: &model.TableInfo{
+					Name:  ast.NewCIStr("tb"),
+					State: model.StatePublic,
+				},
+				LineFieldsInfo: importdef.LineFieldsInfo{
+					FieldsTerminatedBy: "\t",
+					LinesTerminatedBy:  "\n",
+				},
 			},
-			LineFieldsInfo: importdef.LineFieldsInfo{
-				FieldsTerminatedBy: "\t",
-				LinesTerminatedBy:  "\n",
-			},
+			Stmt: `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
 		},
-		Stmt: `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
 	}
 	specs, err := generateMergeSortSpecs(planCtx, p)
 	require.NoError(t, err)
@@ -349,7 +379,11 @@ func TestGetSortedKVMetas(t *testing.T) {
 			proto.ImportStepMergeSort:     mergeStepMetas,
 		},
 		ThreadCnt: 16,
-	}, &LogicalPlan{Plan: importer.Plan{CloudStorageURI: "noop://sort"}}, nil)
+	}, &LogicalPlan{
+		TaskMeta: taskinfo.TaskMeta{
+			Plan: importer.Plan{CloudStorageURI: "noop://sort"},
+		},
+	}, nil)
 	require.NoError(t, err)
 	require.Len(t, allKVMetas, 2)
 	require.Equal(t, []byte("x_0_a"), allKVMetas["data"].StartKey)
@@ -436,7 +470,11 @@ func TestPlanReadsQueryStepMetas(t *testing.T) {
 			proto.ImportStepEncodeAndSort: {[]byte("unexpected encode metadata")},
 		},
 	}
-	p := &LogicalPlan{Plan: importer.Plan{QuerySource: &importer.QuerySource{}, CloudStorageURI: "noop://sort"}}
+	p := &LogicalPlan{
+		TaskMeta: taskinfo.TaskMeta{
+			Plan: importer.Plan{QuerySource: &importer.QuerySource{}, CloudStorageURI: "noop://sort"},
+		},
+	}
 
 	specs, err := generateMergeSortSpecs(planCtx, p)
 	require.NoError(t, err)

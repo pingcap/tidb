@@ -341,8 +341,10 @@ func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle,
 	}
 
 	logicalPlan := &LogicalPlan{
-		Plan:   taskMeta.Plan,
-		Stmt:   taskMeta.Stmt,
+		TaskMeta: taskinfo.TaskMeta{
+			Plan: taskMeta.Plan,
+			Stmt: taskMeta.Stmt,
+		},
 		Logger: sch.GetLogger(),
 	}
 	controller, err := buildControllerForPlan(logicalPlan)
