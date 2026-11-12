@@ -32,7 +32,8 @@ import (
 )
 
 var (
-	FilterFilesByRegion = filterFilesByRegion
+	FilterFilesByRegion  = filterFilesByRegion
+	MergeDMLFilesByTable = mergeDMLFilesByTable
 )
 
 func (metaname *MetaName) Meta() Meta {
