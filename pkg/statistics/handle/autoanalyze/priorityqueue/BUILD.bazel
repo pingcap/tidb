@@ -21,6 +21,7 @@ go_library(
         "//pkg/infoschema",
         "//pkg/meta",
         "//pkg/meta/model",
+        "//pkg/metrics",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/variable",

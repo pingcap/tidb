@@ -346,6 +346,11 @@ func TestDropTable(t *testing.T) {
 	isEmpty, err = pq.IsEmptyForTest()
 	require.NoError(t, err)
 	require.True(t, isEmpty)
+
+	// A panic in handling an event does not escape HandleDDLEvent. The event has no table info.
+	require.NotPanics(t, func() {
+		require.NoError(t, pq.HandleDDLEvent(ctx, sctx, notifier.NewDropTableEvent(nil)))
+	})
 }
 
 func TestDropPartitionedTableWithStaticPartition(t *testing.T) {
