@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -53,42 +52,6 @@ type recordingObserver struct {
 
 func (o *recordingObserver) Observe(float64) {
 	o.count++
-}
-
-func TestSessionTokenModeGlobalAccessorStorageFailure(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipCheckReservedSchemaObjInNextGen", "return(true)")
-	const name = "tidb_session_token_mode"
-	sv := variable.GetSysVar(name)
-	require.NotNil(t, sv)
-	// Simulate registering a new variable after the global cache was built.
-	variable.UnregisterSysVar(name)
-	defer variable.RegisterSysVar(sv)
-	store, dom := CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
-	variable.RegisterSysVar(sv)
-
-	se, err := createSession(store)
-	require.NoError(t, err)
-	defer se.Close()
-	_, err = dom.GetGlobalVar(name)
-	require.Error(t, err, "test must exercise the table fallback on a cache miss")
-
-	// An absent row during an upgrade still uses the registered default.
-	value, err := se.GetGlobalSysVar(name)
-	require.NoError(t, err)
-	require.Equal(t, "COMPATIBLE", value)
-
-	MustExec(t, se, "insert into mysql.global_variables values ('tidb_session_token_mode', 'STRICT')")
-	value, err = se.GetGlobalSysVar(name)
-	require.NoError(t, err)
-	require.Equal(t, "STRICT", value)
-
-	MustExec(t, se, "rename table mysql.global_variables to mysql.global_variables_unavailable")
-	defer MustExec(t, se, "rename table mysql.global_variables_unavailable to mysql.global_variables")
-	value, err = se.GetGlobalSysVar(name)
-	require.Error(t, err, "storage failure must not reopen compatible token policy")
-	require.Empty(t, value)
 }
 
 func TestSharedLockLostRollsBackTransaction(t *testing.T) {

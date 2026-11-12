@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -31,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -355,54 +353,6 @@ func TestTiFlashQuerySpillRatio(t *testing.T) {
 	require.Equal(t, "0.85", val)
 	require.Nil(t, sv.SetSessionFromHook(vars, "0.75")) // sets
 	require.Equal(t, 0.75, vars.TiFlashQuerySpillRatio)
-}
-
-func TestSessionTokenMode(t *testing.T) {
-	sv := GetSysVar("tidb_session_token_mode")
-	require.NotNil(t, sv)
-	require.Equal(t, vardef.ScopeGlobal, sv.Scope)
-	require.Equal(t, "COMPATIBLE", sv.Value)
-	// Keep malformed persisted values intact on reads so migration/authentication
-	// can reject them instead of silently enabling legacy verification.
-	require.Equal(t, vardef.TypeStr, sv.Type)
-	require.Nil(t, sv.SetGlobal)
-	require.Nil(t, sv.GetGlobal)
-	require.False(t, sv.IsSensitive)
-	vars := NewSessionVars(nil)
-	for _, mode := range []string{"COMPATIBLE", "TRANSITION", "STRICT"} {
-		normalized, err := sv.Validate(vars, strings.ToLower(mode), vardef.ScopeGlobal)
-		require.NoError(t, err)
-		require.Equal(t, mode, normalized)
-	}
-	for _, mode := range []string{"", "0", "1", "ON", "unknown"} {
-		_, err := sv.Validate(vars, mode, vardef.ScopeGlobal)
-		require.Error(t, err)
-	}
-	_, err := sv.Validate(vars, "STRICT", vardef.ScopeSession)
-	require.Error(t, err)
-	raw, err := sv.ValidateFromType(vars, "corrupt", vardef.ScopeGlobal)
-	require.NoError(t, err)
-	require.Equal(t, "corrupt", raw)
-
-	_, err = vars.GetSessionTokenMode(context.Background())
-	require.Error(t, err)
-	accessor := NewMockGlobalAccessor4Tests()
-	vars.GlobalVarsAccessor = accessor
-	for _, mode := range []sessionstates.SessionTokenMode{
-		sessionstates.SessionTokenCompatible, sessionstates.SessionTokenTransition, sessionstates.SessionTokenStrict,
-	} {
-		require.NoError(t, accessor.SetGlobalSysVar(context.Background(), sv.Name, string(mode)))
-		actual, err := vars.GetSessionTokenMode(context.Background())
-		require.NoError(t, err)
-		require.Equal(t, mode, actual)
-	}
-	// Simulate corrupt persisted data without the normal SET validation.
-	require.NoError(t, accessor.SetGlobalSysVarOnly(context.Background(), sv.Name, "corrupt", false))
-	_, err = vars.GetSessionTokenMode(context.Background())
-	require.Error(t, err)
-	delete(accessor.vals, sv.Name)
-	_, err = vars.GetSessionTokenMode(context.Background())
-	require.Error(t, err)
 }
 
 func TestTiDBTTLJobEnableSetGlobalUpdatesLocalWithoutExternalWorkload(t *testing.T) {

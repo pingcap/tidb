@@ -18,12 +18,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -2259,7 +2256,6 @@ func TestAuthSessionTokenPlugin(t *testing.T) {
 	ctx := context.Background()
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("SET GLOBAL tidb_session_token_mode='TRANSITION'")
 	tk.MustExec("CREATE USER auth_session_token")
 	tk.MustExec("CREATE USER another_user")
 
@@ -2341,208 +2337,6 @@ func TestAuthSessionTokenPlugin(t *testing.T) {
 	cc.user = "auth_session_token"
 	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
 	require.ErrorContains(t, err, "Access denied")
-}
-
-// legacyMigrationToken freezes the wire format and ECDSA signing semantics from
-// 8947a33f18. Keep this independent of the current session-token implementation:
-// using its legacy helpers would let writer and reader regress together.
-type legacyMigrationToken struct {
-	Username   string    `json:"username"`
-	SignTime   time.Time `json:"sign-time"`
-	ExpireTime time.Time `json:"expire-time"`
-	Signature  []byte    `json:"signature,omitempty"`
-}
-
-func issueLegacyMigrationToken(t *testing.T, key *ecdsa.PrivateKey, username string) []byte {
-	now := time.Now()
-	token := legacyMigrationToken{Username: username, SignTime: now, ExpireTime: now.Add(time.Minute)}
-	content, err := json.Marshal(token)
-	require.NoError(t, err)
-	// The old implementation signed the JSON directly, without hashing it.
-	token.Signature, err = ecdsa.SignASN1(rand.Reader, key, content)
-	require.NoError(t, err)
-	content, err = json.Marshal(token)
-	require.NoError(t, err)
-	return content
-}
-
-func verifyLegacyMigrationToken(tokenBytes []byte, key *ecdsa.PublicKey, username string) error {
-	var token legacyMigrationToken
-	if err := json.Unmarshal(tokenBytes, &token); err != nil {
-		return err
-	}
-	signature := token.Signature
-	token.Signature = nil
-	content, err := json.Marshal(token)
-	if err != nil {
-		return err
-	}
-	if !ecdsa.VerifyASN1(key, content, signature) {
-		return errors.New("legacy ECDSA signature verification failed")
-	}
-	if now := time.Now(); now.After(token.ExpireTime) || token.SignTime.Add(time.Minute).Before(now) {
-		return errors.New("legacy token expired")
-	}
-	if !strings.EqualFold(username, token.Username) {
-		return errors.New("legacy token username does not match")
-	}
-	return nil
-}
-
-// TestSessionTokenMigrationCompatible covers the two protocol directions needed
-// during a rolling upgrade. This exercises backend authentication and real SQL
-// state restoration; frontend socket continuity is a separate TiProxy E2E gate.
-func TestSessionTokenMigrationCompatible(t *testing.T) {
-	restoreConfig := config.RestoreFunc()
-	t.Cleanup(restoreConfig)
-	certPath := filepath.Join(t.TempDir(), "cert.pem")
-	keyPath := filepath.Join(t.TempDir(), "key.pem")
-	require.NoError(t, util.CreateCertificates(certPath, keyPath, 0, x509.ECDSA, x509.ECDSAWithSHA256))
-	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
-	require.NoError(t, err)
-	key, ok := pair.PrivateKey.(*ecdsa.PrivateKey)
-	require.True(t, ok)
-	config.UpdateGlobal(func(cfg *config.Config) {
-		cfg.Security.SessionTokenSigningCert = certPath
-		cfg.Security.SessionTokenSigningKey = keyPath
-	})
-
-	store := testkit.CreateMockStore(t)
-	admin := testkit.NewTestKit(t, store)
-	admin.MustExec("CREATE USER migration_user")
-	admin.MustExec("GRANT ALL ON test.* TO migration_user")
-	admin.MustExec("CREATE TABLE test.session_token_migration (n int)")
-	admin.MustExec("INSERT INTO test.session_token_migration VALUES (40)")
-	cfg := serverutil.NewTestConfig()
-	cfg.Port, cfg.Status.StatusPort = 0, 0
-	drv := NewTiDBDriver(store)
-	srv, err := NewServer(cfg, drv)
-	require.NoError(t, err)
-	t.Cleanup(srv.Close)
-
-	newConn := func() *clientConn {
-		cc := &clientConn{
-			connectionID: 1,
-			alloc:        arena.NewAllocator(1024),
-			chunkAlloc:   chunk.NewAllocator(),
-			collation:    mysql.DefaultCollationID,
-			peerHost:     "localhost",
-			pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
-			server:       srv,
-			user:         "migration_user",
-		}
-		t.Cleanup(func() {
-			if ctx := cc.getCtx(); ctx != nil {
-				require.NoError(t, ctx.Close())
-			}
-		})
-		return cc
-	}
-	oldConn := newConn()
-	require.NoError(t, oldConn.openSessionAndDoAuth(nil, mysql.AuthNativePassword, 0))
-	oldSession := testkit.NewTestKitWithSession(t, store, oldConn.ctx.Session)
-	oldSession.MustExec("USE test")
-	oldSession.MustExec("SET @migration_counter=41, @arg=2, time_zone='+08:00'")
-	oldSession.MustExec("PREPARE migration_stmt FROM 'SELECT n+? FROM session_token_migration'")
-	state := oldSession.MustQuery("SHOW SESSION_STATES").Rows()[0][0].(string)
-
-	// An old backend's token must authenticate on a newly upgraded backend in
-	// the default mode, before the operator changes any cluster setting.
-	upgradedConn := newConn()
-	oldToken := issueLegacyMigrationToken(t, key, "migration_user")
-	// A destination authentication failure must leave the source usable while
-	// the proxy retains its existing backend connection and retries migration.
-	invalidToken := bytes.Clone(oldToken)
-	invalidToken[0] ^= 0xff
-	require.ErrorContains(t, upgradedConn.openSessionAndDoAuth(invalidToken, mysql.AuthTiDBSessionToken, 0), "Access denied")
-	oldSession.MustQuery("SELECT DATABASE(), @@time_zone, @migration_counter, @arg").Check(testkit.Rows("test +08:00 41 2"))
-	oldSession.MustQuery("EXECUTE migration_stmt USING @arg").Check(testkit.Rows("42"))
-	require.NoError(t, upgradedConn.openSessionAndDoAuth(oldToken, mysql.AuthTiDBSessionToken, 0))
-	upgradedSession := testkit.NewTestKitWithSession(t, store, upgradedConn.ctx.Session)
-	restoreAndContinue := func(tk *testkit.TestKit, state string) {
-		state = strings.ReplaceAll(state, "\\", "\\\\")
-		state = strings.ReplaceAll(state, "'", "\\'")
-		tk.MustExec("SET SESSION_STATES '" + state + "'")
-		tk.MustQuery("SELECT DATABASE(), @@time_zone, @migration_counter, @arg").Check(testkit.Rows("test +08:00 41 2"))
-		tk.MustQuery("EXECUTE migration_stmt USING @arg").Check(testkit.Rows("42"))
-		tk.MustQuery("SELECT @migration_counter:=@migration_counter+1").Check(testkit.Rows("42"))
-		tk.MustQuery("SELECT n+@migration_counter FROM session_token_migration").Check(testkit.Rows("82"))
-	}
-	restoreAndContinue(upgradedSession, state)
-
-	// In the reverse direction, consume the new backend's SHOW output with
-	// the frozen old verifier before restoring it into an old-style session.
-	upgradedSession.MustExec("SET @migration_counter=41")
-	rows := upgradedSession.MustQuery("SHOW SESSION_STATES").Rows()
-	require.NoError(t, verifyLegacyMigrationToken([]byte(rows[0][1].(string)), &key.PublicKey, "migration_user"))
-	rollbackConn := newConn()
-	// The frozen verifier above represents old token authentication. The local
-	// process contains only the new server, so open the restoration session
-	// with its unchanged password plugin instead of claiming an old binary.
-	require.NoError(t, rollbackConn.openSessionAndDoAuth(nil, mysql.AuthNativePassword, 0))
-	restoreAndContinue(testkit.NewTestKitWithSession(t, store, rollbackConn.ctx.Session), rows[0][0].(string))
-
-	admin.MustQuery("SELECT @@global.tidb_session_token_mode").Check(testkit.Rows("COMPATIBLE"))
-	require.ErrorContains(t, admin.ExecToErr("SET SESSION tidb_session_token_mode='STRICT'"), "GLOBAL variable")
-	require.ErrorContains(t, admin.ExecToErr("SET GLOBAL tidb_session_token_mode='invalid'"), "can't be set to the value of")
-	// Open the destination before each mode change too: authentication must use
-	// the current cluster setting, rather than the session's creation time.
-	preExistingDestination := newConn()
-	require.NoError(t, preExistingDestination.openSession())
-	var strictToken []byte
-	for _, mode := range []string{"COMPATIBLE", "TRANSITION", "STRICT", "COMPATIBLE"} {
-		t.Run(mode, func(t *testing.T) {
-			admin.MustExec("SET GLOBAL tidb_session_token_mode='" + strings.ToLower(mode) + "'")
-			admin.MustQuery("SELECT @@global.tidb_session_token_mode").Check(testkit.Rows(mode))
-			admin.MustQuery("SELECT variable_value FROM mysql.global_variables WHERE variable_name='tidb_session_token_mode'").Check(testkit.Rows(mode))
-
-			freshConn := newConn()
-			require.NoError(t, freshConn.openSessionAndDoAuth(nil, mysql.AuthNativePassword, 0))
-			freshSession := testkit.NewTestKitWithSession(t, store, freshConn.ctx.Session)
-			// SHOW on both an existing and a fresh session follows the new mode.
-			for _, source := range []*testkit.TestKit{upgradedSession, freshSession} {
-				rows := source.MustQuery("SHOW SESSION_STATES").Rows()
-				token := []byte(rows[0][1].(string))
-				var envelope struct {
-					Version int `json:"version"`
-				}
-				require.NoError(t, json.Unmarshal(token, &envelope))
-				if mode == "COMPATIBLE" {
-					require.Zero(t, envelope.Version)
-					require.NoError(t, verifyLegacyMigrationToken(token, &key.PublicKey, "migration_user"))
-				} else {
-					require.Equal(t, 2, envelope.Version)
-					require.Error(t, verifyLegacyMigrationToken(token, &key.PublicKey, "migration_user"))
-					strictToken = token
-				}
-				destination := newConn()
-				require.NoError(t, destination.openSessionAndDoAuth(token, mysql.AuthTiDBSessionToken, 0))
-			}
-
-			if strictToken != nil {
-				// Returning to COMPATIBLE must still accept V2 tokens already in flight.
-				require.NoError(t, preExistingDestination.openSessionAndDoAuth(strictToken, mysql.AuthTiDBSessionToken, 0))
-			}
-
-			oldToken := issueLegacyMigrationToken(t, key, "migration_user")
-			err := preExistingDestination.openSessionAndDoAuth(oldToken, mysql.AuthTiDBSessionToken, 0)
-			if mode == "STRICT" {
-				require.ErrorContains(t, err, "Access denied")
-			} else {
-				require.NoError(t, err)
-			}
-		})
-	}
-
-	// A corrupt persisted phase must not silently select the compatible default.
-	accessor := admin.Session().GetSessionVars().GlobalVarsAccessor
-	require.NoError(t, accessor.SetGlobalSysVarOnly(context.Background(), "tidb_session_token_mode", "corrupt", true))
-	require.ErrorContains(t, upgradedSession.QueryToErr("SHOW SESSION_STATES"), "invalid session token mode")
-	for _, token := range [][]byte{oldToken, strictToken} {
-		require.ErrorContains(t, newConn().openSessionAndDoAuth(token, mysql.AuthTiDBSessionToken, 0), "Access denied")
-	}
-	upgradedSession.MustQuery("SELECT 1").Check(testkit.Rows("1"))
-	admin.MustExec("SET GLOBAL tidb_session_token_mode='COMPATIBLE'")
 }
 
 func TestMaxAllowedPacket(t *testing.T) {

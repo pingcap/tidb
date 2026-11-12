@@ -1448,11 +1448,6 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		logutil.BgLogger().Info("sysvar not in cache yet. sysvar cache may be stale", zap.String("name", name))
 		sysVar, err = s.getTableValue(context.TODO(), mysql.GlobalVariablesTable, name)
 		if err != nil {
-			// Missing rows are expected for newly introduced variables during an
-			// upgrade. A storage failure must not reopen legacy token acceptance.
-			if name == vardef.TiDBSessionTokenMode && errors.Cause(err) != errResultIsEmpty {
-				return "", err
-			}
 			return sv.Value, nil
 		}
 	}

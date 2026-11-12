@@ -679,20 +679,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 
 	// If the user uses session token to log in, skip checking record.AuthPlugin.
 	if user.AuthPlugin == mysql.AuthTiDBSessionToken {
-		mode, modeErr := sessionVars.GetSessionTokenMode(context.Background())
-		err = modeErr
-		if err == nil {
-			if sessionstates.IsLegacySessionToken(authentication) {
-				if mode == sessionstates.SessionTokenStrict {
-					err = sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("legacy session tokens are disabled")
-				} else {
-					err = sessionstates.ValidateLegacySessionToken(authentication, user.Username)
-				}
-			} else {
-				err = sessionstates.ValidateSessionToken(authentication, authUser, authHost)
-			}
-		}
-		if err != nil {
+		if err = sessionstates.ValidateSessionToken(authentication, authUser, authHost); err != nil {
 			logutil.BgLogger().Warn("verify session token failed", zap.String("username", user.Username), zap.Error(err))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
