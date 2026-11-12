@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -166,7 +166,7 @@ func mviewBuildReadTS(data []byte) (uint64, error) {
 // submits it. The task key comes from the import job, like other imports.
 func (w *worker) findOrSubmitMViewDistTask(ctx context.Context, mgr *storage.TaskManager, job *model.Job,
 	mviewTableInfo *model.TableInfo, importJobID int64) (*proto.Task, error) {
-	key := taskkey.ForJob(importJobID)
+	key := taskkey.ForImportJob(importJobID)
 	task, err := mgr.GetTaskByKeyWithHistory(ctx, key)
 	if err == nil {
 		return task, nil
@@ -268,7 +268,7 @@ func (w *worker) stopMViewDistTask(ctx context.Context, job *model.Job) error {
 	if err != nil {
 		return err
 	}
-	key := taskkey.ForJob(importJobID)
+	key := taskkey.ForImportJob(importJobID)
 	task, err := mgr.GetTaskByKeyWithHistory(ctx, key)
 	if goerrors.Is(err, storage.ErrTaskNotFound) {
 		return errors.Trace(importer.CancelJob(ctx, exec, importJobID))

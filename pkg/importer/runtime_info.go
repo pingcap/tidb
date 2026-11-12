@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -155,7 +155,7 @@ func GetJobRuntimeInfo(
 		return nil, err
 	}
 
-	task, err := dxfTaskMgr.GetTaskByKeyWithHistory(ctx, taskkey.ForJob(jobID))
+	task, err := dxfTaskMgr.GetTaskByKeyWithHistory(ctx, taskkey.ForImportJob(jobID))
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +240,7 @@ func GetJobLastUpdateTime(ctx context.Context, jobID int64) (types.Time, error) 
 	if err != nil {
 		return types.ZeroTime, err
 	}
-	taskKey := taskkey.ForJob(jobID)
+	taskKey := taskkey.ForImportJob(jobID)
 	task, err := taskManager.GetTaskBaseByKeyWithHistory(ctx, taskKey)
 	if err != nil {
 		return types.ZeroTime, err

@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
-	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -79,7 +79,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 
 	bytes, err := json.Marshal(taskMeta)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, taskkey.ForJob(111), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, bytes)
+	taskID, err := manager.CreateTask(ctx, taskkey.ForImportJob(111), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
 	importStepSummaries := []*execute.SubtaskSummary{
 		{
@@ -120,7 +120,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 
 	bytes, err = json.Marshal(taskMeta)
 	require.NoError(t, err)
-	taskID, err = manager.CreateTask(ctx, taskkey.ForJob(222), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, bytes)
+	taskID, err = manager.CreateTask(ctx, taskkey.ForImportJob(222), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
 	ingestStepSummaries := []*execute.SubtaskSummary{
 		{
@@ -161,11 +161,11 @@ func TestGetJobLastUpdateTime(t *testing.T) {
 		"alter table mysql.tidb_global_task auto_increment = 9007199254740992")
 	require.NoError(t, err)
 
-	gotAdjacentTaskID, err := manager.CreateTask(ctx, taskkey.ForJob(jobID+1), proto.ImportInto,
+	gotAdjacentTaskID, err := manager.CreateTask(ctx, taskkey.ForImportJob(jobID+1), proto.ImportInto,
 		"", 1, "", 0, proto.ExtraParams{}, nil)
 	require.NoError(t, err)
 	require.Equal(t, adjacentTaskID, gotAdjacentTaskID)
-	gotTargetTaskID, err := manager.CreateTask(ctx, taskkey.ForJob(jobID), proto.ImportInto,
+	gotTargetTaskID, err := manager.CreateTask(ctx, taskkey.ForImportJob(jobID), proto.ImportInto,
 		"", 1, "", 0, proto.ExtraParams{}, nil)
 	require.NoError(t, err)
 	require.Equal(t, targetTaskID, gotTargetTaskID)
@@ -246,7 +246,7 @@ func TestShowImportProgress(t *testing.T) {
 		"root", "", &importer.ImportParameters{}, 1000)
 	require.NoError(t, err)
 
-	taskID, err := manager.CreateTask(ctx, taskkey.ForJob(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, bytes)
+	taskID, err := manager.CreateTask(ctx, taskkey.ForImportJob(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
 
 	subtasks := []struct {
@@ -404,7 +404,7 @@ func TestShowImportGroup(t *testing.T) {
 			"root", job.GroupKey, &importer.ImportParameters{}, 1000)
 		require.NoError(t, err)
 
-		taskID, err := manager.CreateTask(ctx, taskkey.ForJob(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, nil)
+		taskID, err := manager.CreateTask(ctx, taskkey.ForImportJob(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, nil)
 		require.NoError(t, err)
 
 		switchTaskStep(ctx, t, manager, taskID, proto.ImportStepEncodeAndSort)

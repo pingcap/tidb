@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -177,20 +177,20 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 
 	t.Run("cancel dangling user keyspace job without DXF task", func(t *testing.T) {
 		jobID, _ := setupUserKeyspaceImportJob(t)
-		sysKSTK.MustQuery("select count(1) from mysql.tidb_global_task where task_key = ?", taskkey.ForJob(jobID)).
+		sysKSTK.MustQuery("select count(1) from mysql.tidb_global_task where task_key = ?", taskkey.ForImportJob(jobID)).
 			Check(testkit.Rows("0"))
 
 		userKSTK.MustExec(fmt.Sprintf("cancel import job %d", jobID))
 
 		userKSTK.MustQuery("select status, error_message from mysql.tidb_import_jobs where id = ?", jobID).
 			Check(testkit.Rows("cancelled cancelled by user"))
-		sysKSTK.MustQuery("select count(1) from mysql.tidb_global_task where task_key = ?", taskkey.ForJob(jobID)).
+		sysKSTK.MustQuery("select count(1) from mysql.tidb_global_task where task_key = ?", taskkey.ForImportJob(jobID)).
 			Check(testkit.Rows("0"))
 	})
 
 	t.Run("cancel user keyspace job with an archived reverted DXF task", func(t *testing.T) {
 		jobID, sysKSTaskMgr := setupUserKeyspaceImportJob(t)
-		taskID, err := sysKSTaskMgr.CreateTask(ctx, taskkey.ForJob(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, nil)
+		taskID, err := sysKSTaskMgr.CreateTask(ctx, taskkey.ForImportJob(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, nil)
 		require.NoError(t, err)
 		// This is a synthetic state, not a normal real-world scheduler outcome:
 		// onReverting calls importScheduler.OnDone to fail or cancel the job before
@@ -216,7 +216,7 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 
 	t.Run("cancel pending user keyspace job when task is created after lookup miss", func(t *testing.T) {
 		jobID, sysKSTaskMgr := setupUserKeyspaceImportJob(t)
-		sysKSTK.MustQuery("select count(1) from mysql.tidb_global_task where task_key = ?", taskkey.ForJob(jobID)).
+		sysKSTK.MustQuery("select count(1) from mysql.tidb_global_task where task_key = ?", taskkey.ForImportJob(jobID)).
 			Check(testkit.Rows("0"))
 
 		var lateTaskID atomic.Int64
@@ -227,7 +227,7 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 					callbackErrCh <- fmt.Errorf("unexpected job ID %d", probeMissJobID)
 					return
 				}
-				taskID, err := sysKSTaskMgr.CreateTask(ctx, taskkey.ForJob(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, nil)
+				taskID, err := sysKSTaskMgr.CreateTask(ctx, taskkey.ForImportJob(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, nil)
 				if err != nil {
 					callbackErrCh <- err
 					return
@@ -260,7 +260,7 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 
 		userKSTK.MustQuery("select status, error_message from mysql.tidb_import_jobs where id = ?", jobID).
 			Check(testkit.Rows("cancelled cancelled by user"))
-		sysKSTK.MustQuery("select state from mysql.tidb_global_task where task_key = ?", taskkey.ForJob(jobID)).
+		sysKSTK.MustQuery("select state from mysql.tidb_global_task where task_key = ?", taskkey.ForImportJob(jobID)).
 			Check(testkit.Rows(string(proto.TaskStatePending)))
 	})
 

@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	dxfstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/importer"
@@ -344,7 +344,7 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 		if kerneltype.IsClassic() || kv.IsSystemKS(se.GetStore()) {
 			taskMeta.JobID = jobID
 			planCtx.SessionCtx = se
-			planCtx.TaskKey = taskkey.ForJob(jobID)
+			planCtx.TaskKey = taskkey.ForImportJob(jobID)
 			planCtx.Keyspace = plan.Keyspace
 			if taskID, err2 = submitTask2DXF(taskMeta, extraParams, planCtx, taskManager); err2 != nil {
 				return err2
@@ -368,7 +368,7 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 		if err2 = dxfTaskMgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 			taskMeta.JobID = jobID
 			planCtx.SessionCtx = se
-			planCtx.TaskKey = taskkey.ForJob(jobID)
+			planCtx.TaskKey = taskkey.ForImportJob(jobID)
 			planCtx.Keyspace = plan.Keyspace
 			var err2 error
 			if taskID, err2 = submitTask2DXF(taskMeta, extraParams, planCtx, dxfTaskMgr); err2 != nil {
@@ -569,7 +569,7 @@ func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
 	if err != nil {
 		return err
 	}
-	taskKey := taskkey.ForJob(jobID)
+	taskKey := taskkey.ForImportJob(jobID)
 	_, err = manager.GetTaskBaseByKeyWithHistory(ctx, taskKey)
 	if err == nil {
 		if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {

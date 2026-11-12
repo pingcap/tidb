@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -154,7 +154,7 @@ func TestMergeTempIndexBasic(t *testing.T) {
 			tk.MustExec(tc.adminCheck)
 		}
 
-		tkBuilder := ddl.NewTaskKeyBuilder()
+		tkBuilder := taskkey.NewBackfillKeyBuilder()
 		taskKey := tkBuilder.Build(jobID)
 
 		require.True(t, runInsert, "%s: never ran incrOp: %s", tc.name, tc.incrOp[0])

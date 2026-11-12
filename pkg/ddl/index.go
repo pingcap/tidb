@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -48,13 +47,13 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
@@ -3237,61 +3236,6 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 	return nil
 }
 
-// TaskKeyBuilder is used to build task key for the backfill job.
-type TaskKeyBuilder struct {
-	multiSchemaSeq int32
-	mergeTempIdx   bool
-}
-
-// NewTaskKeyBuilder creates a new TaskKeyBuilder.
-func NewTaskKeyBuilder() *TaskKeyBuilder {
-	return &TaskKeyBuilder{multiSchemaSeq: -1}
-}
-
-// SetMergeTempIndex sets whether to merge the temporary index.
-func (b *TaskKeyBuilder) SetMergeTempIndex(flag bool) *TaskKeyBuilder {
-	b.mergeTempIdx = flag
-	return b
-}
-
-// SetMultiSchema sets the multi-schema change information.
-func (b *TaskKeyBuilder) SetMultiSchema(info *model.MultiSchemaInfo) *TaskKeyBuilder {
-	if info != nil {
-		b.multiSchemaSeq = info.Seq
-	}
-	return b
-}
-
-// Build builds the task key for the backfill job.
-func (b *TaskKeyBuilder) Build(jobID int64) string {
-	labels := make([]string, 0, 8)
-	if kerneltype.IsNextGen() {
-		labels = append(labels, keyspace.GetKeyspaceNameBySettings())
-	}
-	labels = append(labels, "ddl", proto.Backfill.String(), strconv.FormatInt(jobID, 10))
-	if b.multiSchemaSeq >= 0 {
-		labels = append(labels, strconv.Itoa(int(b.multiSchemaSeq)))
-	}
-	if b.mergeTempIdx {
-		labels = append(labels, "merge")
-	}
-	return strings.Join(labels, "/")
-}
-
-// TaskKey generates a task key for the backfill job.
-func TaskKey(jobID int64, mergeTempIdx bool) string {
-	labels := make([]string, 0, 8)
-	if kerneltype.IsNextGen() {
-		ks := keyspace.GetKeyspaceNameBySettings()
-		labels = append(labels, ks)
-	}
-	labels = append(labels, "ddl", proto.Backfill.String(), strconv.FormatInt(jobID, 10))
-	if mergeTempIdx {
-		labels = append(labels, "merge")
-	}
-	return strings.Join(labels, "/")
-}
-
 func autoPauseAddIndexJobOnKVDiskFull(job *model.Job, taskID int64, taskErr error) error {
 	storeType := kvDiskFullStoreType(taskErr)
 	message := fmt.Sprintf("DXF add-index task %d hit %s disk full", taskID, storeType)
@@ -3349,7 +3293,7 @@ func (w *worker) resolveCloudStorageURI(job *model.Job, mergeTempIndex bool) (st
 func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *reorgInfo) error {
 	stepCtx := jobCtx.stepCtx
 	taskType := proto.Backfill
-	tkBuilder := NewTaskKeyBuilder().
+	tkBuilder := taskkey.NewBackfillKeyBuilder().
 		SetMultiSchema(reorgInfo.Job.MultiSchemaInfo).
 		SetMergeTempIndex(reorgInfo.mergingTmpIdx)
 	taskKey := tkBuilder.Build(reorgInfo.Job.ID)

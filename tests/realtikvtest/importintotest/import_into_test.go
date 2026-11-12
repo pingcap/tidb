@@ -44,7 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
-	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
@@ -920,7 +920,7 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 func (s *mockGCSSuite) checkTaskMetaRedacted(jobID int64) {
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	taskKey := taskkey.ForJob(jobID)
+	taskKey := taskkey.ForImportJob(jobID)
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
@@ -1454,7 +1454,7 @@ func (s *mockGCSSuite) TestImportIntoWithMockDataSize() {
 	defer setAmplifyFactorFn(1)
 	s.tk.MustExec("create table t (a int, b int);")
 	checkResourceParamFn := func(jobID int64, thread, maxNode int) {
-		taskKey := taskkey.ForJob(jobID)
+		taskKey := taskkey.ForImportJob(jobID)
 		taskRows := s.tk.MustQuery(`
 			with global_tasks as (
 				select id, max_node_count from mysql.tidb_global_task where task_key = ?

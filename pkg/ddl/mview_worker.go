@@ -27,7 +27,7 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -279,7 +279,7 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 				if err != nil {
 					return ver, err
 				}
-				task, err := mgr.GetTaskByKeyWithHistory(jobCtx.stepCtx, taskkey.ForJob(importJobID))
+				task, err := mgr.GetTaskByKeyWithHistory(jobCtx.stepCtx, taskkey.ForImportJob(importJobID))
 				if err != nil && !goerrors.Is(err, storage.ErrTaskNotFound) {
 					return ver, err
 				}

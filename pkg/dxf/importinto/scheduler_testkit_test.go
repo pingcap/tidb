@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
-	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
@@ -123,7 +123,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	}
 	manager, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, taskkey.ForJob(jobID), proto.ImportInto, "", 1, "", 1, proto.ExtraParams{}, bs)
+	taskID, err := manager.CreateTask(ctx, taskkey.ForImportJob(jobID), proto.ImportInto, "", 1, "", 1, proto.ExtraParams{}, bs)
 	require.NoError(t, err)
 	task.ID = taskID
 
@@ -375,7 +375,7 @@ func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(
 		}
 		task.ID, err = mgr.CreateTask(
 			ctx,
-			taskkey.ForJob(jobID),
+			taskkey.ForImportJob(jobID),
 			proto.ImportInto,
 			keyspace,
 			1,
@@ -643,7 +643,7 @@ func testSchedulerExtGlobalSort(t *testing.T, sourceStep proto.Step) {
 	require.NoError(t, err)
 	taskMeta, err := json.Marshal(task)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, taskkey.ForJob(jobID), proto.ImportInto, keyspace, 1, scope, 1, proto.ExtraParams{}, taskMeta)
+	taskID, err := manager.CreateTask(ctx, taskkey.ForImportJob(jobID), proto.ImportInto, keyspace, 1, scope, 1, proto.ExtraParams{}, taskMeta)
 	require.NoError(t, err)
 	task.ID = taskID
 
