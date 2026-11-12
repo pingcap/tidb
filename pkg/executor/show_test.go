@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -67,7 +66,7 @@ func TestFillOneImportJobInfo(t *testing.T) {
 	require.True(t, c.GetRow(0).IsNull(startIdx))
 	require.True(t, c.GetRow(0).IsNull(endIdx))
 
-	executor.FillOneImportJobInfo(c, jobInfo, &importinto.RuntimeInfo{ImportRows: 0})
+	executor.FillOneImportJobInfo(c, jobInfo, &importer.RuntimeInfo{ImportRows: 0})
 	require.False(t, c.GetRow(1).IsNull(rowCntIdx))
 	require.Equal(t, uint64(0), c.GetRow(1).GetUint64(rowCntIdx))
 	require.True(t, c.GetRow(1).IsNull(startIdx))
@@ -85,7 +84,7 @@ func TestFillOneImportJobInfo(t *testing.T) {
 	require.False(t, c.GetRow(2).IsNull(startIdx))
 	require.False(t, c.GetRow(2).IsNull(endIdx))
 
-	ri := &importinto.RuntimeInfo{
+	ri := &importer.RuntimeInfo{
 		Processed: 10,
 		Total:     100000,
 		Speed:     2,
@@ -98,11 +97,11 @@ func TestFillOneImportJobInfo(t *testing.T) {
 	require.Equal(t, "13:53:15", c.GetRow(3).GetString(fmap["CurStepETA"]))
 
 	// runtime info have update time, so use it
-	executor.FillOneImportJobInfo(c, jobInfo, &importinto.RuntimeInfo{ImportRows: 0, UpdateTime: t2025})
+	executor.FillOneImportJobInfo(c, jobInfo, &importer.RuntimeInfo{ImportRows: 0, UpdateTime: t2025})
 	require.EqualValues(t, t2025, c.GetRow(4).GetTime(14))
 
 	// conflict-step runtime progress should use conflict count labels.
-	ri = &importinto.RuntimeInfo{
+	ri = &importer.RuntimeInfo{
 		Step:      proto.ImportStepCollectConflicts,
 		Processed: 12,
 		Total:     34,
@@ -115,7 +114,7 @@ func TestFillOneImportJobInfo(t *testing.T) {
 
 	// preparing phase should be visible while current business step is still init.
 	jobInfo.Step = importer.JobStepPreparing
-	ri = &importinto.RuntimeInfo{
+	ri = &importer.RuntimeInfo{
 		Step: proto.StepInit,
 	}
 	executor.FillOneImportJobInfo(c, jobInfo, ri)

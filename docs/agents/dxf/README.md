@@ -45,7 +45,8 @@ Use it to quickly find:
     scheduler manager based on DDL owner role.
 
 - IMPORT INTO integration:
-  - `pkg/dxf/importinto/job.go`: DXF task submission + job/task lifecycle bridge.
+  - `pkg/executor/import_into.go`: DXF task submission for IMPORT INTO jobs.
+  - `pkg/executor/importer/runtime_info.go`: IMPORT INTO job progress from its DXF task.
   - `pkg/dxf/importinto/planner.go`: IMPORT INTO logical/physical planning by DXF
     step.
   - `pkg/dxf/importinto/scheduler.go`: IMPORT INTO scheduler extension.

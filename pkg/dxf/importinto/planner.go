@@ -57,7 +57,6 @@ type LogicalPlan struct {
 	Stmt              string
 	EligibleInstances []*serverinfo.ServerInfo
 	ChunkMap          map[int32][]importer.Chunk
-	PrepareMode       proto.PrepareMode
 	// PreparedChunkMapExternalPath points to externally persisted chunk
 	// metadata produced during framework prepare stage.
 	PreparedChunkMapExternalPath string
@@ -71,13 +70,12 @@ type LogicalPlan struct {
 func (p *LogicalPlan) GetTaskExtraParams() proto.ExtraParams {
 	return proto.ExtraParams{
 		ManualRecovery: p.Plan.ManualRecovery,
-		PrepareMode:    p.PrepareMode,
 	}
 }
 
 // ToTaskMeta converts the logical plan to task meta.
 func (p *LogicalPlan) ToTaskMeta() ([]byte, error) {
-	taskMeta := TaskMeta{
+	taskMeta := importer.TaskMeta{
 		JobID:                    p.JobID,
 		Plan:                     p.Plan,
 		Stmt:                     p.Stmt,
@@ -90,7 +88,7 @@ func (p *LogicalPlan) ToTaskMeta() ([]byte, error) {
 
 // FromTaskMeta converts the task meta to logical plan.
 func (p *LogicalPlan) FromTaskMeta(bs []byte) error {
-	var taskMeta TaskMeta
+	var taskMeta importer.TaskMeta
 	if err := json.Unmarshal(bs, &taskMeta); err != nil {
 		return errors.Trace(err)
 	}

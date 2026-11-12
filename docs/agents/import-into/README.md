@@ -13,7 +13,8 @@ when only reading one package at a time.
 ## High-Signal Entry Files
 
 - Job submit/runtime bridge:
-  - `pkg/dxf/importinto/job.go`
+  - `pkg/executor/import_into.go`
+  - `pkg/executor/importer/runtime_info.go`
 - Scheduler and step transitions:
   - `pkg/dxf/importinto/scheduler.go`
   - `pkg/dxf/framework/proto/step.go`
