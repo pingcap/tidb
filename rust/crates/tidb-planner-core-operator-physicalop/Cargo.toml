@@ -16,6 +16,7 @@ workspace = true
 test-util = []
 
 [dependencies]
+tidb-util = { path = "../tidb-util" }
 tidb-planner-core-operator-logicalop = { path = "../tidb-planner-core-operator-logicalop" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-planner-cardinality = { path = "../tidb-planner-cardinality" }

@@ -6602,6 +6602,7 @@ dependencies = [
  "tidb-size",
  "tidb-table",
  "tidb-txnkv",
+ "tidb-util",
  "tidb-vardef",
  "tidb-variable",
 ]

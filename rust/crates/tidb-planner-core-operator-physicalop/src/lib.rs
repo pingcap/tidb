@@ -2471,6 +2471,10 @@ impl PhysicalTableReader {
 pub struct PhysicalIndexScan {
     /// Output schema before index columns and the handle are added.
     pub data_source_schema: Option<Box<Schema>>,
+    /// Go `Table`: the scanned table's metadata.
+    pub table: Option<tidb_model::GoShared<tidb_model::TableInfo>>,
+    /// Go `Index`: the scanned index's metadata.
+    pub index: Option<tidb_model::GoShared<tidb_model::IndexInfo>>,
     /// The shared physical base.
     pub base: BasePhysicalPlan,
     /// Go `Table.ID`.
@@ -5169,6 +5173,8 @@ impl PhysicalPlan {
                 tasks: Vec::new(),
             }),
             Self::IndexScan(op) => Self::IndexScan(PhysicalIndexScan {
+                table: op.table.clone(),
+                index: op.index.clone(),
                 group_by_col_idxs: op.group_by_col_idxs.clone(),
                 by_items: op.by_items.clone(),
                 data_source_schema: op.data_source_schema.clone(),

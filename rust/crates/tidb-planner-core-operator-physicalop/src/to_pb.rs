@@ -208,6 +208,7 @@ impl PhysicalPlan {
             Self::Limit(p) => p.to_pb(self, ctx, store_type),
             Self::TopN(p) => p.to_pb(self, ctx, store_type),
             Self::TableScan(p) => p.to_pb(self, ctx, store_type),
+            Self::IndexScan(p) => p.to_pb(self),
             Self::ExchangeSender(p) => p.to_pb(self, ctx, store_type),
             Self::ExchangeReceiver(p) => p.to_pb(self, ctx),
             Self::HashAgg(p) => p.to_pb(self, ctx, store_type),
@@ -430,6 +431,64 @@ impl PhysicalTableScan {
             ..go_executor()
         })
     }
+}
+
+impl crate::PhysicalIndexScan {
+    /// Go `PhysicalIndexScan.ToPB`.
+    fn to_pb(&self, plan: &PhysicalPlan) -> Result<tipb::Executor, PlanError> {
+        let no = |what: &str| PlanError::internal(format!("plan {} has no {what}", plan.explain_id(false)));
+        let table = self.table.as_ref().ok_or_else(|| no("table"))?.read();
+        let index = self.index.as_ref().ok_or_else(|| no("index"))?.read();
+        let columns = schema_of(plan)?
+            .columns
+            .iter()
+            .map(|col| match col.id {
+                tidb_model::column::EXTRA_HANDLE_ID => {
+                    Ok(tidb_model::GoShared::new(tidb_model::ColumnInfo::new_extra_handle_col_info()))
+                }
+                tidb_model::column::EXTRA_PHYS_TBL_ID => {
+                    Ok(tidb_model::GoShared::new(tidb_model::ColumnInfo::new_extra_phys_tbl_id_col_info()))
+                }
+                id => tidb_model::column::find_column_info_by_id(&table.columns, id).ok_or_else(|| no("column")),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // Go `InitSchema`'s `p.NeedCommonHandle = p.Table.IsCommonHandle`.
+        let pk_col_ids = if table.is_common_handle {
+            tidb_table::tables::scan_from_infos::try_get_common_pk_column_ids(&table)
+        } else {
+            Vec::new()
+        };
+        let idx_exec = tipb::IndexScan {
+            // Go `p.IsPartition`: the scan reads one partition.
+            table_id: Some(self.table_id),
+            index_id: Some(index.id),
+            columns: tidb_util::misc::columns_to_proto(&columns, table.pk_is_handle, true, false),
+            desc: Some(self.desc),
+            primary_column_ids: pk_col_ids,
+            unique: Some(check_cover_index(&index, &self.ranges)),
+            ..tipb::IndexScan::default()
+        };
+        Ok(tipb::Executor {
+            tp: Some(tipb::ExecType::TypeIndexScan as i32),
+            idx_scan: Some(idx_exec),
+            ..go_executor()
+        })
+    }
+}
+
+/// Go `checkCoverIndex`: whether the scan is a unique get -- a unique index
+/// whose every range pins all its columns to non-NULL values.
+fn check_cover_index(idx: &tidb_model::IndexInfo, ranges: &[tidb_ranger::types::Range]) -> bool {
+    // If the index is (c1, c2) but the query range only contains c1, it is not a unique get.
+    if !idx.unique {
+        return false;
+    }
+    ranges.iter().all(|rg| {
+        // a unique index may have duplicated rows with NULLs, so we cannot set the unique attribute to true when the range has NULL
+        rg.low_val.len() == idx.columns.len()
+            && !rg.low_val.iter().any(tidb_datatype::Datum::is_null)
+            && !rg.high_val.iter().any(tidb_datatype::Datum::is_null)
+    })
 }
 
 fn schema_of(child: &PhysicalPlan) -> Result<&Schema, PlanError> {

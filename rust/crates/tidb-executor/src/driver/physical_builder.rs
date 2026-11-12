@@ -1084,7 +1084,7 @@ fn substitute_correlated_access(
 /// access conditions read correlated columns rebuilds its ranges from them,
 /// with every correlated column replaced by its current value, each time the
 /// enclosing Apply reopens it.
-fn correlated_index_range_rebuilder(
+pub(crate) fn correlated_index_range_rebuilder(
     scan: &PhysicalIndexScan,
     ctx: &crate::StmtContext,
 ) -> Option<crate::access_path::RangeRebuilder> {
@@ -7570,6 +7570,36 @@ fn build_reader_node(
             Ok(executor)
         }
         PhysicalPlan::IndexReader(reader) => {
+            // Go `buildIndexReader` on a store with a coprocessor client (the
+            // in-process engine and a temporary table keep the local path,
+            // `docs/tikv-reader-execplan.md`).
+            let scan = reader.index_plan.as_deref().and_then(embedded_index_scan);
+            if ctx.txn_store().is_some_and(|store| store.client().is_some())
+                && !state.reader_storage.is_mem_buffer()
+                && scan.is_some_and(|scan| !scan.is_temporary)
+            {
+                let scan = scan.expect("checked above");
+                let executor = crate::index_reader::IndexReaderExecutor::build(
+                    meta(ctx, plan, plan_schema(plan)?),
+                    ctx,
+                    catalog,
+                    reader,
+                    state.range_group.as_ref(),
+                )
+                .map_err(DriverError::from)?;
+                // Go `IndexReaderExecutor.Close`'s
+                // `indexUsageReporter.ReportCopIndexUsageForTable`.
+                let table = catalog
+                    .physical_kv_table_by_id(scan.table_id)
+                    .ok_or_else(|| DriverError::unsupported("physical table ID is absent from the catalog"))?;
+                return Ok(Box::new(CopIndexUsageExec::new(
+                    executor,
+                    table.table_id(),
+                    crate::access_cost::load_table_stats(ctx, catalog, table.stats_physical_id()),
+                    ctx.index_usage_collector().cloned(),
+                    Some(scan.index_id),
+                )));
+            }
             // Go's `IndexPlan` carries the pushed coprocessor Limit above the
             // IndexScan; the generic walk below builds it as a `LimitExec`,
             // and the scan itself needs the same cap so the local cursor stops

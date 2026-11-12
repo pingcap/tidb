@@ -43,7 +43,8 @@ reader built by Go's `buildTableReader` / `buildIndexReader` /
   (list-based `ToPB`), the reader's ranges, keep order, paging and runtime
   stats through `distsql.Select`; the physical builder routes every such
   reader on a store with a coprocessor client to it.
-- [ ] Milestone 2: `IndexReaderExecutor` likewise.
+- [x] (2026-11-12) Milestone 2: `IndexReaderExecutor` likewise (`index_reader.rs`), on
+  `PhysicalIndexScan.ToPB` ported with the scan's `Table` and `Index`.
 - [ ] Milestone 3: `IndexLookUpExecutor` (index side and table tasks).
 - [ ] Milestone 4: `UnionScanExec` over a reader with Go's `memTableReader`;
   the staged-row merge and `open_mpp_scan` are deleted.

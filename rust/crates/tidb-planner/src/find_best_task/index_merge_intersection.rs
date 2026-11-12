@@ -56,6 +56,8 @@ pub(super) fn build_prepared_index_merge_task(
             base.base.set_noncacheable_reason(reason);
         }
         let mut partial_plan = PhysicalPlan::IndexScan(tidb_planner_core_operator_physicalop::PhysicalIndexScan {
+        table: ds.table_info.clone(),
+        index: Some(source_index.clone()),
             by_items: Vec::new(),
             group_by_col_idxs: Vec::new(),
             base,

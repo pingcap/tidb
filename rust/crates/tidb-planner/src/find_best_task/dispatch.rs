@@ -4918,6 +4918,8 @@ fn find_best_task_4_logical_data_source_paths(
                     .unwrap_or_default();
                 let scan = PhysicalPlan::IndexScan(tidb_planner_core_operator_physicalop::PhysicalIndexScan {
                     base,
+                    table: ds.table_info.clone(),
+                    index: Some(source_index.clone()),
                     table_id: ds.physical_table_id,
                     table_as_name: ds.table_as_name.clone(),
                     dynamic_partition_access: ds.dynamic_partition_access.clone(),

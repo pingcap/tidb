@@ -877,6 +877,8 @@ fn push_index_partial(
     base.base
         .set_schema(Some(tidb_expr::schema::Schema::new(schema_columns)));
     partial_plans_raw.push(PhysicalPlan::IndexScan(tidb_planner_core_operator_physicalop::PhysicalIndexScan {
+        table: ds.table_info.clone(),
+        index: Some(source_index.clone()),
         by_items: Vec::new(),
         group_by_col_idxs: group_by_col_idxs.to_vec(),
         base,
