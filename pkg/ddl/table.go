@@ -30,6 +30,7 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -188,6 +189,15 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 	err = checkTableIDNotExists(metaMut, schemaID, tblInfo.ID)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return ver, errors.Trace(err)
+	}
+	var snapshotMeta meta.Reader = meta.NewReader(w.store.GetSnapshot(kv.NewVersion(recoverInfo.SnapshotTS)))
+	failpoint.InjectCall("recoverTableForeignKeySnapshot", recoverInfo, &snapshotMeta)
+	if err = checkRecoverTableForeignKeys(jobCtx.infoCache.GetLatest(), job.SchemaName, recoverInfo, snapshotMeta); err != nil {
+		// Keep transient snapshot failures retryable by the owner.
+		if isPermanentRecoverTableForeignKeyError(err) {
 			job.State = model.JobStateCancelled
 		}
 		return ver, errors.Trace(err)

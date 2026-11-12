@@ -428,6 +428,18 @@ func (p *UserPrivileges) MatchUserResourceGroupName(exec sqlexec.RestrictedSQLEx
 	return "", false
 }
 
+// GetUserResourceGroup implements the Manager interface.
+func (p *UserPrivileges) GetUserResourceGroup(user, host string) string {
+	if SkipWithGrant {
+		return ""
+	}
+	record := p.Handle.Get().connectionVerification(user, host)
+	if record == nil {
+		return ""
+	}
+	return record.ResourceGroup
+}
+
 // GetAuthWithoutVerification implements the Manager interface.
 func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (success bool) {
 	if SkipWithGrant {

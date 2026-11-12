@@ -107,9 +107,9 @@ func TestIssue54535(t *testing.T) {
 		Check(testkit.Rows(
 			"Projection_10 9990.00 root  test.ta.a1, test.ta.a2, test.ta.a3, test.tb.b1, Column#9",
 			"└─IndexJoin_19 9990.00 root  inner join, inner:HashAgg_17, outer key:test.ta.a1, inner key:test.tb.b1, equal cond:eq(test.ta.a1, test.tb.b1)",
-			"  ├─TableReader_46(Build) 9990.00 root  data:Selection_45",
-			"  │ └─Selection_45 9990.00 cop[tikv]  not(isnull(test.ta.a1))",
-			"  │   └─TableFullScan_44 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
+			"  ├─TableReader_44(Build) 9990.00 root  data:Selection_43",
+			"  │ └─Selection_43 9990.00 cop[tikv]  not(isnull(test.ta.a1))",
+			"  │   └─TableFullScan_42 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
 			"  └─HashAgg_17(Probe) 9990.00 root  group by:test.tb.b1, test.tb.b2, funcs:count(Column#11)->Column#9, funcs:firstrow(test.tb.b1)->test.tb.b1",
 			"    └─IndexLookUp_18 9990.00 root  ",
 			"      ├─Selection_15(Build) 9990.00 cop[tikv]  not(isnull(test.tb.b1))",

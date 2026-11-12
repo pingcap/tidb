@@ -16,6 +16,7 @@ package logclient_test
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -32,6 +33,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
@@ -64,6 +66,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/rawkv"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -76,14 +80,14 @@ var deleteRangeQueryList = []*stream.PreDelRangeQuery{
 			{
 				JobID:    1,
 				ElemID:   1,
-				StartKey: "a",
-				EndKey:   "b",
+				StartKey: hex.EncodeToString(tablecodec.EncodeTablePrefix(123456)),
+				EndKey:   hex.EncodeToString(tablecodec.EncodeTablePrefix(123457)),
 			},
 			{
 				JobID:    1,
 				ElemID:   2,
-				StartKey: "b",
-				EndKey:   "c",
+				StartKey: hex.EncodeToString(tablecodec.EncodeTableIndexPrefix(123456, 2)),
+				EndKey:   hex.EncodeToString(tablecodec.EncodeTableIndexPrefix(123456, 3)),
 			},
 		},
 	},
@@ -94,8 +98,8 @@ var deleteRangeQueryList = []*stream.PreDelRangeQuery{
 			{
 				JobID:    2,
 				ElemID:   1,
-				StartKey: "a",
-				EndKey:   "b",
+				StartKey: hex.EncodeToString(tablecodec.EncodeTablePrefix(234567)),
+				EndKey:   hex.EncodeToString(tablecodec.EncodeTablePrefix(234568)),
 			},
 		},
 	},
@@ -176,18 +180,41 @@ func TestDeleteRangeQueryExec(t *testing.T) {
 	ctx := context.Background()
 	m := mc
 	g := gluetidb.New()
-	client := logclient.NewLogClient(
-		split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
-	err := client.Init(ctx, g, m.Storage)
-	require.NoError(t, err)
+	originalMode := errors.RedactLogEnabled.Load()
+	t.Cleanup(func() { errors.RedactLogEnabled.Store(originalMode) })
+	for _, mode := range []string{"OFF", "ON", "MARKER"} {
+		t.Run(mode, func(t *testing.T) {
+			errors.RedactLogEnabled.Store(mode)
+			core, recorded := observer.New(zap.InfoLevel)
+			restoreLogger := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{
+				Core:  core,
+				Level: zap.NewAtomicLevelAt(zap.InfoLevel),
+			})
+			t.Cleanup(restoreLogger)
 
-	client.RunGCRowsLoader(ctx)
+			client := logclient.NewLogClient(
+				split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
+			require.NoError(t, client.Init(ctx, g, m.Storage))
+			t.Cleanup(func() { client.Close(ctx) })
+			client.RunGCRowsLoader(ctx)
+			for _, query := range deleteRangeQueryList {
+				client.RecordDeleteRange(query)
+			}
+			require.NoError(t, client.InsertGCRows(ctx))
 
-	for _, query := range deleteRangeQueryList {
-		client.RecordDeleteRange(query)
+			entries := recorded.FilterMessage("insert into the delete range").All()
+			require.Len(t, entries, 3)
+			entryIndex := 0
+			for _, query := range deleteRangeQueryList {
+				for _, params := range query.ParamsList {
+					fields := entries[entryIndex].ContextMap()
+					require.Equal(t, params.StartKey, fields["startKey"])
+					require.Equal(t, params.EndKey, fields["endKey"])
+					entryIndex++
+				}
+			}
+		})
 	}
-
-	require.NoError(t, client.InsertGCRows(ctx))
 }
 
 func TestDeleteRangeQuery(t *testing.T) {
