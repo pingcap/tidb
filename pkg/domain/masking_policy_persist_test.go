@@ -17,13 +17,17 @@ package domain_test
 import (
 	"context"
 	"math"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 )
 
 func TestMaskingPolicyPersistAfterRestart(t *testing.T) {
@@ -96,13 +100,68 @@ func TestMaskingPolicyColdSnapshot(t *testing.T) {
 			dom.InfoCache().Insert(latest, current.Ver)
 			historical, err := dom.GetSnapshotInfoSchema(snapshot.Ver)
 			require.NoError(t, err)
-			policy, ok, err := historical.MaskingPolicyByTableColumn(ctx, tbl.Meta().ID, tbl.Meta().Columns[0].ID)
+			var intercepted atomic.Int32
+			loadCtx := interceptor.WithRPCInterceptor(ctx, interceptor.NewRPCInterceptor("masking-policy-user-context", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
+				return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+					intercepted.Add(1)
+					return next(target, req)
+				}
+			}))
+			policy, ok, err := historical.MaskingPolicyByTableColumn(loadCtx, tbl.Meta().ID, tbl.Meta().Columns[0].ID)
 			require.NoError(t, err)
+			require.Zero(t, intercepted.Load(), "policy SQL must not inherit the user's RPC interceptor")
 			require.True(t, ok)
 			require.Equal(t, model.MaskingPolicyStatusEnable, policy.Status)
 			require.Equal(t, tbl.Meta().ID, policy.TableID)
 		})
 	}
+}
+
+func TestMaskingPolicyReloadWarmsCache(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create table test.t_warm_policy(c varchar(20))")
+	for _, tc := range []struct {
+		sql         string
+		hasPolicies bool
+	}{
+		{"", false},
+		{"create masking policy p on test.t_warm_policy(c) as mask_full(c)", true},
+		{"truncate table test.t_warm_policy", true},
+		{"alter table test.t_warm_policy drop masking policy p", false},
+	} {
+		if tc.sql != "" {
+			tk.MustExec(tc.sql)
+		}
+		require.NoError(t, dom.Reload())
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockLoadMaskingPoliciesError", "return(true)")
+		hasPolicies, err := dom.InfoSchema().HasMaskingPolicies(context.Background())
+		require.NoError(t, err, "Reload must warm the cache before the first user query")
+		require.Equal(t, tc.hasPolicies, hasPolicies)
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/infoschema/mockLoadMaskingPoliciesError")
+	}
+}
+
+func TestMaskingPolicyPreloadFailureRetry(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/skipLoadMaskingPolicies", "return(true)")
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create table test.t_retry_policy(c varchar(20))")
+	tk.MustExec("create masking policy p on test.t_retry_policy(c) as mask_full(c)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockLoadMaskingPoliciesError", "return(true)")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/domain/skipLoadMaskingPolicies")
+
+	// Publishing the schema must still renew validation and synchronize versions.
+	require.NoError(t, dom.Reload())
+	_, err := dom.InfoSchema().HasMaskingPolicies(context.Background())
+	require.ErrorContains(t, err, "mock masking policy load error")
+	require.ErrorContains(t, tk.ExecToErr("select c from test.t_retry_policy"), "mock masking policy load error")
+
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/infoschema/mockLoadMaskingPoliciesError")
+	require.NoError(t, dom.Reload())
+	hasPolicies, err := dom.InfoSchema().HasMaskingPolicies(context.Background())
+	require.NoError(t, err)
+	require.True(t, hasPolicies)
 }
 
 func TestMaskingPolicyLatestSnapshot(t *testing.T) {

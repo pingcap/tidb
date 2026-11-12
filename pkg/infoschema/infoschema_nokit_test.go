@@ -199,6 +199,31 @@ func TestMaskingPolicyLoadWaitCancellation(t *testing.T) {
 	require.False(t, is.maskingPoliciesLoaded)
 }
 
+func TestMaskingPolicyLoadCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	is := newInfoSchema(nil)
+	is.factory = func() (pools.Resource, error) {
+		cancel()
+		return nil, context.Canceled
+	}
+
+	_, err := is.HasMaskingPolicies(ctx)
+	require.Equal(t, context.Canceled, err)
+	require.False(t, is.maskingPoliciesLoaded)
+	require.Nil(t, is.maskingPoliciesLoadCh)
+}
+
+func TestMaskingPolicyCachedReadWithCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	is := newInfoSchema(nil)
+	is.maskingPoliciesLoaded = true
+	is.factory = func() (pools.Resource, error) { panic("cached read must not load policies") }
+	_, err := is.HasMaskingPolicies(ctx)
+	require.NoError(t, err)
+}
+
 type maskingPolicyWaitContext struct {
 	context.Context
 	waiting chan struct{}

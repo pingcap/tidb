@@ -37,12 +37,12 @@ import (
 func LoadMaskingPolicies(
 	factory func() (pools.Resource, error),
 ) ([]*model.MaskingPolicyInfo, error) {
-	return loadMaskingPoliciesWithTableIDs(context.Background(), factory, nil, 0)
+	return loadMaskingPoliciesWithTableIDs(context.Background(), factory, nil, 0, nil)
 }
 
 // loadMaskingPoliciesWithTableIDs loads masking policy metadata through mysql.tidb_masking_policy.
 // If tableIDs is empty, all policies are loaded.
-func loadMaskingPoliciesWithTableIDs(ctx context.Context, factory func() (pools.Resource, error), tableIDs []int64, snapshotTS uint64) ([]*model.MaskingPolicyInfo, error) {
+func loadMaskingPoliciesWithTableIDs(ctx context.Context, factory func() (pools.Resource, error), tableIDs []int64, snapshotTS uint64, snapshotSchema InfoSchema) ([]*model.MaskingPolicyInfo, error) {
 	const maxBatchSize = 1024
 	failpoint.Inject("mockLoadMaskingPoliciesError", func() {
 		failpoint.Return(nil, errors.New("mock masking policy load error"))
@@ -60,6 +60,16 @@ func loadMaskingPoliciesWithTableIDs(ctx context.Context, factory func() (pools.
 	if !ok {
 		return nil, errors.New("failed to cast resource to sessionctx.Context")
 	}
+	opts := []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
+	if snapshotSchema != nil {
+		// This schema may not be in Domain's cache yet. Bind it directly to the
+		// dedicated internal session instead of recursively resolving its timestamp.
+		vars := sctx.GetSessionVars()
+		vars.SnapshotTS = snapshotTS
+		vars.SnapshotInfoschema = snapshotSchema
+	} else {
+		opts = append(opts, sqlexec.ExecOptionWithSnapshot(snapshotTS))
+	}
 
 	ids, hasFilter := normalizeMaskingPolicyTableIDs(tableIDs)
 	if hasFilter && len(ids) == 0 {
@@ -71,7 +81,7 @@ func loadMaskingPoliciesWithTableIDs(ctx context.Context, factory func() (pools.
 		internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 		rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
 			internalCtx,
-			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionWithSnapshot(snapshotTS)},
+			opts,
 			query,
 			args...,
 		)

@@ -1393,7 +1393,7 @@ func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.Correla
 
 // maskSubqueryResult applies masking to the output of an IN or quantified
 // comparison subquery, so the outer operand is compared with masked values.
-func (er *expressionRewriter) maskSubqueryResult(ctx context.Context, planCtx *exprRewriterPlanCtx, np base.LogicalPlan) (base.LogicalPlan, error) {
+func (*expressionRewriter) maskSubqueryResult(ctx context.Context, planCtx *exprRewriterPlanCtx, np base.LogicalPlan) (base.LogicalPlan, error) {
 	enabled, err := planCtx.builder.maskingEnabled(ctx, np, planCtx.plan)
 	if err != nil || !enabled {
 		return np, err

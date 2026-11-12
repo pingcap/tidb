@@ -595,6 +595,8 @@ func TestMaskingPolicyExprCacheSQLMode(t *testing.T) {
 }
 
 func TestMaskingPolicyLoadFailureBlocksQueries(t *testing.T) {
+	// Exercise the lazy fallback with a cold cache instead of the cache warmed by Reload.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/skipLoadMaskingPolicies", "return(true)")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

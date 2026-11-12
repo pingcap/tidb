@@ -95,18 +95,29 @@ func (is *infoSchema) AllMaskingPolicies(ctx context.Context) ([]*model.MaskingP
 	return policies, nil
 }
 
+// PreloadMaskingPolicies loads policies using the supplied schema before it is
+// published. The internal SQL must not try to load that schema again from Domain.
+func PreloadMaskingPolicies(ctx context.Context, is InfoSchema) error {
+	return is.base().loadMaskingPolicies(ctx, is)
+}
+
 // loadMaskingPoliciesIfNeeded loads masking policies from system table on first access.
-// Only one goroutine performs loading, others wait for completion.
 func (is *infoSchema) loadMaskingPoliciesIfNeeded(ctx context.Context) error {
+	return is.loadMaskingPolicies(ctx, nil)
+}
+
+// Only one goroutine performs loading, others wait for completion.
+func (is *infoSchema) loadMaskingPolicies(ctx context.Context, snapshotSchema InfoSchema) error {
 	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		var loadCh chan struct{}
 		is.maskingPolicyMutex.Lock()
 		if is.maskingPoliciesLoaded {
 			is.maskingPolicyMutex.Unlock()
 			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			is.maskingPolicyMutex.Unlock()
+			return err
 		}
 		if is.factory == nil {
 			logutil.BgLogger().Debug("factory is nil, skipping masking policies loading")
@@ -129,10 +140,16 @@ func (is *infoSchema) loadMaskingPoliciesIfNeeded(ctx context.Context) error {
 		snapshotTS := is.maskingPolicySnapshotTS
 		is.maskingPolicyMutex.Unlock()
 
-		// Load policies WITHOUT holding the lock to avoid blocking readers.
-		loadCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		policies, err := loadMaskingPoliciesWithTableIDs(loadCtx, is.factory, nil, snapshotTS)
+		// Keep user RPC interceptors and statement-local values out of internal SQL,
+		// while still allowing the caller to cancel the load.
+		loadCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		stopCancel := context.AfterFunc(ctx, cancel)
+		policies, err := loadMaskingPoliciesWithTableIDs(loadCtx, is.factory, nil, snapshotTS, snapshotSchema)
+		stopCancel()
 		cancel()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			err = ctxErr
+		}
 
 		is.maskingPolicyMutex.Lock()
 		if err != nil {
