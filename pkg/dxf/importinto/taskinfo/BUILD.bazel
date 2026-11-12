@@ -1,0 +1,60 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "taskinfo",
+    srcs = [
+        "runtime_info.go",
+        "task_meta.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain/serverinfo",
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/storage",
+        "//pkg/dxf/framework/taskexecutor/execute",
+        "//pkg/dxf/importinto/taskkey",
+        "//pkg/executor/importer",
+        "//pkg/kv",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/sqlexec",
+        "@com_github_docker_go_units//:go-units",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_tikv_client_go_v2//util",
+    ],
+)
+
+go_test(
+    name = "taskinfo_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "runtime_info_test.go",
+        "task_meta_test.go",
+    ],
+    flaky = True,
+    shard_count = 6,
+    deps = [
+        ":taskinfo",
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/storage",
+        "//pkg/dxf/framework/taskexecutor/execute",
+        "//pkg/dxf/framework/testutil",
+        "//pkg/dxf/importinto/taskkey",
+        "//pkg/executor/importer",
+        "//pkg/kv",
+        "//pkg/planner/core",
+        "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/testkit/testsetup",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

@@ -23,7 +23,7 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -76,7 +76,7 @@ func (s *mockGCSSuite) TestGlobalSortSummary() {
 	require.EqualValues(s.T(), 10000, importedRows)
 
 	// One encode/postprocess task plus four merge/ingest tasks, total 10 subtasks
-	taskKey := importinto.TaskKey(int64(jobID))
+	taskKey := taskkey.ForJob(int64(jobID))
 	idSQL := `select id from mysql.tidb_global_task where task_key = ?
 		union select id from mysql.tidb_global_task_history where task_key = ?`
 	rs = s.tk.MustQuery(idSQL, taskKey, taskKey).Rows()

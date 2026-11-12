@@ -33,7 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
@@ -83,7 +85,7 @@ type importStepExecutor struct {
 	execute.NoopCollector
 
 	taskID        int64
-	taskMeta      *TaskMeta
+	taskMeta      *taskinfo.TaskMeta
 	tableImporter *importer.TableImporter
 	queryRuntime  sqlsvrapi.Runtime
 	store         tidbkv.Storage
@@ -110,7 +112,7 @@ type importStepExecutor struct {
 func getTableImporter(
 	ctx context.Context,
 	taskID int64,
-	taskMeta *TaskMeta,
+	taskMeta *taskinfo.TaskMeta,
 	store tidbkv.Storage,
 	logger *zap.Logger,
 ) (*importer.TableImporter, error) {
@@ -447,7 +449,7 @@ func (s *importStepExecutor) readQuery(
 		}
 	}()
 
-	return importer.RunImportQuery(
+	return executor.RunImportQuery(
 		ctx, se, s.taskMeta.Plan.QuerySource, s.taskMeta.Stmt,
 		int64(float64(s.GetResource().Mem.Capacity())*queryMemBudgetRatio), selected)
 }
@@ -538,7 +540,7 @@ func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 type mergeSortStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 	task     *proto.TaskBase
-	taskMeta *TaskMeta
+	taskMeta *taskinfo.TaskMeta
 	logger   *zap.Logger
 	// subtask of a task is run in serial now, so we don't need lock here.
 	// change to SyncMap when we support parallel subtask in the future.
@@ -747,7 +749,7 @@ type writeAndIngestStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 
 	taskID        int64
-	taskMeta      *TaskMeta
+	taskMeta      *taskinfo.TaskMeta
 	logger        *zap.Logger
 	tableImporter *importer.TableImporter
 	store         tidbkv.Storage
@@ -911,7 +913,7 @@ type postProcessStepExecutor struct {
 	taskID       int64
 	store        tidbkv.Storage
 	taskTbl      taskexecutor.TaskTable
-	taskMeta     *TaskMeta
+	taskMeta     *taskinfo.TaskMeta
 	taskKeyspace string
 	logger       *zap.Logger
 }
@@ -924,7 +926,7 @@ func NewPostProcessStepExecutor(
 	taskID int64,
 	store tidbkv.Storage,
 	taskTbl taskexecutor.TaskTable,
-	taskMeta *TaskMeta,
+	taskMeta *taskinfo.TaskMeta,
 	taskKeyspace string,
 	logger *zap.Logger,
 ) execute.StepExecutor {
@@ -989,7 +991,7 @@ func (*importExecutor) IsRetryableError(err error) bool {
 }
 
 func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
-	taskMeta := TaskMeta{}
+	taskMeta := taskinfo.TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
 	}
