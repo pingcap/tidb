@@ -1208,8 +1208,6 @@ type SessionVars struct {
 	// same-order index join candidate.
 	EnableAlternativeLogicalPlans bool
 
-	// EnableTiKVFullTextIndex allows creating a FULLTEXT index built in TiKV.
-	EnableTiKVFullTextIndex bool
 	// EnableLocalMatchAgainst enables local no-score MATCH ... AGAINST filters.
 	EnableLocalMatchAgainst bool
 
@@ -2403,7 +2401,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableOuterJoinReorder:           vardef.DefTiDBEnableOuterJoinReorder,
 		EnableNoDecorrelateInSelect:      vardef.DefOptEnableNoDecorrelateInSelect,
 		EnableAlternativeLogicalPlans:    vardef.DefOptEnableAlternativeLogicalPlans,
-		EnableTiKVFullTextIndex:          vardef.DefTiDBEnableTiKVFullTextIndex,
 		EnableLocalMatchAgainst:          vardef.DefTiDBEnableLocalMatchAgainst,
 		EnableSemiJoinRewrite:            vardef.DefOptEnableSemiJoinRewrite,
 		RetryLimit:                       vardef.DefTiDBRetryLimit,

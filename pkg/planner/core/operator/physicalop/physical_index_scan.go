@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	utilredact "github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/size"
 	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -108,6 +109,26 @@ type PhysicalIndexScan struct {
 
 	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
 	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
+
+	// FullText is set when the scan reads a FULLTEXT index built in TiKV. The
+	// rows are then selected by TiDB's posting-list engine, evaluating the
+	// search string against the index's entries, rather than by a coprocessor
+	// range scan: Ranges is empty and no DAG request is built for the scan.
+	// Such a scan appears only as the partial plan of an IndexMerge reader.
+	// Nothing changes it once the plan is built, so a cloned plan shares it.
+	FullText *FullTextScanInfo `plan-cache-clone:"shallow"`
+}
+
+// FullTextScanInfo describes the search a full-text index scan evaluates.
+type FullTextScanInfo struct {
+	// Search is the constant boolean-mode search string, compiled at execution
+	// time with the analyzer frozen in the index.
+	Search string
+	// PostingRows estimates the posting entries the search reads, which is
+	// what the scan costs; see util.FullTextAccessInfo.
+	PostingRows float64
+	// PostingScans is the number of posting scans the search opens.
+	PostingScans float64
 }
 
 // FullRange represent used all partitions.
@@ -137,6 +158,10 @@ func (p *PhysicalIndexScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	cloned.Columns = sliceutil.DeepClone(p.Columns)
 	if p.DataSourceSchema != nil {
 		cloned.DataSourceSchema = p.DataSourceSchema.Clone()
+	}
+	if p.FullText != nil {
+		fullText := *p.FullText
+		cloned.FullText = &fullText
 	}
 
 	return cloned, nil
@@ -240,6 +265,9 @@ func (p *PhysicalIndexScan) ExplainID(_ ...bool) fmt.Stringer {
 
 // TP overrides the TP in order to match different range.
 func (p *PhysicalIndexScan) TP(_ ...bool) string {
+	if p.FullText != nil {
+		return plancodec.TypeFullTextIndexScan
+	}
 	if p.IsFullScan() {
 		return plancodec.TypeIndexFullScan
 	}
@@ -261,6 +289,20 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	redact := p.SCtx().GetSessionVars().EnableRedactLog
 	var buffer strings.Builder
+	if p.FullText != nil {
+		// The index is read by terms of the search string; the ranges that
+		// follow, if any, are the key-column values the search is confined
+		// to, followed by the clustered-handle ranges each term's postings
+		// are confined to.
+		if normalized {
+			buffer.WriteString("fulltext:?, ")
+		} else {
+			// The search string is user data, like the range values.
+			buffer.WriteString("fulltext:")
+			utilredact.WriteRedact(&buffer, strconv.Quote(p.FullText.Search), redact)
+			buffer.WriteString(", ")
+		}
+	}
 	if len(p.RangeInfo) > 0 {
 		if !normalized {
 			buffer.WriteString("range: decided by ")
@@ -710,6 +752,19 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 	return is
 }
 
+// ConvertToFullTextIndexScan builds the partial plan of an IndexMerge that
+// reads a FULLTEXT index built in TiKV. The scan has no ranges and no
+// coprocessor request: TiDB's posting-list engine evaluates the search string
+// against the index and yields the matching handles.
+func ConvertToFullTextIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath) *PhysicalIndexScan {
+	is := GetOriginalPhysicalIndexScan(ds, prop, path, false, false)
+	// The search string is baked into the plan. A literal one is the same in
+	// every execution; a plan built for a parameter's value is kept out of
+	// the plan cache when the path is built.
+	is.FullText = &FullTextScanInfo{Search: path.FullText.Search, PostingRows: path.FullText.PostingRows, PostingScans: path.FullText.PostingScans}
+	return is
+}
+
 // ConvertToPartialIndexScan converts a DataSource to a PhysicalIndexScan for IndexMerge.
 func ConvertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *PhysPlanPartInfo, prop *property.PhysicalProperty, path *util.AccessPath, matchProp property.PhysicalPropMatchResult, byItems []*util.ByItems) (base.PhysicalPlan, []expression.Expression, error) {
 	is := GetOriginalPhysicalIndexScan(ds, prop, path, matchProp.Matched(), false)
@@ -738,7 +793,7 @@ func ConvertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *PhysP
 	}
 
 	if len(indexConds) > 0 {
-		pushedFilters, remainingFilter := extractFiltersForIndexMerge(util.GetPushDownCtx(ds.SCtx()), indexConds)
+		pushedFilters, remainingFilter := extractFiltersForIndexMerge(util.GetPushDownCtx(ds.SCtx()), indexConds, ds.PushedDownConds)
 		var selectivity float64
 		if path.CountAfterAccess > 0 {
 			selectivity = path.CountAfterIndex / path.CountAfterAccess

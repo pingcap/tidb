@@ -999,7 +999,8 @@ func TestIssue70706(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table articles (
 		id int primary key,
-		title varchar(200)
+		title varchar(200),
+		fulltext index idx_title(title)
 	)`)
 	tk.MustExec(`insert into articles values
 		(1, 'MySQL Tutorial'),
