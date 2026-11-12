@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
+	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -75,13 +75,13 @@ func (s *mockGCSSuite) TestImportFromSelectBasic() {
 		ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 		mgr, err := storage.GetDXFSvcTaskMgr()
 		s.NoError(err)
-		task, err := mgr.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(jobID))
+		task, err := mgr.GetTaskByKeyWithHistory(ctx, taskkey.ForImportJob(jobID))
 		s.NoError(err)
 		s.Equal(1, task.MaxNodeCount)
 		nodeCPU, err := handle.GetCPUCountOfNode(ctx)
 		s.NoError(err)
 		s.Equal(nodeCPU, task.RequiredSlots)
-		var meta importinto.TaskMeta
+		var meta importer.TaskMeta
 		s.NoError(json.Unmarshal(task.Meta, &meta))
 		s.NotZero(meta.Plan.QuerySource.ReadTS)
 	}

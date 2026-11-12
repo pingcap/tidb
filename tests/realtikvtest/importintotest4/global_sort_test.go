@@ -36,7 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
+	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -218,10 +219,10 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.EqualValues(6, jobInfo.Summary.ImportedRows)
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	taskKey := importinto.TaskKey(int64(jobID))
+	taskKey := taskkey.ForImportJob(int64(jobID))
 	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err2)
-	taskMeta := importinto.TaskMeta{}
+	taskMeta := importer.TaskMeta{}
 	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
 	urlEqual(s.T(), redactedSortStorageURI, taskMeta.Plan.CloudStorageURI)
 	require.True(s.T(), taskMeta.Plan.DisableTiKVImportMode)
@@ -245,7 +246,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.NoError(err)
 	var taskID int64
 	s.Eventually(func() bool {
-		task, err2 = taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+		task, err2 = taskManager.GetTaskByKeyWithHistory(ctx, taskkey.ForImportJob(int64(jobID)))
 		s.NoError(err2)
 		taskID = task.ID
 		return task.State == proto.TaskStateReverted
@@ -316,11 +317,11 @@ func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
 	s.NoError(err)
 	var task *proto.Task
 	s.Eventually(func() bool {
-		task, err = taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+		task, err = taskManager.GetTaskByKeyWithHistory(ctx, taskkey.ForImportJob(int64(jobID)))
 		s.NoError(err)
 		return task.State == proto.TaskStateSucceed
 	}, 30*time.Second, 300*time.Millisecond)
-	var taskMeta importinto.TaskMeta
+	var taskMeta importer.TaskMeta
 	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
 
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
@@ -519,7 +520,7 @@ func TestNextGenMetering(t *testing.T) {
 
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	task, err := taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskkey.ForImportJob(int64(jobID)))
 	s.NoError(err)
 	s.Eventually(func() bool {
 		return gotMeterData.Load() != ""
@@ -617,7 +618,7 @@ func TestNextGenMeteringWithConflictResolution(t *testing.T) {
 
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	task, err := taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskkey.ForImportJob(int64(jobID)))
 	s.NoError(err)
 	s.Eventually(func() bool {
 		return gotMeterData.Load() != ""

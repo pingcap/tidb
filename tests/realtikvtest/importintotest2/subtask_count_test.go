@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -53,7 +53,7 @@ func (s *mockGCSSuite) TestStepSubtaskCount() {
 	// after amplify, the real size is 58*14G=812G, and we mock the node as 16c,
 	// so the computed resource should be at least 2 nodes
 	var status *schstatus.Status
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/amplifyRealSize", fmt.Sprintf("return(%d)", 14*units.GiB))
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/importer/amplifyRealSize", fmt.Sprintf("return(%d)", 14*units.GiB))
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/syncBeforePostProcess", func(int64) {
 		var err error
 		status, err = handle.GetScheduleStatus(ctx)
@@ -70,7 +70,7 @@ func (s *mockGCSSuite) TestStepSubtaskCount() {
 	// only 1 node is required in post process step.
 	s.Equal(status.TiDBWorker.RequiredCount, 1)
 
-	taskKey := importinto.TaskKey(int64(jobID))
+	taskKey := taskkey.ForImportJob(int64(jobID))
 	mgr, err := storage.GetTaskManager()
 	s.NoError(err)
 	task, err := mgr.GetTaskByKeyWithHistory(ctx, taskKey)

@@ -58,7 +58,7 @@ type ImportDataSizeEstimate struct {
 }
 
 // ImportOptions wraps the options for IMPORT INTO statement.
-// It reuses structures from executor/importer where possible.
+// It reuses structures from pkg/importer where possible.
 type ImportOptions struct {
 	Format                string
 	CSVConfig             *config.CSVConfig

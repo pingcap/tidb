@@ -564,6 +564,7 @@
       "pkg/lightning/": "pkg/lightning/",
       "lightning/": "lightning/",
       "pkg/executor/": "executor/",
+      "pkg/importer/": "importer/",
       "pkg/types/json_binary_functions.go": "types/json_binary_functions.go",
       "pkg/types/json_binary_test.go": "types/json_binary_test.go",
       "pkg/ddl/": "ddl",

@@ -84,7 +84,7 @@ func (e *LoadDataController) checkRequirements(ctx context.Context, se sessionct
 	conn := se.GetSQLExecutor()
 	// Only imports that create an import job can conflict with an active one.
 	if e.DataSourceType == DataSourceTypeFile || kerneltype.IsNextGen() {
-		cnt, err := GetActiveJobCnt(ctx, conn, e.Plan.DBName, e.Plan.TableInfo.Name.L)
+		cnt, err := getActiveJobCnt(ctx, conn, e.Plan.DBName, e.Plan.TableInfo.Name.L, e.importJobID)
 		if err != nil {
 			return errors.Trace(err)
 		}

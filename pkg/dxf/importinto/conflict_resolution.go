@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -40,7 +40,7 @@ type conflictResolutionStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 	task     *proto.TaskBase
 	store    tidbkv.Storage
-	taskMeta *TaskMeta
+	taskMeta *importer.TaskMeta
 	logger   *zap.Logger
 
 	tableImporter *importer.TableImporter
@@ -55,7 +55,7 @@ var _ execute.Collector = &conflictResolutionStepExecutor{}
 func NewConflictResolutionStepExecutor(
 	task *proto.TaskBase,
 	store tidbkv.Storage,
-	taskMeta *TaskMeta,
+	taskMeta *importer.TaskMeta,
 	logger *zap.Logger,
 ) execute.StepExecutor {
 	return &conflictResolutionStepExecutor{

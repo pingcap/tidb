@@ -35,7 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
+	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -94,18 +95,20 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "pending", gotJobInfo.Status)
 	logicalPlan := &importinto.LogicalPlan{
-		JobID: jobID,
-		Plan: importer.Plan{
-			DBName: "test",
-			TableInfo: &model.TableInfo{
-				Name:  ast.NewCIStr("t"),
-				State: model.StatePublic,
+		TaskMeta: importer.TaskMeta{
+			JobID: jobID,
+			Plan: importer.Plan{
+				DBName: "test",
+				TableInfo: &model.TableInfo{
+					Name:  ast.NewCIStr("t"),
+					State: model.StatePublic,
+				},
+				DisableTiKVImportMode: true,
 			},
-			DisableTiKVImportMode: true,
+			Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
+			EligibleInstances: []*serverinfo.ServerInfo{{StaticInfo: serverinfo.StaticInfo{ID: "1"}}},
+			ChunkMap:          map[int32][]importer.Chunk{1: {{Path: "gs://test-load/1.csv"}}},
 		},
-		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-		EligibleInstances: []*serverinfo.ServerInfo{{StaticInfo: serverinfo.StaticInfo{ID: "1"}}},
-		ChunkMap:          map[int32][]importer.Chunk{1: {{Path: "gs://test-load/1.csv"}}},
 	}
 	bs, err := logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
@@ -120,7 +123,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	}
 	manager, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, "", 1, "", 1, proto.ExtraParams{}, bs)
+	taskID, err := manager.CreateTask(ctx, taskkey.ForImportJob(jobID), proto.ImportInto, "", 1, "", 1, proto.ExtraParams{}, bs)
 	require.NoError(t, err)
 	task.ID = taskID
 
@@ -329,33 +332,35 @@ func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(
 		require.NoError(t, err)
 		defaultCharset := "utf8mb4"
 		logicalPlan := &importinto.LogicalPlan{
-			JobID: jobID,
-			Plan: importer.Plan{
-				Path:   fmt.Sprintf("gs://test-load/*.csv?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint),
-				Format: importer.DataFormatAuto,
-				DBName: "test",
-				TableInfo: func() *model.TableInfo {
-					c := tblInfo.Clone()
-					c.Name = ast.NewCIStr("t")
-					c.State = model.StatePublic
-					return c
-				}(),
-				DisableTiKVImportMode: true,
-				CloudStorageURI:       sortStorageURI,
-				InImportInto:          true,
-				Charset:               &defaultCharset,
-				FieldNullDef:          []string{`\N`},
-				LineFieldsInfo: importdef.LineFieldsInfo{
-					FieldsTerminatedBy: ",",
-					FieldsEnclosedBy:   `"`,
-					FieldsEscapedBy:    `\`,
-					LinesStartingBy:    ``,
-					LinesTerminatedBy:  ``,
+			TaskMeta: importer.TaskMeta{
+				JobID: jobID,
+				Plan: importer.Plan{
+					Path:   fmt.Sprintf("gs://test-load/*.csv?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint),
+					Format: importer.DataFormatAuto,
+					DBName: "test",
+					TableInfo: func() *model.TableInfo {
+						c := tblInfo.Clone()
+						c.Name = ast.NewCIStr("t")
+						c.State = model.StatePublic
+						return c
+					}(),
+					DisableTiKVImportMode: true,
+					CloudStorageURI:       sortStorageURI,
+					InImportInto:          true,
+					Charset:               &defaultCharset,
+					FieldNullDef:          []string{`\N`},
+					LineFieldsInfo: importdef.LineFieldsInfo{
+						FieldsTerminatedBy: ",",
+						FieldsEnclosedBy:   `"`,
+						FieldsEscapedBy:    `\`,
+						LinesStartingBy:    ``,
+						LinesTerminatedBy:  ``,
+					},
 				},
+				Stmt: `IMPORT INTO test.t FROM 'gs://test-load/*.csv?endpoint=xxx'`,
 			},
-			Stmt: `IMPORT INTO test.t FROM 'gs://test-load/*.csv?endpoint=xxx'`,
 		}
-		require.True(t, importinto.ShouldUseAsyncPrepare(&logicalPlan.Plan))
+		require.True(t, importer.ShouldUseAsyncPrepare(&logicalPlan.Plan))
 		bs, err := logicalPlan.ToTaskMeta()
 		require.NoError(t, err)
 		task := &proto.Task{
@@ -370,7 +375,7 @@ func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(
 		}
 		task.ID, err = mgr.CreateTask(
 			ctx,
-			importinto.TaskKey(jobID),
+			taskkey.ForImportJob(jobID),
 			proto.ImportInto,
 			keyspace,
 			1,
@@ -500,19 +505,21 @@ func TestSchedulerOnDoneCancelResetsTableMode(t *testing.T) {
 	require.NoError(t, err)
 
 	logicalPlan := &importinto.LogicalPlan{
-		JobID: jobID,
-		Plan: importer.Plan{
-			DBName: "test",
-			DBID:   dbInfo.ID,
-			TableInfo: func() *model.TableInfo {
-				c := tblInfo.Clone()
-				c.Name = ast.NewCIStr("t")
-				c.State = model.StatePublic
-				return c
-			}(),
-			DisableTiKVImportMode: true,
+		TaskMeta: importer.TaskMeta{
+			JobID: jobID,
+			Plan: importer.Plan{
+				DBName: "test",
+				DBID:   dbInfo.ID,
+				TableInfo: func() *model.TableInfo {
+					c := tblInfo.Clone()
+					c.Name = ast.NewCIStr("t")
+					c.State = model.StatePublic
+					return c
+				}(),
+				DisableTiKVImportMode: true,
+			},
+			Stmt: `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
 		},
-		Stmt: `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
 	}
 	bs, err := logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
@@ -588,24 +595,26 @@ func testSchedulerExtGlobalSort(t *testing.T, sourceStep proto.Step) {
 	require.NoError(t, err)
 	require.Equal(t, "pending", gotJobInfo.Status)
 	logicalPlan := &importinto.LogicalPlan{
-		JobID: jobID,
-		Plan: importer.Plan{
-			Path:   fmt.Sprintf("gs://test-load/*.csv?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint),
-			Format: "csv",
-			DBName: "test",
-			TableInfo: &model.TableInfo{
-				Name:  ast.NewCIStr("t"),
-				State: model.StatePublic,
+		TaskMeta: importer.TaskMeta{
+			JobID: jobID,
+			Plan: importer.Plan{
+				Path:   fmt.Sprintf("gs://test-load/*.csv?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint),
+				Format: "csv",
+				DBName: "test",
+				TableInfo: &model.TableInfo{
+					Name:  ast.NewCIStr("t"),
+					State: model.StatePublic,
+				},
+				DisableTiKVImportMode: true,
+				CloudStorageURI:       sortStorageURI,
+				InImportInto:          true,
 			},
-			DisableTiKVImportMode: true,
-			CloudStorageURI:       sortStorageURI,
-			InImportInto:          true,
-		},
-		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-		EligibleInstances: []*serverinfo.ServerInfo{{StaticInfo: serverinfo.StaticInfo{ID: "1"}}},
-		ChunkMap: map[int32][]importer.Chunk{
-			1: {{Path: "gs://test-load/1.csv"}},
-			2: {{Path: "gs://test-load/2.csv"}},
+			Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
+			EligibleInstances: []*serverinfo.ServerInfo{{StaticInfo: serverinfo.StaticInfo{ID: "1"}}},
+			ChunkMap: map[int32][]importer.Chunk{
+				1: {{Path: "gs://test-load/1.csv"}},
+				2: {{Path: "gs://test-load/2.csv"}},
+			},
 		},
 	}
 	sourceSubtasks := 2
@@ -634,7 +643,7 @@ func testSchedulerExtGlobalSort(t *testing.T, sourceStep proto.Step) {
 	require.NoError(t, err)
 	taskMeta, err := json.Marshal(task)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, keyspace, 1, scope, 1, proto.ExtraParams{}, taskMeta)
+	taskID, err := manager.CreateTask(ctx, taskkey.ForImportJob(jobID), proto.ImportInto, keyspace, 1, scope, 1, proto.ExtraParams{}, taskMeta)
 	require.NoError(t, err)
 	task.ID = taskID
 
@@ -773,7 +782,7 @@ func testSchedulerExtGlobalSort(t *testing.T, sourceStep proto.Step) {
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.ImportStepPostProcess, task.Step)
-	var completedMeta importinto.TaskMeta
+	var completedMeta importer.TaskMeta
 	require.NoError(t, json.Unmarshal(task.Meta, &completedMeta))
 	require.EqualValues(t, 3*sourceSubtasks, completedMeta.Summary.ImportedRows)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)

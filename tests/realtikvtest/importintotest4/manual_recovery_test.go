@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -52,7 +52,7 @@ func (s *mockGCSSuite) runTaskToAwaitingState() (context.Context, int64, *proto.
 	s.NoError(err)
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	task, err := taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskkey.ForImportJob(int64(jobID)))
 	s.NoError(err)
 	_, err = handle.WaitTask(ctx, task.ID, func(t *proto.TaskBase) bool {
 		return t.State == proto.TaskStateAwaitingResolution

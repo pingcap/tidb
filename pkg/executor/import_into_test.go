@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
@@ -361,7 +361,7 @@ func TestCancelImportJobWithoutDXFTask(t *testing.T) {
 	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
 
 	assertNoDXFTask := func(jobID int64) {
-		taskKey := importinto.TaskKey(jobID)
+		taskKey := taskkey.ForImportJob(jobID)
 		tk.MustQuery("select count(1) from mysql.tidb_global_task where task_key = ?", taskKey).
 			Check(testkit.Rows("0"))
 		tk.MustQuery("select count(1) from mysql.tidb_global_task_history where task_key = ?", taskKey).

@@ -31,6 +31,15 @@ Hard requirements remain in the repository root `AGENTS.md`.
   - `pkg/executor/test/materializedviewlog/` for materialized view log purge and related checks
   - SQL integration tests for user-visible behavior
 
+### Import preparation and execution
+- `pkg/importer/`: import plans, task metadata and execution; it must not depend on `pkg/planner/core`, because `pkg/ddl` imports it.
+- `pkg/executor/import_into.go`, `pkg/executor/load_data.go`: also convert SQL plans to import plans.
+- `pkg/dxf/importinto/`: distributed import scheduling and step execution, also used by MV builds.
+- `pkg/dxf/taskkey/`: shared IMPORT and ADD INDEX task key formatting, including keyspace and multi-schema suffixes.
+- `pkg/importer/job.go`, `pkg/importer/runtime_info.go`: import job rows, and job progress read from the DXF task.
+- `pkg/executor/import_into.go`: IMPORT INTO task submission; `pkg/executor` must not import `pkg/dxf/importinto`.
+- First tests: importer metadata/option tests, `pkg/importer/runtime_info_test.go`, `pkg/executor/query_import_test.go` and `pkg/executor/import_into_submit_test.go`.
+
 ### Session, variables, protocol
 - `pkg/session/`
 - `pkg/sessionctx/`

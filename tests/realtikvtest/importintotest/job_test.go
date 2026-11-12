@@ -32,8 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
+	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
@@ -132,7 +132,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.ErrorIs(err, exeerrors.ErrLoadDataJobNotFound)
 
 	// test show job by id using test_show_job1
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/importer/setLastImportJobID", `return(true)`)
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/storage/testSetLastTaskID", "return(true)")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/parser/ast/forceRedactURL", "return(true)")
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_show_job1", Hostname: "localhost"}, nil, nil, nil))
@@ -467,7 +467,7 @@ func (s *mockGCSSuite) TestShowImportJobTimingAroundPrepare() {
 	var preparedOnce sync.Once
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/afterTaskPrepared",
 		func(task *proto.Task) {
-			if task.Key != importinto.TaskKey(jobID64) {
+			if task.Key != taskkey.ForImportJob(jobID64) {
 				return
 			}
 			preparedOnce.Do(func() {
@@ -615,10 +615,10 @@ func (s *mockGCSSuite) TestDetachedJobWithoutPrepareModeStillSucceeds() {
 		Content: []byte("seed"),
 	})
 
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/mockDisableAsyncPrepare", "return")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/importer/mockDisableAsyncPrepare", "return")
 	// Block scheduler so we can verify submitted task still has no prepare mode.
 	releaseScheduler := s.blockSchedulerBeforeGetSchedulableTasks()
-	s.False(importinto.ShouldUseAsyncPrepare(&importer.Plan{CloudStorageURI: "gs://mock-bucket/mock-path"}))
+	s.False(importer.ShouldUseAsyncPrepare(&importer.Plan{CloudStorageURI: "gs://mock-bucket/mock-path"}))
 	importSQL := fmt.Sprintf(
 		`IMPORT INTO t FROM 'gs://detached-job-without-prepare-mode-source/t.csv?endpoint=%s'
 		WITH DETACHED, cloud_storage_uri='gs://detached-job-without-prepare-mode-sort/path?endpoint=%s'`,
@@ -630,7 +630,7 @@ func (s *mockGCSSuite) TestDetachedJobWithoutPrepareModeStillSucceeds() {
 	jobID, err := strconv.Atoi(result[0][0].(string))
 	s.NoError(err)
 	jobID64 := int64(jobID)
-	taskKey := importinto.TaskKey(jobID64)
+	taskKey := taskkey.ForImportJob(jobID64)
 	// prepare_mode is 0 and omit when marshal to JSON, so "is null" return true.
 	s.tk.MustQuery(fmt.Sprintf(
 		"select json_extract(extra_params, '$.prepare_mode') is null from mysql.tidb_global_task where task_key = '%s'",
@@ -653,7 +653,7 @@ func (s *mockGCSSuite) TestDetachedJobWithoutPrepareModeStillSucceeds() {
 func (s *mockGCSSuite) getTaskByJobID(ctx context.Context, jobID int64) *proto.Task {
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	taskKey := importinto.TaskKey(jobID)
+	taskKey := taskkey.ForImportJob(jobID)
 	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err)
 	return task
@@ -756,7 +756,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 			}, 10*time.Second, 500*time.Millisecond)
 		},
 	)
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/waitCtxDone", "return(true)")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/importer/waitCtxDone", "return(true)")
 	result2 := s.tk.MustQuery(fmt.Sprintf(`import into t2 FROM 'gs://test_cancel_job/t.csv?endpoint=%s' with detached`,
 		gcsEndpoint)).Rows()
 	s.Len(result2, 1)
@@ -786,7 +786,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.compareJobInfoWithoutTime(jobInfo, rows2[0])
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	taskKey := importinto.TaskKey(int64(jobID2))
+	taskKey := taskkey.ForImportJob(int64(jobID2))
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
 		task2, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
@@ -806,7 +806,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 
 	// cancel a pending job created by test_cancel_job2 using root
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/dxf/importinto/syncBeforePostProcess"))
-	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/waitCtxDone"))
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/importer/waitCtxDone"))
 	wg = sync.WaitGroup{}
 	wg.Add(1)
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/syncBeforeJobStarted",
@@ -880,7 +880,7 @@ func (s *mockGCSSuite) TestJobFailWhenDispatchSubtask() {
 		ErrorMessage:   "injected error after ImportStepImport",
 	}
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/failWhenDispatchPostProcessSubtask", "return(true)")
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/importer/setLastImportJobID", `return(true)`)
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	err = s.tk.QueryToErr(fmt.Sprintf(`import into t1 FROM 'gs://fail_job_after_import/t.csv?endpoint=%s'`, gcsEndpoint))
 	s.ErrorContains(err, "injected error after ImportStepImport")
@@ -919,7 +919,7 @@ func (s *mockGCSSuite) TestKillBeforeFinish() {
 			cancelFn.Store(&cancel)
 		},
 	)
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/importer/setLastImportJobID", `return(true)`)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
@@ -935,7 +935,7 @@ func (s *mockGCSSuite) TestKillBeforeFinish() {
 	s.Equal("cancelled", rows[0][fmap["Status"]])
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	taskKey := importinto.TaskKey(jobID)
+	taskKey := taskkey.ForImportJob(jobID)
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
 		task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)

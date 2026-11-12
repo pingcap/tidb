@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -570,7 +570,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		require.NoError(t, err)
 		defer pool.Destroy(resource)
 		output := make(chan importer.QueryChunk, 4)
-		err = importer.RunImportQuery(ctx, resource.(sessionctx.Context), captured, sql, 1<<20, output)
+		err = executor.RunImportQuery(ctx, resource.(sessionctx.Context), captured, sql, 1<<20, output)
 		require.NoError(t, err)
 		close(output)
 		result := make(map[int64]int64)

@@ -33,7 +33,6 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/dumpformat/testutils"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -542,11 +541,17 @@ func newParquetPlanAndControllerForTest(ctx context.Context, t *testing.T, sctx 
 	t.Helper()
 	sctx.Store = keyspaceOnlyStore{}
 
-	node, err := parser.New().ParseOneStmt("create table t(a timestamp)", "", "")
-	require.NoError(t, err)
-	tblInfo, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 1)
-	require.NoError(t, err)
-	tblInfo.State = model.StatePublic
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{{
+			ID:        1,
+			Name:      ast.NewCIStr("a"),
+			State:     model.StatePublic,
+			FieldType: *types.NewFieldType(mysql.TypeTimestamp),
+		}},
+	}
 	table := tables.MockTableFromMeta(tblInfo)
 
 	fileName := filepath.Join(t.TempDir(), "data.parquet")
@@ -583,7 +588,7 @@ func TestImportPlanParquetLocation(t *testing.T) {
 		require.NotNil(t, controller.ParquetLocation())
 		require.Equal(t, "Asia/Shanghai", controller.ParquetLocation().String())
 
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/importer/skipEstimateCompressionForParquet", "return(true)")
 		require.NoError(t, controller.InitDataFiles(ctx))
 		require.Len(t, controller.dataFiles, 1)
 		require.Same(t, controller.ParquetLocation(), controller.dataFiles[0].ParquetMeta.Loc)
@@ -601,7 +606,7 @@ func TestImportPlanParquetLocation(t *testing.T) {
 		_, offset := time.Now().In(controller.ParquetLocation()).Zone()
 		require.Equal(t, 8*3600, offset)
 
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/importer/skipEstimateCompressionForParquet", "return(true)")
 		require.NoError(t, controller.InitDataFiles(ctx))
 		require.Len(t, controller.dataFiles, 1)
 		require.Same(t, controller.ParquetLocation(), controller.dataFiles[0].ParquetMeta.Loc)
@@ -670,7 +675,7 @@ func TestImportPlanParquetLocation(t *testing.T) {
 		require.NoError(t, err)
 		require.Same(t, time.UTC, legacyController.ParquetLocation())
 
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/importer/skipEstimateCompressionForParquet", "return(true)")
 		require.NoError(t, legacyController.InitDataFiles(ctx))
 		require.Len(t, legacyController.dataFiles, 1)
 		require.Same(t, time.UTC, legacyController.dataFiles[0].ParquetMeta.Loc)
@@ -916,7 +921,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 		},
 	}
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/importer/skipEstimateCompressionForParquet", "return(true)")
 	for _, testcase := range testcases {
 		for _, fileName := range testcase.fileNames {
 			c.Format = DataFormatAuto
@@ -1040,4 +1045,25 @@ func TestPlanMetadataCompatibility(t *testing.T) {
 		require.JSONEq(t, string(value), string(actual[key]), key)
 	}
 	require.NotContains(t, actual, "LineFieldsInfo")
+}
+
+func TestTaskMetaCompatibility(t *testing.T) {
+	// TaskMeta moved from dxf/importinto; its persisted layout must not change.
+	const legacy = `{"JobID":5,"Plan":{"DBName":"db"},"Stmt":"import","Summary":{},"EligibleInstances":null,"ChunkMap":null,"prepared_meta_external_path":"p"}`
+	var meta TaskMeta
+	require.NoError(t, json.Unmarshal([]byte(legacy), &meta))
+	require.EqualValues(t, 5, meta.JobID)
+	require.Equal(t, "db", meta.Plan.DBName)
+	require.Equal(t, "p", meta.PreparedMetaExternalPath)
+	encoded, err := json.Marshal(&meta)
+	require.NoError(t, err)
+	var actual, expected map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(encoded, &actual))
+	require.NoError(t, json.Unmarshal([]byte(legacy), &expected))
+	for _, key := range []string{"JobID", "Stmt", "prepared_meta_external_path"} {
+		require.JSONEq(t, string(expected[key]), string(actual[key]), key)
+	}
+	for key := range expected {
+		require.Contains(t, actual, key)
+	}
 }

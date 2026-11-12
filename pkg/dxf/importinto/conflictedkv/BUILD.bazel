@@ -14,7 +14,7 @@ go_library(
     deps = [
         "//pkg/dxf/framework/handle",
         "//pkg/dxf/framework/taskexecutor/execute",
-        "//pkg/executor/importer",
+        "//pkg/importer",
         "//pkg/ingestor/globalsort",
         "//pkg/ingestor/simplesst",
         "//pkg/kv",
@@ -55,7 +55,7 @@ go_test(
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/dxf/framework/taskexecutor/execute",
-        "//pkg/executor/importer",
+        "//pkg/importer",
         "//pkg/ingestor/globalsort",
         "//pkg/ingestor/simplesst",
         "//pkg/kv",

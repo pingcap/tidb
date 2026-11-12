@@ -101,7 +101,7 @@ func (s *mockGCSSuite) TestStarterMaxImportDataSize() {
 	s.tk.MustExec("create table under_limit (a int, b int);")
 	s.tk.MustExec("create table over_limit (a int, b int);")
 
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/amplifyRealSize", "return(10)")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/importer/amplifyRealSize", "return(10)")
 	underLimitSQL := fmt.Sprintf(`IMPORT INTO under_limit
 		FROM 'gs://starter-max-import-data-size-source/under.csv?endpoint=%s'
 		WITH cloud_storage_uri='gs://starter-max-import-data-size-sort/under?endpoint=%s'`,

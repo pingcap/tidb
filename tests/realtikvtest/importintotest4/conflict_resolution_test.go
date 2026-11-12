@@ -34,7 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
+	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -170,7 +171,7 @@ func (s *mockGCSSuite) getSourceRowCount(sourceContents []string) int {
 
 func (s *mockGCSSuite) getTaskByJob(jobID int64) *proto.Task {
 	s.T().Helper()
-	taskKey := importinto.TaskKey(jobID)
+	taskKey := taskkey.ForImportJob(jobID)
 	task, err2 := s.taskMgr.GetTaskByKeyWithHistory(s.ctx, taskKey)
 	s.NoError(err2)
 	return task
@@ -571,7 +572,7 @@ func (s *mockGCSSuite) TestGlobalSortMultiValuedUniqueIndexCountsConflictedRowOn
 	// collectors are exercised.
 	testfailpoint.Enable(
 		s.T(),
-		"github.com/pingcap/tidb/pkg/executor/importer/amplifyRealSize",
+		"github.com/pingcap/tidb/pkg/importer/amplifyRealSize",
 		fmt.Sprintf("return(%d)", 2*units.GiB),
 	)
 
@@ -831,7 +832,7 @@ func (s *mockGCSSuite) checkMergeStepConflictInfo(jobID int64, sortStorageURI st
 	task := s.getTaskByJob(jobID)
 	subtasks := s.getSubtasksOfStep(task.ID, proto.ImportStepMergeSort)
 
-	taskMeta := importinto.TaskMeta{}
+	taskMeta := importer.TaskMeta{}
 	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
 	kvGroupCanConflict := make(map[string]bool, len(taskMeta.Plan.TableInfo.Indices)+1)
 	kvGroupCanConflict["data"] = taskMeta.Plan.TableInfo.HasClusteredIndex()

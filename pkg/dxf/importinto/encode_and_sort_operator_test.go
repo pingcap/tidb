@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/mock"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -53,7 +53,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 
 	executorForParam := &importStepExecutor{
 		taskID: 1,
-		taskMeta: &TaskMeta{
+		taskMeta: &importer.TaskMeta{
 			Plan: importer.Plan{
 				ThreadCnt: 2,
 			},

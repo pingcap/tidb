@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -106,9 +105,11 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 
 type queryChunkEncodeReader struct {
 	chunkCh <-chan QueryChunk
-	currChk QueryChunk
-	cursor  int
-	numRows int
+	// columnCnt is the number of values the encoder maps to the target table.
+	columnCnt int
+	currChk   QueryChunk
+	cursor    int
+	numRows   int
 }
 
 func (r *queryChunkEncodeReader) readRow(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error) {
@@ -120,6 +121,13 @@ func (r *queryChunkEncodeReader) readRow(ctx context.Context, row []types.Datum)
 		case currChk, ok := <-r.chunkCh:
 			if !ok {
 				closed = true
+				return
+			}
+			// The encoder fills missing values with defaults and ignores extra
+			// ones, so a mismatch would silently write wrong data.
+			if len(currChk.Fields) != r.columnCnt {
+				err = errors.Errorf("import query returns %d columns, but the target expects %d",
+					len(currChk.Fields), r.columnCnt)
 				return
 			}
 			r.currChk = currChk
@@ -151,8 +159,8 @@ func (r *queryChunkEncodeReader) readRow(ctx context.Context, row []types.Datum)
 }
 
 // queryRowEncodeReader wraps a queryChunkEncodeReader as a encodeReaderFn.
-func queryRowEncodeReader(chunkCh <-chan QueryChunk) encodeReaderFn {
-	reader := queryChunkEncodeReader{chunkCh: chunkCh}
+func queryRowEncodeReader(chunkCh <-chan QueryChunk, columnCnt int) encodeReaderFn {
+	reader := queryChunkEncodeReader{chunkCh: chunkCh, columnCnt: columnCnt}
 	return func(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error) {
 		return reader.readRow(ctx, row)
 	}
@@ -578,13 +586,6 @@ type QueryChunk struct {
 	RowIDOffset int64
 }
 
-// RunImportQuery runs the SELECT of the IMPORT INTO statement importSQL at q.ReadTS.
-// sctx takes the session states of the submitter, so the caller must destroy it.
-// It sends the result chunks to output, which the caller closes, and the
-// receiver owns the chunks it gets.
-// TODO(joechenrh): Registration by executor is to avoid import cycle. We can refactor it later.
-var RunImportQuery func(ctx context.Context, sctx sessionctx.Context, q *QuerySource, importSQL string, memQuota int64, output chan<- QueryChunk) error
-
 func newQueryChunkProcessor(
 	chunkCh chan QueryChunk,
 	encoder *TableKVEncoder,
@@ -610,7 +611,7 @@ func newQueryChunkProcessor(
 		deliver:    deliver,
 		enc: newChunkEncoder(
 			chunkName,
-			queryRowEncodeReader(chunkCh),
+			queryRowEncodeReader(chunkCh, len(encoder.fieldMappings)),
 			-1,
 			deliver.sendEncodedData,
 			collector,
