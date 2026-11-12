@@ -415,6 +415,23 @@ func BuildIndexInfo(
 	indexOption *ast.IndexOption,
 	state model.SchemaState,
 ) (*model.IndexInfo, error) {
+	return buildIndexInfo(ctx, tblInfo, indexName, isPrimary, isUnique, columnarIndexType, indexPartSpecifications, indexOption, state, nil)
+}
+
+// buildIndexInfo is BuildIndexInfo for a caller that already holds the
+// analyzer snapshot of a FULLTEXT index built in TiKV, as the DDL owner does
+// from the job; see buildTiKVFullTextInfoWithCheck.
+func buildIndexInfo(
+	ctx *metabuild.Context,
+	tblInfo *model.TableInfo,
+	indexName ast.CIStr,
+	isPrimary, isUnique bool,
+	columnarIndexType model.ColumnarIndexType,
+	indexPartSpecifications []*ast.IndexPartSpecification,
+	indexOption *ast.IndexOption,
+	state model.SchemaState,
+	tikvFullTextAnalyzer *model.TiKVFullTextIndexInfo,
+) (*model.IndexInfo, error) {
 	if err := checkTooLongIndex(indexName); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -450,7 +467,7 @@ func BuildIndexInfo(
 
 	tikvFullText := columnarIndexType == model.ColumnarIndexTypeNA && IsTiKVFullTextIndexOption(indexOption)
 	if tikvFullText {
-		info, err := buildTiKVFullTextInfoWithCheck(ctx, tblInfo.Columns, indexPartSpecifications, indexOption, tblInfo)
+		info, err := buildTiKVFullTextInfoWithCheck(ctx, tblInfo.Columns, indexPartSpecifications, indexOption, tblInfo, tikvFullTextAnalyzer)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -886,7 +903,11 @@ func checkAndBuildIndexInfo(
 	if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
 		return nil, errors.Trace(err)
 	}
-	indexInfo, err = BuildIndexInfo(
+	// The owner has no session to read FULLTEXT analyzer settings from; the
+	// statement's session captured them into the job, and the index is both
+	// built with them and compared with the table's other FULLTEXT indexes
+	// under them.
+	indexInfo, err = buildIndexInfo(
 		nil,
 		tblInfo,
 		args.IndexName,
@@ -896,6 +917,7 @@ func checkAndBuildIndexInfo(
 		args.IndexPartSpecifications,
 		args.IndexOption,
 		model.StateNone,
+		args.TiKVFullText,
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -906,9 +928,8 @@ func checkAndBuildIndexInfo(
 		}
 	}
 	if indexInfo.TiKVFullText != nil {
-		// The owner has no session to read analyzer settings from; the
-		// statement's session captured them into the job. Without them the
-		// index would be built from defaults the user did not ask for.
+		// Without the job's snapshot the index would be built from defaults
+		// the user did not ask for.
 		if args.TiKVFullText == nil {
 			return nil, dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index job carries no analyzer settings")
 		}

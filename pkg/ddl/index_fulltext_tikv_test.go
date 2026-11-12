@@ -126,6 +126,12 @@ func TestFullTextIndexBuiltInTiKV(t *testing.T) {
 	tk.MustExec("create table t_frozen (id int primary key, body varchar(255), fulltext index idx (body))")
 	frozen := check("t_frozen", "idx", model.FullTextParserTypeStandardV1)
 	require.Equal(t, 8, frozen.TiKVFullText.MinTokenSize)
+	// A second index over the column is checked against the first on the DDL
+	// owner too, which must compare the statement's settings, not defaults.
+	tk.MustExec("alter table t_frozen add fulltext index idx_second (id, body)")
+	_, frozenSecond := tikvFullTextIndex(t, dom, "t_frozen", "idx_second")
+	require.Equal(t, 8, frozenSecond.TiKVFullText.MinTokenSize)
+	tk.MustExec("alter table t_frozen drop index idx_second")
 	// Changing the variable does not reinterpret an existing index.
 	_, inline = tikvFullTextIndex(t, dom, "t_inline", "idx")
 	require.Equal(t, 3, inline.TiKVFullText.MinTokenSize)
@@ -474,7 +480,34 @@ func TestFullTextIndexBuiltInTiKVEntries(t *testing.T) {
 	tk.MustExec("admin check table pt")
 	tk.MustExec("delete from pt where id = 1")
 	tk.MustExec("admin check table pt")
+	// A partition's entries live under its own ID: an entry no row accounts
+	// for is found there.
+	ptBogusKey := tablecodec.EncodeIndexSeekKey(ptInfo.Partition.Definitions[0].ID, ptIdx.ID, nil)
+	ptBogusKey = append(ptBogusKey, encodedTerm...)
+	mutate(func(txn kv.Transaction) {
+		require.NoError(t, txn.Set(ptBogusKey, tablecodec.EncodeTiKVFullTextIndexValue(nil, tablecodec.EncodeTiKVFullTextPositions(nil, []int{0}), false)))
+	})
+	tk.MustContainErrMsg("admin check table pt", "data inconsistency in table: pt, index: idx, handle: 1")
+	mutate(func(txn kv.Transaction) { require.NoError(t, txn.Delete(ptBogusKey)) })
+	tk.MustExec("admin check table pt")
 	tk.MustExec("alter table pt drop index idx")
+
+	// A FULLTEXT index declared ahead of an ordinary one does not shift which
+	// index a count mismatch is traced to.
+	tk.MustExec("create table mix (id int primary key, n int, body text, fulltext index ft (body), index k1 (n))")
+	tk.MustExec("insert into mix values (1, 10, 'hello world'), (2, 20, 'distributed sql')")
+	mixInfo, _ := tikvFullTextIndex(t, dom, "mix", "ft")
+	k1Prefix := tablecodec.EncodeTableIndexPrefix(mixInfo.ID, mixInfo.FindIndexByName("k1").ID)
+	mutate(func(txn kv.Transaction) {
+		iter, err := txn.Iter(k1Prefix, k1Prefix.PrefixNext())
+		require.NoError(t, err)
+		require.True(t, iter.Valid())
+		k1Key := iter.Key().Clone()
+		iter.Close()
+		require.NoError(t, txn.Delete(k1Key))
+	})
+	tk.MustContainErrMsg("admin check table mix", "index: k1")
+	tk.MustExec("drop table mix")
 
 	// The column must stay text the analyzer can read.
 	tk.MustContainErrMsg("alter table t modify column body int", "FULLTEXT index requires a string column")

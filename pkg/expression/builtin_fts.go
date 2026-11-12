@@ -16,6 +16,7 @@ package expression
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
@@ -52,8 +53,10 @@ type ftsMysqlMatchAgainstFunctionClass struct {
 
 type builtinFtsMysqlMatchAgainstSig struct {
 	baseBuiltinFunc
-	modifier      ast.FulltextSearchModifier
-	localEvalInfo *FTSLocalEvalInfo
+	modifier ast.FulltextSearchModifier
+	// localEvalInfo is replaced, never modified in place, when evaluation
+	// refreshes it; workers sharing the signature read it without the lock.
+	localEvalInfo atomic.Pointer[FTSLocalEvalInfo]
 
 	// The compiled query is cached across rows: analysis and boolean-query
 	// compilation depend only on the search string, which is constant for the
@@ -92,7 +95,7 @@ func (info *FTSLocalEvalInfo) Clone() *FTSLocalEvalInfo {
 }
 
 func (b *builtinFtsMysqlMatchAgainstSig) hasLocalEvalInfo() bool {
-	return b.localEvalInfo != nil
+	return b.localEvalInfo.Load() != nil
 }
 
 // ftsLocalEvalPlan is the per-search-string compiled state for local matching.
@@ -112,7 +115,7 @@ func (b *builtinFtsMysqlMatchAgainstSig) Clone() builtinFunc {
 	newSig := &builtinFtsMysqlMatchAgainstSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	newSig.modifier = b.modifier
-	newSig.localEvalInfo = b.localEvalInfo.Clone()
+	newSig.localEvalInfo.Store(b.localEvalInfo.Load().Clone())
 	return newSig
 }
 
@@ -140,7 +143,7 @@ func SetFTSMysqlMatchAgainstLocalEvalInfo(sf *ScalarFunction, info *FTSLocalEval
 	if !ok {
 		return errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, sf.Function)
 	}
-	sig.localEvalInfo = info.Clone()
+	sig.localEvalInfo.Store(info.Clone())
 	return nil
 }
 
@@ -148,10 +151,11 @@ func SetFTSMysqlMatchAgainstLocalEvalInfo(sf *ScalarFunction, info *FTSLocalEval
 // metadata attached to `MATCH ... AGAINST`, if any.
 func FTSMysqlMatchAgainstLocalEvalInfo(sf *ScalarFunction) (*FTSLocalEvalInfo, bool) {
 	sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
-	if !ok || sig.localEvalInfo == nil {
+	if !ok {
 		return nil, false
 	}
-	return sig.localEvalInfo, true
+	info := sig.localEvalInfo.Load()
+	return info, info != nil
 }
 
 // FTSModifierSupportedByLocalNoScore reports whether the modifier can be
@@ -276,7 +280,7 @@ func (c *ftsMysqlMatchAgainstFunctionClass) getFunction(ctx BuildContext, args [
 }
 
 func (b *builtinFtsMysqlMatchAgainstSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
-	if b.localEvalInfo == nil {
+	if b.localEvalInfo.Load() == nil {
 		// args[0] is validated to be a *Constant by getFunction; guard
 		// defensively since the sig may be reconstructed via the distsql path
 		// without that check. Reading Value directly is only safe here because
@@ -337,7 +341,8 @@ func (b *builtinFtsMysqlMatchAgainstSig) getOrBuildLocalNoScorePlan(search strin
 		return b.localPlan, nil
 	}
 
-	config := b.localEvalInfo.AnalyzerConfig
+	info := b.localEvalInfo.Load()
+	config := info.AnalyzerConfig
 	analyzer, err := fulltext.GetAnalyzer(config)
 	if err != nil {
 		return nil, err
@@ -353,12 +358,10 @@ func (b *builtinFtsMysqlMatchAgainstSig) getOrBuildLocalNoScorePlan(search strin
 	// one present when the plan was built. Only the planner reads it today, and
 	// only for a stable constant, so this changes nothing in practice; it keeps
 	// the two from being able to disagree if that ever stops holding.
-	if b.localEvalInfo != nil {
-		refreshed := *b.localEvalInfo
-		refreshed.MatchNothing = query.MatchesNothing()
-		refreshed.SelectivityTerm, _ = query.SelectivityTerm()
-		b.localEvalInfo = &refreshed
-	}
+	refreshed := *info
+	refreshed.MatchNothing = query.MatchesNothing()
+	refreshed.SelectivityTerm, _ = query.SelectivityTerm()
+	b.localEvalInfo.Store(&refreshed)
 	return b.localPlan, nil
 }
 

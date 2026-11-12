@@ -238,7 +238,13 @@ func CheckFullTextIndexAndRecord(ctx context.Context, sessCtx sessionctx.Context
 		return reporter.ReportAdminCheckInconsistent(ctx, handle, entry, row)
 	}
 
-	prefix := tablecodec.EncodeTableIndexPrefix(t.Meta().ID, idxInfo.ID)
+	// t is one partition of a partitioned table, whose entries are keyed by
+	// the partition's ID rather than the table's.
+	physicalID := t.Meta().ID
+	if physicalTable, ok := t.(table.PhysicalTable); ok {
+		physicalID = physicalTable.GetPhysicalID()
+	}
+	prefix := tablecodec.EncodeTableIndexPrefix(physicalID, idxInfo.ID)
 	it, err := txn.Iter(prefix, prefix.PrefixNext())
 	if err != nil {
 		return errors.Trace(err)

@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression/fulltext"
@@ -401,4 +402,26 @@ func TestFTSMysqlMatchAgainstLocalEvalInfoTracksSearch(t *testing.T) {
 	// A required term the analyzer drops leaves a query that matches nothing.
 	info = evalWith("+ab")
 	require.True(t, info.MatchNothing)
+
+	// Executor workers can share the signature; the metadata refresh of one
+	// must not race with the reads of the others (run under -race).
+	shared := newFTSMatchAgainstForTest(t, ctx, "+tidb", 1, ast.FulltextSearchModifierBooleanMode)
+	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(shared, localEvalInfoForTest()))
+	const workers = 4
+	evalErrs := make([]error, workers)
+	hasInfo := make([]bool, workers)
+	var wg sync.WaitGroup
+	for i := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, evalErrs[i] = shared.EvalReal(ctx, stringRow("TiDB storage"))
+			_, hasInfo[i] = FTSMysqlMatchAgainstLocalEvalInfo(shared)
+		}()
+	}
+	wg.Wait()
+	for i := range workers {
+		require.NoError(t, evalErrs[i])
+		require.True(t, hasInfo[i])
+	}
 }

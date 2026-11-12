@@ -5928,7 +5928,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	}
 	var tikvFullTextInfo *model.TiKVFullTextIndexInfo
 	if tikvFullText {
-		if tikvFullTextInfo, err = buildTiKVFullTextInfoWithCheck(metaBuildCtx, finalColumns, indexPartSpecifications, indexOption, tblInfo); err != nil {
+		if tikvFullTextInfo, err = buildTiKVFullTextInfoWithCheck(metaBuildCtx, finalColumns, indexPartSpecifications, indexOption, tblInfo, nil); err != nil {
 			return errors.Trace(err)
 		}
 	}

@@ -145,7 +145,10 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	defer func() { e.done = true }()
 
+	// Not every index has its entries counted, so idxOffsets maps a position
+	// in idxNames back to the index's position in e.indexInfos.
 	idxNames := make([]string, 0, len(e.indexInfos))
+	idxOffsets := make([]int, 0, len(e.indexInfos))
 	for offset, idx := range e.indexInfos {
 		if idx.HasCondition() {
 			return errors.Trace(errCheckPartialIndexWithoutFastCheck)
@@ -163,20 +166,27 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			continue
 		}
 		idxNames = append(idxNames, idx.Name.O)
+		idxOffsets = append(idxOffsets, offset)
 	}
 	if len(e.srcs) == 0 {
 		return nil
 	}
-	greater, idxOffset, err := admin.CheckIndicesCount(e.Ctx(), e.dbName, e.table.Meta().Name.O, idxNames)
+	greater, nameOffset, err := admin.CheckIndicesCount(e.Ctx(), e.dbName, e.table.Meta().Name.O, idxNames)
 	if err != nil {
 		// For admin check index statement, for speed up and compatibility, doesn't do below checks.
 		if e.checkIndex {
 			return errors.Trace(err)
 		}
+		countErr := err
 		if greater == admin.IdxCntGreater {
-			err = e.checkTableIndexHandle(ctx, e.indexInfos[idxOffset])
+			err = e.checkTableIndexHandle(ctx, e.indexInfos[idxOffsets[nameOffset]])
 		} else if greater == admin.TblCntGreater {
-			err = e.checkTableRecord(ctx, idxOffset)
+			err = e.checkTableRecord(ctx, idxOffsets[nameOffset])
+		}
+		if err == nil {
+			// The counts differ even if the detailed check could not name
+			// the row; the table must not be reported consistent.
+			err = countErr
 		}
 		return errors.Trace(err)
 	}

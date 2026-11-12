@@ -77,6 +77,10 @@ func NormalizeTiKVFullTextIndexOption(option *ast.IndexOption) *ast.IndexOption 
 // resolves the analyzer it is built with: the parser named by the definition,
 // and the settings snapshot carried by the meta-build context.
 //
+// The DDL owner has no session behind its context; it passes the snapshot the
+// statement's session captured into the job as jobAnalyzer, which is then the
+// analyzer of the index and the one compared with the existing indexes.
+//
 // columns are the columns the index is built over: the table's, plus any
 // hidden column an expression key part has been given, which the index
 // refuses.
@@ -86,6 +90,7 @@ func buildTiKVFullTextInfoWithCheck(
 	indexPartSpecifications []*ast.IndexPartSpecification,
 	indexOption *ast.IndexOption,
 	tblInfo *model.TableInfo,
+	jobAnalyzer *model.TiKVFullTextIndexInfo,
 ) (*model.TiKVFullTextIndexInfo, error) {
 	// The last column is the one tokenized; the key holds a term of it. The
 	// columns before it are key columns, encoded ahead of the term as they
@@ -150,6 +155,9 @@ func buildTiKVFullTextInfoWithCheck(
 	}
 	info.ParserType = parserType
 	info.Version = model.CurrentTiKVFullTextVersion
+	if jobAnalyzer != nil {
+		info = *jobAnalyzer
+	}
 	if err := fulltext.ValidateTiKVFullTextIndex(&info); err != nil {
 		return nil, dbterror.ErrUnsupportedIndexType.GenWithStack(fmt.Sprintf("FULLTEXT index with %s", err))
 	}
