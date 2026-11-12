@@ -124,6 +124,8 @@ type conflictedKVHandleContext struct {
 
 func prepareConflictedKVHandleContext(t *testing.T) *conflictedKVHandleContext {
 	t.Helper()
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(c *config.Config) { c.TempDir = t.TempDir() })
 	tempDir := t.TempDir()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -171,15 +173,11 @@ func runConflictedKVHandleStep(t *testing.T, subtask *proto.Subtask, stepExe exe
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/createTableImporterForTest", `return(true)`)
 	ctx := context.Background()
 	require.NoError(t, stepExe.Init(ctx))
+	t.Cleanup(func() { require.NoError(t, stepExe.Cleanup(ctx)) })
 	require.NoError(t, stepExe.RunSubtask(ctx, subtask))
 }
 
 func TestConflictResolutionStepExecutor(t *testing.T) {
-	origin := config.GetGlobalConfig().TempDir
-	defer func() {
-		config.GetGlobalConfig().TempDir = origin
-	}()
-	config.GetGlobalConfig().TempDir = t.TempDir()
 	hdlCtx := prepareConflictedKVHandleContext(t)
 	stMeta := importinto.ConflictResolutionStepMeta{Infos: hdlCtx.conflictedKVInfo}
 	bytes, err := json.Marshal(stMeta)
