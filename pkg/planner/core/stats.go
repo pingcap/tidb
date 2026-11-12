@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -537,7 +536,9 @@ func getGroupNDVs(ds *logicalop.DataSource, colGroups [][]*expression.Column) []
 func getTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (fullName string, tblInfo *model.TableInfo) {
 	fullName = "tableID " + strconv.FormatInt(id, 10)
 
-	is := domain.GetDomain(sctx).InfoSchema()
+	// Internal queries can use a candidate schema before Domain publishes it.
+	// Record stats against the same schema used to plan the current statement.
+	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	var tbl table.Table
 	var partDef *model.PartitionDefinition
 

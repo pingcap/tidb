@@ -4561,6 +4561,11 @@ func (s *session) GetInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 
 func (s *session) GetDomainInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	is := domain.GetDomain(s).InfoSchema()
+	if is == nil {
+		// Internal queries can bind a candidate schema during Domain's initial
+		// load. Use it for transaction setup until the first schema is published.
+		is, _ = s.sessionVars.SnapshotInfoschema.(infoschema.InfoSchema)
+	}
 	extIs := &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, extIs)
 }

@@ -20,9 +20,13 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -139,6 +143,60 @@ func TestMaskingPolicyReloadWarmsCache(t *testing.T) {
 		require.NoError(t, err, "Reload must warm the cache before the first user query")
 		require.Equal(t, tc.hasPolicies, hasPolicies)
 		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/infoschema/mockLoadMaskingPoliciesError")
+	}
+}
+
+func TestMaskingPolicyPreloadBeforePublish(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create table test.t_preload_policy(c varchar(20))")
+	tk.MustExec("create masking policy p on test.t_preload_policy(c) as mask_full(c)")
+	ctx := context.Background()
+	latest := dom.InfoSchema()
+	tbl, err := latest.TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("t_preload_policy"))
+	require.NoError(t, err)
+	version, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	dbInfos := latest.AllSchemas()
+	for i, db := range dbInfos {
+		dbInfos[i] = db.Copy()
+		dbInfos[i].TableName2ID = nil
+		dbInfos[i].Deprecated.Tables, err = latest.SchemaTableInfos(ctx, db.Name)
+		require.NoError(t, err)
+	}
+
+	for _, useV2 := range []bool{false, true} {
+		name := "v1"
+		if useV2 {
+			name = "v2"
+		}
+		t.Run(name, func(t *testing.T) {
+			// A starting Domain has no published schema yet. Internal SQL must
+			// use the candidate schema even while deriving and recording stats.
+			startingDomain := domain.NewMockDomain()
+			startingDomain.InfoCache().Reset(16)
+			factory := func() (pools.Resource, error) {
+				se, err := session.CreateSessionWithDomain(store, startingDomain)
+				if err != nil {
+					return nil, err
+				}
+				se.GetSessionVars().CommonGlobalLoaded = true
+				se.GetSessionVars().InRestrictedSQL = true
+				return se, nil
+			}
+			builder := infoschema.NewBuilder(dom, factory, infoschema.NewData(), useV2)
+			require.NoError(t, builder.InitWithDBInfos(dbInfos, latest.AllPlacementPolicies(), latest.AllResourceGroups(), latest.SchemaMetaVersion()))
+			candidate := builder.Build(version.Ver)
+			require.Nil(t, startingDomain.InfoSchema())
+			require.NoError(t, infoschema.PreloadMaskingPolicies(ctx, candidate))
+			require.Nil(t, startingDomain.InfoSchema())
+			// A successful preload must serve subsequent reads from the cache.
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockLoadMaskingPoliciesError", "return(true)")
+			policy, ok, err := candidate.MaskingPolicyByTableColumn(ctx, tbl.Meta().ID, tbl.Meta().Columns[0].ID)
+			require.NoError(t, err)
+			require.True(t, ok)
+			require.Equal(t, "p", policy.Name.O)
+		})
 	}
 }
 
