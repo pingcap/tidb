@@ -1210,6 +1210,8 @@ type SessionVars struct {
 
 	// EnableTiKVFullTextIndex allows creating a FULLTEXT index built in TiKV.
 	EnableTiKVFullTextIndex bool
+	// EnableLocalMatchAgainst enables local no-score MATCH ... AGAINST filters.
+	EnableLocalMatchAgainst bool
 
 	// TiKVFullTextAnalyzerForRebuild, when set, is the analyzer settings a
 	// FULLTEXT index this session creates is built with, in place of the
@@ -2402,6 +2404,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableNoDecorrelateInSelect:      vardef.DefOptEnableNoDecorrelateInSelect,
 		EnableAlternativeLogicalPlans:    vardef.DefOptEnableAlternativeLogicalPlans,
 		EnableTiKVFullTextIndex:          vardef.DefTiDBEnableTiKVFullTextIndex,
+		EnableLocalMatchAgainst:          vardef.DefTiDBEnableLocalMatchAgainst,
 		EnableSemiJoinRewrite:            vardef.DefOptEnableSemiJoinRewrite,
 		RetryLimit:                       vardef.DefTiDBRetryLimit,
 		DisableTxnAutoRetry:              vardef.DefTiDBDisableTxnAutoRetry,
