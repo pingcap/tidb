@@ -22,6 +22,7 @@ import (
 	"math"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -685,14 +686,23 @@ func TestBinaryJSONTextParserOwnership(t *testing.T) {
 		{"small_result_after_large_overwrite", `{"a":"` + strings.Repeat("x", 300*1024) + `","a":0}`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			// Concurrent callers share the pool but must own their returned bytes.
-			t.Parallel()
 			first := mustParseBinaryFromString(t, tt.input)
 			saved := first.Copy()
-			for range 100 {
-				_, err := ParseBinaryJSONFromString(`{"x":[null,1,2,3],"x":"replacement"}`)
-				require.NoError(t, err)
+			// Keep tests serial while concurrent callers exercise the shared pool.
+			var wg sync.WaitGroup
+			for range 4 {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for range 100 {
+						if _, err := ParseBinaryJSONFromString(`{"x":[null,1,2,3],"x":"replacement"}`); err != nil {
+							t.Error(err)
+							return
+						}
+					}
+				}()
 			}
+			wg.Wait()
 			require.Equal(t, saved, first)
 		})
 	}
