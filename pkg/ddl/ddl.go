@@ -861,7 +861,14 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 
 // Start implements DDL.Start interface.
 func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
+<<<<<<< HEAD
 	d.detectAndUpdateJobVersion()
+=======
+	failpoint.InjectCall("beforeDDLStart", startMode)
+	if kerneltype.IsClassic() {
+		d.detectAndUpdateJobVersion()
+	}
+>>>>>>> 35599163cae (session: initialize MDL before starting the DDL scheduler during upgrade (#70464))
 	campaignOwner := config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()
 	if startMode == Upgrade {
 		if !campaignOwner {

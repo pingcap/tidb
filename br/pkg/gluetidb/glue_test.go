@@ -17,13 +17,20 @@ package gluetidb
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/br/pkg/glue"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+=======
+	"github.com/pingcap/tidb/pkg/ddl"
+>>>>>>> 35599163cae (session: initialize MDL before starting the DDL scheduler during upgrade (#70464))
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -108,6 +115,7 @@ func TestTheSessionIsoation(t *testing.T) {
 	}))
 }
 
+<<<<<<< HEAD
 func TestGlueReusesServingDomain(t *testing.T) {
 	store, dom := session.CreateStoreAndBootstrap(t)
 	t.Cleanup(func() {
@@ -125,4 +133,54 @@ func TestGlueReusesServingDomain(t *testing.T) {
 	info, err = infosync.GetServerInfoByID(context.Background(), dom.DDL().GetID())
 	require.NoError(t, err)
 	require.False(t, info.DisableRPC)
+=======
+func TestMDLInitializedBeforeBRDomainStarts(t *testing.T) {
+	for _, entrypoint := range []string{"GetDomain", "CreateSession", "UseOneShotSession"} {
+		t.Run(entrypoint, func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
+			dom.Close()
+			original := vardef.IsMDLEnabled()
+			vardef.SetEnableMDL(false)
+			t.Cleanup(func() { vardef.SetEnableMDL(original) })
+			observed := make(chan bool, 1)
+			dispatched := make(chan bool, 1)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDDLStart", func(mode ddl.StartMode) {
+				require.Equal(t, ddl.BR, mode)
+				observed <- vardef.IsMDLEnabled()
+			})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
+				select {
+				case dispatched <- vardef.IsMDLEnabled():
+				default:
+				}
+			})
+			g := New()
+			defer func() {
+				if dom, _ := session.GetDomain(nil); dom != nil {
+					dom.Close()
+				}
+			}()
+			switch entrypoint {
+			case "GetDomain":
+				_, err := g.GetDomain(store)
+				require.NoError(t, err)
+			case "CreateSession":
+				se, err := g.CreateSession(store)
+				require.NoError(t, err)
+				se.Close()
+			case "UseOneShotSession":
+				require.NoError(t, g.UseOneShotSession(store, false, func(glue.Session) error { return nil }))
+			}
+			for _, observations := range []chan bool{observed, dispatched} {
+				select {
+				case enabled := <-observations:
+					require.True(t, enabled, "BR must load persisted MDL before starting its DDL scheduler")
+				case <-time.After(10 * time.Second):
+					require.FailNow(t, "BR DDL did not start or dispatch")
+				}
+			}
+		})
+	}
+>>>>>>> 35599163cae (session: initialize MDL before starting the DDL scheduler during upgrade (#70464))
 }
