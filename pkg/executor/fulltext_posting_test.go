@@ -80,7 +80,7 @@ func (it *memPostingIter) Next() error {
 	}
 	return nil
 }
-func (*memPostingIter) Close()           {}
+func (*memPostingIter) Close() {}
 
 const testPostingTableID, testPostingIndexID = 100, 1
 
@@ -167,6 +167,23 @@ func TestTiKVPostingSeek(t *testing.T) {
 		require.Equal(t, rare, searchPostings(t, src, `+"common rare"`))
 		require.Empty(t, searchPostings(t, src, `+"rare common"`))
 		require.Empty(t, searchPostings(t, src, "+rare -common"))
+
+		// Only a reader that compares positions has them decoded: a phrase
+		// opens its terms with them, any other read without.
+		src = newTestPostingSource(s)
+		for _, c := range []struct {
+			open      func(string) (fulltext.PostingCursor, error)
+			positions []int
+		}{{src.Term, []int{1}}, {src.TermHandles, nil}, {src.Prefix, nil}} {
+			cursor, err := c.open("rare")
+			require.NoError(t, err)
+			posting, ok, err := cursor.Next()
+			require.NoError(t, err)
+			require.True(t, ok)
+			require.Equal(t, rare[0], posting.Handle)
+			require.Equal(t, c.positions, posting.Positions)
+			require.NoError(t, cursor.Close())
+		}
 
 		// A near target is read forward to; a far one reopens the scan.
 		src = newTestPostingSource(s)

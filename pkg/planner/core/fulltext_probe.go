@@ -163,18 +163,20 @@ func fullTextProbePhysicalIDs(ds *logicalop.DataSource) ([]int64, float64) {
 // postings span every term under them.
 func fullTextTermPostings(ds *logicalop.DataSource, idx *model.IndexInfo, keyPrefix []byte, read fulltext.PostingRead,
 	probedScale float64, statsEstimate func() float64) float64 {
-	estimate := statsEstimate()
+	// The statistics estimate evaluates the term against the column's whole
+	// TopN and histogram, so it is computed only where it is used: an exact
+	// count, the common case for a selective term, replaces it.
 	if read.Prefix {
-		return estimate
+		return statsEstimate()
 	}
 	probed, ok := probeFullTextPostings(ds, idx, keyPrefix, read.Term)
 	if !ok {
-		return estimate
+		return statsEstimate()
 	}
 	if probed.exact {
 		return probed.count * probedScale
 	}
-	return max(estimate, probed.count*probedScale)
+	return max(statsEstimate(), probed.count*probedScale)
 }
 
 // estimateFullTextMatchSelectivities estimates, from the postings of their
@@ -185,6 +187,12 @@ func fullTextTermPostings(ds *logicalop.DataSource, idx *model.IndexInfo, keyPre
 // range; its MATCH keeps the estimate from the column's statistics.
 func estimateFullTextMatchSelectivities(ds *logicalop.DataSource) {
 	if ds.TableInfo == nil || ds.TableStats == nil || ds.TableStats.RowCount <= 0 {
+		return
+	}
+	// The probe reads TiKV, which a statement isolated from TiKV must not do
+	// even to plan. A hint for another engine is only a preference of where
+	// the rows are read, and the count still tells how many there are.
+	if !fullTextIndexReadable(ds) {
 		return
 	}
 	rows := ds.TableStats.RowCount

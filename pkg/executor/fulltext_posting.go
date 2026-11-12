@@ -177,14 +177,28 @@ type fullTextHandleRange struct {
 // disjoint, and a term's entries are stored in handle order, so the result
 // is in ascending handle order like the whole posting list.
 func (s *tikvPostingSource) Term(term string) (fulltext.PostingCursor, error) {
+	return s.term(term, false)
+}
+
+// TermHandles implements fulltext.PostingHandleSource.
+func (s *tikvPostingSource) TermHandles(term string) (fulltext.PostingCursor, error) {
+	return s.term(term, true)
+}
+
+func (s *tikvPostingSource) term(term string, handlesOnly bool) (fulltext.PostingCursor, error) {
 	start, err := s.termKey(term)
 	if err != nil {
 		return nil, err
 	}
 	if len(s.handleRanges) == 0 {
-		return s.openTerm(start, start, start.PrefixNext())
+		cursor, err := s.openTerm(start, start, start.PrefixNext())
+		if err != nil {
+			return nil, err
+		}
+		cursor.handlesOnly = handlesOnly
+		return cursor, nil
 	}
-	return &rangedPostingCursor{source: s, termKey: start}, nil
+	return &rangedPostingCursor{source: s, termKey: start, handlesOnly: handlesOnly}, nil
 }
 
 // Prefix implements fulltext.PostingSource. Terms are stored in byte order
@@ -204,7 +218,7 @@ func (s *tikvPostingSource) Prefix(prefix string) (fulltext.PostingCursor, error
 	if err != nil {
 		return nil, err
 	}
-	cursor.prefix = prefix
+	cursor.prefix, cursor.handlesOnly = prefix, true
 	return prefixPostingCursor{cursor: cursor}, nil
 }
 
@@ -270,6 +284,9 @@ type tikvPostingCursor struct {
 	iter   kv.Iterator
 	// prefix, when set, ends the cursor at the first term without it.
 	prefix string
+	// handlesOnly leaves the positions of each posting undecoded, for a
+	// reader that does not compare them.
+	handlesOnly bool
 	// termKey, start and end are the term's key prefix and the range the
 	// cursor reads; a seek reopens the scan within them. termKey is nil for
 	// a prefix cursor, which does not seek.
@@ -344,9 +361,11 @@ func (c *tikvPostingCursor) Next() (fulltext.Posting, bool, error) {
 	if err != nil || !ok {
 		return fulltext.Posting{}, false, err
 	}
-	positions, err := tablecodec.DecodeTiKVFullTextIndexValue(c.iter.Value())
-	if err != nil {
-		return fulltext.Posting{}, false, errors.Trace(err)
+	var positions []int
+	if !c.handlesOnly {
+		if positions, err = tablecodec.DecodeTiKVFullTextIndexValue(c.iter.Value()); err != nil {
+			return fulltext.Posting{}, false, errors.Trace(err)
+		}
 	}
 	if err := c.advance(); err != nil {
 		return fulltext.Posting{}, false, err
@@ -414,10 +433,11 @@ func (c prefixPostingCursor) Close() error { return c.cursor.Close() }
 // the source in turn, opening a range only when the one before it is
 // exhausted, and a seek skips the ranges wholly below its target.
 type rangedPostingCursor struct {
-	source  *tikvPostingSource
-	termKey kv.Key
-	next    int
-	current *tikvPostingCursor
+	source      *tikvPostingSource
+	termKey     kv.Key
+	handlesOnly bool
+	next        int
+	current     *tikvPostingCursor
 }
 
 // openNext opens the next range that ends past from, a key under the term,
@@ -445,6 +465,7 @@ func (c *rangedPostingCursor) openNext(from kv.Key) (bool, error) {
 		if err != nil {
 			return false, err
 		}
+		cursor.handlesOnly = c.handlesOnly
 		c.current = cursor
 		return true, nil
 	}

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
@@ -403,8 +404,14 @@ func TestFullTextIndexBuiltInTiKVEntries(t *testing.T) {
 		require.NoError(t, txn.Set(bogusKey, tablecodec.EncodeTiKVFullTextIndexValue(nil, tablecodec.EncodeTiKVFullTextPositions(nil, []int{0}), false)))
 	})
 	tk.MustContainErrMsg("admin check table t", "data inconsistency in table: t, index: idx, handle: 1")
+	// The check remembers the rows it has tokenized only up to a bound; a
+	// row forgotten between two of its entries is read again, to the same
+	// verdict.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/admin/fullTextCheckRowCacheBytes", "return(1)")
+	tk.MustContainErrMsg("admin check table t", "data inconsistency in table: t, index: idx, handle: 1")
 	mutate(func(txn kv.Transaction) { require.NoError(t, txn.Delete(bogusKey)) })
 	tk.MustExec("admin check table t")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/util/admin/fullTextCheckRowCacheBytes")
 
 	// Updating the document replaces its entries; updating another column
 	// leaves them alone; deleting the row removes them.

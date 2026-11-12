@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -195,6 +196,12 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 	return nil
 }
 
+// fullTextCheckRowCacheBytes bounds the rows CheckFullTextIndexAndRecord
+// remembers. The entries of the index are in term order, so a row comes back
+// once per term it holds and remembering it saves fetching and tokenizing it
+// again; but remembering every row would hold the whole index in memory.
+const fullTextCheckRowCacheBytes = 64 << 20
+
 // CheckFullTextIndexAndRecord is the index-to-record direction of ADMIN CHECK
 // for a FULLTEXT index built in TiKV: every entry must belong to a row that
 // exists, its key-column values must be the ones the row encodes to, and its
@@ -251,12 +258,21 @@ func CheckFullTextIndexAndRecord(ctx context.Context, sessCtx sessionctx.Context
 	}
 	defer it.Close()
 	// Entries of one row are spread over its terms, so rows are fetched and
-	// tokenized once and remembered while their entries keep appearing.
+	// tokenized once and remembered while their entries keep appearing, up to
+	// a bound: past it they are forgotten, and fetched again when their next
+	// entry appears. What is remembered is charged to the statement.
 	type rowEntries struct {
 		keyValues []types.Datum
 		terms     map[string]struct{}
 	}
 	rows := make(map[string]rowEntries)
+	cacheLimit := int64(fullTextCheckRowCacheBytes)
+	failpoint.Inject("fullTextCheckRowCacheBytes", func(val failpoint.Value) {
+		cacheLimit = int64(val.(int))
+	})
+	memTracker := sessCtx.GetSessionVars().StmtCtx.MemTracker
+	var cached int64
+	defer func() { memTracker.Consume(-cached) }()
 	for it.Valid() {
 		keyValues, term, err := tables.DecodeTiKVFullTextIndexKey(idxInfo, it.Key())
 		if err != nil {
@@ -306,7 +322,24 @@ func CheckFullTextIndexAndRecord(ctx context.Context, sessCtx sessionctx.Context
 			if entries.terms, err = tables.FullTextIndexTerms(idx, doc); err != nil {
 				return errors.Trace(err)
 			}
+			// stringOverhead stands for the string header and map slot of
+			// each key held.
+			const stringOverhead = 32
+			size := int64(len(handleKey) + stringOverhead)
+			for i := range entries.keyValues {
+				size += entries.keyValues[i].MemUsage()
+			}
+			for rowTerm := range entries.terms {
+				size += int64(len(rowTerm) + stringOverhead)
+			}
+			if cached > 0 && cached+size > cacheLimit {
+				clear(rows)
+				memTracker.Consume(-cached)
+				cached = 0
+			}
 			rows[handleKey] = entries
+			cached += size
+			memTracker.Consume(size)
 		}
 		mismatch, err := tables.FullTextIndexKeyColumnMismatch(idx, loc, keyValues, entries.keyValues)
 		if err != nil {

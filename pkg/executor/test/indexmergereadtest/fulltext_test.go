@@ -95,7 +95,7 @@ func TestFullTextIndexMatchAgainst(t *testing.T) {
 	if !kerneltype.IsClassic() {
 		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
 	}
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key, k int, body text, fulltext index idx (body))")
@@ -205,6 +205,46 @@ func TestFullTextIndexMatchAgainst(t *testing.T) {
 	tk.MustExec("rollback")
 	tk.MustQuery("select count(*) from t where match(body) against('+rareword' in boolean mode)").Check(testkit.Rows("15"))
 	tk.MustExec("admin check table t")
+
+	// The search string is user data: the plan shows it as it shows the
+	// values of a range, redacted when the session redacts.
+	explain := func(sql string) string {
+		var text strings.Builder
+		for _, row := range tk.MustQuery("explain format = 'brief' " + sql).Rows() {
+			text.WriteString(fmt.Sprint(row))
+			text.WriteString("\n")
+		}
+		return text.String()
+	}
+	sql = "select id from t use index (idx) where match(body) against('+rareword' in boolean mode)"
+	tk.Session().GetSessionVars().EnableRedactLog = "ON"
+	require.Contains(t, explain(sql), "fulltext:?, ")
+	require.NotContains(t, explain(sql), `fulltext:"+rareword"`)
+	tk.Session().GetSessionVars().EnableRedactLog = "MARKER"
+	require.Contains(t, explain(sql), `fulltext:‹"+rareword"›, `)
+	tk.Session().GetSessionVars().EnableRedactLog = "OFF"
+	require.Contains(t, explain(sql), `fulltext:"+rareword", `)
+
+	// Planning counts a term's postings in TiKV, which a session isolated
+	// from TiKV must not read: its estimate stays the statistics' one. The
+	// table has no statistics, so the two are told apart.
+	tk.MustExec("create table iso (id int primary key, k int, body text, fulltext index idx (body))")
+	fullTextCorpus(t, tk, "iso", 300, 1)
+	testkit.SetTiFlashReplica(t, dom, "test", "iso")
+	matchRows := func() string {
+		rows := tk.MustQuery("explain format = 'brief' select id from iso ignore index (idx) where match(body) against('+rareword' in boolean mode)").Rows()
+		for _, row := range rows {
+			if strings.Contains(fmt.Sprint(row[0]), "Selection") {
+				return fmt.Sprint(row[1])
+			}
+		}
+		require.Fail(t, "no Selection in the plan", "%v", rows)
+		return ""
+	}
+	require.Equal(t, "3.00", matchRows())
+	tk.MustExec("set tidb_isolation_read_engines = 'tiflash,tidb'")
+	require.NotEqual(t, "3.00", matchRows())
+	tk.MustExec("set tidb_isolation_read_engines = 'tikv,tiflash,tidb'")
 }
 
 // TestFullTextIndexMatchAgainstNgram covers the NGRAM analyzer on long

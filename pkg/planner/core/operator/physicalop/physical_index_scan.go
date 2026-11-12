@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	utilredact "github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/size"
 	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -296,8 +297,9 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 		if normalized {
 			buffer.WriteString("fulltext:?, ")
 		} else {
+			// The search string is user data, like the range values.
 			buffer.WriteString("fulltext:")
-			buffer.WriteString(strconv.Quote(p.FullText.Search))
+			utilredact.WriteRedact(&buffer, strconv.Quote(p.FullText.Search), redact)
 			buffer.WriteString(", ")
 		}
 	}

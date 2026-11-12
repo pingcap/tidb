@@ -82,15 +82,19 @@ import (
 // and a selective condition on another index can win over the search. USE
 // INDEX and FORCE INDEX naming the index force the path; IGNORE INDEX forbids
 // it.
+// fullTextIndexReadable reports whether the statement may read a FULLTEXT
+// index of ds, to plan or to execute: the postings and the rows they lead to
+// are both read from TiKV, which the isolation read engines can rule out.
+func fullTextIndexReadable(ds *logicalop.DataSource) bool {
+	_, ok := ds.SCtx().GetSessionVars().GetIsolationReadEngines()[kv.TiKV]
+	return ok
+}
+
 func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
-	if ds.TableInfo == nil || ds.PreferStoreType&h.PreferTiFlash != 0 {
+	if ds.TableInfo == nil || ds.PreferStoreType&h.PreferTiFlash != 0 || !fullTextIndexReadable(ds) {
 		return nil
 	}
 	sessVars := ds.SCtx().GetSessionVars()
-	// The postings and the rows they lead to are both read from TiKV.
-	if _, ok := sessVars.GetIsolationReadEngines()[kv.TiKV]; !ok {
-		return nil
-	}
 	var paths []*util.AccessPath
 	forced := false
 	for _, idx := range ds.TableInfo.Indices {

@@ -57,8 +57,19 @@ type PostingSource interface {
 	Term(term string) (PostingCursor, error)
 	// Prefix opens the postings of every term that starts with prefix. They
 	// come grouped by term, in ascending handle order within a term, and a
-	// handle may appear once per term.
+	// handle may appear once per term. Only their handles are read, so the
+	// source may leave their positions out.
 	Prefix(prefix string) (PostingCursor, error)
+}
+
+// PostingHandleSource is implemented by a PostingSource that can read a
+// term's postings without their positions. Only a phrase compares positions;
+// every other read of a term wants the handles alone, and decoding the
+// positions of each posting of a common term is most of the cost of reading
+// it.
+type PostingHandleSource interface {
+	// TermHandles is PostingSource.Term with the positions left out.
+	TermHandles(term string) (PostingCursor, error)
 }
 
 // PostingSeeker is implemented by a PostingCursor that can skip ahead in its
@@ -142,7 +153,11 @@ func openPostingStream(node queryNode, src PostingSource) (postingStream, error)
 	case nil, neverNode:
 		return emptyStream{}, nil
 	case termNode:
-		cursor, err := src.Term(n.token)
+		open := src.Term
+		if handles, ok := src.(PostingHandleSource); ok {
+			open = handles.TermHandles
+		}
+		cursor, err := open(n.token)
 		if err != nil {
 			return nil, err
 		}
