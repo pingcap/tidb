@@ -55,6 +55,7 @@ import (
 )
 
 const (
+	maxMaterializedViewNestingDepth                       = 16
 	mviewAttrAlertWarning                                 = "mview_alert_warning"
 	mviewAttrAlertOverdue                                 = "mview_alert_overdue"
 	mviewAttrAlertRefreshFailed                           = "mview_alert_refresh_failed"
@@ -584,32 +585,39 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	if err != nil {
 		return err
 	}
-	if baseTable.Meta().IsView() || baseTable.Meta().IsSequence() || baseTable.Meta().TempTableType != model.TempTableNone || baseTable.Meta().MaterializedView != nil {
-		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, baseTableName.Name, "BASE TABLE")
-	}
-	if baseTable.Meta().GetPartitionInfo() != nil {
-		return errUnsupportedMaterializedViewOnPartitionTable("CREATE MATERIALIZED VIEW")
-	}
-	baseTableID := baseTable.Meta().ID
-
-	mlogName := model.MaterializedViewLogTableName(baseTable.Meta().Name)
-	mlogTable, err := is.TableByName(e.ctx, baseTableName.Schema, mlogName)
-	if err != nil {
-		if infoschema.ErrTableNotExists.Equal(err) {
-			return errors.Errorf("materialized view log does not exist for base table %s.%s", baseTableName.Schema.O, baseTableName.Name.O)
-		}
+	baseTableInfo := baseTable.Meta()
+	if err := validateMaterializedViewSourceState(schemaName.O, baseTableInfo); err != nil {
 		return err
 	}
-	if mlogTable.Meta().MaterializedViewLog == nil || mlogTable.Meta().MaterializedViewLog.BaseTableID != baseTableID {
-		return errors.Errorf("table %s.%s is not a materialized view log for base table %s.%s", baseTableName.Schema.O, mlogName.O, baseTableName.Schema.O, baseTableName.Name.O)
+	if err := validateMaterializedViewNestingDepth(baseTableInfo, func(tableID int64) (*model.TableInfo, error) {
+		tbl, ok := is.TableByID(e.ctx, tableID)
+		if !ok {
+			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(schemaName.O, fmt.Sprintf("(Table ID %d)", tableID))
+		}
+		return tbl.Meta(), nil
+	}); err != nil {
+		return err
+	}
+	baseTableID := baseTableInfo.ID
+
+	if baseTableInfo.MaterializedViewBase == nil || baseTableInfo.MaterializedViewBase.MLogID == 0 {
+		return errors.Errorf("materialized view log does not exist for source object %s.%s", baseTableName.Schema.O, baseTableName.Name.O)
+	}
+	mlogTable, ok := is.TableByID(e.ctx, baseTableInfo.MaterializedViewBase.MLogID)
+	if !ok {
+		return errors.Errorf("materialized view log id %d does not exist for source object %s.%s", baseTableInfo.MaterializedViewBase.MLogID, baseTableName.Schema.O, baseTableName.Name.O)
+	}
+	mlogTableInfo := mlogTable.Meta()
+	if err := validateMaterializedViewSourceMLog(schemaName.O, baseTableInfo, mlogTableInfo); err != nil {
+		return err
 	}
 
 	// Validate Stage-1 query contract and ensure MV LOG columns cover query references.
 	queryAnalysis, err := validateCreateMaterializedViewQuery(
 		ctx,
 		baseTableName,
-		baseTable.Meta(),
-		mlogTable.Meta().MaterializedViewLog.Columns,
+		baseTableInfo,
+		mlogTableInfo.MaterializedViewLog.Columns,
 		s.Select,
 	)
 	if err != nil {
@@ -748,8 +756,8 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	// CREATE MATERIALIZED VIEW is submitted as reorg DDL: create table first, then initial build in reorg phase.
 	involvingSchemas := []model.InvolvingSchemaInfo{
 		{Database: schema.Name.L, Table: mvTableInfo.Name.L},
-		{Database: schema.Name.L, Table: baseTable.Meta().Name.L},
-		{Database: schema.Name.L, Table: mlogTable.Meta().Name.L},
+		{Database: schema.Name.L, Table: baseTableInfo.Name.L},
+		{Database: schema.Name.L, Table: mlogTableInfo.Name.L},
 	}
 	job := &model.Job{
 		Version:             model.GetJobVerInUse(),
@@ -770,7 +778,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	AddMViewExecutionSessionVarsToJob(job, sessionVars)
 	jobW := NewJobWrapperWithArgs(job, &model.CreateMaterializedViewArgs{
 		TableInfo:    mvTableInfo,
-		MLogTableIDs: []int64{mlogTable.Meta().ID},
+		MLogTableIDs: []int64{mlogTableInfo.ID},
 	}, false)
 	if err := e.DoDDLJobWrapper(ctx, jobW); err != nil {
 		return errors.Trace(err)
@@ -2086,4 +2094,91 @@ func buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
 		involving = append(involving, model.InvolvingSchemaInfo{Database: schemaName.L, Table: mlogTable.Meta().Name.L, Mode: model.ExclusiveInvolving})
 	}
 	return involving, nil
+}
+
+// validateMaterializedViewNestingDepth checks the longest source chain, counting
+// the new MV as depth 1. The depth budget also bounds traversal of cyclic metadata.
+func validateMaterializedViewNestingDepth(source *model.TableInfo, getTable func(int64) (*model.TableInfo, error)) error {
+	// TODO: Limit the number of visited dependency nodes before supporting MVs
+	// with multiple sources. The depth limit alone does not bound metadata reads
+	// or the depth cache size.
+	depths := make(map[int64]int)
+	var sourceDepth func(*model.TableInfo, int) (int, error)
+	sourceDepth = func(tbl *model.TableInfo, remainingDepth int) (int, error) {
+		if tbl.MaterializedView == nil {
+			return 0, nil
+		}
+		cachedDepth := depths[tbl.ID]
+		if remainingDepth == 0 || cachedDepth > remainingDepth {
+			return 0, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("materialized view nesting depth exceeds maximum of %d", maxMaterializedViewNestingDepth)
+		}
+		if cachedDepth > 0 {
+			return cachedDepth, nil
+		}
+		depth := 1
+		for _, baseTableID := range tbl.MaterializedView.BaseTableIDs {
+			baseTable, err := getTable(baseTableID)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			baseDepth, err := sourceDepth(baseTable, remainingDepth-1)
+			if err != nil {
+				return 0, err
+			}
+			depth = max(depth, baseDepth+1)
+		}
+		depths[tbl.ID] = depth
+		return depth, nil
+	}
+	_, err := sourceDepth(source, maxMaterializedViewNestingDepth-1)
+	return err
+}
+
+// validateMaterializedViewSourceState validates the object that an MV definition
+// reads. Public physical tables and ready MVs are valid sources; protected MV
+// auxiliary tables and SQL views are not.
+func validateMaterializedViewSourceState(schemaName string, source *model.TableInfo) error {
+	if source == nil {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: source object is nil")
+	}
+	if source.IsView() ||
+		source.IsSequence() ||
+		source.TempTableType != model.TempTableNone ||
+		source.MaterializedViewShadow != nil ||
+		source.MaterializedViewLog != nil {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, source.Name, "BASE TABLE")
+	}
+	if source.State != model.StatePublic {
+		return dbterror.ErrInvalidDDLState.GenWithStack("source object %s is not in public, but %s", source.Name, source.State)
+	}
+	if source.GetPartitionInfo() != nil {
+		return errUnsupportedMaterializedViewOnPartitionTable("CREATE MATERIALIZED VIEW")
+	}
+	if source.MaterializedView != nil && !source.MaterializedView.GetInitBuildState().IsReady() {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs(source.MaterializedView.GetInitBuildState().AccessErrorMessage(schemaName + "." + source.Name.O))
+	}
+	return nil
+}
+
+func validateMaterializedViewSourceMLog(schemaName string, source, mlog *model.TableInfo) error {
+	if source == nil {
+		return errors.Errorf("materialized view log does not exist for source object %s", schemaName)
+	}
+	if source.MaterializedViewBase == nil || source.MaterializedViewBase.MLogID == 0 {
+		return errors.Errorf("materialized view log does not exist for source object %s.%s", schemaName, source.Name.O)
+	}
+	if mlog == nil ||
+		mlog.ID != source.MaterializedViewBase.MLogID ||
+		mlog.MaterializedViewLog == nil ||
+		mlog.MaterializedViewLog.BaseTableID != source.ID {
+		mlogName := ""
+		if mlog != nil {
+			mlogName = mlog.Name.O
+		}
+		return errors.Errorf("table %s is not a materialized view log for source object %s.%s", mlogName, schemaName, source.Name.O)
+	}
+	if mlog.State != model.StatePublic {
+		return dbterror.ErrInvalidDDLState.GenWithStack("materialized view log %s is not in public, but %s", mlog.Name, mlog.State)
+	}
+	return nil
 }

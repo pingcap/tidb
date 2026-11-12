@@ -180,14 +180,13 @@ func onCreateMaterializedViewBaseCheck(metaMut *meta.Mutator, schemaID, baseTabl
 	if err != nil {
 		return nil, err
 	}
-	if baseTblInfo.IsView() || baseTblInfo.IsSequence() || baseTblInfo.TempTableType != model.TempTableNone || baseTblInfo.MaterializedView != nil {
-		return nil, dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, baseTblInfo.Name, "BASE TABLE")
+	if err := validateMaterializedViewSourceState(schemaName, baseTblInfo); err != nil {
+		return nil, err
 	}
-	if baseTblInfo.GetPartitionInfo() != nil {
-		return nil, errUnsupportedMaterializedViewOnPartitionTable("CREATE MATERIALIZED VIEW")
-	}
-	if baseTblInfo.State != model.StatePublic {
-		return nil, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", baseTblInfo.State)
+	if err := validateMaterializedViewNestingDepth(baseTblInfo, func(tableID int64) (*model.TableInfo, error) {
+		return getTableInfo(metaMut, tableID, schemaID)
+	}); err != nil {
+		return nil, err
 	}
 	if baseTblInfo.MaterializedViewBase == nil || baseTblInfo.MaterializedViewBase.MLogID == 0 {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: base table has no materialized view log")
@@ -196,11 +195,8 @@ func onCreateMaterializedViewBaseCheck(metaMut *meta.Mutator, schemaID, baseTabl
 	if err != nil {
 		return nil, err
 	}
-	if mlogTableInfo.MaterializedViewLog == nil || mlogTableInfo.MaterializedViewLog.BaseTableID != baseTblInfo.ID {
-		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid materialized view log metadata")
-	}
-	if mlogTableInfo.State != model.StatePublic {
-		return nil, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", mlogTableInfo.State)
+	if err := validateMaterializedViewSourceMLog(schemaName, baseTblInfo, mlogTableInfo); err != nil {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStack("create materialized view: invalid materialized view log metadata: %s", err.Error())
 	}
 	return baseTblInfo, nil
 }
