@@ -74,7 +74,14 @@ reader built by Go's `buildTableReader` / `buildIndexReader` /
   reader's `HandleCols`; it exposed that the planner's ordered scan never
   recorded the fresh `_tidb_rowid` as its handle
   (`setIndexMergeTableScanHandleCols`) nor appended the added columns'
-  infos to `ts.Columns`.
+  infos to `ts.Columns`. (c) for index partials followed:
+  `PartialIndexWorker` (Go `partialIndexWorker` with
+  `startPartialIndexWorker`'s requests over `buildIndexReq`,
+  `buildPartialWorkerKVRanges`, `extractTaskHandles` and its `retChk` of
+  the whole index rows); it exposed that the planner never gave an ordered
+  merge's partial scans their `ByItems` (`ConvertToPartialIndexScan`,
+  `convertToPartialTableScan`). Left in (c): the table partials
+  (`partialTableWorker` over a `TableReaderExecutor` of the partial plan).
 - [ ] Milestone 4: the index join's inner side is Go's
   `dataReaderBuilder.BuildExecutorForIndexJoin`, and a union scan there is
   `buildUnionScanForIndexJoin`'s `UnionScanExec` over the task's reader; the

@@ -488,7 +488,9 @@ pub(super) fn build_converged_union_index_merge_task(
                     table: ds.table_info.clone(),
                     columns: ds.columns.clone(),
                     is_mpp_or_batch_cop: false,
-                    by_items: Vec::new(),
+                    // Go `convertToPartialTableScan`: `ts.ByItems = byItems`
+                    // when the order matches.
+                    by_items: if matched.matched() { by_items.clone() } else { Vec::new() },
                     group_by_col_idxs: groups.clone(),
                     base,
                     table_id: ds.physical_table_id,
@@ -591,6 +593,7 @@ pub(super) fn build_converged_union_index_merge_task(
                     matched.matched(),
                     desc,
                     &[],
+                    by_items,
                     &mut partial_plans_raw,
                 )?);
             }
@@ -609,6 +612,7 @@ pub(super) fn build_converged_union_index_merge_task(
                 matched.matched(),
                 desc,
                 groups,
+                by_items,
                 &mut partial_plans_raw,
             )?);
         }
@@ -887,6 +891,7 @@ fn push_index_partial(
     matched: bool,
     desc: bool,
     group_by_col_idxs: &[usize],
+    by_items: &[tidb_expression_aggregation::ByItems],
     partial_plans_raw: &mut Vec<PhysicalPlan>,
 ) -> Result<Vec<tidb_expr::expression::Expression>, PlanError> {
     let ranges = &path.ranges;
@@ -911,7 +916,9 @@ fn push_index_partial(
     partial_plans_raw.push(PhysicalPlan::IndexScan(tidb_planner_core_operator_physicalop::PhysicalIndexScan {
         table: ds.table_info.clone(),
         index: Some(source_index.clone()),
-        by_items: Vec::new(),
+        // Go `ConvertToPartialIndexScan`: "Add sort items for index scan for
+        // merge-sort operation between partitions or range groups."
+        by_items: if matched { by_items.to_vec() } else { Vec::new() },
         group_by_col_idxs: group_by_col_idxs.to_vec(),
         base,
         table_id: ds.physical_table_id,

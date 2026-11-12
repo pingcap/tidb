@@ -3261,3 +3261,256 @@ impl FinalTableReader {
         Ok(())
     }
 }
+
+/// Go `partialIndexWorker` (:1717) with `startPartialIndexWorker`'s requests
+/// (:380) on a store with a coprocessor client: one select result a
+/// (range group x table) of `buildPartialWorkerKVRanges` over the partial
+/// plan's `buildIndexReq`, merged by `byItems` when ordered
+/// (`NewSortedSelectResults`), read by `extractTaskHandles`.
+pub(crate) struct PartialIndexWorker {
+    pub ctx: crate::StmtContext,
+    pub client: std::sync::Arc<dyn tidb_txnkv::Client>,
+    /// Go `e.partialPlans[workID]`, the index scan first.
+    pub plans: Vec<tidb_planner_core_operator_physicalop::PhysicalPlan>,
+    /// Go `buildIndexScanOutputOffsets`.
+    pub output_offsets: Vec<u32>,
+    /// Go `getRetTpsForIndexScan`.
+    pub ret_types: Vec<FieldType>,
+    /// The leading by-item columns of an index row.
+    pub by_items: Vec<tidb_executor_sortexec::SortByItem>,
+    /// Go `partialWorkerKVRanges[workID]`: each request's physical table and
+    /// key ranges.
+    pub kv_ranges: Vec<(i64, Vec<tidb_txnkv::KeyRange>)>,
+    /// Go `e.handleCols`.
+    pub handle_cols: tidb_planner_util::handle_cols::HandleCols,
+    /// Go `needPartitionHandle`.
+    pub need_partition_handle: bool,
+    /// The physical IDs `HandleRef::partition_index` names; empty for a table
+    /// that is not partitioned.
+    pub physical_ids: Vec<i64>,
+    pub desc: bool,
+    pub keep_order: bool,
+    pub start_ts: u64,
+    /// Go `partialNetDataSizes[workID]`.
+    pub net_data_size: f64,
+    /// Go `e.getPartitalPlanID(workID)`.
+    pub plan_id: i64,
+    /// Go `CalculateBatchSize(is.StatsCount(), ...)`, `IndexLookupSize`.
+    pub initial_batch_size: usize,
+    pub max_batch_size: usize,
+    pub max_chunk_size: usize,
+    /// The index merge reader's plan ID: Go's `e.memTracker`.
+    pub memory_label: i64,
+    /// What `Close` reports the index usage of.
+    pub table: TableCommon,
+    pub stats: Option<tidb_stmtctx::used_stats::UsedStatsInfoForTable>,
+    pub index_id: i64,
+    pub batch_size: usize,
+    pub memory: Option<MergeReaderMemory>,
+    /// The select results and each one's physical table (`None` once merged).
+    pub results: Vec<(Option<i64>, crate::range_group_merge::ReaderResult)>,
+    pub cur: usize,
+    pub chunk: Option<Chunk>,
+    pub reported: bool,
+}
+
+impl PartialIndexWorker {
+    /// `HandleRef::partition_index` of `pid`.
+    fn partition_index(&self, pid: i64) -> Result<usize, ExecError> {
+        self.physical_ids
+            .iter()
+            .position(|id| *id == pid)
+            .ok_or_else(|| ExecError::internal("index-merge partial read an unknown partition"))
+    }
+
+    /// Go `extractTaskHandles` (:1830) over the current result.
+    fn extract_task_handles(&mut self, maximum: usize) -> Result<Option<PartialHandleBatch>, ExecError> {
+        let zone = tidb_exprctx::Columns::time_zone(&self.ctx);
+        while self.cur < self.results.len() {
+            let target = self.batch_size.min(maximum);
+            let mut handles = Vec::with_capacity(target);
+            // Go `retChk = chunk.NewChunkWithCapacity(w.getRetTpsForIndexScan(handleCols),
+            // w.batchSize)`: the whole index rows, the by-item columns first.
+            let mut sort_keys = if self.by_items.is_empty() {
+                MergeSortKeys::default()
+            } else {
+                MergeSortKeys::typed(self.ret_types.clone(), self.batch_size)
+            };
+            let mut chunk = self.chunk.take().expect("partial worker is open");
+            let read = (|| {
+                while handles.len() < target {
+                    chunk.set_required_rows((target - handles.len()) as isize, self.max_chunk_size);
+                    let (pid, result) = &mut self.results[self.cur];
+                    let pid = *pid;
+                    result.next(&mut chunk)?;
+                    if chunk.num_rows() == 0 {
+                        break;
+                    }
+                    self.memory.as_ref().expect("partial worker is open").consume_chunk(chunk.memory_usage())?;
+                    // Every row of the chunk (a reused response chunk may hold
+                    // more than were required), up to the pushed limit.
+                    for row_index in 0..chunk.num_rows().min(maximum - handles.len()) {
+                        let row = chunk.get_row(row_index);
+                        let handle = if self.need_partition_handle {
+                            self.handle_cols.build_partition_handle_from_index_row(&zone, row)
+                        } else {
+                            self.handle_cols.build_handle_from_index_row(&zone, row)
+                        }
+                        .map_err(|error| ExecError::internal(format!("{error:?}")))?;
+                        let (partition, handle) = match handle {
+                            tidb_txnkv::Handle::Partition(partition) => (
+                                Some(partition.partition_id()),
+                                partition.inner().clone(),
+                            ),
+                            handle => (pid, handle),
+                        };
+                        let partition_index = match partition {
+                            Some(pid) if !self.physical_ids.is_empty() => self.partition_index(pid)?,
+                            _ => 0,
+                        };
+                        let handle = match handle {
+                            tidb_txnkv::Handle::Int(handle) => TableHandle::Int(handle.value()),
+                            handle => TableHandle::Common(handle.encoded().to_vec()),
+                        };
+                        handles.push(HandleRef { handle, partition_index });
+                        if let MergeSortKeys::Typed { chunk: keys, .. } = &mut sort_keys {
+                            keys.append_row(row);
+                        }
+                    }
+                }
+                Ok::<(), ExecError>(())
+            })();
+            self.chunk = Some(chunk);
+            read?;
+            if handles.is_empty() {
+                self.cur += 1;
+                continue;
+            }
+            if handles.len() >= self.batch_size {
+                self.batch_size = self.batch_size.saturating_mul(2).min(self.max_batch_size);
+            }
+            return Ok(Some(PartialHandleBatch { handles, sort_keys }));
+        }
+        Ok(None)
+    }
+
+    /// Go `SelectResult` over one request of the partial plan.
+    fn select_result(
+        &self,
+        statement: &tidb_distsql::remote_scan::PushdownStatementContext,
+        dag: tidb_proto::tipb::DagRequest,
+        mut key_ranges: Vec<tidb_txnkv::KeyRange>,
+        mem_tracker: std::sync::Arc<tidb_memory::Tracker>,
+    ) -> Result<tidb_distsql::select_response::SelectResponseIter, ExecError> {
+        // The key ranges should be ordered.
+        key_ranges.sort_by(|a, b| a.start_key.cmp(&b.start_key));
+        crate::cop_reader::open_table_read(
+            self.client.as_ref(),
+            statement,
+            crate::cop_reader::TableRead {
+                store_type: tidb_kv::store_type::StoreType::TiKv,
+                dag,
+                key_ranges,
+                key_range_hints: Vec::new(),
+                partition_id_and_ranges: Vec::new(),
+                batch_cop: false,
+                schema_version: 0,
+                connection_id: tidb_exprctx::Columns::connection_id(&self.ctx).unwrap_or_default(),
+                connection_alias: self.ctx.ddl_session_alias().to_owned(),
+                start_ts: self.start_ts,
+                keep_order: self.keep_order,
+                desc: self.desc,
+                paging: statement.paging,
+                field_types: self.ret_types.clone(),
+                cop_plan_ids: self.plans.iter().map(|plan| plan.id() as isize).collect(),
+                root_plan_id: isize::try_from(self.plan_id).unwrap_or(0),
+                mem_tracker: Some(mem_tracker),
+            },
+        )
+        .map_err(|error| ExecError::Internal(error.into()))
+        .inspect(|_| tidb_kv::storage::note_storage_op(|ops| ops.cop_scans += 1))
+    }
+}
+
+impl PartialHandleSource for PartialIndexWorker {
+    /// `startPartialIndexWorker`: the requests, all sent before any handle is
+    /// read.
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.reported = false;
+        self.cur = 0;
+        self.batch_size = self.initial_batch_size;
+        let memory = MergeReaderMemory::new(&self.ctx.statement_memory(), self.memory_label);
+        let statement = crate::remote_scan::pushdown_statement_context(&self.ctx)
+            .with_estimated_net_bytes(self.net_data_size);
+        // Go `buildIndexReq`: `ConstructDAGReq` over the partial plans (rebuilt
+        // for `isCorColInPartialFilters`) with the index scan's output offsets.
+        let plans: Vec<&tidb_planner_core_operator_physicalop::PhysicalPlan> = self.plans.iter().collect();
+        let mut dag = crate::builder_utils::construct_dag_req(&self.ctx, &statement, &plans, tidb_kv::store_type::StoreType::TiKv)
+            .map_err(|error| ExecError::Internal(error.to_string().into()))?;
+        dag.output_offsets.clone_from(&self.output_offsets);
+        dag.collect_range_counts = Some(false);
+        let mut results = Vec::with_capacity(self.kv_ranges.len());
+        for (pid, key_ranges) in &self.kv_ranges {
+            let result = self.select_result(&statement, dag.clone(), key_ranges.clone(), std::sync::Arc::clone(memory.tracker()))?;
+            results.push((Some(*pid), crate::range_group_merge::ReaderResult::One(result)));
+        }
+        if results.len() > 1 && !self.by_items.is_empty() {
+            let meta = ExecutorMeta::new(
+                Schema::new(Vec::new()),
+                self.plan_id,
+                self.max_chunk_size,
+                self.max_chunk_size,
+            );
+            let inputs = results
+                .into_iter()
+                .map(|(_, result)| match result {
+                    crate::range_group_merge::ReaderResult::One(result) => result,
+                    crate::range_group_merge::ReaderResult::Sorted(_) => unreachable!("one result a request"),
+                })
+                .collect();
+            let merged = crate::range_group_merge::SortedSelectResults::new(meta, self.by_items.clone(), inputs, self.ctx.clone())?
+                .with_mem_tracker(Some(std::sync::Arc::clone(memory.tracker())));
+            results = vec![(None, crate::range_group_merge::ReaderResult::Sorted(merged))];
+        }
+        self.results = results;
+        self.chunk = Some(Chunk::new(&self.ret_types, self.max_chunk_size, self.max_chunk_size));
+        self.memory = Some(memory);
+        Ok(())
+    }
+
+    fn next_batch(&mut self) -> Result<Option<PartialHandleBatch>, ExecError> {
+        self.extract_task_handles(usize::MAX)
+    }
+
+    fn next_batch_with_max_handles(&mut self, maximum: usize) -> Result<Option<PartialHandleBatch>, ExecError> {
+        if maximum == 0 {
+            return Ok(None);
+        }
+        self.extract_task_handles(maximum)
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        let mut first_error = Ok(());
+        let scan_id = self.plans.first().map_or(0, |plan| plan.id() as isize);
+        let (mut requests, mut rows) = (0, 0);
+        for (_, mut result) in self.results.drain(..) {
+            for select in result.select_results() {
+                let (more_requests, more_rows) = select.runtime_stats().get_cop_count_and_rows(scan_id);
+                requests += more_requests;
+                rows += more_rows;
+            }
+            let closed = result.close();
+            if first_error.is_ok() {
+                first_error = closed;
+            }
+        }
+        self.memory = None;
+        self.chunk = None;
+        if !self.reported {
+            self.reported = true;
+            tidb_executor_internal_exec::index_usage_reporter::IndexUsageReporter::new(self.ctx.index_usage_collector())
+                .report_cop_index_usage_for_table(&self.table, self.stats.as_ref(), self.index_id, requests, rows);
+        }
+        first_error
+    }
+}

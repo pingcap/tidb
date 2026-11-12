@@ -7327,6 +7327,129 @@ impl PartialHandleSource for IndexPartialHandleSource {
     }
 }
 
+/// Go `startPartialIndexWorker`'s worker over `partial`, whose index scan
+/// is `scan`: `buildIndexReq`, `buildPartialWorkerKVRanges` and
+/// `getRetTpsForIndexScan`.
+#[allow(clippy::too_many_arguments)]
+fn build_partial_index_worker(
+    plan: &PhysicalPlan,
+    partial: &PhysicalPlan,
+    scan: &tidb_planner_core_operator_physicalop::PhysicalIndexScan,
+    table: &tidb_table::tables::TableCommon,
+    table_info: &tidb_model::TableInfo,
+    selected: &[usize],
+    physical_ids: &[i64],
+    handle_cols: tidb_planner_util::handle_cols::HandleCols,
+    client: Arc<dyn tidb_txnkv::Client>,
+    catalog: &SessionExtendedInfoSchema,
+    ctx: &crate::StmtContext,
+) -> Result<crate::index_merge_reader::PartialIndexWorker, DriverError> {
+    let index = table_info
+        .indices
+        .iter_deref()
+        .find(|index| index.read().id == scan.index_id)
+        .map(|index| index.read().clone())
+        .ok_or_else(|| DriverError::unsupported("an index-merge partial's index is absent from its table"))?;
+    let partitioned = table_info.get_partition_info().is_some();
+    // Go `e.partitionTableMode`: a dynamically pruned partitioned table.
+    let partition_table_mode = partitioned && !ctx.static_partition_prune() && scan.table_id == table_info.id;
+    // Go `PhysicalIndexScan.NeedExtraOutputCol` and `needPartitionHandle`.
+    let need_extra_output_col = partitioned && (index.global || (!scan.by_items.is_empty() && !ctx.static_partition_prune()));
+    let need_partition_handle = (partition_table_mode && !scan.by_items.is_empty()) || index.global;
+    let index_schema = scan.base.base.schema().ok_or_else(|| DriverError::unsupported("the index scan has no schema"))?;
+    // Go `buildIndexScanOutputOffsets`.
+    let mut output_offsets = Vec::new();
+    let mut ret_types = Vec::new();
+    let mut by_items = Vec::new();
+    for item in &scan.by_items {
+        let Expression::Column(column) = &item.expr else {
+            return Err(DriverError::unsupported("Not support non-column in orderBy pushed down"));
+        };
+        let position = index_schema
+            .columns
+            .iter()
+            .position(|candidate| candidate.id == column.id)
+            .ok_or_else(|| DriverError::unsupported("Not found order by related columns in indexScan.schema"))?;
+        output_offsets.push(position as u32);
+        let field_type = column.ret_type.clone().unwrap_or_else(|| FieldType::new(tidb_datatype::FieldTypeCode::Null));
+        let mut key = column.clone();
+        key.index = by_items.len() as i64;
+        key.ret_type = Some(field_type.clone());
+        ret_types.push(field_type);
+        by_items.push(SortByItem { expr: Expression::Column(key), desc: item.desc });
+    }
+    let index_columns = index.columns.len();
+    let handle_len = handle_cols.num_cols();
+    output_offsets.extend((0..handle_len).map(|i| (index_columns + i) as u32));
+    if need_extra_output_col {
+        output_offsets.push((index_columns + handle_len) as u32);
+    }
+    // Go `getRetTpsForIndexScan`.
+    ret_types.extend(handle_cols.get_fields_types());
+    if need_partition_handle {
+        ret_types.push(FieldType::new(tidb_datatype::FieldTypeCode::LongLong));
+    }
+    // Go `buildPartialWorkerKVRanges`: each range group over each table.
+    let grouped_ranges = if scan.group_by_col_idxs.is_empty() {
+        vec![scan.ranges.clone()]
+    } else {
+        tidb_planner::find_best_task::dispatch::group_ranges_by_cols(&scan.ranges, &scan.group_by_col_idxs)
+            .map_err(DriverError::unsupported)?
+    };
+    let tables: Vec<i64> = if partition_table_mode && !index.global {
+        selected.iter().map(|index| physical_ids[*index]).collect()
+    } else if partition_table_mode {
+        vec![table_info.id]
+    } else {
+        vec![scan.table_id]
+    };
+    let zone = tidb_exprctx::Columns::time_zone(ctx);
+    let mut kv_ranges = Vec::with_capacity(grouped_ranges.len() * tables.len());
+    for ranges in &grouped_ranges {
+        for &pid in &tables {
+            let ranges = tidb_distsql::index_ranges_to_kv_ranges(Some(&zone), &[pid], scan.index_id, ranges)
+                .map_err(|error| DriverError::unsupported(format!("{error:?}")))?;
+            kv_ranges.push((pid, ranges.into_iter().flatten().collect()));
+        }
+    }
+    let max_chunk_size = ctx.executor_chunk_sizes().1;
+    Ok(crate::index_merge_reader::PartialIndexWorker {
+        ctx: ctx.clone(),
+        client,
+        plans: crate::builder_utils::flatten_table_plan(partial).into_iter().cloned().collect(),
+        output_offsets,
+        ret_types,
+        by_items,
+        kv_ranges,
+        handle_cols,
+        need_partition_handle,
+        physical_ids: if partitioned { physical_ids.to_vec() } else { Vec::new() },
+        desc: scan.desc,
+        keep_order: scan.keep_order,
+        start_ts: crate::statement_store(ctx).start_ts(),
+        net_data_size: partial.cop_net_data_size(true, tidb_config::tikvcfg::get_global_config().tikv_client.enable_chunk_rpc),
+        plan_id: i64::from(partial.id()),
+        initial_batch_size: crate::access_path::calculate_lookup_batch_size_with_cap(
+            scan.base.base.stats_info().map(|stats| stats.row_count()),
+            max_chunk_size,
+            false,
+            ctx.index_lookup_size(),
+        ),
+        max_batch_size: ctx.index_lookup_size(),
+        max_chunk_size,
+        memory_label: i64::from(plan.id()),
+        table: table.clone(),
+        stats: crate::access_cost::load_table_stats(ctx, catalog, table.stats_physical_id()),
+        index_id: scan.index_id,
+        batch_size: 0,
+        memory: None,
+        results: Vec::new(),
+        cur: 0,
+        chunk: None,
+        reported: false,
+    })
+}
+
 fn build_index_merge_reader(
     plan: &PhysicalPlan,
     reader: &tidb_planner_core_operator_physicalop::PhysicalIndexMergeReader,
@@ -7374,9 +7497,36 @@ fn build_index_merge_reader(
     // reader records, in `built` order: an executor-built partial records
     // its own through the operator wrapper.
     let mut built_ids: Vec<Option<i64>> = Vec::new();
+    // Go's partial index workers on a store with a coprocessor client.
+    let go_client = ctx
+        .txn_store()
+        .and_then(|store| store.client())
+        .filter(|_| matches!(state.reader_storage, ReaderStorage::Snapshot));
+    let table_info = table.meta().read().clone();
+    let merge_handle_cols = go_client.as_ref().map(|_| table_handle_cols(&table_info)).transpose()?;
     for partial in &reader.partial_plans_raw {
         let partial_schema = plan_schema(partial)?;
         let selected = index_merge_partition_indexes(partial, &table)?;
+        if let (Some(client), Some(handle_cols), Some(scan)) =
+            (go_client.as_ref(), merge_handle_cols.as_ref(), embedded_index_scan(partial))
+        {
+            let worker = build_partial_index_worker(
+                plan,
+                partial,
+                scan,
+                &table,
+                &table_info,
+                &selected,
+                &physical_ids,
+                handle_cols.clone(),
+                Arc::clone(client),
+                catalog,
+                ctx,
+            )?;
+            built_ids.push(Some(i64::from(partial.id())));
+            built.push((matches!(partial, PhysicalPlan::IndexScan(_)) && reader.by_items.is_empty(), Box::new(worker)));
+            continue;
+        }
         if let PhysicalPlan::IndexScan(scan) = partial {
             if reader.by_items.is_empty() {
                 // Go buildIndexScanOutputOffsets returns only handles here.
@@ -8692,6 +8842,40 @@ fn exec_handle_cols(
             .next()
             .ok_or_else(|| DriverError::unsupported("a table has no handle column"))?,
     }))
+}
+
+/// Go `ts.HandleCols` of a table scan as the table's metadata defines it:
+/// the clustered primary key's columns, the integer primary key, or
+/// `_tidb_rowid` (`setIndexMergeTableScanHandleCols`).
+fn table_handle_cols(table_info: &tidb_model::TableInfo) -> Result<tidb_planner_util::handle_cols::HandleCols, DriverError> {
+    let column_of = |info: &tidb_model::ColumnInfo, index: usize| {
+        let mut column = Column::new(0, info.field_type.clone());
+        column.id = info.id;
+        column.index = index as i64;
+        column
+    };
+    let columns = if table_info.is_common_handle {
+        let primary = tidb_table::tables::scan_from_infos::find_primary_index(table_info)
+            .ok_or_else(|| DriverError::unsupported("a clustered table has no primary index"))?;
+        let primary = primary.read();
+        primary
+            .columns
+            .iter_deref()
+            .enumerate()
+            .map(|(index, index_column)| {
+                usize::try_from(index_column.read().offset)
+                    .ok()
+                    .and_then(|offset| table_info.columns.get(offset))
+                    .map(|info| column_of(&info.read(), index))
+                    .ok_or_else(|| DriverError::unsupported("a primary key column is absent from its table"))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else if let Some(pk) = table_info.get_pk_col_info().filter(|_| table_info.pk_is_handle) {
+        vec![column_of(&pk.read(), 0)]
+    } else {
+        vec![column_of(&tidb_model::ColumnInfo::new_extra_handle_col_info(), 0)]
+    };
+    exec_handle_cols(table_info, columns)
 }
 
 /// Whether a table reader is Go's `TableReaderExecutor`
