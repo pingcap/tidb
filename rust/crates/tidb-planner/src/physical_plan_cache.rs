@@ -669,6 +669,9 @@ fn rebuild_table_scan(
             });
         }
         scan.ranges = result.ranges;
+        // Rebuild GroupedRanges if GroupByColIdxs is set
+        scan.grouped_ranges = crate::find_best_task::dispatch::grouped_ranges(&scan.ranges, &scan.group_by_col_idxs)
+            .map_err(PlanCacheRebuildError::RangeBuild)?;
         return Ok(());
     }
     if rebuild.common_handle_columns.is_empty()
@@ -702,6 +705,9 @@ fn rebuild_table_scan(
         });
     }
     scan.ranges = result.ranges;
+    // Rebuild GroupedRanges if GroupByColIdxs is set
+    scan.grouped_ranges = crate::find_best_task::dispatch::grouped_ranges(&scan.ranges, &scan.group_by_col_idxs)
+        .map_err(PlanCacheRebuildError::RangeBuild)?;
     Ok(())
 }
 
@@ -744,6 +750,9 @@ fn rebuild_index_scan(
         });
     }
     scan.ranges = result.ranges;
+    // Rebuild GroupedRanges if GroupByColIdxs is set
+    scan.grouped_ranges = crate::find_best_task::dispatch::grouped_ranges(&scan.ranges, &scan.group_by_col_idxs)
+        .map_err(PlanCacheRebuildError::RangeBuild)?;
     Ok(())
 }
 

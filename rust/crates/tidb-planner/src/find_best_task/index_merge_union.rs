@@ -184,7 +184,7 @@ fn key_columns_match_order(
         }
     }
     if !group_by_col_idxs.is_empty()
-        && super::dispatch::range_group_count(ranges, &group_by_col_idxs)? == 0
+        && super::dispatch::property_range_groups(ranges, &group_by_col_idxs)?.is_empty()
     {
         group_by_col_idxs.clear();
     }
@@ -496,6 +496,8 @@ pub(super) fn build_converged_union_index_merge_task(
                     // when the order matches.
                     by_items: if matched.matched() { by_items.clone() } else { Vec::new() },
                     group_by_col_idxs: groups.clone(),
+                    grouped_ranges: super::dispatch::grouped_ranges(ranges, &groups)
+                        .map_err(PlanError::internal)?,
                     base,
                     table_id: ds.physical_table_id,
                     table_as_name: ds.table_as_name.clone(),
@@ -644,6 +646,7 @@ pub(super) fn build_converged_union_index_merge_task(
                 is_mpp_or_batch_cop: false,
                 by_items: Vec::new(),
                 group_by_col_idxs: Vec::new(),
+                grouped_ranges: Vec::new(),
                 base,
                 table_id: ds.physical_table_id,
                 table_as_name: ds.table_as_name.clone(),
@@ -980,6 +983,8 @@ fn push_index_partial(
         // merge-sort operation between partitions or range groups."
         by_items: if matched { by_items.to_vec() } else { Vec::new() },
         group_by_col_idxs: group_by_col_idxs.to_vec(),
+        grouped_ranges: super::dispatch::grouped_ranges(ranges, group_by_col_idxs)
+            .map_err(PlanError::internal)?,
         base,
         table_id: ds.physical_table_id,
         table_as_name: ds.table_as_name.clone(),

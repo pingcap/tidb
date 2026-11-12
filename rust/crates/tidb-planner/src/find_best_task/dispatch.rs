@@ -2051,16 +2051,19 @@ fn sort_items_to_by_items(items: &[tidb_planner_property::SortItem]) -> Vec<tidb
 
 /// Go `matchProperty`'s verdict for one access path: whether it delivers the
 /// required order, and the index columns whose per-range constants force the
-/// reader to merge-sort the range groups (`AccessPath.GroupByColIdxs`).
+/// reader to merge-sort the range groups (`AccessPath.GroupByColIdxs`) and
+/// those groups (`AccessPath.GroupedRanges`).
 pub(super) struct OrderMatch {
     pub result: tidb_planner_property::PhysicalPropMatchResult,
     pub group_by_col_idxs: Vec<usize>,
+    pub grouped_ranges: Vec<tidb_ranger::types::Ranges>,
 }
 
 impl OrderMatch {
     pub(super) const NOT_MATCHED: Self = Self {
         result: tidb_planner_property::PhysicalPropMatchResult::NotMatched,
         group_by_col_idxs: Vec::new(),
+        grouped_ranges: Vec::new(),
     };
 
     pub(super) fn matched(&self) -> bool {
@@ -2124,36 +2127,38 @@ fn match_sort_items(
     let matched = || OrderMatch {
         result: tidb_planner_property::PhysicalPropMatchResult::Matched,
         group_by_col_idxs: Vec::new(),
+        grouped_ranges: Vec::new(),
     };
     if group_by_col_idxs.is_empty() {
         return matched();
     }
-    match range_group_count(ranges.map_or(&[][..], |ranges| &ranges[..]), &group_by_col_idxs) {
+    match property_range_groups(ranges.map_or(&[][..], |ranges| &ranges[..]), &group_by_col_idxs) {
         None => OrderMatch::NOT_MATCHED,
-        Some(0) => matched(),
-        Some(_) => OrderMatch {
+        Some(groups) if groups.is_empty() => matched(),
+        Some(grouped_ranges) => OrderMatch {
             result: tidb_planner_property::PhysicalPropMatchResult::MatchedNeedMergeSort,
             group_by_col_idxs,
+            grouped_ranges,
         },
     }
 }
 
-/// Go `GroupRangesByCols` plus `matchProperty`'s `maxGroupCount`: the number
-/// of range groups the ranges form on the group-by columns (ranges that agree
-/// on them are one group, keyed by the value encoding with collation
-/// ignored). `None` means the path cannot take the merge sort -- the
-/// encoding failed, or Go's cap is exceeded. Multiple ranges fit one cop
-/// task but groups are forced apart, so the cap bounds that overhead.
-pub(super) fn range_group_count(
+/// Go `GroupRangesByCols` plus `matchProperty`'s `maxGroupCount`: the range
+/// groups the ranges form on the group-by columns (ranges that agree on them
+/// are one group, keyed by the value encoding with collation ignored).
+/// `None` means the path cannot take the merge sort -- the encoding failed,
+/// or Go's cap is exceeded. Multiple ranges fit one cop task but groups are
+/// forced apart, so the cap bounds that overhead.
+pub(super) fn property_range_groups(
     ranges: &[tidb_ranger::types::Range],
     group_by_col_idxs: &[usize],
-) -> Option<usize> {
+) -> Option<Vec<tidb_ranger::types::Ranges>> {
     // Multiple ranges can be put into one cop task. But when we group them,
     // they are forced to be split into multiple cop tasks. This can cause
     // large overhead besides the merge sort operation itself.
     const MAX_GROUP_COUNT: usize = 2048;
     let groups = group_ranges_by_cols(ranges, group_by_col_idxs).ok()?;
-    (groups.len() <= MAX_GROUP_COUNT).then_some(groups.len())
+    (groups.len() <= MAX_GROUP_COUNT).then_some(groups)
 }
 
 /// Go `GroupRangesByCols`: ranges that agree on the group-by columns form
@@ -2224,6 +2229,7 @@ pub(super) fn table_path_matches_order(
         return OrderMatch {
             result: tidb_planner_property::PhysicalPropMatchResult::Matched,
             group_by_col_idxs: Vec::new(),
+            grouped_ranges: Vec::new(),
         };
     }
     let (all_same, _) = prop.all_same_order();
@@ -2306,6 +2312,22 @@ pub(super) fn add_extra_phys_tbl_id_column(
     column.orig_name = "_tidb_tid".to_owned();
     columns.push(column);
     true
+}
+
+/// Go's `GroupedRanges` rebuild (`if len(GroupByColIdxs) > 0 {
+/// GroupedRanges, err = GroupRangesByCols(...) }`): the ranges grouped by
+/// `group_by_col_idxs`, empty without them.
+///
+/// # Errors
+/// [`group_ranges_by_cols`]'s.
+pub fn grouped_ranges(
+    ranges: &[tidb_ranger::types::Range],
+    group_by_col_idxs: &[usize],
+) -> Result<Vec<tidb_ranger::types::Ranges>, String> {
+    if group_by_col_idxs.is_empty() {
+        return Ok(Vec::new());
+    }
+    group_ranges_by_cols(ranges, group_by_col_idxs)
 }
 
 /// Go `ds.HandleCols` as `util.HandleCols`: the integer handle's column, or
@@ -4036,6 +4058,7 @@ fn find_best_task_4_logical_data_source_paths(
                     desc,
                     ranges: ranges.clone(),
                     group_by_col_idxs: order_match.group_by_col_idxs.clone(),
+                    grouped_ranges: order_match.grouped_ranges.clone(),
                     // Go `convertToTableScan`: a matched keep-order scan of a
                     // partitioned table, or one that merge-sorts its range
                     // groups, carries the property's sort items.
@@ -4251,6 +4274,7 @@ fn find_best_task_4_logical_data_source_paths(
                     is_mpp_or_batch_cop: false,
                     by_items: Vec::new(),
                     group_by_col_idxs: Vec::new(),
+                    grouped_ranges: Vec::new(),
                     base,
                     table_id: ds.physical_table_id,
                     table_as_name: ds.table_as_name.clone(),
@@ -4987,6 +5011,7 @@ fn find_best_task_4_logical_data_source_paths(
                     desc,
                     ranges: ranges.clone(),
                     group_by_col_idxs: order_match.group_by_col_idxs.clone(),
+                    grouped_ranges: order_match.grouped_ranges.clone(),
                     // Go `convertToIndexScan`: "keep order between partitions
                     // (only required for a local index)" and "between range
                     // groups" both add the sort items the reader merges by.
@@ -5099,6 +5124,7 @@ fn find_best_task_4_logical_data_source_paths(
                             is_mpp_or_batch_cop: false,
                             by_items: Vec::new(),
                             group_by_col_idxs: Vec::new(),
+                            grouped_ranges: Vec::new(),
                             base: table_base,
                             table_id: ds.physical_table_id,
                             table_as_name: ds.table_as_name.clone(),

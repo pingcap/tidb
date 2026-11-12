@@ -491,3 +491,40 @@ fn a_union_scan_over_grouped_ranges_merges_the_buffered_rows() {
     ]);
     tk.must_exec("rollback");
 }
+
+/// Go's plan-cache rebuild regroups a cached scan's ranges
+/// (`plan_cache_rebuild.go`: "Rebuild GroupedRanges if GroupByColIdxs is
+/// set"), so a cached table, index or lookup reader reads the new
+/// parameters' range groups. Go's rows (a testkit probe).
+#[test]
+fn a_cached_plans_range_groups_are_rebuilt_with_its_ranges() {
+    let mut tk = TestKit::new();
+    tk.must_exec("create table tc (a int, b int, c int, primary key(a,b) clustered)");
+    tk.must_exec("insert into tc values (1,5,0),(2,3,0),(1,1,0),(3,2,0),(2,8,0),(3,6,0)");
+    tk.must_exec("create table tl (a int, b int, c int, index iab(a,b))");
+    tk.must_exec("insert into tl values (1,5,0),(2,3,0),(1,1,0),(3,2,0),(2,8,0),(3,6,0)");
+    for (sql, first, second) in [
+        (
+            "select * from tc where a in (?,?) order by b",
+            ["1 1 0", "2 3 0", "1 5 0", "2 8 0"],
+            ["3 2 0", "2 3 0", "3 6 0", "2 8 0"],
+        ),
+        (
+            "select a, b from tl where a in (?,?) order by b",
+            ["1 1", "2 3", "1 5", "2 8"],
+            ["3 2", "2 3", "3 6", "2 8"],
+        ),
+        (
+            "select * from tl where a in (?,?) order by b desc",
+            ["2 8 0", "1 5 0", "2 3 0", "1 1 0"],
+            ["2 8 0", "3 6 0", "2 3 0", "3 2 0"],
+        ),
+    ] {
+        tk.must_exec(&format!("prepare s from '{sql}'"));
+        tk.must_exec("set @x=1, @y=2");
+        tk.must_query("execute s using @x, @y").check(first);
+        tk.must_exec("set @x=2, @y=3");
+        tk.must_query("execute s using @x, @y").check(second);
+        tk.must_query("select @@last_plan_from_cache").check(["1"]);
+    }
+}

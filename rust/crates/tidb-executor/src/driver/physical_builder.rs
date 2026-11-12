@@ -7390,11 +7390,10 @@ fn build_partial_index_worker(
         ret_types.push(FieldType::new(tidb_datatype::FieldTypeCode::LongLong));
     }
     // Go `buildPartialWorkerKVRanges`: each range group over each table.
-    let grouped_ranges = if scan.group_by_col_idxs.is_empty() {
+    let grouped_ranges = if scan.grouped_ranges.is_empty() {
         vec![scan.ranges.clone()]
     } else {
-        tidb_planner::find_best_task::dispatch::group_ranges_by_cols(&scan.ranges, &scan.group_by_col_idxs)
-            .map_err(DriverError::unsupported)?
+        scan.grouped_ranges.clone()
     };
     let tables: Vec<i64> = if partition_table_mode && !index.global {
         selected.iter().map(|index| physical_ids[*index]).collect()
@@ -7476,7 +7475,8 @@ fn build_partial_table_worker(
         tidb_kv::store_type::StoreType::TiKv,
         false,
     )
-    .map_err(DriverError::from)?;
+    .map_err(DriverError::from)?
+    .with_scan_grouped_ranges();
     let partitioned = table_info.get_partition_info().is_some();
     // Go `e.partitionTableMode`.
     let partition_table_mode = partitioned && !ctx.static_partition_prune() && scan.table_id == table_info.id;
@@ -7584,12 +7584,13 @@ fn build_index_merge_reader(
         .and_then(|store| store.client())
         .filter(|_| matches!(state.reader_storage, ReaderStorage::Snapshot));
     let table_info = table.meta().read().clone();
-    // Go `v.HandleCols`: the table scan's (`setIndexMergeTableScanHandleCols`).
+    // Go `v.HandleCols`.
     let merge_handle_cols = go_client
         .as_ref()
         .map(|_| {
-            embedded_table_scan(table_plan)
-                .and_then(|ts| ts.handle_cols.clone())
+            reader
+                .handle_cols()
+                .cloned()
                 .ok_or_else(|| DriverError::unsupported("an index merge's table scan has no handle columns"))
         })
         .transpose()?;
@@ -7918,9 +7919,8 @@ fn build_index_merge_reader(
         let table_info = table.meta().read().clone();
         let keep_order = if reader.keep_order {
             // Go `p.HandleCols.ResolveIndices(p.Schema())` when `KeepOrder`.
-            let handle_cols = ts
-                .handle_cols
-                .as_ref()
+            let handle_cols = reader
+                .handle_cols()
                 .ok_or_else(|| DriverError::unsupported("an index merge's table scan has no handle columns"))?
                 .resolve_indices(&schema)
                 .map_err(DriverError::unsupported)?;
@@ -7963,14 +7963,9 @@ fn partial_range_groups(
     partial: &PhysicalPlan,
 ) -> Result<Option<Vec<tidb_ranger::types::Ranges>>, DriverError> {
     let grouped = embedded_index_scan(partial)
-        .map(|scan| (&scan.group_by_col_idxs, &scan.ranges))
-        .or_else(|| embedded_table_scan(partial).map(|scan| (&scan.group_by_col_idxs, &scan.ranges)));
-    match grouped {
-        Some((idxs, ranges)) if !idxs.is_empty() => {
-            Ok(Some(tidb_planner::find_best_task::dispatch::group_ranges_by_cols(ranges, idxs).map_err(DriverError::unsupported)?))
-        }
-        _ => Ok(None),
-    }
+        .map(|scan| &scan.grouped_ranges)
+        .or_else(|| embedded_table_scan(partial).map(|scan| &scan.grouped_ranges));
+    Ok(grouped.filter(|groups| !groups.is_empty()).cloned())
 }
 
 /// Points the grouped scan of a cloned plan at one range group.
@@ -7979,10 +7974,12 @@ fn narrow_scan_ranges(plan: &mut PhysicalPlan, ranges: &tidb_ranger::types::Rang
         PhysicalPlan::TableScan(scan) if !scan.group_by_col_idxs.is_empty() => {
             scan.ranges = ranges.clone();
             scan.group_by_col_idxs.clear();
+            scan.grouped_ranges.clear();
         }
         PhysicalPlan::IndexScan(scan) if !scan.group_by_col_idxs.is_empty() => {
             scan.ranges = ranges.clone();
             scan.group_by_col_idxs.clear();
+            scan.grouped_ranges.clear();
         }
         _ => {
             for child in plan.base_mut().children_mut() {
@@ -8877,25 +8874,25 @@ fn build_reader_node(
     }
 }
 
-/// The scan of a reader that carries Go's `GroupByColIdxs`, with the property
-/// the planner built it under.
+/// The range groups of a reader's scan (Go `GroupedRanges`), with the
+/// property the planner built it under.
 fn range_grouped_scan(
     plan: &PhysicalPlan,
-) -> Option<(&[usize], &tidb_ranger::types::Ranges, Option<&tidb_planner_property::PhysicalProperty>)> {
+) -> Option<(&[tidb_ranger::types::Ranges], Option<&tidb_planner_property::PhysicalProperty>)> {
     let leaf = match plan {
         PhysicalPlan::TableReader(reader) => reader.table_plan.as_deref().and_then(|plan| {
             embedded_table_scan(plan).map(|scan| {
-                (&scan.group_by_col_idxs[..], &scan.ranges, scan.prop.as_deref())
+                (&scan.grouped_ranges[..], scan.prop.as_deref())
             })
         }),
         PhysicalPlan::IndexReader(reader) => reader.index_plan.as_deref().and_then(|plan| {
             embedded_index_scan(plan).map(|scan| {
-                (&scan.group_by_col_idxs[..], &scan.ranges, scan.prop.as_deref())
+                (&scan.grouped_ranges[..], scan.prop.as_deref())
             })
         }),
         PhysicalPlan::IndexLookUpReader(reader) => reader.index_plan.as_deref().and_then(|plan| {
             embedded_index_scan(plan).map(|scan| {
-                (&scan.group_by_col_idxs[..], &scan.ranges, scan.prop.as_deref())
+                (&scan.grouped_ranges[..], scan.prop.as_deref())
             })
         }),
         _ => None,
@@ -8969,7 +8966,7 @@ fn build_range_grouped_reader(
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
-    let Some((group_by_col_idxs, ranges, prop)) = range_grouped_scan(plan) else {
+    let Some((groups, prop)) = range_grouped_scan(plan) else {
         return build_reader_node(plan, catalog, ctx, state);
     };
     let go_reader = match plan {
@@ -8979,8 +8976,7 @@ fn build_range_grouped_reader(
     if go_reader {
         return build_reader_node(plan, catalog, ctx, state);
     }
-    let groups = tidb_planner::find_best_task::dispatch::group_ranges_by_cols(ranges, group_by_col_idxs)
-        .map_err(DriverError::unsupported)?;
+    let groups = groups.to_vec();
     if groups.len() <= 1 {
         // One group is read in range order, which is already the property's.
         return build_reader_node(plan, catalog, ctx, state);

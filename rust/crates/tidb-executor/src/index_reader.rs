@@ -81,6 +81,8 @@ pub struct IndexReaderExecutor {
     /// Go `is.GroupByColIdxs`: the columns whose values group `ranges` into
     /// `groupedRanges`.
     group_by_col_idxs: Vec<usize>,
+    /// Go `groupedRanges`: the scan's `GroupedRanges`.
+    grouped_ranges: Vec<Vec<tidb_ranger::types::Range>>,
     /// Go `corColInAccess`: the ranges rebuilt over the outer row
     /// (`rebuildIndexRanges`).
     range_rebuild: Option<crate::access_path::RangeRebuilder>,
@@ -228,6 +230,7 @@ impl IndexReaderExecutor {
             index_id: scan.index_id,
             ranges: scan.ranges.clone(),
             group_by_col_idxs: scan.group_by_col_idxs.clone(),
+            grouped_ranges: scan.grouped_ranges.clone(),
             range_rebuild: crate::driver::physical_builder::correlated_index_range_rebuilder(scan, ctx),
             fixed_kv_ranges: None,
             keep_order: scan.keep_order,
@@ -285,18 +288,23 @@ impl IndexReaderExecutor {
         if let Some(fixed) = &self.fixed_kv_ranges {
             return Ok(fixed.clone());
         }
-        let ranges = match &self.range_rebuild {
-            Some(rebuild) => rebuild().map_err(|error| ExecError::Internal(format!("{error:?}").into()))?,
-            None => self.ranges.clone(),
+        // Go `corColInAccess`: the ranges rebuilt over the outer row, and
+        // `groupedRanges` with them when the scan groups them.
+        let (ranges, grouped_ranges) = match &self.range_rebuild {
+            Some(rebuild) => {
+                let ranges = rebuild().map_err(|error| ExecError::Internal(format!("{error:?}").into()))?;
+                let grouped_ranges = if self.group_by_col_idxs.is_empty() {
+                    Vec::new()
+                } else {
+                    tidb_planner::find_best_task::dispatch::group_ranges_by_cols(&ranges, &self.group_by_col_idxs)
+                        .map_err(|error| ExecError::Internal(error.into()))?
+                };
+                (ranges, grouped_ranges)
+            }
+            None => (self.ranges.clone(), self.grouped_ranges.clone()),
         };
-        // Go `groupedRanges`, rebuilt with the ranges (`GroupRangesByCols`),
-        // or the ranges as one group.
-        let grouped_ranges = if self.group_by_col_idxs.is_empty() {
-            vec![ranges]
-        } else {
-            tidb_planner::find_best_task::dispatch::group_ranges_by_cols(&ranges, &self.group_by_col_idxs)
-                .map_err(|error| ExecError::Internal(error.into()))?
-        };
+        // Go `groupedRanges`, or the ranges as one group.
+        let grouped_ranges = if grouped_ranges.is_empty() { vec![ranges] } else { grouped_ranges };
         let zone = tidb_exprctx::Columns::time_zone(&self.ctx);
         let mut results = Vec::new();
         for ranges in &grouped_ranges {

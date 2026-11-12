@@ -310,6 +310,8 @@ pub struct TableReaderExecutor {
     /// Go `groupByColIdxs`: the columns whose values group `ranges` into
     /// `groupedRanges`, one request a group merged by `by_items`.
     group_by_col_idxs: Vec<usize>,
+    /// Go `groupedRanges`: `buildTableReader`'s `ts.GroupedRanges`.
+    grouped_ranges: Vec<Vec<tidb_ranger::types::Range>>,
     /// Go `byItems`.
     by_items: Vec<tidb_expression_aggregation::ByItems>,
     /// Go `resultHandler`: the select results, read one after another
@@ -391,6 +393,7 @@ impl TableReaderExecutor {
             virtual_column_index,
             virtual_column_ret_field_types,
             group_by_col_idxs: Vec::new(),
+            grouped_ranges: Vec::new(),
             by_items: Vec::new(),
             results: Vec::new(),
             cur: 0,
@@ -454,7 +457,7 @@ impl TableReaderExecutor {
         let Some(reader) = Self::build_no_range(meta, ctx, is, v)? else {
             return Ok(Box::new(crate::table_dual::TableDualExec::new(dual, 0)));
         };
-        Ok(Box::new(reader))
+        Ok(Box::new(reader.with_scan_grouped_ranges()))
     }
 
     /// Go `buildNoRangeTableReader` and `buildTableReader`'s partition
@@ -590,7 +593,8 @@ impl TableReaderExecutor {
             columns: ts.columns.clone(),
             virtual_column_index,
             virtual_column_ret_field_types,
-            group_by_col_idxs: ts.group_by_col_idxs.clone(),
+            group_by_col_idxs: Vec::new(),
+            grouped_ranges: Vec::new(),
             by_items: ts.by_items.clone(),
             results: Vec::new(),
             cur: 0,
@@ -602,6 +606,19 @@ impl TableReaderExecutor {
             // union scan's.
             dummy: table.temp_table_type != tidb_model::TempTableType::NONE,
         })
+    }
+
+    /// Go `buildTableReader`'s (and a merge's partial table reader's)
+    /// `groupedRanges` and `groupByColIdxs`: the scan's.
+    #[must_use]
+    pub(crate) fn with_scan_grouped_ranges(mut self) -> Self {
+        let mut table_scans = Vec::new();
+        crate::mpp_gather::get_table_scans(&self.table_plan, &mut table_scans);
+        if let [ts] = table_scans[..] {
+            self.group_by_col_idxs = ts.group_by_col_idxs.clone();
+            self.grouped_ranges = ts.grouped_ranges.clone();
+        }
+        self
     }
 
     /// Go `partialTableReader.table = tbl` (and its `kvRangeBuilder`): the
@@ -931,22 +948,26 @@ impl Executor for TableReaderExecutor {
             None => statement.memory.operator_tracker(self.meta.id()),
         };
         self.mem_tracker = Some(tracker);
-        let ranges = match &self.range_rebuild {
-            Some(rebuild) => rebuild().map_err(|error| ExecError::Internal(format!("{error:?}").into()))?,
-            None => self.ranges.clone(),
-        };
         self.kv_ranges.clear();
         self.results.clear();
         self.cur = 0;
+        // Go `corColInAccess`: the ranges rebuilt over the outer row, and
+        // `groupedRanges` with them when it was set.
+        if let Some(rebuild) = &self.range_rebuild {
+            let ranges = rebuild().map_err(|error| ExecError::Internal(format!("{error:?}").into()))?;
+            if !self.group_by_col_idxs.is_empty() {
+                self.grouped_ranges = tidb_planner::find_best_task::dispatch::group_ranges_by_cols(&ranges, &self.group_by_col_idxs)
+                    .map_err(|error| ExecError::Internal(error.into()))?;
+            }
+            self.ranges = ranges;
+        }
         // To make the code more clean, we use a unified `groupedRanges` to
         // represent the ranges to be read, no matter whether they are from
-        // `e.ranges` or `e.groupedRanges` (Go `GroupRangesByCols`, rebuilt
-        // with the ranges).
-        let grouped_ranges = if !self.group_by_col_idxs.is_empty() {
-            tidb_planner::find_best_task::dispatch::group_ranges_by_cols(&ranges, &self.group_by_col_idxs)
-                .map_err(|error| ExecError::Internal(error.into()))?
-        } else if !ranges.is_empty() {
-            vec![ranges]
+        // `e.ranges` or `e.groupedRanges`.
+        let grouped_ranges = if !self.grouped_ranges.is_empty() {
+            self.grouped_ranges.clone()
+        } else if !self.ranges.is_empty() {
+            vec![self.ranges.clone()]
         } else {
             Vec::new()
         };

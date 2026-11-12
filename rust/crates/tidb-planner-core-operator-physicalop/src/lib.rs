@@ -1298,9 +1298,11 @@ pub struct PhysicalTableScan {
     /// of. Non-empty means the reader splits `ranges` into groups that agree
     /// on those columns (`GroupRangesByCols`), reads each group in order and
     /// merge-sorts the groups by the scan property's items. The groups are
-    /// derived from the (possibly cache-rebuilt) ranges at execution, as Go's
-    /// plan-cache rebuild does.
+    /// derived again from rebuilt ranges, as Go's plan-cache rebuild does.
     pub group_by_col_idxs: Vec<usize>,
+    /// Go `GroupedRanges`: `ranges` grouped by `group_by_col_idxs`
+    /// (`GroupRangesByCols`), empty without them.
+    pub grouped_ranges: Vec<tidb_ranger::types::Ranges>,
     /// Go `ByItems`: the sort items a keep-order read merge-sorts its range
     /// groups (and, for a local index, its partitions) by.
     pub by_items: Vec<tidb_expression_aggregation::ByItems>,
@@ -2558,6 +2560,8 @@ pub struct PhysicalIndexScan {
     pub ranges: tidb_ranger::types::Ranges,
     /// Go `GroupByColIdxs`; see [`PhysicalTableScan::group_by_col_idxs`].
     pub group_by_col_idxs: Vec<usize>,
+    /// Go `GroupedRanges`; see [`PhysicalTableScan::grouped_ranges`].
+    pub grouped_ranges: Vec<tidb_ranger::types::Ranges>,
     /// Go `ByItems`: the sort items a keep-order read merge-sorts its range
     /// groups (and, for a local index, its partitions) by.
     pub by_items: Vec<tidb_expression_aggregation::ByItems>,
@@ -2915,6 +2919,21 @@ pub struct PhysicalIndexMergeReader {
     pub keep_order: bool,
     /// Go `PlanPartInfo`.
     pub plan_part_info: Option<std::sync::Arc<PhysPlanPartInfo>>,
+}
+
+impl PhysicalIndexMergeReader {
+    /// Go `HandleCols`, which `Init` takes from the table scan
+    /// (`p.TablePlans[0].(*PhysicalTableScan).HandleCols`).
+    #[must_use]
+    pub fn handle_cols(&self) -> Option<&tidb_planner_util::handle_cols::HandleCols> {
+        let mut plan = self.table_plan.as_deref()?;
+        loop {
+            match plan {
+                PhysicalPlan::TableScan(ts) => return ts.handle_cols.as_ref(),
+                _ => plan = plan.children().first()?,
+            }
+        }
+    }
 }
 
 /// Go `physicalop.TblColPosInfo` for a single-table DELETE whose read was
@@ -5092,6 +5111,7 @@ impl PhysicalPlan {
                 columns: op.columns.clone(),
                 is_mpp_or_batch_cop: op.is_mpp_or_batch_cop,
                 group_by_col_idxs: op.group_by_col_idxs.clone(),
+                grouped_ranges: op.grouped_ranges.clone(),
                 by_items: op.by_items.clone(),
                 base: base_of(&op.base),
                 keep_order: op.keep_order,
@@ -5237,6 +5257,7 @@ impl PhysicalPlan {
                 table: op.table.clone(),
                 index: op.index.clone(),
                 group_by_col_idxs: op.group_by_col_idxs.clone(),
+                grouped_ranges: op.grouped_ranges.clone(),
                 by_items: op.by_items.clone(),
                 data_source_schema: op.data_source_schema.clone(),
                 base: base_of(&op.base),
