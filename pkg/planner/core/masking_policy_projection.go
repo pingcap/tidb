@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"slices"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -49,6 +50,8 @@ type maskingResultBuilder struct {
 	outerPlan base.LogicalPlan
 	rootPlan  base.LogicalPlan
 	cache     map[maskingResultKey]maskingResult
+	// predicate is set when the result is only compared by an outer predicate.
+	predicate bool
 }
 
 func (b *PlanBuilder) maskingEnabled(ctx context.Context, plans ...base.LogicalPlan) (bool, error) {
@@ -79,6 +82,17 @@ func planHasMaskingSource(p base.LogicalPlan) bool {
 // values. Only the final projection evaluates masking, using raw dependencies
 // carried through intermediate projections and DISTINCT as auxiliary columns.
 func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p base.LogicalPlan, oldLen int, outerPlan ...base.LogicalPlan) (base.LogicalPlan, error) {
+	return b.buildMaskingProjection(ctx, p, oldLen, false, outerPlan...)
+}
+
+// buildPredicateProjectionWithMasking masks each result column used by a
+// predicate. A column whose policy cannot be preserved keeps its original
+// value, while the other columns of the same row are still masked.
+func (b *PlanBuilder) buildPredicateProjectionWithMasking(ctx context.Context, p base.LogicalPlan, outerPlan base.LogicalPlan) (base.LogicalPlan, error) {
+	return b.buildMaskingProjection(ctx, p, p.Schema().Len(), true, outerPlan)
+}
+
+func (b *PlanBuilder) buildMaskingProjection(ctx context.Context, p base.LogicalPlan, oldLen int, rawOnUnsupported bool, outerPlan ...base.LogicalPlan) (base.LogicalPlan, error) {
 	if p == nil {
 		return p, nil
 	}
@@ -86,7 +100,7 @@ func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p bas
 	if err != nil || !enabled {
 		return p, err
 	}
-	m := maskingResultBuilder{b: b, ctx: ctx, rootPlan: p, cache: make(map[maskingResultKey]maskingResult)}
+	m := maskingResultBuilder{b: b, ctx: ctx, rootPlan: p, cache: make(map[maskingResultKey]maskingResult), predicate: rawOnUnsupported}
 	if len(outerPlan) > 0 {
 		m.outerPlan = outerPlan[0]
 	}
@@ -97,12 +111,16 @@ func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p bas
 	for i, col := range cols {
 		result, err := m.column(p, col)
 		if err != nil {
-			return nil, err
+			if !rawOnUnsupported || !isMaskingNotPreservedErr(err) {
+				return nil, err
+			}
+			result = maskingResult{expr: col}
 		}
 		hasMask = hasMask || result.masked
 		exprs[i] = result.expr
 	}
-	if !hasMask {
+	// A failed attempt may leave auxiliary raw inputs on the root schema.
+	if !hasMask && p.Schema().Len() == oldLen {
 		return p, nil
 	}
 	proj := logicalop.LogicalProjection{Exprs: exprs}.Init(b.ctx, p.QueryBlockOffset())
@@ -395,6 +413,10 @@ func (m *maskingResultBuilder) aggregate(p *logicalop.LogicalAggregation, idx in
 			result.expr, err = m.aggregateInputs(p, result.expr)
 			return result, err
 		}
+		if (agg.Name == ast.AggFuncMax || agg.Name == ast.AggFuncMin) && m.predicate {
+			// Predicates compare the MIN/MAX of a subquery with its original value.
+			return plain, nil
+		}
 		if (agg.Name == ast.AggFuncMax || agg.Name == ast.AggFuncMin) && result.policyID != 0 {
 			// MIN/MAX select an original value. Apply its policy after the raw
 			// aggregate rather than changing comparisons inside the aggregate.
@@ -445,6 +467,9 @@ func (m *maskingResultBuilder) aggregateInputs(p *logicalop.LogicalAggregation, 
 func (m *maskingResultBuilder) union(p *logicalop.LogicalUnionAll, idx int) (maskingResult, error) {
 	col := p.Schema().Columns[idx]
 	result := maskingResult{expr: col}
+	if m.predicate {
+		return m.predicateUnion(p, idx)
+	}
 	for i, child := range p.Children() {
 		input := child.Schema().Columns[idx]
 		branch, err := m.column(child, input)
@@ -468,6 +493,87 @@ func (m *maskingResultBuilder) union(p *logicalop.LogicalUnionAll, idx int) (mas
 		}
 	}
 	return result, nil
+}
+
+// predicateUnion applies the policy of the first branch whose output is
+// computed from a protected column to the whole UNION column, so a predicate
+// compares every value of that column with the masked form. Results of
+// aggregate and window functions do not carry a policy.
+func (m *maskingResultBuilder) predicateUnion(p *logicalop.LogicalUnionAll, idx int) (maskingResult, error) {
+	col := p.Schema().Columns[idx]
+	plain := maskingResult{expr: col}
+	policy, tblInfo, colInfo, err := m.predicatePolicySource(p, col)
+	if err != nil || policy == nil {
+		return plain, err
+	}
+	expr, placeholder, err := getMaskingPolicyExpr(m.b.ctx.GetExprCtx(), m.b.ctx.GetSessionVars(), m.b.is.SchemaMetaVersion(), policy, tblInfo, colInfo)
+	if err != nil {
+		return plain, err
+	}
+	expr, err = m.substitute(expr, expression.NewSchema(placeholder), []expression.Expression{col})
+	return maskingResult{expr: expr, masked: true, policyID: policy.ID}, err
+}
+
+// predicatePolicySource returns the first enabled policy of a table column
+// that col is computed from by row-level expressions.
+func (m *maskingResultBuilder) predicatePolicySource(p base.LogicalPlan, col *expression.Column) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo, error) {
+	idx := p.Schema().ColumnIndex(col)
+	if idx < 0 {
+		return nil, nil, nil, nil
+	}
+	var inputs []*expression.Column
+	switch x := p.(type) {
+	case *logicalop.DataSource:
+		policy, tblInfo, colInfo, err := m.b.findMaskingPolicy(m.ctx, x.OutputNames()[idx], col)
+		if err != nil || policy == nil || policy.Status != model.MaskingPolicyStatusEnable {
+			return nil, nil, nil, err
+		}
+		return policy, tblInfo, colInfo, nil
+	case *logicalop.LogicalProjection:
+		if idx >= len(x.Exprs) {
+			return nil, nil, nil, nil
+		}
+		inputs = expression.ExtractColumns(x.Exprs[idx])
+	case *logicalop.LogicalAggregation:
+		// Grouping columns pass through FIRST_ROW; other aggregates do not
+		// carry a policy.
+		if idx >= len(x.AggFuncs) || x.AggFuncs[idx].Name != ast.AggFuncFirstRow {
+			return nil, nil, nil, nil
+		}
+		for _, arg := range x.AggFuncs[idx].Args {
+			inputs = append(inputs, expression.ExtractColumns(arg)...)
+		}
+	case *logicalop.LogicalWindow:
+		child := x.Children()[0]
+		if idx >= child.Schema().Len() {
+			return nil, nil, nil, nil
+		}
+		return m.predicatePolicySource(child, child.Schema().Columns[idx])
+	case *logicalop.LogicalUnionAll:
+		for _, child := range x.Children() {
+			policy, tblInfo, colInfo, err := m.predicatePolicySource(child, child.Schema().Columns[idx])
+			if err != nil || policy != nil {
+				return policy, tblInfo, colInfo, err
+			}
+		}
+		return nil, nil, nil, nil
+	case *logicalop.LogicalCTE:
+		return nil, nil, nil, nil
+	default:
+		inputs = []*expression.Column{col}
+	}
+	for _, input := range inputs {
+		for _, child := range p.Children() {
+			if !child.Schema().Contains(input) {
+				continue
+			}
+			policy, tblInfo, colInfo, err := m.predicatePolicySource(child, input)
+			if err != nil || policy != nil {
+				return policy, tblInfo, colInfo, err
+			}
+		}
+	}
+	return nil, nil, nil, nil
 }
 
 func (m *maskingResultBuilder) cte(p *logicalop.LogicalCTE, idx int) (maskingResult, error) {
@@ -495,4 +601,8 @@ func (m *maskingResultBuilder) cte(p *logicalop.LogicalCTE, idx int) (maskingRes
 	}
 	result.expr, err = m.substitute(result.expr, expression.NewSchema(input), []expression.Expression{col})
 	return result, err
+}
+
+func isMaskingNotPreservedErr(err error) bool {
+	return strings.HasPrefix(err.Error(), "masking policy cannot be preserved")
 }

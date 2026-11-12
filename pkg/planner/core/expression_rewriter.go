@@ -772,6 +772,10 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 		er.err = err
 		return v, true
 	}
+	if np, err = er.maskSubqueryResult(ctx, planCtx, np); err != nil {
+		er.err = err
+		return v, true
+	}
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
 	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingCompareSubquery)
 
@@ -1215,6 +1219,10 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		er.err = err
 		return v, true
 	}
+	if np, err = er.maskSubqueryResult(ctx, planCtx, np); err != nil {
+		er.err = err
+		return v, true
+	}
 	lLen := expression.GetRowLen(lexpr)
 	if lLen != np.Schema().Len() {
 		er.err = expression.ErrOperandColumns.GenWithStackByArgs(lLen)
@@ -1383,15 +1391,32 @@ func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.Correla
 	return noDecorrelate
 }
 
+// maskSubqueryResult applies masking to the output of an IN or quantified
+// comparison subquery, so the outer operand is compared with masked values.
+func (er *expressionRewriter) maskSubqueryResult(ctx context.Context, planCtx *exprRewriterPlanCtx, np base.LogicalPlan) (base.LogicalPlan, error) {
+	enabled, err := planCtx.builder.maskingEnabled(ctx, np, planCtx.plan)
+	if err != nil || !enabled {
+		return np, err
+	}
+	return maskPredicateSubqueryResult(ctx, planCtx, np)
+}
+
+// maskPredicateSubqueryResult masks a subquery result used by a predicate.
+func maskPredicateSubqueryResult(ctx context.Context, planCtx *exprRewriterPlanCtx, np base.LogicalPlan) (base.LogicalPlan, error) {
+	return planCtx.builder.buildPredicateProjectionWithMasking(ctx, np, planCtx.plan)
+}
+
 func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, v *ast.SubqueryExpr) (ast.Node, bool) {
 	intest.AssertNotNil(planCtx)
 	// In 8.5, UPDATE assignments also use fieldList; they are not displayed results.
 	resultField := planCtx.curClause == fieldList && !planCtx.builder.inUpdateStmt && !planCtx.builder.inDeleteStmt
-	// The value of a scalar subquery in SET, DO, UPDATE assignments and INSERT
-	// values is stored or returned without passing through a final SELECT
-	// projection, so the subquery masks its own result. buildSubquery resets
-	// the context, so subqueries nested in it keep the ordinary rules.
-	valueResult := planCtx.builder.maskScalarSubqueryValue > 0
+	// Outside the displayed fields, a scalar subquery masks its own result:
+	// SET, DO, UPDATE assignments and INSERT values store or return it without
+	// a final SELECT projection, and predicates compare against the masked
+	// value. buildSubquery resets the context, so subqueries nested in it keep
+	// the ordinary rules.
+	storedValue := planCtx.builder.maskScalarSubqueryValue > 0
+	predicateValue := !storedValue && !resultField
 	ci := planCtx.builder.prepareCTECheckForSubQuery()
 	defer resetCTECheckForSubQuery(ci)
 	savedClause := planCtx.builder.curClause
@@ -1406,13 +1431,19 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 		er.err = err
 		return v, true
 	}
-	if valueResult && maskingEnabled {
+	if predicateValue && maskingEnabled {
+		np, err = maskPredicateSubqueryResult(ctx, planCtx, np)
+		if err != nil {
+			er.err = err
+			return v, true
+		}
+	} else if storedValue && maskingEnabled {
 		np, err = planCtx.builder.buildFinalProjectionWithMasking(ctx, np, np.Schema().Len(), planCtx.plan)
 		if err != nil {
 			er.err = err
 			return v, true
 		}
-	} else if resultField && maskingEnabled {
+	} else if maskingEnabled {
 		// Scalar preprocessing may turn the raw result into a constant, losing
 		// its policy identity before the outer final projection can inspect it.
 		m := maskingResultBuilder{b: planCtx.builder, ctx: ctx, outerPlan: planCtx.plan, cache: make(map[maskingResultKey]maskingResult)}

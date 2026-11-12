@@ -500,7 +500,7 @@ WHERE c = (SELECT c FROM privilege__column_masking_policy.src_prepare_ud LIMIT 1
 EXECUTE stmt_prepare_ud_del;
 SELECT COUNT(*) FROM privilege__column_masking_policy.dst_prepare_ud;
 COUNT(*)
-1
+0
 DEALLOCATE PREPARE stmt_prepare_ud_upd;
 DEALLOCATE PREPARE stmt_prepare_ud_del;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_snapshot_compat;

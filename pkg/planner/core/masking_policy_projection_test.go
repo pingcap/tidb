@@ -17,6 +17,7 @@ package core_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -222,8 +223,9 @@ func TestMaskingPolicyUnsupportedResults(t *testing.T) {
 	require.ErrorContains(t, tk.ExecToErr("select (select c from t_unsupported where id = 1)"), "masking policy cannot be preserved through scalar subquery")
 	require.ErrorContains(t, tk.ExecToErr("select (select t.c) from t_unsupported t"), "masking policy cannot be preserved through scalar subquery")
 	require.ErrorContains(t, tk.ExecToErr("select concat(c, rand()) from t_unsupported order by 1"), "masking policy cannot be preserved through mutable expression")
-	// Predicate subqueries still compare original values.
-	tk.MustQuery("select id from t_unsupported where c = (select c from t_unsupported where id = 1)").Check(testkit.Rows("1"))
+	// Predicate subqueries compare with their masked results.
+	tk.MustQuery("select id from t_unsupported where c = (select c from t_unsupported where id = 1)").Check(testkit.Rows())
+	tk.MustQuery("select id from t_unsupported where 'XXXXXX' = (select c from t_unsupported where id = 1)").Check(testkit.Rows("1"))
 }
 
 func TestMaskingPolicyWindowResults(t *testing.T) {
@@ -274,7 +276,7 @@ func TestMaskingPolicyScalarSubqueryClauses(t *testing.T) {
 		require.ErrorContains(t, tk.ExecToErr(sql), "masking policy cannot be preserved through scalar subquery", sql)
 	}
 	// Nested clauses must not turn a predicate subquery into a result-field check.
-	tk.MustQuery("select id from t_scalar where id = (select id from t_scalar order by id limit 1) and c = (select c from t_scalar where id = 1)").Check(testkit.Rows("1"))
+	tk.MustQuery("select id from t_scalar where id = (select id from t_scalar order by id limit 1) and c <> (select c from t_scalar where id = 1)").Check(testkit.Rows("1"))
 	tk.MustQuery("select (select id from t_scalar order by id limit 1), (select max(id) from t_scalar)").Check(testkit.Rows("1 2"))
 
 	// Values stored or returned outside a SELECT result are masked by the subquery itself.
@@ -292,16 +294,16 @@ func TestMaskingPolicyScalarSubqueryClauses(t *testing.T) {
 	err := tk.ExecToErr("update t_scalar_dst set id = (select c from t_scalar where id = 1) where id = 1")
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "secret")
-	// A predicate subquery nested in a value subquery still compares raw values.
-	tk.MustExec("set @w = (select c from t_scalar where c = (select c from t_scalar where id = 1))")
+	// A predicate subquery nested in a value subquery compares its masked result.
+	tk.MustExec("set @w = (select c from t_scalar where id = 1 and c <> (select c from t_scalar where id = 1))")
 	tk.MustQuery("select @w").Check(testkit.Rows("XXXXXX"))
 	// EXISTS, IN and quantified subqueries do not pass the value context to their inner query blocks.
 	tk.MustExec("set @e = exists(select 1 from t_scalar where c = (select c from t_scalar where id = 1))")
 	tk.MustExec("set @i = 1 in (select id from t_scalar where c = (select c from t_scalar where id = 1))")
 	tk.MustExec("set @a = 1 = any(select id from t_scalar where c = (select c from t_scalar where id = 1))")
-	tk.MustQuery("select @e, @i, @a").Check(testkit.Rows("1 1 1"))
+	tk.MustQuery("select @e, @i, @a").Check(testkit.Rows("0 0 0"))
 	tk.MustExec("update t_scalar_dst set id = 10 + exists(select 1 from t_scalar where c = (select c from t_scalar where id = 1)) where id = 3")
-	tk.MustQuery("select id from t_scalar_dst where id > 3").Check(testkit.Rows("11"))
+	tk.MustQuery("select id from t_scalar_dst where id > 3").Check(testkit.Rows("10"))
 }
 
 func TestMaskingPolicyFastPathRepresentations(t *testing.T) {
@@ -600,7 +602,7 @@ func TestMaskingPolicyLoadFailureBlocksQueries(t *testing.T) {
 	tk.MustExec("insert into t_load values (1, 'secret')")
 	tk.MustExec("create masking policy p on t_load(c) as mask_full(c) enable")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockLoadMaskingPoliciesError", "return(true)")
-	for _, sql := range []string{"select c from t_load where id=1", "select c from t_load order by id", "show masking policies for t_load", "show create table t_load", "alter table t_load modify column c varchar(100)"} {
+	for _, sql := range []string{"select c from t_load where id=1", "select c from t_load order by id", "show masking policies for t_load", "show create table t_load", "alter table t_load modify column c varchar(100)", "select id from t_load where c = (select c from t_load where id = 1)", "select id from t_load where 'secret' in (select c from t_load)"} {
 		rs, err := tk.Exec(sql)
 		if err == nil && rs != nil {
 			_, err = session.GetRows4Test(context.Background(), tk.Session(), rs)
@@ -676,4 +678,98 @@ func TestMaskingPolicyCaseFoldingWithoutPolicies(t *testing.T) {
 	sql := "select id from t_case where id = case when 1 then 1 else sleep(0) end"
 	tk.MustQuery(sql).Check(testkit.Rows("1"))
 	require.Contains(t, tk.MustQuery("explain format='brief' " + sql).Rows()[0][0], "Point_Get")
+}
+
+func TestMaskingPolicyPredicateSubqueryResults(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_pred_src(id int primary key, c varchar(20))")
+	tk.MustExec("insert into t_pred_src values (1, 'secret')")
+	tk.MustExec("create masking policy p on t_pred_src(c) as mask_full(c)")
+	tk.MustExec("create table t_pred_dst(id int, c varchar(20))")
+	reset := func() {
+		tk.MustExec("delete from t_pred_dst")
+		tk.MustExec("insert into t_pred_dst values (1, 'secret'), (2, 'XXXXXX')")
+	}
+	reset()
+	// Subquery results in predicates are masked; base columns keep their values.
+	for _, tc := range []struct {
+		pred string
+		ids  []string
+	}{
+		{"c = (select c from t_pred_src)", []string{"2"}},
+		// MIN/MAX results keep their original values in predicates.
+		{"c = (select max(c) from t_pred_src)", []string{"1"}},
+		{"c = (select s.c from t_pred_src s where s.id = t_pred_dst.id)", nil},
+		{"c in (select c from t_pred_src)", []string{"2"}},
+		{"c not in (select c from t_pred_src)", []string{"1"}},
+		{"c = any (select c from t_pred_src)", []string{"2"}},
+		{"c <> all (select c from t_pred_src)", []string{"1"}},
+		{"(select c from t_pred_src) = 'secret'", nil},
+		{"c = (select c from (select c from t_pred_src) d)", []string{"2"}},
+		{"c = (with x as (select c from t_pred_src) select c from x)", []string{"2"}},
+		// Comparisons inside the subquery use the original values.
+		{"exists (select 1 from t_pred_src s where s.c = t_pred_dst.c)", []string{"1"}},
+		{"id = (select max(s.id) from t_pred_src s where s.c = t_pred_dst.c)", []string{"1"}},
+	} {
+		rows := make([][]any, 0, len(tc.ids))
+		for _, id := range tc.ids {
+			rows = append(rows, []any{id})
+		}
+		tk.MustQuery("select id from t_pred_dst where " + tc.pred + " order by id").Check(rows)
+		tk.MustExec("update t_pred_dst set c = 'hit' where " + tc.pred)
+		tk.MustQuery("select id from t_pred_dst where c = 'hit' order by id").Check(rows)
+		reset()
+		tk.MustExec("delete from t_pred_dst where " + tc.pred)
+		tk.MustQuery("select count(*) from t_pred_dst").Check(testkit.Rows(strconv.Itoa(2 - len(tc.ids))))
+		reset()
+	}
+	// Results whose policy cannot be preserved keep comparing original values.
+	for _, pred := range []string{
+		"(select s.c) = 'secret'",
+		"(select s.c) in ('secret')",
+		"'secret' in (select s.c)",
+		"'secret' = any (select s.c)",
+		"(select group_concat(c) from t_pred_src) = 'secret'",
+		"(select count(distinct c) from t_pred_src) = 1",
+	} {
+		tk.MustQuery("select s.id from t_pred_src s where " + pred).Check(testkit.Rows("1"))
+	}
+	// Each column of a row result is handled separately.
+	for _, pred := range []string{
+		"(c, 1) in (select c, count(c) from t_pred_src group by c)",
+		"(c, 1) = any (select c, count(c) from t_pred_src group by c)",
+		"(c, 1) in (select concat(c, ''), count(c) from t_pred_src group by c)",
+		"(c, 1) = any (select concat(c, ''), count(c) from t_pred_src group by c)",
+		"(c, 'secret') in (select c, group_concat(c) from t_pred_src group by c)",
+	} {
+		tk.MustQuery("select id from t_pred_dst where " + pred).Check(testkit.Rows("2"))
+	}
+	tk.MustQuery("select s.id from t_pred_src s where (select s.c) = 'XXXXXX'").Check(testkit.Rows())
+	tk.MustQuery("select id from t_pred_dst where id = (select count(c) from t_pred_src) order by id").Check(testkit.Rows("1"))
+	// A UNION column takes the policy of its protected branch for all rows.
+	tk.MustExec("insert into t_pred_dst values (3, 'public')")
+	for _, pred := range []string{
+		"c in (select c from t_pred_src union all select 'public')",
+		"c in (select 'public' union all select c from t_pred_src)",
+		"c = any (select c from t_pred_src union select 'public')",
+		"(c, 1) in (select c, 1 from t_pred_src union all select 'public', 1)",
+		"c in (select count(c) from t_pred_src union all select c from t_pred_src)",
+		"c in (select c from t_pred_src union all select group_concat(c) from t_pred_src)",
+		"c in (select concat(c, '') from t_pred_src union all select 'public')",
+		"c in (select concat(id, c) from t_pred_src union all select 'public')",
+		"c in (select 'public' union all (select 'other' union all select c from t_pred_src))",
+		"c in (select c from t_pred_src group by c union all select 'public')",
+		"c in (select c from (select c, row_number() over () rn from t_pred_src) x union all select 'public')",
+	} {
+		tk.MustQuery("select id from t_pred_dst where " + pred + " order by id").Check(testkit.Rows("2"))
+	}
+	// Derived values, such as aggregates, do not carry a policy into a UNION.
+	tk.MustQuery("select id from t_pred_dst where c in (select max(c) from t_pred_src union all select 'public') order by id").Check(testkit.Rows("1", "3"))
+	tk.MustExec("delete from t_pred_dst where id = 3")
+	tk.MustQuery("select id from t_pred_dst group by id having max(c) = (select c from t_pred_src) order by id").Check(testkit.Rows("2"))
+	tk.MustQuery("select id from t_pred_dst order by (select c from t_pred_src), id").Check(testkit.Rows("1", "2"))
+	tk.MustExec("alter table t_pred_src disable masking policy p")
+	tk.MustQuery("select id from t_pred_dst where c = (select c from t_pred_src)").Check(testkit.Rows("1"))
 }
