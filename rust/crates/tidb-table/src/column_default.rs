@@ -820,7 +820,7 @@ pub fn materialize_stored_literal(
     )
 }
 
-fn system_location_as_session_zone() -> SessionTimeZone {
+pub(crate) fn system_location_as_session_zone() -> SessionTimeZone {
     match tidb_timeutil::system_location() {
         tidb_timeutil::TimeZone::Local => SessionTimeZone::Local,
         tidb_timeutil::TimeZone::Named(zone) => SessionTimeZone::Named(zone),

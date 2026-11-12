@@ -133,7 +133,29 @@ pub fn set_pb_columns_default_value(
             continue;
         }
 
-        let d = crate::origin_default::origin_default(&c, table_name).map_err(|err| err.to_string())?;
+        let mut d = crate::origin_default::origin_default(&c, table_name).map_err(|err| err.to_string())?;
+        // Go `getColDefaultValue`: a TIMESTAMP's stored literal (neither the
+        // zero datetime nor CURRENT_TIMESTAMP) is in UTC -- the system zone
+        // before ColumnInfoVersion1 -- and is converted to the statement's
+        // zone, which `EncodeValue(loc)` then encodes back.
+        if c.get_type() == tidb_datatype::FieldTypeCode::Timestamp {
+            if let (Some(tidb_model::GoAnyView::String(text)), tidb_datatype::Datum::Time(time)) =
+                (c.get_origin_default_value().view(), &mut d)
+            {
+                let text = text.as_bytes();
+                if text != b"0000-00-00 00:00:00"
+                    && !text.eq_ignore_ascii_case(b"CURRENT_TIMESTAMP")
+                    && !time.is_zero()
+                {
+                    let source = if c.version >= tidb_model::column::COLUMN_INFO_VERSION1 {
+                        tidb_datatype::SessionTimeZone::utc()
+                    } else {
+                        crate::column_default::system_location_as_session_zone()
+                    };
+                    time.convert_time_zone(&source, zone).map_err(|err| err.to_string())?;
+                }
+            }
+        }
         pb_columns[i].default_val = Some(
             tidb_codec::encode_value_in_timezone(zone, std::slice::from_ref(&d)).map_err(|err| err.to_string())?,
         );
