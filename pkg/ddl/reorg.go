@@ -440,9 +440,16 @@ func (w *worker) runReorgJob(
 		}
 
 		beOwnerTS := w.ddlCtx.reorgCtx.getOwnerTS()
+		// Keep the context of this reorg across later DDL steps.
+		stepCtx := jobCtx.stepCtx
 		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.Job.GetRowCount())
 		w.wg.Run(func() {
 			err := reorgFn()
+			if errors.Cause(err) == context.Canceled && stepCtx != nil {
+				if cause := context.Cause(stepCtx); cause != nil {
+					err = cause
+				}
+			}
 			rc.doneCh <- reorgFnResult{ownerTS: beOwnerTS, ru: rc.getRU(), err: err}
 		})
 	}

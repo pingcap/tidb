@@ -15,9 +15,13 @@
 package ddl
 
 import (
+	"context"
 	"sync"
 	"testing"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -62,4 +66,41 @@ func TestReorgCtxSetMaxProgressConcurrent(t *testing.T) {
 	wg.Wait()
 
 	require.Equal(t, 0.99, rc.maxProgress.Load())
+}
+
+func TestRunReorgJobContextCause(t *testing.T) {
+	buildErr := errors.New("build failed")
+	for _, tc := range []struct {
+		name                string
+		cause, result, want error
+	}{
+		{"cancelled", dbterror.ErrCancelledDDLJob, errors.Trace(context.Canceled), dbterror.ErrCancelledDDLJob},
+		{"paused", dbterror.ErrPausedDDLJob, context.Canceled, dbterror.ErrPausedDDLJob},
+		{"owner change", dbterror.ErrNotOwner, context.Canceled, dbterror.ErrNotOwner},
+		{"live context", nil, context.Canceled, context.Canceled},
+		{"unrelated error", dbterror.ErrPausedDDLJob, buildErr, buildErr},
+		{"completed", dbterror.ErrCancelledDDLJob, nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancelCause(context.Background())
+			defer cancel(nil)
+			if tc.cause != nil {
+				cancel(tc.cause)
+			}
+			w := &worker{ddlCtx: &ddlCtx{reorgCtx: reorgContexts{reorgCtxMap: make(map[int64]*reorgCtx)}}}
+			job := &model.Job{ID: 1}
+			jobCtx := &jobContext{stepCtx: ctx, oldDDLCtx: w.ddlCtx}
+			err := w.runReorgJob(jobCtx, &reorgInfo{Job: job, jobCtx: jobCtx}, nil, func() error {
+				// A later step may replace the context before consuming this result.
+				jobCtx.stepCtx = context.Background()
+				return tc.result
+			})
+			w.wg.Wait()
+			if tc.want == nil {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, tc.want)
+			}
+		})
+	}
 }
