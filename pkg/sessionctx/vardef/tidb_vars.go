@@ -1235,6 +1235,8 @@ const (
 
 // TiDB vars that have only global scope
 const (
+	// TiDBSessionTokenMode controls the staged upgrade of session-token authentication.
+	TiDBSessionTokenMode = "tidb_session_token_mode"
 	// TiDBGCEnable turns garbage collection on or OFF
 	TiDBGCEnable = "tidb_gc_enable"
 	// TiDBGCRunInterval sets the interval that GC runs
@@ -1549,6 +1551,8 @@ const (
 
 // Default TiDB system variable values.
 const (
+	// DefTiDBSessionTokenMode preserves migration with unmodified older TiDB.
+	DefTiDBSessionTokenMode             = "COMPATIBLE"
 	DefHostname                         = "localhost"
 	DefIndexLookupConcurrency           = ConcurrencyUnset
 	DefIndexLookupJoinConcurrency       = ConcurrencyUnset

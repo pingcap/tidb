@@ -1,0 +1,22 @@
+select @@global.tidb_session_token_mode;
+@@global.tidb_session_token_mode
+COMPATIBLE
+set session tidb_session_token_mode='STRICT';
+Error 1229 (HY000): Variable 'tidb_session_token_mode' is a GLOBAL variable and should be set with SET GLOBAL
+set global tidb_session_token_mode='invalid';
+Error 1231 (42000): Variable 'tidb_session_token_mode' can't be set to the value of 'invalid'
+set global tidb_session_token_mode='transition';
+select @@global.tidb_session_token_mode;
+@@global.tidb_session_token_mode
+TRANSITION
+select variable_value from mysql.global_variables where variable_name='tidb_session_token_mode';
+variable_value
+TRANSITION
+set global tidb_session_token_mode='strict';
+select @@global.tidb_session_token_mode;
+@@global.tidb_session_token_mode
+STRICT
+set global tidb_session_token_mode=default;
+select @@global.tidb_session_token_mode;
+@@global.tidb_session_token_mode
+COMPATIBLE

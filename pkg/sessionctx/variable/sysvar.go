@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
@@ -205,6 +206,16 @@ var defaultSysVars = []*SysVar{
 	{Scope: vardef.ScopeNone, Name: "version_compile_os", Value: runtime.GOOS},
 	{Scope: vardef.ScopeNone, Name: "version_compile_machine", Value: runtime.GOARCH},
 	/* TiDB specific variables */
+	// Keep the persisted string intact on reads. TypeEnum's relaxed validation
+	// could replace a corrupt policy with the legacy-accepting default.
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBSessionTokenMode, Value: vardef.DefTiDBSessionTokenMode, Type: vardef.TypeStr,
+		Validation: func(_ *SessionVars, value, _ string, _ vardef.ScopeFlag) (string, error) {
+			mode, err := sessionstates.ParseSessionTokenMode(value)
+			if err != nil {
+				return value, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBSessionTokenMode, value)
+			}
+			return string(mode), nil
+		}},
 	{Scope: vardef.ScopeNone, Name: vardef.TiDBEnableEnhancedSecurity, Value: vardef.Off, Type: vardef.TypeStr},
 	{Scope: vardef.ScopeNone, Name: vardef.TiDBAllowFunctionForExpressionIndex, ReadOnly: true, Value: collectAllowFuncName4ExpressionIndex()},
 

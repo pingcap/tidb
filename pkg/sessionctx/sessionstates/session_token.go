@@ -25,6 +25,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"strings"
 	"sync"
 	"time"
 
@@ -95,9 +96,12 @@ func currentOldCertValidTime() time.Duration {
 }
 
 // SessionToken represents the token used to authenticate with the new server.
+// Legacy readers reconstruct JSON before verification, so field order and the
+// omission of hostname/version for legacy tokens are part of the wire contract.
 type SessionToken struct {
 	Username   string    `json:"username"`
-	Hostname   string    `json:"hostname"`
+	Hostname   string    `json:"hostname,omitempty"`
+	Version    int       `json:"version,omitempty"`
 	SignTime   time.Time `json:"sign-time"`
 	ExpireTime time.Time `json:"expire-time"`
 	Signature  []byte    `json:"signature,omitempty"`
@@ -105,6 +109,10 @@ type SessionToken struct {
 
 // CreateSessionToken creates a token bound to the matched privilege account for the proxy.
 func CreateSessionToken(username, hostname string) (*SessionToken, error) {
+	return createSessionToken(username, hostname, false)
+}
+
+func createSessionToken(username, hostname string, legacy bool) (*SessionToken, error) {
 	now := getNow()
 	token := &SessionToken{
 		Username:   username,
@@ -112,21 +120,65 @@ func CreateSessionToken(username, hostname string) (*SessionToken, error) {
 		SignTime:   now,
 		ExpireTime: now.Add(currentTokenLifetime()),
 	}
+	if !legacy {
+		token.Version = 2
+	}
 	tokenBytes, err := json.Marshal(token)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if token.Signature, err = globalSigningCert.sign(tokenBytes); err != nil {
+	if legacy {
+		token.Signature, err = globalSigningCert.signLegacy(tokenBytes)
+	} else {
+		token.Signature, err = globalSigningCert.sign(tokenBytes)
+	}
+	if err != nil {
 		return nil, ErrCannotMigrateSession.GenWithStackByArgs(err.Error())
 	}
 	return token, nil
 }
 
+// IsLegacySessionToken reports whether a payload has the pre-V2 wire shape.
+func IsLegacySessionToken(tokenBytes []byte) bool {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(tokenBytes, &fields); err != nil || fields == nil {
+		return false
+	}
+	// Check key presence, not decoded values. Null, empty, malformed, or
+	// differently cased V2 markers must never select the legacy verifier.
+	for field := range fields {
+		if strings.EqualFold(field, "hostname") || strings.EqualFold(field, "version") {
+			return false
+		}
+	}
+	return true
+}
+
+// CreateLegacySessionToken creates a compatibility token for the proxy.
+func CreateLegacySessionToken(username string) (*SessionToken, error) {
+	return createSessionToken(username, "", true)
+}
+
+// ValidateLegacySessionToken validates a token from a pre-V2 server.
+func ValidateLegacySessionToken(tokenBytes []byte, loginUsername string) error {
+	if !IsLegacySessionToken(tokenBytes) {
+		return ErrCannotMigrateSession.GenWithStackByArgs("invalid legacy token format")
+	}
+	return validateSessionToken(tokenBytes, loginUsername, "", true)
+}
+
 // ValidateSessionToken validates the token sent from the proxy.
-func ValidateSessionToken(tokenBytes []byte, username, hostname string) (err error) {
+func ValidateSessionToken(tokenBytes []byte, username, hostname string) error {
+	return validateSessionToken(tokenBytes, username, hostname, false)
+}
+
+func validateSessionToken(tokenBytes []byte, username, hostname string, legacy bool) (err error) {
 	var token SessionToken
 	if err = json.Unmarshal(tokenBytes, &token); err != nil {
 		return errors.Trace(err)
+	}
+	if !legacy && token.Version != 2 {
+		return ErrCannotMigrateSession.GenWithStackByArgs("unsupported session token version")
 	}
 	signature := token.Signature
 	// Clear the signature and marshal it again to get the original content.
@@ -134,7 +186,12 @@ func ValidateSessionToken(tokenBytes []byte, username, hostname string) (err err
 	if tokenBytes, err = json.Marshal(token); err != nil {
 		return errors.Trace(err)
 	}
-	if err = globalSigningCert.checkSignature(tokenBytes, signature); err != nil {
+	if legacy {
+		err = globalSigningCert.checkLegacySignature(tokenBytes, signature)
+	} else {
+		err = globalSigningCert.checkSignature(tokenBytes, signature)
+	}
+	if err != nil {
 		return ErrCannotMigrateSession.GenWithStackByArgs(err.Error())
 	}
 	now := getNow()
@@ -148,11 +205,16 @@ func ValidateSessionToken(tokenBytes []byte, username, hostname string) (err err
 	if token.SignTime.Add(currentTokenLifetime()).Before(now) {
 		return ErrCannotMigrateSession.GenWithStackByArgs("token lifetime is too long", token.SignTime.String())
 	}
-	// Privilege records identify accounts by exact username and matched host.
-	if username != token.Username {
+	// Compatibility tokens preserve the historical login username comparison.
+	// V2 identifies privilege records by exact username and matched host.
+	usernameMatches := username == token.Username
+	if legacy {
+		usernameMatches = strings.EqualFold(username, token.Username)
+	}
+	if !usernameMatches {
 		return ErrCannotMigrateSession.GenWithStackByArgs("username does not match", username, token.Username)
 	}
-	if token.Hostname == "" || hostname != token.Hostname {
+	if !legacy && (token.Hostname == "" || hostname != token.Hostname) {
 		return ErrCannotMigrateSession.GenWithStackByArgs("hostname does not match", hostname, token.Hostname)
 	}
 	return nil
@@ -272,6 +334,15 @@ func (sc *signingCert) loadCert() error {
 
 // sign generates a signature with the content and the private key.
 func (sc *signingCert) sign(content []byte) ([]byte, error) {
+	return sc.signToken(content, false)
+}
+
+// signLegacy preserves raw-payload ECDSA only for pre-V2 compatibility tokens.
+func (sc *signingCert) signLegacy(content []byte) ([]byte, error) {
+	return sc.signToken(content, true)
+}
+
+func (sc *signingCert) signToken(content []byte, legacy bool) ([]byte, error) {
 	var (
 		signer crypto.Signer
 		opts   crypto.SignerOpts
@@ -323,11 +394,13 @@ func (sc *signingCert) sign(content []byte) ([]byte, error) {
 		}
 	case *ecdsa.PrivateKey:
 		signer = key
-		// ECDSA expects a digest and truncates inputs longer than the curve order.
-		// Hash the complete payload so every token field is authenticated.
-		hashed := sha256.Sum256(content)
-		content = hashed[:]
-		opts = crypto.SHA256
+		if !legacy {
+			// ECDSA truncates digest inputs longer than the curve order. V2 hashes
+			// the complete payload so every token field is authenticated.
+			hashed := sha256.Sum256(content)
+			content = hashed[:]
+			opts = crypto.SHA256
+		}
 	default:
 		return nil, errors.Errorf("not supported private key type '%s' for signing", certInfo.cert.SignatureAlgorithm.String())
 	}
@@ -336,6 +409,15 @@ func (sc *signingCert) sign(content []byte) ([]byte, error) {
 
 // checkSignature checks the signature and the content.
 func (sc *signingCert) checkSignature(content, signature []byte) error {
+	return sc.checkTokenSignature(content, signature, false)
+}
+
+// checkLegacySignature must only be selected after rejecting all V2 markers.
+func (sc *signingCert) checkLegacySignature(content, signature []byte) error {
+	return sc.checkTokenSignature(content, signature, true)
+}
+
+func (sc *signingCert) checkTokenSignature(content, signature []byte, legacy bool) error {
 	sc.RLock()
 	defer sc.RUnlock()
 	now := getNow()
@@ -348,10 +430,15 @@ func (sc *signingCert) checkSignature(content, signature []byte) error {
 		switch certInfo.privKey.(type) {
 		// ESDSA is special: `PrivateKey.Sign` doesn't match with `Certificate.CheckSignature`.
 		case *ecdsa.PrivateKey:
-			hashed := sha256.Sum256(content)
-			if !ecdsa.VerifyASN1(certInfo.cert.PublicKey.(*ecdsa.PublicKey), hashed[:], signature) {
-				err = errors.New("x509: ECDSA verification failure")
+			digest := content
+			if !legacy {
+				hashed := sha256.Sum256(content)
+				digest = hashed[:]
 			}
+			if ecdsa.VerifyASN1(certInfo.cert.PublicKey.(*ecdsa.PublicKey), digest, signature) {
+				return nil
+			}
+			err = errors.New("x509: ECDSA verification failure")
 		default:
 			err = certInfo.cert.CheckSignature(certInfo.cert.SignatureAlgorithm, content, signature)
 		}

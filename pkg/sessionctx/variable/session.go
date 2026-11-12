@@ -3124,6 +3124,19 @@ func (s *SessionVars) GetGlobalSystemVar(ctx context.Context, name string) (stri
 	return sv.GetGlobalFromHook(ctx, s)
 }
 
+// GetSessionTokenMode reads the global policy on every migration operation, so
+// existing sessions follow phase changes rather than retaining session defaults.
+func (s *SessionVars) GetSessionTokenMode(ctx context.Context) (sessionstates.SessionTokenMode, error) {
+	if s.GlobalVarsAccessor == nil {
+		return "", errors.New("session token mode has no global variable accessor")
+	}
+	value, err := s.GetGlobalSystemVar(ctx, vardef.TiDBSessionTokenMode)
+	if err != nil {
+		return "", err
+	}
+	return sessionstates.ParseSessionTokenMode(value)
+}
+
 // SetSystemVar sets the value of a system variable for session scope.
 // Values are automatically normalized (i.e. oN / on / 1 => ON)
 // and the validation function is run. To set with less validation, see

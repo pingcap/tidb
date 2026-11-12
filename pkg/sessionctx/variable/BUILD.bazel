@@ -120,6 +120,7 @@ go_test(
         "//pkg/kv",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
+        "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/vardef",
         "//pkg/testkit/testsetup",
         "//pkg/util/gctuner",
