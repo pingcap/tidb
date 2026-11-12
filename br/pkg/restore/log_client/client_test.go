@@ -3174,8 +3174,7 @@ func TestRepairIngestIndex(t *testing.T) {
 }
 
 // A FULLTEXT index built in TiKV is rebuilt with the analyzer settings it
-// recorded, in a session that never turned on the switch that gates creating
-// one and whose cluster has other settings in force by now.
+// recorded, in a cluster that has other settings in force by now.
 func TestRepairIngestFullTextIndex(t *testing.T) {
 	if !kerneltype.IsClassic() {
 		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
@@ -3184,7 +3183,6 @@ func TestRepairIngestFullTextIndex(t *testing.T) {
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
 	tk.MustExec("set global innodb_ft_min_token_size = 2")
 	tk.MustExec("set @@session.innodb_ft_enable_stopword = off")
-	tk.MustExec("set @@tidb_enable_tikv_fulltext_index = on")
 	tk.MustExec("CREATE TABLE test.repair_fulltext_t1(id int primary key, tenant int, body text, fulltext index ft(tenant, body));")
 	tk.MustExec("insert into test.repair_fulltext_t1 values (1, 7, 'to be or not to be')")
 	tk.MustExec("set global innodb_ft_min_token_size = 3")

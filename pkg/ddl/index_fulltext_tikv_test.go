@@ -54,7 +54,6 @@ func TestFullTextIndexBuiltInTiKV(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_tikv_fulltext_index = on")
 
 	check := func(tbl, idx string, parser model.FullTextParserType) *model.IndexInfo {
 		tblInfo, idxInfo := tikvFullTextIndex(t, dom, tbl, idx)
@@ -196,17 +195,6 @@ func TestFullTextIndexBuiltInTiKVRefusals(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key, n int, b blob, body text, title varchar(100), j json)")
-	// Until the switch is on, every way of creating the index fails as it
-	// does without this feature.
-	tk.MustExec("set @@tidb_enable_tikv_fulltext_index = off")
-	for _, sql := range []string{
-		"create table blocked (id int primary key, body text, fulltext index idx (body))",
-		"create fulltext index idx on t (body)",
-		"alter table t add fulltext index idx (body)",
-	} {
-		tk.MustContainErrMsg(sql, "FULLTEXT index is only supported in starter deployment mode")
-	}
-	tk.MustExec("set @@tidb_enable_tikv_fulltext_index = on")
 	tk.MustExec("create table pt (id int, body text) partition by hash(id) partitions 2")
 
 	for _, tc := range []struct{ sql, err string }{
@@ -336,7 +324,6 @@ func TestFullTextIndexBuiltInTiKVEntries(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_tikv_fulltext_index = on")
 	// Every write below is checked against the row by the mutation checker
 	// and against the store by assertions.
 	tk.MustExec("set tidb_enable_mutation_checker = 1")
@@ -598,7 +585,6 @@ func TestFullTextIndexAdminCheckAddedColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_tikv_fulltext_index = on")
 	tk.MustExec("create table t (id int primary key, note text)")
 	tk.MustExec("insert into t values (1, 'first'), (2, 'second')")
 	tk.MustExec("alter table t add column body varchar(64) default 'hello world', add column tenant int default 7")
@@ -608,6 +594,8 @@ func TestFullTextIndexAdminCheckAddedColumn(t *testing.T) {
 	tk.MustExec("admin check table t")
 	tk.MustExec("admin check index t idx_body")
 	tk.MustExec("admin check index t idx_tenant")
+	tk.MustQuery("select id from t where match(body) against('+hello' in boolean mode) order by id").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select id from t where tenant = 7 and match(body) against('+world' in boolean mode) order by id").Check(testkit.Rows("1", "2"))
 }
 
 func TestFullTextIndexNotUsedByForeignKey(t *testing.T) {
@@ -617,7 +605,6 @@ func TestFullTextIndexNotUsedByForeignKey(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_tikv_fulltext_index = on")
 	tk.MustExec("set @@foreign_key_checks = 1")
 	tk.MustExec("create table parent (id int primary key)")
 	// The FULLTEXT index leads with the foreign key's column, but its entries
@@ -652,7 +639,6 @@ func TestFullTextIndexExchangePartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_tikv_fulltext_index = on")
 	tk.MustExec(`create table pt (id int primary key, doc text, fulltext index ft (doc))
 		partition by range (id) (partition p0 values less than (100), partition p1 values less than (200))`)
 	tk.MustExec("insert into pt values (1, 'hello world'), (101, 'relational storage')")
@@ -682,7 +668,6 @@ func TestFullTextIndexAdminCheckWithPartialIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_tikv_fulltext_index = on")
 	// A partial index is only validated by the fast check, which a FULLTEXT
 	// index on the same table must not turn off.
 	tk.MustExec("create table t (id int primary key, a int, doc text, index ia (a) where a is not null, fulltext index ft (doc))")

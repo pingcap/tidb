@@ -2323,14 +2323,9 @@ func (rc *LogClient) RepairIngestIndex(
 			// create the repaired index when first execution or not found it
 			if sql.TiKVFullText != nil {
 				// A FULLTEXT index is rebuilt with the analyzer it recorded.
-				// Creating one is otherwise up to a switch, which must not
-				// stop a restore after the index has been dropped.
 				sessVars := indexSession.GetSessionCtx().GetSessionVars()
-				enabled := sessVars.EnableTiKVFullTextIndex
-				sessVars.EnableTiKVFullTextIndex = true
 				sessVars.TiKVFullTextAnalyzerForRebuild = sql.TiKVFullText
 				defer func() {
-					sessVars.EnableTiKVFullTextIndex = enabled
 					sessVars.TiKVFullTextAnalyzerForRebuild = nil
 				}()
 			}

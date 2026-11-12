@@ -390,10 +390,6 @@ const (
 	// produce an equivalent same-order index join candidate.
 	TiDBOptEnableAlternativeLogicalPlans = "tidb_opt_enable_alternative_logical_plans"
 
-	// TiDBEnableTiKVFullTextIndex allows creating a FULLTEXT index built in
-	// TiKV on the classic kernel. It is undocumented and off by default while
-	// queries cannot yet read such an index; it is removed once they can.
-	TiDBEnableTiKVFullTextIndex = "tidb_enable_tikv_fulltext_index"
 	// TiDBEnableLocalMatchAgainst controls whether TiDB may evaluate supported
 	// MATCH ... AGAINST filters locally as no-score predicates.
 	TiDBEnableLocalMatchAgainst = "tidb_enable_local_match_against"
@@ -1629,7 +1625,6 @@ const (
 	DefOptPreferRangeScan               = true
 	DefOptEnableNoDecorrelateInSelect   = false
 	DefOptEnableAlternativeLogicalPlans = false
-	DefTiDBEnableTiKVFullTextIndex      = false
 	DefTiDBEnableLocalMatchAgainst      = false
 	DefOptEnableSemiJoinRewrite         = false
 	DefBatchInsert                      = false

@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
@@ -51,17 +50,6 @@ func checkTiKVFullTextClusterSupport() error {
 	}
 	if !model.GetTiKVFullTextSupported() {
 		return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index requires every TiDB node in the cluster to support it; upgrade the remaining nodes first")
-	}
-	return nil
-}
-
-// checkTiKVFullTextIndexEnabled refuses to create a FULLTEXT index built in
-// TiKV unless the session turned on tidb_enable_tikv_fulltext_index. Until
-// the read path is in place such an index could be written but never used by
-// a query, so the statement fails as it does without this feature.
-func checkTiKVFullTextIndexEnabled(sctx sessionctx.Context) error {
-	if !sctx.GetSessionVars().EnableTiKVFullTextIndex {
-		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index is only supported in starter deployment mode")
 	}
 	return nil
 }

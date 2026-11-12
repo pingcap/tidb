@@ -188,6 +188,11 @@ func getPlanCostVer24PhysicalIndexScan(pp base.PhysicalPlan, taskType property.T
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
+	if p.FullText != nil {
+		p.PlanCostVer2 = fullTextIndexScanCostVer2(option, p)
+		p.PlanCostInit = true
+		return p.PlanCostVer2, nil
+	}
 
 	rows := getCardinality(p, option.CostFlag)
 	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns) // consider all index columns
@@ -215,6 +220,39 @@ func getPlanCostVer24PhysicalIndexScan(pp base.PhysicalPlan, taskType property.T
 		p.PlanCostVer2 = costusage.AddCostWithoutTrace(p.PlanCostVer2, tieBreakerValue)
 	}
 	return p.PlanCostVer2, nil
+}
+
+// fullTextPostingEntrySize is the typical size of an entry of a FULLTEXT index
+// built in TiKV: the index prefix, a short term and the handle in the key, and
+// a few bytes of positions in the value.
+const fullTextPostingEntrySize = 48
+
+// fullTextIndexScanCostVer2 returns the cost of reading a FULLTEXT index built
+// in TiKV, which is:
+// plan-cost = seek-cost + scan-cost + net-cost + decode-cost
+// seek-cost = posting-scans * 10 * log2(8) * tikv-scan-factor
+// scan-cost = posting-rows * log2(entry-size) * tikv-scan-factor
+// net-cost = posting-rows * entry-size * net-factor
+// decode-cost = posting-rows * tidb-cpu-factor
+// The entries read are sent to TiDB, which decodes and merges them, so the
+// cost follows the entries read rather than the rows the search matches. An
+// intersection reads its smallest list in full and seeks in the others, each
+// seek a scan of its own; posting-rows and posting-scans count both, see
+// fulltext.Query.EstimatePostingCost.
+func fullTextIndexScanCostVer2(option *costusage.PlanCostOption, p *physicalop.PhysicalIndexScan) costusage.CostVer2 {
+	rows := p.FullText.PostingRows
+	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, property.CopMultiReadTaskType)
+	// Each posting scan is a request of its own, priced like the seek of an
+	// ordinary range scan.
+	seekCost := costusage.NewCostVer2(option, scanFactor,
+		p.FullText.PostingScans*10*math.Log2(8)*scanFactor.Value,
+		func() string { return fmt.Sprintf("seeking(%v*10*log2(8)*%v)", p.FullText.PostingScans, scanFactor) })
+	scanCost := scanCostVer2(option, rows, fullTextPostingEntrySize, scanFactor)
+	netCost := netCostVer2(option, rows, fullTextPostingEntrySize, getTaskNetFactorVer2(p, property.RootTaskType))
+	cpuFactor := getTaskCPUFactorVer2(p, property.RootTaskType)
+	decodeCost := costusage.NewCostVer2(option, cpuFactor, rows*cpuFactor.Value,
+		func() string { return fmt.Sprintf("decode(%v*%v)", rows, cpuFactor) })
+	return costusage.SumCostVer2(seekCost, scanCost, netCost, decodeCost)
 }
 
 // getPlanCostVer24PhysicalTableScan returns the plan-cost of this sub-plan, which is:
@@ -522,6 +560,16 @@ func GetPlanCostVer24PhysicalIndexMergeReader(pp base.PhysicalPlan, taskType pro
 
 	indexSideCost := make([]costusage.CostVer2, 0, len(p.PartialPlansRaw))
 	for _, indexPath := range p.PartialPlansRaw {
+		if is, ok := indexPath.(*physicalop.PhysicalIndexScan); ok && is.FullText != nil {
+			// The posting lists are read by one worker in TiDB, one request
+			// after another, and the scan's own cost includes sending them.
+			indexChildCost, err := indexPath.GetPlanCostVer2(taskType, option)
+			if err != nil {
+				return costusage.ZeroCostVer2, err
+			}
+			indexSideCost = append(indexSideCost, indexChildCost)
+			continue
+		}
 		rows := getCardinality(indexPath, option.CostFlag)
 		rowSize := getAvgRowSize(indexPath.StatsInfo(), indexPath.Schema().Columns)
 
@@ -536,6 +584,13 @@ func GetPlanCostVer24PhysicalIndexMergeReader(pp base.PhysicalPlan, taskType pro
 	sumIndexSideCost := costusage.SumCostVer2(indexSideCost...)
 
 	p.PlanCostVer2 = costusage.SumCostVer2(tableSideCost, sumIndexSideCost)
+	if fullTextRows, ok := fullTextIndexMergeRows(p, option); ok {
+		// A FULLTEXT index yields handles in any order across the table, and
+		// every one is looked up on its own, as an IndexLookUp's handles are:
+		// charge the same double-read cost, or a search matching many rows
+		// looks as cheap as a scan that reads them in order.
+		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, indexMergeDoubleReadCostVer2(p, option, fullTextRows, taskType))
+	}
 	// give a bias to pushDown limit, since it will get the same cost with NON_PUSH_DOWN_LIMIT case via expect count.
 	// push down limit case may reduce cop request consumption if any in some cases.
 	//
@@ -558,6 +613,32 @@ func GetPlanCostVer24PhysicalIndexMergeReader(pp base.PhysicalPlan, taskType pro
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexMergeCostFactor)
 	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptIndexMergeCostFactor)
 	return p.PlanCostVer2, nil
+}
+
+// fullTextIndexMergeRows returns the handles the FULLTEXT partial plan of an
+// IndexMerge yields, and whether it has one.
+func fullTextIndexMergeRows(p *physicalop.PhysicalIndexMergeReader, option *costusage.PlanCostOption) (float64, bool) {
+	for _, partial := range p.PartialPlansRaw {
+		if is, ok := partial.(*physicalop.PhysicalIndexScan); ok && is.FullText != nil {
+			return getCardinality(partial, option.CostFlag), true
+		}
+	}
+	return 0, false
+}
+
+// indexMergeDoubleReadCostVer2 is the double-read cost of looking up rows handles,
+// as getPlanCostVer24PhysicalIndexLookUpReader computes it:
+// double-read-cost = (double-read-cpu-cost + double-read-request-cost) / double-read-concurrency
+func indexMergeDoubleReadCostVer2(p *physicalop.PhysicalIndexMergeReader, option *costusage.PlanCostOption, rows float64, taskType property.TaskType) costusage.CostVer2 {
+	cpuFactor := getTaskCPUFactorVer2(p, taskType)
+	requestFactor := getTaskRequestFactorVer2(p, taskType)
+	cpuCost := costusage.NewCostVer2(option, cpuFactor, rows*cpuFactor.Value,
+		func() string { return fmt.Sprintf("double-read-cpu(%v*%v)", rows, cpuFactor) })
+	batchSize := float64(p.SCtx().GetSessionVars().IndexLookupSize)
+	taskPerBatch := 32.0 // the same magic number as IndexLookUp's
+	requestCost := doubleReadCostVer2(option, rows/batchSize*taskPerBatch, requestFactor)
+	concurrency := float64(p.SCtx().GetSessionVars().IndexLookupConcurrency())
+	return costusage.DivCostVer2(costusage.SumCostVer2(cpuCost, requestCost), concurrency)
 }
 
 // getPlanCostVer24PhysicalSort returns the plan-cost of this sub-plan, which is:

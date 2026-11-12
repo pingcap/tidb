@@ -1062,9 +1062,6 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	if kerneltype.IsClassic() {
 		for _, constr := range s.Constraints {
 			if constr.Tp == ast.ConstraintFulltext {
-				if err := checkTiKVFullTextIndexEnabled(ctx); err != nil {
-					return errors.Trace(err)
-				}
 				if err := checkTiKVFullTextClusterSupport(); err != nil {
 					return errors.Trace(err)
 				}
@@ -5882,9 +5879,6 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		// columnar index before reaching here.
 		if !kerneltype.IsClassic() {
 			return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT index is not supported")
-		}
-		if err := checkTiKVFullTextIndexEnabled(ctx); err != nil {
-			return errors.Trace(err)
 		}
 		if err := checkTiKVFullTextClusterSupport(); err != nil {
 			return errors.Trace(err)
