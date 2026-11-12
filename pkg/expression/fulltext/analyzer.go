@@ -97,6 +97,56 @@ func AnalyzerConfigFromSessionContext(sctx sessionctx.Context, parserType model.
 	return AnalyzerConfigFromSessionVars(sctx.GetSessionVars(), parserType)
 }
 
+// TiKVFullTextAnalyzerFromSessionVars snapshots the analyzer settings a FULLTEXT
+// index built in TiKV is created with. The parser type is left unset; it comes
+// from the index definition.
+func TiKVFullTextAnalyzerFromSessionVars(sessVars *variable.SessionVars) (model.TiKVFullTextIndexInfo, error) {
+	config, err := AnalyzerConfigFromSessionVars(sessVars, model.FullTextParserTypeInvalid)
+	if err != nil {
+		return model.TiKVFullTextIndexInfo{}, err
+	}
+	return model.TiKVFullTextIndexInfo{
+		MinTokenSize:   config.InnodbFtMinTokenSize,
+		MaxTokenSize:   config.InnodbFtMaxTokenSize,
+		EnableStopword: config.InnodbFtEnableStopword,
+		NgramTokenSize: config.NgramTokenSize,
+	}, nil
+}
+
+// AnalyzerConfigFromTiKVFullTextIndex returns the analyzer a FULLTEXT index built
+// in TiKV was created with. Writes and queries against the index must both use
+// it, so that the terms stored and the terms looked up agree.
+func AnalyzerConfigFromTiKVFullTextIndex(info *model.TiKVFullTextIndexInfo) AnalyzerConfig {
+	return AnalyzerConfig{
+		ParserType:             info.ParserType,
+		InnodbFtMinTokenSize:   info.MinTokenSize,
+		InnodbFtMaxTokenSize:   info.MaxTokenSize,
+		InnodbFtEnableStopword: info.EnableStopword,
+		NgramTokenSize:         info.NgramTokenSize,
+	}
+}
+
+// ValidateTiKVFullTextIndex rejects an analyzer snapshot that would build an
+// index no query could use: a parser with no local analyzer, or token bounds
+// that admit no token at all.
+func ValidateTiKVFullTextIndex(info *model.TiKVFullTextIndexInfo) error {
+	switch info.ParserType {
+	case model.FullTextParserTypeStandardV1:
+		if info.MinTokenSize > info.MaxTokenSize {
+			return fmt.Errorf("minimum token size %d above maximum %d, which admits no token",
+				info.MinTokenSize, info.MaxTokenSize)
+		}
+	case model.FullTextParserTypeNgramV1:
+		if info.NgramTokenSize <= 0 {
+			return fmt.Errorf("ngram token size %d admits no token", info.NgramTokenSize)
+		}
+	default:
+		return fmt.Errorf("parser %s has no analyzer in TiDB", info.ParserType.SQLName())
+	}
+	_, err := GetAnalyzer(AnalyzerConfigFromTiKVFullTextIndex(info))
+	return err
+}
+
 // AnalyzerConfigFromSessionVars builds an AnalyzerConfig from session/global
 // sysvars.
 func AnalyzerConfigFromSessionVars(sessVars *variable.SessionVars, parserType model.FullTextParserType) (AnalyzerConfig, error) {

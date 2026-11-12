@@ -140,31 +140,47 @@ func (e *CheckTableExec) handlePanic(r any) {
 
 // Next implements the Executor Next interface.
 func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
-	if e.done || len(e.srcs) == 0 {
+	if e.done {
 		return nil
 	}
 	defer func() { e.done = true }()
 
+	// Not every index has its entries counted, so idxOffsets maps a position
+	// in idxNames back to the index's position in e.indexInfos.
 	idxNames := make([]string, 0, len(e.indexInfos))
-	for _, idx := range e.indexInfos {
+	idxOffsets := make([]int, 0, len(e.indexInfos))
+	for offset, idx := range e.indexInfos {
 		if idx.HasCondition() {
 			return errors.Trace(errCheckPartialIndexWithoutFastCheck)
+		}
+		if idx.IsTiKVFullTextIndex() {
+			// Its entries are analyzed terms, so neither an entry count nor
+			// an index lookup compares to the rows. Each row is instead
+			// checked to have an entry for every term it analyzes to.
+			if err := e.checkTableRecord(ctx, offset); err != nil {
+				return errors.Trace(err)
+			}
+			continue
 		}
 		if idx.MVIndex || idx.IsColumnarIndex() {
 			continue
 		}
 		idxNames = append(idxNames, idx.Name.O)
+		idxOffsets = append(idxOffsets, offset)
 	}
-	greater, idxOffset, err := admin.CheckIndicesCount(e.Ctx(), e.dbName, e.table.Meta().Name.O, idxNames)
+	if len(e.srcs) == 0 {
+		return nil
+	}
+	greater, nameOffset, err := admin.CheckIndicesCount(e.Ctx(), e.dbName, e.table.Meta().Name.O, idxNames)
 	if err != nil {
 		// For admin check index statement, for speed up and compatibility, doesn't do below checks.
 		if e.checkIndex {
 			return errors.Trace(err)
 		}
 		if greater == admin.IdxCntGreater {
-			err = e.checkTableIndexHandle(ctx, e.indexInfos[idxOffset])
+			err = e.checkTableIndexHandle(ctx, e.indexInfos[idxOffsets[nameOffset]])
 		} else if greater == admin.TblCntGreater {
-			err = e.checkTableRecord(ctx, idxOffset)
+			err = e.checkTableRecord(ctx, idxOffsets[nameOffset])
 		}
 		return errors.Trace(err)
 	}
@@ -228,29 +244,46 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 }
 
 func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) error {
-	idxInfo := e.indexInfos[idxOffset]
-	txn, err := e.Ctx().Txn(true)
+	return checkTableRecordForIndex(ctx, e.Ctx(), e.table, e.indexInfos[idxOffset])
+}
+
+// checkTableRecordForIndex checks that every row of the table has its entries
+// in the index, one physical table at a time. For a FULLTEXT index built in
+// TiKV it also checks that every entry belongs to a row.
+func checkTableRecordForIndex(ctx context.Context, sctx sessionctx.Context, tbl table.Table, idxInfo *model.IndexInfo) error {
+	txn, err := sctx.Txn(true)
 	if err != nil {
 		return err
 	}
-	if e.table.Meta().GetPartitionInfo() == nil {
-		idx, err := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
+	check := func(physicalTable table.Table, idx table.Index) error {
+		if err := admin.CheckRecordAndIndex(ctx, sctx, txn, physicalTable, idx); err != nil {
+			return errors.Trace(err)
+		}
+		if idxInfo.IsTiKVFullTextIndex() {
+			// No index lookup covers this index, so the index-to-record
+			// direction is checked here as well.
+			return errors.Trace(admin.CheckFullTextIndexAndRecord(ctx, sctx, txn, physicalTable, idx))
+		}
+		return nil
+	}
+	if tbl.Meta().GetPartitionInfo() == nil {
+		idx, err := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), idxInfo)
 		if err != nil {
 			return err
 		}
-		return admin.CheckRecordAndIndex(ctx, e.Ctx(), txn, e.table, idx)
+		return check(tbl, idx)
 	}
 
-	info := e.table.Meta().GetPartitionInfo()
+	info := tbl.Meta().GetPartitionInfo()
 	for _, def := range info.Definitions {
 		pid := def.ID
-		partition := e.table.(table.PartitionedTable).GetPartition(pid)
-		idx, err := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
+		partition := tbl.(table.PartitionedTable).GetPartition(pid)
+		idx, err := tables.NewIndex(def.ID, tbl.Meta(), idxInfo)
 		if err != nil {
 			return err
 		}
-		if err := admin.CheckRecordAndIndex(ctx, e.Ctx(), txn, partition, idx); err != nil {
-			return errors.Trace(err)
+		if err := check(partition, idx); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -309,7 +342,11 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	op.Open()
 
 OUTER:
-	for i := range e.indexInfos {
+	for i, idx := range e.indexInfos {
+		if idx.IsTiKVFullTextIndex() {
+			// Checked row by row after the others; see below.
+			continue
+		}
 		select {
 		case ch <- checkIndexTask{indexOffset: i}:
 		case <-wctx.Done():
@@ -322,7 +359,22 @@ OUTER:
 	if opErr := wctx.OperatorErr(); opErr != nil {
 		return opErr
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	// The entries of a FULLTEXT index built in TiKV are analyzed terms, which
+	// the checksums the workers compare cannot be computed over. Each row is
+	// instead checked against its entries, as without the fast check, so the
+	// other indexes of the table, a partial one among them, keep the fast one.
+	for _, idx := range e.indexInfos {
+		if !idx.IsTiKVFullTextIndex() {
+			continue
+		}
+		if err := checkTableRecordForIndex(ctx, e.Ctx(), e.table, idx); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 func (e *FastCheckTableExec) createWorker() workerpool.Worker[checkIndexTask, workerpool.None] {
