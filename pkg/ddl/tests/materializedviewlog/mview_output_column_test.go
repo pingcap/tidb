@@ -208,48 +208,52 @@ func TestMaterializedViewOutputLogModifyColumnBatchRollback(t *testing.T) {
 		tableIDs = append(tableIDs, tbl.Meta().ID)
 	}
 	var injected, observed atomic.Bool
-	type observation struct {
-		changed []string
-		err     error
-	}
-	observations := make(chan observation, 1)
+	var failedJobID atomic.Int64
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeBatchedMultiSchemaParentJobUpdate", func(parent, proxy *model.Job) {
 		if parent.TableID == tableIDs[0] && proxy.Type == model.ActionModifyColumn && injected.CompareAndSwap(false, true) {
 			// The first sub-job has staged parent/MV/MLog metadata. Fail the second.
+			failedJobID.Store(parent.ID)
 			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr", "1*return(1)")
 		}
 	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRollbackTxnForMustRollbackTxnOnError", func(job *model.Job) {
-		if job.Type != model.ActionMultiSchemaChange || job.TableID != tableIDs[0] || !observed.CompareAndSwap(false, true) {
-			return
+		if job.Type == model.ActionMultiSchemaChange && job.ID == failedJobID.Load() {
+			observed.Store(true)
 		}
-		var result observation
-		result.err = kv.RunInNewTxn(context.Background(), store, false, func(_ context.Context, txn kv.Transaction) error {
-			m := meta.NewMutator(txn)
-			for _, id := range tableIDs {
-				info, err := m.GetTable(schema.ID, id)
-				if err != nil {
-					return err
-				}
-				for _, col := range info.Columns {
-					switch col.Name.L {
-					case "a", "b", "k", "l":
-						if col.GetType() != mysql.TypeLong {
-							result.changed = append(result.changed, info.Name.O+"."+col.Name.O)
-						}
-					}
-				}
-			}
-			return nil
-		})
-		observations <- result
 	})
 	require.ErrorContains(t, tk.ExecToErr(outputLogAlterSQL), "mock update version and tableInfo error")
 	require.True(t, injected.Load())
 	require.True(t, observed.Load(), "the failed batch must discard its whole transaction")
-	result := <-observations
-	require.NoError(t, result.err)
-	require.Empty(t, result.changed, "no related metadata may persist before the retry")
+	// Check durable metadata after the failed ALTER has completed. Reading from a
+	// separate transaction inside the rollback hook cannot see staged mutations.
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		for _, id := range tableIDs {
+			info, err := m.GetTable(schema.ID, id)
+			if err != nil {
+				return err
+			}
+			require.NotNil(t, info, "table ID %d", id)
+			for _, col := range info.Columns {
+				switch col.Name.L {
+				case "a", "b", "k", "l":
+					require.Equal(t, mysql.TypeLong, col.GetType(), "%s.%s", info.Name, col.Name)
+				}
+			}
+		}
+		return nil
+	}))
+	historyJob, err := ddl.GetHistoryJobByID(tk.Session(), failedJobID.Load())
+	require.NoError(t, err)
+	require.Equal(t, model.JobStateRollbackDone, historyJob.State)
+	require.NotNil(t, historyJob.MultiSchemaInfo)
+	require.True(t, historyJob.MultiSchemaInfo.Revertible)
+	require.Len(t, historyJob.MultiSchemaInfo.SubJobs, 2)
+	// The restored sub-jobs cancel from SchemaStateNone without publishing changes.
+	for i, sub := range historyJob.MultiSchemaInfo.SubJobs {
+		require.Equal(t, model.JobStateCancelled, sub.State, "sub-job %d", i)
+		require.Equal(t, model.StateNone, sub.SchemaState, "sub-job %d", i)
+	}
 	tk.MustQuery("select distinct data_type from information_schema.columns where table_schema='test' and column_name in ('a', 'b', 'k', 'l')").Check(testkit.Rows("int"))
 	tk.MustExec(outputLogAlterSQL)
 	tk.MustQuery("select distinct data_type from information_schema.columns where table_schema='test' and column_name in ('a', 'b', 'k', 'l')").Check(testkit.Rows("bigint"))
