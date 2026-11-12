@@ -95,8 +95,11 @@ reader built by Go's `buildTableReader` / `buildIndexReader` /
   `buildStreamAggFromChildExec` over the task's executor, then their
   `OpenSelf`). The HashJoin arm followed (`buildHashJoinForIndexJoin`:
   `indexJoinLookupChildIdx`, the other child built and opened, the V1 or V2
-  join from its child executors opened with `OpenSelf`). Left in (c):
-  dynamically pruned partitions, which still take the probe-seeded leaf.
+  join from its child executors opened with `OpenSelf`). Dynamically pruned partitions
+  followed (`prunePartitionForInnerExecutor` / `GetPartitionByRow` /
+  `buildIndexRangeForEachPartition` with the readers' `partRangeMap`,
+  `buildPartitionedTableReaderKVRangesForIndexJoin`, a global index's
+  `buildRangesForIndexJoin`); (c) is complete. Next: (d).
 - [ ] Milestone 5: the offer machinery is deleted; E15 leaves the register.
 
 ## Surprises & Discoveries

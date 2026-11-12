@@ -107,6 +107,59 @@ pub(crate) fn build_kv_ranges_for_index_join(
         .map_err(encode_err)
 }
 
+/// Go `buildRangesForIndexJoin`: each lookup content's keys written into
+/// the join's template `ranges` at their index offsets, and, with a
+/// next-column comparison (`cwc`), the template's last slot rebuilt from each
+/// content's comparison values and the ranges unioned -- the datum ranges a
+/// reader opens over (a global index, or a partition's `partRangeMap`).
+pub(crate) fn build_ranges_for_index_join(
+    probes: &IndexJoinProbes,
+    ranges: &[Range],
+    key_off2_idx_off: &[i64],
+    cwc: Option<&ColWithCmpFuncManager>,
+) -> Result<Vec<Range>, ExecError> {
+    if ranges.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut idx_offs: Vec<usize> =
+        key_off2_idx_off.iter().filter_map(|off| usize::try_from(*off).ok()).collect();
+    idx_offs.sort_unstable();
+    let last_pos = ranges[0].low_val.len() - 1;
+    let mut ranges = ranges.to_vec();
+    let mut ret_ranges = Vec::with_capacity(ranges.len() * probes.keys.len());
+    let mut tmp_datum_ranges = Vec::with_capacity(probes.keys.len());
+    for (keys, bounds) in probes.keys.iter().zip(probes.bound_values.iter().chain(std::iter::repeat(&Vec::new()))) {
+        for ran in &mut ranges {
+            for (key, idx_off) in keys.iter().zip(&idx_offs) {
+                ran.low_val[*idx_off] = key.clone();
+                ran.high_val[*idx_off] = key.clone();
+            }
+        }
+        let Some(cwc) = cwc else {
+            ret_ranges.extend(ranges.iter().cloned());
+            continue;
+        };
+        let next_col_ranges = cwc
+            .build_ranges_by_row(bounds)
+            .map_err(|error| ExecError::internal(error.to_string()))?;
+        for next_col_ran in next_col_ranges {
+            for ran in &mut ranges {
+                ran.low_val[last_pos] = next_col_ran.low_val[0].clone();
+                ran.high_val[last_pos] = next_col_ran.high_val[0].clone();
+                ran.low_exclude = next_col_ran.low_exclude;
+                ran.high_exclude = next_col_ran.high_exclude;
+                ran.collators.clone_from(&next_col_ran.collators);
+                tmp_datum_ranges.push(ran.clone());
+            }
+        }
+    }
+    if cwc.is_none() {
+        return Ok(ret_ranges);
+    }
+    tidb_ranger::ranger::union_ranges(tmp_datum_ranges, true)
+        .map_err(|error| ExecError::internal(format!("index-join range union: {error}")))
+}
+
 /// Go `distsql.IndexRangesToKVRangesWithInterruptSignal` over one table,
 /// charging `mem_tracker` when there is one.
 fn index_ranges_to_kv_ranges(

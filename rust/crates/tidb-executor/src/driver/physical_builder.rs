@@ -4377,6 +4377,13 @@ struct DataReaderBuilder {
     /// Go `indexJoinKeyUniqueIDs`: the inner join keys, which locate a hash
     /// join's lookup child.
     index_join_keys: Vec<Column>,
+    /// Go `IndexJoinLookUpContent.KeyColIDs`.
+    key_col_ids: Vec<i64>,
+    /// A dynamically pruned partitioned inner table, whose readers prune its
+    /// partitions per task.
+    partitioned: Option<Arc<tidb_table::tables::TableCommon>>,
+    /// Whether the inner index is a global one.
+    global_index: bool,
     key_off2_idx_off: Vec<i64>,
     compare_filters: Option<tidb_planner_core_operator_physicalop::ColWithCmpFuncManager>,
     /// The inner table's id, the index and the statistics `Close` reports
@@ -4442,12 +4449,27 @@ impl DataReaderBuilder {
             .ok_or_else(|| DriverError::unsupported("physical table ID is absent from the catalog"))?;
         let usage_index_id = usage_index_id
             .or_else(|| tidb_executor_internal_exec::index_usage_reporter::get_cluster_index_id(&table));
-        // Go `buildIndexReaderForIndexJoin`'s dynamically pruned partitions
-        // are built by the probe-seeded leaf for now.
-        if table.meta().read().get_partition_info().is_some() && !ctx.static_partition_prune() {
-            return Ok(None);
-        }
+        // Go `KeyColIDs`, aligned with the probe keys, which arrive in the
+        // index's column order.
+        let mut key_col_ids: Vec<(i64, i64)> = join
+            .key_off2_idx_off
+            .iter()
+            .zip(&join.inner_join_keys)
+            .filter(|(off, _)| **off >= 0)
+            .map(|(off, key)| (*off, key.id))
+            .collect();
+        key_col_ids.sort_unstable();
+        let table_info = table.meta().read().clone();
+        let global_index = usage_index_id.is_some_and(|index_id| {
+            table_info.indices.iter_deref().any(|index| index.read().id == index_id && index.read().global)
+        });
+        // Go `tbInfo.GetPartitionInfo() != nil && UseDynamicPartitionPrune()`.
+        let partitioned =
+            (table_info.get_partition_info().is_some() && !ctx.static_partition_prune()).then(|| Arc::clone(&table));
         Ok(Some(Self {
+            key_col_ids: key_col_ids.into_iter().map(|(_, id)| id).collect(),
+            partitioned,
+            global_index,
             plan: inner.clone(),
             ret_types: meta(ctx, inner, plan_schema(inner)?).ret_field_types().to_vec(),
             ctx: ctx.clone(),
@@ -4616,8 +4638,10 @@ impl DataReaderBuilder {
         plan: &PhysicalPlan,
         probes: &tidb_executor_join::index_lookup::IndexJoinProbes,
     ) -> Result<Box<dyn Executor>, crate::ExecError> {
-        let lost = || crate::ExecError::internal("a statically pruned reader lost its partition");
         let meta = meta(&self.ctx, plan, plan_schema(plan).map_err(|error| crate::ExecError::internal(error.to_string()))?);
+        // Go's `TableDualExec{BaseExecutorV2: e.BaseExecutorV2}` when no
+        // partition is left.
+        let dual = |meta| Box::new(crate::table_dual::TableDualExec::new(meta, 0)) as Box<dyn Executor>;
         let kv_ranges = |(table_id, index_id)| {
             crate::index_join_reader::build_kv_ranges_for_index_join(
                 &tidb_exprctx::Columns::time_zone(&self.ctx),
@@ -4632,17 +4656,31 @@ impl DataReaderBuilder {
         };
         let reader: Box<dyn Executor> = match plan {
             PhysicalPlan::IndexReader(v) => {
-                let mut e = crate::index_reader::IndexReaderExecutor::build_no_range(meta, &self.ctx, &self.is, v)?
-                    .ok_or_else(lost)?;
-                let ids = e.physical_table_id_and_index_id();
-                e.open_with_kv_ranges(kv_ranges(ids)?)?;
+                let Some(mut e) = crate::index_reader::IndexReaderExecutor::build_no_range(meta.clone(), &self.ctx, &self.is, v)? else {
+                    return Ok(dual(meta));
+                };
+                match self.index_join_partition_ranges(v.plan_part_info.as_deref(), probes)? {
+                    None => {
+                        let ids = e.physical_table_id_and_index_id();
+                        e.open_with_kv_ranges(kv_ranges(ids)?)?;
+                    }
+                    Some(None) => return Ok(dual(meta)),
+                    Some(Some(r)) => e.open_for_index_join(r.partitions, r.ranges, r.range_map)?,
+                }
                 Box::new(e)
             }
             PhysicalPlan::IndexLookUpReader(v) => {
-                let mut e = crate::index_lookup::IndexLookUpExecutor::build_no_range(meta, &self.ctx, &self.is, v)?
-                    .ok_or_else(lost)?;
-                let ids = e.physical_table_id_and_index_id();
-                e.open_with_kv_ranges(kv_ranges(ids)?)?;
+                let Some(mut e) = crate::index_lookup::IndexLookUpExecutor::build_no_range(meta.clone(), &self.ctx, &self.is, v)? else {
+                    return Ok(dual(meta));
+                };
+                match self.index_join_partition_ranges(v.plan_part_info.as_deref(), probes)? {
+                    None => {
+                        let ids = e.physical_table_id_and_index_id();
+                        e.open_with_kv_ranges(kv_ranges(ids)?)?;
+                    }
+                    Some(None) => return Ok(dual(meta)),
+                    Some(Some(r)) => e.open_for_index_join(r.partitions, r.ranges, r.range_map)?,
+                }
                 Box::new(e)
             }
             // A common handle reads the ranges of its keys
@@ -4650,10 +4688,23 @@ impl DataReaderBuilder {
             // (`dedupHandles`, `buildTableReaderFromHandles` with
             // `canReorderHandles`).
             PhysicalPlan::TableReader(v) => {
-                let mut e = crate::table_reader::TableReaderExecutor::build_no_range(meta, &self.ctx, &self.is, v)?
-                    .ok_or_else(lost)?;
+                let Some(mut e) = crate::table_reader::TableReaderExecutor::build_no_range(meta.clone(), &self.ctx, &self.is, v)? else {
+                    return Ok(dual(meta));
+                };
                 let (table_id, common_handle) = e.physical_table_id_and_common_handle();
-                if common_handle {
+                if let Some(table) = &self.partitioned {
+                    // Go `buildPartitionedTableReaderKVRangesForIndexJoin`
+                    // over the condition-pruned partitions.
+                    let table_info = table.meta().read().clone();
+                    let used = crate::index_reader::get_partition_ids_after_pruning(
+                        &self.is,
+                        &table_info,
+                        v.plan_part_info.as_deref(),
+                        &self.ctx,
+                    )?;
+                    let kv_ranges = self.build_partitioned_table_reader_kv_ranges_for_index_join(table, &used, probes, common_handle)?;
+                    e.build_table_reader_base(kv_ranges, Vec::new())?;
+                } else if common_handle {
                     e.build_table_reader_base(kv_ranges((table_id, -1))?, Vec::new())?;
                 } else {
                     let mut handles = probes
@@ -4682,6 +4733,204 @@ impl DataReaderBuilder {
             self.usage_index_id,
         )))
     }
+
+    /// Go `buildIndexReaderForIndexJoin` / `buildIndexLookUpReaderForIndexJoin`
+    /// over a dynamically pruned partitioned table: `None` for any other
+    /// table; else a global index's ranges over its own table, or
+    /// `buildIndexJoinPartitionRanges` -- `Some(None)` when no partition is
+    /// left.
+    fn index_join_partition_ranges(
+        &self,
+        plan_part_info: Option<&tidb_planner_core_operator_physicalop::PhysPlanPartInfo>,
+        probes: &tidb_executor_join::index_lookup::IndexJoinProbes,
+    ) -> Result<Option<Option<IndexJoinPartitionRanges>>, crate::ExecError> {
+        let Some(table) = &self.partitioned else {
+            return Ok(None);
+        };
+        let cwc = self.compare_filters.as_ref();
+        if self.global_index {
+            let ranges =
+                crate::index_join_reader::build_ranges_for_index_join(probes, &self.ranges, &self.key_off2_idx_off, cwc)?;
+            return Ok(Some(Some(IndexJoinPartitionRanges { partitions: None, ranges, range_map: None })));
+        }
+        let (used_partition, can_prune, content_pos) =
+            self.prune_partition_for_inner_executor(table, plan_part_info, probes)?;
+        if used_partition.is_empty() {
+            return Ok(Some(None));
+        }
+        if can_prune {
+            let range_map = self.build_index_range_for_each_partition(&used_partition, &content_pos, probes)?;
+            return Ok(Some(Some(IndexJoinPartitionRanges {
+                partitions: Some(used_partition),
+                ranges: self.ranges.clone(),
+                range_map: Some(range_map),
+            })));
+        }
+        let ranges = crate::index_join_reader::build_ranges_for_index_join(probes, &self.ranges, &self.key_off2_idx_off, cwc)?;
+        Ok(Some(Some(IndexJoinPartitionRanges { partitions: Some(used_partition), ranges, range_map: None })))
+    }
+
+    /// Go `prunePartitionForInnerExecutor`: the condition-pruned partitions
+    /// the task's contents route to (ascending), whether the contents could
+    /// be routed, and each content's partition.
+    fn prune_partition_for_inner_executor(
+        &self,
+        table: &tidb_table::tables::TableCommon,
+        plan_part_info: Option<&tidb_planner_core_operator_physicalop::PhysPlanPartInfo>,
+        probes: &tidb_executor_join::index_lookup::IndexJoinProbes,
+    ) -> Result<(Vec<i64>, bool, Vec<Option<i64>>), crate::ExecError> {
+        let table_info = table.meta().read().clone();
+        let cond_prune_result =
+            crate::index_reader::get_partition_ids_after_pruning(&self.is, &table_info, plan_part_info, &self.ctx)?;
+        if probes.keys.is_empty() {
+            return Ok((Vec::new(), false, Vec::new()));
+        }
+        let Some(key_col_offsets) = get_partition_key_col_offsets(&self.key_col_ids, table) else {
+            return Ok((cond_prune_result, false, Vec::new()));
+        };
+        let mut partitions = std::collections::BTreeSet::new();
+        let mut content_pos = Vec::with_capacity(probes.keys.len());
+        for keys in &probes.keys {
+            let pid = self.get_partition_by_row(table, &key_col_offsets, keys)?;
+            if let Some(pid) = pid {
+                partitions.insert(pid);
+            }
+            content_pos.push(pid);
+        }
+        let mut used_partition: Vec<i64> =
+            cond_prune_result.into_iter().filter(|pid| partitions.contains(pid)).collect();
+        // To make the final key ranges involving multiple partitions ordered.
+        used_partition.sort_unstable();
+        Ok((used_partition, true, content_pos))
+    }
+
+    /// Go `partitionTbl.GetPartitionByRow` over a row holding `keys` at
+    /// `key_col_offsets`: `None` for `ErrNoPartitionForGivenValue`.
+    fn get_partition_by_row(
+        &self,
+        table: &tidb_table::tables::TableCommon,
+        key_col_offsets: &[usize],
+        keys: &[tidb_datatype::Datum],
+    ) -> Result<Option<i64>, crate::ExecError> {
+        let mut locate_key = vec![tidb_datatype::Datum::Null; table.columns().len()];
+        for (offset, data) in key_col_offsets.iter().zip(keys) {
+            locate_key[*offset] = data.clone();
+        }
+        match table.locate_partition(&locate_key, &self.ctx) {
+            Ok(pid) => Ok(Some(pid)),
+            Err(tidb_table::tables::KvTableError::Mysql(error)) if error.code == 1526 => Ok(None),
+            Err(error) => Err(crate::ExecError::internal(format!("{error:?}"))),
+        }
+    }
+
+    /// Go `buildIndexRangeForEachPartition`: each used partition's ranges
+    /// over its own contents.
+    fn build_index_range_for_each_partition(
+        &self,
+        used_partitions: &[i64],
+        content_pos: &[Option<i64>],
+        probes: &tidb_executor_join::index_lookup::IndexJoinProbes,
+    ) -> Result<std::collections::HashMap<i64, Vec<tidb_ranger::types::Range>>, crate::ExecError> {
+        let mut next_range = std::collections::HashMap::with_capacity(used_partitions.len());
+        for &pid in used_partitions {
+            let contents: Vec<usize> = (0..content_pos.len()).filter(|&i| content_pos[i] == Some(pid)).collect();
+            let ranges = crate::index_join_reader::build_ranges_for_index_join(
+                &sub_probes(probes, &contents),
+                &self.ranges,
+                &self.key_off2_idx_off,
+                self.compare_filters.as_ref(),
+            )?;
+            next_range.insert(pid, ranges);
+        }
+        Ok(next_range)
+    }
+
+    /// Go `buildPartitionedTableReaderKVRangesForIndexJoin`: the task's
+    /// handles (or a common handle's key ranges) in the partitions they
+    /// route to (`groupIndexJoinLookUpContentsByPartition`), or in every
+    /// used partition when they cannot be routed, sorted by start key.
+    fn build_partitioned_table_reader_kv_ranges_for_index_join(
+        &self,
+        table: &tidb_table::tables::TableCommon,
+        used_partition_list: &[i64],
+        probes: &tidb_executor_join::index_lookup::IndexJoinProbes,
+        is_common_handle: bool,
+    ) -> Result<Vec<tidb_txnkv::KeyRange>, crate::ExecError> {
+        // Go `dedupHandles`: the contents whose keys are one integer handle.
+        let contents: Vec<usize> = if is_common_handle {
+            (0..probes.keys.len()).collect()
+        } else {
+            (0..probes.keys.len())
+                .filter(|&i| {
+                    let keys = &probes.keys[i];
+                    keys.first().is_some_and(|first| keys.iter().all(|key| key.get_int64() == first.get_int64()))
+                })
+                .collect()
+        };
+        let handles: Vec<tidb_txnkv::Handle> = contents
+            .iter()
+            .map(|&i| tidb_txnkv::Handle::Int(tidb_txnkv::IntHandle::new(probes.keys[i][0].get_int64())))
+            .collect();
+        // Go `groupIndexJoinLookUpContentsByPartition`.
+        let mut contents_by_pid: Vec<(i64, Vec<usize>)> = Vec::new();
+        let can_locate_by_key = match (contents.is_empty(), get_partition_key_col_offsets(&self.key_col_ids, table)) {
+            (false, Some(offsets)) => {
+                for &i in &contents {
+                    let Some(pid) = self.get_partition_by_row(table, &offsets, &probes.keys[i])? else {
+                        continue;
+                    };
+                    if !used_partition_list.contains(&pid) {
+                        continue;
+                    }
+                    match contents_by_pid.iter_mut().find(|(p, _)| *p == pid) {
+                        Some((_, group)) => group.push(i),
+                        None => contents_by_pid.push((pid, vec![i])),
+                    }
+                }
+                true
+            }
+            _ => false,
+        };
+        let zone = tidb_exprctx::Columns::time_zone(&self.ctx);
+        let mut kv_ranges = Vec::new();
+        if is_common_handle {
+            // Keep the same memory tracking behavior as the previous branchy
+            // implementation.
+            let groups: Vec<(i64, tidb_executor_join::index_lookup::IndexJoinProbes)> = if can_locate_by_key {
+                contents_by_pid.iter().map(|(pid, group)| (*pid, sub_probes(probes, group))).collect()
+            } else {
+                used_partition_list.iter().map(|pid| (*pid, sub_probes(probes, &contents))).collect()
+            };
+            for (pid, group) in &groups {
+                let tracker = if can_locate_by_key { None } else { probes.mem_tracker.as_ref() };
+                kv_ranges.extend(crate::index_join_reader::build_kv_ranges_for_index_join(
+                    &zone,
+                    *pid,
+                    -1,
+                    group,
+                    &self.ranges,
+                    &self.key_off2_idx_off,
+                    self.compare_filters.as_ref(),
+                    tracker,
+                )?);
+            }
+        } else if can_locate_by_key {
+            for (pid, group) in &contents_by_pid {
+                let part_handles: Vec<tidb_txnkv::Handle> = group
+                    .iter()
+                    .map(|&i| tidb_txnkv::Handle::Int(tidb_txnkv::IntHandle::new(probes.keys[i][0].get_int64())))
+                    .collect();
+                kv_ranges.extend(tidb_distsql::table_handles_to_kv_ranges(*pid, &part_handles).0);
+            }
+        } else {
+            for &pid in used_partition_list {
+                kv_ranges.extend(tidb_distsql::table_handles_to_kv_ranges(pid, &handles).0);
+            }
+        }
+        // Go `sortKVRangesByStartKey`.
+        kv_ranges.sort_by(|a, b| a.start_key.cmp(&b.start_key));
+        Ok(kv_ranges)
+    }
 }
 
 impl tidb_executor_join::index_lookup::IndexJoinReaderBuilder for DataReaderBuilder {
@@ -4694,6 +4943,45 @@ impl tidb_executor_join::index_lookup::IndexJoinReaderBuilder for DataReaderBuil
         probes: tidb_executor_join::index_lookup::IndexJoinProbes,
     ) -> Result<Box<dyn Executor>, crate::ExecError> {
         self.build_internal(&self.plan, &probes)
+    }
+}
+
+/// Go `indexJoinPartitionRanges`: the partitions an index join task's
+/// reader reads (`None` keeps a global index's table), its ranges, and each
+/// partition's own ranges when the contents could be routed.
+struct IndexJoinPartitionRanges {
+    partitions: Option<Vec<i64>>,
+    ranges: Vec<tidb_ranger::types::Range>,
+    range_map: Option<std::collections::HashMap<i64, Vec<tidb_ranger::types::Range>>>,
+}
+
+/// Go `getPartitionKeyColOffsets`: each key column's offset in the table's
+/// columns, when every column the partition expression reads is a key.
+fn get_partition_key_col_offsets(key_col_ids: &[i64], table: &tidb_table::tables::TableCommon) -> Option<Vec<usize>> {
+    let columns = table.columns();
+    let key_col_offsets = key_col_ids
+        .iter()
+        .map(|id| columns.iter().position(|column| column.read().id == *id))
+        .collect::<Option<Vec<_>>>()?;
+    let pe = table.partition()?;
+    for name in &pe.dependencies {
+        let offset = columns.iter().position(|column| column.read().name.original().eq_ignore_ascii_case(name))?;
+        if !key_col_offsets.contains(&offset) {
+            return None;
+        }
+    }
+    Some(key_col_offsets)
+}
+
+/// The lookup contents at `indices` of `probes`.
+fn sub_probes(
+    probes: &tidb_executor_join::index_lookup::IndexJoinProbes,
+    indices: &[usize],
+) -> tidb_executor_join::index_lookup::IndexJoinProbes {
+    tidb_executor_join::index_lookup::IndexJoinProbes {
+        keys: indices.iter().map(|&i| probes.keys[i].clone()).collect(),
+        bound_values: indices.iter().filter_map(|&i| probes.bound_values.get(i).cloned()).collect(),
+        mem_tracker: probes.mem_tracker.clone(),
     }
 }
 

@@ -105,6 +105,8 @@ pub struct IndexReaderExecutor {
     mem_tracker: Option<Arc<tidb_memory::Tracker>>,
     /// Go `partitionIDMap`: a global index's pruned partitions.
     partition_id_map: std::collections::BTreeSet<i64>,
+    /// Go `partRangeMap`: an index join task's ranges of each partition.
+    part_range_map: Option<std::collections::HashMap<i64, Vec<tidb_ranger::types::Range>>>,
     /// Go `kvRanges`.
     kv_ranges: Vec<tidb_txnkv::KeyRange>,
     /// Go `dummy`: not a real reader, only the KV ranges a union scan reads
@@ -240,6 +242,7 @@ impl IndexReaderExecutor {
             result: None,
             mem_tracker: None,
             partition_id_map,
+            part_range_map: None,
             kv_ranges: Vec::new(),
             // Go: a temporary table's reader is a dummy; its rows are the
             // union scan's.
@@ -297,11 +300,38 @@ impl IndexReaderExecutor {
         let zone = tidb_exprctx::Columns::time_zone(&self.ctx);
         let mut results = Vec::new();
         for ranges in &grouped_ranges {
-            let kv_ranges = tidb_distsql::index_ranges_to_kv_ranges(Some(&zone), &self.table_ids, self.index_id, ranges)
-                .map_err(|error| ExecError::Internal(format!("{error:?}").into()))?;
-            results.extend(kv_ranges.into_iter().flatten());
+            // Go `buildKeyRanges`: a partition's override ranges
+            // (`partRangeMap`) in place of the reader's.
+            for &physical_id in &self.table_ids {
+                let ranges = self.part_range_map.as_ref().and_then(|map| map.get(&physical_id)).unwrap_or(ranges);
+                let kv_ranges = tidb_distsql::index_ranges_to_kv_ranges(Some(&zone), &[physical_id], self.index_id, ranges)
+                    .map_err(|error| ExecError::Internal(format!("{error:?}").into()))?;
+                results.extend(kv_ranges.into_iter().flatten());
+            }
         }
         Ok(results)
+    }
+
+    /// Go `buildIndexReaderForIndexJoin` over a dynamically pruned
+    /// partitioned table: the task's partitions (`None` keeps the reader's,
+    /// a global index's table), ranges and per-partition ranges
+    /// (`partRangeMap`), then `exec.Open`.
+    ///
+    /// # Errors
+    /// As [`Executor::open`].
+    pub(crate) fn open_for_index_join(
+        &mut self,
+        partitions: Option<Vec<i64>>,
+        ranges: Vec<tidb_ranger::types::Range>,
+        part_range_map: Option<std::collections::HashMap<i64, Vec<tidb_ranger::types::Range>>>,
+    ) -> Result<(), ExecError> {
+        if let Some(partitions) = partitions {
+            self.table_ids = partitions;
+        }
+        self.ranges = ranges;
+        self.range_rebuild = None;
+        self.part_range_map = part_range_map;
+        self.open()
     }
 
     /// Go `SelectResult` over the key ranges `kv_ranges`.

@@ -377,6 +377,44 @@ fn an_index_joins_inner_hash_join_is_built_per_task() {
     tk.must_query(sql).check(["1 100", "1 101", "3 300", "4 100", "4 101"]);
 }
 
+/// Go `buildTableReaderForIndexJoin` / `buildIndexReaderForIndexJoin` /
+/// `buildIndexLookUpReaderForIndexJoin` over a dynamically pruned
+/// partitioned inner table: each task routes its lookup contents to their
+/// partitions (`prunePartitionForInnerExecutor`, `GetPartitionByRow`) and
+/// reads each partition over its own ranges (`partRangeMap`), and a global
+/// index reads its table over the task's ranges (`partitionIDMap`) -- union
+/// scans inside a transaction included. Go's rows (gorun).
+#[test]
+fn an_index_join_reads_a_partitioned_inner_table_per_task() {
+    let mut tk = TestKit::new();
+    tk.must_exec("create table o (a int, b int)");
+    tk.must_exec("create table p (a int primary key, b int, c int, index ib(b)) partition by hash(a) partitions 4");
+    tk.must_exec("create table g (a int, b int, c int, index gb(b) global) partition by hash(a) partitions 4");
+    tk.must_exec("insert into o values (1,10),(2,20),(3,30),(5,50),(6,60)");
+    tk.must_exec("insert into p values (1,10,100),(2,20,200),(3,30,300),(4,40,400),(5,50,500),(6,10,600)");
+    tk.must_exec("insert into g values (1,10,100),(2,20,200),(3,30,300),(4,40,400),(5,50,500),(6,10,600)");
+    let table = "select /*+ INL_JOIN(p) */ o.a, p.c from o join p on o.a = p.a order by o.a";
+    let lookup = "select /*+ INL_JOIN(p) */ o.a, p.c from o join p use index(ib) on o.b = p.b order by o.a, p.c";
+    let global = "select /*+ INL_JOIN(g) */ o.a, g.c from o join g use index(gb) on o.b = g.b order by o.a, g.c";
+    tk.must_query(table).check(["1 100", "2 200", "3 300", "5 500", "6 600"]);
+    tk.must_query("select /*+ INL_JOIN(p) */ o.a, p.b from o join p use index(ib) on o.b = p.b order by o.a, p.b")
+        .check(["1 10", "1 10", "2 20", "3 30", "5 50"]);
+    tk.must_query(lookup).check(["1 100", "1 600", "2 200", "3 300", "5 500"]);
+    tk.must_query("select /*+ INL_JOIN(p) */ o.a, p.c from o join p on o.a = p.a where p.a in (1,2,5) order by o.a")
+        .check(["1 100", "2 200", "5 500"]);
+    tk.must_query(global).check(["1 100", "1 600", "2 200", "3 300", "5 500"]);
+    tk.must_query("select /*+ INL_JOIN(g) */ o.a, g.b from o join g use index(gb) on o.b = g.b order by o.a, g.b")
+        .check(["1 10", "1 10", "2 20", "3 30", "5 50"]);
+    tk.must_exec("begin");
+    tk.must_exec("insert into p values (7,20,700)");
+    tk.must_exec("update p set c=c+1 where a=3");
+    tk.must_exec("insert into g values (7,20,700)");
+    tk.must_query(table).check(["1 100", "2 200", "3 301", "5 500", "6 600"]);
+    tk.must_query(lookup).check(["1 100", "1 600", "2 200", "2 700", "3 301", "5 500"]);
+    tk.must_query(global).check(["1 100", "1 600", "2 200", "2 700", "3 300", "5 500"]);
+    tk.must_exec("rollback");
+}
+
 /// Go `buildRespForGroupedRanges` assigns `e.kvRanges` on each call, so a
 /// keep-order read of an unsigned handle whose ranges straddle the int64
 /// boundary keeps only the second part's KV ranges, and the union scan over

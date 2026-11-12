@@ -156,6 +156,8 @@ pub struct IndexLookUpExecutor {
     partition_table_mode: bool,
     /// Go `partitionIDMap`: a global index's pruned partitions.
     partition_id_map: std::collections::BTreeSet<i64>,
+    /// Go `partitionRangeMap`: an index join task's ranges of each partition.
+    partition_range_map: Option<std::collections::HashMap<i64, Vec<tidb_ranger::types::Range>>>,
     /// Go `ranges`.
     ranges: Vec<tidb_ranger::types::Range>,
     /// Go `is.GroupByColIdxs`: the columns whose values group `ranges` into
@@ -407,6 +409,7 @@ impl IndexLookUpExecutor {
             table_ids,
             partition_table_mode,
             partition_id_map,
+            partition_range_map: None,
             ranges: scan.ranges.clone(),
             group_by_col_idxs: scan.group_by_col_idxs.clone(),
             range_rebuild: crate::driver::physical_builder::correlated_index_range_rebuilder(scan, ctx),
@@ -449,6 +452,29 @@ impl IndexLookUpExecutor {
     pub(crate) fn open_with_kv_ranges(&mut self, kv_ranges: Vec<tidb_txnkv::KeyRange>) -> Result<(), ExecError> {
         self.kv_ranges = vec![kv_ranges];
         self.open_inner()
+    }
+
+    /// Go `buildIndexLookUpReaderForIndexJoin` over a dynamically pruned
+    /// partitioned table: the task's partitions (`prunedPartitions`, `None`
+    /// keeps a global index's table), ranges and per-partition ranges
+    /// (`partitionRangeMap`), then `exec.Open`.
+    ///
+    /// # Errors
+    /// As [`Executor::open`].
+    pub(crate) fn open_for_index_join(
+        &mut self,
+        partitions: Option<Vec<i64>>,
+        ranges: Vec<tidb_ranger::types::Range>,
+        partition_range_map: Option<std::collections::HashMap<i64, Vec<tidb_ranger::types::Range>>>,
+    ) -> Result<(), ExecError> {
+        if let Some(partitions) = partitions {
+            self.table_ids = partitions;
+            self.partition_table_mode = true;
+        }
+        self.ranges = ranges;
+        self.range_rebuild = None;
+        self.partition_range_map = partition_range_map;
+        self.open()
     }
 
     /// Go `setDummy`.
@@ -506,8 +532,10 @@ impl IndexLookUpExecutor {
         let mut kv_ranges = Vec::with_capacity(grouped_ranges.len() * self.table_ids.len());
         for ranges in &grouped_ranges {
             // Go `buildKeyRanges`: `IndexRangesToKVRangesWithInterruptSignal`
-            // per physical table, charging `memTracker`.
+            // per physical table (over its `partitionRangeMap` ranges when it
+            // has them), charging `memTracker`.
             for &physical_id in &self.table_ids {
+                let ranges = self.partition_range_map.as_ref().and_then(|map| map.get(&physical_id)).unwrap_or(ranges);
                 kv_ranges.push(
                     tidb_distsql::index_ranges_to_kv_ranges_with_mem_tracker(
                         Some(&zone),
