@@ -1186,6 +1186,11 @@ error = '''
 Comment for table partition '%-.64s' is too long (max = %d)
 '''
 
+["ddl:1796"]
+error = '''
+Cannot create FULLTEXT index on temporary InnoDB table
+'''
+
 ["ddl:1826"]
 error = '''
 Duplicate foreign key constraint name '%s'
