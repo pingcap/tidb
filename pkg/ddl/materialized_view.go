@@ -204,14 +204,19 @@ func errUnsupportedMaterializedViewOnPartitionTable(op string) error {
 }
 
 func isValidMaterializedViewLogBaseTable(schemaLowerName string, tblInfo *model.TableInfo) bool {
-	return tblInfo != nil &&
-		!metadef.IsMemOrSysDB(schemaLowerName) &&
-		!tblInfo.IsView() &&
-		!tblInfo.IsSequence() &&
-		tblInfo.TempTableType == model.TempTableNone &&
-		tblInfo.MaterializedView == nil &&
-		tblInfo.MaterializedViewShadow == nil &&
-		tblInfo.MaterializedViewLog == nil
+	if tblInfo == nil ||
+		metadef.IsMemOrSysDB(schemaLowerName) ||
+		tblInfo.IsView() ||
+		tblInfo.IsSequence() ||
+		tblInfo.TempTableType != model.TempTableNone ||
+		tblInfo.MaterializedViewShadow != nil ||
+		tblInfo.MaterializedViewLog != nil {
+		return false
+	}
+	if tblInfo.MaterializedView != nil {
+		return tblInfo.State == model.StatePublic && tblInfo.MaterializedView.GetInitBuildState().IsReady()
+	}
+	return true
 }
 
 // formatSQLMode formats mode as the value of the sql_mode variable.
@@ -579,7 +584,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	if err != nil {
 		return err
 	}
-	if baseTable.Meta().IsView() || baseTable.Meta().IsSequence() || baseTable.Meta().TempTableType != model.TempTableNone {
+	if baseTable.Meta().IsView() || baseTable.Meta().IsSequence() || baseTable.Meta().TempTableType != model.TempTableNone || baseTable.Meta().MaterializedView != nil {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, baseTableName.Name, "BASE TABLE")
 	}
 	if baseTable.Meta().GetPartitionInfo() != nil {
@@ -814,6 +819,10 @@ func (e *executor) DropMaterializedView(ctx sessionctx.Context, s *ast.DropMater
 	}
 	if tbl.Meta().MaterializedView == nil {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, s.ViewName.Name, "MATERIALIZED VIEW")
+	}
+
+	if err := checkBaseTableMaterializedViewDependencyConstraints(tbl.Meta(), "DROP MATERIALIZED VIEW"); err != nil {
+		return err
 	}
 
 	dropStmt := &ast.DropTableStmt{IfExists: s.IfExists, Tables: []*ast.TableName{{Schema: schemaName, Name: s.ViewName.Name}}}
@@ -2004,6 +2013,7 @@ func (e *executor) RefreshMaterializedViewCompleteOutOfPlaceCutover(
 	oldMViewID int64,
 	shadowTableID int64,
 	buildReadTSO uint64,
+	buildSources []model.MViewRefreshSource,
 	expectedOldMViewRevision *uint64,
 	expectedLastSuccessReadTSO uint64,
 	expectedLastSuccessReadTSONull bool,
@@ -2022,7 +2032,7 @@ func (e *executor) RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		CDCWriteSource: sessionVars.CDCWriteSource, SQLMode: sessionVars.SQLMode,
 	}
 	args := &model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
-		OldMViewID: oldMViewID, ShadowTableID: shadowTableID, BuildReadTSO: buildReadTSO,
+		OldMViewID: oldMViewID, ShadowTableID: shadowTableID, BuildReadTSO: buildReadTSO, BuildSources: buildSources,
 		ExpectedOldMViewRevision: expectedOldMViewRevision, ExpectedLastSuccessReadTSO: expectedLastSuccessReadTSO,
 		ExpectedLastSuccessReadTSONull: expectedLastSuccessReadTSONull, NextRefreshUnixSeconds: nextRefreshUnixSeconds,
 		ShouldUpdateNextRefreshUnixSeconds: shouldUpdateNextRefreshUnixSeconds,

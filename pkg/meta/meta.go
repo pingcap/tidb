@@ -195,6 +195,8 @@ const (
 	StorageClassTransitionNextGenBootTableVersion NextGenBootTableVersion = 3
 	// MaterializedViewNextGenBootTableVersion adds materialized view maintenance metadata tables.
 	MaterializedViewNextGenBootTableVersion NextGenBootTableVersion = 4
+	// MaterializedViewRefreshSourceNextGenBootTableVersion adds mysql.tidb_mview_fast_refresh_source_info.
+	MaterializedViewRefreshSourceNextGenBootTableVersion NextGenBootTableVersion = 5
 )
 
 // DDLTableVersion is to display ddl related table versions
@@ -2051,7 +2053,7 @@ func IsJobMatch(job []byte, schemaNames, tableNames set.StringSet) (match bool, 
 		return
 	}
 	if (schemaNames.Count() == 0 || schemaNames.Exist(schemaName)) &&
-		tableNames.Count() == 0 || tableNames.Exist(tableName) {
+		(tableNames.Count() == 0 || tableNames.Exist(tableName)) {
 		match = true
 	}
 	return

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -233,6 +234,11 @@ type PlanBuilder struct {
 	// rewriterCounter counts how many rewriter is being used.
 	rewriterPool    []*expressionRewriter
 	rewriterCounter int
+	// projNameIndex indexes the input names of the projection being built by
+	// buildProjection, so that resolving many select fields (e.g. SELECT * on a
+	// wide table) does not scan all input names once per field. It is used only
+	// when the rewriter's names are exactly the indexed slice.
+	projNameIndex *expression.FieldNameIndex
 
 	windowSpecs  map[string]*ast.WindowSpec
 	inUpdateStmt bool
@@ -4792,9 +4798,6 @@ var (
 	showImportGroupsFTypes = []byte{mysql.TypeString, mysql.TypeLonglong,
 		mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong,
 		mysql.TypeTimestamp, mysql.TypeTimestamp}
-
-	// ImportIntoDataSource used inplannererrors.ErrLoadDataInvalidURI.
-	ImportIntoDataSource = "data source"
 )
 
 func init() {
@@ -4910,7 +4913,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 	if ld.Select == nil {
 		u, err := url.Parse(ld.Path)
 		if err != nil {
-			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
+			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(importdef.ImportIntoDataSource, err.Error())
 		}
 		importFromServer = objstore.IsLocal(u)
 		if semv1.IsEnabled() {
@@ -6158,7 +6161,7 @@ func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) 
 	return &SelectInto{
 		TargetPlan:     targetPlan,
 		IntoOpt:        selectIntoInfo,
-		LineFieldsInfo: NewLineFieldsInfo(selectIntoInfo.FieldsInfo, selectIntoInfo.LinesInfo),
+		LineFieldsInfo: importdef.NewLineFieldsInfo(selectIntoInfo.FieldsInfo, selectIntoInfo.LinesInfo),
 	}, nil
 }
 
@@ -6771,7 +6774,7 @@ func checkStarterS3Path(u *url.URL) error {
 		}
 	}
 	if !hasExternalID {
-		return exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, "external ID is required for Starter deployments")
+		return exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(importdef.ImportIntoDataSource, "external ID is required for Starter deployments")
 	}
 	return nil
 }

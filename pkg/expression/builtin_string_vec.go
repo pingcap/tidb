@@ -1233,6 +1233,33 @@ func (b *builtinReverseSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, r
 	return nil
 }
 
+func (b *builtinSoundexSig) vectorized() bool {
+	return true
+}
+
+// vecEvalString evals a SOUNDEX(str).
+// See https://dev.mysql.com/doc/refman/8.0/en/string-functions.html#function_soundex
+func (b *builtinSoundexSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	for i := range n {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(soundex(buf.GetString(i), b.mode))
+	}
+	return nil
+}
+
 func (b *builtinRTrimSig) vectorized() bool {
 	return true
 }

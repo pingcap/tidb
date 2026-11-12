@@ -39,9 +39,9 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -345,7 +345,7 @@ func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(
 				InImportInto:          true,
 				Charset:               &defaultCharset,
 				FieldNullDef:          []string{`\N`},
-				LineFieldsInfo: plannercore.LineFieldsInfo{
+				LineFieldsInfo: importdef.LineFieldsInfo{
 					FieldsTerminatedBy: ",",
 					FieldsEnclosedBy:   `"`,
 					FieldsEscapedBy:    `\`,

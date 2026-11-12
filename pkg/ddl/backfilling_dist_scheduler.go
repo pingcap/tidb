@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -338,7 +339,17 @@ func generateReadIndexPlan(
 	nodeCnt int,
 	logger *zap.Logger,
 ) (metas [][]byte, err error) {
-	jobReorgCtx := d.jobContext(job.ID, job.ReorgMeta)
+	var jobReorgCtx *ReorgContext
+	if kerneltype.IsNextGen() {
+		// Planning also reads tenant data on the shared DXF service. Use an
+		// execution context independent of the foreground DDL owner's context.
+		jobReorgCtx = NewReorgContext()
+		jobReorgCtx.ddlJobCtx = ctx
+		jobReorgCtx.resourceGroupName = resourcegroup.DefaultResourceGroupName
+		jobReorgCtx.setDDLLabelForDiagnosis(job.Type)
+	} else {
+		jobReorgCtx = d.jobContext(job.ID, job.ReorgMeta)
+	}
 	if tbl.Meta().Partition == nil {
 		return generatePlanForPhysicalTable(ctx, jobReorgCtx, store, tbl.(table.PhysicalTable), job, useCloud, nodeCnt, logger)
 	}

@@ -22,6 +22,7 @@ go_library(
         "//pkg/meta",
         "//pkg/meta/metadef",
         "//pkg/meta/model",
+        "//pkg/metrics",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/vardef",
@@ -63,6 +64,7 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
+        "//pkg/ddl/notifier",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/meta/metadef",

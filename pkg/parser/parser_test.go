@@ -515,6 +515,7 @@ func TestRefreshMaterializedViewStatements(t *testing.T) {
 				LastSuccessfulRefreshReadTSO: 4242,
 				TargetRefreshReadTSO:         5252,
 				MLogRetainedLowerTSO:         3131,
+				RegisteredMLogIDs:            []int64{1234},
 			},
 			expectedSQL: "IMPLEMENT FOR REFRESH MATERIALIZED VIEW `test`.`mv` FAST USING TIMESTAMP 4242 UP TO TIMESTAMP 5252 MLOG RETAINED LOWER TIMESTAMP 3131",
 		},

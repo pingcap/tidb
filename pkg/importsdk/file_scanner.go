@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	execimporter "github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"go.uber.org/zap"
 )
@@ -404,7 +404,7 @@ func (s *fileScanner) buildEstimateSampleConfig(format string) *execimporter.KVS
 		Charset:          &charset,
 		ImportantSysVars: importantSysVars,
 		FieldNullDef:     fieldNullDef,
-		LineFieldsInfo: plannercore.LineFieldsInfo{
+		LineFieldsInfo: importdef.LineFieldsInfo{
 			FieldsTerminatedBy: s.config.csvConfig.FieldsTerminatedBy,
 			FieldsEnclosedBy:   s.config.csvConfig.FieldsEnclosedBy,
 			FieldsEscapedBy:    fieldsEscapedBy,

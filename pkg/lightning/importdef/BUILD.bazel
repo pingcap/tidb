@@ -1,9 +1,29 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "importdef",
-    srcs = ["tidb.go"],
+    srcs = [
+        "format.go",
+        "tidb.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/lightning/importdef",
     visibility = ["//visibility:public"],
-    deps = ["//pkg/meta/model"],
+    deps = [
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+    ],
+)
+
+go_test(
+    name = "importdef_test",
+    timeout = "short",
+    srcs = ["format_test.go"],
+    embed = [":importdef"],
+    flaky = True,
+    deps = [
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/test_driver",
+        "@com_github_stretchr_testify//require",
+    ],
 )

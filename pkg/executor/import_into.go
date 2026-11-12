@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	litkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -102,11 +103,11 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		// need to return an empty req to indicate all results have been written
 		return nil
 	}
-	importPlan, err := importer.NewImportPlan(ctx, e.userSctx, e.plan, e.tbl)
+	importPlan, err := NewImportPlan(ctx, e.userSctx, e.plan, e.tbl)
 	if err != nil {
 		return err
 	}
-	astArgs := importer.ASTArgsFromImportPlan(e.plan)
+	astArgs := astArgsFromImportPlan(e.plan)
 	if err = ValidateImportIntoColAssignmentsWithEncodeCtx(importPlan, astArgs.ColumnAssignments); err != nil {
 		return err
 	}
@@ -247,7 +248,7 @@ func (e *ImportIntoExec) submitTask(ctx context.Context) (int64, *proto.TaskBase
 		importFromServer, err := objstore.IsLocalPath(e.controller.Path)
 		if err != nil {
 			// The URI was checked while creating the controller.
-			return 0, nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(plannercore.ImportIntoDataSource, err.Error())
+			return 0, nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(importdef.ImportIntoDataSource, err.Error())
 		}
 		if importFromServer {
 			chunkMap, err := e.controller.PopulateChunks(ctx)
@@ -511,4 +512,50 @@ func (e *ImportIntoExec) fillQueryInfo(ctx context.Context, jobID, taskID int64)
 	stmtCtx.SetAffectedRows(uint64(meta.Summary.ImportedRows))
 	stmtCtx.SetMessage(fmt.Sprintf("Records: %d, ID: %d", meta.Summary.ImportedRows, jobID))
 	return nil
+}
+
+// NewImportPlan adapts a SQL plan to resolved input.
+func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*importer.Plan, error) {
+	failpoint.InjectCall("NewImportPlan", plan)
+	options := make([]*importer.ImportOption, len(plan.Options))
+	for i, opt := range plan.Options {
+		option := &importer.ImportOption{Name: opt.Name}
+		if opt.Value != nil {
+			value, ok := opt.Value.(*expression.Constant)
+			if !ok {
+				return nil, exeerrors.ErrInvalidOptionVal.GenWithStackByArgs(opt.Name)
+			}
+			option.Value = value
+		}
+		options[i] = option
+	}
+	return importer.NewImportPlanFromInput(ctx, userSctx, &importer.Input{
+		DBName:             plan.Table.Schema.L,
+		DBID:               plan.Table.DBInfo.ID,
+		TableInfo:          tbl.Meta(),
+		Path:               plan.Path,
+		Format:             plan.Format,
+		DataSourceType:     getDataSourceType(plan),
+		ColumnsAndUserVars: plan.ColumnsAndUserVars,
+		ColumnAssignments:  plan.ColumnAssignments,
+		Options:            options,
+	})
+}
+
+// astArgsFromImportPlan creates ASTArgs from plan.
+func astArgsFromImportPlan(plan *plannercore.ImportInto) *importer.ASTArgs {
+	// FileLocRef are not used in ImportIntoStmt, OnDuplicate not used now.
+	return &importer.ASTArgs{
+		FileLocRef:         ast.FileLocServerOrRemote,
+		ColumnsAndUserVars: plan.ColumnsAndUserVars,
+		ColumnAssignments:  plan.ColumnAssignments,
+		OnDuplicate:        ast.OnDuplicateKeyHandlingReplace,
+	}
+}
+
+func getDataSourceType(p *plannercore.ImportInto) importer.DataSourceType {
+	if p.SelectPlan != nil {
+		return importer.DataSourceTypeQuery
+	}
+	return importer.DataSourceTypeFile
 }
