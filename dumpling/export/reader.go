@@ -26,10 +26,69 @@ type readBatch struct {
 	rows   int
 }
 
+func (b *readBatch) wouldOverflow(rowBytes int) bool {
+	// An individual row may exceed the byte target, but gets its own batch.
+	return b.rows > 0 && len(b.data)+rowBytes > readBatchBytes
+}
+
+// appendRow copies borrowed values before the source advances. A nil values
+// slice counts a generated-only row without storing any cells.
+func (b *readBatch) appendRow(values []sql.RawBytes, rowBytes int) {
+	if rowBytes > 0 && b.data == nil {
+		b.data = make([]byte, 0, max(readBatchBytes, rowBytes))
+	}
+	for _, value := range values {
+		cell := readBatchValue{offset: len(b.data), length: len(value)}
+		if value == nil {
+			cell.length = -1
+		} else {
+			b.data = append(b.data, value...)
+		}
+		b.values = append(b.values, cell)
+	}
+	b.rows++
+}
+
+func (b *readBatch) full() bool {
+	return b.rows == readBatchRows || len(b.data) >= readBatchBytes
+}
+
+func (b *readBatch) decodeRow(rowIndex int, args []any) error {
+	for i, arg := range args {
+		destination, ok := arg.(*sql.RawBytes)
+		if !ok {
+			return errors.Errorf("unsupported Dumpling row receiver %T", arg)
+		}
+		value := b.values[rowIndex*len(args)+i]
+		switch value.length {
+		case -1:
+			*destination = nil
+		case 0:
+			*destination = sql.RawBytes{}
+		default:
+			*destination = b.data[value.offset : value.offset+value.length]
+		}
+	}
+	return nil
+}
+
+func (b *readBatch) reset() {
+	b.rows = 0
+	b.values = b.values[:0]
+	// Do not retain an oversized row's allocation for the remainder of a chunk.
+	if cap(b.data) > readBatchBytes {
+		b.data = nil
+	} else {
+		b.data = b.data[:0]
+	}
+}
+
+// readResult carries a batch, a decode failure on its own logical row, or a
+// terminal result. Only one payload is set; all nil denotes a clean end of stream.
 type readResult struct {
-	batch     *readBatch
-	decodeErr error
-	err       error
+	batch       *readBatch
+	decodeErr   error
+	terminalErr error
 }
 
 // tableDataReader separates source iteration from formatting and storage. Only
@@ -37,20 +96,26 @@ type readResult struct {
 // consumer advances past its last row and returns it to the pool.
 type tableDataReader struct {
 	TableDataIR
-	tctx      *tcontext.Context
-	cancel    func()
-	pool      chan *readBatch
-	results   chan readResult
-	done      chan struct{}
+
+	// Shared lifecycle and immutable source configuration.
+	tctx        *tcontext.Context
+	cancel      func()
+	pool        chan *readBatch
+	results     chan readResult
+	done        chan struct{}
+	columnCount int
+
+	// Consumer-owned cursor and row binding scratch space.
 	args      []any
 	current   *readBatch
-	index     int
+	rowIndex  int
 	decodeErr error
 	err       error
 	ended     bool
 }
 
 func newTableDataReader(tctx *tcontext.Context, cancel func(), meta TableMeta, source TableDataIR) *tableDataReader {
+	columnCount := len(meta.ColumnTypes())
 	r := &tableDataReader{
 		TableDataIR: source,
 		tctx:        tctx,
@@ -58,7 +123,8 @@ func newTableDataReader(tctx *tcontext.Context, cancel func(), meta TableMeta, s
 		pool:        make(chan *readBatch, readBatchCount),
 		results:     make(chan readResult, readBatchCount),
 		done:        make(chan struct{}),
-		args:        make([]any, len(meta.ColumnTypes())),
+		columnCount: columnCount,
+		args:        make([]any, columnCount),
 	}
 	for range readBatchCount {
 		r.pool <- &readBatch{}
@@ -74,7 +140,7 @@ func (r *tableDataReader) read(decode bool) {
 		return
 	}
 	iter := r.TableDataIR.Rows()
-	row := &RowReceiverArr{data: make([]sql.RawBytes, len(r.args))}
+	row := &RowReceiverArr{data: make([]sql.RawBytes, r.columnCount)}
 	var batch *readBatch
 	for {
 		if r.tctx.Err() != nil {
@@ -90,10 +156,11 @@ func (r *tableDataReader) read(decode bool) {
 				return
 			}
 		}
+		var values []sql.RawBytes
 		var rowBytes int
 		if decode {
 			if err := iter.Decode(row); err != nil {
-				if batch.rows != 0 && !r.send(readResult{batch: batch}) {
+				if !r.publishBatch(batch) {
 					return
 				}
 				// Keep a decode failure on its own logical row. In particular,
@@ -101,14 +168,13 @@ func (r *tableDataReader) read(decode bool) {
 				r.send(readResult{decodeErr: err})
 				return
 			}
-			for _, value := range row.data {
+			values = row.data
+			for _, value := range values {
 				rowBytes += len(value)
 			}
 		}
-		// An individual row may exceed the byte target, but never shares that
-		// batch with another row. Copy before Next invalidates borrowed bytes.
-		if batch.rows > 0 && len(batch.data)+rowBytes > readBatchBytes {
-			if !r.send(readResult{batch: batch}) {
+		if batch.wouldOverflow(rowBytes) {
+			if !r.publishBatch(batch) {
 				return
 			}
 			batch = r.takeBatch()
@@ -116,24 +182,10 @@ func (r *tableDataReader) read(decode bool) {
 				return
 			}
 		}
-		if decode {
-			if rowBytes > 0 && batch.data == nil {
-				batch.data = make([]byte, 0, max(readBatchBytes, rowBytes))
-			}
-			for _, value := range row.data {
-				cell := readBatchValue{offset: len(batch.data), length: len(value)}
-				if value == nil {
-					cell.length = -1
-				} else {
-					batch.data = append(batch.data, value...)
-				}
-				batch.values = append(batch.values, cell)
-			}
-		}
-		batch.rows++
+		batch.appendRow(values, rowBytes)
 		iter.Next()
-		if batch.rows == readBatchRows || len(batch.data) >= readBatchBytes {
-			if !r.send(readResult{batch: batch}) {
+		if batch.full() {
+			if !r.publishBatch(batch) {
 				return
 			}
 			batch = nil
@@ -165,12 +217,19 @@ func (r *tableDataReader) send(result readResult) bool {
 	}
 }
 
-func (r *tableDataReader) finish(batch *readBatch, err error) {
-	if batch != nil && batch.rows != 0 && !r.send(readResult{batch: batch}) {
+func (r *tableDataReader) publishBatch(batch *readBatch) bool {
+	if batch == nil || batch.rows == 0 {
+		return true
+	}
+	return r.send(readResult{batch: batch})
+}
+
+func (r *tableDataReader) finish(batch *readBatch, terminalErr error) {
+	if !r.publishBatch(batch) {
 		return
 	}
 	// Errors are ordered after all copied rows, including at file boundaries.
-	r.send(readResult{err: err})
+	r.send(readResult{terminalErr: terminalErr})
 }
 
 func (r *tableDataReader) Rows() SQLRowIter { return r }
@@ -196,12 +255,12 @@ func (r *tableDataReader) HasNext() bool {
 			return true
 		}
 		if !ok || result.batch == nil {
-			r.err = result.err
+			r.err = result.terminalErr
 			r.ended = true
 			return false
 		}
 		r.current = result.batch
-		r.index = 0
+		r.rowIndex = 0
 		return true
 	}
 }
@@ -217,22 +276,7 @@ func (r *tableDataReader) Decode(row RowReceiver) error {
 		return r.decodeErr
 	}
 	row.BindAddress(r.args)
-	for i, arg := range r.args {
-		destination, ok := arg.(*sql.RawBytes)
-		if !ok {
-			return errors.Errorf("unsupported Dumpling row receiver %T", arg)
-		}
-		value := r.current.values[r.index*len(r.args)+i]
-		switch value.length {
-		case -1:
-			*destination = nil
-		case 0:
-			*destination = sql.RawBytes{}
-		default:
-			*destination = r.current.data[value.offset : value.offset+value.length]
-		}
-	}
-	return nil
+	return r.current.decodeRow(r.rowIndex, r.args)
 }
 
 func (r *tableDataReader) Next() {
@@ -245,26 +289,21 @@ func (r *tableDataReader) Next() {
 		r.ended = true
 		return
 	}
-	r.index++
-	if r.index < r.current.rows {
+	r.rowIndex++
+	if r.rowIndex < r.current.rows {
 		return
 	}
 	batch := r.current
 	r.current = nil
-	batch.rows = 0
-	batch.values = batch.values[:0]
-	// Do not retain an oversized row's allocation for the remainder of a chunk.
-	if cap(batch.data) > readBatchBytes {
-		batch.data = nil
-	} else {
-		batch.data = batch.data[:0]
-	}
+	batch.reset()
 	select {
 	case <-r.tctx.Done():
 		r.err = r.tctx.Err()
 		return
 	case r.pool <- batch:
 	}
+	// A writer may check Error at a file boundary without calling HasNext again.
+	// Observe terminal errors now, but leave decode failures on the next row.
 	r.HasNext()
 }
 
