@@ -1332,6 +1332,37 @@ pub struct IndexMergeReaderExecutor {
     current: Option<MergeTableTask>,
     /// Go `IndexMergeReaderExecutor.stats`, when collected.
     merge_stats: Option<crate::index_lookup_stats::IndexMergeStatsHandle>,
+    /// Go `buildFinalTableReader`'s inputs on a store with a coprocessor
+    /// client; without one, the table side reads the handles locally.
+    final_table_reader: Option<FinalTableReader>,
+}
+
+/// Go `buildFinalTableReader`'s inputs (`tableRequest`, `tblPlans`,
+/// `columns`, `startTS`, `dataAvgRowSize`) and `executeTask`'s
+/// `handleCols`: each task's rows are read by Go's `TableReaderExecutor`
+/// over its handles.
+pub(crate) struct FinalTableReader {
+    /// Go `BuildNewBaseExecutorV2(..., e.Schema(), e.getTablePlanRootID())`.
+    pub meta: ExecutorMeta,
+    pub ctx: crate::StmtContext,
+    pub client: std::sync::Arc<dyn tidb_txnkv::Client>,
+    /// Go `tblPlans`, the table scan first.
+    pub table_plans: Vec<tidb_planner_core_operator_physicalop::PhysicalPlan>,
+    pub columns: Vec<tidb_model::GoShared<tidb_model::ColumnInfo>>,
+    pub start_ts: u64,
+    /// Go `dataAvgRowSize`.
+    pub avg_row_size: f64,
+    /// Go `getPhysicalTableID(e.table)`.
+    pub physical_table_id: i64,
+    pub is_common_handle: bool,
+    /// The physical ID of each `HandleRef::partition_index`, when the table
+    /// is partitioned (Go `task.partitionTable`).
+    pub partition_ids: Option<Vec<i64>>,
+    /// Go `keepOrder`'s `handleCols` over the reader's schema and its
+    /// `_tidb_tid` column, which put each task's rows back in `indexOrder`.
+    pub keep_order: Option<(tidb_planner_util::handle_cols::HandleCols, Option<usize>)>,
+    /// Go `tableRequest`, built on `Open`.
+    pub table_request: Option<tidb_proto::tipb::DagRequest>,
 }
 
 impl IndexMergeReaderExecutor {
@@ -1372,7 +1403,16 @@ impl IndexMergeReaderExecutor {
             union_process: None,
             table_workers: 0,
             current: None,
+            final_table_reader: None,
         }
+    }
+
+    /// Go's table side on a store with a coprocessor client
+    /// (`buildFinalTableReader`).
+    #[must_use]
+    pub(crate) fn with_final_table_reader(mut self, final_table_reader: FinalTableReader) -> Self {
+        self.final_table_reader = Some(final_table_reader);
+        self
     }
 
     /// Go `startIndexMergeTableScanWorker`'s worker count.
@@ -1781,7 +1821,6 @@ impl IndexMergeReaderExecutor {
             memory: MergeProcessMemory::new(&memory, self.meta.id()),
         };
         let result: Result<(), ExecError> = (|| {
-            reader.open()?;
             task.memory.consume(
                 i64::try_from(task.handles.capacity())
                     .unwrap_or(i64::MAX)
@@ -1800,6 +1839,11 @@ impl IndexMergeReaderExecutor {
                 task.rows
                     .extend((0..chunk.num_rows()).map(|row| (index, row)));
                 task.chunks.push(chunk);
+            }
+            // Go `executeTask`'s `keepOrder`: the rows put back in the
+            // task's handle order (`indexOrder`).
+            if let Some(go) = &self.final_table_reader {
+                go.restore_index_order(&task.handles, &task.chunks, &mut task.rows)?;
             }
             // Go chunk.Row is a chunk pointer and row index on this target.
             task.memory.consume(
@@ -1825,11 +1869,15 @@ impl IndexMergeReaderExecutor {
     }
 
     /// Go `buildFinalTableReader` (:854) + `executeTask` (:1988): the reader
-    /// over one task's handles.
+    /// over one task's handles, ready to read (Go's is built with its
+    /// request sent, never opened; the local reader is opened here).
     fn build_final_table_reader(
         &self,
         handles: &[HandleRef],
     ) -> Result<Box<dyn Executor>, ExecError> {
+        if let Some(go) = &self.final_table_reader {
+            return go.build(handles).map(|reader| Box::new(reader) as Box<dyn Executor>);
+        }
         let meta = ExecutorMeta::new(
             self.table_source_schema
                 .as_ref()
@@ -1871,10 +1919,12 @@ impl IndexMergeReaderExecutor {
         }
         .with_partition_ids(Some(partition_ids))
         .with_table_statement(self.table_statement.clone());
-        match &self.table_task_builder {
-            Some(build) => build(Box::new(source)),
-            None => Ok(Box::new(source)),
-        }
+        let mut reader = match &self.table_task_builder {
+            Some(build) => build(Box::new(source))?,
+            None => Box::new(source),
+        };
+        reader.open()?;
+        Ok(reader)
     }
 }
 
@@ -1887,6 +1937,9 @@ impl Executor for IndexMergeReaderExecutor {
         self.tasks.clear();
         self.union_process = None;
         self.current = None;
+        if let Some(go) = &mut self.final_table_reader {
+            go.build_table_request(self.meta.schema().columns.len())?;
+        }
         Ok(())
     }
 
@@ -3091,5 +3144,120 @@ mod tests {
         );
         assert_eq!(limit.offset, 0);
         assert_eq!(limit.count, 0);
+    }
+}
+
+impl FinalTableReader {
+    /// Go `buildTableReq(b, v.Schema().Len(), v.TablePlans)`, rebuilt on
+    /// `Open` (`isCorColInTableFilter`).
+    fn build_table_request(&mut self, output_len: usize) -> Result<(), ExecError> {
+        let statement = crate::remote_scan::pushdown_statement_context(&self.ctx);
+        let plans: Vec<&tidb_planner_core_operator_physicalop::PhysicalPlan> = self.table_plans.iter().collect();
+        let mut table_request = crate::builder_utils::construct_dag_req(
+            &self.ctx,
+            &statement,
+            &plans,
+            tidb_kv::store_type::StoreType::TiKv,
+        )
+        .map_err(|error| ExecError::Internal(error.to_string().into()))?;
+        table_request.output_offsets = (0..output_len as u32).collect();
+        self.table_request = Some(table_request);
+        Ok(())
+    }
+
+    /// Go `buildFinalTableReader`: the `TableReaderExecutor` over one task's
+    /// handles (`buildTableReaderFromHandles(..., canReorderHandles=true)`),
+    /// a partitioned task's handles in their partitions.
+    fn build(&self, handles: &[HandleRef]) -> Result<crate::table_reader::TableReaderExecutor, ExecError> {
+        let mut kv_handles = handles
+            .iter()
+            .map(|handle| {
+                let inner = match &handle.handle {
+                    TableHandle::Int(value) => tidb_txnkv::Handle::Int(tidb_txnkv::IntHandle::new(*value)),
+                    TableHandle::Common(encoded) => tidb_txnkv::CommonHandle::new(encoded.clone())
+                        .map(tidb_txnkv::Handle::Common)
+                        .map_err(|error| ExecError::internal(format!("{error:?}")))?,
+                };
+                Ok(match &self.partition_ids {
+                    Some(ids) => {
+                        let pid = *ids.get(handle.partition_index).ok_or_else(|| {
+                            ExecError::internal("index-merge task references an unknown partition")
+                        })?;
+                        tidb_txnkv::Handle::Partition(tidb_txnkv::PartitionHandle::new(pid, Some(inner)))
+                    }
+                    None => inner,
+                })
+            })
+            .collect::<Result<Vec<_>, ExecError>>()?;
+        let table_request = self
+            .table_request
+            .clone()
+            .ok_or_else(|| ExecError::internal("the index merge reader read before Open"))?;
+        crate::table_reader::TableReaderExecutor::build_table_reader_from_handles(
+            crate::table_reader::TableReaderForHandles {
+                meta: self.meta.clone(),
+                ctx: &self.ctx,
+                client: std::sync::Arc::clone(&self.client),
+                table_plan: self
+                    .table_plans
+                    .last()
+                    .ok_or_else(|| ExecError::internal("the index merge reader has no table plans"))?,
+                plan_ids: self.table_plans.iter().map(|plan| plan.id() as isize).collect(),
+                dag: table_request,
+                physical_table_id: self.physical_table_id,
+                is_common_handle: self.is_common_handle,
+                columns: self.columns.clone(),
+                start_ts: self.start_ts,
+                net_data_size: self.avg_row_size * handles.len() as f64,
+            },
+            &mut kv_handles,
+        )
+    }
+
+    /// Go `executeTask`'s `keepOrder` branch: each row's handle (`BuildHandle`,
+    /// a `PartitionHandle` over its `_tidb_tid` in partition table mode)
+    /// located in the task's `indexOrder`, and the rows sorted by it.
+    fn restore_index_order(
+        &self,
+        handles: &[HandleRef],
+        chunks: &[Chunk],
+        rows: &mut Vec<(usize, usize)>,
+    ) -> Result<(), ExecError> {
+        let Some((handle_cols, phys_tbl_id_idx)) = &self.keep_order else {
+            return Ok(());
+        };
+        let partition_of = |handle: &HandleRef| -> Option<i64> {
+            phys_tbl_id_idx.and(self.partition_ids.as_ref()).and_then(|ids| ids.get(handle.partition_index).copied())
+        };
+        let index_order: std::collections::HashMap<(Option<i64>, TableHandle), usize> = handles
+            .iter()
+            .enumerate()
+            .map(|(position, handle)| ((partition_of(handle), handle.handle.clone()), position))
+            .collect();
+        let zone = tidb_exprctx::Columns::time_zone(&self.ctx);
+        let mut row_idx = Vec::with_capacity(rows.len());
+        for &(chunk, row) in rows.iter() {
+            let row = chunks[chunk].get_row(row);
+            let handle = handle_cols
+                .build_handle(&zone, row)
+                .map_err(|error| ExecError::internal(format!("{error:?}")))?;
+            let handle = match handle {
+                tidb_txnkv::Handle::Int(handle) => TableHandle::Int(handle.value()),
+                handle => TableHandle::Common(handle.encoded().to_vec()),
+            };
+            let partition = match (phys_tbl_id_idx, &self.partition_ids) {
+                (Some(index), Some(_)) => Some(row.get_int64(*index)),
+                _ => None,
+            };
+            let position = index_order
+                .get(&(partition, handle))
+                .copied()
+                .ok_or_else(|| ExecError::internal("an index-merge row's handle is absent from its task"))?;
+            row_idx.push(position);
+        }
+        let mut ordered: Vec<(usize, (usize, usize))> = row_idx.into_iter().zip(rows.iter().copied()).collect();
+        ordered.sort_by_key(|(position, _)| *position);
+        *rows = ordered.into_iter().map(|(_, row)| row).collect();
+        Ok(())
     }
 }

@@ -749,6 +749,7 @@ fn append_index_merge_scan_columns(
         return false;
     };
     let mut schema = shared.as_ref().clone();
+    let original_len = schema.columns.len();
     let mut added = false;
     let contains = |schema: &tidb_expr::schema::Schema, column: &tidb_expr::column::Column| {
         schema
@@ -770,25 +771,56 @@ fn append_index_merge_scan_columns(
                 added = true;
             }
         }
-    } else if !schema
-        .columns
-        .iter()
-        .any(|column| column.id == tidb_planner_core_operator_logicalop::data_source::EXTRA_HANDLE_ID)
-    {
-        let mut extra = tidb_expr::column::Column::new(
-            ctx.column_ids.map(|ids| ids.alloc()).unwrap_or_default(),
-            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
-                .with_flags(
-                    tidb_datatype::FieldTypeFlags::NOT_NULL | tidb_datatype::FieldTypeFlags::PRI_KEY,
-                ),
-        );
-        extra.id = tidb_planner_core_operator_logicalop::data_source::EXTRA_HANDLE_ID;
-        extra.orig_name = "_tidb_rowid".to_owned();
-        schema.columns.push(extra);
-        added = true;
+    } else {
+        // Go `setIndexMergeTableScanHandleCols`: the scan's handle is the
+        // data source's, or, once column pruning dropped it, a fresh
+        // `_tidb_rowid` (`NewExtraHandleSchemaCol`); the ordered scan reads
+        // it (`ts.HandleCols.GetCol(0)`).
+        let handle = match ds.handle_cols.first() {
+            Some(handle) => handle.clone(),
+            None => {
+                let mut extra = tidb_expr::column::Column::new(
+                    ctx.column_ids.map(|ids| ids.alloc()).unwrap_or_default(),
+                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong).with_flags(
+                        tidb_datatype::FieldTypeFlags::NOT_NULL | tidb_datatype::FieldTypeFlags::PRI_KEY,
+                    ),
+                );
+                extra.id = tidb_planner_core_operator_logicalop::data_source::EXTRA_HANDLE_ID;
+                extra.orig_name = "_tidb_rowid".to_owned();
+                extra
+            }
+        };
+        if let tidb_planner_core_operator_physicalop::PhysicalPlan::TableScan(ts) = &mut *scan {
+            ts.handle_col_unique_id = Some(handle.unique_id);
+        }
+        if !contains(&schema, &handle) {
+            schema.columns.push(handle);
+            added = true;
+        }
     }
     if keeps_phys_tbl_id(ds) {
         added |= super::dispatch::add_extra_phys_tbl_id_column(&mut schema.columns, ctx);
+    }
+    // Go appends each added column's info to `ts.Columns` (the table
+    // column, `NewExtraHandleColInfo`, `AddExtraPhysTblIDColumn`'s).
+    if let tidb_planner_core_operator_physicalop::PhysicalPlan::TableScan(ts) = &mut *scan {
+        for column in &schema.columns[original_len..] {
+            let info = match column.id {
+                tidb_planner_core_operator_logicalop::data_source::EXTRA_HANDLE_ID => {
+                    tidb_model::ColumnInfo::new_extra_handle_col_info()
+                }
+                tidb_model::column::EXTRA_PHYS_TBL_ID => tidb_model::ColumnInfo::new_extra_phys_tbl_id_col_info(),
+                id => match ds
+                    .table_info
+                    .as_ref()
+                    .and_then(|table| table.read().columns.iter_deref().find(|info| info.read().id == id))
+                {
+                    Some(info) => info.read().clone(),
+                    None => continue,
+                },
+            };
+            ts.columns.push(tidb_model::GoShared::new(info));
+        }
     }
     scan.base_mut().base.set_schema(Some(schema));
     added

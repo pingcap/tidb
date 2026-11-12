@@ -68,6 +68,13 @@ reader built by Go's `buildTableReader` / `buildIndexReader` /
   select result a key-range group, `NewSortedSelectResults` when ordered,
   `extractTaskHandles`); (d) `buildFinalTableReader` through
   `TableReaderExecutor::build_table_reader_from_handles`.
+  Done (2026-11-12): (d) -- `FinalTableReader` (`tableRequest` built on
+  `Open`, a partitioned task's handles as `PartitionHandle`s, never
+  opened as Go's is) and `executeTask`'s keep-order restore over the
+  reader's `HandleCols`; it exposed that the planner's ordered scan never
+  recorded the fresh `_tidb_rowid` as its handle
+  (`setIndexMergeTableScanHandleCols`) nor appended the added columns'
+  infos to `ts.Columns`.
 - [ ] Milestone 4: the index join's inner side is Go's
   `dataReaderBuilder.BuildExecutorForIndexJoin`, and a union scan there is
   `buildUnionScanForIndexJoin`'s `UnionScanExec` over the task's reader; the
