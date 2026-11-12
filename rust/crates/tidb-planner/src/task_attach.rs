@@ -3433,10 +3433,10 @@ mod attach_tests {
             base.base.set_stats(Some(StatsInfo::new(9.0, [])));
             PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
                 base,
-                table_id: 1,
+                physical_table_id: 1,
                 table_as_name: None,
                 dynamic_partition_access: None,
-                cost_columns: Vec::new(),
+                tbl_cols: Vec::new(),
                 store_type: tidb_kv::store_type::StoreType::TiKv,
                 keep_order: false,
                 desc: false,
@@ -3469,7 +3469,7 @@ mod attach_tests {
         let scan = || {
             PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
                 base: op_with_stats("TableScan", 20.0),
-                table_id: 42,
+                physical_table_id: 42,
                 ..Default::default()
             })
         };
@@ -3546,7 +3546,7 @@ mod attach_tests {
             base.base.set_schema(Some(Schema::new(columns.clone())));
             PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
                 base,
-                table_id: 42,
+                physical_table_id: 42,
                 ..Default::default()
             })
         };
@@ -3608,7 +3608,7 @@ mod attach_tests {
             base.base.set_id(id);
             PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
                 base,
-                table_id: 42,
+                physical_table_id: 42,
                 ..tidb_planner_core_operator_physicalop::PhysicalTableScan::default()
             })
         };
@@ -3800,10 +3800,10 @@ mod task_tests {
         base.base.set_stats(Some(StatsInfo::new(rows, [])));
         PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
             base,
-            table_id: 1,
+            physical_table_id: 1,
             table_as_name: None,
             dynamic_partition_access: None,
-            cost_columns: Vec::new(),
+            tbl_cols: Vec::new(),
             store_type: tidb_kv::store_type::StoreType::TiKv,
             keep_order: false,
             desc: false,
@@ -3889,13 +3889,13 @@ mod task_tests {
         match tp {
             "TableScan" => PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
                 base,
-                table_id: 1,
+                physical_table_id: 1,
                 store_type: tidb_kv::store_type::StoreType::TiKv,
                 ..tidb_planner_core_operator_physicalop::PhysicalTableScan::default()
             }),
             "IndexScan" => PhysicalPlan::IndexScan(tidb_planner_core_operator_physicalop::PhysicalIndexScan {
                 base,
-                table_id: 1,
+                physical_table_id: 1,
                 index_id: 1,
                 ..tidb_planner_core_operator_physicalop::PhysicalIndexScan::default()
             }),
@@ -4104,10 +4104,10 @@ mod task_tests {
         base.base.set_stats(Some(StatsInfo::new(42.0, [])));
         let scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
             base,
-            table_id: 9,
+            physical_table_id: 9,
             table_as_name: None,
             dynamic_partition_access: None,
-            cost_columns: Vec::new(),
+            tbl_cols: Vec::new(),
             store_type: tidb_kv::store_type::StoreType::TiKv,
             keep_order: false,
             desc: false,

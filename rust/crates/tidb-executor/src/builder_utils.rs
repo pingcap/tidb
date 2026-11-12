@@ -124,7 +124,7 @@ fn physical_table_scan_to_pb(
     Ok(tipb::Executor {
         tp: Some(tipb::ExecType::TypeTableScan as i32),
         tbl_scan: Some(tipb::TableScan {
-            table_id: Some(scan.table_id),
+            table_id: Some(scan.physical_table_id),
             columns,
             desc: Some(scan.desc),
             primary_column_ids,
@@ -538,11 +538,11 @@ pub fn set_handle_ranges(
     let ranges = if is_common_handle {
         tidb_distsql::common_handle_ranges_to_kv_ranges(
             Some(&ctx.session_zone()),
-            scan.table_id,
+            scan.physical_table_id,
             &scan.ranges,
         )
     } else {
-        tidb_distsql::table_ranges_to_kv_ranges(scan.table_id, &scan.ranges)
+        tidb_distsql::table_ranges_to_kv_ranges(scan.physical_table_id, &scan.ranges)
     }
     .map_err(|error| unsupported(format!("{error:?}")))?;
     Ok(ranges

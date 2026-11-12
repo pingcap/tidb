@@ -408,10 +408,8 @@ impl PhysicalTableScan {
             self.used_columnar_indexes.iter().map(|idx| idx.query_info.clone()).collect();
         // Go `int32(p.maxWaitTimeMs)`, zero without runtime filters.
         ts_exec.max_wait_time_ms = Some(0);
-        // Go `p.isPartition` (`ds.PartitionDefIdx != nil`): the scan reads
-        // one partition, whose physical id differs from the table's.
-        if self.table_id != table.id {
-            ts_exec.table_id = Some(self.table_id);
+        if self.is_partition {
+            ts_exec.table_id = Some(self.physical_table_id);
         }
         let mut executor_id = String::new();
         if store_type == StoreType::TiFlash {
@@ -458,8 +456,7 @@ impl crate::PhysicalIndexScan {
             Vec::new()
         };
         let idx_exec = tipb::IndexScan {
-            // Go `p.IsPartition`: the scan reads one partition.
-            table_id: Some(self.table_id),
+            table_id: Some(if self.is_partition { self.physical_table_id } else { table.id }),
             index_id: Some(index.id),
             columns: tidb_util::misc::columns_to_proto(&columns, table.pk_is_handle, true, false),
             desc: Some(self.desc),

@@ -401,7 +401,7 @@ fn count_star_rewrite_internal(plan: &mut PhysicalPlan, column_ids: &tidb_planne
     let mut result = current.clone();
     let mut result_flen = width(&current);
     let mut changed = false;
-    for column in scan.cost_columns.iter().filter(|column| column.id > 0) {
+    for column in scan.tbl_cols.iter().filter(|column| column.id > 0) {
         let Some(field_type) = column.get_static_type() else {
             continue;
         };

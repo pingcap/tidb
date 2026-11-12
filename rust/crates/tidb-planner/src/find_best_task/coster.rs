@@ -421,11 +421,11 @@ impl Ver2Coster {
             // no probe RangeInfo, and the penalty inputs default exactly as
             // a pseudo-stats session's do.
             PhysicalPlan::TableScan(scan) => {
-                let row_size = if scan.cost_columns.is_empty() {
+                let row_size = if scan.tbl_cols.is_empty() {
                     Self::row_size(plan)
                 } else {
                     Self::row_size_for_columns(
-                        scan.cost_columns
+                        scan.tbl_cols
                             .iter()
                             .filter(|column| column.id != crate::plan_builder::EXTRA_COMMIT_TS_ID),
                         plan.stats_info()

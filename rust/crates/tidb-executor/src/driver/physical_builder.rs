@@ -1184,7 +1184,7 @@ fn table_scan_schema(
     let mut full = Vec::with_capacity(table.logical_data_source_column_count());
     for (index, column) in table.logical_columns().iter().enumerate() {
         let mut planned = scan
-            .cost_columns
+            .tbl_cols
             .iter()
             .find(|planned| planned.id == column.read().id)
             .cloned()
@@ -1269,7 +1269,7 @@ fn build_table_scan(
     let (table, store, separated) = storage.table(
         ctx,
         catalog
-            .physical_kv_table_by_id(scan.table_id)
+            .physical_kv_table_by_id(scan.physical_table_id)
             .ok_or_else(|| {
                 DriverError::unsupported("physical table ID is absent from the catalog")
             })?,
@@ -3097,7 +3097,7 @@ fn build_index_reader(
     let (mut table, store, separated) = storage.table(
         ctx,
         catalog
-            .physical_kv_table_by_id(scan.table_id)
+            .physical_kv_table_by_id(scan.physical_table_id)
             .ok_or_else(|| {
                 DriverError::unsupported("physical index table ID is absent from the catalog")
             })?,
@@ -3544,7 +3544,7 @@ fn physical_join_output_offsets(
 fn physical_table_schema(plan: &PhysicalPlan, table: &crate::TableCommon) -> Schema {
     fn scan_columns(plan: &PhysicalPlan) -> Option<&[Column]> {
         match plan {
-            PhysicalPlan::TableScan(scan) => Some(scan.cost_columns.as_slice()),
+            PhysicalPlan::TableScan(scan) => Some(scan.tbl_cols.as_slice()),
             PhysicalPlan::IndexScan(scan) => Some(scan.cost_columns.as_slice()),
             _ => plan.children().iter().find_map(scan_columns),
         }
@@ -4448,12 +4448,12 @@ impl DataReaderBuilder {
         };
         // The scanned table and the index whose usage `Close` reports.
         let (table_id, usage_index_id) = match (leaf, index_plan.and_then(embedded_index_scan)) {
-            (_, Some(scan)) => (scan.table_id, Some(scan.index_id)),
+            (_, Some(scan)) => (scan.physical_table_id, Some(scan.index_id)),
             (PhysicalPlan::TableReader(reader), None) if reader.store_type == tidb_kv::store_type::StoreType::TiKv => {
                 let Some(ts) = reader.table_plan.as_deref().and_then(embedded_table_scan) else {
                     return Ok(None);
                 };
-                (ts.table_id, None)
+                (ts.physical_table_id, None)
             }
             _ => return Ok(None),
         };
@@ -6220,8 +6220,8 @@ fn join_key_offsets(
 fn retained_table_id(plan: &PhysicalPlan) -> Result<i64, DriverError> {
     fn collect(plan: &PhysicalPlan, table_id: &mut Option<i64>) -> Result<(), DriverError> {
         let current = match plan {
-            PhysicalPlan::TableScan(scan) => Some(scan.table_id),
-            PhysicalPlan::IndexScan(scan) => Some(scan.table_id),
+            PhysicalPlan::TableScan(scan) => Some(scan.physical_table_id),
+            PhysicalPlan::IndexScan(scan) => Some(scan.physical_table_id),
             _ => None,
         };
         if let Some(current) = current {
@@ -7357,7 +7357,7 @@ fn build_partial_index_worker(
         .ok_or_else(|| DriverError::unsupported("an index-merge partial's index is absent from its table"))?;
     let partitioned = table_info.get_partition_info().is_some();
     // Go `e.partitionTableMode`: a dynamically pruned partitioned table.
-    let partition_table_mode = partitioned && !ctx.static_partition_prune() && scan.table_id == table_info.id;
+    let partition_table_mode = partitioned && !ctx.static_partition_prune() && scan.physical_table_id == table_info.id;
     // Go `PhysicalIndexScan.NeedExtraOutputCol` and `needPartitionHandle`.
     let need_extra_output_col = partitioned && (index.global || (!scan.by_items.is_empty() && !ctx.static_partition_prune()));
     let need_partition_handle = (partition_table_mode && !scan.by_items.is_empty()) || index.global;
@@ -7405,7 +7405,7 @@ fn build_partial_index_worker(
     } else if partition_table_mode {
         vec![table_info.id]
     } else {
-        vec![scan.table_id]
+        vec![scan.physical_table_id]
     };
     let zone = tidb_exprctx::Columns::time_zone(ctx);
     let mut kv_ranges = Vec::with_capacity(grouped_ranges.len() * tables.len());
@@ -7484,7 +7484,7 @@ fn build_partial_table_worker(
     .with_scan_grouped_ranges();
     let partitioned = table_info.get_partition_info().is_some();
     // Go `e.partitionTableMode`.
-    let partition_table_mode = partitioned && !ctx.static_partition_prune() && scan.table_id == table_info.id;
+    let partition_table_mode = partitioned && !ctx.static_partition_prune() && scan.physical_table_id == table_info.id;
     let pruned: Vec<i64> = selected.iter().map(|index| physical_ids[*index]).collect();
     // Go `tbls`: each pruned partition of an unordered merge, else the table
     // (its pruned partitions, sorted, merged by `byItems`).
@@ -7493,9 +7493,9 @@ fn build_partial_table_worker(
     } else if partition_table_mode {
         let mut pruned = pruned;
         pruned.sort_unstable();
-        vec![(scan.table_id, Some(pruned))]
+        vec![(scan.physical_table_id, Some(pruned))]
     } else {
-        vec![(scan.table_id, None)]
+        vec![(scan.physical_table_id, None)]
     };
     let ret_types = partial_reader.ret_field_types().to_vec();
     // Go `pruneTableWorkerTaskIdxRows`: each by-item column's index in the
@@ -7951,7 +7951,7 @@ fn build_index_merge_reader(
                 false,
                 tidb_config::tikvcfg::get_global_config().tikv_client.enable_chunk_rpc,
             ),
-            physical_table_id: ts.table_id,
+            physical_table_id: ts.physical_table_id,
             is_common_handle: table_info.is_common_handle,
             partition_ids: table.partition().is_some().then(|| table.record_physical_ids()),
             keep_order,
@@ -8033,11 +8033,11 @@ fn index_merge_partition_indexes(
 fn set_index_merge_partition(plan: &mut PhysicalPlan, physical_id: i64) {
     match plan {
         PhysicalPlan::TableScan(scan) => {
-            scan.table_id = physical_id;
+            scan.physical_table_id = physical_id;
             scan.dynamic_partition_access = None;
         }
         PhysicalPlan::IndexScan(scan) => {
-            scan.table_id = physical_id;
+            scan.physical_table_id = physical_id;
             scan.dynamic_partition_access = None;
         }
         _ => {
@@ -8670,7 +8670,7 @@ fn build_reader_node(
                     .and_then(embedded_table_scan)
                     .ok_or_else(|| DriverError::unsupported("a TiKV table reader has no table scan"))?;
                 let table = catalog
-                    .physical_kv_table_by_id(scan.table_id)
+                    .physical_kv_table_by_id(scan.physical_table_id)
                     .ok_or_else(|| DriverError::unsupported("physical table ID is absent from the catalog"))?;
                 return Ok(Box::new(CopIndexUsageExec::new(
                     executor,
@@ -8713,7 +8713,7 @@ fn build_reader_node(
                 // Go `IndexReaderExecutor.Close`'s
                 // `indexUsageReporter.ReportCopIndexUsageForTable`.
                 let table = catalog
-                    .physical_kv_table_by_id(scan.table_id)
+                    .physical_kv_table_by_id(scan.physical_table_id)
                     .ok_or_else(|| DriverError::unsupported("physical table ID is absent from the catalog"))?;
                 return Ok(Box::new(CopIndexUsageExec::new(
                     executor,
@@ -8837,7 +8837,7 @@ fn build_reader_node(
                     .map_err(DriverError::from)?
                 };
                 let table = catalog
-                    .physical_kv_table_by_id(scan.table_id)
+                    .physical_kv_table_by_id(scan.physical_table_id)
                     .ok_or_else(|| DriverError::unsupported("physical table ID is absent from the catalog"))?;
                 return Ok(Box::new(CopIndexUsageExec::new(
                     executor,
@@ -9994,7 +9994,7 @@ fn union_scan_reader(plan: &PhysicalPlan) -> Result<Option<UnionScanReader>, Dri
                 return Ok(None);
             };
             Some(UnionScanReader {
-                table_id: scan.table_id,
+                table_id: scan.physical_table_id,
                 index_id: None,
                 keep_order: scan.keep_order,
                 desc: scan.desc,
@@ -10006,7 +10006,7 @@ fn union_scan_reader(plan: &PhysicalPlan) -> Result<Option<UnionScanReader>, Dri
                 return Ok(None);
             };
             Some(UnionScanReader {
-                table_id: scan.table_id,
+                table_id: scan.physical_table_id,
                 index_id: Some(scan.index_id),
                 keep_order: scan.keep_order,
                 desc: scan.desc,
@@ -10018,7 +10018,7 @@ fn union_scan_reader(plan: &PhysicalPlan) -> Result<Option<UnionScanReader>, Dri
                 return Ok(None);
             };
             Some(UnionScanReader {
-                table_id: scan.table_id,
+                table_id: scan.physical_table_id,
                 index_id: Some(scan.index_id),
                 keep_order: reader.keep_order,
                 desc: scan.desc,
@@ -10041,7 +10041,7 @@ fn union_scan_reader(plan: &PhysicalPlan) -> Result<Option<UnionScanReader>, Dri
                 by_item_columns = by_item_column_ids(&reader.by_items)?;
             }
             Some(UnionScanReader {
-                table_id: scan.table_id,
+                table_id: scan.physical_table_id,
                 index_id: None,
                 keep_order,
                 desc,
@@ -11678,8 +11678,8 @@ use super::*;
         base.base.set_schema(Some(schema.clone()));
         PhysicalPlan::TableScan(PhysicalTableScan {
             base,
-            table_id,
-            cost_columns: schema.columns,
+            physical_table_id: table_id,
+            tbl_cols: schema.columns,
             ranges: vec![tidb_ranger::types::Range {
                 low_val: vec![tidb_datatype::Datum::Int(low)],
                 high_val: vec![tidb_datatype::Datum::Int(high)],
@@ -11713,7 +11713,7 @@ use super::*;
             }
             right.base_mut().base.set_schema(Some(right_schema.clone()));
             if let PhysicalPlan::TableScan(scan) = &mut right {
-                scan.cost_columns = right_schema.columns.clone();
+                scan.tbl_cols = right_schema.columns.clone();
             }
             let key = left.schema().unwrap().columns[0].clone();
             let mut base = BasePhysicalPlan::with_id(3, "HashJoin", 0);
@@ -11834,8 +11834,8 @@ use super::*;
             .set_schema(Some(Schema::new(vec![handle.clone()])));
         let plan = PhysicalPlan::TableScan(PhysicalTableScan {
             base,
-            table_id: 41,
-            cost_columns: vec![handle],
+            physical_table_id: 41,
+            tbl_cols: vec![handle],
             ..PhysicalTableScan::default()
         });
 
@@ -12108,7 +12108,7 @@ use super::*;
         base.base.set_schema(Some(schema.clone()));
         PhysicalPlan::IndexScan(PhysicalIndexScan {
             base,
-            table_id,
+            physical_table_id: table_id,
             cost_columns: schema.columns,
             index_id,
             index_name: "value_idx".to_owned(),

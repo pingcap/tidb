@@ -1276,14 +1276,17 @@ pub struct PhysicalTableScan {
     /// Go `IsMPPOrBatchCop`: the scan's reader reads through MPP or a batch
     /// request (used for TiFlash `PartitionTableScan`).
     pub is_mpp_or_batch_cop: bool,
-    /// Go `Table.ID`.
-    pub table_id: i64,
+    /// Go `PhysicalTableID`: the partition read, or the table.
+    pub physical_table_id: i64,
+    /// Go `isPartition` (`ds.PartitionDefIdx != nil`): a static-prune
+    /// partition read, whose `ToPB` names the partition.
+    pub is_partition: bool,
     /// Go `TableAsName`: the query-visible alias, when one was written.
     pub table_as_name: Option<String>,
     /// Dynamic partition access selected for the reader above this scan.
     pub dynamic_partition_access: Option<tidb_planner_core_access::DynamicPartitionAccessObject>,
     /// Go `TblCols`: all original table columns used by scan costing.
-    pub cost_columns: Vec<Column>,
+    pub tbl_cols: Vec<Column>,
     /// Go `StoreType`: which engine serves this scan. `CopTask.GetStoreType`
     /// reads it at the leaf.
     pub store_type: tidb_kv::store_type::StoreType,
@@ -1445,7 +1448,7 @@ impl PhysicalTableScan {
     ) -> Self {
         Self {
             base: BasePhysicalPlan::with_id(plan_id, "TableScan", query_block_offset),
-            table_id: pushdown.table_id,
+            physical_table_id: pushdown.table_id,
             keep_order: pushdown.keep_order,
             desc: pushdown.desc,
             tikv_pushdown: Some(pushdown),
@@ -2545,8 +2548,11 @@ pub struct PhysicalIndexScan {
     pub need_common_handle: bool,
     /// The shared physical base.
     pub base: BasePhysicalPlan,
-    /// Go `Table.ID`.
-    pub table_id: i64,
+    /// Go `PhysicalTableID`: the partition read, or the table.
+    pub physical_table_id: i64,
+    /// Go `isPartition` (`ds.PartitionDefIdx != nil`): a static-prune
+    /// partition read, whose `ToPB` names the partition.
+    pub is_partition: bool,
     /// Go `TableAsName`: the query-visible alias, when one was written.
     pub table_as_name: Option<String>,
     /// Dynamic partition access selected for the reader above this scan.
@@ -5174,10 +5180,11 @@ impl PhysicalPlan {
                 base: base_of(&op.base),
                 keep_order: op.keep_order,
                 desc: op.desc,
-                table_id: op.table_id,
+                physical_table_id: op.physical_table_id,
+                is_partition: op.is_partition,
                 table_as_name: op.table_as_name.clone(),
                 dynamic_partition_access: op.dynamic_partition_access.clone(),
-                cost_columns: op.cost_columns.clone(),
+                tbl_cols: op.tbl_cols.clone(),
                 store_type: op.store_type,
                 ranges: op.ranges.clone(),
                 access_condition: op.access_condition.clone(),
@@ -5321,7 +5328,8 @@ impl PhysicalPlan {
                 by_items: op.by_items.clone(),
                 data_source_schema: op.data_source_schema.clone(),
                 base: base_of(&op.base),
-                table_id: op.table_id,
+                physical_table_id: op.physical_table_id,
+                is_partition: op.is_partition,
                 table_as_name: op.table_as_name.clone(),
                 dynamic_partition_access: op.dynamic_partition_access.clone(),
                 cost_columns: op.cost_columns.clone(),

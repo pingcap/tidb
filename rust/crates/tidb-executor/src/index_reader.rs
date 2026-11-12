@@ -163,7 +163,7 @@ impl IndexReaderExecutor {
             .client()
             .ok_or_else(|| ExecError::Internal("the store has no coprocessor client".into()))?;
         let table = is
-            .physical_kv_table_by_id(scan.table_id)
+            .physical_kv_table_by_id(scan.physical_table_id)
             .ok_or_else(|| ExecError::Internal("the index reader's table is absent from the catalog".into()))?;
         let table_info = table.meta().read().clone();
         let global = table_info
@@ -171,12 +171,12 @@ impl IndexReaderExecutor {
             .iter_deref()
             .find(|index| index.read().id == scan.index_id)
             .is_some_and(|index| index.read().global);
-        let mut table_ids = vec![scan.table_id];
+        let mut table_ids = vec![scan.physical_table_id];
         let mut partition_id_map = std::collections::BTreeSet::new();
         // Go `buildIndexReader`: a dynamically pruned partitioned table reads
         // its pruned partitions; a global index reads the table itself and
         // keeps its entries of the pruned partitions (`partitionIDMap`).
-        if !ctx.static_partition_prune() && scan.table_id == table_info.id && table_info.get_partition_info().is_some() {
+        if !ctx.static_partition_prune() && scan.physical_table_id == table_info.id && table_info.get_partition_info().is_some() {
             let pids = get_partition_ids_after_pruning(is, &table_info, v.plan_part_info.as_deref(), ctx)?;
             if global {
                 partition_id_map = pids.into_iter().collect();

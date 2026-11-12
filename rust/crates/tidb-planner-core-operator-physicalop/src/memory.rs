@@ -206,7 +206,7 @@ fn table_scan_usage(scan: &PhysicalTableScan) -> i64 {
             &scan.ranges,
             scan.resolved_explain_id(true).as_deref() == Some("TableRowIDScan"),
         )
-        + columns_memory_usage(&scan.cost_columns)
+        + columns_memory_usage(&scan.tbl_cols)
 }
 
 fn index_scan_usage(scan: &super::PhysicalIndexScan) -> i64 {

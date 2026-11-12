@@ -580,7 +580,7 @@ impl TableReaderExecutor {
             client,
             table_plan: table_plan.clone(),
             plan_ids,
-            physical_table_id: ts.table_id,
+            physical_table_id: ts.physical_table_id,
             is_common_handle: table.is_common_handle,
             ranges: ts.ranges.clone(),
             range_rebuild: crate::driver::physical_builder::correlated_table_range_rebuilder(ts, ctx),

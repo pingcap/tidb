@@ -248,7 +248,7 @@ impl IndexLookUpExecutor {
         let store = ctx.txn_store().ok_or_else(|| internal("the index lookup has no store"))?;
         let client = store.client().ok_or_else(|| internal("the store has no coprocessor client"))?;
         let table = is
-            .physical_kv_table_by_id(scan.table_id)
+            .physical_kv_table_by_id(scan.physical_table_id)
             .ok_or_else(|| internal("the index lookup's table is absent from the catalog"))?;
         let table_info = table.meta().read().clone();
         // Go: a temporary table's lookup is a dummy; its rows are the union
@@ -277,12 +277,12 @@ impl IndexLookUpExecutor {
             .collect::<Result<Vec<_>, _>>()?;
         // Go `partitionTableMode`: a dynamically pruned partitioned table
         // (not through a global index) reads its pruned partitions.
-        let mut table_ids = vec![scan.table_id];
+        let mut table_ids = vec![scan.physical_table_id];
         let mut partition_table_mode = false;
         // A global index keeps its entries of the pruned partitions (Go
         // `partitionIDMap`).
         let mut partition_id_map = std::collections::BTreeSet::new();
-        if !ctx.static_partition_prune() && scan.table_id == table_info.id && table_info.get_partition_info().is_some() {
+        if !ctx.static_partition_prune() && scan.physical_table_id == table_info.id && table_info.get_partition_info().is_some() {
             let pids = crate::index_reader::get_partition_ids_after_pruning(is, &table_info, v.plan_part_info.as_deref(), ctx)?;
             if index.global {
                 partition_id_map = pids.into_iter().collect();
@@ -365,7 +365,7 @@ impl IndexLookUpExecutor {
             keep_order,
             start_ts: store.start_ts(),
             columns: ts.columns.clone(),
-            physical_table_id: ts.table_id,
+            physical_table_id: ts.physical_table_id,
             avg_row_size: avg_table_row_size,
             finished: AtomicBool::new(false),
             index_scan_plan_id: index_plans[0].id() as isize,

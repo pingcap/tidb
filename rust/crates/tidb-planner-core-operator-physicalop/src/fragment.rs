@@ -479,7 +479,7 @@ impl MppTaskGenerator<'_> {
             tiflash_static_prune = !self.ctx.use_dynamic_partition_prune();
             if tiflash_static_prune {
                 let req = MppBuildTasksRequest {
-                    key_ranges: Some(self.ctx.table_handle_ranges_to_kv_ranges(ts.table_id, table.is_common_handle, &splited_ranges)?),
+                    key_ranges: Some(self.ctx.table_handle_ranges_to_kv_ranges(ts.physical_table_id, table.is_common_handle, &splited_ranges)?),
                     start_ts: self.start_ts,
                     ..MppBuildTasksRequest::default()
                 };
@@ -699,7 +699,7 @@ mod tests {
         let scan = PhysicalPlan::TableScan(crate::PhysicalTableScan {
             base: node(5, "TableScan", vec![]),
             table: Some(tidb_model::GoShared::new(table)),
-            table_id: 42,
+            physical_table_id: 42,
             ..Default::default()
         });
         let lower_sender = PhysicalPlan::ExchangeSender(PhysicalExchangeSender {

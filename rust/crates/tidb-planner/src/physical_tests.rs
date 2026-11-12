@@ -42,10 +42,10 @@ fn scan(id: i32, columns: &[i64]) -> PhysicalPlan {
     )));
     PhysicalPlan::TableScan(PhysicalTableScan {
         base,
-        table_id: i64::from(id),
+        physical_table_id: i64::from(id),
         table_as_name: None,
         dynamic_partition_access: None,
-        cost_columns: Vec::new(),
+        tbl_cols: Vec::new(),
         store_type: Default::default(),
         keep_order: false,
         desc: false,
@@ -182,7 +182,7 @@ fn cached_plan_rebuilds_normal_and_reader_scan_trees_without_mutating_template()
     let mut index_scan = PhysicalPlan::IndexScan(PhysicalIndexScan {
         data_source_schema: None,
         base: BasePhysicalPlan::with_id(3, "IndexRangeScan", 0),
-        table_id: 1,
+        physical_table_id: 1,
         table_as_name: None,
         dynamic_partition_access: None,
         cost_columns: Vec::new(),
@@ -723,7 +723,7 @@ fn cached_plan_rebuilds_index_join_range_and_updates_inner_reader() {
     let index_column = Column::new(2, FieldType::new(FieldTypeCode::LongLong));
     let inner_scan = PhysicalPlan::IndexScan(PhysicalIndexScan {
         base: BasePhysicalPlan::with_id(21, "IndexRangeScan", 0),
-        table_id: 2,
+        physical_table_id: 2,
         index_id: 3,
         index_name: "idx_probe".to_owned(),
         ranges: vec![point_range(0)],

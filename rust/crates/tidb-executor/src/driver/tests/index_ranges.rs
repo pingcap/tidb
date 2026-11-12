@@ -39,7 +39,7 @@ fn planner_index_path(
 
         match plan {
             PhysicalPlan::IndexScan(scan)
-                if scan.table_id == table_id
+                if scan.physical_table_id == table_id
                     && scan
                         .table_as_name
                         .as_deref()

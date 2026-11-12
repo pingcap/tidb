@@ -250,17 +250,17 @@ impl HintContext<'_> {
         match scan {
             PhysicalPlan::TableScan(scan) => Some(ScanNames {
                 db: scan.db_name.clone(),
-                table: self.table_display_name(scan.table_id, scan.table_as_name.as_deref())?,
+                table: self.table_display_name(scan.physical_table_id, scan.table_as_name.as_deref())?,
                 keep_order: scan.keep_order,
                 index_name: None,
-                table_id: scan.table_id,
+                table_id: scan.physical_table_id,
             }),
             PhysicalPlan::IndexScan(scan) => Some(ScanNames {
                 db: scan.db_name.clone(),
-                table: self.table_display_name(scan.table_id, scan.table_as_name.as_deref())?,
+                table: self.table_display_name(scan.physical_table_id, scan.table_as_name.as_deref())?,
                 keep_order: scan.keep_order,
                 index_name: Some(scan.index_name.clone()),
-                table_id: scan.table_id,
+                table_id: scan.physical_table_id,
             }),
             _ => None,
         }

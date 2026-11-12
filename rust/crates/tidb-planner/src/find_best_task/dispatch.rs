@@ -4046,10 +4046,11 @@ fn find_best_task_4_logical_data_source_paths(
                         .map(tidb_planner_core_operator_physicalop::build_full_text_index_extra)
                         .into_iter()
                         .collect(),
-                    table_id: ds.physical_table_id,
+                    physical_table_id: ds.physical_table_id,
+                    is_partition: ds.partition_def_idx.is_some(),
                     table_as_name: ds.table_as_name.clone(),
                     dynamic_partition_access: ds.dynamic_partition_access.clone(),
-                    cost_columns: ds.table_columns.clone(),
+                    tbl_cols: ds.table_columns.clone(),
                     // Go `getPossibleAccessPaths`: a cluster table's table
                     // path is served by TiDB.
                     store_type: if ds.is_cluster_table {
@@ -4279,10 +4280,11 @@ fn find_best_task_4_logical_data_source_paths(
                     group_by_col_idxs: Vec::new(),
                     grouped_ranges: Vec::new(),
                     base,
-                    table_id: ds.physical_table_id,
+                    physical_table_id: ds.physical_table_id,
+                    is_partition: ds.partition_def_idx.is_some(),
                     table_as_name: ds.table_as_name.clone(),
                     dynamic_partition_access: ds.dynamic_partition_access.clone(),
-                    cost_columns: ds.table_columns.clone(),
+                    tbl_cols: ds.table_columns.clone(),
                     store_type: tidb_kv::store_type::StoreType::TiFlash,
                     keep_order,
                     desc,
@@ -5018,7 +5020,8 @@ fn find_best_task_4_logical_data_source_paths(
                     columns: index_columns,
                     // Go `InitSchema`'s `p.NeedCommonHandle = p.Table.IsCommonHandle`.
                     need_common_handle: ds.is_common_handle(),
-                    table_id: ds.physical_table_id,
+                    physical_table_id: ds.physical_table_id,
+                    is_partition: ds.partition_def_idx.is_some(),
                     table_as_name: ds.table_as_name.clone(),
                     dynamic_partition_access: ds.dynamic_partition_access.clone(),
                     cost_columns,
@@ -5146,10 +5149,11 @@ fn find_best_task_4_logical_data_source_paths(
                             group_by_col_idxs: Vec::new(),
                             grouped_ranges: Vec::new(),
                             base: table_base,
-                            table_id: ds.physical_table_id,
+                            physical_table_id: ds.physical_table_id,
+                            is_partition: ds.partition_def_idx.is_some(),
                             table_as_name: ds.table_as_name.clone(),
                             dynamic_partition_access: ds.dynamic_partition_access.clone(),
-                            cost_columns: ds.table_columns.clone(),
+                            tbl_cols: ds.table_columns.clone(),
                             store_type: tidb_kv::store_type::StoreType::TiKv,
                             keep_order: false,
                             desc: false,
@@ -6269,7 +6273,7 @@ mod tests {
         let Some(PhysicalPlan::TableScan(scan)) = reader.table_plan.as_deref() else {
             panic!("the scan hangs off TablePlan");
         };
-        assert_eq!(scan.table_id, 42);
+        assert_eq!(scan.physical_table_id, 42);
     }
 
     fn apply_candidate_with_outer_stats(

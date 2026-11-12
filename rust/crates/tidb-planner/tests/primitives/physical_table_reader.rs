@@ -65,7 +65,7 @@ fn table_reader_clone_rebuilds_the_owned_physical_tree() {
         unreachable!();
     };
     assert_eq!(cloned.table_scans().len(), 1);
-    assert_eq!(cloned.table_scan().unwrap().table_id, 42);
+    assert_eq!(cloned.table_scan().unwrap().physical_table_id, 42);
     assert!(!std::ptr::eq(
         original.table_plan.as_deref().unwrap(),
         cloned.table_plan.as_deref().unwrap(),

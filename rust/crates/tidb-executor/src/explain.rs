@@ -835,7 +835,7 @@ fn is_index_join_table_range(
     };
     context.is_some_and(|context| {
         context.index_id.is_none()
-            && context.table_id == scan.table_id
+            && context.table_id == scan.physical_table_id
             && !context.outer_keys.is_empty()
     })
 }
@@ -851,7 +851,7 @@ fn is_index_join_index_range(
     };
     context.is_some_and(|context| {
         context.index_id == Some(scan.index_id)
-            && context.table_id == scan.table_id
+            && context.table_id == scan.physical_table_id
             && !context.outer_keys.is_empty()
     })
 }
@@ -1085,7 +1085,7 @@ fn physical_access(
             }))
         }
         PhysicalPlan::TableScan(scan) => {
-            let mut access = table_access(catalog, scan.table_id, scan.table_as_name.as_deref());
+            let mut access = table_access(catalog, scan.physical_table_id, scan.table_as_name.as_deref());
             access.indexes.extend(columnar_index_accesses(scan));
             Some(AccessObject::Scan(access))
         }
@@ -1102,7 +1102,7 @@ fn physical_access(
         PhysicalPlan::IndexScan(scan) => Some(AccessObject::Scan(index_access(
             catalog,
             hypo_indexes,
-            scan.table_id,
+            scan.physical_table_id,
             scan.table_as_name.as_deref(),
             scan.index_id,
             Some(&scan.index_name),
@@ -1589,7 +1589,7 @@ fn physical_operator_own_info(
             parts.push(scan_keep_order_text(scan.keep_order, scan.desc));
             if let Some(stats) = used_stats_suffix_for_scan(
                 statement_context,
-                scan.table_id,
+                scan.physical_table_id,
                 &scan.base,
                 catalog,
                 None,
@@ -1652,7 +1652,7 @@ fn physical_operator_own_info(
             parts.push(scan_keep_order_text(scan.keep_order, scan.desc));
             if let Some(stats) = used_stats_suffix_for_scan(
                 statement_context,
-                scan.table_id,
+                scan.physical_table_id,
                 &scan.base,
                 catalog,
                 Some(scan.index_id),
@@ -2725,7 +2725,7 @@ fn index_process_name(
 ) -> String {
     format!(
         "{}:{}",
-        table_name(catalog, scan.table_id, None),
+        table_name(catalog, scan.physical_table_id, None),
         scan.index_name
     )
 }
@@ -2742,7 +2742,7 @@ fn collect_executor_process_fields(
         }
         PhysicalPlan::TableReader(reader) => {
             if let Some(scan) = reader.table_plan.as_deref().and_then(first_table_scan) {
-                table_ids.push(logical_table_id(catalog, scan.table_id));
+                table_ids.push(logical_table_id(catalog, scan.physical_table_id));
             }
         }
         PhysicalPlan::IndexReader(reader) => {
@@ -2755,7 +2755,7 @@ fn collect_executor_process_fields(
                 index_names.push(index_process_name(catalog, scan));
             }
             if let Some(scan) = reader.table_plan.as_deref().and_then(first_table_scan) {
-                table_ids.push(logical_table_id(catalog, scan.table_id));
+                table_ids.push(logical_table_id(catalog, scan.physical_table_id));
             }
         }
         PhysicalPlan::IndexMergeReader(reader) => {
@@ -2763,7 +2763,7 @@ fn collect_executor_process_fields(
                 if let Some(scan) = first_index_scan(partial) {
                     index_names.push(index_process_name(catalog, scan));
                 } else if let Some(scan) = first_table_scan(partial) {
-                    if let Some(table) = catalog.physical_kv_table_by_id(scan.table_id) {
+                    if let Some(table) = catalog.physical_kv_table_by_id(scan.physical_table_id) {
                         if let Some(primary) =
                             table.indexes().iter().find(|index| index.clustered_primary)
                         {
@@ -2773,7 +2773,7 @@ fn collect_executor_process_fields(
                 }
             }
             if let Some(scan) = reader.table_plan.as_deref().and_then(first_table_scan) {
-                table_ids.push(logical_table_id(catalog, scan.table_id));
+                table_ids.push(logical_table_id(catalog, scan.physical_table_id));
             }
         }
         PhysicalPlan::PointGet(point) => {
@@ -2795,7 +2795,7 @@ fn collect_executor_process_fields(
             }
         }
         PhysicalPlan::TableScan(scan) => {
-            table_ids.push(logical_table_id(catalog, scan.table_id));
+            table_ids.push(logical_table_id(catalog, scan.physical_table_id));
         }
         PhysicalPlan::IndexScan(scan) => index_names.push(index_process_name(catalog, scan)),
         PhysicalPlan::TableSample(sample) => {
@@ -2851,12 +2851,12 @@ fn collect_stats_info(
             }
         }
         PhysicalPlan::IndexScan(scan) => {
-            let name = table_name(catalog, scan.table_id, None);
-            stats_info.insert(name, stats_version(scan.table_id));
+            let name = table_name(catalog, scan.physical_table_id, None);
+            stats_info.insert(name, stats_version(scan.physical_table_id));
         }
         PhysicalPlan::TableScan(scan) => {
-            let name = table_name(catalog, scan.table_id, None);
-            stats_info.insert(name, stats_version(scan.table_id));
+            let name = table_name(catalog, scan.physical_table_id, None);
+            stats_info.insert(name, stats_version(scan.physical_table_id));
         }
         PhysicalPlan::Dml(root) => {
             if let Some(select) = root.select_plan.as_deref() {
