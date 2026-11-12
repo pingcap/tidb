@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package importer_test
+package taskinfo_test
 
 import (
 	"context"
@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -63,7 +64,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
 
 	// local sort
-	taskMeta := importer.TaskMeta{
+	taskMeta := taskinfo.TaskMeta{
 		Plan: importer.Plan{},
 		Summary: importer.Summary{
 			EncodeSummary: importer.StepSummary{
@@ -100,13 +101,13 @@ func TestGetTaskImportedRows(t *testing.T) {
 
 	loc := tk.Session().GetSessionVars().Location()
 
-	runInfo, err := importer.GetJobRuntimeInfo(ctx, loc, 111)
+	runInfo, err := taskinfo.GetJobRuntimeInfo(ctx, loc, 111)
 	require.NoError(t, err)
 	require.EqualValues(t, 700, runInfo.ImportRows)
 	require.Equal(t, "80", runInfo.Percent())
 
 	// global sort
-	taskMeta = importer.TaskMeta{
+	taskMeta = taskinfo.TaskMeta{
 		Plan: importer.Plan{
 			CloudStorageURI: "s3://test-bucket/test-path",
 		},
@@ -138,7 +139,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 	}
 
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepWriteAndIngest)
-	runInfo, err = importer.GetJobRuntimeInfo(ctx, tk.Session().GetSessionVars().Location(), 222)
+	runInfo, err = taskinfo.GetJobRuntimeInfo(ctx, tk.Session().GetSessionVars().Location(), 222)
 	require.NoError(t, err)
 	require.EqualValues(t, 300, runInfo.ImportRows)
 	require.Equal(t, "30", runInfo.Percent())
@@ -201,7 +202,7 @@ func TestGetJobLastUpdateTime(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, expectedRows, 1)
 
-	lastUpdateTime, err := importer.GetJobLastUpdateTime(ctx, jobID)
+	lastUpdateTime, err := taskinfo.GetJobLastUpdateTime(ctx, jobID)
 	require.NoError(t, err)
 	require.Equal(t, expectedRows[0].GetTime(0), lastUpdateTime)
 }
@@ -224,7 +225,7 @@ func TestShowImportProgress(t *testing.T) {
 	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
 
 	// global sort
-	taskMeta := importer.TaskMeta{
+	taskMeta := taskinfo.TaskMeta{
 		Plan: importer.Plan{
 			CloudStorageURI: "s3://test-bucket/test-path",
 		},
@@ -303,7 +304,7 @@ func TestShowImportProgress(t *testing.T) {
 	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepGlobalSorting))
 	checkShowInfo("init", "0B", "0B", "N/A", "0B/s", "N/A", 0)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/mockSpeedDuration", "return(5000)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo/mockSpeedDuration", "return(5000)")
 
 	// Encode step
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepEncodeAndSort)
@@ -314,7 +315,7 @@ func TestShowImportProgress(t *testing.T) {
 
 	loc := tk.Session().GetSessionVars().Location()
 
-	runInfo, err := importer.GetJobRuntimeInfo(ctx, loc, jobID)
+	runInfo, err := taskinfo.GetJobRuntimeInfo(ctx, loc, jobID)
 	require.NoError(t, err)
 	require.EqualValues(t, 1000, runInfo.Total)
 	require.EqualValues(t, 500, runInfo.Processed)
@@ -327,7 +328,7 @@ func TestShowImportProgress(t *testing.T) {
 	// Merge step
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepMergeSort)
 
-	runInfo, err = importer.GetJobRuntimeInfo(ctx, loc, jobID)
+	runInfo, err = taskinfo.GetJobRuntimeInfo(ctx, loc, jobID)
 	require.NoError(t, err)
 	require.EqualValues(t, 0, runInfo.Total)
 	require.EqualValues(t, 0, runInfo.Processed)
@@ -339,7 +340,7 @@ func TestShowImportProgress(t *testing.T) {
 			"", bytes, &s.summary, s.state, proto.ImportInto, 11)
 	}
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/mockSpeedDuration", "return(10000)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo/mockSpeedDuration", "return(10000)")
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepWriteAndIngest)
 	checkShowInfo("ingest", "500B", "1000B", "50", "50B/s", "00:00:10", 50)
 
@@ -434,9 +435,9 @@ func TestShowImportGroup(t *testing.T) {
 }
 
 func TestFormatTime(t *testing.T) {
-	require.Equal(t, "1 d 00:00:00", importer.FormatSecondAsTime(86400))
-	require.Equal(t, "2 d 00:00:01", importer.FormatSecondAsTime(172801))
-	require.Equal(t, "23:59:59", importer.FormatSecondAsTime(86399))
-	require.Equal(t, "00:59:59", importer.FormatSecondAsTime(3599))
-	require.Equal(t, "08:00:00", importer.FormatSecondAsTime(28800))
+	require.Equal(t, "1 d 00:00:00", taskinfo.FormatSecondAsTime(86400))
+	require.Equal(t, "2 d 00:00:01", taskinfo.FormatSecondAsTime(172801))
+	require.Equal(t, "23:59:59", taskinfo.FormatSecondAsTime(86399))
+	require.Equal(t, "00:59:59", taskinfo.FormatSecondAsTime(3599))
+	require.Equal(t, "08:00:00", taskinfo.FormatSecondAsTime(28800))
 }

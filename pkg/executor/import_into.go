@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	dxfstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -300,7 +301,7 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 		return 0, nil, err
 	}
 
-	taskMeta := &importer.TaskMeta{
+	taskMeta := &taskinfo.TaskMeta{
 		Plan:              *plan,
 		Stmt:              stmt,
 		EligibleInstances: instances,
@@ -403,7 +404,7 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 	return jobID, task, nil
 }
 
-func submitTask2DXF(taskMeta *importer.TaskMeta, extraParams proto.ExtraParams, planCtx planner.PlanCtx,
+func submitTask2DXF(taskMeta *taskinfo.TaskMeta, extraParams proto.ExtraParams, planCtx planner.PlanCtx,
 	taskMgr *dxfstorage.TaskManager) (int64, error) {
 	meta, err := json.Marshal(taskMeta)
 	if err != nil {
@@ -664,7 +665,7 @@ func (e *ImportIntoExec) fillQueryInfo(ctx context.Context, jobID, taskID int64)
 	if finished.State != proto.TaskStateSucceed {
 		return errors.Errorf("import task %d stopped in state %s", taskID, finished.State)
 	}
-	var meta importer.TaskMeta
+	var meta taskinfo.TaskMeta
 	if err := json.Unmarshal(finished.Meta, &meta); err != nil {
 		return err
 	}

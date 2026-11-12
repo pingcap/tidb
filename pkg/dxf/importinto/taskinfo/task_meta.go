@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package importer
+package taskinfo
 
 import (
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/executor/importer"
 )
 
 // TaskMeta is the task of IMPORT INTO.
@@ -23,11 +24,11 @@ import (
 type TaskMeta struct {
 	// IMPORT INTO job id, see mysql.tidb_import_jobs.
 	JobID int64
-	Plan  Plan
+	Plan  importer.Plan
 	Stmt  string
 
 	// Summary is the summary of the whole import task.
-	Summary Summary
+	Summary importer.Summary
 
 	// eligible instances to run this task, we run on all instances if it's empty.
 	// we only need this when run IMPORT INTO without distributed option now, i.e.
@@ -37,7 +38,7 @@ type TaskMeta struct {
 	// files to the framework scheduler which might run on another instance.
 	// we use a map from engine ID to chunks since we need support split_file for CSV,
 	// so need to split them into engines before passing to scheduler.
-	ChunkMap map[int32][]Chunk
+	ChunkMap map[int32][]importer.Chunk
 	// PreparedMetaExternalPath points to external chunk metadata prepared by
 	// framework OnPrepare for nextgen global-sort path.
 	PreparedMetaExternalPath string `json:"prepared_meta_external_path,omitempty"`

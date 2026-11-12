@@ -20,6 +20,7 @@ go_test(
         "//pkg/dxf/framework/schstatus",
         "//pkg/dxf/framework/storage",
         "//pkg/dxf/framework/testutil",
+        "//pkg/dxf/importinto/taskinfo",
         "//pkg/dxf/importinto/taskkey",
         "//pkg/executor/importer",
         "//pkg/infoschema",

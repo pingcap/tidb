@@ -1041,24 +1041,3 @@ func TestPlanMetadataCompatibility(t *testing.T) {
 	}
 	require.NotContains(t, actual, "LineFieldsInfo")
 }
-
-func TestTaskMetaCompatibility(t *testing.T) {
-	// TaskMeta moved from dxf/importinto; its persisted layout must not change.
-	const legacy = `{"JobID":5,"Plan":{"DBName":"db"},"Stmt":"import","Summary":{},"EligibleInstances":null,"ChunkMap":null,"prepared_meta_external_path":"p"}`
-	var meta TaskMeta
-	require.NoError(t, json.Unmarshal([]byte(legacy), &meta))
-	require.EqualValues(t, 5, meta.JobID)
-	require.Equal(t, "db", meta.Plan.DBName)
-	require.Equal(t, "p", meta.PreparedMetaExternalPath)
-	encoded, err := json.Marshal(&meta)
-	require.NoError(t, err)
-	var actual, expected map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(encoded, &actual))
-	require.NoError(t, json.Unmarshal([]byte(legacy), &expected))
-	for _, key := range []string{"JobID", "Stmt", "prepared_meta_external_path"} {
-		require.JSONEq(t, string(expected[key]), string(actual[key]), key)
-	}
-	for key := range expected {
-		require.Contains(t, actual, key)
-	}
-}

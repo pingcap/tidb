@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
@@ -75,7 +76,7 @@ func (p *LogicalPlan) GetTaskExtraParams() proto.ExtraParams {
 
 // ToTaskMeta converts the logical plan to task meta.
 func (p *LogicalPlan) ToTaskMeta() ([]byte, error) {
-	taskMeta := importer.TaskMeta{
+	taskMeta := taskinfo.TaskMeta{
 		JobID:                    p.JobID,
 		Plan:                     p.Plan,
 		Stmt:                     p.Stmt,
@@ -88,7 +89,7 @@ func (p *LogicalPlan) ToTaskMeta() ([]byte, error) {
 
 // FromTaskMeta converts the task meta to logical plan.
 func (p *LogicalPlan) FromTaskMeta(bs []byte) error {
-	var taskMeta importer.TaskMeta
+	var taskMeta taskinfo.TaskMeta
 	if err := json.Unmarshal(bs, &taskMeta); err != nil {
 		return errors.Trace(err)
 	}
