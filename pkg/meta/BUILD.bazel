@@ -40,7 +40,7 @@ go_test(
     ],
     embed = [":meta"],
     flaky = True,
-    shard_count = 19,
+    shard_count = 20,
     deps = [
         "//pkg/ddl",
         "//pkg/infoschema/context",
@@ -58,6 +58,7 @@ go_test(
         "//pkg/util/dbterror",
         "//pkg/util/intest",
         "//pkg/util/mock",
+        "//pkg/util/set",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

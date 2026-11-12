@@ -1904,7 +1904,7 @@ func IsJobMatch(job []byte, schemaNames, tableNames set.StringSet) (match bool, 
 		return
 	}
 	if (schemaNames.Count() == 0 || schemaNames.Exist(schemaName)) &&
-		tableNames.Count() == 0 || tableNames.Exist(tableName) {
+		(tableNames.Count() == 0 || tableNames.Exist(tableName)) {
 		match = true
 	}
 	return
