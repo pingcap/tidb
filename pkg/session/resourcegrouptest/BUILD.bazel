@@ -6,6 +6,7 @@ go_test(
     srcs = ["resource_group_test.go"],
     flaky = True,
     deps = [
+        "//pkg/parser/auth",
         "//pkg/testkit",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
