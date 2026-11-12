@@ -28,7 +28,7 @@
 //! while the cached plan no longer carries the residual filter needed to make
 //! that widening safe.
 
-use tidb_planner_core_operator_physicalop::range_rebuild::{PointConstantsRebuild, PointRangeRebuild, TableRangeRebuild};
+use tidb_planner_core_operator_physicalop::range_rebuild::{PointConstantsRebuild, PointRangeRebuild};
 use std::fmt;
 
 use tidb_datatype::Datum;
@@ -56,22 +56,6 @@ pub fn cached_plan_memory_usage(plan: &PhysicalPlan) -> u64 {
     u64::try_from(plan.memory_usage()).unwrap_or(u64::MAX)
 }
 
-fn table_scan_is_full(scan: &PhysicalTableScan) -> bool {
-    let unsigned_int_handle = matches!(
-        scan.range_rebuild.as_ref(),
-        Some(TableRangeRebuild {
-            unsigned_int_handle: true,
-            ..
-        })
-    );
-    scan.ranges
-        .iter()
-        .all(|range| range.is_full_range(unsigned_int_handle))
-}
-
-fn index_scan_is_full(scan: &tidb_planner_core_operator_physicalop::PhysicalIndexScan) -> bool {
-    scan.ranges.iter().all(|range| range.is_full_range(false))
-}
 
 fn physical_plan_cacheable(
     plan: &PhysicalPlan,
@@ -114,10 +98,10 @@ fn physical_plan_cacheable(
             index_merge = true;
             reader.partial_plans_raw.iter().collect()
         }
-        PhysicalPlan::IndexScan(scan) if under_index_merge && index_scan_is_full(scan) => {
+        PhysicalPlan::IndexScan(scan) if under_index_merge && scan.is_full_scan() => {
             return Err("IndexMerge plan with full-scan is un-cacheable".to_owned());
         }
-        PhysicalPlan::TableScan(scan) if under_index_merge && table_scan_is_full(scan) => {
+        PhysicalPlan::TableScan(scan) if under_index_merge && scan.is_full_scan() => {
             return Err("IndexMerge plan with full-scan is un-cacheable".to_owned());
         }
         PhysicalPlan::TableReader(reader) => reader.table_plan.as_deref().into_iter().collect(),
@@ -633,78 +617,123 @@ fn range_is_safe(
         && !has_full_range(original, unsigned_int_handle))
 }
 
+/// Go `buildRangeForTableScan`.
 fn rebuild_table_scan(
     scan: &mut PhysicalTableScan,
     context: &CachedPlanRebuildContext<'_>,
 ) -> Result<(), PlanCacheRebuildError> {
-    let Some(rebuild) = scan.range_rebuild.as_mut() else {
-        return Ok(());
-    };
-    bind_conditions(&mut rebuild.access_conditions, context)?;
-    let original = scan.ranges.clone();
-    if let Some(handle_type) = &rebuild.handle_type {
-        let result = tidb_ranger::ranger::build_table_range_in(
-            &rebuild.access_conditions,
-            handle_type,
-            0,
-            &|expr: &Expression| context.evaluate(expr),
-        )
-        .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
-        note_skipped(context, &result.skip_plan_cache_reason);
-        // Go `buildRangeForTableScan` hands `isSafeRange` the scan's OLD
-        // ranges as the rebuilt result here, so an integer handle only
-        // refuses when the previous execution's ranges were empty: `c1>=3
-        // and c1<=1` still reuses the plan with no range, and the execution
-        // after it rebuilds again.
-        if !range_is_safe(
-            &original,
-            &original,
-            rebuild.access_conditions.len(),
-            result.access_conds.len(),
-            result.remained_conds.len(),
-            true,
-        ) {
-            return Err(PlanCacheRebuildError::UnsafeRange {
-                plan_id: scan.base.base.id(),
-            });
+    let plan_id = scan.base.base.id();
+    let table = scan
+        .table
+        .as_ref()
+        .ok_or(PlanCacheRebuildError::InvalidMetadata { plan_id, detail: "table scan has no table" })?
+        .read()
+        .clone();
+    bind_conditions(&mut scan.access_condition, context)?;
+    let schema_columns = scan.base.base.schema().map_or(&[][..], |schema| &schema.columns[..]);
+    if table.is_common_handle {
+        let pk = tidb_table::tables::scan_from_infos::find_primary_index(&table).ok_or(
+            PlanCacheRebuildError::InvalidMetadata { plan_id, detail: "common-handle table has no primary index" },
+        )?;
+        let pk = pk.read();
+        let mut pk_cols = Vec::with_capacity(pk.columns.len());
+        let mut pk_cols_len = Vec::with_capacity(pk.columns.len());
+        for col_info in pk.columns.iter_deref() {
+            let col_info = col_info.read();
+            let Some(table_column) = usize::try_from(col_info.offset).ok().and_then(|offset| table.columns.get(offset)) else {
+                continue;
+            };
+            let table_column_id = table_column.read().id;
+            if let Some(pk_col) = tidb_expr::column::column_by_id(schema_columns, table_column_id) {
+                // We need to consider the prefix index.
+                // For example: when we have 'a varchar(50), index idx(a(10))'
+                // So we will get 'colInfo.Length = 50' and 'pkCol.RetType.flen = 10'.
+                // In 'hasPrefix' function from 'util/ranger/ranger.go' file,
+                // we use 'columnLength == types.UnspecifiedLength' to check whether we have prefix index.
+                if col_info.length != tidb_datatype::UNSPECIFIED_LENGTH
+                    && Some(col_info.length) == pk_col.ret_type.as_ref().map(|ty| ty.flen())
+                {
+                    pk_cols_len.push(tidb_datatype::UNSPECIFIED_LENGTH);
+                } else {
+                    pk_cols_len.push(col_info.length);
+                }
+                pk_cols.push(pk_col.clone());
+            }
         }
-        scan.ranges = result.ranges;
-        // Rebuild GroupedRanges if GroupByColIdxs is set
-        scan.grouped_ranges = crate::find_best_task::dispatch::grouped_ranges(&scan.ranges, &scan.group_by_col_idxs)
-            .map_err(PlanCacheRebuildError::RangeBuild)?;
-        return Ok(());
+        if pk_cols.is_empty() {
+            if !scan.access_condition.is_empty() {
+                return Err(PlanCacheRebuildError::RangeBuild(
+                    "fail to build ranges, cannot get the primary key column".to_owned(),
+                ));
+            }
+            scan.ranges = tidb_ranger::points::full_range();
+        } else {
+            let result = tidb_ranger::detacher::detach_cond_and_build_range_for_index_in(
+                &scan.access_condition,
+                &pk_cols,
+                &pk_cols_len,
+                0,
+                &|expr: &Expression| context.evaluate(expr),
+                context.ranger_options,
+            )
+            .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
+            note_skipped(context, &result.skip_plan_cache_reason);
+            if !range_is_safe(
+                &scan.ranges,
+                &result.ranges,
+                scan.access_condition.len(),
+                result.access_conds.len(),
+                result.remained_conds.len(),
+                false,
+            ) {
+                return Err(PlanCacheRebuildError::UnsafeRange { plan_id });
+            }
+            scan.ranges = result.ranges;
+        }
+    } else {
+        let pk_col = table
+            .pk_is_handle
+            .then(|| table.get_pk_col_info())
+            .flatten()
+            .and_then(|pk_col_info| tidb_expr::column::column_by_id(schema_columns, pk_col_info.read().id).cloned());
+        if let Some(pk_col) = pk_col {
+            let pk_type = pk_col.ret_type.clone().ok_or(PlanCacheRebuildError::InvalidMetadata {
+                plan_id,
+                detail: "the primary key column has no type",
+            })?;
+            let result = tidb_ranger::ranger::build_table_range_in(
+                &scan.access_condition,
+                &pk_type,
+                0,
+                &|expr: &Expression| context.evaluate(expr),
+            )
+            .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
+            note_skipped(context, &result.skip_plan_cache_reason);
+            // Go hands `isSafeRange` the scan's OLD ranges as the rebuilt
+            // result here, so an integer handle only refuses when the
+            // previous execution's ranges were empty: `c1>=3 and c1<=1` still
+            // reuses the plan with no range, and the execution after it
+            // rebuilds again.
+            if !range_is_safe(
+                &scan.ranges,
+                &scan.ranges,
+                scan.access_condition.len(),
+                result.access_conds.len(),
+                result.remained_conds.len(),
+                true,
+            ) {
+                return Err(PlanCacheRebuildError::UnsafeRange { plan_id });
+            }
+            scan.ranges = result.ranges;
+        } else {
+            if !scan.access_condition.is_empty() {
+                return Err(PlanCacheRebuildError::RangeBuild(
+                    "fail to build ranges, cannot get the primary key column".to_owned(),
+                ));
+            }
+            scan.ranges = tidb_ranger::points::full_int_range(false);
+        }
     }
-    if rebuild.common_handle_columns.is_empty()
-        || rebuild.common_handle_columns.len() != rebuild.common_handle_lengths.len()
-    {
-        return Err(PlanCacheRebuildError::InvalidMetadata {
-            plan_id: scan.base.base.id(),
-            detail: "common-handle columns and lengths must be non-empty and aligned",
-        });
-    }
-    let result = tidb_ranger::detacher::detach_cond_and_build_range_for_index_in(
-        &rebuild.access_conditions,
-        &rebuild.common_handle_columns,
-        &rebuild.common_handle_lengths,
-        0,
-        &|expr: &Expression| context.evaluate(expr),
-        context.ranger_options,
-    )
-    .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
-    note_skipped(context, &result.skip_plan_cache_reason);
-    if !range_is_safe(
-        &original,
-        &result.ranges,
-        rebuild.access_conditions.len(),
-        result.access_conds.len(),
-        result.remained_conds.len(),
-        false,
-    ) {
-        return Err(PlanCacheRebuildError::UnsafeRange {
-            plan_id: scan.base.base.id(),
-        });
-    }
-    scan.ranges = result.ranges;
     // Rebuild GroupedRanges if GroupByColIdxs is set
     scan.grouped_ranges = crate::find_best_task::dispatch::grouped_ranges(&scan.ranges, &scan.group_by_col_idxs)
         .map_err(PlanCacheRebuildError::RangeBuild)?;

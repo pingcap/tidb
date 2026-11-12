@@ -507,7 +507,7 @@ pub(super) fn build_converged_union_index_merge_task(
                     keep_order: matched.matched(),
                     desc,
                     ranges: ranges.clone(),
-                    range_rebuild: partial_table_range_rebuild(ds, lead),
+                    access_condition: lead.access_conds.clone(),
                     table_scan_penalty: ds.table_scan_penalty_input(),
                     tikv_pushdown: None,
                     db_name: ds.db_name.clone(),
@@ -656,7 +656,7 @@ pub(super) fn build_converged_union_index_merge_task(
                 keep_order: false,
                 desc: false,
                 ranges: tidb_ranger::types::Ranges::new(),
-                range_rebuild: None,
+                access_condition: Vec::new(),
                 table_scan_penalty: ds.table_scan_penalty_input(),
                 tikv_pushdown: None,
                 db_name: ds.db_name.clone(),
@@ -896,33 +896,6 @@ fn append_index_merge_scan_columns(
 /// Go `ts.Table.GetPartitionInfo() != nil && UseDynamicPartitionPrune()`.
 fn keeps_phys_tbl_id(ds: &DataSource) -> bool {
     !ds.partition_definition_ids().is_empty() && ds.dynamic_partition_access.is_some()
-}
-
-/// Go `PhysicalTableScan.AccessCondition` of a merge partial over the
-/// handle, which `buildRangeForTableScan` re-detaches on a plan-cache hit.
-fn partial_table_range_rebuild(
-    ds: &DataSource,
-    path: &AccessPath,
-) -> Option<tidb_planner_core_operator_physicalop::range_rebuild::TableRangeRebuild> {
-    let access_conds = &path.access_conds;
-    if access_conds.is_empty() {
-        return None;
-    }
-    Some(if ds.common_handle_cols.is_empty() {
-        let (_, handle_type) = crate::access_path::ordinary::table_path_handle(ds);
-        tidb_planner_core_operator_physicalop::range_rebuild::TableRangeRebuild::int_handle(
-            access_conds.clone(),
-            handle_type.clone(),
-            ds.pk_is_handle() && handle_type.is_unsigned(),
-        )
-    } else {
-        let (columns, lengths) = path.idx_cols.iter().cloned().unzip();
-        tidb_planner_core_operator_physicalop::range_rebuild::TableRangeRebuild::common_handle(
-            access_conds.clone(),
-            columns,
-            lengths,
-        )
-    })
 }
 
 /// One index partial of a union: its IndexRangeScan, under a Selection for

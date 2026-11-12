@@ -37,7 +37,6 @@ mod logicalop_rule_util_copy_on_write_source;
 mod logicalop_window_frame_handlecols_identity_source;
 mod physicalop_final_mode_agg_split_source;
 mod physicalop_memory_trace_clone_stream_count_source;
-mod planner_util_index_col_projection_source;
 mod planner_util_path_compare_lengths_source;
 mod primitives;
 mod redact_explain_limit_redaction_source;

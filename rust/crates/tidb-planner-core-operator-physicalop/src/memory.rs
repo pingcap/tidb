@@ -199,10 +199,7 @@ fn table_scan_usage(scan: &PhysicalTableScan) -> i64 {
         + part_info_memory_usage(scan.plan_part_info.as_ref())
         + table_as_name_memory_usage(scan.table_as_name.as_deref())
         + prop_memory_usage(scan.prop.as_ref())
-        + scan
-            .range_rebuild
-            .as_ref()
-            .map_or(0, |rebuild| exprs_memory_usage(&rebuild.access_conditions))
+        + exprs_memory_usage(&scan.access_condition)
         + exprs_memory_usage(&scan.filter_condition)
         + exprs_memory_usage(&scan.late_materialization_filter_condition)
         + scan_ranges_memory_usage(

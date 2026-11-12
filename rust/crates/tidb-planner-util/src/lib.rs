@@ -15,7 +15,7 @@
 //! Go `pkg/planner/util`: ORDER BY items, index-column helpers, null rejection and handle columns.
 pub mod by_item;
 pub mod column_length;
-pub mod index_columns;
+pub mod column;
 pub mod misc;
 pub mod null_misc;
 pub mod path;

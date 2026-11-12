@@ -462,12 +462,7 @@ impl MppTaskGenerator<'_> {
     /// table (a table without partitions, or a single partition of one).
     fn construct_mpp_tasks_impl(&mut self, ts: &PhysicalTableScan) -> Result<Vec<MppTask>, PlanError> {
         // update ranges according to correlated columns in access conditions like in the Open() of TableReaderExecutor
-        let ranges = if ts.range_rebuild.as_ref().is_some_and(|rebuild| {
-            rebuild
-                .access_conditions
-                .iter()
-                .any(|cond| !tidb_expr::simple_expr::extract_cor_columns(cond).is_empty())
-        }) {
+        let ranges = if ts.have_cor_col() {
             self.ctx.resolve_correlated_columns(ts)?
         } else {
             ts.ranges.clone()

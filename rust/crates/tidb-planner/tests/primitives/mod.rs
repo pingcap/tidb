@@ -21,7 +21,6 @@ mod column_length;
 mod cost_factors;
 mod cross_estimation;
 mod fix_control;
-mod index_columns;
 mod index_range_policy;
 mod join;
 mod out_of_range;

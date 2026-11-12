@@ -4073,10 +4073,10 @@ fn find_best_task_4_logical_data_source_paths(
                     },
                     // Go's index-join inner table scan carries no
                     // `AccessCondition`; the join owns its ranges.
-                    range_rebuild: if prop.index_join_prop.is_some() {
-                        None
+                    access_condition: if prop.index_join_prop.is_some() {
+                        Vec::new()
                     } else {
-                        table_range_rebuild
+                        table_access_conds.clone()
                     },
                     // Go `constructDS2TableScanTask` sets the probe's
                     // `RangeInfo` ("decided by ..."), and
@@ -4284,7 +4284,7 @@ fn find_best_task_4_logical_data_source_paths(
                     keep_order,
                     desc,
                     ranges: path.ranges.clone(),
-                    range_rebuild: table_range_rebuild(ds, path, &path.access_conds),
+                    access_condition: path.access_conds.clone(),
                     table_scan_penalty: ds.table_scan_penalty_input(),
                     tikv_pushdown: None,
                     db_name: ds.db_name.clone(),
@@ -5131,7 +5131,7 @@ fn find_best_task_4_logical_data_source_paths(
                             // The lookup's table side reads BY HANDLE from
                             // the index rows, not by its own ranges.
                             ranges: tidb_ranger::types::Ranges::new(),
-                            range_rebuild: None,
+                            access_condition: Vec::new(),
                             table_scan_penalty: ds.table_scan_penalty_input(),
                             tikv_pushdown: None,
                             db_name: ds.db_name.clone(),
@@ -6674,7 +6674,7 @@ mod tests {
             100.0,
             "a non-handle predicate must not scale table-range cardinality",
         );
-        assert!(scan.range_rebuild.is_none());
+        assert!(scan.access_condition.is_empty());
 
         // Go's ranger reads PlanCacheParams, not Constant.Value saved at
         // PREPARE. Cover both table ranges and index detachment in this funnel.

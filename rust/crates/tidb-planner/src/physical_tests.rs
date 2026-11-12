@@ -50,7 +50,6 @@ fn scan(id: i32, columns: &[i64]) -> PhysicalPlan {
         keep_order: false,
         desc: false,
         ranges: tidb_ranger::types::Ranges::new(),
-        range_rebuild: None,
         table_scan_penalty: Default::default(),
         tikv_pushdown: None,
         resolved_descriptor: None,
@@ -133,10 +132,33 @@ fn point_range(value: i64) -> tidb_ranger::types::Range {
     }
 }
 
+/// Gives a scan Go's `ts.Table` with an integer primary key handle (column
+/// id 1) and marks its schema's column `unique_id` as that column, which
+/// `buildRangeForTableScan` finds by `ColInfo2Col`.
+fn with_int_handle_table(scan: &mut PhysicalTableScan, unique_id: i64) {
+    let pk = tidb_model::ColumnInfo {
+        id: 1,
+        name: tidb_ast::CiString::new("a"),
+        field_type: FieldType::new(FieldTypeCode::LongLong).with_added_flags(tidb_datatype::FieldTypeFlags::PRI_KEY),
+        ..Default::default()
+    };
+    scan.table = Some(tidb_model::GoShared::new(tidb_model::TableInfo {
+        pk_is_handle: true,
+        columns: tidb_model::GoSharedPointerSlice::from_handles(vec![Some(tidb_model::GoShared::new(pk))]),
+        ..Default::default()
+    }));
+    let mut schema = scan.base.base.schema().cloned().unwrap_or_default();
+    for column in &mut schema.columns {
+        if column.unique_id == unique_id {
+            column.id = 1;
+        }
+    }
+    scan.base.base.set_schema(Some(schema));
+}
+
 #[test]
 fn cached_plan_rebuilds_normal_and_reader_scan_trees_without_mutating_template() {
     use crate::physical_plan_cache::{CachedPlanRebuildContext};
-    use tidb_planner_core_operator_physicalop::range_rebuild::{IndexRangeRebuild, TableRangeRebuild};
 
     let int_type = FieldType::new(FieldTypeCode::LongLong);
     let handle = Column::new(1, int_type.clone());
@@ -145,14 +167,11 @@ fn cached_plan_rebuilds_normal_and_reader_scan_trees_without_mutating_template()
         unreachable!();
     };
     scan.ranges = vec![point_range(0)];
-    scan.range_rebuild = Some(TableRangeRebuild::int_handle(
-        vec![
-            parameter_condition("ge", handle.clone(), 0),
-            parameter_condition("le", handle, 1),
-        ],
-        int_type.clone(),
-        false,
-    ));
+    with_int_handle_table(scan, 1);
+    scan.access_condition = vec![
+        parameter_condition("ge", handle.clone(), 0),
+        parameter_condition("le", handle, 1),
+    ];
     let table_reader = PhysicalPlan::TableReader(PhysicalTableReader {
         base: BasePhysicalPlan::with_id(2, "TableReader", 0),
         table_plan: Some(Box::new(table_scan)),
@@ -239,15 +258,11 @@ fn cached_plan_rebuilds_normal_and_reader_scan_trees_without_mutating_template()
 #[test]
 fn cached_index_lookup_rebuilds_only_gos_index_plan() {
     use crate::physical_plan_cache::{CachedPlanRebuildContext};
-    use tidb_planner_core_operator_physicalop::range_rebuild::{TableRangeRebuild};
 
+    // No `ts.Table`: Go's buildRangeForTableScan would fail on it, so the
+    // rebuild must not reach the table side.
     let invalid_table_side = PhysicalPlan::TableScan(PhysicalTableScan {
         base: BasePhysicalPlan::with_id(901, "TableRowIDScan", 0),
-        range_rebuild: Some(TableRangeRebuild::common_handle(
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        )),
         ..PhysicalTableScan::default()
     });
     let lookup = PhysicalPlan::IndexLookUpReader(PhysicalIndexLookUpReader {
@@ -341,20 +356,16 @@ fn physical_plan_cache_reads_noncacheable_reason_and_size() {
 #[test]
 fn cached_plan_rebuilds_the_same_tree_for_consecutive_parameter_sets() {
     use crate::physical_plan_cache::{CachedPlanRebuildContext};
-    use tidb_planner_core_operator_physicalop::range_rebuild::{TableRangeRebuild};
 
     let int_type = FieldType::new(FieldTypeCode::LongLong);
-    let handle = Column::new(1, int_type.clone());
+    let handle = Column::new(1, int_type);
     let mut cached = scan(31, &[1]);
     let PhysicalPlan::TableScan(scan) = &mut cached else {
         unreachable!();
     };
     scan.ranges = vec![point_range(0)];
-    scan.range_rebuild = Some(TableRangeRebuild::int_handle(
-        vec![parameter_condition("eq", handle, 0)],
-        int_type,
-        false,
-    ));
+    with_int_handle_table(scan, 1);
+    scan.access_condition = vec![parameter_condition("eq", handle, 0)];
 
     cached
         .rebuild_plan_for_cache_in_place(&CachedPlanRebuildContext::new(&[Datum::Int(3)]))

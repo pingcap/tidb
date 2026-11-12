@@ -1117,39 +1117,56 @@ pub(crate) fn correlated_index_range_rebuilder(
     }))
 }
 
-/// Go `PhysicalTableScan.ResolveCorrelatedColumns`: the integer handle's
-/// range from `BuildTableRange`, a common handle's from
-/// `DetachCondAndBuildRangeForIndex`, over the substituted access conditions.
+/// The handle a table scan's ranges are built over.
+enum TableRangeHandle {
+    /// The primary index's prefix columns and lengths.
+    Common(Vec<tidb_expr::column::Column>, Vec<i64>),
+    /// The integer primary key's type.
+    Int(tidb_datatype::FieldType),
+}
+
+/// Go `PhysicalTableScan.ResolveCorrelatedColumns`: a common handle's range
+/// from `DetachCondAndBuildRangeForIndex` over the primary index's prefix
+/// columns (`IndexInfo2PrefixCols(p.Columns, p.Schema().Columns, pkIdx)`),
+/// an integer handle's from `BuildTableRange` over the primary key's type,
+/// each over the access conditions with the correlated columns' current
+/// values.
 pub(crate) fn correlated_table_range_rebuilder(
     scan: &PhysicalTableScan,
     ctx: &crate::StmtContext,
 ) -> Option<crate::access_path::RangeRebuilder> {
-    let rebuild = scan.range_rebuild.clone()?;
-    if !has_correlated_access(&rebuild.access_conditions) {
+    if !scan.have_cor_col() {
         return None;
     }
+    let table = scan.table.as_ref()?.read().clone();
+    let access_condition = scan.access_condition.clone();
+    let handle = if table.is_common_handle {
+        let pk_idx = tidb_table::tables::scan_from_infos::find_primary_index(&table)?;
+        let schema_columns = scan.base.base.schema().map_or(&[][..], |schema| &schema.columns[..]);
+        let (idx_cols, idx_col_lens) =
+            tidb_planner_util::column::index_info_2_prefix_cols(&scan.columns, schema_columns, &pk_idx.read());
+        TableRangeHandle::Common(idx_cols, idx_col_lens)
+    } else {
+        TableRangeHandle::Int(table.get_pk_col_info()?.read().field_type.clone())
+    };
     let ctx = ctx.clone();
     Some(std::sync::Arc::new(move || {
-        let access = substitute_correlated_access(&rebuild.access_conditions, &ctx)?;
+        let access = substitute_correlated_access(&access_condition, &ctx)?;
         let evaluate = tidb_ranger::points::StatementRangerEvaluator(&ctx);
-        let ranges = match &rebuild.handle_type {
-            Some(handle_type) => {
-                tidb_ranger::ranger::build_table_range_in(&access, handle_type, 0, &evaluate)
-                    .map_err(|error| tidb_driver_error::ExecError::internal(format!("{error:?}")))?
-                    .ranges
-            }
-            None => {
-                tidb_ranger::detacher::detach_cond_and_build_range_for_index_in(
-                    &access,
-                    &rebuild.common_handle_columns,
-                    &rebuild.common_handle_lengths,
-                    0,
-                    &evaluate,
-                    ctx.ranger_options(),
-                )
+        let ranges = match &handle {
+            TableRangeHandle::Int(pk_tp) => tidb_ranger::ranger::build_table_range_in(&access, pk_tp, 0, &evaluate)
                 .map_err(|error| tidb_driver_error::ExecError::internal(format!("{error:?}")))?
-                .ranges
-            }
+                .ranges,
+            TableRangeHandle::Common(idx_cols, idx_col_lens) => tidb_ranger::detacher::detach_cond_and_build_range_for_index_in(
+                &access,
+                idx_cols,
+                idx_col_lens,
+                0,
+                &evaluate,
+                ctx.ranger_options(),
+            )
+            .map_err(|error| tidb_driver_error::ExecError::internal(format!("{error:?}")))?
+            .ranges,
         };
         Ok(ranges)
     }))
@@ -1355,7 +1372,7 @@ fn build_table_scan(
     let scan_ranges = range_group
         .filter(|_| !scan.group_by_col_idxs.is_empty())
         .unwrap_or(&scan.ranges);
-    if !scan_ranges.is_empty() || scan.range_rebuild.is_some() {
+    if !scan_ranges.is_empty() || !scan.access_condition.is_empty() {
         let ranges = scan_ranges.clone();
         if !source.accept_handle_ranges(&ranges) {
             return Err(DriverError::unsupported(

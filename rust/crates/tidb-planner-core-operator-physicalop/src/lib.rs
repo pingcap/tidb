@@ -1306,9 +1306,10 @@ pub struct PhysicalTableScan {
     /// Go `ByItems`: the sort items a keep-order read merge-sorts its range
     /// groups (and, for a local index, its partitions) by.
     pub by_items: Vec<tidb_expression_aggregation::ByItems>,
-    /// Access conditions and handle metadata retained for execute-time plan
-    /// cache range rebuild.
-    pub range_rebuild: Option<crate::range_rebuild::TableRangeRebuild>,
+    /// Go `AccessCondition`: the conditions the ranges were built from,
+    /// re-detached on a plan-cache hit (`buildRangeForTableScan`) and over
+    /// each outer row when correlated (`ResolveCorrelatedColumns`).
+    pub access_condition: Vec<Expression>,
     /// Go `getTableScanPenalty`'s table/session inputs.
     pub table_scan_penalty: tidb_planner_core_operator_logicalop::data_source::TableScanPenaltyInput,
     /// Schema-resolved fields consumed by the TiKV protobuf lowering path.
@@ -2927,6 +2928,58 @@ pub struct PhysicalIndexMergeReader {
     /// Go `HandleCols`: the table scan's (`Init`), resolved over the
     /// reader's schema when `KeepOrder` (`ResolveIndices`).
     pub handle_cols: Option<tidb_planner_util::handle_cols::HandleCols>,
+}
+
+/// Go `ExtractCorColumns` over each access condition: whether one reads a
+/// correlated column.
+fn have_cor_col(access_condition: &[Expression]) -> bool {
+    access_condition
+        .iter()
+        .any(|cond| !tidb_expr::simple_expr::extract_cor_columns(cond).is_empty())
+}
+
+impl PhysicalTableScan {
+    /// Go `haveCorCol`.
+    #[must_use]
+    pub fn have_cor_col(&self) -> bool {
+        have_cor_col(&self.access_condition)
+    }
+
+    /// Go `IsFullScan`. Go's `RangeInfo` (an index join's inner scan's) is
+    /// not carried; the plan-cache check that asks reads index merge
+    /// partials, which never have one.
+    #[must_use]
+    pub fn is_full_scan(&self) -> bool {
+        if self.have_cor_col() {
+            return false;
+        }
+        let unsigned_int_handle = self.table.as_ref().is_some_and(|table| {
+            let table = table.read();
+            table.pk_is_handle
+                && table
+                    .get_pk_col_info()
+                    .is_some_and(|pk_col_info| pk_col_info.read().field_type.has_flag(tidb_datatype::FieldTypeFlags::UNSIGNED))
+        });
+        self.ranges.iter().all(|ran| ran.is_full_range(unsigned_int_handle))
+    }
+}
+
+impl PhysicalIndexScan {
+    /// Go `haveCorCol`.
+    #[must_use]
+    pub fn have_cor_col(&self) -> bool {
+        have_cor_col(&self.access_condition)
+    }
+
+    /// Go `IsFullScan`; see [`PhysicalTableScan::is_full_scan`] for
+    /// `RangeInfo`.
+    #[must_use]
+    pub fn is_full_scan(&self) -> bool {
+        if self.have_cor_col() {
+            return false;
+        }
+        self.ranges.iter().all(|ran| ran.is_full_range(false))
+    }
 }
 
 impl PhysicalIndexMergeReader {
@@ -4851,11 +4904,7 @@ impl PhysicalPlan {
                     result.retain(|column| !outer_schema.contains(&column.column));
                 }
             }
-            Self::TableScan(op) => {
-                if let Some(rebuild) = &op.range_rebuild {
-                    expressions(&mut result, &rebuild.access_conditions);
-                }
-            }
+            Self::TableScan(op) => expressions(&mut result, &op.access_condition),
             Self::IndexScan(op) => expressions(&mut result, &op.access_condition),
             Self::TableReader(op) => {
                 if let Some(plan) = op.table_plan.as_deref() {
@@ -5126,7 +5175,7 @@ impl PhysicalPlan {
                 cost_columns: op.cost_columns.clone(),
                 store_type: op.store_type,
                 ranges: op.ranges.clone(),
-                range_rebuild: op.range_rebuild.clone(),
+                access_condition: op.access_condition.clone(),
                 table_scan_penalty: op.table_scan_penalty,
                 tikv_pushdown: op.tikv_pushdown.clone(),
                 resolved_descriptor: op.resolved_descriptor,
@@ -5645,11 +5694,7 @@ fn visit_physical_correlated_columns_mut(
                 visitor(column);
             }
         }
-        PhysicalPlan::TableScan(op) => {
-            if let Some(rebuild) = &mut op.range_rebuild {
-                expressions(&mut rebuild.access_conditions, visitor);
-            }
-        }
+        PhysicalPlan::TableScan(op) => expressions(&mut op.access_condition, visitor),
         PhysicalPlan::IndexScan(op) => expressions(&mut op.access_condition, visitor),
         PhysicalPlan::TableReader(op) => {
             if let Some(plan) = op.table_plan.as_deref_mut() {
