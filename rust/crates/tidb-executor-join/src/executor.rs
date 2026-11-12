@@ -189,7 +189,8 @@ impl<C> HashJoinV2Executor<C> {
         first_error.map_or(Ok(()), Err)
     }
 
-    fn open_self(&mut self) -> Result<(), ExecError> {
+    /// Go `OpenSelf`'s body: the join's runtime over its open children.
+    fn open_runtime(&mut self) -> Result<(), ExecError> {
         let plan = &self.plan;
         let right_build = plan.right_as_build_side;
         if plan.concurrency == 0 || plan.build_key_indices.is_empty() {
@@ -586,6 +587,19 @@ impl<C: Columns + Clone + Send + Sync + 'static> HashJoinV2Executor<C> {
     }
 }
 
+impl<C: Columns + Clone + Send + Sync + 'static> HashJoinV2Executor<C> {
+    /// Go `OpenSelf`: the join opened over children its caller already
+    /// opened (Go's index join builds one over each task's inner executor);
+    /// `Close` closes them.
+    ///
+    /// # Errors
+    /// As [`Executor::open`].
+    pub fn open_self(&mut self) -> Result<(), ExecError> {
+        self.children_open = true;
+        recover_worker_panic(|| self.open_runtime())
+    }
+}
+
 impl<C: Columns + Clone + Send + Sync + 'static> Executor for HashJoinV2Executor<C> {
     fn open(&mut self) -> Result<(), ExecError> {
         self.close_owned()?;
@@ -593,7 +607,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> Executor for HashJoinV2Executor
         for child in self.children.iter_mut().flatten() {
             child.open()?;
         }
-        recover_worker_panic(|| self.open_self())
+        recover_worker_panic(|| self.open_runtime())
     }
 
     fn next(&mut self, output: &mut Chunk) -> Result<(), ExecError> {

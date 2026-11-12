@@ -5220,10 +5220,11 @@ fn miss_marker(kind: JoinKind, has_null: bool) -> Datum {
     }
 }
 
-impl<C: Columns + Clone + Send + Sync + 'static> Executor for JoinExec<C> {
-    fn open(&mut self) -> Result<(), ExecError> {
-        self.left_exec_mut().open()?;
-        self.right_exec_mut().open()?;
+impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
+    /// Go `HashJoinV1Exec.OpenSelf`: the join opened over children its
+    /// caller already opened (Go's index join builds one over each task's
+    /// inner executor).
+    pub fn open_self(&mut self) {
         self.emitted = false;
         self.hash = None;
         self.parallel_probe = None;
@@ -5232,6 +5233,14 @@ impl<C: Columns + Clone + Send + Sync + 'static> Executor for JoinExec<C> {
         self.tracker.consume(-std::mem::take(&mut self.matched_status_bytes));
         self.merge_state = None;
         self.condition_evals.set(0);
+    }
+}
+
+impl<C: Columns + Clone + Send + Sync + 'static> Executor for JoinExec<C> {
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.left_exec_mut().open()?;
+        self.right_exec_mut().open()?;
+        self.open_self();
         Ok(())
     }
 

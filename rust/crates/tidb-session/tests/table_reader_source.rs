@@ -345,6 +345,38 @@ fn an_index_joins_inner_aggregate_is_built_per_task() {
     tk.must_exec("rollback");
 }
 
+/// Go `buildHashJoinForIndexJoin`: an index join into a hash join
+/// (`tidb_enable_inl_join_inner_multi_pattern`) builds, for each task, the
+/// lookup child (the one holding the join keys, `indexJoinLookupChildIdx`)
+/// over the task, builds and opens the other child, and opens the hash join
+/// over them with `OpenSelf` -- union scans inside a transaction included.
+/// Go's plan and rows (gorun).
+#[test]
+fn an_index_joins_inner_hash_join_is_built_per_task() {
+    let mut tk = TestKit::new();
+    tk.must_exec("set @@tidb_enable_inl_join_inner_multi_pattern=1");
+    tk.must_exec("set @@tidb_opt_index_join_cost_factor=0.1");
+    tk.must_exec("set @@tidb_opt_hash_join_cost_factor=100");
+    tk.must_exec("set @@tidb_opt_merge_join_cost_factor=100");
+    tk.must_exec("create table o(a int)");
+    tk.must_exec("create table i(a int, b int, key(a), key(b))");
+    tk.must_exec("create table c(b int, x int)");
+    tk.must_exec("insert into o values (1),(2),(3),(4)");
+    tk.must_exec("insert into i values (1,10),(2,20),(3,30),(4,10)");
+    tk.must_exec("insert into c values (10,100),(10,101),(30,300)");
+    let sql = "select /*+ INL_JOIN(dt) */ o.a, dt.x from o join (select /*+ HASH_JOIN(c) */ i.a, c.x from i join c on i.b = c.b) dt on o.a = dt.a order by o.a, dt.x";
+    assert!(tk.must_query(&format!("explain format='brief' {sql}")).rows().iter().any(|row| row[0].contains("IndexHashJoin") && row[4].contains("inner:HashJoin")));
+    tk.must_query(sql).check(["1 100", "1 101", "3 300", "4 100", "4 101"]);
+    tk.must_exec("begin");
+    tk.must_exec("insert into i values (2,30)");
+    tk.must_exec("insert into c values (20,200)");
+    tk.must_query(sql).check(["1 100", "1 101", "2 200", "2 300", "3 300", "4 100", "4 101"]);
+    tk.must_exec("rollback");
+    // The V1 hash join (`buildHashJoinFromChildExecs`).
+    tk.must_exec("set @@tidb_hash_join_version='legacy'");
+    tk.must_query(sql).check(["1 100", "1 101", "3 300", "4 100", "4 101"]);
+}
+
 /// Go `buildRespForGroupedRanges` assigns `e.kvRanges` on each call, so a
 /// keep-order read of an unsigned handle whose ranges straddle the int64
 /// boundary keeps only the second part's KV ranges, and the union scan over

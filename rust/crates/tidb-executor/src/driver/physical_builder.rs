@@ -4374,6 +4374,9 @@ struct DataReaderBuilder {
     is: SessionExtendedInfoSchema,
     /// Go `PhysicalIndexJoin.Ranges`, `KeyOff2IdxOff` and `CompareFilters`.
     ranges: tidb_ranger::types::Ranges,
+    /// Go `indexJoinKeyUniqueIDs`: the inner join keys, which locate a hash
+    /// join's lookup child.
+    index_join_keys: Vec<Column>,
     key_off2_idx_off: Vec<i64>,
     compare_filters: Option<tidb_planner_core_operator_physicalop::ColWithCmpFuncManager>,
     /// The inner table's id, the index and the statistics `Close` reports
@@ -4389,7 +4392,8 @@ struct DataReaderBuilder {
 impl DataReaderBuilder {
     /// The builder of `inner`, or `None` for a shape it does not build: Go
     /// `buildExecutorForIndexJoinInternal`'s Selection, Projection,
-    /// UnionScan, HashAgg and StreamAgg arms over a reader.
+    /// UnionScan, HashAgg, StreamAgg and HashJoin arms over a reader (a
+    /// hash join's lookup child being the one holding the join keys).
     fn new(
         inner: &PhysicalPlan,
         join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
@@ -4398,13 +4402,19 @@ impl DataReaderBuilder {
         state: &BuildState,
     ) -> Result<Option<Self>, DriverError> {
         let mut leaf = inner;
-        while let PhysicalPlan::Selection(_)
-        | PhysicalPlan::Projection(_)
-        | PhysicalPlan::UnionScan(_)
-        | PhysicalPlan::HashAgg(_)
-        | PhysicalPlan::StreamAgg(_) = leaf
-        {
-            leaf = only_child(leaf)?;
+        loop {
+            leaf = match leaf {
+                PhysicalPlan::Selection(_)
+                | PhysicalPlan::Projection(_)
+                | PhysicalPlan::UnionScan(_)
+                | PhysicalPlan::HashAgg(_)
+                | PhysicalPlan::StreamAgg(_) => only_child(leaf)?,
+                PhysicalPlan::HashJoin(_) => match index_join_lookup_child_idx(leaf, &join.inner_join_keys) {
+                    Some(child_idx) => &leaf.children()[child_idx],
+                    None => return Ok(None),
+                },
+                _ => break,
+            };
         }
         let index_plan = match leaf {
             PhysicalPlan::IndexReader(reader) => reader.index_plan.as_deref(),
@@ -4443,6 +4453,7 @@ impl DataReaderBuilder {
             ctx: ctx.clone(),
             is: catalog.clone(),
             ranges: join.ranges.clone(),
+            index_join_keys: join.inner_join_keys.clone(),
             key_off2_idx_off: join.key_off2_idx_off.clone(),
             compare_filters: join.compare_filters.clone(),
             logical_table_id: table.table_id(),
@@ -4545,6 +4556,36 @@ impl DataReaderBuilder {
                 let mut e = build(child);
                 e.open_self();
                 Ok(self.metered(plan, Box::new(e), 1))
+            }
+            // Go `buildHashJoinForIndexJoin`: the lookup child built for the
+            // task, the other child built and opened, then the hash join
+            // over them opened with `OpenSelf`.
+            PhysicalPlan::HashJoin(join) => {
+                let child_idx = index_join_lookup_child_idx(plan, &self.index_join_keys)
+                    .ok_or_else(|| crate::ExecError::internal("index join inner hash join cannot locate lookup child"))?;
+                let mut children: [Option<Box<dyn Executor>>; 2] = [None, None];
+                children[child_idx] = Some(self.build_internal(&plan.children()[child_idx], probes)?);
+                let mut state = BuildState { untraced: self.runtime_stats.is_none(), ..BuildState::default() };
+                let mut other = build_with_state(&plan.children()[1 - child_idx], &self.is, &self.ctx, &mut state)
+                    .map_err(driver)?;
+                other.open()?;
+                children[1 - child_idx] = Some(other);
+                let [Some(left), Some(right)] = children else {
+                    unreachable!("both children are built");
+                };
+                let executor: Box<dyn Executor> = if self.ctx.optimizer_cost_env().session.use_hash_join_v2
+                    && tidb_executor_join_joinversion::is_hash_join_v2_supported()
+                    && can_use_hash_join_v2(join)
+                {
+                    build_hash_join_v2_from_child_execs(plan, join, left, right, &self.ctx, self.runtime_stats.is_some())
+                        .map_err(driver)?
+                        .into_opened_executor(&self.ctx)?
+                } else {
+                    let mut e = build_hash_join_from_child_execs(plan, join, left, right, &self.ctx).map_err(driver)?;
+                    e.open_self();
+                    Box::new(e)
+                };
+                Ok(self.metered(plan, executor, 2))
             }
             // Go `buildProjectionForIndexJoin`.
             PhysicalPlan::Projection(projection) => {
@@ -5320,8 +5361,43 @@ fn is_ga_for_hash_join_v2(join: &tidb_planner_core_operator_physicalop::Physical
         )
 }
 
-/// Go `buildHashJoinV2FromChildExecs`: preserve build/probe filters and compare
-/// keys using the equality expression's collation and the logical key flags.
+/// Go `buildHashJoinFromChildExecs`: the V1 hash join over children already
+/// built.
+fn build_hash_join_from_child_execs(
+    plan: &PhysicalPlan,
+    join: &tidb_planner_core_operator_physicalop::PhysicalHashJoin,
+    left: Box<dyn Executor>,
+    right: Box<dyn Executor>,
+    ctx: &crate::StmtContext,
+) -> Result<JoinExec<crate::StmtContext>, DriverError> {
+    let mut executor = build_join_over_children(
+        plan,
+        join.join_type,
+        &join.left_join_keys,
+        &join.right_join_keys,
+        &join.is_null_eq,
+        &join.left_conditions,
+        &join.right_conditions,
+        &join.other_conditions,
+        left,
+        right,
+        ctx,
+    )?;
+    let build_child_idx = if join.use_outer_to_build {
+        1usize
+            .checked_sub(join.inner_child_idx)
+            .ok_or_else(|| DriverError::unsupported("a physical hash join has an invalid inner child"))?
+    } else {
+        join.inner_child_idx
+    };
+    executor.set_hash_build_is_left(build_child_idx == 0);
+    executor.set_parallelism(join.concurrency);
+    executor.set_default_values(join.default_values.clone()).map_err(DriverError::Exec)?;
+    Ok(executor)
+}
+
+/// Go `buildHashJoinV2`: the children, then
+/// [`build_hash_join_v2_from_child_execs`].
 fn build_hash_join_v2(
     plan: &PhysicalPlan,
     join: &tidb_planner_core_operator_physicalop::PhysicalHashJoin,
@@ -5334,13 +5410,84 @@ fn build_hash_join_v2(
             "a physical hash join has the wrong child count",
         ));
     };
+    let left = build_with_state(left_plan, catalog, ctx, state)?;
+    let right = build_with_state(right_plan, catalog, ctx, state)?;
+    Ok(build_hash_join_v2_from_child_execs(plan, join, left, right, ctx, !state.untraced)?.into_executor(ctx))
+}
+
+/// Go `buildHashJoinV2FromChildExecs`' join, and the projection that puts
+/// its output in the plan's column order (the V2 executor emits its
+/// children's used columns in its own order).
+struct HashJoinV2FromChildExecs {
+    executor: HashJoinV2Executor<crate::StmtContext>,
+    plan: PhysicalPlan,
+    output_schema: Schema,
+    output_order: Vec<usize>,
+}
+
+impl HashJoinV2FromChildExecs {
+    /// Go `openIndexJoinHashJoinExec`'s `OpenSelf`, then the reordering
+    /// projection over the open join, opened itself.
+    fn into_opened_executor(mut self, ctx: &crate::StmtContext) -> Result<Box<dyn Executor>, crate::ExecError> {
+        self.executor.open_self()?;
+        let Self { executor, plan, output_schema, output_order } = self;
+        if output_order.iter().enumerate().all(|(index, &source)| index == source) {
+            return Ok(Box::new(executor));
+        }
+        let mut projection = reorder_projection(&plan, output_schema, &output_order, Box::new(executor), ctx);
+        projection.open_self()?;
+        Ok(Box::new(projection))
+    }
+
+    /// The join, under the reordering projection when its order differs.
+    fn into_executor(self, ctx: &crate::StmtContext) -> Box<dyn Executor> {
+        let Self { executor, plan, output_schema, output_order } = self;
+        if output_order.iter().enumerate().all(|(index, &source)| index == source) {
+            return Box::new(executor);
+        }
+        Box::new(reorder_projection(&plan, output_schema, &output_order, Box::new(executor), ctx))
+    }
+}
+
+/// The projection that puts a V2 hash join's output (`output_order[i]` is
+/// the plan column its `i`-th column is) in the plan's column order.
+fn reorder_projection(
+    plan: &PhysicalPlan,
+    output_schema: Schema,
+    output_order: &[usize],
+    executor: Box<dyn Executor>,
+    ctx: &crate::StmtContext,
+) -> ProjectionExec<crate::StmtContext> {
+    let mut expressions = vec![None; output_order.len()];
+    for (source, &target) in output_order.iter().enumerate() {
+        let mut column = output_schema.columns[target].clone();
+        column.index = source as i64;
+        expressions[target] = Some(Expression::Column(column));
+    }
+    ProjectionExec::new(
+        meta(ctx, plan, output_schema),
+        expressions.into_iter().map(Option::unwrap).collect(),
+        executor,
+        ctx.clone(),
+    )
+}
+
+/// Go `buildHashJoinV2FromChildExecs`: preserve build/probe filters and compare
+/// keys using the equality expression's collation and the logical key flags,
+/// over children already built.
+fn build_hash_join_v2_from_child_execs(
+    plan: &PhysicalPlan,
+    join: &tidb_planner_core_operator_physicalop::PhysicalHashJoin,
+    left: Box<dyn Executor>,
+    right: Box<dyn Executor>,
+    ctx: &crate::StmtContext,
+    traced: bool,
+) -> Result<HashJoinV2FromChildExecs, DriverError> {
     if join.inner_child_idx > 1 || join.left_join_keys.len() != join.right_join_keys.len() {
         return Err(DriverError::unsupported(
             "a physical hash join has invalid children or keys",
         ));
     }
-    let left = build_with_state(left_plan, catalog, ctx, state)?;
-    let right = build_with_state(right_plan, catalog, ctx, state)?;
     let (outer_conditions, outer_schema, inner_conditions) = if join.inner_child_idx == 1 {
         (&join.left_conditions, left.schema(), &join.right_conditions)
     } else {
@@ -5460,7 +5607,7 @@ fn build_hash_join_v2(
             .map(|&index| output_schema.columns[index].clone())
             .collect(),
     );
-    let mut executor: Box<dyn Executor> = Box::new(HashJoinV2Executor::new(
+    let executor = HashJoinV2Executor::new(
         meta(ctx, plan, native_schema),
         HashJoinV2Plan {
             concurrency: join.concurrency,
@@ -5486,29 +5633,11 @@ fn build_hash_join_v2(
     )
     .with_runtime_stats(
         ctx.executor_runtime_stats_source()
-            .filter(|_| !state.untraced)
+            .filter(|_| traced)
             .cloned(),
         is_ga_for_hash_join_v2(join),
-    ));
-    if output_order
-        .iter()
-        .enumerate()
-        .any(|(index, &source)| index != source)
-    {
-        let mut expressions = vec![None; output_order.len()];
-        for (source, &target) in output_order.iter().enumerate() {
-            let mut column = output_schema.columns[target].clone();
-            column.index = source as i64;
-            expressions[target] = Some(Expression::Column(column));
-        }
-        executor = Box::new(ProjectionExec::new(
-            meta(ctx, plan, output_schema),
-            expressions.into_iter().map(Option::unwrap).collect(),
-            executor,
-            ctx.clone(),
-        ));
-    }
-    Ok(executor)
+    );
+    Ok(HashJoinV2FromChildExecs { executor, plan: plan.clone(), output_schema, output_order })
 }
 
 fn build_apply(
@@ -8913,32 +9042,12 @@ fn build_with_state(
                     )
                 });
             }
-            let mut executor = build_join(
-                plan,
-                join.join_type,
-                &join.left_join_keys,
-                &join.right_join_keys,
-                &join.is_null_eq,
-                &join.left_conditions,
-                &join.right_conditions,
-                &join.other_conditions,
-                catalog,
-                ctx,
-                state,
-            )?;
-            let build_child_idx = if join.use_outer_to_build {
-                1usize.checked_sub(join.inner_child_idx).ok_or_else(|| {
-                    DriverError::unsupported("a physical hash join has an invalid inner child")
-                })?
-            } else {
-                join.inner_child_idx
+            let [left_plan, right_plan] = plan.children() else {
+                return Err(DriverError::unsupported("a physical join has the wrong child count"));
             };
-            executor.set_hash_build_is_left(build_child_idx == 0);
-            executor.set_parallelism(join.concurrency);
-            executor
-                .set_default_values(join.default_values.clone())
-                .map_err(DriverError::Exec)?;
-            Ok(Box::new(executor) as Box<dyn Executor>)
+            let left = build_with_state(left_plan, catalog, ctx, state)?;
+            let right = build_with_state(right_plan, catalog, ctx, state)?;
+            Ok(Box::new(build_hash_join_from_child_execs(plan, join, left, right, ctx)?) as Box<dyn Executor>)
         }
         PhysicalPlan::MergeJoin(join) => {
             let [left, right] = plan.children() else {
