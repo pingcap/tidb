@@ -104,7 +104,6 @@ go_test(
         "metadata_test.go",
         "metrics_test.go",
         "prepare_test.go",
-        "reader_bench_test.go",
         "reader_iterator_test.go",
         "reader_test.go",
         "schema_projection_test.go",

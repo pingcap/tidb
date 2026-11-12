@@ -46,7 +46,6 @@ func TestTableDataReaderBackpressureAndClose(t *testing.T) {
 	require.Equal(t, readBatchCount, iter.index, "source must not advance without a free batch")
 	require.False(t, data.closed, "reader must join before its caller closes the source")
 	require.NoError(t, data.Close())
-	require.True(t, data.closed)
 }
 
 func TestTableDataReaderTerminalErrorAfterBufferedRows(t *testing.T) {
@@ -91,25 +90,37 @@ func TestTableDataReaderTerminalErrorAfterBufferedRows(t *testing.T) {
 }
 
 func TestWriterTerminalErrorAcrossFileBoundary(t *testing.T) {
-	conf := defaultConfigForTest(t)
-	conf.OutputDirPath = t.TempDir()
-	conf.FileType = FileFormatCSVString
-	conf.NoHeader = true
-	conf.CsvLineTerminator = "\n"
-	conf.FileSize = readBatchRows * 4 // One batch of CSV rows per file.
-	w := createTestWriter(conf, t)
-	sourceErr := errors.New("source failed after the second file's first row")
-	meta := newMockTableIR("test", "boundary", nil, nil, []string{"TEXT"})
-	data := &workerTestTableData{mockTableIR: meta, newIter: func(int) *workerTestRowIter {
-		values := make([][]byte, readBatchRows+2)
-		for i := range values {
-			values[i] = []byte("r")
-		}
-		return &workerTestRowIter{values: values, errorIndex: readBatchRows + 1, readErr: sourceErr}
-	}}
-	require.ErrorIs(t, w.WriteTableData(meta, data, 0), sourceErr)
-	output := workerTestOutput(t, conf.OutputDirPath)
-	require.Equal(t, []string{strings.Repeat("\"r\"\n", readBatchRows), "\"r\"\n"}, output)
+	for _, format := range []string{FileFormatSQLTextString, FileFormatCSVString} {
+		t.Run(format, func(t *testing.T) {
+			conf := defaultConfigForTest(t)
+			conf.OutputDirPath = t.TempDir()
+			conf.FileType = format
+			conf.StatementSize = UnspecifiedSize
+			conf.NoHeader = true
+			conf.CsvLineTerminator = "\n"
+			firstFile := strings.Repeat("\"r\"\n", readBatchRows)
+			lastFile := "\"r\"\n"
+			if format == FileFormatSQLTextString {
+				firstFile = "INSERT INTO `boundary` VALUES\n" + strings.Repeat("('r'),\n", readBatchRows-1) + "('r');\n"
+				lastFile = "INSERT INTO `boundary` VALUES\n('r');\n"
+			}
+			conf.FileSize = uint64(len(firstFile)) // One batch per file.
+			w := createTestWriter(conf, t)
+			sourceErr := errors.New("source failed after the second file's first row")
+			meta := newMockTableIR("test", "boundary", nil, nil, []string{"TEXT"})
+			data := &workerTestTableData{mockTableIR: meta, newIter: func(int) *workerTestRowIter {
+				values := make([][]byte, readBatchRows+2)
+				for i := range values {
+					values[i] = []byte("r")
+				}
+				return &workerTestRowIter{values: values, errorIndex: readBatchRows + 1, readErr: sourceErr}
+			}}
+			require.ErrorIs(t, w.WriteTableData(meta, data, 0), sourceErr)
+			output := workerTestOutput(t, conf.OutputDirPath)
+			require.Equal(t, []string{firstFile, lastFile}, output)
+			require.True(t, data.iter.closed, "the failed source must be closed before the worker returns")
+		})
+	}
 }
 
 func TestWriterEmptyValuesRemainNonNull(t *testing.T) {

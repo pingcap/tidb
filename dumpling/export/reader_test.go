@@ -20,49 +20,52 @@ import (
 )
 
 func TestWriterReadsWhileOutputBlocked(t *testing.T) {
-	conf := defaultConfigForTest(t)
-	conf.OutputDirPath = t.TempDir()
-	conf.StatementSize = UnspecifiedSize
-	w := createTestWriter(conf, t)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	w.tctx = w.tctx.WithContext(ctx)
+	for _, format := range []string{FileFormatSQLTextString, FileFormatCSVString} {
+		t.Run(format, func(t *testing.T) {
+			conf := defaultConfigForTest(t)
+			conf.OutputDirPath = t.TempDir()
+			conf.FileType = format
+			conf.StatementSize = UnspecifiedSize
+			conf.NoHeader = true
+			conf.CsvLineTerminator = "\n"
+			w := createTestWriter(conf, t)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			w.tctx = w.tctx.WithContext(ctx)
 
-	writeStarted := make(chan struct{})
-	sourceAdvanced := make(chan struct{})
-	iter := &overlapRowIter{
-		rowCount:       64,
-		buffer:         make([]byte, 64*1024),
-		args:           make([]any, 1),
-		writeStarted:   writeStarted,
-		sourceAdvanced: sourceAdvanced,
+			writeStarted := make(chan struct{})
+			sourceAdvanced := make(chan struct{})
+			iter := &overlapRowIter{
+				rowCount:       64,
+				buffer:         make([]byte, 64*1024),
+				args:           make([]any, 1),
+				writeStarted:   writeStarted,
+				sourceAdvanced: sourceAdvanced,
+			}
+			meta := newMockTableIR("test", "overlap", nil, nil, []string{"TEXT"})
+			data := &overlapTableData{mockTableIR: meta, iter: iter}
+			w.extStorage = &overlapStorage{
+				Storage:        w.extStorage,
+				writeStarted:   writeStarted,
+				sourceAdvanced: sourceAdvanced,
+			}
+			require.NoError(t, runWorkerTestTask(w, meta, data), "the source must keep advancing while an output write is blocked")
+			rows := make([]string, iter.rowCount)
+			for i := range iter.rowCount {
+				value := strings.Repeat(string(rune('a'+i%26)), len(iter.buffer))
+				if format == FileFormatSQLTextString {
+					rows[i] = "('" + value + "')"
+				} else {
+					rows[i] = "\"" + value + "\"\n"
+				}
+			}
+			expected := strings.Join(rows, "")
+			if format == FileFormatSQLTextString {
+				expected = "INSERT INTO `overlap` VALUES\n" + strings.Join(rows, ",\n") + ";\n"
+			}
+			require.Equal(t, []string{expected}, workerTestOutput(t, conf.OutputDirPath), "source buffers must remain owned by their queued rows")
+		})
 	}
-	meta := newMockTableIR("test", "overlap", nil, nil, []string{"TEXT"})
-	data := &overlapTableData{mockTableIR: meta, iter: iter}
-	w.extStorage = &overlapStorage{
-		Storage:        w.extStorage,
-		writeStarted:   writeStarted,
-		sourceAdvanced: sourceAdvanced,
-	}
-	tasks := make(chan Task, 1)
-	tasks <- &TaskTableData{Meta: meta, Data: data, TotalChunks: 1}
-	close(tasks)
-
-	require.NoError(t, w.run(tasks), "the source must keep advancing while an output write is blocked")
-	output, err := os.ReadFile(filepath.Join(conf.OutputDirPath, "test.overlap.000000000.sql"))
-	require.NoError(t, err)
-	var expected strings.Builder
-	expected.WriteString("INSERT INTO `overlap` VALUES\n")
-	for i := range iter.rowCount {
-		expected.WriteString("('")
-		expected.WriteString(strings.Repeat(string(rune('a'+i%26)), len(iter.buffer)))
-		if i+1 == iter.rowCount {
-			expected.WriteString("');\n")
-		} else {
-			expected.WriteString("'),\n")
-		}
-	}
-	require.Equal(t, expected.String(), string(output), "source buffers must remain owned by their queued rows")
 }
 
 type overlapTableData struct {
@@ -185,91 +188,42 @@ func TestWriterCSVReusedRowsAcrossFiles(t *testing.T) {
 	require.True(t, data.iter.closed, "the source must be closed before the worker returns")
 }
 
-func TestWriterReadsWhileCSVOutputBlocked(t *testing.T) {
-	conf := defaultConfigForTest(t)
-	conf.OutputDirPath = t.TempDir()
-	conf.FileType = FileFormatCSVString
-	conf.NoHeader = true
-	conf.CsvLineTerminator = "\n"
-	w := createTestWriter(conf, t)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	w.tctx = w.tctx.WithContext(ctx)
-	writeStarted, sourceAdvanced := make(chan struct{}), make(chan struct{})
-	iter := &overlapRowIter{
-		rowCount: 64, buffer: make([]byte, 64*1024), args: make([]any, 1),
-		writeStarted: writeStarted, sourceAdvanced: sourceAdvanced,
-	}
-	meta := newMockTableIR("test", "csv_overlap", nil, nil, []string{"TEXT"})
-	data := &overlapTableData{mockTableIR: meta, iter: iter}
-	w.extStorage = &overlapStorage{Storage: w.extStorage, writeStarted: writeStarted, sourceAdvanced: sourceAdvanced}
-
-	require.NoError(t, runWorkerTestTask(w, meta, data))
-	var expected strings.Builder
-	for i := range iter.rowCount {
-		expected.WriteByte('"')
-		expected.WriteString(strings.Repeat(string(rune('a'+i%26)), len(iter.buffer)))
-		expected.WriteString("\"\n")
-	}
-	require.Equal(t, []string{expected.String()}, workerTestOutput(t, conf.OutputDirPath))
-}
-
-func TestWriterSourceErrors(t *testing.T) {
-	for _, stage := range []string{"decode", "next"} {
-		t.Run(stage, func(t *testing.T) {
+func TestWriterDecodeErrorAfterFileRotation(t *testing.T) {
+	for _, format := range []string{FileFormatSQLTextString, FileFormatCSVString} {
+		t.Run(format, func(t *testing.T) {
 			conf := defaultConfigForTest(t)
 			conf.OutputDirPath = t.TempDir()
+			conf.FileType = format
+			conf.NoHeader = true
+			conf.CsvLineTerminator = "\n"
+			conf.FileSize = 1
 			w := createTestWriter(conf, t)
-			sourceErr := errors.New("source " + stage + " failure")
-			meta := newMockTableIR("test", "failure", nil, nil, []string{"TEXT"})
+			sourceErr := errors.New("decode failure in next file")
+			meta := newMockTableIR("test", "decode_boundary", nil, nil, []string{"TEXT"})
 			data := &workerTestTableData{
 				mockTableIR: meta,
 				newIter: func(_ int) *workerTestRowIter {
-					iter := &workerTestRowIter{values: [][]byte{[]byte("first"), []byte("second")}, errorIndex: 1}
-					if stage == "decode" {
-						iter.decodeErr = sourceErr
-					} else {
-						iter.readErr = sourceErr
+					return &workerTestRowIter{
+						values:     [][]byte{[]byte("first"), []byte("second")},
+						errorIndex: 1,
+						decodeErr:  sourceErr,
 					}
-					return iter
 				},
 			}
 
 			require.ErrorContains(t, runWorkerTestTask(w, meta, data), sourceErr.Error())
-			require.True(t, data.iter.closed, "the failed source must be closed before the worker returns")
+			// Next reached the second row successfully, so the preceding file and its
+			// metrics are committed before decoding the first row of the next file.
+			firstFile := "\"first\"\n"
+			if format == FileFormatSQLTextString {
+				firstFile = "INSERT INTO `decode_boundary` VALUES\n('first');\n"
+			}
+			require.Equal(t, []string{firstFile}, workerTestOutput(t, conf.OutputDirPath))
+			require.Equal(t, float64(1), ReadGauge(w.metrics.finishedRowsGauge))
+			require.Equal(t, float64(len(firstFile)), ReadGauge(w.metrics.finishedSizeGauge))
+			require.True(t, data.iter.closed)
 		})
 	}
-}
-
-func TestWriterDecodeErrorAfterFileRotation(t *testing.T) {
-	conf := defaultConfigForTest(t)
-	conf.OutputDirPath = t.TempDir()
-	conf.FileType = FileFormatCSVString
-	conf.NoHeader = true
-	conf.CsvLineTerminator = "\n"
-	conf.FileSize = 1
-	w := createTestWriter(conf, t)
-	sourceErr := errors.New("decode failure in next file")
-	meta := newMockTableIR("test", "decode_boundary", nil, nil, []string{"TEXT"})
-	data := &workerTestTableData{
-		mockTableIR: meta,
-		newIter: func(_ int) *workerTestRowIter {
-			return &workerTestRowIter{
-				values:     [][]byte{[]byte("first"), []byte("second")},
-				errorIndex: 1,
-				decodeErr:  sourceErr,
-			}
-		},
-	}
-
-	require.ErrorContains(t, runWorkerTestTask(w, meta, data), sourceErr.Error())
-	// Next reached the second row successfully, so the preceding file and its
-	// metrics are committed before decoding the first row of the next file.
-	const firstFile = "\"first\"\n"
-	require.Equal(t, []string{firstFile}, workerTestOutput(t, conf.OutputDirPath))
-	require.Equal(t, float64(1), ReadGauge(w.metrics.finishedRowsGauge))
-	require.Equal(t, float64(len(firstFile)), ReadGauge(w.metrics.finishedSizeGauge))
-	require.True(t, data.iter.closed)
 }
 
 func TestWriterFailureCancelsBlockedSource(t *testing.T) {
