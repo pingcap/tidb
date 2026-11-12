@@ -486,7 +486,7 @@ func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec) {
 			} else {
 				needComma = true
 			}
-			b.WriteString(fmt.Sprintf("%v %s", val, strings.ToLower(ast.AnalyzeOptionString[optType])))
+			fmt.Fprintf(&b, "%v %s", val, strings.ToLower(ast.AnalyzeOptionString[optType]))
 		}
 	}
 	printOption(ast.AnalyzeOptNumBuckets)
@@ -499,7 +499,7 @@ func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec) {
 		} else {
 			needComma = true
 		}
-		b.WriteString(fmt.Sprintf("%v samplerate", sampleRate))
+		fmt.Fprintf(&b, "%v samplerate", sampleRate)
 	}
 	e.job.JobInfo = b.String()
 }

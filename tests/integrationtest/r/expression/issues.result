@@ -840,7 +840,7 @@ j
 {"test": 3}
 {"test": 0}
 {"test": "0"}
-{"test": 0}
+{"test": 0.0}
 {"test": "aaabbb"}
 {"test": 3.1415}
 {"test": []}
@@ -883,7 +883,7 @@ j
 {"test": 3}
 {"test": 0}
 {"test": "0"}
-{"test": 0}
+{"test": 0.0}
 {"test": "aaabbb"}
 {"test": 3.1415}
 {"test": []}

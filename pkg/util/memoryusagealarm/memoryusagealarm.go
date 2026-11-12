@@ -291,9 +291,9 @@ func (record *memoryUsageAlarm) tryRemoveRedundantRecords() {
 func getPlanString(info *util.ProcessInfo) string {
 	var buf strings.Builder
 	rows := info.PlanExplainRows
-	buf.WriteString(fmt.Sprintf("|%v|%v|%v|%v|%v|", "id", "estRows", "task", "access object", "operator info"))
+	fmt.Fprintf(&buf, "|%v|%v|%v|%v|%v|", "id", "estRows", "task", "access object", "operator info")
 	for _, row := range rows {
-		buf.WriteString(fmt.Sprintf("\n|%v|%v|%v|%v|%v|", row[0], row[1], row[2], row[3], row[4]))
+		fmt.Fprintf(&buf, "\n|%v|%v|%v|%v|%v|", row[0], row[1], row[2], row[3], row[4])
 	}
 	return buf.String()
 }
@@ -323,7 +323,7 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 	serverMemoryLimit := memory.ServerMemoryLimit.Load()
 	for i, totalCnt := 0, 10; i < len(list) && totalCnt > 0; i++ {
 		info := list[i]
-		buf.WriteString(fmt.Sprintf("SQL %v: \n", i))
+		fmt.Fprintf(&buf, "SQL %v: \n", i)
 		fields := util.GenLogFields(record.lastCheckTime.Sub(info.Time), info, false)
 		if fields == nil {
 			continue

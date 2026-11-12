@@ -85,6 +85,8 @@ func TestContextDetach(t *testing.T) {
 		ResourceGroupName:             "c",
 		LoadBasedReplicaReadThreshold: time.Second,
 		TiKVClientReadTimeout:         1,
+		MaxKeysRead:                   1,
+		MaxKeysReadCounter:            new(atomic.Uint64),
 
 		ReplicaClosestReadThreshold: 1,
 		ConnectionID:                1,

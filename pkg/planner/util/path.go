@@ -49,6 +49,8 @@ type AccessPath struct {
 	IdxCols        []*expression.Column
 	IdxColLens     []int
 	// ConstCols indicates whether the column is constant under the given conditions for all index columns.
+	// A column is also marked when an access condition restricts it to a single value only at execution
+	// time, i.e. `index_col = correlated_col`. See markConstCol.
 	ConstCols []bool
 	Ranges    []*ranger.Range
 	// CountAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
@@ -65,17 +67,41 @@ type AccessPath struct {
 	// If there are extra filters, store them in TableFilters.
 	PartialIndexPaths []*AccessPath
 
-	// ************************************************** special field below *********************************************************
-	// For every dnf/cnf item, there maybe several matched partial index paths to be determined later in property detecting and cost model.
-	// when PartialAlternativeIndexPaths is not empty, it means a special state for index merge path, and it can't have PartialIndexPaths
-	// at same time. Normal single index or table path also doesn't use this field.
-	PartialAlternativeIndexPaths [][]*AccessPath
-	// KeepIndexMergeORSourceFilter and IndexMergeORSourceFilter are only used with PartialAlternativeIndexPaths, which means for
-	// the new state/type of access path. (undetermined index merge path)
+	// The 3 fields below are for another case for building IndexMerge path besides AccessPath.PartialIndexPaths.
+	// Currently, it only applies to OR type IndexMerge.
+	// For every item in the OR list, there might be multiple candidate paths that satisfy the filters.
+	// The AccessPath.PartialIndexPaths case decides on one of them when building AccessPath. But here, we keep all the
+	// alternatives and make the decision later in findBestTask (see matchPropForIndexMergeAlternatives()).
+	// It's because we only know the required Sort property at that time. Delaying the decision to findBestTask can make
+	// us able to consider and try to satisfy the required Sort property.
+	/* For example:
+		create table t (a int, b int, c int, key a(a), key b(b), key ac(a, c), key bc(b, c));
+		explain format='verbose' select * from t where a=1 or b=1 order by c;
+	For a=1, it has two partial alternative paths: [a, ac]
+	For b=1, it has two partial alternative paths: [b, bc]
+	Then we build such a AccessPath:
+		AccessPath {
+			PartialAlternativeIndexPaths: [[[a], [ac]], [[b], [bc]]]
+			IndexMergeORSourceFilter: a = 1 or b = 1
+		}
+	*/
+
+	// PartialAlternativeIndexPaths stores all the alternative paths for each OR branch.
+	// meaning of the 3 dimensions:
+	// each OR branch -> each alternative for this OR branch -> each access path of this alternative (One JSON filter on
+	// MV index may build into multiple partial paths. For example, json_overlap(a, '[1, 2, 3]') builds into 3 partial
+	// paths in the final plan. For non-MV index, each alternative only has one AccessPath.)
+	PartialAlternativeIndexPaths [][][]*AccessPath
+	// KeepIndexMergeORSourceFilter indicates if we need to keep IndexMergeORSourceFilter in the final Selection of the
+	// IndexMerge plan.
+	// It has 2 cases:
+	// 1. The AccessPath.PartialAlternativeIndexPaths is set.
+	// If this field is true, the final plan should keep the filter.
+	// 2. It's a children of AccessPath.PartialAlternativeIndexPaths.
+	// If the final plan contains this alternative, it should keep the filter.
 	KeepIndexMergeORSourceFilter bool
-	// IndexMergeORSourceFilter indicates that there are some expression inside this dnf that couldn't be pushed down, and we should keep the entire dnf above.
+	// IndexMergeORSourceFilter is the original OR list for building the IndexMerge path.
 	IndexMergeORSourceFilter expression.Expression
-	// ********************************************************************************************************************************
 
 	// IndexMergeIsIntersection means whether it's intersection type or union type IndexMerge path.
 	// It's only valid for a IndexMerge path.
@@ -178,15 +204,15 @@ func (path *AccessPath) Clone() *AccessPath {
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
 	}
-	for _, partialPath := range path.PartialIndexPaths {
-		ret.PartialIndexPaths = append(ret.PartialIndexPaths, partialPath.Clone())
-	}
-	for _, onePartialAlternative := range path.PartialAlternativeIndexPaths {
-		tmp := make([]*AccessPath, 0, len(onePartialAlternative))
-		for _, oneAlternative := range onePartialAlternative {
-			tmp = append(tmp, oneAlternative.Clone())
+	ret.PartialIndexPaths = SliceDeepClone(path.PartialIndexPaths)
+	ret.PartialAlternativeIndexPaths = make([][][]*AccessPath, 0, len(path.PartialAlternativeIndexPaths))
+	for _, oneORBranch := range path.PartialAlternativeIndexPaths {
+		clonedORBranch := make([][]*AccessPath, 0, len(oneORBranch))
+		for _, oneAlternative := range oneORBranch {
+			clonedOneAlternative := SliceDeepClone(oneAlternative)
+			clonedORBranch = append(clonedORBranch, clonedOneAlternative)
 		}
-		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, tmp)
+		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, clonedORBranch)
 	}
 	for _, ranges := range path.GroupedRanges {
 		ret.GroupedRanges = append(ret.GroupedRanges, CloneRanges(ranges))
@@ -225,6 +251,8 @@ func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.
 // The function consider the `idx_col_1 = const and index_col_2 = cor_col and index_col_3 = const` case.
 // It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.
+// Each equality it moves also marks the matched index column in AccessPath.ConstCols, so that the
+// order the remaining index columns provide can be recognized. See markConstCol for the reasoning.
 func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
 	used := make([]bool, len(path.TableFilters))
@@ -254,6 +282,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			access[i-eqOrInCount] = filter
 			if path.IdxColLens[i] == types.UnspecifiedLength {
 				used[j] = true
+				path.markConstCol(i)
 			}
 			break
 		}
@@ -268,6 +297,28 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 		}
 	}
 	return access, remained
+}
+
+// markConstCol records that path.IdxCols[idx] is restricted to a single value by an access
+// condition, so callers that reason about index order (matchProperty) may skip over it.
+//
+// The ranger cannot build a range for `index_col = correlated_col` at plan time, so such a
+// column is neither point-ranged in path.Ranges nor marked in ConstCols by
+// DetachCondAndBuildRangeForIndex. The range is instead rebuilt per execution of the inner
+// subtree in ResolveCorrelatedColumns/rebuildIndexRanges, and because the condition is an
+// equality that rebuilt range is always a single point on this column. Hence the index columns
+// after it stay sorted, exactly as they would be for a literal equality, and an ORDER BY on
+// them can be satisfied by the scan order instead of a sort.
+//
+// Only full-length columns may be marked: on a prefix column the stored value is truncated, so
+// an equality does not pin the column to one value.
+func (path *AccessPath) markConstCol(idx int) {
+	if path.ConstCols == nil {
+		path.ConstCols = make([]bool, len(path.IdxCols))
+	}
+	if idx < len(path.ConstCols) {
+		path.ConstCols[idx] = true
+	}
 }
 
 // isColEqConstant checks if the expression is eq function that one side is column and the other side is constant.

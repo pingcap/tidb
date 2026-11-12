@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -590,17 +591,19 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 	}
 }
 
+func getDataSourceHintTable(ds *logicalop.DataSource) *h.HintedTable {
+	if ds.TableAsName != nil && len(ds.TableAsName.L) != 0 {
+		return &h.HintedTable{DBName: ds.DBName, TblName: *ds.TableAsName, SelectOffset: ds.QueryBlockOffset()}
+	}
+	return &h.HintedTable{DBName: ds.DBName, TblName: ds.TableInfo.Name, SelectOffset: ds.QueryBlockOffset()}
+}
+
 func setPreferredStoreType(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
 	if hintInfo == nil {
 		return
 	}
 
-	var alias *h.HintedTable
-	if len(ds.TableAsName.L) != 0 {
-		alias = &h.HintedTable{DBName: ds.DBName, TblName: *ds.TableAsName, SelectOffset: ds.QueryBlockOffset()}
-	} else {
-		alias = &h.HintedTable{DBName: ds.DBName, TblName: ds.TableInfo.Name, SelectOffset: ds.QueryBlockOffset()}
-	}
+	alias := getDataSourceHintTable(ds)
 	if hintTbl := hintInfo.IfPreferTiKV(alias); hintTbl != nil {
 		for _, path := range ds.AllPossibleAccessPaths {
 			if path.StoreType == kv.TiKV {
@@ -722,6 +725,58 @@ func isImmediateLateralTableSource(node ast.ResultSetNode) bool {
 	default:
 		return false
 	}
+}
+
+func setTiFlashLMFilterColumns(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
+	if hintInfo == nil {
+		return
+	}
+
+	alias := getDataSourceHintTable(ds)
+	columnIDsByName := make(map[string]int64, len(ds.Columns))
+	for i, col := range ds.Columns {
+		columnIDsByName[col.Name.L] = ds.TblCols[i].UniqueID
+	}
+	columnIDSet := make(map[int64]struct{}, len(ds.TiFlashLMFilterColumnIDs))
+	for _, colID := range ds.TiFlashLMFilterColumnIDs {
+		columnIDSet[colID] = struct{}{}
+	}
+
+	for i, columnHint := range hintInfo.TiFlashLMFilters {
+		if !columnHint.Match(alias) {
+			continue
+		}
+		hintInfo.TiFlashLMFilters[i].Matched = true
+		columnIDs := make([]int64, 0, len(columnHint.Columns))
+		invalidColumnNames := make([]string, 0)
+		for _, columnName := range columnHint.Columns {
+			columnID, ok := columnIDsByName[columnName.L]
+			if !ok {
+				invalidColumnNames = append(invalidColumnNames, columnName.O)
+				continue
+			}
+			columnIDs = append(columnIDs, columnID)
+		}
+		if len(invalidColumnNames) > 0 {
+			errMsg := fmt.Sprintf("%s(%s) is inapplicable, check whether the columns (%s) exist in table %s.%s",
+				h.HintTiFlashLMFilter,
+				columnHint.ColumnString(),
+				strings.Join(invalidColumnNames, ", "),
+				alias.DBName.O,
+				alias.TblName.O,
+			)
+			ds.SCtx().GetSessionVars().StmtCtx.SetHintWarning(errMsg)
+			continue
+		}
+		for _, columnID := range columnIDs {
+			if _, ok := columnIDSet[columnID]; ok {
+				continue
+			}
+			columnIDSet[columnID] = struct{}{}
+			ds.TiFlashLMFilterColumnIDs = append(ds.TiFlashLMFilterColumnIDs, columnID)
+		}
+	}
+	slices.Sort(ds.TiFlashLMFilterColumnIDs)
 }
 
 func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.LogicalPlan, error) {
@@ -4344,6 +4399,11 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
+	oldInSelect := b.inSelect
+	b.inSelect = true
+	defer func() {
+		b.inSelect = oldInSelect
+	}()
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
 	defer func() {
@@ -5106,6 +5166,31 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, plannererrors.ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
 	}
 
+	// Reading a table in a SELECT requires a SELECT privilege on that table even
+	// when the query does not reference any of its columns, such as
+	// `SELECT 1 FROM t` or `SELECT COUNT(*) FROM t`.
+	//
+	// Column-level privileges make the per-column checks recorded by the
+	// expression rewriter insufficient on their own: a table whose columns are
+	// never referenced produces no SELECT requirement at all, so a user without
+	// any grant could still read the table (leaking its row count) and probe its
+	// existence. `"*"` requires a table-level SELECT privilege or a column-level
+	// SELECT privilege on any column, matching MySQL.
+	//
+	// This is deliberately limited to SELECT so that the target tables of
+	// UPDATE/DELETE do not gain a spurious SELECT requirement.
+	if b.inSelect && !tableInfo.IsSequence() {
+		var selectErr error
+		if len(b.SavedViews) > 0 {
+			view := b.SavedViews[len(b.SavedViews)-1]
+			selectErr = plannererrors.ErrViewInvalid.GenWithStackByArgs(view.Schema.O, view.Name.O)
+		} else {
+			user, host := auth.GetUserAndHostName(sessionVars.User)
+			selectErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", user, host, tableInfo.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "*", selectErr)
+	}
+
 	if tbl.Type().IsVirtualTable() {
 		if tn.TableSample != nil {
 			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in virtual tables")
@@ -5380,6 +5465,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	b.handleHelper.pushMap(handleMap)
 	ds.SetSchema(schema)
 	ds.SetOutputNames(names)
+	setTiFlashLMFilterColumns(ds, b.TableHints())
 	// setPreferredStoreType will mark user preferred path, which should be shared by all ds alternative. Here
 	// we only mark it for the AllPossibleAccessPaths(since the element inside is shared by PossibleAccessPaths),
 	// and the following ds alternative will clone/inherit this mark from DS copying.

@@ -31,6 +31,7 @@ type ParquetColumn struct {
 	Name      string
 	Type      parquet.Type
 	Converted schema.ConvertedType
+	Logical   schema.LogicalType
 	TypeLen   int
 	Precision int
 	Scale     int
@@ -90,13 +91,25 @@ func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int,
 		if pc.TypeLen > 0 {
 			typeLen = pc.TypeLen
 		}
-		if fields[i], err = schema.NewPrimitiveNodeConverted(
-			pc.Name,
-			parquet.Repetitions.Optional,
-			pc.Type, pc.Converted,
-			typeLen, pc.Precision, pc.Scale,
-			-1,
-		); err != nil {
+		if pc.Logical != nil {
+			fields[i], err = schema.NewPrimitiveNodeLogical(
+				pc.Name,
+				parquet.Repetitions.Optional,
+				pc.Logical,
+				pc.Type,
+				typeLen,
+				-1,
+			)
+		} else {
+			fields[i], err = schema.NewPrimitiveNodeConverted(
+				pc.Name,
+				parquet.Repetitions.Optional,
+				pc.Type, pc.Converted,
+				typeLen, pc.Precision, pc.Scale,
+				-1,
+			)
+		}
+		if err != nil {
 			return err
 		}
 		opts = append(opts, parquet.WithDictionaryFor(pc.Name, true))

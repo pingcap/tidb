@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -35,10 +36,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
@@ -225,6 +230,74 @@ func unixSocketAvailable() bool {
 		return true
 	}
 	return false
+}
+
+type stmtSummarySysVarContext struct {
+	*mock.Context
+	rows []chunk.Row
+}
+
+func (c *stmtSummarySysVarContext) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
+	return c
+}
+
+func (c *stmtSummarySysVarContext) ExecRestrictedSQL(context.Context, []sqlexec.OptionFuncAlias, string, ...any) ([]chunk.Row, []*resolve.ResultField, error) {
+	return c.rows, nil, nil
+}
+
+// Regression coverage for issue #69913's repeated sysvar-cache rebuild path.
+func TestLoadSysVarCacheLoopReappliesStmtSummaryInternalQuery(t *testing.T) {
+	require.False(t, config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent)
+
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	dom := NewDomain(store, 80*time.Millisecond, 0, 0, mockFactory, nil)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+
+	ctx := &stmtSummarySysVarContext{
+		Context: mock.NewContext(),
+		rows: []chunk.Row{
+			chunk.MutRowFromValues(variable.TiDBStmtSummaryInternalQuery, variable.Off).ToRow(),
+			// This lightweight Domain does not start DDL, so keep the MDL callback
+			// from calling its DDL-owned hook while rebuilding unrelated sysvars.
+			chunk.MutRowFromValues(variable.TiDBEnableMDL, variable.BoolToOnOff(variable.EnableMDL.Load())).ToRow(),
+		},
+	}
+
+	originalInternalEnabled := stmtsummaryv2.EnabledInternal()
+	t.Cleanup(func() {
+		require.NoError(t, stmtsummaryv2.SetEnableInternalQuery(originalInternalEnabled))
+	})
+	require.NoError(t, stmtsummaryv2.SetEnableInternalQuery(false))
+	require.False(t, stmtsummaryv2.EnabledInternal())
+
+	stmtSummarySysVar := variable.GetSysVar(variable.TiDBStmtSummaryInternalQuery)
+	require.NotNil(t, stmtSummarySysVar)
+	wrappedStmtSummarySysVar := *stmtSummarySysVar
+	originalSetGlobal := wrappedStmtSummarySysVar.SetGlobal
+	appliedCount := 0
+	wrappedStmtSummarySysVar.SetGlobal = func(ctx context.Context, vars *variable.SessionVars, val string) error {
+		require.Equal(t, variable.Off, val)
+		appliedCount++
+		return originalSetGlobal(ctx, vars, val)
+	}
+	variable.RegisterSysVar(&wrappedStmtSummarySysVar)
+	t.Cleanup(func() {
+		variable.RegisterSysVar(stmtSummarySysVar)
+	})
+
+	require.NoError(t, dom.LoadSysVarCacheLoop(ctx))
+	require.False(t, stmtsummaryv2.EnabledInternal())
+	require.Equal(t, 1, appliedCount)
+
+	// The persisted and local values both remain OFF. A second rebuild must still
+	// invoke the callback, which runs the internal-summary cleanup path again.
+	require.NoError(t, dom.rebuildSysVarCache(ctx))
+	require.False(t, stmtsummaryv2.EnabledInternal())
+	require.Equal(t, 2, appliedCount)
 }
 
 func mockFactory() (pools.Resource, error) {
@@ -514,4 +587,44 @@ func TestDeferFn(t *testing.T) {
 	require.False(t, c)
 	require.True(t, d)
 	require.Len(t, df.data, 1)
+}
+
+func TestClosestReplicaReadCheckerSkipsNonServingNodes(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	dom := NewDomain(store, 80*time.Millisecond, 0, 0, mockFactory, nil)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+	dom.sysVarCache.Lock()
+	dom.sysVarCache.global = map[string]string{variable.TiDBReplicaRead: "closest-adaptive"}
+	dom.sysVarCache.Unlock()
+	original := variable.IsAdaptiveReplicaReadEnabled()
+	t.Cleanup(func() { variable.SetEnableAdaptiveReplicaRead(original) })
+	pdClient := &mockInfoPdClient{stores: []*metapb.Store{
+		{Labels: []*metapb.StoreLabel{{Key: "zone", Value: "zone1"}}},
+		{Labels: []*metapb.StoreLabel{{Key: "zone", Value: "zone2"}}},
+	}}
+	const realServers = `"s1":{"ddl_id":"s1","labels":{"zone":"zone1"}},"s2":{"ddl_id":"s2","labels":{"zone":"zone2"},"disable_rpc":false}`
+	for _, tc := range []struct {
+		name       string
+		serverInfo string
+		localInfo  string
+		enabled    bool
+	}{
+		{"BR sorts before serving node", `{` + realServers + `,"br":{"ddl_id":"br","disable_rpc":true,"labels":{"zone":"zone1"}}}`, `{"ddl_id":"s1","labels":{"zone":"zone1"}}`, true},
+		{"BR must not fill an empty zone", `{"s1":{"ddl_id":"s1","labels":{"zone":"zone1"}},"br":{"ddl_id":"br","disable_rpc":true,"labels":{"zone":"zone2"}}}`, `{"ddl_id":"s1","labels":{"zone":"zone1"}}`, false},
+		{"local BR", `{"br":{"ddl_id":"br","disable_rpc":true,"labels":{"zone":"zone1"}}}`, `{"ddl_id":"br","disable_rpc":true,"labels":{"zone":"zone1"}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for fp, data := range map[string]string{"mockGetAllServerInfo": tc.serverInfo, "mockGetServerInfo": tc.localInfo} {
+				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/"+fp, fmt.Sprintf("return(`%s`)", data)))
+				t.Cleanup(func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/"+fp)) })
+			}
+			variable.SetEnableAdaptiveReplicaRead(!tc.enabled)
+			require.NoError(t, dom.checkReplicaRead(context.Background(), pdClient))
+			require.Equal(t, tc.enabled, variable.IsAdaptiveReplicaReadEnabled())
+		})
+	}
 }

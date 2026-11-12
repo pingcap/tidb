@@ -835,6 +835,10 @@ func onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 
 	fkh := newForeignKeyHelper()
 	metaMut := jobCtx.metaMut
+	is := jobCtx.infoCache.GetLatest()
+	firstRenameByTableID := make(map[int64]*model.RenameTableArgs)
+	finalRenameByTableID := make(map[int64]*model.RenameTableArgs)
+	renamedTableByID := make(map[int64]schemaIDAndTableInfo)
 	for _, info := range args.RenameTableInfos {
 		job.TableID = info.TableID
 		job.TableName = info.OldTableName.L
@@ -846,12 +850,16 @@ func onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		err = adjustForeignKeyChildTableInfoAfterRenameTable(
-			jobCtx.infoCache, metaMut, job, &fkh, tblInfo,
-			info.OldSchemaName, info.OldTableName, info.NewTableName, info.NewSchemaID)
-		if err != nil {
-			return ver, errors.Trace(err)
+		if _, ok := firstRenameByTableID[info.TableID]; !ok {
+			firstRenameByTableID[info.TableID] = info
 		}
+		finalRenameByTableID[info.TableID] = info
+		renamedTableByID[info.TableID] = schemaIDAndTableInfo{schemaID: info.NewSchemaID, tblInfo: tblInfo}
+	}
+	err = adjustForeignKeyChildTableInfoAfterRenameTables(
+		is, metaMut, &fkh, firstRenameByTableID, finalRenameByTableID, renamedTableByID)
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
 
 	ver, err = updateSchemaVersion(jobCtx, job, fkh.getLoadedTables()...)
@@ -931,6 +939,59 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(
 		return nil
 	}
 	fkh.addLoadedTable(oldSchemaName.L, oldTableName.L, newDB.ID, tblInfo)
+	err := adjustReferredForeignKeysAfterRename(is, t, fkh, referredFKs, newDB.Name, newTableName)
+	if err != nil {
+		return err
+	}
+	return updateLoadedForeignKeyTables(t, fkh)
+}
+
+func adjustForeignKeyChildTableInfoAfterRenameTables(
+	is infoschema.InfoSchema,
+	t *meta.Mutator,
+	fkh *foreignKeyHelper,
+	firstRenameByTableID, finalRenameByTableID map[int64]*model.RenameTableArgs,
+	renamedTableByID map[int64]schemaIDAndTableInfo,
+) error {
+	if !variable.EnableForeignKey.Load() {
+		return nil
+	}
+
+	// The InfoSchema referred-FK map describes table names before the statement.
+	// Register each renamed object under its original name, but point to the
+	// TableInfo at its final location so child tables renamed earlier in the same
+	// statement are updated in place.
+	for tableID, firstRename := range firstRenameByTableID {
+		renamedTable := renamedTableByID[tableID]
+		fkh.addLoadedTable(firstRename.OldSchemaName.L, firstRename.OldTableName.L,
+			renamedTable.schemaID, renamedTable.tblInfo)
+	}
+
+	for tableID, firstRename := range firstRenameByTableID {
+		referredFKs := is.GetTableReferredForeignKeys(firstRename.OldSchemaName.L, firstRename.OldTableName.L)
+		if len(referredFKs) == 0 {
+			continue
+		}
+		finalRename := finalRenameByTableID[tableID]
+		newDB, ok := is.SchemaByID(finalRename.NewSchemaID)
+		if !ok {
+			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", finalRename.NewSchemaID))
+		}
+		if err := adjustReferredForeignKeysAfterRename(
+			is, t, fkh, referredFKs, newDB.Name, finalRename.NewTableName); err != nil {
+			return err
+		}
+	}
+	return updateLoadedForeignKeyTables(t, fkh)
+}
+
+func adjustReferredForeignKeysAfterRename(
+	is infoschema.InfoSchema,
+	t *meta.Mutator,
+	fkh *foreignKeyHelper,
+	referredFKs []*model.ReferredFKInfo,
+	newSchemaName, newTableName pmodel.CIStr,
+) error {
 	for _, referredFK := range referredFKs {
 		childTableInfo, err := fkh.getTableFromStorage(is, t, referredFK.ChildSchema, referredFK.ChildTable)
 		if err != nil {
@@ -943,9 +1004,13 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(
 		if childFKInfo == nil {
 			continue
 		}
-		childFKInfo.RefSchema = newDB.Name
+		childFKInfo.RefSchema = newSchemaName
 		childFKInfo.RefTable = newTableName
 	}
+	return nil
+}
+
+func updateLoadedForeignKeyTables(t *meta.Mutator, fkh *foreignKeyHelper) error {
 	for _, info := range fkh.loaded {
 		err := updateTable(t, info.schemaID, info.tblInfo)
 		if err != nil {

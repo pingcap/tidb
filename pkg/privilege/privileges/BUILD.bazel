@@ -54,6 +54,7 @@ go_test(
     timeout = "short",
     srcs = [
         "cache_test.go",
+        "column_privilege_const_select_test.go",
         "main_test.go",
         "privileges_test.go",
         "tidb_auth_token_test.go",
