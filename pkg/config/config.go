@@ -213,16 +213,22 @@ var (
 
 // Config contains configuration options.
 type Config struct {
-	Host             string    `toml:"host" json:"host"`
-	AdvertiseAddress string    `toml:"advertise-address" json:"advertise-address"`
-	Port             uint      `toml:"port" json:"port"`
-	Cors             string    `toml:"cors" json:"cors"`
-	Store            StoreType `toml:"store" json:"store"`
-	Path             string    `toml:"path" json:"path"`
-	Socket           string    `toml:"socket" json:"socket"`
-	Lease            string    `toml:"lease" json:"lease"`
-	SplitTable       bool      `toml:"split-table" json:"split-table"`
-	TokenLimit       uint      `toml:"token-limit" json:"token-limit"`
+	// ConfigFile is the absolute startup configuration path, never a TOML option.
+	ConfigFile string `toml:"-" json:"-"`
+	// LogLevelOverride retains an explicitly supplied -L flag across file reloads.
+	LogLevelOverride string `toml:"-" json:"-"`
+	// StoreLimitReloaded prevents background sysvar refreshes from undoing a file reload.
+	StoreLimitReloaded bool      `toml:"-" json:"-"`
+	Host               string    `toml:"host" json:"host"`
+	AdvertiseAddress   string    `toml:"advertise-address" json:"advertise-address"`
+	Port               uint      `toml:"port" json:"port"`
+	Cors               string    `toml:"cors" json:"cors"`
+	Store              StoreType `toml:"store" json:"store"`
+	Path               string    `toml:"path" json:"path"`
+	Socket             string    `toml:"socket" json:"socket"`
+	Lease              string    `toml:"lease" json:"lease"`
+	SplitTable         bool      `toml:"split-table" json:"split-table"`
+	TokenLimit         uint      `toml:"token-limit" json:"token-limit"`
 	// MaxAllowedPacket is the configured default for max_allowed_packet in starter deployment mode.
 	MaxAllowedPacket uint64 `toml:"max-allowed-packet" json:"max-allowed-packet"`
 	TempDir          string `toml:"temp-dir" json:"temp-dir"`
@@ -1340,6 +1346,7 @@ var defaultConf = Config{
 
 var (
 	globalConf                     atomic.Pointer[Config]
+	globalConfigMu                 sync.Mutex
 	preparedErrorMessageExtensions atomic.Pointer[[]ErrorMessageExtension]
 )
 
@@ -1349,9 +1356,8 @@ func NewConfig() *Config {
 	return &conf
 }
 
-// GetGlobalConfig returns the global configuration for this server.
-// It should store configuration from command line and configuration file.
-// Other parts of the system can read the global configuration use this function.
+// GetGlobalConfig returns the current configuration snapshot. Runtime callers
+// must not modify it; use UpdateGlobal or UpdateGlobalWithError to publish changes.
 func GetGlobalConfig() *Config {
 	return globalConf.Load()
 }
@@ -1367,6 +1373,12 @@ func GetErrorMessageExtensions() []ErrorMessageExtension {
 
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
+	globalConfigMu.Lock()
+	defer globalConfigMu.Unlock()
+	storeGlobalConfig(config)
+}
+
+func storeGlobalConfig(config *Config) {
 	extensions, err := prepareErrorMessageExtensions(config.ErrorMessageExtensions, true)
 	if err != nil {
 		logutil.BgLogger().Warn("skip invalid error message extension config", zap.Error(err))
@@ -1454,6 +1466,8 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCm
 	cfg := GetGlobalConfig()
 	var err error
 	if confPath != "" {
+		confPath, err = filepath.Abs(confPath)
+		terror.MustNil(err)
 		if err = cfg.Load(confPath); err != nil {
 			// Unused config item error turns to warnings.
 			if tmp, ok := err.(*ErrConfigValidationFailed); ok {
@@ -1488,7 +1502,14 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCm
 			os.Exit(1)
 		}
 	}
+	cfg.ConfigFile = confPath
 	enforceCmdArgs(cfg, fset)
+	cfg.LogLevelOverride = ""
+	fset.Visit(func(f *flag.Flag) {
+		if f.Name == "L" {
+			cfg.LogLevelOverride = cfg.Log.Level
+		}
+	})
 
 	if err := cfg.Valid(); err != nil {
 		if !filepath.IsAbs(confPath) {
@@ -1912,12 +1933,27 @@ func (c *Config) Valid() error {
 	return l.UnmarshalText([]byte(c.Log.Level))
 }
 
-// UpdateGlobal updates the global config, and provide a restore function that can be used to restore to the original.
+// UpdateGlobal serializes a runtime update with other writers and file reloads.
+// The callback must not modify shared maps/slices or recursively update config.
 func UpdateGlobal(f func(conf *Config)) {
-	g := GetGlobalConfig()
-	newConf := *g
-	f(&newConf)
-	StoreGlobalConfig(&newConf)
+	_ = UpdateGlobalWithError(func(conf *Config) error {
+		f(conf)
+		return nil
+	})
+}
+
+// UpdateGlobalWithError publishes a configuration snapshot only if f succeeds.
+// The callback has the same restrictions as UpdateGlobal and must perform any
+// fallible validation before applying runtime side effects.
+func UpdateGlobalWithError(f func(conf *Config) error) error {
+	globalConfigMu.Lock()
+	defer globalConfigMu.Unlock()
+	newConf := *GetGlobalConfig()
+	if err := f(&newConf); err != nil {
+		return err
+	}
+	storeGlobalConfig(&newConf)
+	return nil
 }
 
 // RestoreFunc gets a function that restore the config to the current value.

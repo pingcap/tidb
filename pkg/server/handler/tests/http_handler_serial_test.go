@@ -24,6 +24,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -40,16 +42,19 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/server/handler/tikvhandler"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/stretchr/testify/require"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/pd/client/clients/gc"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -876,4 +881,134 @@ func TestIngestParam(t *testing.T) {
 			require.Equal(t, tc.expectedVal, payload.Value)
 		})
 	}
+}
+
+func TestConfigReload(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	oldLevel := log.GetLevel()
+	oldProcs := runtime.GOMAXPROCS(0)
+	oldCrossJoin := plannercore.AllowCartesianProduct.Load()
+	oldRatio := statistics.RatioOfPseudoEstimate.Load()
+	oldLimit := tikvstore.StoreLimit.Load()
+	t.Cleanup(func() {
+		log.SetLevel(oldLevel)
+		runtime.GOMAXPROCS(oldProcs)
+		plannercore.AllowCartesianProduct.Store(oldCrossJoin)
+		statistics.RatioOfPseudoEstimate.Store(oldRatio)
+		tikvstore.StoreLimit.Store(oldLimit)
+	})
+	cfg := config.NewConfig()
+	cfg.ConfigFile = filepath.Join(t.TempDir(), "tidb.toml")
+	config.StoreGlobalConfig(cfg)
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+	reload := func(method string, status int) string {
+		req, err := http.NewRequest(method, ts.StatusURL("/config/reload"), nil)
+		require.NoError(t, err)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		data, err := io.ReadAll(resp.Body)
+		require.NoError(t, resp.Body.Close())
+		require.NoError(t, err)
+		require.Equal(t, status, resp.StatusCode, string(data))
+		return string(data)
+	}
+	reloadOK := func() config.ReloadResult {
+		body := reload(http.MethodPut, http.StatusOK)
+		var result config.ReloadResult
+		require.NoError(t, json.Unmarshal([]byte(body), &result))
+		return result
+	}
+	reload(http.MethodGet, http.StatusMethodNotAllowed)
+	reload(http.MethodPost, http.StatusMethodNotAllowed)
+	reload(http.MethodPut, http.StatusInternalServerError) // Missing startup file.
+	const contents = `# File owned by the configuration platform.
+port = 4999
+tikv-worker-url = "worker-new:19000"
+unknown-option = "ignored"
+[log]
+level = "warn"
+[performance]
+max-procs = 2
+cross-join = false
+pseudo-estimate-ratio = 0.5
+stmt-count-limit = 123
+[tikv-client]
+store-limit = 100
+txn-chunk-writer-addr = "txn-new:19000"
+[instance]
+tidb_slow_log_threshold = 123
+`
+	require.NoError(t, os.WriteFile(cfg.ConfigFile, []byte(contents), 0400))
+	report := reloadOK()
+	require.Contains(t, report.RestartRequired, "port")
+	require.Equal(t, []string{"unknown-option"}, report.Unknown)
+	require.Contains(t, report.AppliedForNewClients, "tikv-worker-url")
+	require.Contains(t, report.AppliedForNewClients, "tikv-client.txn-chunk-writer-addr")
+	require.Equal(t, 2, runtime.GOMAXPROCS(0))
+	require.Equal(t, zap.WarnLevel, log.GetLevel())
+	require.False(t, plannercore.AllowCartesianProduct.Load())
+	require.Equal(t, 0.5, statistics.RatioOfPseudoEstimate.Load())
+	require.Equal(t, int64(100), tikvstore.StoreLimit.Load())
+	require.Equal(t, cfg.Port, config.GetGlobalConfig().Port)
+	resp, err := ts.FetchStatus("/config")
+	require.NoError(t, err)
+	var observed config.Config
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&observed))
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "warn", observed.Log.Level)
+	require.Equal(t, uint(123), observed.Performance.StmtCountLimit)
+	data, err := os.ReadFile(cfg.ConfigFile)
+	require.NoError(t, err)
+	require.Equal(t, contents, string(data))
+	// Verify the SQL-visible value on the same connection across reloads.
+	db, err := sql.Open("mysql", ts.GetDSN())
+	require.NoError(t, err)
+	defer db.Close()
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	defer conn.Close()
+	var threshold int
+	require.NoError(t, conn.QueryRowContext(context.Background(), "SELECT @@GLOBAL.tidb_slow_log_threshold").Scan(&threshold))
+	require.Equal(t, 123, threshold)
+	_, err = conn.ExecContext(context.Background(), "SET GLOBAL tidb_slow_log_threshold = 456")
+	require.NoError(t, err)
+	reloadOK()
+	require.NoError(t, conn.QueryRowContext(context.Background(), "SELECT @@GLOBAL.tidb_slow_log_threshold").Scan(&threshold))
+	require.Equal(t, 123, threshold)
+	// Independent runtime changes must be restored from the managed file.
+	tikvstore.StoreLimit.Store(200)
+	statistics.RatioOfPseudoEstimate.Store(0.9)
+	plannercore.AllowCartesianProduct.Store(true)
+	runtime.GOMAXPROCS(3)
+	log.SetLevel(zap.ErrorLevel)
+	reloadOK()
+	require.Equal(t, int64(100), tikvstore.StoreLimit.Load())
+	require.Equal(t, 0.5, statistics.RatioOfPseudoEstimate.Load())
+	require.False(t, plannercore.AllowCartesianProduct.Load())
+	require.Equal(t, 2, runtime.GOMAXPROCS(0))
+	require.Equal(t, zap.WarnLevel, log.GetLevel())
+	// A later invalid edit must not apply the otherwise valid log level change.
+	require.NoError(t, os.Chmod(cfg.ConfigFile, 0600))
+	require.NoError(t, os.WriteFile(cfg.ConfigFile, []byte("[log]\nlevel = 'info'\n[tikv-client]\nstore-limit = -1"), 0600))
+	reload(http.MethodPut, http.StatusInternalServerError)
+	require.Equal(t, zap.WarnLevel, log.GetLevel())
+	require.Equal(t, int64(100), tikvstore.StoreLimit.Load())
+	// A platform can atomically replace the managed file; omitted options reset.
+	replacement := filepath.Join(filepath.Dir(cfg.ConfigFile), "replacement.toml")
+	require.NoError(t, os.WriteFile(replacement, []byte("port = 4999"), 0400))
+	require.NoError(t, os.Rename(replacement, cfg.ConfigFile))
+	reloadOK()
+	require.Equal(t, zap.InfoLevel, log.GetLevel())
+	require.Equal(t, config.NewConfig().Performance.CrossJoin, plannercore.AllowCartesianProduct.Load())
+	require.Equal(t, config.NewConfig().Performance.PseudoEstimateRatio, statistics.RatioOfPseudoEstimate.Load())
+	require.Equal(t, config.NewConfig().TiKVClient.StoreLimit, tikvstore.StoreLimit.Load())
+	require.Zero(t, config.GetGlobalConfig().Performance.MaxProcs)
+	defaultProcs := runtime.GOMAXPROCS(0)
+	runtime.GOMAXPROCS(defaultProcs + 1)
+	reloadOK() // Snapshot and file both contain zero; restore the runtime policy too.
+	require.Equal(t, defaultProcs, runtime.GOMAXPROCS(0))
+	config.UpdateGlobal(func(c *config.Config) { c.ConfigFile = "" })
+	require.Contains(t, reload(http.MethodPut, http.StatusInternalServerError), "--config")
 }

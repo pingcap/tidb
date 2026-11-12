@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -49,6 +51,7 @@ import (
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
 	"go.etcd.io/etcd/tests/v3/integration"
@@ -671,4 +674,33 @@ func TestIsAnalyzeTableSQL(t *testing.T) {
 	for _, tt := range tests {
 		require.True(t, isAnalyzeTableSQL(tt.sql))
 	}
+}
+
+func TestConfigReloadStoreLimitCache(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	oldLimit := tikvstore.StoreLimit.Load()
+	t.Cleanup(func() { tikvstore.StoreLimit.Store(oldLimit) })
+	config.StoreGlobalConfig(config.NewConfig())
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	dom := NewDomain(store, 80*time.Millisecond, 0, 0, mockFactory)
+	t.Cleanup(func() { dom.Close(); require.NoError(t, store.Close()) })
+	ctx := &stmtSummarySysVarContext{Context: mock.NewContext(), rows: []chunk.Row{
+		chunk.MutRowFromValues(vardef.TiDBStoreLimit, "200").ToRow(),
+		chunk.MutRowFromValues(vardef.TiDBEnableMDL, variable.BoolToOnOff(vardef.IsMDLEnabled())).ToRow(),
+	}}
+	require.NoError(t, dom.rebuildSysVarCache(ctx))
+	require.Equal(t, int64(200), tikvstore.StoreLimit.Load())
+	path := filepath.Join(t.TempDir(), "tidb.toml")
+	require.NoError(t, os.WriteFile(path, []byte("[tikv-client]\nstore-limit = 100\n"), 0600))
+	require.NoError(t, config.ReloadGlobalConfig(path, func(_, next *config.Config) { tikvstore.StoreLimit.Store(next.TiKVClient.StoreLimit) }))
+	require.Equal(t, int64(100), tikvstore.StoreLimit.Load())
+	require.NoError(t, dom.rebuildSysVarCache(ctx))
+	require.Equal(t, int64(100), tikvstore.StoreLimit.Load(), "cache refresh must preserve the managed file's limit")
+	// Explicit SQL updates still work until the next file reload.
+	require.NoError(t, variable.GetSysVar(vardef.TiDBStoreLimit).SetGlobal(context.Background(), ctx.GetSessionVars(), "300"))
+	require.NoError(t, dom.rebuildSysVarCache(ctx))
+	require.Equal(t, int64(300), tikvstore.StoreLimit.Load())
+	require.NoError(t, config.ReloadGlobalConfig(path, func(_, next *config.Config) { tikvstore.StoreLimit.Store(next.TiKVClient.StoreLimit) }))
+	require.Equal(t, int64(100), tikvstore.StoreLimit.Load())
 }
