@@ -140,21 +140,25 @@ func TestGetConAttrs(t *testing.T) {
 	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 	server.registerConn(cc)
 
+	// Connection IDs come from a process-wide counter, so this session is not
+	// always ID 1 when another test in the same shard creates a testkit first.
+	connID := tk.Session().GetSessionVars().ConnectionID
+
 	// Get attributes for all clients
 	attrs := server.GetConAttrs(nil)
-	require.Equal(t, attrs[1]["_client_name"], "tidb_test")
+	require.Equal(t, "tidb_test", attrs[connID]["_client_name"])
 
-	// Get attributes for userA@foo.example.com, which should have results for connID 1.
+	// Get attributes for userA@foo.example.com, which should have results for this connection.
 	userA := &auth.UserIdentity{Username: "userA", Hostname: "foo.example.com"}
 	attrs = server.GetConAttrs(userA)
-	require.Equal(t, attrs[1]["_client_name"], "tidb_test")
-	_, hasClientName := attrs[1]
+	require.Equal(t, "tidb_test", attrs[connID]["_client_name"])
+	_, hasClientName := attrs[connID]
 	require.True(t, hasClientName)
 
-	// Get attributes for userB@foo.example.com, which should NOT have results for connID 1.
+	// Get attributes for userB@foo.example.com, which should NOT have results for this connection.
 	userB := &auth.UserIdentity{Username: "userB", Hostname: "foo.example.com"}
 	attrs = server.GetConAttrs(userB)
-	_, hasClientName = attrs[1]
+	_, hasClientName = attrs[connID]
 	require.False(t, hasClientName)
 
 	newConn := func(connID uint64, gwConnID string) *clientConn {
