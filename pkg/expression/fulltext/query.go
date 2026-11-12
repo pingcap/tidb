@@ -29,6 +29,9 @@ type Query struct {
 	documentMatchCost float64
 	matchesNothing    bool
 	selectivityTerm   string
+	// gramPhrases is set when the query's phrases are runs of NGRAM grams,
+	// whose tokens appear together, rather than runs of words.
+	gramPhrases bool
 }
 
 // CompileBooleanQuery parses and normalizes a BOOLEAN MODE query for local
@@ -53,6 +56,7 @@ func CompileBooleanQuery(search string, config AnalyzerConfig) (*Query, error) {
 		matchCost:         work.fixed,
 		documentMatchCost: work.perDocument,
 		matchesNothing:    queryNodeMatchesNothing(root),
+		gramPhrases:       config.ParserType == model.FullTextParserTypeNgramV1,
 	}
 	if config.ParserType == model.FullTextParserTypeStandardV1 && !query.matchesNothing {
 		query.selectivityTerm, _ = singlePositiveTerm(root)

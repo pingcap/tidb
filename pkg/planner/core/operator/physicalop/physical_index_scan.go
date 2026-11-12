@@ -114,7 +114,8 @@ type PhysicalIndexScan struct {
 	// search string against the index's entries, rather than by a coprocessor
 	// range scan: Ranges is empty and no DAG request is built for the scan.
 	// Such a scan appears only as the partial plan of an IndexMerge reader.
-	FullText *FullTextScanInfo `plan-cache-clone:"must-nil"`
+	// Nothing changes it once the plan is built, so a cloned plan shares it.
+	FullText *FullTextScanInfo `plan-cache-clone:"shallow"`
 }
 
 // FullTextScanInfo describes the search a full-text index scan evaluates.
@@ -755,10 +756,10 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 // against the index and yields the matching handles.
 func ConvertToFullTextIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath) *PhysicalIndexScan {
 	is := GetOriginalPhysicalIndexScan(ds, prop, path, false, false)
+	// The search string is baked into the plan. A literal one is the same in
+	// every execution; a plan built for a parameter's value is kept out of
+	// the plan cache when the path is built.
 	is.FullText = &FullTextScanInfo{Search: path.FullText.Search, PostingRows: path.FullText.PostingRows, PostingScans: path.FullText.PostingScans}
-	// The search string is baked into the plan, so a cached plan would answer
-	// a different parameter with the wrong rows.
-	is.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("fulltext index scan")
 	return is
 }
 

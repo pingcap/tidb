@@ -80,6 +80,38 @@ func fullTextTestTableWithKeyColumns(t *testing.T, parser model.FullTextParserTy
 	return tc, idx
 }
 
+// TestFullTextIndexUnusable covers an index this binary cannot analyze
+// documents for, one built by a later release or with invalid settings: the
+// table still loads, so the rest of the schema is usable, and every write or
+// check of the index fails rather than adding or removing the wrong entries.
+func TestFullTextIndexUnusable(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		modify func(*model.TiKVFullTextIndexInfo)
+		err    string
+	}{
+		{"newer version", func(info *model.TiKVFullTextIndexInfo) { info.Version = model.CurrentTiKVFullTextVersion + 1 }, "newer than this TiDB supports"},
+		{"invalid parser", func(info *model.TiKVFullTextIndexInfo) { info.ParserType = model.FullTextParserTypeInvalid }, "FULLTEXT index idx"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			tc, _ := fullTextTestTable(t, model.FullTextParserTypeStandardV1)
+			tableInfo := tc.Meta().Clone()
+			c.modify(tableInfo.Indices[0].TiKVFullText)
+			tbl, err := TableFromMeta(autoid.NewAllocators(false), tableInfo)
+			require.NoError(t, err)
+			idx := asIndex(tbl.(*TableCommon).indices[0])
+			for _, doc := range []types.Datum{types.NewStringDatum("hello world"), types.NewDatum(nil)} {
+				iter := idx.GenIndexKVIter(errctx.StrictNoWarningContext, time.UTC, []types.Datum{doc}, kv.IntHandle(1), nil)
+				require.True(t, iter.Valid())
+				_, _, _, err = iter.Next(nil, nil)
+				require.ErrorContains(t, err, c.err)
+				_, err = idx.fullTextTerms(doc)
+				require.ErrorContains(t, err, c.err)
+			}
+		})
+	}
+}
+
 // TestFullTextIndexKVGeneration covers the fan-out of one row into its term
 // entries: keys hold the term and the handle, values hold the positions.
 func TestFullTextIndexKVGeneration(t *testing.T) {

@@ -15,6 +15,7 @@ go_test(
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/executor",
+        "//pkg/expression/fulltext",
         "//pkg/meta/autoid",
         "//pkg/session",
         "//pkg/session/sessmgr",

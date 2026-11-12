@@ -2555,8 +2555,8 @@ func (er *expressionRewriter) tikvFullTextIndexForMatch(numCols, stackLen int) *
 	}
 	colID := ds.Columns[offset].ID
 	for _, idx := range ds.TableInfo.Indices {
-		textCol := idx.TiKVFullTextColumn()
-		if textCol != nil && idx.State == model.StatePublic && ds.TableInfo.Columns[textCol.Offset].ID == colID {
+		textCol := idx.QueryableTiKVFullTextColumn()
+		if textCol != nil && ds.TableInfo.Columns[textCol.Offset].ID == colID {
 			return idx
 		}
 	}

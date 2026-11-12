@@ -709,12 +709,13 @@ func newOrStream(streams []postingStream) postingStream {
 	return &orStream{streams: streams, current: make([]Posting, len(streams)), valid: make([]bool, len(streams))}
 }
 
-// SeekReadLimit is how many postings a seek reads forward before it reopens
-// the posting scan at its target instead. A TiKV scan fetches entries in
-// batches of 256 by default, so reading forward costs at most about one batch
-// more than reopening, while reopening skips everything in between. The TiKV
-// posting cursor seeks this way, and EstimatePostingCost assumes it.
-const SeekReadLimit = 256
+// PostingScanBatch is how many postings a TiKV scan fetches in one request,
+// the scan batch of a snapshot iterator. A seek reads forward only through
+// the batch already fetched; reaching its end, it reopens the scan at its
+// target instead, which costs the request that fetching the next batch
+// would, and skips everything in between. The TiKV posting cursor seeks this
+// way, and EstimatePostingCost assumes it.
+const PostingScanBatch = 256
 
 // PostingCost is what evaluating a query against an index is expected to
 // read: the posting entries scanned and sent to TiDB, and the posting scans
@@ -722,6 +723,9 @@ const SeekReadLimit = 256
 type PostingCost struct {
 	Entries float64
 	Scans   float64
+	// Rows is the number of rows the search is estimated to match, under
+	// the same model.
+	Rows float64
 }
 
 // PostingCostModel holds the estimates a search is costed from.
@@ -740,24 +744,50 @@ type PostingCostModel struct {
 // streams it builds rather than summing every list in full. An intersection,
 // of a group's required children or of a phrase's terms, is driven by the
 // child that yields the fewest rows; every other child only seeks to the
-// rows proposed to it. A seek into a list reads at most SeekReadLimit
-// postings forward and then reopens the scan, whose first batch is read
-// again, so a list with fewer than two batches' worth of postings between
-// targets is read through, and a sparser one costs two batches and a scan
-// per target. A union passes each target to every child, a prohibited child
+// rows proposed to it. A seek into a list reads forward through the batch
+// it has fetched and otherwise reopens the scan at its target, so a list with
+// fewer than a batch's worth of postings between targets is read through, and
+// a sparser one costs at most a batch and a scan per target. A union passes each target to every child, a prohibited child
 // is sought to the rows its positive side yields, and a prefix is collected
 // in full whatever is asked of it.
 func (q *Query) EstimatePostingCost(model PostingCostModel) PostingCost {
 	if q == nil || q.matchesNothing || q.root == nil {
 		return PostingCost{}
 	}
-	e := postingEstimator{model: model, postings: make(map[PostingRead]float64)}
-	return e.cost(q.root, math.Inf(1))
+	e := postingEstimator{model: model, postings: make(map[PostingRead]float64), gramPhrases: q.gramPhrases}
+	cost := e.cost(q.root, math.Inf(1))
+	cost.Rows = min(e.rows(q.root), model.Rows)
+	return cost
 }
 
 type postingEstimator struct {
-	model    PostingCostModel
-	postings map[PostingRead]float64
+	model       PostingCostModel
+	postings    map[PostingRead]float64
+	gramPhrases bool
+}
+
+// RowsFromPostings reports whether the rows EstimatePostingCost estimates
+// rest on the postings alone. A phrase of words is matched by their being
+// adjacent, which the size of each word's postings says nothing about; the
+// estimate then only bounds the rows from above.
+func (q *Query) RowsFromPostings() bool {
+	return q != nil && (q.gramPhrases || !containsPhrase(q.root))
+}
+
+func containsPhrase(node queryNode) bool {
+	switch n := node.(type) {
+	case phraseNode:
+		return true
+	case groupNode:
+		for _, children := range [][]queryNode{n.must, n.should, n.mustNot} {
+			for _, child := range children {
+				if containsPhrase(child) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func (e postingEstimator) list(read PostingRead) float64 {
@@ -777,11 +807,17 @@ func (e postingEstimator) rows(node queryNode) float64 {
 	case prefixNode:
 		return e.list(PostingRead{Term: n.prefix, Prefix: true})
 	case phraseNode:
-		rows := make([]float64, 0, len(n.tokens))
+		lists := make([]float64, 0, len(n.tokens))
 		for _, token := range n.tokens {
-			rows = append(rows, e.list(PostingRead{Term: token}))
+			lists = append(lists, e.list(PostingRead{Term: token}))
 		}
-		return e.intersection(rows)
+		if !e.gramPhrases {
+			return e.intersection(lists)
+		}
+		// The grams of an NGRAM word appear together far more than
+		// independence would have them, and every row with the word
+		// holds each of them: the rarest one bounds it closely.
+		return slices.Min(lists)
 	case groupNode:
 		var positive float64
 		switch {
@@ -809,13 +845,22 @@ func (e postingEstimator) childRows(nodes []queryNode) []float64 {
 	return rows
 }
 
+// intersection estimates the rows in every one of several sets. Terms a
+// search requires together are seldom independent, so their shares are
+// combined with the exponential backoff the planner uses for correlated
+// conditions: the rarest in full, the next three with decreasing weight.
 func (e postingEstimator) intersection(rows []float64) float64 {
 	if e.model.Rows <= 0 || len(rows) == 0 {
 		return 0
 	}
-	result := e.model.Rows
+	shares := make([]float64, 0, len(rows))
 	for _, r := range rows {
-		result *= min(1, r/e.model.Rows)
+		shares = append(shares, min(1, r/e.model.Rows))
+	}
+	slices.Sort(shares)
+	result := e.model.Rows
+	for i, share := range shares[:min(len(shares), 4)] {
+		result *= math.Pow(share, 1/math.Pow(2, float64(i)))
 	}
 	return result
 }
@@ -894,10 +939,10 @@ func (e postingEstimator) cost(node queryNode, seeks float64) PostingCost {
 func (e postingEstimator) termCost(term string, seeks float64) PostingCost {
 	n := e.list(PostingRead{Term: term})
 	scans := max(1, e.model.TermScans)
-	if seeks*2*SeekReadLimit >= n {
+	if seeks*PostingScanBatch >= n {
 		return PostingCost{Entries: n, Scans: scans}
 	}
-	return PostingCost{Entries: seeks * 2 * SeekReadLimit, Scans: scans + seeks}
+	return PostingCost{Entries: seeks * PostingScanBatch, Scans: scans + seeks}
 }
 
 func (c *PostingCost) add(other PostingCost) {

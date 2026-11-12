@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -86,11 +87,15 @@ func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 		return nil
 	}
 	sessVars := ds.SCtx().GetSessionVars()
+	// The postings and the rows they lead to are both read from TiKV.
+	if _, ok := sessVars.GetIsolationReadEngines()[kv.TiKV]; !ok {
+		return nil
+	}
 	var paths []*util.AccessPath
 	forced := false
 	for _, idx := range ds.TableInfo.Indices {
-		textCol := idx.TiKVFullTextColumn()
-		if textCol == nil || idx.State != model.StatePublic {
+		textCol := idx.QueryableTiKVFullTextColumn()
+		if textCol == nil {
 			continue
 		}
 		if idx.Invisible && !sessVars.OptimizerUseInvisibleIndexes {
@@ -116,6 +121,10 @@ func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 					// which the scan reads from the plan; a cached plan would
 					// search a later execution's string with this one.
 					ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("MATCH...AGAINST with a mutable search string uses a FULLTEXT index")
+				} else if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), path.PartialIndexPaths[0].AccessConds...) {
+					// Likewise for the key-column point and the handle
+					// ranges, which a cached plan does not rebuild.
+					ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("a FULLTEXT index scan confined by a mutable condition")
 				}
 				paths = append(paths, path)
 				forced = forced || fullTextIndexNamedByHints(ds, idx)
@@ -361,7 +370,11 @@ func buildFullTextIndexPath(ds *logicalop.DataSource, idx *model.IndexInfo, matc
 	count := ds.TableStats.RowCount * selectivity
 	partial.CountAfterAccess = count
 	partial.CountAfterIndex = count
-	postingCost, err := estimateFullTextPostingCost(ds, match, query, keyConds, handleConds, handleRanges)
+	var keyValues []types.Datum
+	if keyColumnCount > 0 {
+		keyValues = partial.Ranges[0].LowVal[:keyColumnCount]
+	}
+	postingCost, err := estimateFullTextPostingCost(ds, idx, match, query, keyValues, keyConds, handleConds, handleRanges)
 	if err != nil {
 		return nil, err
 	}
@@ -409,10 +422,15 @@ func fullTextHandleRanges(keyRanges, handleRanges ranger.Ranges) ranger.Ranges {
 // string match, or is the default string-match selectivity when the
 // statistics cannot evaluate it. How much of each list is read follows the
 // streams the search runs as: see fulltext.Query.EstimatePostingCost.
-func estimateFullTextPostingCost(ds *logicalop.DataSource, match *expression.ScalarFunction, query *fulltext.Query,
-	keyConds, handleConds []expression.Expression, handleRanges int) (fulltext.PostingCost, error) {
+func estimateFullTextPostingCost(ds *logicalop.DataSource, idx *model.IndexInfo, match *expression.ScalarFunction, query *fulltext.Query,
+	keyValues []types.Datum, keyConds, handleConds []expression.Expression, handleRanges int) (fulltext.PostingCost, error) {
 	if len(query.PostingReads()) == 0 {
 		return fulltext.PostingCost{}, nil
+	}
+	sc := ds.SCtx().GetSessionVars().StmtCtx
+	keyPrefix, err := codec.EncodeKey(sc.TimeZone(), nil, keyValues...)
+	if err != nil {
+		return fulltext.PostingCost{}, errors.Trace(err)
 	}
 	selectivity := func(conds []expression.Expression) (float64, error) {
 		if len(conds) == 0 {
@@ -430,32 +448,22 @@ func estimateFullTextPostingCost(ds *logicalop.DataSource, match *expression.Sca
 		return fulltext.PostingCost{}, err
 	}
 	column := match.GetArgs()[1]
-	defaultSel := ds.SCtx().GetSessionVars().GetStrMatchDefaultSelectivity()
-	var estimateErr error
 	postings := func(read fulltext.PostingRead) float64 {
-		// Without statistics every condition is given the generic
-		// selectivity, which for a term would mean one in nearly every row;
-		// the string-match default is the better guess.
-		termSel := defaultSel
-		if !ds.TableStats.HistColl.Pseudo {
-			if like, err := expression.BuildFTSTermILikePredicate(ds.SCtx().GetExprCtx(), column, read.Term); err == nil {
-				if termSel, err = selectivity([]expression.Expression{like}); err != nil && estimateErr == nil {
-					estimateErr = err
-				}
-			}
-		}
-		scope := ds.TableStats.RowCount * keySel
+		// A term's postings within the key-column point are probed; the
+		// handle ranges confine an exact term's to their share of them.
+		scale := 1.0
 		if !read.Prefix {
-			scope *= handleSel
+			scale = handleSel
 		}
-		return scope * termSel
+		return fullTextTermPostings(ds, idx, keyPrefix, read, scale, func() float64 {
+			return ds.TableStats.RowCount * keySel * scale * fullTextTermSelectivity(ds, column, read.Term)
+		})
 	}
-	cost := query.EstimatePostingCost(fulltext.PostingCostModel{
+	return query.EstimatePostingCost(fulltext.PostingCostModel{
 		Postings:  postings,
 		Rows:      ds.TableStats.RowCount * keySel * handleSel,
 		TermScans: float64(max(1, handleRanges)),
-	})
-	return cost, estimateErr
+	}), nil
 }
 
 // pointPathSelectedByHeuristics reports whether derivePathStatsAndTryHeuristics

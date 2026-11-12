@@ -275,13 +275,31 @@ type FullTextIndexInfo struct {
 // variables taken when the index was created. Every write and every query
 // tokenizes with this snapshot rather than with the current variables, so the
 // entries in the index and the terms looked up in it always agree.
+//
+// The settings alone do not pin the terms a document analyzes to: the
+// analyzer's code, its Unicode tables and stopword list, and the entry layout
+// can change between releases. Version names that behaviour. A binary only
+// writes and reads an index whose version it knows, so that it never adds or
+// removes entries another release would analyze differently.
 type TiKVFullTextIndexInfo struct {
 	ParserType     FullTextParserType `json:"parser_type"`
 	MinTokenSize   int                `json:"min_token_size"`
 	MaxTokenSize   int                `json:"max_token_size"`
 	EnableStopword bool               `json:"enable_stopword"`
 	NgramTokenSize int                `json:"ngram_token_size,omitempty"`
+	Version        int                `json:"version,omitempty"`
 }
+
+const (
+	// TiKVFullTextVersion1 is the first analyzer and entry layout of a
+	// FULLTEXT index built in TiKV. An index whose metadata has no version
+	// was built with it.
+	TiKVFullTextVersion1 = 1
+	// CurrentTiKVFullTextVersion is the version new indexes are built with,
+	// and the newest one this binary can maintain. Bump it whenever the terms
+	// or positions any document analyzes to, or the entry layout, change.
+	CurrentTiKVFullTextVersion = TiKVFullTextVersion1
+)
 
 // Clone clones TiKVFullTextIndexInfo.
 func (info *TiKVFullTextIndexInfo) Clone() *TiKVFullTextIndexInfo {
@@ -290,6 +308,28 @@ func (info *TiKVFullTextIndexInfo) Clone() *TiKVFullTextIndexInfo {
 	}
 	ni := *info
 	return &ni
+}
+
+// EffectiveVersion returns the version the index was built with.
+func (info *TiKVFullTextIndexInfo) EffectiveVersion() int {
+	if info.Version == 0 {
+		return TiKVFullTextVersion1
+	}
+	return info.Version
+}
+
+// Supported reports whether this binary knows the index's version, and can
+// therefore maintain and read it.
+func (info *TiKVFullTextIndexInfo) Supported() bool {
+	return info.EffectiveVersion() <= CurrentTiKVFullTextVersion
+}
+
+// SameAnalyzer reports whether two indexes analyze every document to the
+// same terms.
+func (info *TiKVFullTextIndexInfo) SameAnalyzer(other *TiKVFullTextIndexInfo) bool {
+	a, b := *info, *other
+	a.Version, b.Version = info.EffectiveVersion(), other.EffectiveVersion()
+	return a == b
 }
 
 // ColumnarIndexType is the type of columnar index.
@@ -415,6 +455,16 @@ func (index *IndexInfo) TiKVFullTextColumn() *IndexColumn {
 		return nil
 	}
 	return index.Columns[len(index.Columns)-1]
+}
+
+// QueryableTiKVFullTextColumn returns TiKVFullTextColumn for a public index
+// whose version this binary knows, the only ones a query may read or take
+// its analyzer from, and nil otherwise.
+func (index *IndexInfo) QueryableTiKVFullTextColumn() *IndexColumn {
+	if index.State != StatePublic || index.TiKVFullText == nil || !index.TiKVFullText.Supported() {
+		return nil
+	}
+	return index.TiKVFullTextColumn()
 }
 
 // IsChanging checks if the index is a new index added in modify column.

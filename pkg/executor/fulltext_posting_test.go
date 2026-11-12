@@ -38,12 +38,15 @@ import (
 )
 
 // memPostingSnapshot is a kv.Snapshot over sorted in-memory entries that
-// serves Iter only, and counts the scans opened.
+// serves Iter only, and counts the scans opened and the batches of
+// fulltext.PostingScanBatch entries they would fetch from TiKV: one when the
+// scan opens, and one more each time it moves past a full batch.
 type memPostingSnapshot struct {
 	kv.Snapshot
-	keys   []kv.Key
-	values map[string][]byte
-	iters  int
+	keys    []kv.Key
+	values  map[string][]byte
+	iters   int
+	batches int
 }
 
 func (s *memPostingSnapshot) put(key kv.Key, value []byte) {
@@ -54,13 +57,14 @@ func (s *memPostingSnapshot) put(key kv.Key, value []byte) {
 
 func (s *memPostingSnapshot) Iter(start, end kv.Key) (kv.Iterator, error) {
 	s.iters++
+	s.batches++
 	i := sort.Search(len(s.keys), func(i int) bool { return s.keys[i].Cmp(start) >= 0 })
-	return &memPostingIter{snapshot: s, i: i, end: end}, nil
+	return &memPostingIter{snapshot: s, i: i, start: i, end: end}, nil
 }
 
 type memPostingIter struct {
 	snapshot *memPostingSnapshot
-	i        int
+	i, start int
 	end      kv.Key
 }
 
@@ -69,7 +73,13 @@ func (it *memPostingIter) Valid() bool {
 }
 func (it *memPostingIter) Key() kv.Key   { return it.snapshot.keys[it.i] }
 func (it *memPostingIter) Value() []byte { return it.snapshot.values[string(it.snapshot.keys[it.i])] }
-func (it *memPostingIter) Next() error   { it.i++; return nil }
+func (it *memPostingIter) Next() error {
+	it.i++
+	if (it.i-it.start)%fulltext.PostingScanBatch == 0 && it.Valid() {
+		it.snapshot.batches++
+	}
+	return nil
+}
 func (*memPostingIter) Close()           {}
 
 const testPostingTableID, testPostingIndexID = 100, 1
@@ -149,7 +159,11 @@ func TestTiKVPostingSeek(t *testing.T) {
 
 		src := newTestPostingSource(s)
 		require.Equal(t, rare, searchPostings(t, src, "+rare +common"))
-		require.Less(t, src.stats.entries, int64(len(rare)*(fulltext.SeekReadLimit+2)+len(rare)+1), "entries read")
+		require.Less(t, src.stats.entries, int64(len(rare)*(fulltext.PostingScanBatch+1)+len(rare)+1), "entries read")
+		// A seek never fetches a batch it then leaves for a reopened scan:
+		// each scan opened fetches one batch, the rare list's and one per
+		// seek into the common list.
+		require.Equal(t, s.iters, s.batches, "batches fetched")
 		require.Equal(t, rare, searchPostings(t, src, `+"common rare"`))
 		require.Empty(t, searchPostings(t, src, `+"rare common"`))
 		require.Empty(t, searchPostings(t, src, "+rare -common"))

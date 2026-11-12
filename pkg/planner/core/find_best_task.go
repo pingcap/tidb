@@ -2012,8 +2012,10 @@ func getIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, pro
 	if prop.IsSortItemEmpty() && len(prop.AdvisorySortItems) > 0 && !path.IndexMergeIsIntersection && allSameOrder {
 		hintsProp := prop.CloneEssentialFields()
 		hintsProp.SortItems = hintsProp.AdvisorySortItems
-		candidate.matchWithAdvisorySortItems = true
 		candidate.partialPathMatchResults, _ = isMatchPropForIndexMerge(ds, path, hintsProp)
+		// Without a match result for every partial path, as when one of them
+		// cannot keep any order, there is nothing for the hints to act on.
+		candidate.matchWithAdvisorySortItems = len(candidate.partialPathMatchResults) == len(path.PartialIndexPaths)
 		// When using hints, there are no real sort items, so the overall match
 		// against the original prop is PropNotMatched.
 		candidate.matchPropResult = property.PropNotMatched

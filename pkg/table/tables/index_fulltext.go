@@ -48,15 +48,28 @@ import (
 // fullTextIndex is the per-index state of a FULLTEXT index built in TiKV.
 type fullTextIndex struct {
 	analyzer fulltext.Analyzer
+	// unusable is set instead of analyzer when this binary cannot analyze
+	// documents as the index was built to: its version is newer than this
+	// binary knows, or its analyzer settings are invalid. Loading the schema
+	// still succeeds; every write and check of the index fails with it.
+	unusable error
 }
 
 func (c *index) initFullText() error {
-	if c.idxInfo.TiKVFullText == nil {
+	info := c.idxInfo.TiKVFullText
+	if info == nil {
 		return nil
 	}
-	analyzer, err := fulltext.GetAnalyzer(fulltext.AnalyzerConfigFromTiKVFullTextIndex(c.idxInfo.TiKVFullText))
+	if !info.Supported() {
+		c.fullText = &fullTextIndex{unusable: errors.Errorf(
+			"FULLTEXT index %s was built with version %d, newer than this TiDB supports (%d); upgrade TiDB to write or check it",
+			c.idxInfo.Name.O, info.EffectiveVersion(), model.CurrentTiKVFullTextVersion)}
+		return nil
+	}
+	analyzer, err := fulltext.GetAnalyzer(fulltext.AnalyzerConfigFromTiKVFullTextIndex(info))
 	if err != nil {
-		return errors.Trace(err)
+		c.fullText = &fullTextIndex{unusable: errors.Annotatef(err, "FULLTEXT index %s", c.idxInfo.Name.O)}
+		return nil
 	}
 	c.fullText = &fullTextIndex{analyzer: analyzer}
 	return nil
@@ -105,6 +118,9 @@ func (c *index) fullTextIndexedValues(indexedValues []types.Datum) ([][]types.Da
 // fullTextPositions tokenizes a document and returns the positions of each
 // distinct term in it; a NULL document has none.
 func (c *index) fullTextPositions(doc types.Datum) (map[string][]int, error) {
+	if c.fullText.unusable != nil {
+		return nil, c.fullText.unusable
+	}
 	if doc.IsNull() {
 		return nil, nil
 	}

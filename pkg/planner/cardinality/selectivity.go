@@ -63,6 +63,40 @@ func Selectivity(
 	if coll.RealtimeCount == 0 || len(exprs) == 0 {
 		return 1, nil
 	}
+	// A MATCH the planner estimated from the postings of its terms takes that
+	// estimate; the others are estimated from the statistics, independently.
+	if known := fullTextMatchSelectivitiesOf(ctx, false); known != nil {
+		fixed, rest := 1.0, exprs
+		for i, expr := range exprs {
+			if sel, ok := known.get(expr); ok {
+				if len(rest) == len(exprs) {
+					rest = slices.Clone(exprs[:i])
+				}
+				fixed *= sel
+			} else if len(rest) != len(exprs) {
+				rest = append(rest, expr)
+			}
+		}
+		if len(rest) != len(exprs) {
+			if len(rest) == 0 {
+				return fixed, nil
+			}
+			sel, err := selectivity(ctx, coll, rest, filledPaths)
+			return fixed * sel, err
+		}
+	}
+	return selectivity(ctx, coll, exprs, filledPaths)
+}
+
+func selectivity(
+	ctx planctx.PlanContext,
+	coll *statistics.HistColl,
+	exprs []expression.Expression,
+	filledPaths []*planutil.AccessPath,
+) (
+	result float64,
+	err error,
+) {
 	ret := 1.0
 	sc := ctx.GetSessionVars().StmtCtx
 	tableID := coll.PhysicalID
@@ -949,6 +983,45 @@ func (c *selectivityByFilterCache) put(key selectivityByFilterKey, sel float64) 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.m[key] = sel
+}
+
+// fullTextMatchSelectivities holds the selectivities of one statement's MATCH
+// predicates that the planner estimated from the postings of their terms in
+// a FULLTEXT index, keyed by the predicate's hash code.
+type fullTextMatchSelectivities struct {
+	mu sync.Mutex
+	m  map[string]float64
+}
+
+func fullTextMatchSelectivitiesOf(sctx planctx.PlanContext, create bool) *fullTextMatchSelectivities {
+	sc := sctx.GetSessionVars().StmtCtx
+	if !create {
+		cached, _ := sc.GetStmtCache(stmtctx.StmtFullTextMatchSelectivityCacheKey).(*fullTextMatchSelectivities)
+		return cached
+	}
+	return sc.GetOrStoreStmtCache(stmtctx.StmtFullTextMatchSelectivityCacheKey,
+		&fullTextMatchSelectivities{m: make(map[string]float64)}).(*fullTextMatchSelectivities)
+}
+
+func (s *fullTextMatchSelectivities) get(expr expression.Expression) (float64, bool) {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok || sf.FuncName.L != ast.FTSMysqlMatchAgainst {
+		return 0, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sel, ok := s.m[string(sf.HashCode())]
+	return sel, ok
+}
+
+// SetFullTextMatchSelectivity records the selectivity of a MATCH predicate
+// estimated from the postings of its terms; Selectivity uses it in place of
+// the statistics of the column for the rest of the statement.
+func SetFullTextMatchSelectivity(sctx planctx.PlanContext, match *expression.ScalarFunction, sel float64) {
+	s := fullTextMatchSelectivitiesOf(sctx, true)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.m[string(match.HashCode())] = sel
 }
 
 // GetSelectivityByFilter try to estimate selectivity of expressions by evaluate the expressions using TopN, Histogram buckets boundaries and NULL.

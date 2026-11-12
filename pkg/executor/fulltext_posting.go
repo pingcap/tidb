@@ -76,7 +76,15 @@ type tikvPostingSource struct {
 	// memTracker is charged for the rows a prefix collects; nil when
 	// memory is not tracked.
 	memTracker *memory.Tracker
+	// stopped reports that the reader no longer wants rows, because it was
+	// closed, reached its limit, or its context ended; nil when it never
+	// stops early.
+	stopped func() bool
 }
+
+// errFullTextScanStopped ends a posting scan whose reader no longer wants its
+// rows; it is not an error of the statement.
+var errFullTextScanStopped = errors.New("fulltext posting scan stopped")
 
 // ConsumeMemory implements fulltext.PostingMemoryConsumer.
 func (s *tikvPostingSource) ConsumeMemory(bytes int64) {
@@ -90,9 +98,12 @@ func (s *tikvPostingSource) ConsumeMemory(bytes int64) {
 // batch holds 256 entries by default.
 const postingInterruptCheckInterval = 256
 
-// checkInterrupted reports a pending kill of the statement, or a runaway rule
-// the posting reads broke.
+// checkInterrupted reports a pending kill of the statement, a runaway rule
+// the posting reads broke, or that the reader stopped wanting rows.
 func (s *tikvPostingSource) checkInterrupted() error {
+	if s.stopped != nil && s.stopped() {
+		return errFullTextScanStopped
+	}
 	if s.killer != nil {
 		if err := s.killer.HandleSignal(); err != nil {
 			return err
@@ -109,11 +120,23 @@ func (s *tikvPostingSource) checkInterrupted() error {
 type fullTextScanRuntimeStats struct {
 	entries int64
 	scans   int64
+	// batches and batchTime are the kv_scan requests the scans made, one
+	// when a scan opens and one for each later batch it reads into, and the
+	// time spent waiting for them. The snapshot iterator records no
+	// statistics of its own for them, unlike a point get's.
+	batches   int64
+	batchTime time.Duration
+}
+
+func (s *fullTextScanRuntimeStats) recordBatch(d time.Duration) {
+	s.batches++
+	s.batchTime += d
 }
 
 // String implements execdetails.RuntimeStats.
 func (s *fullTextScanRuntimeStats) String() string {
-	return fmt.Sprintf("fulltext:{posting_entries:%d, posting_scans:%d}", s.entries, s.scans)
+	return fmt.Sprintf("fulltext:{posting_entries:%d, posting_scans:%d, scan_rpc:{num:%d, time:%v}}",
+		s.entries, s.scans, s.batches, execdetails.FormatDuration(s.batchTime))
 }
 
 // Merge implements execdetails.RuntimeStats.
@@ -124,6 +147,8 @@ func (s *fullTextScanRuntimeStats) Merge(other execdetails.RuntimeStats) {
 	}
 	s.entries += o.entries
 	s.scans += o.scans
+	s.batches += o.batches
+	s.batchTime += o.batchTime
 }
 
 // Clone implements execdetails.RuntimeStats.
@@ -217,12 +242,14 @@ func (s *tikvPostingSource) iter(start, end kv.Key) (kv.Iterator, error) {
 	if err := s.checkInterrupted(); err != nil {
 		return nil, err
 	}
+	begin := time.Now()
 	iter, err := s.snapshot.Iter(start, end)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if s.stats != nil {
 		s.stats.scans++
+		s.stats.recordBatch(time.Since(begin))
 	}
 	return iter, nil
 }
@@ -249,18 +276,32 @@ type tikvPostingCursor struct {
 	termKey, start, end kv.Key
 	done                bool
 	read                int
+	// sinceOpen counts the entries read since the iterator was opened, so
+	// that a seek knows whether the next one is in the batch already
+	// fetched.
+	sinceOpen int
 }
 
 // advance moves past the current entry, counting it and checking for a
 // kill every postingInterruptCheckInterval entries.
 func (c *tikvPostingCursor) advance() error {
+	// Moving past the last entry of a batch fetches the next one.
+	fetches := c.source.stats != nil && (c.sinceOpen+1)%fulltext.PostingScanBatch == 0
+	var begin time.Time
+	if fetches {
+		begin = time.Now()
+	}
 	if err := c.iter.Next(); err != nil {
 		return errors.Trace(err)
 	}
 	if c.source.stats != nil {
 		c.source.stats.entries++
+		if fetches && c.iter.Valid() {
+			c.source.stats.recordBatch(time.Since(begin))
+		}
 	}
 	c.read++
+	c.sinceOpen++
 	if c.read%postingInterruptCheckInterval == 0 {
 		return c.source.checkInterrupted()
 	}
@@ -313,12 +354,14 @@ func (c *tikvPostingCursor) Next() (fulltext.Posting, bool, error) {
 	return fulltext.Posting{Handle: handle, Positions: positions}, true, nil
 }
 
-// Seek implements fulltext.PostingSeeker. It reads forward while the target
-// is near, decoding only the handles, and past fulltext.SeekReadLimit entries
-// reopens the scan at the target's key within the cursor's range, which the
-// planner's cost of a search assumes; see fulltext.Query.EstimatePostingCost.
+// Seek implements fulltext.PostingSeeker. It reads forward, decoding only the
+// handles, while the next entry is in the batch the scan has fetched, and at
+// the end of the batch reopens the scan at the target's key within the
+// cursor's range: either costs one request, and reopening skips the entries
+// in between. The planner's cost of a search assumes this; see
+// fulltext.Query.EstimatePostingCost.
 func (c *tikvPostingCursor) Seek(target kv.Handle) (fulltext.Posting, bool, error) {
-	for steps := 0; ; steps++ {
+	for {
 		handle, ok, err := c.current()
 		if err != nil || !ok {
 			return fulltext.Posting{}, false, err
@@ -326,7 +369,7 @@ func (c *tikvPostingCursor) Seek(target kv.Handle) (fulltext.Posting, bool, erro
 		if handle.Compare(target) >= 0 {
 			return c.Next()
 		}
-		if steps < fulltext.SeekReadLimit || c.termKey == nil {
+		if (c.sinceOpen+1)%fulltext.PostingScanBatch != 0 || c.termKey == nil {
 			if err := c.advance(); err != nil {
 				return fulltext.Posting{}, false, err
 			}
@@ -345,7 +388,7 @@ func (c *tikvPostingCursor) Seek(target kv.Handle) (fulltext.Posting, bool, erro
 			return fulltext.Posting{}, false, err
 		}
 		c.iter.Close()
-		c.iter, steps = iter, 0
+		c.iter, c.sinceOpen = iter, 0
 	}
 }
 

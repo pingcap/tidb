@@ -17,6 +17,7 @@ package fulltext
 import (
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 	"slices"
 	"sort"
@@ -585,7 +586,7 @@ func TestEstimatePostingCost(t *testing.T) {
 		Rows:      rows,
 		TermScans: 1,
 	}
-	seekRead := 2.0 * SeekReadLimit
+	seekRead := float64(PostingScanBatch)
 	cases := []struct {
 		search  string
 		entries float64
@@ -597,7 +598,7 @@ func TestEstimatePostingCost(t *testing.T) {
 		{`+"rare common"`, 10 + 10*seekRead, 2 + 10},
 		{"+rare +medium +common", 10 + 2*10*seekRead, 3 + 2*10},
 		{"+rare -common", 10 + 10*seekRead, 2 + 10},
-		// Too dense to skip in: two batches between targets are read through.
+		// Too dense to skip in: less than a batch between targets is read through.
 		{"+dense +common", 500_000 + 900_000, 2},
 		{"+medium +common", 20_000 + 900_000, 2},
 		// A union reads every list in full, and so does a prefix.
@@ -659,4 +660,45 @@ func TestEstimatePostingCostBoundedByFullReads(t *testing.T) {
 		require.GreaterOrEqual(t, cost.Entries, 0.0, search)
 	}
 	require.Greater(t, checked, 1000)
+}
+
+// TestEstimatePostingRows checks the rows a search is estimated to match: a
+// phrase is bounded by its rarest token, whose fellow tokens keep it company,
+// and required terms are combined with exponential backoff, not independence.
+func TestEstimatePostingRows(t *testing.T) {
+	const rows = 10_000
+	postings := map[string]float64{"my": 5, "ys": 5, "sq": 6, "ql": 7, "alpha": 1000, "beta": 100, "gamma": 4000}
+	model := PostingCostModel{
+		Postings:  func(read PostingRead) float64 { return postings[read.Term] },
+		Rows:      rows,
+		TermScans: 1,
+	}
+	estimate := func(search string, config AnalyzerConfig) float64 {
+		query, err := CompileBooleanQuery(search, config)
+		require.NoError(t, err)
+		return query.EstimatePostingCost(model).Rows
+	}
+	ngram := ngramConfig()
+	require.InDelta(t, 5, estimate("mysql", ngram), 1e-9)
+	require.InDelta(t, 5, estimate(`+"mysql"`, ngram), 1e-9)
+	// beta 1%, then alpha 10% and gamma 40% with weights 1/2 and 1/4.
+	require.InDelta(t, rows*0.01*math.Sqrt(0.1)*math.Pow(0.4, 0.25), estimate("+alpha +beta +gamma", standardConfig()), 1e-6)
+	require.InDelta(t, 100, estimate("+beta", standardConfig()), 1e-9)
+	// Postings say nothing about whether words are adjacent: a phrase of
+	// words leaves the estimate a bound, which callers do not take as the
+	// MATCH's own; a phrase of grams does not.
+	for _, c := range []struct {
+		search string
+		config AnalyzerConfig
+		exact  bool
+	}{
+		{"+alpha +beta", standardConfig(), true},
+		{`+"alpha beta"`, standardConfig(), false},
+		{`+gamma -"alpha beta"`, standardConfig(), false},
+		{"mysql", ngramConfig(), true},
+	} {
+		query, err := CompileBooleanQuery(c.search, c.config)
+		require.NoError(t, err)
+		require.Equal(t, c.exact, query.RowsFromPostings(), c.search)
+	}
 }

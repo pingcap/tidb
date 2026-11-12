@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -156,20 +157,39 @@ func TestFullTextIndexMatchAgainst(t *testing.T) {
 	row := fullTextScanRow("select id from t use index (idx) where match(body) against('+rareword' in boolean mode)")
 	require.Equal(t, "15", row[2])
 	require.Contains(t, row[5], "time:")
-	require.Contains(t, row[5], "fulltext:{posting_entries:15, posting_scans:1}")
+	require.Regexp(t, `fulltext:\{posting_entries:15, posting_scans:1, scan_rpc:\{num:1, time:[^}]+\}\}`, row[5])
 	alpha := tk.MustQuery("select count(*) from t ignore index (idx) where match(body) against('+alpha' in boolean mode)").Rows()[0][0]
 	both := tk.MustQuery("select count(*) from t where match(body) against('+rareword +alpha' in boolean mode)").Rows()[0][0]
 	// An intersection stops at the end of its shortest list, so it reads
 	// all of rareword's postings and alpha's only up to the last of them.
 	row = fullTextScanRow("select id from t use index (idx) where match(body) against('+rareword +alpha' in boolean mode)")
 	require.Equal(t, fmt.Sprint(both), row[2])
-	m := regexp.MustCompile(`fulltext:\{posting_entries:(\d+), posting_scans:2\}`).FindStringSubmatch(fmt.Sprint(row[5]))
-	require.Len(t, m, 2, row[5])
+	// Each seek into alpha's postings reads on within the batch it has
+	// fetched, or else reopens the scan at its target, never fetching a
+	// batch only to leave it: every request is a scan opened.
+	m := regexp.MustCompile(`fulltext:\{posting_entries:(\d+), posting_scans:(\d+), scan_rpc:\{num:(\d+),`).FindStringSubmatch(fmt.Sprint(row[5]))
+	require.Len(t, m, 4, row[5])
 	require.Greater(t, atoi(t, m[1]), 15)
 	require.LessOrEqual(t, atoi(t, m[1]), 15+atoi(t, alpha))
+	require.GreaterOrEqual(t, atoi(t, m[2]), 2)
+	require.Equal(t, m[2], m[3])
 	row = fullTextScanRow("select id from t use index (idx) where match(body) against('+nosuchword' in boolean mode)")
 	require.Equal(t, "0", row[2])
-	require.Contains(t, row[5], "fulltext:{posting_entries:0, posting_scans:1}")
+	require.Contains(t, row[5], "fulltext:{posting_entries:0, posting_scans:1, scan_rpc:{num:1, ")
+	// A scan makes a kv_scan request for each batch of postings it reads.
+	alphaRows := atoi(t, alpha)
+	require.Greater(t, alphaRows, 2*fulltext.PostingScanBatch)
+	row = fullTextScanRow("select id from t use index (idx) where match(body) against('+alpha' in boolean mode)")
+	require.Contains(t, row[5], fmt.Sprintf("fulltext:{posting_entries:%d, posting_scans:1, scan_rpc:{num:%d, ",
+		alphaRows, (alphaRows+fulltext.PostingScanBatch-1)/fulltext.PostingScanBatch))
+	// A union reader that needs only the first rows stops the scan there.
+	var limited string
+	for _, r := range tk.MustQuery("explain analyze select id from t use index (idx) where match(body) against('+alpha' in boolean mode) limit 3").Rows() {
+		if strings.Contains(fmt.Sprint(r[5]), "fulltext:{") {
+			limited = fmt.Sprint(r[5])
+		}
+	}
+	require.Contains(t, limited, "fulltext:{posting_entries:3, posting_scans:1, scan_rpc:{num:1, ")
 
 	// Changes made earlier in the same transaction are visible through the
 	// index, both ways.
@@ -512,7 +532,7 @@ func TestFullTextIndexMatchAgainstSeeks(t *testing.T) {
 	postingReads := func(sql string) (entries, scans int) {
 		for _, row := range tk.MustQuery("explain analyze " + sql).Rows() {
 			if strings.Contains(fmt.Sprint(row[0]), "FullTextIndexScan") {
-				m := regexp.MustCompile(`fulltext:\{posting_entries:(\d+), posting_scans:(\d+)\}`).FindStringSubmatch(fmt.Sprint(row[5]))
+				m := regexp.MustCompile(`fulltext:\{posting_entries:(\d+), posting_scans:(\d+), scan_rpc:`).FindStringSubmatch(fmt.Sprint(row[5]))
 				require.Len(t, m, 3, row[5])
 				return atoi(t, m[1]), atoi(t, m[2])
 			}

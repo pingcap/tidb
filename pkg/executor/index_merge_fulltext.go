@@ -166,6 +166,11 @@ func (e *IndexMergeReaderExecutor) startPartialFullTextWorker(ctx context.Contex
 		worker.scanStats = &fullTextScanRuntimeStats{}
 		e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(worker.planID, true)
 	}
+	// For a union, the handles past the pushed limit are never needed; an
+	// intersection must see every partial plan's handles first.
+	if e.pushedLimit != nil && !e.isIntersection {
+		worker.limit = e.pushedLimit.Offset + e.pushedLimit.Count
+	}
 
 	ruDetails, _ := ctx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
 	e.fullTextReads.open(ruDetails)
@@ -205,6 +210,9 @@ type partialFullTextWorker struct {
 	// partial plan; scanStats is nil when they are not collected.
 	planID    int
 	scanStats *fullTextScanRuntimeStats
+	// limit, when set, is the most handles the reader needs, and fetched
+	// counts those sent so far.
+	limit, fetched uint64
 }
 
 // run scans each physical table's index in turn. Handles are batched into
@@ -248,6 +256,18 @@ func (w *partialFullTextWorker) scanPhysicalTable(ctx context.Context, physicalI
 		killer:          &e.Ctx().GetSessionVars().SQLKiller,
 		reads:           e.fullTextReads,
 		memTracker:      e.memTracker,
+		stopped: func() bool {
+			select {
+			case <-ctx.Done():
+				return true
+			case <-exitCh:
+				return true
+			case <-e.finished:
+				return true
+			default:
+				return false
+			}
+		},
 	}
 	iter, err := w.query.OpenPostings(source)
 	if err != nil {
@@ -260,10 +280,19 @@ func (w *partialFullTextWorker) scanPhysicalTable(ctx context.Context, physicalI
 	}()
 	batchSize := w.batchSize
 	for {
+		if w.limit > 0 {
+			if w.fetched >= w.limit {
+				return nil
+			}
+			batchSize = int(min(uint64(batchSize), w.limit-w.fetched))
+		}
 		start := time.Now()
 		handles := make([]kv.Handle, 0, batchSize)
 		for len(handles) < batchSize {
 			handle, ok, err := iter.Next()
+			if errors.Cause(err) == errFullTextScanStopped {
+				return nil
+			}
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -272,6 +301,7 @@ func (w *partialFullTextWorker) scanPhysicalTable(ctx context.Context, physicalI
 			}
 			handles = append(handles, handle)
 		}
+		w.fetched += uint64(len(handles))
 		if w.scanStats != nil {
 			e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(w.planID, false).Record(time.Since(start), len(handles))
 		}

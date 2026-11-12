@@ -277,11 +277,27 @@ func CheckFullTextIndexAndRecord(ctx context.Context, sessCtx sessionctx.Context
 			if err != nil {
 				return errors.Trace(err)
 			}
+			// A row written before a column was added does not store it; it
+			// holds the column's original default, as the index was built.
+			columnValue := func(col *table.Column) (types.Datum, error) {
+				if value, ok := rowMap[col.ID]; ok {
+					return value, nil
+				}
+				return table.GetColOriginDefaultValue(sessCtx.GetExprCtx(), col.ToInfo())
+			}
 			entries.keyValues = make([]types.Datum, 0, keyColumnCount)
 			for _, idxCol := range idxInfo.Columns[:keyColumnCount] {
-				entries.keyValues = append(entries.keyValues, rowMap[cols[idxCol.Offset].ID])
+				value, err := columnValue(cols[idxCol.Offset])
+				if err != nil {
+					return errors.Trace(err)
+				}
+				entries.keyValues = append(entries.keyValues, value)
 			}
-			if entries.terms, err = tables.FullTextIndexTerms(idx, rowMap[cols[textCol.Offset].ID]); err != nil {
+			doc, err := columnValue(cols[textCol.Offset])
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if entries.terms, err = tables.FullTextIndexTerms(idx, doc); err != nil {
 				return errors.Trace(err)
 			}
 			rows[handleKey] = entries

@@ -868,6 +868,12 @@ const (
 	// StmtSelectivityByFilterCacheKey holds the selectivities estimated by evaluating a filter
 	// against a column's statistics, which planning one statement asks for many times.
 	StmtSelectivityByFilterCacheKey
+	// StmtFullTextMatchSelectivityCacheKey holds the selectivities of MATCH predicates estimated
+	// from the postings of their terms in a FULLTEXT index built in TiKV.
+	StmtFullTextMatchSelectivityCacheKey
+	// StmtFullTextPostingCountCacheKey holds the posting counts of FULLTEXT index terms probed
+	// while planning the statement.
+	StmtFullTextPostingCountCacheKey
 )
 
 // GetOrStoreStmtCache gets the cached value of the given key if it exists, otherwise stores the value.
@@ -880,6 +886,13 @@ func (sc *StatementContext) GetOrStoreStmtCache(key StmtCacheKey, value any) any
 	if _, ok := sc.stmtCache.data[key]; !ok {
 		sc.stmtCache.data[key] = value
 	}
+	return sc.stmtCache.data[key]
+}
+
+// GetStmtCache gets the cached value of the given key, or nil if there is none.
+func (sc *StatementContext) GetStmtCache(key StmtCacheKey) any {
+	sc.stmtCache.mu.Lock()
+	defer sc.stmtCache.mu.Unlock()
 	return sc.stmtCache.data[key]
 }
 

@@ -5140,6 +5140,9 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *physicalop.PhysicalInde
 				if fullTextSnapshot, err = b.getSnapshot(); err != nil {
 					return nil, err
 				}
+				// The scans are snapshot reads, as a point get's are, and
+				// are tagged for Top SQL and the KV exec counters the same way.
+				setOptionForTopSQL(b.sctx.GetSessionVars().StmtCtx, fullTextSnapshot)
 				fullTextReads = newFullTextReadAccount(b.sctx)
 				fullTextReads.attach(fullTextSnapshot)
 			}

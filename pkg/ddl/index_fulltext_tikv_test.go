@@ -59,6 +59,7 @@ func TestFullTextIndexBuiltInTiKV(t *testing.T) {
 		require.Equal(t, ast.IndexTypeFulltext, idxInfo.Tp)
 		require.NotNil(t, idxInfo.TiKVFullText)
 		require.Equal(t, parser, idxInfo.TiKVFullText.ParserType)
+		require.Equal(t, model.CurrentTiKVFullTextVersion, idxInfo.TiKVFullText.Version)
 		// Never the columnar shape: that would tell the storage layer the
 		// index holds no KV data.
 		require.Nil(t, idxInfo.FullTextInfo)
@@ -533,4 +534,28 @@ func TestFullTextIndexBuiltInTiKVEntries(t *testing.T) {
 	require.Len(t, keys[1], 1)
 	require.Equal(t, "acme corp", string(keys[1][0].GetBytes()))
 	tk.MustExec("admin check table ks")
+}
+
+// TestFullTextIndexAdminCheckAddedColumn covers ADMIN CHECK of a FULLTEXT
+// index over columns added after the rows were written: such a row does not
+// store the column, which holds its original default, and the entries the
+// index holds for that default belong to it.
+func TestFullTextIndexAdminCheckAddedColumn(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, note text)")
+	tk.MustExec("insert into t values (1, 'first'), (2, 'second')")
+	tk.MustExec("alter table t add column body varchar(64) default 'hello world', add column tenant int default 7")
+	tk.MustExec("insert into t values (3, 'third', 'hello again', 8)")
+	tk.MustExec("create fulltext index idx_body on t (body)")
+	tk.MustExec("create fulltext index idx_tenant on t (tenant, body)")
+	tk.MustExec("admin check table t")
+	tk.MustExec("admin check index t idx_body")
+	tk.MustExec("admin check index t idx_tenant")
+	tk.MustQuery("select id from t where match(body) against('+hello' in boolean mode) order by id").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select id from t where tenant = 7 and match(body) against('+world' in boolean mode) order by id").Check(testkit.Rows("1", "2"))
 }

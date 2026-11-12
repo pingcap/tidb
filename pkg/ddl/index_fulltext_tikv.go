@@ -149,6 +149,7 @@ func buildTiKVFullTextInfoWithCheck(
 		}
 	}
 	info.ParserType = parserType
+	info.Version = model.CurrentTiKVFullTextVersion
 	if err := fulltext.ValidateTiKVFullTextIndex(&info); err != nil {
 		return nil, dbterror.ErrUnsupportedIndexType.GenWithStack(fmt.Sprintf("FULLTEXT index with %s", err))
 	}
@@ -159,7 +160,7 @@ func buildTiKVFullTextInfoWithCheck(
 	// depends on the order the indexes were created in.
 	for _, existing := range tblInfo.Indices {
 		other := existing.TiKVFullTextColumn()
-		if other == nil || other.Name.L != textCol.Name.L || *existing.TiKVFullText == info {
+		if other == nil || other.Name.L != textCol.Name.L || existing.TiKVFullText.SameAnalyzer(&info) {
 			continue
 		}
 		return nil, dbterror.ErrUnsupportedIndexType.GenWithStack(
