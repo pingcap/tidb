@@ -668,6 +668,99 @@ type sortRange struct {
 	encodedEnd    []byte
 }
 
+// IntersectSortedRanges intersects sorted, non-overlapping index ranges. Input
+// string datums must already be converted to index sort keys, as for UnionRanges.
+// For input sizes N and M and output size K, the sweep takes O(N+M)
+// range comparisons and O(K) output space. Unsorted or overlapping inputs
+// return an error; callers can conservatively retain their original ranges.
+// The bool reports that the output exceeded rangeMaxSize (zero means unlimited).
+func IntersectSortedRanges(sctx *rangerctx.RangerContext, left, right Ranges, rangeMaxSize int64, mergeConsecutive bool) (Ranges, bool, error) {
+	// Check the sweep invariant before narrowing any range. This also protects
+	// callers if a future range-construction path stops normalizing its output.
+	for _, ranges := range []Ranges{left, right} {
+		for i := 1; i < len(ranges); i++ {
+			prev, next := ranges[i-1], ranges[i]
+			if !checkCollators(prev, next, min(len(prev.LowVal), len(next.LowVal))) {
+				return nil, false, errors.New("incompatible range collators")
+			}
+			collators := prev.Collators
+			if len(next.Collators) > len(collators) {
+				collators = next.Collators
+			}
+			cmp, err := compareLexicographically(sctx.TypeCtx, prev.HighVal, next.LowVal, collators, prev.HighExclude, next.LowExclude, false, true)
+			if err != nil {
+				return nil, false, err
+			}
+			if cmp >= 0 {
+				return nil, false, errors.New("intersection requires sorted, non-overlapping ranges")
+			}
+		}
+	}
+	intersection := make(Ranges, 0)
+	var memUsage int64
+	var lastEnd []byte
+	for i, j := 0, 0; i < len(left) && j < len(right); {
+		l, r := left[i], right[j]
+		if !checkCollators(l, r, min(len(l.LowVal), len(r.LowVal))) {
+			return nil, false, errors.New("incompatible range collators")
+		}
+		collators := l.Collators
+		if len(r.Collators) > len(collators) {
+			collators = r.Collators
+		}
+		cmp, err := compareLexicographically(sctx.TypeCtx, l.HighVal, r.HighVal, collators, l.HighExclude, r.HighExclude, false, false)
+		if err != nil {
+			return nil, false, err
+		}
+		x, err := l.IntersectRange(sctx.TypeCtx, r)
+		if err != nil {
+			return nil, false, err
+		}
+		// The interval ending first cannot intersect any later interval in the
+		// opposite input. Advancing both on equal ends bounds visits by N+M.
+		if cmp <= 0 {
+			i++
+		}
+		if cmp >= 0 {
+			j++
+		}
+		if x == nil {
+			continue
+		}
+		memUsage += x.MemUsage()
+		if rangeMaxSize > 0 && memUsage > rangeMaxSize {
+			return nil, true, nil
+		}
+		start, err := codec.EncodeKey(sctx.TypeCtx.Location(), nil, x.LowVal...)
+		if err = sctx.ErrCtx.HandleError(err); err != nil {
+			return nil, false, err
+		}
+		if x.LowExclude {
+			start = kv.Key(start).PrefixNext()
+		}
+		end, err := codec.EncodeKey(sctx.TypeCtx.Location(), nil, x.HighVal...)
+		if err = sctx.ErrCtx.HandleError(err); err != nil {
+			return nil, false, err
+		}
+		if !x.HighExclude {
+			end = kv.Key(end).PrefixNext()
+		}
+		// Intersections arrive in order. Coalesce using the same encoded-key
+		// adjacency rule as UnionRanges, without sorting or retaining all keys.
+		if len(intersection) > 0 && (bytes.Compare(lastEnd, start) > 0 || (mergeConsecutive && bytes.Equal(lastEnd, start))) {
+			if bytes.Compare(end, lastEnd) > 0 {
+				last := intersection[len(intersection)-1]
+				last.HighVal, last.HighExclude = x.HighVal, x.HighExclude
+				lastEnd = end
+			}
+		} else {
+			intersection = append(intersection, x)
+			lastEnd = end
+		}
+	}
+	return intersection, false, nil
+}
+
 // UnionRanges sorts `ranges`, union adjacent ones if possible.
 // For two intervals [a, b], [c, d], we have guaranteed that a <= c. If b >= c. Then two intervals are overlapped.
 // And this two can be merged as [a, max(b, d)].
