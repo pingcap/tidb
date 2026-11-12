@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
-	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -172,7 +172,7 @@ func (s *mockGCSSuite) getSourceRowCount(sourceContents []string) int {
 
 func (s *mockGCSSuite) getTaskByJob(jobID int64) *proto.Task {
 	s.T().Helper()
-	taskKey := taskkey.ForJob(jobID)
+	taskKey := taskkey.ForImportJob(jobID)
 	task, err2 := s.taskMgr.GetTaskByKeyWithHistory(s.ctx, taskKey)
 	s.NoError(err2)
 	return task

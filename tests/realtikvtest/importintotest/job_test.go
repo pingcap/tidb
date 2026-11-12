@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -467,7 +467,7 @@ func (s *mockGCSSuite) TestShowImportJobTimingAroundPrepare() {
 	var preparedOnce sync.Once
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/afterTaskPrepared",
 		func(task *proto.Task) {
-			if task.Key != taskkey.ForJob(jobID64) {
+			if task.Key != taskkey.ForImportJob(jobID64) {
 				return
 			}
 			preparedOnce.Do(func() {
@@ -630,7 +630,7 @@ func (s *mockGCSSuite) TestDetachedJobWithoutPrepareModeStillSucceeds() {
 	jobID, err := strconv.Atoi(result[0][0].(string))
 	s.NoError(err)
 	jobID64 := int64(jobID)
-	taskKey := taskkey.ForJob(jobID64)
+	taskKey := taskkey.ForImportJob(jobID64)
 	// prepare_mode is 0 and omit when marshal to JSON, so "is null" return true.
 	s.tk.MustQuery(fmt.Sprintf(
 		"select json_extract(extra_params, '$.prepare_mode') is null from mysql.tidb_global_task where task_key = '%s'",
@@ -653,7 +653,7 @@ func (s *mockGCSSuite) TestDetachedJobWithoutPrepareModeStillSucceeds() {
 func (s *mockGCSSuite) getTaskByJobID(ctx context.Context, jobID int64) *proto.Task {
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	taskKey := taskkey.ForJob(jobID)
+	taskKey := taskkey.ForImportJob(jobID)
 	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err)
 	return task
@@ -786,7 +786,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.compareJobInfoWithoutTime(jobInfo, rows2[0])
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	taskKey := taskkey.ForJob(int64(jobID2))
+	taskKey := taskkey.ForImportJob(int64(jobID2))
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
 		task2, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
@@ -935,7 +935,7 @@ func (s *mockGCSSuite) TestKillBeforeFinish() {
 	s.Equal("cancelled", rows[0][fmap["Status"]])
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	taskKey := taskkey.ForJob(jobID)
+	taskKey := taskkey.ForImportJob(jobID)
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
 		task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)

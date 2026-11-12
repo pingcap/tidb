@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/jobhistory"
-	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,7 +45,7 @@ func testGetFromHistory(t *testing.T, sourceStep proto.Step) {
 	_, err := tm.ExecuteSQLWithNewSession(ctx,
 		"alter table mysql.tidb_global_task auto_increment = 9007199254740992")
 	require.NoError(t, err)
-	gotAdjacentTaskID, err := tm.CreateTask(ctx, taskkey.ForJobInKeyspace(keyspace, jobID+1), proto.ImportInto,
+	gotAdjacentTaskID, err := tm.CreateTask(ctx, taskkey.ForImportJobInKeyspace(keyspace, jobID+1), proto.ImportInto,
 		keyspace, 8, "", 4, proto.ExtraParams{}, nil)
 	require.NoError(t, err)
 	require.Equal(t, adjacentTaskID, gotAdjacentTaskID)
@@ -63,7 +63,7 @@ func testGetFromHistory(t *testing.T, sourceStep proto.Step) {
 			"row-count": 1024
 		}
 	}`)
-	taskID, err := tm.CreateTask(ctx, taskkey.ForJobInKeyspace(keyspace, jobID), proto.ImportInto, keyspace, 8, "", 4, proto.ExtraParams{}, taskMeta)
+	taskID, err := tm.CreateTask(ctx, taskkey.ForImportJobInKeyspace(keyspace, jobID), proto.ImportInto, keyspace, 8, "", 4, proto.ExtraParams{}, taskMeta)
 	require.NoError(t, err)
 	require.Equal(t, targetTaskID, taskID)
 

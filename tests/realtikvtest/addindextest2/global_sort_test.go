@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -156,7 +157,7 @@ func getTaskID(t *testing.T, jobID int64) int64 {
 	mgr, err := diststorage.GetTaskManager()
 	require.NoError(t, err)
 	ctx := util.WithInternalSourceType(context.Background(), "scheduler")
-	tkBuilder := ddl.NewTaskKeyBuilder()
+	tkBuilder := taskkey.NewBackfillKeyBuilder()
 	task, err := mgr.GetTaskByKeyWithHistory(ctx, tkBuilder.Build(jobID))
 	require.NoError(t, err)
 	return task.ID
@@ -1048,7 +1049,7 @@ func TestNextGenMetering(t *testing.T) {
 	tk.MustExec("alter table t add index idx(c);")
 	taskManager, err := diststorage.GetTaskManager()
 	require.NoError(t, err)
-	task, err := taskManager.GetTaskByKeyWithHistory(ctx, ddl.TaskKey(jobID, false))
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskkey.ForBackfillJob(jobID, false))
 	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {

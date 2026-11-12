@@ -22,8 +22,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	kvstore "github.com/pingcap/tidb/pkg/store"
@@ -53,7 +53,7 @@ func TestAddIndexOnSystemTable(t *testing.T) {
 	jobIDStr := rs[0][0].(string)
 	jobID, err := strconv.Atoi(jobIDStr)
 	require.NoError(t, err)
-	builder := ddl.NewTaskKeyBuilder()
+	builder := taskkey.NewBackfillKeyBuilder()
 	taskKey := builder.Build(int64(jobID))
 
 	// job to user keyspace, task to system keyspace

@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
-	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -98,7 +98,7 @@ func TestMViewBuildCancelPausedTask(t *testing.T) {
 	worker := ddl.NewMViewBuildWorkerForTest(ctx, store, pool)
 	for _, state := range []proto.TaskState{proto.TaskStatePaused, proto.TaskStatePausing, proto.TaskStateResuming} {
 		t.Run(string(state), func(t *testing.T) {
-			key := taskkey.ForJob(importJobID)
+			key := taskkey.ForImportJob(importJobID)
 			id, err := mgr.CreateTask(ctx, key, proto.ImportInto, store.GetKeyspace(), 1, "", 1, proto.ExtraParams{}, meta)
 			require.NoError(t, err)
 			t.Cleanup(func() {
@@ -148,7 +148,7 @@ func TestMViewBuildReconnectRetry(t *testing.T) {
 				return exec.ExecuteInternal(ctx, sql, args...)
 			}
 			store, pool, mgr, ctx, job, importJobID, meta := newMViewTaskTest(t, hook)
-			key := taskkey.ForJob(importJobID)
+			key := taskkey.ForImportJob(importJobID)
 			id, err := mgr.CreateTask(ctx, key, proto.ImportInto, store.GetKeyspace(), 1, "", 1, proto.ExtraParams{}, meta)
 			require.NoError(t, err)
 			state := proto.TaskStateSucceed
@@ -198,7 +198,7 @@ func TestMViewBuildLostSubmitResponse(t *testing.T) {
 	}
 	store, pool, mgr, ctx, job, importJobID, meta := newMViewTaskTest(t, hook)
 	worker := ddl.NewMViewBuildWorkerForTest(ctx, store, pool)
-	key := taskkey.ForJob(importJobID)
+	key := taskkey.ForImportJob(importJobID)
 	_, err := worker.SubmitMViewBuildForTest(ctx, mgr, key, &proto.Task{TaskBase: proto.TaskBase{RequiredSlots: 1, MaxNodeCount: 1}, Meta: meta})
 	require.ErrorIs(t, err, injectedErr)
 	require.True(t, committed.Load())

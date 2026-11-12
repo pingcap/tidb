@@ -24,7 +24,7 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/tikv/client-go/v2/util"
@@ -61,7 +61,7 @@ func (s *mockGCSSuite) TestSplitFile() {
 	s.NoError(err)
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	taskKey := taskkey.ForJob(int64(jobID))
+	taskKey := taskkey.ForImportJob(int64(jobID))
 	s.NoError(err)
 	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err2)

@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 )
 
@@ -74,7 +74,7 @@ func GetFromHistory(
 		return nil, err
 	}
 
-	taskKey := taskkey.ForJobInKeyspace(keyspace, jobID)
+	taskKey := taskkey.ForImportJobInKeyspace(keyspace, jobID)
 	// NOTE: mysql.tidb_background_subtask_history.task_key stores task ID, not task_key string.
 	rows, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		select

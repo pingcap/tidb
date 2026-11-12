@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/jobhistory"
-	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
+	"github.com/pingcap/tidb/pkg/dxf/taskkey"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	server2 "github.com/pingcap/tidb/pkg/server"
@@ -500,7 +500,7 @@ func TestDXFAPI(t *testing.T) {
 					"row-count": 1024
 				}
 			}`)
-			taskID, err := tm.CreateTask(ctx, taskkey.ForJobInKeyspace("ks1", 9527), proto.ImportInto, "ks1", 8, "", 4, proto.ExtraParams{}, taskMeta)
+			taskID, err := tm.CreateTask(ctx, taskkey.ForImportJobInKeyspace("ks1", 9527), proto.ImportInto, "ks1", 8, "", 4, proto.ExtraParams{}, taskMeta)
 			require.NoError(t, err)
 
 			_, err = tm.ExecuteSQLWithNewSession(ctx, `
