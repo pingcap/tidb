@@ -103,8 +103,11 @@ func TestMaterializedViewOutputLogModifyColumnRuntimeDependency(t *testing.T) {
 			jobW := buildOutputLogModifyJob(t, tkAlter, dom.InfoSchema())
 			// This sibling MV is absent from the submitted ALTER's scheduling set.
 			tk.MustExec("create materialized view mv_output_late (k, l, cnt) as select a, b, count(1) from t_output_batch group by a, b")
+			// Only the second, SkipVersion sub-job modifies this sibling and its MLog.
+			tk.MustExec("create materialized view mv_output_late_b (l, cnt) as select b, count(1) from t_output_batch group by b")
 			for _, info := range jobW.GetInvolvingSchemaInfo() {
 				require.NotEqual(t, "mv_output_late", info.Table)
+				require.NotEqual(t, "mv_output_late_b", info.Table)
 			}
 			boundary := make(chan struct{})
 			resume := make(chan struct{})
@@ -157,7 +160,8 @@ func TestMaterializedViewOutputLogModifyColumnRuntimeDependency(t *testing.T) {
 			}
 			// CREATE MLog can run because the late MV is outside the submitted set.
 			tk.MustExec("create materialized view log on mv_output_late (k, l)")
-			names := []string{"$mlog$t_output_batch", "mv_output_known", "$mlog$mv_output_known", "mv_output_late", "$mlog$mv_output_late"}
+			tk.MustExec("create materialized view log on mv_output_late_b (l)")
+			names := []string{"$mlog$t_output_batch", "mv_output_known", "$mlog$mv_output_known", "mv_output_late", "$mlog$mv_output_late", "mv_output_late_b", "$mlog$mv_output_late_b"}
 			var affectedIDs []int64
 			for _, name := range names {
 				tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
@@ -185,7 +189,7 @@ func TestMaterializedViewOutputLogModifyColumnRuntimeDependency(t *testing.T) {
 				require.ElementsMatch(t, affectedIDs, got)
 				return nil
 			}))
-			tk.MustQuery("select distinct data_type from information_schema.columns where table_schema='test' and table_name in ('t_output_batch', '$mlog$t_output_batch', 'mv_output_known', '$mlog$mv_output_known', 'mv_output_late', '$mlog$mv_output_late') and column_name in ('a', 'b', 'k', 'l')").Check(testkit.Rows("bigint"))
+			tk.MustQuery("select distinct data_type from information_schema.columns where table_schema='test' and table_name in ('t_output_batch', '$mlog$t_output_batch', 'mv_output_known', '$mlog$mv_output_known', 'mv_output_late', '$mlog$mv_output_late', 'mv_output_late_b', '$mlog$mv_output_late_b') and column_name in ('a', 'b', 'k', 'l')").Check(testkit.Rows("bigint"))
 		})
 	}
 }
