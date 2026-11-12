@@ -916,7 +916,7 @@ fn push_index_partial(
 ) -> Result<Vec<tidb_expr::expression::Expression>, PlanError> {
     let ranges = &path.ranges;
     let source_index = index;
-    let mut schema_columns = partial_index_schema(ds, source_index, ctx)?;
+    let mut schema_columns = partial_index_schema(ds, path, ctx)?;
     // Go `ConvertToPartialIndexScan`: an ordered partial of a dynamically
     // pruned partitioned table also reads each entry's partition id, unless
     // a global index already carries it.
@@ -1016,99 +1016,124 @@ fn push_index_partial(
 }
 
 
-/// Go PhysicalIndexScan.InitSchema. The usable range prefix and the physical
-/// index row have different widths after pruning; restore the latter from
-/// immutable table metadata and retain the handle suffix's exact order.
+/// Go `ConvertToPartialIndexScan`'s `InitSchema` over a merge partial's
+/// path: always a double read.
 pub(super) fn partial_index_schema(
     ds: &DataSource,
-    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
+    path: &AccessPath,
     ctx: &DispatchContext<'_>,
 ) -> Result<Vec<tidb_expr::column::Column>, PlanError> {
-    index_scan_schema(ds, index, ctx, true)
+    let index = path.index_info().expect("an index merge partial reads an index");
+    index_scan_schema(ds, index, path, ctx, true)
 }
 
-/// Construct the physical index row, including handles required by lookup.
+/// Go `PhysicalIndexScan.InitSchema(append(path.FullIdxCols,
+/// ds.CommonHandleCols...), isDoubleRead)`: the path's `IdxCols`, then each
+/// remaining index column from `FullIdxCols` or, pruned, a fresh column of
+/// the table's; a common handle's columns; else the data source's integer
+/// handle; a double read's or global index's `_tidb_rowid` when no handle was
+/// set; a global index's partition id; and the data source's partition id.
 pub(super) fn index_scan_schema(
     ds: &DataSource,
     index: &tidb_model::GoShared<tidb_model::IndexInfo>,
+    path: &AccessPath,
     ctx: &DispatchContext<'_>,
-    double_read: bool,
+    is_double_read: bool,
 ) -> Result<Vec<tidb_expr::column::Column>, PlanError> {
-    let mut columns = Vec::with_capacity(index.read().columns.len() + ds.common_handle_cols.len() + 2);
-    for index_column in index.read().columns.iter_deref() {
-        let column = if let Some(column) = ds.schema_column_for_index_column(&index_column.read()) {
-            column.clone()
+    let index = index.read();
+    let table = ds
+        .table_info
+        .as_ref()
+        .ok_or_else(|| PlanError::internal("index scan schema requires the table"))?
+        .read();
+    let idx_expr_cols: Vec<Option<tidb_expr::column::Column>> = path
+        .full_idx_cols
+        .iter()
+        .flatten()
+        .map(|column| column.as_ref().map(|(column, _)| column.clone()))
+        .chain(ds.common_handle_cols.iter().cloned().map(Some))
+        .collect();
+    let mut index_cols: Vec<tidb_expr::column::Column> =
+        Vec::with_capacity(index.columns.len() + 1);
+    index_cols.extend(path.idx_cols.iter().map(|(column, _)| column.clone()));
+    for i in path.idx_cols.len()..index.columns.len() {
+        if let Some(Some(column)) = idx_expr_cols.get(i) {
+            index_cols.push(column.clone());
         } else {
-            let mut column = ds
-                .table_columns
-                .get(index_column.read().offset as usize)
-                .cloned()
-                .ok_or_else(|| {
-                    PlanError::internal("index column is absent from immutable table metadata")
-                })?;
-            column.unique_id = ctx
-                .column_ids
-                .ok_or_else(|| {
-                    PlanError::internal("index scan schema requires the statement column allocator")
-                })?
-                .alloc();
-            column
-        };
-        // Go `indexCol2Col`: a column the index holds only a prefix of is
-        // flagged `IsPrefix` (a copy; the DataSource's own column stays
-        // whole), which keeps `canPushToIndexPlan` from sorting or cutting by
-        // a truncated key.
-        let mut column = column;
-        if index_column.read().length > 0
-            && column
-                .ret_type
-                .as_ref()
-                .is_some_and(|field_type| field_type.flen() > index_column.read().length)
-        {
-            column.is_prefix = true;
+            // TODO: try to reuse the col generated when building the DataSource.
+            let offset = index.columns.get(i).map(|column| column.read().offset);
+            let table_column = offset
+                .and_then(|offset| usize::try_from(offset).ok())
+                .and_then(|offset| table.columns.get(offset))
+                .ok_or_else(|| PlanError::internal("index column is absent from immutable table metadata"))?;
+            let table_column = table_column.read();
+            let mut column = tidb_expr::column::Column::new(
+                ctx.column_ids
+                    .ok_or_else(|| PlanError::internal("index scan schema requires the statement column allocator"))?
+                    .alloc(),
+                table_column.field_type.clone(),
+            );
+            column.id = table_column.id;
+            index_cols.push(column);
         }
-        // Go `InitSchema(path.FullIdxCols)`: an MV partial's ARRAY column is
-        // its element type, which is what the index key holds.
-        columns.push(crate::access_path::mv_index::unwrap_array_column(column));
     }
-    let schema = ds.base.base.schema();
-    if ds.is_common_handle() {
-        // A prefix index can contain a truncated copy of a common-handle
-        // column. Go still appends the full handle, even with the same ID.
-        columns.extend(ds.common_handle_cols.iter().cloned());
-    } else if let Some(handle) = schema.and_then(|schema| {
-        schema.columns.iter().find(|column| {
-            column.id == tidb_model::column::EXTRA_HANDLE_ID
-                || (ds.pk_is_handle()
-                    && ds
-                        .columns
-                        .iter()
-                        .any(|metadata| metadata.read().id == column.id && metadata.read().field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)))
-        })
-    }) {
-        columns.push(handle.clone());
-    } else if double_read || index.read().global {
-        columns.push(extra_column(
-            ctx,
-            tidb_model::column::EXTRA_HANDLE_ID,
-            tidb_model::column::EXTRA_HANDLE_NAME,
-        )?);
+    let need_common_handle = table.is_common_handle;
+    if need_common_handle {
+        index_cols.extend(idx_expr_cols.iter().skip(index.columns.len()).flatten().cloned());
     }
-    if let Some(column) = schema.and_then(|schema| {
+    let data_source_schema = ds.base.base.schema();
+    let mut set_handle = index_cols.len() > index.columns.len();
+    if !set_handle {
+        for col in &ds.columns {
+            let col = col.read();
+            if (col.field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY) && table.pk_is_handle)
+                || col.id == tidb_model::column::EXTRA_HANDLE_ID
+            {
+                let Some(handle_col) = data_source_schema
+                    .and_then(|schema| tidb_expr::column::column_by_id(&schema.columns, col.id))
+                else {
+                    continue;
+                };
+                index_cols.push(handle_col.clone());
+                set_handle = true;
+                break;
+            }
+        }
+    }
+
+    // If `dataSouceSchema` contains `model.ExtraPhysTblID`, we should add it into `indexScan.schema`
+    let extra_phys_tbl_col = data_source_schema.and_then(|schema| {
         schema
             .columns
             .iter()
             .find(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID)
-    }) {
-        columns.push(column.clone());
-    } else if index.read().global {
-        columns.push(extra_column(
-            ctx,
-            tidb_model::column::EXTRA_PHYS_TBL_ID,
-            tidb_model::column::EXTRA_PHYS_TBL_ID_NAME,
-        )?);
+            .cloned()
+    });
+
+    if is_double_read || index.global {
+        // If it's double read case, the first index must return handle. So we should add extra handle column
+        // if there isn't a handle column.
+        if !set_handle && !table.is_common_handle {
+            index_cols.push(extra_column(
+                ctx,
+                tidb_model::column::EXTRA_HANDLE_ID,
+                tidb_model::column::EXTRA_HANDLE_NAME,
+            )?);
+        }
+        // If it's global index, handle and PhysTblID columns has to be added, so that needed pids can be filtered.
+        if index.global && extra_phys_tbl_col.is_none() {
+            index_cols.push(extra_column(
+                ctx,
+                tidb_model::column::EXTRA_PHYS_TBL_ID,
+                tidb_model::column::EXTRA_PHYS_TBL_ID_NAME,
+            )?);
+        }
     }
-    Ok(columns)
+
+    if let Some(column) = extra_phys_tbl_col {
+        index_cols.push(column);
+    }
+    Ok(index_cols)
 }
 
 fn extra_column(
@@ -1211,6 +1236,15 @@ mod tests {
 
     /// Go PhysicalIndexScan.InitSchema, reached by the union candidates in
     /// TestIndexMergePathGeneration: pruning cannot change physical key layout.
+
+    /// Go `fillIndexPath`'s `IdxCols` and `FullIdxCols` over the data source.
+    fn filled_index_path(ds: &DataSource, index: &tidb_model::GoShared<tidb_model::IndexInfo>) -> AccessPath {
+        let idx_cols = ds.index_range_columns(index);
+        let mut full_idx_cols = ds.index_info_2_full_cols(index);
+        full_idx_cols.extend(idx_cols.iter().skip(index.read().columns.len()).cloned().map(Some));
+        AccessPath { index: Some(index.clone()), idx_cols, full_idx_cols: Some(full_idx_cols), ..Default::default() }
+    }
+
     #[test]
     fn index_merge_restores_index_columns_and_handle_suffix() {
         use tidb_planner_core_operator_logicalop::{BaseLogicalPlan};
@@ -1260,7 +1294,23 @@ mod tests {
                     },
                 ].into(),
                 ..tidb_model::IndexInfo::default()
-            })]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
+            })]).into_iter().map(Some).collect()),
+            // Go `Table.Columns`, which `InitSchema` reads a pruned index
+            // column's ID and type from.
+            columns: tidb_model::GoSharedPointerSlice::from_handles(
+                [(1, "a"), (2, "b")]
+                    .into_iter()
+                    .map(|(id, name)| {
+                        Some(tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                            id,
+                            name: tidb_ast::CiString::new(name),
+                            field_type: ty.clone(),
+                            ..tidb_model::ColumnInfo::default()
+                        }))
+                    })
+                    .collect(),
+            ),
+            ..tidb_model::TableInfo::default() })),
             base,
             table_columns: vec![a.clone(), b],
             columns: vec![tidb_model::GoShared::new({
@@ -1660,7 +1710,7 @@ mod tests {
             .is_none());
         // A global index over a common handle: the pruned `b` comes back as
         // a fresh column, then the handle and the physical-table id.
-        let columns = partial_index_schema(&ds, &ds.table_indices()[0], &ctx).unwrap();
+        let columns = partial_index_schema(&ds, &filled_index_path(&ds, &ds.table_indices()[0]), &ctx).unwrap();
         assert_eq!(
             columns.iter().map(|column| column.id).collect::<Vec<_>>(),
             vec![1, 2, 1, tidb_model::column::EXTRA_PHYS_TBL_ID]
@@ -1676,7 +1726,7 @@ mod tests {
         ds.table_indices()[0].write().global = false;
         for (pk_is_handle, expected) in [(false, vec![1, 2, -1]), (true, vec![1, 2, 1])] {
             ds.set_pk_is_handle(pk_is_handle);
-            let columns = partial_index_schema(&ds, &ds.table_indices()[0], &ctx).unwrap();
+            let columns = partial_index_schema(&ds, &filled_index_path(&ds, &ds.table_indices()[0]), &ctx).unwrap();
             assert_eq!(
                 columns.iter().map(|column| column.id).collect::<Vec<_>>(),
                 expected
@@ -1693,7 +1743,7 @@ mod tests {
             .base
             .set_schema(Some(Schema::new(vec![inherited.clone()])));
         ds.table_indices()[0].write().global = true;
-        let columns = partial_index_schema(&ds, &ds.table_indices()[0], &ctx).unwrap();
+        let columns = partial_index_schema(&ds, &filled_index_path(&ds, &ds.table_indices()[0]), &ctx).unwrap();
         assert_eq!(
             columns.iter().map(|column| column.id).collect::<Vec<_>>(),
             vec![1, 2, -1, -3]

@@ -4623,8 +4623,26 @@ fn find_best_task_4_logical_data_source_paths(
                     "IndexScan",
                     ds.base.base.query_block_offset(),
                 );
+                // Go `GetOriginalPhysicalIndexScan`'s `InitSchema` over the
+                // path's columns; an index-join probe's path is filled as
+                // `fillIndexPath` fills it.
+                let unfilled_path;
+                let schema_path = match filled_owner {
+                    Some(path) => path,
+                    None => {
+                        let mut full_idx_cols = ds.index_info_2_full_cols(source_index);
+                        full_idx_cols.extend(resolved_index_prefix.iter().skip(source_index.read().columns.len()).cloned().map(Some));
+                        unfilled_path = tidb_planner_util::path::AccessPath {
+                            index: Some(source_index.clone()),
+                            idx_cols: resolved_index_prefix.clone(),
+                            full_idx_cols: Some(full_idx_cols),
+                            ..Default::default()
+                        };
+                        &unfilled_path
+                    }
+                };
                 let mut index_schema = super::index_merge_union::index_scan_schema(
-                    ds, source_index, ctx, !single_scan,
+                    ds, source_index, schema_path, ctx, !single_scan,
                 )?;
                 // Go `convertToIndexScan` (`find_best_task.go:2692`): a
                 // keep-order lookup on a dynamically pruned partitioned table

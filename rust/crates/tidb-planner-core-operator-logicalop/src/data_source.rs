@@ -292,33 +292,21 @@ impl DataSource {
         self.base.base.schema()?.columns.get(position)
     }
 
-    /// Go `IndexInfo2FullCols`: retain unresolved positions and normalize
-    /// full-length prefixes before either pruning or range construction.
+    /// Go `IndexInfo2FullCols(ds.Columns, ds.Schema().Columns, index)`: every
+    /// index column with its length, `None` where pruning dropped it, a
+    /// column the index holds a prefix of flagged `IsPrefix`.
     #[must_use]
     pub fn index_info_2_full_cols(
         &self,
         index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     ) -> Vec<Option<(Column, i64)>> {
-        index
-            .read().columns
-            .iter_deref()
-            .map(|key| {
-                let key = key.read();
-                self.schema_column_for_index_column(&key)
-                    .cloned()
-                    .map(|column| {
-                        let length = if column
-                            .ret_type
-                            .as_ref()
-                            .is_some_and(|ty| ty.flen() == key.length)
-                        {
-                            tidb_datatype::UNSPECIFIED_LENGTH
-                        } else {
-                            key.length
-                        };
-                        (column, length)
-                    })
-            })
+        let schema_columns = self.base.base.schema().map_or(&[][..], |schema| &schema.columns[..]);
+        let (full_cols, full_lens) =
+            tidb_planner_util::column::index_info_2_full_cols(&self.columns, schema_columns, &index.read());
+        full_cols
+            .into_iter()
+            .zip(full_lens)
+            .map(|(column, length)| column.map(|column| (column, length)))
             .collect()
     }
 

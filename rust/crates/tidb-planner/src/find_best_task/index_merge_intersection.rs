@@ -43,7 +43,7 @@ pub(super) fn build_prepared_index_merge_task(
             .count_after_access()
             .unwrap_or(partial.ranges.len() as f64);
         let schema_columns =
-            crate::find_best_task::index_merge_union::partial_index_schema(ds, source_index, ctx)?;
+            crate::find_best_task::index_merge_union::partial_index_schema(ds, partial, ctx)?;
         let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
             ctx.allocator,
             "IndexRangeScan",
