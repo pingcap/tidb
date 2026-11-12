@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -1030,6 +1031,207 @@ func TestValidateMaterializedViewCompleteOutOfPlaceTarget(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 			}
+		})
+	}
+}
+
+func TestValidateMaterializedViewSourceState(t *testing.T) {
+	base := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("base"),
+		State: model.StatePublic,
+	}
+	require.NoError(t, validateMaterializedViewSourceState("test", base))
+
+	view := base.Clone()
+	view.View = &model.ViewInfo{}
+	require.ErrorContains(t, validateMaterializedViewSourceState("test", view), "is not BASE TABLE")
+
+	building := base.Clone()
+	building.MaterializedView = &model.MaterializedViewInfo{InitBuildState: model.MViewInitBuildBuilding}
+	require.ErrorContains(t, validateMaterializedViewSourceState("test", building), "initial build is in progress")
+
+	deferred := base.Clone()
+	deferred.MaterializedView = &model.MaterializedViewInfo{InitBuildState: model.MViewInitBuildDeferred}
+	require.ErrorContains(t, validateMaterializedViewSourceState("test", deferred), "initial build has not completed")
+}
+
+func TestValidateMaterializedViewSourceMLog(t *testing.T) {
+	source := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("mv_parent"),
+		State: model.StatePublic,
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{
+			MLogID: 2,
+		},
+	}
+	mlog := &model.TableInfo{
+		ID:                  2,
+		Name:                ast.NewCIStr("$mlog$mv_parent"),
+		State:               model.StatePublic,
+		MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: 1},
+	}
+	require.NoError(t, validateMaterializedViewSourceMLog("test", source, mlog))
+
+	wrongBase := mlog.Clone()
+	wrongBase.MaterializedViewLog.BaseTableID = 3
+	require.ErrorContains(t, validateMaterializedViewSourceMLog("test", source, wrongBase), "is not a materialized view log")
+
+	wrongID := mlog.Clone()
+	wrongID.ID = 3
+	require.ErrorContains(t, validateMaterializedViewSourceMLog("test", source, wrongID), "is not a materialized view log")
+
+	notMLog := mlog.Clone()
+	notMLog.MaterializedViewLog = nil
+	require.ErrorContains(t, validateMaterializedViewSourceMLog("test", source, notMLog), "is not a materialized view log")
+}
+
+func TestOnCreateMaterializedViewBaseCheckNestedSource(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(source, mlog *model.TableInfo)
+		err    string
+	}{
+		{name: "ready"},
+		{name: "building", mutate: func(source, _ *model.TableInfo) {
+			source.MaterializedView.InitBuildState = model.MViewInitBuildBuilding
+		}, err: "initial build is in progress"},
+		{name: "deferred", mutate: func(source, _ *model.TableInfo) {
+			source.MaterializedView.InitBuildState = model.MViewInitBuildDeferred
+		}, err: "initial build has not completed"},
+		{name: "source_not_public", mutate: func(source, _ *model.TableInfo) {
+			source.State = model.StateWriteOnly
+		}, err: "not in public"},
+		{name: "wrong_mlog_source", mutate: func(_, mlog *model.TableInfo) {
+			mlog.MaterializedViewLog.BaseTableID = 99
+		}, err: "invalid materialized view log metadata"},
+		{name: "mlog_not_public", mutate: func(_, mlog *model.TableInfo) {
+			mlog.State = model.StateWriteOnly
+		}, err: "invalid materialized view log metadata"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := mockstore.NewMockStore()
+			require.NoError(t, err)
+			defer func() { require.NoError(t, store.Close()) }()
+			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+			err = kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+				m := meta.NewMutator(txn)
+				require.NoError(t, m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}))
+				source := &model.TableInfo{
+					ID: 2, Name: ast.NewCIStr("mv_parent"), State: model.StatePublic,
+					MaterializedView:     &model.MaterializedViewInfo{InitBuildState: model.MViewInitBuildReady},
+					MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: 3},
+				}
+				mlog := &model.TableInfo{
+					ID: 3, Name: ast.NewCIStr("$mlog$mv_parent"), State: model.StatePublic,
+					MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: source.ID},
+				}
+				if tc.mutate != nil {
+					tc.mutate(source, mlog)
+				}
+				require.NoError(t, m.CreateTableOrView(1, source))
+				require.NoError(t, m.CreateTableOrView(1, mlog))
+				actual, err := onCreateMaterializedViewBaseCheck(m, 1, source.ID, "test")
+				if tc.err == "" {
+					require.NoError(t, err)
+					require.Equal(t, source.ID, actual.ID)
+				} else {
+					require.ErrorContains(t, err, tc.err)
+					require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(err))
+					if validateErr := validateMaterializedViewSourceMLog("test", source, mlog); validateErr != nil {
+						require.True(t, dbterror.ErrInvalidDDLJob.Equal(err))
+						require.ErrorContains(t, err, validateErr.Error())
+					}
+				}
+				return nil
+			})
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestValidateMaterializedViewNestingDepth(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		sharedDepth int
+		cycle       bool
+		missing     bool
+		err         string
+	}{
+		{name: "shared_sources_at_limit", sharedDepth: 13},
+		{name: "shared_sources_above_limit", sharedDepth: 14, err: "materialized view nesting depth exceeds maximum of 16"},
+		{name: "cycle", cycle: true, err: "materialized view nesting depth exceeds maximum of 16"},
+		{name: "missing_source", missing: true, err: "table 99 missing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tables := map[int64]*model.TableInfo{1: {ID: 1}}
+			for depth := 1; depth <= tc.sharedDepth; depth++ {
+				id := int64(depth + 1)
+				tables[id] = &model.TableInfo{ID: id, MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{id - 1}}}
+			}
+			sharedID := int64(tc.sharedDepth + 1)
+			tables[100] = &model.TableInfo{ID: 100, MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{sharedID}}}
+			source := &model.TableInfo{ID: 101, MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{sharedID, 100}}}
+			if tc.cycle {
+				source.MaterializedView.BaseTableIDs = []int64{source.ID}
+				tables[source.ID] = source
+			}
+			if tc.missing {
+				source.MaterializedView.BaseTableIDs = []int64{99}
+			}
+			err := validateMaterializedViewNestingDepth(source, func(id int64) (*model.TableInfo, error) {
+				if tbl, ok := tables[id]; ok {
+					return tbl, nil
+				}
+				return nil, fmt.Errorf("table %d missing", id)
+			})
+			if tc.err == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.err)
+			}
+		})
+	}
+}
+
+func TestOnCreateMaterializedViewBaseCheckNestingDepth(t *testing.T) {
+	for _, sourceDepth := range []int{0, 1, 15, 16, 17} {
+		t.Run(fmt.Sprintf("source_depth_%d", sourceDepth), func(t *testing.T) {
+			store, err := mockstore.NewMockStore()
+			require.NoError(t, err)
+			defer func() { require.NoError(t, store.Close()) }()
+			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+			err = kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+				m := meta.NewMutator(txn)
+				require.NoError(t, m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}))
+				const mlogID int64 = 100
+				var source *model.TableInfo
+				for depth := 0; depth <= sourceDepth; depth++ {
+					source = &model.TableInfo{
+						ID: int64(depth + 2), Name: ast.NewCIStr(fmt.Sprintf("source_%d", depth)), State: model.StatePublic,
+					}
+					if depth > 0 {
+						source.MaterializedView = &model.MaterializedViewInfo{BaseTableIDs: []int64{source.ID - 1}}
+					}
+					if depth == sourceDepth {
+						source.MaterializedViewBase = &model.MaterializedViewBaseInfo{MLogID: mlogID}
+					}
+					require.NoError(t, m.CreateTableOrView(1, source))
+				}
+				require.NoError(t, m.CreateTableOrView(1, &model.TableInfo{
+					ID: mlogID, Name: ast.NewCIStr("$mlog$source"), State: model.StatePublic,
+					MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: source.ID},
+				}))
+				_, err := onCreateMaterializedViewBaseCheck(m, 1, source.ID, "test")
+				if sourceDepth < 16 {
+					require.NoError(t, err)
+				} else {
+					require.ErrorContains(t, err, "materialized view nesting depth exceeds maximum of 16")
+					require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(err))
+				}
+				return nil
+			})
+			require.NoError(t, err)
 		})
 	}
 }
