@@ -17,12 +17,16 @@ package gluetidb
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -103,4 +107,54 @@ func TestTheSessionIsoation(t *testing.T) {
 	req.NoError(glueSe.(glue.BatchCreateTableSession).CreateTables(ctx, map[string][]*model.TableInfo{
 		"test": infos,
 	}))
+}
+
+func TestMDLInitializedBeforeBRDomainStarts(t *testing.T) {
+	for _, entrypoint := range []string{"GetDomain", "CreateSession", "UseOneShotSession"} {
+		t.Run(entrypoint, func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
+			dom.Close()
+			original := vardef.IsMDLEnabled()
+			vardef.SetEnableMDL(false)
+			t.Cleanup(func() { vardef.SetEnableMDL(original) })
+			observed := make(chan bool, 1)
+			dispatched := make(chan bool, 1)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDDLStart", func(mode ddl.StartMode) {
+				require.Equal(t, ddl.BR, mode)
+				observed <- vardef.IsMDLEnabled()
+			})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
+				select {
+				case dispatched <- vardef.IsMDLEnabled():
+				default:
+				}
+			})
+			g := New()
+			defer func() {
+				if dom, _ := session.GetDomain(nil); dom != nil {
+					dom.Close()
+				}
+			}()
+			switch entrypoint {
+			case "GetDomain":
+				_, err := g.GetDomain(store)
+				require.NoError(t, err)
+			case "CreateSession":
+				se, err := g.CreateSession(store)
+				require.NoError(t, err)
+				se.Close()
+			case "UseOneShotSession":
+				require.NoError(t, g.UseOneShotSession(store, false, func(glue.Session) error { return nil }))
+			}
+			for _, observations := range []chan bool{observed, dispatched} {
+				select {
+				case enabled := <-observations:
+					require.True(t, enabled, "BR must load persisted MDL before starting its DDL scheduler")
+				case <-time.After(10 * time.Second):
+					require.FailNow(t, "BR DDL did not start or dispatch")
+				}
+			}
+		})
+	}
 }
