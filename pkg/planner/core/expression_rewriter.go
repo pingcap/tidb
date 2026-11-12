@@ -1883,7 +1883,19 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) bool {
 			}
 		}
 		// SetCollationExpr sets the collation explicitly, even when the evaluation type of the expression is non-string.
-		if _, ok := arg.(*expression.Column); ok || arg.GetType(er.sctx.GetEvalCtx()).GetType() == mysql.TypeJSON {
+		// A correlated column shares its FieldType with the outer column, so it must not be changed in place either.
+		_, isColumn := arg.(*expression.Column)
+		corCol, isCorrelatedColumn := arg.(*expression.CorrelatedColumn)
+		argType := arg.GetType(er.sctx.GetEvalCtx()).GetType()
+		if isCorrelatedColumn && (argType == mysql.TypeEnum || argType == mysql.TypeSet) {
+			// ENUM and SET can't take the cast below, so set the collation on a copy of the correlated column.
+			corCol = corCol.Clone().(*expression.CorrelatedColumn)
+			corCol.RetType = corCol.RetType.Clone()
+			corCol.RetType.SetCollate(v.Collate)
+			arg = corCol
+			er.ctxStackPop(1)
+			er.ctxStackAppend(corCol, types.EmptyName)
+		} else if isColumn || isCorrelatedColumn || argType == mysql.TypeJSON {
 			if arg.GetType(er.sctx.GetEvalCtx()).GetType() == mysql.TypeEnum || arg.GetType(er.sctx.GetEvalCtx()).GetType() == mysql.TypeSet {
 				er.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("use collate clause for enum or set")
 				break
