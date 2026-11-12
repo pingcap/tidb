@@ -48,8 +48,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	kvstore "github.com/pingcap/tidb/pkg/store"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -712,7 +710,6 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 			etcd.SetEtcdCliByNamespace(*cliP, keyspace.MakeKeyspaceEtcdNamespace(codec))
 		},
 	)
-	require.NoError(t, kvstore.Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{}))
 	sysKSStore, _ := testkit.CreateMockStoreAndDomainForKS(t, keyspace.System)
 	sysKSTK := testkit.NewTestKit(t, sysKSStore)
 	// in uni-store, Store instances are completely isolated, even they have the
