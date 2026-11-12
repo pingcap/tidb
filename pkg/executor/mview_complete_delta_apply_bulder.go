@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -101,6 +102,11 @@ func (b *executorBuilder) buildMViewCompleteDeltaApply(v *plannercore.MViewCompl
 		b.err = err
 		return nil
 	}
+	target = b.wrapTableWithMLogIfExists(target, tables.MLogSourceRefresh)
+	if b.err != nil {
+		return nil
+	}
+
 	return &MViewCompleteDeltaApplyExec{
 		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID(), sourceExec),
 		TargetTable:  target, TargetHandleCols: v.CurrentHandleCols, OpColID: v.OpColID,
@@ -125,15 +131,16 @@ func buildMViewCompleteDeltaWritableInputColIDs(target table.Table, rowInputColI
 	if len(rowInputColIDs) != len(publicCols) {
 		return nil, errors.Errorf("MViewCompleteDeltaApply row input column mapping length %d != target public column count %d", len(rowInputColIDs), len(publicCols))
 	}
+	// Row buffers and touched flags use writable ordinals as physical column offsets.
 	ids := make([]int, 0, len(writableCols))
 	for i, col := range writableCols {
 		if col == nil {
 			return nil, errors.Errorf("MViewCompleteDeltaApply target writable column at offset %d is nil", i)
 		}
-		if col.Offset < 0 || col.Offset >= len(rowInputColIDs) {
+		if col.Offset != i {
 			return nil, errors.Errorf(
-				"MViewCompleteDeltaApply target writable column `%s` offset %d out of range [0,%d)",
-				col.Name.O, col.Offset, len(rowInputColIDs),
+				"MViewCompleteDeltaApply target writable column `%s` offset %d != writable ordinal %d",
+				col.Name.O, col.Offset, i,
 			)
 		}
 		ids = append(ids, rowInputColIDs[col.Offset])

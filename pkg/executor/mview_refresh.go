@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -56,6 +57,10 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
+
+// Refreshes with stale schemas share reload results by rechecking their
+// domain version under this mutex. Up-to-date refreshes do not acquire it.
+var mvRefreshSchemaReloadMu sync.Mutex
 
 var errMVRefreshAdvisoryLockConflict = errors.NewNoStackError("materialized view refresh advisory lock conflict")
 
@@ -401,6 +406,15 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if err := checkRefreshMaterializedViewBaseTableSelect(e.Ctx(), domain.GetDomain(e.Ctx()).InfoSchema(), tblInfo.MaterializedView); err != nil {
 		return err
 	}
+	if refreshMode == ast.RefreshMaterializedViewModeCompleteInPlace {
+		if baseInfo := tblInfo.MaterializedViewBase; baseInfo != nil && baseInfo.MLogID != 0 {
+			return errors.Errorf(
+				"refresh materialized view complete IN PLACE is not supported for materialized view %s.%s with a materialized view log",
+				schemaName.O,
+				tblInfo.Name.O,
+			)
+		}
+	}
 	reportRefreshFailed := tblInfo.MaterializedView != nil && tblInfo.MaterializedView.AlertRefreshFailed
 	mviewID = tblInfo.ID
 	refreshHistRunningInserted := false
@@ -494,6 +508,24 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		}
 		err = errors.Annotate(err, invariantErr.Error())
 	}()
+	// Check schema freshness under the shared lock so refresh sees MLogs
+	// committed by a previous DDL owner, even before normal schema synchronization.
+	if err := ensureMVRefreshSchemaVersion(kctx, e.Ctx()); err != nil {
+		return err
+	}
+	currentTbl, ok := domain.GetDomain(e.Ctx()).InfoSchema().TableByID(context.Background(), tblInfo.ID)
+	if !ok {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(schemaName, tblInfo.Name)
+	}
+	if refreshMode == ast.RefreshMaterializedViewModeCompleteInPlace {
+		if baseInfo := currentTbl.Meta().MaterializedViewBase; baseInfo != nil && baseInfo.MLogID != 0 {
+			return errors.Errorf(
+				"refresh materialized view complete IN PLACE is not supported for materialized view %s.%s with a materialized view log",
+				schemaName.O,
+				tblInfo.Name.O,
+			)
+		}
+	}
 	// CREATE publishes input logs with ready state. Missing registration is metadata corruption.
 	registeredLogs, err := mviewutil.ReadRefreshSourceIDs(kctx, sqlExec, mviewID)
 	if err != nil {
@@ -1063,6 +1095,18 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 
 	if err := kctx.Err(); err != nil {
 		return 0, err
+	}
+	currentTbl, ok := domain.GetDomain(e.Ctx()).InfoSchema().TableByID(context.Background(), tblInfo.ID)
+	if !ok {
+		return 0, infoschema.ErrTableNotExists.GenWithStackByArgs(schemaName, tblInfo.Name)
+	}
+	if baseInfo := currentTbl.Meta().MaterializedViewBase; baseInfo != nil &&
+		(baseInfo.MLogID != 0 || len(baseInfo.MViewIDs) != 0) {
+		return 0, errors.Errorf(
+			"refresh materialized view complete OUT OF PLACE is not supported for materialized view %s.%s with a materialized view log or dependent materialized view",
+			schemaName.O,
+			tblInfo.Name.O,
+		)
 	}
 	buildSctx, err := e.GetSysSession()
 	if err != nil {
@@ -1798,8 +1842,60 @@ func lockRefreshInfoRow(
 	return decodeRefreshInfoSnapshot(lockRows[0], 1, 2), nil
 }
 
-func buildMVRefreshAdvisoryLockName(schemaID int64, mviewID int64) string {
-	return fmt.Sprintf("mv_refresh_%d_%d", schemaID, mviewID)
+func ensureMVRefreshSchemaVersion(ctx context.Context, sctx sessionctx.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	dom := domain.GetDomain(sctx)
+	ver, err := sctx.GetStore().CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return errors.Annotate(err, "refresh materialized view: failed to get schema-check timestamp")
+	}
+	m := dom.GetSnapshotMeta(ver.Ver)
+	requiredVersion, err := m.GetSchemaVersion()
+	if err != nil {
+		return errors.Annotate(err, "refresh materialized view: failed to get schema version")
+	}
+	// DDL can reserve versions without committing their schema diffs. Skip
+	// empty versions: Reload may retain an older version for those no-op changes.
+	// An up-to-date refresh only needs the schema-version read above.
+	currentVersion := dom.InfoSchema().SchemaMetaVersion()
+	for requiredVersion > currentVersion {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		diff, err := m.GetSchemaDiff(requiredVersion)
+		if err != nil {
+			return errors.Annotatef(err, "refresh materialized view: failed to get schema diff for version %d", requiredVersion)
+		}
+		if diff != nil {
+			break
+		}
+		requiredVersion--
+	}
+	if dom.InfoSchema().SchemaMetaVersion() >= requiredVersion {
+		return nil
+	}
+	failpoint.InjectCall("refreshMaterializedViewBeforeSchemaReloadLock", requiredVersion)
+	mvRefreshSchemaReloadMu.Lock()
+	defer mvRefreshSchemaReloadMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Another refresh or the background schema loader may have caught up while
+	// this refresh was waiting. Recheck before invoking Reload, which still does
+	// KV reads on a cache hit.
+	if dom.InfoSchema().SchemaMetaVersion() >= requiredVersion {
+		return nil
+	}
+	failpoint.InjectCall("refreshMaterializedViewBeforeSchemaReload", requiredVersion)
+	if err := dom.Reload(); err != nil {
+		return errors.Annotate(err, "refresh materialized view: failed to reload schema")
+	}
+	if currentVersion := dom.InfoSchema().SchemaMetaVersion(); currentVersion < requiredVersion {
+		return errors.Errorf("refresh materialized view: schema version %d is behind required version %d", currentVersion, requiredVersion)
+	}
+	return nil
 }
 
 func acquireMVRefreshAdvisoryLock(
@@ -1807,12 +1903,12 @@ func acquireMVRefreshAdvisoryLock(
 	schemaName ast.CIStr,
 	tblInfo *model.TableInfo,
 ) (string, error) {
-	lockName := buildMVRefreshAdvisoryLockName(tblInfo.DBID, tblInfo.ID)
+	lockName := mviewutil.RefreshAdvisoryLockName(tblInfo.DBID, tblInfo.ID)
 	if err := refreshSctx.GetAdvisoryLock(lockName, mvRefreshAdvisoryLockTimeoutSec); err != nil {
 		if isMVRefreshAdvisoryLockConflict(err) {
 			return lockName, errors.Annotatef(
 				errMVRefreshAdvisoryLockConflict,
-				"another refresh is running for materialized view %s.%s, please retry later",
+				"another refresh or materialized view log creation is running for materialized view %s.%s, please retry later",
 				schemaName.O,
 				tblInfo.Name.O,
 			)
