@@ -84,14 +84,18 @@ import (
 // it.
 // fullTextIndexReadable reports whether the statement may read a FULLTEXT
 // index of ds, to plan or to execute: the postings and the rows they lead to
-// are both read from TiKV, which the isolation read engines can rule out.
+// are both read from TiKV, which the isolation read engines or a hint to
+// read the table from TiFlash rule out.
 func fullTextIndexReadable(ds *logicalop.DataSource) bool {
+	if ds.PreferStoreType&h.PreferTiFlash != 0 {
+		return false
+	}
 	_, ok := ds.SCtx().GetSessionVars().GetIsolationReadEngines()[kv.TiKV]
 	return ok
 }
 
 func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
-	if ds.TableInfo == nil || ds.PreferStoreType&h.PreferTiFlash != 0 || !fullTextIndexReadable(ds) {
+	if ds.TableInfo == nil || !fullTextIndexReadable(ds) {
 		return nil
 	}
 	sessVars := ds.SCtx().GetSessionVars()

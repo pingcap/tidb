@@ -189,9 +189,8 @@ func estimateFullTextMatchSelectivities(ds *logicalop.DataSource) {
 	if ds.TableInfo == nil || ds.TableStats == nil || ds.TableStats.RowCount <= 0 {
 		return
 	}
-	// The probe reads TiKV, which a statement isolated from TiKV must not do
-	// even to plan. A hint for another engine is only a preference of where
-	// the rows are read, and the count still tells how many there are.
+	// The probe reads TiKV, which a statement kept from TiKV, by the
+	// isolation read engines or a TiFlash hint, must not do even to plan.
 	if !fullTextIndexReadable(ds) {
 		return
 	}
