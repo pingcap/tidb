@@ -18,6 +18,20 @@ set -eu
 DB="$TEST_NAME"
 DB_COUNT=10
 
+# A scheduler-removal error must not be reported as a successful empty backup.
+for mode in full raw txn; do
+    failure_dir="$TEST_DIR/scheduler-error-$mode"
+    failure_log="$TEST_DIR/scheduler-error-$mode.log"
+    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/pdutil/removeSchedulersError=return(true)"
+    if run_br --pd "$PD_ADDR" backup "$mode" --remove-schedulers -s "local://$failure_dir" > "$failure_log" 2>&1; then
+        echo "backup $mode incorrectly succeeded after scheduler removal failed"
+        exit 1
+    fi
+    grep -q "injected scheduler removal failure" "$failure_log"
+    test ! -f "$failure_dir/backupmeta"
+    export GO_FAILPOINTS=""
+done
+
 # backup empty.
 echo "backup empty cluster start..."
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/empty_cluster"
