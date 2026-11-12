@@ -711,26 +711,26 @@ fn rebuild_table_scan(
     Ok(())
 }
 
+/// Go `buildRangeForIndexScan`.
 fn rebuild_index_scan(
     scan: &mut tidb_planner_core_operator_physicalop::PhysicalIndexScan,
     context: &CachedPlanRebuildContext<'_>,
 ) -> Result<(), PlanCacheRebuildError> {
-    let Some(rebuild) = scan.range_rebuild.as_mut() else {
-        return Ok(());
-    };
-    if rebuild.index_columns.is_empty()
-        || rebuild.index_columns.len() != rebuild.index_column_lengths.len()
-    {
-        return Err(PlanCacheRebuildError::InvalidMetadata {
-            plan_id: scan.base.base.id(),
-            detail: "index columns and lengths must be non-empty and aligned",
-        });
+    if scan.idx_cols.is_empty() {
+        // the original range is already a full-range.
+        if has_full_range(&scan.ranges, false) {
+            scan.ranges = tidb_ranger::points::full_range();
+            return Ok(());
+        }
+        return Err(PlanCacheRebuildError::RangeBuild(
+            "unexpected range for PhysicalIndexScan".to_owned(),
+        ));
     }
-    bind_conditions(&mut rebuild.access_conditions, context)?;
+    bind_conditions(&mut scan.access_condition, context)?;
     let result = tidb_ranger::detacher::detach_cond_and_build_range_for_index_in(
-        &rebuild.access_conditions,
-        &rebuild.index_columns,
-        &rebuild.index_column_lengths,
+        &scan.access_condition,
+        &scan.idx_cols,
+        &scan.idx_col_lens,
         0,
         &|expr: &Expression| context.evaluate(expr),
         context.ranger_options,
@@ -740,7 +740,7 @@ fn rebuild_index_scan(
     if !range_is_safe(
         &scan.ranges,
         &result.ranges,
-        rebuild.access_conditions.len(),
+        scan.access_condition.len(),
         result.access_conds.len(),
         result.remained_conds.len(),
         false,

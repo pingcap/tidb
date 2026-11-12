@@ -72,9 +72,9 @@ pub(super) fn build_prepared_index_merge_task(
             keep_order: false,
             desc: false,
             ranges: partial.ranges.clone(),
-            range_rebuild: crate::find_best_task::index_merge_union::partial_index_range_rebuild(
-                partial,
-            ),
+            access_condition: partial.access_conds.clone(),
+            idx_cols: partial.idx_cols.iter().map(|(column, _)| column.clone()).collect(),
+            idx_col_lens: partial.idx_cols.iter().map(|(_, length)| *length).collect(),
             covering_ranges: Vec::new(),
             tikv_pushdown: None,
             db_name: ds.db_name.clone(),

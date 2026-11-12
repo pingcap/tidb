@@ -965,10 +965,7 @@ fn correlated_access_conditions(plan: &PhysicalPlan) -> Option<&[tidb_expr::expr
             .range_rebuild
             .as_ref()
             .map(|rebuild| rebuild.access_conditions.as_slice()),
-        PhysicalPlan::IndexScan(scan) => scan
-            .range_rebuild
-            .as_ref()
-            .map(|rebuild| rebuild.access_conditions.as_slice()),
+        PhysicalPlan::IndexScan(scan) => Some(scan.access_condition.as_slice()),
         _ => None,
     }?;
     conditions

@@ -213,22 +213,12 @@ fn table_scan_usage(scan: &PhysicalTableScan) -> i64 {
 }
 
 fn index_scan_usage(scan: &super::PhysicalIndexScan) -> i64 {
-    let (access_conditions, index_columns) = scan.range_rebuild.as_ref().map_or_else(
-        || (0, columns_memory_usage(&scan.cost_columns)),
-        |rebuild| {
-            (
-                exprs_memory_usage(&rebuild.access_conditions),
-                columns_memory_usage(&rebuild.index_columns),
-            )
-        },
-    );
+    let (access_conditions, index_columns) =
+        (exprs_memory_usage(&scan.access_condition), columns_memory_usage(&scan.idx_cols));
     GO_EMPTY_PHYSICAL_INDEX_SCAN_SIZE
         + scan.base.go_schema_producer_memory_usage()
         // `IdxColLens`.
-        + scan
-            .range_rebuild
-            .as_ref()
-            .map_or(0, |rebuild| rebuild.index_column_lengths.len() as i64 * SIZE_OF_INT)
+        + scan.idx_col_lens.len() as i64 * SIZE_OF_INT
         + ci_str_memory_usage(&scan.db_name)
         // `Columns`: one `ColumnInfo` per data-source column.
         + scan

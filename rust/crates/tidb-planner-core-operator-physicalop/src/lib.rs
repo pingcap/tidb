@@ -2565,9 +2565,14 @@ pub struct PhysicalIndexScan {
     /// Go `ByItems`: the sort items a keep-order read merge-sorts its range
     /// groups (and, for a local index, its partitions) by.
     pub by_items: Vec<tidb_expression_aggregation::ByItems>,
-    /// Access conditions and index metadata retained for execute-time plan
-    /// cache range rebuild.
-    pub range_rebuild: Option<crate::range_rebuild::IndexRangeRebuild>,
+    /// Go `AccessCondition`: the conditions the ranges were built from,
+    /// re-detached on a plan-cache hit (`buildRangeForIndexScan`) and over
+    /// each outer row when correlated (`rebuildIndexRanges`).
+    pub access_condition: Vec<tidb_expr::expression::Expression>,
+    /// Go `IdxCols`: the index's usable leading columns.
+    pub idx_cols: Vec<tidb_expr::column::Column>,
+    /// Go `IdxColLens`: each of `idx_cols`' prefix length.
+    pub idx_col_lens: Vec<i64>,
     /// Normalized source ranges used by the bounded `checkCoverIndex` bridge.
     /// They represent the same Go `Ranges` as [`Self::ranges`] until that
     /// cardinality adapter consumes the full ranger type.
@@ -4851,11 +4856,7 @@ impl PhysicalPlan {
                     expressions(&mut result, &rebuild.access_conditions);
                 }
             }
-            Self::IndexScan(op) => {
-                if let Some(rebuild) = &op.range_rebuild {
-                    expressions(&mut result, &rebuild.access_conditions);
-                }
-            }
+            Self::IndexScan(op) => expressions(&mut result, &op.access_condition),
             Self::TableReader(op) => {
                 if let Some(plan) = op.table_plan.as_deref() {
                     result.extend(extract_correlated_cols_4_physical_plan(plan));
@@ -5273,7 +5274,9 @@ impl PhysicalPlan {
                 keep_order: op.keep_order,
                 desc: op.desc,
                 ranges: op.ranges.clone(),
-                range_rebuild: op.range_rebuild.clone(),
+                access_condition: op.access_condition.clone(),
+                idx_cols: op.idx_cols.clone(),
+                idx_col_lens: op.idx_col_lens.clone(),
                 covering_ranges: op.covering_ranges.clone(),
                 tikv_pushdown: op.tikv_pushdown.clone(),
                 db_name: op.db_name.clone(),
@@ -5647,11 +5650,7 @@ fn visit_physical_correlated_columns_mut(
                 expressions(&mut rebuild.access_conditions, visitor);
             }
         }
-        PhysicalPlan::IndexScan(op) => {
-            if let Some(rebuild) = &mut op.range_rebuild {
-                expressions(&mut rebuild.access_conditions, visitor);
-            }
-        }
+        PhysicalPlan::IndexScan(op) => expressions(&mut op.access_condition, visitor),
         PhysicalPlan::TableReader(op) => {
             if let Some(plan) = op.table_plan.as_deref_mut() {
                 visit_physical_correlated_columns_mut(plan, visitor);

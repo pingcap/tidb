@@ -528,3 +528,27 @@ fn a_cached_plans_range_groups_are_rebuilt_with_its_ranges() {
         tk.must_query("select @@last_plan_from_cache").check(["1"]);
     }
 }
+
+/// Go `GetOriginalPhysicalIndexScan` keeps the path's `AccessCondition`,
+/// `IdxCols` and `IdxColLens` on every index scan, and a plan-cache hit
+/// re-detaches the ranges over them (`buildRangeForIndexScan`) -- also when
+/// column pruning left only a prefix of the index's columns (`b` of
+/// `iab(a, b)` here), which once kept the first execution's ranges. Go's rows
+/// (gorun).
+#[test]
+fn a_cached_index_scan_over_a_pruned_index_prefix_rebuilds_its_ranges() {
+    let mut tk = TestKit::new();
+    tk.must_exec("create table t (a int, b int, c int, key iab(a,b))");
+    tk.must_exec("insert into t values (1,1,1),(2,2,2),(3,3,3)");
+    for (sql, first, second) in [
+        ("select a from t where a = ?", &["1"][..], &["2"][..]),
+        ("select a from t where a > ?", &["2", "3"][..], &["3"][..]),
+    ] {
+        tk.must_exec(&format!("prepare s from '{sql}'"));
+        tk.must_exec("set @x=1");
+        tk.must_query("execute s using @x").check(first);
+        tk.must_exec("set @x=2");
+        tk.must_query("execute s using @x").check(second);
+        tk.must_query("select @@last_plan_from_cache").check(["1"]);
+    }
+}

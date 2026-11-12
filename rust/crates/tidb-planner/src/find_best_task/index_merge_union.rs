@@ -898,22 +898,6 @@ fn keeps_phys_tbl_id(ds: &DataSource) -> bool {
     !ds.partition_definition_ids().is_empty() && ds.dynamic_partition_access.is_some()
 }
 
-/// Go `PhysicalIndexScan.AccessCondition` / `IdxCols` / `IdxColLens` of a
-/// merge partial, which `rebuildRange` re-detaches on a plan-cache hit.
-pub(crate) fn partial_index_range_rebuild(
-    path: &AccessPath,
-) -> Option<tidb_planner_core_operator_physicalop::range_rebuild::IndexRangeRebuild> {
-    if path.access_conds.is_empty() {
-        return None;
-    }
-    let (columns, lengths) = path.idx_cols.iter().cloned().unzip();
-    Some(tidb_planner_core_operator_physicalop::range_rebuild::IndexRangeRebuild::new(
-        path.access_conds.clone(),
-        columns,
-        lengths,
-    ))
-}
-
 /// Go `PhysicalTableScan.AccessCondition` of a merge partial over the
 /// handle, which `buildRangeForTableScan` re-detaches on a plan-cache hit.
 fn partial_table_range_rebuild(
@@ -996,7 +980,9 @@ fn push_index_partial(
         keep_order: matched,
         desc,
         ranges: ranges.clone(),
-        range_rebuild: partial_index_range_rebuild(path),
+        access_condition: path.access_conds.clone(),
+        idx_cols: path.idx_cols.iter().map(|(column, _)| column.clone()).collect(),
+        idx_col_lens: path.idx_cols.iter().map(|(_, length)| *length).collect(),
         covering_ranges: Vec::new(),
         tikv_pushdown: None,
         db_name: ds.db_name.clone(),

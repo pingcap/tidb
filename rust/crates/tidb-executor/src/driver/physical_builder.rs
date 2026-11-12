@@ -1095,18 +1095,19 @@ pub(crate) fn correlated_index_range_rebuilder(
     scan: &PhysicalIndexScan,
     ctx: &crate::StmtContext,
 ) -> Option<crate::access_path::RangeRebuilder> {
-    let rebuild = scan.range_rebuild.clone()?;
-    if !has_correlated_access(&rebuild.access_conditions) {
+    if !has_correlated_access(&scan.access_condition) {
         return None;
     }
+    let (access_condition, idx_cols, idx_col_lens) =
+        (scan.access_condition.clone(), scan.idx_cols.clone(), scan.idx_col_lens.clone());
     let ctx = ctx.clone();
     Some(std::sync::Arc::new(move || {
-        let access = substitute_correlated_access(&rebuild.access_conditions, &ctx)?;
+        let access = substitute_correlated_access(&access_condition, &ctx)?;
         let (ranges, _, _) =
             tidb_ranger::detacher::detach_simple_cond_and_build_range_for_index_in(
                 &access,
-                &rebuild.index_columns,
-                &rebuild.index_column_lengths,
+                &idx_cols,
+                &idx_col_lens,
                 0,
                 &tidb_ranger::points::StatementRangerEvaluator(&ctx),
                 ctx.ranger_options(),

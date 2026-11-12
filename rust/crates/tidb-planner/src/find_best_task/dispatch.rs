@@ -4588,30 +4588,23 @@ fn find_best_task_4_logical_data_source_paths(
                         |result| result.remained_conds.clone(),
                     ),
                 };
-                // Go retains `AccessCondition` on PhysicalIndexScan, not
-                // every pushed predicate. Rebuilding the latter would feed
-                // residual filters back into the ranger and make a safe
-                // parameter change look uncacheable.
-                // A correlated access condition has no static range: the
-                // executor must rebuild it for every outer row (Go
-                // `rebuildIndexRanges`), so it always keeps its source.
-                let correlated_access = detach.as_ref().is_some_and(|result| {
-                    result
-                        .access_conds
-                        .iter()
-                        .any(|condition| !tidb_expr::simple_expr::extract_cor_columns(condition).is_empty())
+                // Go `GetOriginalPhysicalIndexScan`'s `AccessCondition:
+                // path.AccessConds` -- the conditions the ranges came from, not
+                // every pushed predicate -- which a plan-cache hit re-detaches
+                // over `IdxCols` (`buildRangeForIndexScan`) and a correlated
+                // read over each outer row (`rebuildIndexRanges`).
+                let access_condition = detach
+                    .as_ref()
+                    .map_or_else(Vec::new, |result| result.access_conds.clone());
+                // A point plan converted from this path rebuilds its point
+                // ranges from the same source.
+                let index_range_rebuild = (!access_condition.is_empty()).then(|| {
+                    tidb_planner_core_operator_physicalop::range_rebuild::IndexRangeRebuild::new(
+                        access_condition.clone(),
+                        index_cols.clone(),
+                        index_lengths.clone(),
+                    )
                 });
-                let index_range_rebuild = (declared_index_prefix_complete || correlated_access)
-                    .then_some(detach.as_ref())
-                    .flatten()
-                    .filter(|result| !result.access_conds.is_empty())
-                    .map(|result| {
-                        tidb_planner_core_operator_physicalop::range_rebuild::IndexRangeRebuild::new(
-                            result.access_conds.clone(),
-                            index_cols.clone(),
-                            index_lengths.clone(),
-                        )
-                    });
                 let covered = |condition: &tidb_expr::expression::Expression| {
                     index_covers_condition(
                         ds,
@@ -5026,11 +5019,13 @@ fn find_best_task_4_logical_data_source_paths(
                     },
                     // Go's index-join inner scan (`constructDS2IndexScanTask`)
                     // carries no `AccessCondition`; the join owns its ranges.
-                    range_rebuild: if prop.index_join_prop.is_some() {
-                        None
+                    access_condition: if prop.index_join_prop.is_some() {
+                        Vec::new()
                     } else {
-                        index_range_rebuild
+                        access_condition
                     },
+                    idx_cols: index_cols.clone(),
+                    idx_col_lens: index_lengths.clone(),
                     covering_ranges: Vec::new(),
                     tikv_pushdown: None,
                     db_name: ds.db_name.clone(),

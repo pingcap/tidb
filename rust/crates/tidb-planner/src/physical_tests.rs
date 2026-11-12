@@ -172,7 +172,6 @@ fn cached_plan_rebuilds_normal_and_reader_scan_trees_without_mutating_template()
         keep_order: false,
         desc: false,
         ranges: vec![point_range(0)],
-        range_rebuild: None,
         covering_ranges: Vec::new(),
         tikv_pushdown: None,
         ..Default::default()
@@ -180,11 +179,9 @@ fn cached_plan_rebuilds_normal_and_reader_scan_trees_without_mutating_template()
     let PhysicalPlan::IndexScan(scan) = &mut index_scan else {
         unreachable!();
     };
-    scan.range_rebuild = Some(IndexRangeRebuild::new(
-        vec![parameter_condition("eq", index_column.clone(), 2)],
-        vec![index_column],
-        vec![tidb_datatype::UNSPECIFIED_LENGTH],
-    ));
+    scan.access_condition = vec![parameter_condition("eq", index_column.clone(), 2)];
+    scan.idx_cols = vec![index_column];
+    scan.idx_col_lens = vec![tidb_datatype::UNSPECIFIED_LENGTH];
     let index_reader = PhysicalPlan::IndexLookUpReader(PhysicalIndexLookUpReader {
         base: BasePhysicalPlan::with_id(4, "IndexLookUp", 0),
         index_plan: Some(Box::new(index_scan)),
@@ -703,6 +700,11 @@ fn cached_batch_point_plan_rebuilds_dnf_equalities_as_unioned_points() {
 }
 
 #[test]
+/// Go `rebuildRange` over an index join: the join's mutable ranges are
+/// rebuilt and `updateRange` hands them to the inner scan, whose own rebuild
+/// (`buildRangeForIndexScan`) then re-detaches its empty `AccessCondition`
+/// over `IdxCols` into a full range -- the join keeps the ranges it reads
+/// (a Go testkit probe shows `[NULL,+inf]` on the inner scan after a hit).
 fn cached_plan_rebuilds_index_join_range_and_updates_inner_reader() {
     use crate::physical_plan_cache::{CachedPlanRebuildContext};
     use tidb_planner_core_operator_physicalop::range_rebuild::{IndexRangeRebuild, PointRangeRebuild};
@@ -714,6 +716,8 @@ fn cached_plan_rebuilds_index_join_range_and_updates_inner_reader() {
         index_id: 3,
         index_name: "idx_probe".to_owned(),
         ranges: vec![point_range(0)],
+        idx_cols: vec![index_column.clone()],
+        idx_col_lens: vec![tidb_datatype::UNSPECIFIED_LENGTH],
         ..PhysicalIndexScan::default()
     });
     let inner_reader = PhysicalPlan::IndexReader(PhysicalIndexReader {
@@ -760,7 +764,7 @@ fn cached_plan_rebuilds_index_join_range_and_updates_inner_reader() {
     else {
         panic!("inner index scan");
     };
-    assert_eq!(inner_scan.ranges[0].low_val, vec![Datum::Int(42)]);
+    assert_eq!(inner_scan.ranges, tidb_ranger::points::full_range());
 
     let PhysicalPlan::IndexJoin(template_join) = template else {
         unreachable!();
