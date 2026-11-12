@@ -414,6 +414,10 @@ impl Executor for CopIndexUsageExec {
     fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
         self.child.table_access()
     }
+
+    fn union_scan_reader(&mut self) -> Option<&mut dyn std::any::Any> {
+        self.child.union_scan_reader()
+    }
 }
 
 #[cfg(test)]

@@ -4803,6 +4803,8 @@ impl PhysicalPlan {
                 }
             }
             Self::Selection(op) => expressions(&mut result, &op.conditions),
+            // Go `PhysicalUnionScan.ExtractCorrelatedCols`.
+            Self::UnionScan(op) => expressions(&mut result, &op.conditions),
             Self::Projection(op) => expressions(&mut result, &op.exprs),
             Self::HashJoin(op) => hash_join_conditions(op, &mut result),
             Self::MergeJoin(op) => {
@@ -5581,6 +5583,7 @@ fn visit_physical_correlated_columns_mut(
 
     match plan {
         PhysicalPlan::Selection(op) => expressions(&mut op.conditions, visitor),
+        PhysicalPlan::UnionScan(op) => expressions(&mut op.conditions, visitor),
         PhysicalPlan::Projection(op) => expressions(&mut op.exprs, visitor),
         PhysicalPlan::Expand(op) => {
             for grouping_set in op.grouping_sets.iter_mut() {

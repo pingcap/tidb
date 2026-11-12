@@ -389,6 +389,13 @@ impl<C: Columns + Send> Executor for SelectionExec<C> {
     fn table_access(&mut self) -> Option<&mut dyn tidb_executor_internal_exec::table_access::TableAccess> {
         Some(self)
     }
+
+    /// Go `UnionScanExec.open`: "If the push-downed condition contains
+    /// virtual column, we may build a selection upon reader" -- the reader
+    /// is the selection's child.
+    fn union_scan_reader(&mut self) -> Option<&mut dyn std::any::Any> {
+        self.child.union_scan_reader()
+    }
 }
 
 // A Selection is not a transparent wrapper. Its bound expressions and schema

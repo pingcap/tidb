@@ -184,6 +184,9 @@ pub struct IndexLookUpExecutor {
     result_curr: Option<(TaskRows, usize)>,
     workers: Vec<std::thread::JoinHandle<()>>,
     worker_started: bool,
+    /// Go `dummy`: not a real reader, only the KV ranges a union scan reads
+    /// the cached or temporary table's rows over (`setDummy`).
+    dummy: bool,
 }
 
 impl IndexLookUpExecutor {
@@ -426,6 +429,7 @@ impl IndexLookUpExecutor {
             result_curr: None,
             workers: Vec::new(),
             worker_started: false,
+            dummy: false,
         }))
     }
 
@@ -448,6 +452,32 @@ impl IndexLookUpExecutor {
     pub(crate) fn open_with_kv_ranges(&mut self, kv_ranges: Vec<tidb_txnkv::KeyRange>) -> Result<(), ExecError> {
         self.kv_ranges = vec![kv_ranges];
         self.open_inner()
+    }
+
+    /// Go `setDummy`.
+    pub(crate) fn set_dummy(&mut self) {
+        self.dummy = true;
+    }
+
+    /// What Go's `buildMemIndexLookUpReader` reads of an open lookup: its
+    /// `groupedKVRanges` with each group's physical table, and `columns`.
+    pub(crate) fn grouped_kv_ranges_and_columns(
+        &self,
+    ) -> (Vec<(i64, &[tidb_txnkv::KeyRange])>, &[tidb_model::GoShared<tidb_model::ColumnInfo>]) {
+        let groups = self
+            .kv_ranges
+            .iter()
+            .enumerate()
+            .map(|(idx, ranges)| {
+                let physical_table_id = if self.partition_table_mode {
+                    self.table_ids[idx % self.table_ids.len()]
+                } else {
+                    self.shared.physical_table_id
+                };
+                (physical_table_id, ranges.as_slice())
+            })
+            .collect();
+        (groups, &self.shared.columns)
     }
 
     /// Go `getPhysicalTableID(e.table)` and `e.index.ID`.
@@ -1136,6 +1166,10 @@ impl Executor for IndexLookUpExecutor {
         Some(self)
     }
 
+    fn union_scan_reader(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     /// Go `IndexLookUpExecutor.Open`: `memTracker` attached to the
     /// statement's, the key ranges built (charging it), then `open`'s reset
     /// and attach again; the workers start at the first `Next`.
@@ -1143,11 +1177,18 @@ impl Executor for IndexLookUpExecutor {
         self.shared.mem_tracker.reset();
         self.shared.mem_tracker.attach_to(&self.stmt_mem_tracker);
         self.kv_ranges = self.build_table_key_ranges()?;
+        if self.dummy {
+            return Ok(());
+        }
         self.open_inner()
     }
 
     /// Go `IndexLookUpExecutor.Next`.
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        if self.dummy {
+            req.reset();
+            return Ok(());
+        }
         if !self.worker_started {
             self.start_workers(req.required_rows())?;
         }

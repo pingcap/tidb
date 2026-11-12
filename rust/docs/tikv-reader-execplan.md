@@ -50,6 +50,13 @@ reader built by Go's `buildTableReader` / `buildIndexReader` /
   columns across groups, one pooled decode chunk), table workers over Go's
   `tableRequest` with the handles' ranges and hints, Go's per-task memory
   charges, index usage and runtime stats.
+- [ ] Milestone 3b: `IndexMergeReaderExecutor`'s partial workers and table
+  workers are Go's (`partialIndexWorker` / `partialTableWorker` over
+  `ConstructDAGReq` of each partial plan, `buildFinalTableReader` through
+  the handle-built `TableReaderExecutor`); its handle algebra
+  (`index_merge_reader.rs`, `fetchLoopUnion` / `fetchLoopIntersection`) is
+  already Go's, but its partial sources and table side are the offer path's
+  (`PartialHandleSource` over `access_path`, `TableCommon` and its storage).
 - [ ] Milestone 4: the index join's inner side is Go's
   `dataReaderBuilder.BuildExecutorForIndexJoin`, and a union scan there is
   `buildUnionScanForIndexJoin`'s `UnionScanExec` over the task's reader; the
@@ -101,6 +108,39 @@ reader built by Go's `buildTableReader` / `buildIndexReader` /
   which keeps its join keys as UniqueIDs, still builds ID-only items); and
   the reader's own schema, which in Go is its table plan's schema object, so
   `ResolveIndicesForVirtualColumn` binds both.
+- 2026-11-12 (M4): Go's `UnionScanExec.open` builds its added rows from
+  the reader below it (`buildMemTableReader(us, x.kvRanges)`,
+  `buildMemIndexReader(us, x)`, `buildMemIndexLookUpReader(us, x)` over the
+  reader's `groupedKVRanges`), so a per-task index-join union scan reads the
+  buffer over the task's ranges. The Rust union scan instead takes its added
+  rows from a second copy of the reader plan built over the buffer
+  (`ReaderStorage::MemBuffer`, the offer path). `mem_reader.rs` has Go's mem
+  readers but nothing calls them: no real buffer implements
+  `MemBufferSource` (only its tests' buffer), their iterators borrow the
+  reader and the buffer (`UnionScanExec` needs an owned `MemRowsIter`), and
+  `MemTableReader` decodes through the table's `RowDecoder` where Go's
+  `memTableReader` decodes `rowcodec` over the union scan's columns
+  (`_tidb_rowid` and `_tidb_tid` included). Those three are M4's first
+  work, then an `Executor` hook through which `open` reaches the reader
+  under its wrappers (Go's `reader.(type)` switch).
+  Done for a TiKV `TableReader` and `IndexReader` over a table that is
+  neither partitioned nor cached: `MemTableDecoder` (Go's decoding),
+  `IndexDecodeMeta::new` (Go `getTypes` and the index rowcodec infos), Go's
+  `EvalBool` conditions, `MemBufferSource` for the statement's buffer
+  snapshot, `Executor::union_scan_reader` and `UnionScanExec`'s
+  `build_added_rows`, called by `open`, with Go's `virtualColumnIndex`.
+  The index lookup's mem reader followed (Go `buildMemIndexLookUpReader`),
+  and a cached table's readers became Go's dummy readers (`setDummy`: the
+  KV ranges, no request) under a union scan reading the cache under the
+  buffer (`handleCachedTable`). Porting it exposed that a union scan's
+  conditions were invisible to an Apply's correlated-column binding (Go
+  `PhysicalUnionScan.ExtractCorrelatedCols`). Left: partitioned tables
+  (Go's mem table reader does not decode `_tidb_tid`; the partition merge
+  of a keep-order read lives outside `TableReaderExecutor` here, inside it
+  in Go), grouped ranges (`build_range_grouped_reader` builds one reader a
+  range group under a merge, where Go's reader keeps `groupedRanges` /
+  `groupedKVRanges` itself), temporary tables, then the per-task union scan
+  of the index join.
 - 2026-11-12 (M3): `TableRead` now takes Go's `SetMemTracker` and
   `SetPaging` from its caller. The TableReader and IndexReader still hand
   each select result a fresh operator tracker under the statement's, where

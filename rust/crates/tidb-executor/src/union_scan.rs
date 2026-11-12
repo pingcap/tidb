@@ -349,6 +349,7 @@ pub struct UnionScanExec<C: Columns> {
     mem_buf_snap: Box<dyn MemBufferSnapshotGetter>,
     /// Go `addedRowsIter` (:49). See "Completeness" for why it arrives built.
     added_rows_iter: Box<dyn MemRowsIter>,
+    build_added_rows: Option<BuildAddedRows>,
     /// Go `conditionsWithVirCol` (:45), evaluated at :178.
     ///
     /// Go `conditions` (:44) is handed to the mem readers instead and is never
@@ -392,6 +393,11 @@ pub struct UnionScanExec<C: Columns> {
 
 /// Everything [`UnionScanExec::new`] needs; the Go builder
 /// (`pkg/executor/builder.go:1473` `buildUnionScanExec`) fills the same set.
+/// Go `UnionScanExec.open`'s `buildMem*Reader(us, x).getMemRowsIter(ctx)`
+/// over the reader `x` below the union scan.
+pub type BuildAddedRows =
+    Box<dyn FnMut(&mut dyn Executor, &CompareExec) -> Result<Box<dyn MemRowsIter>, ExecError> + Send>;
+
 pub struct UnionScanSpec<C: Columns> {
     /// Go `exec.NewBaseExecutor(sctx, v.Schema(), v.ID(), reader)`.
     pub meta: ExecutorMeta,
@@ -401,6 +407,9 @@ pub struct UnionScanSpec<C: Columns> {
     pub mem_buf_snap: Box<dyn MemBufferSnapshotGetter>,
     /// Go `us.addedRowsIter`, already built by a `mem_reader.go` builder.
     pub added_rows_iter: Box<dyn MemRowsIter>,
+    /// Go `open`'s `buildMem*Reader(us, reader)`: the added rows built from
+    /// the reader below once it is open, replacing `added_rows_iter`.
+    pub build_added_rows: Option<BuildAddedRows>,
     /// Go `us.conditionsWithVirCol`.
     pub conditions_with_vir_col: Vec<Expression>,
     /// Go `us.columns`.
@@ -433,6 +442,7 @@ impl<C: Columns> UnionScanExec<C> {
             child: spec.child,
             mem_buf_snap: spec.mem_buf_snap,
             added_rows_iter: spec.added_rows_iter,
+            build_added_rows: spec.build_added_rows,
             conditions_with_vir_col: spec.conditions_with_vir_col,
             columns: spec.columns,
             table_record_id: spec.table_record_id,
@@ -638,6 +648,10 @@ impl<C: Columns + Send> Executor for UnionScanExec<C> {
     /// Go `Open` (:75) plus `open` (:85), minus the reader type switch.
     fn open(&mut self) -> Result<(), ExecError> {
         self.child.open()?;
+        // :117-131. The added rows of the reader below, over its ranges.
+        if let Some(build) = self.build_added_rows.as_mut() {
+            self.added_rows_iter = build(self.child.as_mut(), &self.compare_exec)?;
+        }
 
         // :101-107. LAST matching column wins, because Go walks backwards and
         // breaks.
@@ -898,6 +912,7 @@ mod tests {
                 child: Box::new(BatchSource::new(self.snapshot)),
                 mem_buf_snap: Box::new(DirtyKeys::of(TABLE_ID, &self.dirty)),
                 added_rows_iter: Box::new(DefaultRowsIter::new(self.added)),
+                build_added_rows: None,
                 conditions_with_vir_col: Vec::new(),
                 columns: vec![
                     UnionScanColumn {
@@ -1070,6 +1085,7 @@ mod tests {
             child: Box::new(BatchSource::new(Vec::new())),
             mem_buf_snap: Box::new(DirtyKeys::of(1, &[])),
             added_rows_iter: Box::new(DefaultRowsIter::new(Vec::new())),
+            build_added_rows: None,
             conditions_with_vir_col: Vec::new(),
             columns: vec![
                 UnionScanColumn {

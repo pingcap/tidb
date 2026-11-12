@@ -156,6 +156,9 @@ impl ReaderStorage {
 struct BuildState {
     /// See [`ReaderStorage`].
     reader_storage: ReaderStorage,
+    /// Go `handleCachedTable`'s `x.setDummy()`: the reader below a union
+    /// scan over a cached table only provides its KV ranges.
+    dummy_reader: bool,
     /// Building a `UnionScanExec`'s mem reader: Go's mem readers are not
     /// executors, so the copy records no `exec.Next` regions and no runtime
     /// statistics.
@@ -824,6 +827,10 @@ impl Executor for SqlKillerCheckExec {
 
     fn table_access(&mut self) -> Option<&mut dyn tidb_executor_internal_exec::table_access::TableAccess> {
         self.child.table_access()
+    }
+
+    fn union_scan_reader(&mut self) -> Option<&mut dyn std::any::Any> {
+        self.child.union_scan_reader()
     }
 
     fn agg_tree_input_empty(&self) -> bool {
@@ -7837,14 +7844,28 @@ fn build_reader_node(
                 || (reader.store_type == tidb_kv::store_type::StoreType::TiKv && has_coprocessor && !temporary))
                 && !state.reader_storage.is_mem_buffer()
             {
-                let executor = crate::table_reader::TableReaderExecutor::build(
-                    meta(ctx, plan, plan_schema(plan)?),
-                    ctx,
-                    catalog,
-                    reader,
-                    state.range_group.as_ref(),
-                )
-                .map_err(DriverError::from)?;
+                let executor: Box<dyn Executor> = if state.dummy_reader {
+                    let mut e = crate::table_reader::TableReaderExecutor::build_no_range(
+                        meta(ctx, plan, plan_schema(plan)?),
+                        ctx,
+                        catalog,
+                        reader,
+                        state.range_group.as_ref(),
+                    )
+                    .map_err(DriverError::from)?
+                    .ok_or_else(|| DriverError::unsupported("a dummy reader's table has no partition to read"))?;
+                    e.set_dummy();
+                    Box::new(e)
+                } else {
+                    crate::table_reader::TableReaderExecutor::build(
+                        meta(ctx, plan, plan_schema(plan)?),
+                        ctx,
+                        catalog,
+                        reader,
+                        state.range_group.as_ref(),
+                    )
+                    .map_err(DriverError::from)?
+                };
                 ctx.mark_physical_table_reader();
                 if reader.store_type == tidb_kv::store_type::StoreType::TiFlash {
                     return Ok(executor);
@@ -7881,14 +7902,28 @@ fn build_reader_node(
                 && scan.is_some_and(|scan| !scan.is_temporary)
             {
                 let scan = scan.expect("checked above");
-                let executor = crate::index_reader::IndexReaderExecutor::build(
-                    meta(ctx, plan, plan_schema(plan)?),
-                    ctx,
-                    catalog,
-                    reader,
-                    state.range_group.as_ref(),
-                )
-                .map_err(DriverError::from)?;
+                let executor: Box<dyn Executor> = if state.dummy_reader {
+                    let mut e = crate::index_reader::IndexReaderExecutor::build_no_range(
+                        meta(ctx, plan, plan_schema(plan)?),
+                        ctx,
+                        catalog,
+                        reader,
+                        state.range_group.as_ref(),
+                    )
+                    .map_err(DriverError::from)?
+                    .ok_or_else(|| DriverError::unsupported("a dummy reader's table has no partition to read"))?;
+                    e.set_dummy();
+                    Box::new(e)
+                } else {
+                    crate::index_reader::IndexReaderExecutor::build(
+                        meta(ctx, plan, plan_schema(plan)?),
+                        ctx,
+                        catalog,
+                        reader,
+                        state.range_group.as_ref(),
+                    )
+                    .map_err(DriverError::from)?
+                };
                 // Go `IndexReaderExecutor.Close`'s
                 // `indexUsageReporter.ReportCopIndexUsageForTable`.
                 let table = catalog
@@ -8000,14 +8035,28 @@ fn build_reader_node(
                 && scan.is_some_and(|scan| !scan.is_temporary)
             {
                 let scan = scan.expect("checked above");
-                let executor = crate::index_lookup::IndexLookUpExecutor::build(
-                    meta(ctx, plan, plan_schema(plan)?),
-                    ctx,
-                    catalog,
-                    reader,
-                    state.range_group.as_ref(),
-                )
-                .map_err(DriverError::from)?;
+                let executor: Box<dyn Executor> = if state.dummy_reader {
+                    let mut e = crate::index_lookup::IndexLookUpExecutor::build_no_range(
+                        meta(ctx, plan, plan_schema(plan)?),
+                        ctx,
+                        catalog,
+                        reader,
+                        state.range_group.as_ref(),
+                    )
+                    .map_err(DriverError::from)?
+                    .ok_or_else(|| DriverError::unsupported("a dummy reader's table has no partition to read"))?;
+                    e.set_dummy();
+                    Box::new(e)
+                } else {
+                    crate::index_lookup::IndexLookUpExecutor::build(
+                        meta(ctx, plan, plan_schema(plan)?),
+                        ctx,
+                        catalog,
+                        reader,
+                        state.range_group.as_ref(),
+                    )
+                    .map_err(DriverError::from)?
+                };
                 let table = catalog
                     .physical_kv_table_by_id(scan.table_id)
                     .ok_or_else(|| DriverError::unsupported("physical table ID is absent from the catalog"))?;
@@ -8919,6 +8968,184 @@ fn build_with_state(
     Ok(state.meter(plan, executor, ctx.statement_memory()))
 }
 
+/// Go `buildMemTableReader(ctx, us, x.kvRanges).getMemRowsIter(ctx)`: the
+/// buffered rows of the open `TableReaderExecutor` below a union scan, over
+/// its `kvRanges` and `columns`, filtered by the union scan's conditions
+/// without virtual columns and sorted by its `compareExec` when the order
+/// needs it.
+fn build_mem_table_reader(
+    mem_buf_snap: Arc<tidb_kv::mem_buffer::MemBufferSnapshot>,
+    table: tidb_model::TableInfo,
+    conditions: Vec<tidb_expr::expression::Expression>,
+    schema: &Schema,
+    ctx: &crate::StmtContext,
+    keep_order: bool,
+) -> Result<crate::union_scan::BuildAddedRows, DriverError> {
+    let conditions = resolve_expressions(&conditions, schema)?;
+    let ctx = ctx.clone();
+    Ok(Box::new(move |child: &mut dyn Executor, compare: &crate::union_scan::CompareExec| {
+        let reader = child
+            .union_scan_reader()
+            .and_then(|reader| reader.downcast_mut::<crate::table_reader::TableReaderExecutor>())
+            .ok_or_else(|| crate::ExecError::internal("unexpected union scan children"))?;
+        let decoder = crate::mem_reader::MemTableDecoder::new(&table, reader.columns(), ctx.session_zone());
+        let kv_ranges = reader
+            .kv_ranges()
+            .iter()
+            .map(|range| (range.start_key.clone(), range.end_key.clone()))
+            .collect();
+        let mut mem_reader = crate::mem_reader::MemTableReader::new(
+            decoder,
+            kv_ranges,
+            conditions.clone(),
+            ctx.clone(),
+            compare.desc,
+            keep_order,
+            compare.need_extra_sorting,
+        );
+        let rows = mem_reader
+            .get_mem_rows(&*mem_buf_snap, Some(compare))
+            .map_err(|error| crate::ExecError::internal(format!("{error:?}")))?;
+        Ok(Box::new(crate::mem_reader::DefaultRowsIter::new(rows)) as Box<dyn crate::mem_reader::MemRowsIter>)
+    }))
+}
+
+/// Go `buildMemIndexReader(ctx, us, x).getMemRowsIter(ctx)`: the buffered
+/// entries of the index the open `IndexReaderExecutor` below a union scan
+/// reads, over its `kvRanges`, each decoded to its `outputColumns`.
+fn build_mem_index_reader(
+    mem_buf_snap: Arc<tidb_kv::mem_buffer::MemBufferSnapshot>,
+    table: tidb_model::TableInfo,
+    index_id: i64,
+    conditions: Vec<tidb_expr::expression::Expression>,
+    schema: &Schema,
+    ctx: &crate::StmtContext,
+    keep_order: bool,
+) -> Result<crate::union_scan::BuildAddedRows, DriverError> {
+    let conditions = resolve_expressions(&conditions, schema)?;
+    let index = table
+        .indices
+        .iter_deref()
+        .find(|index| index.read().id == index_id)
+        .map(|index| index.read().clone())
+        .ok_or_else(|| DriverError::unsupported("a union scan's index is absent from its table"))?;
+    let meta = crate::mem_reader::IndexDecodeMeta::new(&table, &index, tidb_datatype::new_collation_enabled());
+    // Go `us.physTblIDIdx`: the last `_tidb_tid` column.
+    let phys_tbl_id_idx =
+        schema.columns.iter().rposition(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID);
+    let ctx = ctx.clone();
+    Ok(Box::new(move |child: &mut dyn Executor, compare: &crate::union_scan::CompareExec| {
+        let reader = child
+            .union_scan_reader()
+            .and_then(|reader| reader.downcast_mut::<crate::index_reader::IndexReaderExecutor>())
+            .ok_or_else(|| crate::ExecError::internal("unexpected union scan children"))?;
+        let (kv_ranges, output_offsets) = reader.kv_ranges_and_output_offsets();
+        let mut mem_reader = crate::mem_reader::MemIndexReader::new(
+            meta.clone(),
+            kv_ranges.iter().map(|range| (range.start_key.clone(), range.end_key.clone())).collect(),
+            output_offsets.iter().map(|offset| *offset as usize).collect(),
+            phys_tbl_id_idx,
+            std::collections::BTreeSet::new(),
+            conditions.clone(),
+            ctx.clone(),
+            ctx.session_zone(),
+            compare.desc,
+            keep_order,
+            compare.need_extra_sorting,
+        );
+        let rows = mem_reader
+            .get_mem_rows(&*mem_buf_snap, Some(compare))
+            .map_err(|error| crate::ExecError::internal(format!("{error:?}")))?;
+        Ok(Box::new(crate::mem_reader::DefaultRowsIter::new(rows)) as Box<dyn crate::mem_reader::MemRowsIter>)
+    }))
+}
+
+/// Go `buildMemIndexLookUpReader(ctx, us, x).getMemRowsIter(ctx)`: the
+/// handles of the buffered entries of the index the open
+/// `IndexLookUpExecutor` below a union scan reads (over each of its
+/// `groupedKVRanges`), then the buffered rows of those handles, decoded over
+/// its `columns`.
+fn build_mem_index_lookup_reader(
+    mem_buf_snap: Arc<tidb_kv::mem_buffer::MemBufferSnapshot>,
+    table: tidb_model::TableInfo,
+    index_id: i64,
+    conditions: Vec<tidb_expr::expression::Expression>,
+    schema: &Schema,
+    ctx: &crate::StmtContext,
+    keep_order: bool,
+) -> Result<crate::union_scan::BuildAddedRows, DriverError> {
+    let conditions = resolve_expressions(&conditions, schema)?;
+    let index = table
+        .indices
+        .iter_deref()
+        .find(|index| index.read().id == index_id)
+        .map(|index| index.read().clone())
+        .ok_or_else(|| DriverError::unsupported("a union scan's index is absent from its table"))?;
+    let meta = crate::mem_reader::IndexDecodeMeta::new(&table, &index, tidb_datatype::new_collation_enabled());
+    let ctx = ctx.clone();
+    Ok(Box::new(move |child: &mut dyn Executor, compare: &crate::union_scan::CompareExec| {
+        let internal = |error: crate::mem_reader::MemReaderError| crate::ExecError::internal(format!("{error:?}"));
+        let reader = child
+            .union_scan_reader()
+            .and_then(|reader| reader.downcast_mut::<crate::index_lookup::IndexLookUpExecutor>())
+            .ok_or_else(|| crate::ExecError::internal("unexpected union scan children"))?;
+        let (groups, columns) = reader.grouped_kv_ranges_and_columns();
+        // Go's `memIdxReader`: the index entries' handles (`outputOffset`
+        // is the handle's), no conditions, ascending.
+        let mut idx_reader = crate::mem_reader::MemIndexReader::new(
+            meta.clone(),
+            Vec::new(),
+            vec![meta.index_columns],
+            None,
+            std::collections::BTreeSet::new(),
+            Vec::new(),
+            ctx.clone(),
+            ctx.session_zone(),
+            false,
+            false,
+            false,
+        );
+        let mut tbl_kv_ranges = Vec::new();
+        let mut num_handles = 0;
+        for (physical_table_id, ranges) in groups {
+            idx_reader.set_kv_ranges(ranges.iter().map(|range| (range.start_key.clone(), range.end_key.clone())).collect());
+            let handles = idx_reader.get_mem_rows_handle(&*mem_buf_snap).map_err(internal)?;
+            if handles.is_empty() {
+                continue;
+            }
+            num_handles += handles.len();
+            let handles = handles
+                .into_iter()
+                .map(|handle| match handle.handle {
+                    tidb_table::tables::TableHandle::Int(value) => Ok(tidb_txnkv::Handle::Int(tidb_txnkv::IntHandle::new(value))),
+                    tidb_table::tables::TableHandle::Common(encoded) => tidb_txnkv::CommonHandle::new(encoded)
+                        .map(tidb_txnkv::Handle::Common)
+                        .map_err(|error| crate::ExecError::internal(format!("{error:?}"))),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let (ranges, _) = tidb_distsql::table_handles_to_kv_ranges(physical_table_id, &handles);
+            tbl_kv_ranges.extend(ranges.into_iter().map(|range| (range.start_key, range.end_key)));
+        }
+        if num_handles == 0 {
+            return Ok(Box::new(crate::mem_reader::DefaultRowsIter::new(Vec::new())) as Box<dyn crate::mem_reader::MemRowsIter>);
+        }
+        // Go reverses the ranges for a descending read; `MemTableReader::new`
+        // does that.
+        let decoder = crate::mem_reader::MemTableDecoder::new(&table, columns, ctx.session_zone());
+        let mut mem_reader = crate::mem_reader::MemTableReader::new(
+            decoder,
+            tbl_kv_ranges,
+            conditions.clone(),
+            ctx.clone(),
+            compare.desc,
+            keep_order,
+            compare.need_extra_sorting,
+        );
+        let rows = mem_reader.get_mem_rows(&*mem_buf_snap, Some(compare)).map_err(internal)?;
+        Ok(Box::new(crate::mem_reader::DefaultRowsIter::new(rows)) as Box<dyn crate::mem_reader::MemRowsIter>)
+    }))
+}
+
 /// The reader a `UnionScanExec` merges with the transaction's buffered rows:
 /// Go `buildUnionScanFromReader`'s `reader.(type)` arms.
 struct UnionScanReader {
@@ -9280,7 +9507,44 @@ fn build_union_scan(
     // in-memory copy, which `getSnapIter` unions under the buffer, and its
     // reader is a dummy (`setDummy`).
     let cache_table = cached_table_data(&table, ctx, true);
+    // Go's readers (`docs/tikv-reader-execplan.md` M4): a TiKV reader of a
+    // table that is not partitioned, whose added rows Go's mem readers build
+    // in `open` from its ranges.
+    // A reader of grouped ranges is built here as one reader a group under a
+    // merge (Go keeps the groups inside the reader, `groupedRanges`), so it
+    // keeps the buffer-built reader for now.
+    let go_reader = ctx.txn_store().is_some_and(|store| store.client().is_some())
+        && table.meta().read().get_partition_info().is_none()
+        && range_grouped_scan(reader_plan).is_none()
+        && match reader_plan {
+            PhysicalPlan::TableReader(table_reader) => {
+                table_reader.store_type == tidb_kv::store_type::StoreType::TiKv
+                    && !crate::mpp_gather::use_mpp_execution(ctx, table_reader)
+                    && table_reader.table_plan.as_deref().and_then(embedded_table_scan).is_some_and(|scan| !scan.is_temporary)
+            }
+            PhysicalPlan::IndexReader(index_reader) => index_reader
+                .index_plan
+                .as_deref()
+                .and_then(embedded_index_scan)
+                .is_some_and(|scan| !scan.is_temporary),
+            PhysicalPlan::IndexLookUpReader(lookup) => {
+                !lookup.index_lookup_push_down
+                    && lookup.index_plan.as_deref().and_then(embedded_index_scan).is_some_and(|scan| !scan.is_temporary)
+            }
+            _ => false,
+        };
+    let go_table_reader = go_reader && matches!(reader_plan, PhysicalPlan::TableReader(_));
+    let go_index_reader = go_reader && matches!(reader_plan, PhysicalPlan::IndexReader(_));
+    let go_index_lookup = go_reader && matches!(reader_plan, PhysicalPlan::IndexLookUpReader(_));
     let (child, mem_snapshot) = match &cache_table {
+        // Go `handleCachedTable`: the reader is a dummy that only provides
+        // its KV ranges, and the mem reader reads the cache under the buffer.
+        Some(cache) if go_reader => {
+            let previous = std::mem::replace(&mut state.dummy_reader, true);
+            let built = build_with_state(child_plan, catalog, ctx, state);
+            state.dummy_reader = previous;
+            (built?, union_cache_under_buffer(cache, &snapshot))
+        }
         Some(cache) => (
             Box::new(crate::table_dual::TableDualExec::new(
                 meta(ctx, child_plan, plan_schema(child_plan)?),
@@ -9293,15 +9557,21 @@ fn build_union_scan(
             Arc::clone(&snapshot),
         ),
     };
-    let mut mem_state = BuildState {
-        reader_storage: ReaderStorage::MemBuffer(mem_snapshot),
-        untraced: true,
-        has_lock: state.has_lock,
-        ..BuildState::default()
+    let mem_reader = if go_table_reader || go_index_reader || go_index_lookup {
+        None
+    } else {
+        let mut mem_state = BuildState {
+            reader_storage: ReaderStorage::MemBuffer(Arc::clone(&mem_snapshot)),
+            untraced: true,
+            has_lock: state.has_lock,
+            ..BuildState::default()
+        };
+        Some(build_with_state(child_plan, catalog, ctx, &mut mem_state)?)
     };
-    let mem_reader = build_with_state(child_plan, catalog, ctx, &mut mem_state)?;
     let schema = child.schema().clone();
-    if schema.len() != plan_schema(plan)?.len() || mem_reader.schema().len() != schema.len() {
+    if schema.len() != plan_schema(plan)?.len()
+        || mem_reader.as_ref().is_some_and(|mem_reader| mem_reader.schema().len() != schema.len())
+    {
         return Err(DriverError::unsupported(
             "a union scan's reader does not produce the union scan's columns",
         ));
@@ -9383,22 +9653,86 @@ fn build_union_scan(
             field_type: field_type.clone(),
         })
         .collect();
+    // Go `us.virtualColumnIndex = x.virtualColumnIndex`: the Go mem table
+    // reader decodes the stored columns, and the union scan evaluates the
+    // virtual ones over every row it returns. The buffer-built reader plan
+    // fills them itself.
+    let virtual_column_index = match reader_plan {
+        PhysicalPlan::TableReader(table_reader) if go_table_reader => table_reader
+            .table_plan
+            .as_deref()
+            .and_then(embedded_table_scan)
+            .map(|ts| crate::mpp_gather::build_virtual_column_info(&schema, &ts.columns).0)
+            .unwrap_or_default(),
+        PhysicalPlan::IndexLookUpReader(lookup) if go_index_lookup => lookup
+            .table_plan
+            .as_deref()
+            .and_then(embedded_table_scan)
+            .map(|ts| crate::mpp_gather::build_virtual_column_info(&schema, &ts.columns).0)
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    let union_scan_conditions: Vec<tidb_expr::expression::Expression> = union_scan
+        .conditions
+        .iter()
+        .filter(|condition| {
+            !tidb_expr::expr_util::predicates::contain_virtual_column(std::slice::from_ref(condition))
+        })
+        .cloned()
+        .collect();
+    let build_added_rows = if go_index_lookup {
+        Some(build_mem_index_lookup_reader(
+            Arc::clone(&mem_snapshot),
+            table.meta().read().clone(),
+            reader.index_id.ok_or_else(|| DriverError::unsupported("an index lookup's union scan has no index"))?,
+            union_scan_conditions.clone(),
+            &schema,
+            ctx,
+            reader.keep_order,
+        )?)
+    } else if go_index_reader {
+        Some(build_mem_index_reader(
+            Arc::clone(&mem_snapshot),
+            table.meta().read().clone(),
+            reader.index_id.ok_or_else(|| DriverError::unsupported("an index reader's union scan has no index"))?,
+            union_scan_conditions.clone(),
+            &schema,
+            ctx,
+            reader.keep_order,
+        )?)
+    } else {
+        go_table_reader
+            .then(|| {
+                build_mem_table_reader(
+                    Arc::clone(&mem_snapshot),
+                    table.meta().read().clone(),
+                    union_scan_conditions,
+                    &schema,
+                    ctx,
+                    reader.keep_order,
+                )
+            })
+            .transpose()?
+    };
     Ok(Box::new(crate::union_scan::UnionScanExec::new(
         crate::union_scan::UnionScanSpec {
             meta: meta(ctx, plan, schema),
             child,
             mem_buf_snap: Box::new(snapshot),
-            added_rows_iter: Box::new(ReaderMemRowsIter {
-                reader: mem_reader,
-                chunk: None,
-                position: 0,
-                opened: false,
-            }),
+            added_rows_iter: match mem_reader {
+                Some(reader) => Box::new(ReaderMemRowsIter {
+                    reader,
+                    chunk: None,
+                    position: 0,
+                    opened: false,
+                }),
+                None => Box::new(crate::mem_reader::DefaultRowsIter::new(Vec::new())),
+            },
+            build_added_rows,
             conditions_with_vir_col,
             columns,
             table_record_id: reader.table_id,
-            // The readers on both sides fill the virtual columns already.
-            virtual_column_index: Vec::new(),
+            virtual_column_index,
             cache_table: cache_table.is_some(),
             partition_id_map: std::collections::BTreeSet::new(),
             keep_order: reader.keep_order,

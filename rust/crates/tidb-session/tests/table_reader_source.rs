@@ -121,3 +121,112 @@ fn an_index_join_reads_its_covering_inner_side_per_task() {
     tk.must_query("select /*+ inl_join(x) */ o.a, x.e from o join (select b, d + 1 as e from i) x on o.a = x.b order by o.a, o.c, x.e")
         .check(["1 102", "1 112", "2 207", "2 222", "2 207", "2 222", "3 330", "3 332"]);
 }
+
+/// Go `UnionScanExec.open`'s `buildMemTableReader(us, x.kvRanges)`: a
+/// transaction's own writes are read from its buffer over the ranges of the
+/// table reader below the union scan, decoded over the reader's columns
+/// (`_tidb_rowid` included), and merged with the snapshot by handle.
+#[test]
+fn a_union_scan_reads_the_buffer_over_its_table_readers_ranges() {
+    let mut tk = TestKit::new();
+    tk.must_exec("create table u (a int, b int, c varchar(10))");
+    tk.must_exec("insert into u values (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z')");
+    tk.must_exec("create table p (a int primary key, b int)");
+    tk.must_exec("insert into p values (1, 10), (2, 20), (3, 30)");
+    tk.must_exec("create table v (a int, b int as (a + 10), c int)");
+    tk.must_exec("create table x (a int, b int, c int, index ib(b))");
+    tk.must_exec("insert into x values (1, 10, 100), (2, 20, 200), (3, 30, 300)");
+    tk.must_exec("begin");
+    tk.must_exec("insert into u values (4, 40, 'w')");
+    tk.must_exec("update u set b = 21 where a = 2");
+    tk.must_exec("delete from u where a = 3");
+    tk.must_query("select a, b, c from u order by a").check(["1 10 x", "2 21 y", "4 40 w"]);
+    tk.must_query("select a, b from u where b > 15 order by a").check(["2 21", "4 40"]);
+    tk.must_query("select _tidb_rowid, a from u where a >= 2 order by a").check(["2 2", "4 4"]);
+    tk.must_exec("insert into p values (5, 50)");
+    tk.must_exec("update p set b = 11 where a = 1");
+    tk.must_exec("delete from p where a = 2");
+    tk.must_query("select a, b from p where a between 1 and 5 order by a").check(["1 11", "3 30", "5 50"]);
+    tk.must_query("select a, b from p where a between 1 and 5 order by a desc").check(["5 50", "3 30", "1 11"]);
+    // A virtual column of a buffered row is the union scan's to evaluate
+    // (`us.virtualColumnIndex`): the mem reader decodes the stored ones.
+    tk.must_exec("insert into v (a, c) values (1, 100)");
+    tk.must_exec("insert into v (a, c) values (2, 200)");
+    tk.must_query("select a, b, c from v order by a").check(["1 11 100", "2 12 200"]);
+    // A covering index read (`buildMemIndexReader(us, x)`): the buffered
+    // index entries over the reader's ranges, decoded to its output columns.
+    tk.must_exec("insert into x values (4, 25, 400)");
+    tk.must_exec("update x set b = 5 where a = 1");
+    tk.must_exec("delete from x where a = 3");
+    tk.must_query("select b from x use index(ib) where b > 4 order by b").check(["5", "20", "25"]);
+    tk.must_query("select b from x use index(ib) where b > 4 order by b desc").check(["25", "20", "5"]);
+    tk.must_query("select b, _tidb_rowid from x use index(ib) where b between 5 and 25 order by b")
+        .check(["5 1", "20 2", "25 4"]);
+    // An index lookup (`buildMemIndexLookUpReader(us, x)`): the buffered
+    // entries' handles, then those handles' buffered rows.
+    tk.must_query("select b, c from x use index(ib) where b > 4 order by b").check(["5 100", "20 200", "25 400"]);
+    tk.must_query("select b, c from x use index(ib) where b > 4 and c < 400 order by b desc").check(["20 200", "5 100"]);
+    tk.must_exec("rollback");
+    tk.must_query("select a, b from p order by a").check(["1 10", "2 20", "3 30"]);
+}
+
+/// A union scan over a reader of grouped ranges (Go
+/// `PropMatchedNeedMergeSort`, `tests/integrationtest/t/planner/core/
+/// grouped_ranges_order_by.test`): the transaction's rows merge into the
+/// merge-sorted range groups.
+#[test]
+fn a_union_scan_over_grouped_ranges_merges_the_buffered_rows() {
+    let mut tk = TestKit::new();
+    tk.must_exec("create table t(a int, b int, c int, d int, index iabc(a,b,c))");
+    tk.must_exec(
+        "insert into t values (10, 35, 9, 230), (10, 31, 10, 240), (10, 23, 11, 250), (10, 35, 12, 260), \
+         (20, 13, 5, 190), (20, 15, 6, 200), (20, 21, 7, 210), (20, 23, 8, 220), \
+         (30, 1, 1, 150), (30, 3, 2, 160), (30, 5, 3, 170), (30, 11, 4, 180), \
+         (40, 21, 13, 270), (40, 3, 14, 280), (40, 5, 15, 290), (50, 11, 16, 300)",
+    );
+    tk.must_exec("begin pessimistic");
+    tk.must_exec(
+        "insert into t values (10, 1, 25, 390), (10, 3, 26, 400), (10, 5, 27, 410), (10, 11, 28, 420), \
+         (20, 1, 21, 350), (20, 31, 22, 360), (20, 33, 23, 370), (20, 35, 24, 380), \
+         (30, 13, 17, 310), (30, 35, 18, 320), (30, 2, 19, 330), (40, 23, 20, 340), \
+         (40, 13, 29, 430), (50, 15, 30, 440), (50, 3, 31, 450), (50, 23, 32, 460)",
+    );
+    tk.must_query(
+        "select * from t where a in (10,20,30,40,50) and b in (1, 3, 5, 11, 13, 15, 21, 23, 25, 31, 33, 35) \
+         and d > 100 order by a, c",
+    )
+    .check([
+            "10 35 9 230",
+            "10 31 10 240",
+            "10 23 11 250",
+            "10 35 12 260",
+            "10 1 25 390",
+            "10 3 26 400",
+            "10 5 27 410",
+            "10 11 28 420",
+            "20 13 5 190",
+            "20 15 6 200",
+            "20 21 7 210",
+            "20 23 8 220",
+            "20 1 21 350",
+            "20 31 22 360",
+            "20 33 23 370",
+            "20 35 24 380",
+            "30 1 1 150",
+            "30 3 2 160",
+            "30 5 3 170",
+            "30 11 4 180",
+            "30 13 17 310",
+            "30 35 18 320",
+            "40 21 13 270",
+            "40 3 14 280",
+            "40 5 15 290",
+            "40 23 20 340",
+            "40 13 29 430",
+            "50 11 16 300",
+            "50 15 30 440",
+            "50 3 31 450",
+            "50 23 32 460",
+    ]);
+    tk.must_exec("rollback");
+}

@@ -56,15 +56,11 @@
 //! * [`tidb_txnkv::iteration::KvIterator`] is Go `kv.Iterator`; [`ScanIter`]
 //!   is only its object-safe form (one fixed error type) so a range cursor
 //!   can be boxed.
-//! * [`crate::kv_table::RowDecoder::decode_record`] is Go
-//!   `memTableReader.decodeRecordKeyValue` (:475) + `decodeRowData` (:484) +
-//!   `getRowData` (:501) TOGETHER: row-key to handle, new-format and legacy
-//!   value decoding, handle-column restoration for `PKIsHandle` /
-//!   `IsCommonHandle` / `_tidb_rowid`, and origin-default filling. The Go
-//!   trio is byte-level (`[][]byte` slots plus `hasColVal` :575); the Rust
-//!   decoder returns the datum row directly. Same observable row, and
-//!   `hasColVal`/`allocBuf` have no counterpart because there are no reusable
-//!   byte slots to track.
+//! * [`MemTableDecoder`] is Go `memTableReader.decodeRecordKeyValue`
+//!   (:475), `decodeRowData` (:484) and `getRowData` (:501) over the union
+//!   scan's columns: a new-format value through `rowcodec.BytesDecoder`
+//!   ([`tidb_rowcodec::decode_row_to_old_bytes`]), a legacy one through
+//!   `CutRowNew` with the handle and NULL columns filled.
 //! * [`tidb_tablecodec::decode_index_kv`] is Go `tablecodec.DecodeIndexKVEx`;
 //!   [`tidb_tablecodec::decode_index_handle`] is `tablecodec.DecodeIndexHandle`;
 //!   [`tidb_tablecodec::split_index_value`] is `tablecodec.SplitIndexValue`.
@@ -111,11 +107,6 @@
 //!   trait: this tier has no session context to pull a live transaction out
 //!   of, and which buffer a statement reads is the session's fact, not this
 //!   file's.
-//! * **`NewRowDecoder`/`rowcodec.NewByteDecoder` construction** (:293) and
-//!   `getColIDAndPkColIDs` (:1150) build the two decoders from the table
-//!   meta. [`crate::kv_table::RowDecoder`] is built by its own constructor
-//!   from a [`crate::kv_table::TableCommon`], so the Go builder is not restated;
-//!   a `MemTableReader` takes the finished decoder.
 //! * `tracing.StartRegion`, `addedRowsLen`, and the `buf`/`decodeBuff`/
 //!   `resultRows` reuse buffers are instrumentation and allocation reuse with
 //!   no observable effect; not ported.
@@ -132,7 +123,6 @@ use tidb_txnkv::{Handle as KvHandle, Key, KvIterator};
 
 use tidb_driver_error::ExecError;
 use tidb_table::tables::TableHandle;
-use tidb_table::tables::RowDecoder;
 use tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe;
 
 /// A half-open `[start, end)` key interval, the crate's spelling of Go
@@ -284,6 +274,19 @@ pub trait MemBufferSource: Sync {
         _reverse: bool,
     ) -> Result<Option<Box<dyn ScanIter>>, MemReaderError> {
         Ok(None)
+    }
+}
+
+/// Go `txn.GetMemBuffer().SnapshotIter` over the statement's snapshot of
+/// the buffer (`union_scan.go`'s `us.memBufSnap`).
+impl MemBufferSource for tidb_kv::mem_buffer::MemBufferSnapshot {
+    fn snapshot_iter(
+        &self,
+        start: &Key,
+        end: &Key,
+        reverse: bool,
+    ) -> Result<Box<dyn ScanIter>, MemReaderError> {
+        Ok(Box::new(VecScanIter::new(self.entries(start, end, reverse))))
     }
 }
 
@@ -584,14 +587,182 @@ impl MemRowsIter for DefaultRowsIter {
 }
 
 /// Go `memTableReader` (:238): the added rows of a TABLE read.
+/// Go `memTableReader`'s decoding state (`buildMemTableReader` :262):
+/// `columns` (the union scan's, `_tidb_rowid` and `_tidb_tid` included),
+/// `colIDs`, `pkColIDs` and `buffer.rd` (a `rowcodec.BytesDecoder` over
+/// them with the columns' origin defaults).
+pub struct MemTableDecoder {
+    columns: Vec<tidb_model::GoShared<tidb_model::ColumnInfo>>,
+    col_ids: std::collections::BTreeMap<i64, usize>,
+    pk_col_ids: Vec<i64>,
+    rd_columns: Vec<tidb_rowcodec::ColumnInfo>,
+    pk_is_handle: bool,
+    is_common_handle: bool,
+    table_name: String,
+    zone: tidb_datatype::SessionTimeZone,
+}
+
+impl MemTableDecoder {
+    /// Go `buildMemTableReader`'s `colIDs`, `colInfo`, `pkColIDs` and
+    /// `NewByteDecoder(colInfo, pkColIDs, defVal, loc)`.
+    #[must_use]
+    pub fn new(
+        table: &tidb_model::TableInfo,
+        columns: &[tidb_model::GoShared<tidb_model::ColumnInfo>],
+        zone: tidb_datatype::SessionTimeZone,
+    ) -> Self {
+        let col_ids = columns.iter().enumerate().map(|(i, col)| (col.read().id, i)).collect();
+        let rd_columns = columns
+            .iter()
+            .map(|col| {
+                let col = col.read();
+                tidb_rowcodec::ColumnInfo {
+                    id: col.id,
+                    is_pk_handle: table.pk_is_handle
+                        && col.field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
+                    virtual_generated: false,
+                    field_type: col.field_type.clone(),
+                }
+            })
+            .collect();
+        let mut pk_col_ids = tidb_table::tables::scan_from_infos::try_get_common_pk_column_ids(table);
+        if pk_col_ids.is_empty() {
+            pk_col_ids = vec![-1];
+        }
+        MemTableDecoder {
+            columns: columns.to_vec(),
+            col_ids,
+            pk_col_ids,
+            rd_columns,
+            pk_is_handle: table.pk_is_handle,
+            is_common_handle: table.is_common_handle,
+            table_name: table.name.original().to_owned(),
+            zone,
+        }
+    }
+
+    /// Go `defVal`: the column's origin default, `EncodeValue`d.
+    fn def_val(&self, i: usize) -> Result<Vec<u8>, String> {
+        let datum = tidb_table::origin_default::origin_default(&self.columns[i].read(), &self.table_name)
+            .map_err(|error| format!("{error:?}"))?;
+        tidb_codec::encode_value_in_timezone(&self.zone, &[datum]).map_err(|error| format!("{error:?}"))
+    }
+
+    /// Go `tablecodec.DecodeRowKey`.
+    fn record_handle(key: &[u8]) -> Result<TableHandle, MemReaderError> {
+        match tidb_tablecodec::table_key::decode_row_key(key)
+            .map_err(|error| MemReaderError::Decode(format!("{error:?}")))?
+        {
+            tidb_tablecodec::table_key::RecordHandle::Int(value) => Ok(TableHandle::Int(value)),
+            tidb_tablecodec::table_key::RecordHandle::Common(encoded) => Ok(TableHandle::Common(encoded)),
+            other => Err(MemReaderError::Decode(format!("unexpected record handle {other:?}"))),
+        }
+    }
+
+    /// Go `decodeRecordKeyValue` (:475) and `decodeRowData` (:484).
+    fn decode_record(&self, key: &[u8], value: &[u8]) -> Result<(TableHandle, Vec<Datum>), MemReaderError> {
+        let decode = |error: String| MemReaderError::Decode(error);
+        let handle = Self::record_handle(key)?;
+        let values = self.get_row_data(&handle, value)?;
+        let row = self
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(i, col)| {
+                tidb_tablecodec::decode_column_value(&values[i], &col.read().field_type, Some(&self.zone))
+                    .map_err(|error| decode(format!("{error:?}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((handle, row))
+    }
+
+    /// Go `getRowData` (:501): a new-format row through the bytes decoder,
+    /// an old one through `CutRowNew` with its handle and NULL columns
+    /// filled.
+    fn get_row_data(&self, handle: &TableHandle, value: &[u8]) -> Result<Vec<Vec<u8>>, MemReaderError> {
+        let decode = |error: String| MemReaderError::Decode(error);
+        let common = match handle {
+            TableHandle::Common(encoded) => Some(
+                tidb_txnkv::CommonHandle::new(encoded.clone()).map_err(|error| decode(format!("{error:?}")))?,
+            ),
+            TableHandle::Int(_) => None,
+        };
+        if tidb_rowcodec::is_new_format(value) {
+            let rd_handle = match (handle, &common) {
+                (TableHandle::Int(value), _) => tidb_rowcodec::Handle::Int(*value),
+                (TableHandle::Common(_), Some(common)) => tidb_rowcodec::Handle::Common(
+                    (0..self.pk_col_ids.len())
+                        .map(|i| common.encoded_column(i).map(<[u8]>::to_vec).unwrap_or_default())
+                        .collect(),
+                ),
+                (TableHandle::Common(_), None) => unreachable!("a common handle is decoded above"),
+            };
+            let def_val = |i: usize| self.def_val(i);
+            return tidb_rowcodec::decode_row_to_old_bytes(
+                value,
+                &self.rd_columns,
+                &self.col_ids,
+                &self.pk_col_ids,
+                Some(&rd_handle),
+                &[],
+                Some(&def_val),
+            )
+            .map_err(|error| decode(format!("{error:?}")));
+        }
+        let cut = tidb_tablecodec::cut_table_row(value, &self.col_ids)
+            .map_err(|error| decode(format!("{error:?}")))?;
+        let mut values: Vec<Option<Vec<u8>>> = if cut.is_empty() { vec![None; self.col_ids.len()] } else { cut };
+        // Fill the handle and null columns.
+        for col in &self.columns {
+            let col = col.read();
+            let offset = self.col_ids[&col.id];
+            if self.is_common_handle {
+                if let Some(common) = &common {
+                    for (i, col_id) in self.pk_col_ids.iter().enumerate() {
+                        // Only decode the handle when the value has no such
+                        // column: a prefixed clustered index stores part of
+                        // it in the handle.
+                        if *col_id == col.id && !col.field_type.need_restored_data() && values[offset].is_none() {
+                            values[offset] = common.encoded_column(i).map(<[u8]>::to_vec);
+                            break;
+                        }
+                    }
+                }
+            } else if (self.pk_is_handle && col.field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY))
+                || col.id == tidb_model::column::EXTRA_HANDLE_ID
+            {
+                let TableHandle::Int(value) = handle else {
+                    return Err(decode("an integer handle column over a common handle".into()));
+                };
+                let datum = if col.field_type.has_flag(tidb_datatype::FieldTypeFlags::UNSIGNED) {
+                    Datum::UInt(*value as u64)
+                } else {
+                    Datum::Int(*value)
+                };
+                values[offset] = Some(
+                    tidb_codec::encode_value_in_timezone(&self.zone, &[datum])
+                        .map_err(|error| decode(format!("{error:?}")))?,
+                );
+                continue;
+            }
+            if values[offset].is_some() {
+                continue;
+            }
+            // No need to fill the default value.
+            values[offset] = Some(vec![tidb_codec::NIL_FLAG]);
+        }
+        Ok(values.into_iter().map(Option::unwrap_or_default).collect())
+    }
+}
+
 pub struct MemTableReader {
     /// Go `kvRanges`, already reversed by the builder when `desc` (:295).
     kv_ranges: Vec<MemKeyRange>,
-    /// Go `buffer.rd` + `buffer.cd` + `columns` + `colIDs` + `pkColIDs`, all
-    /// of which [`RowDecoder`] already holds.
-    decoder: RowDecoder,
-    /// Go `conditions`, evaluated as `expression.EvalBool`.
-    conditions: Option<ScanFilterProbe>,
+    /// Go `columns`, `colIDs`, `pkColIDs` and `buffer.rd`.
+    decoder: MemTableDecoder,
+    /// Go `conditions`, evaluated as `expression.EvalBool` under `ctx`.
+    conditions: Vec<tidb_expr::expression::Expression>,
+    ctx: crate::StmtContext,
     /// Go `compareExec.desc`.
     desc: bool,
     /// Go `keepOrder`.
@@ -608,9 +779,10 @@ impl MemTableReader {
     /// descending read (:295), so callers pass ascending ranges.
     #[must_use]
     pub fn new(
-        decoder: RowDecoder,
+        decoder: MemTableDecoder,
         mut kv_ranges: Vec<MemKeyRange>,
-        conditions: Option<ScanFilterProbe>,
+        conditions: Vec<tidb_expr::expression::Expression>,
+        ctx: crate::StmtContext,
         desc: bool,
         keep_order: bool,
         need_extra_sorting: bool,
@@ -622,6 +794,7 @@ impl MemTableReader {
             kv_ranges,
             decoder,
             conditions,
+            ctx,
             desc,
             keep_order,
             need_extra_sorting,
@@ -636,12 +809,20 @@ impl MemTableReader {
 
     /// Go `memTableReader.decodeRecordKeyValue` (:475) -> `decodeRowData`
     /// (:484) -> `getRowData` (:501), all three of which
-    /// [`RowDecoder::decode_record`] already performs.
+    /// [`MemTableDecoder`] performs.
     fn decode_record(&self, key: &Key, value: &[u8]) -> Result<Vec<Datum>, MemReaderError> {
-        self.decoder
-            .decode_record(key_bytes(key), value)
-            .map(|(_, row)| row)
-            .map_err(|error| MemReaderError::Decode(format!("{error:?}")))
+        self.decoder.decode_record(key_bytes(key), value).map(|(_, row)| row)
+    }
+
+    /// Go `expression.EvalBool(m.ctx.GetExprCtx().GetEvalCtx(),
+    /// m.conditions, mutableRow.ToRow())`.
+    fn admits(&self, row: &[Datum]) -> Result<bool, MemReaderError> {
+        if self.conditions.is_empty() {
+            return Ok(true);
+        }
+        let mutable_row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(row);
+        let (matched, _) = tidb_executor_join::joiner::eval_bool(&self.ctx, &self.conditions, mutable_row.to_row())?;
+        Ok(matched)
     }
 
     /// Go `memTableReader.getMemRows` (:434).
@@ -651,14 +832,10 @@ impl MemTableReader {
         comparator: Option<&dyn RowComparator>,
     ) -> Result<Vec<Vec<Datum>>, MemReaderError> {
         let mut added_rows: Vec<Vec<Datum>> = Vec::new();
-        let decoder = &self.decoder;
-        let conditions = &mut self.conditions;
+        let this = &*self;
         iter_txn_mem_buffer(source, &self.kv_ranges, self.desc, |key, value| {
-            let row = decoder
-                .decode_record(key_bytes(key), value)
-                .map(|(_, row)| row)
-                .map_err(|error| MemReaderError::Decode(format!("{error:?}")))?;
-            if !admits(conditions.as_mut(), &row)? {
+            let row = this.decoder.decode_record(key_bytes(key), value).map(|(_, row)| row)?;
+            if !this.admits(&row)? {
                 return Ok(());
             }
             added_rows.push(row);
@@ -694,11 +871,8 @@ impl MemTableReader {
         source: &S,
     ) -> Result<Vec<MemHandle>, MemReaderError> {
         let mut handles = Vec::new();
-        let decoder = &self.decoder;
         iter_txn_mem_buffer(source, &self.kv_ranges, self.desc, |key, _value| {
-            let handle = decoder
-                .record_handle(key_bytes(key))
-                .map_err(|error| MemReaderError::Decode(format!("{error:?}")))?;
+            let handle = MemTableDecoder::record_handle(key_bytes(key))?;
             handles.push(MemHandle::plain(handle));
             Ok(())
         })?;
@@ -706,13 +880,9 @@ impl MemTableReader {
     }
 }
 
-/// Go `memRowsIterForTable` (:905).
-///
-/// Go keeps two decode paths here -- `ChunkDecoder.DecodeToChunk` for a
-/// new-format value and a fallback through `decodeRecordKeyValue` for the
-/// legacy format -- because only the former can write straight into a chunk.
-/// [`RowDecoder::decode_record`] already handles both formats and yields
-/// datums either way, so there is one path here and the same rows come out.
+/// Go `memRowsIterForTable` (:905): every value through
+/// [`MemTableDecoder`], Go's `decodeRecordKeyValue` fallback, which yields
+/// the same row as its `ChunkDecoder` path.
 struct MemRowsIterForTable<'a, S: MemBufferSource> {
     kv_iter: TxnMemBufferIter<'a, S>,
     reader: &'a mut MemTableReader,
@@ -729,7 +899,7 @@ impl<S: MemBufferSource> MemRowsIter for MemRowsIterForTable<'_, S> {
                 continue;
             }
             let row = self.reader.decode_record(&key, &value)?;
-            if !admits(self.reader.conditions.as_mut(), &row)? {
+            if !self.reader.admits(&row)? {
                 continue;
             }
             return Ok(Some(row));
@@ -763,6 +933,75 @@ pub struct IndexDecodeMeta {
     pub use_new_collation: bool,
 }
 
+impl IndexDecodeMeta {
+    /// Go `memIndexReader.getTypes` (:126) and
+    /// `tables.BuildRowcodecColInfoForIndexColumns` /
+    /// `TryAppendCommonHandleRowcodecColInfos` over the table and index meta.
+    #[must_use]
+    pub fn new(table: &tidb_model::TableInfo, index: &tidb_model::IndexInfo, use_new_collation: bool) -> Self {
+        let columns: Vec<tidb_model::GoShared<tidb_model::ColumnInfo>> = table.columns.iter_deref().collect();
+        let column = |offset: usize| columns[offset].read();
+        let mut types: Vec<FieldType> =
+            index.columns.iter_deref().map(|ic| column(ic.read().offset as usize).field_type.clone()).collect();
+        let primary = tidb_table::tables::scan_from_infos::find_primary_index(table);
+        if table.pk_is_handle {
+            if let Some(pk) = columns
+                .iter()
+                .find(|col| col.read().field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY))
+            {
+                types.push(pk.read().field_type.clone());
+            }
+        } else if table.is_common_handle {
+            if let Some(pk) = &primary {
+                types.extend(pk.read().columns.iter_deref().map(|ic| column(ic.read().offset as usize).field_type.clone()));
+            }
+        } else {
+            // ExtraHandle Column tp.
+            types.push(FieldType::new(tidb_datatype::FieldTypeCode::LongLong));
+        }
+        let mut column_infos: Vec<tidb_rowcodec::ColumnInfo> = index
+            .columns
+            .iter_deref()
+            .map(|ic| {
+                let ic = ic.read();
+                let col = column(ic.offset as usize);
+                // Go `model.GetIdxChangingFieldType`.
+                let field_type = match (&col.changing_field_type, ic.use_changing_type) {
+                    (Some(changing), true) => changing.read().clone(),
+                    _ => col.field_type.clone(),
+                };
+                tidb_rowcodec::ColumnInfo {
+                    id: col.id,
+                    is_pk_handle: table.pk_is_handle && field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
+                    virtual_generated: false,
+                    field_type,
+                }
+            })
+            .collect();
+        if table.is_common_handle && table.common_handle_version != 0 {
+            if let Some(pk) = &primary {
+                column_infos.extend(pk.read().columns.iter_deref().map(|ic| {
+                    let col = column(ic.read().offset as usize);
+                    tidb_rowcodec::ColumnInfo {
+                        id: col.id,
+                        is_pk_handle: false,
+                        virtual_generated: false,
+                        field_type: col.field_type.clone(),
+                    }
+                }));
+            }
+        }
+        IndexDecodeMeta {
+            index_columns: index.columns.len(),
+            types,
+            column_infos,
+            common_handle: table.is_common_handle,
+            global: index.global,
+            use_new_collation,
+        }
+    }
+}
+
 /// Go `memIndexReader` (:52): the added ENTRIES of an index read.
 pub struct MemIndexReader {
     /// Go `kvRanges`, reversed by the builder when `desc` (:80).
@@ -775,7 +1014,9 @@ pub struct MemIndexReader {
     phys_tbl_id_idx: Option<usize>,
     /// Go `partitionIDMap`.
     partition_id_map: BTreeSet<i64>,
-    conditions: Option<ScanFilterProbe>,
+    /// Go `conditions`, evaluated as `expression.EvalBool` under `ctx`.
+    conditions: Vec<tidb_expr::expression::Expression>,
+    ctx: crate::StmtContext,
     zone: SessionTimeZone,
     desc: bool,
     keep_order: bool,
@@ -792,7 +1033,8 @@ impl MemIndexReader {
         output_offset: Vec<usize>,
         phys_tbl_id_idx: Option<usize>,
         partition_id_map: BTreeSet<i64>,
-        conditions: Option<ScanFilterProbe>,
+        conditions: Vec<tidb_expr::expression::Expression>,
+        ctx: crate::StmtContext,
         zone: SessionTimeZone,
         desc: bool,
         keep_order: bool,
@@ -808,6 +1050,7 @@ impl MemIndexReader {
             phys_tbl_id_idx,
             partition_id_map,
             conditions,
+            ctx,
             zone,
             desc,
             keep_order,
@@ -875,6 +1118,17 @@ impl MemIndexReader {
         Ok(row)
     }
 
+    /// Go `expression.EvalBool(m.ctx.GetExprCtx().GetEvalCtx(),
+    /// m.conditions, mutableRow.ToRow())`.
+    fn admits(&self, row: &[Datum]) -> Result<bool, MemReaderError> {
+        if self.conditions.is_empty() {
+            return Ok(true);
+        }
+        let mutable_row = tidb_chunk::mutrow::MutRow::mut_row_from_datums(row);
+        let (matched, _) = tidb_executor_join::joiner::eval_bool(&self.ctx, &self.conditions, mutable_row.to_row())?;
+        Ok(matched)
+    }
+
     /// Whether a GLOBAL index entry belongs to a partition this read wants:
     /// Go `memRowsIterForIndex.Next` (:995).
     fn global_entry_is_wanted(&self, value: &[u8]) -> Result<bool, MemReaderError> {
@@ -908,7 +1162,7 @@ impl MemIndexReader {
                 Ok(())
             })?;
             for row in collected {
-                if admits(self.conditions.as_mut(), &row)? {
+                if self.admits(&row)? {
                     added_rows.push(row);
                 }
             }
@@ -997,7 +1251,7 @@ impl<S: MemBufferSource> MemRowsIter for MemRowsIterForIndex<'_, S> {
                 continue;
             }
             let row = self.reader.decode_index_key_value(&key, &value)?;
-            if !admits(self.reader.conditions.as_mut(), &row)? {
+            if !self.reader.admits(&row)? {
                 continue;
             }
             return Ok(Some(row));

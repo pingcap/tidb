@@ -86,6 +86,15 @@ pub trait Executor: Send {
         None
     }
 
+    /// Go `UnionScanExec.open`'s `reader.(type)` switch: this operator as
+    /// the reader a union scan reads the transaction's buffer beside, seen
+    /// through the wrappers the builder puts around it (and a
+    /// `SelectionExec`, which Go looks through). `None` for any other
+    /// operator.
+    fn union_scan_reader(&mut self) -> Option<&mut dyn std::any::Any> {
+        None
+    }
+
     /// Go `aggExecutorTreeInputEmpty` (`pkg/executor/join/hash_join_v1.go`):
     /// whether this already-executed operator tree is an aggregation that saw
     /// NO input row, and therefore owes its single output row entirely to the

@@ -67,6 +67,9 @@ pub struct IndexReaderExecutor {
     merged: Option<Box<dyn Executor>>,
     /// Go `kvRanges`.
     kv_ranges: Vec<tidb_txnkv::KeyRange>,
+    /// Go `dummy`: not a real reader, only the KV ranges a union scan reads
+    /// the cached or temporary table's entries over (`setDummy`).
+    dummy: bool,
 }
 
 impl IndexReaderExecutor {
@@ -209,6 +212,7 @@ impl IndexReaderExecutor {
             result: None,
             merged: None,
             kv_ranges: Vec::new(),
+            dummy: false,
         }))
     }
 
@@ -220,6 +224,16 @@ impl IndexReaderExecutor {
     pub(crate) fn open_with_kv_ranges(&mut self, kv_ranges: Vec<tidb_txnkv::KeyRange>) -> Result<(), ExecError> {
         self.fixed_kv_ranges = Some(kv_ranges);
         self.open()
+    }
+
+    /// Go `setDummy`.
+    pub(crate) fn set_dummy(&mut self) {
+        self.dummy = true;
+    }
+
+    /// Go `kvRanges` and `outputColumns`' indices (`buildMemIndexReader`).
+    pub(crate) fn kv_ranges_and_output_offsets(&self) -> (&[tidb_txnkv::KeyRange], &[u32]) {
+        (&self.kv_ranges, &self.output_offsets)
     }
 
     /// Go `physicalTableID` and `index.ID`.
@@ -300,6 +314,7 @@ impl IndexReaderExecutor {
             result: None,
             merged: None,
             kv_ranges: Vec::new(),
+            dummy: false,
         })
     }
 }
@@ -319,6 +334,10 @@ impl tidb_executor_internal_exec::table_access::TableAccess for IndexReaderExecu
 
 impl Executor for IndexReaderExecutor {
     fn table_access(&mut self) -> Option<&mut dyn tidb_executor_internal_exec::table_access::TableAccess> {
+        Some(self)
+    }
+
+    fn union_scan_reader(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
     }
 
@@ -342,6 +361,10 @@ impl Executor for IndexReaderExecutor {
         self.kv_ranges.clone_from(&kv_ranges);
         self.result = None;
         self.merged = None;
+        // Go: avoid sending a request for a dummy reader.
+        if self.dummy {
+            return Ok(());
+        }
         // Go `needMergeSort(e.byItems, len(kvRanges))`.
         if !self.by_items.is_empty() && kv_ranges.len() > 1 {
             let children = kv_ranges.into_iter().map(|kv_range| self.reader_of(kv_range)).collect();
@@ -360,6 +383,10 @@ impl Executor for IndexReaderExecutor {
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        if self.dummy {
+            req.reset();
+            return Ok(());
+        }
         if let Some(merged) = self.merged.as_mut() {
             return merged.next(req);
         }

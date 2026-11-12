@@ -186,6 +186,10 @@ impl Executor for RegisterStatsOnClose {
         self.child.table_access()
     }
 
+    fn union_scan_reader(&mut self) -> Option<&mut dyn std::any::Any> {
+        self.child.union_scan_reader()
+    }
+
     fn agg_tree_input_empty(&self) -> bool {
         self.child.agg_tree_input_empty()
     }

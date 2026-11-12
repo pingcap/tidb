@@ -320,6 +320,9 @@ pub struct TableReaderExecutor {
     mem_tracker: Option<Arc<tidb_memory::Tracker>>,
     /// Go `dagPB.Size()` of the reader's request.
     dag_size: usize,
+    /// Go `dummy`: not a real reader, only the KV ranges a union scan reads
+    /// the cached or temporary table's rows over (`setDummy`).
+    dummy: bool,
 }
 
 /// What Go's `IndexLookUpExecutor.buildTableReader` puts in the
@@ -386,6 +389,7 @@ impl TableReaderExecutor {
             paging: false,
             mem_tracker: None,
             dag_size: prost::Message::encoded_len(&e.dag),
+            dummy: false,
             meta: e.meta,
         };
         let statement = crate::remote_scan::pushdown_statement_context(&reader.ctx)
@@ -567,6 +571,7 @@ impl TableReaderExecutor {
             paging: crate::remote_scan::pushdown_statement_context(ctx).paging,
             mem_tracker: None,
             dag_size: 0,
+            dummy: false,
         }))
     }
 
@@ -595,6 +600,11 @@ impl TableReaderExecutor {
         let result = self.select_result(&statement, dag, kv_ranges, key_range_hints, Vec::new())?;
         self.results.push_back(result);
         Ok(())
+    }
+
+    /// Go `setDummy`.
+    pub(crate) fn set_dummy(&mut self) {
+        self.dummy = true;
     }
 
     /// Go `physicalTableID` and whether the table has a common handle.
@@ -659,10 +669,16 @@ impl TableReaderExecutor {
                     paging: self.paging,
                     mem_tracker: None,
                     dag_size: 0,
+                    dummy: false,
                 }) as Box<dyn Executor>
             })
             .collect();
         Ok(Box::new(crate::range_group_merge::SortedSelectResults::new(meta, by_items, children, ctx)?))
+    }
+
+    /// Go `columns`.
+    pub(crate) fn columns(&self) -> &[tidb_model::GoShared<tidb_model::ColumnInfo>] {
+        &self.columns
     }
 
     /// Go `kvRanges`.
@@ -786,6 +802,10 @@ impl Executor for TableReaderExecutor {
         Some(self)
     }
 
+    fn union_scan_reader(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     /// Go `TableReaderExecutor.Open`.
     fn open(&mut self) -> Result<(), ExecError> {
         let statement = crate::remote_scan::pushdown_statement_context(&self.ctx)
@@ -829,6 +849,24 @@ impl Executor for TableReaderExecutor {
             self.desc,
             self.is_common_handle,
         );
+        // Go: a dummy reader only calculates the KV ranges the union scan
+        // relies on, the parts swapped for a descending read (the union scan
+        // reads them forward and reverses its rows).
+        if self.dummy {
+            let (first, second) = if self.desc && !second_part_ranges.is_empty() {
+                (second_part_ranges, first_part_ranges)
+            } else {
+                (first_part_ranges, second_part_ranges)
+            };
+            let zone = &statement.time_zone;
+            for ranges in [first, second] {
+                for pid in self.partitions.clone().unwrap_or_else(|| vec![self.physical_table_id]) {
+                    self.kv_ranges
+                        .extend(table_handle_ranges_to_kv_ranges(zone, pid, self.is_common_handle, &ranges)?);
+                }
+            }
+            return Ok(());
+        }
         self.build_resp(&statement, &dag, &first_part_ranges)?;
         if !second_part_ranges.is_empty() {
             self.build_resp(&statement, &dag, &second_part_ranges)?;
@@ -839,6 +877,9 @@ impl Executor for TableReaderExecutor {
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
+        if self.dummy {
+            return Ok(());
+        }
         let required = req.required_rows().max(1);
         // Go `serialSelectResults.Next`: the results one after another; each
         // stays open until the reader's `Close`.
