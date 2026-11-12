@@ -588,7 +588,7 @@ func TestImportPlanParquetLocation(t *testing.T) {
 		require.NotNil(t, controller.ParquetLocation())
 		require.Equal(t, "Asia/Shanghai", controller.ParquetLocation().String())
 
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/importer/skipEstimateCompressionForParquet", "return(true)")
 		require.NoError(t, controller.InitDataFiles(ctx))
 		require.Len(t, controller.dataFiles, 1)
 		require.Same(t, controller.ParquetLocation(), controller.dataFiles[0].ParquetMeta.Loc)
@@ -606,7 +606,7 @@ func TestImportPlanParquetLocation(t *testing.T) {
 		_, offset := time.Now().In(controller.ParquetLocation()).Zone()
 		require.Equal(t, 8*3600, offset)
 
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/importer/skipEstimateCompressionForParquet", "return(true)")
 		require.NoError(t, controller.InitDataFiles(ctx))
 		require.Len(t, controller.dataFiles, 1)
 		require.Same(t, controller.ParquetLocation(), controller.dataFiles[0].ParquetMeta.Loc)
@@ -675,7 +675,7 @@ func TestImportPlanParquetLocation(t *testing.T) {
 		require.NoError(t, err)
 		require.Same(t, time.UTC, legacyController.ParquetLocation())
 
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/importer/skipEstimateCompressionForParquet", "return(true)")
 		require.NoError(t, legacyController.InitDataFiles(ctx))
 		require.Len(t, legacyController.dataFiles, 1)
 		require.Same(t, time.UTC, legacyController.dataFiles[0].ParquetMeta.Loc)
@@ -921,7 +921,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 		},
 	}
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/importer/skipEstimateCompressionForParquet", "return(true)")
 	for _, testcase := range testcases {
 		for _, fileName := range testcase.fileNames {
 			c.Format = DataFormatAuto

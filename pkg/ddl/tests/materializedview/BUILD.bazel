@@ -23,7 +23,7 @@ go_test(
         "//pkg/domain/affinity",
         "//pkg/dxf/framework/proto",
         "//pkg/executor",
-        "//pkg/executor/importer",
+        "//pkg/importer",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta",

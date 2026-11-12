@@ -37,8 +37,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -151,34 +151,34 @@ func TestVerifyChecksum(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/afterHandleChecksumRequest"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum", `3*return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/importer/errWhenChecksum", `3*return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/importer/errWhenChecksum"))
 	}()
 	err = importer.VerifyChecksum(ctx, plan, localChecksum, logutil.BgLogger(), getRemoteChecksumFn)
 	require.ErrorContains(t, err, "occur an error when checksum")
 	// remote checksum success after retry
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum", `1*return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/importer/errWhenChecksum", `1*return(true)`))
 	localChecksum = verify.MakeKVChecksum(1, 1, 1)
 	err = importer.VerifyChecksum(ctx, plan, localChecksum, logutil.BgLogger(), getRemoteChecksumFn)
 	require.NoError(t, err)
 
 	// checksum = optional
 	plan.Checksum = config.OpLevelOptional
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/importer/errWhenChecksum"))
 	localChecksum = verify.MakeKVChecksum(1, 1, 1)
 	err = importer.VerifyChecksum(ctx, plan, localChecksum, logutil.BgLogger(), getRemoteChecksumFn)
 	require.NoError(t, err)
 	localChecksum = verify.MakeKVChecksum(1, 2, 1)
 	err = importer.VerifyChecksum(ctx, plan, localChecksum, logutil.BgLogger(), getRemoteChecksumFn)
 	require.NoError(t, err)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum", `3*return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/importer/errWhenChecksum", `3*return(true)`))
 	err = importer.VerifyChecksum(ctx, plan, localChecksum, logutil.BgLogger(), getRemoteChecksumFn)
 	require.NoError(t, err)
 
 	// checksum = off
 	plan.Checksum = config.OpLevelOff
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/importer/errWhenChecksum"))
 	localChecksum = verify.MakeKVChecksum(1, 2, 1)
 	err = importer.VerifyChecksum(ctx, plan, localChecksum, logutil.BgLogger(), getRemoteChecksumFn)
 	require.NoError(t, err)

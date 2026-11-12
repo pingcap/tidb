@@ -9,7 +9,7 @@ go_library(
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/storage",
         "//pkg/dxf/importinto/conflictpath",
-        "//pkg/executor/importer",
+        "//pkg/importer",
         "//pkg/objstore/storeapi",
         "//pkg/util/logutil",
         "@org_uber_go_zap//:zap",

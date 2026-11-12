@@ -23,7 +23,7 @@ go_test(
         "//pkg/dxf/framework/taskexecutor/execute",
         "//pkg/dxf/framework/testutil",
         "//pkg/dxf/importinto/taskkey",
-        "//pkg/executor/importer",
+        "//pkg/importer",
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/lightning/mydump",

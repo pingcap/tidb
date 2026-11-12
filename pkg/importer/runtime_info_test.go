@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -303,7 +303,7 @@ func TestShowImportProgress(t *testing.T) {
 	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepGlobalSorting))
 	checkShowInfo("init", "0B", "0B", "N/A", "0B/s", "N/A", 0)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/mockSpeedDuration", "return(5000)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/importer/mockSpeedDuration", "return(5000)")
 
 	// Encode step
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepEncodeAndSort)
@@ -339,7 +339,7 @@ func TestShowImportProgress(t *testing.T) {
 			"", bytes, &s.summary, s.state, proto.ImportInto, 11)
 	}
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/mockSpeedDuration", "return(10000)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/importer/mockSpeedDuration", "return(10000)")
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepWriteAndIngest)
 	checkShowInfo("ingest", "500B", "1000B", "50", "50B/s", "00:00:10", 50)
 

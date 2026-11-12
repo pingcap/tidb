@@ -11,7 +11,7 @@ Use it to quickly find:
 - Core framework: `pkg/dxf/framework/`
 - IMPORT INTO DXF app: `pkg/dxf/importinto/`
 - DDL distributed backfill DXF app: `pkg/ddl/`
-- SQL/user-facing import entry: `pkg/executor/` and `pkg/executor/importer/`
+- SQL/user-facing import entry: `pkg/executor/` and `pkg/importer/`
 - Runtime bootstrap and ownership loops: `pkg/session/` and `pkg/domain/`
 
 ## Reading Rule
@@ -46,13 +46,13 @@ Use it to quickly find:
 
 - IMPORT INTO integration:
   - `pkg/executor/import_into.go`: DXF task submission for IMPORT INTO jobs.
-  - `pkg/executor/importer/runtime_info.go`: IMPORT INTO job progress from its DXF task.
+  - `pkg/importer/runtime_info.go`: IMPORT INTO job progress from its DXF task.
   - `pkg/dxf/importinto/planner.go`: IMPORT INTO logical/physical planning by DXF
     step.
   - `pkg/dxf/importinto/scheduler.go`: IMPORT INTO scheduler extension.
   - `pkg/dxf/importinto/task_executor.go` and
     `pkg/dxf/importinto/subtask_executor.go`: executor + step executors.
-  - `pkg/executor/import_into.go` and `pkg/executor/importer/import.go`: SQL
+  - `pkg/executor/import_into.go` and `pkg/importer/import.go`: SQL
     executor/planning and user-facing behavior around IMPORT INTO.
 
 - DDL backfill integration:
@@ -142,7 +142,7 @@ Use it to quickly find:
 
 - "How does IMPORT INTO use DXF?"
   - `pkg/dxf/importinto/` first, then `pkg/executor/import_into.go` and
-    `pkg/executor/importer/`.
+    `pkg/importer/`.
 
 - "How does DDL backfill use DXF?"
   - `pkg/ddl/index.go` -> `pkg/ddl/backfilling_dist_scheduler.go` ->

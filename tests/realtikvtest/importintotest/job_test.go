@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/importer"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
@@ -132,7 +132,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.ErrorIs(err, exeerrors.ErrLoadDataJobNotFound)
 
 	// test show job by id using test_show_job1
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/importer/setLastImportJobID", `return(true)`)
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/storage/testSetLastTaskID", "return(true)")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/parser/ast/forceRedactURL", "return(true)")
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_show_job1", Hostname: "localhost"}, nil, nil, nil))
@@ -615,7 +615,7 @@ func (s *mockGCSSuite) TestDetachedJobWithoutPrepareModeStillSucceeds() {
 		Content: []byte("seed"),
 	})
 
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/mockDisableAsyncPrepare", "return")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/importer/mockDisableAsyncPrepare", "return")
 	// Block scheduler so we can verify submitted task still has no prepare mode.
 	releaseScheduler := s.blockSchedulerBeforeGetSchedulableTasks()
 	s.False(importer.ShouldUseAsyncPrepare(&importer.Plan{CloudStorageURI: "gs://mock-bucket/mock-path"}))
@@ -756,7 +756,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 			}, 10*time.Second, 500*time.Millisecond)
 		},
 	)
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/waitCtxDone", "return(true)")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/importer/waitCtxDone", "return(true)")
 	result2 := s.tk.MustQuery(fmt.Sprintf(`import into t2 FROM 'gs://test_cancel_job/t.csv?endpoint=%s' with detached`,
 		gcsEndpoint)).Rows()
 	s.Len(result2, 1)
@@ -806,7 +806,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 
 	// cancel a pending job created by test_cancel_job2 using root
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/dxf/importinto/syncBeforePostProcess"))
-	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/waitCtxDone"))
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/importer/waitCtxDone"))
 	wg = sync.WaitGroup{}
 	wg.Add(1)
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/syncBeforeJobStarted",
@@ -880,7 +880,7 @@ func (s *mockGCSSuite) TestJobFailWhenDispatchSubtask() {
 		ErrorMessage:   "injected error after ImportStepImport",
 	}
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/failWhenDispatchPostProcessSubtask", "return(true)")
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/importer/setLastImportJobID", `return(true)`)
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	err = s.tk.QueryToErr(fmt.Sprintf(`import into t1 FROM 'gs://fail_job_after_import/t.csv?endpoint=%s'`, gcsEndpoint))
 	s.ErrorContains(err, "injected error after ImportStepImport")
@@ -919,7 +919,7 @@ func (s *mockGCSSuite) TestKillBeforeFinish() {
 			cancelFn.Store(&cancel)
 		},
 	)
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/importer/setLastImportJobID", `return(true)`)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {

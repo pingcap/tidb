@@ -53,7 +53,7 @@ func (s *mockGCSSuite) TestStepSubtaskCount() {
 	// after amplify, the real size is 58*14G=812G, and we mock the node as 16c,
 	// so the computed resource should be at least 2 nodes
 	var status *schstatus.Status
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/amplifyRealSize", fmt.Sprintf("return(%d)", 14*units.GiB))
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/importer/amplifyRealSize", fmt.Sprintf("return(%d)", 14*units.GiB))
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/syncBeforePostProcess", func(int64) {
 		var err error
 		status, err = handle.GetScheduleStatus(ctx)

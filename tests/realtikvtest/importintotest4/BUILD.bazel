@@ -28,7 +28,7 @@ go_test(
         "//pkg/dxf/importinto",
         "//pkg/dxf/importinto/conflictedkv",
         "//pkg/dxf/importinto/taskkey",
-        "//pkg/executor/importer",
+        "//pkg/importer",
         "//pkg/importsdk",
         "//pkg/ingestor/globalsort",
         "//pkg/kv",
