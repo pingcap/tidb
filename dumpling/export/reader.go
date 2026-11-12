@@ -7,6 +7,7 @@ import (
 
 	"github.com/pingcap/errors"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/util"
 )
 
 const (
@@ -102,7 +103,7 @@ type tableDataReader struct {
 	cancel      func()
 	pool        chan *readBatch
 	results     chan readResult
-	done        chan struct{}
+	wg          util.WaitGroupWrapper
 	columnCount int
 
 	// Consumer-owned cursor and row binding scratch space.
@@ -122,19 +123,20 @@ func newTableDataReader(tctx *tcontext.Context, cancel func(), meta TableMeta, s
 		cancel:      cancel,
 		pool:        make(chan *readBatch, readBatchCount),
 		results:     make(chan readResult, readBatchCount),
-		done:        make(chan struct{}),
 		columnCount: columnCount,
 		args:        make([]any, columnCount),
 	}
 	for range readBatchCount {
 		r.pool <- &readBatch{}
 	}
-	go r.read(meta.SelectedField() != "")
+	decode := meta.SelectedField() != ""
+	r.wg.Run(func() {
+		r.read(decode)
+	})
 	return r
 }
 
 func (r *tableDataReader) read(decode bool) {
-	defer close(r.done)
 	defer close(r.results)
 	if r.tctx.Err() != nil {
 		return
@@ -147,7 +149,7 @@ func (r *tableDataReader) read(decode bool) {
 			return
 		}
 		if !iter.HasNext() {
-			r.finish(batch, iter.Error())
+			r.finish(batch, readResult{terminalErr: iter.Error()})
 			return
 		}
 		if batch == nil {
@@ -160,12 +162,9 @@ func (r *tableDataReader) read(decode bool) {
 		var rowBytes int
 		if decode {
 			if err := iter.Decode(row); err != nil {
-				if !r.publishBatch(batch) {
-					return
-				}
 				// Keep a decode failure on its own logical row. In particular,
 				// the preceding file's Error check must not observe it.
-				r.send(readResult{decodeErr: err})
+				r.finish(batch, readResult{decodeErr: err})
 				return
 			}
 			values = row.data
@@ -194,9 +193,6 @@ func (r *tableDataReader) read(decode bool) {
 }
 
 func (r *tableDataReader) takeBatch() *readBatch {
-	if r.tctx.Err() != nil {
-		return nil
-	}
 	select {
 	case <-r.tctx.Done():
 		return nil
@@ -206,9 +202,6 @@ func (r *tableDataReader) takeBatch() *readBatch {
 }
 
 func (r *tableDataReader) send(result readResult) bool {
-	if r.tctx.Err() != nil {
-		return false
-	}
 	select {
 	case <-r.tctx.Done():
 		return false
@@ -224,19 +217,18 @@ func (r *tableDataReader) publishBatch(batch *readBatch) bool {
 	return r.send(readResult{batch: batch})
 }
 
-func (r *tableDataReader) finish(batch *readBatch, terminalErr error) {
+func (r *tableDataReader) finish(batch *readBatch, result readResult) {
 	if !r.publishBatch(batch) {
 		return
 	}
 	// Errors are ordered after all copied rows, including at file boundaries.
-	r.send(readResult{terminalErr: terminalErr})
+	r.send(result)
 }
 
 func (r *tableDataReader) Rows() SQLRowIter { return r }
 
 func (r *tableDataReader) HasNext() bool {
-	if err := r.tctx.Err(); err != nil {
-		r.err = err
+	if r.Error() != nil {
 		return false
 	}
 	if r.current != nil || r.decodeErr != nil {
@@ -247,7 +239,6 @@ func (r *tableDataReader) HasNext() bool {
 	}
 	select {
 	case <-r.tctx.Done():
-		r.err = r.tctx.Err()
 		return false
 	case result, ok := <-r.results:
 		if result.decodeErr != nil {
@@ -296,12 +287,8 @@ func (r *tableDataReader) Next() {
 	batch := r.current
 	r.current = nil
 	batch.reset()
-	select {
-	case <-r.tctx.Done():
-		r.err = r.tctx.Err()
-		return
-	case r.pool <- batch:
-	}
+	// The consumer owns one of readBatchCount batches, so the pool has room.
+	r.pool <- batch
 	// A writer may check Error at a file boundary without calling HasNext again.
 	// Observe terminal errors now, but leave decode failures on the next row.
 	r.HasNext()
@@ -318,6 +305,6 @@ func (r *tableDataReader) Error() error {
 // The storage context is independent and remains usable for output cleanup.
 func (r *tableDataReader) Close() error {
 	r.cancel()
-	<-r.done
+	r.wg.Wait()
 	return nil
 }
