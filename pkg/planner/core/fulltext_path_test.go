@@ -283,3 +283,80 @@ func TestFullTextIndexPathPlanning(t *testing.T) {
 	}
 	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache = default")
 }
+
+// TestLocalMatchAgainstFollowsSessionAnalyzer covers a MATCH evaluated in
+// TiDB over a column without a FULLTEXT index built in TiKV: its analyzer
+// comes from the innodb_ft_* variables in force when it is planned, so a plan
+// is never cached for a later execution under other settings.
+func TestLocalMatchAgainstFollowsSessionAnalyzer(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table s (id int primary key, c text)")
+	tk.MustExec("insert into s values (1, 'the cat'), (2, 'a dog')")
+	tk.MustExec("set tidb_enable_local_match_against = on")
+	tk.MustExec("set innodb_ft_enable_stopword = on")
+	tk.MustExec("prepare st from 'select id from s where match(c) against(? in boolean mode) order by id'")
+	tk.MustExec("prepare lit from 'select id from s where match(c) against(''+the'' in boolean mode) order by id'")
+	tk.MustExec("set @q = '+the'")
+	tk.MustQuery("execute st using @q").Check(testkit.Rows())
+	tk.MustQuery("execute lit").Check(testkit.Rows())
+	tk.MustExec("set innodb_ft_enable_stopword = off")
+	tk.MustQuery("execute st using @q").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute lit").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select id from s where match(c) against('+the' in boolean mode)").Check(testkit.Rows("1"))
+}
+
+// TestLocalMatchAgainstAnalyzerFollowsBaseColumn covers which FULLTEXT index
+// built in TiKV a MATCH takes its analyzer from: the one over the base-table
+// column the MATCH reads, whatever names a derived table, CTE or alias gives
+// it, and never one that only shares a table or column name with it.
+func TestLocalMatchAgainstAnalyzerFollowsBaseColumn(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database other")
+	tk.MustExec("use test")
+	// NGRAM matches 'cat' inside 'concat'; STANDARD, the session default,
+	// matches only the word.
+	tk.MustExec("create table t (id int primary key, body text, fulltext index idx (body) with parser ngram)")
+	tk.MustExec("insert into t values (1, 'a cat'), (2, 'concat')")
+	tk.MustExec("create table other.t (id int primary key, body text)")
+	tk.MustExec("insert into other.t values (1, 'a cat'), (2, 'concat')")
+	tk.MustExec("create table d (id int primary key, c text, fulltext index ft (c) with parser ngram)")
+
+	// The index authorises the MATCH over its own column, under any name.
+	for _, sql := range []string{
+		"select id from t where match(body) against('+cat' in boolean mode) order by id",
+		"select id from t as x where match(x.body) against('+cat' in boolean mode) order by id",
+		"select id from (select id, body from t) d where match(body) against('+cat' in boolean mode) order by id",
+		"select id from (select id, body as c from t) other where match(c) against('+cat' in boolean mode) order by id",
+	} {
+		tk.MustQuery(sql).Check(testkit.Rows("1", "2"))
+	}
+
+	// A column of no indexed table is analyzed with the session's settings,
+	// and needs the session switch to be evaluated locally at all.
+	for _, sql := range []string{
+		"select id from other.t where match(body) against('+cat' in boolean mode) order by id",
+		"select id from (select id, body from other.t) t where match(body) against('+cat' in boolean mode) order by id",
+		"with t as (select id, body from other.t) select id from t where match(body) against('+cat' in boolean mode) order by id",
+		"select 1 as id from (select 'concat' as c) d where match(c) against('+cat' in boolean mode)",
+	} {
+		tk.MustContainErrMsg(sql, "MATCH...AGAINST")
+	}
+	tk.MustExec("set tidb_enable_local_match_against = on")
+	for _, sql := range []string{
+		"select id from other.t where match(body) against('+cat' in boolean mode) order by id",
+		"select id from (select id, body from other.t) t where match(body) against('+cat' in boolean mode) order by id",
+		"with t as (select id, body from other.t) select id from t where match(body) against('+cat' in boolean mode) order by id",
+		"select 1 as id from (select 'a cat' as c) d where match(c) against('+cat' in boolean mode)",
+	} {
+		tk.MustQuery(sql).Check(testkit.Rows("1"))
+	}
+	tk.MustQuery("select 1 from (select 'concat' as c) d where match(c) against('+cat' in boolean mode)").Check(testkit.Rows())
+}

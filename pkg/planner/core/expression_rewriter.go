@@ -2532,45 +2532,53 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 }
 
 // tikvFullTextIndexForMatch returns the public FULLTEXT index built in TiKV
-// that tokenizes the single column a MATCH names, or nil when the MATCH names
+// that tokenizes the single column a MATCH reads, or nil when the MATCH names
 // several columns, a column of no base table, or a column without such an
 // index. Every such index over a column is built with the same analyzer, so
 // the first one found stands for all of them.
+//
+// The column is traced to the data source that produces it rather than
+// looked up by name: a derived table, CTE or alias renames a column, and a
+// name can belong to an unrelated table in the current database.
 func (er *expressionRewriter) tikvFullTextIndexForMatch(numCols, stackLen int) *model.IndexInfo {
-	nameStart := stackLen - numCols - 1
-	if numCols != 1 || nameStart < 0 || er.planCtx == nil || er.planCtx.builder == nil || er.planCtx.builder.is == nil {
+	colStart := stackLen - numCols - 1
+	if numCols != 1 || colStart < 0 || er.planCtx == nil || er.planCtx.plan == nil {
 		return nil
 	}
-	name := er.ctxNameStk[nameStart]
-	if name == nil {
+	col, ok := er.ctxStack[colStart].(*expression.Column)
+	if !ok {
 		return nil
 	}
-	tblName := name.OrigTblName
-	if tblName.L == "" {
-		tblName = name.TblName
-	}
-	if tblName.L == "" {
+	ds, offset := dataSourceProducingColumn(er.planCtx.plan, col)
+	if ds == nil || ds.TableInfo == nil {
 		return nil
 	}
-	dbName := name.DBName
-	if dbName.L == "" {
-		dbName = ast.NewCIStr(er.planCtx.builder.ctx.GetSessionVars().CurrentDB)
-	}
-	tblInfo, err := er.planCtx.builder.is.TableInfoByName(dbName, tblName)
-	if err != nil {
-		return nil
-	}
-	colName := name.OrigColName
-	if colName.L == "" {
-		colName = name.ColName
-	}
-	for _, idx := range tblInfo.Indices {
+	colID := ds.Columns[offset].ID
+	for _, idx := range ds.TableInfo.Indices {
 		textCol := idx.TiKVFullTextColumn()
-		if textCol != nil && idx.State == model.StatePublic && textCol.Name.L == colName.L {
+		if textCol != nil && idx.State == model.StatePublic && ds.TableInfo.Columns[textCol.Offset].ID == colID {
 			return idx
 		}
 	}
 	return nil
+}
+
+// dataSourceProducingColumn returns the data source under p whose schema
+// holds col, and the column's offset in it, or nil when col is computed above
+// every data source, as a projected expression or a CTE's output is.
+func dataSourceProducingColumn(p base.LogicalPlan, col *expression.Column) (*logicalop.DataSource, int) {
+	if ds, ok := p.(*logicalop.DataSource); ok {
+		if offset := ds.Schema().ColumnIndex(col); offset >= 0 && offset < len(ds.Columns) {
+			return ds, offset
+		}
+		return nil, -1
+	}
+	for _, child := range p.Children() {
+		if ds, offset := dataSourceProducingColumn(child, col); ds != nil {
+			return ds, offset
+		}
+	}
+	return nil, -1
 }
 
 // matchAgainstToLocalBuiltin emits the native MATCH ... AGAINST builtin marked
@@ -2619,6 +2627,10 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 			er.err = err
 			return
 		}
+		// The variables can change before a later execution, and the plan
+		// cache key does not hold them; a cached plan would search with the
+		// analyzer, and the matches-nothing result, of this one.
+		sessVars.StmtCtx.SetSkipPlanCache("MATCH...AGAINST is analyzed with the innodb_ft_* variables of the session")
 	}
 	info := &expression.FTSLocalEvalInfo{AnalyzerConfig: config}
 
