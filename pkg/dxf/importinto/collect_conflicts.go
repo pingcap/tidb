@@ -48,7 +48,7 @@ type collectConflictsStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 	task     *proto.TaskBase
 	store    tidbkv.Storage
-	taskMeta *TaskMeta
+	taskMeta *importer.TaskMeta
 	logger   *zap.Logger
 
 	tableImporter *importer.TableImporter
@@ -77,7 +77,7 @@ var _ execute.Collector = &collectConflictsStepExecutor{}
 func NewCollectConflictsStepExecutor(
 	task *proto.TaskBase,
 	store tidbkv.Storage,
-	taskMeta *TaskMeta,
+	taskMeta *importer.TaskMeta,
 	logger *zap.Logger,
 ) execute.StepExecutor {
 	return &collectConflictsStepExecutor{

@@ -53,7 +53,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 
 	executorForParam := &importStepExecutor{
 		taskID: 1,
-		taskMeta: &TaskMeta{
+		taskMeta: &importer.TaskMeta{
 			Plan: importer.Plan{
 				ThreadCnt: 2,
 			},

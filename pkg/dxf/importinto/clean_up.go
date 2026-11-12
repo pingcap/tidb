@@ -92,7 +92,7 @@ func (*ImportCleaner) BatchClean(ctx context.Context, tasks []*proto.Task) error
 	meterTasks := make([]*proto.Task, 0, len(tasks))
 	fileGroups := make(map[string]*cleanFileGroup, len(tasks))
 	for _, task := range tasks {
-		taskMeta := &TaskMeta{}
+		taskMeta := &importer.TaskMeta{}
 		err := json.Unmarshal(task.Meta, taskMeta)
 		if err != nil {
 			return err
@@ -173,7 +173,7 @@ func sendMeterOnCleanInParallel(ctx context.Context, tasks []*proto.Task, sendFn
 	return eg.Wait()
 }
 
-func cleanTableMode(ctx context.Context, taskMeta *TaskMeta) error {
+func cleanTableMode(ctx context.Context, taskMeta *importer.TaskMeta) error {
 	if !kerneltype.IsClassic() {
 		return nil
 	}

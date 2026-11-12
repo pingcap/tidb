@@ -81,7 +81,7 @@ func (s *mockGCSSuite) TestImportFromSelectBasic() {
 		nodeCPU, err := handle.GetCPUCountOfNode(ctx)
 		s.NoError(err)
 		s.Equal(nodeCPU, task.RequiredSlots)
-		var meta importinto.TaskMeta
+		var meta importer.TaskMeta
 		s.NoError(json.Unmarshal(task.Meta, &meta))
 		s.NotZero(meta.Plan.QuerySource.ReadTS)
 	}

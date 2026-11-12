@@ -182,7 +182,7 @@ func TestImportIntoOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 			if task == nil || task.Type != proto.ImportInto || !strings.HasPrefix(task.Key, userKeyspace+"/ImportInto/") {
 				return
 			}
-			var taskMeta importinto.TaskMeta
+			var taskMeta importer.TaskMeta
 			require.NoError(t, json.Unmarshal(task.Meta, &taskMeta))
 			require.NotNil(t, taskMeta.Plan.UseNewCollate)
 			require.False(t, *taskMeta.Plan.UseNewCollate)

@@ -117,7 +117,7 @@ type conflictedKVHandleContext struct {
 	store            tidbkv.Storage
 	logger           *zap.Logger
 	tbl              table.Table
-	taskMeta         *importinto.TaskMeta
+	taskMeta         *importer.TaskMeta
 	tk               *testkit.TestKit
 	conflictedKVInfo importinto.KVGroupConflictInfos
 }
@@ -144,7 +144,7 @@ func prepareConflictedKVHandleContext(t *testing.T) *conflictedKVHandleContext {
 	// need them to generate conflict KV files for testing.
 	conflictedKVInfo := generateConflictKVFiles(t, tempDir, tbl, store.GetCodec())
 
-	taskMeta := &importinto.TaskMeta{
+	taskMeta := &importer.TaskMeta{
 		Plan: importer.Plan{
 			CloudStorageURI: tempDir,
 			TableInfo:       tbl.Meta(),

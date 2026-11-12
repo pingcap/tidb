@@ -324,7 +324,7 @@ func GetRuntimeInfoForJob(
 	}
 
 	var (
-		taskMeta TaskMeta
+		taskMeta importer.TaskMeta
 
 		latestTime time.Time
 		ri         = &RuntimeInfo{

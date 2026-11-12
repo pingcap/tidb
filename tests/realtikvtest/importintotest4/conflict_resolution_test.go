@@ -831,7 +831,7 @@ func (s *mockGCSSuite) checkMergeStepConflictInfo(jobID int64, sortStorageURI st
 	task := s.getTaskByJob(jobID)
 	subtasks := s.getSubtasksOfStep(task.ID, proto.ImportStepMergeSort)
 
-	taskMeta := importinto.TaskMeta{}
+	taskMeta := importer.TaskMeta{}
 	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
 	kvGroupCanConflict := make(map[string]bool, len(taskMeta.Plan.TableInfo.Indices)+1)
 	kvGroupCanConflict["data"] = taskMeta.Plan.TableInfo.HasClusteredIndex()

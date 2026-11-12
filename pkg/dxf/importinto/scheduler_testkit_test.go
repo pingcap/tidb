@@ -773,7 +773,7 @@ func testSchedulerExtGlobalSort(t *testing.T, sourceStep proto.Step) {
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.ImportStepPostProcess, task.Step)
-	var completedMeta importinto.TaskMeta
+	var completedMeta importer.TaskMeta
 	require.NoError(t, json.Unmarshal(task.Meta, &completedMeta))
 	require.EqualValues(t, 3*sourceSubtasks, completedMeta.Summary.ImportedRows)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)

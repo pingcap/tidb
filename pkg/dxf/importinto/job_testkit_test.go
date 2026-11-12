@@ -398,7 +398,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
 
 	// local sort
-	taskMeta := importinto.TaskMeta{
+	taskMeta := importer.TaskMeta{
 		Plan: importer.Plan{},
 		Summary: importer.Summary{
 			EncodeSummary: importer.StepSummary{
@@ -441,7 +441,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 	require.Equal(t, "80", runInfo.Percent())
 
 	// global sort
-	taskMeta = importinto.TaskMeta{
+	taskMeta = importer.TaskMeta{
 		Plan: importer.Plan{
 			CloudStorageURI: "s3://test-bucket/test-path",
 		},
@@ -559,7 +559,7 @@ func TestShowImportProgress(t *testing.T) {
 	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
 
 	// global sort
-	taskMeta := importinto.TaskMeta{
+	taskMeta := importer.TaskMeta{
 		Plan: importer.Plan{
 			CloudStorageURI: "s3://test-bucket/test-path",
 		},

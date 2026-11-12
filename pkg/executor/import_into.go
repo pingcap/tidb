@@ -504,7 +504,7 @@ func (e *ImportIntoExec) fillQueryInfo(ctx context.Context, jobID, taskID int64)
 	if finished.State != proto.TaskStateSucceed {
 		return errors.Errorf("import task %d stopped in state %s", taskID, finished.State)
 	}
-	var meta importinto.TaskMeta
+	var meta importer.TaskMeta
 	if err := json.Unmarshal(finished.Meta, &meta); err != nil {
 		return err
 	}
