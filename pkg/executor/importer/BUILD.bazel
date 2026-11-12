@@ -10,6 +10,7 @@ go_library(
         "job.go",
         "kv_encode.go",
         "precheck.go",
+        "query_import.go",
         "query_source.go",
         "sampler.go",
         "table_import.go",
@@ -111,6 +112,7 @@ go_test(
     name = "importer_test",
     timeout = "short",
     srcs = [
+        "chunk_process_internal_test.go",
         "chunk_process_testkit_test.go",
         "import_test.go",
         "importer_testkit_test.go",

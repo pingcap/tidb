@@ -194,21 +194,12 @@ func CaptureQuerySource(sctx sessionctx.Context, sql string) (*QuerySource, erro
 		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("sequences in IMPORT INTO FROM SELECT")
 	}
 
-	sessionStates, err := storeQueryStates(sctx)
-	if err != nil {
-		return nil, err
-	}
 	txnManager := sessiontxn.GetTxnManager(sctx)
 	is := txnManager.GetTxnInfoSchema()
-	q := &QuerySource{
-		EncodeTimestamp:    time.Now().Unix(),
-		SessionStates:      sessionStates,
-		SchemaVersion:      is.SchemaMetaVersion(),
-		InMViewMaintenance: sctx.GetSessionVars().InMViewMaintenance,
-	}
 	// Like the plan cache, take the tables that the planner resolved for the
 	// statement, including those in the views it expands.
 	ids := slices.Sorted(maps.Keys(vars.StmtCtx.RelatedTableIDs))
+	tables := make([]SourceTable, 0, len(ids))
 	for _, id := range ids {
 		tbl, ok := is.TableByID(context.Background(), id)
 		if !ok {
@@ -218,10 +209,66 @@ func CaptureQuerySource(sctx sessionctx.Context, sql string) (*QuerySource, erro
 			return nil, err
 		}
 		tblInfo := tbl.Meta()
-		q.Tables = append(q.Tables, SourceTable{DBID: tblInfo.DBID, ID: tblInfo.ID, Revision: tblInfo.Revision})
+		tables = append(tables, SourceTable{DBID: tblInfo.DBID, ID: tblInfo.ID, Revision: tblInfo.Revision})
 	}
-	q.ReadTS, err = txnManager.GetStmtReadTS()
-	return q, err
+	readTS, err := txnManager.GetStmtReadTS()
+	if err != nil {
+		return nil, err
+	}
+	q, err := newQuerySource(sctx, readTS, is.SchemaMetaVersion(), tables)
+	if err != nil {
+		return nil, err
+	}
+	// The planned statement may select another group through a hint.
+	q.SessionStates.ResourceGroupName = vars.StmtCtx.ResourceGroupName
+	return q, nil
+}
+
+// NewQuerySourceAtSnapshot captures a query source without planning it. The
+// caller supplies the source tables, which must be all the tables the SELECT
+// reads, and their definitions are read at readTS. Reading them from the same
+// snapshot as the data means a lagging info schema cannot make a worker reject
+// the source as changed.
+func NewQuerySourceAtSnapshot(sctx sessionctx.Context, readTS uint64, dbID int64, tableIDs []int64) (*QuerySource, error) {
+	m := meta.NewReader(sctx.GetStore().GetSnapshot(tidbkv.NewVersion(readTS)))
+	schemaVersion, err := m.GetSchemaVersion()
+	if err != nil {
+		return nil, err
+	}
+	tables := make([]SourceTable, 0, len(tableIDs))
+	for _, id := range tableIDs {
+		tblInfo, err := m.GetTable(dbID, id)
+		if err != nil {
+			return nil, err
+		}
+		if tblInfo == nil {
+			return nil, errors.Errorf("source table %d not found at the import query snapshot", id)
+		}
+		// A planner expands a view into its tables, but nothing expands it here.
+		if tblInfo.IsView() {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("views as unplanned import query sources")
+		}
+		if err := checkQuerySourceTableInfo(tblInfo); err != nil {
+			return nil, err
+		}
+		tables = append(tables, SourceTable{DBID: dbID, ID: id, Revision: tblInfo.Revision})
+	}
+	return newQuerySource(sctx, readTS, schemaVersion, tables)
+}
+
+func newQuerySource(sctx sessionctx.Context, readTS uint64, schemaVersion int64, tables []SourceTable) (*QuerySource, error) {
+	sessionStates, err := storeQueryStates(sctx)
+	if err != nil {
+		return nil, err
+	}
+	return &QuerySource{
+		ReadTS:             readTS,
+		SchemaVersion:      schemaVersion,
+		EncodeTimestamp:    time.Now().Unix(),
+		Tables:             tables,
+		SessionStates:      sessionStates,
+		InMViewMaintenance: sctx.GetSessionVars().InMViewMaintenance,
+	}, nil
 }
 
 // hasSequenceFunc returns whether node calls a sequence function.
@@ -261,7 +308,6 @@ func storeQueryStates(sctx sessionctx.Context) (*sessionstates.SessionStates, er
 		return nil, err
 	}
 	states.SystemVars[vardef.Timestamp] = timestamp
-	states.ResourceGroupName = vars.StmtCtx.ResourceGroupName
 
 	return states, nil
 }
@@ -269,13 +315,17 @@ func storeQueryStates(sctx sessionctx.Context) (*sessionstates.SessionStates, er
 // checkQuerySourceTable rejects a source table that a worker cannot read the
 // same way as the submitter, including temporary tables, sequences, and virtual tables.
 func checkQuerySourceTable(tbl table.Table) error {
-	tblInfo := tbl.Meta()
+	if tbl.Type().IsVirtualTable() {
+		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("virtual source tables in IMPORT INTO FROM SELECT")
+	}
+	return checkQuerySourceTableInfo(tbl.Meta())
+}
+
+func checkQuerySourceTableInfo(tblInfo *model.TableInfo) error {
 	var kind string
 	switch {
 	case tblInfo.TempTableType != model.TempTableNone:
 		kind = "temporary source tables"
-	case tbl.Type().IsVirtualTable():
-		kind = "virtual source tables"
 	case tblInfo.IsSequence():
 		kind = "sequences"
 	default:
