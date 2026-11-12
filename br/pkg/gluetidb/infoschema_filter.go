@@ -46,6 +46,8 @@ func (f *brInfoSchemaFilter) SkipLoadDiff(diff *model.SchemaDiff, latestIS infos
 	case model.ActionCreateSchema,
 		// Always accept `PLACEMENT POLICY` SQLs: its `schemaID` is ID of this policy but not zero.
 		model.ActionCreatePlacementPolicy, model.ActionAlterPlacementPolicy, model.ActionDropPlacementPolicy,
+		// Masking-policy jobs also store their policy ID in SchemaID.
+		model.ActionCreateMaskingPolicy, model.ActionAlterMaskingPolicy, model.ActionDropMaskingPolicy,
 		// Always accept resource group related SQLs: their `schemaID` is resource group ID.
 		model.ActionCreateResourceGroup, model.ActionDropResourceGroup, model.ActionAlterResourceGroup:
 		return false

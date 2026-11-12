@@ -963,34 +963,53 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	// Capture IDs from DDL tasks instead of assuming how many IDs bootstrap used.
+	type ddlJobIDs struct {
+		job, schema, table int64
+	}
+	var latestJob atomic.Pointer[ddlJobIDs]
+	captureJobIDs := func(job *model.Job) {
+		latestJob.Store(&ddlJobIDs{job: job.ID, schema: job.SchemaID, table: job.TableID})
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", captureJobIDs)
+	execDDL := func(sql string) ddlJobIDs {
+		tk.MustExec(sql)
+		ids := latestJob.Load()
+		require.NotNil(t, ids)
+		return *ids
+	}
+	historyRow := func(ids ddlJobIDs, jobType, tableName string) string {
+		return fmt.Sprintf("%d|%s|public|%d|%d|%s|synced", ids.job, jobType, ids.schema, ids.table, tableName)
+	}
+	var createJobs, indexJobs [2][4]ddlJobIDs
 	for i := 0; i < 2; i++ {
 		tk.MustExec(fmt.Sprintf("create database d%d", i))
 		tk.MustExec(fmt.Sprintf("use d%d", i))
 		for j := 0; j < 4; j++ {
-			tk.MustExec(fmt.Sprintf("create table t%d(id int, col1 int, col2 int)", j))
-			tk.MustExec(fmt.Sprintf("alter table t%d add index (col1)", j))
+			createJobs[i][j] = execDDL(fmt.Sprintf("create table t%d(id int, col1 int, col2 int)", j))
+			indexJobs[i][j] = execDDL(fmt.Sprintf("alter table t%d add index (col1)", j))
 		}
 	}
 
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t1";`).Check(testkit.RowsWithSep("|",
-		"134|add index|public|127|132|t1|synced",
-		"133|create table|public|127|132|t1|synced",
-		"120|add index|public|113|118|t1|synced",
-		"119|create table|public|113|118|t1|synced",
+		historyRow(indexJobs[1][1], "add index", "t1"),
+		historyRow(createJobs[1][1], "create table", "t1"),
+		historyRow(indexJobs[0][1], "add index", "t1"),
+		historyRow(createJobs[0][1], "create table", "t1"),
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d1" and JOB_TYPE LIKE "add index%%";`).Check(testkit.RowsWithSep("|",
-		"140|add index|public|127|138|t3|synced",
-		"137|add index|public|127|135|t2|synced",
-		"134|add index|public|127|132|t1|synced",
-		"131|add index|public|127|129|t0|synced",
+		historyRow(indexJobs[1][3], "add index", "t3"),
+		historyRow(indexJobs[1][2], "add index", "t2"),
+		historyRow(indexJobs[1][1], "add index", "t1"),
+		historyRow(indexJobs[1][0], "add index", "t0"),
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and table_name = "t3";`).Check(testkit.RowsWithSep("|",
-		"126|add index|public|113|124|t3|synced",
-		"125|create table|public|113|124|t3|synced",
+		historyRow(indexJobs[0][3], "add index", "t3"),
+		historyRow(createJobs[0][3], "create table", "t3"),
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 					FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.Rows())
@@ -998,35 +1017,38 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	// Test running job
 	loaded := atomic.Bool{}
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+		captureJobIDs(job)
 		if job.SchemaState == model.StateWriteOnly && loaded.CompareAndSwap(false, true) {
+			runningRow := fmt.Sprintf("%d|add index|write only|%d|%d|t0|running", job.ID, job.SchemaID, job.TableID)
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t0" and state = "running";`).Check(testkit.RowsWithSep("|",
-				"141 add index write only 113 115 t0 running",
+				runningRow,
 			))
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and state = "running";`).Check(testkit.RowsWithSep("|",
-				"141 add index write only 113 115 t0 running",
+				runningRow,
 			))
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.RowsWithSep("|",
-				"141 add index write only 113 115 t0 running",
+				runningRow,
 			))
 		}
 	})
 
 	tk.MustExec("use d0")
 	tk.MustExec("alter table t0 add index (col2)")
+	require.True(t, loaded.Load())
 
 	// Test search history jobs
 	tk.MustExec("create database test2")
-	tk.MustExec("create table test2.t1(id int)")
+	firstCreate := execDDL("create table test2.t1(id int)")
 	tk.MustExec("drop database test2")
 	tk.MustExec("create database test2")
-	tk.MustExec("create table test2.t1(id int)")
+	secondCreate := execDDL("create table test2.t1(id int)")
 	tk.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "test2" and table_name = "t1"`).Check(testkit.RowsWithSep("|",
-		"150|create table|public|147|149|t1|synced",
-		"145|create table|public|142|144|t1|synced",
+		historyRow(secondCreate, "create table", "t1"),
+		historyRow(firstCreate, "create table", "t1"),
 	))
 
 	// Test explain output, since the output may change in future.

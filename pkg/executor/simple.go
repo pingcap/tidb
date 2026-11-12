@@ -561,18 +561,24 @@ func (e *SimpleExec) setRoleNone() error {
 }
 
 func (e *SimpleExec) executeSetRole(s *ast.SetRoleStmt) error {
+	var err error
 	switch s.SetRoleOpt {
 	case ast.SetRoleRegular:
-		return e.setRoleRegular(s)
+		err = e.setRoleRegular(s)
 	case ast.SetRoleAll:
-		return e.setRoleAll()
+		err = e.setRoleAll()
 	case ast.SetRoleAllExcept:
-		return e.setRoleAllExcept(s)
+		err = e.setRoleAllExcept(s)
 	case ast.SetRoleNone:
-		return e.setRoleNone()
+		err = e.setRoleNone()
 	case ast.SetRoleDefault:
-		return e.setRoleDefault()
+		err = e.setRoleDefault()
 	}
+	if err != nil {
+		return err
+	}
+	// Active roles participate in masking policy expressions.
+	e.Ctx().GetSessionVars().SetMaskingPolicyExprCache(nil, 0)
 	return nil
 }
 

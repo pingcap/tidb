@@ -620,3 +620,44 @@ func TestRole(t *testing.T) {
 		}
 	}
 }
+
+func TestMaskingPolicyRoleCacheInvalidation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	admin := testkit.NewTestKit(t, store)
+	admin.MustExec("create user masking_user")
+	admin.MustExec("create role masking_role")
+	admin.MustExec("grant masking_role to masking_user")
+	admin.MustExec("set default role masking_role to masking_user")
+	admin.MustExec("create table test.masking_role_cache(c varchar(20))")
+	admin.MustExec("insert into test.masking_role_cache values ('secret')")
+	admin.MustExec("grant select on test.masking_role_cache to masking_user")
+	admin.MustExec("create masking policy p_role on test.masking_role_cache(c) as case when current_role() != 'NONE' then c else mask_full(c) end")
+
+	user := testkit.NewTestKit(t, store)
+	require.NoError(t, user.Session().Auth(&auth.UserIdentity{Username: "masking_user", Hostname: "%"}, nil, nil, nil))
+	for _, tc := range []struct {
+		sql    string
+		result string
+	}{
+		{"set role masking_role", "secret"},
+		{"set role none", "XXXXXX"},
+		{"set role default", "secret"},
+		{"set role all except masking_role", "XXXXXX"},
+		{"set role all", "secret"},
+	} {
+		user.MustQuery("select c from test.masking_role_cache")
+		cached, _ := user.Session().GetSessionVars().GetMaskingPolicyExprCache()
+		require.NotNil(t, cached)
+		user.MustExec(tc.sql)
+		cached, _ = user.Session().GetSessionVars().GetMaskingPolicyExprCache()
+		require.Nil(t, cached, tc.sql)
+		user.MustQuery("select c from test.masking_role_cache").Check(testkit.Rows(tc.result))
+	}
+
+	cached, version := user.Session().GetSessionVars().GetMaskingPolicyExprCache()
+	user.MustExecToErr("set role ungranted_masking_role")
+	after, afterVersion := user.Session().GetSessionVars().GetMaskingPolicyExprCache()
+	require.Same(t, cached, after)
+	require.Equal(t, version, afterVersion)
+	user.MustQuery("select c from test.masking_role_cache").Check(testkit.Rows("secret"))
+}

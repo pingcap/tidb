@@ -61,8 +61,8 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 	r, ctx := tracing.StartRegionEx(ctx, "distsql.Select")
 	defer r.End()
 
-	// For testing purpose.
-	if hook := ctx.Value("CheckSelectRequestHook"); hook != nil {
+	// Only inspect user queries; internal metadata queries may share their context.
+	if hook := ctx.Value("CheckSelectRequestHook"); hook != nil && !kvReq.RequestSource.RequestSourceInternal {
 		hook.(func(*kv.Request))(kvReq)
 	}
 

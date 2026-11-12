@@ -81,6 +81,7 @@ func NewChecker(
 		// avoid setting deadline if the threshold is 0
 		if settings.Rule.ExecElapsedTimeMs != 0 {
 			c.deadline = startTime.Add(time.Duration(settings.Rule.ExecElapsedTimeMs) * time.Millisecond)
+			failpoint.InjectCall("mockRunawayDeadline", resourceGroupName, &c.deadline)
 		}
 		c.ruThreshold = settings.Rule.RequestUnit
 		c.processedKeysThreshold = settings.Rule.ProcessedKeys
@@ -351,6 +352,7 @@ func (r *Checker) CheckThresholds(ruDetail *util.RUDetails, processKeys int64, e
 	if err != nil && strings.HasPrefix(err.Error(), "Coprocessor task terminated due to exceeding the deadline") {
 		checkTime = now
 	}
+	failpoint.InjectCall("mockRunawayCheckTime", r.resourceGroupName, r.deadline, &checkTime)
 	// add the processed keys to the total processed keys.
 	atomic.AddInt64(&r.totalProcessedKeys, processKeys)
 	totalProcessedKeys := atomic.LoadInt64(&r.totalProcessedKeys)

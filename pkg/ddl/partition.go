@@ -3641,6 +3641,9 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				return ver, errors.Trace(err)
 			}
 			tblInfo.ID = partInfo.NewTableID
+			if err = w.updateMaskingPolicyTableID(jobCtx, oldTblID, tblInfo.ID); err != nil {
+				return ver, errors.Trace(err)
+			}
 			if oldTblID != physicalTableIDs[0] {
 				// if partitioned before, then also add the old table ID,
 				// otherwise it will be the already included first partition

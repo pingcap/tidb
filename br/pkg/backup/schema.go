@@ -162,7 +162,9 @@ func (ss *Schemas) BackupSchemas(
 						}
 					}
 				}
-				if statsHandle != nil {
+				// The policy table is forced into filtered backups so its rows survive.
+				// Its optimizer stats are not user-table statistics and must not be dumped.
+				if statsHandle != nil && !isMaskingPolicySystemTable(schema) {
 					statsWriter := metaWriter.NewStatsWriter()
 					if err := schema.dumpStatsToJSON(ctx, statsWriter, statsHandle, backupTS); err != nil {
 						logger.Error("dump table stats failed", logutil.ShortError(err))
@@ -269,6 +271,14 @@ func (s *schemaInfo) matchChecksum(checksumMap map[int64]*metautil.ChecksumStats
 	log.Info("checksum success",
 		zap.Stringer("db", s.dbInfo.Name), zap.Stringer("table", s.tableInfo.Name))
 	return nil
+}
+
+func isMaskingPolicySystemTable(schema *schemaInfo) bool {
+	if schema == nil || schema.tableInfo == nil || schema.dbInfo == nil {
+		return false
+	}
+	return schema.tableInfo.Name.L == sysMaskingPolicyTableName &&
+		utils.IsSysOrTempSysDB(schema.dbInfo.Name.O)
 }
 
 func (s *schemaInfo) dumpStatsToJSON(ctx context.Context, statsWriter *metautil.StatsWriter, statsHandle *handle.Handle, backupTS uint64) error {

@@ -202,6 +202,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowCreatePlacementPolicy()
 	case ast.ShowCreateResourceGroup:
 		return e.fetchShowCreateResourceGroup()
+	case ast.ShowMaskingPolicies:
+		return e.fetchShowMaskingPolicies(ctx)
 	case ast.ShowDatabases:
 		return e.fetchShowDatabases()
 	case ast.ShowEngines:
@@ -800,6 +802,69 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	return nil
 }
 
+func maskingPolicyRestrictOpsStr(ops ast.MaskingPolicyRestrictOps) string {
+	if ops == ast.MaskingPolicyRestrictOpNone {
+		return "NONE"
+	}
+	vals := make([]string, 0, 4)
+	if ops&ast.MaskingPolicyRestrictOpInsertIntoSelect != 0 {
+		vals = append(vals, ast.MaskingPolicyRestrictNameInsertIntoSelect)
+	}
+	if ops&ast.MaskingPolicyRestrictOpUpdateSelect != 0 {
+		vals = append(vals, ast.MaskingPolicyRestrictNameUpdateSelect)
+	}
+	if ops&ast.MaskingPolicyRestrictOpDeleteSelect != 0 {
+		vals = append(vals, ast.MaskingPolicyRestrictNameDeleteSelect)
+	}
+	if ops&ast.MaskingPolicyRestrictOpCTAS != 0 {
+		vals = append(vals, ast.MaskingPolicyRestrictNameCTAS)
+	}
+	return strings.Join(vals, ",")
+}
+
+func (e *ShowExec) fetchShowMaskingPolicies(ctx context.Context) error {
+	tb, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+	if checker != nil && e.Ctx().GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.InsertPriv|mysql.SelectPriv|mysql.UpdatePriv|mysql.ReferencesPriv) {
+		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
+	}
+
+	policies, err := e.is.AllMaskingPolicies(ctx)
+	if err != nil {
+		return err
+	}
+	rows := make([]*model.MaskingPolicyInfo, 0, len(policies))
+	for _, policy := range policies {
+		if policy.TableID == tb.Meta().ID {
+			rows = append(rows, policy)
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].ColumnName.L == rows[j].ColumnName.L {
+			return rows[i].Name.L < rows[j].Name.L
+		}
+		return rows[i].ColumnName.L < rows[j].ColumnName.L
+	})
+
+	for _, policy := range rows {
+		restrictOn := maskingPolicyRestrictOpsStr(policy.RestrictOps)
+		e.appendRow([]any{
+			policy.Name.O,
+			policy.ColumnName.O,
+			policy.Expression,
+			policy.Status.String(),
+			string(policy.MaskingType),
+			restrictOn,
+		})
+	}
+	return nil
+}
+
 func (e *ShowExec) fetchShowIndex() error {
 	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
@@ -1085,6 +1150,22 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 		return nil
 	}
 
+	var maskingPolicies map[int64]*model.MaskingPolicyInfo
+	if ctx != nil {
+		if is, ok := ctx.GetInfoSchema().(infoschema.InfoSchema); ok {
+			allPolicies, loadErr := is.AllMaskingPolicies(context.Background())
+			if loadErr != nil {
+				return loadErr
+			}
+			maskingPolicies = make(map[int64]*model.MaskingPolicyInfo)
+			for _, policy := range allPolicies {
+				if policy.TableID == tableInfo.ID {
+					maskingPolicies[policy.ColumnID] = policy
+				}
+			}
+		}
+	}
+
 	tblCharset := tableInfo.Charset
 	if len(tblCharset) == 0 {
 		tblCharset = mysql.DefaultCharset
@@ -1207,6 +1288,11 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 		}
 		if len(col.Comment) > 0 {
 			fmt.Fprintf(buf, " COMMENT '%s'", format.OutputFormat(col.Comment))
+		}
+		if maskingPolicies != nil {
+			if policy := maskingPolicies[col.ID]; policy != nil {
+				fmt.Fprintf(buf, " /* MASKING POLICY %s %s */", stringutil.Escape(policy.Name.O, sqlMode), policy.Status.String())
+			}
 		}
 		if i != len(tableInfo.Cols())-1 {
 			needAddComma = true

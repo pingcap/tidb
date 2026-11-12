@@ -15,8 +15,11 @@
 package infoschema
 
 import (
+	"context"
+	"errors"
 	"testing"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
@@ -30,7 +33,7 @@ func (is *infoschemaV2) HasCache(tableID int64, schemaVersion int64) bool {
 }
 
 func TestInfoSchemaAddDel(t *testing.T) {
-	is := newInfoSchema()
+	is := newInfoSchema(nil)
 	is.addSchema(&schemaTables{
 		dbInfo: &model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")},
 	})
@@ -39,4 +42,194 @@ func TestInfoSchemaAddDel(t *testing.T) {
 	is.delSchema(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")})
 	require.Empty(t, is.schemaMap)
 	require.Empty(t, is.schemaID2Name)
+}
+
+func TestLoadMaskingPoliciesRetryOnGenericError(t *testing.T) {
+	is := newInfoSchema(nil)
+	calls := 0
+	is.factory = func() (pools.Resource, error) {
+		calls++
+		return nil, errors.New("temporary load failure")
+	}
+
+	require.Error(t, is.loadMaskingPoliciesIfNeeded(context.Background()))
+	require.False(t, is.maskingPoliciesLoaded)
+	require.Equal(t, 1, calls)
+
+	require.Error(t, is.loadMaskingPoliciesIfNeeded(context.Background()))
+	require.False(t, is.maskingPoliciesLoaded)
+	require.Equal(t, 2, calls)
+}
+
+func TestLoadMaskingPoliciesNoRetryWhenTableNotReady(t *testing.T) {
+	is := newInfoSchema(nil)
+	calls := 0
+	is.factory = func() (pools.Resource, error) {
+		calls++
+		return nil, ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_masking_policy")
+	}
+
+	require.NoError(t, is.loadMaskingPoliciesIfNeeded(context.Background()))
+	require.True(t, is.maskingPoliciesLoaded)
+	require.Equal(t, 1, calls)
+
+	require.NoError(t, is.loadMaskingPoliciesIfNeeded(context.Background()))
+	require.Equal(t, 1, calls)
+}
+
+func TestInitWithOldInfoSchemaCopiesMaskingLoadedState(t *testing.T) {
+	oldIS := newInfoSchema(nil)
+	oldIS.maskingPoliciesLoaded = true
+	oldIS.maskingPolicyTableColumnMap[42] = map[int64]*model.MaskingPolicyInfo{
+		7: {
+			ID:       1,
+			Name:     pmodel.NewCIStr("p"),
+			TableID:  42,
+			ColumnID: 7,
+		},
+	}
+
+	builder := NewBuilder(nil, nil, NewData(), false)
+	require.NoError(t, builder.InitWithOldInfoSchema(oldIS))
+
+	newIS := builder.infoSchema
+	// The loaded state should be copied from the old InfoSchema
+	require.True(t, newIS.maskingPoliciesLoaded)
+	// The policy map should be copied
+	policy, ok := newIS.maskingPolicyTableColumnMap[42][7]
+	require.True(t, ok)
+	require.Equal(t, int64(1), policy.ID)
+}
+
+func TestInitWithOldInfoSchemaDoesNotInheritMaskingLoadChannel(t *testing.T) {
+	oldIS := newInfoSchema(nil)
+	oldIS.maskingPoliciesLoaded = false
+	oldIS.maskingPoliciesLoadCh = make(chan struct{})
+	oldIS.maskingPolicyTableColumnMap[42] = map[int64]*model.MaskingPolicyInfo{
+		7: {
+			ID:       1,
+			Name:     pmodel.NewCIStr("p"),
+			TableID:  42,
+			ColumnID: 7,
+		},
+	}
+
+	builder := NewBuilder(nil, nil, NewData(), false)
+	require.NoError(t, builder.InitWithOldInfoSchema(oldIS))
+
+	newIS := builder.infoSchema
+	require.Nil(t, newIS.maskingPoliciesLoadCh)
+	require.False(t, newIS.maskingPoliciesLoaded)
+	policy, ok := newIS.maskingPolicyTableColumnMap[42][7]
+	require.True(t, ok)
+	require.Equal(t, int64(1), policy.ID)
+}
+
+func TestMaskingPolicyByNameAmbiguous(t *testing.T) {
+	is := newInfoSchema(nil)
+	is.maskingPoliciesLoaded = true
+	is.maskingPolicyTableColumnMap[101] = map[int64]*model.MaskingPolicyInfo{
+		11: {
+			ID:       1,
+			Name:     pmodel.NewCIStr("dup"),
+			TableID:  101,
+			ColumnID: 11,
+		},
+	}
+	is.maskingPolicyTableColumnMap[202] = map[int64]*model.MaskingPolicyInfo{
+		22: {
+			ID:       2,
+			Name:     pmodel.NewCIStr("dup"),
+			TableID:  202,
+			ColumnID: 22,
+		},
+	}
+
+	policy, ok, err := is.MaskingPolicyByName(context.Background(), pmodel.NewCIStr("dup"))
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.Nil(t, policy)
+}
+
+func TestNormalizeMaskingPolicyTableIDs(t *testing.T) {
+	ids, hasFilter := normalizeMaskingPolicyTableIDs(nil)
+	require.False(t, hasFilter)
+	require.Nil(t, ids)
+
+	ids, hasFilter = normalizeMaskingPolicyTableIDs([]int64{0, -1, 42, 42, 7})
+	require.True(t, hasFilter)
+	require.Equal(t, []int64{7, 42}, ids)
+
+	ids, hasFilter = normalizeMaskingPolicyTableIDs([]int64{0, -1})
+	require.True(t, hasFilter)
+	require.Empty(t, ids)
+}
+
+func TestMaskingPolicyLoadErrorsAreReturned(t *testing.T) {
+	for _, loadErr := range []error{errors.New("temporary load failure"), errors.New("key not exist"), ErrDatabaseNotExists.GenWithStackByArgs("missing")} {
+		is := newInfoSchema(nil)
+		is.factory = func() (pools.Resource, error) { return nil, loadErr }
+		_, _, err := is.MaskingPolicyByName(context.Background(), pmodel.NewCIStr("p"))
+		require.ErrorIs(t, err, loadErr)
+		_, _, err = is.MaskingPolicyByTableColumn(context.Background(), 1, 1)
+		require.ErrorIs(t, err, loadErr)
+		_, err = is.AllMaskingPolicies(context.Background())
+		require.ErrorIs(t, err, loadErr)
+		_, err = is.HasMaskingPolicies(context.Background())
+		require.ErrorIs(t, err, loadErr)
+		require.False(t, is.maskingPoliciesLoaded)
+	}
+}
+
+func TestMaskingPolicyLoadWaitCancellation(t *testing.T) {
+	is := newInfoSchema(nil)
+	is.factory = func() (pools.Resource, error) { panic("waiter must not start another load") }
+	is.maskingPoliciesLoadCh = make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	waiting := make(chan struct{})
+	waitCtx := maskingPolicyWaitContext{Context: ctx, waiting: waiting}
+	finished := make(chan error, 1)
+	go func() {
+		_, err := is.HasMaskingPolicies(waitCtx)
+		finished <- err
+	}()
+	<-waiting
+	cancel()
+	require.ErrorIs(t, <-finished, context.Canceled)
+	require.False(t, is.maskingPoliciesLoaded)
+}
+
+func TestMaskingPolicyLoadCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	is := newInfoSchema(nil)
+	is.factory = func() (pools.Resource, error) {
+		cancel()
+		return nil, context.Canceled
+	}
+
+	_, err := is.HasMaskingPolicies(ctx)
+	require.Equal(t, context.Canceled, err)
+	require.False(t, is.maskingPoliciesLoaded)
+	require.Nil(t, is.maskingPoliciesLoadCh)
+}
+
+func TestMaskingPolicyCachedReadWithCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	is := newInfoSchema(nil)
+	is.maskingPoliciesLoaded = true
+	is.factory = func() (pools.Resource, error) { panic("cached read must not load policies") }
+	_, err := is.HasMaskingPolicies(ctx)
+	require.NoError(t, err)
+}
+
+type maskingPolicyWaitContext struct {
+	context.Context
+	waiting chan struct{}
+}
+
+func (ctx maskingPolicyWaitContext) Done() <-chan struct{} {
+	close(ctx.waiting)
+	return ctx.Context.Done()
 }

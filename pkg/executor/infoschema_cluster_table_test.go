@@ -433,9 +433,9 @@ func TestTableStorageStats(t *testing.T) {
 	tk.MustQuery("select TABLE_SCHEMA, sum(TABLE_SIZE) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' group by TABLE_SCHEMA;").Check(testkit.Rows(
 		"test 2",
 	))
-	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
-	result := 59
-	require.Len(t, rows, result)
+	mysqlTables := tk.MustQuery("select TABLE_NAME from information_schema.TABLES where TABLE_SCHEMA = 'mysql'").Sort().Rows()
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Sort().Check(mysqlTables)
+	result := len(mysqlTables)
 
 	// More tests about the privileges.
 	tk.MustExec("create user 'testuser'@'localhost'")

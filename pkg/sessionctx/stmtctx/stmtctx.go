@@ -65,9 +65,17 @@ func AllocateTaskID() uint64 {
 // SQLWarn relates a sql warning and it's level.
 type SQLWarn = contextutil.SQLWarn
 
+// MaskingPolicyCheck records a source column whose restricted operation must be
+// authorized again when a physical plan is reused.
+type MaskingPolicyCheck struct {
+	PolicyID, TableID, ColumnID int64
+	Operation                   ast.MaskingPolicyRestrictOps
+}
+
 // LogicalPlanBuildState stores the statement-scoped planner state that is mutated while
 // building a logical plan from AST.
 type LogicalPlanBuildState struct {
+	maskingPolicyChecks  []MaskingPolicyCheck
 	warnings             []SQLWarn
 	extraWarnings        []SQLWarn
 	tables               []TableEntry
@@ -274,6 +282,7 @@ type StatementContext struct {
 	// the min start TS to PD.
 	IsDDLJobInQueue        atomic.Bool
 	DDLJobID               int64
+	MaskingPolicyChecks    []MaskingPolicyCheck
 	InInsertStmt           bool
 	InUpdateStmt           bool
 	InDeleteStmt           bool
@@ -616,6 +625,7 @@ func (sc *StatementContext) Reset() bool {
 func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
 	planCacheUseCache, planCacheType, planCacheUnqualified, planCacheForce, planCacheAlwaysWarn := sc.PlanCacheTracker.Save()
 	return LogicalPlanBuildState{
+		maskingPolicyChecks:  slices.Clone(sc.MaskingPolicyChecks),
 		warnings:             slices.Clone(sc.GetWarnings()),
 		extraWarnings:        slices.Clone(sc.GetExtraWarnings()),
 		tables:               slices.Clone(sc.Tables),
@@ -636,6 +646,7 @@ func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
 // RestoreLogicalPlanBuildState restores the statement-scoped planner state after a
 // discarded logical plan build attempt.
 func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildState) {
+	sc.MaskingPolicyChecks = slices.Clone(state.maskingPolicyChecks)
 	sc.SetWarnings(slices.Clone(state.warnings))
 	sc.SetExtraWarnings(slices.Clone(state.extraWarnings))
 	sc.Tables = slices.Clone(state.tables)

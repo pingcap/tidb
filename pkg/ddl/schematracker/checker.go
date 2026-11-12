@@ -162,8 +162,15 @@ func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName pmode
 		return ret
 	}
 
-	s1 := removeClusteredIndexComment(result.String())
-	s2 := removeClusteredIndexComment(result2.String())
+	// Remove masking policy annotations: the real executor adds them via InfoSchema
+	// but the SchemaTracker does not have masking policy info, so strip them before comparing.
+	removeMaskingPolicyComment := func(s string) string {
+		re := regexp.MustCompile(`(?s) /\* MASKING POLICY .+? \*/`)
+		return re.ReplaceAllString(s, "")
+	}
+
+	s1 := removeMaskingPolicyComment(removeClusteredIndexComment(result.String()))
+	s2 := removeMaskingPolicyComment(removeClusteredIndexComment(result2.String()))
 
 	// Remove shard_row_id_bits and pre_split_regions comments.
 	if ctx.GetSessionVars().ShardRowIDBits != 0 || ctx.GetSessionVars().PreSplitRegions != 0 {
@@ -603,4 +610,22 @@ func UnwrapStorage(s kv.Storage) kv.Storage {
 		return s
 	}
 	return injector.storageAndMore
+}
+
+// CreateMaskingPolicy implements the DDL interface.
+func (d *Checker) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateMaskingPolicyStmt) error {
+	err := d.realExecutor.CreateMaskingPolicy(ctx, stmt)
+	if err != nil {
+		return err
+	}
+	err = d.tracker.CreateMaskingPolicy(ctx, stmt)
+	if err != nil {
+		panic(err)
+	}
+	tableSchema := stmt.Table.Schema
+	if tableSchema.L == "" {
+		tableSchema = ast.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	}
+	d.checkTableInfo(ctx, tableSchema, stmt.Table.Name)
+	return nil
 }

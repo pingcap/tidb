@@ -224,7 +224,10 @@ func TestSplitRegionTimeout(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@session.tidb_scatter_region='table';")
 	require.NoError(t, failpoint.Enable("tikvclient/mockScatterRegionTimeout", `return(true)`))
-	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	originalSplitTableRegion := atomic.SwapUint32(&ddl.EnableSplitTableRegion, 1)
+	t.Cleanup(func() {
+		atomic.StoreUint32(&ddl.EnableSplitTableRegion, originalSplitTableRegion)
+	})
 	start := time.Now()
 	tk.MustExec("create table t (a int, b int) partition by hash(a) partitions 5;")
 	require.Less(t, time.Since(start).Seconds(), 10.0)

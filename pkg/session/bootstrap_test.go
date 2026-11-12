@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
@@ -241,6 +242,10 @@ func TestBootstrapWithError(t *testing.T) {
 }
 
 func TestDDLTableCreateBackfillTable(t *testing.T) {
+	// The notifier must not poll its system table while this test recreates it.
+	enableStatsOwner := config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Swap(false)
+	defer config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(enableStatsOwner)
+
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	se := CreateSessionAndSetID(t, store)
@@ -273,6 +278,10 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 }
 
 func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
+	// The notifier must not poll its system table while this test recreates it.
+	enableStatsOwner := config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Swap(false)
+	defer config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(enableStatsOwner)
+
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	se := CreateSessionAndSetID(t, store)

@@ -159,6 +159,19 @@ func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 	}
 }
 
+const defaultMockUpgradeToVerLatestKind = 0
+
+func enableMockUpgradeForTest(t *testing.T, kind int) {
+	t.Helper()
+	mock := true
+	session.WithMockUpgrade = &mock
+	session.MockUpgradeToVerLatestKind = kind
+	t.Cleanup(func() {
+		mock = false
+		session.MockUpgradeToVerLatestKind = defaultMockUpgradeToVerLatestKind
+	})
+}
+
 func TestUpgradeVersion66(t *testing.T) {
 	ctx := context.Background()
 	store, dom := session.CreateStoreAndBootstrap(t)
@@ -292,8 +305,7 @@ func TestUpgradeVersion75(t *testing.T) {
 }
 
 func TestUpgradeVersionMockLatest(t *testing.T) {
-	mock := true
-	session.WithMockUpgrade = &mock
+	enableMockUpgradeForTest(t, defaultMockUpgradeToVerLatestKind)
 
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -356,9 +368,7 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 
 // TestUpgradeVersionWithUpgradeHTTPOp tests SupportUpgradeHTTPOpVer upgrade SupportUpgradeHTTPOpVer++ with HTTP op.
 func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
-	mock := true
-	session.WithMockUpgrade = &mock
-	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
+	enableMockUpgradeForTest(t, session.MockSimpleUpgradeToVerLatest)
 
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -406,9 +416,7 @@ func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
 
 // TestUpgradeVersionWithoutUpgradeHTTPOp tests SupportUpgradeHTTPOpVer upgrade SupportUpgradeHTTPOpVer++ without HTTP op.
 func TestUpgradeVersionWithoutUpgradeHTTPOp(t *testing.T) {
-	mock := true
-	session.WithMockUpgrade = &mock
-	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
+	enableMockUpgradeForTest(t, session.MockSimpleUpgradeToVerLatest)
 
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -530,9 +538,7 @@ func checkDDLJobExecSucc(t *testing.T, se sessiontypes.Session, jobID int64) {
 // Then we do re-upgrade(This operation will pause all DDL jobs by the system).
 func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	// Mock a general and a reorg job in bootstrap.
-	mock := true
-	session.WithMockUpgrade = &mock
-	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
+	enableMockUpgradeForTest(t, session.MockSimpleUpgradeToVerLatest)
 
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -803,8 +809,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	}
 	session.TestHook = tc
 
-	mock := true
-	session.WithMockUpgrade = &mock
+	enableMockUpgradeForTest(t, defaultMockUpgradeToVerLatestKind)
 	seV := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -1207,4 +1212,65 @@ func TestDefaultAnalyzeBackgroundOnlyAffectsFreshBootstrap(t *testing.T) {
 	require.True(t, ok)
 	// The upgrade path should not backfill the fresh-bootstrap background setting.
 	require.Nil(t, defaultGroup.Background)
+}
+
+// TestMaskingPolicyUpgrade checks both a recent release and an older release
+// whose upgrade DDL changes system columns before version234 is reached.
+func TestMaskingPolicyUpgrade(t *testing.T) {
+	for _, tc := range []struct {
+		version  int
+		preserve bool
+	}{{189, false}, {220, false}, {233, false}, {233, true}} {
+		version := tc.version
+		t.Run(fmt.Sprintf("%d/preserve=%t", version, tc.preserve), func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
+			tk := testkit.NewTestKit(t, store)
+			if tc.preserve {
+				tk.MustExec("create table test.masking_upgrade(c varchar(20))")
+				tk.MustExec("insert into test.masking_upgrade values ('secret')")
+				tk.MustExec("create masking policy p_upgrade on test.masking_upgrade(c) as mask_full(c)")
+			}
+			if version == 189 {
+				tk.MustExec("alter table mysql.tidb_global_task modify dispatcher_id varchar(128)")
+			}
+			revertVersionAndVariables(t, tk.Session(), version)
+			policyTable, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("mysql"), pmodel.NewCIStr("tidb_masking_policy"))
+			require.NoError(t, err)
+			mysqlDB, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr("mysql"))
+			require.True(t, ok)
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			m := meta.NewMutator(txn)
+			if !tc.preserve {
+				require.NoError(t, m.DropTableOrView(mysqlDB.ID, policyTable.Meta().ID))
+			}
+			require.NoError(t, m.FinishBootstrap(int64(version)))
+			require.NoError(t, txn.Commit(context.Background()))
+			session.UnsetStoreBootstrapped(store.UUID())
+			tk.Session().Close()
+			dom.Close()
+
+			upgraded, err := session.BootstrapSession(store)
+			require.NoError(t, err)
+			defer upgraded.Close()
+			tk = testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			if tc.preserve {
+				tk.MustQuery("select count(*) from mysql.tidb_masking_policy").Check(testkit.Rows("1"))
+				tableAfter, err := upgraded.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("mysql"), pmodel.NewCIStr("tidb_masking_policy"))
+				require.NoError(t, err)
+				require.Equal(t, policyTable.Meta().ID, tableAfter.Meta().ID)
+			} else {
+				tk.MustQuery("select count(*) from mysql.tidb_masking_policy").Check(testkit.Rows("0"))
+				tk.MustExec("create table masking_upgrade(c varchar(20))")
+				tk.MustExec("insert into masking_upgrade values ('secret')")
+				tk.MustExec("create masking policy p_upgrade on masking_upgrade(c) as mask_full(c)")
+			}
+			tk.MustQuery("select c from masking_upgrade").Check(testkit.Rows("XXXXXX"))
+			got, err := session.GetBootstrapVersion(tk.Session())
+			require.NoError(t, err)
+			require.Equal(t, session.CurrentBootstrapVersion, got)
+		})
+	}
 }

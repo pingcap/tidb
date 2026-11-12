@@ -38,9 +38,11 @@ go_test(
     srcs = ["glue_test.go"],
     embed = [":gluetidb"],
     flaky = True,
+    shard_count = 3,
     deps = [
         "//br/pkg/glue",
         "//pkg/domain/infosync",
+        "//pkg/infoschema",
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/session",

@@ -82,6 +82,9 @@ func TestBackupAndRestore(t *testing.T) {
 
 func TestRestoreMultiTables(t *testing.T) {
 	tk := initTestKit(t)
+	t.Cleanup(func() {
+		tk.MustExec("drop database if exists br")
+	})
 	tk.MustExec("create database if not exists br")
 	tk.MustExec("use br")
 
@@ -94,8 +97,11 @@ func TestRestoreMultiTables(t *testing.T) {
 		tablesNameSet[fmt.Sprintf("table_%d", i)] = struct{}{}
 	}
 
-	tmpDir := path.Join(getBackupTempDir(), "bk1")
-	require.NoError(t, os.RemoveAll(tmpDir))
+	tmpDir, err := os.MkdirTemp(getBackupTempDir(), "br-restore-multi-")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, os.RemoveAll(tmpDir))
+	})
 	// backup database to tmp dir
 	tk.MustQuery("backup database br to 'local://" + tmpDir + "'")
 
@@ -105,7 +111,7 @@ func TestRestoreMultiTables(t *testing.T) {
 	// restore database with backup data
 	tk.MustQuery("restore database * from 'local://" + tmpDir + "'")
 	tk.MustExec("use br")
-	ddlCreateTablesRows := tk.MustQuery("admin show ddl jobs where JOB_TYPE = 'create tables'").Rows()
+	ddlCreateTablesRows := tk.MustQuery("admin show ddl jobs where DB_NAME = 'br' and JOB_TYPE = 'create tables'").Rows()
 	cnt := 0
 	for _, row := range ddlCreateTablesRows {
 		tables := row[2].(string)
@@ -120,5 +126,4 @@ func TestRestoreMultiTables(t *testing.T) {
 	for i := 0; i < tableNum; i += 1 {
 		tk.MustQuery(fmt.Sprintf("select count(*) from table_%d", i)).Check(testkit.Rows("1"))
 	}
-	tk.MustExec("drop database br")
 }

@@ -42,5 +42,9 @@ type InfoSchema interface {
 	// without loading the whole info from storage.
 	// So it's all in memory operation. No need to worry about network or disk cost.
 	TableItemByPartitionID(partitionID int64) (TableItem, bool)
+	MaskingPolicyByName(ctx stdctx.Context, name pmodel.CIStr) (*model.MaskingPolicyInfo, bool, error)
+	MaskingPolicyByTableColumn(ctx stdctx.Context, tableID, columnID int64) (*model.MaskingPolicyInfo, bool, error)
+	AllMaskingPolicies(ctx stdctx.Context) ([]*model.MaskingPolicyInfo, error)
+	HasMaskingPolicies(ctx stdctx.Context) (bool, error)
 	base() *infoSchema
 }

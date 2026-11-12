@@ -99,7 +99,7 @@ func TestBackupSchemaWithMergeOption(t *testing.T) {
 	require.NoError(t, err)
 
 	_, backupSchemas, _, err := backup.BuildBackupRangeAndInitSchema(
-		m.Storage, testFilter, math.MaxUint64, false)
+		m.Storage, testFilter, math.MaxUint64, false, false)
 	require.NoError(t, err)
 	require.Equal(t, 2, backupSchemas.Len())
 

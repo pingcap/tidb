@@ -102,6 +102,9 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		if err = w.dropMaskingPoliciesOnTable(jobCtx, tblInfo.ID); err != nil {
+			return ver, errors.Trace(err)
+		}
 		metaMut := jobCtx.metaMut
 		if tblInfo.IsSequence() {
 			if err = metaMut.DropSequence(job.SchemaID, job.TableID); err != nil {
@@ -617,6 +620,9 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	if err := w.updateMaskingPolicyTableID(jobCtx, oldTblInfo.ID, tblInfo.ID); err != nil {
+		return ver, err
+	}
 	truncateTableEvent := notifier.NewTruncateTableEvent(tblInfo, oldTblInfo)
 	err = asyncNotifyEvent(jobCtx, truncateTableEvent, job, noSubJob, w.sess)
 	if err != nil {
@@ -785,7 +791,7 @@ func verifyNoOverflowShardBits(s *sess.Pool, tbl table.Table, shardRowIDBits uin
 	return nil
 }
 
-func onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+func (w *worker) onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetRenameTableArgs(job)
 	if err != nil {
 		// Invalid arguments, cancel this job.
@@ -823,6 +829,21 @@ func onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+
+	// Update masking policy names in sys table after rename
+	is := jobCtx.infoCache.GetLatest()
+	newDB, ok := is.SchemaByID(newSchemaID)
+	if !ok {
+		job.State = model.JobStateCancelled
+		return ver, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", newSchemaID))
+	}
+	err = w.updateMaskingPolicyNamesAfterRename(jobCtx.stepCtx, tblInfo.ID,
+		oldSchemaName, newDB.Name, oldTableName, tableName)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
+	}
+
 	ver, err = updateSchemaVersion(jobCtx, job, fkh.getLoadedTables()...)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -831,7 +852,7 @@ func onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	return ver, nil
 }
 
-func onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+func (w *worker) onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetRenameTablesArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -870,6 +891,21 @@ func onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		is, metaMut, &fkh, firstRenameByTableID, finalRenameByTableID, renamedTableByID)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+	// A table can be renamed more than once in one statement. Policy rows are
+	// keyed by table ID, so write each table's final schema and table name once.
+	for tableID, info := range finalRenameByTableID {
+		newDB, ok := is.SchemaByID(info.NewSchemaID)
+		if !ok {
+			job.State = model.JobStateCancelled
+			return ver, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", info.NewSchemaID))
+		}
+		err = w.updateMaskingPolicyNamesAfterRename(jobCtx.stepCtx, tableID,
+			info.OldSchemaName, newDB.Name, info.OldTableName, info.NewTableName)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
+		}
 	}
 
 	ver, err = updateSchemaVersion(jobCtx, job, fkh.getLoadedTables()...)

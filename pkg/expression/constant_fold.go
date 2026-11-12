@@ -144,8 +144,8 @@ func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) 
 			return foldedExpr, isDeferredConst
 		}
 	}
-	// If the number of arguments in casewhen is odd, and the previous conditions
-	// is false, then the folded else execution body is returned. otherwise
+	// If number of arguments in casewhen is odd, and the previous conditions
+	// is false, then the folded else execution body is returned. Otherwise
 	// the execution body of the else are folded and replaced.
 	if l%2 == 1 {
 		foldedExpr, isDeferred := foldConstant(ctx, args[l-1])
@@ -155,6 +155,11 @@ func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) 
 			return foldedExpr, isDeferredConst
 		}
 		return foldedExpr, isDeferredConst
+	}
+	// If case expression contains deferred constants (e.g., ParamMarkers or DeferredExpr like user variables),
+	// return the expression as-is but marked as deferred, so it will be re-evaluated at runtime.
+	if isDeferredConst {
+		return expr, true
 	}
 	return expr, isDeferredConst
 }

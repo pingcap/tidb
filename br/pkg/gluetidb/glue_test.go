@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
@@ -125,4 +126,13 @@ func TestGlueReusesServingDomain(t *testing.T) {
 	info, err = infosync.GetServerInfoByID(context.Background(), dom.DDL().GetID())
 	require.NoError(t, err)
 	require.False(t, info.DisableRPC)
+}
+
+func TestMaskingPolicyDiffsIgnoreDatabaseFilter(t *testing.T) {
+	f := NewInfoSchemaFilter(func(name pmodel.CIStr) bool { return name.L == "selected" })
+	is := infoschema.MockInfoSchema([]*model.TableInfo{})
+	for _, tp := range []model.ActionType{model.ActionCreateMaskingPolicy, model.ActionAlterMaskingPolicy, model.ActionDropMaskingPolicy} {
+		require.False(t, f.SkipLoadDiff(&model.SchemaDiff{Type: tp, SchemaID: 12345}, is))
+	}
+	require.True(t, f.SkipLoadDiff(&model.SchemaDiff{Type: model.ActionDropTable, SchemaID: 12345}, is))
 }

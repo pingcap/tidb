@@ -328,6 +328,7 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 			// So we keep updating the ts of the infoschema v2.
 			is = raw.CloneAndUpdateTS(startTS)
 		}
+		infoschema.UpdateMaskingPolicySnapshotTS(is, startTS)
 
 		// try to insert here as well to correct the schemaTs if previous is wrong
 		// the insert method check if schemaTs is zero
@@ -351,6 +352,9 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		if err == nil {
 			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
 			isV2, _ := infoschema.IsV2(is)
+			if !isSnapshot {
+				do.preloadMaskingPolicies(is)
+			}
 			do.infoCache.Insert(is, schemaTs)
 			logutil.BgLogger().Info("diff load InfoSchema success",
 				zap.Bool("isV2", isV2),
@@ -410,6 +414,9 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		return nil, false, currentSchemaVersion, nil, err
 	}
 	is := builder.Build(startTS)
+	if !isSnapshot {
+		do.preloadMaskingPolicies(is)
+	}
 	isV2, _ := infoschema.IsV2(is)
 	logutil.BgLogger().Info("full load InfoSchema success",
 		zap.Bool("isV2", isV2),
@@ -708,8 +715,17 @@ func (do *Domain) InfoSchema() infoschema.InfoSchema {
 
 // GetSnapshotInfoSchema gets a snapshot information schema.
 func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchema, error) {
+	if snapshotTS == math.MaxUint64 {
+		// Latest reads still need a real timestamp for delayed policy SQL.
+		version, err := do.store.CurrentVersion(kv.GlobalTxnScope)
+		if err != nil {
+			return nil, err
+		}
+		snapshotTS = version.Ver
+	}
 	// if the snapshotTS is new enough, we can get infoschema directly through snapshotTS.
 	if is := do.infoCache.GetBySnapshotTS(snapshotTS); is != nil {
+		infoschema.UpdateMaskingPolicySnapshotTS(is, snapshotTS)
 		return is, nil
 	}
 	is, _, _, _, err := do.loadInfoSchema(snapshotTS, true)
@@ -825,6 +841,7 @@ func (do *Domain) Reload() error {
 		metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
 		return err
 	}
+	do.preloadMaskingPolicies(is)
 	metrics.LoadSchemaCounter.WithLabelValues("succ").Inc()
 
 	// only update if it is not from cache
@@ -858,6 +875,23 @@ func (do *Domain) Reload() error {
 	}
 
 	return nil
+}
+
+// preloadMaskingPolicies warms the cache before publishing a new schema, so the
+// first user query does not need to execute an internal coprocessor request.
+func (do *Domain) preloadMaskingPolicies(is infoschema.InfoSchema) {
+	failpoint.Inject("skipLoadMaskingPolicies", func() {
+		failpoint.Return()
+	})
+	// Bootstrap and upgrade may not have created the policy table yet.
+	if !is.TableExists(ast.NewCIStr(mysql.SystemDB), ast.NewCIStr("tidb_masking_policy")) {
+		return
+	}
+	if err := infoschema.PreloadMaskingPolicies(do.ctx, is); err != nil {
+		// Keep schema validation/version synchronization running. Policy access
+		// retries the load and returns an error until loading succeeds.
+		logutil.BgLogger().Warn("failed to preload masking policies", zap.Error(err))
+	}
 }
 
 // LogSlowQuery keeps topN recent slow queries in domain.

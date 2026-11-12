@@ -186,6 +186,9 @@ type worker struct {
 	sess            *sess.Session // sess is used and only used in running DDL job.
 	delRangeManager delRangeManager
 	seqAllocator    *atomic.Uint64
+	// Policy SQL can flush earlier metadata writes into the transaction.
+	// A failed step must roll back the transaction rather than only its last statement.
+	maskingPolicyTxn bool
 
 	*ddlCtx
 }
@@ -624,13 +627,17 @@ func (w *worker) transitOneJobStep(
 
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
+	w.maskingPolicyTxn = false
+	wasRollingback := job.IsRollingback()
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job)
 
 	failpoint.InjectCall("onJobRunAfter", job)
 
 	if job.IsCancelled() {
 		defer jobCtx.unlockSchemaVersion(job.ID)
-		w.sess.Reset()
+		if err := w.resetFailedJobStep(jobCtx, jobW); err != nil {
+			return 0, err
+		}
 		return 0, w.handleJobDone(jobCtx, job)
 	}
 
@@ -639,14 +646,15 @@ func (w *worker) transitOneJobStep(
 		return 0, err
 	}
 
-	if runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone() {
-		// If the running job meets an error
-		// and the job state is rolling back, it means that we have already handled this error.
-		// Some DDL jobs (such as adding indexes) may need to update the table info and the schema version,
-		// then shouldn't discard the KV modification.
-		// And the job state is rollback done, it means the job was already finished, also shouldn't discard too.
-		// Otherwise, we should discard the KV modification when running job.
-		w.sess.Reset()
+	if (runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone()) ||
+		(w.maskingPolicyTxn && (runJobErr != nil || job.IsCancelling() || job.IsRollingback() && !wasRollingback)) {
+		// Preserve the existing rollback behavior for other DDLs, but discard
+		// the entire transaction if policy SQL may have flushed partial writes.
+
+		if err := w.resetFailedJobStep(jobCtx, jobW); err != nil {
+			jobCtx.unlockSchemaVersion(job.ID)
+			return 0, err
+		}
 		// If error happens after updateSchemaVersion(), then the schemaVer is updated.
 		// Result in the retry duration is up to 2 * lease.
 		schemaVer = 0
@@ -687,6 +695,31 @@ func (w *worker) transitOneJobStep(
 	}
 
 	return schemaVer, nil
+}
+
+// resetFailedJobStep discards all policy SQL and metadata written by this step.
+// Recheck the persisted job after restarting so concurrent cancellation or an
+// owner change cannot be overwritten by the failed step's bookkeeping.
+func (w *worker) resetFailedJobStep(jobCtx *jobContext, jobW *model.JobW) error {
+	if !w.maskingPolicyTxn {
+		w.sess.Reset()
+		return nil
+	}
+	w.sess.Rollback()
+	txn, err := w.prepareTxn(jobW.Job)
+	if err != nil {
+		return err
+	}
+	current, err := jobCtx.sysTblMgr.GetJobBytesByIDWithSe(jobCtx.ctx, w.sess, jobW.Job.ID)
+	if err != nil || !bytes.Equal(current, jobW.Bytes) {
+		w.sess.Rollback()
+		if err != nil {
+			return err
+		}
+		return errors.New("job meta changed by others")
+	}
+	jobCtx.metaMut = meta.NewMutator(txn)
+	return nil
 }
 
 func (w *worker) checkBeforeCommit() error {
@@ -957,7 +990,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionAddColumn:
 		ver, err = w.onAddColumn(jobCtx, job)
 	case model.ActionDropColumn:
-		ver, err = onDropColumn(jobCtx, job)
+		ver, err = w.onDropColumn(jobCtx, job)
 	case model.ActionModifyColumn:
 		ver, err = w.onModifyColumn(jobCtx, job)
 	case model.ActionSetDefaultValue:
@@ -983,7 +1016,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionRebaseAutoRandomBase:
 		ver, err = onRebaseAutoRandomType(jobCtx, job)
 	case model.ActionRenameTable:
-		ver, err = onRenameTable(jobCtx, job)
+		ver, err = w.onRenameTable(jobCtx, job)
 	case model.ActionShardRowID:
 		ver, err = w.onShardRowID(jobCtx, job)
 	case model.ActionModifyTableComment:
@@ -1013,11 +1046,17 @@ func (w *worker) runOneJobStep(
 	case model.ActionAlterSequence:
 		ver, err = onAlterSequence(jobCtx, job)
 	case model.ActionRenameTables:
-		ver, err = onRenameTables(jobCtx, job)
+		ver, err = w.onRenameTables(jobCtx, job)
 	case model.ActionAlterTableAttributes:
 		ver, err = onAlterTableAttributes(jobCtx, job)
 	case model.ActionAlterTablePartitionAttributes:
 		ver, err = onAlterTablePartitionAttributes(jobCtx, job)
+	case model.ActionCreateMaskingPolicy:
+		ver, err = w.onCreateMaskingPolicy(jobCtx, job)
+	case model.ActionAlterMaskingPolicy:
+		ver, err = w.onAlterMaskingPolicy(jobCtx, job)
+	case model.ActionDropMaskingPolicy:
+		ver, err = w.onDropMaskingPolicy(jobCtx, job)
 	case model.ActionCreatePlacementPolicy:
 		ver, err = onCreatePlacementPolicy(jobCtx, job)
 	case model.ActionDropPlacementPolicy:

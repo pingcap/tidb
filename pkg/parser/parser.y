@@ -39,6 +39,19 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/duration"
 )
 
+func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool) {
+	switch strings.ToUpper(name) {
+	case ast.MaskingPolicyRestrictNameInsertIntoSelect:
+		return ast.MaskingPolicyRestrictOpInsertIntoSelect, true
+	case ast.MaskingPolicyRestrictNameUpdateSelect:
+		return ast.MaskingPolicyRestrictOpUpdateSelect, true
+	case ast.MaskingPolicyRestrictNameDeleteSelect:
+		return ast.MaskingPolicyRestrictOpDeleteSelect, true
+	case ast.MaskingPolicyRestrictNameCTAS:
+		return ast.MaskingPolicyRestrictOpCTAS, true
+	}
+	return ast.MaskingPolicyRestrictOpNone, false
+}
 %}
 
 %union {
@@ -485,6 +498,7 @@ import (
 	location              "LOCATION"
 	locked                "LOCKED"
 	logs                  "LOGS"
+	masking               "MASKING"
 	master                "MASTER"
 	maxConnectionsPerHour "MAX_CONNECTIONS_PER_HOUR"
 	max_idxnum            "MAX_IDXNUM"
@@ -546,6 +560,7 @@ import (
 	pipesAsOr
 	plugins               "PLUGINS"
 	point                 "POINT"
+	policies              "POLICIES"
 	policy                "POLICY"
 	preceding             "PRECEDING"
 	prepare               "PREPARE"
@@ -987,6 +1002,7 @@ import (
 	CreateIndexStmt            "CREATE INDEX statement"
 	CreateBindingStmt          "CREATE BINDING statement"
 	CreatePolicyStmt           "CREATE PLACEMENT POLICY statement"
+	CreateMaskingPolicyStmt    "CREATE MASKING POLICY statement"
 	CreateProcedureStmt        "CREATE PROCEDURE statement"
 	AddQueryWatchStmt          "ADD QUERY WATCH statement"
 	CreateResourceGroupStmt    "CREATE RESOURCE GROUP statement"
@@ -1109,6 +1125,10 @@ import (
 	AlterTableSpec                         "Alter table specification"
 	AlterTableSpecList                     "Alter table specification list"
 	AlterTableSpecListOpt                  "Alter table specification list optional"
+	MaskingPolicyStateOpt                  "Optional masking policy state"
+	MaskingPolicyRestrictOnOpt             "Optional masking policy restriction"
+	MaskingPolicyRestrictOperationList     "Masking policy restrict operation list"
+	MaskingPolicyRestrictOperation         "Masking policy restrict operation"
 	AlterSequenceOption                    "Alter sequence option"
 	AlterSequenceOptionList                "Alter sequence option list"
 	ArrayKwdOpt                            "Array options"
@@ -1621,6 +1641,7 @@ import (
 	ProcedurceLabelOpt              "Optional Procedure label name"
 
 %precedence empty
+%precedence masking
 %precedence statsExtended
 %precedence as
 %precedence placement
@@ -2347,6 +2368,157 @@ AlterTableSpec:
 			Tp:          ast.AlterTableAddStatistics,
 			IfNotExists: $3.(bool),
 			Statistics:  statsSpec,
+		}
+	}
+|	"ADD" "MASKING" Type ColumnOptionListOpt ColumnPosition
+	{
+		colDef := &ast.ColumnDef{
+			Name:    &ast.ColumnName{Name: model.NewCIStr("masking")},
+			Tp:      $3.(*types.FieldType),
+			Options: $4.([]*ast.ColumnOption),
+		}
+		if err := colDef.Validate(); err != nil {
+			yylex.AppendError(err)
+			return 1
+		}
+		$$ = &ast.AlterTableSpec{
+			IfNotExists: false,
+			Tp:          ast.AlterTableAddColumns,
+			NewColumns:  []*ast.ColumnDef{colDef},
+			Position:    $5.(*ast.ColumnPosition),
+		}
+	}
+|	"ADD" "MASKING" "SERIAL" ColumnOptionListOpt ColumnPosition
+	{
+		// Keep behavior consistent with `ColumnDef: ColumnName "SERIAL" ...`.
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		options := []*ast.ColumnOption{{Tp: ast.ColumnOptionNotNull}, {Tp: ast.ColumnOptionAutoIncrement}, {Tp: ast.ColumnOptionUniqKey}}
+		options = append(options, $4.([]*ast.ColumnOption)...)
+		tp.AddFlag(mysql.UnsignedFlag)
+		colDef := &ast.ColumnDef{
+			Name:    &ast.ColumnName{Name: model.NewCIStr("masking")},
+			Tp:      tp,
+			Options: options,
+		}
+		if err := colDef.Validate(); err != nil {
+			yylex.AppendError(err)
+			return 1
+		}
+		$$ = &ast.AlterTableSpec{
+			IfNotExists: false,
+			Tp:          ast.AlterTableAddColumns,
+			NewColumns:  []*ast.ColumnDef{colDef},
+			Position:    $5.(*ast.ColumnPosition),
+		}
+	}
+|	"ADD" "MASKING" "POLICY" PolicyName "ON" '(' Identifier ')' "AS" Expression MaskingPolicyRestrictOnOpt MaskingPolicyStateOpt
+	{
+		state := $12.(*ast.MaskingPolicyState)
+		$$ = &ast.AlterTableSpec{
+			Tp:                       ast.AlterTableAddMaskingPolicy,
+			MaskingPolicyName:        model.NewCIStr($4),
+			MaskingPolicyColumn:      &ast.ColumnName{Name: model.NewCIStr($7)},
+			MaskingPolicyExpr:        $10,
+			MaskingPolicyRestrictOps: $11.(ast.MaskingPolicyRestrictOps),
+			MaskingPolicyState:       *state,
+		}
+	}
+|	"ENABLE" "MASKING" "POLICY" PolicyName
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:                ast.AlterTableEnableMaskingPolicy,
+			MaskingPolicyName: model.NewCIStr($4),
+		}
+	}
+|	"DISABLE" "MASKING" "POLICY" PolicyName
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:                ast.AlterTableDisableMaskingPolicy,
+			MaskingPolicyName: model.NewCIStr($4),
+		}
+	}
+|	"DROP" "MASKING" "POLICY" PolicyName
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:                ast.AlterTableDropMaskingPolicy,
+			MaskingPolicyName: model.NewCIStr($4),
+		}
+	}
+|	"DROP" "MASKING" RestrictOrCascadeOpt
+	{
+		$$ = &ast.AlterTableSpec{
+			IfExists:      false,
+			Tp:            ast.AlterTableDropColumn,
+			OldColumnName: &ast.ColumnName{Name: model.NewCIStr("masking")},
+		}
+	}
+|	"MODIFY" "MASKING" "POLICY" PolicyName "SET" Identifier "=" Expression
+	{
+		if !strings.EqualFold($6, "expression") {
+			yylex.AppendError(yylex.Errorf("unsupported masking policy modify option: %s", $6))
+			return 1
+		}
+		$$ = &ast.AlterTableSpec{
+			Tp:                ast.AlterTableModifyMaskingPolicyExpression,
+			MaskingPolicyName: model.NewCIStr($4),
+			MaskingPolicyExpr: $8,
+		}
+	}
+|	"MODIFY" "MASKING" Type ColumnOptionListOpt ColumnPosition
+	{
+		colDef := &ast.ColumnDef{
+			Name:    &ast.ColumnName{Name: model.NewCIStr("masking")},
+			Tp:      $3.(*types.FieldType),
+			Options: $4.([]*ast.ColumnOption),
+		}
+		if err := colDef.Validate(); err != nil {
+			yylex.AppendError(err)
+			return 1
+		}
+		$$ = &ast.AlterTableSpec{
+			IfExists:   false,
+			Tp:         ast.AlterTableModifyColumn,
+			NewColumns: []*ast.ColumnDef{colDef},
+			Position:   $5.(*ast.ColumnPosition),
+		}
+	}
+|	"MODIFY" "MASKING" "SERIAL" ColumnOptionListOpt ColumnPosition
+	{
+		// Keep behavior consistent with `ColumnDef: ColumnName "SERIAL" ...`.
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		options := []*ast.ColumnOption{{Tp: ast.ColumnOptionNotNull}, {Tp: ast.ColumnOptionAutoIncrement}, {Tp: ast.ColumnOptionUniqKey}}
+		options = append(options, $4.([]*ast.ColumnOption)...)
+		tp.AddFlag(mysql.UnsignedFlag)
+		colDef := &ast.ColumnDef{
+			Name:    &ast.ColumnName{Name: model.NewCIStr("masking")},
+			Tp:      tp,
+			Options: options,
+		}
+		if err := colDef.Validate(); err != nil {
+			yylex.AppendError(err)
+			return 1
+		}
+		$$ = &ast.AlterTableSpec{
+			IfExists:   false,
+			Tp:         ast.AlterTableModifyColumn,
+			NewColumns: []*ast.ColumnDef{colDef},
+			Position:   $5.(*ast.ColumnPosition),
+		}
+	}
+|	"MODIFY" "MASKING" "POLICY" PolicyName "SET" "RESTRICT" "ON" '(' MaskingPolicyRestrictOperationList ')'
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:                       ast.AlterTableModifyMaskingPolicyRestrictOn,
+			MaskingPolicyName:        model.NewCIStr($4),
+			MaskingPolicyRestrictOps: $9.(ast.MaskingPolicyRestrictOps),
+		}
+	}
+|	"MODIFY" "MASKING" "POLICY" PolicyName "SET" "RESTRICT" "ON" "NONE"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:                       ast.AlterTableModifyMaskingPolicyRestrictOn,
+			MaskingPolicyName:        model.NewCIStr($4),
+			MaskingPolicyRestrictOps: ast.MaskingPolicyRestrictOpNone,
 		}
 	}
 |	AttributesOpt
@@ -7212,6 +7384,8 @@ UnReservedKeyword:
 |	"COMPRESSION_TYPE"
 |	"ENCRYPTION_METHOD"
 |	"ENCRYPTION_KEYFILE"
+|	"MASKING"
+|	"POLICIES"
 
 TiDBKeyword:
 	"ADMIN"
@@ -11642,6 +11816,17 @@ ShowStmt:
 			User: $4.(*auth.UserIdentity),
 		}
 	}
+|	"SHOW" "MASKING" "POLICIES" "FOR" TableName WhereClauseOptional
+	{
+		stmt := &ast.ShowStmt{
+			Tp:    ast.ShowMaskingPolicies,
+			Table: $5.(*ast.TableName),
+		}
+		if $6 != nil {
+			stmt.Where = $6.(ast.ExprNode)
+		}
+		$$ = stmt
+	}
 |	"SHOW" "TABLE" TableName PartitionNameListOpt "REGIONS" WhereClauseOptional
 	{
 		stmt := &ast.ShowStmt{
@@ -12380,6 +12565,7 @@ Statement:
 |	CreateRoleStmt
 |	CreateBindingStmt
 |	CreatePolicyStmt
+|	CreateMaskingPolicyStmt
 |	CreateProcedureStmt
 |	CreateResourceGroupStmt
 |	AddQueryWatchStmt
@@ -14604,7 +14790,25 @@ ExtendedPriv:
 	}
 
 RoleOrPrivElem:
-	PrivElem
+	"CREATE" "MASKING" "POLICY"
+	{
+		$$ = &ast.RoleOrPriv{
+			Symbols: "CREATE MASKING POLICY",
+		}
+	}
+|	"ALTER" "MASKING" "POLICY"
+	{
+		$$ = &ast.RoleOrPriv{
+			Symbols: "ALTER MASKING POLICY",
+		}
+	}
+|	"DROP" "MASKING" "POLICY"
+	{
+		$$ = &ast.RoleOrPriv{
+			Symbols: "DROP MASKING POLICY",
+		}
+	}
+|	PrivElem
 	{
 		$$ = &ast.RoleOrPriv{
 			Node: $1,
@@ -15567,6 +15771,82 @@ CreatePolicyStmt:
 			IfNotExists:      $5.(bool),
 			PolicyName:       model.NewCIStr($6),
 			PlacementOptions: $7.([]*ast.PlacementOption),
+		}
+	}
+
+MaskingPolicyStateOpt:
+	{
+		$$ = &ast.MaskingPolicyState{
+			Enabled:  true,
+			Explicit: false,
+		}
+	}
+|	"ENABLE"
+	{
+		$$ = &ast.MaskingPolicyState{
+			Enabled:  true,
+			Explicit: true,
+		}
+	}
+|	"DISABLE"
+	{
+		$$ = &ast.MaskingPolicyState{
+			Enabled:  false,
+			Explicit: true,
+		}
+	}
+
+MaskingPolicyRestrictOnOpt:
+	{
+		$$ = ast.MaskingPolicyRestrictOpNone
+	}
+|	"RESTRICT" "ON" '(' MaskingPolicyRestrictOperationList ')'
+	{
+		$$ = $4.(ast.MaskingPolicyRestrictOps)
+	}
+|	"RESTRICT" "ON" "NONE"
+	{
+		$$ = ast.MaskingPolicyRestrictOpNone
+	}
+
+MaskingPolicyRestrictOperationList:
+	MaskingPolicyRestrictOperation
+	{
+		$$ = $1.(ast.MaskingPolicyRestrictOps)
+	}
+|	MaskingPolicyRestrictOperationList ',' MaskingPolicyRestrictOperation
+	{
+		$$ = $1.(ast.MaskingPolicyRestrictOps) | $3.(ast.MaskingPolicyRestrictOps)
+	}
+
+MaskingPolicyRestrictOperation:
+	Identifier
+	{
+		op, ok := getMaskingPolicyRestrictOp($1)
+		if !ok {
+			yylex.AppendError(yylex.Errorf("unsupported masking policy restrict operation: %s", $1))
+			return 1
+		}
+		$$ = op
+	}
+
+CreateMaskingPolicyStmt:
+	"CREATE" OrReplace "MASKING" "POLICY" IfNotExists PolicyName "ON" TableName '(' Identifier ')' "AS" Expression MaskingPolicyRestrictOnOpt MaskingPolicyStateOpt
+	{
+		if $2.(bool) && $5.(bool) {
+			yylex.AppendError(yylex.Errorf("'OR REPLACE' and 'IF NOT EXISTS' are mutually exclusive"))
+			return 1
+		}
+		state := $15.(*ast.MaskingPolicyState)
+		$$ = &ast.CreateMaskingPolicyStmt{
+			OrReplace:          $2.(bool),
+			IfNotExists:        $5.(bool),
+			PolicyName:         model.NewCIStr($6),
+			Table:              $8.(*ast.TableName),
+			Column:             &ast.ColumnName{Name: model.NewCIStr($10)},
+			Expr:               $13,
+			RestrictOps:        $14.(ast.MaskingPolicyRestrictOps),
+			MaskingPolicyState: *state,
 		}
 	}
 

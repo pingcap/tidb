@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -1085,8 +1086,15 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 // source metadata loaded from the backup.
 func (rc *SnapClient) CreateDatabasesWithPlan(ctx context.Context, plans []*restoreutils.DatabaseRestorePlan) error {
 	if rc.IsSkipCreateSQL() {
-		log.Info("skip create database")
-		return nil
+		// --no-schema reuses user schemas, but policy rows still need a staging
+		// database before they can be rebound to the existing target tables.
+		staging := make([]*restoreutils.DatabaseRestorePlan, 0, 1)
+		for _, plan := range plans {
+			if rc.withSysTable && plan.Target.Name.L == utils.TemporaryDBName(mysql.SystemDB).L {
+				staging = append(staging, plan)
+			}
+		}
+		plans = staging
 	}
 
 	if len(rc.dbPool) == 0 {
@@ -1195,6 +1203,12 @@ func (rc *SnapClient) CreateTablesWithPlan(
 	return rc.createTablesSingle(ctx, []*tidallocdb.DB{rc.db}, plans, newTS)
 }
 
+// isMaskingPolicyStagingTable identifies metadata that must be staged even
+// when --no-schema reuses existing user tables.
+func (rc *SnapClient) isMaskingPolicyStagingTable(dbName, tableName pmodel.CIStr) bool {
+	return rc.withSysTable && dbName.L == utils.TemporaryDBName(mysql.SystemDB).L && tableName.L == sysMaskingPolicyTableName
+}
+
 func (rc *SnapClient) createTables(
 	ctx context.Context,
 	db *tidallocdb.DB,
@@ -1204,11 +1218,12 @@ func (rc *SnapClient) createTables(
 	log.Info("client to create tables")
 	targetTables := make([]*metautil.Table, 0, len(plans))
 	for _, plan := range plans {
+		if rc.IsSkipCreateSQL() && !rc.isMaskingPolicyStagingTable(plan.TargetDB.Name, plan.TargetInfo.Name) {
+			continue
+		}
 		targetTables = append(targetTables, plan.TargetTable())
 	}
-	if rc.IsSkipCreateSQL() {
-		log.Info("skip create table and alter autoIncID")
-	} else {
+	if len(targetTables) > 0 {
 		err := db.CreateTables(ctx, targetTables, rc.getRebasedTables(), rc.supportPolicy, rc.policyMap)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1429,7 +1444,7 @@ func (rc *SnapClient) createTable(
 	newTS uint64,
 ) (*restoreutils.CreatedTable, error) {
 	targetTable := plan.TargetTable()
-	if rc.IsSkipCreateSQL() {
+	if rc.IsSkipCreateSQL() && !rc.isMaskingPolicyStagingTable(plan.TargetDB.Name, plan.TargetInfo.Name) {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", plan.TargetInfo.Name))
 	} else {
 		err := db.CreateTable(ctx, targetTable, rc.getRebasedTables(), rc.supportPolicy, rc.policyMap)

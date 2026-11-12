@@ -3497,6 +3497,37 @@ func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
 	})
 }
 
+// initBootstrapDependentTables creates the masking policy table before upgrade
+// DDL can consult it. The caller holds the upgrade lock; retries preserve an
+// existing table and its policies, including customer branches that created it.
+func initBootstrapDependentTables(store kv.Storage, ver int64) error {
+	if ver <= notBootstrapped || ver >= version234 || currentBootstrapVersion < version234 {
+		return nil
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	return kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		dbID, err := m.CreateMySQLDatabaseIfNotExists()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tables, err := m.ListTables(ctx, dbID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, tbl := range tables {
+			if tbl.Name.L == "tidb_masking_policy" {
+				return nil
+			}
+		}
+		tableID, err := m.GenGlobalID()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return createAndSplitTables(store, m, dbID, []tableBasicInfo{{SQL: CreateMaskingPolicyTable, id: tableID}})
+	})
+}
+
 func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables []tableBasicInfo) error {
 	tableIDs := make([]int64, 0, len(tables))
 	for _, tbl := range tables {
@@ -3700,7 +3731,9 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	}
 	ver := getStoreBootstrapVersionWithCache(store)
 	if ver < currentBootstrapVersion {
-		runInBootstrapSession(store, ver)
+		if err = runInBootstrapSession(store, ver); err != nil {
+			return nil, err
+		}
 	} else {
 		err = InitMDLVariable(store)
 		if err != nil {
@@ -3947,7 +3980,7 @@ func getStartMode(ver int64) ddl.StartMode {
 // If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
-func runInBootstrapSession(store kv.Storage, ver int64) {
+func runInBootstrapSession(store kv.Storage, ver int64) error {
 	startMode := getStartMode(ver)
 
 	if startMode == ddl.Upgrade {
@@ -3968,6 +4001,8 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 			// TODO remove this after we can refactor below code out in this case.
 			logutil.BgLogger().Info("[upgrade] already upgraded by other nodes, switch to normal mode")
 			startMode = ddl.Normal
+		} else if err := initBootstrapDependentTables(store, currVer); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	s, err := createSession(store)
@@ -4010,6 +4045,7 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 		infosync.MockGlobalServerInfoManagerEntry.Close()
 	}
 	domap.Delete(store)
+	return nil
 }
 
 func createSessions(store kv.Storage, cnt int) ([]*session, error) {
@@ -4568,6 +4604,11 @@ func (s *session) GetInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 
 func (s *session) GetDomainInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	is := domain.GetDomain(s).InfoSchema()
+	if is == nil {
+		// Internal queries can bind a candidate schema during Domain's initial
+		// load. Use it for transaction setup until the first schema is published.
+		is, _ = s.sessionVars.SnapshotInfoschema.(infoschema.InfoSchema)
+	}
 	extIs := &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, extIs)
 }

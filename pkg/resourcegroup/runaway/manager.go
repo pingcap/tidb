@@ -317,6 +317,7 @@ func (rm *Manager) addWatchList(record *QuarantineRecord, ttl time.Duration, for
 
 // GetWatchList is used to get all watch items.
 func (rm *Manager) GetWatchList() []*QuarantineRecord {
+	failpoint.InjectCall("mockRunawayWatchList", rm.watchList)
 	items := rm.watchList.Items()
 	ret := make([]*QuarantineRecord, 0, len(items))
 	for _, item := range items {
