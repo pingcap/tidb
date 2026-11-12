@@ -165,9 +165,20 @@ func rebuildIndexRanges(ectx expression.BuildContext, rctx *rangerctx.RangerCont
 		}
 		access = append(access, newCond)
 	}
+<<<<<<< HEAD
 	// All of access conditions must be used to build ranges, so we don't limit range memory usage.
 	ranges, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, access, idxCols, colLens, 0)
 	return ranges, err
+=======
+	// Disable memory fallback. Semantic fallback can still return residuals, whose
+	// predicates the planner retains in filters (including the suffix after a
+	// correlated TIMESTAMP equality); see SplitCorColAccessCondFromFilters.
+	ranges, _, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, access, idxCols, colLens, 0)
+	if err != nil {
+		return nil, err
+	}
+	return ranges, nil
+>>>>>>> 2a6eaa16c20 (planner: safely fall back for invalid TIMESTAMP range bounds (#72603))
 }
 
 type indexReaderExecutorContext struct {
