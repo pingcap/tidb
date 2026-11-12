@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -179,6 +180,22 @@ func TestPrepareQueryImport(t *testing.T) {
 			DBName: "test", DBID: fullTbl.Meta().DBID, Table: fullTbl, SourceTableIDs: []int64{srcTbl.Meta().ID},
 		})
 		require.ErrorContains(t, err, "target table is not empty")
+	})
+
+	t.Run("ignores its own import job in the precheck", func(t *testing.T) {
+		se := newQueryImportSession(t, store).Session()
+		jobID, err := importer.CreateJob(ctx, se.GetSQLExecutor(), "test", "dst", dstTbl.Meta().ID, "", "", &importer.ImportParameters{}, 0)
+		require.NoError(t, err)
+		// Classic checks active jobs only for file imports.
+		if kerneltype.IsNextGen() {
+			_, err = importer.PrepareQueryImport(ctx, se, request)
+			require.ErrorContains(t, err, "there is active job on the target table")
+		}
+		withJob := *request
+		withJob.JobID = jobID
+		_, err = importer.PrepareQueryImport(ctx, se, &withJob)
+		require.NoError(t, err)
+		require.NoError(t, importer.CancelJob(ctx, se.GetSQLExecutor(), jobID))
 	})
 
 	t.Run("rejects unreadable sources", func(t *testing.T) {
