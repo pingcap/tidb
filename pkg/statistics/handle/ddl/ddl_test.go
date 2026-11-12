@@ -1334,18 +1334,14 @@ func TestDropSchema(t *testing.T) {
 	`)
 	h := dom.StatsHandle()
 	tk.MustExec("insert into t values (1)")
-<<<<<<< HEAD
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-=======
 	tk.MustExec("insert into pt values (1), (11)")
 	tk.MustExec("analyze table t, pt")
->>>>>>> ae75035f48b (statistics: update partition stats on drop schema (#69397))
 
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	partitionedTbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("pt"))
+	partitionedTbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("pt"))
 	require.NoError(t, err)
 	partitionedTableInfo := partitionedTbl.Meta()
 	require.NotNil(t, partitionedTableInfo.Partition)
