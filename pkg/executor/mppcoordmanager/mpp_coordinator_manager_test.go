@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/stretchr/testify/require"
@@ -55,6 +56,50 @@ func (*IdleCoordinator) IsClosed() bool {
 // GetNodeCnt implements MppCoordinator interface function.
 func (*IdleCoordinator) GetNodeCnt() int {
 	return 0
+}
+
+func TestReportStatus(t *testing.T) {
+	manager := newMPPCoordinatorManger()
+	// A missing Meta must be rejected even if a coordinator with zero IDs exists.
+	require.NoError(t, manager.Register(CoordinatorUniqueID{}, &IdleCoordinator{}))
+	t.Cleanup(func() { manager.Unregister(CoordinatorUniqueID{}) })
+
+	emptyRequest := new(mpp.ReportTaskStatusRequest)
+	require.NoError(t, emptyRequest.Unmarshal(nil))
+	require.Nil(t, emptyRequest.Meta)
+	for _, tc := range []struct {
+		name    string
+		request *mpp.ReportTaskStatusRequest
+	}{
+		{name: "nil request"},
+		{name: "empty protobuf request", request: emptyRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := manager.ReportStatus(tc.request)
+			require.NotNil(t, resp)
+			require.NotNil(t, resp.Error)
+			require.Equal(t, "missing task metadata", resp.Error.Msg)
+		})
+	}
+
+	// Present metadata with zero IDs still follows the normal coordinator lookup.
+	resp := manager.ReportStatus(&mpp.ReportTaskStatusRequest{Meta: &mpp.TaskMeta{}})
+	require.Nil(t, resp.Error)
+
+	meta := &mpp.TaskMeta{QueryTs: 1, LocalQueryId: 2, ServerId: 3, GatherId: 4, MppVersion: 3}
+	resp = manager.ReportStatus(&mpp.ReportTaskStatusRequest{Meta: meta})
+	require.NotNil(t, resp.Error)
+	require.Equal(t, "MppCoordinator not exists", resp.Error.Msg)
+	require.Equal(t, meta.MppVersion, resp.Error.MppVersion)
+
+	coordID := CoordinatorUniqueID{
+		MPPQueryID: kv.MPPQueryID{QueryTs: meta.QueryTs, LocalQueryID: meta.LocalQueryId, ServerID: meta.ServerId},
+		GatherID:   meta.GatherId,
+	}
+	require.NoError(t, manager.Register(coordID, &IdleCoordinator{}))
+	t.Cleanup(func() { manager.Unregister(coordID) })
+	resp = manager.ReportStatus(&mpp.ReportTaskStatusRequest{Meta: meta})
+	require.Nil(t, resp.Error)
 }
 
 func TestDetectAndDelete(t *testing.T) {
