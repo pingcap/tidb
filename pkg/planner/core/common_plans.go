@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -87,6 +88,8 @@ type MViewDeltaMerge struct {
 	GroupKeyMVOffsets           []int
 	CountStarMVOffset           int
 	AggInfos                    []mview.AggInfo
+	// RegisteredMLogIDs is the immutable input-log baseline captured before execution.
+	RegisteredMLogIDs []int64 `plan-cache-clone:"shallow"`
 	// MLogEmpty means the optimizer proved that the mlog input produces no rows.
 	// MIN/MAX recomputation is unreachable, so its lookup template can be omitted.
 	MLogEmpty bool
@@ -118,7 +121,8 @@ func (p *MViewDeltaMerge) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface*4 + size.SizeOfInt64*3 + size.SizeOfPointer + size.SizeOfInt*4 + size.SizeOfSlice*5 + size.SizeOfBool
+	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface*4 + size.SizeOfInt64*3 + size.SizeOfPointer + size.SizeOfInt*4 + size.SizeOfSlice*6 + size.SizeOfBool
+	sum += int64(cap(p.RegisteredMLogIDs)) * size.SizeOfInt64
 	sum += int64(cap(p.GroupKeyMVOffsets)) * size.SizeOfInt
 	sum += int64(cap(p.AggInfos)) * size.SizeOfInterface
 	sum += int64(cap(p.FullUpdateKeyOff2IdxOff)) * size.SizeOfInt
@@ -202,6 +206,9 @@ type MViewCompleteDeltaApply struct {
 	CurrentHandleCols        util.HandleCols
 	CurrentRowInputColIDs    []int
 	RecomputedRowInputColIDs []int
+	// Executor construction overwrites these computation inputs on every retry.
+	RefreshReadTSO uint64
+	RefreshSources []model.MViewRefreshSource `plan-cache-clone:"shallow"`
 }
 
 // ExplainInfo returns the row-diff layout used by the complete delta-apply operator.
@@ -225,7 +232,8 @@ func (p *MViewCompleteDeltaApply) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfInt64 + size.SizeOfInt*3 + size.SizeOfSlice*3
+	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfInt64 + size.SizeOfUint64 + size.SizeOfInt*3 + size.SizeOfSlice*4
+	sum += int64(cap(p.RefreshSources)) * size.SizeOfInt64 * 2
 	sum += int64(cap(p.GroupKeyMVOffsets)) * size.SizeOfInt
 	sum += int64(cap(p.CurrentRowInputColIDs)) * size.SizeOfInt
 	sum += int64(cap(p.RecomputedRowInputColIDs)) * size.SizeOfInt
@@ -796,51 +804,7 @@ type SelectInto struct {
 
 	TargetPlan base.Plan
 	IntoOpt    *ast.SelectIntoOption
-	LineFieldsInfo
-}
-
-// LineFieldsInfo used in load-data/select-into/index-advise stmt.
-type LineFieldsInfo struct {
-	FieldsTerminatedBy string
-	FieldsEnclosedBy   string // length always <= 1, see parser.y
-	FieldsEscapedBy    string // length always <= 1, see parser.y
-	FieldsOptEnclosed  bool
-	LinesStartingBy    string
-	LinesTerminatedBy  string
-}
-
-// NewLineFieldsInfo new LineFieldsInfo from FIELDS/LINES info.
-func NewLineFieldsInfo(fieldsInfo *ast.FieldsClause, linesInfo *ast.LinesClause) LineFieldsInfo {
-	e := LineFieldsInfo{
-		FieldsTerminatedBy: "\t",
-		FieldsEnclosedBy:   "",
-		FieldsEscapedBy:    "\\",
-		FieldsOptEnclosed:  false,
-		LinesStartingBy:    "",
-		LinesTerminatedBy:  "\n",
-	}
-
-	if fieldsInfo != nil {
-		if fieldsInfo.Terminated != nil {
-			e.FieldsTerminatedBy = *fieldsInfo.Terminated
-		}
-		if fieldsInfo.Enclosed != nil {
-			e.FieldsEnclosedBy = *fieldsInfo.Enclosed
-		}
-		if fieldsInfo.Escaped != nil {
-			e.FieldsEscapedBy = *fieldsInfo.Escaped
-		}
-		e.FieldsOptEnclosed = fieldsInfo.OptEnclosed
-	}
-	if linesInfo != nil {
-		if linesInfo.Starting != nil {
-			e.LinesStartingBy = *linesInfo.Starting
-		}
-		if linesInfo.Terminated != nil {
-			e.LinesTerminatedBy = *linesInfo.Terminated
-		}
-	}
-	return e
+	importdef.LineFieldsInfo
 }
 
 // ExplainInfoForEncode store explain info for JSON encode

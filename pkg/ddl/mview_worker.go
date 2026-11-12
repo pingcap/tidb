@@ -297,7 +297,23 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			job.State = model.JobStateRollingback
 			return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid build read tso")
 		}
+		// The source/MLog DDL dependencies keep these bindings stable throughout build.
+		finished := make([]*model.TableInfo, 0, len(baseTableIDs)+1)
+		mlogIDs := make([]int64, 0, len(baseTableIDs))
+		for _, id := range baseTableIDs {
+			base, getErr := onCreateMaterializedViewBaseCheck(jobCtx.metaMut, job.SchemaID, id, job.SchemaName)
+			if getErr != nil {
+				job.State = model.JobStateRollingback
+				return ver, errors.Trace(getErr)
+			}
+			finished = append(finished, base)
+			mlogIDs = append(mlogIDs, base.MaterializedViewBase.MLogID)
+		}
 		if err = w.upsertCreateMaterializedViewRefreshInfo(jobCtx, job.SchemaName, mviewTableInfo, job.SnapshotVer); err != nil {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(err)
+		}
+		if err := w.insertMViewRefreshSourceInfo(jobCtx, mviewTableInfo.ID, mlogIDs); err != nil {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
@@ -316,14 +332,6 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 		if err != nil {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
-		}
-		finished := make([]*model.TableInfo, 0, len(baseTableIDs)+1)
-		for _, id := range baseTableIDs {
-			base, getErr := getTableInfo(jobCtx.metaMut, id, job.SchemaID)
-			if getErr != nil {
-				return ver, errors.Trace(getErr)
-			}
-			finished = append(finished, base)
 		}
 		finished = append(finished, mviewTableInfo)
 		job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, finished)
@@ -907,6 +915,9 @@ func (w *worker) deleteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 func (w *worker) deleteCreateMaterializedViewRefreshInfos(jobCtx *jobContext, mviewIDs []int64) error {
 	if len(mviewIDs) == 0 {
 		return nil
+	}
+	if err := w.deleteMViewRefreshSourceInfos(jobCtx, mviewIDs); err != nil {
+		return errors.Trace(err)
 	}
 	ctx := jobCtx.stepCtx
 	if ctx == nil {

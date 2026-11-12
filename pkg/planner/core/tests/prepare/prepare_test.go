@@ -274,15 +274,16 @@ func randValue(tk *testkit.TestKit, tbl, col, dtype, rtype string) string {
 			return fmt.Sprintf("'%v'", rand.Intn(4294967295))
 		}
 	case "float":
+		// Avoid generating negative zero after rounding, which cannot be pushed down.
 		switch rtype {
 		case "valid":
-			return fmt.Sprintf("%v%.4fE%v", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(38))
+			return fmt.Sprintf("%v0.%04dE%v", []string{"+", "-"}[rand.Intn(2)], rand.Intn(9999)+1, rand.Intn(38))
 		case "out-of-range":
-			return fmt.Sprintf("%v%.4fE%v", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(100)+38)
+			return fmt.Sprintf("%v0.%04dE%v", []string{"+", "-"}[rand.Intn(2)], rand.Intn(9999)+1, rand.Intn(100)+38)
 		case "invalid":
 			return "'invalid-float'"
 		case "str":
-			return fmt.Sprintf("'%v%.4fE%v'", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(38))
+			return fmt.Sprintf("'%v0.%04dE%v'", []string{"+", "-"}[rand.Intn(2)], rand.Intn(9999)+1, rand.Intn(38))
 		}
 	case "decimal": // (10,2)
 		switch rtype {

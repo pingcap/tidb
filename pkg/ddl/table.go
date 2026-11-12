@@ -39,13 +39,11 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -2222,6 +2220,10 @@ func (w *worker) onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx *jobC
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	if err := w.migrateMViewRefreshSourceInfo(jobCtx, args.OldMViewID, args.ShadowTableID, args.BuildSources); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
 	failpoint.Inject("mockMViewRefreshOutOfPlaceCutoverAfterMigrateRefreshInfoError", func() {
 		failpoint.Return(ver, errors.New("mock refresh materialized view complete OUT OF PLACE cutover error after migrating refresh info"))
 	})
@@ -2319,74 +2321,73 @@ func rewriteMaterializedViewBaseForOutOfPlaceCutover(baseTblInfo *model.TableInf
 
 // migrateMViewRefreshInfoForOutOfPlaceCutover moves the refresh-info row from
 // the old MV table ID to the shadow table ID as part of the cutover DDL txn.
-//
-// Do not use a SQL UPDATE here. SQL writes run as independent statements and
-// StmtCommit moves their mutations into the DDL session before the remaining
-// cutover metadata mutations are complete. If a later cutover step fails,
-// w.sess.Reset only rolls back the current statement staging, so an earlier SQL
-// UPDATE can leave mysql.tidb_mview_refresh_info pointing at the shadow table
-// while the schema still points at the old MV. Writing through the table API
-// keeps this migration in the same DDL transaction as the table metadata swap.
-func (w *worker) migrateMViewRefreshInfoForOutOfPlaceCutover(jobCtx *jobContext, args *model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) error {
+func (w *worker) migrateMViewRefreshInfoForOutOfPlaceCutover(
+	jobCtx *jobContext,
+	args *model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs,
+) error {
 	ctx := jobCtx.stepCtx
 	if ctx == nil {
 		ctx = w.workCtx
 	}
-	rows, err := w.sess.Execute(ctx, "SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS, NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?", "mview-refresh-cutover-read-refresh-info", args.OldMViewID)
+	// SQL statement commits release mutations into the transaction buffer, so
+	// later cutover errors must roll back the entire DDL transaction.
+	jobCtx.mustRollbackTxnOnError = true
+
+	oldRows, err := w.sess.Execute(
+		ctx,
+		"SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS, NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
+		"mview-refresh-cutover-read-refresh-info",
+		args.OldMViewID,
+	)
 	if err != nil {
 		return errors.Trace(convertMViewRefreshInfoTableNotExistsErrOnOutOfPlaceCutover(err))
 	}
-	if len(rows) != 1 {
-		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: refresh info row missing in mysql.tidb_mview_refresh_info")
+	if len(oldRows) == 0 {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+			"refresh materialized view complete OUT OF PLACE cutover: refresh info row missing in mysql.tidb_mview_refresh_info",
+		)
 	}
-	oldRow := rows[0]
+	if len(oldRows) != 1 {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+			"refresh materialized view complete OUT OF PLACE cutover: inconsistent refresh info row in mysql.tidb_mview_refresh_info",
+		)
+	}
+
+	oldRow := oldRows[0]
 	if args.ExpectedLastSuccessReadTSONull {
 		if !oldRow.IsNull(1) {
-			return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: stale LAST_SUCCESS_READ_TSO detected before cutover")
+			return dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+				"refresh materialized view complete OUT OF PLACE cutover: stale LAST_SUCCESS_READ_TSO detected before cutover",
+			)
 		}
 	} else if oldRow.IsNull(1) || oldRow.GetUint64(1) != args.ExpectedLastSuccessReadTSO {
-		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: stale LAST_SUCCESS_READ_TSO detected before cutover")
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+			"refresh materialized view complete OUT OF PLACE cutover: stale LAST_SUCCESS_READ_TSO detected before cutover",
+		)
 	}
-	is, ok := w.sess.GetLatestInfoSchema().(infoschema.InfoSchema)
-	if !ok {
-		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: required system table mysql.tidb_mview_refresh_info does not exist")
-	}
-	refreshInfoTbl, err := is.TableByName(context.Background(), ast.NewCIStr(mysql.SystemDB), ast.NewCIStr("tidb_mview_refresh_info"))
-	if err != nil {
-		return errors.Trace(convertMViewRefreshInfoTableNotExistsErrOnOutOfPlaceCutover(err))
-	}
-	// The table API mutation below relies on the fixed refresh-info schema:
-	// columns are [MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS, NEXT_REFRESH_UNIX_SECONDS],
-	// and MVIEW_ID is the single integer primary-key handle used by kv.IntHandle.
-	// If this system table schema changes, update this function together with
-	// TestBootstrapMaterializedViewSystemTables.
-	if len(refreshInfoTbl.Meta().Columns) != 4 {
-		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: unexpected refresh info schema")
-	}
-	fieldTypes := make([]*types.FieldType, 4)
-	for i := range fieldTypes {
-		fieldTypes[i] = &refreshInfoTbl.Meta().Columns[i].FieldType
-	}
-	oldDatums := oldRow.GetDatumRow(fieldTypes)
-	newDatums := append([]types.Datum(nil), oldDatums...)
-	newDatums[0] = types.NewIntDatum(args.ShadowTableID)
-	newDatums[1] = types.NewUintDatum(args.BuildReadTSO)
-	newDatums[2] = types.NewIntDatum(time.Now().Unix())
-	if args.ShouldUpdateNextRefreshUnixSeconds {
-		newDatums[3].SetNull()
-		if args.NextRefreshUnixSeconds != nil {
-			newDatums[3] = types.NewIntDatum(*args.NextRefreshUnixSeconds)
+
+	sql := "UPDATE mysql.tidb_mview_refresh_info SET MVIEW_ID = %?, LAST_SUCCESS_READ_TSO = %?, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS = %?"
+	buildReadTSO := args.BuildReadTSO
+	failpoint.Inject("mockMViewRefreshOutOfPlacePersistReadTSO", func(val failpoint.Value) {
+		if text, ok := val.(string); ok {
+			if ts, err := strconv.ParseUint(text, 10, 64); err == nil {
+				buildReadTSO = ts
+			}
 		}
+	})
+	params := []any{args.ShadowTableID, buildReadTSO, time.Now().Unix()}
+	if args.ShouldUpdateNextRefreshUnixSeconds {
+		sql += ", NEXT_REFRESH_UNIX_SECONDS = %?"
+		var nextRefreshUnixSeconds any
+		if args.NextRefreshUnixSeconds != nil {
+			nextRefreshUnixSeconds = *args.NextRefreshUnixSeconds
+		}
+		params = append(params, nextRefreshUnixSeconds)
 	}
-	txn, err := w.sess.Txn()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if err := refreshInfoTbl.RemoveRecord(w.sess.GetTableCtx(), txn, kv.IntHandle(args.OldMViewID), oldDatums); err != nil {
-		return errors.Trace(err)
-	}
-	_, err = refreshInfoTbl.AddRecord(w.sess.GetTableCtx(), txn, newDatums, table.WithCtx(ctx))
-	return errors.Trace(err)
+	sql += " WHERE MVIEW_ID = %?"
+	params = append(params, args.OldMViewID)
+	_, err = w.sess.Execute(ctx, sql, "mview-refresh-cutover-migrate-refresh-info", params...)
+	return errors.Trace(convertMViewRefreshInfoTableNotExistsErrOnOutOfPlaceCutover(err))
 }
 
 func (w *worker) deleteMViewRefreshAlertForOutOfPlaceCutover(jobCtx *jobContext, oldMViewID int64) error {
