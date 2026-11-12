@@ -1972,6 +1972,7 @@ func colsToStr(cols []ast.CIStr) string {
 const (
 	alterTableDropIndexSQL         = "ALTER TABLE %n.%n DROP INDEX %n"
 	alterTableAddIndexFormat       = "ALTER TABLE %%n.%%n ADD INDEX %%n(%s)"
+	alterTableAddFullTextFormat    = "ALTER TABLE %%n.%%n ADD FULLTEXT INDEX %%n(%s)"
 	alterTableAddUniqueIndexFormat = "ALTER TABLE %%n.%%n ADD UNIQUE KEY %%n(%s)"
 	alterTableAddPrimaryFormat     = "ALTER TABLE %%n.%%n ADD PRIMARY KEY (%s) NONCLUSTERED"
 	alterTableAddForeignKeyFormat  = "ALTER TABLE %%n.%%n ADD CONSTRAINT %%n FOREIGN KEY (%s) REFERENCES %%n.%%n (%s)"
@@ -2051,6 +2052,10 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			fmt.Fprintf(&addSQL, alterTableAddUniqueIndexFormat, info.ColumnList)
 			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
+		} else if info.IndexInfo.TiKVFullText != nil {
+			fmt.Fprintf(&addSQL, alterTableAddFullTextFormat, info.ColumnList)
+			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
+			addArgs = append(addArgs, info.ColumnArgs...)
 		} else {
 			fmt.Fprintf(&addSQL, alterTableAddIndexFormat, info.ColumnList)
 			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
@@ -2061,9 +2066,10 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			addSQL.WriteString(" WHERE ")
 			addSQL.WriteString(info.IndexInfo.ConditionExprString)
 		}
-		// USING BTREE/HASH/RTREE
+		// USING BTREE/HASH/RTREE. A FULLTEXT index names its kind in the
+		// statement itself and rejects a USING clause.
 		indexTypeStr := info.IndexInfo.Tp.String()
-		if len(indexTypeStr) > 0 {
+		if len(indexTypeStr) > 0 && info.IndexInfo.TiKVFullText == nil {
 			addSQL.WriteString(" USING ")
 			addSQL.WriteString(indexTypeStr)
 		}
@@ -2071,6 +2077,10 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 		if info.IndexInfo.FullTextInfo != nil {
 			addSQL.WriteString(" WITH PARSER ")
 			addSQL.WriteString(info.IndexInfo.FullTextInfo.ParserType.SQLName())
+		}
+		if info.IndexInfo.TiKVFullText != nil {
+			addSQL.WriteString(" WITH PARSER ")
+			addSQL.WriteString(info.IndexInfo.TiKVFullText.ParserType.SQLName())
 		}
 		// COMMENT [...]
 		if len(info.IndexInfo.Comment) > 0 {
@@ -2097,6 +2107,9 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			IndexName:  info.IndexInfo.Name.O,
 			AddSQL:     addSQL.String(),
 			AddArgs:    addArgs,
+			// The settings the index recorded, not the ones in force in
+			// this cluster now, are what its rows have been analyzed with.
+			TiKVFullText: info.IndexInfo.TiKVFullText.Clone(),
 		})
 
 		return nil
@@ -2308,6 +2321,19 @@ func (rc *LogClient) RepairIngestIndex(
 				}
 			})
 			// create the repaired index when first execution or not found it
+			if sql.TiKVFullText != nil {
+				// A FULLTEXT index is rebuilt with the analyzer it recorded.
+				// Creating one is otherwise up to a switch, which must not
+				// stop a restore after the index has been dropped.
+				sessVars := indexSession.GetSessionCtx().GetSessionVars()
+				enabled := sessVars.EnableTiKVFullTextIndex
+				sessVars.EnableTiKVFullTextIndex = true
+				sessVars.TiKVFullTextAnalyzerForRebuild = sql.TiKVFullText
+				defer func() {
+					sessVars.EnableTiKVFullTextIndex = enabled
+					sessVars.TiKVFullTextAnalyzerForRebuild = nil
+				}()
+			}
 			if err := indexSession.ExecuteInternal(ectx, sql.AddSQL, sql.AddArgs...); err != nil {
 				return errors.Trace(err)
 			}
