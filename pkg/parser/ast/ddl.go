@@ -735,7 +735,8 @@ type IndexOption struct {
 	Visibility   IndexVisibility
 	PrimaryKeyTp model.PrimaryKeyType
 	Global       bool
-	Condition    ExprNode `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
+	Condition    ExprNode     `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
+	SplitOpt     *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
 }
 
 // IsEmpty is true if only default options are given
@@ -748,7 +749,8 @@ func (n *IndexOption) IsEmpty() bool {
 		n.Comment != "" ||
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
-		n.Condition != nil {
+		n.Condition != nil ||
+		n.SplitOpt != nil {
 		return false
 	}
 	return true
@@ -824,6 +826,24 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		hasPrevOption = true
 	}
 
+	if n.SplitOpt != nil {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("PRE_SPLIT_REGIONS")
+		ctx.WritePlain(" = ")
+		if n.SplitOpt.Num != 0 && len(n.SplitOpt.Lower) == 0 {
+			ctx.WritePlainf("%d", n.SplitOpt.Num)
+		} else {
+			ctx.WritePlain("(")
+			if err := n.SplitOpt.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while splicing IndexOption SplitOpt")
+			}
+			ctx.WritePlain(")")
+		}
+		hasPrevOption = true
+	}
+
 	if n.Condition != nil {
 		if hasPrevOption {
 			ctx.WritePlain(" ")
@@ -844,6 +864,13 @@ func (n *IndexOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*IndexOption)
+	if n.SplitOpt != nil {
+		node, ok := n.SplitOpt.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.SplitOpt = node.(*SplitOption)
+	}
 	return v.Leave(n)
 }
 

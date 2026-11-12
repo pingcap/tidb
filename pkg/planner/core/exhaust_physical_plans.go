@@ -613,6 +613,17 @@ func constructIndexMergeJoin(
 	path *util.AccessPath,
 	compareFilters *ColWithCmpFuncManager,
 ) []base.PhysicalPlan {
+	// An ordered index scan does not guarantee ordered output after HashAgg.
+	// The inner wrappers are unary; inspect them before trusting index order.
+	for inner := innerTask.Plan(); inner != nil; {
+		if _, ok := inner.(*PhysicalHashAgg); ok {
+			return nil
+		}
+		if len(inner.Children()) != 1 {
+			break
+		}
+		inner = inner.Children()[0]
+	}
 	hintExists := false
 	if (outerIdx == 1 && (p.PreferJoinType&h.PreferLeftAsINLMJInner) > 0) || (outerIdx == 0 && (p.PreferJoinType&h.PreferRightAsINLMJInner) > 0) {
 		hintExists = true
@@ -1163,19 +1174,20 @@ func constructInnerTableScanTask(
 		return nil
 	}
 	ts := PhysicalTableScan{
-		Table:           ds.TableInfo,
-		Columns:         ds.Columns,
-		TableAsName:     ds.TableAsName,
-		DBName:          ds.DBName,
-		filterCondition: ds.PushedDownConds,
-		Ranges:          ranges,
-		rangeInfo:       rangeInfo,
-		KeepOrder:       keepOrder,
-		Desc:            desc,
-		physicalTableID: ds.PhysicalTableID,
-		isPartition:     ds.PartitionDefIdx != nil,
-		tblCols:         ds.TblCols,
-		tblColHists:     ds.TblColHists,
+		Table:                                    ds.TableInfo,
+		Columns:                                  ds.Columns,
+		TableAsName:                              ds.TableAsName,
+		DBName:                                   ds.DBName,
+		filterCondition:                          ds.PushedDownConds,
+		Ranges:                                   ranges,
+		rangeInfo:                                rangeInfo,
+		KeepOrder:                                keepOrder,
+		Desc:                                     desc,
+		physicalTableID:                          ds.PhysicalTableID,
+		isPartition:                              ds.PartitionDefIdx != nil,
+		tblCols:                                  ds.TblCols,
+		tblColHists:                              ds.TblColHists,
+		ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema().Clone())
 	if rowCount <= 0 {
@@ -1394,14 +1406,15 @@ func constructInnerIndexScanTask(
 	if !path.IsSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
-			Columns:         ds.Columns,
-			Table:           is.Table,
-			TableAsName:     ds.TableAsName,
-			DBName:          ds.DBName,
-			isPartition:     ds.PartitionDefIdx != nil,
-			physicalTableID: ds.PhysicalTableID,
-			tblCols:         ds.TblCols,
-			tblColHists:     ds.TblColHists,
+			Columns:                                  ds.Columns,
+			Table:                                    is.Table,
+			TableAsName:                              ds.TableAsName,
+			DBName:                                   ds.DBName,
+			isPartition:                              ds.PartitionDefIdx != nil,
+			physicalTableID:                          ds.PhysicalTableID,
+			tblCols:                                  ds.TblCols,
+			tblColHists:                              ds.TblColHists,
+			ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
 		ts.schema = is.dataSourceSchema.Clone()
 		if ds.TableInfo.IsCommonHandle {
