@@ -420,6 +420,10 @@ func (helper *extractHelper) extractLikePatternCol(
 		}
 		if canBuildPattern {
 			patterns = append(patterns, pattern)
+			if needLike2Regexp && toLower && fn.FuncName.L == ast.Like {
+				// Case-folded patterns are only prefilters for case-sensitive LIKE.
+				remained = append(remained, expr)
+			}
 		} else {
 			remained = append(remained, expr)
 		}

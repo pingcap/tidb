@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -1350,7 +1351,7 @@ func IterRecords(t table.Table, ctx sessionctx.Context, cols []*table.Column,
 		return nil
 	}
 
-	logutil.BgLogger().Debug("iterate records", zap.ByteString("startKey", startKey), zap.ByteString("key", it.Key()), zap.ByteString("value", it.Value()))
+	logutil.BgLogger().Debug("iterate records", zap.String("startKey", redact.Value(string(startKey))), zap.String("key", redact.Value(string(it.Key()))), zap.String("value", redact.Value(string(it.Value()))))
 
 	colMap := make(map[int64]*types.FieldType, len(cols))
 	for _, col := range cols {

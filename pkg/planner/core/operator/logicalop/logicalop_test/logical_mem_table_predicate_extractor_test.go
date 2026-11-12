@@ -1804,6 +1804,7 @@ func TestColumns(t *testing.T) {
 		tableSchemaPattern []string
 		tableNamePattern   []string
 		skipRequest        bool
+		remained           string
 	}{
 		{
 			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where lower(column_name)=lower('T');`,
@@ -1841,27 +1842,42 @@ func TestColumns(t *testing.T) {
 		{
 			sql:              `select * from information_schema.COLUMNS where table_name like 'T%';`,
 			tableNamePattern: []string{"t%"},
+			remained:         "[like(Column#3, T%, 92)]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'T%';`,
 			columnNamePattern: []string{"t%"},
+			remained:          "[like(Column#4, T%, 92)]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'i%';`,
 			columnNamePattern: []string{"i%"},
+			remained:          "[like(Column#4, i%, 92)]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' or column_name like "def%";`,
 			columnNamePattern: []string{},
+			remained:          "[or(like(Column#4, abc%, 92), like(Column#4, def%, 92))]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' and column_name like "%def";`,
 			columnNamePattern: []string{"abc%", "%def"},
+			remained:          "[like(Column#4, abc%, 92) like(Column#4, %def, 92)]",
+		},
+		{
+			sql:               `select * from information_schema.COLUMNS where column_name ilike 'T%';`,
+			columnNamePattern: []string{"t%"},
 		},
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, ok, remained := getLogicalMemTableWithRemained(t, dom, se, parser, ca.sql)
+		if ca.remained == "" {
+			require.Empty(t, remained, ca.sql)
+		} else {
+			require.Equal(t, ca.remained, expression.StringifyExpressionsWithCtx(se.GetExprCtx().GetEvalCtx(), remained), ca.sql)
+		}
+		require.True(t, ok, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
 
 		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaColumnsExtractor)
@@ -1955,6 +1971,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		prepared string
 		userVars []any
 		params   []any
+		filter   bool
 		checker  func(extractor base.MemTablePredicateExtractor)
 	}{
 		{
@@ -1994,6 +2011,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			prepared: "select * from information_schema.COLUMNS where table_name like ?",
 			userVars: []any{`"a%"`},
 			params:   []any{"a%"},
+			filter:   true,
 			checker: func(extractor base.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.InfoSchemaColumnsExtractor)
 				require.EqualValues(t, []string{"a%"}, rse.LikePatterns["table_name"])
@@ -2035,7 +2053,13 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
-		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
+		inner := plan.(*plannercore.Execute).Plan
+		if ca.filter {
+			selection := inner.(*plannercore.PhysicalSelection)
+			require.Len(t, selection.Conditions, 1)
+			inner = selection.Children()[0]
+		}
+		extractor := inner.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
 
@@ -2053,7 +2077,13 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		nodeW := resolve.NewNodeW(execStmt)
 		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
-		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
+		inner := plan.(*plannercore.Execute).Plan
+		if ca.filter {
+			selection := inner.(*plannercore.PhysicalSelection)
+			require.Len(t, selection.Conditions, 1)
+			inner = selection.Children()[0]
+		}
+		extractor := inner.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
 }
@@ -2067,7 +2097,31 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 		sql           string
 		skipRequest   bool
 		colPredicates map[string]set.StringSet
+		likePatterns  []string
+		remained      string
 	}{
+		{
+			sql:           `select * from information_schema.tables where table_name like 'T%';`,
+			colPredicates: map[string]set.StringSet{},
+			likePatterns:  []string{"t%"},
+			remained:      "[like(Column#3, T%, 92)]",
+		},
+		{
+			sql:           `select * from information_schema.tables where table_name like 't%';`,
+			colPredicates: map[string]set.StringSet{},
+			likePatterns:  []string{"t%"},
+			remained:      "[like(Column#3, t%, 92)]",
+		},
+		{
+			sql:           `select * from information_schema.tables where table_name collate utf8mb4_bin like 'T%';`,
+			colPredicates: map[string]set.StringSet{},
+			remained:      "[like(cast(Column#3, varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin), T%, 92)]",
+		},
+		{
+			sql:           `select * from information_schema.tables where table_name ilike 'T%';`,
+			colPredicates: map[string]set.StringSet{},
+			likePatterns:  []string{"t%"},
+		},
 		{
 			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_schema='test';`,
 			skipRequest: false,
@@ -2291,7 +2345,13 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, ok, remained := getLogicalMemTableWithRemained(t, dom, se, parser, ca.sql)
+		if ca.remained != "" {
+			require.Equal(t, ca.remained, expression.StringifyExpressionsWithCtx(se.GetExprCtx().GetEvalCtx(), remained), ca.sql)
+		} else if ca.likePatterns != nil {
+			require.Empty(t, remained, ca.sql)
+		}
+		require.True(t, ok, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
 		ex, ok := logicalMemTable.Extractor.(interface {
 			GetBase() *plannercore.InfoSchemaBaseExtractor
@@ -2299,5 +2359,6 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, ca.skipRequest, ex.GetBase().SkipRequest, "SQL: %v", ca.sql)
 		require.Equal(t, ca.colPredicates, ex.GetBase().ColPredicates, "SQL: %v", ca.sql)
+		require.Equal(t, ca.likePatterns, ex.GetBase().LikePatterns["table_name"], ca.sql)
 	}
 }

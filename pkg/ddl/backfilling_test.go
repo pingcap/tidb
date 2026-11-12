@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -41,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
+	tikverr "github.com/tikv/client-go/v2/error"
+	pderr "github.com/tikv/pd/client/errs"
 )
 
 func TestDoneTaskKeeper(t *testing.T) {
@@ -65,6 +68,8 @@ func TestDoneTaskKeeper(t *testing.T) {
 	require.True(t, bytes.Equal(n.nextKey, kv.Key("h")))
 }
 
+// TestBackfillRetryableErrors covers executor retryability and MODIFY COLUMN
+// retry limits, wrapped PD timeouts and deterministic conversion errors.
 func TestBackfillRetryableErrors(t *testing.T) {
 	t.Run("local-sort disk probe errors are retryable", func(t *testing.T) {
 		err := errors.New("mock local sort disk probe failed")
@@ -74,6 +79,74 @@ func TestBackfillRetryableErrors(t *testing.T) {
 	t.Run("confirmed insufficient local-sort disk is not retryable", func(t *testing.T) {
 		err := dbterror.ErrIngestCheckEnvFailed.FastGenByArgs("mock insufficient local sort disk space")
 		require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
+	})
+
+	t.Run("PD TSO stream errors are retryable", func(t *testing.T) {
+		errs := []error{
+			pderr.ErrClientCreateTSOStream.FastGenByArgs(pderr.RetryTimeoutErr),
+			pderr.ErrClientTSOStreamClosed.GenWithStackByArgs(),
+		}
+		for _, err := range errs {
+			require.True(t, isRetryableError(err, false))
+			require.True(t, isRetryableError(errors.Annotate(err, "wrapped"), false))
+			require.True(t, (&backfillDistExecutor{}).IsRetryableError(err))
+
+			// The local ingest path checks for duplicate keys before classifying
+			// the reorg error. PD errors must retain their identity across it.
+			convertedErr := ingest.TryConvertToKeyExistsErr(err, &model.IndexInfo{}, &model.TableInfo{})
+			require.ErrorIs(t, convertedErr, err)
+			require.True(t, isRetryableJobError(convertedErr, 0))
+			require.False(t, isRetryableJobError(convertedErr, variable.GetDDLErrorCountLimit()-1))
+		}
+	})
+
+	t.Run("unrelated PD errors are not made retryable", func(t *testing.T) {
+		err := pderr.ErrClientProtoUnmarshal.FastGenByArgs("invalid response")
+		require.False(t, isRetryableError(err, false))
+	})
+
+	t.Run("modify column retries typed PD timeout", func(t *testing.T) {
+		pdTimeout := tikverr.NewErrPDServerTimeout("region cache is not ready")
+		for name, err := range map[string]error{
+			"direct":           pdTimeout,
+			"pingcap wrapper":  errors.Annotate(pdTimeout, "load ranges"),
+			"standard wrapper": fmt.Errorf("load ranges: %w", pdTimeout),
+		} {
+			t.Run(name, func(t *testing.T) {
+				require.True(t, isRetryableModifyColumnReorgJobError(err, 0))
+				require.False(t, isRetryableModifyColumnReorgJobError(err, variable.GetDDLErrorCountLimit()-1))
+				require.True(t, isRetryableError(err, true))
+			})
+		}
+	})
+
+	t.Run("modify column rejects conversion errors containing retry text", func(t *testing.T) {
+		for _, text := range dbterror.ReorgRetryableErrMsgs {
+			for name, conversionErr := range map[string]error{
+				"invalid integer":          types.ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", text),
+				"truncated column":         types.ErrTruncated.GenWithStackByArgs(text, 1),
+				"long data":                types.ErrDataTooLong.GenWithStackByArgs(text, 1),
+				"out of range":             types.ErrOverflow.GenWithStackByArgs(text, 1),
+				"invalid JSON":             types.ErrInvalidJSONText.GenWithStack("invalid JSON value: %s", text),
+				"null column":              table.ErrColumnCantNull.GenWithStackByArgs(text),
+				"invalid character string": table.ErrTruncatedWrongValueForField.FastGen("Incorrect string value '%s' for column '%s'", "0xFF", text),
+			} {
+				t.Run(name+"/"+text, func(t *testing.T) {
+					for _, err := range []error{conversionErr, errors.Annotate(conversionErr, "cast value"), fmt.Errorf("cast value: %w", conversionErr)} {
+						require.False(t, isRetryableModifyColumnReorgJobError(err, 0))
+					}
+				})
+			}
+		}
+	})
+
+	t.Run("modify column preserves other retry classifications", func(t *testing.T) {
+		for _, text := range dbterror.ReorgRetryableErrMsgs {
+			require.True(t, isRetryableModifyColumnReorgJobError(errors.New(text), 0))
+		}
+		require.True(t, isRetryableModifyColumnReorgJobError(kv.ErrTxnRetryable, 0))
+		require.False(t, isRetryableModifyColumnReorgJobError(errors.New("unknown reorg error"), 0))
+		require.True(t, isRetryableError(errors.New("unknown reorg error"), true))
 	})
 }
 

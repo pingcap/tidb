@@ -17,7 +17,7 @@ import (
 func TestCreateStorage(t *testing.T) {
 	_, err := ParseBackend("1invalid:", nil)
 	require.Error(t, err)
-	require.Regexp(t, "parse storage URL failed: invalid format", err.Error())
+	require.ErrorContains(t, err, "parse storage URL failed: invalid format")
 
 	_, err = ParseBackend("net:storage", nil)
 	require.Error(t, err)
@@ -288,7 +288,7 @@ func TestIsLocal(t *testing.T) {
 		want   bool
 		errStr string
 	}{
-		{"local", args{":"}, false, "missing protocol scheme"},
+		{"local", args{":"}, false, "invalid storage URL"},
 		{"local", args{"~/tmp/file"}, true, ""},
 		{"local", args{"."}, true, ""},
 		{"local", args{".."}, true, ""},

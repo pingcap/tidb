@@ -305,18 +305,23 @@ type backfillWorker struct {
 	backfiller
 	taskCh   chan *reorgBackfillTask
 	resultCh chan *backfillResult
-	ctx      context.Context
-	cancel   func()
-	wg       *sync.WaitGroup
+	workCtx  context.Context
+	// resultCtx covers execution and delivery of in-flight tasks. Worker retirement
+	// stops taking new tasks without interrupting a partially completed range.
+	resultCtx context.Context
+	cancel    func()
+	wg        *sync.WaitGroup
 }
 
-func newBackfillWorker(ctx context.Context, bf backfiller) *backfillWorker {
-	bfCtx, cancel := context.WithCancel(ctx)
+// newBackfillWorker lets workCtx retire a worker without canceling its active task or results.
+func newBackfillWorker(workCtx, resultCtx context.Context, bf backfiller) *backfillWorker {
+	workCtx, cancel := context.WithCancel(workCtx)
 	return &backfillWorker{
 		backfiller: bf,
 		taskCh:     make(chan *reorgBackfillTask, 1),
 		resultCh:   make(chan *backfillResult, 1),
-		ctx:        bfCtx,
+		workCtx:    workCtx,
+		resultCtx:  resultCtx,
 		cancel:     cancel,
 	}
 }
@@ -325,6 +330,9 @@ func (w *backfillWorker) String() string {
 	return fmt.Sprintf("backfill-worker %d, tp %s", w.GetCtx().id, w.backfiller.String())
 }
 
+// Close retires this worker by canceling only workCtx. During downscaling, the
+// executor keeps resultCtx active so in-flight tasks finish and report their results.
+// Forced executor shutdown cancels resultCtx before Close to unblock result sends.
 func (w *backfillWorker) Close() {
 	if w.cancel != nil {
 		w.cancel()
@@ -367,7 +375,8 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			return result
 		}
 
-		taskCtx, err := bf.BackfillData(w.ctx, handleRange)
+		taskCtx, err := bf.BackfillData(w.resultCtx, handleRange)
+		failpoint.InjectCall("afterBackfillBatch", task.jobID, w.GetCtx().id, w.workCtx, taskCtx.done, &err)
 		if err != nil {
 			result.err = err
 			return result
@@ -415,13 +424,15 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	return result
 }
 
+// sendResult uses resultCtx so retiring a worker does not discard its task result.
 func (w *backfillWorker) sendResult(result *backfillResult) {
 	select {
-	case <-w.ctx.Done():
+	case <-w.resultCtx.Done():
 	case w.resultCh <- result:
 	}
 }
 
+// run lets the active task report its result before observing worker retirement.
 func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 	logger := logutil.DDLLogger().With(zap.Stringer("worker", w), zap.Int64("jobID", job.ID))
 	var (
@@ -435,8 +446,12 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		w.sendResult(&backfillResult{taskID: curTaskID, err: dbterror.ErrReorgPanic})
 	}, false)
 	for {
+		// Prefer retirement over queued work after the current task finishes.
+		if w.workCtx.Err() != nil {
+			return
+		}
 		select {
-		case <-w.ctx.Done():
+		case <-w.workCtx.Done():
 			logger.Info("backfill worker exit on context done")
 			return
 		case task, ok = <-w.taskCh:
@@ -529,6 +544,11 @@ func loadTableRanges(
 			zap.Int64("physicalTableID", t.GetPhysicalID()),
 			zap.String("start key", hex.EncodeToString(startKey)),
 			zap.String("end key", hex.EncodeToString(endKey)))
+		failpoint.Inject("loadTableRangesFromPDErr", func(val failpoint.Value) {
+			if msg, ok := val.(string); ok && msg != "" {
+				failpoint.Return(false, errors.New(msg))
+			}
+		})
 		rs, err := rc.BatchLoadRegionsWithKeyRange(bo, startKey, endKey, limit)
 		if err != nil {
 			return false, errors.Trace(err)
@@ -1045,6 +1065,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				cnt++
 
 				if result.err != nil {
+					failpoint.InjectCall("onBackfillTaskError", reorgInfo.ID, result.err)
 					logutil.DDLLogger().Warn("backfill worker failed",
 						zap.Int64("job ID", reorgInfo.ID),
 						zap.Int64("total added count", totalAddedCount),
@@ -1199,6 +1220,9 @@ func iterateSnapshotKeys(ctx *ReorgContext, store kv.Storage, priority int, keyP
 	}
 	snap.SetOption(kv.ResourceGroupName, ctx.resourceGroupName)
 
+	failpoint.Inject("mockIterateSnapshotKeysError", func() {
+		failpoint.Return(errors.New("mock snapshot scan error"))
+	})
 	it, err := snap.Iter(firstKey, upperBound)
 	if err != nil {
 		return errors.Trace(err)

@@ -1273,18 +1273,28 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	determinedIndexPartialPaths := make([]*util.AccessPath, 0, len(path.PartialAlternativeIndexPaths))
 	partialPathMatchResults := make([]property.PhysicalPropMatchResult, 0, len(path.PartialAlternativeIndexPaths))
 	usedIndexMap := make(map[int64]struct{}, 1)
+	useMVIndex := false
 	for _, oneORBranch := range path.PartialAlternativeIndexPaths {
 		matchIdxes := make([]int, 0, 1)
-		// altMatchResults[i] stores the matchProperty result for
-		// oneORBranch[i]. It is populated during advisory or fallback matching.
-		altMatchResults := make([]property.PhysicalPropMatchResult, len(oneORBranch))
+		// altMatchResults[i] stores matchProperty results for each access path
+		// in oneORBranch[i]. It is populated during advisory or fallback matching.
+		var altMatchResults [][]property.PhysicalPropMatchResult
 
 		if useAdvisorySortItems {
 			// First pass: prefer alternatives that satisfy AdvisorySortItems.
+			altMatchResults = make([][]property.PhysicalPropMatchResult, len(oneORBranch))
 			for i, oneAlternative := range oneORBranch {
-				result := matchProperty(ds, oneAlternative, advisoryProp)
-				altMatchResults[i] = result
-				if result.Matched() {
+				match := true
+				results := make([]property.PhysicalPropMatchResult, 0, len(oneAlternative))
+				for _, oneAccessPath := range oneAlternative {
+					result := matchProperty(ds, oneAccessPath, advisoryProp)
+					results = append(results, result)
+					if !result.Matched() {
+						match = false
+					}
+				}
+				altMatchResults[i] = results
+				if match {
 					matchIdxes = append(matchIdxes, i)
 				}
 			}
@@ -1293,14 +1303,23 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		// If no matches are found with advisory items, fall back to the default
 		// matching logic.
 		if len(matchIdxes) == 0 {
+			altMatchResults = make([][]property.PhysicalPropMatchResult, len(oneORBranch))
 			for i, oneAlternative := range oneORBranch {
 				// if there is some sort items and this path doesn't match this prop, continue.
-				var result property.PhysicalPropMatchResult
-				if !noSortItem {
-					result = matchProperty(ds, oneAlternative, prop)
+				match := true
+				results := make([]property.PhysicalPropMatchResult, 0, len(oneAlternative))
+				for _, oneAccessPath := range oneAlternative {
+					var result property.PhysicalPropMatchResult
+					if !noSortItem {
+						result = matchProperty(ds, oneAccessPath, prop)
+					}
+					results = append(results, result)
+					if !noSortItem && !result.Matched() {
+						match = false
+					}
 				}
-				altMatchResults[i] = result
-				if !noSortItem && !result.Matched() {
+				altMatchResults[i] = results
+				if !match {
 					continue
 				}
 				// two possibilities here:
@@ -1316,47 +1335,43 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		}
 		if len(matchIdxes) > 1 {
 			// if matchIdxes greater than 1, we should sort this match alternative path by its CountAfterAccess.
-			tmpOneItemAlternatives := oneORBranch
+			alternatives := oneORBranch
 			slices.SortStableFunc(matchIdxes, func(a, b int) int {
-				lhsCountAfter := tmpOneItemAlternatives[a].CountAfterAccess
-				if len(tmpOneItemAlternatives[a].IndexFilters) > 0 {
-					lhsCountAfter = tmpOneItemAlternatives[a].CountAfterIndex
-				}
-				rhsCountAfter := tmpOneItemAlternatives[b].CountAfterAccess
-				if len(tmpOneItemAlternatives[b].IndexFilters) > 0 {
-					rhsCountAfter = tmpOneItemAlternatives[b].CountAfterIndex
-				}
-				res := cmp.Compare(lhsCountAfter, rhsCountAfter)
+				res := cmpAlternatives(ds.SCtx().GetSessionVars())(alternatives[a], alternatives[b])
 				if res != 0 {
 					return res
 				}
 				// If CountAfterAccess is same, any path is global index should be the first one.
 				var lIsGlobalIndex, rIsGlobalIndex int
-				if !tmpOneItemAlternatives[a].IsTablePath() && tmpOneItemAlternatives[a].Index.Global {
+				if !alternatives[a][0].IsTablePath() && alternatives[a][0].Index.Global {
 					lIsGlobalIndex = 1
 				}
-				if !tmpOneItemAlternatives[b].IsTablePath() && tmpOneItemAlternatives[b].Index.Global {
+				if !alternatives[b][0].IsTablePath() && alternatives[b][0].Index.Global {
 					rIsGlobalIndex = 1
 				}
 				return -cmp.Compare(lIsGlobalIndex, rIsGlobalIndex)
 			})
 		}
 		lowestCountAfterAccessIdx := matchIdxes[0]
-		determinedIndexPartialPaths = append(determinedIndexPartialPaths, oneORBranch[lowestCountAfterAccessIdx])
-		partialPathMatchResults = append(partialPathMatchResults, altMatchResults[lowestCountAfterAccessIdx])
+		determinedIndexPartialPaths = append(determinedIndexPartialPaths, util.SliceDeepClone(oneORBranch[lowestCountAfterAccessIdx])...)
+		partialPathMatchResults = append(partialPathMatchResults, altMatchResults[lowestCountAfterAccessIdx]...)
 		// record the index usage info to avoid choosing a single index for all partial paths
 		var indexID int64
-		if oneORBranch[lowestCountAfterAccessIdx].IsTablePath() {
+		if oneORBranch[lowestCountAfterAccessIdx][0].IsTablePath() {
 			indexID = -1
 		} else {
-			indexID = oneORBranch[lowestCountAfterAccessIdx].Index.ID
+			indexID = oneORBranch[lowestCountAfterAccessIdx][0].Index.ID
+			// record mv index because it's not affected by the all single index limitation.
+			if oneORBranch[lowestCountAfterAccessIdx][0].Index.MVIndex {
+				useMVIndex = true
+			}
 		}
 		// record the lowestCountAfterAccessIdx's chosen index.
 		usedIndexMap[indexID] = struct{}{}
 	}
 	// since all the choice is done, check the all single index limitation, skip check for mv index.
 	// since ds index merge hints will prune other path ahead, lift the all single index limitation here.
-	if len(usedIndexMap) == 1 && len(ds.IndexMergeHints) <= 0 {
+	if len(usedIndexMap) == 1 && !useMVIndex && len(ds.IndexMergeHints) <= 0 {
 		// if all partial path are using a same index, meaningless and fail over.
 		return nil, nil, false, property.PropNotMatched
 	}
@@ -1369,6 +1384,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 
 	// step2: gen a new **concrete** index merge path.
 	indexMergePath := &util.AccessPath{
+		IndexMergeAccessMVIndex:  useMVIndex,
 		PartialIndexPaths:        determinedIndexPartialPaths,
 		IndexMergeIsIntersection: false,
 		// inherit those determined can't pushed-down table filters.
@@ -1376,26 +1392,11 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	}
 	// path.ShouldBeKeptCurrentFilter record that whether there are some part of the cnf item couldn't be pushed down to tikv already.
 	shouldKeepCurrentFilter := path.KeepIndexMergeORSourceFilter
-	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
-	for _, path := range determinedIndexPartialPaths {
-		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
-		if len(path.TableFilters) > 0 {
-			if !expression.CanExprsPushDown(pushDownCtx, path.TableFilters, kv.TiKV) {
-				// if this table filters can't be pushed down, all of them should be kept in the table side, cleaning the lookup side here.
-				path.TableFilters = nil
-			}
+	for _, p := range determinedIndexPartialPaths {
+		if p.KeepIndexMergeORSourceFilter {
 			shouldKeepCurrentFilter = true
+			break
 		}
-		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
-		if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(pushDownCtx, path.IndexFilters, kv.TiKV) {
-			shouldKeepCurrentFilter = true
-			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
-			path.IndexFilters = nil
-		}
-	}
-	// Keep this filter as a part of table filters for safety if it has any parameter.
-	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), []expression.Expression{path.IndexMergeORSourceFilter}) {
-		shouldKeepCurrentFilter = true
 	}
 	if shouldKeepCurrentFilter {
 		// add the cnf expression back as table filer.
@@ -1403,21 +1404,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	}
 
 	// step3: after the index merge path is determined, compute the countAfterAccess as usual.
-	accessConds := make([]expression.Expression, 0, len(determinedIndexPartialPaths))
-	for _, p := range determinedIndexPartialPaths {
-		indexCondsForP := p.AccessConds[:]
-		indexCondsForP = append(indexCondsForP, p.IndexFilters...)
-		if len(indexCondsForP) > 0 {
-			accessConds = append(accessConds, expression.ComposeCNFCondition(ds.SCtx().GetExprCtx(), indexCondsForP...))
-		}
-	}
-	accessDNF := expression.ComposeDNFCondition(ds.SCtx().GetExprCtx(), accessConds...)
-	sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, []expression.Expression{accessDNF}, nil)
-	if err != nil {
-		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-		sel = cost.SelectionFactor
-	}
-	indexMergePath.CountAfterAccess = sel * ds.TableStats.RowCount
+	indexMergePath.CountAfterAccess = estimateCountAfterAccessForIndexMergeOR(ds, determinedIndexPartialPaths)
 	if noSortItem {
 		// since there is no sort property, index merge case is generated by random combination, each alternative with the lower/lowest
 		// countAfterAccess, here the returned matchProperty should be PropNotMatched.
@@ -2421,15 +2408,16 @@ func setIndexMergeTableScanHandleCols(ds *logicalop.DataSource, ts *PhysicalTabl
 func buildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expression.Expression,
 	totalRowCount float64, matchProp bool) (base.PhysicalPlan, []expression.Expression, bool, error) {
 	ts := PhysicalTableScan{
-		Table:           ds.TableInfo,
-		Columns:         slices.Clone(ds.Columns),
-		TableAsName:     ds.TableAsName,
-		DBName:          ds.DBName,
-		isPartition:     ds.PartitionDefIdx != nil,
-		physicalTableID: ds.PhysicalTableID,
-		HandleCols:      ds.HandleCols,
-		tblCols:         ds.TblCols,
-		tblColHists:     ds.TblColHists,
+		Table:                                    ds.TableInfo,
+		Columns:                                  slices.Clone(ds.Columns),
+		TableAsName:                              ds.TableAsName,
+		DBName:                                   ds.DBName,
+		isPartition:                              ds.PartitionDefIdx != nil,
+		physicalTableID:                          ds.PhysicalTableID,
+		HandleCols:                               ds.HandleCols,
+		tblCols:                                  ds.TblCols,
+		tblColHists:                              ds.TblColHists,
+		ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema().Clone())
 	err := setIndexMergeTableScanHandleCols(ds, ts)
@@ -2672,14 +2660,15 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if !candidate.path.IsSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
-			Columns:         util.CloneColInfos(ds.Columns),
-			Table:           is.Table,
-			TableAsName:     ds.TableAsName,
-			DBName:          ds.DBName,
-			isPartition:     ds.PartitionDefIdx != nil,
-			physicalTableID: ds.PhysicalTableID,
-			tblCols:         ds.TblCols,
-			tblColHists:     ds.TblColHists,
+			Columns:                                  util.CloneColInfos(ds.Columns),
+			Table:                                    is.Table,
+			TableAsName:                              ds.TableAsName,
+			DBName:                                   ds.DBName,
+			isPartition:                              ds.PartitionDefIdx != nil,
+			physicalTableID:                          ds.PhysicalTableID,
+			tblCols:                                  ds.TblCols,
+			tblColHists:                              ds.TblColHists,
+			ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 		}.Init(ds.SCtx(), is.QueryBlockOffset())
 		ts.SetSchema(ds.Schema().Clone())
 		// We set `StatsVersion` here and fill other fields in `(*copTask).finishIndexPlan`. Since `copTask.indexPlan` may
@@ -3044,16 +3033,17 @@ func splitIndexFilterConditions(ds *logicalop.DataSource, conditions []expressio
 func GetPhysicalScan4LogicalTableScan(s *logicalop.LogicalTableScan, schema *expression.Schema, stats *property.StatsInfo) *PhysicalTableScan {
 	ds := s.Source
 	ts := PhysicalTableScan{
-		Table:           ds.TableInfo,
-		Columns:         ds.Columns,
-		TableAsName:     ds.TableAsName,
-		DBName:          ds.DBName,
-		isPartition:     ds.PartitionDefIdx != nil,
-		physicalTableID: ds.PhysicalTableID,
-		Ranges:          s.Ranges,
-		AccessCondition: s.AccessConds,
-		tblCols:         ds.TblCols,
-		tblColHists:     ds.TblColHists,
+		Table:                                    ds.TableInfo,
+		Columns:                                  ds.Columns,
+		TableAsName:                              ds.TableAsName,
+		DBName:                                   ds.DBName,
+		isPartition:                              ds.PartitionDefIdx != nil,
+		physicalTableID:                          ds.PhysicalTableID,
+		Ranges:                                   s.Ranges,
+		AccessCondition:                          s.AccessConds,
+		tblCols:                                  ds.TblCols,
+		tblColHists:                              ds.TblColHists,
+		ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 	}.Init(s.SCtx(), s.QueryBlockOffset())
 	ts.SetStats(stats)
 	ts.SetSchema(schema.Clone())
@@ -3520,21 +3510,22 @@ func (ts *PhysicalTableScan) getScanRowSize() float64 {
 
 func getOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool) (*PhysicalTableScan, float64) {
 	ts := PhysicalTableScan{
-		Table:           ds.TableInfo,
-		Columns:         slices.Clone(ds.Columns),
-		TableAsName:     ds.TableAsName,
-		DBName:          ds.DBName,
-		isPartition:     ds.PartitionDefIdx != nil,
-		physicalTableID: ds.PhysicalTableID,
-		Ranges:          path.Ranges,
-		AccessCondition: path.AccessConds,
-		StoreType:       path.StoreType,
-		HandleCols:      ds.HandleCols,
-		tblCols:         ds.TblCols,
-		tblColHists:     ds.TblColHists,
-		constColsByCond: path.ConstCols,
-		prop:            prop,
-		filterCondition: slices.Clone(path.TableFilters),
+		Table:                                    ds.TableInfo,
+		Columns:                                  slices.Clone(ds.Columns),
+		TableAsName:                              ds.TableAsName,
+		DBName:                                   ds.DBName,
+		isPartition:                              ds.PartitionDefIdx != nil,
+		physicalTableID:                          ds.PhysicalTableID,
+		Ranges:                                   path.Ranges,
+		AccessCondition:                          path.AccessConds,
+		StoreType:                                path.StoreType,
+		HandleCols:                               ds.HandleCols,
+		tblCols:                                  ds.TblCols,
+		tblColHists:                              ds.TblColHists,
+		constColsByCond:                          path.ConstCols,
+		prop:                                     prop,
+		filterCondition:                          slices.Clone(path.TableFilters),
+		ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema().Clone())
 	rowCount := path.CountAfterAccess
