@@ -1256,7 +1256,7 @@ fn max_one_row_enumeration_needs_an_orderless_root_property() {
     let logical = LogicalMaxOneRow::new(base);
 
     let ordered = PhysicalProperty {
-        sort_items: vec![SortItem::new(3, false)],
+        sort_items: vec![SortItem::from_unique_id(3, false)],
         ..PhysicalProperty::default()
     };
     assert!(
@@ -1416,7 +1416,7 @@ fn a_table_dual_is_born_inside_its_own_root_task() {
     let mut dual = LogicalTableDual::new(base, 1);
 
     let sorted = PhysicalProperty {
-        sort_items: vec![SortItem::new(3, false)],
+        sort_items: vec![SortItem::from_unique_id(3, false)],
         ..PhysicalProperty::default()
     };
     // One row: the order is vacuous, the task is real.
@@ -1465,7 +1465,7 @@ fn a_cte_table_promises_no_order_and_is_born_in_a_root_task() {
     };
 
     let sorted = PhysicalProperty {
-        sort_items: vec![SortItem::new(1, false)],
+        sort_items: vec![SortItem::from_unique_id(1, false)],
         ..PhysicalProperty::default()
     };
     assert!(find_best_task_4_logical_cte_table(&cte, &sorted, &allocator).invalid());
@@ -1506,7 +1506,7 @@ fn a_show_and_its_ddl_jobs_twin_are_born_in_root_tasks() {
     ));
 
     let sorted = PhysicalProperty {
-        sort_items: vec![SortItem::new(1, false)],
+        sort_items: vec![SortItem::from_unique_id(1, false)],
         ..PhysicalProperty::default()
     };
     assert!(find_best_task_4_logical_show(&show, &sorted, &allocator).invalid());
@@ -1784,13 +1784,13 @@ fn partial_order_projection_maps_columns_and_rejects_computed_keys() {
     let prop = PhysicalProperty {
         task_tp: TaskType::CopMultiRead,
         partial_order_info: Some(PartialOrderInfo {
-            sort_items: vec![SortItem::from_column(output, true)],
+            sort_items: vec![SortItem::new(output, true)],
         }),
         ..PhysicalProperty::default()
     };
     let child = projection.try_to_get_child_prop(&prop).unwrap();
     let order = child.partial_order_info.unwrap();
-    assert_eq!(order.sort_items, vec![SortItem::from_column(input, true)]);
+    assert_eq!(order.sort_items, vec![SortItem::new(input, true)]);
     assert_eq!(
         prop.partial_order_info.as_ref().unwrap().sort_items[0]
             .col

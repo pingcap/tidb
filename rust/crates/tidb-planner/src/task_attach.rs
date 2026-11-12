@@ -3774,7 +3774,7 @@ mod task_tests {
             assert_eq!(filter_rows(attached.plan().unwrap()), Some(10.0));
 
             let property = tidb_planner_property::PhysicalProperty {
-                sort_items: vec![tidb_planner_property::SortItem::new(1, false)],
+                sort_items: vec![tidb_planner_property::SortItem::from_unique_id(1, false)],
                 ..Default::default()
             };
             let enforced =
@@ -4237,7 +4237,7 @@ mod task_tests {
                     false,
                 )],
                 partition_by: if partitioned {
-                    vec![tidb_planner_property::SortItem::from_column(
+                    vec![tidb_planner_property::SortItem::new(
                         column_with_id(1),
                         false,
                     )]

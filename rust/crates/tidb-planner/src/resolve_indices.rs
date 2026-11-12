@@ -557,11 +557,27 @@ impl ResolveIndicesItself for PhysicalPlan {
                         PlanError::internal("IndexLookUpReader table plan has no schema")
                     })?;
                     bind_virtual_columns(&mut schema.columns, input)?;
+                    // Go's reader schema is its table plan's schema object,
+                    // so the binding holds for both.
+                    op.base.base.set_schema(Some(schema.clone()));
                     plan.base_mut().base.set_schema(Some(schema));
                     plan.resolve_indices()?;
                 }
                 if let Some(plan) = &mut op.index_plan {
                     plan.resolve_indices()?;
+                }
+                if let Some(column) = &mut op.extra_handle_col {
+                    let schema = op.table_plan.as_deref().and_then(PhysicalPlan::schema).ok_or_else(|| {
+                        PlanError::internal("IndexLookUpReader table plan has no schema")
+                    })?;
+                    bind_column(column, schema)?;
+                }
+                let scan_schema = op.table_plans.first().and_then(PhysicalPlan::schema).cloned();
+                for column in &mut op.common_handle_cols {
+                    let schema = scan_schema.as_ref().ok_or_else(|| {
+                        PlanError::internal("IndexLookUpReader table scan has no schema")
+                    })?;
+                    bind_column(column, schema)?;
                 }
             }
             Self::TableScan(op) => {

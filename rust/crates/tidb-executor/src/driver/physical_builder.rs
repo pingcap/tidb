@@ -7685,6 +7685,38 @@ fn build_reader_node(
             }
         }
         PhysicalPlan::IndexLookUpReader(reader) => {
+            // Go `buildIndexLookUpReader` on a store with a coprocessor client
+            // (the in-process engine, a temporary table and the TiKV-side
+            // lookup keep the local path, `docs/tikv-reader-execplan.md`).
+            let scan = reader.index_plans.first().and_then(|plan| match plan {
+                PhysicalPlan::IndexScan(scan) => Some(scan),
+                _ => None,
+            });
+            if ctx.txn_store().is_some_and(|store| store.client().is_some())
+                && !state.reader_storage.is_mem_buffer()
+                && !reader.index_lookup_push_down
+                && scan.is_some_and(|scan| !scan.is_temporary)
+            {
+                let scan = scan.expect("checked above");
+                let executor = crate::index_lookup::IndexLookUpExecutor::build(
+                    meta(ctx, plan, plan_schema(plan)?),
+                    ctx,
+                    catalog,
+                    reader,
+                    state.range_group.as_ref(),
+                )
+                .map_err(DriverError::from)?;
+                let table = catalog
+                    .physical_kv_table_by_id(scan.table_id)
+                    .ok_or_else(|| DriverError::unsupported("physical table ID is absent from the catalog"))?;
+                return Ok(Box::new(CopIndexUsageExec::new(
+                    executor,
+                    table.table_id(),
+                    crate::access_cost::load_table_stats(ctx, catalog, table.stats_physical_id()),
+                    ctx.index_usage_collector().cloned(),
+                    Some(scan.index_id),
+                )));
+            }
             let executor = build_index_reader(
                 plan,
                 reader.index_plan.as_deref().ok_or_else(|| {

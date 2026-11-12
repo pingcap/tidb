@@ -444,18 +444,21 @@ impl PartialEq for MppPartitionColumn {
 impl Eq for MppPartitionColumn {}
 
 impl SortItem {
-    /// A required order on `col`, ascending when `desc` is false.
+    /// Go `SortItem{Col: col, Desc: desc}`: a required order on `col`,
+    /// ascending when `desc` is false.
     #[must_use]
-    pub fn new(col: i64, desc: bool) -> Self {
+    pub const fn new(col: tidb_expr::column::Column, desc: bool) -> Self {
+        Self { col, desc }
+    }
+
+    /// A sort item naming its column by `UniqueID` alone, for the merge-join
+    /// enumeration, which keeps its join keys as UniqueIDs (Go's are the
+    /// key columns).
+    #[must_use]
+    pub fn from_unique_id(col: i64, desc: bool) -> Self {
         let mut column = tidb_expr::column::Column::default();
         column.unique_id = col;
         Self { col: column, desc }
-    }
-
-    /// Build a sort item from the complete source column.
-    #[must_use]
-    pub const fn from_column(col: tidb_expr::column::Column, desc: bool) -> Self {
-        Self { col, desc }
     }
 
     /// Source-shaped owned memory accounting.
@@ -614,7 +617,7 @@ impl PhysicalProperty {
         enforced: bool,
     ) -> Self {
         Self {
-            sort_items: cols.iter().map(|&col| SortItem::new(col, desc)).collect(),
+            sort_items: cols.iter().map(|&col| SortItem::from_unique_id(col, desc)).collect(),
             task_tp,
             expected_cnt,
             can_add_enforcer: enforced,
@@ -899,7 +902,7 @@ pub fn sort_items_from_cols(columns: &[tidb_expr::column::Column], desc: bool) -
     columns
         .iter()
         .cloned()
-        .map(|column| SortItem::from_column(column, desc))
+        .map(|column| SortItem::new(column, desc))
         .collect()
 }
 
@@ -1087,7 +1090,7 @@ mod required_property_tests {
     #[test]
     fn mixed_directions_are_not_all_same_order() {
         let prop = PhysicalProperty {
-            sort_items: vec![SortItem::new(1, false), SortItem::new(2, true)],
+            sort_items: vec![SortItem::from_unique_id(1, false), SortItem::from_unique_id(2, true)],
             ..PhysicalProperty::default()
         };
         assert_eq!(prop.all_same_order(), (false, false));
@@ -1141,9 +1144,9 @@ mod required_property_tests {
     #[test]
     fn partial_order_is_prioritized_for_keep_order() {
         let prop = PhysicalProperty {
-            sort_items: vec![SortItem::new(1, false)],
+            sort_items: vec![SortItem::from_unique_id(1, false)],
             partial_order_info: Some(PartialOrderInfo {
-                sort_items: vec![SortItem::new(2, true)],
+                sort_items: vec![SortItem::from_unique_id(2, true)],
             }),
             ..PhysicalProperty::default()
         };
@@ -1207,7 +1210,7 @@ mod required_property_tests {
                 ..base.clone()
             },
             PhysicalProperty {
-                advisory_sort_items: vec![SortItem::new(1, false)],
+                advisory_sort_items: vec![SortItem::from_unique_id(1, false)],
                 ..base.clone()
             },
             PhysicalProperty {

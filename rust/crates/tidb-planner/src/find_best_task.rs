@@ -590,7 +590,7 @@ fn enforced_merge_join_candidates(
         right_keys.clear();
     }
     let child_prop = |keys: &[i64]| PhysicalProperty {
-        sort_items: keys.iter().map(|col| SortItem::new(*col, desc)).collect(),
+        sort_items: keys.iter().map(|col| SortItem::from_unique_id(*col, desc)).collect(),
         task_tp: TaskType::Root,
         expected_cnt: f64::MAX,
         can_add_enforcer: true,
@@ -921,7 +921,7 @@ mod tests {
         let candidates = merge_join_candidates(&join, &prop);
         assert_eq!(candidates.len(), 1);
         for (child, key) in candidates[0].child_props.iter().zip([1, 2]) {
-            assert_eq!(child.sort_items, vec![SortItem::new(key, false)]);
+            assert_eq!(child.sort_items, vec![SortItem::from_unique_id(key, false)]);
             assert!(!child.can_add_enforcer);
         }
         join.right_properties.clear();

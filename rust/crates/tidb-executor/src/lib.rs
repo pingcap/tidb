@@ -198,6 +198,7 @@ pub mod stats_lock;
 pub mod table_dual;
 pub mod table_reader;
 pub mod index_reader;
+pub mod index_lookup;
 mod table_sample;
 #[cfg(test)]
 mod tests_duplicate_entry_message_source;

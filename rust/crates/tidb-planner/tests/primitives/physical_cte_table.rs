@@ -52,7 +52,7 @@ fn explain_info_matches_cte_plan_tree_text() {
 fn task_gates_match_source_rejection_order() {
     let allocator = PlanIdAllocator::new();
     let sorted = PhysicalProperty {
-        sort_items: vec![SortItem::new(1, false)],
+        sort_items: vec![SortItem::from_unique_id(1, false)],
         ..PhysicalProperty::default()
     };
     assert!(

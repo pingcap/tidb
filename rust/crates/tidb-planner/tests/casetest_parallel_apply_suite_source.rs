@@ -28,7 +28,7 @@ fn apply(outer: PhysicalPlan, inner: PhysicalPlan, ordered: bool) -> PhysicalPla
     base.set_children(vec![outer, inner]);
     let outer_prop = tidb_planner_property::PhysicalProperty {
         sort_items: if ordered {
-            vec![tidb_planner_property::SortItem::new(1, false)]
+            vec![tidb_planner_property::SortItem::from_unique_id(1, false)]
         } else {
             Vec::new()
         },

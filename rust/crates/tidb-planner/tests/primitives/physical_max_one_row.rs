@@ -29,7 +29,7 @@ fn unsupported_sort_or_flash_requirements_do_not_emit_a_plan() {
     let logical =
         LogicalMaxOneRow::new(BaseLogicalPlan::new(&allocator, LogicalMaxOneRow::TYPE, 0));
     let sorted = PhysicalProperty {
-        sort_items: vec![SortItem::new(1, false)],
+        sort_items: vec![SortItem::from_unique_id(1, false)],
         ..PhysicalProperty::default()
     };
     assert!(exhaust_physical_plans_4_logical_max_one_row(&logical, &sorted, &allocator).is_empty());

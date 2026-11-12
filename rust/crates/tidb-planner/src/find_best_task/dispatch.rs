@@ -5161,33 +5161,6 @@ fn find_best_task_4_logical_data_source_paths(
                         from_data_source: true,
                     })
                 };
-                // Go `convertToIndexScan` (`find_best_task.go:2665`): a
-                // keep-order read on a non-common-handle table appends the
-                // extra handle column to the table side
-                // (`AppendExtraHandleCol`, isNew) and projects it back away
-                // above the reader — `cop.NeedExtraProj = true` with
-                // `cop.OriginSchema = ds.Schema()`. The common-handle
-                // missing-handle-column append (`:2652`) is a no-op here:
-                // this tier's table side already carries the full schema.
-                // Without the appended column the reader schema equals the
-                // origin schema, so Go's postOptimize
-                // eliminatePhysicalProjection would erase the projection
-                // `BuildIndexLookUpTask` builds (the reader's schema is the
-                // table side's, `physical_indexlookup_reader.go:205`).
-                let extra_handle_proj =
-                    keep_order && table_side.is_some() && ds.common_handle_cols.is_empty()
-                        && ds.handle_cols.is_empty();
-                let mut extra_phys_tbl_id_proj = false;
-                if keeps_phys_tbl_id {
-                    if let Some(table_plan) = table_side.as_deref_mut() {
-                        if let Some(schema_shared) = table_plan.base_mut().base.schema_shared() {
-                            let mut schema = schema_shared.as_ref().clone();
-                            extra_phys_tbl_id_proj =
-                                add_extra_phys_tbl_id_column(&mut schema.columns, ctx);
-                            table_plan.base_mut().base.set_schema(Some(schema));
-                        }
-                    }
-                }
                 // Go `convertToIndexScan` (`find_best_task.go:2652`): on a
                 // double read over a common-handle table, every handle
                 // column the DataSource schema lacks is appended to the table
@@ -5200,43 +5173,67 @@ fn find_best_task_4_logical_data_source_paths(
                         if let Some(schema_shared) = table_plan.base_mut().base.schema_shared() {
                             let mut schema = schema_shared.as_ref().clone();
                             let ds_schema = ds.base.base.schema().cloned().unwrap_or_default();
+                            let mut infos = Vec::new();
                             for column in &ds.common_handle_cols {
                                 if ds_schema.column_index(column) < 0 {
                                     schema.columns.push(column.clone());
+                                    infos.push(tidb_model::GoShared::new(column.to_info()));
                                     common_handle_proj = true;
                                 }
                             }
                             if common_handle_proj {
                                 table_plan.base_mut().base.set_schema(Some(schema));
+                                if let PhysicalPlan::TableScan(ts) = table_plan {
+                                    ts.columns.extend(infos);
+                                }
                             }
                         }
                     }
                 }
-                if extra_handle_proj {
-                    if let Some(table_plan) = table_side.as_deref_mut() {
-                        if let Some(schema_shared) = table_plan.base_mut().base.schema_shared() {
-                            let mut schema = schema_shared.as_ref().clone();
-                            let next_id = schema
-                                .columns
-                                .iter()
-                                .map(|column| column.unique_id)
-                                .max()
-                                .unwrap_or(0)
-                                + 1;
+                // Go `convertToIndexScan` (`find_best_task.go:2665`): a
+                // keep-order read on a non-common-handle table takes its
+                // handle from the table side (`AppendExtraHandleCol`), and a
+                // newly appended `_tidb_rowid` is projected back away above
+                // the reader (`cop.NeedExtraProj`, `cop.OriginSchema =
+                // ds.Schema()`).
+                let mut extra_handle_col = None;
+                let mut extra_handle_proj = false;
+                if keep_order && ds.common_handle_cols.is_empty() {
+                    if let Some(PhysicalPlan::TableScan(ts)) = table_side.as_deref_mut() {
+                        let next_id = ts
+                            .base
+                            .base
+                            .schema()
+                            .map_or(0, |schema| schema.columns.iter().map(|column| column.unique_id).max().unwrap_or(0))
+                            + 1;
+                        let (column, is_new) = ts.append_extra_handle_col(&ds.handle_cols, || {
                             let mut extra = tidb_expr::column::Column::new(
                                 ctx.column_ids.map(|ids| ids.alloc()).unwrap_or(next_id),
-                                tidb_datatype::FieldType::new(
-                                    tidb_datatype::FieldTypeCode::LongLong,
-                                )
-                                .with_flags(
-                                    tidb_datatype::FieldTypeFlags::NOT_NULL
-                                        | tidb_datatype::FieldTypeFlags::PRI_KEY,
+                                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong).with_flags(
+                                    tidb_datatype::FieldTypeFlags::NOT_NULL | tidb_datatype::FieldTypeFlags::PRI_KEY,
                                 ),
                             );
                             extra.id = tidb_planner_core_operator_logicalop::data_source::EXTRA_HANDLE_ID;
                             extra.orig_name = "_tidb_rowid".to_owned();
-                            schema.columns.push(extra);
-                            table_plan.base_mut().base.set_schema(Some(schema));
+                            extra
+                        });
+                        extra_handle_col = Some(column);
+                        extra_handle_proj = is_new;
+                    }
+                }
+                // Go `convertToIndexScan` (`find_best_task.go:2692`):
+                // `AddExtraPhysTblIDColumn` on the table side, after the
+                // handle.
+                let mut extra_phys_tbl_id_proj = false;
+                if keeps_phys_tbl_id {
+                    if let Some(PhysicalPlan::TableScan(ts)) = table_side.as_deref_mut() {
+                        let mut schema = ts.base.base.schema().cloned().unwrap_or_default();
+                        extra_phys_tbl_id_proj = add_extra_phys_tbl_id_column(&mut schema.columns, ctx);
+                        if extra_phys_tbl_id_proj {
+                            ts.base.base.set_schema(Some(schema));
+                            ts.columns.push(tidb_model::GoShared::new(
+                                tidb_model::ColumnInfo::new_extra_phys_tbl_id_col_info(),
+                            ));
                         }
                     }
                 }
@@ -5244,6 +5241,7 @@ fn find_best_task_4_logical_data_source_paths(
                     phys_plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
                     index_plan: Some(Box::new(index_plan)),
                     table_plan: table_side,
+                    extra_handle_col,
                     need_extra_proj: extra_handle_proj
                         || extra_phys_tbl_id_proj
                         || common_handle_proj,
@@ -6074,7 +6072,7 @@ mod tests {
         let selection = LogicalPlan::Selection(LogicalSelection::new(base, Vec::new()));
 
         let prop = PhysicalProperty {
-            sort_items: vec![SortItem::new(7, false)],
+            sort_items: vec![SortItem::from_unique_id(7, false)],
             can_add_enforcer: true,
             ..PhysicalProperty::default()
         };
@@ -6113,7 +6111,7 @@ mod tests {
         let selection = LogicalPlan::Selection(LogicalSelection::new(base, Vec::new()));
 
         let prop = PhysicalProperty {
-            sort_items: vec![SortItem::new(7, false)],
+            sort_items: vec![SortItem::from_unique_id(7, false)],
             can_add_enforcer: true,
             ..PhysicalProperty::default()
         };
@@ -6202,7 +6200,7 @@ mod tests {
         apply.cor_cols = vec![tidb_expr::column::CorrelatedColumn::new(column)];
         let prop = PhysicalProperty {
             expected_cnt: 5.0,
-            sort_items: if ordered { vec![SortItem::new(1, false)] } else { vec![] },
+            sort_items: if ordered { vec![SortItem::from_unique_id(1, false)] } else { vec![] },
             ..Default::default()
         };
         let (mut candidates, _) = exhaust_physical_plans(&LogicalPlan::Apply(apply), &prop, &ctx).unwrap();
@@ -7186,7 +7184,7 @@ mod tests {
         let partial = PhysicalProperty {
             task_tp: TaskType::CopMultiRead,
             partial_order_info: Some(tidb_planner_property::PartialOrderInfo {
-                sort_items: vec![SortItem::from_column(column.clone(), false)],
+                sort_items: vec![SortItem::new(column.clone(), false)],
             }),
             ..PhysicalProperty::default()
         };
@@ -7706,7 +7704,7 @@ mod tests {
         // A required order enumerates nothing (getHashAggs' first gate);
         // with CanAddEnforcer the enforcer branch sorts ABOVE the agg.
         let prop = PhysicalProperty {
-            sort_items: vec![tidb_planner_property::SortItem::new(1, false)],
+            sort_items: vec![tidb_planner_property::SortItem::from_unique_id(1, false)],
             can_add_enforcer: true,
             ..PhysicalProperty::default()
         };

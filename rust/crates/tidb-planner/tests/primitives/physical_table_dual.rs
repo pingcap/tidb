@@ -49,7 +49,7 @@ fn table_dual_explain_and_kind_match_source_plan_tree() {
 fn one_row_dual_accepts_required_sort_property() {
     let allocator = PlanIdAllocator::new();
     let property = PhysicalProperty {
-        sort_items: vec![SortItem::new(1, false)],
+        sort_items: vec![SortItem::from_unique_id(1, false)],
         ..PhysicalProperty::default()
     };
     let task = find_best_task_4_logical_table_dual(
@@ -69,7 +69,7 @@ fn one_row_dual_accepts_required_sort_property() {
 fn multirow_dual_rejects_sort() {
     let allocator = PlanIdAllocator::new();
     let property = PhysicalProperty {
-        sort_items: vec![SortItem::new(1, false)],
+        sort_items: vec![SortItem::from_unique_id(1, false)],
         ..PhysicalProperty::default()
     };
     assert!(find_best_task_4_logical_table_dual(

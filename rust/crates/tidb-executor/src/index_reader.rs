@@ -222,6 +222,7 @@ impl IndexReaderExecutor {
                 store_type: tidb_kv::store_type::StoreType::TiKv,
                 dag,
                 key_ranges: kv_ranges,
+                key_range_hints: Vec::new(),
                 partition_id_and_ranges: Vec::new(),
                 batch_cop: false,
                 schema_version: 0,
@@ -230,9 +231,13 @@ impl IndexReaderExecutor {
                 start_ts: self.start_ts,
                 keep_order: self.keep_order,
                 desc: self.desc,
+                // Go `paging`: the session's `EnablePaging`.
+                paging: statement.paging,
                 field_types: self.meta.ret_field_types().to_vec(),
                 cop_plan_ids: self.plan_ids.clone(),
                 root_plan_id: isize::try_from(self.meta.id()).unwrap_or(0),
+                // Go `memTracker`, `NewTracker(e.ID(), -1)` under the statement's.
+                mem_tracker: (self.meta.id() > 0).then(|| statement.memory.operator_tracker(self.meta.id())),
             },
         )
         .map_err(|error| ExecError::Internal(error.into()))

@@ -132,10 +132,7 @@ impl LogicalProjection {
                 .position(|c| c.unique_id == item.col.unique_id)?;
             match self.exprs.get(idx)? {
                 Expression::Column(col) => {
-                    new_items.push(tidb_planner_property::SortItem::new(
-                        col.unique_id,
-                        item.desc,
-                    ));
+                    new_items.push(tidb_planner_property::SortItem::new(col.clone(), item.desc));
                 }
                 Expression::ScalarFunction(_) => return None,
                 Expression::Constant(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => {}
@@ -166,7 +163,7 @@ impl LogicalProjection {
                 };
                 match self.exprs.get(index)? {
                     Expression::Column(column) => sort_items.push(
-                        tidb_planner_property::SortItem::from_column(column.clone(), item.desc),
+                        tidb_planner_property::SortItem::new(column.clone(), item.desc),
                     ),
                     Expression::ScalarFunction(_) => return None,
                     Expression::Constant(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => {}

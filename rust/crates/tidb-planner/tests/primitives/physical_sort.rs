@@ -41,7 +41,7 @@ fn sort(items: Vec<SortItem>, partial: bool, offset: i32, stream_count: u64) -> 
 #[test]
 fn sort_memory_usage_grows_when_by_item_is_added() {
     let empty = PhysicalPlan::Sort(sort(vec![], false, 0, 0));
-    let with_item = PhysicalPlan::Sort(sort(vec![SortItem::new(1, false)], false, 0, 0));
+    let with_item = PhysicalPlan::Sort(sort(vec![SortItem::from_unique_id(1, false)], false, 0, 0));
     assert!(with_item.memory_usage() > empty.memory_usage());
 }
 
@@ -63,7 +63,7 @@ fn clone_preserves_sort_stream_count_for_zero_and_eight() {
 
 #[test]
 fn deep_clone_keeps_sort_items_independent() {
-    let plan = PhysicalPlan::Sort(sort(vec![SortItem::new(1, false)], false, 0, 0));
+    let plan = PhysicalPlan::Sort(sort(vec![SortItem::from_unique_id(1, false)], false, 0, 0));
     let mut cloned = plan.clone_plan();
     let PhysicalPlan::Sort(cloned_sort) = &mut cloned else {
         unreachable!();
@@ -90,7 +90,7 @@ fn deep_clone_keeps_sort_items_independent() {
 #[test]
 fn sort_identity_partial_flag_and_stream_count_live_on_the_physical_tree() {
     let plan = sort(
-        vec![SortItem::new(1, false), SortItem::new(2, true)],
+        vec![SortItem::from_unique_id(1, false), SortItem::from_unique_id(2, true)],
         true,
         4,
         8,

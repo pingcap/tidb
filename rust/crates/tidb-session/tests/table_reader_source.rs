@@ -37,3 +37,41 @@ fn a_prefix_index_reads_a_clustered_columns_full_value() {
     tk.must_query("select c2 from t2 use index(idx1)").check(["cd"]);
     tk.must_query("select count(1) from t2 use index(idx1) where c2 = 'cd'").check(["1"]);
 }
+
+/// Go `IndexLookUpExecutor` keeping the index order: the table side reads
+/// the handle the planner appended (`PhysicalTableScan.AppendExtraHandleCol`,
+/// the reader's `ExtraHandleCol`) to sort each task's rows back into index
+/// order, and a dynamically pruned partitioned table merges its partitions'
+/// index results by the order-by column (`buildIndexScanOutputOffsets`).
+#[test]
+fn a_keep_order_index_lookup_sorts_by_the_extra_handle() {
+    let mut tk = TestKit::new();
+    tk.must_exec("create table t (a int, b int, c int, index ib(b))");
+    tk.must_exec("insert into t values (1, 30, 100), (2, 20, 200), (3, 10, 300), (4, 40, 400)");
+    tk.must_query("select c from t force index(ib) where b < 40 order by b").check(["300", "200", "100"]);
+    tk.must_query("select c from t force index(ib) where b < 40 order by b desc").check(["100", "200", "300"]);
+    tk.must_exec("create table p (a int, b int, c int, index ib(b)) partition by hash(a) partitions 3");
+    tk.must_exec("insert into p values (1, 30, 100), (2, 20, 200), (3, 10, 300), (4, 40, 400)");
+    tk.must_query("select c from p force index(ib) where b < 40 order by b").check(["300", "200", "100"]);
+}
+
+/// Go `IndexLookUpExecutor`'s table task fills a virtual column the table
+/// side's filter reads (`FillVirtualColumnValue` before the root selection),
+/// over an int handle and over `_tidb_rowid`.
+#[test]
+fn an_index_lookup_fills_the_virtual_columns_its_filter_reads() {
+    let mut tk = TestKit::new();
+    for (table, handle) in [("t", "a bigint primary key"), ("u", "a bigint")] {
+        tk.must_exec(&format!("create table {table} ({handle}, b bigint as (a+10), c bigint, index ic(c))"));
+        tk.must_exec(&format!("insert into {table} (a, c) values (1, 21), (2, 22), (3, 23)"));
+        for (suffix, expected) in [
+            ("", &["12", "13"][..]),
+            (" limit 1", &["12"][..]),
+            (" limit 1 offset 1", &["13"][..]),
+            (" desc limit 1", &["13"][..]),
+        ] {
+            tk.must_query(&format!("select b from {table} force index(ic) where c >= 21 and b > 11 order by c{suffix}"))
+                .check(expected);
+        }
+    }
+}

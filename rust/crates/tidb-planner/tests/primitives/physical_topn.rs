@@ -56,7 +56,7 @@ fn prefix_index_metadata_lives_on_the_wired_topn() {
     let plan = PhysicalTopN {
         base: BasePhysicalPlan::with_id(1, "TopN", 4),
         by_items: vec![ByItems::new(column(2), false)],
-        partition_by: vec![SortItem::new(3, false)],
+        partition_by: vec![SortItem::from_unique_id(3, false)],
         offset: 1,
         count: 2,
         prefix_col: Some(2),

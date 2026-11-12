@@ -974,10 +974,7 @@ pub fn exhaust_physical_plans_4_logical_sort(
         .iter()
         .map(|item| {
             let column = item.expr.as_column()?;
-            Some(tidb_planner_property::SortItem::new(
-                column.unique_id,
-                item.desc,
-            ))
+            Some(tidb_planner_property::SortItem::new(column.clone(), item.desc))
         })
         .collect::<Option<Vec<_>>>();
     let stats = sort
@@ -1028,10 +1025,7 @@ pub fn exhaust_physical_plans_4_logical_sort(
                 .by_items
                 .iter()
                 .filter_map(|item| {
-                    Some(tidb_planner_property::SortItem::new(
-                        item.expr.as_column()?.unique_id,
-                        item.desc,
-                    ))
+                    Some(tidb_planner_property::SortItem::new(item.expr.as_column()?.clone(), item.desc))
                 })
                 .collect(),
             only_column: true,
@@ -1365,6 +1359,26 @@ pub struct PhysicalMemTable {
 }
 
 impl PhysicalTableScan {
+    /// Go `PhysicalTableScan.AppendExtraHandleCol`: a reader that keeps order
+    /// needs the handle from its table scan -- the DataSource's int handle
+    /// when it has one, else `new_handle_col` appended to the scan (`true`).
+    pub fn append_extra_handle_col(
+        &mut self,
+        handle_cols: &[Column],
+        new_handle_col: impl FnOnce() -> Column,
+    ) -> (Column, bool) {
+        if let Some(handle_col) = handle_cols.first() {
+            return (handle_col.clone(), false);
+        }
+        let handle_col = new_handle_col();
+        let mut schema = self.base.base.schema().cloned().unwrap_or_default();
+        schema.columns.push(handle_col.clone());
+        self.base.base.set_schema(Some(schema));
+        self.columns
+            .push(tidb_model::GoShared::new(tidb_model::ColumnInfo::new_extra_handle_col_info()));
+        (handle_col, true)
+    }
+
     /// Go `PhysicalTableScan.hasFullTextIndexPushDown`.
     #[must_use]
     pub fn has_full_text_index_push_down(&self) -> bool {
@@ -2645,8 +2659,7 @@ pub struct PhysicalIndexReader {
 /// Go `physicalop.PhysicalIndexLookUpReader`
 /// (`physical_indexlookup_reader.go:33`): the double read — the index side
 /// finds row ids, the table side reads the rows back — born by
-/// `BuildIndexLookUpTask` (`:284`). `ExtraHandleCol` and `PlanPartInfo` stay
-/// with their unported dependent types, absent rather than stubbed.
+/// `BuildIndexLookUpTask` (`:284`).
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalIndexLookUpReader {
     /// The shared physical base.
@@ -2663,6 +2676,9 @@ pub struct PhysicalIndexLookUpReader {
     pub index_plans_un_natural_orders: std::collections::BTreeMap<usize, usize>,
     /// Go `TablePlans`, the leaf-first flattening of `TablePlan`.
     pub table_plans: Vec<PhysicalPlan>,
+    /// Go `ExtraHandleCol`: the table side's int handle a keep-order read
+    /// sorts its rows back into index order by.
+    pub extra_handle_col: Option<Column>,
     /// Go `CommonHandleCols`.
     pub common_handle_cols: Vec<Column>,
     /// Go `IndexLookUpPushDown`, true after `tryPushDownLookUp` succeeds.
@@ -3066,10 +3082,7 @@ pub fn get_prop_by_order_by_items(
         let tidb_expr::expression::Expression::Column(col) = &item.expr else {
             return None;
         };
-        prop_items.push(tidb_planner_property::SortItem::new(
-            col.unique_id,
-            item.desc,
-        ));
+        prop_items.push(tidb_planner_property::SortItem::new(col.clone(), item.desc));
     }
     Some(prop_items)
 }
@@ -3218,7 +3231,7 @@ pub fn get_phys_top_n(
             .iter()
             .map(|item| match &item.expr {
                 tidb_expr::expression::Expression::Column(column) => Some(
-                    tidb_planner_property::SortItem::new(column.unique_id, item.desc),
+                    tidb_planner_property::SortItem::new(column.clone(), item.desc),
                 ),
                 _ => None,
             })
@@ -3236,7 +3249,7 @@ pub fn get_phys_top_n(
             .iter()
             .map(|item| match &item.expr {
                 tidb_expr::expression::Expression::Column(column) => Some(
-                    tidb_planner_property::SortItem::from_column(column.clone(), item.desc),
+                    tidb_planner_property::SortItem::new(column.clone(), item.desc),
                 ),
                 _ => None,
             })
@@ -3867,7 +3880,7 @@ pub fn get_stream_aggs(
         }
         let child_sort: Vec<tidb_planner_property::SortItem> = possible[..group_by_cols.len()]
             .iter()
-            .map(|col| tidb_planner_property::SortItem::new(col.unique_id, desc))
+            .map(|col| tidb_planner_property::SortItem::new(col.clone(), desc))
             .collect();
         let child_prop_probe = PhysicalProperty {
             sort_items: child_sort.clone(),
@@ -3920,7 +3933,7 @@ pub fn get_stream_aggs(
     {
         let child_sort = group_by_cols
             .iter()
-            .map(|column| tidb_planner_property::SortItem::new(column.unique_id, desc))
+            .map(|column| tidb_planner_property::SortItem::new(column.clone(), desc))
             .collect::<Vec<_>>();
         let child_prop_probe = PhysicalProperty {
             sort_items: child_sort.clone(),
@@ -4105,7 +4118,7 @@ fn try_to_get_mpp_windows(
         .partition_by
         .iter()
         .chain(&window.order_by)
-        .map(|item| tidb_planner_property::SortItem::new(item.col.unique_id, item.desc))
+        .map(|item| tidb_planner_property::SortItem::new(item.col.clone(), item.desc))
         .collect();
     let mut child_prop = PhysicalProperty {
         expected_cnt: f64::MAX,
@@ -4222,7 +4235,7 @@ pub fn exhaust_physical_plans_4_logical_window(
     let child_prop = PhysicalProperty {
         sort_items: by_items
             .iter()
-            .map(|item| tidb_planner_property::SortItem::new(item.col.unique_id, item.desc))
+            .map(|item| tidb_planner_property::SortItem::new(item.col.clone(), item.desc))
             .collect(),
         task_tp: TaskType::Root,
         expected_cnt: f64::MAX,
@@ -5209,6 +5222,7 @@ impl PhysicalPlan {
                 index_plans: op.index_plans.clone(),
                 index_plans_un_natural_orders: op.index_plans_un_natural_orders.clone(),
                 table_plans: op.table_plans.clone(),
+                extra_handle_col: op.extra_handle_col.clone(),
                 common_handle_cols: op.common_handle_cols.clone(),
                 index_lookup_push_down: op.index_lookup_push_down,
                 keep_order: op.keep_order,

@@ -58,7 +58,7 @@ fn partition_and_prefix_metadata_are_caller_owned() {
     column.orig_name = "a".to_owned();
     let mut plan = limit(1, 2, 0);
     plan.base.base.set_schema(Some(Schema::new(vec![column])));
-    plan.partition_by = vec![SortItem::new(1, false)];
+    plan.partition_by = vec![SortItem::from_unique_id(1, false)];
     plan.prefix_col = Some(1);
     plan.prefix_len = 3;
     assert_eq!(

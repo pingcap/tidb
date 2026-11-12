@@ -60,7 +60,7 @@ fn ddl_jobs_show_keeps_job_number_and_gate_behavior() {
     assert_eq!(plan.job_number, 12);
 
     let sorted = PhysicalProperty {
-        sort_items: vec![SortItem::new(1, false)],
+        sort_items: vec![SortItem::from_unique_id(1, false)],
         ..PhysicalProperty::default()
     };
     assert!(find_best_task_4_logical_show_ddl_jobs(&jobs, &sorted, &allocator).invalid());

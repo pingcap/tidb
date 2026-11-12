@@ -1343,7 +1343,7 @@ mod tests {
             candidates[1].index_merge_or_source_filter.as_ref().unwrap().canonical_hash_code()
         );
         let advisory = tidb_planner_property::PhysicalProperty {
-            advisory_sort_items: vec![tidb_planner_property::SortItem::new(b.unique_id, false)],
+            advisory_sort_items: vec![tidb_planner_property::SortItem::from_unique_id(b.unique_id, false)],
             ..Default::default()
         };
         let mut logical_source = choices.clone();

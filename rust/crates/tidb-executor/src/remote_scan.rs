@@ -977,15 +977,13 @@ mod tests {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 2,
                         name: tidb_ast::CiString::new("check_stored"),
-                        columns: (vec![2])
-                            .iter()
-                            .enumerate()
-                            .map(|(position, _)| tidb_model::IndexColumn {
-                                length: (vec![tidb_datatype::UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
-                                ..tidb_model::IndexColumn::default()
-                            })
-                            .collect::<Vec<_>>()
-                            .into(),
+                        columns: vec![tidb_model::IndexColumn {
+                            name: tidb_ast::CiString::new("c"),
+                            offset: 2,
+                            length: tidb_datatype::UNSPECIFIED_LENGTH,
+                            ..tidb_model::IndexColumn::default()
+                        }]
+                        .into(),
                         state: tidb_model::SchemaState::PUBLIC,
                         ..tidb_model::IndexInfo::default()
                     }),

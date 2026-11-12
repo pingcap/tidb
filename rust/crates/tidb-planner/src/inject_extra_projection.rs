@@ -885,7 +885,7 @@ mod tests {
         )]);
         let plan = PhysicalPlan::NominalSort(tidb_planner_core_operator_physicalop::NominalSort {
             base,
-            by_items: vec![tidb_planner_property::SortItem::new(1, false)],
+            by_items: vec![tidb_planner_property::SortItem::from_unique_id(1, false)],
             only_column: true,
         });
 
@@ -908,7 +908,7 @@ mod tests {
         )]);
         let plan = PhysicalPlan::NominalSort(tidb_planner_core_operator_physicalop::NominalSort {
             base,
-            by_items: vec![tidb_planner_property::SortItem::new(1, false)],
+            by_items: vec![tidb_planner_property::SortItem::from_unique_id(1, false)],
             only_column: false,
         });
 

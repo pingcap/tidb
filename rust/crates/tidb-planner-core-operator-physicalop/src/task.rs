@@ -490,6 +490,8 @@ pub struct CopTask {
     pub index_plan: Option<Box<PhysicalPlan>>,
     /// Go `TablePlan`.
     pub table_plan: Option<Box<PhysicalPlan>>,
+    /// Go `ExtraHandleCol`.
+    pub extra_handle_col: Option<tidb_expr::column::Column>,
     /// Go `CommonHandleCols`.
     pub common_handle_cols: Vec<tidb_expr::column::Column>,
     /// Go `IndexLookUpPushDownBy`: whether a double read should become one
@@ -869,6 +871,7 @@ impl CopTask {
             index_plans,
             index_plans_un_natural_orders,
             table_plans,
+            extra_handle_col: self.extra_handle_col,
             common_handle_cols: self.common_handle_cols,
             index_lookup_push_down,
             keep_order: self.keep_order,

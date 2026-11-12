@@ -88,7 +88,7 @@ fn sort_requests_are_rejected() {
     let allocator = PlanIdAllocator::new();
     let union = LogicalUnionAll::new(BaseLogicalPlan::new(&allocator, LogicalUnionAll::TYPE, 0));
     let sorted = PhysicalProperty {
-        sort_items: vec![SortItem::new(1, false)],
+        sort_items: vec![SortItem::from_unique_id(1, false)],
         ..PhysicalProperty::default()
     };
     assert!(

@@ -45,7 +45,11 @@ reader built by Go's `buildTableReader` / `buildIndexReader` /
   reader on a store with a coprocessor client to it.
 - [x] (2026-11-12) Milestone 2: `IndexReaderExecutor` likewise (`index_reader.rs`), on
   `PhysicalIndexScan.ToPB` ported with the scan's `Table` and `Index`.
-- [ ] Milestone 3: `IndexLookUpExecutor` (index side and table tasks).
+- [x] (2026-11-12) Milestone 3: `IndexLookUpExecutor` (`index_lookup.rs`):
+  the index worker (one request a key-range group, merged by the order-by
+  columns across groups, one pooled decode chunk), table workers over Go's
+  `tableRequest` with the handles' ranges and hints, Go's per-task memory
+  charges, index usage and runtime stats.
 - [ ] Milestone 4: `UnionScanExec` over a reader with Go's `memTableReader`;
   the staged-row merge and `open_mpp_scan` are deleted.
 - [ ] Milestone 5: the offer machinery is deleted; E15 leaves the register.
@@ -66,6 +70,21 @@ reader built by Go's `buildTableReader` / `buildIndexReader` /
   under `MustQuery`, which resets the pool per statement, settled it; a
   probe through `tk.Exec`, which does not reset, misleads); and the copr
   runtime refused a request over no range, where Go builds no task.
+- 2026-11-12 (M3): the IndexLookUp reader exposed planner fields Go has and
+  Rust lacked or dropped: `PhysicalIndexLookUpReader.ExtraHandleCol` (and
+  `PhysicalTableScan.AppendExtraHandleCol`, which also appends the column's
+  info to `ts.Columns`; `AddExtraPhysTblIDColumn` likewise, after the
+  handle); `SortItem`s that named their column by UniqueID alone, so a
+  partition merge's ByItems carried no column ID (`SortItem::new` now takes
+  the column, as Go's `SortItem{Col}`; only the merge-join enumeration,
+  which keeps its join keys as UniqueIDs, still builds ID-only items); and
+  the reader's own schema, which in Go is its table plan's schema object, so
+  `ResolveIndicesForVirtualColumn` binds both.
+- 2026-11-12 (M3): `TableRead` now takes Go's `SetMemTracker` and
+  `SetPaging` from its caller. The TableReader and IndexReader still hand
+  each select result a fresh operator tracker under the statement's, where
+  Go's reader holds one `memTracker` (reset and attached on `Open`) that its
+  `kvRanges` are charged to as well; the lookup does it Go's way.
 
 ## Decision Log
 

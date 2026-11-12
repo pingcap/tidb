@@ -521,6 +521,7 @@ impl TableReaderExecutor {
                 store_type: self.store_type,
                 dag,
                 key_ranges,
+                key_range_hints: Vec::new(),
                 partition_id_and_ranges,
                 batch_cop: self.batch_cop,
                 schema_version: self.schema_version,
@@ -529,9 +530,13 @@ impl TableReaderExecutor {
                 start_ts: self.start_ts,
                 keep_order: self.keep_order,
                 desc: self.desc,
+                // Go `paging`: the session's `EnablePaging`.
+                paging: statement.paging,
                 field_types: self.meta.ret_field_types().to_vec(),
                 cop_plan_ids: self.plan_ids.clone(),
                 root_plan_id: isize::try_from(self.meta.id()).unwrap_or(0),
+                // Go `memTracker`, `NewTracker(e.ID(), -1)` under the statement's.
+                mem_tracker: (self.meta.id() > 0).then(|| statement.memory.operator_tracker(self.meta.id())),
             },
         )
         .map_err(|error| ExecError::Internal(error.into()))

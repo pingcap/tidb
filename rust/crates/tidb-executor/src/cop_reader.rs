@@ -891,6 +891,9 @@ pub(crate) struct TableRead {
     /// Go `SetHandleRanges` / `SetKeyRanges`' ranges; empty for a partition
     /// table scan.
     pub key_ranges: Vec<KeyRange>,
+    /// Go `SetTableHandles`' row-count hints, aligned with `key_ranges`;
+    /// empty for a request over ranges.
+    pub key_range_hints: Vec<usize>,
     /// Go `SetPartitionIDAndRanges`.
     pub partition_id_and_ranges: Vec<tidb_txnkv::PartitionIdAndRanges>,
     /// Go `SetAllowBatchCop(e.batchCop)`.
@@ -903,11 +906,16 @@ pub(crate) struct TableRead {
     pub start_ts: u64,
     pub keep_order: bool,
     pub desc: bool,
+    /// Go `SetPaging`.
+    pub paging: bool,
     /// Go `exec.RetTypes(e)`.
     pub field_types: Vec<FieldType>,
     /// Go `getPhysicalPlanIDs(e.plans)` and `e.ID()`.
     pub cop_plan_ids: Vec<isize>,
     pub root_plan_id: isize,
+    /// Go `SetMemTracker`: the tracker the select result charges its
+    /// responses to, none for a request built without one.
+    pub mem_tracker: Option<Arc<tidb_memory::Tracker>>,
 }
 
 /// Go `TableReaderExecutor.SelectResult`: the request through `client` (a
@@ -917,12 +925,13 @@ pub(crate) fn open_table_read(
     statement: &tidb_distsql::remote_scan::PushdownStatementContext,
     read: TableRead,
 ) -> Result<SelectResponseIter, String> {
-    let memory_tracker =
-        (read.root_plan_id > 0).then(|| statement.memory.operator_tracker(read.root_plan_id as i64));
+    let memory_tracker = read.mem_tracker;
     let envelope = dag_envelope(&read.dag);
     let plan = RemoteScanPlan {
         key_ranges: read.key_ranges,
+        key_range_hints: read.key_range_hints,
         snapshot_ts: read.start_ts,
+        paging: read.paging,
         keep_order: read.keep_order,
         // Go `kv.Request.KeepOrder = false`: the copIterator answers each
         // region's response as it completes.
