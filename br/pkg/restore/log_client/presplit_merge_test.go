@@ -119,3 +119,26 @@ func TestMergeDMLFilesByTableStopsOnIterError(t *testing.T) {
 	require.Nil(t, got)
 	require.Zero(t, count)
 }
+
+func TestMergeDMLFilesByTableStopsOnCancel(t *testing.T) {
+	r := rand.New(rand.NewSource(11))
+	files := randomDMLFiles(r, 50000)
+	rules := map[int64]*restoreutils.RewriteRules{}
+	for _, f := range files {
+		rules[f.TableId] = &restoreutils.RewriteRules{}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	seen := 0
+	it := iter.Tap(iter.FromSlice(files), func(*logclient.LogDataFileInfo) {
+		seen++
+		if seen == 10000 {
+			cancel()
+		}
+	})
+	got, count, err := logclient.MergeDMLFilesByTable(ctx, it, rules, 2)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, got)
+	require.Zero(t, count)
+	require.Less(t, seen, len(files))
+}

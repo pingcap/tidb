@@ -60,6 +60,9 @@ func mergeDMLFilesByTable(
 		go func(queue <-chan []preSplitFile, owned map[int64]*split.SplitHelper) {
 			defer wg.Done()
 			for batch := range queue {
+				if ctx.Err() != nil {
+					continue
+				}
 				for _, f := range batch {
 					helper, ok := owned[f.tableID]
 					if !ok {
@@ -73,12 +76,20 @@ func mergeDMLFilesByTable(
 	}
 
 	pending := make([][]preSplitFile, workers)
-	flush := func(i int) {
+	flush := func(i int) error {
 		if len(pending[i]) == 0 {
-			return
+			return nil
 		}
-		queues[i] <- pending[i]
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		select {
+		case queues[i] <- pending[i]:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 		pending[i] = make([]preSplitFile, 0, preSplitMergeBatchSize)
+		return nil
 	}
 
 	var fileCount int
@@ -109,15 +120,18 @@ func mergeDMLFilesByTable(
 				},
 			},
 		})
-		if len(pending[i]) >= preSplitMergeBatchSize {
-			flush(i)
-		}
 		fileCount++
+		if len(pending[i]) >= preSplitMergeBatchSize {
+			if iterErr = flush(i); iterErr != nil {
+				break
+			}
+		}
+	}
+	for i := 0; iterErr == nil && i < workers; i++ {
+		iterErr = flush(i)
 	}
 	if iterErr == nil {
-		for i := range workers {
-			flush(i)
-		}
+		iterErr = ctx.Err()
 	}
 	for _, queue := range queues {
 		close(queue)
