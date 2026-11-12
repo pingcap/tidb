@@ -312,9 +312,113 @@ pub struct TableReaderExecutor {
     cur: usize,
     /// Go `kvRanges`.
     kv_ranges: Vec<tidb_txnkv::KeyRange>,
+    /// Go `paging` (the session's `EnablePaging`; never for a reader built
+    /// from handles).
+    paging: bool,
+    /// Go `memTracker`, made on `Open`; a reader its caller built and never
+    /// opens has none.
+    mem_tracker: Option<Arc<tidb_memory::Tracker>>,
+    /// Go `dagPB.Size()` of the reader's request.
+    dag_size: usize,
+}
+
+/// What Go's `IndexLookUpExecutor.buildTableReader` puts in the
+/// `TableReaderExecutor` a table task reads its handles through.
+pub(crate) struct TableReaderForHandles<'a> {
+    /// The reader's shape: the lookup's schema under its table plans' root.
+    pub meta: ExecutorMeta,
+    pub ctx: &'a crate::StmtContext,
+    pub client: Arc<dyn tidb_txnkv::Client>,
+    /// Go `tblPlans`' root.
+    pub table_plan: &'a PhysicalPlan,
+    /// Go `getPhysicalPlanIDs(e.tblPlans)`.
+    pub plan_ids: Vec<isize>,
+    /// Go `tableRequest`.
+    pub dag: tipb::DagRequest,
+    /// Go `getPhysicalTableID(table)`.
+    pub physical_table_id: i64,
+    pub is_common_handle: bool,
+    pub columns: Vec<tidb_model::GoShared<tidb_model::ColumnInfo>>,
+    pub start_ts: u64,
+    /// Go `avgRowSize * len(task.handles)`.
+    pub net_data_size: f64,
 }
 
 impl TableReaderExecutor {
+    /// Go `dataReaderBuilder.buildTableReaderFromHandles(ctx, e, handles,
+    /// true)`: the handles sorted, their ranges and row-count hints the
+    /// request (`SetTableHandles`), which `buildTableReaderBase` sends at
+    /// once -- the reader is never opened.
+    ///
+    /// # Errors
+    /// The request could not be sent.
+    pub(crate) fn build_table_reader_from_handles(
+        e: TableReaderForHandles<'_>,
+        handles: &mut [tidb_txnkv::Handle],
+    ) -> Result<Self, ExecError> {
+        handles.sort_by(|a, b| a.clone().compare(b).unwrap_or(std::cmp::Ordering::Equal));
+        let (kv_ranges, hints) = tidb_distsql::table_handles_to_kv_ranges(e.physical_table_id, handles);
+        let (virtual_column_index, virtual_column_ret_field_types) =
+            crate::mpp_gather::build_virtual_column_info(e.meta.schema(), &e.columns);
+        let mut reader = Self {
+            ctx: e.ctx.clone(),
+            store_type: tidb_kv::store_type::StoreType::TiKv,
+            net_data_size: e.net_data_size,
+            client: e.client,
+            table_plan: e.table_plan.clone(),
+            plan_ids: e.plan_ids,
+            physical_table_id: e.physical_table_id,
+            is_common_handle: e.is_common_handle,
+            ranges: Vec::new(),
+            range_rebuild: None,
+            partitions: None,
+            keep_order: false,
+            desc: false,
+            batch_cop: false,
+            start_ts: e.start_ts,
+            schema_version: 0,
+            columns: e.columns,
+            virtual_column_index,
+            virtual_column_ret_field_types,
+            results: std::collections::VecDeque::new(),
+            cur: 0,
+            kv_ranges: kv_ranges.clone(),
+            paging: false,
+            mem_tracker: None,
+            dag_size: prost::Message::encoded_len(&e.dag),
+            meta: e.meta,
+        };
+        let statement = crate::remote_scan::pushdown_statement_context(&reader.ctx)
+            .with_estimated_net_bytes(reader.net_data_size);
+        let result = reader.select_result(&statement, e.dag, kv_ranges, hints, Vec::new())?;
+        reader.results.push_back(result);
+        Ok(reader)
+    }
+
+    /// Go `TableReaderExecutor.memUsage()`: the executor, its `ranges`, its
+    /// `kvRanges` (each key allocated exactly) and `dagPB.Size()`.
+    pub(crate) fn mem_usage(&self) -> i64 {
+        // Go `unsafe.Sizeof(TableReaderExecutor{})`, `size.SizeOfPointer`
+        // and `unsafe.Sizeof(kv.KeyRange{})`.
+        const SIZEOF_TABLE_READER_EXECUTOR: usize = 768;
+        const SIZEOF_POINTER: usize = 8;
+        const SIZEOF_KEY_RANGE: usize = 48;
+        let ranges = self.ranges.len() * SIZEOF_POINTER
+            + self.ranges.iter().map(|range| range.mem_usage() as usize).sum::<usize>();
+        let key_bytes: usize = self.kv_ranges.iter().map(|range| range.start_key.len() + range.end_key.len()).sum();
+        let kv_ranges_cap = if self.kv_ranges.is_empty() {
+            0
+        } else {
+            tidb_goruntime::go_runtime::go_64_next_slice_capacity_for_element(
+                self.kv_ranges.len(),
+                0,
+                SIZEOF_KEY_RANGE,
+                tidb_goruntime::go_runtime::GoSliceElementLayout::PointerBearing,
+            )
+        };
+        (SIZEOF_TABLE_READER_EXECUTOR + ranges + kv_ranges_cap * SIZEOF_KEY_RANGE + key_bytes + self.dag_size) as i64
+    }
+
     /// Go `buildTableReader` for a `kv.TiKV` reader or a `kv.TiFlash` one
     /// `useMPPExecution` refuses: `buildNoRangeTableReader`, then the
     /// reader's ranges and, for
@@ -424,6 +528,9 @@ impl TableReaderExecutor {
             results: std::collections::VecDeque::new(),
             cur: 0,
             kv_ranges: Vec::new(),
+            paging: crate::remote_scan::pushdown_statement_context(ctx).paging,
+            mem_tracker: None,
+            dag_size: 0,
         };
         match &reader.partitions {
             // Go `buildKVReqSeparately` under `NewSortedSelectResults`: a
@@ -494,6 +601,9 @@ impl TableReaderExecutor {
                     results: std::collections::VecDeque::new(),
                     cur: 0,
                     kv_ranges: Vec::new(),
+                    paging: self.paging,
+                    mem_tracker: None,
+                    dag_size: 0,
                 }) as Box<dyn Executor>
             })
             .collect();
@@ -512,6 +622,7 @@ impl TableReaderExecutor {
         statement: &tidb_distsql::remote_scan::PushdownStatementContext,
         dag: tipb::DagRequest,
         key_ranges: Vec<tidb_txnkv::KeyRange>,
+        key_range_hints: Vec<usize>,
         partition_id_and_ranges: Vec<tidb_txnkv::PartitionIdAndRanges>,
     ) -> Result<SelectResponseIter, ExecError> {
         crate::cop_reader::open_table_read(
@@ -521,7 +632,7 @@ impl TableReaderExecutor {
                 store_type: self.store_type,
                 dag,
                 key_ranges,
-                key_range_hints: Vec::new(),
+                key_range_hints,
                 partition_id_and_ranges,
                 batch_cop: self.batch_cop,
                 schema_version: self.schema_version,
@@ -531,12 +642,12 @@ impl TableReaderExecutor {
                 keep_order: self.keep_order,
                 desc: self.desc,
                 // Go `paging`: the session's `EnablePaging`.
-                paging: statement.paging,
+                paging: self.paging,
                 field_types: self.meta.ret_field_types().to_vec(),
                 cop_plan_ids: self.plan_ids.clone(),
                 root_plan_id: isize::try_from(self.meta.id()).unwrap_or(0),
                 // Go `memTracker`, `NewTracker(e.ID(), -1)` under the statement's.
-                mem_tracker: (self.meta.id() > 0).then(|| statement.memory.operator_tracker(self.meta.id())),
+                mem_tracker: self.mem_tracker.clone(),
             },
         )
         .map_err(|error| ExecError::Internal(error.into()))
@@ -558,7 +669,7 @@ impl TableReaderExecutor {
             let key_ranges =
                 table_handle_ranges_to_kv_ranges(zone, self.physical_table_id, self.is_common_handle, ranges)?;
             self.kv_ranges.extend(key_ranges.iter().cloned());
-            let result = self.select_result(statement, dag.clone(), key_ranges, Vec::new())?;
+            let result = self.select_result(statement, dag.clone(), key_ranges, Vec::new(), Vec::new())?;
             self.results.push_back(result);
             return Ok(());
         };
@@ -570,7 +681,7 @@ impl TableReaderExecutor {
                 key_ranges.extend(table_handle_ranges_to_kv_ranges(zone, pid, self.is_common_handle, ranges)?);
             }
             self.kv_ranges.extend(key_ranges.iter().cloned());
-            let result = self.select_result(statement, dag.clone(), key_ranges, Vec::new())?;
+            let result = self.select_result(statement, dag.clone(), key_ranges, Vec::new(), Vec::new())?;
             self.results.push_back(result);
             return Ok(());
         }
@@ -584,7 +695,7 @@ impl TableReaderExecutor {
                 self.kv_ranges.extend(key_ranges.iter().cloned());
                 let mut dag = dag.clone();
                 update(&mut dag, &[pid])?;
-                let result = self.select_result(statement, dag, key_ranges, Vec::new())?;
+                let result = self.select_result(statement, dag, key_ranges, Vec::new(), Vec::new())?;
                 self.results.push_back(result);
             }
             return Ok(());
@@ -597,7 +708,7 @@ impl TableReaderExecutor {
         }
         let mut dag = dag.clone();
         update(&mut dag, &partitions)?;
-        let result = self.select_result(statement, dag, Vec::new(), partition_id_and_ranges)?;
+        let result = self.select_result(statement, dag, Vec::new(), Vec::new(), partition_id_and_ranges)?;
         self.results.push_back(result);
         Ok(())
     }
@@ -635,6 +746,18 @@ impl Executor for TableReaderExecutor {
         let mut dag = crate::builder_utils::construct_dag_req(&self.ctx, &statement, &plans, self.store_type)
             .map_err(|error| ExecError::Internal(error.to_string().into()))?;
         dag.output_offsets = (0..self.meta.schema().columns.len() as u32).collect();
+        self.dag_size = prost::Message::encoded_len(&dag);
+        // Go `Open`: `memTracker` reset, or made, and attached to the
+        // statement's.
+        let tracker = match self.mem_tracker.take() {
+            Some(tracker) => {
+                tracker.reset();
+                tracker.attach_to(statement.memory.stmt_tracker());
+                tracker
+            }
+            None => statement.memory.operator_tracker(self.meta.id()),
+        };
+        self.mem_tracker = Some(tracker);
         let ranges = match &self.range_rebuild {
             Some(rebuild) => rebuild().map_err(|error| ExecError::Internal(format!("{error:?}").into()))?,
             None => self.ranges.clone(),

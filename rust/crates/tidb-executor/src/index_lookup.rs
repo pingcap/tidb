@@ -69,8 +69,6 @@ struct Shared {
     table_plans: Vec<PhysicalPlan>,
     /// Go `getPhysicalPlanIDs(e.tblPlans)`.
     table_plan_ids: Vec<isize>,
-    /// Go `getTableRootPlanID()`.
-    table_root_plan_id: isize,
     /// Go `e.table`'s metadata.
     table_info: tidb_model::TableInfo,
     /// Go `primaryKeyIndex`, as the key codec reads it.
@@ -90,13 +88,10 @@ struct Shared {
     keep_order: bool,
     /// Go `startTS`.
     start_ts: u64,
-    /// The reader's output types (Go `e.RetFieldTypes()`).
-    ret_field_types: Vec<FieldType>,
-    /// Go `columns` and the virtual columns `buildVirtualColumnInfo` finds.
+    /// Go `columns`, which each task's table reader decodes.
     columns: Vec<tidb_model::GoShared<tidb_model::ColumnInfo>>,
-    schema: Schema,
-    virtual_column_index: Vec<usize>,
-    virtual_column_ret_field_types: Vec<FieldType>,
+    /// Go `getPhysicalTableID(e.table)`.
+    physical_table_id: i64,
     /// Go `avgRowSize`.
     avg_row_size: f64,
     /// Go `e.finished`.
@@ -235,7 +230,6 @@ impl IndexLookUpExecutor {
             .ok_or_else(|| internal("the index lookup's index is absent from its table"))?;
         // Go `ExtraHandleCol` / `CommonHandleCols`, resolved against the
         // table side's schema.
-        let schema = meta.schema().clone();
         let (handle_cols, primary_key_index): (Vec<Column>, _) = match &v.extra_handle_col {
             Some(column) => (vec![column.clone()], None),
             // Go `tables.FindPrimaryIndex(tbl.Meta())`, as the key codec
@@ -332,15 +326,12 @@ impl IndexLookUpExecutor {
         let avg_table_row_size = v.table_plan.as_deref().map_or(0.0, |plan| {
             plan.cop_avg_row_size(false, tidb_config::tikvcfg::get_global_config().tikv_client.enable_chunk_rpc)
         });
-        let (virtual_column_index, virtual_column_ret_field_types) =
-            crate::mpp_gather::build_virtual_column_info(&schema, &ts.columns);
         let index_plan_ids: Vec<isize> = index_plans.iter().map(|plan| plan.id() as isize).collect();
         let table_plan_ids: Vec<isize> = table_plans.iter().map(|plan| plan.id() as isize).collect();
         let shared = Shared {
             ctx: ctx.clone(),
             client,
             table_plans: table_plans.iter().copied().cloned().collect(),
-            table_root_plan_id: *table_plan_ids.last().unwrap_or(&(meta.id() as isize)),
             table_plan_ids,
             index_name: index.name.original().to_owned(),
             codec_table_info: table.codec_table_info(),
@@ -352,17 +343,21 @@ impl IndexLookUpExecutor {
             partition_handle_from_table,
             keep_order,
             start_ts: store.start_ts(),
-            ret_field_types: meta.ret_field_types().to_vec(),
             columns: ts.columns.clone(),
-            schema,
-            virtual_column_index,
-            virtual_column_ret_field_types,
+            physical_table_id: ts.table_id,
             avg_row_size: avg_table_row_size,
             finished: AtomicBool::new(false),
             index_scan_plan_id: index_plans[0].id() as isize,
             index_cop_count_and_rows: Mutex::new((0, 0)),
             mem_tracker: ctx.statement_memory().operator_tracker(meta.id()),
-            table_reader_meta: meta.clone(),
+            // Go `BuildNewBaseExecutorV2(..., e.Schema(), e.getTableRootPlanID())`.
+            table_reader_meta: ExecutorMeta::new(
+                meta.schema().clone(),
+                table_plans.last().map_or(meta.id(), |plan| i64::from(plan.id())),
+                meta.init_cap(),
+                meta.max_chunk_size(),
+            )
+            .with_alloc_pool(meta.alloc_pool().cloned()),
             table_reader_ruv2: tidb_executor_internal_exec::ruv2::Ruv2NextCache::new(
                 "*executor.TableReaderExecutor",
                 ctx.ruv2_metrics(),
@@ -487,7 +482,7 @@ impl IndexLookUpExecutor {
             tidb_kv::store_type::StoreType::TiKv,
         )
         .map_err(|error| ExecError::Internal(error.to_string().into()))?;
-        table_request.output_offsets = (0..self.shared.schema.columns.len() as u32).collect();
+        table_request.output_offsets = (0..self.meta.schema().columns.len() as u32).collect();
         let table_request = Arc::new(table_request);
         for _ in 0..self.index_lookup_concurrency.max(1) {
             let shared = Arc::clone(&self.shared);
@@ -925,80 +920,52 @@ fn execute_table_task(
         }
         order
     });
-    // Go `buildTableReaderFromHandles(..., canReorderHandles=true)`.
-    handles.sort_by(|a, b| a.clone().compare(b).unwrap_or(std::cmp::Ordering::Equal));
-    let physical_table_id = partition.unwrap_or(shared.table_info.id);
-    let physical_table_id = match shared.table_plans.first() {
-        Some(PhysicalPlan::TableScan(ts)) if ts.table_id != shared.table_info.id && partition.is_none() => ts.table_id,
-        _ => physical_table_id,
-    };
-    let (key_ranges, key_range_hints) = tidb_distsql::table_handles_to_kv_ranges(physical_table_id, &handles);
-    let statement = crate::remote_scan::pushdown_statement_context(&shared.ctx)
-        .with_estimated_net_bytes(shared.avg_row_size * handles.len() as f64);
+    // Go `buildTableReader`: the task's `TableReaderExecutor` over its
+    // handles (`buildTableReaderFromHandles(..., canReorderHandles=true)`).
+    let physical_table_id = partition.unwrap_or(shared.physical_table_id);
+    let mut reader = crate::table_reader::TableReaderExecutor::build_table_reader_from_handles(
+        crate::table_reader::TableReaderForHandles {
+            meta: shared.table_reader_meta.clone(),
+            ctx: &shared.ctx,
+            client: Arc::clone(&shared.client),
+            table_plan: shared.table_plans.last().ok_or_else(|| ExecError::Internal("the lookup has no table plans".into()))?,
+            plan_ids: shared.table_plan_ids.clone(),
+            dag: table_request.clone(),
+            physical_table_id,
+            is_common_handle: shared.table_info.is_common_handle,
+            columns: shared.columns.clone(),
+            start_ts: shared.start_ts,
+            net_data_size: shared.avg_row_size * handles.len() as f64,
+        },
+        &mut handles,
+    )?;
     // Go `executeTask`'s first charge: `cap(task.handles)`, the table
     // reader's `memUsage()`, each handle, `indexOrder` and `idxRows`.
     let mut mem_usage = (handles_cap * SIZEOF_INTERFACE) as i64
-        + table_reader_mem_usage(&key_ranges, prost::Message::encoded_len(table_request))
+        + reader.mem_usage()
         + handles.iter().map(Handle::mem_usage).sum::<u64>() as i64
         + index_order.as_ref().map_or(0, tidb_txnkv::HandleMap::mem_usage);
     mem_tracker.consume(mem_usage);
-    let mut result = crate::cop_reader::open_table_read(
-        shared.client.as_ref(),
-        &statement,
-        crate::cop_reader::TableRead {
-            store_type: tidb_kv::store_type::StoreType::TiKv,
-            dag: table_request.clone(),
-            key_ranges,
-            key_range_hints,
-            partition_id_and_ranges: Vec::new(),
-            batch_cop: false,
-            schema_version: 0,
-            connection_id: tidb_exprctx::Columns::connection_id(&shared.ctx).unwrap_or_default(),
-            connection_alias: shared.ctx.ddl_session_alias().to_owned(),
-            start_ts: shared.start_ts,
-            keep_order: false,
-            desc: false,
-            // Go `buildTableReaderBase`'s `SetPaging(e.paging)`, which the
-            // lookup's table reader leaves unset.
-            paging: false,
-            field_types: shared.ret_field_types.clone(),
-            cop_plan_ids: shared.table_plan_ids.clone(),
-            root_plan_id: shared.table_root_plan_id,
-            // Go `buildTableReaderBase` sets no memory tracker.
-            mem_tracker: None,
-        },
-    )
-    .map_err(|error| ExecError::Internal(error.into()))?;
     let mut chunks = Vec::new();
     let mut order = Vec::new();
     // Go `task.rows = make([]chunk.Row, 0, handleCnt)`.
     let mut rows_cap = handles.len();
-    let max_chunk_size = shared.table_reader_meta.max_chunk_size();
     loop {
-        // Go `exec.TryNewCacheChunk(tableReader)`.
+        // Go `exec.TryNewCacheChunk(tableReader)` and `exec.Next`.
         let mut chk = shared.table_reader_meta.new_chunk();
-        let more = result
-            .fill_chunk_with_required_rows(max_chunk_size, &mut chk)
-            .map_err(|error| ExecError::from(crate::cop_reader::select_response_error(error)))?;
+        let next = reader.next(&mut chk);
         tidb_executor_internal_exec::ruv2::record_leaf_next(
             shared.table_reader_ruv2.as_ref(),
             chk.num_rows(),
-            shared.schema.columns.len(),
+            shared.table_reader_meta.schema().columns.len(),
         );
-        if !more || chk.num_rows() == 0 {
-            if !more {
-                break;
-            }
-            continue;
+        if let Err(error) = next {
+            let _ = reader.close();
+            return Err(error);
         }
-        crate::mpp_gather::fill_virtual_column_value(
-            &shared.ctx,
-            &shared.schema,
-            &shared.columns,
-            &shared.virtual_column_index,
-            &shared.virtual_column_ret_field_types,
-            &mut chk,
-        )?;
+        if chk.num_rows() == 0 {
+            break;
+        }
         // Go: each filled chunk's `MemoryUsage`.
         let chunk_usage = chk.memory_usage();
         mem_usage += chunk_usage;
@@ -1008,7 +975,7 @@ fn execute_table_task(
         rows_cap = go_append_cap(order.len(), rows_cap, SIZEOF_CHUNK_ROW);
         chunks.push(chk);
     }
-    let _ = result.close();
+    let _ = reader.close();
     let rows_usage = (rows_cap * SIZEOF_CHUNK_ROW) as i64;
     mem_usage += rows_usage;
     mem_tracker.consume(rows_usage);
@@ -1044,21 +1011,6 @@ fn execute_table_task(
         order = keyed.into_iter().map(|(_, at)| at).collect();
     }
     Ok(TaskRows { chunks, order, mem_usage, mem_tracker })
-}
-
-/// Go `TableReaderExecutor.memUsage()` of the reader
-/// `buildTableReaderFromHandles` builds: the executor, its `kvRanges`
-/// (`KeyRanges.AppendSelfTo(nil)`, each key allocated exactly) and
-/// `dagPB.Size()`; it has no `ranges`.
-fn table_reader_mem_usage(key_ranges: &[tidb_txnkv::KeyRange], dag_size: usize) -> i64 {
-    // Go `unsafe.Sizeof(TableReaderExecutor{})` and `kv.KeyRange{}`.
-    const SIZEOF_TABLE_READER_EXECUTOR: usize = 768;
-    const SIZEOF_KEY_RANGE: usize = 48;
-    let key_bytes: usize = key_ranges.iter().map(|range| range.start_key.len() + range.end_key.len()).sum();
-    (SIZEOF_TABLE_READER_EXECUTOR
-        + go_append_cap(key_ranges.len(), 0, SIZEOF_KEY_RANGE) * SIZEOF_KEY_RANGE
-        + key_bytes
-        + dag_size) as i64
 }
 
 /// One index select result as an executor, which the merge reads. Closing

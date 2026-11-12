@@ -50,8 +50,21 @@ reader built by Go's `buildTableReader` / `buildIndexReader` /
   columns across groups, one pooled decode chunk), table workers over Go's
   `tableRequest` with the handles' ranges and hints, Go's per-task memory
   charges, index usage and runtime stats.
-- [ ] Milestone 4: `UnionScanExec` over a reader with Go's `memTableReader`;
-  the staged-row merge and `open_mpp_scan` are deleted.
+- [ ] Milestone 4: the index join's inner side is Go's
+  `dataReaderBuilder.BuildExecutorForIndexJoin`, and a union scan there is
+  `buildUnionScanForIndexJoin`'s `UnionScanExec` over the task's reader; the
+  staged-row merge (`ReaderStorage::Merged`) and `open_mpp_scan` are deleted.
+  Steps: (a) `TableReaderExecutor` gains Go's `buildTableReaderBase` shape --
+  a `dagPB` built once and a request over given KV ranges or handles
+  (`buildTableReaderFromKvRanges` / `FromHandles`) -- and the lookup's table
+  task reads through it; (b) tidb-executor-join's inner worker calls a
+  `BuildExecutorForIndexJoin` builder per task (Go `innerWorker.fetchInnerResults`)
+  in place of `IndexLookupSource`'s re-seeded probes; (c) the driver
+  implements the builder per Go's `buildExecutorForIndexJoinInternal` arms
+  over `buildKvRangesForIndexJoin` (lookup contents into the join's index
+  ranges, `ColWithCmpFuncManager.BuildRangesByRow`, `UnionRanges`); (d) the
+  probe-offer leaf (`IndexJoinLookupExec`, `SharedIndexJoinProbes`) is
+  deleted with its tests' Go-pinned cases moved to the session suite.
 - [ ] Milestone 5: the offer machinery is deleted; E15 leaves the register.
 
 ## Surprises & Discoveries
