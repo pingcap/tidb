@@ -609,11 +609,21 @@ func checkOpSelfSatisfyPropTaskTypeRequirement(p base.LogicalPlan, prop *propert
 // 2) columns from DataSource that are used as inner join keys.
 // It works for plain GROUP BY columns, but it is conservative for GROUP BY expressions or
 // columns introduced/re-mapped by intermediate operators (for example, GROUP BY c1+c2).
-// In those cases, semantically equivalent keys may carry different UniqueIDs, so we may
+// In those cases, semantically equivalent keys may carry different UniqueIDs, and columns
+// nested inside expressions are deliberately not treated as grouping keys, so we may
 // reject some valid index join plans (false negatives) to keep correctness.
 // TODO: use FunctionDependency/equivalence reasoning to replace pure UniqueID subset matching.
 func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, indexJoinProp *property.IndexJoinRuntimeProp) bool {
-	groupByCols := expression.ExtractColumnsMapFromExpressions(nil, la.GroupByItems...)
+	// Only direct GROUP BY columns count as grouping keys. A column that merely
+	// appears inside a GROUP BY expression (for example GROUP BY c2 % 2) does not
+	// partition the groups by that column, so probing per join-key value would
+	// still split a group across probes.
+	groupByCols := make(map[int64]struct{}, len(la.GroupByItems))
+	for _, item := range la.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			groupByCols[col.UniqueID] = struct{}{}
+		}
+	}
 
 	var dataSourceSchema *expression.Schema
 	var iterChild base.LogicalPlan = la
