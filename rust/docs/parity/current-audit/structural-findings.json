@@ -2,8 +2,8 @@
   "date": "2026-11-09",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 18,
-    "open": 4,
+    "unresolved": 19,
+    "open": 5,
     "partial": 14
   },
   "findings": [
@@ -50,6 +50,13 @@
       "group": "DML and executor handoff",
       "finding": "A TiKV reader builds its DAG from its access path's scan request (`cop_reader.rs`; `cop_plan_ids_for` matches executors to the pushed nodes by kind) where Go's `constructDAGReq` lowers the reader's pushed plan one node per executor (`ToPB`). A pushed TopN (a reader's, or an IndexLookUp's index side) reaches the coprocessor through the scan's offer, its `ByItem`s expressions over the scan's output as `PhysicalTopN.ToPB` lowers them, and an IndexLookUp's table-side TopN (`TopN(Probe)`) rides every table task's request, as Go's `buildTableReader` over `tblPlans` sends it (`an_index_lookup_pushes_its_table_side_topn_into_each_task_like_go`). A covering `IndexReader`'s pushed Projection of columns is lowered as the request's Projection executor (over the scan, or over its pushed Selection through `accept_post_filter_projection`), and a covering reader over a pushed Selection returns only its `OutputColumns`, as Go's `dagReq.OutputOffsets`, under a pushed Limit too (the in-reader Limit narrows its source once the Selection is in: `SELECT a FROM t WHERE c > 2 LIMIT 3`'s reader charges Go's 295 Bytes); a covering reader decodes its response straight into its parent's chunk (Go `e.result.Next(ctx, req)`) when the request returns exactly its columns; and a TableReader's pushed Projection that computes (`j->'$.x'`) is the request's last executor too, its computed rows what the response returns (`a_reader_pushes_its_computing_projection_into_the_request_like_go`: Go's 1.96 KB where the scan's whole rows took 24.8 KB); a TableReader's Projection of columns and a covering IndexReader's computing Projection are that executor as well (`a_readers_pushed_projection_is_a_coprocessor_executor_like_go`: Go's 677 Bytes, 1.09 KB, 761 Bytes and 660 Bytes, the Projection reporting its rows). A TiKV `TableReader` and `IndexReader` on a store with a coprocessor client are now Go's `TableReaderExecutor` and `IndexReaderExecutor` over Go's `ConstructDAGReq` (`table_reader.rs`, `index_reader.rs`, `builder_utils::construct_dag_req`: the plan's `ToPB` list, `distsql.Select`; `docs/tikv-reader-execplan.md` M1-M2). What remains is the construction for the other readers and stores: an `IndexLookUp`, a union scan's reader and the in-process engine's readers still re-derive the request from the offers their source accepted, so a pushed shape no source accepts stays a root executor there (M2-M5)",
       "go_owner": "`pkg/executor/builder.go` (`constructDAGReq`), `pkg/planner/core/plan_to_pb.go`"
+    },
+    {
+      "id": "P01",
+      "status": "open",
+      "group": "DML and executor handoff",
+      "finding": "The physical operators do not carry Go's fields, so a Go method that reads them has nothing to port onto (`PhysicalIndexScan` had no `Table` or `Index` until E15 M2, so its `ToPB` was never ported; audit: `rust/scripts/physicalop-field-audit.py`). Missing still: `PhysicalIndexScan`'s `IdxCols`, `IdxColLens`, `Columns`, `AccessCondition` (held apart in `range_rebuild`), `DoubleRead`, `NeedCommonHandle`, `GroupedRanges`, `PhysicalTableID`/`IsPartition`, `TblColHists`, `ConstColsByCond`, `UsedStatsInfo`, `GenExprs`, `RangeInfo`; `PhysicalTableScan`'s `HandleCols`, `HandleIdx`, `AccessCondition`, `GroupedRanges`, `TblCols`, `TblColHists`, `SampleInfo`, `UsedStatsInfo`, `RangeInfo`; `PhysicalIndexLookUpReader`'s `ExtraHandleCol`; `PhysicalIndexMergeReader`'s `PartialPlans` and `HandleCols`; `PhysicalLock`'s `Lock`, `TblID2Handle`, `TblID2PhysTblIDCol`; `PhysicalTableReader`'s `TableScanAndPartitionInfos`; `PhysicalMergeJoin`'s `CompareFuncs`; `PhysicalCTE`'s `CTE` and `RecurPlan`; `PhysicalMemTable`'s and `PhysicalTableSample`'s table; and the operators `PhysicalCTESink`, `PhysicalCTESource`, `PhysicalIndexHashJoin` and `PhysicalIndexMergeJoin` have no struct. Rust-only specs stand in for several (`tikv_pushdown`, `covering_ranges`, `range_rebuild`), which the offer machinery reads (E15)",
+      "go_owner": "`pkg/planner/core/operator/physicalop` (the operator structs)"
     },
     {
       "id": "C01",
@@ -138,7 +145,7 @@
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
-  "unresolved": 18,
-  "open": 4,
+  "unresolved": 19,
+  "open": 5,
   "partial": 14
 }
