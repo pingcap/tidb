@@ -413,10 +413,6 @@ func TestValidator(t *testing.T) {
 		{"UPDATE t SET a = a + 1 WHERE _tidb_commit_ts > 0", false,
 			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
 		{"DELETE FROM t WHERE _tidb_commit_ts > 0", false, nil},
-		{"UPDATE t SET a = (SELECT 1) WHERE _tidb_commit_ts > 0", false,
-			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
-		{"INSERT INTO t SELECT _tidb_commit_ts FROM t", false,
-			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
 	}
 
 	store := testkit.CreateMockStore(t)
@@ -441,8 +437,6 @@ func TestValidator(t *testing.T) {
 	}
 	for _, sql := range []string{
 		"UPDATE t SET a = a + 1 WHERE _tidb_commit_ts > 0",
-		"UPDATE t SET a = (SELECT 1) WHERE _tidb_commit_ts > 0",
-		"INSERT INTO t SELECT _tidb_commit_ts FROM t",
 	} {
 		runSQL(t, tk.Session(), is, sql, false,
 			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now"))

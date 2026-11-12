@@ -240,15 +240,6 @@ type preprocessor struct {
 	flag   preprocessorFlag
 	stmtTp byte
 	showTp ast.ShowStmtType
-	// commitTSStmtStack records the nesting of DML statements while checking
-	// _tidb_commit_ts references. It must be kept separately from stmtTp because
-	// stmtTp is overwritten by an inner statement and is not restored when that
-	// statement is left. For example, while preprocessing
-	// `UPDATE t SET a = (SELECT 1) WHERE _tidb_commit_ts > 0`, the inner SELECT
-	// changes stmtTp to TypeSelect. The stack records [TypeUpdate, TypeSelect]
-	// inside the subquery and [TypeUpdate] again after leaving it, so the
-	// _tidb_commit_ts reference in the outer UPDATE is still rejected.
-	commitTSStmtStack []byte
 
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
@@ -276,59 +267,14 @@ type preprocessor struct {
 	useInfoSchemaAsIs bool
 }
 
-func (p *preprocessor) pushCommitTSStmt(tp byte) {
-	p.commitTSStmtStack = append(p.commitTSStmtStack, tp)
-}
-
-func (p *preprocessor) popCommitTSStmt() {
-	if len(p.commitTSStmtStack) == 0 {
-		return
-	}
-	p.commitTSStmtStack = p.commitTSStmtStack[:len(p.commitTSStmtStack)-1]
-}
-
-// extraCommitTSColumnDenied reports whether this _tidb_commit_ts reference is rejected.
-// Reads and deletes can access the column regardless of tidb_mview_enable. Updates and
-// inserts remain rejected because _tidb_commit_ts is not a writable column.
-func (p *preprocessor) extraCommitTSColumnDenied() bool {
-	hasUpdate := false
-	hasInsert := false
-	for _, tp := range p.commitTSStmtStack {
-		switch tp {
-		case TypeUpdate:
-			hasUpdate = true
-		case TypeInsert:
-			hasInsert = true
-		}
-	}
-	if hasUpdate {
-		return true
-	}
-	if len(p.commitTSStmtStack) == 0 {
-		return false
-	}
-	switch p.commitTSStmtStack[len(p.commitTSStmtStack)-1] {
-	case TypeSelect, TypeSetOpr, TypeDelete:
-		// INSERT ... SELECT is not allowed to read the synthetic column as an input.
-		if hasInsert {
-			return true
-		}
-		return false
-	default:
-		return false
-	}
-}
-
 func (p *preprocessor) Enter(in ast.Node) bool {
 	switch node := in.(type) {
 	case *ast.AdminStmt:
 		p.checkAdminCheckTableGrammar(node)
 	case *ast.DeleteStmt:
 		p.stmtTp = TypeDelete
-		p.pushCommitTSStmt(TypeDelete)
 	case *ast.SelectStmt:
 		p.stmtTp = TypeSelect
-		p.pushCommitTSStmt(TypeSelect)
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
@@ -337,16 +283,13 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		// table refs during traversal and later bind LockInfo targets without re-walking the FROM tree.
 		p.pushLockSelectCtx(node)
 	case *ast.SetOprStmt:
-		p.pushCommitTSStmt(TypeSetOpr)
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
 	case *ast.UpdateStmt:
 		p.stmtTp = TypeUpdate
-		p.pushCommitTSStmt(TypeUpdate)
 	case *ast.InsertStmt:
 		p.stmtTp = TypeInsert
-		p.pushCommitTSStmt(TypeInsert)
 		// handle the insert table name imminently
 		// insert into t with t ..., the insert can not see t here. We should hand it before the CTE statement
 		p.handleTableName(node.Table.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName))
@@ -567,10 +510,10 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		// Used in ALTER TABLE or CREATE TABLE
 		p.checkConstraintGrammar(node)
 	case *ast.ColumnName:
-		// Reads and deletes are independent of tidb_mview_enable. UPDATE always stays
-		// rejected, including references that appear after a nested SELECT has
-		// overwritten stmtTp.
-		if node.Name.L == model.ExtraCommitTSName.L && p.extraCommitTSColumnDenied() {
+		// Reads and deletes are independent of tidb_mview_enable. UPDATE and INSERT
+		// remain rejected because _tidb_commit_ts is not a writable column.
+		if node.Name.L == model.ExtraCommitTSName.L &&
+			(p.stmtTp == TypeUpdate || p.stmtTp == TypeInsert) {
 			p.err = plannererrors.ErrInternal.GenWithStack("Usage of column name '%s' is not supported for now",
 				model.ExtraCommitTSName.O)
 		}
@@ -838,7 +781,6 @@ func (p *preprocessor) Leave(in ast.Node) bool {
 			with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
 		}
 	case *ast.SelectStmt:
-		p.popCommitTSStmt()
 		if x.With != nil {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
 		}
@@ -846,10 +788,7 @@ func (p *preprocessor) Leave(in ast.Node) bool {
 			p.checkLockClauseTables(x, lockCtx)
 			p.popLockSelectCtx()
 		}
-	case *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
-		p.popCommitTSStmt()
 	case *ast.SetOprStmt:
-		p.popCommitTSStmt()
 		if x.With != nil {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
 		}
