@@ -89,15 +89,19 @@ pub(crate) struct LocatedRegion {
     pub(crate) partition_index: i64,
 }
 
-/// Go `buildBatchCopTasksCore` on classic TiFlash (`isMPP`,
-/// `balanceWithContinuity`, `balanceContinuousRegionCount = 20`) over the
-/// regions covering each physical table's ranges
-/// (`rangesForEachPhysicalTable`), each region tagged with its table's
-/// index. Answers the tasks and the warnings Go's `appendWarning` receives.
+/// Go `buildBatchCopTasksCore` on classic TiFlash over the regions covering
+/// each physical table's ranges (`rangesForEachPhysicalTable`), each region
+/// tagged with its table's index. Go's `ttl` is zero at every caller (the
+/// deprecated `tidb_mpp_store_fail_ttl`). Answers the tasks and the warnings
+/// Go's `appendWarning` receives.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
     store: &TikvStore<S>,
     ranges_for_each_physical_table: &[Vec<(tidb_txnkv::Key, tidb_txnkv::Key)>],
     memory: &std::sync::Arc<dyn tidb_txnkv::MppContext>,
+    is_mpp: bool,
+    balance_with_continuity: bool,
+    balance_continuous_region_count: usize,
     mut tiflash_replica_read_policy: ReplicaRead,
     kv_context: &tidb_txnkv::StatementKvContext,
 ) -> Result<(Vec<BatchCopTask>, Vec<String>), String> {
@@ -141,7 +145,7 @@ pub(crate) async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
         let mut min_replica_num = u64::MAX;
         for task in &tasks {
             let selected = pd
-                .get_tiflash_rpc_context(&task.region, true, TiFlashLabelFilter::NoWriteNode)
+                .get_tiflash_rpc_context(&task.region, is_mpp, TiFlashLabelFilter::NoWriteNode)
                 .await
                 .map_err(|error| error.to_string())?;
             // Go: a missing TiFlash route means the region moved or its TiFlash
@@ -253,8 +257,8 @@ pub(crate) async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
         let tasks = balance_batch_cop_task(
             &stores_union,
             batch_tasks,
-            true,
-            BALANCE_CONTINUOUS_REGION_COUNT,
+            balance_with_continuity,
+            balance_continuous_region_count,
             all_region_infos,
         );
         return Ok((tasks, warnings));
@@ -287,6 +291,40 @@ pub(crate) fn convert_region_infos_to_partition_table_regions(
             }
             table_regions.retain(|table| !table.regions.is_empty());
             table_regions
+        })
+        .collect()
+}
+
+/// The built tasks as their sender takes them: a partitioned build
+/// (`partition_ids` not empty) runs Go's
+/// `convertRegionInfosToPartitionTableRegions`, which leaves a task its
+/// table regions in place of its region list.
+pub(crate) fn store_tasks(
+    mut tasks: Vec<BatchCopTask>,
+    partition_ids: &[i64],
+) -> Vec<tidb_txnkv::MppStoreTask> {
+    let mut partition_table_regions = if partition_ids.is_empty() {
+        vec![Vec::new(); tasks.len()]
+    } else {
+        convert_region_infos_to_partition_table_regions(&mut tasks, partition_ids)
+    };
+    tasks
+        .into_iter()
+        .zip(partition_table_regions.drain(..))
+        .map(|(task, partition_table_regions)| tidb_txnkv::MppStoreTask {
+            address: task.store_addr,
+            store_id: task.store_id,
+            region_peers: task
+                .region_infos
+                .iter()
+                .map(|region| region.region.region.peers.len())
+                .collect(),
+            regions: task
+                .region_infos
+                .into_iter()
+                .map(|region| region.info)
+                .collect(),
+            partition_table_regions,
         })
         .collect()
 }
@@ -402,9 +440,17 @@ fn can_skip_check_alive_stores(
     retry_num: usize,
     min_replica_num: u64,
 ) -> bool {
+    #[cfg_attr(not(any(test, feature = "test-util")), allow(unused_mut))]
+    let mut skip_check = tidb_intest::IN_TEST;
     #[cfg(any(test, feature = "test-util"))]
-    if mock::mock_no_alive_tiflash() && retry_num <= 1 {
-        alive_stores.stores_in_all_zones = Vec::new();
+    if let Some(val) = mock::mock_no_alive_tiflash() {
+        skip_check = false;
+        if val && retry_num <= 1 {
+            alive_stores.stores_in_all_zones = Vec::new();
+        }
+    }
+    if skip_check {
+        return true;
     }
 
     if !policy.is_closest_replicas() {
@@ -422,18 +468,24 @@ fn can_skip_check_alive_stores(
 /// Go's failpoints in `batch_coprocessor.go`, as seams.
 #[cfg(any(test, feature = "test-util"))]
 pub mod mock {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicU8, Ordering};
 
-    static MOCK_NO_ALIVE_TIFLASH: AtomicBool = AtomicBool::new(false);
+    /// 0 is a disabled failpoint, 1 `return(false)`, 2 `return(true)`.
+    static MOCK_NO_ALIVE_TIFLASH: AtomicU8 = AtomicU8::new(0);
 
-    /// Go `failpoint.Enable("mockNoAliveTiFlash", "return(true)")`: the
-    /// first build of a request's batch tasks finds no alive TiFlash store.
-    pub fn set_mock_no_alive_tiflash(enabled: bool) {
-        MOCK_NO_ALIVE_TIFLASH.store(enabled, Ordering::Release);
+    /// Go `failpoint.Enable("mockNoAliveTiFlash", ...)`: an enabled
+    /// failpoint runs the alive-store check an in-test build skips, and
+    /// `return(true)` makes the first build of a request's batch tasks find
+    /// no alive TiFlash store. `None` is `failpoint.Disable`.
+    pub fn set_mock_no_alive_tiflash(val: Option<bool>) {
+        MOCK_NO_ALIVE_TIFLASH.store(val.map_or(0, |val| 1 + u8::from(val)), Ordering::Release);
     }
 
-    pub(super) fn mock_no_alive_tiflash() -> bool {
-        MOCK_NO_ALIVE_TIFLASH.load(Ordering::Acquire)
+    pub(super) fn mock_no_alive_tiflash() -> Option<bool> {
+        match MOCK_NO_ALIVE_TIFLASH.load(Ordering::Acquire) {
+            0 => None,
+            val => Some(val == 2),
+        }
     }
 }
 
@@ -738,7 +790,12 @@ pub(crate) fn balance_batch_cop_task(
                         return Some(store);
                     }
                 }
-                lightest(&mut store_task_map.keys())
+                // Go ranges over `storeTaskMap`, a map: no store is always
+                // the first of the equally light ones, so a task rebuilt
+                // after its store failed does not keep landing on that store.
+                let stores: Vec<&u64> = store_task_map.keys().collect();
+                let first = tidb_fastrand::uint64_n(stores.len() as u64) as usize;
+                lightest(&mut stores.iter().cycle().skip(first).take(stores.len()).copied())
             };
         let mut store = find_next_store(
             None,
@@ -868,6 +925,7 @@ mod tests {
     /// Go `TestAliveStoreSkipCheck`.
     #[test]
     fn test_alive_store_skip_check() {
+        mock::set_mock_no_alive_tiflash(Some(false));
         let used_tiflash_stores_map = BTreeSet::from([1, 2, 3]);
         let mut can_skip = |alive_stores: &mut AliveStores, policy, min_replica_num| {
             can_skip_check_alive_stores(alive_stores, &used_tiflash_stores_map, policy, 2, min_replica_num)
@@ -911,6 +969,7 @@ mod tests {
     /// Go `TestCheckAliveStore`.
     #[test]
     fn test_check_alive_store() {
+        mock::set_mock_no_alive_tiflash(Some(false));
         let used_tiflash_stores_map = BTreeSet::from([1, 2, 3]);
         let used_tiflash_stores = [
             vec![1, 2], // region-1

@@ -28,5 +28,6 @@ pub mod response_channel;
 pub mod cop_paging;
 pub mod query_transport;
 pub mod batch_cop_tasks;
+pub mod batch_coprocessor;
 pub mod cop_client;
 pub mod mpp_client;

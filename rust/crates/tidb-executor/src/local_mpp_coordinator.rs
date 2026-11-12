@@ -965,7 +965,7 @@ impl LocalMppCoordinator {
 }
 
 /// Go `ConstructDAGReq(ctx, []PhysicalPlan{sink}, kv.TiFlash)`.
-fn construct_dag_req(
+pub(crate) fn construct_dag_req(
     ctx: &crate::StmtContext,
     statement: &PushdownStatementContext,
     sink: &PhysicalPlan,

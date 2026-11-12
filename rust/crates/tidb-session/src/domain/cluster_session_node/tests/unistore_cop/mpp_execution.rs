@@ -1950,10 +1950,231 @@ fn test_no_alive_tiflash_retry() {
     }
     rows(&mut session, &dml);
 
-    tidb_copr::batch_cop_tasks::mock::set_mock_no_alive_tiflash(true);
+    tidb_copr::batch_cop_tasks::mock::set_mock_no_alive_tiflash(Some(true));
     let count = displayed(rows(&mut session, "select count(*) from t"));
-    tidb_copr::batch_cop_tasks::mock::set_mock_no_alive_tiflash(false);
+    tidb_copr::batch_cop_tasks::mock::set_mock_no_alive_tiflash(None);
     assert_eq!(count, [["50"]]);
+}
+
+/// A non-MPP TiFlash read is Go's `batchCop` or `cop` request by
+/// `tidb_allow_batch_cop`, over a plain and a dynamically pruned partitioned
+/// table: the plans and rows of a Go testkit run on two mock TiFlash stores
+/// (`testdata/tiflash_batch_cop_go.txt`).
+#[test]
+fn a_tiflash_read_is_batch_cop_or_cop_like_go() {
+    let (stack, mut session) = tiflash_session(2, 2231);
+    rows(&mut session, "create table t(a int primary key, b int)");
+    rows(
+        &mut session,
+        "create table pt(a int primary key, b int) partition by range(a) (partition p1 values less than (10), partition p2 values less than (20), partition p3 values less than (30))",
+    );
+    for table in ["t", "pt"] {
+        rows(&mut session, &format!("alter table {table} set tiflash replica 1"));
+        replica_available(&stack, &mut session, table);
+        rows(&mut session, &format!("insert into {table} values(1,1),(2,10),(0,11),(11,3),(21,4)"));
+    }
+    rows(&mut session, "set @@tidb_partition_prune_mode = 'dynamic'");
+    rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+    rows(&mut session, "set @@session.tidb_allow_tiflash_cop=ON");
+    rows(&mut session, "set @@session.tidb_allow_mpp=OFF");
+
+    // Go's `Result.Sort` orders rows by their column strings.
+    let go_rows = |session: &mut Session, sql: &str, sort: bool| -> Vec<String> {
+        let mut rows = displayed(rows(session, sql));
+        if sort {
+            rows.sort();
+        }
+        rows.iter()
+            .map(|row| format!("[{}]", row.join(" ")))
+            .collect()
+    };
+    let fixture = include_str!("../../../../../testdata/tiflash_batch_cop_go.txt");
+    let mut cases = 0;
+    for case in fixture.split("== ").skip(1) {
+        let mut lines = case.lines();
+        let (mode, query) = lines.next().unwrap().split_once(" | ").unwrap();
+        let (mut plan, mut result) = (Vec::new(), Vec::new());
+        for line in lines {
+            match line.strip_prefix("RES ") {
+                Some(row) => result.push(row.to_owned()),
+                None => plan.push(line.to_owned()),
+            }
+        }
+        rows(&mut session, &format!("set @@tidb_allow_batch_cop = {mode}"));
+        assert_eq!(
+            go_rows(&mut session, &format!("explain format='brief' {query}"), false),
+            plan,
+            "{mode} | {query}"
+        );
+        assert_eq!(go_rows(&mut session, query, true), result, "{mode} | {query}");
+        cases += 1;
+    }
+    assert_eq!(cases, 27);
+}
+
+/// Go `pkg/store`'s `TestStoreErr` and `TestStoreSwitchPeer` table: one row
+/// read through batch cop from `stores` TiFlash stores.
+fn store_err_table(stores: usize, connection_id: u64) -> (UnistoreClusterStack, Session) {
+    let (stack, mut session) = tiflash_session(stores, connection_id);
+    rows(&mut session, "create table t(a int not null, b int not null)");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    rows(&mut session, "set @@session.tidb_allow_tiflash_cop=ON");
+    replica_available(&stack, &mut session, "t");
+    rows(&mut session, "insert into t values(1,0)");
+    rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
+    rows(&mut session, "set @@session.tidb_allow_mpp=OFF");
+    (stack, session)
+}
+
+/// Go `TestStoreErr`: a canceled batch cop request is the statement's
+/// `context.Canceled`, one failed send is retried, and a store that keeps
+/// failing is the statement's error.
+#[test]
+fn test_store_err() {
+    use tidb_unistore::rpc::mock::{set_batch_cop_cancelled, set_batch_cop_rpc_err};
+    let (_stack, mut session) = store_err_table(1, 2233);
+
+    set_batch_cop_cancelled(1);
+    let (_, message) = query_error(&mut session, "select count(*) from t");
+    // Go `errors.Cause(err) == context.Canceled`, under this tree's storage
+    // error text.
+    assert_eq!(message, "storage error: context canceled");
+
+    set_batch_cop_rpc_err("tiflash0", 1);
+    check(&mut session, "select count(*) from t", &[&["1"]]);
+
+    set_batch_cop_rpc_err("tiflash0", usize::MAX);
+    tidb_copr::batch_coprocessor::mock::set_reduce_cop_next_max_backoff(true);
+    let (code, _) = query_error(&mut session, "select count(*) from t");
+    assert_eq!(code, tidb_errno::errcode::ErrTiFlashServerTimeout);
+    tidb_copr::batch_coprocessor::mock::set_reduce_cop_next_max_backoff(false);
+    set_batch_cop_rpc_err("tiflash0", 0);
+}
+
+/// Go `TestStoreSwitchPeer`: a batch cop task whose store keeps failing is
+/// rebuilt on the region's other TiFlash peer, and fails once that one
+/// fails too.
+#[test]
+fn test_store_switch_peer() {
+    use tidb_unistore::rpc::mock::set_batch_cop_rpc_err;
+    let (_stack, mut session) = store_err_table(2, 2234);
+
+    set_batch_cop_rpc_err("tiflash0", usize::MAX);
+    check(&mut session, "select count(*) from t", &[&["1"]]);
+
+    set_batch_cop_rpc_err("tiflash1", usize::MAX);
+    tidb_copr::batch_coprocessor::mock::set_reduce_cop_next_max_backoff(true);
+    let (code, _) = query_error(&mut session, "select count(*) from t");
+    assert_eq!(code, tidb_errno::errcode::ErrTiFlashServerTimeout);
+    tidb_copr::batch_coprocessor::mock::set_reduce_cop_next_max_backoff(false);
+    set_batch_cop_rpc_err("tiflash0", 0);
+    set_batch_cop_rpc_err("tiflash1", 0);
+}
+
+/// Go server `TestTiFlashFallback`'s batch cop arm (`testFallbackWork`): a
+/// batch cop read whose store keeps failing is the statement's own error
+/// without the fallback, the TiFlash server timeout `handleQuery` falls back
+/// on with it, and the re-run without TiFlash answers from TiKV.
+#[test]
+fn test_tiflash_fallback_batch_cop() {
+    use tidb_unistore::rpc::mock::set_batch_cop_rpc_err;
+    let (stack, mut session) = tiflash_session(1, 2235);
+    rows(&mut session, "set @@session.tidb_allow_tiflash_cop=ON");
+    rows(&mut session, "set tidb_cost_model_version=1");
+    rows(&mut session, "create table t(a int not null primary key, b int not null)");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+    let values: Vec<String> = (0..50).map(|i| format!("({i}, 0)")).collect();
+    rows(&mut session, &format!("insert into t values{}", values.join(",")));
+    check(&mut session, "select count(*) from t", &[&["50"]]);
+
+    tidb_copr::batch_coprocessor::mock::set_reduce_cop_next_max_backoff(true);
+    rows(&mut session, "set @@tidb_allow_batch_cop=1");
+    rows(&mut session, "set @@tidb_allow_mpp=0");
+    set_batch_cop_rpc_err("tiflash0", usize::MAX);
+    let sql = "select count(*) from t";
+    rows(&mut session, "set @@tidb_allow_fallback_to_tikv=''");
+    let (code, _) = query_error(&mut session, sql);
+    assert!(!session.tiflash_fallback_allowed(code));
+    rows(&mut session, "set @@tidb_allow_fallback_to_tikv='tiflash'");
+    let (code, _) = query_error(&mut session, sql);
+    assert_eq!(code, tidb_errno::errcode::ErrTiFlashServerTimeout);
+    assert!(session.tiflash_fallback_allowed(code));
+    session.set_tiflash_fallback(true);
+    check(&mut session, sql, &[&["50"]]);
+    session.set_tiflash_fallback(false);
+    set_batch_cop_rpc_err("tiflash0", 0);
+
+    // Go `batchCopRecvTimeout`: a stream that ends in an error is the same
+    // timeout.
+    tidb_unistore::rpc::mock::set_batch_cop_recv_timeout(true);
+    rows(&mut session, "set @@tidb_allow_fallback_to_tikv=''");
+    let (code, _) = query_error(&mut session, sql);
+    assert!(!session.tiflash_fallback_allowed(code));
+    rows(&mut session, "set @@tidb_allow_fallback_to_tikv='tiflash'");
+    let (code, _) = query_error(&mut session, sql);
+    assert_eq!(code, tidb_errno::errcode::ErrTiFlashServerTimeout);
+    session.set_tiflash_fallback(true);
+    check(&mut session, sql, &[&["50"]]);
+    session.set_tiflash_fallback(false);
+    tidb_unistore::rpc::mock::set_batch_cop_recv_timeout(false);
+    tidb_copr::batch_coprocessor::mock::set_reduce_cop_next_max_backoff(false);
+}
+
+/// Go `handleTaskOnce` and `handleStreamedBatchCopResponse`'s caller: a
+/// TiFlash `cop` or `batchCop` request names no resource group while
+/// resource control is off (TiFlash reads an empty name as "disabled"); a
+/// TiKV request keeps the name.
+#[test]
+fn a_tiflash_request_names_no_resource_group_without_resource_control_like_go() {
+    use tikv_client::proto::coprocessor;
+    let (stack, mut session) = tiflash_session(2, 2232);
+    rows(&mut session, "create table t(a int primary key, b int)");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+    rows(&mut session, "insert into t values(1,1),(2,10)");
+    rows(&mut session, "set @@session.tidb_allow_tiflash_cop=ON");
+    rows(&mut session, "set @@session.tidb_allow_mpp=OFF");
+
+    let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let recorded = std::sync::Arc::clone(&sent);
+    stack.rpc.set_send_hook(Some(std::sync::Arc::new(move |request| {
+        let any = request.as_any();
+        let context = if let Some(cop) = any.downcast_ref::<coprocessor::Request>() {
+            Some(("cop", cop.context.clone()))
+        } else {
+            any.downcast_ref::<tikv_client::tikv::BatchCoprocessorStreamRequest>()
+                .map(|batch| ("batchCop", batch.request().context.clone()))
+        };
+        if let Some((kind, context)) = context {
+            let context = context.unwrap();
+            // A background session's read is not the statement's.
+            if !context.request_source.starts_with("internal") {
+                let name = context.resource_control_context.unwrap().resource_group_name;
+                recorded.lock().unwrap().push((kind, name));
+            }
+        }
+    })));
+    let mut names = |session: &mut Session, engine: &str, batch_cop: u8| {
+        rows(session, &format!("set @@session.tidb_isolation_read_engines='{engine}'"));
+        rows(session, &format!("set @@tidb_allow_batch_cop = {batch_cop}"));
+        sent.lock().unwrap().clear();
+        assert_eq!(displayed(rows(session, "select count(*) from t")), [["2"]]);
+        let mut names = std::mem::take(&mut *sent.lock().unwrap());
+        names.dedup();
+        names
+    };
+    let default = "default".to_owned();
+    assert_eq!(names(&mut session, "tiflash", 0), [("cop", default.clone())]);
+    assert_eq!(names(&mut session, "tiflash", 2), [("batchCop", default.clone())]);
+    assert_eq!(names(&mut session, "tikv", 0), [("cop", default.clone())]);
+
+    rows(&mut session, "set global tidb_enable_resource_control = off");
+    assert_eq!(names(&mut session, "tiflash", 0), [("cop", String::new())]);
+    assert_eq!(names(&mut session, "tiflash", 2), [("batchCop", String::new())]);
+    assert_eq!(names(&mut session, "tikv", 0), [("cop", default)]);
+    stack.rpc.set_send_hook(None);
 }
 
 /// Go `TestMPPRecovery`: a held read's error is recovered and the gather
@@ -2075,4 +2296,53 @@ fn test_mpp_goroutines_exit_from_errors() {
     assert_eq!(code, tidb_errno::errcode::ErrTiFlashServerTimeout);
     tidb_executor::local_mpp_coordinator::mock::set_mpp_non_root_task_error(false);
     tidb_unistore::rpc::mock::set_mpp_recv_hang(false);
+}
+
+/// Go `TestTiflashPartitionTableScan`.
+#[test]
+fn test_tiflash_partition_table_scan() {
+    let (stack, mut session) = tiflash_session(2, 2230);
+    rows(
+        &mut session,
+        "create table t(\n    a int,\n    primary key(a)\n) partition by range(a) (\n    partition p1 values less than (10),\n    partition p2 values less than (20),\n    partition p3 values less than (30),\n    partition p4 values less than (40),\n    partition p5 values less than (50)\n);",
+    );
+    rows(&mut session, "alter table t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+    rows(&mut session, "insert into t values(1),(11),(21),(31),(41);");
+    rows(&mut session, "set @@tidb_partition_prune_mode = 'dynamic';");
+    rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\";");
+    // unistore does not support later materialization
+    rows(&mut session, "set @@session.tidb_opt_enable_late_materialization=0");
+    rows(&mut session, "set @@session.tidb_allow_tiflash_cop=ON");
+    let count = |session: &mut Session| displayed(rows(session, "select count(*) from t where a < 12;"));
+    let two = vec![vec!["2".to_owned()]];
+    // MPP
+    rows(&mut session, "set @@session.tidb_allow_mpp=ON;");
+    assert_eq!(count(&mut session), two);
+
+    // BatchCop
+    rows(&mut session, "set @@session.tidb_allow_mpp=OFF;");
+    rows(&mut session, "set @@tidb_allow_batch_cop = 2;");
+    assert_eq!(count(&mut session), two);
+
+    // test retry batch cop
+    let busy_for_100ms = || {
+        tidb_unistore::rpc::mock::set_rpc_server_busy(true);
+        std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            tidb_unistore::rpc::mock::set_rpc_server_busy(false);
+        })
+    };
+    // MPP
+    let wg = busy_for_100ms();
+    rows(&mut session, "set @@session.tidb_allow_mpp=ON;");
+    assert_eq!(count(&mut session), two);
+    wg.join().unwrap();
+
+    // BatchCop
+    let wg = busy_for_100ms();
+    rows(&mut session, "set @@session.tidb_allow_mpp=OFF;");
+    rows(&mut session, "set @@tidb_allow_batch_cop = 2;");
+    assert_eq!(count(&mut session), two);
+    wg.join().unwrap();
 }

@@ -1163,6 +1163,51 @@ impl KvHandler {
         batch_resps
     }
 
+    /// Go `Server.BatchCoprocessor`: every region of the request -- its own
+    /// and its partitions' -- runs as one coprocessor request, and each
+    /// answer's data is one batch response; a region error ends the stream
+    /// as an error (Go `RegionError.Error`: its message).
+    pub fn batch_coprocessor(
+        &mut self,
+        req: &coprocessor::BatchRequest,
+    ) -> Result<Vec<coprocessor::BatchResponse>, String> {
+        // Support PartitionTableScan for BatchCop
+        let regions = req
+            .regions
+            .iter()
+            .chain(req.table_regions.iter().flat_map(|tr| &tr.regions));
+        let mut batch_responses = Vec::new();
+        for ri in regions {
+            let mut region_ctx = req.context.clone().unwrap_or_default();
+            region_ctx.region_epoch = ri.region_epoch.clone();
+            region_ctx.region_id = ri.region_id;
+            let (req_ctx, reg_err) = self.new_request_ctx(Some(&region_ctx));
+            if let Some(reg_err) = reg_err {
+                return Err(reg_err.message);
+            }
+            let cop = coprocessor::Request {
+                tp: tidb_unistore_cophandler::REQ_TYPE_DAG,
+                data: req.data.clone(),
+                start_ts: req.start_ts,
+                ranges: ri.ranges.clone(),
+                context: Some(region_ctx),
+                ..coprocessor::Request::default()
+            };
+            let reader = RequestDbReader {
+                store: &self.store,
+                ctx: req_ctx.read_context(),
+                regions: &self.regions,
+                store_id: req_ctx.store_id,
+            };
+            let cop_response = tidb_unistore_cophandler::handle_cop_request(&reader, &cop);
+            batch_responses.push(coprocessor::BatchResponse {
+                data: cop_response.data,
+                ..coprocessor::BatchResponse::default()
+            });
+        }
+        Ok(batch_responses)
+    }
+
     /// Go `Server.IsAlive`.
     #[must_use]
     pub fn is_alive(&self, _req: &mpp::IsAliveRequest) -> mpp::IsAliveResponse {

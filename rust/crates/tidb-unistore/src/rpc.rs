@@ -39,7 +39,10 @@ use std::time::Duration;
 use prost::Message as _;
 use tidb_proto::tipb;
 use tikv_client::proto::{coprocessor, debugpb, kvrpcpb, mpp};
-use tikv_client::tikv::{MppStreamRequest, MppStreamResponse, Request};
+use tikv_client::tikv::{
+    BatchCoprocessorStreamRequest, BatchCoprocessorStreamResponse, MppStreamRequest,
+    MppStreamResponse, Request,
+};
 use tikv_client::{Error, Result};
 
 use crate::cluster::Cluster;
@@ -57,6 +60,66 @@ pub mod mock {
     static MPP_VERSION_ERROR: AtomicI64 = AtomicI64::new(i64::MIN);
     static MPP_RECV_TIMEOUT: AtomicI64 = AtomicI64::new(i64::MIN);
     static MPP_RECV_HANG: AtomicBool = AtomicBool::new(false);
+    static RPC_SERVER_BUSY: AtomicBool = AtomicBool::new(false);
+    static BATCH_COP_CANCELLED: AtomicUsize = AtomicUsize::new(0);
+    static BATCH_COP_RPC_ERR: std::sync::Mutex<Vec<(String, usize)>> = std::sync::Mutex::new(Vec::new());
+
+    /// Go `failpoint.Enable("rpcServerBusy", "return(true)")`: every request
+    /// answers `GenRegionErrorResp(req, ServerIsBusy)`.
+    pub fn set_rpc_server_busy(enabled: bool) {
+        RPC_SERVER_BUSY.store(enabled, Ordering::Release);
+    }
+
+    pub(super) fn rpc_server_busy() -> bool {
+        RPC_SERVER_BUSY.load(Ordering::Acquire)
+    }
+
+    /// Go `failpoint.Enable("BatchCopCancelled", "<times>*return(true)")`:
+    /// the next `times` batch coprocessor requests are canceled; zero
+    /// disables it.
+    pub fn set_batch_cop_cancelled(times: usize) {
+        BATCH_COP_CANCELLED.store(times, Ordering::Release);
+    }
+
+    pub(super) fn batch_cop_cancelled() -> bool {
+        BATCH_COP_CANCELLED
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |times| times.checked_sub(1))
+            .is_ok()
+    }
+
+    static BATCH_COP_RECV_TIMEOUT: AtomicBool = AtomicBool::new(false);
+
+    /// Go `failpoint.Enable("batchCopRecvTimeout", "return(true)")`: a batch
+    /// coprocessor stream's `Recv` answers `context.Canceled` once its
+    /// responses are read, where it would answer `io.EOF`.
+    pub fn set_batch_cop_recv_timeout(enabled: bool) {
+        BATCH_COP_RECV_TIMEOUT.store(enabled, Ordering::Release);
+    }
+
+    pub(super) fn batch_cop_recv_timeout() -> bool {
+        BATCH_COP_RECV_TIMEOUT.load(Ordering::Acquire)
+    }
+
+    /// Go `failpoint.Enable("BatchCopRpcErr<addr>", "<times>*return(\"<addr>\")")`:
+    /// the next `times` batch coprocessor requests to the store at `addr`
+    /// fail with "rpc error"; `usize::MAX` is the uncounted `return`, zero
+    /// disables it.
+    pub fn set_batch_cop_rpc_err(addr: &str, times: usize) {
+        let mut stores = BATCH_COP_RPC_ERR.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        stores.retain(|(store, _)| store != addr);
+        stores.push((addr.to_owned(), times));
+    }
+
+    pub(super) fn batch_cop_rpc_err(addr: &str) -> bool {
+        let mut stores = BATCH_COP_RPC_ERR.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some((_, times)) = stores.iter_mut().find(|(store, times)| store == addr && *times > 0) else {
+            return false;
+        };
+        if *times != usize::MAX {
+            *times -= 1;
+        }
+        true
+    }
 
     /// Go `failpoint.Enable("mppDispatchTimeout", "<times>*return(true)")`:
     /// the next `times` dispatches fail with "rpc error"; zero disables it.
@@ -111,6 +174,51 @@ pub mod mock {
     pub(super) fn mpp_recv_hang() -> bool {
         MPP_RECV_HANG.load(Ordering::Acquire)
     }
+}
+
+/// Client-go `tikvrpc.GenRegionErrorResp`: the response of `req`'s command
+/// carrying only `e`; a command outside its switch is an error.
+#[cfg(any(test, feature = "test-util"))]
+fn gen_region_error_resp(
+    req: &dyn Request,
+    e: tikv_client::proto::errorpb::Error,
+) -> Result<Box<dyn Any>> {
+    let any = req.as_any();
+    macro_rules! region_error {
+        ($($request:ty => $response:ty),* $(,)?) => {
+            $(if any.is::<$request>() {
+                let mut response = <$response>::default();
+                response.region_error = Some(e);
+                return Ok(Box::new(response));
+            })*
+        };
+    }
+    region_error!(
+        kvrpcpb::GetRequest => kvrpcpb::GetResponse,
+        kvrpcpb::ScanRequest => kvrpcpb::ScanResponse,
+        kvrpcpb::PrewriteRequest => kvrpcpb::PrewriteResponse,
+        kvrpcpb::PessimisticLockRequest => kvrpcpb::PessimisticLockResponse,
+        kvrpcpb::PessimisticRollbackRequest => kvrpcpb::PessimisticRollbackResponse,
+        kvrpcpb::CommitRequest => kvrpcpb::CommitResponse,
+        kvrpcpb::CleanupRequest => kvrpcpb::CleanupResponse,
+        kvrpcpb::BatchGetRequest => kvrpcpb::BatchGetResponse,
+        kvrpcpb::BatchRollbackRequest => kvrpcpb::BatchRollbackResponse,
+        kvrpcpb::ScanLockRequest => kvrpcpb::ScanLockResponse,
+        kvrpcpb::ResolveLockRequest => kvrpcpb::ResolveLockResponse,
+        kvrpcpb::GcRequest => kvrpcpb::GcResponse,
+        kvrpcpb::DeleteRangeRequest => kvrpcpb::DeleteRangeResponse,
+        kvrpcpb::UnsafeDestroyRangeRequest => kvrpcpb::UnsafeDestroyRangeResponse,
+        coprocessor::Request => coprocessor::Response,
+        kvrpcpb::MvccGetByKeyRequest => kvrpcpb::MvccGetByKeyResponse,
+        kvrpcpb::MvccGetByStartTsRequest => kvrpcpb::MvccGetByStartTsResponse,
+        kvrpcpb::SplitRegionRequest => kvrpcpb::SplitRegionResponse,
+        kvrpcpb::TxnHeartBeatRequest => kvrpcpb::TxnHeartBeatResponse,
+        kvrpcpb::CheckTxnStatusRequest => kvrpcpb::CheckTxnStatusResponse,
+        kvrpcpb::CheckSecondaryLocksRequest => kvrpcpb::CheckSecondaryLocksResponse,
+        kvrpcpb::FlushRequest => kvrpcpb::FlushResponse,
+        kvrpcpb::BufferBatchGetRequest => kvrpcpb::BufferBatchGetResponse,
+    );
+    Err(Error::StringError(format!("invalid request type {}", req.label())))
 }
 
 /// Go `UnistoreRPCClientSendHook`: a test's look at every request before the
@@ -402,6 +510,17 @@ impl MppRpcClient for RpcClient {
 impl tikv_client::tikv::Client for RpcClient {
     /// Go `RPCClient.SendRequest`.
     async fn dispatch(&self, req: &dyn Request) -> Result<Box<dyn Any>> {
+        #[cfg(any(test, feature = "test-util"))]
+        if mock::rpc_server_busy() {
+            use tikv_client::proto::errorpb;
+            return gen_region_error_resp(
+                req,
+                errorpb::Error {
+                    server_is_busy: Some(errorpb::ServerIsBusy::default()),
+                    ..errorpb::Error::default()
+                },
+            );
+        }
         let hook = self
             .send_hook
             .lock()
@@ -487,6 +606,33 @@ impl tikv_client::tikv::Client for RpcClient {
             return Err(Error::Unimplemented);
         }
         serve!(kvrpcpb::BufferBatchGetRequest, kv_buffer_batch_get);
+        if let Some(request) = any.downcast_ref::<BatchCoprocessorStreamRequest>() {
+            #[cfg(any(test, feature = "test-util"))]
+            if mock::batch_cop_cancelled() {
+                return Err(Error::ContextCanceled);
+            }
+            #[cfg(any(test, feature = "test-util"))]
+            if mock::batch_cop_rpc_err(&self.addr) {
+                return Err(Error::StringError("rpc error".to_owned()));
+            }
+            // Go `handleBatchCop`: the server's responses, collected while it
+            // runs, answer as an already-received stream; `Recv` of the first
+            // one answers `io.EOF` when there is none.
+            let batch_responses = self
+                .lock()
+                .batch_coprocessor(request.request())
+                .map_err(Error::StringError)?;
+            if batch_responses.is_empty() {
+                return Err(Error::StringError("EOF".to_owned()));
+            }
+            #[cfg_attr(not(any(test, feature = "test-util")), allow(unused_mut))]
+            let mut response = BatchCoprocessorStreamResponse::from_responses(batch_responses);
+            #[cfg(any(test, feature = "test-util"))]
+            if mock::batch_cop_recv_timeout() {
+                response = response.with_recv_err(Error::ContextCanceled);
+            }
+            return Ok(Box::new(response));
+        }
         if let Some(request) = any.downcast_ref::<MppStreamRequest>() {
             #[cfg(any(test, feature = "test-util"))]
             {
@@ -495,9 +641,6 @@ impl tikv_client::tikv::Client for RpcClient {
                     return Err(Error::StringError("rpc error".to_owned()));
                 }
                 if mock::mpp_version_error(&[version(&request.0.receiver_meta), version(&request.0.sender_meta)]) {
-                    return Err(Error::ContextCanceled);
-                }
-                if mock::mpp_recv_timeout(request.0.sender_meta.as_ref().map_or(0, |meta| meta.task_id)) {
                     return Err(Error::ContextCanceled);
                 }
                 if mock::mpp_recv_hang() {
@@ -510,13 +653,21 @@ impl tikv_client::tikv::Client for RpcClient {
             // collected while it runs, answer as an already-received stream.
             let rpc = self.clone();
             let request = request.0.clone();
-            let packets = tokio::task::spawn_blocking(move || {
-                rpc.establish_mpp_connection_with_store_id(&request, store_id)
+            let packets = tokio::task::spawn_blocking({
+                let request = request.clone();
+                move || rpc.establish_mpp_connection_with_store_id(&request, store_id)
             })
             .await
             .map_err(|error| Error::StringError(error.to_string()))?
             .map_err(Error::StringError)?;
-            return Ok(Box::new(MppStreamResponse::from_packets(packets)));
+            #[cfg_attr(not(any(test, feature = "test-util")), allow(unused_mut))]
+            let mut response = MppStreamResponse::from_packets(packets);
+            // Go `mockMPPConnectionClient.Recv`: once the packets are read.
+            #[cfg(any(test, feature = "test-util"))]
+            if mock::mpp_recv_timeout(request.sender_meta.as_ref().map_or(0, |meta| meta.task_id)) {
+                response = response.with_recv_err(Error::ContextCanceled);
+            }
+            return Ok(Box::new(response));
         }
         if let Some(request) = any.downcast_ref::<mpp::DispatchTaskRequest>() {
             #[cfg(any(test, feature = "test-util"))]

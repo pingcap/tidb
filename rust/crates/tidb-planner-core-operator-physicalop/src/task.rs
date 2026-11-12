@@ -429,6 +429,14 @@ impl MppTask {
             tasks: Vec::new(),
         });
 
+        // Go `collectPartitionInfosFromMPPPlan`: a reader over one table scan
+        // keeps that scan's partition pruning metadata.
+        let mut table_scans = Vec::new();
+        collect_table_scans(&sender, &mut table_scans);
+        let plan_part_info = match table_scans[..] {
+            [scan] => scan.plan_part_info.clone(),
+            _ => None,
+        };
         let mut reader_base = crate::BasePhysicalPlan::new(
             allocator,
             "TableReader",
@@ -442,7 +450,7 @@ impl MppTask {
             store_type: StoreType::TiFlash,
             is_common_handle: false,
             read_req_type: ReadReqType::Mpp,
-            plan_part_info: None,
+            plan_part_info,
         });
 
         let mut root = RootTask::default();
@@ -1361,3 +1369,15 @@ impl Task {
     }
 }
 
+
+/// Go `collectPartitionInfosFromMPPPlan`'s walk: the table scans under
+/// `plan`, in child order.
+fn collect_table_scans<'a>(plan: &'a PhysicalPlan, scans: &mut Vec<&'a crate::PhysicalTableScan>) {
+    match plan {
+        PhysicalPlan::TableScan(scan) => scans.push(scan),
+        _ => plan
+            .children()
+            .iter()
+            .for_each(|child| collect_table_scans(child, scans)),
+    }
+}

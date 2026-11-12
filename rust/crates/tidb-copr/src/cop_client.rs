@@ -42,6 +42,18 @@ pub trait RealTiKvSessionTransportFactory: Send + Sync {
 
     /// Creates query-local state over the already-running process authority.
     fn open_session_transport(&self) -> Result<Self::Transport, String>;
+
+    /// Go `CopClient.sendBatch` over the factory's store.
+    ///
+    /// # Errors
+    /// Go's `copErrorResponse`; a factory without a TiFlash-capable store
+    /// refuses.
+    fn send_batch(
+        &self,
+        _request: &TransportRequest,
+    ) -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
+        Err("batch coprocessor is not supported by this store".to_owned())
+    }
 }
 
 /// Go `copr.CopClient` over the node's transport factory.
@@ -78,6 +90,16 @@ where
                 request.metadata().request_type
             )
         })?;
+        // Go `CopClient.Send`: `if req.StoreType == kv.TiFlash && req.BatchCop {
+        // return c.sendBatch(ctx, req, vars, option) }`.
+        if request.metadata().store_type == tidb_txnkv::StoreType::TiFlash
+            && request.metadata().batch_cop
+        {
+            let bound = request
+                .bind(tidb_txnkv::TransportBinding::new())
+                .map_err(|error| format!("{error:?}"))?;
+            return self.factory.send_batch(&bound);
+        }
         let mut transport = self.factory.open_session_transport()?;
         let response = send_request(&mut transport, request, operation, None, None)
             .map_err(|error| error.to_string())?;

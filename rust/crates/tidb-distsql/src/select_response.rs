@@ -718,6 +718,28 @@ impl SelectResponseIter {
         }
         let mut output: Option<SelectResultRow<DecodedChunk>> = None;
         let mut output_reused = false;
+        match self.fill_output(required_rows, reuse, &mut output, &mut output_reused) {
+            Ok(()) => Ok(output),
+            Err(error) => {
+                // Go's `chk` is the caller's whatever `Next` answers: an
+                // error after decoded rows leaves them in it.
+                if output_reused {
+                    *reuse = output.map(|output| output.row);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// [`Self::next_chunk_reusing`]'s fetch-and-decode loop: `output` is its
+    /// answer, and holds `reuse`'s chunk while `output_reused`.
+    fn fill_output(
+        &mut self,
+        required_rows: usize,
+        reuse: &mut Option<DecodedChunk>,
+        output: &mut Option<SelectResultRow<DecodedChunk>>,
+        output_reused: &mut bool,
+    ) -> Result<(), ResponseChannelError> {
         loop {
             while let Some(channel_index) =
                 self.channels.last().map(|channel| channel.channel_index)
@@ -726,7 +748,7 @@ impl SelectResponseIter {
                     .as_ref()
                     .is_some_and(|chunk| chunk.channel_index != channel_index)
                 {
-                    return Ok(output);
+                    return Ok(());
                 }
                 let output_chunk = output.get_or_insert_with(|| {
                     let field_types = &self
@@ -741,7 +763,7 @@ impl SelectResponseIter {
                     // jemalloc extent per column, faulted in and freed per
                     // chunk); the append path grows its columns on demand.
                     let reused = reuse.take();
-                    output_reused = reused.is_some();
+                    *output_reused = reused.is_some();
                     SelectResultRow::new(
                         channel_index,
                         reused.unwrap_or_else(|| DecodedChunk::new(field_types, 0, required_rows)),
@@ -753,13 +775,13 @@ impl SelectResponseIter {
                     .expect("the channel index was just read")
                     .fill_chunk(&mut output_chunk.row, required_rows)?;
                 if ready {
-                    return Ok(output.take());
+                    return Ok(());
                 }
                 self.pop_last_channel();
                 let output_is_empty = output_chunk.row.num_rows() == 0;
                 if output_is_empty {
                     let output = output.take();
-                    if std::mem::take(&mut output_reused) {
+                    if std::mem::take(output_reused) {
                         *reuse = output.map(|output| output.row);
                     }
                 }
@@ -773,7 +795,8 @@ impl SelectResponseIter {
                 Ok(event) => event,
                 Err(ResponseChannelError::Pending) => {
                     return output
-                        .map_or(Err(ResponseChannelError::Pending), |chunk| Ok(Some(chunk)))
+                        .as_ref()
+                        .map_or(Err(ResponseChannelError::Pending), |_| Ok(()))
                 }
                 Err(error) => {
                     let _ = self.close();
@@ -810,11 +833,12 @@ impl SelectResponseIter {
                     // `Close` registers the select result.
                     self.release_response_memory();
                     self.closed = true;
-                    return Ok(output);
+                    return Ok(());
                 }
                 None => {
                     return output
-                        .map_or(Err(ResponseChannelError::Pending), |chunk| Ok(Some(chunk)))
+                        .as_ref()
+                        .map_or(Err(ResponseChannelError::Pending), |_| Ok(()))
                 }
             }
         }

@@ -89,6 +89,16 @@ pub fn build_tikv_unary_request(
             tagger.encode_tag_with_key(key)
         })
         .unwrap_or_default();
+    // By calling variable.EnableGlobalResourceControlFunc() and setting global variables,
+    // tikv/client-go can sense whether the rg function is enabled
+    // But for tiflash, it check if rgName is empty to decide if resource control is enabled or not.
+    let rg_name = if metadata.store_type == tidb_txnkv::StoreType::TiFlash
+        && !tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::Relaxed)
+    {
+        String::new()
+    } else {
+        metadata.resource_group_name.clone()
+    };
     let mut context = KvrpcContext {
         region_id: task.region_id,
         region_epoch: task.region_epoch.map(|epoch| KvrpcRegionEpoch {
@@ -113,7 +123,7 @@ pub fn build_tikv_unary_request(
         request_source: input_request_source.clone(),
         busy_threshold_ms: task.store_busy_threshold_ms as u32,
         resource_control_context: Some(KvrpcResourceControlContext {
-            resource_group_name: metadata.resource_group_name.clone(),
+            resource_group_name: rg_name,
             override_priority: 0,
             ..Default::default()
         }),

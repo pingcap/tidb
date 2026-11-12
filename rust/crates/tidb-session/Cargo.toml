@@ -232,7 +232,7 @@ tidb-executor = { path = "../tidb-executor", features = ["test-util"] }
 tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }
 tidb-unistore = { path = "../tidb-unistore", features = ["test-util"] }
 tidb-domain-core = { path = "../tidb-domain-core", features = ["test-util"] }
-tidb-build-tags = { path = "../tidb-build-tags", features = ["failpoints"] }
+tidb-build-tags = { path = "../tidb-build-tags", features = ["failpoints", "intest"] }
 fail = { version = "0.4", features = ["failpoints"] }
 tidb-unistore-cophandler = { path = "../tidb-unistore-cophandler", features = ["failpoints"] }
 # `tests_dml_lock_keys` classifies the raw keys a DML statement leaves behind

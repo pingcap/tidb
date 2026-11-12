@@ -86,7 +86,7 @@ async fn probe_mpp_store<S: tikv_client::PdClient>(
 /// Go `GetTiKVClient().SendRequest(ctx, addr, req, timeout)` for one MPP
 /// command whose `StoreTp` is `store_type`: the store's TiKV client, outside
 /// region routing.
-async fn send_mpp<S, Req, Resp>(
+pub(crate) async fn send_mpp<S, Req, Resp>(
     store: &TikvStore<S>,
     address: &str,
     store_type: tikv_client::tikv::EndpointType,
@@ -241,7 +241,7 @@ impl<S: tikv_client::PdClient> MPPClient<S> {
         kv_context: &tidb_txnkv::StatementKvContext,
         append_warning: &mut dyn FnMut(String),
     ) -> Result<Vec<MppStoreTask>, String> {
-        let (mut tasks, warnings) =
+        let (tasks, warnings) =
             self.store
                 .block_on(crate::cop_store::with_statement_kv_context(
                     kv_context,
@@ -249,6 +249,9 @@ impl<S: tikv_client::PdClient> MPPClient<S> {
                         &self.store,
                         ranges_for_each_physical_table,
                         ctx,
+                        true,
+                        true,
+                        crate::batch_cop_tasks::BALANCE_CONTINUOUS_REGION_COUNT,
                         replica_read,
                         kv_context,
                     ),
@@ -256,30 +259,7 @@ impl<S: tikv_client::PdClient> MPPClient<S> {
         for warning in warnings {
             append_warning(warning);
         }
-        let mut partition_table_regions = if partition_ids.is_empty() {
-            vec![Vec::new(); tasks.len()]
-        } else {
-            crate::batch_cop_tasks::convert_region_infos_to_partition_table_regions(&mut tasks, partition_ids)
-        };
-        Ok(tasks
-            .into_iter()
-            .zip(partition_table_regions.drain(..))
-            .map(|(task, partition_table_regions)| MppStoreTask {
-                address: task.store_addr,
-                store_id: task.store_id,
-                region_peers: task
-                    .region_infos
-                    .iter()
-                    .map(|region| region.region.region.peers.len())
-                    .collect(),
-                regions: task
-                    .region_infos
-                    .into_iter()
-                    .map(|region| region.info)
-                    .collect(),
-                partition_table_regions,
-            })
-            .collect())
+        Ok(crate::batch_cop_tasks::store_tasks(tasks, partition_ids))
     }
 
     /// Go `RegionCache.InvalidateTiFlashComputeStores`.
@@ -297,18 +277,7 @@ impl<S: tikv_client::PdClient> MPPClient<S> {
         address: &str,
         rpc_interceptor: &tidb_txnkv::RpcInterceptorOption,
     ) -> MppTarget<S> {
-        let config = tidb_config::config_tree::config::get_global_config();
-        MppTarget {
-            store: self.store.clone(),
-            address: address.to_owned(),
-            store_type: if config.disaggregated_tiflash {
-                tikv_client::tikv::EndpointType::TiFlashCompute
-            } else {
-                tikv_client::tikv::EndpointType::TiFlash
-            },
-            compute_cache: config.disaggregated_tiflash && !config.use_auto_scaler,
-            rpc_interceptor: rpc_interceptor.clone(),
-        }
+        MppTarget::new(&self.store, address, rpc_interceptor)
     }
 
     fn compute_addresses(
@@ -822,7 +791,7 @@ pub(crate) async fn mpp_retry_wait(
 
 /// Go `MPPClient.DispatchMPPTask`'s retry regions: invalidated in the store's
 /// region cache.
-async fn invalidate_mpp_retry_regions<S: tikv_client::PdClient>(
+pub(crate) async fn invalidate_mpp_retry_regions<S: tikv_client::PdClient>(
     store: &TikvStore<S>,
     retries: &[tidb_proto::metapb::Region],
 ) {
@@ -842,7 +811,7 @@ async fn invalidate_mpp_retry_regions<S: tikv_client::PdClient>(
 // context but still honor the deadline. Keep the transport error until the
 // retry decision is made. Statement cancellation has no remote RPC identity.
 #[derive(Debug)]
-struct MppSetupError {
+pub(crate) struct MppSetupError {
     message: String,
     transport: Option<tikv_client::Error>,
 }
@@ -865,7 +834,17 @@ impl MppSetupError {
     /// status.Code(errors.Cause(err)) == codes.Canceled`: the statement
     /// stopped the RPC, or the store answered that it was canceled. Such a
     /// send is never retried.
-    fn canceled(&self) -> bool {
+    /// Go `errors.Cause(err)`'s text: the error under the connection
+    /// annotation, which is `context.Canceled` when the statement stopped
+    /// the RPC before it had one.
+    pub(crate) fn cause(&self) -> String {
+        match &self.transport {
+            Some(transport) => transport.cause().to_string(),
+            None => tikv_client::Error::ContextCanceled.to_string(),
+        }
+    }
+
+    pub(crate) fn canceled(&self) -> bool {
         // `errors.Cause`: the connection annotation is not the kind.
         match self.transport.as_ref().map(tikv_client::Error::cause) {
             None | Some(tikv_client::Error::ContextCanceled) => true,
@@ -880,7 +859,7 @@ impl MppSetupError {
 /// failed, every region of the task switches to its next TiFlash peer and
 /// reloads, and the answer is whether the send is retried. A canceled send
 /// and a TiDB that is shutting down do neither.
-async fn on_send_fail_for_batch_regions<S: tikv_client::PdClient>(
+pub(crate) async fn on_send_fail_for_batch_regions<S: tikv_client::PdClient>(
     memory: &dyn MppContext,
     bo: &mut RegionBackoffBudget,
     target: &MppTarget<S>,
@@ -932,7 +911,7 @@ async fn backoff_tiflash_rpc(
     waited.is_ok()
 }
 
-async fn mpp_setup<T>(
+pub(crate) async fn mpp_setup<T>(
     memory: Option<&dyn MppContext>,
     timeout: Option<std::time::Duration>,
     stage: &str,
@@ -975,15 +954,15 @@ async fn mpp_setup<T>(
 }
 
 // Go copr.TiFlashReadTimeoutUltraLong bounds each receive, not stream lifetime.
-const MPP_RECEIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600);
+pub(crate) const MPP_RECEIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600);
 
 /// One MPP task's store: where it was dispatched and how it is cleaned up.
-struct MppTarget<S: tikv_client::PdClient> {
-    store: TikvStore<S>,
-    address: String,
+pub(crate) struct MppTarget<S: tikv_client::PdClient> {
+    pub(crate) store: TikvStore<S>,
+    pub(crate) address: String,
     /// Go `getEndPointType(kv.TiFlash)`: TiFlash compute under
     /// disaggregated TiFlash, TiFlash otherwise.
-    store_type: tikv_client::tikv::EndpointType,
+    pub(crate) store_type: tikv_client::tikv::EndpointType,
     /// Whether the task runs on a TiFlash compute node from the region
     /// cache's compute-store list, which a send failure invalidates.
     compute_cache: bool,
@@ -1003,6 +982,26 @@ impl<S: tikv_client::PdClient> Clone for MppTarget<S> {
 }
 
 impl<S: tikv_client::PdClient> MppTarget<S> {
+    /// The store at `address` as Go `getEndPointType(kv.TiFlash)` types it.
+    pub(crate) fn new(
+        store: &TikvStore<S>,
+        address: &str,
+        rpc_interceptor: &tidb_txnkv::RpcInterceptorOption,
+    ) -> Self {
+        let config = tidb_config::config_tree::config::get_global_config();
+        Self {
+            store: store.clone(),
+            address: address.to_owned(),
+            store_type: if config.disaggregated_tiflash {
+                tikv_client::tikv::EndpointType::TiFlashCompute
+            } else {
+                tikv_client::tikv::EndpointType::TiFlash
+            },
+            compute_cache: config.disaggregated_tiflash && !config.use_auto_scaler,
+            rpc_interceptor: rpc_interceptor.clone(),
+        }
+    }
+
     fn invalidate_compute_cache(&self) {
         if self.compute_cache {
             self.store
@@ -1016,7 +1015,7 @@ impl<S: tikv_client::PdClient> MppTarget<S> {
 /// Go `distsql.WithSQLKvExecCounterInterceptor(ctx, ...)` on the MPP
 /// coordinator's ctx: the MPP RPCs `future` sends run the statement's
 /// interceptor (client-go's `interceptedClient` reads it from the ctx).
-async fn under_rpc_interceptor<F: std::future::Future>(
+pub(crate) async fn under_rpc_interceptor<F: std::future::Future>(
     interceptor: &tidb_txnkv::RpcInterceptorOption,
     future: F,
 ) -> F::Output {
@@ -1160,7 +1159,7 @@ async fn cancel_mpp_task<S: tikv_client::PdClient>(target: &MppTarget<S>, meta: 
 }
 
 /// The statement's stop as a response error, with its SQL identity.
-fn mpp_memory_error(ctx: &dyn MppContext) -> Result<(), QueryResponseError> {
+pub(crate) fn mpp_memory_error(ctx: &dyn MppContext) -> Result<(), QueryResponseError> {
     ctx.check().map_err(|sql| QueryResponseError::Sql {
         code: sql.code,
         message: sql.message,

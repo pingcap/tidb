@@ -44,7 +44,7 @@ pub fn use_mpp_execution(ctx: &crate::StmtContext, tr: &PhysicalTableReader) -> 
 }
 
 /// Go `collectPlanIDs`.
-fn collect_plan_ids(plan: &PhysicalPlan, ids: &mut Vec<isize>) {
+pub(crate) fn collect_plan_ids(plan: &PhysicalPlan, ids: &mut Vec<isize>) {
     ids.push(plan.id() as isize);
     for child in plan.children() {
         collect_plan_ids(child, ids);
@@ -74,7 +74,7 @@ pub struct MppGather {
 }
 
 /// Go `PhysicalTableReader.GetTableScans`: the table scans below the plan.
-fn get_table_scans<'p>(plan: &'p PhysicalPlan, scans: &mut Vec<&'p tidb_planner_core_operator_physicalop::PhysicalTableScan>) {
+pub(crate) fn get_table_scans<'p>(plan: &'p PhysicalPlan, scans: &mut Vec<&'p tidb_planner_core_operator_physicalop::PhysicalTableScan>) {
     if let PhysicalPlan::TableScan(scan) = plan {
         scans.push(scan);
     }
@@ -85,7 +85,7 @@ fn get_table_scans<'p>(plan: &'p PhysicalPlan, scans: &mut Vec<&'p tidb_planner_
 
 /// Go `buildVirtualColumnInfo`: the schema's virtual columns ordered by their
 /// column offsets, and their types.
-fn build_virtual_column_info(
+pub(crate) fn build_virtual_column_info(
     schema: &Schema,
     cols: &[tidb_model::GoShared<tidb_model::ColumnInfo>],
 ) -> (Vec<usize>, Vec<FieldType>) {
@@ -225,36 +225,56 @@ impl MppGather {
 impl MppGather {
     /// Go `table.FillVirtualColumnValue` over the gather's virtual columns.
     fn fill_virtual_column_value(&self, req: &mut Chunk) -> Result<(), ExecError> {
-        if self.virtual_column_index.is_empty() {
-            return Ok(());
-        }
-        let mut vir_cols = Chunk::new_chunk_with_capacity(&self.virtual_column_ret_field_types, req.capacity());
-        let flags = tidb_exprctx::Columns::type_flags(&self.ctx);
-        for (i, &idx) in self.virtual_column_index.iter().enumerate() {
-            let exp_col = &self.meta.schema().columns[idx];
-            let virtual_expr = exp_col
-                .virtual_expr
-                .as_ref()
-                .ok_or_else(|| ExecError::internal("mpp gather: virtual column has no generating expression"))?;
-            let col_info = self.columns[idx].read();
-            for row_idx in 0..req.num_rows() {
-                let datum = virtual_expr.eval(&self.ctx, req.get_row(row_idx))?;
-                // Because the expression might return different type from
-                // the generated column, we should wrap a CAST on the result.
-                let cast_datum = tidb_table::generated_column::cast_virtual_column_value(
-                    datum,
-                    &col_info.field_type,
-                    col_info.name.original(),
-                    &self.ctx,
-                    flags,
-                )
-                .map_err(|error| ExecError::Mysql(error.to_mysql_error()))?;
-                vir_cols.append_datum(i, &cast_datum);
-            }
-            req.set_col(idx, vir_cols.column_handle(i));
-        }
-        Ok(())
+        fill_virtual_column_value(
+            &self.ctx,
+            self.meta.schema(),
+            &self.columns,
+            &self.virtual_column_index,
+            &self.virtual_column_ret_field_types,
+            req,
+        )
     }
+}
+
+/// Go `table.FillVirtualColumnValue`: each virtual column of `req` computed
+/// from its generating expression and cast to the column's type.
+pub(crate) fn fill_virtual_column_value(
+    ctx: &crate::StmtContext,
+    schema: &Schema,
+    columns: &[tidb_model::GoShared<tidb_model::ColumnInfo>],
+    virtual_column_index: &[usize],
+    virtual_column_ret_field_types: &[FieldType],
+    req: &mut Chunk,
+) -> Result<(), ExecError> {
+    if virtual_column_index.is_empty() {
+        return Ok(());
+    }
+    let mut vir_cols = Chunk::new_chunk_with_capacity(virtual_column_ret_field_types, req.capacity());
+    let flags = tidb_exprctx::Columns::type_flags(ctx);
+    for (i, &idx) in virtual_column_index.iter().enumerate() {
+        let exp_col = &schema.columns[idx];
+        let virtual_expr = exp_col
+            .virtual_expr
+            .as_ref()
+            .ok_or_else(|| ExecError::internal("mpp gather: virtual column has no generating expression"))?;
+        let col_info = columns[idx].read();
+        for row_idx in 0..req.num_rows() {
+            let datum = virtual_expr.eval(ctx, req.get_row(row_idx))?;
+            // Because the expression might return different type from
+            // the generated column, we should wrap a CAST on the result.
+            let cast_datum = tidb_table::generated_column::cast_virtual_column_value(
+                datum,
+                &col_info.field_type,
+                col_info.name.original(),
+                ctx,
+                flags,
+            )
+            .map_err(|error| ExecError::Mysql(error.to_mysql_error()))?;
+            vir_cols.append_datum(i, &cast_datum);
+        }
+        req.set_col(idx, vir_cols.column_handle(i));
+    }
+    Ok(())
 }
 
 /// Go `ExecutorWithRetry.setupMPPCoordinator`: a new gather id, the

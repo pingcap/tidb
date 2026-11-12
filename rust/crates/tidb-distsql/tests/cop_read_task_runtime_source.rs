@@ -243,7 +243,7 @@ fn unsupported_request_shapes_fail_before_task_or_cache_mutation() {
     let mut cases = Vec::new();
 
     let mut request = metadata(vec![range("a", "z")]);
-    request.store_type = StoreType::TiFlash;
+    request.store_type = StoreType::TiDb;
     cases.push((request, "unsupported_store"));
 
     let mut request = metadata(vec![range("a", "z")]);

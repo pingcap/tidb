@@ -78,6 +78,9 @@ macro_rules! streaming_response {
             /// Items after `first` that a mock stream already holds (client-go's
             /// mock MPP connection client); read before `stream`.
             buffered: std::collections::VecDeque<$item>,
+            /// The error a mock stream's `Recv` answers once its items are
+            /// read (the mock store's receive failpoints).
+            recv_err: Option<Error>,
             stream: Option<tonic::Streaming<$item>>,
             timeout: Duration,
             ru_details: Option<Arc<crate::RuDetails>>,
@@ -90,6 +93,9 @@ macro_rules! streaming_response {
             pub async fn message(&mut self) -> Result<Option<$item>> {
                 if let Some(item) = self.buffered.pop_front() {
                     return Ok(Some(item));
+                }
+                if let Some(err) = self.recv_err.take() {
+                    return Err(err);
                 }
                 let Some(stream) = self.stream.as_mut() else {
                     return Ok(None);
@@ -121,6 +127,14 @@ macro_rules! streaming_response {
                 );
             }
 
+            /// A mock stream whose `Recv` answers `err` once its items are
+            /// read.
+            #[must_use]
+            pub fn with_recv_err(mut self, err: Error) -> Self {
+                self.recv_err = Some(err);
+                self
+            }
+
             /// Cancels the remaining stream. Dropping this value has the same
             /// effect through Tonic's request-body cancellation.
             pub fn close(&mut self) {
@@ -140,6 +154,7 @@ impl CoprocessorStreamResponse {
         Self {
             first,
             buffered: std::collections::VecDeque::new(),
+            recv_err: None,
             stream: None,
             timeout: Duration::ZERO,
             ru_details: None,
@@ -162,6 +177,7 @@ impl MppStreamResponse {
         Self {
             first: buffered.pop_front(),
             buffered,
+            recv_err: None,
             stream: None,
             timeout: Duration::ZERO,
             ru_details: None,
@@ -177,12 +193,22 @@ impl BatchCoprocessorStreamResponse {
         Self {
             first,
             buffered: std::collections::VecDeque::new(),
+            recv_err: None,
             stream: None,
             timeout: Duration::ZERO,
             ru_details: None,
             count_read_rpc: false,
             bypass_ru_v2: true,
         }
+    }
+
+    /// Client-go's mock batch coprocessor client (the mock store's
+    /// `mockBatchCopClient`): the stream of `responses`, already received.
+    pub fn from_responses(responses: Vec<coprocessor::BatchResponse>) -> Self {
+        let mut buffered: std::collections::VecDeque<coprocessor::BatchResponse> = responses.into();
+        let mut response = Self::from_first(buffered.pop_front());
+        response.buffered = buffered;
+        response
     }
 }
 
@@ -260,6 +286,11 @@ impl BatchCoprocessorStreamRequest {
     }
 
     pub(crate) fn inner_for_mock(&self) -> &coprocessor::BatchRequest {
+        &self.request
+    }
+
+    /// Client-go's `Request.BatchCop()`.
+    pub fn request(&self) -> &coprocessor::BatchRequest {
         &self.request
     }
 
@@ -1552,6 +1583,7 @@ impl Request for CoprocessorStreamRequest {
         let mut response = CoprocessorStreamResponse {
             first,
             buffered: std::collections::VecDeque::new(),
+            recv_err: None,
             stream: Some(stream),
             timeout,
             ru_details: self.ru_details.clone(),
@@ -1706,6 +1738,7 @@ impl Request for BatchCoprocessorStreamRequest {
         Ok(Box::new(BatchCoprocessorStreamResponse {
             first,
             buffered: std::collections::VecDeque::new(),
+            recv_err: None,
             stream: Some(stream),
             timeout,
             ru_details: None,
@@ -1852,6 +1885,7 @@ impl Request for MppStreamRequest {
         Ok(Box::new(MppStreamResponse {
             first,
             buffered: std::collections::VecDeque::new(),
+            recv_err: None,
             stream: Some(stream),
             timeout,
             ru_details: None,
@@ -2726,6 +2760,7 @@ mod tests {
         let mut stream = CoprocessorStreamResponse {
             first: None,
             buffered: std::collections::VecDeque::new(),
+            recv_err: None,
             stream: None,
             timeout: Duration::from_secs(1),
             ru_details: Some(details.clone()),
@@ -2777,6 +2812,7 @@ mod tests {
         let mut bypass_stream = CoprocessorStreamResponse {
             first: None,
             buffered: std::collections::VecDeque::new(),
+            recv_err: None,
             stream: None,
             timeout: Duration::from_secs(1),
             ru_details: Some(bypass_details.clone()),
@@ -2825,6 +2861,7 @@ mod tests {
         let mut charged_stream = CoprocessorStreamResponse {
             first: None,
             buffered: std::collections::VecDeque::new(),
+            recv_err: None,
             stream: None,
             timeout: Duration::from_secs(1),
             ru_details: Some(charged_details.clone()),
@@ -2851,6 +2888,7 @@ mod tests {
         let mut bypass_stream = CoprocessorStreamResponse {
             first: None,
             buffered: std::collections::VecDeque::new(),
+            recv_err: None,
             stream: None,
             timeout: Duration::from_secs(1),
             ru_details: Some(bypass_details.clone()),

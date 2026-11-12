@@ -3924,6 +3924,7 @@ dependencies = [
  "tidb-hack",
  "tidb-infoschema",
  "tidb-infoschema-perfschema",
+ "tidb-intest",
  "tidb-kv",
  "tidb-log",
  "tidb-logutil",

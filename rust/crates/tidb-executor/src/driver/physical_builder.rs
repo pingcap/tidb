@@ -7518,6 +7518,20 @@ fn build_reader_node(
                 ctx.mark_physical_table_reader();
                 return Ok(Box::new(gather));
             }
+            // Go `buildNoRangeTableReader` over the `kv.TiFlash` store: a
+            // tree-based request, sent as `batchCop` or `cop`. A union scan
+            // reads the buffer through its own mem table reader.
+            if reader.store_type == tidb_kv::store_type::StoreType::TiFlash && !state.reader_storage.is_mem_buffer() {
+                let executor = crate::table_reader::TiFlashTableReaderExecutor::build(
+                    meta(ctx, plan, plan_schema(plan)?),
+                    ctx,
+                    catalog,
+                    reader,
+                )
+                .map_err(DriverError::from)?;
+                ctx.mark_physical_table_reader();
+                return Ok(executor);
+            }
             let executor = build_reader(plan.id(), reader.table_plan.as_deref(), catalog, ctx, state)?;
             ctx.mark_physical_table_reader();
             Ok(executor)

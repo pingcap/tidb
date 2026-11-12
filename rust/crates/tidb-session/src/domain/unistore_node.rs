@@ -72,6 +72,13 @@ impl RealTiKvSessionTransportFactory for InProcessReadSessionFactory {
             },
         ))
     }
+
+    fn send_batch(
+        &self,
+        request: &tidb_txnkv::TransportRequest,
+    ) -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
+        tidb_copr::batch_coprocessor::send_batch(&self.tikv_store, request)
+    }
 }
 
 #[cfg(test)]

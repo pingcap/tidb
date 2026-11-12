@@ -1436,7 +1436,7 @@ pub(super) fn check_store_batch_copr(metadata: &KvRequestMetadata) -> bool {
 }
 
 pub(super) fn validate_request(metadata: &KvRequestMetadata) -> Result<(), CopReadTaskError> {
-    if metadata.store_type != StoreType::TiKv {
+    if !matches!(metadata.store_type, StoreType::TiKv | StoreType::TiFlash) {
         return Err(CopReadTaskError::UnsupportedStore);
     }
     // Go `BuildCopIterator` turns paging off for every non-DAG request;

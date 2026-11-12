@@ -783,16 +783,6 @@ fn build_resp_with(
     });
     let dag_size = prost::Message::encoded_len(&dag);
     let plan = RemoteScanPlan {
-        cancellation: request.statement.memory.coprocessor_request_cancellation(),
-        rpc_interceptor: request.statement.rpc_interceptor.clone(),
-        kv_context: request
-            .statement
-            .kv_context
-            .as_ref()
-            .map(tidb_txnkv::StatementKvContextCell::get)
-            .unwrap_or_default(),
-        dag,
-        envelope: RequestEnvelope::new(shapes),
         key_ranges,
         key_range_hints: request.range_hints.clone(),
         snapshot_ts: request.snapshot_ts,
@@ -804,32 +794,10 @@ fn build_resp_with(
         // Go `startIndexWorker`: a pushed lookup's request is not paged.
         paging: request.statement.paging && request.index_lookup.is_none(),
         paging_min_size: request.paging_min_size,
-        time_zone: request.statement.time_zone.clone(),
-        resource_group_name: request.statement.resource_group_name.clone(),
-        request_source: request.statement.request_source.clone(),
-        replica_read: request.statement.replica_read,
-        read_replica_scope: request.statement.read_replica_scope.clone(),
-        is_staleness: request.statement.is_staleness,
-        rc_check_ts: request.statement.rc_check_ts,
-        weak_consistency: request.statement.weak_consistency,
-        read_policy: request.statement.read_policy.clone(),
-        estimated_net_bytes: request.statement.estimated_net_bytes,
-        max_execution_time_ms: request.statement.max_execution_time_ms,
-        priority: request.statement.priority,
-        not_fill_cache: request.statement.not_fill_cache,
-        dist_sql_scan_concurrency: request.statement.dist_sql_scan_concurrency,
-        store_batch_size: request.statement.store_batch_size,
-        query_cop_store_limiter: request.statement.query_cop_store_limiter.clone(),
-        runaway_checker: request.statement.runaway_checker.clone(),
-        warnings: request.statement.warnings.clone(),
-        cop_lite_worker: Arc::clone(&request.statement.cop_lite_worker),
         cop_plan_ids,
         root_plan_id,
-        keys_read: request.statement.keys_read.clone(),
-        cop_response_sink: request.statement.cop_response_sink.clone(),
         memory_tracker,
-        session_mem_tracker: Arc::clone(request.statement.memory.session_tracker()),
-        enabled_rate_limit_action: request.statement.enabled_rate_limit_action,
+        ..statement_scan_plan(&request.statement, dag, RequestEnvelope::new(shapes))
     };
     let (iter, deferred) = match deferred {
         Some(client) => (None, Some((client, plan))),
@@ -853,6 +821,130 @@ fn build_resp_with(
         exhausted: false,
         dag_size,
     }))
+}
+
+/// The statement's side of a read's plan (what Go `SetFromSessionVars` and
+/// the reader's context give every request), around `dag`; the read's own
+/// ranges, order and result types are left empty.
+fn statement_scan_plan(
+    statement: &tidb_distsql::remote_scan::PushdownStatementContext,
+    dag: tidb_proto::tipb::DagRequest,
+    envelope: RequestEnvelope,
+) -> RemoteScanPlan {
+    RemoteScanPlan {
+        cancellation: statement.memory.coprocessor_request_cancellation(),
+        rpc_interceptor: statement.rpc_interceptor.clone(),
+        kv_context: statement
+            .kv_context
+            .as_ref()
+            .map(tidb_txnkv::StatementKvContextCell::get)
+            .unwrap_or_default(),
+        dag,
+        envelope,
+        key_ranges: Vec::new(),
+        key_range_hints: Vec::new(),
+        snapshot_ts: 0,
+        keep_order: false,
+        allow_unordered: false,
+        desc: false,
+        field_types: Vec::new(),
+        intermediate_output_types: Vec::new(),
+        paging: statement.paging,
+        paging_min_size: None,
+        time_zone: statement.time_zone.clone(),
+        resource_group_name: statement.resource_group_name.clone(),
+        request_source: statement.request_source.clone(),
+        replica_read: statement.replica_read,
+        read_replica_scope: statement.read_replica_scope.clone(),
+        is_staleness: statement.is_staleness,
+        rc_check_ts: statement.rc_check_ts,
+        weak_consistency: statement.weak_consistency,
+        read_policy: statement.read_policy.clone(),
+        estimated_net_bytes: statement.estimated_net_bytes,
+        max_execution_time_ms: statement.max_execution_time_ms,
+        priority: statement.priority,
+        not_fill_cache: statement.not_fill_cache,
+        dist_sql_scan_concurrency: statement.dist_sql_scan_concurrency,
+        store_batch_size: statement.store_batch_size,
+        query_cop_store_limiter: statement.query_cop_store_limiter.clone(),
+        runaway_checker: statement.runaway_checker.clone(),
+        warnings: statement.warnings.clone(),
+        cop_lite_worker: Arc::clone(&statement.cop_lite_worker),
+        cop_plan_ids: Vec::new(),
+        root_plan_id: 0,
+        keys_read: statement.keys_read.clone(),
+        cop_response_sink: statement.cop_response_sink.clone(),
+        memory_tracker: None,
+        session_mem_tracker: Arc::clone(statement.memory.session_tracker()),
+        enabled_rate_limit_action: statement.enabled_rate_limit_action,
+        tiflash: None,
+    }
+}
+
+/// What a `kv.TiFlash` table read adds to its request (Go
+/// `TableReaderExecutor.buildKVReq` / `buildKVReqForPartitionTableScan`).
+pub(crate) struct TiFlashRead {
+    /// Go `dagPB`: the tree-based request.
+    pub dag: tidb_proto::tipb::DagRequest,
+    /// Go `SetHandleRanges` / `SetKeyRanges`' ranges; empty for a partition
+    /// table scan.
+    pub key_ranges: Vec<KeyRange>,
+    /// Go `SetPartitionIDAndRanges`.
+    pub partition_id_and_ranges: Vec<tidb_txnkv::PartitionIdAndRanges>,
+    /// Go `SetAllowBatchCop(e.batchCop)`.
+    pub batch_cop: bool,
+    /// Go `SetFromInfoSchema`'s `SchemaVar`.
+    pub schema_version: i64,
+    /// Go `SetConnIDAndConnAlias`.
+    pub connection_id: u64,
+    pub connection_alias: String,
+    pub start_ts: u64,
+    pub keep_order: bool,
+    pub desc: bool,
+    /// Go `exec.RetTypes(e)`.
+    pub field_types: Vec<FieldType>,
+    /// Go `getPhysicalPlanIDs(e.plans)` and `e.ID()`.
+    pub cop_plan_ids: Vec<isize>,
+    pub root_plan_id: isize,
+}
+
+/// Go `TableReaderExecutor.SelectResult` for a `kv.TiFlash` read: the request
+/// through `client` (a batch request goes to `CopClient.sendBatch`).
+pub(crate) fn open_tiflash_read(
+    client: &dyn tidb_txnkv::Client,
+    statement: &tidb_distsql::remote_scan::PushdownStatementContext,
+    read: TiFlashRead,
+) -> Result<SelectResponseIter, String> {
+    let memory_tracker =
+        (read.root_plan_id > 0).then(|| statement.memory.operator_tracker(read.root_plan_id as i64));
+    let plan = RemoteScanPlan {
+        key_ranges: read.key_ranges,
+        snapshot_ts: read.start_ts,
+        keep_order: read.keep_order,
+        desc: read.desc,
+        field_types: read.field_types,
+        cop_plan_ids: read.cop_plan_ids,
+        root_plan_id: read.root_plan_id,
+        memory_tracker,
+        tiflash: Some(TiFlashRequest {
+            partition_id_and_ranges: read.partition_id_and_ranges,
+            batch_cop: read.batch_cop,
+            schema_version: read.schema_version,
+            connection_id: read.connection_id,
+            connection_alias: read.connection_alias,
+        }),
+        ..statement_scan_plan(statement, read.dag, RequestEnvelope::new(Vec::new()))
+    };
+    scan_result(|| open_scan(client, plan))
+}
+
+/// The `kv.TiFlash` side of a request.
+struct TiFlashRequest {
+    partition_id_and_ranges: Vec<tidb_txnkv::PartitionIdAndRanges>,
+    batch_cop: bool,
+    schema_version: i64,
+    connection_id: u64,
+    connection_alias: String,
 }
 
 /// Everything needed to open one response on the query worker.
@@ -939,6 +1031,8 @@ struct RemoteScanPlan {
     keys_read: crate::KeysReadBudget,
     /// The statement's consumer of per-response execution details.
     cop_response_sink: Option<Arc<dyn tidb_distsql::select_response::CopResponseSink>>,
+    /// Set for a read of the `kv.TiFlash` store.
+    tiflash: Option<TiFlashRequest>,
 }
 
 /// Go copIteratorWorker/liteCopIteratorWorker turns task panics into errors.
@@ -1057,6 +1151,14 @@ fn open_scan(
         builder.set_key_ranges_with_hints(plan.key_ranges, plan.key_range_hints);
     } else {
         builder.set_non_partitioned_key_ranges(plan.key_ranges);
+    }
+    if let Some(tiflash) = plan.tiflash {
+        builder
+            .set_store_type(tidb_txnkv::StoreType::TiFlash)
+            .set_allow_batch_cop(tiflash.batch_cop)
+            .set_schema_version(tiflash.schema_version)
+            .set_connection(tiflash.connection_id, tiflash.connection_alias)
+            .set_partition_id_and_ranges(tiflash.partition_id_and_ranges);
     }
     builder
         .set_start_ts(plan.snapshot_ts)

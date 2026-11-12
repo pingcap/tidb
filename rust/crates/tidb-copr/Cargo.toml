@@ -15,6 +15,7 @@ test-util = []
 [dependencies]
 tidb-cpuprofile = { path = "../tidb-cpuprofile" }
 tidb-go-strconv = { path = "../tidb-go-strconv" }
+tidb-intest = { path = "../tidb-intest" }
 tidb-copr-metrics = { path = "../tidb-copr-metrics" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }

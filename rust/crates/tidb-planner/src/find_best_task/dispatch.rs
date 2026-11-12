@@ -4307,6 +4307,7 @@ fn find_best_task_4_logical_data_source_paths(
                     Task::Mpp(mpp)
                 } else {
                     Task::Cop(tidb_planner_core_operator_physicalop::task::CopTask {
+                        phys_plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
                         table_plan: Some(Box::new(table_plan)),
                         index_plan_finished: true,
                         keep_order,
