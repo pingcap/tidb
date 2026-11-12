@@ -1690,6 +1690,10 @@ const (
 	DefTiDBMaxDeltaSchemaCount              = 1024
 	DefTiDBPlacementMode                    = PlacementModeStrict
 	DefTiDBEnableAutoIncrementInGenerated   = false
+	DefInnodbFtEnableStopword               = true
+	DefInnodbFtMinTokenSize                 = 3
+	DefInnodbFtMaxTokenSize                 = 84
+	DefNgramTokenSize                       = 2
 	DefTiDBHashAggPartialConcurrency        = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency          = ConcurrencyUnset
 	DefTiDBWindowConcurrency                = ConcurrencyUnset
