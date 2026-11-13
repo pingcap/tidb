@@ -3010,6 +3010,40 @@ func TestRiskRangeSkewRatioOutOfRange(t *testing.T) {
 	require.NoError(t, err3)
 	// Result of count3 should be larger because the risk ratio is higher
 	require.Less(t, count2, count3)
+
+	t.Run("zero_width_fix_control", func(t *testing.T) {
+		// The mock store was bootstrapped as a new cluster.
+		testKit.MustQuery("select @@global.tidb_opt_fix_control").Check(testkit.Rows("65294:ON"))
+		testKit.MustQuery("select @@session.tidb_opt_fix_control").Check(testkit.Rows("65294:ON"))
+		testKit.MustExec("set @@session.tidb_opt_objective = 'moderate'")
+		testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0.5")
+		histNDV := col.Histogram.NDV - int64(col.TopN.Num())
+		point := types.NewIntDatum(12)
+		rangeHigh := types.NewIntDatum(15)
+		estimate := func(low, high *types.Datum) statistics.RowEstimate {
+			return col.Histogram.OutOfRangeRowCount(sctx.GetPlanCtx(), low, high, RealTimeCount, ModifyCount, histNDV)
+		}
+
+		// With no explicit fix control, existing clusters retain the old behavior.
+		testKit.MustExec("set @@session.tidb_opt_fix_control = ''")
+		require.Equal(t, statistics.DefaultRowEst(0), estimate(&point, &point))
+		testKit.MustExec("set @@session.tidb_opt_fix_control = '65294:OFF'")
+		require.Equal(t, statistics.DefaultRowEst(0), estimate(&point, &point))
+		rangeWithFixOff := estimate(&point, &rangeHigh)
+		require.Greater(t, rangeWithFixOff.Est, 0.0)
+
+		// Enabling the fix retains the risk-adjusted estimate for zero-width ranges.
+		testKit.MustExec("set @@session.tidb_opt_fix_control = '65294:ON'")
+		pointWithFixOn := estimate(&point, &point)
+		require.InDelta(t, 455.0, pointWithFixOn.Est, 0.001)
+		require.Equal(t, rangeWithFixOff, estimate(&point, &rangeHigh))
+
+		// Determinate mode returns the histogram's one-value estimate in both cases.
+		testKit.MustExec("set @@session.tidb_opt_objective = 'determinate'")
+		require.InDelta(t, 10.0, estimate(&point, &point).Est, 0.001)
+		testKit.MustExec("set @@session.tidb_opt_fix_control = '65294:OFF'")
+		require.InDelta(t, 10.0, estimate(&point, &point).Est, 0.001)
+	})
 }
 
 // TestOutOfRangeGeVsBetween tests two out-of-range queries: col >= 100 and col BETWEEN 100 AND 102.
