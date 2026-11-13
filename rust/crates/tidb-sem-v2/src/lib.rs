@@ -146,25 +146,24 @@ pub fn set_sys_var_registry(registry: Option<Arc<dyn SysVarRegistry>>) {
         .unwrap_or_else(std::sync::PoisonError::into_inner) = registry;
 }
 
-/// Go `variable.GetSysVar`. Without a registry every variable is unknown,
-/// which is Go's `nil` `SysVar` branch.
-pub fn get_sys_var(name: &str) -> Option<SysVar> {
-    let registry = SYS_VAR_REGISTRY
+/// The installed registry, or the session variable registry Go's
+/// `variable` package is when none is installed.
+fn sys_var_registry() -> Arc<dyn SysVarRegistry> {
+    SYS_VAR_REGISTRY
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
-    registry.and_then(|registry| registry.get_sys_var(name))
+        .clone()
+        .unwrap_or_else(|| Arc::new(VariableRegistry))
+}
+
+/// Go `variable.GetSysVar`.
+pub fn get_sys_var(name: &str) -> Option<SysVar> {
+    sys_var_registry().get_sys_var(name)
 }
 
 /// Go `variable.SetSysVar`.
 pub fn set_sys_var(name: &str, value: &str) {
-    let registry = SYS_VAR_REGISTRY
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
-    if let Some(registry) = registry {
-        registry.set_sys_var(name, value);
-    }
+    sys_var_registry().set_sys_var(name, value);
 }
 
 /// The current TiDB release version, overriding [`tidb_mysql::TIDB_RELEASE_VERSION`].

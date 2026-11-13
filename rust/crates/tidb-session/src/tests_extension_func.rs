@@ -254,10 +254,15 @@ fn register_extension_func() {
     check_func_list(&org_func_list, &[]);
 }
 
-/// Go `testExtensionFuncPrivilege` under SEM v1. Go runs it under SEM v2
-/// too, with `compatibleSEMV2Config`, which is not ported.
+/// Go `TestExtensionFuncPrivilege`.
 #[test]
 fn extension_func_privilege() {
+    extension_func_privilege_under(tidb_sem_compat::V1);
+    extension_func_privilege_under(tidb_sem_compat::V2);
+}
+
+/// Go `testExtensionFuncPrivilege`.
+fn extension_func_privilege_under(sem_ver: &str) {
     let privileged = |name: &str, eval_tp: EvalType, value: &'static str, require: fn(bool) -> Vec<String>| FunctionDef {
         require_dynamic_privileges: Some(Arc::new(require)),
         ..match eval_tp {
@@ -345,14 +350,16 @@ fn extension_func_privilege() {
     check(&mut login("u3"), [Ok("zzz"), super_or_1, Ok("def"), super_or_1, super_or_1]);
     check(&mut login("u4"), all);
 
-    tidb_sem::enable();
-    struct SemOff;
+    // Go `defer sem.SwitchToSEMForTest(t, semVer)()`.
+    struct SemOff(Option<Box<dyn FnOnce()>>);
     impl Drop for SemOff {
         fn drop(&mut self) {
-            tidb_sem::disable();
+            if let Some(cleanup) = self.0.take() {
+                cleanup();
+            }
         }
     }
-    let _sem_off = SemOff;
+    let _sem_off = SemOff(Some(tidb_sem_compat::switch_to_sem_for_test(sem_ver)));
     let restricted_2 = Err("RESTRICTED_CUSTOM_DYN_PRIV_2");
     let only_1 = Err("CUSTOM_DYN_PRIV_1");
     // root in sem

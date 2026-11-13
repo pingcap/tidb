@@ -14,6 +14,10 @@
 
 //! Go `pkg/util/sem/compat`: dispatch between SEM v1 and SEM v2.
 
+mod testhelper;
+
+pub use testhelper::{switch_to_sem_for_test, V1, V2};
+
 fn assert_exclusive() {
     tidb_intest::assert_with_message(
         !(tidb_sem::is_enabled() && tidb_sem_v2::is_enabled()),
