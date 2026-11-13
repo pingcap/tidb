@@ -441,7 +441,7 @@ func TestProcessChunkWith(t *testing.T) {
 			{Name: "skip_rows", Value: expression.NewInt64Const(1)}})
 		defer func() {
 			ti.LoadDataController.Close()
-			ti.Backend().CloseEngineMgr()
+			ti.Backend().Close()
 		}()
 		kvWriter := mock.NewMockEngineWriter(ctrl)
 		kvWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -464,7 +464,7 @@ func TestProcessChunkWith(t *testing.T) {
 		ti := getTableImporter(ctx, t, store, "t", "", importer.DataFormatCSV, nil)
 		defer func() {
 			ti.LoadDataController.Close()
-			ti.Backend().CloseEngineMgr()
+			ti.Backend().Close()
 		}()
 		chkCh := make(chan importer.QueryChunk, 3)
 		fields := make([]*types.FieldType, 0, 3)
@@ -546,7 +546,7 @@ func TestPopulateChunks(t *testing.T) {
 	ti := getTableImporter(ctx, t, store, "t", fmt.Sprintf("%s/test-*.csv", tidbCfg.TempDir), importer.DataFormatCSV, []*plannercore.LoadDataOpt{{Name: "__max_engine_size", Value: expression.NewStrConst("20")}})
 	defer func() {
 		ti.LoadDataController.Close()
-		ti.Backend().CloseEngineMgr()
+		ti.Backend().Close()
 	}()
 	require.NoError(t, ti.InitDataFiles(ctx))
 	engines, err := ti.PopulateChunks(ctx)
