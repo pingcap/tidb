@@ -2584,6 +2584,12 @@ func TestAuthSessionTokenPlugin(t *testing.T) {
 	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
 	require.NoError(t, err)
 
+	// Migration may change the peer address while matching the same wildcard account.
+	cc.peerHost = "192.0.2.1"
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
+	require.NoError(t, err)
+	cc.peerHost = "localhost"
+
 	// login succeeds even if the password expires now
 	tk.MustExec("ALTER USER auth_session_token PASSWORD EXPIRE")
 	err = cc.openSessionAndDoAuth([]byte{}, mysql.AuthNativePassword, 0)
@@ -2599,6 +2605,17 @@ func TestAuthSessionTokenPlugin(t *testing.T) {
 
 	// using the token to auth with another user should fail
 	cc.user = "another_user"
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
+	require.ErrorContains(t, err, "Access denied")
+
+	// Case-distinct usernames and different matched hosts are separate accounts.
+	tk.MustExec("CREATE USER 'AUTH_SESSION_TOKEN'@'%' IDENTIFIED BY 'other-password'")
+	tk.MustExec("CREATE USER 'auth_session_token'@'localhost' IDENTIFIED BY 'other-password'")
+	tk.MustExec("GRANT ALL ON *.* TO 'AUTH_SESSION_TOKEN'@'%', 'auth_session_token'@'localhost'")
+	cc.user = "AUTH_SESSION_TOKEN"
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
+	require.ErrorContains(t, err, "Access denied")
+	cc.user = "auth_session_token"
 	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
 	require.ErrorContains(t, err, "Access denied")
 }
