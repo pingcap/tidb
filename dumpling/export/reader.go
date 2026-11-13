@@ -11,6 +11,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 )
 
+// readBatchCount, readBatchRows, and readBatchBytes are not optimal values.
+// Based on experience, increasing them did not make dumping a 1B-row table
+// with about 200 bytes per row any faster.
 const (
 	readBatchCount = 3
 	readBatchRows  = 256
