@@ -31,19 +31,16 @@ var noopSysVars = []*SysVar{
 	// does not support it. It is possible that these features will be supported in future,
 	// but until then...
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TxReadOnly, Value: vardef.Off, Type: vardef.TypeBool, Aliases: []string{vardef.TransactionReadOnly}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
+		return checkReadOnly(vars, normalizedValue, originalValue, scope)
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TransactionReadOnly, Value: vardef.Off, Type: vardef.TypeBool, Aliases: []string{vardef.TxReadOnly}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
-	}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.OfflineMode, Value: vardef.Off, Type: vardef.TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		return checkReadOnly(vars, normalizedValue, originalValue, scope, true)
+		return checkReadOnly(vars, normalizedValue, originalValue, scope)
 	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.SuperReadOnly, Value: vardef.Off, Type: vardef.TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
+		return checkReadOnly(vars, normalizedValue, originalValue, scope)
 	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.ReadOnly, Value: vardef.Off, Type: vardef.TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
+		return checkReadOnly(vars, normalizedValue, originalValue, scope)
 	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.ConnectTimeout, Value: "10", Type: vardef.TypeUnsigned, MinValue: 2, MaxValue: secondsPerYear},
 	{

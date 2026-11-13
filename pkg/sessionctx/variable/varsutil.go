@@ -85,11 +85,8 @@ func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 }
 
 // checkReadOnly requires TiDBEnableNoopFuncs=1 for the same scope otherwise an error will be returned.
-func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag, offlineMode bool) (string, error) {
+func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 	errMsg := ErrFunctionsNoopImpl.FastGenByArgs("READ ONLY")
-	if offlineMode {
-		errMsg = ErrFunctionsNoopImpl.FastGenByArgs("OFFLINE MODE")
-	}
 	if TiDBOptOn(normalizedValue) {
 		if scope == vardef.ScopeSession && vars.NoopFuncsMode != OnInt {
 			if vars.NoopFuncsMode == OffInt {
