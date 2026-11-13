@@ -256,7 +256,7 @@ func (b *sasClientBuilder) GetAccountName() string {
 
 // use token to access azure blob storage
 type tokenClientBuilder struct {
-	cred        *azidentity.ClientSecretCredential
+	cred        azcore.TokenCredential
 	accountName string
 	serviceURL  string
 
@@ -358,6 +358,26 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *stor
 			}, nil
 		}
 		log.Warn("Failed to get azure token credential but environment variables exist, try to use shared key.", zap.String("tenantId", tenantID), zap.String("clientId", clientID), zap.String("clientSecret", "?"))
+	}
+
+	// The Azure workload identity webhook provides AZURE_CLIENT_ID, AZURE_TENANT_ID,
+	// and AZURE_FEDERATED_TOKEN_FILE. Let the SDK read and refresh the federated token.
+	if len(os.Getenv("AZURE_FEDERATED_TOKEN_FILE")) > 0 {
+		cred, err := azidentity.NewWorkloadIdentityCredential(&azidentity.WorkloadIdentityCredentialOptions{
+			ClientOptions: clientOptions.ClientOptions,
+		})
+		if err != nil {
+			return nil, errors.Annotate(err, "Failed to get azure workload identity credential")
+		}
+		if opts != nil && opts.SendCredentials {
+			options.AccountName = accountName
+		}
+		return &tokenClientBuilder{
+			cred:          cred,
+			accountName:   accountName,
+			serviceURL:    serviceURL,
+			clientOptions: clientOptions,
+		}, nil
 	}
 
 	var sharedKey string
