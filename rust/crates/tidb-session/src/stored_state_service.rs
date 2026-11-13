@@ -36,9 +36,10 @@ pub trait AccountService {
     /// Go `GetSysSession` from the domain's pool: the session the statement's
     /// `BEGIN PESSIMISTIC` .. `COMMIT` and row writes run on.
     fn system_session(&self) -> Result<Box<dyn crate::user_table::AccountSqlSession>, DriverError>;
-    /// Go `Domain.NotifyUpdatePrivilege` after the statement committed: the
-    /// live privilege cache reloads from the tables and peers are told.
-    fn notify_update_privilege(&self) -> Result<(), DriverError>;
+    /// Go `Domain.NotifyUpdatePrivilege(users)` after the statement
+    /// committed: the live privilege cache reloads those users' rows and
+    /// peers are told.
+    fn notify_update_privilege(&self, users: &[String]) -> Result<(), DriverError>;
 }
 
 /// Persists `SET GLOBAL` (Go's `SetGlobalSysVar` writing
@@ -80,7 +81,9 @@ impl Session {
         let mut system = service.system_session()?;
         system.execute("BEGIN PESSIMISTIC")?;
         self.account_sql = Some(system);
+        self.pending_privilege_users = None;
         let applied = run(self);
+        let notified = self.pending_privilege_users.take();
         let mut system = self
             .account_sql
             .take()
@@ -94,7 +97,9 @@ impl Session {
             }
         };
         system.execute("COMMIT")?;
-        service.notify_update_privilege()?;
+        if let Some(users) = notified {
+            service.notify_update_privilege(&users)?;
+        }
         Ok(output)
     }
 }

@@ -109,8 +109,22 @@ pub fn node_accounts(
     Ok(Arc::new(apply_account_policies(config, users)))
 }
 
+/// Go `privileges.NewHandle(do.SysSessionPool(), ...)`: the live account
+/// table's handle loads through the domain's system sessions. Installed as
+/// soon as the domain exists, so an account statement's
+/// `NotifyUpdatePrivilege` always has a handle to reload.
+pub fn new_privilege_handle(
+    users: &ConfiguredUserStore,
+    session_pool: Arc<tidb_domain_core::sys_session::DomainSysSessionPool>,
+) {
+    users.accounts().set_privilege_loader(Arc::new(
+        tidb_domain_core::cluster_privileges::SysSessionPrivilegeLoader { session_pool },
+    ));
+}
+
 /// Go `Domain.LoadPrivilegeLoop`: loads `mysql.*` into `users` through the
-/// domain's system sessions, then keeps it following the cluster.
+/// domain's system sessions ([`new_privilege_handle`]), then keeps it
+/// following the cluster.
 ///
 /// The returned [`PrivilegeReloader`], when present, must be kept alive for
 /// the node's whole run: dropping it stops the reload thread.
@@ -122,27 +136,20 @@ pub fn node_accounts(
 pub fn load_privilege_loop(
     config: &NodeConfig,
     users: &ConfiguredUserStore,
-    session_pool: Arc<tidb_domain_core::sys_session::DomainSysSessionPool>,
 ) -> Result<Option<PrivilegeReloader>, RunConfiguredNodeError> {
     if config.skip_grant_table || !config.load_privileges {
         return Ok(None);
     }
     let engine = |error: String| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error));
-    let privileges = tidb_domain_core::cluster_privileges::update_all(
-        &tidb_domain_core::sys_session::StatsPool {
-            session_pool: Some(&session_pool),
-        },
-    )
-    .map_err(engine)?;
-    users
-        .accounts()
-        .replace_from(&tidb_privilege::load::registry_from_cluster(&privileges).registry);
+    let accounts = users.accounts();
+    // Go's handle starts empty and loads each user as it is used until the
+    // first event's `UpdateAll`; this node loads every user at once.
+    accounts.update_all().map_err(engine)?;
     // Ticks at Go `LoadPrivilegeLoop`'s fallback cadence
     // (pkg/domain/domain.go:1394-1396): ten minutes when the etcd watch is up
     // (the watch makes a peer's GRANT prompt), five when it is not.
     PrivilegeReloader::spawn(
-        users.accounts(),
-        session_pool,
+        accounts,
         privilege_reload_interval(!config.pd_endpoints.is_empty()),
     )
     .map(Some)

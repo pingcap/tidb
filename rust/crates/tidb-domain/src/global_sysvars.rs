@@ -1174,6 +1174,7 @@ impl GlobalSysvars {
             name,
             REQUIRE_SECURE_TRANSPORT
                 | PERFORMANCE_SCHEMA_SESSION_CONNECT_ATTRS_SIZE
+                | TIDB_ACCELERATE_USER_CREATION_UPDATE
                 | TIDB_TTL_JOB_ENABLE
                 | TIDB_TTL_SCAN_BATCH_SIZE
                 | TIDB_TTL_DELETE_BATCH_SIZE
@@ -1255,6 +1256,9 @@ impl GlobalSysvars {
                 SeqCst,
             ),
             TIDB_TTL_JOB_ENABLE => tidb_vardef::ENABLE_TTL_JOB.store(on, SeqCst),
+            TIDB_ACCELERATE_USER_CREATION_UPDATE => {
+                tidb_vardef::ACCELERATE_USER_CREATION_UPDATE.store(on, SeqCst);
+            }
             // Go `SetGlobal`: `vardef.ServiceScope.Store(strings.ToLower(s))`
             // and the config's `Instance.TiDBServiceScope`.
             TIDB_SERVICE_SCOPE => {

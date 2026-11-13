@@ -59,6 +59,10 @@ pub trait AccountSession: crate::stmt_ctx_build::ResetContextOfStmt {
     fn lock_catalog(&self) -> Result<std::sync::MutexGuard<'_, crate::SessionExtendedInfoSchema>, DriverError>;
     /// The `RESOURCE_GROUP` user attribute after Go's resource-group checks.
     fn user_resource_group_attribute(&self, name: &str, is_role: bool) -> Result<String, DriverError>;
+    /// Go `domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(users)` at the
+    /// end of an account executor: the users whose privilege rows it
+    /// changed, reloaded once its writes commit.
+    fn notify_update_privilege(&mut self, users: Vec<String>) -> Result<(), DriverError>;
 }
 
 /// Renders one SQL string literal under the default (backslash-escaping)

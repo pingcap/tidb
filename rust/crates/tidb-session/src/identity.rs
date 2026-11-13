@@ -790,6 +790,7 @@ impl Session {
                   table: &str,
                   _column: &str,
                   privilege: tidb_mysql::PrivilegeType| {
+                registry.log_ensure_active_user(user);
                 let account = registry
                     .matching_account(user, host)
                     .unwrap_or_else(|| (user.to_owned(), host.to_owned()));

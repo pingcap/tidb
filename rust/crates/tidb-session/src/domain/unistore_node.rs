@@ -797,6 +797,7 @@ pub fn unistore_cluster_session_stack_from(
     // The pool's sessions are the node's, so it is bound once the node's
     // session services are: the job scheduler takes one as soon as it can.
     ddl_session_pool.bind(&factory);
+    crate::domain::real_tikv_node::new_privilege_handle(&users, factory.advanced_sys_session_pool());
     // Go's bootstrap provisions `root@%` through SQL; this node provisions its
     // `--auth-file` accounts the same way, before any client connects.
     crate::domain::cluster_session_node::seed_auth_file_accounts(&factory, &users.accounts())

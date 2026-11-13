@@ -101,6 +101,132 @@ struct PrivilegeReloadSignal {
     /// Set by a [`PrivilegeReloadWaker`] so the next wait returns at once and
     /// runs a pass, instead of sitting out the rest of the interval.
     nudged: bool,
+    /// The watch's events since the last pass, merged as Go's
+    /// `batchReadMoreData` merges them.
+    pending: PrivilegeEvent,
+}
+
+/// Go `domain.PrivilegeEvent`, the JSON value of `/tidb/privilege`: reload
+/// every user, or the users listed. `ServerID` names the TiDB that sent it.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PrivilegeEvent {
+    /// Go `All`.
+    pub all: bool,
+    /// Go `ServerID`.
+    pub server_id: u64,
+    /// Go `UserList`.
+    pub user_list: Vec<String>,
+}
+
+impl PrivilegeEvent {
+    /// Go `json.Marshal(event)`.
+    #[must_use]
+    pub fn encode(&self) -> String {
+        let user_list = if self.user_list.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::Value::from(self.user_list.clone())
+        };
+        serde_json::json!({
+            "All": self.all,
+            "ServerID": self.server_id,
+            "UserList": user_list,
+        })
+        .to_string()
+    }
+
+    /// Go `batchReadMoreData`'s merge of a later event into this one.
+    pub fn merge(&mut self, later: Self) {
+        if later.all {
+            self.all = true;
+        } else if !self.all {
+            self.user_list.extend(later.user_list);
+        }
+    }
+}
+
+/// Go `Domain.decodePrivilegeEvent` over one watch response's values: an
+/// event this server sent (`server_id`, when nonzero) is skipped, `All` wins,
+/// user lists are appended, and a response of empty values (an older TiDB's
+/// notification) reloads every user.
+#[must_use]
+pub fn decode_privilege_event<'a>(
+    values: impl IntoIterator<Item = &'a [u8]>,
+    server_id: u64,
+) -> PrivilegeEvent {
+    let mut msg = PrivilegeEvent::default();
+    let mut is_new_version_events = false;
+    for value in values {
+        if value.is_empty() {
+            continue;
+        }
+        let Ok(tmp) = serde_json::from_slice::<serde_json::Value>(value) else {
+            tidb_logutil::bg_logger().warn("decodePrivilegeEvent unmarshal fail", &[]);
+            break;
+        };
+        is_new_version_events = true;
+        if server_id != 0 && tmp["ServerID"].as_u64() == Some(server_id) {
+            // Skip the events from this TiDB-Server.
+            continue;
+        }
+        if tmp["All"].as_bool() == Some(true) {
+            msg.all = true;
+            break;
+        }
+        if let Some(users) = tmp["UserList"].as_array() {
+            msg.user_list
+                .extend(users.iter().filter_map(|user| user.as_str().map(str::to_owned)));
+        }
+    }
+    if msg.user_list.is_empty() && !is_new_version_events {
+        msg.all = true;
+    }
+    msg
+}
+
+/// Go `privReloadEvent`: every user's rows unless
+/// `tidb_accelerate_user_creation_update` is on, then every loaded user's for
+/// an `All` event, else the listed users'.
+///
+/// # Errors
+///
+/// The handle's load failed.
+pub fn priv_reload_event(registry: &PrivilegeRegistry, event: &PrivilegeEvent) -> Result<(), String> {
+    if !tidb_vardef::ACCELERATE_USER_CREATION_UPDATE.load(Ordering::Acquire) {
+        registry.update_all()
+    } else if event.all {
+        registry.update_all_active()
+    } else {
+        registry.update(&event.user_list)
+    }
+}
+
+/// Go `Handle.sctx`: the domain's system session pool, each load one
+/// session's `SELECT HIGH_PRIORITY` reads ([`SqlPrivilegeTables`]).
+pub struct SysSessionPrivilegeLoader {
+    /// The domain's system sessions.
+    pub session_pool: Arc<crate::sys_session::DomainSysSessionPool>,
+}
+
+impl tidb_privilege::PrivilegeLoader for SysSessionPrivilegeLoader {
+    fn with_tables(
+        &self,
+        load: &mut dyn FnMut(&mut dyn PrivilegeTables) -> Result<(), SystemTableError>,
+    ) -> Result<(), String> {
+        crate::sys_session::StatsPool {
+            session_pool: Some(&self.session_pool),
+        }
+        .call_with_sctx(
+            &mut |sctx| {
+                load(&mut SqlPrivilegeTables {
+                    exec: |sql: &str| tidb_stats_handle_util::exec_rows(sctx, sql, &[]),
+                })
+                .map_err(|error| tidb_sqlexec::SqlExecError::from(error.to_string()))
+            },
+            &[],
+        )
+        .map_err(|error| error.message)
+    }
 }
 
 /// A handle the etcd privilege watch uses to wake the reload thread before its
@@ -116,8 +242,9 @@ pub struct PrivilegeReloadWaker {
 }
 
 impl PrivilegeReloadWaker {
-    /// Asks for one reload pass as soon as the thread can run it.
-    pub fn nudge(&self) {
+    /// Asks for one reload pass for `event` as soon as the thread can run
+    /// it, merged with the events not yet reloaded.
+    pub fn nudge(&self, event: PrivilegeEvent) {
         let (lock, condvar) = &*self.signal;
         {
             let mut state = match lock.lock() {
@@ -125,6 +252,7 @@ impl PrivilegeReloadWaker {
                 Err(poisoned) => poisoned.into_inner(),
             };
             state.nudged = true;
+            state.pending.merge(event);
         }
         condvar.notify_all();
     }
@@ -174,48 +302,38 @@ impl std::fmt::Display for PrivilegeReloadError {
 
 impl std::error::Error for PrivilegeReloadError {}
 
-/// One reload pass's read step, answering the cluster's accounts or a reason
-/// they could not be read.
+/// One reload pass: Go `privReloadEvent` for the pass's event, or a reason
+/// it failed.
 ///
-/// Kept as an injectable closure -- Go's own reload loop separates "read one
-/// snapshot" from "publish it" the same way -- so the thread's condvar/
-/// shutdown machinery can run against a fake snapshot provider in tests,
-/// without a real PD/TiKV connection.
-pub type PrivilegeReloadRead =
-    Box<dyn FnMut() -> Result<ClusterPrivileges, String> + Send + 'static>;
+/// Kept as an injectable closure so the thread's condvar/shutdown machinery
+/// can run against a fake reload in tests, without a real PD/TiKV
+/// connection.
+pub type PrivilegeReloadPass =
+    Box<dyn FnMut(&PrivilegeEvent) -> Result<(), String> + Send + 'static>;
 
 impl PrivilegeReloader {
     /// Starts the reload thread ticking every `interval` against `registry`,
-    /// reading through the domain's system sessions (Go `LoadPrivilegeLoop`'s
-    /// `do.privHandle.UpdateAll()` over `do.sysSessionPool`).
+    /// whose handle loads through the domain's system sessions (Go
+    /// `LoadPrivilegeLoop`'s `privReloadEvent(do.privHandle, &event)`).
     ///
     /// `registry` is the node's LIVE table -- the same one every session, the
-    /// login path, and `SHOW GRANTS` already hold a clone of. Every tick
-    /// builds a throwaway registry from one fresh load and publishes it into
-    /// `registry` with [`PrivilegeRegistry::replace_from`], which every
-    /// existing clone observes immediately.
+    /// login path, and `SHOW GRANTS` already hold a clone of; a reload
+    /// publishes into it, which every existing clone observes immediately.
     pub fn spawn(
         registry: PrivilegeRegistry,
-        session_pool: Arc<crate::sys_session::DomainSysSessionPool>,
         interval: Duration,
     ) -> Result<Self, PrivilegeReloadError> {
-        Self::spawn_with_read(
-            registry,
+        Self::spawn_with_reload(
             interval,
-            Box::new(move || {
-                update_all(&crate::sys_session::StatsPool {
-                    session_pool: Some(&session_pool),
-                })
-            }),
+            Box::new(move |event| priv_reload_event(&registry, event)),
         )
     }
 
-    /// Starts the reload thread with an injectable read step; production
-    /// code should use [`Self::spawn`], which supplies the real cluster read.
-    pub fn spawn_with_read(
-        registry: PrivilegeRegistry,
+    /// Starts the reload thread with an injectable pass; production code
+    /// should use [`Self::spawn`], which supplies Go's `privReloadEvent`.
+    pub fn spawn_with_reload(
         interval: Duration,
-        mut read: PrivilegeReloadRead,
+        mut reload: PrivilegeReloadPass,
     ) -> Result<Self, PrivilegeReloadError> {
         if interval.is_zero() {
             return Err(PrivilegeReloadError::ZeroInterval);
@@ -235,13 +353,20 @@ impl PrivilegeReloader {
                         Ok(state) => state,
                         Err(poisoned) => poisoned.into_inner(),
                     };
+                    let mut timed_out = false;
                     if !state.shutdown && !state.nudged {
                         state = match condvar.wait_timeout(state, interval) {
-                            Ok((state, _)) => state,
+                            Ok((state, result)) => {
+                                timed_out = result.timed_out();
+                                state
+                            }
                             Err(poisoned) => poisoned.into_inner().0,
                         };
                     }
                     let stopping = state.shutdown;
+                    let mut event = std::mem::take(&mut state.pending);
+                    // Go: `case <-time.After(duration): event.All = true`.
+                    event.all |= timed_out;
                     // Taking the flag here is what makes one nudge one pass:
                     // a burst of events collapses into the single reload the
                     // thread is about to run, exactly as Go's own loop batches
@@ -251,7 +376,11 @@ impl PrivilegeReloader {
                     if stopping {
                         return;
                     }
-                    run_one_privilege_reload_pass(&registry, read.as_mut(), &worker_stats);
+                    // Go: "All events are from this TiDB-Server, skip them".
+                    if !event.all && event.user_list.is_empty() {
+                        continue;
+                    }
+                    run_one_privilege_reload_pass(&event, reload.as_mut(), &worker_stats);
                 }
             })
             .map_err(PrivilegeReloadError::Spawn)?;
@@ -309,19 +438,16 @@ impl Drop for PrivilegeReloader {
     }
 }
 
-/// Runs one pass: load the cluster's accounts, build their registry, and
-/// publish it -- or leave the currently published table alone on any
-/// failure, exactly as Go's reload loop logs and retries.
+/// Runs one pass: Go `privReloadEvent` -- or, on its failure, the currently
+/// published table stays, exactly as Go's reload loop logs and retries.
 fn run_one_privilege_reload_pass(
-    registry: &PrivilegeRegistry,
-    read: &mut dyn FnMut() -> Result<ClusterPrivileges, String>,
+    event: &PrivilegeEvent,
+    reload: &mut dyn FnMut(&PrivilegeEvent) -> Result<(), String>,
     stats: &PrivilegeReloadCounters,
 ) {
     stats.passes.fetch_add(1, Ordering::AcqRel);
-    match read() {
-        Ok(privileges) => {
-            let built = registry_from_cluster(&privileges);
-            registry.replace_from(&built.registry);
+    match reload(event) {
+        Ok(()) => {
             stats.reloads.fetch_add(1, Ordering::AcqRel);
         }
         Err(error) => {
@@ -333,26 +459,25 @@ fn run_one_privilege_reload_pass(
     }
 }
 
-/// Go `Handle.UpdateAll`: `MySQLPrivilege.LoadAll` on one of the domain's
-/// system sessions.
-///
-/// # Errors
-///
-/// The session could not be taken, or a table did not load (a missing
-/// `mysql.user` included, Go `errLoadPrivilege`).
-pub fn update_all(pool: &dyn StatsSessionPool) -> Result<ClusterPrivileges, String> {
-    let mut loaded = ClusterPrivileges::default();
-    pool.call_with_sctx(
-        &mut |sctx| {
-            loaded = load_all(&mut SqlPrivilegeTables {
-                exec: |sql: &str| tidb_stats_handle_util::exec_rows(sctx, sql, &[]),
-            })?;
-            Ok(())
-        },
-        &[],
-    )
-    .map_err(|error| error.message)?;
-    Ok(loaded)
+/// Go `addUserFilterCondition`: `sql` narrowed to the rows of `users`, unless
+/// there are none or more than 1024 of them.
+fn add_user_filter_condition(
+    mut sql: String,
+    users: Option<&std::collections::BTreeSet<String>>,
+) -> String {
+    let Some(users) = users.filter(|users| !users.is_empty() && users.len() <= 1024) else {
+        return sql;
+    };
+    sql.push_str(" WHERE ");
+    for (index, user) in users.iter().enumerate() {
+        if index > 0 {
+            sql.push_str(" OR ");
+        }
+        sql.push_str("USER = '");
+        sql.push_str(&String::from_utf8_lossy(&tidb_sqlescape::escape_string(user)));
+        sql.push('\'');
+    }
+    sql
 }
 
 /// `mysql.*` read through internal SQL, Go `loadTable`: one
@@ -377,9 +502,13 @@ where
         table: &str,
         columns: &[&str],
         timezone: Option<&tidb_datatype::SessionTimeZone>,
+        users: Option<&std::collections::BTreeSet<String>>,
     ) -> Result<Option<PrivilegeTableRows>, SystemTableError> {
         let name = format!("mysql.{table}");
-        let sql = format!("SELECT HIGH_PRIORITY {} FROM {name}", columns.join(","));
+        let sql = add_user_filter_condition(
+            format!("SELECT HIGH_PRIORITY {} FROM {name}", columns.join(",")),
+            users,
+        );
         let (rows, fields) = match (self.exec)(&sql) {
             Ok(result) => result,
             Err(error)
@@ -804,6 +933,52 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Instant;
 
+    /// Go `json.Marshal(PrivilegeEvent)` and `decodePrivilegeEvent`: the
+    /// events of one watch response merge, this server's own are skipped,
+    /// `All` wins, and a response of empty values (an older TiDB's) reloads
+    /// every user.
+    #[test]
+    fn privilege_events_encode_and_decode_as_go() {
+        let users = |names: &[&str]| PrivilegeEvent {
+            server_id: 7,
+            user_list: names.iter().map(|name| (*name).to_owned()).collect(),
+            ..PrivilegeEvent::default()
+        };
+        assert_eq!(users(&["a"]).encode(), r#"{"All":false,"ServerID":7,"UserList":["a"]}"#);
+        let all = PrivilegeEvent { all: true, ..PrivilegeEvent::default() };
+        assert_eq!(all.encode(), r#"{"All":true,"ServerID":0,"UserList":null}"#);
+
+        let (a, b) = (users(&["a"]).encode(), users(&["b", "a"]).encode());
+        assert_eq!(
+            decode_privilege_event([a.as_bytes(), b.as_bytes()], 0).user_list,
+            ["a", "b", "a"]
+        );
+        // This server's own events are skipped: nothing to reload.
+        assert_eq!(decode_privilege_event([a.as_bytes()], 7), PrivilegeEvent::default());
+        assert!(decode_privilege_event([a.as_bytes(), all.encode().as_bytes()], 0).all);
+        assert!(decode_privilege_event([b"".as_slice()], 0).all);
+
+        // Go `batchReadMoreData`: a later `All` absorbs the user lists.
+        let mut merged = users(&["a"]);
+        merged.merge(users(&["b"]));
+        assert_eq!(merged.user_list, ["a", "b"]);
+        merged.merge(all.clone());
+        assert!(merged.all);
+        merged.merge(users(&["c"]));
+        assert_eq!(merged.user_list, ["a", "b"]);
+    }
+
+    /// A pass that publishes what `read` answers, as Go's `UpdateAll` does.
+    fn publishing(
+        registry: PrivilegeRegistry,
+        mut read: impl FnMut() -> Result<ClusterPrivileges, String> + Send + 'static,
+    ) -> PrivilegeReloadPass {
+        Box::new(move |_event| {
+            registry.replace_from(&registry_from_cluster(&read()?).registry);
+            Ok(())
+        })
+    }
+
     fn snapshot_with_users(users: Vec<LoadedUser>) -> ClusterPrivileges {
         ClusterPrivileges {
             users,
@@ -814,10 +989,9 @@ mod tests {
     #[test]
     fn a_zero_interval_is_refused_rather_than_spinning() {
         let registry = PrivilegeRegistry::bootstrapped_from(Vec::new());
-        let result = PrivilegeReloader::spawn_with_read(
-            registry,
+        let result = PrivilegeReloader::spawn_with_reload(
             Duration::ZERO,
-            Box::new(|| Ok(snapshot_with_users(Vec::new()))),
+            publishing(registry, || Ok(snapshot_with_users(Vec::new()))),
         );
         assert!(matches!(result, Err(PrivilegeReloadError::ZeroInterval)));
     }
@@ -828,10 +1002,9 @@ mod tests {
 
         let (sender, receiver) = mpsc::channel();
         let mut tick = 0u32;
-        let mut reloader = PrivilegeReloader::spawn_with_read(
-            registry.clone(),
+        let mut reloader = PrivilegeReloader::spawn_with_reload(
             Duration::from_millis(5),
-            Box::new(move || {
+            publishing(registry.clone(), move || {
                 tick += 1;
                 let snapshot = match tick {
                     // Pass 1: `new_user` arrives with SELECT, `stale` is
@@ -873,10 +1046,9 @@ mod tests {
         // An interval far longer than this test's patience: only a nudge can
         // make the pass happen in time, so a waker that did nothing would
         // fail here rather than pass slowly.
-        let mut reloader = PrivilegeReloader::spawn_with_read(
-            registry.clone(),
+        let mut reloader = PrivilegeReloader::spawn_with_reload(
             Duration::from_secs(600),
-            Box::new(move || {
+            publishing(registry.clone(), move || {
                 let snapshot =
                     snapshot_with_users(vec![user("granted", "%", "", false, vec!["SELECT"])]);
                 sender.send(()).unwrap();
@@ -884,7 +1056,10 @@ mod tests {
             }),
         )
         .unwrap();
-        reloader.waker().nudge();
+        reloader.waker().nudge(PrivilegeEvent {
+            all: true,
+            ..PrivilegeEvent::default()
+        });
         receiver
             .recv_timeout(Duration::from_secs(10))
             .expect("the nudge must run a pass");
@@ -896,10 +1071,9 @@ mod tests {
     fn a_failed_load_is_counted_as_a_failure_and_keeps_the_previous_table() {
         let registry = registry_from_cluster(&snapshot_with_users(vec![user("kept", "%", "", false, vec![])])).registry;
 
-        let mut reloader = PrivilegeReloader::spawn_with_read(
-            registry.clone(),
+        let mut reloader = PrivilegeReloader::spawn_with_reload(
             Duration::from_millis(5),
-            Box::new(|| Err("Load privilege table fail: mysql.user".to_owned())),
+            publishing(registry.clone(), || Err("Load privilege table fail: mysql.user".to_owned())),
         )
         .unwrap();
 
@@ -919,10 +1093,9 @@ mod tests {
     fn dropping_the_reloader_stops_its_thread_promptly() {
         let registry = PrivilegeRegistry::bootstrapped_from(Vec::new());
         let (sender, receiver) = mpsc::channel();
-        let reloader = PrivilegeReloader::spawn_with_read(
-            registry,
+        let reloader = PrivilegeReloader::spawn_with_reload(
             Duration::from_millis(5),
-            Box::new(move || {
+            publishing(registry, move || {
                 let _ = sender.send(());
                 Ok(snapshot_with_users(Vec::new()))
             }),
@@ -971,10 +1144,9 @@ mod tests {
         ));
 
         let (sender, receiver) = mpsc::channel();
-        let mut reloader = PrivilegeReloader::spawn_with_read(
-            registry.clone(),
+        let mut reloader = PrivilegeReloader::spawn_with_reload(
             Duration::from_millis(5),
-            Box::new(move || {
+            publishing(registry.clone(), move || {
                 let _ = sender.send(());
                 // `r1` is gone: no row, no edge -- a cluster-wide `DROP ROLE
                 // r1`.

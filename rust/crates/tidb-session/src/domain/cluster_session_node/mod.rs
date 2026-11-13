@@ -2747,9 +2747,9 @@ impl crate::stored_state_service::AccountService for ClusterAccountService {
         Ok(Box::new(AccountSystemSession(session)))
     }
 
-    fn notify_update_privilege(&self) -> Result<(), tidb_driver_error::DriverError> {
+    fn notify_update_privilege(&self, users: &[String]) -> Result<(), tidb_driver_error::DriverError> {
         self.accounts
-            .notify_update_privilege()
+            .notify_update_privilege(users)
             .map_err(tidb_driver_error::DriverError::unsupported)
     }
 }

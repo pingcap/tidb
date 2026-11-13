@@ -681,7 +681,7 @@ impl MockAccountWriter {
     /// `NotifyUpdatePrivilege` do.
     pub(super) fn write_rows(&self, write: impl FnOnce(&mut tidb_privilege::loaded::ClusterPrivileges)) {
         write(&mut self.stored.lock().unwrap());
-        self.notify_update_privilege().unwrap();
+        self.notify_all_privileges_changed().unwrap();
     }
 
     /// `CREATE USER user@'%'` with no password.
@@ -722,7 +722,12 @@ impl ClusterAccountWriter for MockAccountWriter {
         Ok(tidb_privilege::load::registry_from_cluster(&self.stored.lock().unwrap()).registry)
     }
 
-    fn notify_update_privilege(&self) -> Result<(), String> {
+    /// The mock's handle loads every user: a reload is `UpdateAll`.
+    fn notify_update_privilege(&self, _users: &[String]) -> Result<(), String> {
+        self.notify_all_privileges_changed()
+    }
+
+    fn notify_all_privileges_changed(&self) -> Result<(), String> {
         self.live.replace_from(&self.load_accounts()?);
         Ok(())
     }

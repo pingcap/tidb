@@ -449,6 +449,9 @@ impl ConfiguredUserStore {
         if self.identity_policy.skip_with_grant() {
             return Some(DEFAULT_AUTH_PLUGIN.to_owned());
         }
+        // Go `MatchIdentity`'s `ensureActiveUser`; a load that fails leaves
+        // the user unmatched.
+        self.accounts.log_ensure_active_user(username);
         let catalog = IdentityCatalog::new(
             self.accounts
                 .accounts()
@@ -605,6 +608,8 @@ impl ConfiguredUserStore {
                 internal: false,
             });
         }
+        // Go `Auth`'s `MatchIdentity`, which loads the user's rows first.
+        self.accounts.log_ensure_active_user(username);
         // The source bypass returned above without taking any account-table
         // lock. Only ordinary authentication constructs and sorts the live
         // identity catalog.

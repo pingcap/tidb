@@ -407,10 +407,15 @@ pub struct Session {
     /// What the session's executors reach through Go's `Domain`; `None` for
     /// an in-process session.
     domain_services: Option<crate::domain_services::DomainServices>,
-    /// Go `Domain.NotifyUpdateAllUsersPrivilege`'s announcement half: tells
-    /// every node of the cluster to reload privileges after FLUSH
-    /// PRIVILEGES. `None` for a session with no peers to tell.
-    privilege_change_notifier: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Go `Domain.NotifyUpdateAllUsersPrivilege`: the domain's reload of
+    /// every user and its announcement to every node of the cluster after
+    /// FLUSH PRIVILEGES. `None` for a session with no domain, which reloads
+    /// its own registry.
+    privilege_change_notifier: Option<Arc<dyn Fn() -> Result<(), DriverError> + Send + Sync>>,
+    /// The users an account executor named to Go's `NotifyUpdatePrivilege`
+    /// while its system session's transaction is open; notified once it
+    /// commits.
+    pending_privilege_users: Option<Vec<String>>,
     /// Go `session.values`: heterogeneous values addressed by session-context
     /// stringer keys. Values must be thread-safe because the native session
     /// moves between connection workers.
@@ -965,6 +970,7 @@ impl Session {
             precompiled: None,
             domain_services: None,
             privilege_change_notifier: None,
+            pending_privilege_users: None,
             context_values: HashMap::new(),
             executor_first_run_breakpoint: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             statement_runaway: Arc::default(),

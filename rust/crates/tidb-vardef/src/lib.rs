@@ -304,6 +304,11 @@ pub static AUTO_ANALYZE_CONCURRENCY: AtomicI64 =
 /// zero-value is intentionally disabled even though the SQL default is ON.
 pub static ENABLE_RESOURCE_CONTROL: AtomicBool = AtomicBool::new(false);
 
+/// Go `vardef.AccelerateUserCreationUpdate`: whether the privilege handle
+/// loads only the users in use (`tidb_accelerate_user_creation_update`).
+pub static ACCELERATE_USER_CREATION_UPDATE: AtomicBool =
+    AtomicBool::new(defaults::DEF_TIDB_ACCELERATE_USER_CREATION_UPDATE);
+
 /// Go `vardef.EnableResourceControlStrictMode`.
 pub static ENABLE_RESOURCE_CONTROL_STRICT_MODE: AtomicBool =
     AtomicBool::new(defaults::DEF_TIDB_RESOURCE_CONTROL_STRICT_MODE);

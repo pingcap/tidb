@@ -837,7 +837,8 @@ pub trait AccountPasswordExec: super::account::AccountExec {
             self.run_user_table_write(&sql)?;
         }
         self.session_vars_mut().sandbox_mode = false;
-        Ok(())
+        // Go `executeSetPwd`: `NotifyUpdatePrivilege([]string{u})`.
+        self.notify_update_privilege(vec![user])
     }
 }
 

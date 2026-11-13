@@ -144,7 +144,7 @@ fn apply_login_policy_in_session(
     if before.auto_account_locked != after.auto_account_locked {
         // Go: "Notification auto (un)lock" -- `NotifyUpdatePrivilege`
         // reloads the privileges from the tables and announces the change.
-        domain.accounts.notify_update_privilege().map_err(|error| {
+        domain.accounts.notify_update_privilege(&[user.to_owned()]).map_err(|error| {
             AuthenticationFailure::Storage(SqlQueryError::unknown(error))
         })?;
     }

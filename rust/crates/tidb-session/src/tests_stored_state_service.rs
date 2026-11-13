@@ -82,7 +82,7 @@ impl AccountService for Unreached {
         unreachable!("a SET opens no system session")
     }
 
-    fn notify_update_privilege(&self) -> Result<(), DriverError> {
+    fn notify_update_privilege(&self, _users: &[String]) -> Result<(), DriverError> {
         unreachable!("a SET reloads no privilege")
     }
 }

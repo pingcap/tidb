@@ -28572,6 +28572,51 @@ fn the_table_size_cache_is_gos_process_wide_cache_over_both_reads() {
     assert_eq!(length(&mut second), expected);
 }
 
+/// Go `TestSQLVariableAccelerateUserCreationUpdate`: with
+/// `tidb_accelerate_user_creation_update` on, an account statement reloads
+/// only the users already loaded, so a new user's grant is not in the cache
+/// until that user logs in (`MatchIdentity`'s `ensureActiveUser`); turned
+/// off, the next statement reloads every user.
+#[test]
+fn accelerate_user_creation_update_loads_users_as_they_log_in_like_go() {
+    let (stack, users) = cop_backed_stack();
+    let mut tk = stack.factory.open_session(session_context(307)).unwrap();
+    let select = |user: &str| {
+        users.accounts().has_matching_global_or_schema_priv(
+            user,
+            "%",
+            "test",
+            tidb_privilege::PrivilegeTypeExt::mask(tidb_mysql::SelectPriv),
+        )
+    };
+    // 1. check the default variable value
+    assert_eq!(displayed(rows(&mut tk, "select @@global.tidb_accelerate_user_creation_update")), [["0"]]);
+    rows(&mut tk, "create user aaa");
+    assert!(users.accounts().full_data());
+    assert!(!select("bbb"));
+
+    // 2. change the variable and check
+    rows(&mut tk, "set @@global.tidb_accelerate_user_creation_update = on");
+    assert_eq!(displayed(rows(&mut tk, "select @@global.tidb_accelerate_user_creation_update")), [["1"]]);
+    assert!(tidb_vardef::ACCELERATE_USER_CREATION_UPDATE.load(std::sync::atomic::Ordering::SeqCst));
+    rows(&mut tk, "create user bbb");
+    assert!(!users.accounts().full_data());
+    // The reload runs, but bbb is not an active user: its grant is not
+    // loaded ("counterintuitive, but it's still the expected behavior").
+    rows(&mut tk, "grant select on test.* to bbb");
+    assert!(!select("bbb"));
+    // bbb logs in: everything works as expected.
+    assert!(users.match_identity("bbb", "localhost").is_some());
+    assert!(select("bbb"));
+
+    // 3. change the variable and check again
+    rows(&mut tk, "set @@global.tidb_accelerate_user_creation_update = off");
+    assert_eq!(displayed(rows(&mut tk, "select @@global.tidb_accelerate_user_creation_update")), [["0"]]);
+    rows(&mut tk, "drop user aaa");
+    assert!(users.accounts().full_data());
+    assert!(select("bbb"));
+}
+
 /// Go `LoadPrivilegeLoop` -> `Handle.UpdateAll`: a peer's account rows land
 /// only in `mysql.*`, and this node's load reads them through the domain's
 /// system sessions (`MySQLPrivilege.LoadAll`'s `SELECT HIGH_PRIORITY`s), a
@@ -28594,12 +28639,11 @@ fn the_privilege_load_reads_a_peers_rows_through_the_domains_sessions_as_go() {
         rows(&mut session, sql);
     }
     assert!(!users.accounts().user_exists("peer", "%"));
-    let loaded = tidb_domain_core::cluster_privileges::update_all(
-        &tidb_domain_core::sys_session::StatsPool {
-            session_pool: Some(&stack.factory.advanced_sys_session_pool()),
-        },
-    )
-    .expect("the load runs on the domain's sessions");
+    users
+        .accounts()
+        .update_all()
+        .expect("the load runs on the domain's sessions");
+    let loaded = tidb_privilege::load::cluster_image_from_registry(&users.accounts());
     let peer = loaded
         .users
         .iter()
@@ -28610,9 +28654,6 @@ fn the_privilege_load_reads_a_peers_rows_through_the_domains_sessions_as_go() {
         peer.password_last_changed.map(|time| time.to_string()).as_deref(),
         Some("2026-01-02 03:04:05")
     );
-    users
-        .accounts()
-        .replace_from(&tidb_privilege::load::registry_from_cluster(&loaded).registry);
     assert_eq!(
         displayed(rows(&mut session, "SHOW GRANTS FOR 'peer'@'%'")),
         [

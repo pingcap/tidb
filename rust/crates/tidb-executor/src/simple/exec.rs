@@ -41,6 +41,9 @@ pub trait SimpleExec: crate::admin::AdminExec {
                 }
                 tidb_ast::SessionStmt::SetDefaultRole(set_default) => {
                     self.set_default_role_stmt(set_default)?;
+                    self.notify_update_privilege(
+                        set_default.users.iter().map(|user| user.user.clone()).collect(),
+                    )?;
                     Ok(Some(StmtOutput::Affected(0)))
                 }
                 // `SET PASSWORD` writes `mysql.user`, not a variable.
@@ -88,6 +91,7 @@ pub trait SimpleExec: crate::admin::AdminExec {
                     users,
                 } => {
                     self.drop_user_stmt(*is_role, *if_exists, users)?;
+                    self.notify_update_privilege(users.iter().map(|user| user.user.clone()).collect())?;
                     Ok(Some(StmtOutput::Affected(0)))
                 }
                 tidb_ast::AdminStmt::AlterInstance(alter) => {
@@ -96,10 +100,19 @@ pub trait SimpleExec: crate::admin::AdminExec {
                 }
                 tidb_ast::AdminStmt::AlterUser(alter) => {
                     self.alter_user_stmt(alter)?;
+                    self.notify_update_privilege(
+                        alter.users.iter().map(|spec| spec.user.user.clone()).collect(),
+                    )?;
                     Ok(Some(StmtOutput::Affected(0)))
                 }
                 tidb_ast::AdminStmt::RenameUser { pairs } => {
                     self.rename_user_stmt(pairs)?;
+                    self.notify_update_privilege(
+                        pairs
+                            .iter()
+                            .flat_map(|pair| [pair.old_user.user.clone(), pair.new_user.user.clone()])
+                            .collect(),
+                    )?;
                     Ok(Some(StmtOutput::Affected(0)))
                 }
                 tidb_ast::AdminStmt::CreateRole {

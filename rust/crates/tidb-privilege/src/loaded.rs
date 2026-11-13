@@ -198,3 +198,34 @@ pub struct ClusterPrivileges {
     /// `mysql.default_roles`, in stored key order.
     pub default_roles: Vec<LoadedDefaultRole>,
 }
+
+impl ClusterPrivileges {
+    /// Go `MySQLPrivilege.merge`: these rows with every row of a user in
+    /// `users` replaced by `diff`'s rows of that user (a user `diff` has no
+    /// rows of loses its own), and `diff`'s role graph.
+    #[must_use]
+    pub fn merge(&self, diff: &Self, users: &std::collections::BTreeSet<String>) -> Self {
+        fn merged<T: Clone>(
+            old: &[T],
+            diff: &[T],
+            users: &std::collections::BTreeSet<String>,
+            user: impl Fn(&T) -> &str,
+        ) -> Vec<T> {
+            old.iter()
+                .filter(|row| !users.contains(user(row)))
+                .chain(diff.iter().filter(|row| users.contains(user(row))))
+                .cloned()
+                .collect()
+        }
+        Self {
+            global_priv: merged(&self.global_priv, &diff.global_priv, users, |row| &row.user),
+            users: merged(&self.users, &diff.users, users, |row| &row.user),
+            db_grants: merged(&self.db_grants, &diff.db_grants, users, |row| &row.user),
+            table_grants: merged(&self.table_grants, &diff.table_grants, users, |row| &row.user),
+            column_grants: merged(&self.column_grants, &diff.column_grants, users, |row| &row.user),
+            dynamic_grants: merged(&self.dynamic_grants, &diff.dynamic_grants, users, |row| &row.user),
+            role_edges: diff.role_edges.clone(),
+            default_roles: merged(&self.default_roles, &diff.default_roles, users, |row| &row.user),
+        }
+    }
+}

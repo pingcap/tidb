@@ -137,6 +137,10 @@ impl tidb_executor::simple::account_tables::AccountSession for Session {
         Session::run_user_table_write(self, sql)
     }
 
+    fn notify_update_privilege(&mut self, users: Vec<String>) -> Result<(), DriverError> {
+        Session::notify_update_privilege(self, users)
+    }
+
     fn user_table_rows(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
         Session::user_table_rows(self, sql)
     }

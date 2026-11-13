@@ -26,20 +26,38 @@ impl Session {
     /// so a row written there directly -- `INSERT INTO mysql.role_edges` --
     /// takes effect, and the live registry every session shares is replaced
     /// in place.
-    /// Installs the announcement FLUSH PRIVILEGES makes to the cluster's
-    /// other nodes after reloading this one.
-    pub fn set_privilege_change_notifier(&mut self, notifier: Arc<dyn Fn() + Send + Sync>) {
+    /// Installs the domain's `NotifyUpdateAllUsersPrivilege`, which FLUSH
+    /// PRIVILEGES runs: this node's reload and the announcement to the
+    /// cluster's other nodes.
+    pub fn set_privilege_change_notifier(
+        &mut self,
+        notifier: Arc<dyn Fn() -> Result<(), DriverError> + Send + Sync>,
+    ) {
         self.privilege_change_notifier = Some(notifier);
     }
 
-    /// Go `executeFlush`'s `NotifyUpdateAllUsersPrivilege`: reload this
-    /// node, then announce the change so every peer reloads too.
+    /// Go `executeFlush`'s `NotifyUpdateAllUsersPrivilege`: the domain
+    /// reloads this node and announces the change so every peer reloads
+    /// too; a session without a domain reloads its own registry.
     pub(crate) fn flush_privileges(&mut self) -> Result<(), DriverError> {
-        self.reload_privileges_from_tables()?;
-        if let Some(notify) = &self.privilege_change_notifier {
-            notify();
+        match &self.privilege_change_notifier {
+            Some(notify) => notify(),
+            None => self.reload_privileges_from_tables(),
         }
-        Ok(())
+    }
+
+    /// Go `NotifyUpdatePrivilege(users)` from an account executor: once the
+    /// statement's system session commits ([`Session::with_account_service`]),
+    /// or at once for an executor that writes no system session.
+    pub(crate) fn notify_update_privilege(&mut self, users: Vec<String>) -> Result<(), DriverError> {
+        if self.account_sql.is_some() {
+            self.pending_privilege_users.get_or_insert_with(Vec::new).extend(users);
+            return Ok(());
+        }
+        match self.domain_services.as_ref() {
+            Some(services) => services.accounts.notify_update_privilege(&users),
+            None => Ok(()),
+        }
     }
 
     pub(crate) fn reload_privileges_from_tables(&mut self) -> Result<(), DriverError> {

@@ -405,7 +405,9 @@ impl DomainSessions for Domain {
         session.set_info_schema(Arc::clone(&loaded));
         let accounts = Arc::clone(&self.accounts);
         session.set_privilege_change_notifier(Arc::new(move || {
-            accounts.notify_all_privileges_changed();
+            accounts
+                .notify_all_privileges_changed()
+                .map_err(tidb_driver_error::DriverError::unsupported)
         }));
         if let Some(syncer) = &self.global_config_syncer {
             session.set_global_config_syncer(Arc::clone(syncer));

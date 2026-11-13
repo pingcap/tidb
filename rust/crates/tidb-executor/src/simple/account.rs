@@ -711,7 +711,9 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 rows.join(",")
             ))?;
         }
-        Ok(())
+        // Go: `NotifyUpdatePrivilege(userIdentityToUserList(users))`, the
+        // accounts this statement created.
+        self.notify_update_privilege(users.iter().map(|(user, _)| (*user).to_owned()).collect())
     }
 
     /// Go `whetherSavePasswordHistory`.
@@ -1980,6 +1982,8 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 "SHOW GRANTS requires a server front end with a privilege registry",
             ));
         };
+        // Go `UserPrivileges.ShowGrants`: `ensureActiveUser(ctx, u)`.
+        registry.ensure_active_user(&user).map_err(DriverError::unsupported)?;
         // Go `fetchShowGrants` merges the session's active roles only for a
         // bare SHOW GRANTS or FOR CURRENT_USER(); naming the account -- even
         // one's own -- shows its own grants.

@@ -51,6 +51,8 @@ use tidb_privilege::cluster_privilege_load::{load_cluster_privileges, read_boots
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_pd_client::EtcdClient;
 use tidb_privilege::PrivilegeRegistry;
+
+use crate::cluster_privileges::{priv_reload_event, PrivilegeEvent};
 use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 
 use tidb_privilege::load::registry_from_cluster;
@@ -64,12 +66,12 @@ use tidb_privilege::load::registry_from_cluster;
 pub trait ClusterAccountWriter: Send + Sync {
     /// The cluster's accounts as of now: what one statement validates against.
     fn load_accounts(&self) -> Result<PrivilegeRegistry, String>;
-    /// Go `Domain.NotifyUpdatePrivilege` after a committed account statement:
-    /// the live table reloads from the cluster's tables and peers are told.
-    fn notify_update_privilege(&self) -> Result<(), String>;
-    /// Go `NotifyUpdateAllUsersPrivilege`'s etcd PUT after FLUSH PRIVILEGES:
-    /// every peer's privilege watch reloads all accounts.
-    fn notify_all_privileges_changed(&self) {}
+    /// Go `Domain.NotifyUpdatePrivilege(users)` after a committed account
+    /// statement: peers are told and the live table reloads those users.
+    fn notify_update_privilege(&self, users: &[String]) -> Result<(), String>;
+    /// Go `NotifyUpdateAllUsersPrivilege` after FLUSH PRIVILEGES: peers are
+    /// told and the live table reloads every user.
+    fn notify_all_privileges_changed(&self) -> Result<(), String>;
 }
 
 /// The production account writer: reads of the cluster's tables, the live
@@ -116,8 +118,11 @@ impl<S> ClusterAccountWriter for RealClusterAccountWriter<S>
 where
     S: StoreClient,
 {
-    fn notify_all_privileges_changed(&self) {
-        notify_privilege_update(self.notifier.as_deref(), &[]);
+    fn notify_all_privileges_changed(&self) -> Result<(), String> {
+        self.notify_update(&PrivilegeEvent {
+            all: true,
+            ..PrivilegeEvent::default()
+        })
     }
 
     fn load_accounts(&self) -> Result<PrivilegeRegistry, String> {
@@ -142,11 +147,24 @@ where
         Ok(registry)
     }
 
-    fn notify_update_privilege(&self) -> Result<(), String> {
-        let loaded = self.load_accounts()?;
-        self.live.replace_from(&loaded);
-        notify_privilege_update(self.notifier.as_deref(), &[]);
-        Ok(())
+    fn notify_update_privilege(&self, users: &[String]) -> Result<(), String> {
+        self.notify_update(&PrivilegeEvent {
+            user_list: users.to_vec(),
+            ..PrivilegeEvent::default()
+        })
+    }
+}
+
+impl<S> RealClusterAccountWriter<S>
+where
+    S: StoreClient,
+{
+    /// Go `Domain.notifyUpdatePrivilege`: the etcd announcement, then
+    /// `privReloadEvent` on this node's handle. This node allocates no
+    /// global server ID, so its events carry Go's zero `ServerID`.
+    fn notify_update(&self, event: &PrivilegeEvent) -> Result<(), String> {
+        notify_privilege_update(self.notifier.as_deref(), event);
+        priv_reload_event(&self.live, event)
     }
 }
 
@@ -157,12 +175,12 @@ where
 /// for the same reason this does: the rows are already durable, and every
 /// reader's own reload interval still finds them. Only a committed change is
 /// ever announced.
-pub fn notify_privilege_update(notifier: Option<&EtcdClient>, _changed: &[String]) {
+pub fn notify_privilege_update(notifier: Option<&EtcdClient>, event: &PrivilegeEvent) {
     let Some(notifier) = notifier else {
         return;
     };
     // Go `Domain.notifyUpdatePrivilege` is silent on success.
-    if let Err(error) = notifier.notify_privilege_update() {
+    if let Err(error) = notifier.notify_privilege_update(&event.encode()) {
         tidb_logutil::bg_logger()
             .warn("notify update privilege failed", &[tidb_logutil::zap_error(error)]);
     }

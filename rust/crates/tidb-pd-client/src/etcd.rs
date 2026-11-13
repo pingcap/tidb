@@ -78,17 +78,6 @@ pub const DDL_GLOBAL_SCHEMA_VERSION_KEY: &str = "/tidb/ddl/global_schema_version
 /// so a node that misses an event loses nothing but time.
 pub const PRIVILEGE_UPDATE_KEY: &str = "/tidb/privilege";
 
-/// The `PrivilegeEvent` body that asks every reader to reload every account.
-///
-/// Go's `PrivilegeEvent` is `{All bool, ServerID uint64, UserList []string}`
-/// (`pkg/domain/domain.go`). A reader skips an event whose `ServerID` equals
-/// its own, so `0` -- the ID no running TiDB reports, and a value its check
-/// ignores anyway -- is what keeps a real TiDB from mistaking this node's
-/// announcement for its own. `All` rather than a `UserList` because every
-/// reader of this key reloads its whole account table regardless, and a
-/// partial list that missed a row would be a silently stale grant.
-const PRIVILEGE_UPDATE_ALL_EVENT: &str = r#"{"All":true,"ServerID":0,"UserList":null}"#;
-
 /// The etcd key TiDB notifies `SET GLOBAL` changes on.
 ///
 /// Source of truth: `pkg/domain/domain.go` `sysVarCacheKey` ("/tidb/sysvars"),
@@ -945,13 +934,12 @@ impl EtcdClient {
         )
     }
 
-    /// Announces that this node changed the cluster's accounts, so every
-    /// peer's privilege watch reloads instead of waiting out its own tick.
-    pub fn notify_privilege_update(&self) -> Result<(), EtcdError> {
-        self.put(
-            PRIVILEGE_UPDATE_KEY.as_bytes(),
-            PRIVILEGE_UPDATE_ALL_EVENT.as_bytes(),
-        )
+    /// Go `notifyUpdatePrivilege`'s `PutKVToEtcd(privilegeKey, data)`:
+    /// announces a change of the cluster's accounts, `event` being Go's
+    /// JSON-encoded `PrivilegeEvent`, so every peer's privilege watch reloads
+    /// instead of waiting out its own tick.
+    pub fn notify_privilege_update(&self, event: &str) -> Result<(), EtcdError> {
+        self.put(PRIVILEGE_UPDATE_KEY.as_bytes(), event.as_bytes())
     }
 
     /// Announces that this node changed a `SET GLOBAL` value, so every

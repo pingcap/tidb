@@ -82,6 +82,8 @@ pub use registry_ops::global_priv_require_str;
 mod tls_policy;
 pub mod verification;
 pub mod cluster_privilege_load;
+mod handle;
+pub use handle::PrivilegeLoader;
 use tls_policy::match_uri_with_wildcard;
 pub use tls_policy::{check_support_x509_name_oneline, parse_and_check_san, x509_name_online};
 pub use tls_policy::{certificate_uri, TlsPeerIdentity};
@@ -220,6 +222,8 @@ pub struct PrivilegeRegistry {
     /// its whole swap of the separate tables, and every reader that combines
     /// tables holds the read side ([`PrivilegeRegistry::read_view`]).
     reload_gate: Arc<std::sync::RwLock<()>>,
+    /// Go `Handle`: what the published tables were loaded from.
+    handle: Arc<crate::handle::HandleState>,
 }
 
 impl std::fmt::Debug for PrivilegeRegistry {
@@ -308,6 +312,7 @@ impl PrivilegeRegistry {
             default_roles: Arc::new(Mutex::new(HashMap::new())),
             clock,
             reload_gate: Arc::new(std::sync::RwLock::new(())),
+            handle: Arc::default(),
         }
     }
 }

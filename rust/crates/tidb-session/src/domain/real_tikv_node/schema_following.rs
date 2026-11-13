@@ -55,7 +55,11 @@ pub fn spawn_privilege_watch(
             event.mod_revision,
             json_string(&String::from_utf8_lossy(&event.value))
         );
-        waker.nudge();
+        // Go `decodePrivilegeEvent`; this node allocates no global server ID.
+        waker.nudge(tidb_domain_core::cluster_privileges::decode_privilege_event(
+            [event.value.as_slice()],
+            0,
+        ));
     }) {
         Ok(watcher) => Some(watcher),
         Err(error) => {

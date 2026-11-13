@@ -591,6 +591,7 @@ pub fn cluster_session_stack(
     // The pool's sessions are the node's, so it is bound once the node's
     // session services are: the job scheduler takes one as soon as it can.
     ddl_session_pool.bind(&factory);
+    tidb_session::domain::real_tikv_node::new_privilege_handle(&users, factory.advanced_sys_session_pool());
     // Go `runInBootstrapSession`'s `upgrade(s)` and `finishBootstrap`, on the
     // domain's sessions before any global variable or privilege loads, so
     // the rows the upgrade writes are the ones those loops read.
@@ -641,11 +642,8 @@ pub fn cluster_session_stack(
     // cache: Go loads accounts at first use, so its pooled sessions never
     // copy the global tier before the cache is built. The reloader must drop
     // before the authority's shutdown drain, like the catalog reloader.
-    let privilege_reloader = tidb_session::domain::real_tikv_node::load_privilege_loop(
-        config,
-        &users,
-        factory.advanced_sys_session_pool(),
-    )?;
+    let privilege_reloader =
+        tidb_session::domain::real_tikv_node::load_privilege_loop(config, &users)?;
     // The reloader's tick is what makes a peer's `GRANT` reach this node at
     // all, and this watch is what makes it arrive in a round trip instead of
     // an interval.

@@ -893,6 +893,9 @@ impl PrivilegeRegistry {
     /// (3530) rather than activating it.
     #[must_use]
     pub fn find_role(&self, account: &Account, role: &Account) -> bool {
+        // Go `findRole`.
+        self.log_ensure_active_user(&account.0);
+        self.log_ensure_active_user(&role.0);
         self.lock_role_edges()
             .get(account)
             .is_some_and(|roles| roles.contains(role))
@@ -1121,6 +1124,7 @@ impl PrivilegeRegistry {
     /// and dynamic-grant rows each match that host independently.
     #[must_use]
     pub fn request_dynamic_verification_with_user(&self, user: &str, host: &str, name: &str) -> bool {
+        self.log_ensure_active_user(user);
         let _view = self.read_view();
         let defaults = self
             .lock_default_roles()

@@ -33,7 +33,10 @@
 //!
 //! Connection-policy text is loaded independently, including orphan rows.
 
+use std::collections::BTreeSet;
 use std::fmt;
+
+
 
 use tidb_infoschema::cluster_catalog::MetaSnapshot;
 use tidb_infoschema::SessionExtendedInfoSchema;
@@ -318,7 +321,9 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
 pub trait PrivilegeTables {
     /// `mysql.<table>` projected to `columns`, with each row's decoded column
     /// values keyed by column ID, or `None` when the table does not exist.
-    /// `timezone` decodes TIMESTAMP columns.
+    /// `timezone` decodes TIMESTAMP columns. `users` is Go's
+    /// `addUserFilterCondition`: a source that can narrow the read to those
+    /// users' rows does; the loader keeps only their rows either way.
     ///
     /// # Errors
     ///
@@ -328,6 +333,7 @@ pub trait PrivilegeTables {
         table: &str,
         columns: &[&str],
         timezone: Option<&tidb_datatype::SessionTimeZone>,
+        users: Option<&BTreeSet<String>>,
     ) -> Result<Option<PrivilegeTableRows>, SystemTableError>;
 }
 
@@ -348,6 +354,7 @@ impl<S: MetaSnapshot> PrivilegeTables for ClusterPrivilegeTables<'_, S> {
         table: &str,
         columns: &[&str],
         timezone: Option<&tidb_datatype::SessionTimeZone>,
+        _users: Option<&BTreeSet<String>>,
     ) -> Result<Option<PrivilegeTableRows>, SystemTableError> {
         let Ok(view) = SystemTableView::locate(self.catalog, table, columns) else {
             return Ok(None);
@@ -368,18 +375,126 @@ impl<S: MetaSnapshot> PrivilegeTables for ClusterPrivilegeTables<'_, S> {
 /// A missing `mysql.user`, or a row whose stored value is not what its
 /// column declares.
 pub fn load_all(
-    tables: &mut impl PrivilegeTables,
+    tables: &mut (impl PrivilegeTables + ?Sized),
+) -> Result<ClusterPrivileges, SystemTableError> {
+    let mut loaded = load_tables(tables, None)?;
+    if let Some(role_edges) = read_role_graph(tables)? {
+        loaded.role_edges = role_edges;
+    }
+    Ok(loaded)
+}
+
+/// Go `MySQLPrivilege.loadSomeUsers`: the rows of `users` in every table but
+/// `mysql.role_edges`, which Go's `updateUsers` reads whole beforehand
+/// ([`load_role_graph`]); each table is required here.
+///
+/// # Errors
+///
+/// A missing table, or a row whose stored value is not what its column
+/// declares.
+pub fn load_some_users(
+    tables: &mut (impl PrivilegeTables + ?Sized),
+    users: &BTreeSet<String>,
+) -> Result<ClusterPrivileges, SystemTableError> {
+    load_tables(tables, Some(users))
+}
+
+/// Go `loadTable(exec, sqlLoadRoleGraph, p.decodeRoleEdgesTable)`: the whole
+/// `mysql.role_edges`, which `updateUsers` reads before it picks the users
+/// to load.
+///
+/// # Errors
+///
+/// A missing table, or a row that does not decode.
+pub fn load_role_graph(
+    tables: &mut (impl PrivilegeTables + ?Sized),
+) -> Result<Vec<LoadedRoleEdge>, SystemTableError> {
+    read_role_graph(tables)?.ok_or_else(|| SystemTableError::Missing {
+        name: "mysql.role_edges".to_owned(),
+    })
+}
+
+/// Go `findUserAndAllRoles`: `user_list` and, transitively, every role
+/// granted to one of them.
+#[must_use]
+pub fn find_user_and_all_roles(user_list: &[String], role_edges: &[LoadedRoleEdge]) -> BTreeSet<String> {
+    let mut all: BTreeSet<String> = user_list.iter().cloned().collect();
+    let mut queue: std::collections::VecDeque<String> = user_list.iter().cloned().collect();
+    while let Some(user) = queue.pop_front() {
+        for edge in role_edges.iter().filter(|edge| edge.grantee_user == user) {
+            if all.insert(edge.role_user.clone()) {
+                queue.push_back(edge.role_user.clone());
+            }
+        }
+    }
+    all
+}
+
+/// Go `LoadRoleGraph`'s read; `None` for a missing table.
+fn read_role_graph(
+    tables: &mut (impl PrivilegeTables + ?Sized),
+) -> Result<Option<Vec<LoadedRoleEdge>>, SystemTableError> {
+    let Some((view, rows)) = tables.rows(
+        "role_edges",
+        &["from_host", "from_user", "to_host", "to_user"],
+        None,
+        None,
+    )?
+    else {
+        return Ok(None);
+    };
+    let mut role_edges = Vec::with_capacity(rows.len());
+    for values in rows {
+        let row = SystemRow::from_values(&view, values);
+        role_edges.push(LoadedRoleEdge {
+            role_host: row.text("from_host")?.unwrap_or_default(),
+            role_user: row.text("from_user")?.unwrap_or_default(),
+            grantee_host: row.text("to_host")?.unwrap_or_default(),
+            grantee_user: row.text("to_user")?.unwrap_or_default(),
+        });
+    }
+    Ok(Some(role_edges))
+}
+
+/// Go `LoadAll`'s table reads without the role graph (`users` `None`), or
+/// `loadSomeUsers`' (each `decode*TableRow(userList)` keeping only those
+/// users' rows, every table required).
+fn load_tables(
+    tables: &mut (impl PrivilegeTables + ?Sized),
+    users: Option<&BTreeSet<String>>,
 ) -> Result<ClusterPrivileges, SystemTableError> {
     let mut loaded = ClusterPrivileges::default();
+    // Go: a `loadSomeUsers` read of a missing table is an error; `LoadAll`
+    // skips every optional one.
+    let mut rows_of = |table: &str,
+                       columns: &[&str],
+                       timezone: Option<&tidb_datatype::SessionTimeZone>|
+     -> Result<Option<PrivilegeTableRows>, SystemTableError> {
+        match tables.rows(table, columns, timezone, users)? {
+            None if users.is_some() => Err(SystemTableError::Missing {
+                name: format!("mysql.{table}"),
+            }),
+            rows => Ok(rows),
+        }
+    };
+    let wanted = |row: &SystemRow<'_>| -> Result<bool, SystemTableError> {
+        Ok(match users {
+            Some(users) => users.contains(&row.text("user")?.unwrap_or_default()),
+            None => true,
+        })
+    };
 
     let timezone = tidb_datatype::SessionTimeZone::utc();
-    let Some((users, user_rows)) = tables.rows("user", USER_COLUMNS, Some(&timezone))? else {
+    let Some((users_view, user_rows)) = rows_of("user", USER_COLUMNS, Some(&timezone))? else {
         return Err(SystemTableError::Missing {
             name: "mysql.user".to_owned(),
         });
     };
     for values in user_rows {
-        let row = SystemRow::from_values(&users, values);
+        let row = SystemRow::from_values(&users_view, values);
+        if !wanted(&row)? {
+            continue;
+        }
         let user_attributes = if row.has_column("user_attributes") {
             match row.datum("user_attributes")? {
                 Some(tidb_datatype::Datum::Json(json)) => Some(json.to_string()),
@@ -447,9 +562,12 @@ pub fn load_all(
         });
     }
 
-    if let Some((view, rows)) = tables.rows("global_priv", &["host", "user", "priv"], None)? {
+    if let Some((view, rows)) = rows_of("global_priv", &["host", "user", "priv"], None)? {
         for values in rows {
             let row = SystemRow::from_values(&view, values);
+            if !wanted(&row)? {
+                continue;
+            }
             loaded.global_priv.push(LoadedGlobalPriv {
                 host: row.text("host")?.unwrap_or_default(),
                 user: row.text("user")?.unwrap_or_default(),
@@ -458,9 +576,12 @@ pub fn load_all(
         }
     }
 
-    if let Some((view, rows)) = tables.rows("db", DB_COLUMNS, None)? {
+    if let Some((view, rows)) = rows_of("db", DB_COLUMNS, None)? {
         for values in rows {
             let row = SystemRow::from_values(&view, values);
+            if !wanted(&row)? {
+                continue;
+            }
             loaded.db_grants.push(LoadedDbGrant {
                 host: row.text("host")?.unwrap_or_default(),
                 user: row.text("user")?.unwrap_or_default(),
@@ -470,13 +591,16 @@ pub fn load_all(
         }
     }
 
-    if let Some((view, rows)) = tables.rows(
+    if let Some((view, rows)) = rows_of(
         "tables_priv",
         &["host", "user", "db", "table_name", "table_priv"],
         None,
     )? {
         for values in rows {
             let row = SystemRow::from_values(&view, values);
+            if !wanted(&row)? {
+                continue;
+            }
             loaded.table_grants.push(LoadedTableGrant {
                 host: row.text("host")?.unwrap_or_default(),
                 user: row.text("user")?.unwrap_or_default(),
@@ -487,7 +611,7 @@ pub fn load_all(
         }
     }
 
-    if let Some((view, rows)) = tables.rows(
+    if let Some((view, rows)) = rows_of(
         "columns_priv",
         &[
             "host",
@@ -501,6 +625,9 @@ pub fn load_all(
     )? {
         for values in rows {
             let row = SystemRow::from_values(&view, values);
+            if !wanted(&row)? {
+                continue;
+            }
             loaded.column_grants.push(LoadedColumnGrant {
                 host: row.text("host")?.unwrap_or_default(),
                 user: row.text("user")?.unwrap_or_default(),
@@ -512,13 +639,16 @@ pub fn load_all(
         }
     }
 
-    if let Some((view, rows)) = tables.rows(
+    if let Some((view, rows)) = rows_of(
         "global_grants",
         &["host", "user", "priv", "with_grant_option"],
         None,
     )? {
         for values in rows {
             let row = SystemRow::from_values(&view, values);
+            if !wanted(&row)? {
+                continue;
+            }
             loaded.dynamic_grants.push(LoadedDynamicGrant {
                 host: row.text("host")?.unwrap_or_default(),
                 user: row.text("user")?.unwrap_or_default(),
@@ -528,29 +658,16 @@ pub fn load_all(
         }
     }
 
-    if let Some((view, rows)) = tables.rows(
-        "role_edges",
-        &["from_host", "from_user", "to_host", "to_user"],
-        None,
-    )? {
-        for values in rows {
-            let row = SystemRow::from_values(&view, values);
-            loaded.role_edges.push(LoadedRoleEdge {
-                role_host: row.text("from_host")?.unwrap_or_default(),
-                role_user: row.text("from_user")?.unwrap_or_default(),
-                grantee_host: row.text("to_host")?.unwrap_or_default(),
-                grantee_user: row.text("to_user")?.unwrap_or_default(),
-            });
-        }
-    }
-
-    if let Some((view, rows)) = tables.rows(
+    if let Some((view, rows)) = rows_of(
         "default_roles",
         &["host", "user", "default_role_host", "default_role_user"],
         None,
     )? {
         for values in rows {
             let row = SystemRow::from_values(&view, values);
+            if !wanted(&row)? {
+                continue;
+            }
             loaded.default_roles.push(LoadedDefaultRole {
                 host: row.text("host")?.unwrap_or_default(),
                 user: row.text("user")?.unwrap_or_default(),

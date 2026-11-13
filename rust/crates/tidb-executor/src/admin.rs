@@ -1094,18 +1094,26 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
             }
             tidb_ast::AdminStmt::Grant(grant) => {
                 self.grant_stmt(grant)?;
+                // Go `GrantExec.Next`: `NotifyUpdatePrivilege(userSpecToUserList(e.Users))`.
+                self.notify_update_privilege(grant.users.iter().map(|spec| spec.user.user.clone()).collect())?;
                 Ok(Some(StmtOutput::Affected(0)))
             }
             tidb_ast::AdminStmt::Revoke(revoke) => {
                 self.revoke_stmt(revoke)?;
+                // Go `RevokeExec.Next`.
+                self.notify_update_privilege(revoke.users.iter().map(|spec| spec.user.user.clone()).collect())?;
                 Ok(Some(StmtOutput::Affected(0)))
             }
             tidb_ast::AdminStmt::GrantRole(grant) => {
                 self.grant_role_stmt(grant)?;
+                // Go `executeGrantRole`.
+                self.notify_update_privilege(grant.users.iter().map(|user| user.user.clone()).collect())?;
                 Ok(Some(StmtOutput::Affected(0)))
             }
             tidb_ast::AdminStmt::RevokeRole(revoke) => {
                 self.revoke_role_stmt(revoke)?;
+                // Go `executeRevokeRole`.
+                self.notify_update_privilege(revoke.users.iter().map(|user| user.user.clone()).collect())?;
                 Ok(Some(StmtOutput::Affected(0)))
             }
             // Go `SimpleExec.executeFlush`.
