@@ -22,7 +22,14 @@ go_test(
         "//pkg/session",  #keep
         "//pkg/session/types",
         "//pkg/sessionctx",
+<<<<<<< HEAD:pkg/session/bootstraptest/BUILD.bazel
         "//pkg/sessionctx/variable",
+=======
+        "//pkg/sessionctx/vardef",
+        "//pkg/statistics",
+        "//pkg/store/mockstore",
+        "//pkg/structure",
+>>>>>>> 35599163cae (session: initialize MDL before starting the DDL scheduler during upgrade (#70464)):pkg/session/test/bootstraptest/BUILD.bazel
         "//pkg/testkit",  #keep
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testmain",
