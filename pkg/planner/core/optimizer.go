@@ -91,7 +91,7 @@ var optRuleList = []base.LogicalOptRule{
 	&ResultReorder{},
 	&rule.BuildKeySolver{},
 	&DecorrelateSolver{},
-	&SemiJoinRewriter{},
+	&rule.SemiJoinRewriter{},
 	&AggregationEliminator{},
 	&SkewDistinctAggRewriter{},
 	&ProjectionEliminator{},
