@@ -598,14 +598,18 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		require.True(t, ctrl.Satisfied())
 	})
 
-	t.Run("test switch2NextStep", func(t *testing.T) {
+	t.Run("test switchOneStep", func(t *testing.T) {
+		switchOneStep := func() error {
+			_, err := scheduler.switchOneStep()
+			return err
+		}
 		scheduler.task.Store(&schTask)
 
 		// retryable plan error, nothing changes
 		schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(nil, errors.New("plan err"))
 		schExt.EXPECT().IsRetryableErr(gomock.Any()).Return(true)
-		require.ErrorContains(t, scheduler.switch2NextStep(), "plan err")
+		require.ErrorContains(t, switchOneStep(), "plan err")
 		require.Equal(t, *scheduler.getTaskClone(), task)
 		require.True(t, ctrl.Satisfied())
 		// non-retryable plan error, but failed to revert, task state unchanged
@@ -613,7 +617,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 			Return(nil, errors.New("plan err"))
 		schExt.EXPECT().IsRetryableErr(gomock.Any()).Return(false)
 		taskMgr.EXPECT().RevertTask(gomock.Any(), task.ID, gomock.Any(), gomock.Any()).Return(fmt.Errorf("revert err"))
-		require.ErrorContains(t, scheduler.switch2NextStep(), "revert err")
+		require.ErrorContains(t, switchOneStep(), "revert err")
 		require.Equal(t, *scheduler.getTaskClone(), task)
 		require.True(t, ctrl.Satisfied())
 		// non-retryable plan error, task state changed to reverting
@@ -621,7 +625,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 			Return(nil, fmt.Errorf("revert err"))
 		schExt.EXPECT().IsRetryableErr(gomock.Any()).Return(false)
 		taskMgr.EXPECT().RevertTask(gomock.Any(), task.ID, gomock.Any(), gomock.Any()).Return(nil)
-		require.NoError(t, scheduler.switch2NextStep())
+		require.NoError(t, switchOneStep())
 		tmpTask := task
 		tmpTask.State = proto.TaskStateReverting
 		tmpTask.Error = fmt.Errorf("revert err")
@@ -635,7 +639,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(nil, nil)
 		taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, fmt.Errorf("update err"))
-		require.ErrorContains(t, scheduler.switch2NextStep(), "update err")
+		require.ErrorContains(t, switchOneStep(), "update err")
 		require.Equal(t, *scheduler.getTaskClone(), task)
 		require.True(t, ctrl.Satisfied())
 		// switch to next step successfully
@@ -643,7 +647,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 			Return(nil, nil)
 		taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
 		taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), proto.TaskStateRunning, proto.StepOne, gomock.Any()).Return(nil)
-		require.NoError(t, scheduler.switch2NextStep())
+		require.NoError(t, switchOneStep())
 		tmpTask = task
 		tmpTask.State = proto.TaskStateRunning
 		tmpTask.Step = proto.StepOne
@@ -664,7 +668,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 				require.Equal(t, doneMeta, task.Meta)
 				return fmt.Errorf("update err")
 			})
-		require.ErrorContains(t, scheduler.switch2NextStep(), "update err")
+		require.ErrorContains(t, switchOneStep(), "update err")
 		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 		// task done successfully, task state changed
 		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
@@ -677,7 +681,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 				require.Equal(t, doneMeta, task.Meta)
 				return nil
 			})
-		require.NoError(t, scheduler.switch2NextStep())
+		require.NoError(t, switchOneStep())
 		tmpTask.State = proto.TaskStateSucceed
 		tmpTask.Step = proto.StepDone
 		tmpTask.Meta = doneMeta
@@ -735,15 +739,18 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 			Return(nil, nil)
 		taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
 		taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), proto.TaskStateRunning, proto.StepOne, gomock.Any()).Return(nil)
+		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+		taskMgr.EXPECT().SucceedTask(gomock.Any(), gomock.Any()).Return(nil)
 		require.NoError(t, scheduler.onPending())
-		taskWithPrepare.State = proto.TaskStateRunning
-		taskWithPrepare.Step = proto.StepOne
+		taskWithPrepare.State = proto.TaskStateSucceed
+		taskWithPrepare.Step = proto.StepDone
 		taskWithPrepare.Meta = []byte(`{"prepare":"done"}`)
 		taskWithPrepare.RequiredSlots = 8
 		taskWithPrepare.MaxNodeCount = 6
 		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
 		require.True(t, ctrl.Satisfied())
 
+		taskWithPrepare.State = proto.TaskStatePending
 		taskWithPrepare.Step = proto.StepInit
 		taskWithPrepare.Meta = []byte(`{"prepare":"init"}`)
 		taskWithPrepare.RequiredSlots = task.RequiredSlots
@@ -964,4 +971,49 @@ func TestOnTaskFinished(t *testing.T) {
 	require.EqualValues(t, map[string]int{
 		metricStateAll: 8, "succeed": 1, "failed": 3, "cancelled": 1, "data-error": 3,
 	}, collectMetricsFn())
+}
+
+func TestSchedulerSkipsEmptySteps(t *testing.T) {
+	for _, emptyFinal := range []bool{false, true} {
+		t.Run(fmt.Sprintf("empty-final-%t", emptyFinal), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			taskMgr := mock.NewMockTaskManager(ctrl)
+			ext := schmock.NewMockExtension(ctrl)
+			task := &proto.Task{TaskBase: proto.TaskBase{ID: 1, State: proto.TaskStatePending, Step: proto.StepInit}}
+			sch := createScheduler(task, true, taskMgr, ctrl)
+			sch.Extension = ext
+			ext.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(func(base *proto.TaskBase) proto.Step {
+				switch base.Step {
+				case proto.StepInit:
+					return proto.StepOne
+				case proto.StepOne:
+					return proto.StepTwo
+				default:
+					return proto.StepDone
+				}
+			}).AnyTimes()
+			ext.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return([]string{":4000"}, nil).Times(2)
+			ext.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), proto.StepOne).Return(nil, nil)
+			metas := [][]byte{[]byte("work")}
+			if emptyFinal {
+				metas = nil
+			}
+			ext.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), proto.StepTwo).Return(metas, nil)
+			taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil).Times(2)
+			taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), proto.TaskStateRunning, proto.StepOne, gomock.Any()).Return(nil)
+			taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), proto.TaskStateRunning, proto.StepTwo, gomock.Any()).Return(nil)
+			if emptyFinal {
+				ext.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				taskMgr.EXPECT().SucceedTask(gomock.Any(), gomock.Any()).Return(nil)
+			}
+			require.NoError(t, sch.switch2NextStep())
+			if emptyFinal {
+				require.Equal(t, proto.TaskStateSucceed, sch.GetTask().State)
+				require.Equal(t, proto.StepDone, sch.GetTask().Step)
+			} else {
+				require.Equal(t, proto.TaskStateRunning, sch.GetTask().State)
+				require.Equal(t, proto.StepTwo, sch.GetTask().Step)
+			}
+		})
+	}
 }

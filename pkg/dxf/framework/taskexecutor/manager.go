@@ -47,7 +47,7 @@ var (
 	TaskCheckInterval = 300 * time.Millisecond
 	// SubtaskCheckInterval is the interval to check whether there are subtasks to run.
 	// exported for testing.
-	SubtaskCheckInterval = 300 * time.Millisecond
+	SubtaskCheckInterval = 100 * time.Millisecond
 	// MaxSubtaskCheckInterval is the max interval to check whether there are subtasks to run.
 	// exported for testing.
 	MaxSubtaskCheckInterval = 2 * time.Second
