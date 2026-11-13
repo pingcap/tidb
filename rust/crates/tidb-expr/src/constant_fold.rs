@@ -202,6 +202,11 @@ fn fold_current_value_in(
     if is_unfoldable_in(func.func_name.lowercase(), func.args.len(), ctx) {
         return None;
     }
+    // Go: "we should not fold the extension function, because it may have a
+    // side effect".
+    if func.is_extension_func() {
+        return None;
+    }
     if let Some(folded) = special_fold(expr, func, ctx) {
         return folded;
     }
@@ -485,7 +490,7 @@ fn fold_value(expr: &mut Expression) -> Option<Datum> {
         }
         Expression::ScalarFunction(func) => func,
     };
-    if is_unfoldable_call(func.func_name.lowercase(), func.args.len()) {
+    if is_unfoldable_call(func.func_name.lowercase(), func.args.len()) || func.is_extension_func() {
         // Go still folds this node's ARGUMENTS -- `foldConstant` recurses
         // through `NewFunction` as each level is built -- it only refuses to
         // fold the unfoldable node itself.
@@ -557,6 +562,7 @@ pub(crate) fn folds_to_constant(expr: &Expression) -> bool {
         }
         Expression::ScalarFunction(func) => {
             !is_unfoldable_call(func.func_name.lowercase(), func.args.len())
+                && !func.is_extension_func()
                 && func.args.iter().all(folds_to_constant)
         }
     }

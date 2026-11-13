@@ -575,6 +575,9 @@ pub struct StmtContextSessionState {
     /// The session's privilege answer for the sequence builtins; `None` is an
     /// unrestricted session.
     pub sequence_privilege: Option<SequencePrivilegeCheck>,
+    /// The session's dynamic-privilege answer (Go's `PrivilegeChecker`
+    /// property); `None` is an unrestricted session.
+    pub dynamic_privilege: Option<DynamicPrivilegeCheck>,
     /// Go `RequestVerificationWithUser`, which the planner asks for a
     /// `SQL SECURITY DEFINER` view's definer; `None` is a session that
     /// enforces no privileges.
@@ -642,6 +645,7 @@ impl Default for StmtContextSessionState {
             connection_collation: "utf8mb4_bin".to_owned(),
             default_collation_for_utf8mb4: "utf8mb4_bin".to_owned(),
             sequence_privilege: None,
+            dynamic_privilege: None,
             view_definer_privilege: None,
             session_privilege: None,
             mdl_related_table: None,
@@ -661,6 +665,10 @@ impl Default for StmtContextSessionState {
 /// while evaluating: `(schema, sequence, insert)` answers whether the session
 /// holds INSERT (`insert`) or SELECT on the sequence.
 pub type SequencePrivilegeCheck = Arc<dyn Fn(&str, &str, bool) -> bool + Send + Sync>;
+
+/// Go `PrivilegeChecker.RequestDynamicVerification(privName, grantable)` as
+/// an extension function asks it while building and evaluating.
+pub type DynamicPrivilegeCheck = Arc<dyn Fn(&str, bool) -> bool + Send + Sync>;
 
 /// Go `kv.Storage.GetMinSafeTS(txnScope)`.
 pub type MinSafeTsProvider = Arc<dyn Fn(&str) -> u64 + Send + Sync>;
@@ -908,6 +916,8 @@ pub struct StmtContextData {
     default_collation_for_utf8mb4: String,
     /// See [`StmtContextSessionState::sequence_privilege`].
     sequence_privilege: Option<SequencePrivilegeCheck>,
+    /// See [`StmtContextSessionState::dynamic_privilege`].
+    dynamic_privilege: Option<DynamicPrivilegeCheck>,
     /// See [`StmtContextSessionState::view_definer_privilege`].
     view_definer_privilege: Option<ViewDefinerPrivilegeCheck>,
     /// See [`StmtContextSessionState::session_privilege`].
@@ -3174,6 +3184,7 @@ impl StmtContext {
             connection_collation: session.connection_collation,
             default_collation_for_utf8mb4: session.default_collation_for_utf8mb4,
             sequence_privilege: session.sequence_privilege,
+            dynamic_privilege: session.dynamic_privilege,
             view_definer_privilege: session.view_definer_privilege,
             session_privilege: session.session_privilege,
             plan_privilege_check: None,
@@ -4489,6 +4500,10 @@ impl StmtContext {
                         *cell = unqualified;
                     }
                 }
+                // Go's `StatementContext` is its `PlanCacheTracker`: the
+                // tracker's answer is the statement's, and under a forced
+                // plan cache (`Fix49736`) it only warns.
+                return;
             }
         }
         let mut current = self
@@ -7258,6 +7273,25 @@ impl Columns for StmtContext {
 
     fn has_process_privilege(&self) -> bool {
         self.process_privilege
+    }
+
+    fn has_privilege_checker(&self) -> bool {
+        true
+    }
+
+    fn request_dynamic_verification(&self, priv_name: &str, grantable: bool) -> bool {
+        self.dynamic_privilege
+            .as_ref()
+            .is_none_or(|check| check(priv_name, grantable))
+    }
+
+    fn active_role_identities(&self) -> Option<Vec<(String, String)>> {
+        Some(
+            self.active_roles
+                .as_ref()
+                .map(|roles| roles.as_ref().clone())
+                .unwrap_or_default(),
+        )
     }
 
     fn retrieve_sql_digest_texts(

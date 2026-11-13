@@ -33,8 +33,6 @@
 //! `builtinFunc`). [`crate::new_function`] names the consequence for return
 //! types as an explicit narrowing.
 
-use std::collections::HashMap;
-use std::sync::{LazyLock, RwLock};
 
 /// The arity contract Go stores in `baseFunctionClass` (`builtin.go:583`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -374,17 +372,6 @@ static FUNCTION_CLASSES: &[(&str, usize, Option<usize>)] = &[
     ("yearweek", 1, Some(2)),
 ];
 
-/// Go `extensionFuncs` (`pkg/expression/extension.go:33`), the `sync.Map` an
-/// extension registers additional function classes into at startup.
-///
-/// NARROWING: Go stores a whole `functionClass`; this stores only the arity
-/// contract, which is the only part [`crate::new_function`] consults. Go keys
-/// by `string`; this keys by `&'static str` because the only registrations
-/// are startup-time ones with literal names, and that keeps arity errors on
-/// the existing `&'static str`-carrying error variant.
-static EXTENSION_FUNCS: LazyLock<RwLock<HashMap<&'static str, FunctionArity>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
-
 /// Looks a name up in [`FUNCTION_CLASSES`], returning its `&'static str` key
 /// alongside its arity so callers can report errors without allocating.
 fn builtin_class(name: &str) -> Option<(&'static str, FunctionArity)> {
@@ -405,17 +392,18 @@ pub fn function_class(name: &str) -> Option<(&'static str, FunctionArity)> {
     if let Some(found) = builtin_class(name) {
         return Some(found);
     }
-    let extensions = EXTENSION_FUNCS
-        .read()
-        .expect("extension function registry poisoned");
-    extensions
-        .get_key_value(name)
-        .map(|(key, arity)| (*key, *arity))
+    crate::extension::extension_func(name).map(|(key, class)| (key, class.arity))
+}
+
+/// Whether Go's `funcs` map has `name`.
+pub(crate) fn is_builtin_name(name: &str) -> bool {
+    builtin_class(name).is_some()
 }
 
 /// Go `VerifyArgsWrapper` (`builtin.go:606`): verifies an argument count by
-/// function name, and returns `Ok(())` for an unregistered name exactly as Go
-/// does ("this function assumes that the function is supported").
+/// function name, and returns `Ok(())` for a name outside Go's `funcs` map
+/// exactly as Go does ("this function assumes that the function is
+/// supported") -- an extension function's class verifies its own count.
 ///
 /// # Errors
 ///
@@ -423,7 +411,7 @@ pub fn function_class(name: &str) -> Option<(&'static str, FunctionArity)> {
 /// `ErrIncorrectParameterCount` (`ErrWrongParamcountToNativeFct`, 1582), when
 /// the count falls outside the class's `[minArgs, maxArgs]` range.
 pub fn verify_args_by_count(name: &str, count: usize) -> Result<(), crate::EvalError> {
-    let Some((key, arity)) = function_class(name) else {
+    let Some((key, arity)) = builtin_class(name) else {
         return Ok(());
     };
     if arity.accepts(count) {
@@ -440,42 +428,6 @@ pub fn verify_args_by_count(name: &str, count: usize) -> Result<(), crate::EvalE
         ));
     }
     Err(crate::EvalError::WrongParameterCount(key))
-}
-
-/// Go `RegisterExtensionFunc` (`pkg/expression/extension.go:54`), which uses
-/// `LoadOrStore` and fails when the name is already taken.
-///
-/// # Errors
-///
-/// Returns [`crate::EvalError::FunctionNotExists`]-free duplicate reporting via
-/// [`crate::EvalError::IncorrectArguments`] carrying Go's duplicate-name text.
-pub fn register_extension_func(
-    name: &'static str,
-    arity: FunctionArity,
-) -> Result<(), crate::EvalError> {
-    if builtin_class(name).is_some() {
-        return Err(crate::EvalError::IncorrectArguments(format!(
-            "extension function name '{name}' conflicts with a builtin"
-        )));
-    }
-    let mut extensions = EXTENSION_FUNCS
-        .write()
-        .expect("extension function registry poisoned");
-    if extensions.contains_key(name) {
-        return Err(crate::EvalError::IncorrectArguments(format!(
-            "extension function '{name}' already registered"
-        )));
-    }
-    extensions.insert(name, arity);
-    Ok(())
-}
-
-/// Go `RemoveExtensionFunc` (`pkg/expression/extension.go:63`).
-pub fn remove_extension_func(name: &str) {
-    let mut extensions = EXTENSION_FUNCS
-        .write()
-        .expect("extension function registry poisoned");
-    extensions.remove(name);
 }
 
 /// Names registered in Go's `pkg/expression/builtin.go::funcs`.
@@ -514,23 +466,14 @@ pub fn get_builtin_list() -> Vec<String> {
         .filter(|name| !NOT_IMPLEMENTED.contains(name) && !name.starts_with("'tidb`.("))
         .map(str::to_owned)
         .collect();
-    names.extend(
-        EXTENSION_FUNCS
-            .read()
-            .expect("the extension registry lock")
-            .keys()
-            .map(|name| (*name).to_owned()),
-    );
+    names.extend(crate::extension::extension_func_names());
     names.sort();
     names
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        function_class, is_registered_builtin, register_extension_func, remove_extension_func,
-        FunctionArity, FUNCTION_CLASSES,
-    };
+    use super::{function_class, is_registered_builtin, FunctionArity, FUNCTION_CLASSES};
 
     #[test]
     fn source_registry_distinguishes_unported_from_unknown() {
@@ -573,25 +516,5 @@ mod tests {
         // A class whose arity is a genuine range, not a fixed count.
         expect("atan", 1, Some(2));
         expect("now", 0, Some(1));
-    }
-
-    #[test]
-    fn extension_functions_register_and_unregister() {
-        let arity = FunctionArity {
-            min_args: 1,
-            max_args: Some(2),
-        };
-        assert!(!is_registered_builtin("agent_test_ext_fn"));
-        register_extension_func("agent_test_ext_fn", arity).unwrap();
-        assert_eq!(
-            function_class("agent_test_ext_fn"),
-            Some(("agent_test_ext_fn", arity))
-        );
-        // Go's LoadOrStore rejects a second registration of the same name.
-        assert!(register_extension_func("agent_test_ext_fn", arity).is_err());
-        // An extension may not shadow a builtin.
-        assert!(register_extension_func("abs", arity).is_err());
-        remove_extension_func("agent_test_ext_fn");
-        assert!(!is_registered_builtin("agent_test_ext_fn"));
     }
 }

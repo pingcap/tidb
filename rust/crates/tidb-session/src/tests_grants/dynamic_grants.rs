@@ -158,7 +158,7 @@ fn super_is_the_fallback_for_every_dynamic_privilege() {
     session.run("GRANT SUPER ON *.* TO 'su'@'%'").unwrap();
     let registry = session.privileges.clone().unwrap();
 
-    for name in tidb_privilege::DYNAMIC_PRIVS {
+    for name in &tidb_privilege::get_dynamic_privileges() {
         assert!(
             registry.request_dynamic_verification("su", "%", name, false),
             "SUPER satisfies {name}"

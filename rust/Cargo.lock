@@ -5407,6 +5407,7 @@ dependencies = [
  "tidb-errno",
  "tidb-exprctx",
  "tidb-exprstatic",
+ "tidb-extension",
  "tidb-go-regexp",
  "tidb-goruntime",
  "tidb-hack",
@@ -5424,6 +5425,7 @@ dependencies = [
  "tidb-printer",
  "tidb-proto",
  "tidb-resolve",
+ "tidb-sem-compat",
  "tidb-size",
  "tidb-sqlescape",
  "tidb-sqlexec",
@@ -5504,6 +5506,16 @@ dependencies = [
  "tidb-timeutil",
  "tidb-vardef",
  "tidb-variable",
+]
+
+[[package]]
+name = "tidb-extension"
+version = "0.0.0"
+dependencies = [
+ "tidb-chunk",
+ "tidb-datatype",
+ "tidb-exprctx",
+ "tidb-parser",
 ]
 
 [[package]]
@@ -7459,6 +7471,7 @@ dependencies = [
  "tidb-expr",
  "tidb-exprctx",
  "tidb-expression-aggregation",
+ "tidb-extension",
  "tidb-failpoint",
  "tidb-fastrand",
  "tidb-fixcontrol",

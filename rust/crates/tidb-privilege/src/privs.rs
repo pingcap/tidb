@@ -233,15 +233,12 @@ pub(crate) fn all_table_privs_mask() -> u64 {
         .fold(0u64, |mask, priv_| mask | priv_.bit())
 }
 
-/// Go `pkg/privilege/privileges/privileges.go`'s `dynamicPrivs` slice --
-/// the DYNAMIC privilege names TiDB registers at startup, in Go's source
-/// order. A `GRANT`/`REVOKE` naming anything outside this list is not a
-/// privilege at all (`ErrDynamicPrivilegeNotRegistered`/3929).
-///
-/// Go lets plugins append to this list at runtime
-/// (`RegisterDynamicPrivilege`); this tier loads no plugins, so the built-in
-/// set is the whole set and a `const` is the honest shape.
-pub const DYNAMIC_PRIVS: &[&str] = &[
+/// Go `pkg/privilege/privileges/privileges.go`'s `dynamicPrivs` slice as
+/// TiDB declares it -- the DYNAMIC privilege names registered at startup, in
+/// Go's source order. A `GRANT`/`REVOKE` naming anything outside the
+/// registered list is not a privilege at all
+/// (`ErrDynamicPrivilegeNotRegistered`/3929).
+const BUILTIN_DYNAMIC_PRIVS: &[&str] = &[
     "BACKUP_ADMIN",
     "RESTORE_ADMIN",
     "SYSTEM_USER",
@@ -265,6 +262,22 @@ pub const DYNAMIC_PRIVS: &[&str] = &[
     "APPLICATION_PASSWORD_ADMIN",
 ];
 
+/// Go `dynamicPrivs` under `dynamicPrivLock`: the declared list plus what
+/// an extension registered (`RegisterDynamicPrivilege`).
+fn dynamic_privs() -> &'static std::sync::Mutex<Vec<String>> {
+    static DYNAMIC_PRIVS: std::sync::OnceLock<std::sync::Mutex<Vec<String>>> =
+        std::sync::OnceLock::new();
+    DYNAMIC_PRIVS.get_or_init(|| {
+        std::sync::Mutex::new(BUILTIN_DYNAMIC_PRIVS.iter().map(|name| (*name).to_owned()).collect())
+    })
+}
+
+fn lock_dynamic_privs() -> std::sync::MutexGuard<'static, Vec<String>> {
+    dynamic_privs()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Go `UserPrivileges.IsDynamicPrivilege`: whether `name` -- matched
 /// case-insensitively, since Go uppercases before the lookup -- is a
 /// registered DYNAMIC privilege.
@@ -272,6 +285,50 @@ pub const DYNAMIC_PRIVS: &[&str] = &[
 pub fn is_dynamic_privilege(name: &str) -> bool {
     // Go `strings.ToUpper(privName) == priv`.
     let upper = tidb_hack::go_to_upper(name);
-    DYNAMIC_PRIVS.iter().any(|registered| *registered == upper)
+    lock_dynamic_privs().contains(&upper)
+}
+
+/// Go `RegisterDynamicPrivilege`: adds a DYNAMIC privilege name, which an
+/// extension's manifest does for each of its `WithCustomDynPrivs`.
+///
+/// # Errors
+///
+/// Go's texts: an empty name, a name longer than 32 characters once
+/// uppercased, or one already registered.
+pub fn register_dynamic_privilege(priv_name: &str) -> Result<(), String> {
+    if priv_name.is_empty() {
+        return Err("privilege name should not be empty".to_owned());
+    }
+    let upper = tidb_hack::go_to_upper(priv_name);
+    if upper.len() > 32 {
+        return Err("privilege name is longer than 32 characters".to_owned());
+    }
+    let mut privs = lock_dynamic_privs();
+    if privs.contains(&upper) {
+        return Err("privilege is already registered".to_owned());
+    }
+    privs.push(upper);
+    Ok(())
+}
+
+/// Go `GetDynamicPrivileges`: a copy of the registered DYNAMIC privilege
+/// names, in registration order.
+#[must_use]
+pub fn get_dynamic_privileges() -> Vec<String> {
+    lock_dynamic_privs().clone()
+}
+
+/// Go `RemoveDynamicPrivilege` (test only in Go, and the clear function an
+/// extension's manifest collects).
+pub fn remove_dynamic_privilege(priv_name: &str) -> bool {
+    let upper = tidb_hack::go_to_upper(priv_name);
+    let mut privs = lock_dynamic_privs();
+    match privs.iter().position(|registered| *registered == upper) {
+        Some(index) => {
+            privs.remove(index);
+            true
+        }
+        None => false,
+    }
 }
 

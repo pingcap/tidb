@@ -160,6 +160,14 @@ pub(crate) trait FunctionClass: Sync {
     ) -> Result<BaseBuiltinFunc, EvalError>;
 }
 
+/// Go `newFunctionImpl`'s lookup: `funcs[funcName]`, then
+/// `extensionFuncs.Load(funcName)`.
+pub(crate) fn funcs_or_extension(name: &str) -> Option<&'static dyn FunctionClass> {
+    funcs(name).or_else(|| {
+        crate::extension::extension_func(name).map(|(_, class)| class as &'static dyn FunctionClass)
+    })
+}
+
 /// Go `funcs`, for the names whose class is ported.
 pub(crate) fn funcs(name: &str) -> Option<&'static dyn FunctionClass> {
     use crate::builtin_arithmetic::{
@@ -537,6 +545,8 @@ pub(crate) enum SigFields {
     /// Go `builtinAes*Sig.aesModeAttr`: the block encryption mode the class
     /// read at build.
     Aes { mode: tidb_exprctx::BlockEncryptionMode },
+    /// Go `extensionFuncSig`: the extension's definition.
+    Extension(crate::extension::ExtensionSig),
 }
 
 /// Go `baseBuiltinFunc` with the signature's `pbCode`.

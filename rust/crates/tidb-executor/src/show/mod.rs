@@ -430,29 +430,6 @@ pub fn show_privileges_rows() -> Vec<Vec<Datum>> {
         ("Update", "Tables", "To update existing rows"),
         ("Usage", "Server Admin", "No privileges - allow connect only"),
     ];
-    const DYNAMIC_PRIVILEGES: &[&str] = &[
-        "BACKUP_ADMIN",
-        "RESTORE_ADMIN",
-        "SYSTEM_USER",
-        "SYSTEM_VARIABLES_ADMIN",
-        "ROLE_ADMIN",
-        "CONNECTION_ADMIN",
-        "PLACEMENT_ADMIN",
-        "DASHBOARD_CLIENT",
-        "RESTRICTED_TABLES_ADMIN",
-        "RESTRICTED_STATUS_ADMIN",
-        "RESTRICTED_VARIABLES_ADMIN",
-        "RESTRICTED_USER_ADMIN",
-        "RESTRICTED_CONNECTION_ADMIN",
-        "RESTRICTED_REPLICA_WRITER_ADMIN",
-        "RESTRICTED_PRIV_ADMIN",
-        "RESTRICTED_SQL_ADMIN",
-        "RESOURCE_GROUP_ADMIN",
-        "RESOURCE_GROUP_USER",
-        "TRAFFIC_CAPTURE_ADMIN",
-        "TRAFFIC_REPLAY_ADMIN",
-        "APPLICATION_PASSWORD_ADMIN",
-    ];
     let mut rows: Vec<Vec<Datum>> = STATIC_PRIVILEGES
         .iter()
         .map(|(privilege, context, comment)| {
@@ -463,7 +440,7 @@ pub fn show_privileges_rows() -> Vec<Vec<Datum>> {
             ]
         })
         .collect();
-    rows.extend(DYNAMIC_PRIVILEGES.iter().map(|privilege| {
+    rows.extend(tidb_privilege::get_dynamic_privileges().iter().map(|privilege| {
         vec![
             Datum::Bytes(privilege.as_bytes().to_vec()),
             Datum::Bytes(b"Server Admin".to_vec()),

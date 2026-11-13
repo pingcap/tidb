@@ -269,6 +269,7 @@ members = [
     "crates/tidb-sessionexpr",
     "crates/tidb-exprstatic",
     "crates/tidb-expropt",
+    "crates/tidb-extension",
     "crates/tidb-metabuild",
     "crates/tidb-ranger-context",
     "crates/tidb-fixcontrol",

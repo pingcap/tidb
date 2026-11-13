@@ -3703,6 +3703,8 @@ mod tests_resource_group;
 #[cfg(test)]
 mod tests_savepoint;
 #[cfg(test)]
+mod tests_extension_func;
+#[cfg(test)]
 mod tests_sem_v2;
 #[cfg(test)]
 mod tests_sequence;

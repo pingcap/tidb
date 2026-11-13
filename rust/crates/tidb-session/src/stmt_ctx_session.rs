@@ -538,6 +538,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::sequence_privilege_check(self)
     }
 
+    fn dynamic_privilege_check(&self) -> Option<tidb_sessionctx::DynamicPrivilegeCheck> {
+        Session::dynamic_privilege_check(self)
+    }
+
     fn pessimistic_constraint_check_in_place(&self) -> bool {
         Session::pessimistic_constraint_check_in_place(self)
     }

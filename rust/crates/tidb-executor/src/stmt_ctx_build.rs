@@ -1666,6 +1666,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             connection_collation,
             default_collation_for_utf8mb4,
             sequence_privilege: self.sequence_privilege_check(),
+            dynamic_privilege: self.dynamic_privilege_check(),
             view_definer_privilege: self.view_definer_privilege_check(),
             session_privilege: self.session_privilege_check(),
             mdl_related_table: self.mdl_related_table_recorder(),
@@ -2800,6 +2801,10 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// `RequestVerification` from the builtin), which run with the session
     /// out of reach. `None` is an unrestricted session.
     fn sequence_privilege_check(&self) -> Option<crate::SequencePrivilegeCheck>;
+    /// Go `PrivilegeChecker.RequestDynamicVerification` for checks Go makes
+    /// while building and evaluating an extension function. `None` is an
+    /// unrestricted session.
+    fn dynamic_privilege_check(&self) -> Option<tidb_sessionctx::DynamicPrivilegeCheck>;
     /// Go SessionVars.ConstraintCheckInPlacePessimistic, read live per statement.
     fn pessimistic_constraint_check_in_place(&self) -> bool;
     /// The node's followed cluster schema version, or 0 for a tier with no

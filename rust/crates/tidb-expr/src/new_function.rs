@@ -275,10 +275,8 @@ pub fn new_function_impl(
     }
 
     verify_args_by_count(func_name, func_args.len())?;
-    // Go: `f, err := fc.getFunction(ctx, funcArgs)`. Every name of Go's
-    // `funcs` has its class; an `extensionFuncs` entry is registered by
-    // arity alone and has none to build with.
-    let Some(class) = crate::builtin::funcs(func_name) else {
+    // Go: `f, err := fc.getFunction(ctx, funcArgs)`.
+    let Some(class) = crate::builtin::funcs_or_extension(func_name) else {
         return Err(crate::builtin_registry::unresolved_error(
             func_name,
             ctx.current_database(),

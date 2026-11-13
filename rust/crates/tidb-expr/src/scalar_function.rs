@@ -576,6 +576,19 @@ impl ScalarFunction {
     /// Go `&ScalarFunction{FuncName, RetType, Function: f}`: the node over
     /// the builtin function a class's `getFunction` returned -- its cast
     /// arguments, its signature and its collation.
+    /// Go `sf.Function.(*extensionFuncSig)`.
+    pub(crate) fn is_extension_func(&self) -> bool {
+        self.extension_def().is_some()
+    }
+
+    /// Go `extensionFuncSig.FunctionDef`.
+    pub(crate) fn extension_def(&self) -> Option<&'static tidb_extension::FunctionDef> {
+        match self.sig {
+            crate::builtin::SigFields::Extension(crate::extension::ExtensionSig(def)) => Some(def),
+            _ => None,
+        }
+    }
+
     pub(crate) fn from_builtin_func(
         func_name: CiString,
         ret_type: FieldType,
@@ -995,6 +1008,11 @@ impl ScalarFunction {
     #[must_use]
     pub fn const_level(&self) -> ConstLevel {
         if is_unfoldable_function(self.func_name.lowercase()) {
+            return ConstLevel::NONE;
+        }
+        // Go: "we should return `ConstNone` for extension functions for
+        // safety, because it may have a side effect".
+        if self.is_extension_func() {
             return ConstLevel::NONE;
         }
         self.args

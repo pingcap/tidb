@@ -660,6 +660,26 @@ pub trait Columns {
         true
     }
 
+    /// Whether the context has Go's `OptPropPrivilegeChecker` property,
+    /// without which `PrivilegeCheckerPropReader.GetPrivilegeChecker` errors.
+    fn has_privilege_checker(&self) -> bool {
+        false
+    }
+
+    /// Go `PrivilegeChecker.RequestDynamicVerification(privName,
+    /// grantable)`, as an extension function asks it. A context without
+    /// the property ([`Self::has_privilege_checker`]) is never asked.
+    fn request_dynamic_verification(&self, _priv_name: &str, _grantable: bool) -> bool {
+        true
+    }
+
+    /// Go `SessionVars.ActiveRoles` as `(user, host)` pairs, read through
+    /// `SessionVarsPropReader`. `None` is a context without Go's
+    /// `OptPropSessionVars` property, where Go's reader errors.
+    fn active_role_identities(&self) -> Option<Vec<(String, String)>> {
+        None
+    }
+
     /// Go `SQLDigestTextRetriever.RetrieveGlobal` (`expression/util.go`),
     /// which `TIDB_DECODE_SQL_DIGESTS` runs through its SQL-executor
     /// property: each requested digest's normalized text from the statement

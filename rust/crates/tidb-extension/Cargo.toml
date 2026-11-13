@@ -1,0 +1,17 @@
+[package]
+name = "tidb-extension"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/extension (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-parser = { path = "../tidb-parser" }

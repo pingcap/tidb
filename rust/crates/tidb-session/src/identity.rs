@@ -158,6 +158,20 @@ impl Session {
         ))
     }
 
+    /// An owned [`Self::has_dynamic_privilege`] for the checks Go makes while
+    /// building and evaluating an extension function. `None` is an
+    /// unrestricted session.
+    #[must_use]
+    pub(crate) fn dynamic_privilege_check(&self) -> Option<tidb_sessionctx::DynamicPrivilegeCheck> {
+        let (registry, user, host) = self.privilege_context()?;
+        let registry = registry.clone();
+        let (user, host) = (user.to_owned(), host.to_owned());
+        let roles = self.active_roles().to_vec();
+        Some(Arc::new(move |name: &str, grantable: bool| {
+            registry.has_dynamic_priv_with_roles(&user, &host, &roles, name, grantable)
+        }))
+    }
+
     /// Go `privilege.Manager.RequestVerification(activeRoles, ...)` for the
     /// planner: whether this session's account, with its active roles, holds
     /// a privilege. `None` is a session that enforces no privileges.

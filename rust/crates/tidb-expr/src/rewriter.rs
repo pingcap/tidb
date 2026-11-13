@@ -2015,7 +2015,7 @@ fn finish_function_call(
         ));
         return finish_function_call("if", vec![condition, null, value], resolver);
     }
-    let Some(class) = crate::builtin::funcs(&lowered) else {
+    let Some(class) = crate::builtin::funcs_or_extension(&lowered) else {
         return Err(crate::builtin_registry::unresolved_error(
             &lowered,
             resolver.current_database(),

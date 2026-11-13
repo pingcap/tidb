@@ -72,6 +72,7 @@ pub use constant_fold::{
 };
 pub mod convert_charset;
 mod eval_error_sql;
+pub mod extension;
 pub use eval_error_sql::{EvalErrorSql, ToTerror};
 pub mod evaluator;
 pub mod expr_collation;

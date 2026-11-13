@@ -23,6 +23,8 @@ tidb-charset = { path = "../tidb-charset" }
 tidb-errctx = { path = "../tidb-errctx" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
 tidb-errno = { path = "../tidb-errno" }
+tidb-extension = { path = "../tidb-extension" }
+tidb-sem-compat = { path = "../tidb-sem-compat" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-parser-types = { path = "../tidb-parser-types" }
 tidb-context = { path = "../tidb-context" }
