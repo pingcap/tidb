@@ -19,12 +19,14 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
@@ -990,4 +992,53 @@ func TestSingleTaskIncrementalIndexHashJoin(t *testing.T) {
 
 	tk.MustQuery("select /*+ inl_hash_join(t2,t1) */ * from t1 where t1.a not in (select t2.b from t2 where t2.b = t1.a)")
 	tk.MustQuery("select /*+ inl_hash_join(t2,t1) */ count(*) from t1 where t1.a not in (select t2.b from t2 where t2.b = t1.a)").Check(testkit.Rows("1"))
+}
+
+func TestMergeJoinPrefetchesOuterSide(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table j (ns bigint, id bigint, payload varchar(20), primary key (ns, id) clustered)")
+	tk.MustExec("create table c (oid bigint, hlc bigint, ns bigint, sjid bigint, primary key (oid, hlc) clustered, key ns_sjid (ns, sjid))")
+	tk.MustExec("insert into j values (1, 1, 'a'), (1, 2, 'b'), (1, 3, 'c'), (2, 1, 'd')")
+	tk.MustExec("insert into c values (10, 1, 1, 1), (20, 1, 1, 3), (30, 1, 2, 1)")
+
+	// The inner side's first fetch waits until the outer side's fetch has started, so the query only
+	// finishes if the two children are read concurrently.
+	var outerStarted sync.Once
+	started := make(chan struct{})
+	overlapped := true
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/join/mergeJoinOuterPrefetch", func() {
+		outerStarted.Do(func() { close(started) })
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/join/mergeJoinFetchInner", func() {
+		select {
+		case <-started:
+		case <-time.After(10 * time.Second):
+			overlapped = false
+		}
+	})
+
+	sql := "select %s j.id, j.payload, c.oid from j left join c on c.ns = j.ns and c.sjid = j.id where j.ns = 1 and j.id in (1, 2, 3) order by j.id"
+	mergeJoin := fmt.Sprintf(sql, "/*+ merge_join(c) */")
+	tk.MustHavePlan(mergeJoin, "MergeJoin")
+	want := testkit.Rows("1 a 10", "2 b <nil>", "3 c 20")
+	tk.MustQuery(mergeJoin).Check(want)
+	require.True(t, overlapped)
+	tk.MustQuery(fmt.Sprintf(sql, "/*+ hash_join(c) */")).Check(want)
+
+	// Later outer chunks are fetched on demand; the results must not change across chunk boundaries.
+	// 200 outer rows and 100 matching inner rows span several 32-row chunks on both sides.
+	tk.MustExec("set @@tidb_max_chunk_size = 32")
+	tk.MustExec("insert into j with recursive r(i) as (select 1 union all select i + 1 from r where i < 200) select 3, i, 'x' from r")
+	tk.MustExec("insert into c select id * 7, 1, ns, id from j where ns = 3 and id % 2 = 0")
+	tk.MustQuery("select count(*) from j where ns = 3").Check(testkit.Rows("200"))
+	tk.MustQuery("select count(*) from c where ns = 3").Check(testkit.Rows("100"))
+	for _, tc := range []struct{ joinType, want string }{{"left join", "200 100 70700"}, {"join", "100 100 70700"}} {
+		q := "select %s count(*), count(c.oid), sum(c.oid) from j " + tc.joinType + " c on c.ns = j.ns and c.sjid = j.id where j.ns = 3"
+		mergeJoinQ := fmt.Sprintf(q, "/*+ merge_join(c) */")
+		tk.MustHavePlan(mergeJoinQ, "MergeJoin")
+		tk.MustQuery(mergeJoinQ).Check(testkit.Rows(tc.want))
+		tk.MustQuery(fmt.Sprintf(q, "/*+ hash_join(c) */")).Check(testkit.Rows(tc.want))
+	}
 }
