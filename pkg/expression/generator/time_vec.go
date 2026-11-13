@@ -275,6 +275,12 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 		}
 	{{ else if or (eq .SigName "builtinAddStringAndStringSig") (eq .SigName "builtinSubStringAndStringSig") }}
 		{{ template "ConvertStringToDuration" . }}
+		{{ if eq .SigName "builtinAddStringAndStringSig" }}
+		if hasDatePartForAddTime(arg1) {
+			{{ template "SetNull" . }}
+			continue
+		}
+		{{ end }}
 		var output string
 		var isNull bool
 		if isDuration(arg0) {
