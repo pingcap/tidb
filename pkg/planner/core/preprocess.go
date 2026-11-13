@@ -510,9 +510,10 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		// Used in ALTER TABLE or CREATE TABLE
 		p.checkConstraintGrammar(node)
 	case *ast.ColumnName:
+		// Reads and deletes are independent of tidb_mview_enable. UPDATE and INSERT
+		// remain rejected because _tidb_commit_ts is not a writable column.
 		if node.Name.L == model.ExtraCommitTSName.L &&
-			(p.stmtTp == TypeSelect || p.stmtTp == TypeSetOpr || p.stmtTp == TypeUpdate || p.stmtTp == TypeDelete) &&
-			!p.sctx.GetSessionVars().EnableMView {
+			(p.stmtTp == TypeUpdate || p.stmtTp == TypeInsert) {
 			p.err = plannererrors.ErrInternal.GenWithStack("Usage of column name '%s' is not supported for now",
 				model.ExtraCommitTSName.O)
 		}
