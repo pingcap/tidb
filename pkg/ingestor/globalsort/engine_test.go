@@ -15,6 +15,7 @@
 package globalsort
 
 import (
+	"bytes"
 	"context"
 	goerrors "errors"
 	"fmt"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/ingestor/testutils"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -741,4 +743,30 @@ func TestChangeEngineConcurrency(t *testing.T) {
 		require.EqualValues(t, 1, releaseCallbackCount.Load())
 		require.Zero(t, resizeEngine.inFlightDataCount.Load())
 	})
+}
+
+func TestMemoryEngine(t *testing.T) {
+	kvs := []simplesst.KVPair{{Key: []byte("a"), Value: []byte("1")}, {Key: []byte("b"), Value: []byte("2")}}
+	e := NewMemoryEngine(kvs, 123, 4, engineapi.ConflictInfo{})
+	size, count := e.KVStatistics()
+	require.EqualValues(t, config.DefaultBatchSize, size)
+	require.EqualValues(t, 2, count)
+	ch := make(chan engineapi.DataAndRanges, 1)
+	require.NoError(t, e.LoadIngestData(context.Background(), ch))
+	data := <-ch
+	data.Data.IncRef()
+	require.EqualValues(t, 123, data.Data.GetTS())
+	require.Equal(t, kvs, getAllDataFromDataAndRanges(t, &data))
+	data.Data.DecRef()
+	start, end, err := e.GetKeyRange()
+	require.NoError(t, err)
+	require.Equal(t, []byte("a"), start)
+	require.Less(t, bytes.Compare([]byte("b"), end), 0)
+	require.NoError(t, e.Close())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, NewMemoryEngine(kvs, 123, 4, engineapi.ConflictInfo{}).LoadIngestData(ctx, make(chan engineapi.DataAndRanges)), context.Canceled)
+	empty := NewMemoryEngine(nil, 123, 0, engineapi.ConflictInfo{})
+	require.NoError(t, empty.LoadIngestData(context.Background(), ch))
+	require.Empty(t, ch)
 }

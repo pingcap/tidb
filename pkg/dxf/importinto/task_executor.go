@@ -15,8 +15,10 @@
 package importinto
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -390,6 +392,12 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		return err
 	}
 
+	if useMemoryFastPath(&s.taskMeta.Plan) {
+		if err := s.ingestFromMemory(ctx, subtask, sharedVars); err != nil {
+			return err
+		}
+	}
+
 	return s.onFinished(ctx, subtask, objStore)
 }
 
@@ -450,6 +458,70 @@ func (s *importStepExecutor) readQuery(
 	return importer.RunImportQuery(
 		ctx, se, s.taskMeta.Plan.QuerySource, s.taskMeta.Stmt,
 		int64(float64(s.GetResource().Mem.Capacity())*queryMemBudgetRatio), selected)
+}
+
+// ingestFromMemory writes the KVs the encode step kept in memory straight into
+// TiKV. Each KV group becomes one engine, as it would in the ingest step, but
+// the data never leaves the process.
+func (s *importStepExecutor) ingestFromMemory(
+	ctx context.Context,
+	subtask *proto.Subtask,
+	sharedVars *SharedVars,
+) error {
+	// Until a mixed-output fallback exists, refuse the entire subtask before
+	// ingesting any memory group. Otherwise spilled files could be skipped.
+	if sharedVars.SortedDataMeta != nil && len(sharedVars.SortedDataMeta.MultipleFilesStats) > 0 {
+		return errors.New("small import fast path cannot ingest spilled files")
+	}
+	for _, meta := range sharedVars.SortedIndexMetas {
+		if meta != nil && len(meta.MultipleFilesStats) > 0 {
+			return errors.New("small import fast path cannot ingest spilled files")
+		}
+	}
+	if len(sharedVars.memGroups) == 0 {
+		// the KVs spilled to the store, which the size gate should have prevented.
+		return errors.Errorf("small import fast path found no KVs kept in memory")
+	}
+	ver, err := s.store.CurrentVersion(tidbkv.GlobalTxnScope)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	localBackend := s.tableImporter.Backend()
+	kvGroups := make([]string, 0, len(sharedVars.memGroups))
+	for kvGroup := range sharedVars.memGroups {
+		kvGroups = append(kvGroups, kvGroup)
+	}
+	slices.Sort(kvGroups)
+
+	for _, kvGroup := range kvGroups {
+		kvs := sharedVars.memGroups[kvGroup]
+		// each writer sorted its own KVs, merge them into one order.
+		slices.SortFunc(kvs, func(a, b simplesst.KVPair) int {
+			return bytes.Compare(a.Key, b.Key)
+		})
+		var totalSize int64
+		for i := range kvs {
+			totalSize += int64(len(kvs[i].Key) + len(kvs[i].Value))
+			if i > 0 && bytes.Equal(kvs[i].Key, kvs[i-1].Key) {
+				return common.ErrFoundDuplicateKeys.FastGenByArgs(kvs[i].Key, kvs[i].Value)
+			}
+		}
+		engine := globalsort.NewMemoryEngine(kvs, ver.Ver, totalSize, engineapi.ConflictInfo{})
+		s.logger.Info("ingest from memory",
+			zap.Int64("subtask-id", subtask.ID),
+			zap.String("kv-group", kvGroup),
+			zap.Int("kv-count", len(kvs)),
+			zap.Int64("total-size", totalSize))
+		importErr := localBackend.IngestExternalEngine(ctx, engine,
+			int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+		if cleanupErr := engine.Close(); cleanupErr != nil {
+			s.logger.Warn("cleanup memory engine failed", zap.Error(cleanupErr))
+		}
+		if importErr != nil {
+			return errors.Trace(importErr)
+		}
+	}
+	return nil
 }
 
 func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {

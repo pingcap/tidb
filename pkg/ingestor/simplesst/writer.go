@@ -216,6 +216,10 @@ type WriterSummary struct {
 	KVFileCount        int
 	MultipleFilesStats []MultipleFilesStat
 	ConflictInfo       engineapi.ConflictInfo
+	// MemKVs are the sorted KV pairs kept in memory when KeepInMemory is set and
+	// they all fit in one buffer. It's nil when the KVs went to the store as usual,
+	// so the caller must check it before taking the in-memory path.
+	MemKVs []KVPair
 }
 
 // OnWriterCloseFunc is the callback function when a writer is closed.
@@ -234,6 +238,7 @@ type WriterBuilder struct {
 	onClose      OnWriterCloseFunc
 	tikvCodec    tikv.Codec
 	onDup        engineapi.OnDuplicateKey
+	keepInMemory bool
 }
 
 // NewWriterBuilder creates a WriterBuilder.
@@ -304,6 +309,14 @@ func (b *WriterBuilder) SetOnDup(onDup engineapi.OnDuplicateKey) *WriterBuilder 
 	return b
 }
 
+// SetKeepInMemory tells the writer to keep the sorted KVs in memory instead of
+// writing them to the store, as long as they fit in one buffer. Used by small
+// imports that ingest the KVs directly.
+func (b *WriterBuilder) SetKeepInMemory(keep bool) *WriterBuilder {
+	b.keepInMemory = keep
+	return b
+}
+
 // Build builds a new Writer. The files writer will create are under the prefix
 // of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
@@ -333,6 +346,7 @@ func (b *WriterBuilder) Build(
 		fileMinKeys:    make([]tidbkv.Key, 0, MultiFileStatNum),
 		fileMaxKeys:    make([]tidbkv.Key, 0, MultiFileStatNum),
 		tikvCodec:      b.tikvCodec,
+		keepInMemory:   b.keepInMemory,
 	}
 
 	return ret
@@ -476,6 +490,11 @@ type Writer struct {
 	tikvCodec tikv.Codec
 	// duplicate key's statistics.
 	conflictInfo engineapi.ConflictInfo
+
+	// keepInMemory asks flushKVs to retain the sorted KVs instead of writing
+	// them out. It only takes effect if nothing was flushed before close.
+	keepInMemory bool
+	memKVs       []KVPair
 }
 
 // WriteRow implements ingest.Writer.
@@ -556,6 +575,7 @@ func (w *Writer) Close(ctx context.Context) error {
 		KVFileCount:        w.kvFileCount,
 		MultipleFilesStats: w.multiFileStats,
 		ConflictInfo:       w.conflictInfo,
+		MemKVs:             w.memKVs,
 	})
 	return nil
 }
@@ -618,6 +638,14 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			dupValue := slices.Clone(w.getValueByLoc(&dupLoc))
 			return common.ErrFoundDuplicateKeys.FastGenByArgs(dupKey, dupValue)
 		}
+	}
+
+	// Small imports ingest straight from memory, so there is no point writing
+	// the KVs out and reading them back. Only possible if this is the one and
+	// only flush, and no duplicate file is needed.
+	if w.keepInMemory && fromClose && w.currentSeq == 0 && len(dupLocs) == 0 {
+		w.retainKVs()
+		return nil
 	}
 
 	writeStartTime := time.Now()
@@ -684,6 +712,28 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	w.batchSize = 0
 	w.currentSeq++
 	return nil
+}
+
+// retainKVs copies the sorted KVs out of the buffer and updates the writer
+// statistics as a flush would, without touching the store.
+func (w *Writer) retainKVs() {
+	if len(w.kvLocations) > 0 {
+		w.memKVs = make([]KVPair, 0, len(w.kvLocations))
+		for i := range w.kvLocations {
+			loc := w.kvLocations[i]
+			w.memKVs = append(w.memKVs, KVPair{
+				Key:   slices.Clone(w.getKeyByLoc(&loc)),
+				Value: slices.Clone(w.getValueByLoc(&loc)),
+			})
+		}
+		w.totalCnt += uint64(len(w.kvLocations))
+		w.totalSize += uint64(w.kvSize)
+		w.recordMinMax(w.memKVs[0].Key, w.memKVs[len(w.memKVs)-1].Key)
+	}
+	w.kvLocations = w.kvLocations[:0]
+	w.kvSize = 0
+	w.kvBuffer.Reset()
+	w.batchSize = 0
 }
 
 func (w *Writer) addNewKVFile2MultiFileStats(dataFile, statFile string, minKey, maxKey []byte) {

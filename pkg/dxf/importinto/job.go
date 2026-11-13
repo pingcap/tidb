@@ -65,6 +65,18 @@ func SubmitTask(ctx context.Context, plan *importer.Plan, stmt string) (int64, *
 	return doSubmitTask(ctx, plan, stmt, nil, nil)
 }
 
+// SubmitTaskWithChunkMap is SubmitTask for a plan that was already prepared by
+// the caller: the chunks travel with the task, so the scheduler doesn't list the
+// data source again.
+func SubmitTaskWithChunkMap(
+	ctx context.Context,
+	plan *importer.Plan,
+	stmt string,
+	chunkMap map[int32][]importer.Chunk,
+) (int64, *proto.TaskBase, error) {
+	return doSubmitTask(ctx, plan, stmt, nil, chunkMap)
+}
+
 // ShouldUseAsyncPrepare returns whether IMPORT INTO should use
 // DXF prepare-mode asynchronous prepare. Starter imports are usually small, and
 // their maximum size is controlled by starter-params.max-import-data-size, so
@@ -76,7 +88,9 @@ func ShouldUseAsyncPrepare(plan *importer.Plan) bool {
 	failpoint.Inject("mockDisableAsyncPrepare", func() {
 		failpoint.Return(false)
 	})
-	return plan != nil && plan.QuerySource == nil && kerneltype.IsNextGen() && !deploymode.IsStarter() && plan.IsGlobalSort()
+	// Keep query imports on their existing preparation path.
+	return plan != nil && plan.QuerySource == nil && kerneltype.IsNextGen() &&
+		!deploymode.IsStarter() && plan.IsGlobalSort() && !plan.SmallSource
 }
 
 func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instance *serverinfo.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
