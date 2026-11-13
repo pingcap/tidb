@@ -29,7 +29,9 @@ type NotifyBreakPointFunc = Arc<dyn Fn(String) + Send + Sync + 'static>;
 fn inject_value(value: Option<&(dyn Any + Send + Sync)>, name: &str) {
     #[cfg(feature = "failpoints")]
     {
-        let _ = fail::eval(name, |_| {
+        // Go's `failpoint.Inject(name, ...)` in this package: failpoint-ctl
+        // names it under the package path.
+        tidb_failpoint::inject(&format!("github.com/pingcap/tidb/pkg/util/breakpoint/{name}"), |_| {
             if let Some(callback) =
                 value.and_then(|value| value.downcast_ref::<NotifyBreakPointFunc>())
             {

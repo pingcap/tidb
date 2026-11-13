@@ -3703,8 +3703,8 @@ dependencies = [
 name = "tidb-breakpoint"
 version = "0.0.0"
 dependencies = [
- "fail",
  "tidb-context",
+ "tidb-failpoint",
 ]
 
 [[package]]
