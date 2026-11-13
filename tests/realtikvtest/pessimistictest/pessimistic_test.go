@@ -2427,6 +2427,23 @@ func TestTransactionIsolationAndForeignKey(t *testing.T) {
 	tk.MustQuery("select * from t2").Check(testkit.Rows())
 	tk.MustExec("admin check table t1")
 	tk.MustExec("admin check table t2")
+
+	id := 10
+	for _, checkTS := range []string{"0", "1"} {
+		for _, insert := range []string{"insert", "insert ignore"} {
+			id++
+			tk.MustExec("set tidb_rc_write_check_ts=" + checkTS)
+			tk.MustExec("begin pessimistic")
+			tk2.MustExec(fmt.Sprintf("insert into t1 values(%d)", id))
+			// No intervening read may refresh the child statement's timestamp.
+			tk.MustExec(fmt.Sprintf("%s into t2 values(%d,%d)", insert, id, id))
+			affected := tk.Session().GetSessionVars().StmtCtx.AffectedRows()
+			tk.MustQuery("show warnings").Check(testkit.Rows())
+			tk.MustExec("commit")
+			require.Equal(t, uint64(1), affected)
+			tk.MustQuery(fmt.Sprintf("select * from t2 where id=%d", id)).Check(testkit.Rows(fmt.Sprintf("%d %d", id, id)))
+		}
+	}
 }
 
 func TestIssue28011(t *testing.T) {
