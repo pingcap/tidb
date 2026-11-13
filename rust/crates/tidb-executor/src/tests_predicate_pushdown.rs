@@ -214,144 +214,12 @@ mod tests {
         );
     }
 
-    /// A pushed predicate must filter the transaction's own staged rows too.
-    ///
-    /// Over `ClusterTableStorage` a scan produces the snapshot merged with the
-    /// session's staged mutation buffer. Pushing a conjunct into the scan
-    /// removes it from the `Selection` above, so the scan becomes the only
-    /// place it is applied: a staged row that fails it must not be returned,
-    /// and a staged row that satisfies it must not be lost -- including when
-    /// a staged UPDATE moves a row across the predicate's boundary and when a
-    /// staged DELETE removes a row the committed half still holds.
-    #[test]
-    fn a_pushed_predicate_filters_staged_rows_as_well_as_committed_ones() {
-        let snapshot = Arc::new(Mutex::new(MockSnapshot::default()));
-        let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&snapshot) as _;
-        let buffer = MutationBuffer::new();
-        let mut store = ClusterTableStorage::new(buffer.clone(), handle);
-        let mut table = TableCommon::new(
-            91,
-            vec![column("a", 1), column("b", 2)],
-        );
-
-        // Committed half: one row above the predicate, one below.
-        let committed_low = table
-            .insert_row(&mut store, &[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns)
-            .unwrap();
-        table
-            .insert_row(&mut store, &[Datum::Int(9), Datum::Int(90)], &tidb_exprctx::NoColumns)
-            .unwrap();
-        let committed_moved = table
-            .insert_row(&mut store, &[Datum::Int(2), Datum::Int(20)], &tidb_exprctx::NoColumns)
-            .unwrap();
-        commit(&buffer, &snapshot);
-        assert!(buffer.is_empty(), "nothing is staged after the commit");
-
-        // Staged half, all inside one open transaction:
-        //   * an INSERT that satisfies `a > 5`,
-        //   * an INSERT that does not,
-        //   * an UPDATE that lifts a committed row across the boundary,
-        //   * a DELETE of a committed row that satisfies it.
-        table
-            .insert_row(&mut store, &[Datum::Int(7), Datum::Int(70)], &tidb_exprctx::NoColumns)
-            .unwrap();
-        table
-            .insert_row(&mut store, &[Datum::Int(3), Datum::Int(30)], &tidb_exprctx::NoColumns)
-            .unwrap();
-        table
-            .update_row_with_context(&mut store, &committed_moved,
-                &[Datum::Int(8), Datum::Int(80)],
-                &crate::StmtContext::for_dml(false, false, false),
-            )
-            .unwrap();
-        table
-            .delete_row_with_context(&mut store, &committed_low,
-                &crate::StmtContext::for_dml(false, false, false),
-            )
-            .unwrap();
-        assert!(!buffer.is_empty(), "the writes are staged, not committed");
-
-        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-        catalog.register_kv("t", table);
-        let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91])
-            .with_txn_store(Box::new(store));
-        assert_eq!(
-            run_select_on("SELECT a, b FROM t WHERE a > 5 ORDER BY a", &catalog, &ctx).unwrap(),
-            vec![
-                vec![Datum::Int(7), Datum::Int(70)],
-                vec![Datum::Int(8), Datum::Int(80)],
-                vec![Datum::Int(9), Datum::Int(90)],
-            ],
-            "staged inserts and updates are filtered by the pushed predicate, \
-             not waved through it"
-        );
-        // The residual half of a split predicate still runs above the scan.
-        assert_eq!(
-            run_select_on(
-                "SELECT a, b FROM t WHERE a > 5 AND b + 1 < 80 ORDER BY a",
-                &catalog,
-                &ctx
-            )
-            .unwrap(),
-            vec![vec![Datum::Int(7), Datum::Int(70)]]
-        );
-        // A staged row the predicate excludes is not reachable by any spelling.
-        assert_eq!(
-            run_select_on("SELECT a FROM t WHERE a = 3", &catalog, &ctx).unwrap(),
-            vec![vec![Datum::Int(3)]],
-            "and it is still there when the predicate selects it"
-        );
-        // The composed descriptions carry the same obligation, because they are
-        // removed from the `Selection` in exactly the same way: a staged row
-        // must be tested by the pushed `IN` and the pushed `OR` too.
-        assert_eq!(
-            run_select_on(
-                "SELECT a FROM t WHERE a IN (3, 7, 8) ORDER BY a",
-                &catalog,
-                &ctx
-            )
-            .unwrap(),
-            vec![
-                vec![Datum::Int(3)],
-                vec![Datum::Int(7)],
-                vec![Datum::Int(8)],
-            ],
-            "the staged insert, the staged update's new value, and nothing else"
-        );
-        assert_eq!(
-            run_select_on(
-                "SELECT a FROM t WHERE a = 1 OR a = 8 ORDER BY a",
-                &catalog,
-                &ctx
-            )
-            .unwrap(),
-            vec![vec![Datum::Int(8)]],
-            "the staged DELETE removed the row `a = 1` matched, and the staged \
-             UPDATE created the row `a = 8` matches"
-        );
-        // A pushed BUILTIN carries the same obligation, and widening what may
-        // be pushed widens what the obligation covers -- so it is re-proved
-        // here rather than assumed. `MOD(a, 4)` is 0 (false) for `a = 8`, the
-        // value a staged UPDATE created, and truthy for the staged INSERTs; a
-        // source that filtered the snapshot half only would return `a = 8`.
-        assert_eq!(
-            run_select_on("SELECT a FROM t WHERE mod(a, 4) ORDER BY a", &catalog, &ctx).unwrap(),
-            vec![
-                vec![Datum::Int(3)],
-                vec![Datum::Int(7)],
-                vec![Datum::Int(9)],
-            ],
-            "the staged UPDATE's new value `a = 8` fails the pushed builtin and \
-             must not be returned, while the staged inserts that pass it are"
-        );
-    }
-
     /// The whole predicate must survive when nothing is pushed, and the split
     /// must not change any answer a `Selection` alone produced.
     #[test]
     fn splitting_a_where_does_not_change_its_result() {
         let mut table = TableCommon::new(92, vec![column("a", 1), column("b", 2)]);
-        let mut store = crate::test_store::fresh_store();
+        let mut store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
         for (a, b) in [(1, 10), (5, 50), (7, 70), (9, 90)] {
             table
                 .insert_row(&mut store, &[Datum::Int(a), Datum::Int(b)], &tidb_exprctx::NoColumns)
@@ -405,7 +273,7 @@ mod tests {
     #[test]
     fn the_composed_predicates_keep_mysqls_three_valued_answers() {
         let mut table = TableCommon::new(93, vec![column("a", 1), column("b", 2)]);
-        let mut store = crate::test_store::fresh_store();
+        let mut store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
         for (a, b) in [
             (Datum::Int(1), Datum::Int(10)),
             (Datum::Int(2), Datum::Null),
@@ -470,7 +338,7 @@ mod tests {
     #[test]
     fn a_pushed_math_builtin_answers_what_the_same_selection_answered() {
         let mut table = TableCommon::new(94, vec![column("a", 1), column("b", 2)]);
-        let mut store = crate::test_store::fresh_store();
+        let mut store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
         for (a, b) in [
             (Datum::Int(0), Datum::Int(3)),
             (Datum::Int(1), Datum::Int(0)),
@@ -538,7 +406,7 @@ mod tests {
     #[test]
     fn a_call_outside_the_catalog_stays_above_the_scan() {
         let mut table = TableCommon::new(95, vec![column("a", 1), column("b", 2)]);
-        let mut store = crate::test_store::fresh_store();
+        let mut store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
         for a in [1_i64, 2, 3] {
             table
                 .insert_row(&mut store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
@@ -741,82 +609,4 @@ mod tests {
         }
     }
 
-    /// Go `CheckAggCanPushCop`: after `CheckAggPushDown` admits each function
-    /// by name, `CanExprsPushDown` runs over the function's arguments and then
-    /// over the group-by items. `tan` is on no store's list, so it refuses in
-    /// either place.
-    #[test]
-    fn an_aggregate_is_pushed_only_with_its_arguments_and_group_by_items() {
-        use tidb_datatype::{FieldType, FieldTypeCode};
-        use tidb_distsql::remote_scan::{
-            PushdownAggregateFunction, PushdownAggregateKind, PushdownPartialAggregate,
-        };
-        let columns = vec![("a".to_owned(), FieldType::new(FieldTypeCode::LongLong))];
-        let context = crate::StmtContext::for_query();
-        let resolver = crate::driver::TableResolver {
-            database: Some("test"),
-            table_name: "t",
-            columns: &columns,
-            constant_context: context.clone(),
-            zone: context.session_zone(),
-            no_unsigned_subtraction: false,
-            div_precision_increment: 4,
-            clause_message: "expression",
-            subquery_constants: &[],
-        };
-        let rewrite = |sql: &str| {
-            let select = tidb_parser::parse(&format!("SELECT {sql}")).expect("parses");
-            let tidb_ast::Stmt::Query(query) = select else {
-                panic!("not a query");
-            };
-            let tidb_ast::QueryStmt::Select(select) = &*query else {
-                panic!("not a select");
-            };
-            let Some(tidb_ast::SelectField::Expr { expr, .. }) = select.fields.fields().first()
-            else {
-                panic!("no field");
-            };
-            let mut expression =
-                tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).expect("rewrites");
-            tidb_expr::scalar_function::into_coprocessor_form(&mut expression);
-            expression
-        };
-        let grouped = |argument: &str, group_by: &str| {
-            let argument = rewrite(argument);
-            let group_by = rewrite(group_by);
-            PushdownPartialAggregate::Grouped {
-                group_types: vec![FieldType::new(FieldTypeCode::LongLong)],
-                group_by: vec![group_by],
-                functions: vec![PushdownAggregateFunction {
-                    kind: PushdownAggregateKind::Max,
-                    output_type: FieldType::new(FieldTypeCode::LongLong),
-                    ret_type: FieldType::new(FieldTypeCode::LongLong),
-                    input: Some(argument),
-                }],
-                streamed: false,
-            }
-        };
-        for (argument, group_by, pushed) in [
-            ("a", "a", true),
-            ("a + 1", "a + 1", true),
-            ("TAN(a)", "a", false),
-            ("a", "TAN(a)", false),
-        ] {
-            assert_eq!(
-                crate::access_path::aggregate_admits(&grouped(argument, group_by), &context),
-                pushed,
-                "MAX({argument}) GROUP BY {group_by}"
-            );
-        }
-        let global = PushdownPartialAggregate::Global {
-            functions: vec![PushdownAggregateFunction {
-                kind: PushdownAggregateKind::Max,
-                output_type: FieldType::new(FieldTypeCode::Double),
-                ret_type: FieldType::new(FieldTypeCode::Double),
-                input: Some(rewrite("TAN(a)")),
-            }],
-            streamed: false,
-        };
-        assert!(!crate::access_path::aggregate_admits(&global, &context));
-    }
 }

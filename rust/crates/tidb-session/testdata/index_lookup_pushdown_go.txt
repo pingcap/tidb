@@ -32,7 +32,7 @@ hit=5 | a > 30/0/51 | n=51 order=7e6f00337b31014 | IndexLookUp:51:R LocalIndexLo
 hit=5 | a >= 20 and a < 24/0/-1 | n=80 order=2128ce01aee988ff | IndexLookUp:80:R LocalIndexLookUp:36:C IndexRangeScan:80:C TableRowIDScan:36:C TableRowIDScan:44:C
 hit=5 | a >= 20 and a < 24/0/33 | n=33 order=64052b1dedf94786 | IndexLookUp:33:R LocalIndexLookUp:14:C Limit:33:C IndexRangeScan:80:C TableRowIDScan:14:C TableRowIDScan:19:C
 hit=5 | a > 40 and b < 500/0/-1 | n=590 order=df26d2287bb7ffca | IndexLookUp:590:R Selection:283:C LocalIndexLookUp:595:C IndexRangeScan:1180:C TableRowIDScan:595:C Selection:307:C TableRowIDScan:585:C
-hit=5 | a > 40 and b < 500/0/29 | n=29 order=4f848a1bddf4d469 | Limit:29:R IndexLookUp:29:R Limit:29:C Selection:283:C LocalIndexLookUp:595:C IndexRangeScan:1180:C TableRowIDScan:595:C Limit:0:C Selection:0:C TableRowIDScan:0:C
+hit=5 | a > 40 and b < 500/0/29 | n=29 order=4f848a1bddf4d469 | Limit:29:R IndexLookUp:29:R Limit:29:C Selection:283:C LocalIndexLookUp:595:C IndexRangeScan:1180:C TableRowIDScan:595:C Limit:*:C Selection:*:C TableRowIDScan:*:C
 hit=10 | 1/0/-1 | n=2000 order=e559f3aa7a9a39ed | IndexLookUp:2000:R LocalIndexLookUp:2000:C IndexFullScan:2000:C TableRowIDScan:2000:C TableRowIDScan:0:C
 hit=10 | 1/0/1500 | n=1500 order=c4f23a6ece0f946f | IndexLookUp:1500:R LocalIndexLookUp:1500:C Limit:1500:C IndexFullScan:1568:C TableRowIDScan:1500:C TableRowIDScan:0:C
 hit=10 | 1/1000/700 | n=700 order=bf2e612e3d1a4fb9 | IndexLookUp:700:R LocalIndexLookUp:1700:C Limit:1700:C IndexFullScan:1792:C TableRowIDScan:1700:C TableRowIDScan:0:C

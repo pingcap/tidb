@@ -163,15 +163,10 @@ impl<C: Columns + Clone + Send + Sync + 'static> IndexLookUpJoinParts<C> {
         let stats = runtime_stats
             .as_ref()
             .map(|_| Arc::new(IndexLookUpJoinRuntimeStats::new(concurrency)));
-        let template = match &plan.source {
-            IndexLookupSource::Leaf(leaf) => leaf.fork_template(),
-            IndexLookupSource::Composite { .. } | IndexLookupSource::Builder(_) => None,
-        };
         let shared = Arc::new(IndexTaskShared {
             build_lookup_map,
             lookup_charges: true,
             vectorized,
-            template,
             probe_plan: IndexProbePlan::new(
                 &keys,
                 plan.probe_keys.clone(),
@@ -460,7 +455,7 @@ pub(super) fn handle_lookup<C: Columns>(
 ) -> Result<PreparedIndexInner, ExecError> {
     let result = (|| {
         let probes = construct_index_task(shared, outer)?;
-        let mem_tracker = outer.take_kv_range_tracker(shared.template.is_some());
+        let mem_tracker = outer.take_kv_range_tracker(false);
         let mut fetch = |reader: &mut dyn Executor, outer: &OuterBatch| {
             let mut inner = None;
             loop {
@@ -474,44 +469,15 @@ pub(super) fn handle_lookup<C: Columns>(
         };
         // Go `fetchInnerResults`: the task's inner executor, built for its
         // lookup contents and read to the end (which closes it).
-        let builder = match &*source.lock().unwrap() {
-            IndexLookupSource::Builder(builder) => Some(Arc::clone(builder)),
-            _ => None,
-        };
-        if let Some(builder) = builder {
-            let (keys, bound_values) = probes.into_iter().map(|probe| (probe.key, probe.bounds)).unzip();
-            let mut inner_exec = builder.build_executor_for_index_join(crate::index_lookup::IndexJoinProbes {
-                keys,
-                bound_values,
-                mem_tracker,
-            })?;
-            return Ok(fetch(inner_exec.as_mut(), outer)?.0);
-        }
-        match open_index_task(shared, probes, mem_tracker)? {
-            Ok(mut task) => {
-                let (inner, inner_rows) = fetch(task.as_mut(), outer)?;
-                if let IndexLookupSource::Leaf(leaf) = &*source.lock().unwrap() {
-                    leaf.add_produced(inner_rows);
-                }
-                Ok(inner)
-            }
-            Err(probes) => {
-                let (keys, bound_values) = probes
-                    .into_iter()
-                    .map(|probe| (probe.key, probe.bounds))
-                    .unzip();
-                let mut source = source.lock().unwrap();
-                if !shared.inner_opened.swap(true, Ordering::SeqCst) {
-                    source.open()?;
-                }
-                source.set_probes(crate::index_lookup::IndexJoinProbes {
-                    keys,
-                    bound_values,
-                    mem_tracker: outer.take_kv_range_tracker(false),
-                })?;
-                Ok(fetch(source.executor()?, outer)?.0)
-            }
-        }
+        let IndexLookupSource::Builder(builder) = &*source.lock().unwrap();
+        let builder = Arc::clone(builder);
+        let (keys, bound_values) = probes.into_iter().map(|probe| (probe.key, probe.bounds)).unzip();
+        let mut inner_exec = builder.build_executor_for_index_join(crate::index_lookup::IndexJoinProbes {
+            keys,
+            bound_values,
+            mem_tracker,
+        })?;
+        Ok(fetch(inner_exec.as_mut(), outer)?.0)
     })();
     outer.inner_worker_tracker = None;
     result

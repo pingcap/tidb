@@ -19,22 +19,6 @@
 
 use super::*;
 
-/// The scope a subquery inside `select` sees as its OUTER scope: `select`'s
-/// own `FROM` tables. An unresolvable `FROM` yields an empty scope, and the
-/// error surfaces when the query itself is built.
-pub(crate) fn select_outer_scope(
-    select: &tidb_ast::SelectStmt,
-    catalog: &SessionExtendedInfoSchema,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> FromScope {
-    let empty = || FromScope::for_statement(ctx);
-    select.from.as_ref().map_or_else(empty, |join| {
-        super::planner_bridge::logical_from_scope(join, catalog, current_db, ctx)
-            .unwrap_or_else(|_| empty())
-    })
-}
-
 /// Whether `expr` contains a subquery.
 pub(crate) fn expr_has_subquery(expr: &tidb_ast::Expr) -> bool {
     use tidb_ast::Expr;

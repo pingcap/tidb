@@ -48,15 +48,10 @@ mod partition_maintenance;
 mod table_scan;
 pub use table_scan::RowDecodeContextExt;
 pub(crate) use table_scan::insert_extra_handle;
-pub(crate) use table_scan::PostFilterExprs;
 pub use ddl_ops::KvTableDdl;
 pub use partition_maintenance::KvTablePartitionMaintenance;
 pub use table_scan::KvTableReader;
-pub use table_scan::{
-    capture_decoded_column_ids, IndexLookUpPushDown, IndexRangeCursor, RemoteIndexHandleCursor, RowOrHandle, RemoteRowCursor,
-    RowCursor, StagedHandlesLookup, TableScanExec,
-};
-pub(crate) use table_scan::{lookup_task_reader_memory, FinishedLookup, FinishedLookupChunk, LookupReaderMemory};
+pub use table_scan::{capture_decoded_column_ids, RowCursor, StagedHandlesLookup};
 
 #[cfg(test)]
 mod tests;

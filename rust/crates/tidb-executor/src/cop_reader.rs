@@ -48,7 +48,7 @@
 //! A refused shape falls back to the byte-level cursor, so it is slower but
 //! never changes the answer.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -916,6 +916,9 @@ pub(crate) struct TableRead {
     /// Go `SetMemTracker`: the tracker the select result charges its
     /// responses to, none for a request built without one.
     pub mem_tracker: Option<Arc<tidb_memory::Tracker>>,
+    /// Go `SelectResult.IntoIter`'s `intermediateFieldTypes`: the row types
+    /// of each intermediate channel the DAG declares.
+    pub intermediate_output_types: Vec<Vec<FieldType>>,
 }
 
 /// Go `TableReaderExecutor.SelectResult`: the request through `client` (a
@@ -941,6 +944,7 @@ pub(crate) fn open_table_read(
         cop_plan_ids: read.cop_plan_ids,
         root_plan_id: read.root_plan_id,
         memory_tracker,
+        intermediate_output_types: read.intermediate_output_types,
         tiflash: (read.store_type == tidb_kv::store_type::StoreType::TiFlash).then(|| TiFlashRequest {
             partition_id_and_ranges: read.partition_id_and_ranges,
             batch_cop: read.batch_cop,

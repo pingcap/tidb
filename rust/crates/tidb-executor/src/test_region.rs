@@ -18,7 +18,7 @@
 //! as [`SentRequest`] (the DAG and the `kv.Request` fields a test asserts
 //! on), and can answer canned rows or fail a read instead.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use prost::Message;
 use tidb_datatype::Datum;
@@ -184,14 +184,6 @@ impl SentRequest {
             .unwrap_or_default()
     }
 
-    /// The scan's `primary_prefix_column_ids`.
-    pub(crate) fn primary_prefix_column_ids(&self) -> Vec<i64> {
-        self.dag.executors[0]
-            .tbl_scan
-            .as_ref()
-            .map(|scan| scan.primary_prefix_column_ids.clone())
-            .unwrap_or_default()
-    }
 
     /// The scan executor's own direction.
     pub(crate) fn scan_desc(&self) -> bool {
@@ -404,82 +396,6 @@ impl tidb_txnkv::Response for Subsets {
             closed.store(true, std::sync::atomic::Ordering::SeqCst);
         }
         Ok(())
-    }
-}
-
-/// What a [`TestRegion`] answers one request with.
-pub(crate) type Answer = Box<
-    dyn Fn(&SentRequest) -> Vec<Result<QueryResultSubset, QueryResponseError>> + Send + Sync,
->;
-
-/// A region that records every request and answers through `answer`.
-pub(crate) struct TestRegion {
-    /// Every request, in send order.
-    pub(crate) sent: Mutex<Vec<SentRequest>>,
-    answer: Answer,
-    closed: Option<Arc<std::sync::atomic::AtomicBool>>,
-}
-
-impl std::fmt::Debug for TestRegion {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("TestRegion")
-    }
-}
-
-impl TestRegion {
-    /// A region answering through `answer`; closing a response sets
-    /// `closed` when one is given.
-    pub(crate) fn new(answer: Answer, closed: Option<Arc<std::sync::atomic::AtomicBool>>) -> Self {
-        Self {
-            sent: Mutex::new(Vec::new()),
-            answer,
-            closed,
-        }
-    }
-
-    /// A region that answers every request with no rows.
-    pub(crate) fn empty() -> Self {
-        Self::new(Box::new(|_| Vec::new()), None)
-    }
-
-    /// A region that answers from `data`'s committed bytes.
-    pub(crate) fn over(data: impl Fn() -> Vec<(Vec<u8>, Vec<u8>)> + Send + Sync + 'static) -> Self {
-        Self::new(
-            Box::new(move |sent| {
-                let mut store = committed_store(data());
-                vec![run_dag(&mut store, &sent.dag, &sent.ranges, 100)
-                    .map(|answer| QueryResultSubset {
-                        data: answer.select.encode_to_vec().into(),
-                        runtime: None,
-                    })
-                    .map_err(|message| {
-                        QueryResponseError::Source(format!("coprocessor other error: {message}"))
-                    })]
-            }),
-            None,
-        )
-    }
-
-    /// The last request sent.
-    pub(crate) fn last(&self) -> Option<SentRequest> {
-        self.sent.lock().unwrap().last().cloned()
-    }
-}
-
-impl tidb_txnkv::Client for TestRegion {
-    fn send(&self, request: &tidb_txnkv::TransportRequest) -> Box<dyn tidb_txnkv::Response + Send> {
-        // Go `Send` answers every failure as a response (`copErrorResponse`).
-        (|| -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
-        let sent = SentRequest::decode(request);
-        let subsets = (self.answer)(&sent);
-        self.sent.lock().unwrap().push(sent);
-        Ok(Subsets::new(subsets, self.closed.clone()))
-    })()
-        .unwrap_or_else(|error| tidb_txnkv::CopErrorResponse::boxed(tidb_txnkv::QueryResponseError::Source(error)))
-    }
-
-    fn is_request_type_supported(&self, _request_type: i64, _sub_type: i64) -> bool {
-        true
     }
 }
 

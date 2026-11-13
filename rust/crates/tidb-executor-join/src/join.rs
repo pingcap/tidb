@@ -617,63 +617,18 @@ pub const INDEX_JOIN_BATCH_SIZE: usize = 25000;
 /// indexed by the join's OWN equality keys, so this strategy and the hash
 /// strategy answer "does this pair match?" with the same bytes.
 pub enum IndexLookupSource {
-    /// The lookup side is one base-table leaf.
-    Leaf(Box<dyn crate::index_lookup::IndexJoinLookup>),
-    /// The lookup side is a full subtree whose target leaf consumes the
-    /// shared probe channel published by the enclosing join.
-    Composite {
-        exec: Box<dyn Executor>,
-        probes: std::sync::Arc<std::sync::Mutex<crate::index_lookup::SharedIndexJoinProbes>>,
-    },
     /// Go's `readerBuilder`: the lookup side built for each task
     /// (`BuildExecutorForIndexJoin`).
     Builder(std::sync::Arc<dyn crate::index_lookup::IndexJoinReaderBuilder>),
 }
 
 impl IndexLookupSource {
-    fn executor(&mut self) -> Result<&mut dyn Executor, ExecError> {
-        match self {
-            Self::Leaf(source) => Ok(source.as_mut()),
-            Self::Composite { exec, .. } => Ok(exec.as_mut()),
-            Self::Builder(_) => Err(ExecError::internal("an index join's reader builder has no shared reader")),
-        }
-    }
-
-    fn set_probes(&mut self, probes: crate::index_lookup::IndexJoinProbes) -> Result<(), ExecError> {
-        match self {
-            Self::Leaf(source) => source.set_probes(probes),
-            Self::Composite {
-                exec,
-                probes: shared,
-            } => {
-                exec.close()?;
-                shared.lock().unwrap().publish(probes);
-                exec.open()
-            }
-            Self::Builder(_) => Err(ExecError::internal("an index join's reader builder takes no probes")),
-        }
-    }
-
-    fn open(&mut self) -> Result<(), ExecError> {
-        match self {
-            Self::Leaf(source) => source.open(),
-            Self::Composite { exec, .. } => exec.open(),
-            Self::Builder(_) => Ok(()),
-        }
-    }
-
     fn close(&mut self) -> Result<(), ExecError> {
-        match self {
-            Self::Leaf(source) => source.close(),
-            Self::Composite { exec, .. } => exec.close(),
-            Self::Builder(_) => Ok(()),
-        }
+        Ok(())
     }
 
     fn ret_field_types(&self) -> &[FieldType] {
         match self {
-            Self::Leaf(source) => source.ret_field_types(),
-            Self::Composite { exec, .. } => exec.ret_field_types(),
             Self::Builder(builder) => builder.ret_field_types(),
         }
     }
@@ -977,9 +932,6 @@ struct IndexTaskShared<C: Columns> {
     lookup_charges: bool,
     /// Go `SessionVars.EnableVectorizedExpression`, for the outer filter.
     vectorized: bool,
-    /// The forkable lookup, when the inner side is a common-handle prefix
-    /// leaf; `None` keeps every task on the session's own reader.
-    template: Option<Box<dyn crate::index_lookup::IndexJoinLookupFork>>,
     probe_plan: IndexProbePlan,
     outer_is_left: bool,
     keys: Vec<EquiKey>,
@@ -1020,41 +972,6 @@ fn construct_index_task<C: Columns>(
         stats.record_construct(construct_started.elapsed());
     }
     Ok(probes)
-}
-
-/// Opens a forked reader for one task's lookup contents, charging its
-/// ranges to `mem_tracker`; without a fork, or when the fork reaches no
-/// range, the contents come back for the session's own reader.
-fn open_index_task<C: Columns>(
-    shared: &IndexTaskShared<C>,
-    probes: Vec<IndexTaskProbe>,
-    mem_tracker: Option<Arc<Tracker>>,
-) -> Result<Result<Box<dyn crate::index_lookup::IndexJoinLookup>, Vec<IndexTaskProbe>>, ExecError> {
-    let Some(template) = shared.template.as_ref() else {
-        return Ok(Err(probes));
-    };
-    let (keys, bound_values) = probes
-        .into_iter()
-        .map(|probe| (probe.key, probe.bounds))
-        .unzip();
-    let task = match template.open(crate::index_lookup::IndexJoinProbes {
-        keys,
-        bound_values,
-        mem_tracker,
-    }) {
-        Ok(Ok(task)) => task,
-        Ok(Err(probes)) => {
-            let probes = probes
-                .keys
-                .into_iter()
-                .zip(probes.bound_values)
-                .map(|(key, bounds)| IndexTaskProbe { key, bounds })
-                .collect();
-            return Ok(Err(probes));
-        }
-        Err(error) => return Err(error),
-    };
-    Ok(Ok(task))
 }
 
 /// Go `constructLookupContent` and `sortAndDedupLookUpContents` for one

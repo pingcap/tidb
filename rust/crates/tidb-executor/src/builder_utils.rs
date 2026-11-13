@@ -63,6 +63,39 @@ fn flatten_push_down_plan(root: &PhysicalPlan) -> Vec<&PhysicalPlan> {
     plans
 }
 
+/// Go `FlattenTreePushDownPlan`: the pushed tree in post order, and the
+/// parent of each child of a multi-child node whose parent is not the next
+/// executor (`unNatureOrders`).
+pub(crate) fn flatten_tree_push_down_plan(
+    root: &PhysicalPlan,
+) -> (Vec<&PhysicalPlan>, std::collections::BTreeMap<usize, usize>) {
+    fn flatten<'p>(
+        plan: &'p PhysicalPlan,
+        plans: &mut Vec<&'p PhysicalPlan>,
+        un_nature_orders: &mut std::collections::BTreeMap<usize, usize>,
+    ) {
+        let multiple_children = plan.children().len() > 1;
+        let mut child_indices = Vec::with_capacity(plan.children().len());
+        for child in plan.children() {
+            flatten(child, plans, un_nature_orders);
+            if multiple_children {
+                child_indices.push(plans.len() - 1);
+            }
+        }
+        plans.push(plan);
+        let parent_index = plans.len() - 1;
+        for child_index in child_indices {
+            if parent_index != child_index + 1 {
+                un_nature_orders.insert(child_index, parent_index);
+            }
+        }
+    }
+    let mut plans = Vec::new();
+    let mut un_nature_orders = std::collections::BTreeMap::new();
+    flatten(root, &mut plans, &mut un_nature_orders);
+    (plans, un_nature_orders)
+}
+
 /// Go `expression.ExpressionsToPBList` over the input row `schema`.
 fn expressions_to_pb_list(
     expressions: &[Expression],

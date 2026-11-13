@@ -115,8 +115,8 @@ pub fn storage(
 #[derive(Clone, Debug, Default)]
 pub struct SharedMemStorage {
     inner: Arc<Mutex<tidb_kv::storage::MemTableStorage>>,
-    /// The coprocessor answering this store's requests, as Go's mock store's
-    /// unistore answers them; `None` leaves the store without one.
+    /// A coprocessor a test answers this store's requests with in place of
+    /// the store's own [`UnistoreCoprocessor`].
     client: Option<Arc<dyn tidb_txnkv::Client>>,
 }
 
@@ -191,8 +191,165 @@ impl tidb_kv::storage::TableStorage for SharedMemStorage {
         Box::new(self.clone())
     }
 
+    /// Go's mock store answers every reader's DAG with unistore's
+    /// coprocessor over its rows, and so does this store.
     fn client(&self) -> Option<Arc<dyn tidb_txnkv::Client>> {
-        self.client.clone()
+        Some(self.client.clone().unwrap_or_else(|| {
+            let rows = Arc::downgrade(&self.inner);
+            Arc::new(UnistoreCoprocessor::new(move |_| {
+                rows.upgrade().map_or_else(Vec::new, |inner| {
+                    SharedMemStorage { inner, client: None }.pairs()
+                })
+            }))
+        }))
+    }
+}
+
+/// Go's mock store coprocessor (`mockstore` over unistore): each request's
+/// DAG answered by unistore's cop handler over the rows its source holds at
+/// the request's start ts, committed in one transaction (versions 1, 2) the
+/// request reads after, with the region layer's scan detail and keys-read
+/// charge.
+pub struct UnistoreCoprocessor {
+    rows: Box<dyn Fn(u64) -> Vec<(Vec<u8>, Vec<u8>)> + Send + Sync>,
+}
+
+impl UnistoreCoprocessor {
+    /// A coprocessor over the pairs `rows` reads at a start ts.
+    pub fn new(rows: impl Fn(u64) -> Vec<(Vec<u8>, Vec<u8>)> + Send + Sync + 'static) -> Self {
+        Self { rows: Box::new(rows) }
+    }
+}
+
+impl std::fmt::Debug for UnistoreCoprocessor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("UnistoreCoprocessor")
+    }
+}
+
+/// The mock store's one region, which holds every key: the store answers a
+/// pushed-down index lookup's table rows from itself (Go unistore's
+/// `ExtraDbReaderProvider` over a single local region).
+struct OneRegionStore<'s>(&'s tidb_unistore_tikv::mvcc_store::MvccStore);
+
+impl tidb_unistore_dbreader::DbReader for OneRegionStore<'_> {
+    fn scan(&self, req: &tidb_unistore_dbreader::ScanReq) -> Vec<tidb_unistore_dbreader::KvPair> {
+        tidb_unistore_dbreader::DbReader::scan(self.0, req)
+    }
+
+    fn extra_db_reader_provider(&self) -> Option<&dyn tidb_unistore_dbreader::ExtraDbReaderProvider> {
+        Some(self)
+    }
+}
+
+impl tidb_unistore_dbreader::ExtraDbReaderProvider for OneRegionStore<'_> {
+    fn locate_extra_region(&self, _key: &[u8]) -> Result<tidb_unistore_dbreader::LocateExtraRegionResult, String> {
+        Ok(tidb_unistore_dbreader::LocateExtraRegionResult {
+            found: true,
+            region: Some(tidb_proto::metapb::Region { id: 1, ..tidb_proto::metapb::Region::default() }),
+            peer: Some(tidb_proto::metapb::Peer::default()),
+            is_leader: true,
+        })
+    }
+
+    fn get_extra_db_reader_by_region<'r>(
+        &'r self,
+        _ctx: &tidb_unistore_dbreader::GetExtraDbReaderContext,
+    ) -> Result<Box<dyn tidb_unistore_dbreader::DbReader + 'r>, tidb_proto::errorpb::Error> {
+        Ok(Box::new(self.0))
+    }
+}
+
+/// One coprocessor response, the whole answer in one subset.
+struct UnistoreCopResponse(Option<tidb_txnkv::QueryResultSubset>);
+
+impl tidb_txnkv::Response for UnistoreCopResponse {
+    fn next(&mut self) -> Result<Option<tidb_txnkv::QueryResultSubset>, tidb_txnkv::QueryResponseError> {
+        Ok(self.0.take())
+    }
+
+    fn close(&mut self) -> Result<(), tidb_txnkv::QueryResponseError> {
+        self.0 = None;
+        Ok(())
+    }
+}
+
+impl tidb_txnkv::Client for UnistoreCoprocessor {
+    fn send(&self, request: &tidb_txnkv::TransportRequest) -> Box<dyn tidb_txnkv::Response + Send> {
+        let metadata = request.metadata();
+        let ranges = metadata
+            .key_ranges
+            .as_ref()
+            .map(|ranges| {
+                ranges
+                    .partitions()
+                    .iter()
+                    .flatten()
+                    .map(|range| tidb_proto::coprocessor::KeyRange {
+                        start: range.start_key.as_bytes().to_vec(),
+                        end: range.end_key.as_bytes().to_vec(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut store = tidb_unistore_tikv::mvcc_store::MvccStore::new();
+        let mutations: Vec<tidb_proto::KvrpcMutation> = (self.rows)(metadata.start_ts)
+            .into_iter()
+            .map(|(key, value)| tidb_proto::KvrpcMutation {
+                op: tidb_proto::KvrpcOp::Put as i32,
+                key,
+                value,
+                ..tidb_proto::KvrpcMutation::default()
+            })
+            .collect();
+        if let Some(primary) = mutations.first().map(|mutation| mutation.key.clone()) {
+            let keys: Vec<Vec<u8>> = mutations.iter().map(|mutation| mutation.key.clone()).collect();
+            store
+                .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
+                    mutations,
+                    primary_lock: primary,
+                    start_version: 1,
+                    ..tidb_unistore_tikv::mvcc_store::PrewriteReq::default()
+                })
+                .expect("the snapshot's rows prewrite");
+            store.commit(&keys, 1, 2).expect("the snapshot's rows commit");
+        }
+        let response = tidb_unistore_cophandler::handle_cop_request(
+            &OneRegionStore(&store),
+            &tidb_proto::coprocessor::Request {
+                tp: tidb_unistore_cophandler::REQ_TYPE_DAG,
+                data: metadata.data.clone().unwrap_or_default(),
+                ranges,
+                start_ts: 3,
+                ..tidb_proto::coprocessor::Request::default()
+            },
+        );
+        if !response.other_error.is_empty() {
+            return tidb_txnkv::CopErrorResponse::boxed(tidb_txnkv::QueryResponseError::Source(format!(
+                "coprocessor other error: {}",
+                response.other_error
+            )));
+        }
+        // The region layer's part (Go `copIteratorWorker.collectCopRuntimeStats`
+        // and the statement-wide keys-read counter it charges).
+        let mut scan = tikv_client::util::ScanDetail::default();
+        if let Some(details) = &response.exec_details_v2 {
+            scan.merge_from_pb(details.scan_detail_v2.as_ref());
+        }
+        if let (Some(counter), Ok(keys)) = (&metadata.max_keys_read_counter, u64::try_from(scan.processed_keys)) {
+            counter.fetch_add(keys, std::sync::atomic::Ordering::Relaxed);
+        }
+        Box::new(UnistoreCopResponse(Some(tidb_txnkv::QueryResultSubset {
+            data: response.data.into(),
+            runtime: Some(tidb_txnkv::ResponseRuntimeStats {
+                scan_detail: Some(scan),
+                ..tidb_txnkv::ResponseRuntimeStats::default()
+            }),
+        })))
+    }
+
+    fn is_request_type_supported(&self, _request_type: i64, _sub_type: i64) -> bool {
+        true
     }
 }
 

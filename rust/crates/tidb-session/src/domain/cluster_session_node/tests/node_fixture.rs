@@ -468,7 +468,14 @@ fn open_session_on_with_context_and_seams_and_usage(
         Arc::clone(&node.auto_ids) as _,
         crate::domain::cluster_session_node::open_pool_session,
     )
-    .with_kv_client(Arc::new(super::mock_cluster::MockCoprocessor(Arc::clone(&node.cluster))))
+    .with_kv_client({
+        // Go's mock store answers the node's DAGs with unistore's coprocessor
+        // over the snapshot each request reads.
+        let cluster = Arc::clone(&node.cluster);
+        Arc::new(tidb_store_driver_txn::cluster_storage_test_util::UnistoreCoprocessor::new(move |start_ts| {
+            cluster.rows_at(start_ts).into_iter().collect()
+        }))
+    })
     .shared();
     crate::domain::cluster_session_node::NodeServices::new(analyze).bind(&factory);
     node.keep(&factory);

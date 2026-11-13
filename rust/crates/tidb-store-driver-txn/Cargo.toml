@@ -36,6 +36,9 @@ tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tikv-client.workspace = true
 tidb-proto = { path = "../tidb-proto" }
 tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-unistore-tikv = { path = "../tidb-unistore-tikv" }
+tidb-unistore-cophandler = { path = "../tidb-unistore-cophandler" }
+tidb-unistore-dbreader = { path = "../tidb-unistore-dbreader" }
 tidb-vardef = { path = "../tidb-vardef" }
 
 [dev-dependencies]

@@ -217,9 +217,27 @@ impl PhysicalPlan {
             Self::Sort(p) => p.to_pb(self, ctx, store_type),
             Self::Window(p) => p.to_pb(self, ctx, store_type),
             Self::Expand(p) => p.to_pb(self, ctx, store_type),
+            Self::LocalIndexLookUp(p) => p.to_pb(store_type),
             // Go's base body is exactly this error.
             _ => Err(PlanError::internal(format!("plan {} fails converts to PB", self.explain_id(false)))),
         }
+    }
+}
+
+impl crate::PhysicalLocalIndexLookUp {
+    /// Go `PhysicalLocalIndexLookUp.ToPB`.
+    fn to_pb(&self, store_type: StoreType) -> Result<tipb::Executor, PlanError> {
+        if store_type != StoreType::TiKv {
+            return Err(PlanError::internal(format!("unsupported store type {store_type:?} for LocalIndexLookUp")));
+        }
+        Ok(tipb::Executor {
+            tp: Some(tipb::ExecType::TypeIndexLookUp as i32),
+            index_lookup: Some(tipb::IndexLookUp {
+                index_handle_offsets: self.index_handle_offsets.clone(),
+                ..tipb::IndexLookUp::default()
+            }),
+            ..go_executor()
+        })
     }
 }
 

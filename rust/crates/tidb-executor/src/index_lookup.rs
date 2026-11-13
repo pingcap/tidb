@@ -145,6 +145,11 @@ pub struct IndexLookUpExecutor {
     shared: Arc<Shared>,
     /// Go `idxPlans`.
     index_plans: Vec<PhysicalPlan>,
+    /// Go `idxPlanUnNatureOrders` (`FlattenTreePushDownPlan`).
+    index_plans_un_nature_orders: std::collections::BTreeMap<usize, usize>,
+    /// Go `indexLookUpPushDown`: the index request looks the rows up in
+    /// TiKV itself, answering the handles it could not as index rows.
+    index_lookup_push_down: bool,
     /// Go `getPhysicalPlanIDs(e.idxPlans)` and `getIndexPlanRootID()`.
     index_plan_ids: Vec<isize>,
     index_root_plan_id: isize,
@@ -235,11 +240,21 @@ impl IndexLookUpExecutor {
         // Go `IndexPlans` / `TablePlans`, flattened from the plans
         // themselves: the reader's flattened copies predate the rewrites
         // that bind them.
-        let index_plans =
-            crate::builder_utils::flatten_table_plan(v.index_plan.as_deref().ok_or_else(|| internal("the lookup has no index plan"))?);
+        let index_plan = v.index_plan.as_deref().ok_or_else(|| internal("the lookup has no index plan"))?;
+        // Go `IndexPlans, IndexPlansUnNatureOrders = FlattenTreePushDownPlan(IndexPlan)`
+        // under a pushed-down lookup.
+        let (index_plans, index_plans_un_nature_orders) = if v.index_lookup_push_down {
+            let (plans, un_nature_orders) = crate::builder_utils::flatten_tree_push_down_plan(index_plan);
+            (plans.into_iter().cloned().collect::<Vec<_>>(), un_nature_orders)
+        } else {
+            (
+                crate::builder_utils::flatten_table_plan(index_plan).into_iter().cloned().collect(),
+                std::collections::BTreeMap::new(),
+            )
+        };
         let table_plans =
             crate::builder_utils::flatten_table_plan(v.table_plan.as_deref().ok_or_else(|| internal("the lookup has no table plan"))?);
-        let PhysicalPlan::IndexScan(scan) = index_plans[0] else {
+        let PhysicalPlan::IndexScan(scan) = &index_plans[0] else {
             return Err(internal("the lookup's index plans start with no index scan"));
         };
         let PhysicalPlan::TableScan(ts) = table_plans[0] else {
@@ -348,6 +363,7 @@ impl IndexLookUpExecutor {
             plan.cop_avg_row_size(false, tidb_config::tikvcfg::get_global_config().tikv_client.enable_chunk_rpc)
         });
         let index_plan_ids: Vec<isize> = index_plans.iter().map(|plan| plan.id() as isize).collect();
+        let est_rows = index_plans[0].stats_count().map_or(0, |count| count as usize);
         let table_plan_ids: Vec<isize> = table_plans.iter().map(|plan| plan.id() as isize).collect();
         let shared = Shared {
             ctx: ctx.clone(),
@@ -405,7 +421,9 @@ impl IndexLookUpExecutor {
             index_root_plan_id: *index_plan_ids.last().unwrap_or(&(meta.id() as isize)),
             meta,
             shared: Arc::new(shared),
-            index_plans: index_plans.iter().copied().cloned().collect(),
+            index_plans_un_nature_orders,
+            index_lookup_push_down: v.index_lookup_push_down,
+            index_plans: index_plans.clone(),
             index_plan_ids,
             index_id: index.id,
             table_ids,
@@ -424,7 +442,7 @@ impl IndexLookUpExecutor {
             index_lookup_size: ctx.index_lookup_size(),
             index_lookup_concurrency: ctx.index_lookup_concurrency(),
             index_paging: v.paging,
-            est_rows: index_plans[0].stats_count().map_or(0, |count| count as usize),
+            est_rows,
             idx_net_data_size: avg_table_row_size,
             stmt_mem_tracker: Arc::clone(ctx.statement_memory().stmt_tracker()),
             kv_ranges: Vec::new(),
@@ -581,7 +599,39 @@ impl IndexLookUpExecutor {
         .map_err(|error| ExecError::Internal(error.to_string().into()))?;
         let mut by_items = self.by_items.clone();
         let mut index_types = self.index_types.clone();
-        dag.output_offsets.clone_from(&self.index_output_offsets);
+        // Go `tblScanIdxForRewritePartitionID`.
+        let mut tbl_scan_idx_for_rewrite_partition_id = None;
+        if self.index_lookup_push_down {
+            // Go `buildIndexLookUpPushDownDAGReq`: the lookup's index rows
+            // are its intermediate channel, the table plan's rows the final
+            // output.
+            for (&child, &parent) in &self.index_plans_un_nature_orders {
+                dag.executors[child].parent_idx = Some(parent as u32);
+            }
+            let intermediate_output_index = dag
+                .executors
+                .iter()
+                .position(|executor| executor.tp == Some(tidb_proto::tipb::ExecType::TypeIndexLookUp as i32))
+                .ok_or_else(|| ExecError::Internal("IndexLookUp executor not found".into()))?;
+            dag.intermediate_output_channels = vec![tidb_proto::tipb::IntermediateOutputChannel {
+                executor_idx: intermediate_output_index as u32,
+                output_offsets: self.index_output_offsets.clone(),
+            }];
+            let output_len = self.index_plans.last().and_then(|plan| plan.schema()).map_or(0, |schema| schema.len());
+            dag.output_offsets = (0..output_len as u32).collect();
+            if self.partition_table_mode {
+                tbl_scan_idx_for_rewrite_partition_id = Some(
+                    dag.executors
+                        .iter()
+                        .position(|executor| executor.tp == Some(tidb_proto::tipb::ExecType::TypeTableScan as i32))
+                        .ok_or_else(|| {
+                            ExecError::Internal("cannot find table scan executor in for partition index lookup push down".into())
+                        })?,
+                );
+            }
+        } else {
+            dag.output_offsets.clone_from(&self.index_output_offsets);
+        }
         // Go: one key-range group needs no merge -- its order-by columns
         // leave the request.
         if kv_ranges.len() == 1 {
@@ -659,6 +709,8 @@ impl IndexLookUpExecutor {
             next_task_id: 0,
             partition_table_mode: self.partition_table_mode,
             index_paging: self.index_paging,
+            index_lookup_push_down: self.index_lookup_push_down,
+            tbl_scan_idx_for_rewrite_partition_id,
         };
         self.workers.push(std::thread::spawn(tidb_executor_internal_exec::ruv2::inherit_goroutine(move || {
             index_worker.run(&result_tx, &work_tx);
@@ -739,6 +791,11 @@ struct IndexWorker {
     partition_table_mode: bool,
     /// Go `indexPaging`.
     index_paging: bool,
+    /// Go `indexLookUpPushDown`.
+    index_lookup_push_down: bool,
+    /// Go `tblScanIdxForRewritePartitionID`: the pushed lookup's table scan,
+    /// whose table id each partition's request rewrites.
+    tbl_scan_idx_for_rewrite_partition_id: Option<usize>,
 }
 
 impl IndexWorker {
@@ -758,12 +815,18 @@ impl IndexWorker {
             let _ = done_tx.send(Err(error));
             let _ = result_tx.send(done_rx);
         };
+        if self.index_lookup_push_down {
+            if let Err(error) = self.run_push_down(ranges, result_tx, work_tx) {
+                fail(error);
+            }
+            return;
+        }
         // Go `startIndexWorker`: one request a key-range group, all sent
         // before any handle is read, and merged by the order-by columns when
         // the read keeps order across groups.
         let mut results: Vec<Box<dyn Executor>> = Vec::with_capacity(total);
-        for kv_range in ranges {
-            match self.select_result(kv_range, total) {
+        for (idx, kv_range) in ranges.into_iter().enumerate() {
+            match self.select_result(idx, kv_range, total) {
                 Ok(result) => {
                     results.push(Box::new(SelectResultExec::new(self.index_meta(), result, Arc::clone(&self.shared))));
                 }
@@ -826,9 +889,18 @@ impl IndexWorker {
     /// Go `buildIndexSelectResultForRange`.
     fn select_result(
         &self,
+        range_idx: usize,
         mut kv_range: Vec<tidb_txnkv::KeyRange>,
         total_ranges: usize,
     ) -> Result<tidb_distsql::select_response::SelectResponseIter, ExecError> {
+        let mut dag = self.dag.clone();
+        if let Some(idx) = self.tbl_scan_idx_for_rewrite_partition_id {
+            // Go: the pushed lookup's table scan reads the range's
+            // partition, so it encodes the table handle key correctly.
+            if let Some(scan) = dag.executors[idx].tbl_scan.as_mut() {
+                scan.table_id = Some(self.table_ids[range_idx % self.table_ids.len()]);
+            }
+        }
         kv_range.sort_by(|a, b| a.start_key.cmp(&b.start_key));
         let statement = self
             .statement
@@ -839,7 +911,7 @@ impl IndexWorker {
             &statement,
             crate::cop_reader::TableRead {
                 store_type: tidb_kv::store_type::StoreType::TiKv,
-                dag: self.dag.clone(),
+                dag,
                 key_ranges: kv_range,
                 key_range_hints: Vec::new(),
                 partition_id_and_ranges: Vec::new(),
@@ -850,9 +922,20 @@ impl IndexWorker {
                 start_ts: self.shared.start_ts,
                 keep_order: self.shared.keep_order,
                 desc: self.desc,
-                // Go `SetPaging(e.indexPaging)`.
-                paging: self.index_paging,
-                field_types: self.index_types.clone(),
+                // Go `SetPaging(e.indexPaging)`; a pushed lookup does not page.
+                paging: self.index_paging && !self.index_lookup_push_down,
+                // Go `e.RetFieldTypes()` under a pushed lookup, whose index
+                // rows are the intermediate channel's.
+                field_types: if self.index_lookup_push_down {
+                    self.meta.ret_field_types().to_vec()
+                } else {
+                    self.index_types.clone()
+                },
+                intermediate_output_types: if self.index_lookup_push_down {
+                    vec![self.index_types.clone()]
+                } else {
+                    Vec::new()
+                },
                 cop_plan_ids: self.index_plan_ids.clone(),
                 root_plan_id: self.index_root_plan_id,
                 mem_tracker: Some(Arc::clone(&self.mem_tracker)),
@@ -902,6 +985,146 @@ impl IndexWorker {
                 stats.stats.record_index_task(finish_fetch - start, start.elapsed(), finish_build.elapsed());
             }
         }
+    }
+
+    /// Go `startIndexWorker` under `indexLookUpPushDown`: each range's
+    /// rows the store looked up, and the handles it could not, in batches;
+    /// the rows are completed tasks, the handles table tasks.
+    fn run_push_down(
+        &mut self,
+        ranges: Vec<Vec<tidb_txnkv::KeyRange>>,
+        result_tx: &SyncSender<TaskDone>,
+        work_tx: &SyncSender<LookupTask>,
+    ) -> Result<(), ExecError> {
+        let total = ranges.len();
+        let mut results = Vec::with_capacity(total);
+        for (idx, kv_range) in ranges.into_iter().enumerate() {
+            results.push(self.select_result(idx, kv_range, total)?);
+        }
+        let handle_offsets = self.handle_offsets();
+        let mut outcome = Ok(());
+        'results: for (idx, result) in results.iter_mut().enumerate() {
+            let partition = self.partition_table_mode.then(|| self.table_ids[idx % self.table_ids.len()]);
+            loop {
+                if let Some(limit) = self.pushed_limit {
+                    if self.scanned_keys >= limit.count + limit.offset {
+                        break 'results;
+                    }
+                }
+                let start = std::time::Instant::now();
+                let (rows, handles, exhausted) = match self.extract_look_up_push_down_rows_or_handles(result, &handle_offsets) {
+                    Ok(extracted) => extracted,
+                    Err(error) => {
+                        outcome = Err(error);
+                        break 'results;
+                    }
+                };
+                let finish_fetch = std::time::Instant::now();
+                if self.shared.finished.load(Ordering::Acquire) {
+                    break 'results;
+                }
+                // Go `buildCompletedTask`: the looked-up rows, done.
+                if !rows.is_empty() {
+                    let mut chunk = Chunk::new(self.meta.ret_field_types(), rows.len(), rows.len());
+                    for row in &rows {
+                        for (col_idx, datum) in row.iter().enumerate() {
+                            chunk.append_datum(col_idx, datum);
+                        }
+                    }
+                    let mem_tracker = tidb_memory::Tracker::new(self.next_task_id, -1);
+                    self.next_task_id += 1;
+                    let (done_tx, done_rx) = sync_channel(1);
+                    let _ = done_tx.send(Ok(TaskRows {
+                        order: (0..rows.len()).map(|row| (0, row)).collect(),
+                        chunks: vec![chunk],
+                        mem_usage: 0,
+                        mem_tracker,
+                    }));
+                    if result_tx.send(done_rx).is_err() {
+                        break 'results;
+                    }
+                }
+                if !handles.is_empty() {
+                    let (done_tx, done_rx) = sync_channel(1);
+                    let handles_cap = handles.capacity();
+                    let task = LookupTask { id: self.next_task_id, handles, handles_cap, partition, done: done_tx };
+                    self.next_task_id += 1;
+                    if work_tx.send(task).is_err() || result_tx.send(done_rx).is_err() {
+                        break 'results;
+                    }
+                }
+                if let Some(stats) = self.shared.stats.as_ref() {
+                    stats.stats.record_index_task(finish_fetch - start, start.elapsed(), finish_fetch.elapsed());
+                }
+                if exhausted {
+                    break;
+                }
+            }
+        }
+        for mut result in results {
+            let _ = result.close();
+            let (requests, rows) = result.runtime_stats().get_cop_count_and_rows(self.shared.index_scan_plan_id);
+            let mut count = self.shared.index_cop_count_and_rows.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            count.0 += requests;
+            count.1 += rows;
+        }
+        outcome
+    }
+
+    /// Go `extractLookUpPushDownRowsOrHandles`: up to `batchSize` rows
+    /// (channel 1, looked up) and handles (channel 0, the index rows the
+    /// store could not look up), and whether the result is exhausted.
+    fn extract_look_up_push_down_rows_or_handles(
+        &mut self,
+        iter: &mut tidb_distsql::select_response::SelectResponseIter,
+        handle_offsets: &[usize],
+    ) -> Result<(Vec<Vec<Datum>>, Vec<Handle>, bool), ExecError> {
+        const CHANNEL_IDX_INDEX: usize = 0;
+        const CHANNEL_IDX_ROW: usize = 1;
+        let start = std::time::Instant::now();
+        let start_scan_keys = self.scanned_keys;
+        let mut rows = Vec::new();
+        let mut handles = Vec::new();
+        let mut index_row = Chunk::new(&self.index_types, 1, 1);
+        let mut exhausted = false;
+        while handles.len() + rows.len() < self.batch_size {
+            let Some(row) = iter
+                .next_row()
+                .map_err(|error| ExecError::from(crate::cop_reader::select_response_error(error)))?
+            else {
+                exhausted = true;
+                break;
+            };
+            self.scanned_keys += 1;
+            if let Some(limit) = self.pushed_limit {
+                if self.scanned_keys <= limit.offset {
+                    continue;
+                }
+                if self.scanned_keys > limit.offset + limit.count {
+                    // Skip the handles after Offset+Count.
+                    break;
+                }
+            }
+            match row.channel_index {
+                CHANNEL_IDX_ROW => rows.push(row.row),
+                CHANNEL_IDX_INDEX => {
+                    index_row.reset();
+                    for (col_idx, datum) in row.row.iter().enumerate() {
+                        index_row.append_datum(col_idx, datum);
+                    }
+                    handles.push(get_handle(&self.shared, index_row.get_row(0), handle_offsets, GetHandleType::FromIndex)?);
+                }
+                other => return Err(ExecError::Internal(format!("unexpected channel index {other}").into())),
+            }
+        }
+        // Go's deferred `indexScanBasicStats.Record(time.Since(startTime), cnt)`.
+        if let Some(basic) = self.shared.stats.as_ref().and_then(|stats| stats.index_scan_basic.as_ref()) {
+            basic.record_next(start.elapsed(), (self.scanned_keys - start_scan_keys) as i64);
+        }
+        if !exhausted && handles.len() + rows.len() >= self.batch_size {
+            self.batch_size = (self.batch_size * 2).min(self.max_batch_size);
+        }
+        Ok((rows, handles, exhausted))
     }
 
     /// Go `getHandleOffsets`.

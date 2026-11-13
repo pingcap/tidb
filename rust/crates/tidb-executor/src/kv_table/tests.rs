@@ -1083,38 +1083,6 @@ fn insert_encodes_real_bytes_and_scan_decodes() {
     }
 }
 
-#[test]
-fn table_scan_exec_emits_chunks() {
-    let mut store = tidb_kv::storage::MemTableStorage::new();
-    let mut t = test_table();
-    let mut s = Datum::Null;
-    s.set_bytes(b"x".to_vec());
-    t.insert_row(&mut store, &[Datum::Int(1), s], &tidb_exprctx::NoColumns)
-        .unwrap();
-
-    let mut out_cols = Vec::new();
-    for (i, ft) in [long(), varstr()].into_iter().enumerate() {
-        let mut c = Column::new((i + 1) as i64, ft);
-        c.index = i as i64;
-        out_cols.push(c);
-    }
-    let mut scan = TableScanExec::new_with_context(
-        ExecutorMeta::new(Schema::new(out_cols), 0, 4, 1024),
-        t.clone(),
-        store.clone_box(),
-        RowDecodeContext::for_test_query_utc(),
-        tidb_distsql::remote_scan::PushdownStatementContext::default(),
-    );
-    scan.open().unwrap();
-    let mut req = scan.new_chunk();
-    scan.next(&mut req).unwrap();
-    assert_eq!(req.num_rows(), 1);
-    assert_eq!(req.get_row(0).get_int64(0), 1);
-    assert_eq!(req.get_row(0).get_bytes(1), b"x");
-    // EOF afterwards.
-    scan.next(&mut req).unwrap();
-    assert_eq!(req.num_rows(), 0);
-}
 
 #[test]
 fn record_keys_are_the_real_format() {

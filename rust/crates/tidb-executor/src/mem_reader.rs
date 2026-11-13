@@ -123,7 +123,6 @@ use tidb_txnkv::{Handle as KvHandle, Key, KvIterator};
 
 use tidb_driver_error::ExecError;
 use tidb_table::tables::TableHandle;
-use tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe;
 
 /// A half-open `[start, end)` key interval, the crate's spelling of Go
 /// `kv.KeyRange` (see [`crate::handle_range::record_key_ranges`]).
@@ -1484,15 +1483,6 @@ impl MemIndexMergeReader {
         Err(MemReaderError::Unsupported(
             "getMemRowsHandle has not been implemented for memIndexMergeReader",
         ))
-    }
-}
-
-/// Go `expression.EvalBool(evalCtx, m.conditions, mutableRow.ToRow())`: no
-/// conditions admits every row.
-fn admits(conditions: Option<&mut ScanFilterProbe>, row: &[Datum]) -> Result<bool, MemReaderError> {
-    match conditions {
-        None => Ok(true),
-        Some(filter) => Ok(filter.admits(row)?),
     }
 }
 

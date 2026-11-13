@@ -62,36 +62,6 @@ pub struct LookupProbeBound {
     pub arg: Expression,
 }
 
-/// Probe values shared by a composite index-join inner subtree and its
-/// target table leaf. The outer join publishes one batch at a time; the leaf
-/// refreshes its lookup source lazily when the generation changes.
-#[derive(Debug, Default)]
-pub struct SharedIndexJoinProbes {
-    probes: IndexJoinProbes,
-    generation: u64,
-}
-
-impl SharedIndexJoinProbes {
-    /// The probes of the latest published batch.
-    #[must_use]
-    pub fn probes(&self) -> &IndexJoinProbes {
-        &self.probes
-    }
-
-    /// The publication count, which a leaf compares to its own to refresh.
-    #[must_use]
-    pub fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    /// Publishes one outer batch's probes.
-    pub fn publish(&mut self, probes: IndexJoinProbes) {
-        self.probes = probes;
-        self.generation = self.generation.wrapping_add(1);
-    }
-}
-
-/// One base-table lookup reader on an index join's inner side.
 /// Go `IndexLookUpJoin`'s `innerCtx.readerBuilder` (`*dataReaderBuilder`):
 /// the inner side, built anew for each task's lookup contents.
 pub trait IndexJoinReaderBuilder: Send + Sync {
@@ -102,26 +72,4 @@ pub trait IndexJoinReaderBuilder: Send + Sync {
     /// lookup contents, already opened; the inner worker reads it to the end
     /// and closes it.
     fn build_executor_for_index_join(&self, probes: IndexJoinProbes) -> Result<Box<dyn Executor>, ExecError>;
-}
-
-pub trait IndexJoinLookup: Executor {
-    /// Seeds the reader with one outer batch's probes.
-    fn set_probes(&mut self, probes: IndexJoinProbes) -> Result<(), ExecError>;
-
-    /// The template a lane thread rebuilds this reader's task from, when the
-    /// lookup can run per batch on its own thread.
-    fn fork_template(&self) -> Option<Box<dyn IndexJoinLookupFork>>;
-
-    /// Counts rows a lane produced on the reader's behalf.
-    fn add_produced(&self, rows: u64);
-}
-
-/// The immutable lookup description a lane thread opens one task from.
-pub trait IndexJoinLookupFork: Send + Sync {
-    /// Opens the task for `probes`; probes that reach no range come back
-    /// unopened for the session's own reader to serve.
-    fn open(
-        &self,
-        probes: IndexJoinProbes,
-    ) -> Result<Result<Box<dyn IndexJoinLookup>, IndexJoinProbes>, ExecError>;
 }

@@ -27,7 +27,6 @@ mod index_entry_go_bytes;
 mod index_nokit_disk_full_pause_source;
 mod join_row_table_source;
 mod join_table_meta_source;
-mod partial_aggregate_primary_ids_source;
 mod partition_exchange_global_index_source;
 mod physical_expand_source;
 mod physical_union_scan_execution_source;

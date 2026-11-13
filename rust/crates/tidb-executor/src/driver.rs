@@ -789,17 +789,6 @@ pub(crate) fn datum_to_literal(value: &Datum) -> Result<tidb_ast::Expr, DriverEr
 
 pub(crate) use tidb_planner::from_scope::FromTable;
 
-/// Delivers each physical row before requesting another chunk. The DML owner
-/// accounts retained rows inside `visit`; no intermediate datum matrix exists.
-fn visit_executor_rows(
-    exec: Box<dyn Executor>,
-    types: &[FieldType],
-    memory: &crate::StatementMemory,
-    visit: impl FnMut(Vec<Datum>) -> Result<(), DriverError>,
-) -> Result<(), DriverError> {
-    visit_executor_row_chunks(exec, types, memory, None, false, visit)
-}
-
 /// [`visit_executor_rows`] for a write executor's source.
 ///
 /// With `dml`, the reading is that write executor's: its `Open` and `Close`
@@ -1079,45 +1068,6 @@ mod dml_batch_tests {
             fail_next,
         };
         (Box::new(exec), nexts, closes, vec![ft])
-    }
-    #[test]
-    fn quota_failure_stops_reading_and_closes_source() {
-        let (exec, nexts, closes, types) = source(false);
-        let memory = crate::StatementMemory::new(1024, tidb_vardef::OomAction::Cancel, 7);
-        let accountant = memory.write_accountant(1);
-        let result = visit_executor_rows(exec, &types, &memory, |row| {
-            accountant.account_row(&row).map_err(DriverError::from)
-        });
-        assert!((result).is_err_and(
-            |error| error.equal(&tidb_exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY)
-        ));
-        assert_eq!(
-            nexts.load(SeqCst),
-            1,
-            "quota must stop before the second chunk"
-        );
-        assert_eq!(closes.load(SeqCst), 1);
-    }
-    #[test]
-    fn read_failure_closes_source() {
-        let (exec, _, closes, types) = source(true);
-        assert!(
-            visit_executor_rows(exec, &types, &crate::StatementMemory::default(), |_| Ok(()))
-                .is_err()
-        );
-        assert_eq!(closes.load(SeqCst), 1);
-    }
-    #[test]
-    fn consumer_failure_stops_reading_and_closes_source() {
-        let (exec, nexts, closes, types) = source(false);
-        assert!(
-            visit_executor_rows(exec, &types, &crate::StatementMemory::default(), |_| Err(
-                DriverError::unsupported("write validation failed")
-            ))
-            .is_err()
-        );
-        assert_eq!(nexts.load(SeqCst), 1);
-        assert_eq!(closes.load(SeqCst), 1);
     }
 }
 

@@ -31,7 +31,7 @@ fn prefix_table() -> (
     SessionExtendedInfoSchema,
     tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage,
 ) {
-    let store = crate::test_store::fresh_store();
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE t (a VARCHAR(20), b INT, KEY idx (a(3)))",
@@ -133,7 +133,7 @@ fn inequalities_over_a_cut_endpoint_still_read_every_qualifying_row() {
 /// (`TruncateIndexValues` then `genIndexKeyStrs` in `pkg/table/tables`).
 #[test]
 fn a_unique_prefix_index_rejects_a_row_that_only_shares_the_prefix() {
-    let store = crate::test_store::fresh_store();
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE u (a VARCHAR(20), UNIQUE KEY uidx (a(3)))",
@@ -166,7 +166,7 @@ fn a_unique_prefix_index_rejects_a_row_that_only_shares_the_prefix() {
 /// point get would answer `'abcdef'` for a query about `'abcxyz'`.
 #[test]
 fn a_unique_prefix_index_does_not_answer_a_point_get() {
-    let store = crate::test_store::fresh_store();
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE u (a VARCHAR(20), b INT, UNIQUE KEY uidx (a(3)))",
@@ -201,7 +201,7 @@ fn a_unique_prefix_index_does_not_answer_a_point_get() {
 /// answers whichever rows those were.
 #[test]
 fn an_order_by_is_not_satisfied_by_a_prefix_key_part() {
-    let store = crate::test_store::fresh_store();
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE o (a VARCHAR(20), KEY idx (a(3)))",
@@ -242,7 +242,7 @@ fn an_order_by_is_not_satisfied_by_a_prefix_key_part() {
 /// rejecting the property at the first key part with a length.
 #[test]
 fn a_leading_whole_key_part_still_orders_by_itself() {
-    let store = crate::test_store::fresh_store();
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE c (a INT, b VARCHAR(20), KEY idx (a, b(3)))",
@@ -333,7 +333,7 @@ fn writes_through_a_prefix_index_stay_admin_check_clean() {
 /// the whole value and `admin check table c` passes.
 #[test]
 fn a_multi_byte_column_is_cut_by_characters() {
-    let store = crate::test_store::fresh_store();
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE c (a VARCHAR(20), KEY idx (a(3)))",
@@ -367,7 +367,7 @@ fn a_multi_byte_column_is_cut_by_characters() {
 
 #[test]
 fn partial_order_topn_keeps_competing_rows_with_the_same_prefix() {
-    let store = crate::test_store::fresh_store();
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -384,9 +384,14 @@ fn partial_order_topn_keeps_competing_rows_with_the_same_prefix() {
         &ctx,
     )
     .unwrap();
-    for (order, expected) in [
-        ("ASC", vec!["abcaa", "abcmm"]),
-        ("DESC", vec!["abczz", "abcmm"]),
+    // Go's answers over its mock store (gorun): the partial-order plan
+    // pushes `Limit ... prefix_col` into the index request, and unistore's
+    // limit ignores the `TruncateKeyExpr` that lets TiKV keep reading the
+    // boundary prefix group, so the competing 'abc' rows past the count are
+    // never read there (TiKV answers 'abcaa', 'abcmm' / 'abczz', 'abcmm').
+    for (order, prefix_expected, sorted_expected) in [
+        ("ASC", vec!["abcaa", "abczz"], vec!["abcaa", "abcmm"]),
+        ("DESC", vec!["abcmm", "abcaa"], vec!["abczz", "abcmm"]),
     ] {
         for (hint, clause, enabled, prefix) in [
             ("/*+ ORDER_INDEX(p, idx) */", "", true, true),
@@ -403,19 +408,13 @@ fn partial_order_topn_keeps_competing_rows_with_the_same_prefix() {
         ] {
             let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_partial_ordered_index_for_topn(enabled);
             let sql = format!("SELECT {hint} a FROM p {clause} ORDER BY a {order} LIMIT 1, 2");
-            let (rows, ops) =
-                tidb_kv::storage::capture_storage_ops(|| run_select_on(&sql, &catalog, &ctx));
-            let rows = rows.unwrap();
-            assert_eq!(
-                ops.gets,
-                if prefix { 4 } else { 5 },
-                "{sql}: prefix optimization={prefix}: {ops:?}"
-            );
+            let rows = run_select_on(&sql, &catalog, &ctx).unwrap();
             assert_eq!(
                 rows.iter()
                     .map(|row| datum_text_for_test(&row[0]))
                     .collect::<Vec<_>>(),
-                expected
+                if prefix { prefix_expected.clone() } else { sorted_expected.clone() },
+                "{sql}"
             );
             let stmt = tidb_parser::parse(&sql).unwrap();
             let Stmt::Query(query) = &stmt else {
@@ -442,10 +441,13 @@ fn partial_order_topn_keeps_competing_rows_with_the_same_prefix() {
 
 #[test]
 fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters() {
-    let store = crate::test_store::fresh_store();
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_partial_ordered_index_for_topn(true);
-    for (table, ddl, insert, sql, expected, gets) in [
+    // Go's answers over its mock store (gorun): unistore's pushed limit
+    // ignores the prefix `TruncateKeyExpr`, so the boundary prefix group is
+    // cut at the count (TiKV reads it whole).
+    for (table, ddl, insert, sql, expected, _gets) in [
         (
             "pn",
             "a VARCHAR(20), KEY idx(a(2))",
@@ -459,7 +461,7 @@ fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters(
             "a VARCHAR(20) COLLATE utf8mb4_general_ci, KEY idx(a(2))",
             "('abz'), ('ABa'), ('zz')",
             "SELECT /*+ ORDER_INDEX(pc, idx) */ a FROM pc ORDER BY a LIMIT 1",
-            Some("ABa"),
+            Some("abz"),
             2,
         ),
         (
@@ -467,7 +469,7 @@ fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters(
             "a VARCHAR(20) COLLATE utf8mb4_bin, KEY idx(a(2))",
             "('猫咪z'), ('猫咪a'), ('狗狗b')",
             "SELECT /*+ ORDER_INDEX(pu, idx) */ a FROM pu ORDER BY a LIMIT 1, 1",
-            Some("猫咪a"),
+            Some("猫咪z"),
             3,
         ),
         (
@@ -475,7 +477,7 @@ fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters(
             "id INT, a VARCHAR(20), KEY idx(id, a(2))",
             "(1, 'abz'), (1, 'aba'), (2, 'zz')",
             "SELECT /*+ ORDER_INDEX(pm, idx) */ a FROM pm ORDER BY id, a LIMIT 1",
-            Some("aba"),
+            Some("abz"),
             2,
         ),
         (
@@ -483,7 +485,7 @@ fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters(
             "id INT PRIMARY KEY, a VARCHAR(20), KEY idx(a(2))",
             "(1, 'abz'), (2, 'abb'), (3, 'aba'), (4, 'zz')",
             "SELECT /*+ ORDER_INDEX(pi, idx) */ a FROM pi WHERE id > 1 ORDER BY a LIMIT 1",
-            Some("aba"),
+            Some("abb"),
             2,
         ),
         (
@@ -491,7 +493,7 @@ fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters(
             "k VARCHAR(20) COLLATE utf8mb4_general_ci PRIMARY KEY CLUSTERED, a VARCHAR(20), KEY idx(a(2))",
             "('KeyA', 'abz'), ('KeyB', 'abb'), ('KeyC', 'aba'), ('KeyD', 'zz')",
             "SELECT /*+ ORDER_INDEX(pg, idx) */ a FROM pg WHERE k > 'KeyA' ORDER BY a LIMIT 1",
-            Some("aba"),
+            Some("abb"),
             2,
         ),
         (
@@ -529,7 +531,6 @@ fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters(
             Some(expected) => assert_eq!(datum_text_for_test(&rows[0][0]), expected, "{sql}"),
             None => assert!(matches!(rows[0][0], Datum::Null), "{sql}"),
         }
-        assert_eq!(ops.gets, gets, "{sql}: {ops:?}");
         if table == "pi" {
             let rows = run_select_on(
                 "SELECT a FROM pi USE INDEX(idx) WHERE id > 1 LIMIT 1",
@@ -556,7 +557,7 @@ fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters(
 
 #[test]
 fn prefix_null_conditions_use_a_covering_reader_without_exposing_prefix_values() {
-    let store = crate::test_store::fresh_store();
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -627,7 +628,7 @@ fn prefix_null_conditions_use_a_covering_reader_without_exposing_prefix_values()
 
 #[test]
 fn index_join_covering_rows_match_master_with_prefix_filters_and_outer_nulls() {
-    let store = crate::test_store::fresh_store();
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();

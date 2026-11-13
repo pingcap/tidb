@@ -190,6 +190,11 @@ impl MppGather {
     pub fn kv_ranges(&self) -> &[KeyRange] {
         &self.kv_ranges
     }
+
+    /// Go `columns`, which a union scan above decodes its buffered rows to.
+    pub(crate) fn columns(&self) -> &[tidb_model::GoShared<tidb_model::ColumnInfo>] {
+        &self.columns
+    }
 }
 
 impl MppGather {
@@ -284,6 +289,10 @@ fn setup_mpp_coordinator(
 }
 
 impl Executor for MppGather {
+    fn union_scan_reader(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     /// Go `MPPGather.Open`: `NewExecutorWithRetry`, then
     /// `GenSelectResultFromMPPResponse` over the gather's field types.
     fn open(&mut self) -> Result<(), ExecError> {

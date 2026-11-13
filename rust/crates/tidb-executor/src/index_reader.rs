@@ -371,6 +371,7 @@ impl IndexReaderExecutor {
                 cop_plan_ids: self.plan_ids.clone(),
                 root_plan_id: isize::try_from(self.meta.id()).unwrap_or(0),
                 mem_tracker: self.mem_tracker.clone(),
+                intermediate_output_types: Vec::new(),
             },
         )
         .map_err(|error| ExecError::Internal(error.into()))

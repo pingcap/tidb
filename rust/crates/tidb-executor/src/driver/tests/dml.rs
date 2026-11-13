@@ -121,7 +121,7 @@ fn batch_point_delete_reads_records_with_one_batch_get() {
     let store = BatchReadCountingStorage {
         gets: Arc::clone(&gets),
         batch_gets: Arc::clone(&batch_gets),
-        inner: crate::test_store::fresh_store(),
+        inner: tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default(),
     };
     let ctx = || crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
@@ -157,7 +157,7 @@ fn ignore_uses_the_original_unique_conflict_without_reading_it_again() {
     let gets = Arc::new(AtomicUsize::new(0));
     let store = BatchReadCountingStorage {
         gets: gets.clone(),
-        inner: crate::test_store::fresh_store(),
+        inner: tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default(),
         batch_gets: Arc::default(),
     };
     let ctx = || crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));

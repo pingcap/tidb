@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex};
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_executor::driver::run_select_on;
-use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_table::tables::TableCommon;
 use tidb_table::tables::Index;
 use prost::Message;
@@ -82,9 +81,9 @@ fn edges_columns() -> Vec<tidb_table::column::Column> {
 }
 
 /// The table and the store its rows are written to.
-fn edge_table() -> (TableCommon, tidb_kv::storage::MemTableStorage) {
+fn edge_table() -> (TableCommon, tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage) {
     let mut table = TableCommon::new(459, edges_columns());
-    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     table.add_index(
         Index {
             info: tidb_model::GoShared::new(tidb_model::IndexInfo {

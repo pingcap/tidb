@@ -416,42 +416,6 @@ impl<C: Columns> tidb_executor_internal_exec::table_access::TableAccess for Sele
             .table_access()
             .is_some_and(|access| access.accept_scan_filter(filter, ctx))
     }
-
-    fn accept_handle_ranges(&mut self, ranges: &[tidb_ranger::types::Range]) -> bool {
-        self.child
-            .table_access()
-            .is_some_and(|access| access.accept_handle_ranges(ranges))
-    }
-
-    fn accept_partition_pruning(&mut self, ids: &[i64]) -> bool {
-        self.child
-            .table_access()
-            .is_some_and(|access| access.accept_partition_pruning(ids))
-    }
-
-    fn accept_keep_order(&mut self, descending: bool) -> bool {
-        self.child
-            .table_access()
-            .is_some_and(|access| access.accept_keep_order(descending))
-    }
-
-    fn accept_scan_estimate(&mut self, rows: f64) {
-        if let Some(access) = self.child.table_access() {
-            access.accept_scan_estimate(rows);
-        }
-    }
-
-    fn accept_lookup_batch_size(&mut self, size: u64) -> bool {
-        self.child
-            .table_access()
-            .is_some_and(|access| access.accept_lookup_batch_size(size))
-    }
-
-    fn accept_index_filter(&mut self) -> bool {
-        self.child
-            .table_access()
-            .is_some_and(|access| access.accept_index_filter())
-    }
 }
 
 impl<C: Columns> Drop for SelectionExec<C> {

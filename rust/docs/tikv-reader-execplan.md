@@ -119,24 +119,26 @@ reader built by Go's `buildTableReader` / `buildIndexReader` /
   `buildIndexRangeForEachPartition` with the readers' `partRangeMap`,
   `buildPartitionedTableReaderKVRangesForIndexJoin`, a global index's
   `buildRangesForIndexJoin`); (c) is complete. Next: (d).
-- [ ] Milestone 5: the offer machinery is deleted; E15 leaves the register.
-  Step (a), 2026-11-13: every test store gets a coprocessor, as Go's
-  mock store's unistore is one. A census (the local path panicking on a
-  TiKV reader) found ~290 executor-crate tests over the thread's
-  `SharedMemStorage` and ~60 session tests over `MockNode`'s `MockCluster`
-  taking the local path. The executor's test store now answers DAGs
-  through `TestRegion::over` (unistore's handler over its rows), the
-  `MockNode` factory through `MockCoprocessor` (unistore's handler over
-  `MockCluster`'s rows as of the request's start timestamp, charging the
-  request's keys-read counter as copr's iterator does). Four executor tests
-  failed on Go's readers: a merge join over a partitioned keep-order
-  lookup (a real bug, fixed in f2a70a27261), two fixtures, and a global
-  temporary table test the harness cannot model (moved to the session
-  TestKit as Go's `TestGlobalTempTableParallel`). Step (b): flip the
-  reader predicates to Go's reader unconditionally and delete the local
-  path with its Rust-only internal tests (`access_path.rs`,
-  `kv_table/table_scan.rs` offers, `remote_scan.rs`, `cop_reader.rs`'s
-  offer lowering).
+- [x] Milestone 5 (2026-11-13): the offer machinery is deleted. Every test
+  store has Go's mock-store coprocessor: `SharedMemStorage` answers DAGs
+  through `UnistoreCoprocessor` (unistore's cop handler over its rows, one
+  region holding every key so a pushed-down lookup reads its table rows),
+  and `MockNode` through the same over `MockCluster`'s rows as of the
+  request's start timestamp. The reader predicates then took Go's reader
+  unconditionally, and temporary tripwires on every local fallback listed
+  the shapes Go's readers still lacked: a pushed-down `IndexLookUp`
+  (`buildIndexLookUpPushDownDAGReq`, `extractLookUpPushDownRowsOrHandles`,
+  `PhysicalLocalIndexLookUp.ToPB`), a union scan over `MPPGather` and over
+  an index merge (`buildMemIndexMergeReader`,
+  `buildPartialWorkerKVRanges`). With those ported, the local readers
+  (`access_path.rs`'s range, lookup and join sources, `kv_table`'s
+  `TableScanExec` and remote cursors, `remote_scan.rs`'s tests), the
+  `ReaderStorage` split, the index merge's local table tasks, the join
+  crate's `Leaf`/`Composite` lookup sources and `TableAccess`'s offers were
+  deleted with their Rust-only tests. Point gets keep `HandleSourceExec` /
+  `UniqueIndexPointSourceExec` (KV gets, not the coprocessor). The internal
+  scans that still lower a scan request (analyze, privilege loads,
+  partition maintenance, TABLESAMPLE) are E15's remaining row.
 
 ## Surprises & Discoveries
 
@@ -223,4 +225,5 @@ reader built by Go's `buildTableReader` / `buildIndexReader` /
 
 ## Outcomes & Retrospective
 
-(not started)
+Every SQL read of TiKV and TiFlash runs Go's reader executors over Go's
+`ConstructDAGReq`; the in-process reader engine is gone (M5).

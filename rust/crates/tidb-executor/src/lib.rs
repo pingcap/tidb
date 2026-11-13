@@ -127,8 +127,6 @@ pub mod dag_request;
 pub mod driver;
 pub mod explain;
 pub(crate) mod foreign_key;
-use tidb_executor_internal_exec::predicate_pushdown::PushedScanFilter;
-use tidb_executor_internal_exec::table_access::TableAccess;
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_distsql::select_response::CopResponseSink;
 #[cfg(test)]
@@ -206,8 +204,6 @@ mod tests_duplicate_entry_message_source;
 #[cfg(test)]
 mod tests_executor_part19_source;
 #[cfg(test)]
-mod tests_index_join;
-#[cfg(test)]
 mod tests_jointest_join_source;
 #[cfg(test)]
 mod tests_memtest_source;
@@ -220,7 +216,6 @@ pub mod view;
 
 pub use apply::ApplyExec;
 pub use ddl::run_create_table_on;
-use tidb_ddl_build::table_lifecycle::split_drop_table_targets;
 pub use ddl_sequence::show_create_sequence;
 #[cfg(test)]
 pub(crate) use driver::access::run_prepared_select_for_test;
@@ -243,13 +238,17 @@ pub use driver::{
     PreparedDmlExecution, PreparedDmlPlan, SelectMeta,
 };
 use tidb_infoschema::{SessionExtendedInfoSchema, TableEntry, ViewDef, DEFAULT_DATABASE};
+use tidb_executor_internal_exec::predicate_pushdown::PushedScanFilter;
+use tidb_executor_internal_exec::table_access::TableAccess;
+use tidb_ddl_build::table_lifecycle::split_drop_table_targets;
+use tidb_executor_join::join::{JoinExec, JoinKind};
+use tidb_ddl_build::table_backfill::KvTableBackfill;
 use tidb_driver_error::DriverError;
 use tidb_terror::MysqlError;
 use tidb_driver_error::ExecError;
 pub use explain::{brief_binary_plan, AnalyzedWrite, explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_connection_brief_plan, explain_connection_plan, query_plan_cost, explain_analyze_physical_plan, explain_analyze_select_stmt, explain_analyze_set_opr_stmt, explain_analyze_update_stmt, explain_delete_stmt, explain_insert_stmt, explain_physical_plan, explain_select_stmt, explain_set_opr_stmt, explain_update_stmt, process_plan_info};
 use tidb_sessionctx::explain_format::ExplainFormat;
-use tidb_executor_join::join::{JoinExec, JoinKind};
-pub use kv_table::{KvTableDdl, KvTablePartitionMaintenance, KvTableReader, RowDecodeContextExt, TableScanExec};
+pub use kv_table::{KvTableDdl, KvTablePartitionMaintenance, KvTableReader, RowDecodeContextExt};
 
 /// Go `sctx.Txn()`: the store the statement's session reads and writes
 /// through. Every statement runs over one -- a session's transaction, or a
@@ -298,7 +297,6 @@ pub fn with_statement_store<R>(
         None => panic!("a statement runs over its session's transaction store"),
     }
 }
-use tidb_ddl_build::table_backfill::KvTableBackfill;
 use tidb_table::tables::{TableCommon, RowDecodeContext, TableCharset};
 pub use limit::LimitExec;
 pub use mem_quota::{SessionMemory, StatementMemory};

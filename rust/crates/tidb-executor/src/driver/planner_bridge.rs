@@ -860,64 +860,6 @@ mod list_columns_pruning_tests {
 
 pub(super) use tidb_planner::point_get_plan::is_cte;
 
-pub(super) fn logical_from_plan(
-    join: &tidb_ast::Join,
-    with: Option<&tidb_ast::WithClause>,
-    catalog: &SessionExtendedInfoSchema,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-    in_dml: bool,
-) -> Result<LogicalPlan, tidb_planner_core_base::PlanError> {
-    let source = catalog
-        .planner_catalog(current_database, ctx.latest_index_schema())
-        .with_statement_hypo_state(ctx)
-        .with_statement_dirty_tables(ctx)
-        .with_statement_privilege_verifier(ctx)
-        .with_statement_related_tables_for_mdl(ctx);
-    let plan_ids = PlanIdAllocator::new();
-    let column_ids = ColumnIdAllocator::new();
-    let prune_fallback = dynamic_prune_fallback(catalog, ctx);
-    let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone())
-        .with_mpp_warning_sink(ctx);
-    builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
-    builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
-    builder.only_full_group_by = ctx.only_full_group_by();
-    builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
-    builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
-    builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
-    builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
-    builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
-    builder.set_isolation_read_engines(ctx.isolation_read_engines());
-    builder.set_tiflash_engine_removed_due_to_strict_sql_mode(
-        ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
-    );
-    builder.advanced_join_hint = ctx.enable_advanced_join_hint();
-    builder.in_explain_stmt = ctx.in_explain_stmt();
-    builder.in_explain_analyze_stmt = ctx.in_explain_analyze_stmt();
-    builder.explain_non_evaled_sub_query = ctx.explain_non_evaled_sub_query();
-    builder.parser_config = ctx.parser_config();
-    builder.set_partition_processor_enabled(ctx.static_partition_prune());
-    builder.set_dynamic_prune_fallback(&prune_fallback);
-    builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
-    builder.flags.enable_semi_join_rewrite = ctx.enable_semi_join_rewrite();
-    builder.flags.enable_correlate_subquery = ctx.enable_correlate_subquery();
-    builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
-    builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
-    builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
-    builder.is_for_update_read = in_dml;
-    builder.in_update_or_delete_stmt = in_dml;
-    // Go `buildUpdate`/`buildDelete` build the statement's `WITH` before its
-    // table refs, so a CTE name in the FROM resolves to the CTE.
-    if let Some(with) = with {
-        let counts = tidb_planner::plan_builder::cte::update_cte_consumer_count(
-            &super::multi_dml::multi_dml_select(Some(with), &[], join, None, &[], None),
-            with,
-        );
-        builder.build_with(with, &counts)?;
-    }
-    builder.build_join(join)
-}
-
 pub(super) fn update_target_columns(
     update: &tidb_ast::UpdateStmt,
     catalog: &SessionExtendedInfoSchema,
@@ -939,67 +881,6 @@ pub(super) fn update_target_columns(
         .into_iter()
         .map(|target| (target.database, target.table, target.column))
         .collect())
-}
-
-/// Builds the name-resolution scope of one `FROM` node through Go's logical
-/// `buildResultSetNode` path. Correlation discovery needs the logical schema
-/// and output names, not an executor or a second AST-side join builder.
-pub(crate) fn logical_from_scope(
-    join: &tidb_ast::Join,
-    catalog: &SessionExtendedInfoSchema,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-) -> Result<FromScope, tidb_planner_core_base::PlanError> {
-    let plan = logical_from_plan(join, None, catalog, current_database, ctx, false)?;
-    let schema = plan.schema().ok_or_else(|| {
-        tidb_planner_core_base::PlanError::internal("FROM logical plan has no schema")
-    })?;
-    let names = plan.output_names();
-    if schema.columns.len() != names.len() {
-        return Err(tidb_planner_core_base::PlanError::internal(
-            "FROM logical schema and output names have different widths",
-        ));
-    }
-
-    let mut scope = FromScope::for_statement(ctx);
-    for (column, name) in schema.columns.iter().zip(names) {
-        if name.hidden || name.not_explicit_usable {
-            continue;
-        }
-        let field_type = column.ret_type.clone().ok_or_else(|| {
-            tidb_planner_core_base::PlanError::internal("FROM column has no field type")
-        })?;
-        let database = &name.names.database.original;
-        let visible_table = &name.names.table.original;
-        let column_name = &name.names.column.original;
-        let offset = scope.width();
-        let append = scope.tables.last_mut().filter(|table| {
-            table.name.go_lower_eq(visible_table)
-                && table
-                    .database
-                    .as_deref()
-                    .unwrap_or_default()
-                    .go_lower_eq(database)
-        });
-        match append {
-            Some(table) => table.columns.push((column_name.clone(), field_type)),
-            None => scope.tables.push(FromTable {
-                name: visible_table.clone(),
-                database: (!database.is_empty()).then(|| database.clone()),
-                columns: vec![(column_name.clone(), field_type)],
-                offset,
-            }),
-        }
-        if name.redundant {
-            scope.coalesced.push(offset);
-        } else {
-            scope.star.push(offset);
-        }
-    }
-    if scope.star.len() == scope.width() {
-        scope.star.clear();
-    }
-    Ok(scope)
 }
 
 /// Detaches parameter/deferred markers from an executor-owned expression

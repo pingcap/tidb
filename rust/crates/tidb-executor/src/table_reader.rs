@@ -731,6 +731,7 @@ impl TableReaderExecutor {
                 root_plan_id: isize::try_from(self.meta.id()).unwrap_or(0),
                 // Go `memTracker`, `NewTracker(e.ID(), -1)` under the statement's.
                 mem_tracker: self.mem_tracker.clone(),
+                intermediate_output_types: Vec::new(),
             },
         )
         .map_err(|error| ExecError::Internal(error.into()))

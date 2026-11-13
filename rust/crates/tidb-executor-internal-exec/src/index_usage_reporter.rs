@@ -352,14 +352,7 @@ impl CopIndexUsageExec {
         let Some(access) = self.child.table_access() else {
             return;
         };
-        let (kv_requests, mut accessed_rows) = access.cop_count_and_rows().unwrap_or_default();
-        // The in-process backend has no coprocessor RPC counters. A clean
-        // local index source can still report its physical scan count; TiKV
-        // counters remain authoritative when present, and sources with
-        // staged rows refuse this fallback.
-        if kv_requests == 0 && accessed_rows == 0 {
-            accessed_rows = access.local_index_usage_rows().unwrap_or_default();
-        }
+        let (kv_requests, accessed_rows) = access.cop_count_and_rows().unwrap_or_default();
         if kv_requests == 0 && accessed_rows == 0 {
             return;
         }
