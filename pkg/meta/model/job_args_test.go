@@ -1067,6 +1067,7 @@ func TestAddIndexArgs(t *testing.T) {
 			IfExist:                 false,
 			IsGlobal:                false,
 			FuncExpr:                "test_string",
+			SplitOpt:                &IndexArgSplitOpt{Num: 4},
 		}},
 		PartitionIDs: []int64{100, 101, 102},
 		OpType:       OpAddIndex,
@@ -1088,6 +1089,11 @@ func TestAddIndexArgs(t *testing.T) {
 		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
 		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
 		require.Equal(t, inArgs.IndexArgs[0].HiddenCols, a.HiddenCols)
+		if v == JobVersion2 {
+			require.Equal(t, inArgs.IndexArgs[0].SplitOpt, a.SplitOpt)
+		} else {
+			require.Nil(t, a.SplitOpt)
+		}
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -1106,7 +1112,39 @@ func TestAddIndexArgs(t *testing.T) {
 		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
 		require.Equal(t, inArgs.IndexArgs[0].SQLMode, a.SQLMode)
 		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
+		if v == JobVersion2 {
+			require.Equal(t, inArgs.IndexArgs[0].SplitOpt, a.SplitOpt)
+		} else {
+			require.Nil(t, a.SplitOpt)
+		}
 	}
+
+	autoArgs := &ModifyIndexArgs{IndexArgs: []*IndexArg{{
+		AutoPreSplit: true,
+	}}}
+	for _, tp := range []ActionType{ActionAddIndex, ActionAddPrimaryKey} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, autoArgs, v, tp)))
+			args, err := GetModifyIndexArgs(j2)
+			require.NoError(t, err)
+			require.Equal(t, v == JobVersion2, args.IndexArgs[0].AutoPreSplit)
+			require.Nil(t, args.IndexArgs[0].SplitOpt)
+		}
+	}
+
+	job := &Job{Version: JobVersion2, Type: ActionAddIndex}
+	job.FillArgs(autoArgs)
+	_, err := job.Encode(true)
+	require.NoError(t, err)
+	var legacyArgs struct {
+		IndexArgs []struct {
+			SplitOpt *struct{} `json:"split_opt,omitempty"`
+		} `json:"index_args,omitempty"`
+	}
+	require.NoError(t, json.Unmarshal(job.RawArgs, &legacyArgs))
+	require.Len(t, legacyArgs.IndexArgs, 1)
+	require.Nil(t, legacyArgs.IndexArgs[0].SplitOpt)
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		inArgs.IndexArgs[0].IsColumnar = true
