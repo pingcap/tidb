@@ -211,8 +211,13 @@ func (w *mergeIndexWorker) BackfillData(ctx context.Context, taskRange reorgBack
 			for i, idxRecord := range w.buffers.tmpIdxRecords {
 				// The index is already exists, we skip it, no needs to backfill it.
 				// The following update, delete, insert on these rows, TiDB can handle it correctly.
-				// If all batch are skipped, update first index key to make txn commit to release lock.
+				// Temp cleanup still commits when all normal index writes are skipped.
 				if idxRecord.skip {
+					// Consume validated temp history even when the normal index is
+					// already correct, so later attempts cannot replay stale values.
+					if err = txn.GetMemBuffer().Delete(w.buffers.tmpIdxKeys[i]); err != nil {
+						return err
+					}
 					continue
 				}
 

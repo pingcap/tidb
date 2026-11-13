@@ -41,6 +41,13 @@ Before touching `pkg/ddl/`, answer these explicitly (write them down in the PR/i
 - Modify-column behavior (reorg types, null/not-null, type change): `docs/agents/ddl/07-modify-column.md`
 - Partition DDL (add/drop/truncate/reorganize/exchange): `docs/agents/ddl/08-partition-ddl.md`
 
+## Design proposals (not implemented behavior)
+
+- [REORGANIZE PARTITION DXF/global sort 正式设计](../../design/2026-11-02-partition-global-sort.md)：最终 v1 规格：纯 split、历史读布局/当前写令牌、DirtyRows 修复、未知代隔离重建及首版约束；含证据边界，产品尚未实现。
+
+- [REORGANIZE PARTITION fast-reorg feasibility](09-partition-fast-reorg-feasibility.md): proposal for full row, local-index, and global-index ingest, including online DML coordination, recovery, and implementation prerequisites; not a description of supported functionality.
+- [Full partition fast-reorg ExecPlan](10-partition-fast-reorg-execplan.md): living implementation plan for the final pure-split protocol; design/independent probes complete, product integration milestones pending.
+
 ## Operation index (jump table)
 
 ### Column DDL
