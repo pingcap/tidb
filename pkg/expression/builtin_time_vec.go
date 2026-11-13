@@ -1798,6 +1798,13 @@ func (b *builtinToDaysSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 			continue
 		}
 		arg := ds[i]
+		if arg.InvalidZero() {
+			if err := handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
 		ret := types.TimestampDiff("DAY", types.ZeroDate, arg)
 		if ret == 0 {
 			if err := handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String())); err != nil {
