@@ -15,6 +15,7 @@
 package statistics
 
 import (
+	"runtime"
 	"testing"
 	"time"
 
@@ -77,6 +78,17 @@ func SubTestSketch() func(*testing.T) {
 		require.Equal(t, maxSize, len(sketch.hashset))
 		sketch.insertHashValue(4)
 		require.LessOrEqual(t, maxSize, len(sketch.hashset))
+
+		// A new sketch allocates its whole hashset up front, whatever it holds later.
+		sketches := make([]*FMSketch, 16)
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		for i := range sketches {
+			sketches[i] = NewFMSketch(MaxSketchSize)
+		}
+		runtime.ReadMemStats(&after)
+		runtime.KeepAlive(sketches)
+		require.Greater(t, (after.TotalAlloc-before.TotalAlloc)/uint64(len(sketches)), uint64(256<<10))
 	}
 }
 
