@@ -402,9 +402,10 @@ mod tests {
             storage_catalog_error(StorageError::Sql(statement_error.clone())),
             ClusterCatalogError::Sql(statement_error)
         );
+        // Go passes a storage error up as it is: its text is its own.
         assert_eq!(
             storage_catalog_error(StorageError::Backend("boom".to_owned())),
-            ClusterCatalogError::Snapshot("storage error: boom".to_owned())
+            ClusterCatalogError::Snapshot("boom".to_owned())
         );
     }
 }
