@@ -599,6 +599,91 @@ func TestVectorizedTimeFormatEmptyFormatReturnsNull(t *testing.T) {
 	require.Equal(t, "01:02:03", result.GetString(1))
 }
 
+func TestVecConvertTzNamedZones(t *testing.T) {
+	ctx := createContext(t)
+
+	datetimeType := types.NewFieldType(mysql.TypeDatetime)
+	datetimeType.SetDecimal(types.MaxFsp)
+	strType := types.NewFieldType(mysql.TypeString)
+	f, err := funcs[ast.ConvertTz].getFunction(ctx, []Expression{
+		&Column{RetType: datetimeType, Index: 0},
+		&Column{RetType: strType, Index: 1},
+		&Column{RetType: strType, Index: 2},
+	})
+	require.NoError(t, err)
+	require.True(t, f.vectorized() && f.isChildrenVectorized())
+
+	// Each case is evaluated several times, so both the first lookup of a name
+	// (loaded) and later ones (cached) are checked. An empty expect means NULL.
+	tests := []struct {
+		t      types.CoreTime
+		fromTz string
+		toTz   string
+		expect string
+	}{
+		{types.FromDate(2021, 7, 1, 12, 0, 0, 123456), "+00:00", "America/New_York", "2021-07-01 08:00:00.123456"},
+		{types.FromDate(2021, 1, 15, 12, 0, 0, 0), "+00:00", "America/New_York", "2021-01-15 07:00:00.000000"},
+		{types.FromDate(2021, 7, 1, 12, 0, 0, 0), "Europe/Berlin", "Asia/Shanghai", "2021-07-01 18:00:00.000000"},
+		{types.FromDate(2021, 1, 15, 12, 0, 0, 0), "Europe/Berlin", "America/New_York", "2021-01-15 06:00:00.000000"},
+		{types.FromDate(2021, 1, 15, 12, 0, 0, 0), "UTC", "Asia/Kolkata", "2021-01-15 17:30:00.000000"},
+		// Australia/Lord_Howe has a 30-minute DST shift.
+		{types.FromDate(2021, 1, 15, 12, 0, 0, 0), "Australia/Lord_Howe", "UTC", "2021-01-15 01:00:00.000000"},
+		{types.FromDate(2021, 7, 1, 12, 0, 0, 0), "Australia/Lord_Howe", "UTC", "2021-07-01 01:30:00.000000"},
+		{types.FromDate(2021, 7, 1, 12, 0, 0, 0), "+08:00", "-05:30", "2021-06-30 22:30:00.000000"},
+		// Invalid names are not cached and return NULL, also next to a cached name.
+		{types.FromDate(2021, 7, 1, 12, 0, 0, 0), "Mars/Olympus_Mons", "UTC", ""},
+		{types.FromDate(2021, 7, 1, 12, 0, 0, 0), "America/New_York", "Mars/Olympus_Mons", ""},
+		{types.FromDate(2021, 7, 1, 12, 0, 0, 0), "", "America/New_York", ""},
+	}
+
+	const rounds = 3
+	input := chunk.NewChunkWithCapacity([]*types.FieldType{datetimeType, strType, strType}, rounds*len(tests)+1)
+	for range rounds {
+		for _, test := range tests {
+			input.AppendTime(0, types.NewTime(test.t, mysql.TypeDatetime, types.MaxFsp))
+			input.AppendString(1, test.fromTz)
+			input.AppendString(2, test.toTz)
+		}
+	}
+	input.AppendTime(0, types.NewTime(types.FromDate(2021, 7, 1, 12, 0, 0, 0), mysql.TypeDatetime, types.MaxFsp))
+	input.AppendNull(1)
+	input.AppendString(2, "America/New_York")
+
+	check := func(i int, isNull bool, got types.Time) {
+		if i == input.NumRows()-1 {
+			require.True(t, isNull, "row %d: NULL from_tz", i)
+			return
+		}
+		test := tests[i%len(tests)]
+		dt := input.GetRow(i).GetTime(0).String()
+		if test.expect == "" {
+			require.True(t, isNull, "row %d: convert_tz(%q, %q, %q)", i, dt, test.fromTz, test.toTz)
+			return
+		}
+		require.False(t, isNull, "row %d: convert_tz(%q, %q, %q)", i, dt, test.fromTz, test.toTz)
+		require.Equal(t, test.expect, got.String(), "row %d: convert_tz(%q, %q, %q)", i, dt, test.fromTz, test.toTz)
+	}
+
+	for range 2 {
+		result := chunk.NewColumn(datetimeType, input.NumRows())
+		require.NoError(t, vecEvalType(ctx, f, types.ETDatetime, input, result))
+		require.Equal(t, input.NumRows(), result.Rows())
+		for i := range input.NumRows() {
+			check(i, result.IsNull(i), result.GetTime(i))
+		}
+	}
+
+	for i := range input.NumRows() {
+		d, err := evalBuiltinFunc(f, ctx, input.GetRow(i))
+		require.NoError(t, err)
+		if d.IsNull() {
+			check(i, true, types.ZeroTime)
+		} else {
+			check(i, false, d.GetMysqlTime())
+		}
+	}
+}
+
 func BenchmarkVectorizedBuiltinTimeEvalOneVec(b *testing.B) {
 	benchmarkVectorizedEvalOneVec(b, vecBuiltinTimeCases)
 }
