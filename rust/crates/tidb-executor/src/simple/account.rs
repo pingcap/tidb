@@ -21,11 +21,12 @@
 
 use std::sync::Arc;
 
+use crate::simple::account_tables::sql_str;
+
 use tidb_datatype::Datum;
 use tidb_variable::{SessionVars, VarError};
 
 use crate::DriverError;
-use crate::KvTableReader;
 use tidb_privilege::PrivilegeTypeExt;
 use tidb_hack::GoCaseCompare;
 use tidb_password_validation::{self as password_validation, GlobalVarAccessor, PasswordUser, PwdError};
@@ -95,9 +96,9 @@ pub struct PasswordOrLockOptions {
     /// `ACCOUNT LOCK` / `ACCOUNT UNLOCK`.
     pub(crate) locked: Option<bool>,
     /// `FAILED_LOGIN_ATTEMPTS n`, clamped as Go clamps it.
-    failed_login_attempts: Option<i64>,
+    pub(crate) failed_login_attempts: Option<i64>,
     /// `PASSWORD_LOCK_TIME n | UNBOUNDED`; `UNBOUNDED` is `-1`.
-    password_lock_time_days: Option<i64>,
+    pub(crate) password_lock_time_days: Option<i64>,
     /// `PASSWORD EXPIRE [DEFAULT | NEVER | INTERVAL n DAY]`.
     pub(crate) expire: Option<tidb_privilege::PasswordExpireSetting>,
     /// Outer None means omitted; inner None means DEFAULT.
@@ -176,31 +177,65 @@ impl PasswordOrLockOptions {
         Ok(loaded)
     }
 
-    /// Writes this statement's options onto one existing account row.
-    ///
-    /// Order matters: `set_locked(.., false)` is the clause that clears the
-    /// failed-login counter (Go's `alterUserFailedLoginJSON` resets it
-    /// whenever `lockAccount` is `"N"`), so `ACCOUNT UNLOCK` is applied AFTER
-    /// the new policy, leaving the captured
-    /// `ALTER USER u5 ACCOUNT UNLOCK FAILED_LOGIN_ATTEMPTS 3
-    /// PASSWORD_LOCK_TIME 6` -> policy 3/6 with count 0.
-    pub(crate) fn apply(&self, registry: &tidb_privilege::PrivilegeRegistry, user: &str, host: &str) {
-        registry.set_password_reuse_policy(user, host, self.history, self.reuse_days);
-        if self.failed_login_attempts.is_some() || self.password_lock_time_days.is_some() {
-            registry.set_password_locking_options(
-                user,
-                host,
-                self.failed_login_attempts,
-                self.password_lock_time_days,
-            );
-        }
-        if let Some(expire) = self.expire {
-            registry.set_password_expire(user, host, expire);
-        }
-        if let Some(locked) = self.locked {
-            registry.set_locked(user, host, locked);
+}
+
+/// Go `notSpecified`.
+const NOT_SPECIFIED: i64 = -1;
+
+/// Go `passwordOrLockOptionsInfo` after `loadOptions`, with CREATE USER's
+/// starting values.
+#[allow(missing_docs)]
+pub struct PasswordOrLockOptionsInfo {
+    pub(crate) lock_account: &'static str,
+    pub(crate) password_expired: &'static str,
+    pub(crate) password_lifetime: Option<i64>,
+    pub(crate) password_history: i64,
+    pub(crate) password_history_change: bool,
+    pub(crate) password_reuse_interval: i64,
+    pub(crate) password_reuse_interval_change: bool,
+    pub(crate) failed_login_attempts: i64,
+    pub(crate) failed_login_attempts_change: bool,
+    pub(crate) password_lock_time: i64,
+    pub(crate) password_lock_time_change: bool,
+}
+
+impl PasswordOrLockOptions {
+    /// Go `executeCreateUser`'s `plOptions` after `loadOptions`.
+    pub(crate) fn create_user_info(&self) -> PasswordOrLockOptionsInfo {
+        let (password_expired, password_lifetime) = match self.expire {
+            Some(tidb_privilege::PasswordExpireSetting::Now) => ("Y", None),
+            Some(tidb_privilege::PasswordExpireSetting::Never) => ("N", Some(0)),
+            Some(tidb_privilege::PasswordExpireSetting::Interval(days)) => ("N", Some(days)),
+            Some(tidb_privilege::PasswordExpireSetting::Default) | None => ("N", None),
+        };
+        PasswordOrLockOptionsInfo {
+            lock_account: if self.locked == Some(true) { "Y" } else { "N" },
+            password_expired,
+            password_lifetime,
+            password_history: self.history.flatten().unwrap_or(NOT_SPECIFIED),
+            password_history_change: self.history.is_some(),
+            password_reuse_interval: self.reuse_days.flatten().unwrap_or(NOT_SPECIFIED),
+            password_reuse_interval_change: self.reuse_days.is_some(),
+            failed_login_attempts: self.failed_login_attempts.unwrap_or(0),
+            failed_login_attempts_change: self.failed_login_attempts.is_some(),
+            password_lock_time: self.password_lock_time_days.unwrap_or(0),
+            password_lock_time_change: self.password_lock_time_days.is_some(),
         }
     }
+}
+
+/// Go `createUserFailedLoginJSON`.
+fn create_user_failed_login_json(info: &PasswordOrLockOptionsInfo) -> String {
+    // Record only when either failedLoginAttempts and passwordLockTime is not 0
+    if (info.failed_login_attempts_change && info.failed_login_attempts != 0)
+        || (info.password_lock_time_change && info.password_lock_time != 0)
+    {
+        return format!(
+            "\"Password_locking\": {{\"failed_login_attempts\": {},\"password_lock_time_days\": {}}}",
+            info.failed_login_attempts, info.password_lock_time
+        );
+    }
+    String::new()
 }
 
 /// The account identity a written role names. Go's role grammar defaults the
@@ -331,110 +366,7 @@ pub fn invalid_user_attribute_json() -> DriverError {
 
 /// Go's executor arms, over the session [`super::account_tables::AccountSession`] gives them.
 pub trait AccountExec: super::account_tables::UserTableExec {
-    /// Go `checkPasswordHistoryRule` + `addHistoricalData`: judges a new
-    /// password against the account's reuse policy (the statement's own
-    /// clauses, else the account's, else the globals) and records it.
-    #[allow(clippy::too_many_arguments)]
-    fn maintain_password_history(
-        &mut self,
-        registry: &tidb_privilege::PrivilegeRegistry,
-        user: &str,
-        host: &str,
-        encoded: &str,
-        plaintext: Option<&str>,
-        plugin: &str,
-        options: &PasswordOrLockOptions,
-        creating: bool,
-        plugin_changed: bool,
-    ) -> Result<(), DriverError> {
-        self.reload_password_history(registry, user, host)?;
-        let (count, days) = registry.password_reuse_policy(user, host);
-        let global = |name| {
-            self.session_vars()
-                .get_global(name)
-                .map_err(DriverError::from)?
-                .parse::<i64>()
-                .map_err(|error| {
-                    DriverError::Exec(crate::ExecError::internal(format!(
-                        "invalid {name}: {error}"
-                    )))
-                })
-        };
-        let count = options
-            .history
-            .unwrap_or(count)
-            .map_or_else(|| global("password_history"), Ok)?;
-        let days = options
-            .reuse_days
-            .unwrap_or(days)
-            .map_or_else(|| global("password_reuse_interval"), Ok)?;
-        registry.record_password_history(
-            user,
-            host,
-            encoded,
-            plaintext,
-            plugin,
-            count,
-            days,
-            creating,
-            plugin_changed,
-            &self.session_vars().session_time_zone(),
-        )
-        .map_err(DriverError::from)
-    }
 
-    /// Refreshes the account's `mysql.password_history` rows into the
-    /// registry before the reuse rule reads them.
-    fn reload_password_history(
-        &mut self,
-        registry: &tidb_privilege::PrivilegeRegistry,
-        user: &str,
-        host: &str,
-    ) -> Result<(), DriverError> {
-        if !self.user_table_present() || self.in_account_statement() {
-            return Ok(());
-        }
-        // The registry keeps UTC timestamps, which is how the TIMESTAMP
-        // column is stored.
-        let ctx = self
-            .statement_context(false)
-            .with_time_zone(tidb_datatype::SessionTimeZone::utc());
-        let decode_context = crate::RowDecodeContext::for_query(&ctx);
-        let rows = self.with_catalog_mut(|catalog| {
-            let Some(crate::TableEntry::Kv(table)) =
-                catalog.table_mut_in("mysql", "password_history")
-            else {
-                return Ok(Vec::new());
-            };
-            let table = std::sync::Arc::make_mut(table);
-            let text = |datum: &Datum| tidb_datatype::datum_text::sysvar_datum_text(datum).unwrap_or_default();
-            let mut store = crate::statement_store(&ctx);
-            let rows = table
-                .scan_rows_with_context(&mut *store, &decode_context)
-                .map_err(crate::ddl::index_backfill_error)?;
-            Ok(rows
-                .into_iter()
-                .filter_map(|row| {
-                    let [stored_host, stored_user, timestamp, password] = row.as_slice() else {
-                        return None;
-                    };
-                    let Datum::Time(timestamp) = timestamp else {
-                        return None;
-                    };
-                    (text(stored_user) == user && text(stored_host) == host).then(|| {
-                        tidb_privilege::loaded::LoadedPasswordHistory {
-                            host: host.to_owned(),
-                            user: user.to_owned(),
-                            timestamp: timestamp.clone(),
-                            password: (!password.is_null()).then(|| text(password)),
-                        }
-                    })
-                })
-                .collect::<Vec<_>>())
-        })?;
-        registry.replace_account_password_history(user, host, rows);
-        Ok(())
-    }
 
     /// Go `pwdValidator.ValidatePassword` when `validate_password.enable`
     /// is on; a no-op otherwise.
@@ -570,7 +502,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         self.current_identity() == Some((user, host))
     }
 
-    /// Go `SimpleExec.executeCreateUser` for `CREATE USER`.
+    /// `CREATE USER`: Go `executeCreateUser`.
     #[allow(clippy::too_many_arguments)]
     fn create_user_stmt(
         &mut self,
@@ -582,88 +514,111 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         comment_or_attribute: &Option<tidb_ast::CreateUserCommentOrAttribute>,
         resource_group: &Option<String>,
     ) -> Result<(), DriverError> {
-        // Go `loadResourceOptions`: only MAX_USER_CONNECTIONS reaches the
-        // stored row, capped at `math.MaxInt16`.
+        let specs: Vec<(&str, &str, Option<&tidb_ast::CreateUserAuth>, bool)> = users
+            .iter()
+            .map(|spec| (spec.user.user.as_str(), spec.user.host.as_str(), spec.auth.as_ref(), spec.dual_password.is_some()))
+            .collect();
+        self.execute_create_user(
+            false,
+            if_not_exists,
+            &specs,
+            tls_options,
+            resource_options,
+            password_options,
+            comment_or_attribute,
+            resource_group,
+        )
+    }
+
+    /// `CREATE ROLE`: Go `executeCreateUser` with `IsCreateRole`; a role's
+    /// omitted host is `%`.
+    fn create_role_stmt(
+        &mut self,
+        if_not_exists: bool,
+        roles: &[tidb_ast::RoleIdentity],
+    ) -> Result<(), DriverError> {
+        let identities: Vec<(String, String)> = roles.iter().map(role_identity).collect();
+        let specs: Vec<(&str, &str, Option<&tidb_ast::CreateUserAuth>, bool)> = identities
+            .iter()
+            .map(|(user, host)| (user.as_str(), host.as_str(), None, false))
+            .collect();
+        self.execute_create_user(true, if_not_exists, &specs, &[], &[], &[], &None, &None)
+    }
+
+    /// Go `executeCreateUser`: every account validated while ONE `INSERT
+    /// INTO mysql.user` is composed, then that INSERT, the password history
+    /// and the `mysql.global_priv` rows, on the statement's system session.
+    #[allow(clippy::too_many_arguments)]
+    fn execute_create_user(
+        &mut self,
+        is_create_role: bool,
+        if_not_exists: bool,
+        specs: &[(&str, &str, Option<&tidb_ast::CreateUserAuth>, bool)],
+        tls_options: &[tidb_ast::AlterUserTlsOption],
+        resource_options: &[tidb_ast::AlterUserResourceOption],
+        password_options: &[tidb_ast::CreateUserPasswordOption],
+        comment_or_attribute: &Option<tidb_ast::CreateUserCommentOrAttribute>,
+        resource_group: &Option<String>,
+    ) -> Result<(), DriverError> {
+        // Check `CREATE USER` privilege.
+        self.require_create_user_privilege(is_create_role)?;
+        let priv_data = tls_policy_of(tls_options)?;
+        // Go `loadResourceOptions`.
         let max_user_connections = max_user_connections_option(resource_options).unwrap_or(0);
-        let tls_policy = tls_policy_of(tls_options)?;
-        // Go `executeCreateUser`'s `userAttributes`: a COMMENT clause is
-        // wrapped as `{"metadata": {"comment": "<text>"}}`, an ATTRIBUTE
-        // clause embeds the caller's JSON as `{"metadata": <json>}`, and a
-        // statement with neither stores the literal empty object `'{}'` --
-        // NOT NULL (captured: a fresh account's `User_attributes` prints
-        // `{}`; only the bootstrap root row is NULL).
-        let user_attributes_json = match comment_or_attribute {
-            None => "{}".to_owned(),
+        let mut pl_options = PasswordOrLockOptions::load(password_options)?.create_user_info();
+        // MySQL rejects RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD in
+        // CREATE USER; a new user always starts with a single primary password.
+        if specs.iter().any(|(_, _, _, dual)| *dual) {
+            return Err(DriverError::unsupported(
+                "RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD clause is not supported in CREATE USER statement",
+            ));
+        }
+        let password_locking = create_user_failed_login_json(&pl_options);
+        if is_create_role {
+            pl_options.lock_account = "Y";
+            pl_options.password_expired = "Y";
+        }
+        let mut user_attributes = Vec::new();
+        match comment_or_attribute {
             Some(tidb_ast::CreateUserCommentOrAttribute::Comment(text)) => {
-                serde_json::json!({"metadata": {"comment": text}}).to_string()
+                user_attributes.push(format!("\"metadata\": {{\"comment\": \"{text}\"}}"));
             }
             Some(tidb_ast::CreateUserCommentOrAttribute::Attribute(json)) => {
-                serde_json::json!({"metadata": serde_json::from_str::<serde_json::Value>(json).map_err(|_| invalid_user_attribute_json())?}).to_string()
+                user_attributes.push(format!("\"metadata\": {json}"));
             }
-        };
-        // Go then appends `"resource_group": "<name>"`.
-        let user_attributes_json = match resource_group {
-            None => user_attributes_json,
-            Some(name) => {
-                let name = self.user_resource_group_attribute(name, false)?;
-                let mut attributes: serde_json::Map<String, serde_json::Value> =
-                    serde_json::from_str(&user_attributes_json).expect("composed above");
-                attributes.insert("resource_group".to_owned(), serde_json::Value::String(name));
-                serde_json::Value::Object(attributes).to_string()
-            }
-        };
-        // Go validates every statement-level option BEFORE writing any row,
-        // so a bad `PASSWORD EXPIRE INTERVAL 0 DAY` creates no account.
-        let options = PasswordOrLockOptions::load(password_options)?;
-        self.require_create_user_privilege(false)?;
-        let Some(registry) = self.privilege_registry().cloned() else {
-            return Err(DriverError::unsupported(
-                "CREATE USER requires a server front end with a privilege registry",
-            ));
-        };
-        let default_plugin = self
+            None => {}
+        }
+        if let Some(name) = resource_group {
+            let name = self.user_resource_group_attribute(name, is_create_role)?;
+            user_attributes.push(format!("\"resource_group\": \"{name}\""));
+        }
+        // If FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME are both specified to 0, a string of 0 length is generated.
+        if !password_locking.is_empty() {
+            user_attributes.push(password_locking);
+        }
+        let user_attributes_str = format!("{{{}}}", user_attributes.join(","));
+        let save_passwd_history = self.whether_save_password_history(&pl_options)?;
+        let default_auth_plugin = self
             .session_vars()
             .get_global("default_authentication_plugin")
             .map_err(DriverError::from)?;
-        if !tidb_privilege::is_create_user_plugin(&default_plugin) {
-            return Err(DriverError::from(
-                tidb_exeerrors::ERR_PLUGIN_IS_NOT_LOADED
-                    .gen_with_stack_by_args(&[default_plugin.into()]),
-            ));
-        }
-        // Go `executeCreateUser` validates every account -- existence,
-        // plugin, password strength -- while composing ONE INSERT, and runs
-        // it only after the loop: a failure on any account creates none.
-        let mut planned = Vec::with_capacity(users.len());
-        for spec in users {
-            // TiDB's grammar rejects RETAIN/DISCARD on CREATE USER with 1064
-            // (the corpus asserts it), and this tier's parser does too, so
-            // this arm is a belt matching Go `executeCreateUser`'s own guard
-            // for AST-built statements.
-            if spec.dual_password.is_some() {
-                return Err(DriverError::unsupported(
-                    "RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD clause is not supported in \
-                     CREATE USER statement",
-                ));
-            }
-            let user = spec.user.user.as_str();
-            let host = spec.user.host.as_str();
-            // Go `executeCreateUser` checks the name length first, then
-            // refuses to expire the anonymous account's password, then the
-            // host length -- all before it looks the account up.
+        let null_or = |value: Option<i64>| value.map_or_else(|| "NULL".to_owned(), |value| value.to_string());
+        let mut values = Vec::new();
+        let mut history_values = Vec::new();
+        let mut users: Vec<(&str, &str)> = Vec::with_capacity(specs.len());
+        for (user, host, auth, _) in specs {
+            let (user, host) = (*user, *host);
             if user.len() > tidb_parser::auth::USER_NAME_MAX_LENGTH {
                 return Err(tidb_planner::preprocess::wrong_string_length_error(
                     user,
                     "user name",
                     tidb_parser::auth::USER_NAME_MAX_LENGTH,
-                ).into());
+                )
+                .into());
             }
-            if user.is_empty()
-                && matches!(options.expire, Some(tidb_privilege::PasswordExpireSetting::Now))
-            {
+            if user.is_empty() && pl_options.password_expired == "Y" {
                 return Err(DriverError::from(
-                    tidb_exeerrors::ERR_PASSWORD_EXPIRE_ANONYMOUS_USER
-                        .gen_with_stack_by_args(&[]),
+                    tidb_exeerrors::ERR_PASSWORD_EXPIRE_ANONYMOUS_USER.gen_with_stack_by_args(&[]),
                 ));
             }
             if host.len() > tidb_parser::auth::HOST_NAME_MAX_LENGTH {
@@ -671,32 +626,26 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     host,
                     "host name",
                     tidb_parser::auth::HOST_NAME_MAX_LENGTH,
-                ).into());
+                )
+                .into());
             }
-            if registry.user_exists(user, host) {
+            if self.user_exists(user, host)? {
+                let account = format!("'{user}'@'{host}'");
                 if !if_not_exists {
+                    let operation = if is_create_role { "CREATE ROLE" } else { "CREATE USER" };
                     return Err(DriverError::from(
-                        tidb_exeerrors::ERR_CANNOT_USER
-                            .gen_with_stack_by_args(&[
-                                "CREATE USER".into(),
-                                format!("'{}'@'{}'", user.to_owned(), host.to_owned()).into(),
-                            ]),
+                        tidb_exeerrors::ERR_CANNOT_USER.gen_with_stack_by_args(&[operation.into(), account.into()]),
                     ));
                 }
-                // go `executeCreateUser` demotes the duplicate to
-                // ErrUserAlreadyExists (3163) as a NOTE under IF NOT EXISTS.
                 self.append_sql_warning(tidb_context::SqlWarn::raised(
                     tidb_context::WarningLevel::Note,
-                    tidb_infoschema::infoschema_errors::ERR_USER_ALREADY_EXISTS
-                        .gen_with_stack_by_args(&[format!("'{}'@'{}'", user, host).into()]),
+                    tidb_infoschema::infoschema_errors::ERR_USER_ALREADY_EXISTS.gen_with_stack_by_args(&[account.into()]),
                 ));
                 continue;
             }
-            let (validation_plugin, validation_text) = match spec.auth.as_ref() {
-                None => (default_plugin.as_str(), ""),
-                Some(tidb_ast::CreateUserAuth::By(password)) => {
-                    (default_plugin.as_str(), password.as_str())
-                }
+            let (auth_plugin, password) = match auth {
+                None => (default_auth_plugin.as_str(), ""),
+                Some(tidb_ast::CreateUserAuth::By(password)) => (default_auth_plugin.as_str(), password.as_str()),
                 Some(tidb_ast::CreateUserAuth::With { plugin, credential }) => (
                     plugin.as_str(),
                     match credential {
@@ -706,169 +655,87 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     },
                 ),
             };
-            if tidb_mysql::is_auth_plugin_clear_text(validation_plugin) {
-                self.validate_password_if_enabled(validation_text)?;
+            // Validate the strength of the password if necessary
+            if !is_create_role && tidb_mysql::is_auth_plugin_clear_text(auth_plugin) {
+                self.validate_password_if_enabled(password)?;
             }
-            let (auth_string, plugin) =
-                Self::resolve_auth_string_and_plugin(spec.auth.as_ref(), &default_plugin)?;
-            planned.push((user, host, auth_string, plugin));
+            let (pwd, auth_plugin) = Self::resolve_auth_string_and_plugin(*auth, &default_auth_plugin)?;
+            let host_name = host.to_lowercase();
+            let reuse_time = (pl_options.password_reuse_interval_change
+                && pl_options.password_reuse_interval != NOT_SPECIFIED)
+                .then_some(pl_options.password_reuse_interval);
+            let history = (pl_options.password_history_change && pl_options.password_history != NOT_SPECIFIED)
+                .then_some(pl_options.password_history);
+            values.push(format!(
+                "({}, {}, {}, {}, {}, {}, '', {}, {}, {}, {}, {})",
+                sql_str(&host_name),
+                sql_str(user),
+                sql_str(&pwd),
+                sql_str(&auth_plugin),
+                sql_str(&user_attributes_str),
+                sql_str(pl_options.lock_account),
+                sql_str(pl_options.password_expired),
+                null_or(pl_options.password_lifetime),
+                max_user_connections,
+                null_or(reuse_time),
+                null_or(history),
+            ));
+            // The empty password does not count in the password history and is subject to reuse at any time.
+            if save_passwd_history && !pwd.is_empty() && !auth_plugin.eq_ignore_ascii_case(tidb_mysql::consts::AuthTiDBAuthToken) {
+                history_values.push(format!("({}, {}, {})", sql_str(&host_name), sql_str(user), sql_str(&pwd)));
+            }
+            users.push((user, host));
         }
-        for (user, host, auth_string, plugin) in planned {
-            if registry.create_user_with_plugin_and_tls_policy(
-                user,
-                host,
-                &auth_string,
-                &plugin,
-                &tls_policy,
-            ) {
-                registry.merge_user_attributes(
-                    user,
-                    host,
-                    serde_json::from_str(&user_attributes_json).expect("validated metadata"),
-                    false,
-                );
-                options.apply(&registry, user, host);
-                registry.set_max_user_connections(user, host, max_user_connections);
-                self.maintain_password_history(
-                    &registry,
-                    user,
-                    host,
-                    &auth_string,
-                    None,
-                    &plugin,
-                    &options,
-                    true,
-                    false,
-                )?;
-                // The `mysql.user` row Go's INSERT writes for this account.
-                // Column values come from the statement's own clauses, the
-                // way Go's `plOptions` feeds the VALUES list.
-                let (password_expired, password_lifetime) = match options.expire {
-                    Some(tidb_privilege::PasswordExpireSetting::Now) => (true, None),
-                    Some(tidb_privilege::PasswordExpireSetting::Never) => (false, Some(0)),
-                    Some(tidb_privilege::PasswordExpireSetting::Interval(days)) => (false, Some(days)),
-                    Some(tidb_privilege::PasswordExpireSetting::Default) | None => (false, None),
-                };
-                let (user, host) = (user.to_owned(), host.to_owned());
-                self.mirror_create_user_row(
-                    &user,
-                    &host,
-                    &auth_string,
-                    &plugin,
-                    &user_attributes_json,
-                    matches!(options.locked, Some(true)),
-                    password_expired,
-                    password_lifetime,
-                    max_user_connections,
-                )?;
-                self.mirror_account_policy_and_history(&registry, &user, &host)?;
-                // Go `executeCreateUser`: `INSERT IGNORE INTO
-                // mysql.global_priv`, whose `tlsOption2GlobalPriv` is `{}`
-                // for a statement without REQUIRE.
-                self.mirror_global_priv(
-                    &user,
-                    &host,
-                    &tls_policy,
-                    super::account_tables::GlobalPrivWrite::CreateUser,
-                )?;
-            } else if !if_not_exists {
-                return Err(DriverError::from(
-                    tidb_exeerrors::ERR_CANNOT_USER.gen_with_stack_by_args(&[
-                        "CREATE USER".into(),
-                        format!("'{}'@'{}'", user.to_owned(), host.to_owned()).into(),
-                    ]),
-                ));
-            }
+        if users.is_empty() {
+            return Ok(());
+        }
+        self.run_user_table_write(&format!(
+            "INSERT INTO mysql.user (Host, User, authentication_string, plugin, user_attributes, Account_locked, \
+             Token_issuer, Password_expired, Password_lifetime, Max_user_connections, Password_reuse_time, \
+             Password_reuse_history) VALUES {}",
+            values.join(",")
+        ))?;
+        if !history_values.is_empty() {
+            self.run_user_table_write(&format!(
+                "INSERT INTO mysql.password_history (Host, User, Password) VALUES {}",
+                history_values.join(",")
+            ))?;
+        }
+        if !priv_data.is_empty() {
+            let rows: Vec<String> = users
+                .iter()
+                .map(|(user, host)| format!("({}, {}, {})", sql_str(host), sql_str(user), sql_str(&priv_data)))
+                .collect();
+            self.run_user_table_write(&format!(
+                "INSERT IGNORE INTO mysql.global_priv (Host, User, Priv) VALUES {}",
+                rows.join(",")
+            ))?;
         }
         Ok(())
     }
 
-    /// `CREATE ROLE [IF NOT EXISTS] <role> [, ...]` -- Go's `executeCreateUser`
-    /// reached with `IsCreateRole`, which writes the same `mysql.user` row
-    /// with `account_locked = 'Y'` and no password.
-    ///
-    /// Roles and users share ONE namespace, so this reports `ErrCannotUser`
-    /// against a name already taken by either kind (captured both ways); the
-    /// only thing that differs from `CREATE USER`'s message is the operation
-    /// name it prints.
-    fn create_role_stmt(
-        &mut self,
-        if_not_exists: bool,
-        roles: &[tidb_ast::RoleIdentity],
-    ) -> Result<(), DriverError> {
-        self.require_create_user_privilege(true)?;
-        let Some(registry) = self.privilege_registry().cloned() else {
-            return Err(DriverError::unsupported(
-                "CREATE ROLE requires a server front end with a privilege registry",
-            ));
+    /// Go `whetherSavePasswordHistory`.
+    fn whether_save_password_history(&self, pl_options: &PasswordOrLockOptionsInfo) -> Result<bool, DriverError> {
+        let global = |name: &str| -> Result<i64, DriverError> {
+            self.session_vars()
+                .get_global(name)
+                .map_err(DriverError::from)?
+                .parse::<i64>()
+                .map_err(|error| DriverError::Exec(crate::ExecError::internal(format!("invalid {name}: {error}"))))
         };
-        // Go `executeCreateUser` (reached with `IsCreateRole`) resolves the
-        // row's plugin from `default_authentication_plugin` exactly as it
-        // does for a user with no `IDENTIFIED WITH`.
-        let default_plugin = self
-            .session_vars()
-            .get_global("default_authentication_plugin")
-            .unwrap_or_else(|_| tidb_mysql::consts::AuthNativePassword.to_owned());
-        // Go `executeCreateUser` checks every role before its one INSERT, so
-        // `CREATE ROLE r1, r2, r3` with r2 taken creates none of them.
-        let mut planned = Vec::with_capacity(roles.len());
-        for spec in roles {
-            let (role, host) = role_identity(spec);
-            if !registry.user_exists(&role, &host) {
-                planned.push((role, host));
-            } else if !if_not_exists {
-                return Err(DriverError::from(
-                    tidb_exeerrors::ERR_CANNOT_USER.gen_with_stack_by_args(&[
-                        "CREATE ROLE".into(),
-                        (format!("'{role}'@'{host}'")).into(),
-                    ]),
-                ));
+        // If the user specifies a default, read the global variable.
+        let passwd_save_num = if pl_options.password_history_change && pl_options.password_history != NOT_SPECIFIED {
+            pl_options.password_history
+        } else {
+            global("password_history")?
+        };
+        let passwd_save_time =
+            if pl_options.password_reuse_interval_change && pl_options.password_reuse_interval != NOT_SPECIFIED {
+                pl_options.password_reuse_interval
             } else {
-                // go demotes the duplicate to Note 3163 under IF NOT
-                // EXISTS, same as CREATE USER.
-                self.append_sql_warning(tidb_context::SqlWarn::raised(
-                    tidb_context::WarningLevel::Note,
-                    tidb_infoschema::infoschema_errors::ERR_USER_ALREADY_EXISTS
-                        .gen_with_stack_by_args(&[format!("'{}'@'{}'", role, host).into()]),
-                ));
-            }
-        }
-        for (role, host) in planned {
-            if registry.create_role_with_plugin(&role, &host, &default_plugin) {
-                registry.merge_user_attributes(&role, &host, serde_json::json!({}), false);
-                // The same INSERT as CREATE USER's, with `IsCreateRole`'s
-                // overrides: `Account_locked='Y'`, `Password_expired='Y'`,
-                // empty password, `'{}'` attributes.
-                self.mirror_create_user_row(
-                    &role,
-                    &host,
-                    "",
-                    &default_plugin,
-                    "{}",
-                    true,
-                    true,
-                    None,
-                    0,
-                )?;
-                self.mirror_account_policy_and_history(&registry, &role, &host)?;
-                // Go `executeCreateUser` with `IsCreateRole` writes the
-                // same `{}` policy row.
-                self.mirror_global_priv(
-                    &role,
-                    &host,
-                    "{}",
-                    super::account_tables::GlobalPrivWrite::CreateUser,
-                )?;
-            } else if !if_not_exists {
-                return Err(DriverError::from(
-                    tidb_exeerrors::ERR_CANNOT_USER.gen_with_stack_by_args(&[
-                        "CREATE ROLE".into(),
-                        (format!("'{role}'@'{host}'")).into(),
-                    ]),
-                ));
-            }
-        }
-        Ok(())
+                global("password_reuse_interval")?
+            };
+        Ok(passwd_save_time > 0 || passwd_save_num > 0)
     }
 
     /// `GRANT <role> [, ...] TO <account> [, ...]`: one `mysql.role_edges`
@@ -883,11 +750,6 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         &mut self,
         grant: &tidb_ast::GrantRoleStmt,
     ) -> Result<(), DriverError> {
-        let Some(registry) = self.privilege_registry().cloned() else {
-            return Err(DriverError::unsupported(
-                "GRANT <role> requires a server front end with a privilege registry",
-            ));
-        };
         let roles = self.resolve_roles(&grant.roles, |role, host| {
             DriverError::from(
                 tidb_exeerrors::ERR_GRANT_ROLE.gen_with_stack_by_args(&[
@@ -898,7 +760,6 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         let grantees = self.resolve_role_grantees(&grant.users, "GRANT ROLE")?;
         for grantee in &grantees {
             for role in &roles {
-                registry.grant_role(role, grantee);
                 self.mirror_role_edge((&role.0, &role.1), (&grantee.0, &grantee.1), true)?;
             }
         }
@@ -913,11 +774,6 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         &mut self,
         revoke: &tidb_ast::RevokeRoleStmt,
     ) -> Result<(), DriverError> {
-        let Some(registry) = self.privilege_registry().cloned() else {
-            return Err(DriverError::unsupported(
-                "REVOKE <role> requires a server front end with a privilege registry",
-            ));
-        };
         let roles = self.resolve_roles(&revoke.roles, |role, host| {
             DriverError::from(
                 tidb_exeerrors::ERR_CANNOT_USER.gen_with_stack_by_args(&[
@@ -929,7 +785,6 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         let grantees = self.resolve_role_grantees(&revoke.users, "REVOKE ROLE")?;
         for grantee in &grantees {
             for role in &roles {
-                registry.revoke_role(role, grantee);
                 self.mirror_role_edge((&role.0, &role.1), (&grantee.0, &grantee.1), false)?;
             }
         }
@@ -1030,7 +885,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
             };
             for role in roles {
                 let (role, host) = role_identity(role);
-                if !registry.user_exists(&role, &host) {
+                if !self.user_exists(&role, &host)? {
                     return Err(DriverError::from(
                         tidb_exeerrors::ERR_CANNOT_USER
                             .gen_with_stack_by_args(&[
@@ -1072,12 +927,6 @@ pub trait AccountExec: super::account_tables::UserTableExec {
             };
             replacements.push(roles);
         }
-        registry.replace_default_roles(
-            accounts
-                .iter()
-                .zip(&replacements)
-                .map(|(account, roles)| (account, roles.as_slice())),
-        );
         // Go `setDefaultRoleNone` / `setDefaultRoleRegular` /
         // `setDefaultRoleAll`.
         for (account, roles) in accounts.iter().zip(&replacements) {
@@ -1306,26 +1155,6 @@ pub trait AccountExec: super::account_tables::UserTableExec {
             }
         }
         for ((old_user, old_host), (new_user, new_host)) in resolved {
-            if !registry.rename_user(&old_user, &old_host, &new_user, &new_host) {
-                return Err(DriverError::from(
-                    tidb_exeerrors::ERR_CANNOT_USER.gen_with_stack_by_args(&[
-                        "RENAME USER".into(),
-                        format!(
-                            "{}@{} TO {}@{} {}",
-                            old_user,
-                            old_host,
-                            new_user,
-                            new_host,
-                            if !registry.user_exists(&old_user, &old_host) {
-                                "old did not exist"
-                            } else {
-                                "new did exist"
-                            }
-                        )
-                        .into(),
-                    ]),
-                ));
-            }
             // Go `renameUserHostInSystemTable` on `mysql.user`: the row moves
             // with the account, authentication string included.
             self.mirror_rename_user_row(&old_user, &old_host, &new_user, &new_host)?;
@@ -1373,18 +1202,13 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         users: &[tidb_ast::UserSpec],
     ) -> Result<(), DriverError> {
         self.require_drop_user_privilege(is_role)?;
-        let Some(registry) = self.privilege_registry().cloned() else {
-            return Err(DriverError::unsupported(
-                "DROP USER requires a server front end with a privilege registry",
-            ));
-        };
         // Go walks the accounts in order inside one transaction: the first
         // missing account (without IF EXISTS) stops the walk and is the only
         // one the error names, a missing one under IF EXISTS is Note 3162,
         // and a `SYSTEM_USER` target rolls everything back. Checking all of
         // it before the first delete reproduces that rollback.
         for spec in users {
-            if !registry.user_exists(&spec.user, &spec.host) {
+            if !self.user_exists(&spec.user, &spec.host)? {
                 let account = format!("{}@{}", spec.user, spec.host);
                 if !if_exists {
                     return Err(if is_role {
@@ -1408,7 +1232,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
             self.require_system_user_privilege_over(&spec.user, &spec.host)?;
         }
         for spec in users {
-            if registry.drop_user(&spec.user, &spec.host) {
+            if self.user_exists(&spec.user, &spec.host)? {
                 // Go `executeDropUser` deletes the account's `mysql.user`
                 // row in the same transaction; a target that never existed
                 // (reachable only under IF EXISTS) deletes nothing.
@@ -1458,11 +1282,6 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 .transpose()
         };
         let tls_policy;
-        let Some(registry) = self.privilege_registry().cloned() else {
-            return Err(DriverError::unsupported(
-                "GRANT requires a server front end with a privilege registry",
-            ));
-        };
         // Go's GRANT is ATOMIC across its user list: the executor writes
         // every row inside one transaction and rolls the whole statement
         // back when a grantee is missing (captured, `executor/grant`'s
@@ -1478,22 +1297,6 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         // with `default_authentication_plugin`. The accounts to create are
         // collected here and written only after every check has passed.
         let no_auto_create_user = self.session_vars().sql_mode().has_no_auto_create_user_mode();
-        let all_grantees_exist =
-            |users: &[tidb_ast::CreateUserSpec]| -> Result<Vec<usize>, DriverError> {
-                let mut missing = Vec::new();
-                for (position, spec) in users.iter().enumerate() {
-                    if !registry.user_exists(&spec.user.user, &spec.user.host) {
-                        if no_auto_create_user {
-                            return Err(DriverError::from(
-                                tidb_exeerrors::ERR_CANT_CREATE_USER_WITH_GRANT
-                                    .gen_with_stack_by_args(&[]),
-                            ));
-                        }
-                        missing.push(position);
-                    }
-                }
-                Ok(missing)
-            };
         match &grant.level {
             tidb_ast::GrantLevel::Global => {
                 let (static_mask, dynamic) = self.split_global_privs(&grant.privileges, true)?;
@@ -1507,25 +1310,12 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 // property of the user".
                 let names_static = grant.privileges.iter().any(|privilege| !privilege.dynamic);
                 let mask = static_mask | if names_static { with_grant } else { 0 };
-                let missing = all_grantees_exist(&grant.users)?;
+                let missing = self.grantees_missing(&grant.users, no_auto_create_user)?;
                 tls_policy = load_tls_policy()?;
-                self.create_grantees(&registry, &grant.users, &missing)?;
+                self.create_grantees(&grant.users, &missing)?;
                 for spec in &grant.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
-                    // Go's default sql_mode forbids GRANT from implicitly
-                    // creating the target account (captured:
-                    // `ErrCantCreateUserWithGrant`, 1410).
-                    if !registry.user_exists(user, host) {
-                        return Err(DriverError::from(
-                            tidb_exeerrors::ERR_CANT_CREATE_USER_WITH_GRANT
-                                .gen_with_stack_by_args(&[]),
-                        ));
-                    }
-                    registry.grant(user, host, mask);
-                    for name in &dynamic {
-                        registry.grant_dynamic(user, host, name, grant.with_grant);
-                    }
                     // Go `grant.go` `composeGlobalPrivUpdate`: the same bits
                     // flip the account's `mysql.user` privilege columns to
                     // `'Y'`. Dynamic privileges live in `global_grants`, not
@@ -1543,19 +1333,12 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 let database = self.resolve_grant_database(database.as_deref())?;
                 let privs = self.resolve_scoped_privs(&grant.privileges, ScopeKind::Database)?;
                 let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit()) | with_grant;
-                let missing = all_grantees_exist(&grant.users)?;
+                let missing = self.grantees_missing(&grant.users, no_auto_create_user)?;
                 tls_policy = load_tls_policy()?;
-                self.create_grantees(&registry, &grant.users, &missing)?;
+                self.create_grantees(&grant.users, &missing)?;
                 for spec in &grant.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
-                    if !registry.user_exists(user, host) {
-                        return Err(DriverError::from(
-                            tidb_exeerrors::ERR_CANT_CREATE_USER_WITH_GRANT
-                                .gen_with_stack_by_args(&[]),
-                        ));
-                    }
-                    registry.grant_db(user, host, &database, mask);
                     let (user, host) = (user.to_owned(), host.to_owned());
                     self.mirror_db_privs(&user, &host, &database, mask, true)?;
                 }
@@ -1566,8 +1349,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     table: privs,
                     columns,
                 } = self.resolve_table_scope_privs(&grant.privileges)?;
-                let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit()) | with_grant;
-                let missing = all_grantees_exist(&grant.users)?;
+                let missing = self.grantees_missing(&grant.users, no_auto_create_user)?;
                 // Go allows granting on a table that does not exist only
                 // when the privilege list includes `CREATE` (captured:
                 // issues #28533/#29268); otherwise it reports
@@ -1598,24 +1380,14 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 if with_grant != 0 {
                     table_privs_written.push(tidb_mysql::GrantPriv);
                 }
-                self.create_grantees(&registry, &grant.users, &missing)?;
+                self.create_grantees(&grant.users, &missing)?;
                 for spec in &grant.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
-                    if !registry.user_exists(user, host) {
-                        return Err(DriverError::from(
-                            tidb_exeerrors::ERR_CANT_CREATE_USER_WITH_GRANT
-                                .gen_with_stack_by_args(&[]),
-                        ));
-                    }
                     // The TABLE row is created even by a column-only grant
                     // (Go's `checkAndInitTablePriv` runs for every TABLE-level
                     // GRANT), which is what later lets `REVOKE` on that table
                     // get past its "no such grant" check.
-                    registry.grant_table(user, host, &database, table, mask);
-                    for (column, column_mask) in &columns {
-                        registry.grant_column(user, host, &database, table, column, *column_mask);
-                    }
                     let (user, host) = (user.to_owned(), host.to_owned());
                     self.mirror_table_privs(
                         &user,
@@ -1632,7 +1404,6 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         }
         if let Some(policy) = tls_policy {
             for spec in &grant.users {
-                registry.set_tls_policy(&spec.user.user, &spec.user.host, &policy);
                 self.mirror_global_priv(
                     &spec.user.user,
                     &spec.user.host,
@@ -1644,13 +1415,47 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         Ok(())
     }
 
+    /// Go `GrantExec.Next`'s `userExists` pass: the positions of the
+    /// grantees with no account, refused under `NO_AUTO_CREATE_USER`.
+    fn grantees_missing(
+        &mut self,
+        users: &[tidb_ast::CreateUserSpec],
+        no_auto_create_user: bool,
+    ) -> Result<Vec<usize>, DriverError> {
+        let mut missing = Vec::new();
+        for (position, spec) in users.iter().enumerate() {
+            if !self.user_exists(&spec.user.user, &spec.user.host)? {
+                if no_auto_create_user {
+                    return Err(DriverError::from(
+                        tidb_exeerrors::ERR_CANT_CREATE_USER_WITH_GRANT.gen_with_stack_by_args(&[]),
+                    ));
+                }
+                missing.push(position);
+            }
+        }
+        Ok(missing)
+    }
+
+    /// Go `RevokeExec.Next`: every revokee must have an account
+    /// (`Unknown user`).
+    fn revokees_exist(&mut self, users: &[tidb_ast::CreateUserSpec]) -> Result<(), DriverError> {
+        for spec in users {
+            if !self.user_exists(&spec.user.user, &spec.user.host)? {
+                return Err(DriverError::from(tidb_terror::MysqlError::unknown(format!(
+                    "Unknown user: {}@{}",
+                    spec.user.user, spec.user.host
+                ))));
+            }
+        }
+        Ok(())
+    }
+
     /// Go `GrantExec.Next`'s implicit account creation: each missing grantee
     /// gets a `mysql.user` row carrying only its host, name, encoded password
     /// and plugin (`IDENTIFIED BY` in the GRANT, else
     /// `default_authentication_plugin`).
     fn create_grantees(
         &mut self,
-        registry: &tidb_privilege::PrivilegeRegistry,
         users: &[tidb_ast::CreateUserSpec],
         missing: &[usize],
     ) -> Result<(), DriverError> {
@@ -1666,10 +1471,8 @@ pub trait AccountExec: super::account_tables::UserTableExec {
             let (auth_string, plugin) =
                 Self::resolve_auth_string_and_plugin(spec.auth.as_ref(), &default_plugin)?;
             let (user, host) = (spec.user.user.as_str(), spec.user.host.as_str());
-            if registry.create_user_with_plugin(user, host, &auth_string, &plugin) {
-                let (user, host) = (user.to_owned(), host.to_owned());
-                self.mirror_grant_created_user_row(&user, &host, &auth_string, &plugin)?;
-            }
+            let (user, host) = (user.to_owned(), host.to_owned());
+            self.mirror_grant_created_user_row(&user, &host, &auth_string, &plugin)?;
         }
         Ok(())
     }
@@ -1730,24 +1533,10 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         // with `r4` absent reports "Unknown user" and r1/r2/r3 keep every
         // bit). Verified after each arm's privilege gate, before its first
         // registry write.
-        let all_revokees_exist = |users: &[tidb_ast::CreateUserSpec]| -> Result<(), DriverError> {
-            for spec in users {
-                if !registry.user_exists(&spec.user.user, &spec.user.host) {
-                    return Err(DriverError::from(tidb_terror::MysqlError::unknown(
-                        format!(
-                            "Unknown user: {}@{}",
-                            spec.user.user.clone(),
-                            spec.user.host.clone()
-                        ),
-                    )));
-                }
-            }
-            Ok(())
-        };
         match &revoke.level {
             tidb_ast::GrantLevel::Global => {
                 let (mask, dynamic) = self.split_global_privs(&revoke.privileges, false)?;
-                all_revokees_exist(&revoke.users)?;
+                self.revokees_exist(&revoke.users)?;
                 let revoke_all_dynamic = revoke
                     .privileges
                     .iter()
@@ -1760,17 +1549,12 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 for spec in &revoke.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
-                    if !registry.user_exists(user, host) {
+                    if !self.user_exists(user, host)? {
                         return Err(DriverError::from(tidb_terror::MysqlError::unknown(
                             format!("Unknown user: {}@{}", user.to_owned(), host.to_owned()),
                         )));
                     }
-                    registry.revoke(user, host, mask);
                     if revoke_all_dynamic {
-                        registry.revoke_all_dynamic(user, host);
-                    }
-                    for name in &dynamic {
-                        registry.revoke_dynamic_priv(user, host, name);
                     }
                     // Go `revoke.go` `composeGlobalPrivUpdate(.., "N")`: the
                     // revoked bits flip the same `mysql.user` columns back.
@@ -1799,11 +1583,11 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 let database = self.resolve_grant_database(database.as_deref())?;
                 let privs = self.resolve_scoped_privs(&revoke.privileges, ScopeKind::Database)?;
                 let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit());
-                all_revokees_exist(&revoke.users)?;
+                self.revokees_exist(&revoke.users)?;
                 for spec in &revoke.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
-                    if !registry.user_exists(user, host) {
+                    if !self.user_exists(user, host)? {
                         return Err(DriverError::from(tidb_terror::MysqlError::unknown(
                             format!("Unknown user: {}@{}", user.to_owned(), host.to_owned()),
                         )));
@@ -1811,7 +1595,6 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     if !registry.db_user_exists(user, host, &database) {
                         return Err(DriverError::from(tidb_terror::MysqlError::unknown(format!("There is no such grant defined for user '{}' on host '{}' on database {}", user.to_owned(), host.to_owned(), database.clone()))));
                     }
-                    registry.revoke_db(user, host, &database, mask);
                     let (user, host) = (user.to_owned(), host.to_owned());
                     self.mirror_db_privs(&user, &host, &database, mask, false)?;
                 }
@@ -1822,12 +1605,11 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     table: privs,
                     columns,
                 } = self.resolve_table_scope_privs(&revoke.privileges)?;
-                let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit());
-                all_revokees_exist(&revoke.users)?;
+                self.revokees_exist(&revoke.users)?;
                 for spec in &revoke.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
-                    if !registry.user_exists(user, host) {
+                    if !self.user_exists(user, host)? {
                         return Err(DriverError::from(tidb_terror::MysqlError::unknown(
                             format!("Unknown user: {}@{}", user.to_owned(), host.to_owned()),
                         )));
@@ -1847,10 +1629,6 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 for spec in &revoke.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
-                    registry.revoke_table(user, host, &database, table, mask);
-                    for (column, column_mask) in &columns {
-                        registry.revoke_column(user, host, &database, table, column, *column_mask);
-                    }
                     let (user, host) = (user.to_owned(), host.to_owned());
                     self.mirror_table_privs(&user, &host, &database, table, &privs, false, false)?;
                     self.mirror_column_privs(&user, &host, &database, table, &columns, false)?;

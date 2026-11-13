@@ -181,8 +181,326 @@ pub fn datum_text(value: &Datum) -> String {
         .unwrap_or_default()
 }
 
+/// Go `alterUserPasswordLocking`.
+#[allow(missing_docs)]
+#[derive(Debug, Default)]
+pub struct AlterUserPasswordLocking {
+    pub failed_login_attempts: i64,
+    pub password_lock_time: i64,
+    pub failed_login_attempts_not_found: bool,
+    pub password_lock_time_change_not_found: bool,
+    pub contains_no_others: bool,
+}
+
+/// Go `alterUserFailedLoginJSON`.
+pub fn alter_user_failed_login_json(info: &AlterUserPasswordLocking, lock_account: &str) -> String {
+    // alterUserPasswordLocking is the user's actual configuration.
+    let mut password_locking_array = Vec::new();
+    if info.failed_login_attempts != 0 || info.password_lock_time != 0 {
+        if lock_account == "N" {
+            password_locking_array.push(format!("\"auto_account_locked\": \"{lock_account}\""));
+            password_locking_array.push(format!(
+                "\"auto_locked_last_changed\": \"{}\"",
+                tidb_privilege::account_policy::locking_epoch_text(chrono::Utc::now().timestamp())
+            ));
+            password_locking_array.push(format!("\"failed_login_count\": {}", 0));
+        }
+        password_locking_array.push(format!("\"failed_login_attempts\": {}", info.failed_login_attempts));
+        password_locking_array.push(format!("\"password_lock_time_days\": {}", info.password_lock_time));
+    }
+    if password_locking_array.is_empty() {
+        return String::new();
+    }
+    format!("\"Password_locking\": {{{}}}", password_locking_array.join(","))
+}
+
 /// The privilege-table writes, over [`AccountSession`].
 pub trait UserTableExec: AccountSession {
+    /// Go `userExists`: the account's `mysql.user` row through restricted
+    /// SQL (the committed tables).
+    fn user_exists(&mut self, user: &str, host: &str) -> Result<bool, DriverError> {
+        let rows = self.exec_restricted_sql(
+            tidb_txnkv::INTERNAL_TXN_PRIVILEGE,
+            &format!(
+                "SELECT * FROM mysql.user WHERE User={} AND Host={};",
+                sql_str(user),
+                sql_str(&host.to_lowercase())
+            ),
+        )?;
+        Ok(!rows.is_empty())
+    }
+
+    /// Go `isRole`: a locked account with an expired password.
+    fn is_role_sql(&mut self, user: &str, host: &str) -> Result<bool, DriverError> {
+        let rows = self.user_table_rows(&format!(
+            "SELECT 1 FROM mysql.user WHERE User={} AND Host={} AND Account_locked=\"Y\" AND Password_expired=\"Y\";",
+            sql_str(user),
+            sql_str(&host.to_lowercase())
+        ))?;
+        Ok(!rows.is_empty())
+    }
+
+    /// Go `readPasswordLockingInfo`: the statement's locking options over
+    /// the account's stored ones.
+    fn read_password_locking_info(
+        &mut self,
+        user: &str,
+        host: &str,
+        failed_login_attempts: Option<i64>,
+        password_lock_time: Option<i64>,
+    ) -> Result<AlterUserPasswordLocking, DriverError> {
+        let rows = self.user_table_rows(&format!(
+            "SELECT JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_attempts')), \
+             JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days')), \
+             JSON_LENGTH(JSON_REMOVE(user_attributes, '$.Password_locking')) FROM mysql.user WHERE User={} AND Host={};",
+            sql_str(user),
+            sql_str(&host.to_lowercase())
+        ))?;
+        let row = rows.first().cloned().unwrap_or_else(|| vec![Datum::Null; 3]);
+        let parse = |datum: &Datum| -> Result<i64, DriverError> {
+            datum_text(datum)
+                .parse::<i64>()
+                .map_err(|error| DriverError::Exec(crate::ExecError::internal(error.to_string())))
+        };
+        let mut info = AlterUserPasswordLocking::default();
+        // Configuration priority is User Changes > User History
+        if let Some(value) = failed_login_attempts {
+            info.failed_login_attempts = value;
+        } else if !row[0].is_null() {
+            info.failed_login_attempts = parse(&row[0])?.clamp(0, i64::from(i16::MAX));
+        } else {
+            info.failed_login_attempts_not_found = true;
+        }
+        if let Some(value) = password_lock_time {
+            info.password_lock_time = value;
+        } else if !row[1].is_null() {
+            info.password_lock_time = parse(&row[1])?.clamp(-1, i64::from(i16::MAX));
+        } else {
+            info.password_lock_time_change_not_found = true;
+        }
+        info.contains_no_others = match &row[2] {
+            Datum::Null => true,
+            Datum::Int(value) => *value == 0,
+            Datum::UInt(value) => *value == 0,
+            other => datum_text(other) == "0",
+        };
+        Ok(info)
+    }
+
+    /// Go `deletePasswordLockingAttribute`: removes a locking object no
+    /// longer in use.
+    fn delete_password_locking_attribute(
+        &mut self,
+        user: &str,
+        host: &str,
+        info: &AlterUserPasswordLocking,
+    ) -> Result<(), DriverError> {
+        // No password_locking information.
+        if info.failed_login_attempts_not_found && info.password_lock_time_change_not_found {
+            return Ok(());
+        }
+        // Password_locking information is still in used.
+        if info.failed_login_attempts != 0 || info.password_lock_time != 0 {
+            return Ok(());
+        }
+        let set = if info.contains_no_others {
+            "UPDATE mysql.user SET user_attributes=NULL"
+        } else {
+            "UPDATE mysql.user SET user_attributes=JSON_REMOVE(user_attributes, '$.Password_locking') "
+        };
+        self.run_user_table_write(&format!("{set} WHERE Host={} and User={};", sql_str(host), sql_str(user)))
+    }
+
+    /// Go `checkPasswordReusePolicy`: refuses a password the account's reuse
+    /// policy forbids (3638) and records it in `mysql.password_history`.
+    #[allow(clippy::too_many_arguments)]
+    fn check_password_reuse_policy(
+        &mut self,
+        user: &str,
+        host: &str,
+        pwd: &str,
+        auth_string: &str,
+        auth_plugin: &str,
+        history_option: Option<Option<i64>>,
+        reuse_option: Option<Option<i64>>,
+    ) -> Result<(), DriverError> {
+        if auth_plugin.eq_ignore_ascii_case(tidb_mysql::consts::AuthTiDBAuthToken)
+            || auth_plugin.eq_ignore_ascii_case(tidb_mysql::consts::AuthLDAPSASL)
+            || auth_plugin.eq_ignore_ascii_case(tidb_mysql::consts::AuthLDAPSimple)
+        {
+            // AuthTiDBAuthToken is the token login method on the cloud,
+            // and the Password Reuse Policy does not take effect.
+            return Ok(());
+        }
+        let global = |this: &Self, name: &str| -> Result<i64, DriverError> {
+            this.session_vars()
+                .get_global(name)
+                .map_err(DriverError::from)?
+                .parse::<i64>()
+                .map_err(|error| DriverError::Exec(crate::ExecError::internal(format!("invalid {name}: {error}"))))
+        };
+        let lower_host = host.to_lowercase();
+        // Go `getUserPasswordLimit`: the account's rules, else the globals,
+        // the statement's own clauses over both.
+        let mut password_history = -1_i64;
+        let mut password_reuse_interval = -1_i64;
+        for row in self.user_table_rows(&format!(
+            "SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE User={} AND Host={};",
+            sql_str(user),
+            sql_str(&lower_host)
+        ))? {
+            password_history = match &row[0] {
+                Datum::Null => global(self, "password_history")?,
+                value => datum_text(value).parse().unwrap_or(0),
+            };
+            password_reuse_interval = match &row[1] {
+                Datum::Null => global(self, "password_reuse_interval")?,
+                value => datum_text(value).parse().unwrap_or(0),
+            };
+        }
+        if let Some(value) = history_option {
+            // If the user specifies a default, the global variable needs to be re-read.
+            password_history = match value {
+                Some(value) => value,
+                None => global(self, "password_history")?,
+            };
+        }
+        if let Some(value) = reuse_option {
+            password_reuse_interval = match value {
+                Some(value) => value,
+                None => global(self, "password_reuse_interval")?,
+            };
+        }
+        // Go `passwordVerification`.
+        let count_rows = |this: &mut Self, sql: String| -> Result<i64, DriverError> {
+            let rows = this.user_table_rows(&sql)?;
+            Ok(rows.first().and_then(|row| row.first()).map_or(0, |value| datum_text(value).parse().unwrap_or(0)))
+        };
+        let password_num = {
+            let rows = self.user_table_rows(&format!(
+                "SELECT count(*) FROM mysql.password_history WHERE User={} AND Host={};",
+                sql_str(user),
+                sql_str(&lower_host)
+            ))?;
+            if rows.len() != 1 {
+                return Err(DriverError::Exec(crate::ExecError::internal(format!(
+                    "`{user}`@`{lower_host}` is not unique, please confirm the mysql.password_history table structure"
+                ))));
+            }
+            datum_text(&rows[0][0]).parse::<i64>().unwrap_or(0)
+        };
+        // the maximum number of records that can be deleted.
+        let can_delete_num = (password_num - password_history + 1).max(0);
+        // Go `getValidTime`: the boundary of password valid time, in the
+        // process's local time.
+        let valid_time = || {
+            let now = chrono::Utc::now().timestamp();
+            let before = (now - password_reuse_interval.saturating_mul(24 * 3600)).max(0);
+            chrono::TimeZone::timestamp_opt(&chrono::Local, before, 0)
+                .single()
+                .map(|time| time.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_default()
+        };
+        let native = matches!(auth_plugin, "" | tidb_mysql::consts::AuthNativePassword);
+        let hashing = matches!(
+            auth_plugin,
+            tidb_mysql::consts::AuthCachingSha2Password | tidb_mysql::consts::AuthTiDBSM3Password
+        );
+        if !native && !hashing {
+            return Err(DriverError::from(
+                tidb_exeerrors::ERR_PLUGIN_IS_NOT_LOADED.gen_with_stack_by_args(&[auth_plugin.to_owned().into()]),
+            ));
+        }
+        // Go `checkPasswordsMatch`: whether no stored hash matches.
+        let passwords_match = |rows: &[Vec<Datum>]| -> bool {
+            !rows.iter().any(|row| {
+                !row[0].is_null()
+                    && tidb_parser::auth::check_hashing_password(datum_text(&row[0]).as_bytes(), auth_string, auth_plugin)
+                        .unwrap_or(false)
+            })
+        };
+        let can_use = if password_history <= 0 && password_reuse_interval <= 0 {
+            true
+        } else if password_num <= password_history || password_reuse_interval > i64::from(i32::MAX) {
+            // Go `fullRecordCheck`.
+            if native {
+                count_rows(self, format!(
+                    "SELECT count(*) FROM mysql.password_history WHERE User= {} AND Host= {} AND Password = {};",
+                    sql_str(user), sql_str(&lower_host), sql_str(pwd)
+                ))? == 0
+            } else {
+                let rows = self.user_table_rows(&format!(
+                    "SELECT Password FROM mysql.password_history WHERE User= {} AND Host= {} ;",
+                    sql_str(user), sql_str(&lower_host)
+                ))?;
+                passwords_match(&rows)
+            }
+        } else {
+            let mut can_use = true;
+            if password_history > 0 {
+                // Go `checkPasswordHistoryRule`.
+                can_use = if native {
+                    count_rows(self, format!(
+                        "SELECT count(*) FROM (SELECT Password FROM mysql.password_history WHERE User={} AND Host={} ORDER BY Password_timestamp DESC LIMIT {} ) as t where t.Password = {} ",
+                        sql_str(user), sql_str(&lower_host), password_history, sql_str(pwd)
+                    ))? == 0
+                } else {
+                    let rows = self.user_table_rows(&format!(
+                        "SELECT Password FROM mysql.password_history WHERE User={} AND Host={} ORDER BY Password_timestamp DESC LIMIT {}",
+                        sql_str(user), sql_str(&lower_host), password_history
+                    ))?;
+                    passwords_match(&rows)
+                };
+            }
+            if can_use && password_reuse_interval > 0 {
+                // Go `checkPasswordTimeRule`.
+                let before = valid_time();
+                can_use = if native {
+                    count_rows(self, format!(
+                        "SELECT count(*) FROM mysql.password_history WHERE User={} AND Host={} AND Password = {} AND Password_timestamp >= {};",
+                        sql_str(user), sql_str(&lower_host), sql_str(pwd), sql_str(&before)
+                    ))? == 0
+                } else {
+                    let rows = self.user_table_rows(&format!(
+                        "SELECT Password FROM mysql.password_history WHERE User={} AND Host={} AND Password_timestamp >= {};",
+                        sql_str(user), sql_str(&lower_host), sql_str(&before)
+                    ))?;
+                    passwords_match(&rows)
+                };
+            }
+            can_use
+        };
+        if !can_use {
+            return Err(DriverError::from(
+                tidb_exeerrors::ERR_EXISTS_IN_HISTORY_PASSWORD
+                    .gen_with_stack_by_args(&[user.to_owned().into(), host.to_owned().into()]),
+            ));
+        }
+        // Go `deleteHistoricalData`: never times out or no row need delete.
+        if password_reuse_interval <= i64::from(i32::MAX) && can_delete_num != 0 {
+            if password_reuse_interval == 0 {
+                self.run_user_table_write(&format!(
+                    "DELETE from mysql.password_history WHERE User= {} AND Host= {} order by Password_timestamp ASC LIMIT {can_delete_num}",
+                    sql_str(user), sql_str(&lower_host)
+                ))?;
+            } else {
+                let before = valid_time();
+                self.run_user_table_write(&format!(
+                    "DELETE from mysql.password_history WHERE User= {} AND Host= {} AND Password_timestamp < {} order by Password_timestamp ASC LIMIT {can_delete_num}",
+                    sql_str(user), sql_str(&lower_host), sql_str(&before)
+                ))?;
+            }
+        }
+        // Go `addHistoricalData`.
+        if password_history > 0 || password_reuse_interval > 0 {
+            self.run_user_table_write(&format!(
+                "INSERT INTO mysql.password_history (Host, User, Password) VALUES ({}, {}, {}) ",
+                sql_str(&lower_host), sql_str(user), sql_str(pwd)
+            ))?;
+        }
+        Ok(())
+    }
+
     /// Deletes the account's `mysql.password_history` rows.
     fn mirror_delete_password_history(
         &mut self,
@@ -219,42 +537,6 @@ pub trait UserTableExec: AccountSession {
         ))
     }
 
-    /// Writes the account's reuse policy and `User_attributes` to
-    /// `mysql.user`, and replaces its `mysql.password_history` rows with the
-    /// registry's.
-    fn mirror_account_policy_and_history(
-        &mut self,
-        registry: &tidb_privilege::PrivilegeRegistry,
-        user: &str,
-        host: &str,
-    ) -> Result<(), DriverError> {
-        if !self.user_table_present() {
-            return Ok(());
-        }
-        let (count, days) = registry.password_reuse_policy(user, host);
-        let count = count.map_or_else(|| "NULL".into(), |n| n.to_string());
-        let days = days.map_or_else(|| "NULL".into(), |n| n.to_string());
-        let attrs = registry
-            .user_attributes(user, host)
-            .as_deref()
-            .map_or_else(|| "NULL".into(), sql_str);
-        self.run_user_table_write(&format!("UPDATE mysql.user SET Password_reuse_history={count}, Password_reuse_time={days}, User_attributes={attrs} WHERE User={} AND Host={}", sql_str(user), sql_str(host)))?;
-        self.mirror_delete_password_history(user, host)?;
-        for row in registry.account_password_history(user, host) {
-            // Registry timestamps are UTC; SQL TIMESTAMP text belongs to this session.
-            let mut timestamp = row.timestamp;
-            timestamp
-                .convert_time_zone(
-                    &tidb_datatype::SessionTimeZone::utc(),
-                    &self.session_vars().session_time_zone(),
-                )
-                .map_err(|error| {
-                    DriverError::Exec(crate::ExecError::internal(error.to_string()))
-                })?;
-            self.run_user_table_write(&format!("INSERT INTO mysql.password_history (Host, User, Password_timestamp, Password) VALUES ({}, {}, {}, {})", sql_str(&row.host), sql_str(&row.user), sql_str(&timestamp.to_string()), row.password.as_deref().map_or_else(|| "NULL".into(), sql_str)))?;
-        }
-        Ok(())
-    }
 
     /// Mirrors one freshly created account into `mysql.user` -- Go
     /// `executeCreateUser`'s `INSERT INTO mysql.user (Host, User,

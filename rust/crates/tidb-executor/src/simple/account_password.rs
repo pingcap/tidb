@@ -205,7 +205,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
             let mut missing = Vec::new();
             for spec in specs {
                 let (user, host) = self.resolve_account(&spec.user)?;
-                if !registry.user_exists(&user, &host) {
+                if !self.user_exists(&user, &host)? {
                     // Go checks the caller's privileges before it reports an
                     // account as missing.
                     self.alter_user_admin_gate(
@@ -251,7 +251,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                 has_other_stmt_options,
                 &effective,
             )?;
-            let exists = registry.user_exists(&user, &host);
+            let exists = self.user_exists(&user, &host)?;
             let current_plugin = registry.plugin(&user, &host).unwrap_or_default();
             let current_auth_string = registry.auth_string(&user, &host).unwrap_or_default();
             if !exists {
@@ -315,14 +315,11 @@ pub trait AccountPasswordExec: super::account::AccountExec {
             let mut mirror_fields: Vec<String> = Vec::new();
             // Go: MAX_USER_CONNECTIONS needs CREATE USER even on one's own
             // account.
-            if let Some(count) =
-                super::account::max_user_connections_option(&alter.resource_options)
-            {
+            let max_user_connections = super::account::max_user_connections_option(&alter.resource_options);
+            if max_user_connections.is_some() {
                 if !self.has_scoped_privilege("", "", tidb_mysql::CreateUserPriv) {
                     return Err(DriverError::from(tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED.gen_with_stack_by_args(&["CREATE USER".into()])));
                 }
-                mirror_fields.push(format!("max_user_connections={count}"));
-                registry.set_max_user_connections(&user, &host, count);
             }
             let mut plugin_changed = false;
             if let Some(auth) = spec.auth.as_ref() {
@@ -369,27 +366,26 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                 if spec_retain && current_auth_string.is_empty() {
                     return Err(DriverError::from(tidb_exeerrors::ERR_SECOND_PASSWORD_CANNOT_BE_EMPTY.gen_with_stack_by_args(&[user.into(), host.into()])));
                 }
-                self.maintain_password_history(
-                    &registry,
-                    &user,
-                    &host,
-                    &auth_string,
-                    plaintext,
-                    &plugin,
-                    &options,
-                    false,
-                    plugin_changed,
-                )?;
-                if registry.set_auth_string_and_plugin(&user, &host, &auth_string, &plugin) {
-                    // Go writes `password_expired='N'` and a fresh
-                    // `Password_last_changed` in the same UPDATE as the new
-                    // hash, which is what lets an expired account recover by
-                    // setting a password (captured: after
-                    // `ALTER USER e5 IDENTIFIED BY 'pw2'`, `SHOW CREATE USER`
-                    // reports `PASSWORD EXPIRE DEFAULT` again).
-                    registry.mark_password_changed(&user, &host);
-                } else if !alter.if_exists {
-                    return Err(DriverError::from(tidb_exeerrors::ERR_CANNOT_USER.gen_with_stack_by_args(&["ALTER USER".into(), format!("'{}'@'{}'", user, host).into()])));
+                // changing the auth method prunes history.
+                if plugin_changed {
+                    self.run_user_table_write(&format!(
+                        "DELETE FROM mysql.password_history WHERE Host = {} and User = {};",
+                        super::account_tables::sql_str(&host),
+                        super::account_tables::sql_str(&user)
+                    ))?;
+                }
+                // for Support Password Reuse Policy.
+                // The empty password does not count in the password history and is subject to reuse at any time.
+                if !auth_string.is_empty() {
+                    self.check_password_reuse_policy(
+                        &user,
+                        &host,
+                        &auth_string,
+                        plaintext.unwrap_or(""),
+                        &effective(&plugin),
+                        options.history,
+                        options.reuse_days,
+                    )?;
                 }
                 mirror_fields.push(format!(
                     "authentication_string={}",
@@ -397,25 +393,50 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                 ));
                 mirror_fields.push(format!("plugin={}", super::account_tables::sql_str(&plugin)));
             }
-            // Go applies the statement's options in the same UPDATE that
-            // writes the password, so a statement doing both lands both.
-            options.apply(&registry, &user, &host);
-            if let Some(locked) = options.locked {
-                mirror_fields.push(format!(
-                    "account_locked='{}'",
-                    if locked { "Y" } else { "N" }
+            let lock_account = match options.locked {
+                Some(true) => "Y",
+                Some(false) => "N",
+                None => "",
+            };
+            if !lock_account.is_empty() {
+                mirror_fields.push(format!("account_locked='{lock_account}'"));
+            }
+            // support alter Password_reuse_history and Password_reuse_time.
+            if let Some(history) = options.history {
+                mirror_fields.push(history.map_or_else(
+                    || "Password_reuse_history = NULL ".to_owned(),
+                    |value| format!("Password_reuse_history = '{value}' "),
                 ));
             }
+            if let Some(reuse) = options.reuse_days {
+                mirror_fields.push(reuse.map_or_else(
+                    || "Password_reuse_time = NULL ".to_owned(),
+                    |value| format!("Password_reuse_time = '{value}' "),
+                ));
+            }
+            let mut password_locking_info = self.read_password_locking_info(
+                &user,
+                &host,
+                options.failed_login_attempts,
+                options.password_lock_time_days,
+            )?;
+            let password_locking_str =
+                super::account_tables::alter_user_failed_login_json(&password_locking_info, lock_account);
             // Go's `plOptions.passwordExpired`: `'Y'` for a bare `PASSWORD
             // EXPIRE`, `'N'` backfilled when the spec stores a new password
-            // and no expire clause was written; the lifetime column moves
-            // only for the DEFAULT/NEVER/INTERVAL forms.
+            // (BY or AS) and no expire clause was written; the lifetime
+            // column moves only for the DEFAULT/NEVER/INTERVAL forms.
+            let stores_password = matches!(
+                spec.auth,
+                Some(tidb_ast::CreateUserAuth::By(_))
+                    | Some(tidb_ast::CreateUserAuth::With { credential: Some(_), .. })
+            );
             match options.expire {
                 Some(tidb_privilege::PasswordExpireSetting::Now) => {
                     mirror_fields.push("password_expired='Y'".to_owned());
                 }
                 _ => {
-                    if spec.auth.is_some() {
+                    if stores_password {
                         mirror_fields.push("password_expired='N'".to_owned());
                     }
                 }
@@ -432,26 +453,29 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                 }
                 Some(tidb_privilege::PasswordExpireSetting::Now) | None => {}
             }
+            if let Some(count) = max_user_connections {
+                mirror_fields.push(format!("max_user_connections={count}"));
+            }
             // Go's `newAttributes`: COMMENT/ATTRIBUTE metadata, then the
             // RETAIN secondary, preserving the locking object and other metadata.
             let mut new_attributes: Vec<String> = Vec::new();
             if let Some(annotation) = &alter.comment_or_attribute {
                 match annotation {
-                    tidb_ast::CreateUserCommentOrAttribute::Comment(text) => new_attributes.push(
-                        format!("\"metadata\": {}", serde_json::json!({"comment": text})),
-                    ),
+                    tidb_ast::CreateUserCommentOrAttribute::Comment(text) => {
+                        new_attributes.push(format!("\"metadata\": {{\"comment\": \"{text}\"}}"));
+                    }
                     tidb_ast::CreateUserCommentOrAttribute::Attribute(json) => {
                         new_attributes.push(format!("\"metadata\": {json}"));
                     }
                 }
             }
             if let Some(name) = &alter.resource_group {
-                let name =
-                    self.user_resource_group_attribute(name, registry.is_role(&user, &host))?;
-                new_attributes.push(format!(
-                    "\"resource_group\": {}",
-                    super::account_tables::json_string_literal(&name)
-                ));
+                let is_role = self.is_role_sql(&user, &host)?;
+                let name = self.user_resource_group_attribute(name, is_role)?;
+                new_attributes.push(format!("\"resource_group\": \"{name}\""));
+            }
+            if !password_locking_str.is_empty() {
+                new_attributes.push(password_locking_str.clone());
             }
             if spec_retain {
                 // Go `buildAdditionalPasswordEntry`: the pre-change primary
@@ -464,23 +488,29 @@ pub trait AccountPasswordExec: super::account::AccountExec {
             // Go: DISCARD removes the secondary, and a plugin change drops
             // it silently; RETAIN always writes a fresh one, so it wins.
             let drop_secondary = (spec_discard || plugin_changed) && !spec_retain;
-            if !new_attributes.is_empty() || drop_secondary {
-                let patch = format!("{{{}}}", new_attributes.join(","));
-                registry.merge_user_attributes(
-                    &user,
-                    &host,
-                    serde_json::from_str(&patch)
-                        .map_err(|_| super::account::invalid_user_attribute_json())?,
-                    drop_secondary,
+            // Emit a single user_attributes assignment so the merge-then-remove
+            // pipeline is expressed in one SQL expression.
+            let has_new_attributes = !new_attributes.is_empty();
+            if has_new_attributes && (new_attributes.len() > 1 || password_locking_str.is_empty()) {
+                password_locking_info.contains_no_others = false;
+            }
+            let new_attributes_str = format!("{{{}}}", new_attributes.join(","));
+            if has_new_attributes && drop_secondary {
+                mirror_fields.push(format!(
+                    "user_attributes=json_remove(json_merge_patch(coalesce(user_attributes, '{{}}'), {}), '$.additional_password')",
+                    super::account_tables::sql_str(&new_attributes_str)
+                ));
+            } else if has_new_attributes {
+                mirror_fields.push(format!(
+                    "user_attributes=json_merge_patch(coalesce(user_attributes, '{{}}'), {})",
+                    super::account_tables::sql_str(&new_attributes_str)
+                ));
+            } else if drop_secondary {
+                mirror_fields.push(
+                    "user_attributes=nullif(json_remove(coalesce(user_attributes, '{}'), '$.additional_password'), cast('{}' as json))"
+                        .to_owned(),
                 );
             }
-            // Go `executeAlterUser` REPLACES the whole `mysql.global_priv`
-            // PRIV JSON on every ALTER USER: `tlsOption2GlobalPriv` answers
-            // `{}` for a statement without REQUIRE, so a password-only ALTER
-            // clears an earlier `REQUIRE SSL` too (captured on this branch:
-            // `SHOW CREATE USER` then prints `REQUIRE NONE`), through
-            // `INSERT ... ON DUPLICATE KEY UPDATE Priv = values(Priv)`.
-            registry.set_tls_policy(&user, &host, &tls_policy);
             self.mirror_global_priv(
                 &user,
                 &host,
@@ -496,7 +526,8 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                 );
                 self.run_user_table_write(&sql)?;
             }
-            self.mirror_account_policy_and_history(&registry, &user, &host)?;
+            // Remove useless Password_locking from User_attributes.
+            self.delete_password_locking_attribute(&user, &host, &password_locking_info)?;
         }
         for account in skipped {
             self.append_sql_warning(tidb_context::SqlWarn::raised(
@@ -790,31 +821,19 @@ pub trait AccountPasswordExec: super::account::AccountExec {
         if set_password.retain_current_password && current_auth_string.is_empty() {
             return Err(DriverError::from(tidb_exeerrors::ERR_SECOND_PASSWORD_CANNOT_BE_EMPTY.gen_with_stack_by_args(&[user.into(), host.into()])));
         }
-        self.maintain_password_history(
-            &registry,
-            &user,
-            &host,
-            &auth_string,
-            Some(&set_password.password),
-            &plugin,
-            &super::account::PasswordOrLockOptions::default(),
-            false,
-            false,
-        )?;
-        if set_password.retain_current_password {
-            registry.merge_user_attributes(
+        // for Support Password Reuse Policy.
+        // The empty password does not count in the password history and is subject to reuse at any time.
+        if !auth_string.is_empty() {
+            self.check_password_reuse_policy(
                 &user,
                 &host,
-                serde_json::json!({"additional_password": current_auth_string}),
-                false,
-            );
+                &auth_string,
+                &set_password.password,
+                &plugin,
+                None,
+                None,
+            )?;
         }
-        if !registry.set_auth_string(&user, &host, &auth_string) {
-            return Err(DriverError::from(tidb_exeerrors::ERR_PASSWORD_NO_MATCH.gen_with_stack_by_args(&[])));
-        }
-        // Same UPDATE as `ALTER USER ... IDENTIFIED BY`: a stored password
-        // is an unexpired password.
-        registry.mark_password_changed(&user, &host);
         // Go's UPDATE against mysql.user, with the RETAIN form promoting the
         // old primary into `$.additional_password` in the SAME statement.
         if self.user_table_present() {
@@ -840,7 +859,6 @@ pub trait AccountPasswordExec: super::account::AccountExec {
             );
             self.run_user_table_write(&sql)?;
         }
-        self.mirror_account_policy_and_history(&registry, &user, &host)?;
         self.session_vars_mut().sandbox_mode = false;
         Ok(())
     }
