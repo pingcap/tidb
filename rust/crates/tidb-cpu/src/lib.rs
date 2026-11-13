@@ -155,6 +155,17 @@ impl Observer {
         state.threads.push(ObserverThread { stop, thread });
     }
 
+    /// Makes a stopped observer startable again. A process that runs the
+    /// node more than once (an embedding host restarting a node that failed
+    /// to boot) reuses the process-wide observer; without this, the second
+    /// run's `stop` would be a close of an already closed observer.
+    pub fn reopen(&self) {
+        self.lifecycle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .stopped = false;
+    }
+
     /// Stops CPU observation and waits for every observer thread.
     pub fn stop(&self) {
         let threads = {

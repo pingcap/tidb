@@ -75,7 +75,15 @@ impl ResourceManager {
     }
 
     /// Starts CPU observation and 100 ms scheduling.
+    ///
+    /// The manager is a process singleton, so a node that is run again in
+    /// the same process starts it again after its previous `stop`.
     pub fn start(&self) {
+        self.lifecycle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .stopped = false;
+        self.cpu_observer.reopen();
         let cpu_observer = Arc::clone(&self.cpu_observer);
         let cpu_start = std::thread::spawn(move || cpu_observer.start());
         let pool_map = Arc::clone(&self.pool_map);
@@ -262,6 +270,15 @@ pub fn instance_resource_manager() -> &'static ResourceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stopped_manager_can_be_started_and_stopped_again() {
+        let manager = ResourceManager::new();
+        manager.start();
+        manager.stop();
+        manager.start();
+        manager.stop();
+    }
     use tidb_resourcemanager_util::MockGPool;
 
     #[test]
