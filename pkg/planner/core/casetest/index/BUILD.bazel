@@ -10,7 +10,11 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     shard_count = 14,
+=======
+    shard_count = 17,
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
     deps = [
         "//pkg/domain",
         "//pkg/domain/infosync",
