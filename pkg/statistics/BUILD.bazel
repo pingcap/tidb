@@ -32,6 +32,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/planner/core/resolve",
         "//pkg/planner/planctx",
+        "//pkg/planner/util/fixcontrol",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
