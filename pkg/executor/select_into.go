@@ -89,7 +89,7 @@ func (s *SelectIntoExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 func (*SelectIntoExec) considerEncloseOpt(et types.EvalType) bool {
 	return et == types.ETString || et == types.ETDuration ||
 		et == types.ETTimestamp || et == types.ETDatetime ||
-		et == types.ETJson
+		et == types.ETJson || et == types.ETVectorFloat32
 }
 
 func (s *SelectIntoExec) escapeField(f []byte) []byte {
@@ -152,9 +152,11 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 				s.lineBuf = append(s.lineBuf, nullTerm...)
 				continue
 			}
-			et := col.GetType(s.Ctx().GetExprCtx().GetEvalCtx()).EvalType()
+			typeInfo := col.GetType(s.Ctx().GetExprCtx().GetEvalCtx())
+			et := typeInfo.EvalType()
 			if (encloseFlag && !encloseOpt) ||
-				(encloseFlag && encloseOpt && s.considerEncloseOpt(et)) {
+				(encloseFlag && encloseOpt && (s.considerEncloseOpt(et) ||
+					typeInfo.GetType() == mysql.TypeBit)) {
 				s.lineBuf = append(s.lineBuf, encloseByte)
 				s.enclosed = true
 			} else {
@@ -180,8 +182,7 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 				mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
 				s.fieldBuf = append(s.fieldBuf, row.GetBytes(j)...)
 			case mysql.TypeBit:
-				// bit value won't be escaped anyway (verified on MySQL, test case added)
-				s.lineBuf = append(s.lineBuf, row.GetBytes(j)...)
+				s.fieldBuf = append(s.fieldBuf, row.GetBytes(j)...)
 			case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 				s.fieldBuf = append(s.fieldBuf, row.GetTime(j).String()...)
 			case mysql.TypeDuration:
@@ -196,14 +197,14 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 				s.fieldBuf = append(s.fieldBuf, row.GetVectorFloat32(j).String()...)
 			}
 
-			switch col.GetType(s.Ctx().GetExprCtx().GetEvalCtx()).EvalType() {
-			case types.ETString, types.ETJson:
+			if et == types.ETString || et == types.ETJson || et == types.ETVectorFloat32 || typeInfo.GetType() == mysql.TypeBit {
 				s.lineBuf = append(s.lineBuf, s.escapeField(s.fieldBuf)...)
-			default:
+			} else {
 				s.lineBuf = append(s.lineBuf, s.fieldBuf...)
 			}
 			if (encloseFlag && !encloseOpt) ||
-				(encloseFlag && encloseOpt && s.considerEncloseOpt(et)) {
+				(encloseFlag && encloseOpt && (s.considerEncloseOpt(et) ||
+					typeInfo.GetType() == mysql.TypeBit)) {
 				s.lineBuf = append(s.lineBuf, encloseByte)
 			}
 		}
