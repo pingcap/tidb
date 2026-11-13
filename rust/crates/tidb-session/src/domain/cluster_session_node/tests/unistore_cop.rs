@@ -13706,15 +13706,18 @@ fn login_durability_batch_locks_unlocks_and_checks_stale_cache() {
     .remove(0);
     let attributes: serde_json::Value = serde_json::from_str(&attributes).unwrap();
     assert_eq!(attributes["Password_locking"]["auto_account_locked"], "Y");
-    let locked = users
-        .accounts()
-        .password_locking("durable_lock", "%")
-        .unwrap();
-    let mut stale = locked;
-    stale.auto_account_locked = false;
-    users
-        .accounts()
-        .publish_password_locking("durable_lock", "%", stale);
+    // Go `autolockAction`: the lock change reloads the privileges
+    // (`NotifyUpdatePrivilege`).
+    assert!(users.accounts().password_locking("durable_lock", "%").unwrap().auto_account_locked);
+    // The loaded privileges go stale as Go's do: a row loaded unlocked by
+    // FLUSH PRIVILEGES, then locked again by a write no reload follows.
+    rows(&mut session, "UPDATE mysql.user SET user_attributes=JSON_MERGE_PATCH(user_attributes, '{\"Password_locking\": {\"auto_account_locked\": \"N\"}}') WHERE User='durable_lock' AND Host='%'");
+    rows(&mut session, "FLUSH PRIVILEGES");
+    rows(&mut session, "UPDATE mysql.user SET user_attributes=JSON_MERGE_PATCH(user_attributes, '{\"Password_locking\": {\"auto_account_locked\": \"Y\"}}') WHERE User='durable_lock' AND Host='%'");
+    assert!(
+        !users.accounts().password_locking("durable_lock", "%").unwrap().auto_account_locked,
+        "the loaded privileges are stale"
+    );
     assert!(
         matches!(
             users.authenticate_native("durable_lock", "127.0.0.1", b"01234567890123456789", b""),
@@ -13731,9 +13734,7 @@ fn login_durability_batch_locks_unlocks_and_checks_stale_cache() {
         "authoritative lock wins even if tracking was concurrently disabled"
     );
     rows(&mut session, "UPDATE mysql.user SET user_attributes=JSON_MERGE_PATCH(user_attributes, '{\"Password_locking\": {\"failed_login_attempts\": 1}}') WHERE User='durable_lock' AND Host='%'");
-    users
-        .accounts()
-        .publish_password_locking("durable_lock", "%", locked);
+    rows(&mut session, "FLUSH PRIVILEGES");
     users.accounts().clock().advance(24 * 60 * 60 + 1);
     users
         .authenticate_native("durable_lock", "127.0.0.1", b"01234567890123456789", b"")

@@ -142,10 +142,11 @@ fn apply_login_policy_in_session(
         }
     };
     if before.auto_account_locked != after.auto_account_locked {
-        domain
-            .privileges
-            .publish_password_locking(user, host, after);
-        domain.accounts.notify_login_lock_change(user, host);
+        // Go: "Notification auto (un)lock" -- `NotifyUpdatePrivilege`
+        // reloads the privileges from the tables and announces the change.
+        domain.accounts.notify_update_privilege().map_err(|error| {
+            AuthenticationFailure::Storage(SqlQueryError::unknown(error))
+        })?;
     }
     admission.map_err(AuthenticationFailure::AutoLocked)
 }

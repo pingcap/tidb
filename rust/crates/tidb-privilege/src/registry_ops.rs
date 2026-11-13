@@ -845,13 +845,6 @@ impl PrivilegeRegistry {
         }
     }
 
-    /// Publish a committed login lock transition without replacing unrelated account state.
-    pub fn publish_password_locking(&self, user: &str, host: &str, locking: PasswordLocking) {
-        if let Some(record) = self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
-            record.password_locking = Some(locking);
-        }
-    }
-
     /// Go's `pkg/session.verifyAccountAutoLock`, run BEFORE the password is
     /// compared: an account still inside its `PASSWORD_LOCK_TIME` window
     /// reports 3955 no matter which password arrived, and an account whose

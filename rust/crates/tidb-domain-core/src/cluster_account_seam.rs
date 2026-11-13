@@ -67,8 +67,6 @@ pub trait ClusterAccountWriter: Send + Sync {
     /// Go `Domain.NotifyUpdatePrivilege` after a committed account statement:
     /// the live table reloads from the cluster's tables and peers are told.
     fn notify_update_privilege(&self) -> Result<(), String>;
-    /// Announce a committed automatic lock/unlock; counter-only writes stay local.
-    fn notify_login_lock_change(&self, _user: &str, _host: &str) {}
     /// Go `NotifyUpdateAllUsersPrivilege`'s etcd PUT after FLUSH PRIVILEGES:
     /// every peer's privilege watch reloads all accounts.
     fn notify_all_privileges_changed(&self) {}
@@ -118,10 +116,6 @@ impl<S> ClusterAccountWriter for RealClusterAccountWriter<S>
 where
     S: StoreClient,
 {
-    fn notify_login_lock_change(&self, user: &str, host: &str) {
-        notify_privilege_update(self.notifier.as_deref(), &[format!("'{user}'@'{host}'")]);
-    }
-
     fn notify_all_privileges_changed(&self) {
         notify_privilege_update(self.notifier.as_deref(), &[]);
     }
