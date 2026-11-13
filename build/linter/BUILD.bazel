@@ -7,6 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "@com_github_apache_skywalking_eyes//pkg/config",
-        "@org_golang_x_crypto_openpgp//:openpgp",
+        "@com_github_go_jose_go_jose_v4//:go-jose",
     ],
 )
