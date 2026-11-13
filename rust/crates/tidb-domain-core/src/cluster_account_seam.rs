@@ -90,6 +90,9 @@ where
     /// privilege watches fire promptly. `None` leaves them to their reload
     /// tick; a failed announcement is a warning, never a failed statement.
     notifier: Option<Arc<EtcdClient>>,
+    /// Go `Domain.ServerID`: the global server ID this node's privilege
+    /// events carry (0 without one).
+    server_id: Arc<dyn Fn() -> u64 + Send + Sync>,
 }
 
 impl<S> RealClusterAccountWriter<S>
@@ -110,7 +113,15 @@ where
             live,
             timeout,
             notifier,
+            server_id: Arc::new(|| 0),
         }
+    }
+
+    /// Go `Domain.ServerID`, read as each privilege event is sent.
+    #[must_use]
+    pub fn with_server_id(mut self, server_id: Arc<dyn Fn() -> u64 + Send + Sync>) -> Self {
+        self.server_id = server_id;
+        self
     }
 }
 
@@ -159,12 +170,15 @@ impl<S> RealClusterAccountWriter<S>
 where
     S: StoreClient,
 {
-    /// Go `Domain.notifyUpdatePrivilege`: the etcd announcement, then
-    /// `privReloadEvent` on this node's handle. This node allocates no
-    /// global server ID, so its events carry Go's zero `ServerID`.
+    /// Go `Domain.notifyUpdatePrivilege`: the etcd announcement, stamped
+    /// with this server's ID, then `privReloadEvent` on this node's handle.
     fn notify_update(&self, event: &PrivilegeEvent) -> Result<(), String> {
-        notify_privilege_update(self.notifier.as_deref(), event);
-        priv_reload_event(&self.live, event)
+        let event = PrivilegeEvent {
+            server_id: (self.server_id)(),
+            ..event.clone()
+        };
+        notify_privilege_update(self.notifier.as_deref(), &event);
+        priv_reload_event(&self.live, &event)
     }
 }
 

@@ -45,6 +45,7 @@ pub fn connect_etcd_client(config: &NodeConfig) -> Option<Arc<EtcdClient>> {
 pub fn spawn_privilege_watch(
     etcd: Option<&EtcdClient>,
     reloader: Option<&PrivilegeReloader>,
+    server_id: std::sync::Arc<dyn Fn() -> u64 + Send + Sync>,
 ) -> Option<EtcdWatcher> {
     let waker = reloader?.waker();
     match etcd?.watch_key(PRIVILEGE_UPDATE_KEY, 0, move |event| {
@@ -55,10 +56,10 @@ pub fn spawn_privilege_watch(
             event.mod_revision,
             json_string(&String::from_utf8_lossy(&event.value))
         );
-        // Go `decodePrivilegeEvent`; this node allocates no global server ID.
+        // Go `decodePrivilegeEvent`, skipping this server's own events.
         waker.nudge(tidb_domain_core::cluster_privileges::decode_privilege_event(
             [event.value.as_slice()],
-            0,
+            server_id(),
         ));
     }) {
         Ok(watcher) => Some(watcher),

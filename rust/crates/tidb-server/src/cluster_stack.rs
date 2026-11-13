@@ -326,6 +326,14 @@ pub fn cluster_session_stack(
             config.global_config.enable_32bits_connection_id,
         )
     });
+    // Go `Domain.ServerID`: the acquired global server ID, 0 without one.
+    let server_id: Arc<dyn Fn() -> u64 + Send + Sync> = match &server_identity {
+        Some(identity) => {
+            let identity = Arc::clone(identity);
+            Arc::new(move || identity.id())
+        }
+        None => Arc::new(|| 0),
+    };
     let mut info = tidb_session::domain::serverinfo_etcd::get_server_info(config);
     if let Some(identity) = &server_identity {
         let identity = Arc::clone(identity);
@@ -532,12 +540,15 @@ pub fn cluster_session_stack(
             TRANSACTION_RPC_TIMEOUT,
         )),
         cluster_ddl,
-        Arc::new(RealClusterAccountWriter::new(
-            Arc::new(authority.transaction_opener()),
-            users.accounts(),
-            CONTROL_PLANE_TIMEOUT,
-            etcd.clone(),
-        )),
+        Arc::new(
+            RealClusterAccountWriter::new(
+                Arc::new(authority.transaction_opener()),
+                users.accounts(),
+                CONTROL_PLANE_TIMEOUT,
+                etcd.clone(),
+            )
+            .with_server_id(Arc::clone(&server_id)),
+        ),
         Arc::new(RealClusterSysvarWriter::new(
             Arc::new(authority.transaction_opener()),
             users.global_vars(),
@@ -647,7 +658,8 @@ pub fn cluster_session_stack(
     // The reloader's tick is what makes a peer's `GRANT` reach this node at
     // all, and this watch is what makes it arrive in a round trip instead of
     // an interval.
-    let privilege_watcher = spawn_privilege_watch(etcd.as_deref(), privilege_reloader.as_ref());
+    let privilege_watcher =
+        spawn_privilege_watch(etcd.as_deref(), privilege_reloader.as_ref(), server_id);
     // Go `InitBindingHandle`, after the sysvar cache (it sizes the binding
     // cache from `tidb_mem_quota_binding_cache`).
     let binding_reloader = tidb_session::domain::cluster_session_node::init_binding_handle(
