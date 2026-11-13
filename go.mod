@@ -68,8 +68,13 @@ require (
 	github.com/golangci/prealloc v0.0.0-20180630174525-215b22d4de21
 	github.com/google/btree v1.1.2
 	github.com/google/pprof v0.0.0-20260302011040-a15ffb7f9dcc
+<<<<<<< HEAD
 	github.com/google/uuid v1.6.0
 	github.com/gordonklaus/ineffassign v0.1.0
+=======
+	github.com/google/uuid v1.6.1-0.20241114170450-2d3c2a9cc518
+	github.com/gordonklaus/ineffassign v0.2.0
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
 	github.com/gorilla/mux v1.8.1
 	github.com/gostaticanalysis/forcetypeassert v0.1.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
@@ -84,10 +89,19 @@ require (
 	github.com/json-iterator/go v1.1.12
 	github.com/karamaru-alpha/copyloopvar v1.1.0
 	github.com/kisielk/errcheck v1.20.0
+<<<<<<< HEAD
 	github.com/klauspost/compress v1.18.5
+=======
+	github.com/klauspost/compress v1.20.2
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
 	github.com/ks3sdklib/aws-sdk-go v1.2.9
 	github.com/lestrrat-go/jwx/v2 v2.0.21
+<<<<<<< HEAD
 	github.com/mgechev/revive v1.4.0
+=======
+	github.com/mgechev/revive v1.17.0
+	github.com/mitchellh/copystructure v1.2.0
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/nishanths/predeclared v0.2.2
@@ -132,7 +146,7 @@ require (
 	github.com/vbauerster/mpb/v7 v7.5.3
 	github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f
 	go.etcd.io/etcd/api/v3 v3.5.15
-	go.etcd.io/etcd/client/pkg/v3 v3.5.15
+	go.etcd.io/etcd/client/pkg/v3 v3.5.33
 	go.etcd.io/etcd/client/v3 v3.5.15
 	go.etcd.io/etcd/server/v3 v3.5.15
 	go.etcd.io/etcd/tests/v3 v3.5.12
@@ -161,6 +175,10 @@ require (
 	gorm.io/gorm v1.25.11
 	honnef.co/go/tools v0.8.2
 	k8s.io/api v0.35.3
+<<<<<<< HEAD
+=======
+	modernc.org/mathutil v1.7.1
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
@@ -189,8 +207,21 @@ require (
 	github.com/Masterminds/sprig/v3 v3.2.2 // indirect
 	github.com/VividCortex/ewma v1.2.0 // indirect
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
+<<<<<<< HEAD
 	github.com/andybalholm/brotli v1.1.1 // indirect
 	github.com/apache/thrift v0.23.0 // indirect
+=======
+	github.com/alibabacloud-go/alibabacloud-gateway-spi v0.0.5 // indirect
+	github.com/alibabacloud-go/darabonba-openapi/v2 v2.0.11 // indirect
+	github.com/alibabacloud-go/debug v1.0.1 // indirect
+	github.com/alibabacloud-go/endpoint-util v1.1.0 // indirect
+	github.com/alibabacloud-go/openapi-util v0.1.1 // indirect
+	github.com/alibabacloud-go/sts-20150401/v2 v2.0.4 // indirect
+	github.com/alibabacloud-go/tea-utils/v2 v2.0.7 // indirect
+	github.com/alibabacloud-go/tea-xml v1.1.3 // indirect
+	github.com/andybalholm/brotli v1.2.7 // indirect
+	github.com/apache/thrift v0.24.0 // indirect
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
 	github.com/aws/aws-sdk-go v1.55.7 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.8 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.20 // indirect
@@ -229,7 +260,10 @@ require (
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/getsentry/sentry-go v0.27.0 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.4 // indirect
+<<<<<<< HEAD
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
+=======
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
@@ -237,8 +271,15 @@ require (
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/golang/glog v1.2.5 // indirect
+<<<<<<< HEAD
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/flatbuffers v24.3.25+incompatible // indirect
+=======
+	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
+	github.com/google/flatbuffers v25.12.19+incompatible // indirect
+	github.com/google/go-cmp v0.7.0 // indirect
+	github.com/google/go-querystring v1.2.0 // indirect
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
 	github.com/google/licensecheck v0.3.1 // indirect
 	github.com/google/renameio/v2 v2.0.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
@@ -247,7 +288,12 @@ require (
 	github.com/gorilla/handlers v1.5.1 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/gostaticanalysis/analysisutil v0.7.1 // indirect
+<<<<<<< HEAD
 	github.com/gostaticanalysis/comment v1.4.2 // indirect
+=======
+	github.com/gostaticanalysis/comment v1.5.0 // indirect
+	github.com/grafana/pyroscope-go/godeltaprof v0.1.9 // indirect
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
 	github.com/grafana/regexp v0.0.0-20250905093917-f7b3be9d1853 // indirect
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway v1.16.0 // indirect
@@ -276,12 +322,20 @@ require (
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
+<<<<<<< HEAD
 	github.com/minio/asm2plan9s v0.0.0-20200509001527-cdd76441f9d8 // indirect
 	github.com/minio/c2goasm v0.0.0-20190812172519-36a3d3bbc4f3 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
+=======
+	github.com/mitchellh/mapstructure v1.5.0 // indirect
+	github.com/mitchellh/reflectwalk v1.0.2 // indirect
+	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
+	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
+	github.com/mozillazg/go-httpheader v0.2.1 // indirect
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/nbutton23/zxcvbn-go v0.0.0-20210217022336-fa2cb2858354 // indirect
 	github.com/ncw/directio v1.0.5 // indirect
@@ -338,11 +392,18 @@ require (
 	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/telemetry v0.0.0-20261009151841-97e8ea77aa2a // indirect
 	golang.org/x/tools/godoc v0.1.0-deprecated // indirect
+<<<<<<< HEAD
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
+=======
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
 	google.golang.org/genproto v0.0.0-20260217215200-42d3e9bedb6d // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
+<<<<<<< HEAD
+=======
+	gopkg.in/ini.v1 v1.67.1 // indirect
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apimachinery v0.35.3 // indirect

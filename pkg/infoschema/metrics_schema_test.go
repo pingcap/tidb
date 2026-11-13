@@ -64,7 +64,11 @@ func TestMetricSchemaDef(t *testing.T) {
 			require.Equalf(t, "instance", def.Labels[0], "metrics table %v: expect `instance`is the first label but got %v", name, def.Labels)
 		}
 
+<<<<<<< HEAD
 		_, err := promQLParser.ParseExpr(mockGenPromQL(def.PromQL))
+=======
+		_, err := parser.NewParser(parser.Options{}).ParseExpr(mockGenPromQL(def.PromQL))
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
 		require.NoError(t, err, "fail to parser PromQL %s", def.PromQL)
 	}
 }

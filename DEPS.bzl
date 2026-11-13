@@ -127,8 +127,13 @@ def go_deps():
         name = "com_github_andybalholm_brotli",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/andybalholm/brotli",
+<<<<<<< HEAD
         sum = "h1:PR2pgnyFznKEugtsUo0xLdDop5SKXd5Qf5ysW+7XdTA=",
         version = "v1.1.1",
+=======
+        sum = "h1:UgafRPGMam5ySHfRkhthMqOFA6IFoeF3D7mWIDLjG5A=",
+        version = "v1.2.7",
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
     )
     go_repository(
         name = "com_github_antihax_optional",
@@ -209,6 +214,7 @@ def go_deps():
         version = "v0.0.0-20160902184237-e75332964ef5",
     )
     go_repository(
+<<<<<<< HEAD
         name = "com_github_asaskevich_govalidator",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/asaskevich/govalidator",
@@ -217,6 +223,9 @@ def go_deps():
     )
     go_repository(
         name = "com_github_ashanbrown_forbidigo",
+=======
+        name = "com_github_ashanbrown_forbidigo_v2",
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
         build_file_proto_mode = "disable_global",
         importpath = "github.com/ashanbrown/forbidigo",
         sum = "h1:D3aewfM37Yb3pxHujIPSpTf6oQk9sc9WZi8gerOIVIY=",
@@ -629,6 +638,13 @@ def go_deps():
         version = "v1.1.1",
     )
     go_repository(
+        name = "com_github_buger_jsonparser",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/buger/jsonparser",
+        sum = "h1:2PnMjfWD7wBILjqQbt530v576A/cAbQvEW9gGIpYMUs=",
+        version = "v1.1.1",
+    )
+    go_repository(
         name = "com_github_burntsushi_toml",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/BurntSushi/toml",
@@ -907,6 +923,24 @@ def go_deps():
         importpath = "github.com/codegangsta/inject",
         sum = "h1:sDMmm+q/3+BukdIpxwO365v/Rbspp2Nt5XntgQRXq8Q=",
         version = "v0.0.0-20150114235600-33e0aa1cb7c0",
+    )
+    go_repository(
+<<<<<<< HEAD
+        name = "com_github_containerd_errdefs",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/containerd/errdefs",
+        sum = "h1:tg5yIfIlQIrxYtu9ajqY42W3lpS19XqdxRQeEwYG8PI=",
+        version = "v1.0.0",
+    )
+    go_repository(
+        name = "com_github_containerd_errdefs_pkg",
+=======
+        name = "com_github_containerd_console",
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/containerd/errdefs/pkg",
+        sum = "h1:9IKJ06FvyNlexW690DXuQNx2KA2cUJXx151Xdx3ZPPE=",
+        version = "v0.3.0",
     )
     go_repository(
         name = "com_github_containerd_errdefs",
@@ -1454,6 +1488,16 @@ def go_deps():
         importpath = "github.com/go-kit/log",
         sum = "h1:DGJh0Sm43HbOeYDNnVZFl8BvcYVvjD5bqYJvp0REbwQ=",
         version = "v0.1.0",
+<<<<<<< HEAD
+=======
+    )
+    go_repository(
+        name = "com_github_go_latex_latex",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/go-latex/latex",
+        sum = "h1:6zl3BbBhdnMkpSj2YY30qV3gDcVBGtFgVsV3+/i+mKQ=",
+        version = "v0.0.0-20210823091927-c0d11ff05a81",
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
     )
     go_repository(
         name = "com_github_go_ldap_ldap_v3",
@@ -1637,6 +1681,23 @@ def go_deps():
         importpath = "github.com/go-openapi/validate",
         sum = "h1:sSACUI6Jcnbo5IWqbYHgjibrhhmt3vR6lCzKZnmAgBw=",
         version = "v0.25.1",
+<<<<<<< HEAD
+=======
+    )
+    go_repository(
+        name = "com_github_go_pdf_fpdf",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/go-pdf/fpdf",
+        sum = "h1:MlgtGIfsdMEEQJr2le6b/HNr1ZlQwxyWr77r2aj2U/8=",
+        version = "v0.6.0",
+    )
+    go_repository(
+        name = "com_github_go_playground_assert_v2",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/go-playground/assert/v2",
+        sum = "h1:MsBgLAaY856+nPRTKrp3/OZK38U/wa0CcBYNjji3q3A=",
+        version = "v2.0.1",
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
     )
     go_repository(
         name = "com_github_go_playground_locales",
@@ -1812,6 +1873,16 @@ def go_deps():
         importpath = "github.com/godbus/dbus/v5",
         sum = "h1:4KLkAxT3aOY8Li4FRJe/KvhoNFFxo0m6fNuFUO8QJUk=",
         version = "v5.1.0",
+<<<<<<< HEAD
+=======
+    )
+    go_repository(
+        name = "com_github_godoc_lint_godoc_lint",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/godoc-lint/godoc-lint",
+        sum = "h1:N9zUYVJ/OkznBbrBsU/zODvua64EUplMBLQWStO3+1M=",
+        version = "v0.11.4",
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
     )
     go_repository(
         name = "com_github_gofrs_flock",
@@ -2099,6 +2170,23 @@ def go_deps():
         importpath = "github.com/googleapis/gax-go/v2",
         sum = "h1:jxP5Uuo3bxm3M6gGtV94P4lliVetoCB4Wk2x8QA86LI=",
         version = "v2.18.0",
+<<<<<<< HEAD
+=======
+    )
+    go_repository(
+        name = "com_github_googleapis_go_type_adapters",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/googleapis/go-type-adapters",
+        sum = "h1:9XdMn+d/G57qq1s8dNc5IesGCXHf6V2HZ2JwRxfA2tA=",
+        version = "v1.0.0",
+    )
+    go_repository(
+        name = "com_github_googleapis_google_cloud_go_testing",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/googleapis/google-cloud-go-testing",
+        sum = "h1:tlyzajkF3030q6M8SvmJSemC9DTHL/xaMa18b65+JM4=",
+        version = "v0.0.0-20200911160855-bcd43fbb19e8",
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
     )
     go_repository(
         name = "com_github_googlecloudplatform_opentelemetry_operations_go_detectors_gcp",
@@ -2141,6 +2229,16 @@ def go_deps():
         importpath = "github.com/gophercloud/gophercloud/v2",
         sum = "h1:jCs4vLH8sJgRqrPzqVfWgl7uI6JnIIlsgeIRM0uHjxY=",
         version = "v2.11.1",
+<<<<<<< HEAD
+=======
+    )
+    go_repository(
+        name = "com_github_gopherjs_gopherjs",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/gopherjs/gopherjs",
+        sum = "h1:l5lAOZEym3oK3SQ2HBHWsJUfbNBiTXJDeW2QDxw9AQ0=",
+        version = "v0.0.0-20200217142428-fce0ec30dd00",
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
     )
     go_repository(
         name = "com_github_gordonklaus_ineffassign",
@@ -2723,8 +2821,13 @@ def go_deps():
         name = "com_github_klauspost_compress",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/klauspost/compress",
+<<<<<<< HEAD
         sum = "h1:/h1gH5Ce+VWNLSWqPzOVn6XBO+vJbCNGvjoaGBFW2IE=",
         version = "v1.18.5",
+=======
+        sum = "h1:v5tiZvm1KGLyg5d5oXdXe3lsSPrbEUiKoXGia//I7Qo=",
+        version = "v1.20.2",
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
     )
     go_repository(
         name = "com_github_klauspost_cpuid",
@@ -2739,6 +2842,27 @@ def go_deps():
         importpath = "github.com/klauspost/cpuid/v2",
         sum = "h1:66ze0taIn2H33fBvCkXuv9BmCwDfafmiIVpKV9kKGuY=",
         version = "v2.2.9",
+    )
+    go_repository(
+        name = "com_github_knadh_koanf_maps",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/knadh/koanf/maps",
+        sum = "h1:RBfmAW5CnZT+PJ1CVc1QSJKf4Xu9kxfQgYVQSu8hpbo=",
+        version = "v0.1.2",
+    )
+    go_repository(
+        name = "com_github_knadh_koanf_providers_confmap",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/knadh/koanf/providers/confmap",
+        sum = "h1:mHKLJTE7iXEys6deO5p6olAiZdG5zwp8Aebir+/EaRE=",
+        version = "v1.0.0",
+    )
+    go_repository(
+        name = "com_github_knadh_koanf_v2",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/knadh/koanf/v2",
+        sum = "h1:jLJC8XCRfLC7n4F+ZKKdBsbq1bfXTpuFhf4L7t94D94=",
+        version = "v2.3.3",
     )
     go_repository(
         name = "com_github_knadh_koanf_maps",
@@ -2865,6 +2989,13 @@ def go_deps():
         importpath = "github.com/ldez/tagliatelle",
         sum = "h1:epgfuYt9v0CG3fms0pEgIMNPuFf/LpPIfjk4kyqSioo=",
         version = "v0.5.0",
+    )
+    go_repository(
+        name = "com_github_ledongthuc_pdf",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/ledongthuc/pdf",
+        sum = "h1:6Yzfa6GP0rIo/kULo2bwGEkFvCePZ3qHDDTC3/J9Swo=",
+        version = "v0.0.0-20220302134840-0c2507a12d80",
     )
     go_repository(
         name = "com_github_ledongthuc_pdf",
@@ -3229,6 +3360,23 @@ def go_deps():
         importpath = "github.com/morikuni/aec",
         sum = "h1:vBBl0pUnvi/Je71dsRrhMBtreIqNMYErSAbEeb8jrXQ=",
         version = "v1.1.0",
+<<<<<<< HEAD
+=======
+    )
+    go_repository(
+        name = "com_github_mozillazg_go_httpheader",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/mozillazg/go-httpheader",
+        sum = "h1:geV7TrjbL8KXSyvghnFm+NyTux/hxwueTSrwhe88TQQ=",
+        version = "v0.2.1",
+    )
+    go_repository(
+        name = "com_github_muesli_cancelreader",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/muesli/cancelreader",
+        sum = "h1:3I4Kt4BQjOR54NavqnDogx/MIoWBFa0StPA8ELUXHmA=",
+        version = "v0.2.2",
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
     )
     go_repository(
         name = "com_github_munnerz_goautoneg",
@@ -3376,6 +3524,30 @@ def go_deps():
         importpath = "github.com/onsi/gomega",
         sum = "h1:eZCjf2xjZAqe+LeWvKb5weQ+NcPwX84kqJ0cZNxok2A=",
         version = "v1.38.2",
+<<<<<<< HEAD
+=======
+    )
+    go_repository(
+        name = "com_github_open_telemetry_opentelemetry_collector_contrib_internal_exp_metrics",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/open-telemetry/opentelemetry-collector-contrib/internal/exp/metrics",
+        sum = "h1:CiTjQE/Hh5xK2t56ogrDK4nl0+tJPNmASCs4zEYZ/xU=",
+        version = "v0.148.0",
+    )
+    go_repository(
+        name = "com_github_open_telemetry_opentelemetry_collector_contrib_pkg_pdatautil",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/pdatautil",
+        sum = "h1:1TLg6YrS3Au6F7xw3ws2Njbwj13IMqPplvGFi+18fWs=",
+        version = "v0.148.0",
+    )
+    go_repository(
+        name = "com_github_open_telemetry_opentelemetry_collector_contrib_processor_deltatocumulativeprocessor",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/open-telemetry/opentelemetry-collector-contrib/processor/deltatocumulativeprocessor",
+        sum = "h1:xgD/kNGp/wWY+bwY599Pc01OamYN17phRiTP934bM5Y=",
+        version = "v0.148.0",
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
     )
     go_repository(
         name = "com_github_open_telemetry_opentelemetry_collector_contrib_internal_exp_metrics",
@@ -3754,6 +3926,13 @@ def go_deps():
         importpath = "github.com/pterm/pterm",
         sum = "h1:LvQE43RYegVH+y5sCDcqjlbsRu0DlAecEn9FDfs9ePs=",
         version = "v0.12.40",
+    )
+    go_repository(
+        name = "com_github_puzpuzpuz_xsync_v4",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/puzpuzpuz/xsync/v4",
+        sum = "h1:vlSN6/CkEY0pY8KaB0yqo/pCLZvp9nhdbBdjipT4gWo=",
+        version = "v4.4.0",
     )
     go_repository(
         name = "com_github_puzpuzpuz_xsync_v4",
@@ -5575,6 +5754,16 @@ def go_deps():
     )
     go_repository(
         name = "in_yaml_go_yaml_v4",
+<<<<<<< HEAD
+=======
+        build_file_proto_mode = "disable_global",
+        importpath = "go.yaml.in/yaml/v4",
+        sum = "h1:UP4+v6fFrBIb1l934bDl//mmnoIZEDK0idg1+AIvX5U=",
+        version = "v4.0.0-rc.4",
+    )
+    go_repository(
+        name = "info_augendre_go_arangolint",
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
         build_file_proto_mode = "disable_global",
         importpath = "go.yaml.in/yaml/v4",
         sum = "h1:UP4+v6fFrBIb1l934bDl//mmnoIZEDK0idg1+AIvX5U=",
@@ -5598,8 +5787,8 @@ def go_deps():
         name = "io_etcd_go_etcd_client_pkg_v3",
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/etcd/client/pkg/v3",
-        sum = "h1:fo0HpWz/KlHGMCC+YejpiCmyWDEuIpnTDzpJLB5fWlA=",
-        version = "v3.5.15",
+        sum = "h1:x9J84BdbVtb+47fQFsXniTA2sZEdy9S5+dQ9q5urpqM=",
+        version = "v3.5.33",
     )
     go_repository(
         name = "io_etcd_go_etcd_client_v2",
@@ -6300,6 +6489,16 @@ def go_deps():
         version = "v1.1.0",
     )
     go_repository(
+<<<<<<< HEAD
+=======
+        name = "org_modernc_z",
+        build_file_proto_mode = "disable_global",
+        importpath = "modernc.org/z",
+        sum = "h1:xkDw/KepgEjeizO2sNco+hqYkU12taxQFqPEmgm1GWE=",
+        version = "v1.7.0",
+    )
+    go_repository(
+>>>>>>> cc4b77085d8 (*: upgrade brotli, compress, etcd client pkg, and prometheus (#73113))
         name = "org_uber_go_atomic",
         build_file_proto_mode = "disable_global",
         importpath = "go.uber.org/atomic",
