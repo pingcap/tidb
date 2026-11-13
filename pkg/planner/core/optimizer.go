@@ -104,6 +104,7 @@ var optRuleList = []base.LogicalOptRule{
 	&CorrelateSolver{},
 	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&PushDownSequenceSolver{},
+	&EliminateUnionAllDualItem{},
 	&ResolveExpand{},
 }
 
@@ -1171,6 +1172,8 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 		}
 		return nil, 0, plannererrors.ErrInternal.GenWithStackByArgs(errMsg)
 	}
+
+	logic.SCtx().GetSessionVars().StmtCtx.AppendWarnings(t.(*RootTask).warnings.GetWarnings())
 
 	if err = t.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err

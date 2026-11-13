@@ -489,8 +489,8 @@ func TestVectorConstantExplain(t *testing.T) {
 	require.Equal(t, strings.Join([]string{
 		`	id                 	task     	estRows	operator info                                                                                                                      	actRows	execution info  	memory 	disk`,
 		`	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast([100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100...(len:401), vector))->Column#3	0      	time:0s, loops:0	0 Bytes	N/A`,
-		`	└─TableReader_5    	root     	10000  	data:TableFullScan_4                                                                                                               	0      	time:0s, loops:0	0 Bytes	N/A`,
-		`	  └─TableFullScan_4	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo                                                                                            	0      	                	N/A    	N/A`,
+		`	└─TableReader_6    	root     	10000  	data:TableFullScan_5                                                                                                               	0      	time:0s, loops:0	0 Bytes	N/A`,
+		`	  └─TableFullScan_5	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo                                                                                            	0      	                	N/A    	N/A`,
 	}, "\n"), planTree)
 
 	// No need to check result at all.
@@ -2337,8 +2337,8 @@ func TestCompareBuiltin(t *testing.T) {
 	result = tk.MustQuery("desc select a = a from t")
 	result.Check(testkit.Rows(
 		"Projection_3 10000.00 root  eq(test.t.a, test.t.a)->Column#3",
-		"└─TableReader_5 10000.00 root  data:TableFullScan_4",
-		"  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"└─TableReader_6 10000.00 root  data:TableFullScan_5",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
 	// for interval

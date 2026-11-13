@@ -16,7 +16,7 @@
       },
       {
         "SQL": "select * from t where c = 10",
-        "Result": "[{\"Level\":\"Note\",\"Message\":\"Using the bindSQL: SELECT * FROM `test`.`t` USE INDEX (`c_d_e`) WHERE `c` = 10\",\"IsExtra\":true}]"
+        "Result": "[{\"Level\":\"Warning\",\"Message\":\"Expression about 'test.t.h' can not be pushed to TiFlash because it contains unsupported calculation of type 'set'.\",\"IsExtra\":true},{\"Level\":\"Note\",\"Message\":\"Using the bindSQL: SELECT * FROM `test`.`t` USE INDEX (`c_d_e`) WHERE `c` = 10\",\"IsExtra\":true}]"
       },
       {
         "SQL": "select /*+ READ_FROM_STORAGE(TIKV[t]) */ * from t where a > 1 order by f",

@@ -157,7 +157,7 @@ func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.Lo
 }
 
 // CanPushToCopImpl checks whether the logical plan can be pushed to coprocessor.
-func CanPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bool) bool {
+func CanPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool {
 	p := lp.GetBaseLogicalPlan().(*BaseLogicalPlan)
 	ret := true
 	for _, ch := range p.Children() {
@@ -194,25 +194,23 @@ func CanPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp, true)
+			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp)
 		case *LogicalSort:
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp, true)
+			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp)
 		case *LogicalProjection:
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
+			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp)
 		case *LogicalExpand:
 			// Expand itself only contains simple col ref and literal projection. (always ok, check its child)
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
-		case *LogicalTableDual:
-			return storeTp == kv.TiFlash && considerDual
+			ret = ret && CanPushToCopImpl(&c.BaseLogicalPlan, storeTp)
 		case *LogicalAggregation, *LogicalSelection, *LogicalJoin, *LogicalWindow:
 			if storeTp != kv.TiFlash {
 				return false
@@ -238,4 +236,60 @@ func CanPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 		}
 	}
 	return ret
+}
+
+// CanSelfBeingPushedToCopImpl checks whether the logical operator itself can be pushed to coprocessor.
+func CanSelfBeingPushedToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool {
+	ret := true
+	switch c := lp.(type) {
+	case *DataSource:
+		validDs := false
+		// since CanPushToCopImpl is only used in physical enumeration of physical plan phase.
+		// we definitely here should use the specific PossibleAccessPaths for each DS alternative.
+		for _, path := range c.PossibleAccessPaths {
+			if path.StoreType == storeTp {
+				validDs = true
+			}
+		}
+		ret = ret && validDs
+
+		if c.TableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+			// Don't push to cop for cached table, it brings more harm than good:
+			// 1. Those tables are small enough, push to cop can't utilize several TiKV to accelerate computation.
+			// 2. Cached table use UnionScan to read the cache data, and push to cop is not supported when an UnionScan exists.
+			// Once aggregation is pushed to cop, the cache data can't be use anymore.
+			return false
+		}
+		return ret
+	case *LogicalUnionAll, *LogicalSort, *LogicalProjection, *LogicalSequence:
+		return storeTp == kv.TiFlash
+	case *LogicalExpand:
+		// Expand itself only contains simple col ref and literal projection. (always ok, check its child)
+		return storeTp == kv.TiFlash
+	case *LogicalAggregation:
+		if storeTp != kv.TiFlash {
+			return false
+		}
+		// logical aggregation has an additional variable to care about.
+		return !c.NoCopPushDown
+	case *LogicalSelection, *LogicalJoin, *LogicalWindow:
+		return storeTp == kv.TiFlash
+	case *LogicalLimit, *LogicalTopN:
+		// since these check is inside subtree, it's check for whether this subtree can be totally pushed to tikv/tiFlash.
+		// currently logicalLimit and logicalTopN can not be fully pushed down to tiFlash. ref: issues/61961
+		return false
+	case *LogicalCTE:
+		if storeTp != kv.TiFlash {
+			return false
+		}
+		if c.Cte.RecursivePartLogicalPlan != nil {
+			return false
+		}
+		// !c.Cte.SeedPartLogicalPlan.CanPushToCop(storeTp) check should return false is left to the children.
+		return true
+	default:
+		lp.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+			"MPP mode may be blocked because operator `" + c.TP() + "` is not supported now.")
+		return false
+	}
 }

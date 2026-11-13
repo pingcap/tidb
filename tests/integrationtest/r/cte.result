@@ -360,19 +360,19 @@ drop table if exists t;
 create table t(a int, b int, key (b));
 desc with cte as (select * from t) select * from cte;
 id	estRows	task	access object	operator info
-TableReader_9	10000.00	root		data:TableFullScan_8
-└─TableFullScan_8	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_10	10000.00	root		data:TableFullScan_9
+└─TableFullScan_9	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 create SESSION binding for with cte as (select * from t) select * from cte using with cte as (select * from t use index(b)) select * from cte;
 desc with cte as (select * from t) select * from cte;
 id	estRows	task	access object	operator info
-IndexLookUp_10	10000.00	root		
-├─IndexFullScan_8(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
-└─TableRowIDScan_9(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp_11	10000.00	root		
+├─IndexFullScan_9(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
+└─TableRowIDScan_10(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc with cte as (select * from t use index()) select * from cte;
 id	estRows	task	access object	operator info
-IndexLookUp_10	10000.00	root		
-├─IndexFullScan_8(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
-└─TableRowIDScan_9(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp_11	10000.00	root		
+├─IndexFullScan_9(Build)	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
+└─TableRowIDScan_10(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t1, tpk;
 create table t1(c1 int);
 insert into t1 values(1), (2), (1), (2);
@@ -565,15 +565,15 @@ insert into t2 values(1, 1);
 insert into t2 values(3, 2);
 explain select * from t1 where c1 > all(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
 id	estRows	task	access object	operator info
-Projection_16	10000.00	root		cte.t1.c1, cte.t1.c2
-└─Apply_18	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(cte.t1.c1, Column#11), if(ne(Column#12, 0), NULL, 1)), or(eq(Column#13, 0), if(isnull(cte.t1.c1), NULL, 0)))
-  ├─TableReader_20(Build)	10000.00	root		data:TableFullScan_19
-  │ └─TableFullScan_19	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─StreamAgg_35(Probe)	10000.00	root		funcs:max(Column#19)->Column#11, funcs:sum(Column#20)->Column#12, funcs:count(Column#21)->Column#13
-    └─TableReader_36	10000.00	root		data:StreamAgg_24
-      └─StreamAgg_24	10000.00	cop[tikv]		funcs:max(cte.t2.c1)->Column#19, funcs:sum(isnull(cte.t2.c1))->Column#20, funcs:count(1)->Column#21
-        └─Selection_34	100000.00	cop[tikv]		eq(cte.t2.c2, cte.t1.c2)
-          └─TableFullScan_33	100000000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+Projection_17	10000.00	root		cte.t1.c1, cte.t1.c2
+└─Apply_21	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(cte.t1.c1, Column#11), if(ne(Column#12, 0), NULL, 1)), or(eq(Column#13, 0), if(isnull(cte.t1.c1), NULL, 0)))
+  ├─TableReader_23(Build)	10000.00	root		data:TableFullScan_22
+  │ └─TableFullScan_22	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─StreamAgg_39(Probe)	10000.00	root		funcs:max(Column#19)->Column#11, funcs:sum(Column#20)->Column#12, funcs:count(Column#21)->Column#13
+    └─TableReader_40	10000.00	root		data:StreamAgg_28
+      └─StreamAgg_28	10000.00	cop[tikv]		funcs:max(cte.t2.c1)->Column#19, funcs:sum(isnull(cte.t2.c1))->Column#20, funcs:count(1)->Column#21
+        └─Selection_38	100000.00	cop[tikv]		eq(cte.t2.c2, cte.t1.c2)
+          └─TableFullScan_37	100000000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select * from t1 where c1 > all(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
 c1	c2
 2	1
@@ -581,13 +581,13 @@ c1	c2
 insert into t1 values(2, 3);
 explain select * from t1 where exists(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
 id	estRows	task	access object	operator info
-HashJoin_14	7992.00	root		semi join, equal:[eq(cte.t1.c2, cte.t2.c2)]
-├─TableReader_20(Build)	9990.00	root		data:Selection_19
-│ └─Selection_19	9990.00	cop[tikv]		not(isnull(cte.t2.c2))
-│   └─TableFullScan_18	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader_17(Probe)	9990.00	root		data:Selection_16
-  └─Selection_16	9990.00	cop[tikv]		not(isnull(cte.t1.c2))
-    └─TableFullScan_15	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+HashJoin_15	7992.00	root		semi join, equal:[eq(cte.t1.c2, cte.t2.c2)]
+├─TableReader_21(Build)	9990.00	root		data:Selection_20
+│ └─Selection_20	9990.00	cop[tikv]		not(isnull(cte.t2.c2))
+│   └─TableFullScan_19	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_18(Probe)	9990.00	root		data:Selection_17
+  └─Selection_17	9990.00	cop[tikv]		not(isnull(cte.t1.c2))
+    └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 where exists(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
 c1	c2
 2	1
@@ -595,37 +595,37 @@ c1	c2
 // Same as above, but test recursive cte.
 explain select * from t1 where c1 > all(with recursive cte1 as (select c1 from t2 where t2.c2 = t1.c2 union all select c1+1 as c1 from cte1 limit 1) select c1 from cte1);
 id	estRows	task	access object	operator info
-Projection_30	10000.00	root		cte.t1.c1, cte.t1.c2
-└─Apply_32	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(cte.t1.c1, Column#14), if(ne(Column#15, 0), NULL, 1)), or(eq(Column#16, 0), if(isnull(cte.t1.c1), NULL, 0)))
-  ├─TableReader_34(Build)	10000.00	root		data:TableFullScan_33
-  │ └─TableFullScan_33	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─HashAgg_35(Probe)	10000.00	root		funcs:max(Column#19)->Column#14, funcs:sum(Column#20)->Column#15, funcs:count(1)->Column#16
-    └─Projection_39	200000.00	root		cte.t2.c1->Column#19, cast(isnull(cte.t2.c1), decimal(20,0) BINARY)->Column#20
-      └─CTEFullScan_37	200000.00	root	CTE:cte1	data:CTE_0
+Projection_32	10000.00	root		cte.t1.c1, cte.t1.c2
+└─Apply_36	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(cte.t1.c1, Column#14), if(ne(Column#15, 0), NULL, 1)), or(eq(Column#16, 0), if(isnull(cte.t1.c1), NULL, 0)))
+  ├─TableReader_38(Build)	10000.00	root		data:TableFullScan_37
+  │ └─TableFullScan_37	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─HashAgg_41(Probe)	10000.00	root		funcs:max(Column#19)->Column#14, funcs:sum(Column#20)->Column#15, funcs:count(1)->Column#16
+    └─Projection_53	200000.00	root		cte.t2.c1->Column#19, cast(isnull(cte.t2.c1), decimal(20,0) BINARY)->Column#20
+      └─CTEFullScan_47	200000.00	root	CTE:cte1	data:CTE_0
 CTE_0	20.00	root		Recursive CTE, limit(offset:0, count:1)
-├─TableReader_26(Seed Part)	10.00	root		data:Projection_20
-│ └─Projection_20	10.00	cop[tikv]		cte.t2.c1
-│   └─Selection_25	10.00	cop[tikv]		eq(cte.t2.c2, cte.t1.c2)
-│     └─TableFullScan_24	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─Projection_27(Recursive Part)	10.00	root		cast(plus(cte.t2.c1, 1), int)->cte.t2.c1
-  └─CTETable_28	10.00	root		Scan on CTE_0
+├─TableReader_27(Seed Part)	10.00	root		data:Projection_21
+│ └─Projection_21	10.00	cop[tikv]		cte.t2.c1
+│   └─Selection_26	10.00	cop[tikv]		eq(cte.t2.c2, cte.t1.c2)
+│     └─TableFullScan_25	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Projection_28(Recursive Part)	10.00	root		cast(plus(cte.t2.c1, 1), int)->cte.t2.c1
+  └─CTETable_29	10.00	root		Scan on CTE_0
 select * from t1 where c1 > all(with recursive cte1 as (select c1 from t2 where t2.c2 = t1.c2 union all select c1+1 as c1 from cte1 limit 1) select c1 from cte1);
 c1	c2
 2	1
 2	3
 explain select * from t1 where exists(with recursive cte1 as (select c1 from t2 where t2.c2 = t1.c2 union all select c1+1 as c1 from cte1 limit 10) select c1 from cte1);
 id	estRows	task	access object	operator info
-Apply_29	10000.00	root		CARTESIAN semi join
-├─TableReader_31(Build)	10000.00	root		data:TableFullScan_30
-│ └─TableFullScan_30	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─CTEFullScan_32(Probe)	200000.00	root	CTE:cte1	data:CTE_0
+Apply_31	10000.00	root		CARTESIAN semi join
+├─TableReader_33(Build)	10000.00	root		data:TableFullScan_32
+│ └─TableFullScan_32	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─CTEFullScan_34(Probe)	200000.00	root	CTE:cte1	data:CTE_0
 CTE_0	20.00	root		Recursive CTE, limit(offset:0, count:10)
-├─TableReader_24(Seed Part)	10.00	root		data:Projection_18
-│ └─Projection_18	10.00	cop[tikv]		cte.t2.c1
-│   └─Selection_23	10.00	cop[tikv]		eq(cte.t2.c2, cte.t1.c2)
-│     └─TableFullScan_22	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─Projection_25(Recursive Part)	10.00	root		cast(plus(cte.t2.c1, 1), int)->cte.t2.c1
-  └─CTETable_26	10.00	root		Scan on CTE_0
+├─TableReader_25(Seed Part)	10.00	root		data:Projection_19
+│ └─Projection_19	10.00	cop[tikv]		cte.t2.c1
+│   └─Selection_24	10.00	cop[tikv]		eq(cte.t2.c2, cte.t1.c2)
+│     └─TableFullScan_23	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Projection_26(Recursive Part)	10.00	root		cast(plus(cte.t2.c1, 1), int)->cte.t2.c1
+  └─CTETable_27	10.00	root		Scan on CTE_0
 select * from t1 where exists(with recursive cte1 as (select c1 from t2 where t2.c2 = t1.c2 union all select c1+1 as c1 from cte1 limit 10) select c1 from cte1);
 c1	c2
 2	1
@@ -633,33 +633,33 @@ c1	c2
 // Test correlated col is in recursive part.
 explain select * from t1 where c1 > all(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
 id	estRows	task	access object	operator info
-Projection_24	10000.00	root		cte.t1.c1, cte.t1.c2
-└─Apply_26	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(cte.t1.c1, Column#18), if(ne(Column#19, 0), NULL, 1)), or(eq(Column#20, 0), if(isnull(cte.t1.c1), NULL, 0)))
-  ├─TableReader_28(Build)	10000.00	root		data:TableFullScan_27
-  │ └─TableFullScan_27	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─HashAgg_29(Probe)	10000.00	root		funcs:max(Column#23)->Column#18, funcs:sum(Column#24)->Column#19, funcs:count(1)->Column#20
-    └─Projection_33	180000000.00	root		cte.t2.c1->Column#23, cast(isnull(cte.t2.c1), decimal(20,0) BINARY)->Column#24
-      └─CTEFullScan_31	180000000.00	root	CTE:cte1	data:CTE_0
+Projection_26	10000.00	root		cte.t1.c1, cte.t1.c2
+└─Apply_30	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(cte.t1.c1, Column#18), if(ne(Column#19, 0), NULL, 1)), or(eq(Column#20, 0), if(isnull(cte.t1.c1), NULL, 0)))
+  ├─TableReader_32(Build)	10000.00	root		data:TableFullScan_31
+  │ └─TableFullScan_31	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─HashAgg_35(Probe)	10000.00	root		funcs:max(Column#23)->Column#18, funcs:sum(Column#24)->Column#19, funcs:count(1)->Column#20
+    └─Projection_47	180000000.00	root		cte.t2.c1->Column#23, cast(isnull(cte.t2.c1), decimal(20,0) BINARY)->Column#24
+      └─CTEFullScan_41	180000000.00	root	CTE:cte1	data:CTE_0
 CTE_0	18000.00	root		Recursive CTE
-├─TableReader_19(Seed Part)	10000.00	root		data:TableFullScan_18
-│ └─TableFullScan_18	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─Projection_20(Recursive Part)	8000.00	root		cast(plus(cte.t2.c1, 1), int)->cte.t2.c1, cast(plus(cte.t2.c2, 1), int)->cte.t2.c2
-  └─Selection_21	8000.00	root		eq(cte.t2.c2, cte.t1.c2)
-    └─CTETable_22	10000.00	root		Scan on CTE_0
+├─TableReader_20(Seed Part)	10000.00	root		data:TableFullScan_19
+│ └─TableFullScan_19	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Projection_21(Recursive Part)	8000.00	root		cast(plus(cte.t2.c1, 1), int)->cte.t2.c1, cast(plus(cte.t2.c2, 1), int)->cte.t2.c2
+  └─Selection_22	8000.00	root		eq(cte.t2.c2, cte.t1.c2)
+    └─CTETable_23	10000.00	root		Scan on CTE_0
 select * from t1 where c1 > all(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
 c1	c2
 explain select * from t1 where exists(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
 id	estRows	task	access object	operator info
-Apply_23	10000.00	root		CARTESIAN semi join
-├─TableReader_25(Build)	10000.00	root		data:TableFullScan_24
-│ └─TableFullScan_24	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─CTEFullScan_26(Probe)	180000000.00	root	CTE:cte1	data:CTE_0
+Apply_25	10000.00	root		CARTESIAN semi join
+├─TableReader_27(Build)	10000.00	root		data:TableFullScan_26
+│ └─TableFullScan_26	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─CTEFullScan_28(Probe)	180000000.00	root	CTE:cte1	data:CTE_0
 CTE_0	18000.00	root		Recursive CTE
-├─TableReader_17(Seed Part)	10000.00	root		data:TableFullScan_16
-│ └─TableFullScan_16	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─Projection_18(Recursive Part)	8000.00	root		cast(plus(cte.t2.c1, 1), int)->cte.t2.c1, cast(plus(cte.t2.c2, 1), int)->cte.t2.c2
-  └─Selection_19	8000.00	root		eq(cte.t2.c2, cte.t1.c2)
-    └─CTETable_20	10000.00	root		Scan on CTE_0
+├─TableReader_18(Seed Part)	10000.00	root		data:TableFullScan_17
+│ └─TableFullScan_17	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Projection_19(Recursive Part)	8000.00	root		cast(plus(cte.t2.c1, 1), int)->cte.t2.c1, cast(plus(cte.t2.c2, 1), int)->cte.t2.c2
+  └─Selection_20	8000.00	root		eq(cte.t2.c2, cte.t1.c2)
+    └─CTETable_21	10000.00	root		Scan on CTE_0
 select * from t1 where exists(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
 c1	c2
 2	1
@@ -778,23 +778,23 @@ insert into tt4 values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);
 insert into tt5 values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);
 explain with recursive cte1 as (select c1 from tt union select c1 from cte1 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte1.c1)) select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) order by 1;
 id	estRows	task	access object	operator info
-Sort_40	10000.00	root		cte1.tt2.c1
-└─Apply_44	10000.00	root		CARTESIAN semi join
-  ├─TableReader_46(Build)	10000.00	root		data:TableFullScan_45
-  │ └─TableFullScan_45	10000.00	cop[tikv]	table:tt2	keep order:false, stats:pseudo
-  └─Limit_49(Probe)	10000.00	root		offset:0, count:1
-    └─Selection_50	10000.00	root		eq(cte1.tt.c1, cte1.tt2.c1)
-      └─CTEFullScan_51	80010000.00	root	CTE:cte1	data:CTE_0
+Sort_47	10000.00	root		cte1.tt2.c1
+└─Apply_52	10000.00	root		CARTESIAN semi join
+  ├─TableReader_54(Build)	10000.00	root		data:TableFullScan_53
+  │ └─TableFullScan_53	10000.00	cop[tikv]	table:tt2	keep order:false, stats:pseudo
+  └─Limit_57(Probe)	10000.00	root		offset:0, count:1
+    └─Selection_59	10000.00	root		eq(cte1.tt.c1, cte1.tt2.c1)
+      └─CTEFullScan_60	80010000.00	root	CTE:cte1	data:CTE_0
 CTE_0	8001.00	root		Recursive CTE
-├─TableReader_27(Seed Part)	10000.00	root		data:TableFullScan_26
-│ └─TableFullScan_26	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
-└─Apply_32(Recursive Part)	10000.00	root		CARTESIAN semi join
-  ├─CTETable_33(Build)	10000.00	root		Scan on CTE_0
-  └─Limit_34(Probe)	10000.00	root		offset:0, count:1
-    └─TableReader_39	10000.00	root		data:Limit_38
-      └─Limit_38	10000.00	cop[tikv]		offset:0, count:1
-        └─Selection_37	10000.00	cop[tikv]		eq(cte1.tt1.c2, cte1.tt.c1)
-          └─TableFullScan_36	10000000.00	cop[tikv]	table:tt1	keep order:false, stats:pseudo
+├─TableReader_28(Seed Part)	10000.00	root		data:TableFullScan_27
+│ └─TableFullScan_27	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+└─Apply_34(Recursive Part)	10000.00	root		CARTESIAN semi join
+  ├─CTETable_35(Build)	10000.00	root		Scan on CTE_0
+  └─Limit_36(Probe)	10000.00	root		offset:0, count:1
+    └─TableReader_43	10000.00	root		data:Limit_42
+      └─Limit_42	10000.00	cop[tikv]		offset:0, count:1
+        └─Selection_41	10000.00	cop[tikv]		eq(cte1.tt1.c2, cte1.tt.c1)
+          └─TableFullScan_40	10000000.00	cop[tikv]	table:tt1	keep order:false, stats:pseudo
 with recursive cte1 as (select c1 from tt union select c1 from cte1 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte1.c1)) select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) order by 1;
 c1
 1
@@ -807,43 +807,43 @@ explain with recursive cte1 as (select c1 from tt union select c1 from cte1 wher
 select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) union select c1 from tt3 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt3.c1) union
 select c1 from tt4 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt4.c1) union select c1 from tt5 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt5.c1) order by 1;
 id	estRows	task	access object	operator info
-Sort_76	32000.00	root		Column#28
-└─HashAgg_78	32000.00	root		group by:Column#28, funcs:firstrow(Column#28)->Column#28
-  └─Union_79	40000.00	root		
-    ├─Apply_82	10000.00	root		CARTESIAN semi join
-    │ ├─TableReader_84(Build)	10000.00	root		data:TableFullScan_83
-    │ │ └─TableFullScan_83	10000.00	cop[tikv]	table:tt2	keep order:false, stats:pseudo
-    │ └─Limit_87(Probe)	10000.00	root		offset:0, count:1
-    │   └─Selection_88	10000.00	root		eq(cte1.tt.c1, cte1.tt2.c1)
-    │     └─CTEFullScan_89	80010000.00	root	CTE:cte1	data:CTE_0
-    ├─Apply_92	10000.00	root		CARTESIAN semi join
-    │ ├─TableReader_94(Build)	10000.00	root		data:TableFullScan_93
-    │ │ └─TableFullScan_93	10000.00	cop[tikv]	table:tt3	keep order:false, stats:pseudo
-    │ └─Limit_97(Probe)	10000.00	root		offset:0, count:1
-    │   └─Selection_98	10000.00	root		eq(cte1.tt.c1, cte1.tt3.c1)
-    │     └─CTEFullScan_99	80010000.00	root	CTE:cte1	data:CTE_0
-    ├─Apply_102	10000.00	root		CARTESIAN semi join
-    │ ├─TableReader_104(Build)	10000.00	root		data:TableFullScan_103
-    │ │ └─TableFullScan_103	10000.00	cop[tikv]	table:tt4	keep order:false, stats:pseudo
-    │ └─Limit_107(Probe)	10000.00	root		offset:0, count:1
-    │   └─Selection_108	10000.00	root		eq(cte1.tt.c1, cte1.tt4.c1)
-    │     └─CTEFullScan_109	80010000.00	root	CTE:cte1	data:CTE_0
-    └─Apply_112	10000.00	root		CARTESIAN semi join
-      ├─TableReader_114(Build)	10000.00	root		data:TableFullScan_113
-      │ └─TableFullScan_113	10000.00	cop[tikv]	table:tt5	keep order:false, stats:pseudo
-      └─Limit_117(Probe)	10000.00	root		offset:0, count:1
-        └─Selection_118	10000.00	root		eq(cte1.tt.c1, cte1.tt5.c1)
-          └─CTEFullScan_119	80010000.00	root	CTE:cte1	data:CTE_0
+Sort_83	32000.00	root		Column#28
+└─HashAgg_87	32000.00	root		group by:Column#28, funcs:firstrow(Column#28)->Column#28
+  └─Union_91	40000.00	root		
+    ├─Apply_95	10000.00	root		CARTESIAN semi join
+    │ ├─TableReader_97(Build)	10000.00	root		data:TableFullScan_96
+    │ │ └─TableFullScan_96	10000.00	cop[tikv]	table:tt2	keep order:false, stats:pseudo
+    │ └─Limit_100(Probe)	10000.00	root		offset:0, count:1
+    │   └─Selection_102	10000.00	root		eq(cte1.tt.c1, cte1.tt2.c1)
+    │     └─CTEFullScan_103	80010000.00	root	CTE:cte1	data:CTE_0
+    ├─Apply_109	10000.00	root		CARTESIAN semi join
+    │ ├─TableReader_111(Build)	10000.00	root		data:TableFullScan_110
+    │ │ └─TableFullScan_110	10000.00	cop[tikv]	table:tt3	keep order:false, stats:pseudo
+    │ └─Limit_114(Probe)	10000.00	root		offset:0, count:1
+    │   └─Selection_116	10000.00	root		eq(cte1.tt.c1, cte1.tt3.c1)
+    │     └─CTEFullScan_117	80010000.00	root	CTE:cte1	data:CTE_0
+    ├─Apply_123	10000.00	root		CARTESIAN semi join
+    │ ├─TableReader_125(Build)	10000.00	root		data:TableFullScan_124
+    │ │ └─TableFullScan_124	10000.00	cop[tikv]	table:tt4	keep order:false, stats:pseudo
+    │ └─Limit_128(Probe)	10000.00	root		offset:0, count:1
+    │   └─Selection_130	10000.00	root		eq(cte1.tt.c1, cte1.tt4.c1)
+    │     └─CTEFullScan_131	80010000.00	root	CTE:cte1	data:CTE_0
+    └─Apply_137	10000.00	root		CARTESIAN semi join
+      ├─TableReader_139(Build)	10000.00	root		data:TableFullScan_138
+      │ └─TableFullScan_138	10000.00	cop[tikv]	table:tt5	keep order:false, stats:pseudo
+      └─Limit_142(Probe)	10000.00	root		offset:0, count:1
+        └─Selection_144	10000.00	root		eq(cte1.tt.c1, cte1.tt5.c1)
+          └─CTEFullScan_145	80010000.00	root	CTE:cte1	data:CTE_0
 CTE_0	8001.00	root		Recursive CTE
-├─TableReader_63(Seed Part)	10000.00	root		data:TableFullScan_62
-│ └─TableFullScan_62	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
-└─Apply_68(Recursive Part)	10000.00	root		CARTESIAN semi join
-  ├─CTETable_69(Build)	10000.00	root		Scan on CTE_0
-  └─Limit_70(Probe)	10000.00	root		offset:0, count:1
-    └─TableReader_75	10000.00	root		data:Limit_74
-      └─Limit_74	10000.00	cop[tikv]		offset:0, count:1
-        └─Selection_73	10000.00	cop[tikv]		eq(cte1.tt1.c2, cte1.tt.c1)
-          └─TableFullScan_72	10000000.00	cop[tikv]	table:tt1	keep order:false, stats:pseudo
+├─TableReader_64(Seed Part)	10000.00	root		data:TableFullScan_63
+│ └─TableFullScan_63	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+└─Apply_70(Recursive Part)	10000.00	root		CARTESIAN semi join
+  ├─CTETable_71(Build)	10000.00	root		Scan on CTE_0
+  └─Limit_72(Probe)	10000.00	root		offset:0, count:1
+    └─TableReader_79	10000.00	root		data:Limit_78
+      └─Limit_78	10000.00	cop[tikv]		offset:0, count:1
+        └─Selection_77	10000.00	cop[tikv]		eq(cte1.tt1.c2, cte1.tt.c1)
+          └─TableFullScan_76	10000000.00	cop[tikv]	table:tt1	keep order:false, stats:pseudo
 with recursive cte1 as (select c1 from tt union select c1 from cte1 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte1.c1))
 select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) union select c1 from tt3 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt3.c1) union
 select c1 from tt4 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt4.c1) union select c1 from tt5 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt5.c1) order by 1;
@@ -859,55 +859,55 @@ select c1 from tt union select c1 from cte2 where exists (select /*+ no_decorrel
 select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) union select c1 from tt3 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt3.c1) union
 select c1 from tt4 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt4.c1) union select c1 from tt5 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt5.c1) order by 1;
 id	estRows	task	access object	operator info
-Sort_109	32000.00	root		Column#36
-└─HashAgg_111	32000.00	root		group by:Column#36, funcs:firstrow(Column#36)->Column#36
-  └─Union_112	40000.00	root		
-    ├─Apply_115	10000.00	root		CARTESIAN semi join
-    │ ├─TableReader_117(Build)	10000.00	root		data:TableFullScan_116
-    │ │ └─TableFullScan_116	10000.00	cop[tikv]	table:tt2	keep order:false, stats:pseudo
-    │ └─Limit_120(Probe)	10000.00	root		offset:0, count:1
-    │   └─Selection_121	10000.00	root		eq(Column#23, cte1.tt2.c1)
-    │     └─CTEFullScan_122	160010000.00	root	CTE:cte1	data:CTE_0
-    ├─Apply_125	10000.00	root		CARTESIAN semi join
-    │ ├─TableReader_127(Build)	10000.00	root		data:TableFullScan_126
-    │ │ └─TableFullScan_126	10000.00	cop[tikv]	table:tt3	keep order:false, stats:pseudo
-    │ └─Limit_130(Probe)	10000.00	root		offset:0, count:1
-    │   └─Selection_131	10000.00	root		eq(Column#27, cte1.tt3.c1)
-    │     └─CTEFullScan_132	160010000.00	root	CTE:cte1	data:CTE_0
-    ├─Apply_135	10000.00	root		CARTESIAN semi join
-    │ ├─TableReader_137(Build)	10000.00	root		data:TableFullScan_136
-    │ │ └─TableFullScan_136	10000.00	cop[tikv]	table:tt4	keep order:false, stats:pseudo
-    │ └─Limit_140(Probe)	10000.00	root		offset:0, count:1
-    │   └─Selection_141	10000.00	root		eq(Column#31, cte1.tt4.c1)
-    │     └─CTEFullScan_142	160010000.00	root	CTE:cte1	data:CTE_0
-    └─Apply_145	10000.00	root		CARTESIAN semi join
-      ├─TableReader_147(Build)	10000.00	root		data:TableFullScan_146
-      │ └─TableFullScan_146	10000.00	cop[tikv]	table:tt5	keep order:false, stats:pseudo
-      └─Limit_150(Probe)	10000.00	root		offset:0, count:1
-        └─Selection_151	10000.00	root		eq(Column#35, cte1.tt5.c1)
-          └─CTEFullScan_152	160010000.00	root	CTE:cte1	data:CTE_0
+Sort_130	32000.00	root		Column#36
+└─HashAgg_134	32000.00	root		group by:Column#36, funcs:firstrow(Column#36)->Column#36
+  └─Union_138	40000.00	root		
+    ├─Apply_142	10000.00	root		CARTESIAN semi join
+    │ ├─TableReader_144(Build)	10000.00	root		data:TableFullScan_143
+    │ │ └─TableFullScan_143	10000.00	cop[tikv]	table:tt2	keep order:false, stats:pseudo
+    │ └─Limit_147(Probe)	10000.00	root		offset:0, count:1
+    │   └─Selection_149	10000.00	root		eq(Column#23, cte1.tt2.c1)
+    │     └─CTEFullScan_150	160010000.00	root	CTE:cte1	data:CTE_0
+    ├─Apply_156	10000.00	root		CARTESIAN semi join
+    │ ├─TableReader_158(Build)	10000.00	root		data:TableFullScan_157
+    │ │ └─TableFullScan_157	10000.00	cop[tikv]	table:tt3	keep order:false, stats:pseudo
+    │ └─Limit_161(Probe)	10000.00	root		offset:0, count:1
+    │   └─Selection_163	10000.00	root		eq(Column#27, cte1.tt3.c1)
+    │     └─CTEFullScan_164	160010000.00	root	CTE:cte1	data:CTE_0
+    ├─Apply_170	10000.00	root		CARTESIAN semi join
+    │ ├─TableReader_172(Build)	10000.00	root		data:TableFullScan_171
+    │ │ └─TableFullScan_171	10000.00	cop[tikv]	table:tt4	keep order:false, stats:pseudo
+    │ └─Limit_175(Probe)	10000.00	root		offset:0, count:1
+    │   └─Selection_177	10000.00	root		eq(Column#31, cte1.tt4.c1)
+    │     └─CTEFullScan_178	160010000.00	root	CTE:cte1	data:CTE_0
+    └─Apply_184	10000.00	root		CARTESIAN semi join
+      ├─TableReader_186(Build)	10000.00	root		data:TableFullScan_185
+      │ └─TableFullScan_185	10000.00	cop[tikv]	table:tt5	keep order:false, stats:pseudo
+      └─Limit_189(Probe)	10000.00	root		offset:0, count:1
+        └─Selection_191	10000.00	root		eq(Column#35, cte1.tt5.c1)
+          └─CTEFullScan_192	160010000.00	root	CTE:cte1	data:CTE_0
 CTE_0	16001.00	root		Non-Recursive CTE
-└─HashAgg_94(Seed Part)	16001.00	root		group by:Column#19, funcs:firstrow(Column#19)->Column#19
-  └─Union_95	30000.00	root		
-    ├─TableReader_98	10000.00	root		data:TableFullScan_97
-    │ └─TableFullScan_97	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
-    └─Apply_101	20000.00	root		CARTESIAN semi join
-      ├─CTEFullScan_102(Build)	20000.00	root	CTE:cte2	data:CTE_1
-      └─Limit_103(Probe)	20000.00	root		offset:0, count:1
-        └─TableReader_108	20000.00	root		data:Limit_107
-          └─Limit_107	20000.00	cop[tikv]		offset:0, count:1
-            └─Selection_106	20000.00	cop[tikv]		eq(cte1.tt1.c2, cte1.tt.c1)
-              └─TableFullScan_105	20000000.00	cop[tikv]	table:tt1	keep order:false, stats:pseudo
+└─HashAgg_103(Seed Part)	16001.00	root		group by:Column#19, funcs:firstrow(Column#19)->Column#19
+  └─Union_107	30000.00	root		
+    ├─TableReader_111	10000.00	root		data:TableFullScan_110
+    │ └─TableFullScan_110	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+    └─Apply_115	20000.00	root		CARTESIAN semi join
+      ├─CTEFullScan_116(Build)	20000.00	root	CTE:cte2	data:CTE_1
+      └─Limit_117(Probe)	20000.00	root		offset:0, count:1
+        └─TableReader_124	20000.00	root		data:Limit_123
+          └─Limit_123	20000.00	cop[tikv]		offset:0, count:1
+            └─Selection_122	20000.00	cop[tikv]		eq(cte1.tt1.c2, cte1.tt.c1)
+              └─TableFullScan_121	20000000.00	cop[tikv]	table:tt1	keep order:false, stats:pseudo
 CTE_1	20000.00	root		Recursive CTE, limit(offset:0, count:300)
-├─TableReader_81(Seed Part)	10000.00	root		data:TableFullScan_80
-│ └─TableFullScan_80	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
-└─Apply_86(Recursive Part)	10000.00	root		CARTESIAN semi join
-  ├─CTETable_87(Build)	10000.00	root		Scan on CTE_1
-  └─Limit_88(Probe)	10000.00	root		offset:0, count:1
-    └─TableReader_93	10000.00	root		data:Limit_92
-      └─Limit_92	10000.00	cop[tikv]		offset:0, count:1
-        └─Selection_91	10000.00	cop[tikv]		eq(cte1.tt1.c1, cte1.tt.c1)
-          └─TableFullScan_90	10000000.00	cop[tikv]	table:tt1	keep order:false, stats:pseudo
+├─TableReader_82(Seed Part)	10000.00	root		data:TableFullScan_81
+│ └─TableFullScan_81	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+└─Apply_88(Recursive Part)	10000.00	root		CARTESIAN semi join
+  ├─CTETable_89(Build)	10000.00	root		Scan on CTE_1
+  └─Limit_90(Probe)	10000.00	root		offset:0, count:1
+    └─TableReader_97	10000.00	root		data:Limit_96
+      └─Limit_96	10000.00	cop[tikv]		offset:0, count:1
+        └─Selection_95	10000.00	cop[tikv]		eq(cte1.tt1.c1, cte1.tt.c1)
+          └─TableFullScan_94	10000000.00	cop[tikv]	table:tt1	keep order:false, stats:pseudo
 with cte1 as (with recursive cte2 as (select c1 from tt union all select c1 from cte2 where exists(select /*+ no_decorrelate() */ c1 from tt1 where tt1.c1 = cte2.c1) limit 300)
 select c1 from tt union select c1 from cte2 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte2.c1))
 select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) union select c1 from tt3 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt3.c1) union
@@ -1135,65 +1135,65 @@ SELECT col_4
 FROM product_detail
 ) a;
 id	estRows	task	access object	operator info
-Union_213	199600.20	root		
-├─Projection_214	99800.10	root		cte1.table_c.col_4->Column#418
-│ └─CTEFullScan_215	99800.10	root	CTE:product_detail	data:CTE_4
-└─Projection_216	99800.10	root		cte1.table_c.col_4->Column#418
-  └─CTEFullScan_217	99800.10	root	CTE:product_detail	data:CTE_4
+Union_246	199600.20	root		
+├─Projection_247	99800.10	root		cte1.table_c.col_4->Column#418
+│ └─CTEFullScan_250	99800.10	root	CTE:product_detail	data:CTE_4
+└─Projection_253	99800.10	root		cte1.table_c.col_4->Column#418
+  └─CTEFullScan_256	99800.10	root	CTE:product_detail	data:CTE_4
 CTE_4	99800.10	root		Non-Recursive CTE
-└─Projection_175(Seed Part)	99800.10	root		cte1.table_c.col_4, 3集合->Column#413
-  └─HashJoin_176	99800.10	root		left outer join, equal:[eq(cte1.table_c.col_4, cte1.table_c.col_4) eq(Column#390, cte1.table_c.col_1)]
-    ├─TableReader_207(Build)	9980.01	root		data:Selection_206
-    │ └─Selection_206	9980.01	cop[tikv]		not(isnull(cte1.table_c.col_1)), not(isnull(cte1.table_c.col_4))
-    │   └─TableFullScan_205	10000.00	cop[tikv]	table:a	keep order:false, stats:pseudo
-    └─HashJoin_193(Probe)	80000.00	root		CARTESIAN left outer join
-      ├─CTEFullScan_203(Build)	10.00	root	CTE:date_table AS dt	data:CTE_0
-      └─HashAgg_199(Probe)	8000.00	root		group by:cte1.table_c.col_3, cte1.table_c.col_4, funcs:firstrow(cte1.table_c.col_4)->cte1.table_c.col_4
-        └─TableReader_200	8000.00	root		data:HashAgg_195
-          └─HashAgg_195	8000.00	cop[tikv]		group by:cte1.table_c.col_3, cte1.table_c.col_4, 
-            └─TableFullScan_198	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─Projection_203(Seed Part)	99800.10	root		cte1.table_c.col_4, 3集合->Column#413
+  └─HashJoin_205	99800.10	root		left outer join, equal:[eq(cte1.table_c.col_4, cte1.table_c.col_4) eq(Column#390, cte1.table_c.col_1)]
+    ├─TableReader_239(Build)	9980.01	root		data:Selection_238
+    │ └─Selection_238	9980.01	cop[tikv]		not(isnull(cte1.table_c.col_1)), not(isnull(cte1.table_c.col_4))
+    │   └─TableFullScan_237	10000.00	cop[tikv]	table:a	keep order:false, stats:pseudo
+    └─HashJoin_222(Probe)	80000.00	root		CARTESIAN left outer join
+      ├─CTEFullScan_235(Build)	10.00	root	CTE:date_table AS dt	data:CTE_0
+      └─HashAgg_231(Probe)	8000.00	root		group by:cte1.table_c.col_3, cte1.table_c.col_4, funcs:firstrow(cte1.table_c.col_4)->cte1.table_c.col_4
+        └─TableReader_232	8000.00	root		data:HashAgg_224
+          └─HashAgg_224	8000.00	cop[tikv]		group by:cte1.table_c.col_3, cte1.table_c.col_4, 
+            └─TableFullScan_230	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 CTE_0	10.00	root		Non-Recursive CTE
-└─Apply_96(Seed Part)	10.00	root		CARTESIAN left outer join
-  ├─Apply_98(Build)	10.00	root		CARTESIAN left outer join
-  │ ├─Apply_100(Build)	10.00	root		CARTESIAN left outer join
-  │ │ ├─Apply_102(Build)	10.00	root		CARTESIAN left outer join
-  │ │ │ ├─TableReader_105(Build)	10.00	root		data:Selection_104
-  │ │ │ │ └─Selection_104	10.00	cop[tikv]		eq(cte1.table_d.col_1, 20240628)
-  │ │ │ │   └─TableFullScan_103	10000.00	cop[tikv]	table:d	keep order:false, stats:pseudo
-  │ │ │ └─StreamAgg_107(Probe)	10.00	root		funcs:max(cte1.table_c.col_1)->Column#159
-  │ │ │   └─TopN_110	10.00	root		cte1.table_c.col_1:desc, offset:0, count:1
-  │ │ │     └─HashJoin_115	63936.00	root		semi join, equal:[eq(Column#423, Column#424)]
-  │ │ │       ├─Projection_120(Build)	80000.00	root		cast(cte1.table_d.col_1, double BINARY)->Column#424
-  │ │ │       │ └─TableReader_123	80000.00	root		data:Selection_122
-  │ │ │       │   └─Selection_122	80000.00	cop[tikv]		eq(cast(cte1.table_d.col_2, double BINARY), 1)
-  │ │ │       │     └─TableFullScan_121	100000.00	cop[tikv]	table:d	keep order:false, stats:pseudo
-  │ │ │       └─Projection_116(Probe)	79920.00	root		cte1.table_c.col_1, cast(cte1.table_c.col_1, double BINARY)->Column#423
-  │ │ │         └─IndexReader_119	79920.00	root		index:Selection_118
-  │ │ │           └─Selection_118	79920.00	cop[tikv]		le(cte1.table_c.col_1, concat(cast(year(cast(date_sub(cte1.table_d.col_1, 1, "YEAR"), datetime(6) BINARY)), var_string(20)), "1231"))
-  │ │ │             └─IndexFullScan_117	99900.00	cop[tikv]	table:a, index:index_col_1_3(col_1, col_3)	keep order:false, stats:pseudo
-  │ │ └─StreamAgg_125(Probe)	10.00	root		funcs:max(cte1.table_a.col_1)->Column#208
-  │ │   └─TopN_128	10.00	root		cte1.table_a.col_1:desc, offset:0, count:1
-  │ │     └─HashJoin_133	63936.00	root		semi join, equal:[eq(Column#429, Column#430)]
-  │ │       ├─Projection_138(Build)	80000.00	root		cast(cte1.table_d.col_1, double BINARY)->Column#430
-  │ │       │ └─TableReader_141	80000.00	root		data:Selection_140
-  │ │       │   └─Selection_140	80000.00	cop[tikv]		eq(cast(cte1.table_d.col_2, double BINARY), 1)
-  │ │       │     └─TableFullScan_139	100000.00	cop[tikv]	table:d	keep order:false, stats:pseudo
-  │ │       └─Projection_134(Probe)	79920.00	root		cte1.table_a.col_1, cast(cte1.table_a.col_1, double BINARY)->Column#429
-  │ │         └─IndexReader_137	79920.00	root		index:Selection_136
-  │ │           └─Selection_136	79920.00	cop[tikv]		le(cte1.table_a.col_1, concat(cast(year(cast(date_sub(cte1.table_d.col_1, 1, "YEAR"), datetime(6) BINARY)), var_string(20)), "1231"))
-  │ │             └─IndexFullScan_135	99900.00	cop[tikv]	table:a, index:index_col_1(col_1)	keep order:false, stats:pseudo
-  │ └─StreamAgg_143(Probe)	10.00	root		funcs:max(cte1.table_c.col_1)->Column#230
-  │   └─Limit_148	10.00	root		offset:0, count:1
-  │     └─IndexReader_157	10.00	root		index:Limit_156
-  │       └─Limit_156	10.00	cop[tikv]		offset:0, count:1
-  │         └─Selection_155	10.00	cop[tikv]		le(cast(cte1.table_c.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
-  │           └─IndexFullScan_154	12.50	cop[tikv]	table:table_c, index:index_col_1_3(col_1, col_3)	keep order:true, desc, stats:pseudo
-  └─StreamAgg_159(Probe)	10.00	root		funcs:max(cte1.table_a.col_1)->Column#254
-    └─Limit_164	10.00	root		offset:0, count:1
-      └─IndexReader_173	10.00	root		index:Limit_172
-        └─Limit_172	10.00	cop[tikv]		offset:0, count:1
-          └─Selection_171	10.00	cop[tikv]		le(cast(cte1.table_a.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
-            └─IndexFullScan_170	12.50	cop[tikv]	table:table_a, index:index_col_1(col_1)	keep order:true, desc, stats:pseudo
+└─Apply_97(Seed Part)	10.00	root		CARTESIAN left outer join
+  ├─Apply_99(Build)	10.00	root		CARTESIAN left outer join
+  │ ├─Apply_101(Build)	10.00	root		CARTESIAN left outer join
+  │ │ ├─Apply_103(Build)	10.00	root		CARTESIAN left outer join
+  │ │ │ ├─TableReader_106(Build)	10.00	root		data:Selection_105
+  │ │ │ │ └─Selection_105	10.00	cop[tikv]		eq(cte1.table_d.col_1, 20240628)
+  │ │ │ │   └─TableFullScan_104	10000.00	cop[tikv]	table:d	keep order:false, stats:pseudo
+  │ │ │ └─StreamAgg_109(Probe)	10.00	root		funcs:max(cte1.table_c.col_1)->Column#159
+  │ │ │   └─TopN_112	10.00	root		cte1.table_c.col_1:desc, offset:0, count:1
+  │ │ │     └─HashJoin_117	63936.00	root		semi join, equal:[eq(Column#423, Column#424)]
+  │ │ │       ├─Projection_123(Build)	80000.00	root		cast(cte1.table_d.col_1, double BINARY)->Column#424
+  │ │ │       │ └─TableReader_127	80000.00	root		data:Selection_126
+  │ │ │       │   └─Selection_126	80000.00	cop[tikv]		eq(cast(cte1.table_d.col_2, double BINARY), 1)
+  │ │ │       │     └─TableFullScan_125	100000.00	cop[tikv]	table:d	keep order:false, stats:pseudo
+  │ │ │       └─Projection_118(Probe)	79920.00	root		cte1.table_c.col_1, cast(cte1.table_c.col_1, double BINARY)->Column#423
+  │ │ │         └─IndexReader_122	79920.00	root		index:Selection_121
+  │ │ │           └─Selection_121	79920.00	cop[tikv]		le(cte1.table_c.col_1, concat(cast(year(cast(date_sub(cte1.table_d.col_1, 1, "YEAR"), datetime(6) BINARY)), var_string(20)), "1231"))
+  │ │ │             └─IndexFullScan_120	99900.00	cop[tikv]	table:a, index:index_col_1_3(col_1, col_3)	keep order:false, stats:pseudo
+  │ │ └─StreamAgg_130(Probe)	10.00	root		funcs:max(cte1.table_a.col_1)->Column#208
+  │ │   └─TopN_133	10.00	root		cte1.table_a.col_1:desc, offset:0, count:1
+  │ │     └─HashJoin_138	63936.00	root		semi join, equal:[eq(Column#429, Column#430)]
+  │ │       ├─Projection_144(Build)	80000.00	root		cast(cte1.table_d.col_1, double BINARY)->Column#430
+  │ │       │ └─TableReader_148	80000.00	root		data:Selection_147
+  │ │       │   └─Selection_147	80000.00	cop[tikv]		eq(cast(cte1.table_d.col_2, double BINARY), 1)
+  │ │       │     └─TableFullScan_146	100000.00	cop[tikv]	table:d	keep order:false, stats:pseudo
+  │ │       └─Projection_139(Probe)	79920.00	root		cte1.table_a.col_1, cast(cte1.table_a.col_1, double BINARY)->Column#429
+  │ │         └─IndexReader_143	79920.00	root		index:Selection_142
+  │ │           └─Selection_142	79920.00	cop[tikv]		le(cte1.table_a.col_1, concat(cast(year(cast(date_sub(cte1.table_d.col_1, 1, "YEAR"), datetime(6) BINARY)), var_string(20)), "1231"))
+  │ │             └─IndexFullScan_141	99900.00	cop[tikv]	table:a, index:index_col_1(col_1)	keep order:false, stats:pseudo
+  │ └─StreamAgg_151(Probe)	10.00	root		funcs:max(cte1.table_c.col_1)->Column#230
+  │   └─Limit_157	10.00	root		offset:0, count:1
+  │     └─IndexReader_170	10.00	root		index:Limit_169
+  │       └─Limit_169	10.00	cop[tikv]		offset:0, count:1
+  │         └─Selection_168	10.00	cop[tikv]		le(cast(cte1.table_c.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
+  │           └─IndexFullScan_167	12.50	cop[tikv]	table:table_c, index:index_col_1_3(col_1, col_3)	keep order:true, desc, stats:pseudo
+  └─StreamAgg_179(Probe)	10.00	root		funcs:max(cte1.table_a.col_1)->Column#254
+    └─Limit_185	10.00	root		offset:0, count:1
+      └─IndexReader_198	10.00	root		index:Limit_197
+        └─Limit_197	10.00	cop[tikv]		offset:0, count:1
+          └─Selection_196	10.00	cop[tikv]		le(cast(cte1.table_a.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
+            └─IndexFullScan_195	12.50	cop[tikv]	table:table_a, index:index_col_1(col_1)	keep order:true, desc, stats:pseudo
 WITH date_table AS (
 SELECT
 d.col_1 AS date,

@@ -81,14 +81,14 @@
       {
         "SQL": "select * from t1_tikv as t1, t2 where t1.k1=t2.k1; -- Doesn't support hash join in root",
         "Plan": [
-          "HashJoin_7 1.25 root  inner join, equal:[eq(test.t1_tikv.k1, test.t2.k1)]",
-          "├─TableReader_18(Build) 1.00 root  MppVersion: 2, data:ExchangeSender_17",
-          "│ └─ExchangeSender_17 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─Selection_16 1.00 mpp[tiflash]  not(isnull(test.t2.k1))",
-          "│     └─TableFullScan_15 1.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false",
-          "└─TableReader_11(Probe) 9990.00 root  data:Selection_10",
-          "  └─Selection_10 9990.00 cop[tikv]  not(isnull(test.t1_tikv.k1))",
-          "    └─TableFullScan_9 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "HashJoin_8 1.25 root  inner join, equal:[eq(test.t1_tikv.k1, test.t2.k1)]",
+          "├─TableReader_19(Build) 1.00 root  MppVersion: 2, data:ExchangeSender_18",
+          "│ └─ExchangeSender_18 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─Selection_17 1.00 mpp[tiflash]  not(isnull(test.t2.k1))",
+          "│     └─TableFullScan_16 1.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false",
+          "└─TableReader_12(Probe) 9990.00 root  data:Selection_11",
+          "  └─Selection_11 9990.00 cop[tikv]  not(isnull(test.t1_tikv.k1))",
+          "    └─TableFullScan_10 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {

@@ -136,6 +136,7 @@ func (p *PhysicalApply) Attach2Task(tasks ...base.Task) base.Task {
 	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	t := &RootTask{}
 	t.SetPlan(p)
+	t.warnings.CopyFrom(&lTask.(*RootTask).warnings, &rTask.(*RootTask).warnings)
 	return t
 }
 
@@ -150,6 +151,7 @@ func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 	}
 	t := &RootTask{}
 	t.SetPlan(p)
+	t.warnings.CopyFrom(&outerTask.(*RootTask).warnings)
 	return t
 }
 
@@ -164,6 +166,7 @@ func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 	}
 	t := &RootTask{}
 	t.SetPlan(p)
+	t.warnings.CopyFrom(&outerTask.(*RootTask).warnings)
 	return t
 }
 
@@ -178,6 +181,7 @@ func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
 	}
 	t := &RootTask{}
 	t.SetPlan(p)
+	t.warnings.CopyFrom(&outerTask.(*RootTask).warnings)
 	return t
 }
 
@@ -211,6 +215,7 @@ func (p *PhysicalHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 	p.SetChildren(lTask.Plan(), rTask.Plan())
 	task := &RootTask{}
 	task.SetPlan(p)
+	task.warnings.CopyFrom(&rTask.(*RootTask).warnings, &lTask.(*RootTask).warnings)
 	return task
 }
 
@@ -492,6 +497,7 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		}
 	}
 	p.schema = defaultSchema
+	task.warnings.CopyFrom(&rTask.warnings, &lTask.warnings)
 	return task
 }
 
@@ -515,6 +521,7 @@ func (p *PhysicalHashJoin) attach2TaskForTiFlash(tasks ...base.Task) base.Task {
 		indexPlanFinished: true,
 		tablePlan:         p,
 	}
+	task.warnings.CopyFrom(&rTask.warnings, &lTask.warnings)
 	return task
 }
 
@@ -525,6 +532,7 @@ func (p *PhysicalMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 	p.SetChildren(lTask.Plan(), rTask.Plan())
 	t := &RootTask{}
 	t.SetPlan(p)
+	t.warnings.CopyFrom(&rTask.(*RootTask).warnings, &lTask.(*RootTask).warnings)
 	return t
 }
 
@@ -1218,9 +1226,6 @@ func (p *PhysicalExpand) Attach2Task(tasks ...base.Task) base.Task {
 	// since expand should be in root side accordingly, convert to root task now.
 	root := t.ConvertToRootTask(p.SCtx())
 	t = attachPlan2Task(p, root)
-	if root, ok := tasks[0].(*RootTask); ok && root.IsEmpty() {
-		t.(*RootTask).SetEmpty(true)
-	}
 	return t
 }
 
@@ -1241,9 +1246,6 @@ func (p *PhysicalProjection) Attach2Task(tasks ...base.Task) base.Task {
 	}
 	t = t.ConvertToRootTask(p.SCtx())
 	t = attachPlan2Task(p, t)
-	if root, ok := tasks[0].(*RootTask); ok && root.IsEmpty() {
-		t.(*RootTask).SetEmpty(true)
-	}
 	return t
 }
 
@@ -1253,11 +1255,9 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...base.Task) base.Task {
 	for _, tk := range tasks {
 		if mpp, ok := tk.(*MppTask); ok && !tk.Invalid() {
 			childPlans = append(childPlans, mpp.Plan())
-		} else if root, ok := tk.(*RootTask); ok && root.IsEmpty() {
 			continue
-		} else {
-			return base.InvalidTask
 		}
+		return base.InvalidTask
 	}
 	if len(childPlans) == 0 {
 		return base.InvalidTask
@@ -2545,17 +2545,20 @@ func (p *PhysicalCTEStorage) Attach2Task(tasks ...base.Task) base.Task {
 	t := tasks[0].Copy()
 	if mpp, ok := t.(*MppTask); ok {
 		p.SetChildren(t.Plan())
-		return &MppTask{
+		nt := &MppTask{
 			p:           p,
 			partTp:      mpp.partTp,
 			hashCols:    mpp.hashCols,
 			tblColHists: mpp.tblColHists,
 		}
+		nt.warnings.CopyFrom(&mpp.warnings)
+		return nt
 	}
 	t.ConvertToRootTask(p.SCtx())
 	p.SetChildren(t.Plan())
 	ta := &RootTask{}
 	ta.SetPlan(p)
+	ta.warnings.CopyFrom(&t.(*RootTask).warnings)
 	return ta
 }
 
@@ -2583,6 +2586,21 @@ func (p *PhysicalSequence) Attach2Task(tasks ...base.Task) base.Task {
 		hashCols:    lastTask.hashCols,
 		tblColHists: lastTask.tblColHists,
 	}
+	tmpWarnings := make([]*simpleWarnings, 0, len(tasks))
+	for _, t := range tasks {
+		if mpp, ok := t.(*MppTask); ok {
+			tmpWarnings = append(tmpWarnings, &mpp.warnings)
+			continue
+		}
+		if root, ok := t.(*RootTask); ok {
+			tmpWarnings = append(tmpWarnings, &root.warnings)
+			continue
+		}
+		if cop, ok := t.(*CopTask); ok {
+			tmpWarnings = append(tmpWarnings, &cop.warnings)
+		}
+	}
+	mppTask.warnings.CopyFrom(tmpWarnings...)
 	return mppTask
 }
 
@@ -2680,9 +2698,11 @@ func (t *MppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *MppTask
 	sender.SetChildren(t.p)
 	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.StatsInfo())
 	receiver.SetChildren(sender)
-	return &MppTask{
+	nt := &MppTask{
 		p:        receiver,
 		partTp:   prop.MPPPartitionTp,
 		hashCols: prop.MPPPartitionCols,
 	}
+	nt.warnings.CopyFrom(&t.warnings)
+	return nt
 }

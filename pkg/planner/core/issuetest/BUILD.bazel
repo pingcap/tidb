@@ -6,6 +6,7 @@ go_test(
     srcs = [
         "main_test.go",
         "planner_issue_test.go",
+        "root_fallback_test.go",
     ],
     data = glob(["testdata/**"]),
     flaky = True,

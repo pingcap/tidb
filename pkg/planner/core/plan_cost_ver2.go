@@ -814,6 +814,11 @@ func (p *PhysicalUnionAll) GetPlanCostVer2(taskType property.TaskType, option *o
 		childCosts = append(childCosts, childCost)
 	}
 	p.PlanCostVer2 = costusage.DivCostVer2(costusage.SumCostVer2(childCosts...), concurrency)
+	if p.mpp && p.SCtx().GetSessionVars().IsMPPEnforced() &&
+		!hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) { // show the real cost in explain-statements
+		// Keep enforced MPP UnionAll comparable through cost instead of bypassing the normal plan comparison path.
+		p.PlanCostVer2 = costusage.DivCostVer2(p.PlanCostVer2, 1000000000)
+	}
 	p.PlanCostInit = true
 	return p.PlanCostVer2, nil
 }

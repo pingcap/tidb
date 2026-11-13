@@ -364,8 +364,7 @@
           "      └─TableRowIDScan 3333.33 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{} 1:{} 2:{}])",
-          "[planner:1815]The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid"
+          "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{} 1:{} 2:{}])"
         ]
       },
       {
@@ -395,8 +394,7 @@
           "      └─TableRowIDScan 3323.33 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{} 1:{} 2:{}])",
-          "[planner:1815]The agg can not push down to the MPP side, the MPP_2PHASE_AGG() hint is invalid"
+          "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{} 1:{} 2:{}])"
         ]
       },
       {
@@ -3029,10 +3027,10 @@
           "  ├─TableReader(Build) 1.00 root  MppVersion: 2, data:ExchangeSender",
           "  │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─Projection 1.00 mpp[tiflash]  Column#5",
-          "  │     └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#12)->Column#5",
+          "  │     └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#11)->Column#5",
           "  │       └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "  │         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "  │           └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#12",
+          "  │           └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#11",
           "  │             └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "  │               └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
           "  │                 └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, ",
@@ -3050,10 +3048,10 @@
           "├─TableReader(Build) 1.00 root  MppVersion: 2, data:ExchangeSender",
           "│ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─Projection 1.00 mpp[tiflash]  Column#10",
-          "│     └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#16)->Column#10",
+          "│     └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#14)->Column#10",
           "│       └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "│         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "│           └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#16",
+          "│           └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#14",
           "│             └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "│               └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
           "│                 └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, ",
@@ -3061,10 +3059,10 @@
           "└─TableReader(Probe) 1.00 root  MppVersion: 2, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Projection 1.00 mpp[tiflash]  Column#5",
-          "      └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#15)->Column#5",
+          "      └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#13)->Column#5",
           "        └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "          └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "            └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#15",
+          "            └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#13",
           "              └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "                └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
           "                  └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, ",
@@ -3485,7 +3483,7 @@
           "TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 1.00 mpp[tiflash]  Column#10",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct Column#12)->Column#10",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct Column#14)->Column#10",
           "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "          └─HashAgg 1.00 mpp[tiflash]  group by:1, ",
@@ -3767,28 +3765,28 @@
       {
         "SQL": "explain select * from t WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
         "Plan": [
-          "HashJoin_14 10000.00 root  CARTESIAN inner join",
-          "├─StreamAgg_19(Build) 1.00 root  funcs:count(1)->Column#12",
-          "│ └─Limit_22 1.00 root  offset:0, count:1",
-          "│   └─HashAgg_23 1.00 root  group by:1, funcs:firstrow(1)->Column#13",
-          "│     └─TableDual_24 1.00 root  rows:1",
-          "└─TableReader_17(Probe) 10000.00 root  data:TableFullScan_16",
-          "  └─TableFullScan_16 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "HashJoin_15 10000.00 root  CARTESIAN inner join",
+          "├─StreamAgg_24(Build) 1.00 root  funcs:count(1)->Column#12",
+          "│ └─Limit_27 1.00 root  offset:0, count:1",
+          "│   └─HashAgg_31 1.00 root  group by:1, funcs:firstrow(1)->Column#13",
+          "│     └─TableDual_36 1.00 root  rows:1",
+          "└─TableReader_18(Probe) 10000.00 root  data:TableFullScan_17",
+          "  └─TableFullScan_17 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
       {
         "SQL": "explain select * from t WHERE TRUE = ALL ( SELECT TRUE from t GROUP BY 1 LIMIT 1 ) is null is not null;",
         "Plan": [
-          "HashJoin_14 10000.00 root  CARTESIAN inner join",
-          "├─StreamAgg_19(Build) 1.00 root  funcs:count(1)->Column#15",
-          "│ └─Limit_22 1.00 root  offset:0, count:1",
-          "│   └─HashAgg_27 1.00 root  group by:Column#17, funcs:firstrow(Column#18)->Column#16",
-          "│     └─TableReader_28 1.00 root  data:HashAgg_23",
-          "│       └─HashAgg_23 1.00 cop[tikv]  group by:1, funcs:firstrow(1)->Column#18",
-          "│         └─TableFullScan_26 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-          "└─TableReader_17(Probe) 10000.00 root  data:TableFullScan_16",
-          "  └─TableFullScan_16 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "HashJoin_15 10000.00 root  CARTESIAN inner join",
+          "├─StreamAgg_24(Build) 1.00 root  funcs:count(1)->Column#15",
+          "│ └─Limit_27 1.00 root  offset:0, count:1",
+          "│   └─HashAgg_35 1.00 root  group by:Column#17, funcs:firstrow(Column#18)->Column#16",
+          "│     └─TableReader_36 1.00 root  data:HashAgg_29",
+          "│       └─HashAgg_29 1.00 cop[tikv]  group by:1, funcs:firstrow(1)->Column#18",
+          "│         └─TableFullScan_34 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─TableReader_18(Probe) 10000.00 root  data:TableFullScan_17",
+          "  └─TableFullScan_17 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
       }

@@ -2651,8 +2651,8 @@ git.pingcap.cn/pingkai/semver v0.0.0-20261102040323-6c09c65d8df1 h1:uq2S4CS4ydnp
 git.pingcap.cn/pingkai/semver v0.0.0-20261102040323-6c09c65d8df1/go.mod h1:DL85y6QvkEGxglLMNoE0iC2uWhnqBi77m9wTpc/bEcM=
 git.pingcap.cn/pingkai/tigateway v0.0.0-20261102040340-bc3f00e2339a h1:hfE9MXYjiYfnlx3vlZC15PbMe2PZ/BZWiljCamVB+Is=
 git.pingcap.cn/pingkai/tigateway v0.0.0-20261102040340-bc3f00e2339a/go.mod h1:8GPuNRXcodwF5LWCpvFGEE4vqHmeZuoi2pEleVxd9sI=
-git.pingcap.cn/pingkai/tipb v0.0.0-20261103115826-66aadd8c9a36 h1:Nrs0e8mgIAB7QPO/by8AkWtpmpTg94d8QWlE7XmZbZs=
-git.pingcap.cn/pingkai/tipb v0.0.0-20261103115826-66aadd8c9a36/go.mod h1:A7mrd7WHBl1o63LE2bIBGEJMTNWXqhgmYiOvMLxozfs=
+git.pingcap.cn/pingkai/tipb v0.0.0-20261113064139-05091b0bc49b h1:UxBuIuGAIE+uJe/Wg0BXbcycnWYWgW72LBtvEHXxEzQ=
+git.pingcap.cn/pingkai/tipb v0.0.0-20261113064139-05091b0bc49b/go.mod h1:A7mrd7WHBl1o63LE2bIBGEJMTNWXqhgmYiOvMLxozfs=
 git.sr.ht/~jackmordaunt/go-toast v1.0.0/go.mod h1:aIuRX/HdBOz7yRS8rOVYQCwJQlFS7DbYBTpUV0SHeeg=
 git.sr.ht/~sbinet/cmpimg v0.1.0/go.mod h1:FU12psLbF4TfNXkKH2ZZQ29crIqoiqTZmeQ7dkp/pxE=
 git.sr.ht/~sbinet/gg v0.3.1/go.mod h1:KGYtlADtqsqANL9ueOFkWymvzUvLMQllU5Ixo+8v3pc=

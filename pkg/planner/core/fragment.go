@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"slices"
+	"strconv"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -48,10 +49,12 @@ type Fragment struct {
 	// following field are filled during getPlanFragment.
 	TableScan         *PhysicalTableScan          // result physical table scan
 	ExchangeReceivers []*PhysicalExchangeReceiver // data receivers
-	CTEReaders        []*PhysicalCTE              // The receivers for CTE storage/producer.
+	// CTEReaders records PhysicalCTE nodes in this fragment. Each reader receives a real
+	// CTESource leaf before the placeholder PhysicalCTE is removed from the MPP DAG.
+	CTEReaders []*PhysicalCTE
 
 	// following fields are filled after scheduling.
-	ExchangeSender *PhysicalExchangeSender // data exporter
+	Sink MPPSink // data exporter
 
 	IsRoot bool
 
@@ -59,8 +62,8 @@ type Fragment struct {
 }
 
 type cteGroupInFragment struct {
-	CTEStorage *PhysicalCTEStorage
-	CTEReader  []*PhysicalCTE
+	CTEStorage  *PhysicalCTEStorage
+	StorageSink *PhysicalCTESink
 
 	StorageTasks     []*kv.MPPTask
 	StorageFragments []*Fragment
@@ -82,14 +85,25 @@ func (f *Fragment) MemoryUsage() (sum int64) {
 	if f.TableScan != nil {
 		sum += f.TableScan.MemoryUsage()
 	}
-	if f.ExchangeSender != nil {
-		sum += f.ExchangeSender.MemoryUsage()
+	if f.Sink != nil {
+		sum += f.Sink.MemoryUsage()
 	}
 
 	for _, receiver := range f.ExchangeReceivers {
 		sum += receiver.MemoryUsage()
 	}
 	return
+}
+
+// MPPSink is the operator to send data to its parent fragment.
+// e.g. ExchangeSender, etc.
+type MPPSink interface {
+	base.PhysicalPlan
+	GetCompressionMode() kv.ExchangeCompressionMode
+	GetSelfTasks() []*kv.MPPTask
+	SetSelfTasks(tasks []*kv.MPPTask)
+	SetTargetTasks(tasks []*kv.MPPTask)
+	AppendTargetTasks(tasks []*kv.MPPTask)
 }
 
 type tasksAndFrags struct {
@@ -167,10 +181,129 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragm
 		return nil, errors.Trace(err)
 	}
 	for _, frag := range frags {
-		frag.ExchangeSender.TargetTasks = []*kv.MPPTask{tidbTask}
+		frag.Sink.SetTargetTasks([]*kv.MPPTask{tidbTask})
 		frag.IsRoot = true
 	}
+	if err := e.fillLocalCTECounts(e.frags); err != nil {
+		return nil, errors.Trace(err)
+	}
 	return e.frags, nil
+}
+
+type cteSinkInMPPTasks struct {
+	sink  *PhysicalCTESink
+	tasks []*kv.MPPTask
+}
+
+type cteSourceInMPPTasks struct {
+	source *PhysicalCTESource
+	tasks  []*kv.MPPTask
+}
+
+type cteInMPPTasks struct {
+	sinks   []cteSinkInMPPTasks
+	sources []cteSourceInMPPTasks
+}
+
+func getCTEInMPPTasks(cteMap map[int]*cteInMPPTasks, cteID int) *cteInMPPTasks {
+	group := cteMap[cteID]
+	if group == nil {
+		group = &cteInMPPTasks{
+			sinks:   make([]cteSinkInMPPTasks, 0, 1),
+			sources: make([]cteSourceInMPPTasks, 0, 1),
+		}
+		cteMap[cteID] = group
+	}
+	return group
+}
+
+func (e *mppTaskGenerator) traverseFragForCTE(p base.PhysicalPlan, tasks []*kv.MPPTask, cteMap map[int]*cteInMPPTasks) {
+	switch x := p.(type) {
+	case *PhysicalCTESink:
+		group := getCTEInMPPTasks(cteMap, x.IDForStorage)
+		group.sinks = append(group.sinks, cteSinkInMPPTasks{sink: x, tasks: tasks})
+	case *PhysicalCTESource:
+		group := getCTEInMPPTasks(cteMap, x.IDForStorage)
+		group.sources = append(group.sources, cteSourceInMPPTasks{source: x, tasks: tasks})
+		return
+	case *PhysicalExchangeReceiver, *PhysicalTableScan:
+		return
+	}
+	for _, child := range p.Children() {
+		e.traverseFragForCTE(child, tasks, cteMap)
+	}
+}
+
+func addCTELocalCount(tasks []*kv.MPPTask, counts map[string]uint32) {
+	for _, task := range tasks {
+		if task == nil || task.Meta == nil {
+			continue
+		}
+		counts[task.Meta.GetAddress()]++
+	}
+}
+
+func getUniformCTELocalCount(cteID int, tasks []*kv.MPPTask, counts map[string]uint32, countName string) (uint32, error) {
+	var count uint32
+	initialized := false
+	for _, task := range tasks {
+		if task == nil || task.Meta == nil {
+			continue
+		}
+		localCount := counts[task.Meta.GetAddress()]
+		if !initialized {
+			count = localCount
+			initialized = true
+			continue
+		}
+		if count != localCount {
+			return 0, errors.Errorf("MPP shared CTE %d has different local %s counts in one fragment", cteID, countName)
+		}
+	}
+	return count, nil
+}
+
+func (e *mppTaskGenerator) fillLocalCTECounts(frags []*Fragment) error {
+	cteMap := make(map[int]*cteInMPPTasks)
+	for _, f := range frags {
+		e.traverseFragForCTE(f.Sink, f.Sink.GetSelfTasks(), cteMap)
+	}
+
+	for cteID, group := range cteMap {
+		sinkCounts := make(map[string]uint32)
+		sourceCounts := make(map[string]uint32)
+		for _, sink := range group.sinks {
+			addCTELocalCount(sink.tasks, sinkCounts)
+		}
+		for _, source := range group.sources {
+			addCTELocalCount(source.tasks, sourceCounts)
+		}
+		for _, sink := range group.sinks {
+			sinkNum, err := getUniformCTELocalCount(cteID, sink.tasks, sinkCounts, "sink")
+			if err != nil {
+				return err
+			}
+			sourceNum, err := getUniformCTELocalCount(cteID, sink.tasks, sourceCounts, "source")
+			if err != nil {
+				return err
+			}
+			sink.sink.CteSinkNum = sinkNum
+			sink.sink.CteSourceNum = sourceNum
+		}
+		for _, source := range group.sources {
+			sinkNum, err := getUniformCTELocalCount(cteID, source.tasks, sinkCounts, "sink")
+			if err != nil {
+				return err
+			}
+			sourceNum, err := getUniformCTELocalCount(cteID, source.tasks, sourceCounts, "source")
+			if err != nil {
+				return err
+			}
+			source.source.CteSinkNum = sinkNum
+			source.source.CteSourceNum = sourceNum
+		}
+	}
+	return nil
 }
 
 type mppAddr struct {
@@ -259,7 +392,7 @@ func (f *Fragment) init(p base.PhysicalPlan) error {
 // after untwist, there will be two plans in `forest` slice:
 // - ExchangeSender -> Projection (c1) -> TableScan(t)
 // - ExchangeSender -> Projection (c2) -> TableScan(s)
-func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPlan, forest *[]*PhysicalExchangeSender) error {
+func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPlan, forest *[]MPPSink) error {
 	cur := stack[len(stack)-1]
 	switch x := cur.(type) {
 	case *PhysicalTableScan, *PhysicalExchangeReceiver, *PhysicalCTE: // This should be the leave node.
@@ -267,7 +400,11 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 		if err != nil {
 			return errors.Trace(err)
 		}
-		*forest = append(*forest, p.(*PhysicalExchangeSender))
+		sink, ok := p.(MPPSink)
+		if !ok {
+			return errors.Trace(errors.New("unexpected sink plan " + p.ExplainID().String()))
+		}
+		*forest = append(*forest, sink)
 		for i := 1; i < len(stack); i++ {
 			if _, ok := stack[i].(*PhysicalUnionAll); ok {
 				continue
@@ -285,9 +422,6 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 				p.SetChildren(ch)
 			}
 			p = ch
-		}
-		if cte, ok := p.(*PhysicalCTE); ok {
-			e.CTEGroups[cte.CTE.IDForStorage].CTEReader = append(e.CTEGroups[cte.CTE.IDForStorage].CTEReader, cte)
 		}
 	case *PhysicalHashJoin:
 		stack = append(stack, x.Children()[1-x.InnerChildIdx])
@@ -311,9 +445,14 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 				e.CTEGroups = make(map[int]*cteGroupInFragment)
 			}
 			cteStorage := x.Children()[i].(*PhysicalCTEStorage)
+			if len(cteStorage.Children()) != 1 {
+				return errors.Trace(errors.New("unexpected cte producer plan " + cteStorage.ExplainID().String()))
+			}
+			cteSink := PhysicalCTESink{IDForStorage: cteStorage.CTE.IDForStorage}.Init(cteStorage.SCtx(), cteStorage.StatsInfo())
+			cteSink.SetChildren(cteStorage.Children()...)
 			e.CTEGroups[cteStorage.CTE.IDForStorage] = &cteGroupInFragment{
-				CTEStorage: cteStorage,
-				CTEReader:  make([]*PhysicalCTE, 0, 3),
+				CTEStorage:  cteStorage,
+				StorageSink: cteSink,
 			}
 		}
 		stack = append(stack, x.Children()[lastChildIdx])
@@ -335,15 +474,15 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 	return nil
 }
 
-func (e *mppTaskGenerator) buildFragments(s *PhysicalExchangeSender) ([]*Fragment, error) {
-	forest := make([]*PhysicalExchangeSender, 0, 1)
+func (e *mppTaskGenerator) buildFragments(s MPPSink) ([]*Fragment, error) {
+	forest := make([]MPPSink, 0, 1)
 	err := e.untwistPlanAndRemoveUnionAll([]base.PhysicalPlan{s}, &forest)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	fragments := make([]*Fragment, 0, len(forest))
 	for _, s := range forest {
-		f := &Fragment{ExchangeSender: s}
+		f := &Fragment{Sink: s}
 		err = f.init(s)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -353,7 +492,7 @@ func (e *mppTaskGenerator) buildFragments(s *PhysicalExchangeSender) ([]*Fragmen
 	return fragments, nil
 }
 
-func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *PhysicalExchangeSender) ([]*kv.MPPTask, []*Fragment, error) {
+func (e *mppTaskGenerator) generateMPPTasksForSink(s MPPSink) ([]*kv.MPPTask, []*Fragment, error) {
 	if cached, ok := e.cache[s.ID()]; ok {
 		return cached.tasks, cached.frags, nil
 	}
@@ -375,15 +514,17 @@ func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *PhysicalExchange
 	return results, frags, nil
 }
 
+func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *PhysicalExchangeSender) ([]*kv.MPPTask, []*Fragment, error) {
+	return e.generateMPPTasksForSink(s)
+}
+
 func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv.MPPTask, err error) {
 	for _, cteReader := range f.CTEReaders {
-		err := e.generateTasksForCTEReader(cteReader)
-		if err != nil {
+		if err := e.generateTasksForCTEReader(cteReader); err != nil {
 			return nil, err
 		}
 	}
 	for _, r := range f.ExchangeReceivers {
-		// chain call: to get lower fragments and tasks
 		r.Tasks, r.frags, err = e.generateMPPTasksForExchangeSender(r.GetExchangeSender())
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -400,16 +541,22 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 			childrenTasks = append(childrenTasks, r.Tasks...)
 		}
 		cteProducerTasks := make([]*kv.MPPTask, 0)
+		addedCTEProducers := make(map[int]struct{}, len(f.CTEReaders))
 		for _, cteR := range f.CTEReaders {
-			child := cteR.Children()[0]
-			if _, ok := child.(*PhysicalProjection); ok {
-				child = child.Children()[0]
+			cteID := cteR.CTE.IDForStorage
+			if _, ok := addedCTEProducers[cteID]; ok {
+				continue
 			}
-			cteProducerTasks = append(cteProducerTasks, child.(*PhysicalExchangeReceiver).Tasks...)
-			childrenTasks = append(childrenTasks, child.(*PhysicalExchangeReceiver).Tasks...)
+			addedCTEProducers[cteID] = struct{}{}
+			cteGroup := e.CTEGroups[cteID]
+			if cteGroup == nil {
+				return nil, errors.Trace(errors.New("cte group not found for id " + strconv.Itoa(cteID)))
+			}
+			cteProducerTasks = append(cteProducerTasks, cteGroup.StorageTasks...)
+			childrenTasks = append(childrenTasks, cteGroup.StorageTasks...)
 		}
 		if f.singleton && len(childrenTasks) > 0 {
-			childrenTasks = childrenTasks[0:1]
+			childrenTasks = childrenTasks[:1]
 		}
 		tasks = e.constructMPPTasksByChildrenTasks(childrenTasks, cteProducerTasks)
 	}
@@ -418,78 +565,69 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 	}
 	for _, r := range f.ExchangeReceivers {
 		for _, frag := range r.frags {
-			frag.ExchangeSender.TargetTasks = append(frag.ExchangeSender.TargetTasks, tasks...)
+			frag.Sink.AppendTargetTasks(tasks)
 		}
 	}
-	for _, cteR := range f.CTEReaders {
-		e.addReaderTasksForCTEStorage(cteR.CTE.IDForStorage, tasks...)
-	}
-	f.ExchangeSender.Tasks = tasks
-	f.flipCTEReader(f.ExchangeSender)
+	f.Sink.SetSelfTasks(tasks)
+	f.flipCTEReader(f.Sink)
 	return tasks, nil
 }
 
-// flipCTEReader fix the plan tree. In the func generateTasksForCTEReader, we create the plan tree like ParentPlan->CTEConsumer->ExchangeReceiver.
-// The CTEConsumer has no real meaning in MPP's execution. We prune it to make the plan become ParentPlan->ExchangeReceiver.
-// But the Receiver needs a schema since itself doesn't hold the schema. So the final plan become ParentPlan->ExchangeReceiver->CTEConsumer.
+// flipCTEReader removes the PhysicalCTE placeholder after a CTESource leaf has been attached.
 func (f *Fragment) flipCTEReader(currentPlan base.PhysicalPlan) {
 	newChildren := make([]base.PhysicalPlan, len(currentPlan.Children()))
-	for i := 0; i < len(currentPlan.Children()); i++ {
-		child := currentPlan.Children()[i]
+	for i, child := range currentPlan.Children() {
 		newChildren[i] = child
 		if cteR, ok := child.(*PhysicalCTE); ok {
-			receiver := cteR.Children()[0]
-			newChildren[i] = receiver
+			newChildren[i] = cteR.Children()[0]
 		} else if _, ok := child.(*PhysicalExchangeReceiver); !ok {
-			// The receiver is the leaf of the fragment though it has child, we need break it.
 			f.flipCTEReader(child)
 		}
 	}
 	currentPlan.SetChildren(newChildren...)
 }
 
-// genereateTasksForCTEReader generates the task leaf for cte reader.
-// A fragment's leaf must be Exchange and we could not lost the information of the CTE.
-// So we create the plan like ParentPlan->CTEReader->ExchangeReceiver.
 func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (err error) {
 	group := e.CTEGroups[cteReader.CTE.IDForStorage]
+	if group == nil {
+		return errors.Trace(errors.New("cte group not found for id " + strconv.Itoa(cteReader.CTE.IDForStorage)))
+	}
 	if group.StorageFragments == nil {
-		group.CTEStorage.storageSender.SetChildren(group.CTEStorage.Children()...)
-		group.StorageTasks, group.StorageFragments, err = e.generateMPPTasksForExchangeSender(group.CTEStorage.storageSender)
+		if group.StorageSink == nil {
+			if len(group.CTEStorage.Children()) != 1 {
+				return errors.Trace(errors.New("unexpected cte producer plan " + group.CTEStorage.ExplainID().String()))
+			}
+			group.StorageSink = PhysicalCTESink{IDForStorage: group.CTEStorage.CTE.IDForStorage}.Init(group.CTEStorage.SCtx(), group.CTEStorage.StatsInfo())
+			group.StorageSink.SetChildren(group.CTEStorage.Children()...)
+		}
+		group.StorageTasks, group.StorageFragments, err = e.generateMPPTasksForSink(group.StorageSink)
 		if err != nil {
 			return err
 		}
 	}
-	receiver := cteReader.readerReceiver
-	receiver.Tasks = group.StorageTasks
-	receiver.frags = group.StorageFragments
-	cteReader.SetChildren(receiver)
-	receiver.SetChildren(group.CTEStorage.Children()[0])
-	inconsistenceNullable := false
-	for i, col := range cteReader.schema.Columns {
-		if mysql.HasNotNullFlag(col.RetType.GetFlag()) != mysql.HasNotNullFlag(group.CTEStorage.Children()[0].Schema().Columns[i].RetType.GetFlag()) {
-			inconsistenceNullable = true
+
+	storageSchema := group.CTEStorage.Children()[0].Schema()
+	source := PhysicalCTESource{IDForStorage: group.CTEStorage.CTE.IDForStorage}.Init(cteReader.SCtx(), cteReader.StatsInfo(), storageSchema.Clone())
+	inconsistentNullable := false
+	for i, col := range cteReader.Schema().Columns {
+		if mysql.HasNotNullFlag(col.RetType.GetFlag()) != mysql.HasNotNullFlag(storageSchema.Columns[i].RetType.GetFlag()) {
+			inconsistentNullable = true
 			break
 		}
 	}
-	if inconsistenceNullable {
-		cols := group.CTEStorage.Children()[0].Schema().Clone().Columns
+	if inconsistentNullable {
+		cols := storageSchema.Clone().Columns
 		for i, col := range cols {
 			col.Index = i
 		}
 		proj := PhysicalProjection{Exprs: expression.Column2Exprs(cols)}.Init(cteReader.SCtx(), cteReader.StatsInfo(), 0, nil)
-		proj.SetSchema(cteReader.schema.Clone())
-		proj.SetChildren(receiver)
+		proj.SetSchema(cteReader.Schema().Clone())
+		proj.SetChildren(source)
 		cteReader.SetChildren(proj)
+		return nil
 	}
+	cteReader.SetChildren(source)
 	return nil
-}
-
-func (e *mppTaskGenerator) addReaderTasksForCTEStorage(storageID int, tasks ...*kv.MPPTask) {
-	group := e.CTEGroups[storageID]
-	for _, frag := range group.StorageFragments {
-		frag.ExchangeSender.TargetCTEReaderTasks = append(frag.ExchangeSender.TargetCTEReaderTasks, tasks)
-	}
 }
 
 func partitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,

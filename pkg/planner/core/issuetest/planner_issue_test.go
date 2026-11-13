@@ -253,10 +253,10 @@ func Test53726(t *testing.T) {
 		Sort().Check(testkit.Rows("-258025139 -258025139", "575932053 575932053"))
 	tk.MustQuery("explain select distinct cast(c as decimal), cast(c as signed) from t7").
 		Check(testkit.Rows(
-			"HashAgg_8 8000.00 root  group by:Column#7, Column#8, funcs:firstrow(Column#7)->Column#3, funcs:firstrow(Column#8)->Column#4",
-			"└─TableReader_9 8000.00 root  data:HashAgg_4",
+			"HashAgg_10 8000.00 root  group by:Column#7, Column#8, funcs:firstrow(Column#7)->Column#3, funcs:firstrow(Column#8)->Column#4",
+			"└─TableReader_11 8000.00 root  data:HashAgg_4",
 			"  └─HashAgg_4 8000.00 cop[tikv]  group by:cast(test.t7.c, bigint(22) BINARY), cast(test.t7.c, decimal(10,0) BINARY), ",
-			"    └─TableFullScan_7 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"))
+			"    └─TableFullScan_9 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"))
 
 	tk.MustExec("analyze table t7 all columns")
 	tk.MustQuery("select distinct cast(c as decimal), cast(c as signed) from t7").
@@ -265,9 +265,9 @@ func Test53726(t *testing.T) {
 	tk.MustQuery("explain select distinct cast(c as decimal), cast(c as signed) from t7").
 		Check(testkit.Rows(
 			"HashAgg_6 2.00 root  group by:Column#11, Column#12, funcs:firstrow(Column#11)->Column#3, funcs:firstrow(Column#12)->Column#4",
-			"└─Projection_12 2.00 root  cast(test.t7.c, decimal(10,0) BINARY)->Column#11, cast(test.t7.c, bigint(22) BINARY)->Column#12",
-			"  └─TableReader_11 2.00 root  data:TableFullScan_10",
-			"    └─TableFullScan_10 2.00 cop[tikv] table:t7 keep order:false"))
+			"└─Projection_14 2.00 root  cast(test.t7.c, decimal(10,0) BINARY)->Column#11, cast(test.t7.c, bigint(22) BINARY)->Column#12",
+			"  └─TableReader_13 2.00 root  data:TableFullScan_12",
+			"    └─TableFullScan_12 2.00 cop[tikv] table:t7 keep order:false"))
 }
 
 func TestIssue54535(t *testing.T) {
@@ -284,16 +284,16 @@ func TestIssue54535(t *testing.T) {
 	tk.MustQuery("explain SELECT /*+ inl_join(tmp) */ * FROM ta, (SELECT b1, COUNT(b3) AS cnt FROM tb GROUP BY b1, b2) as tmp where ta.a1 = tmp.b1").
 		Check(testkit.Rows(
 			"Projection_9 9990.00 root  test.ta.a1, test.ta.a2, test.ta.a3, test.tb.b1, Column#9",
-			"└─IndexJoin_18 9990.00 root  inner join, inner:HashAgg_16, outer key:test.ta.a1, inner key:test.tb.b1, equal cond:eq(test.ta.a1, test.tb.b1)",
-			"  ├─TableReader_45(Build) 9990.00 root  data:Selection_44",
-			"  │ └─Selection_44 9990.00 cop[tikv]  not(isnull(test.ta.a1))",
-			"  │   └─TableFullScan_43 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
-			"  └─HashAgg_16(Probe) 9990.00 root  group by:test.tb.b1, test.tb.b2, funcs:count(Column#11)->Column#9, funcs:firstrow(test.tb.b1)->test.tb.b1",
-			"    └─IndexLookUp_17 9990.00 root  ",
-			"      ├─Selection_14(Build) 9990.00 cop[tikv]  not(isnull(test.tb.b1))",
-			"      │ └─IndexRangeScan_12 10000.00 cop[tikv] table:tb, index:idx_b(b1) range: decided by [eq(test.tb.b1, test.ta.a1)], keep order:false, stats:pseudo",
-			"      └─HashAgg_15(Probe) 9990.00 cop[tikv]  group by:test.tb.b1, test.tb.b2, funcs:count(test.tb.b3)->Column#11",
-			"        └─TableRowIDScan_13 9990.00 cop[tikv] table:tb keep order:false, stats:pseudo"))
+			"└─IndexJoin_19 9990.00 root  inner join, inner:HashAgg_17, outer key:test.ta.a1, inner key:test.tb.b1, equal cond:eq(test.ta.a1, test.tb.b1)",
+			"  ├─TableReader_46(Build) 9990.00 root  data:Selection_45",
+			"  │ └─Selection_45 9990.00 cop[tikv]  not(isnull(test.ta.a1))",
+			"  │   └─TableFullScan_44 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
+			"  └─HashAgg_17(Probe) 9990.00 root  group by:test.tb.b1, test.tb.b2, funcs:count(Column#11)->Column#9, funcs:firstrow(test.tb.b1)->test.tb.b1",
+			"    └─IndexLookUp_18 9990.00 root  ",
+			"      ├─Selection_15(Build) 9990.00 cop[tikv]  not(isnull(test.tb.b1))",
+			"      │ └─IndexRangeScan_13 10000.00 cop[tikv] table:tb, index:idx_b(b1) range: decided by [eq(test.tb.b1, test.ta.a1)], keep order:false, stats:pseudo",
+			"      └─HashAgg_16(Probe) 9990.00 cop[tikv]  group by:test.tb.b1, test.tb.b2, funcs:count(test.tb.b3)->Column#11",
+			"        └─TableRowIDScan_14 9990.00 cop[tikv] table:tb keep order:false, stats:pseudo"))
 	// test for issues/55169
 	tk.MustExec("create table t1(col_1 int, index idx_1(col_1));")
 	tk.MustExec("create table t2(col_1 int, col_2 int, index idx_2(col_1));")
@@ -342,21 +342,21 @@ func TestIssues57583(t *testing.T) {
 	tk.MustExec(" create table t2(id int, v1 int, v2 int, v3 int);")
 	tk.MustQuery("explain select t1.id from t1 join t2 on t1.v1 = t2.v2 intersect select t1.id from t1 join t2 on t1.v1 = t2.v2;").Check(testkit.Rows(
 		"HashJoin_15 6393.60 root  semi join, equal:[nulleq(test.t1.id, test.t1.id)]",
-		"├─HashJoin_26(Build) 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
-		"│ ├─TableReader_33(Build) 9990.00 root  data:Selection_32",
-		"│ │ └─Selection_32 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
-		"│ │   └─TableFullScan_31 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-		"│ └─TableReader_30(Probe) 9990.00 root  data:Selection_29",
-		"│   └─Selection_29 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
-		"│     └─TableFullScan_28 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-		"└─HashAgg_16(Probe) 7992.00 root  group by:test.t1.id, funcs:firstrow(test.t1.id)->test.t1.id",
-		"  └─HashJoin_17 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
-		"    ├─TableReader_24(Build) 9990.00 root  data:Selection_23",
-		"    │ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
-		"    │   └─TableFullScan_22 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-		"    └─TableReader_21(Probe) 9990.00 root  data:Selection_20",
-		"      └─Selection_20 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
-		"        └─TableFullScan_19 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+		"├─HashJoin_32(Build) 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
+		"│ ├─TableReader_39(Build) 9990.00 root  data:Selection_38",
+		"│ │ └─Selection_38 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
+		"│ │   └─TableFullScan_37 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"│ └─TableReader_36(Probe) 9990.00 root  data:Selection_35",
+		"│   └─Selection_35 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
+		"│     └─TableFullScan_34 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─HashAgg_18(Probe) 7992.00 root  group by:test.t1.id, funcs:firstrow(test.t1.id)->test.t1.id",
+		"  └─HashJoin_22 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
+		"    ├─TableReader_29(Build) 9990.00 root  data:Selection_28",
+		"    │ └─Selection_28 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
+		"    │   └─TableFullScan_27 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"    └─TableReader_26(Probe) 9990.00 root  data:Selection_25",
+		"      └─Selection_25 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
+		"        └─TableFullScan_24 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 }
 
 func TestIssue59643(t *testing.T) {
@@ -1249,4 +1249,31 @@ func TestFix69990PointUpdateUnifiedAssignmentConversion(t *testing.T) {
 			require.Equal(t, logical, point)
 		})
 	}
+}
+
+func TestIssue58451(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t1 (a1 int, b1 int);")
+	tk.MustExec("create table t2 (a2 int, b2 int);")
+	tk.MustExec("insert into t1 values(1,1);")
+	tk.MustQuery(`explain format='brief'
+SELECT (4,5) IN (SELECT 8,0 UNION SELECT 8, 8) AS field1
+FROM t1 AS table1
+WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
+GROUP BY field1;`).Check(testkit.Rows("HashJoin 2.00 root  CARTESIAN left outer semi join",
+		"├─HashAgg(Build) 1.00 root  group by:Column#18, Column#19, funcs:firstrow(1)->Column#44",
+		"│ └─TableDual 0.00 root  rows:0",
+		"└─HashAgg(Probe) 2.00 root  group by:Column#10, funcs:firstrow(1)->Column#42",
+		"  └─HashJoin 10000.00 root  CARTESIAN left outer semi join",
+		"    ├─HashAgg(Build) 1.00 root  group by:Column#8, Column#9, funcs:firstrow(1)->Column#43",
+		"    │ └─TableDual 0.00 root  rows:0",
+		"    └─TableReader(Probe) 10000.00 root  data:Selection",
+		"      └─Selection 10000.00 cop[tikv]  or(1, ge(test.t1.b1, 55))",
+		"        └─TableFullScan 10000.00 cop[tikv] table:table1 keep order:false, stats:pseudo"))
+	tk.MustQuery(`SELECT (4,5) IN (SELECT 8,0 UNION SELECT 8, 8) AS field1
+FROM t1 AS table1
+WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
+GROUP BY field1;`).Check(testkit.Rows("0"))
 }

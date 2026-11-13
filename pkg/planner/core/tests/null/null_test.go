@@ -39,12 +39,12 @@ func TestIssue54803(t *testing.T) {
     GROUP BY t1db47fc1.col_68
     HAVING ISNULL(t1db47fc1.col_68) OR t1db47fc1.col_68 IN (62, 200, 196, 99)
     LIMIT 106149535;
-    `).Check(testkit.Rows("Projection_11 8.00 root  trim(cast(test.t1db47fc1.col_68, var_string(20)))->Column#7",
-		"└─Limit_14 8.00 root  offset:0, count:106149535",
-		"  └─HashAgg_17 8.00 root  group by:test.t1db47fc1.col_68, funcs:firstrow(test.t1db47fc1.col_68)->test.t1db47fc1.col_68",
-		"    └─TableReader_24 10.00 root partition:p0 data:Selection_23",
-		"      └─Selection_23 10.00 cop[tikv]  isnull(test.t1db47fc1.col_68), or(isnull(test.t1db47fc1.col_68), in(test.t1db47fc1.col_68, 62, 200, 196, 99))",
-		"        └─TableFullScan_22 10000.00 cop[tikv] table:t1db47fc1 keep order:false, stats:pseudo"))
+    `).Check(testkit.Rows("Projection_12 8.00 root  trim(cast(test.t1db47fc1.col_68, var_string(20)))->Column#7",
+		"└─Limit_16 8.00 root  offset:0, count:106149535",
+		"  └─HashAgg_20 8.00 root  group by:test.t1db47fc1.col_68, funcs:firstrow(test.t1db47fc1.col_68)->test.t1db47fc1.col_68",
+		"    └─TableReader_30 10.00 root partition:p0 data:Selection_29",
+		"      └─Selection_29 10.00 cop[tikv]  isnull(test.t1db47fc1.col_68), or(isnull(test.t1db47fc1.col_68), in(test.t1db47fc1.col_68, 62, 200, 196, 99))",
+		"        └─TableFullScan_28 10000.00 cop[tikv] table:t1db47fc1 keep order:false, stats:pseudo"))
 	// Issue55299
 	tk.MustExec(`
 CREATE TABLE tcd8c2aac (
@@ -79,15 +79,15 @@ WHERE ISNULL(tcd8c2aac.col_21) OR tcd8c2aac.col_21='yJTkLeL5^yJ'
 GROUP BY tcd8c2aac.col_21
 HAVING ISNULL(tcd8c2aac.col_21)
 LIMIT 48579914;`).Check(testkit.Rows(
-		`Limit_17 6.40 root  offset:0, count:48579914`,
-		`└─HashAgg_18 6.40 root  group by:test.tcd8c2aac.col_21, funcs:group_concat(test.tcd8c2aac.col_21 order by test.tcd8c2aac.col_21 separator ",")->Column#14`,
-		`  └─HashJoin_21 80000.00 root  CARTESIAN inner join`,
-		`    ├─IndexLookUp_25(Build) 8.00 root  `,
-		`    │ ├─Selection_24(Build) 8.00 cop[tikv]  isnull(test.tcd8c2aac.col_21)`,
-		`    │ │ └─IndexRangeScan_22 10.00 cop[tikv] table:tcd8c2aac, index:idx_12(col_21) range:[NULL,NULL], keep order:false, stats:pseudo`,
-		`    │ └─TableRowIDScan_23(Probe) 8.00 cop[tikv] table:tcd8c2aac keep order:false, stats:pseudo`,
-		`    └─IndexReader_29(Probe) 10000.00 root  index:IndexFullScan_28`,
-		`      └─IndexFullScan_28 10000.00 cop[tikv] table:tle50fd846, index:PRIMARY(col_48) keep order:false, stats:pseudo`))
+		`Limit_18 6.40 root  offset:0, count:48579914`,
+		`└─HashAgg_22 6.40 root  group by:test.tcd8c2aac.col_21, funcs:group_concat(test.tcd8c2aac.col_21 order by test.tcd8c2aac.col_21 separator ",")->Column#14`,
+		`  └─HashJoin_29 80000.00 root  CARTESIAN inner join`,
+		`    ├─IndexLookUp_33(Build) 8.00 root  `,
+		`    │ ├─Selection_32(Build) 8.00 cop[tikv]  isnull(test.tcd8c2aac.col_21)`,
+		`    │ │ └─IndexRangeScan_30 10.00 cop[tikv] table:tcd8c2aac, index:idx_12(col_21) range:[NULL,NULL], keep order:false, stats:pseudo`,
+		`    │ └─TableRowIDScan_31(Probe) 8.00 cop[tikv] table:tcd8c2aac keep order:false, stats:pseudo`,
+		`    └─IndexReader_37(Probe) 10000.00 root  index:IndexFullScan_36`,
+		`      └─IndexFullScan_36 10000.00 cop[tikv] table:tle50fd846, index:PRIMARY(col_48) keep order:false, stats:pseudo`))
 	tk.MustQuery(`SELECT GROUP_CONCAT(tcd8c2aac.col_21 ORDER BY tcd8c2aac.col_21 SEPARATOR ',') AS r0
 FROM tcd8c2aac
 JOIN tle50fd846
@@ -117,22 +117,22 @@ WHERE ISNULL(ta31c32a7.col_63)
 GROUP BY ta31c32a7.col_63
 HAVING ISNULL(ta31c32a7.col_63)
 LIMIT 65122436;`).Check(testkit.Rows(
-		"Limit_13 6.40 root  offset:0, count:65122436",
-		"└─StreamAgg_37 6.40 root  group by:test.ta31c32a7.col_63, funcs:bit_xor(Column#6)->Column#3",
-		"  └─IndexReader_38 6.40 root  index:StreamAgg_17",
-		"    └─StreamAgg_17 6.40 cop[tikv]  group by:test.ta31c32a7.col_63, funcs:bit_xor(cast(test.ta31c32a7.col_63, bigint(22) BINARY))->Column#6",
-		"      └─IndexRangeScan_34 10.00 cop[tikv] table:ta31c32a7, index:idx_24(col_63) range:[NULL,NULL], keep order:true, stats:pseudo"))
+		"Limit_14 6.40 root  offset:0, count:65122436",
+		"└─StreamAgg_39 6.40 root  group by:test.ta31c32a7.col_63, funcs:bit_xor(Column#6)->Column#3",
+		"  └─IndexReader_40 6.40 root  index:StreamAgg_19",
+		"    └─StreamAgg_19 6.40 cop[tikv]  group by:test.ta31c32a7.col_63, funcs:bit_xor(cast(test.ta31c32a7.col_63, bigint(22) BINARY))->Column#6",
+		"      └─IndexRangeScan_36 10.00 cop[tikv] table:ta31c32a7, index:idx_24(col_63) range:[NULL,NULL], keep order:true, stats:pseudo"))
 	tk.MustQuery(`explain SELECT BIT_XOR(ta31c32a7.col_63) AS r0
 FROM ta31c32a7
 WHERE ISNULL(ta31c32a7.col_63)
   OR ta31c32a7.col_63 IN (1780.7418079754723, 5904.959667345741, 1531.4023068774668)
 GROUP BY ta31c32a7.col_63
 LIMIT 65122436;`).Check(testkit.Rows(
-		"Limit_11 32.00 root  offset:0, count:65122436",
-		"└─StreamAgg_35 32.00 root  group by:test.ta31c32a7.col_63, funcs:bit_xor(Column#5)->Column#3",
-		"  └─IndexReader_36 32.00 root  index:StreamAgg_15",
-		"    └─StreamAgg_15 32.00 cop[tikv]  group by:test.ta31c32a7.col_63, funcs:bit_xor(cast(test.ta31c32a7.col_63, bigint(22) BINARY))->Column#5",
-		"      └─IndexRangeScan_32 40.00 cop[tikv] table:ta31c32a7, index:idx_24(col_63) range:[NULL,NULL], [1531.4023068774668,1531.4023068774668], [1780.7418079754723,1780.7418079754723], [5904.959667345741,5904.959667345741], keep order:true, stats:pseudo"))
+		"Limit_12 32.00 root  offset:0, count:65122436",
+		"└─StreamAgg_37 32.00 root  group by:test.ta31c32a7.col_63, funcs:bit_xor(Column#5)->Column#3",
+		"  └─IndexReader_38 32.00 root  index:StreamAgg_17",
+		"    └─StreamAgg_17 32.00 cop[tikv]  group by:test.ta31c32a7.col_63, funcs:bit_xor(cast(test.ta31c32a7.col_63, bigint(22) BINARY))->Column#5",
+		"      └─IndexRangeScan_34 40.00 cop[tikv] table:ta31c32a7, index:idx_24(col_63) range:[NULL,NULL], [1531.4023068774668,1531.4023068774668], [1780.7418079754723,1780.7418079754723], [5904.959667345741,5904.959667345741], keep order:true, stats:pseudo"))
 	tk.MustExec(`CREATE TABLE tl75eff7ba (
 col_1 tinyint(1) DEFAULT '0',
 KEY idx_1 (col_1),

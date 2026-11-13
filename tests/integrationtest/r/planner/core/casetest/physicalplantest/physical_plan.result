@@ -519,6 +519,7 @@ CTE_0	8001.00	root		Recursive CTE
 show warnings;
 Level	Code	Message
 Warning	1815	Recursive CTE cte2 can not be inlined by merge() or tidb_opt_force_inline_cte.
+Warning	1105	Scalar function 'cast'(signature: CastIntAsInt, return type: int) is not supported to push down to tiflash now.
 explain format='brief' with cte1 as (with recursive cte2(c1) as (select 1 union select c1 + 1 c1 from cte2 where c1 < 100) select * from cte2) select * from cte1; -- recursive 'cte2' inside non-recursive 'cte1';
 id	estRows	task	access object	operator info
 CTEFullScan	2.00	root	CTE:cte2	data:CTE_2
@@ -574,6 +575,7 @@ CTE_0	8001.00	root		Recursive CTE
     └─CTETable	10000.00	root		Scan on CTE_0
 show warnings;
 Level	Code	Message
+Warning	1105	Scalar function 'cast'(signature: CastIntAsInt, return type: int) is not supported to push down to tiflash now.
 explain format='brief' with cte1 as (with recursive cte2(c1) as (select 1 union select c1 + 1 c1 from cte2 where c1 < 100) select * from cte2) select * from cte1; -- recursive 'cte2' inside non-recursive 'cte1';
 id	estRows	task	access object	operator info
 CTEFullScan	2.00	root	CTE:cte2	data:CTE_2
@@ -767,89 +769,89 @@ CTE_4	1.80	root		Recursive CTE
 create table test(a int);
 explain WITH RECURSIVE CTE (x) AS (SELECT 1 UNION ALL SELECT distinct a FROM test), CTE1 AS (SELECT x FROM CTE UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1; -- CTE contain distinct and ref by CET1 recursive part cannot be inlined;
 id	estRows	task	access object	operator info
-CTEFullScan_52	14401.80	root	CTE:cte1	data:CTE_1
+CTEFullScan_64	14401.80	root	CTE:cte1	data:CTE_1
 CTE_1	14401.80	root		Recursive CTE
-├─CTEFullScan_40(Seed Part)	8001.00	root	CTE:cte	data:CTE_0
-└─HashJoin_45(Recursive Part)	6400.80	root		inner join, equal:[eq(Column#11, Column#12)]
-  ├─Selection_49(Build)	6400.80	root		not(isnull(Column#12))
-  │ └─CTETable_50	8001.00	root		Scan on CTE_1
-  └─Selection_47(Probe)	6400.80	root		not(isnull(Column#11))
-    └─CTEFullScan_48	8001.00	root	CTE:cte	data:CTE_0
+├─CTEFullScan_49(Seed Part)	8001.00	root	CTE:cte	data:CTE_0
+└─HashJoin_56(Recursive Part)	6400.80	root		inner join, equal:[eq(Column#11, Column#12)]
+  ├─Selection_60(Build)	6400.80	root		not(isnull(Column#12))
+  │ └─CTETable_61	8001.00	root		Scan on CTE_1
+  └─Selection_58(Probe)	6400.80	root		not(isnull(Column#11))
+    └─CTEFullScan_59	8001.00	root	CTE:cte	data:CTE_0
 CTE_0	8001.00	root		Non-Recursive CTE
 └─Union_27(Seed Part)	8001.00	root		
   ├─Projection_28	1.00	root		1->Column#7
-  │ └─TableDual_29	1.00	root		rows:1
-  └─Projection_30	8000.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.test.a, bigint BINARY)->Column#7
-    └─HashAgg_35	8000.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.test.a)->planner__core__casetest__physicalplantest__physical_plan.test.a
-      └─TableReader_36	8000.00	root		data:HashAgg_31
-        └─HashAgg_31	8000.00	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, 
-          └─TableFullScan_34	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+  │ └─TableDual_30	1.00	root		rows:1
+  └─Projection_32	8000.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.test.a, bigint BINARY)->Column#7
+    └─HashAgg_41	8000.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.test.a)->planner__core__casetest__physicalplantest__physical_plan.test.a
+      └─TableReader_42	8000.00	root		data:HashAgg_34
+        └─HashAgg_34	8000.00	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, 
+          └─TableFullScan_40	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
 create view test_cte(a) as WITH RECURSIVE CTE (x) AS (SELECT 1 UNION ALL SELECT distinct a FROM test) , CTE1 AS (SELECT x FROM CTE UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1;
 explain select * from test_cte;  -- CTE (inside of view) cannot be inlined by default;
 id	estRows	task	access object	operator info
-CTEFullScan_54	14401.80	root	CTE:cte1	data:CTE_1
+CTEFullScan_66	14401.80	root	CTE:cte1	data:CTE_1
 CTE_1	14401.80	root		Recursive CTE
-├─CTEFullScan_42(Seed Part)	8001.00	root	CTE:cte	data:CTE_0
-└─HashJoin_47(Recursive Part)	6400.80	root		inner join, equal:[eq(Column#11, Column#12)]
-  ├─Selection_51(Build)	6400.80	root		not(isnull(Column#12))
-  │ └─CTETable_52	8001.00	root		Scan on CTE_1
-  └─Selection_49(Probe)	6400.80	root		not(isnull(Column#11))
-    └─CTEFullScan_50	8001.00	root	CTE:cte	data:CTE_0
+├─CTEFullScan_51(Seed Part)	8001.00	root	CTE:cte	data:CTE_0
+└─HashJoin_58(Recursive Part)	6400.80	root		inner join, equal:[eq(Column#11, Column#12)]
+  ├─Selection_62(Build)	6400.80	root		not(isnull(Column#12))
+  │ └─CTETable_63	8001.00	root		Scan on CTE_1
+  └─Selection_60(Probe)	6400.80	root		not(isnull(Column#11))
+    └─CTEFullScan_61	8001.00	root	CTE:cte	data:CTE_0
 CTE_0	8001.00	root		Non-Recursive CTE
 └─Union_29(Seed Part)	8001.00	root		
   ├─Projection_30	1.00	root		1->Column#7
-  │ └─TableDual_31	1.00	root		rows:1
-  └─Projection_32	8000.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.test.a, bigint BINARY)->Column#7
-    └─HashAgg_37	8000.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.test.a)->planner__core__casetest__physicalplantest__physical_plan.test.a
-      └─TableReader_38	8000.00	root		data:HashAgg_33
-        └─HashAgg_33	8000.00	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, 
-          └─TableFullScan_36	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+  │ └─TableDual_32	1.00	root		rows:1
+  └─Projection_34	8000.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.test.a, bigint BINARY)->Column#7
+    └─HashAgg_43	8000.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.test.a)->planner__core__casetest__physicalplantest__physical_plan.test.a
+      └─TableReader_44	8000.00	root		data:HashAgg_36
+        └─HashAgg_36	8000.00	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, 
+          └─TableFullScan_42	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
 create view test_inline_cte(a) as with CTE (x) as (select distinct a from test) select * from CTE;
 explain select * from  test_inline_cte;  -- CTE (inside of view) cannot be inlined by default;
 id	estRows	task	access object	operator info
-CTEFullScan_17	8000.00	root	CTE:cte	data:CTE_0
+CTEFullScan_21	8000.00	root	CTE:cte	data:CTE_0
 CTE_0	8000.00	root		Non-Recursive CTE
-└─HashAgg_12(Seed Part)	8000.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.test.a)->planner__core__casetest__physicalplantest__physical_plan.test.a
-  └─TableReader_13	8000.00	root		data:HashAgg_8
+└─HashAgg_15(Seed Part)	8000.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.test.a)->planner__core__casetest__physicalplantest__physical_plan.test.a
+  └─TableReader_16	8000.00	root		data:HashAgg_8
     └─HashAgg_8	8000.00	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, 
-      └─TableFullScan_11	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+      └─TableFullScan_14	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
 create view test_force_inline_cte(a) as with CTE (x) as (select /*+ merge() */ distinct a from test) select * from CTE;
 explain select * from  test_force_inline_cte;  -- CTE (inside of view) can be inlined by force;
 id	estRows	task	access object	operator info
-HashAgg_16	8000.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.test.a)->planner__core__casetest__physicalplantest__physical_plan.test.a
-└─TableReader_17	8000.00	root		data:HashAgg_12
-  └─HashAgg_12	8000.00	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, 
-    └─TableFullScan_15	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+HashAgg_20	8000.00	root		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.test.a)->planner__core__casetest__physicalplantest__physical_plan.test.a
+└─TableReader_21	8000.00	root		data:HashAgg_13
+  └─HashAgg_13	8000.00	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, 
+    └─TableFullScan_19	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
 explain WITH RECURSIVE CTE (x) AS (SELECT a FROM test limit 1) , CTE1(x) AS (SELECT a FROM test UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1;  -- CTE contain limit and ref by CET1 recursive part cannot be inlined;
 id	estRows	task	access object	operator info
-CTEFullScan_42	16400.00	root	CTE:cte1	data:CTE_1
+CTEFullScan_50	16400.00	root	CTE:cte1	data:CTE_1
 CTE_1	16400.00	root		Recursive CTE
-├─TableReader_22(Seed Part)	10000.00	root		data:TableFullScan_21
-│ └─TableFullScan_21	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
-└─HashJoin_36(Recursive Part)	6400.00	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.test.a, planner__core__casetest__physicalplantest__physical_plan.test.a)]
-  ├─Selection_37(Build)	0.80	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
-  │ └─CTEFullScan_38	1.00	root	CTE:cte	data:CTE_0
-  └─Selection_39(Probe)	8000.00	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
-    └─CTETable_40	10000.00	root		Scan on CTE_1
+├─TableReader_23(Seed Part)	10000.00	root		data:TableFullScan_22
+│ └─TableFullScan_22	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+└─HashJoin_43(Recursive Part)	6400.00	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.test.a, planner__core__casetest__physicalplantest__physical_plan.test.a)]
+  ├─Selection_44(Build)	0.80	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
+  │ └─CTEFullScan_45	1.00	root	CTE:cte	data:CTE_0
+  └─Selection_46(Probe)	8000.00	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
+    └─CTETable_47	10000.00	root		Scan on CTE_1
 CTE_0	1.00	root		Non-Recursive CTE
-└─Limit_28(Seed Part)	1.00	root		offset:0, count:1
-  └─TableReader_32	1.00	root		data:Limit_31
-    └─Limit_31	1.00	cop[tikv]		offset:0, count:1
-      └─TableFullScan_30	1.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+└─Limit_30(Seed Part)	1.00	root		offset:0, count:1
+  └─TableReader_36	1.00	root		data:Limit_35
+    └─Limit_35	1.00	cop[tikv]		offset:0, count:1
+      └─TableFullScan_34	1.00	cop[tikv]	table:test	keep order:false, stats:pseudo
 explain WITH RECURSIVE CTE (x) AS (SELECT a FROM test order by a) , CTE1(x) AS (SELECT a FROM test UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1;  -- CTE contain order by and ref by CET1 recursive part cannot be inlined;
 id	estRows	task	access object	operator info
-CTEFullScan_35	20000.00	root	CTE:cte1	data:CTE_1
+CTEFullScan_39	20000.00	root	CTE:cte1	data:CTE_1
 CTE_1	20000.00	root		Recursive CTE
-├─TableReader_20(Seed Part)	10000.00	root		data:TableFullScan_19
-│ └─TableFullScan_19	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
-└─HashJoin_29(Recursive Part)	10000.00	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.test.a, planner__core__casetest__physicalplantest__physical_plan.test.a)]
-  ├─Selection_30(Build)	8000.00	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
-  │ └─CTEFullScan_31	10000.00	root	CTE:cte	data:CTE_0
-  └─Selection_32(Probe)	8000.00	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
-    └─CTETable_33	10000.00	root		Scan on CTE_1
+├─TableReader_21(Seed Part)	10000.00	root		data:TableFullScan_20
+│ └─TableFullScan_20	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+└─HashJoin_32(Recursive Part)	10000.00	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.test.a, planner__core__casetest__physicalplantest__physical_plan.test.a)]
+  ├─Selection_33(Build)	8000.00	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
+  │ └─CTEFullScan_34	10000.00	root	CTE:cte	data:CTE_0
+  └─Selection_35(Probe)	8000.00	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
+    └─CTETable_36	10000.00	root		Scan on CTE_1
 CTE_0	10000.00	root		Non-Recursive CTE
-└─TableReader_25(Seed Part)	10000.00	root		data:TableFullScan_24
-  └─TableFullScan_24	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+└─TableReader_27(Seed Part)	10000.00	root		data:TableFullScan_26
+  └─TableFullScan_26	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, b int, c int, index(c));
 insert into t values (1, 1, 1), (1, 1, 3), (1, 2, 3), (2, 1, 3), (1, 2, NULL);
@@ -2984,8 +2986,8 @@ Projection	10000.00	root		planner__core__casetest__physicalplantest__physical_pl
 └─Apply	10000.00	root		CARTESIAN inner join
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	10000.00	root		funcs:max(Column#14)->Column#8, funcs:count(distinct Column#15)->Column#9, funcs:sum(Column#16)->Column#10, funcs:count(1)->Column#11
-    └─Projection	10000.00	root		planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#14, planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#15, cast(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.b), decimal(20,0) BINARY)->Column#16
+  └─StreamAgg(Probe)	10000.00	root		funcs:max(Column#20)->Column#8, funcs:count(distinct Column#21)->Column#9, funcs:sum(Column#22)->Column#10, funcs:count(1)->Column#11
+    └─Projection	10000.00	root		planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#20, planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#21, cast(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.b), decimal(20,0) BINARY)->Column#22
       └─TableReader	10000.00	root		data:TableRangeScan
         └─TableRangeScan	10000.00	cop[tikv]	table:t2	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t1.b)], keep order:false, stats:pseudo
 select t1.a, t1.a != any (select t2.b from t2 where t2.a = t1.b) from t1;
@@ -3000,8 +3002,8 @@ Projection	10000.00	root		planner__core__casetest__physicalplantest__physical_pl
 └─Apply	10000.00	root		CARTESIAN inner join
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	10000.00	root		funcs:max(Column#14)->Column#8, funcs:count(distinct Column#15)->Column#9, funcs:sum(Column#16)->Column#10, funcs:count(1)->Column#11
-    └─Projection	10000.00	root		planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#14, planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#15, cast(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.b), decimal(20,0) BINARY)->Column#16
+  └─StreamAgg(Probe)	10000.00	root		funcs:max(Column#20)->Column#8, funcs:count(distinct Column#21)->Column#9, funcs:sum(Column#22)->Column#10, funcs:count(1)->Column#11
+    └─Projection	10000.00	root		planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#20, planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#21, cast(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.b), decimal(20,0) BINARY)->Column#22
       └─TableReader	10000.00	root		data:TableRangeScan
         └─TableRangeScan	10000.00	cop[tikv]	table:t2	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t1.b)], keep order:false, stats:pseudo
 select t1.a, t1.a != any (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b) from t1;
@@ -3280,8 +3282,8 @@ HashJoin	250.00	root		left outer join, equal:[eq(planner__core__casetest__physic
 │ ├─Selection(Build)	250.00	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
 │ │ └─IndexRangeScan	250.00	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
 │ └─TableRowIDScan(Probe)	250.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
-└─HashAgg(Probe)	7992.00	root		group by:Column#27, funcs:sum(Column#26)->Column#18, funcs:firstrow(Column#27)->planner__core__casetest__physicalplantest__physical_plan.tb.id
-  └─Projection	9990.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#26, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column#27
+└─HashAgg(Probe)	7992.00	root		group by:Column#28, funcs:sum(Column#27)->Column#18, funcs:firstrow(Column#28)->planner__core__casetest__physicalplantest__physical_plan.tb.id
+  └─Projection	9990.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#27, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column#28
     └─Apply	9990.00	root		CARTESIAN semi join
       ├─TableReader(Build)	9990.00	root		data:Selection
       │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.id))
@@ -3305,8 +3307,8 @@ Projection	250.00	root		planner__core__casetest__physicalplantest__physical_plan
   │ │ └─IndexRangeScan	250.00	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
   │ └─TableRowIDScan(Probe)	250.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	250.00	root		
-    └─StreamAgg	250.00	root		funcs:sum(Column#22)->Column#18
-      └─Projection	2500.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#22
+    └─StreamAgg	250.00	root		funcs:sum(Column#23)->Column#18
+      └─Projection	2500.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#23
         └─Apply	2500.00	root		CARTESIAN semi join
           ├─IndexLookUp(Build)	2500.00	root		
           │ ├─IndexRangeScan(Build)	2500.00	cop[tikv]	table:tb, index:idx_tb_id(id)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)], keep order:false, stats:pseudo
@@ -3826,12 +3828,12 @@ Warning	1105	Scalar function 'json_overlaps'(signature: Unspecified, return type
 set tidb_cost_model_version=DEFAULT;
 explain select /*+ USE_INDEX_MERGE(t3, aid_c1, aid_c2) */ * from t3 where (aid = 1 and c1='aaa') or (aid = 1 and c2='bbb') limit 1;
 id	estRows	task	access object	operator info
-IndexMerge_20	1.00	root		type: union, limit embedded(offset:0, count:1)
-├─Limit_18(Build)	0.01	cop[tikv]		offset:0, count:1
-│ └─IndexRangeScan_11	0.01	cop[tikv]	table:t3, index:aid_c1(aid, c1)	range:[1 "aaa",1 "aaa"], keep order:false, stats:pseudo
-├─Limit_19(Build)	0.01	cop[tikv]		offset:0, count:1
-│ └─IndexRangeScan_12	0.01	cop[tikv]	table:t3, index:aid_c2(aid, c2)	range:[1 "bbb",1 "bbb"], keep order:false, stats:pseudo
-└─TableRowIDScan_13(Probe)	1.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+IndexMerge_22	1.00	root		type: union, limit embedded(offset:0, count:1)
+├─Limit_20(Build)	0.01	cop[tikv]		offset:0, count:1
+│ └─IndexRangeScan_13	0.01	cop[tikv]	table:t3, index:aid_c1(aid, c1)	range:[1 "aaa",1 "aaa"], keep order:false, stats:pseudo
+├─Limit_21(Build)	0.01	cop[tikv]		offset:0, count:1
+│ └─IndexRangeScan_14	0.01	cop[tikv]	table:t3, index:aid_c2(aid, c2)	range:[1 "bbb",1 "bbb"], keep order:false, stats:pseudo
+└─TableRowIDScan_15(Probe)	1.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 CREATE TABLE `tbl_43` (

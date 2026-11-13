@@ -337,11 +337,11 @@ func TestIssue19836(t *testing.T) {
 	tk.MustExec("set @b=2;")
 	tk.MustExec("EXECUTE stmt USING @a, @b;")
 	explainResult := testkit.Rows(
-		"Limit_8 2.00 0 root  time:0s, loops:0 offset:1, count:2 N/A N/A",
-		"└─TableReader_13 3.00 0 root  time:0s, loops:0 data:Limit_12 N/A N/A",
-		"  └─Limit_12 3.00 0 cop[tikv]   offset:0, count:3 N/A N/A",
-		"    └─Selection_11 3.00 0 cop[tikv]   eq(test.t.a, 40) N/A N/A",
-		"      └─TableFullScan_10 3000.00 0 cop[tikv] table:t  keep order:false, stats:pseudo N/A N/A",
+		"Limit_9 2.00 0 root  time:0s, loops:0 offset:1, count:2 N/A N/A",
+		"└─TableReader_16 3.00 0 root  time:0s, loops:0 data:Limit_15 N/A N/A",
+		"  └─Limit_15 3.00 0 cop[tikv]   offset:0, count:3 N/A N/A",
+		"    └─Selection_14 3.00 0 cop[tikv]   eq(test.t.a, 40) N/A N/A",
+		"      └─TableFullScan_13 3000.00 0 cop[tikv] table:t  keep order:false, stats:pseudo N/A N/A",
 	)
 	tk.MustQuery("explain for connection " + strconv.FormatUint(tk.Session().ShowProcess().ID, 10)).Check(explainResult)
 }

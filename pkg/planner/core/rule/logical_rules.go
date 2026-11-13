@@ -44,6 +44,7 @@ const (
 	FlagCorrelate
 	FlagPruneColumnsAgain
 	FlagPushDownSequence
+	FlagEliminateUnionAllDualItem
 	FlagResolveExpand
 )
 

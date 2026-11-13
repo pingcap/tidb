@@ -400,21 +400,6 @@ func (e *PhysicalExchangeSender) ToPB(ctx *base.BuildPBContext, storeType kv.Sto
 		encodedTask = append(encodedTask, encodedStr)
 	}
 
-	encodedUpstreamCTETask := make([]*tipb.EncodedBytesSlice, 0, len(e.TargetCTEReaderTasks))
-	for _, cteRTasks := range e.TargetCTEReaderTasks {
-		encodedTasksForOneCTEReader := &tipb.EncodedBytesSlice{
-			EncodedTasks: make([][]byte, 0, len(cteRTasks)),
-		}
-		for _, task := range cteRTasks {
-			encodedStr, err := task.ToPB().Marshal()
-			if err != nil {
-				return nil, err
-			}
-			encodedTasksForOneCTEReader.EncodedTasks = append(encodedTasksForOneCTEReader.EncodedTasks, encodedStr)
-		}
-		encodedUpstreamCTETask = append(encodedUpstreamCTETask, encodedTasksForOneCTEReader)
-	}
-
 	hashCols := make([]expression.Expression, 0, len(e.HashCols))
 	hashColTypes := make([]*tipb.FieldType, 0, len(e.HashCols))
 	for _, col := range e.HashCols {
@@ -439,14 +424,13 @@ func (e *PhysicalExchangeSender) ToPB(ctx *base.BuildPBContext, storeType kv.Sto
 		return nil, errors.Trace(err)
 	}
 	ecExec := &tipb.ExchangeSender{
-		Tp:                  e.ExchangeType,
-		EncodedTaskMeta:     encodedTask,
-		PartitionKeys:       hashColPb,
-		Child:               child,
-		Types:               hashColTypes,
-		AllFieldTypes:       allFieldTypes,
-		Compression:         e.CompressionMode.ToTipbCompressionMode(),
-		UpstreamCteTaskMeta: encodedUpstreamCTETask,
+		Tp:              e.ExchangeType,
+		EncodedTaskMeta: encodedTask,
+		PartitionKeys:   hashColPb,
+		Child:           child,
+		Types:           hashColTypes,
+		AllFieldTypes:   allFieldTypes,
+		Compression:     e.CompressionMode.ToTipbCompressionMode(),
 	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{
@@ -482,11 +466,6 @@ func (e *PhysicalExchangeReceiver) ToPB(ctx *base.BuildPBContext, _ kv.StoreType
 		EncodedTaskMeta: encodedTask,
 		FieldTypes:      fieldTypes,
 	}
-	if e.IsCTEReader {
-		encodedTaskShallowCopy := make([][]byte, len(e.Tasks))
-		copy(encodedTaskShallowCopy, encodedTask)
-		ecExec.OriginalCtePrdocuerTaskMeta = encodedTaskShallowCopy
-	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{
 		Tp:                            tipb.ExecType_TypeExchangeReceiver,
@@ -495,6 +474,51 @@ func (e *PhysicalExchangeReceiver) ToPB(ctx *base.BuildPBContext, _ kv.StoreType
 		FineGrainedShuffleStreamCount: e.TiFlashFineGrainedShuffleStreamCount,
 		FineGrainedShuffleBatchSize:   ctx.TiFlashFineGrainedShuffleBatchSize,
 	}, nil
+}
+
+// ToPB builds a TiFlash CTE sink executor.
+func (p *PhysicalCTESink) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
+	child, err := p.Children()[0].ToPB(ctx, storeType)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	fieldTypes := make([]*tipb.FieldType, 0, len(p.Schema().Columns))
+	for _, column := range p.Schema().Columns {
+		fieldType, err := expression.ToPBFieldTypeWithCheck(column.RetType, storeType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		fieldTypes = append(fieldTypes, fieldType)
+	}
+	cteSink := &tipb.CTESink{
+		CteId:        uint32(p.IDForStorage),
+		CteSourceNum: p.CteSourceNum,
+		CteSinkNum:   p.CteSinkNum,
+		Child:        child,
+		FieldTypes:   fieldTypes,
+	}
+	executorID := p.ExplainID().String()
+	return &tipb.Executor{Tp: tipb.ExecType_TypeCTESink, CteSink: cteSink, ExecutorId: &executorID}, nil
+}
+
+// ToPB builds a TiFlash CTE source executor.
+func (p *PhysicalCTESource) ToPB(_ *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
+	fieldTypes := make([]*tipb.FieldType, 0, len(p.Schema().Columns))
+	for _, column := range p.Schema().Columns {
+		fieldType, err := expression.ToPBFieldTypeWithCheck(column.RetType, storeType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		fieldTypes = append(fieldTypes, fieldType)
+	}
+	cteSource := &tipb.CTESource{
+		CteId:        uint32(p.IDForStorage),
+		CteSourceNum: p.CteSourceNum,
+		CteSinkNum:   p.CteSinkNum,
+		FieldTypes:   fieldTypes,
+	}
+	executorID := p.ExplainID().String()
+	return &tipb.Executor{Tp: tipb.ExecType_TypeCTESource, CteSource: cteSource, ExecutorId: &executorID}, nil
 }
 
 // ToPB implements PhysicalPlan ToPB interface.

@@ -567,16 +567,40 @@ func TestMPPSharedCTEScan(t *testing.T) {
 	tk.MustExec("drop table if exists s")
 	tk.MustExec("create table t(a int, b int, c int)")
 	tk.MustExec("create table s(a int, b int, c int)")
+	tk.MustExec(`CREATE TABLE part (
+		P_PARTKEY bigint NOT NULL,
+		P_NAME varchar(55) NOT NULL,
+		P_MFGR char(25) NOT NULL,
+		P_BRAND char(10) NOT NULL,
+		P_TYPE varchar(25) NOT NULL,
+		P_SIZE bigint NOT NULL,
+		P_CONTAINER char(10) NOT NULL,
+		P_RETAILPRICE decimal(15,2) NOT NULL,
+		P_COMMENT varchar(23) NOT NULL,
+		PRIMARY KEY (P_PARTKEY) /*T![clustered_index] CLUSTERED */
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	tk.MustExec(`CREATE TABLE orders (
+		O_ORDERKEY bigint NOT NULL,
+		O_CUSTKEY bigint NOT NULL,
+		O_ORDERSTATUS char(1) NOT NULL,
+		O_TOTALPRICE decimal(15,2) NOT NULL,
+		O_ORDERDATE date NOT NULL,
+		O_ORDERPRIORITY char(15) NOT NULL,
+		O_CLERK char(15) NOT NULL,
+		O_SHIPPRIORITY bigint NOT NULL,
+		O_COMMENT varchar(79) NOT NULL,
+		PRIMARY KEY (O_ORDERKEY) /*T![clustered_index] CLUSTERED */
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
 	tk.MustExec("alter table t set tiflash replica 1")
 	tk.MustExec("alter table s set tiflash replica 1")
+	tk.MustExec("alter table part set tiflash replica 1")
+	tk.MustExec("alter table orders set tiflash replica 1")
 
-	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
-	require.NoError(t, err)
-
-	tb = external.GetTableByName(t, tk, "test", "s")
-	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
-	require.NoError(t, err)
+	for _, tableName := range []string{"t", "s", "part", "orders"} {
+		tb := external.GetTableByName(t, tk, "test", tableName)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		require.NoError(t, err)
+	}
 
 	var input []string
 	var output []struct {
@@ -683,4 +707,19 @@ func TestReadCommittedWithTiflash(t *testing.T) {
 	tk.MustQuery(`explain format='brief' select /*+ set_var(tidb_enforce_mpp=on) */ * from t1 join t2 on t1.a=t2.b where t1.a in (1,2);`).CheckAt([]int{0, 2, 3, 4}, expectedPlan)
 	tk.MustQuery(`explain format='brief' select * from t1 join t2 on t1.a=t2.b where t1.a in (1,2);`).CheckAt([]int{0, 2, 3, 4}, expectedPlan)
 	tk.MustExec("commit;")
+}
+
+// TestPushDownSequenceWithTableDual guards against indexing Children()[0] on a
+// childless operator (a LogicalTableDual from a constant-false predicate) while
+// pushing a sequence down under shared-CTE execution.
+func TestPushDownSequenceWithTableDual(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_opt_enable_mpp_shared_cte_execution=1")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1), (2)")
+	tk.MustQuery("with cte as (select a from t) " +
+		"select * from cte c1 join cte c2 on c1.a = c2.a where 1 = 0").
+		Check(testkit.Rows())
 }

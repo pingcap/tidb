@@ -302,17 +302,17 @@ func TestBitColumnPushDown(t *testing.T) {
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("2", "2", "3", "3", "4", "4"))
 	rows := [][]any{
 		{"Projection_15", "root", "test.t1.b"},
-		{"└─Apply_17", "root", "CARTESIAN inner join, other cond:gt(test.t1.b, Column#7)"},
-		{"  ├─TableReader_20(Build)", "root", "data:Selection_19"},
-		{"  │ └─Selection_19", "cop[tikv]", "not(isnull(test.t1.b))"},
-		{"  │   └─TableFullScan_18", "cop[tikv]", "keep order:false, stats:pseudo"},
-		{"  └─Selection_21(Probe)", "root", "not(isnull(Column#7))"},
-		{"    └─StreamAgg_23", "root", "funcs:min(test.t2.b)->Column#7"},
-		{"      └─TopN_24", "root", "test.t2.b, offset:0, count:1"},
-		{"        └─TableReader_33", "root", "data:TopN_32"},
-		{"          └─TopN_32", "cop[tikv]", "test.t2.b, offset:0, count:1"},
-		{"            └─Selection_31", "cop[tikv]", "lt(test.t2.a, test.t1.a), not(isnull(test.t2.b))"},
-		{"              └─TableFullScan_30", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"└─Apply_19", "root", "CARTESIAN inner join, other cond:gt(test.t1.b, Column#7)"},
+		{"  ├─TableReader_22(Build)", "root", "data:Selection_21"},
+		{"  │ └─Selection_21", "cop[tikv]", "not(isnull(test.t1.b))"},
+		{"  │   └─TableFullScan_20", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"  └─Selection_23(Probe)", "root", "not(isnull(Column#7))"},
+		{"    └─StreamAgg_29", "root", "funcs:min(test.t2.b)->Column#7"},
+		{"      └─TopN_30", "root", "test.t2.b, offset:0, count:1"},
+		{"        └─TableReader_41", "root", "data:TopN_40"},
+		{"          └─TopN_40", "cop[tikv]", "test.t2.b, offset:0, count:1"},
+		{"            └─Selection_39", "cop[tikv]", "lt(test.t2.a, test.t1.a), not(isnull(test.t2.b))"},
+		{"              └─TableFullScan_38", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
 	tk.MustExec("insert t1 values ('A', 1);")
@@ -1258,9 +1258,8 @@ func TestIssue36194(t *testing.T) {
 		"Limit 100.00 root  offset:0, count:100",
 		"└─TableReader 100.00 root  MppVersion: 2, data:ExchangeSender",
 		"  └─ExchangeSender 100.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"    └─Limit 100.00 mpp[tiflash]  offset:0, count:100",
-		"      └─Selection 100.00 mpp[tiflash]  gt(plus(test.t.a, 1), 20)",
-		"        └─TableFullScan 125.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"))
+		"    └─Selection 100.00 mpp[tiflash]  gt(plus(test.t.a, 1), 20)",
+		"      └─TableFullScan 125.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"))
 }
 
 func TestGetFormatPushDownToTiFlash(t *testing.T) {
@@ -2013,8 +2012,8 @@ func TestVirtualExprPushDown(t *testing.T) {
 	// Projection to tikv.
 	rows = [][]any{
 		{"Projection_3", "root", "plus(test.t.c1, test.t.c2)->Column#4"},
-		{"└─TableReader_5", "root", "data:TableFullScan_4"},
-		{"  └─TableFullScan_4", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"└─TableReader_6", "root", "data:TableFullScan_5"},
+		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustExec("set session tidb_opt_projection_push_down='ON';")
 	tk.MustQuery("explain select c1 + c2 from t;").CheckAt([]int{0, 2, 4}, rows)
@@ -2022,9 +2021,9 @@ func TestVirtualExprPushDown(t *testing.T) {
 
 	// Selection to tikv.
 	rows = [][]any{
-		{"Selection_7", "root", "gt(test.t.c2, 1)"},
-		{"└─TableReader_6", "root", "data:TableFullScan_5"},
-		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"Selection_8", "root", "gt(test.t.c2, 1)"},
+		{"└─TableReader_7", "root", "data:TableFullScan_6"},
+		{"  └─TableFullScan_6", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
 
@@ -2269,11 +2268,11 @@ func TestIssue54213(t *testing.T) {
   PRIMARY KEY (object_id),
   KEY ab (a,b))`)
 	tk.MustQuery(`explain select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
-		testkit.Rows("StreamAgg_11 1.00 root  funcs:count(1)->Column#6",
-			"└─Limit_12 0.10 root  offset:0, count:100",
-			"  └─IndexReader_16 0.10 root  index:Limit_15",
-			"    └─Limit_15 0.10 cop[tikv]  offset:0, count:100",
-			"      └─IndexRangeScan_14 0.10 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
+		testkit.Rows("StreamAgg_16 1.00 root  funcs:count(1)->Column#6",
+			"└─Limit_17 0.10 root  offset:0, count:100",
+			"  └─IndexReader_23 0.10 root  index:Limit_22",
+			"    └─Limit_22 0.10 cop[tikv]  offset:0, count:100",
+			"      └─IndexRangeScan_21 0.10 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
 }
 
 func TestIssue54870(t *testing.T) {

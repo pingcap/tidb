@@ -524,6 +524,21 @@ func (p PhysicalCTE) Init(ctx base.PlanContext, stats *property.StatsInfo) *Phys
 	return &p
 }
 
+// Init initializes a PhysicalCTESink.
+func (p PhysicalCTESink) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalCTESink {
+	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypePhysicalCTESink, &p, 0)
+	p.SetStats(stats)
+	return &p
+}
+
+// Init initializes a PhysicalCTESource with its output schema.
+func (p PhysicalCTESource) Init(ctx base.PlanContext, stats *property.StatsInfo, schema *expression.Schema) *PhysicalCTESource {
+	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypePhysicalCTESource, &p, 0)
+	p.SetStats(stats)
+	p.SetSchema(schema)
+	return &p
+}
+
 // Init only assigns type and context.
 func (p PhysicalCTETable) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalCTETable {
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeCTETable, 0)

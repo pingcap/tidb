@@ -1892,8 +1892,6 @@ type PhysicalExchangeReceiver struct {
 
 	Tasks []*kv.MPPTask
 	frags []*Fragment
-
-	IsCTEReader bool
 }
 
 // Clone implment op.PhysicalPlan interface.
@@ -1905,8 +1903,6 @@ func (p *PhysicalExchangeReceiver) Clone(newCtx base.PlanContext) (base.Physical
 		return nil, errors.Trace(err)
 	}
 	np.BasePhysicalPlan = *base
-
-	np.IsCTEReader = p.IsCTEReader
 	return np, nil
 }
 
@@ -2016,10 +2012,9 @@ func (p *PhysicalExpand) MemoryUsage() (sum int64) {
 type PhysicalExchangeSender struct {
 	physicalop.BasePhysicalPlan
 
-	TargetTasks          []*kv.MPPTask
-	TargetCTEReaderTasks [][]*kv.MPPTask
-	ExchangeType         tipb.ExchangeType
-	HashCols             []*property.MPPPartitionColumn
+	TargetTasks  []*kv.MPPTask
+	ExchangeType tipb.ExchangeType
+	HashCols     []*property.MPPPartitionColumn
 	// Tasks is the mpp task for current PhysicalExchangeSender.
 	Tasks           []*kv.MPPTask
 	CompressionMode kv.ExchangeCompressionMode
@@ -2046,12 +2041,37 @@ func (p *PhysicalExchangeSender) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice*3 + size.SizeOfInt32 +
+	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice*2 + size.SizeOfInt32 +
 		int64(cap(p.TargetTasks)+cap(p.HashCols)+cap(p.Tasks))*size.SizeOfPointer
 	for _, hCol := range p.HashCols {
 		sum += hCol.MemoryUsage()
 	}
 	return
+}
+
+// GetCompressionMode returns the compression mode of this exchange sender.
+func (p *PhysicalExchangeSender) GetCompressionMode() kv.ExchangeCompressionMode {
+	return p.CompressionMode
+}
+
+// GetSelfTasks returns mpp tasks for current PhysicalExchangeSender.
+func (p *PhysicalExchangeSender) GetSelfTasks() []*kv.MPPTask {
+	return p.Tasks
+}
+
+// SetSelfTasks sets mpp tasks for current PhysicalExchangeSender.
+func (p *PhysicalExchangeSender) SetSelfTasks(tasks []*kv.MPPTask) {
+	p.Tasks = tasks
+}
+
+// SetTargetTasks sets mpp tasks for current PhysicalExchangeSender.
+func (p *PhysicalExchangeSender) SetTargetTasks(tasks []*kv.MPPTask) {
+	p.TargetTasks = tasks
+}
+
+// AppendTargetTasks appends mpp tasks for current PhysicalExchangeSender.
+func (p *PhysicalExchangeSender) AppendTargetTasks(tasks []*kv.MPPTask) {
+	p.TargetTasks = append(p.TargetTasks, tasks...)
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -2926,9 +2946,6 @@ type PhysicalCTE struct {
 	CTE       *logicalop.CTEClass
 	cteAsName pmodel.CIStr
 	cteName   pmodel.CIStr
-
-	readerReceiver *PhysicalExchangeReceiver
-	storageSender  *PhysicalExchangeSender
 }
 
 // PhysicalCTETable is for CTE table.
@@ -2990,20 +3007,6 @@ func (p *PhysicalCTE) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) 
 	}
 	cloned.cteAsName, cloned.cteName = p.cteAsName, p.cteName
 	cloned.CTE = p.CTE
-	if p.storageSender != nil {
-		clonedSender, err := p.storageSender.Clone(newCtx)
-		if err != nil {
-			return nil, err
-		}
-		cloned.storageSender = clonedSender.(*PhysicalExchangeSender)
-	}
-	if p.readerReceiver != nil {
-		clonedReceiver, err := p.readerReceiver.Clone(newCtx)
-		if err != nil {
-			return nil, err
-		}
-		cloned.readerReceiver = clonedReceiver.(*PhysicalExchangeReceiver)
-	}
 	return cloned, nil
 }
 
@@ -3126,6 +3129,101 @@ func (p *PhysicalCTEStorage) Clone(newCtx base.PlanContext) (base.PhysicalPlan, 
 		return nil, err
 	}
 	return (*PhysicalCTEStorage)(cloned.(*PhysicalCTE)), nil
+}
+
+// PhysicalCTESink represents a CTE producer in a TiFlash MPP fragment.
+type PhysicalCTESink struct {
+	physicalop.BasePhysicalPlan
+
+	IDForStorage int
+	TargetTasks  []*kv.MPPTask
+	Tasks        []*kv.MPPTask
+
+	CompressionMode kv.ExchangeCompressionMode
+	CteSinkNum      uint32
+	CteSourceNum    uint32
+}
+
+// GetCompressionMode returns the compression mode for MPP dispatch logging.
+func (p *PhysicalCTESink) GetCompressionMode() kv.ExchangeCompressionMode {
+	return p.CompressionMode
+}
+
+// GetSelfTasks returns the tasks that execute this sink.
+func (p *PhysicalCTESink) GetSelfTasks() []*kv.MPPTask {
+	return p.Tasks
+}
+
+// SetSelfTasks records the tasks that execute this sink.
+func (p *PhysicalCTESink) SetSelfTasks(tasks []*kv.MPPTask) {
+	p.Tasks = tasks
+}
+
+// SetTargetTasks records the sink's target tasks.
+func (p *PhysicalCTESink) SetTargetTasks(tasks []*kv.MPPTask) {
+	p.TargetTasks = tasks
+}
+
+// AppendTargetTasks appends target tasks for this sink.
+func (p *PhysicalCTESink) AppendTargetTasks(tasks []*kv.MPPTask) {
+	p.TargetTasks = append(p.TargetTasks, tasks...)
+}
+
+// Clone implements base.PhysicalPlan.
+func (p *PhysicalCTESink) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+	np := new(PhysicalCTESink)
+	np.SetSCtx(newCtx)
+	basePlan, err := p.BasePhysicalPlan.CloneWithSelf(newCtx, np)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	np.BasePhysicalPlan = *basePlan
+	np.IDForStorage = p.IDForStorage
+	np.CompressionMode = p.CompressionMode
+	np.CteSinkNum = p.CteSinkNum
+	np.CteSourceNum = p.CteSourceNum
+	return np, nil
+}
+
+// MemoryUsage returns the memory used by this sink.
+func (p *PhysicalCTESink) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+	return p.BasePhysicalPlan.MemoryUsage() + size.SizeOfInt + size.SizeOfInt32*2 +
+		size.SizeOfSlice*2 + int64(cap(p.TargetTasks)+cap(p.Tasks))*size.SizeOfPointer
+}
+
+// PhysicalCTESource represents a CTE consumer leaf in a TiFlash MPP fragment.
+type PhysicalCTESource struct {
+	physicalSchemaProducer
+
+	IDForStorage int
+	CteSinkNum   uint32
+	CteSourceNum uint32
+}
+
+// Clone implements base.PhysicalPlan.
+func (p *PhysicalCTESource) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+	np := new(PhysicalCTESource)
+	np.SetSCtx(newCtx)
+	basePlan, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, np)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	np.physicalSchemaProducer = *basePlan
+	np.IDForStorage = p.IDForStorage
+	np.CteSinkNum = p.CteSinkNum
+	np.CteSourceNum = p.CteSourceNum
+	return np, nil
+}
+
+// MemoryUsage returns the memory used by this source.
+func (p *PhysicalCTESource) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+	return p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInt + size.SizeOfInt32*2
 }
 
 func appendChildCandidate(origin base.PhysicalPlan, pp base.PhysicalPlan, op *optimizetrace.PhysicalOptimizeOp) {
