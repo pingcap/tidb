@@ -102,15 +102,25 @@ pub const fn is_supported_select_lock_type(lock_type: SelectLockType) -> bool {
     is_select_for_update_lock_type(lock_type) || is_select_for_share_lock_type(lock_type)
 }
 
+/// Go `ast.SelectLockInfo`: a locking clause's lock type, `WAIT n`
+/// seconds and `OF` tables.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SelectLockInfo {
+    /// Go `LockType`.
+    pub lock_type: SelectLockType,
+    /// Go `WaitSec`, which `ForUpdateWaitN` carries.
+    pub wait_sec: u64,
+    /// Go `Tables`: the `OF` clause's table names.
+    pub tables: Vec<Vec<String>>,
+}
+
 /// Go `logicalop.LogicalLock` (`logical_lock.go:27`).
 #[derive(Clone, Debug, Default)]
 pub struct LogicalLock {
     /// The shared logical base.
     pub base: BaseLogicalPlan,
-    /// Go `Lock.LockType`; see this module's header.
-    pub lock_type: SelectLockType,
-    /// Go `Lock.WaitSec`, which `ForUpdateWaitN` carries.
-    pub wait_sec: u64,
+    /// Go `Lock`; see this module's header for its lock type.
+    pub lock: SelectLockInfo,
     /// Go `TblID2Handle`: each table's handles.
     pub tbl_id2_handle: BTreeMap<i64, Vec<tidb_planner_util::handle_cols::HandleCols>>,
     /// Go `TblID2PhysTblIDCol`: for a partitioned table, "the child executor
@@ -126,11 +136,10 @@ impl LogicalLock {
     /// Go `LogicalLock.Init(ctx)` (`logical_lock.go:42`), which fixes the
     /// query-block offset at 0.
     #[must_use]
-    pub fn new(base: BaseLogicalPlan, lock_type: SelectLockType) -> Self {
+    pub fn new(base: BaseLogicalPlan, lock: SelectLockInfo) -> Self {
         Self {
             base,
-            lock_type,
-            wait_sec: 0,
+            lock,
             tbl_id2_handle: BTreeMap::new(),
             tbl_id2_phys_tbl_id_col: BTreeMap::new(),
         }
@@ -146,7 +155,7 @@ impl LogicalLock {
     #[must_use]
     pub fn prune_columns_local(&self, parent_used_cols: &[Column]) -> Vec<Column> {
         let mut used = parent_used_cols.to_vec();
-        if !is_supported_select_lock_type(self.lock_type) {
+        if !is_supported_select_lock_type(self.lock.lock_type) {
             return used;
         }
         for (table_id, handle_cols) in &self.tbl_id2_handle {
@@ -176,8 +185,7 @@ impl LogicalLock {
     pub fn clone_shallow(&self) -> Self {
         Self {
             base: self.base.shell(),
-            lock_type: self.lock_type,
-            wait_sec: self.wait_sec,
+            lock: self.lock.clone(),
             tbl_id2_handle: self.tbl_id2_handle.clone(),
             tbl_id2_phys_tbl_id_col: self.tbl_id2_phys_tbl_id_col.clone(),
         }

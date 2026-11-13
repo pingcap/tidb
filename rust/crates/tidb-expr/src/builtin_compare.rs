@@ -2146,3 +2146,62 @@ impl crate::builtin::FunctionClass for CompareFunctionClass {
         Ok(bf)
     }
 }
+
+/// Go `expression.CompareFunc`, by the comparer [`get_cmp_function`] picks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompareFunc {
+    /// Go `CompareInt`.
+    Int,
+    /// Go `CompareReal`.
+    Real,
+    /// Go `CompareDecimal`.
+    Decimal,
+    /// Go `genCompareString(collation)`.
+    String(tidb_charset::Collation),
+    /// Go `CompareDuration`.
+    Duration,
+    /// Go `CompareTime`.
+    Time,
+    /// Go `CompareJSON`.
+    Json,
+    /// Go `CompareVectorFloat32`.
+    VectorFloat32,
+}
+
+/// Go `GetCmpFunction`: the comparer of `lhs` and `rhs` by
+/// `GetAccurateCmpType`, a string one under the collation
+/// `CheckAndDeriveCollationFromExprs` derives from both.
+///
+/// # Panics
+/// As Go's: a comparison type with no comparer.
+#[must_use]
+pub fn get_cmp_function(lhs: &Expression, rhs: &Expression) -> CompareFunc {
+    let (lhs_type, rhs_type) = (crate::wrap_cast::type_of(lhs), crate::wrap_cast::type_of(rhs));
+    let operand = |expr: &Expression, field_type| CmpOperand {
+        field_type,
+        is_constant: matches!(expr, Expression::Constant(_)),
+        is_column: matches!(expr, Expression::Column(_)),
+    };
+    match get_accurate_cmp_type(operand(lhs, &lhs_type), operand(rhs, &rhs_type)) {
+        EvalType::Int => CompareFunc::Int,
+        EvalType::Real => CompareFunc::Real,
+        EvalType::Decimal => CompareFunc::Decimal,
+        EvalType::String => {
+            let fallback = lhs_type.collation();
+            let collation = crate::collation_derive::check_and_derive_collation_from_exprs(
+                "",
+                EvalType::Int,
+                &[lhs.clone(), rhs.clone()],
+            )
+            .ok()
+            .and_then(|derived| tidb_charset::Collation::from_name(&derived.collation))
+            .unwrap_or(fallback);
+            CompareFunc::String(collation)
+        }
+        EvalType::Duration => CompareFunc::Duration,
+        EvalType::Datetime | EvalType::Timestamp => CompareFunc::Time,
+        EvalType::Json => CompareFunc::Json,
+        EvalType::VectorFloat32 => CompareFunc::VectorFloat32,
+        other => panic!("cannot compare with {other:?}"),
+    }
+}

@@ -583,6 +583,21 @@ impl PhysicalHashJoin {
 }
 
 impl PhysicalMergeJoin {
+    /// Go `initCompareFuncs`: one `GetCmpFunction` per key pair.
+    pub fn init_compare_funcs(&mut self) {
+        self.compare_funcs = self
+            .left_join_keys
+            .iter()
+            .zip(&self.right_join_keys)
+            .map(|(left, right)| {
+                tidb_expr::builtin_compare::get_cmp_function(
+                    &tidb_expr::expression::Expression::Column(left.clone()),
+                    &tidb_expr::expression::Expression::Column(right.clone()),
+                )
+            })
+            .collect();
+    }
+
     /// Go `PhysicalMergeJoin.MemoryUsage` (`physical_merge_join.go:340-347`):
     /// the join base plus one `CompareFunc` per key pair.
     #[must_use]
@@ -695,6 +710,8 @@ pub struct PhysicalMergeJoin {
     pub default_values: Vec<tidb_datatype::Datum>,
     /// Go `PhysicalMergeJoin.Desc`.
     pub desc: bool,
+    /// Go `PhysicalMergeJoin.CompareFuncs` (`initCompareFuncs`).
+    pub compare_funcs: Vec<tidb_expr::builtin_compare::CompareFunc>,
 }
 
 impl Default for PhysicalMergeJoin {
@@ -710,6 +727,7 @@ impl Default for PhysicalMergeJoin {
             other_conditions: Vec::new(),
             default_values: Vec::new(),
             desc: false,
+            compare_funcs: Vec::new(),
         }
     }
 }
@@ -1930,10 +1948,8 @@ pub fn find_best_task_4_logical_show_ddl_jobs(
 pub struct PhysicalLock {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
-    /// Go `Lock.LockType`.
-    pub lock_type: tidb_planner_core_operator_logicalop::SelectLockType,
-    /// Go `Lock.WaitSec`.
-    pub wait_sec: u64,
+    /// Go `Lock`.
+    pub lock: tidb_planner_core_operator_logicalop::lock::SelectLockInfo,
     /// Go `TblID2Handle`: each table's handles.
     pub tbl_id2_handle: std::collections::BTreeMap<i64, Vec<tidb_planner_util::handle_cols::HandleCols>>,
     /// Go `TblID2PhysTblIDCol`.
@@ -1946,7 +1962,7 @@ impl PhysicalLock {
     /// that carry none.
     #[must_use]
     pub fn explain_info(&self) -> String {
-        format!("{} {}", self.lock_type, self.wait_sec)
+        format!("{} {}", self.lock.lock_type, self.lock.wait_sec)
     }
 }
 
@@ -1977,8 +1993,7 @@ pub fn exhaust_physical_plans_4_logical_lock(
     base.set_children_req_props(vec![Some(child_prop)]);
     vec![PhysicalPlan::Lock(PhysicalLock {
         base,
-        lock_type: p.lock_type,
-        wait_sec: p.wait_sec,
+        lock: p.lock.clone(),
         tbl_id2_handle: p.tbl_id2_handle.clone(),
         tbl_id2_phys_tbl_id_col: p.tbl_id2_phys_tbl_id_col.clone(),
     })]
@@ -5146,6 +5161,7 @@ impl PhysicalPlan {
                 other_conditions: op.other_conditions.clone(),
                 default_values: op.default_values.clone(),
                 desc: op.desc,
+                compare_funcs: op.compare_funcs.clone(),
             }),
             Self::IndexJoin(op) => Self::IndexJoin(PhysicalIndexJoin {
                 base: base_of(&op.base),
@@ -5278,8 +5294,7 @@ impl PhysicalPlan {
             }),
             Self::Lock(op) => Self::Lock(PhysicalLock {
                 base: base_of(&op.base),
-                lock_type: op.lock_type,
-                wait_sec: op.wait_sec,
+                lock: op.lock.clone(),
                 tbl_id2_handle: op.tbl_id2_handle.clone(),
                 tbl_id2_phys_tbl_id_col: op.tbl_id2_phys_tbl_id_col.clone(),
             }),

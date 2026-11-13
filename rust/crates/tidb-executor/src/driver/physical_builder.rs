@@ -4577,18 +4577,18 @@ fn select_lock_executor(
     use tidb_planner_core_operator_logicalop::SelectLockType;
     use tidb_txnkv::transaction::LockWaitTime;
     if matches!(
-        lock.lock_type,
+        lock.lock.lock_type,
         SelectLockType::ForShare | SelectLockType::ForShareNoWait
     ) && !selected.shared_lock_promotion()
     {
         return Ok(child);
     }
-    let wait = match lock.lock_type {
+    let wait = match lock.lock.lock_type {
         SelectLockType::ForUpdateNoWait | SelectLockType::ForShareNoWait => {
             LockWaitTime::NoWait
         }
         SelectLockType::ForUpdateWaitN => {
-            LockWaitTime::Timeout(std::time::Duration::from_secs(lock.wait_sec))
+            LockWaitTime::Timeout(std::time::Duration::from_secs(lock.lock.wait_sec))
         }
         _ => selected.default_wait(),
     };
@@ -4745,8 +4745,7 @@ fn with_select_lock(
     .map_err(DriverError::unsupported)?;
     let lock = tidb_planner_core_operator_physicalop::PhysicalLock {
         base: tidb_planner_core_operator_physicalop::BasePhysicalPlan::default(),
-        lock_type,
-        wait_sec,
+        lock: tidb_planner_core_operator_logicalop::lock::SelectLockInfo { lock_type, wait_sec, tables: Vec::new() },
         tbl_id2_handle: std::collections::BTreeMap::from([(table_id, vec![handle_cols])]),
         tbl_id2_phys_tbl_id_col: phys_column
             .into_iter()
@@ -6791,12 +6790,19 @@ fn build_with_state(
                     "a physical merge join has the wrong child count",
                 ));
             };
-            let keys = join_key_offsets(
+            let mut keys = join_key_offsets(
                 &join.left_join_keys,
                 &join.right_join_keys,
                 &plan_schema(left)?,
                 &plan_schema(right)?,
             )?;
+            // Go `MergeJoinExec.CompareFuncs = v.CompareFuncs`.
+            for (key, compare) in keys.iter_mut().zip(&join.compare_funcs) {
+                key.collation = match compare {
+                    tidb_expr::builtin_compare::CompareFunc::String(collation) => *collation,
+                    _ => tidb_charset::Collation::Binary,
+                };
+            }
             let mut executor = build_join(
                 plan,
                 join.join_type,

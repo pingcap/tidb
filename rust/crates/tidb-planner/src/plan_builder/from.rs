@@ -1856,8 +1856,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     pub fn build_select_lock(
         &mut self,
         mut src: LogicalPlan,
-        lock_type: SelectLockType,
-        wait_sec: u64,
+        lock_info: tidb_planner_core_operator_logicalop::lock::SelectLockInfo,
     ) -> Result<LogicalPlan, PlanError> {
         let tail = self
             .handle_helper
@@ -1873,9 +1872,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .collect();
         let mut physical_columns = BTreeMap::new();
         self.set_extra_phys_tbl_id_cols(&mut src, &mut physical_columns);
-        let mut lock = LogicalLock::new(self.base(LogicalLock::TYPE), lock_type);
+        let mut lock = LogicalLock::new(self.base(LogicalLock::TYPE), lock_info);
         lock.tbl_id2_phys_tbl_id_col = physical_columns;
-        lock.wait_sec = wait_sec;
         lock.tbl_id2_handle = tbl_id2_handle;
         lock.base.set_children(vec![src]);
         Ok(LogicalPlan::Lock(lock))

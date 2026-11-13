@@ -98,7 +98,7 @@ pub fn eliminate_union_scan_and_lock(plan: PhysicalPlan, lock_eligible: bool) ->
         match node {
             PhysicalPlan::PointGet(_) | PhysicalPlan::BatchPointGet(_) => has_point_get = true,
             PhysicalPlan::UnionScan(_) => has_union_scan = true,
-            PhysicalPlan::Lock(op) => lock = Some((op.lock_type, op.wait_sec)),
+            PhysicalPlan::Lock(op) => lock = Some((op.lock.lock_type, op.lock.wait_sec)),
             _ => {}
         }
         stack.extend(node.children());

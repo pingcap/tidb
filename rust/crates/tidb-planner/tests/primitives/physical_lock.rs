@@ -27,7 +27,7 @@ fn mpp_lock_is_rejected_before_plan_creation() {
     let allocator = PlanIdAllocator::new();
     let lock = LogicalLock::new(
         BaseLogicalPlan::new(&allocator, LogicalLock::TYPE, 4),
-        SelectLockType::ForUpdate,
+        tidb_planner_core_operator_logicalop::lock::SelectLockInfo { lock_type: SelectLockType::ForUpdate, ..Default::default() },
     );
     let prop = PhysicalProperty {
         task_tp: TaskType::Mpp,
@@ -41,7 +41,7 @@ fn point_get_lock_explain_info_preserves_source_text() {
     let allocator = PlanIdAllocator::new();
     let lock = LogicalLock::new(
         BaseLogicalPlan::new(&allocator, LogicalLock::TYPE, 4),
-        SelectLockType::ForUpdate,
+        tidb_planner_core_operator_logicalop::lock::SelectLockInfo { lock_type: SelectLockType::ForUpdate, ..Default::default() },
     );
     let plans =
         exhaust_physical_plans_4_logical_lock(&lock, &PhysicalProperty::default(), &allocator, 1.0);
@@ -58,15 +58,15 @@ fn nonzero_wait_seconds_and_lock_type_are_lossless() {
     let allocator = PlanIdAllocator::new();
     let mut lock = LogicalLock::new(
         BaseLogicalPlan::new(&allocator, LogicalLock::TYPE, 0),
-        SelectLockType::ForShare,
+        tidb_planner_core_operator_logicalop::lock::SelectLockInfo { lock_type: SelectLockType::ForShare, ..Default::default() },
     );
-    lock.wait_sec = 42;
+    lock.lock.wait_sec = 42;
     let plans =
         exhaust_physical_plans_4_logical_lock(&lock, &PhysicalProperty::default(), &allocator, 1.0);
     let PhysicalPlan::Lock(plan) = &plans[0] else {
         panic!("a wired PhysicalLock, got {:?}", plans[0]);
     };
-    assert_eq!(plan.lock_type, SelectLockType::ForShare);
-    assert_eq!(plan.wait_sec, 42);
+    assert_eq!(plan.lock.lock_type, SelectLockType::ForShare);
+    assert_eq!(plan.lock.wait_sec, 42);
     assert_eq!(plan.explain_info(), "for share 42");
 }

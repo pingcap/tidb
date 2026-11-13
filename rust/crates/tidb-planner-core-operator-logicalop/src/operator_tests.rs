@@ -3026,7 +3026,7 @@ fn lock_type_support_covers_for_update_and_for_share_only() {
 fn lock_pruning_keeps_handles_only_for_a_supported_lock() {
     let mut op = LogicalLock::new(
         BaseLogicalPlan::with_id(1, LogicalLock::TYPE, 0),
-        SelectLockType::ForUpdate,
+        crate::lock::SelectLockInfo { lock_type: SelectLockType::ForUpdate, ..Default::default() },
     );
     op.tbl_id2_handle.insert(
         7,
@@ -3049,7 +3049,7 @@ fn lock_pruning_keeps_handles_only_for_a_supported_lock() {
         vec![1, 70, 71, 79, 80]
     );
 
-    op.lock_type = SelectLockType::None;
+    op.lock.lock_type = SelectLockType::None;
     assert_eq!(op.prune_columns_local(&[column(1)]).len(), 1);
     // A TopN always goes through the lock rather than removing it.
     assert!(LogicalLock::pushes_topn_into_child(true));
@@ -3230,7 +3230,7 @@ fn the_small_operators_are_wired_into_the_enum() {
         ))),
         LogicalPlan::Lock(LogicalLock::new(
             BaseLogicalPlan::with_id(2, LogicalLock::TYPE, 0),
-            SelectLockType::ForUpdate,
+            crate::lock::SelectLockInfo { lock_type: SelectLockType::ForUpdate, ..Default::default() },
         )),
         LogicalPlan::Sequence(LogicalSequence::new(BaseLogicalPlan::with_id(
             3,

@@ -5389,7 +5389,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // LIMIT, and the trailing projection, which is what puts the
             // physical `SelectLock` between the reader and the projection in
             // the optimized tree.
-            plan = self.build_select_lock(plan, tidb_planner_core_operator_logicalop::SelectLockType::ForUpdate, 0)?;
+            plan = self.build_select_lock(
+                plan,
+                tidb_planner_core_operator_logicalop::lock::SelectLockInfo {
+                    lock_type: tidb_planner_core_operator_logicalop::SelectLockType::ForUpdate,
+                    ..Default::default()
+                },
+            )?;
         }
         if !select.order_by.is_empty() {
             // Go `buildSelect`: "flag it if cte contain order by".
@@ -5799,7 +5805,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 _ => 0,
             };
             let (schema, names) = snapshot_schema_and_names(&plan);
-            plan = self.build_select_lock(plan, lock_type, wait_sec)?;
+            plan = self.build_select_lock(
+                plan,
+                tidb_planner_core_operator_logicalop::lock::SelectLockInfo { lock_type, wait_sec, tables: lock.of.clone() },
+            )?;
             if lock.of.is_empty() {
                 if let Some(from) = &select.from {
                     self.append_lock_visits_for_from(from);

@@ -1334,7 +1334,7 @@ fn exhaust_physical_plans(
                                     .map(tidb_expr::expression::Expression::ScalarFunction),
                             );
                         }
-                        PhysicalPlan::MergeJoin(tidb_planner_core_operator_physicalop::PhysicalMergeJoin {
+                        let mut merge_join = tidb_planner_core_operator_physicalop::PhysicalMergeJoin {
                             base: {
                                 let mut base = base;
                                 // Go's `Init` stores the physical join's own TP.
@@ -1350,7 +1350,10 @@ fn exhaust_physical_plans(
                             other_conditions,
                             default_values: op.default_values.clone(),
                             desc,
-                        })
+                            compare_funcs: Vec::new(),
+                        };
+                        merge_join.init_compare_funcs();
+                        PhysicalPlan::MergeJoin(merge_join)
                     }
                     JoinStrategy::Index {
                         outer_idx,
@@ -6058,7 +6061,7 @@ mod tests {
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0).with_mpp_warning_sink(&sink);
         let mut base = BaseLogicalPlan::new(&allocator, LogicalLock::TYPE, 0);
         base.base.set_stats(Some(StatsInfo::new(1.0, [])));
-        let logical = LogicalPlan::Lock(LogicalLock::new(base, SelectLockType::ForUpdate));
+        let logical = LogicalPlan::Lock(LogicalLock::new(base, tidb_planner_core_operator_logicalop::lock::SelectLockInfo { lock_type: SelectLockType::ForUpdate, ..Default::default() }));
         let mpp = PhysicalProperty {
             task_tp: TaskType::Mpp,
             ..PhysicalProperty::default()

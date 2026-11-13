@@ -1875,8 +1875,7 @@ fn a_lock_enumerates_one_candidate_and_explains_go_style() {
     let allocator = PlanIdAllocator::new();
     let mut base = BaseLogicalPlan::new(&allocator, LogicalLock::TYPE, 0);
     base.base.set_stats(Some(StatsInfo::new(50.0, [])));
-    let mut lock = LogicalLock::new(base, SelectLockType::ForUpdate);
-    lock.wait_sec = 3;
+    let lock = LogicalLock::new(base, tidb_planner_core_operator_logicalop::lock::SelectLockInfo { lock_type: SelectLockType::ForUpdate, wait_sec: 3, ..Default::default() });
 
     let mut mpp = PhysicalProperty::default();
     mpp.task_tp = TaskType::Mpp;
@@ -2654,8 +2653,7 @@ fn lock_over(id: i32, child: PhysicalPlan, lock_type: tidb_planner_core_operator
     base.set_children(vec![child]);
     PhysicalPlan::Lock(PhysicalLock {
         base,
-        lock_type,
-        wait_sec: 0,
+        lock: tidb_planner_core_operator_logicalop::lock::SelectLockInfo { lock_type, ..Default::default() },
         tbl_id2_handle: Default::default(),
         tbl_id2_phys_tbl_id_col: Default::default(),
     })
