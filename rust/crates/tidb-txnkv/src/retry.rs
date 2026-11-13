@@ -181,6 +181,12 @@ impl RegionBackoffBudget {
             .into_iter()
     }
 
+    /// The backoffer this budget charges, for Go's `GetBackoffTimes` /
+    /// `GetBackoffSleepMS` / `GetTotalSleep` readers.
+    pub fn with_backoffer<R>(&self, f: impl FnOnce(&RetryBackoffer) -> R) -> R {
+        f(&self.owner.try_lock().expect("retry owner is exclusively borrowed"))
+    }
+
     /// Completed and currently reserved sleep, including excluded categories.
     #[must_use]
     pub fn total_sleep(&self) -> Duration {
@@ -269,6 +275,30 @@ pub fn retry_backoff_upper_bound_ms(attempts: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go `collectKVClientRuntimeStats` / the batch coprocessor's
+    /// `handleCollectExecutionInfo`: a response's `CopRuntimeStats` carries
+    /// its backoffer's `GetTotalSleep`, `GetBackoffTimes` and
+    /// `GetBackoffSleepMS`.
+    #[test]
+    fn a_response_carries_its_backoffers_sleep_by_kind() {
+        let mut budget = RegionBackoffBudget::new(Duration::from_secs(20));
+        budget.next_delay(tikv_client::retry::BO_REGION_MISS).unwrap();
+        budget.finish_wait(true);
+        budget.next_delay(tikv_client::retry::BO_REGION_MISS).unwrap();
+        budget.finish_wait(true);
+        budget.next_delay(tikv_client::retry::BO_TIKV_RPC).unwrap();
+        budget.finish_wait(true);
+        let mut runtime = crate::ResponseRuntimeStats::default();
+        budget.with_backoffer(|bo| runtime.collect_backoff(bo));
+        assert_eq!(runtime.backoff_times, vec![("regionMiss".to_owned(), 2), ("tikvRPC".to_owned(), 1)]);
+        let rpc_sleep_ms = budget.total_sleep().as_millis() as u64 - 6;
+        assert_eq!(
+            runtime.backoff_sleep_ns,
+            vec![("regionMiss".to_owned(), 6_000_000), ("tikvRPC".to_owned(), rpc_sleep_ms * 1_000_000)]
+        );
+        assert_eq!(runtime.backoff_time, budget.total_sleep());
+    }
 
     #[test]
     fn completed_and_interrupted_waits_keep_separate_counts_and_sleep() {

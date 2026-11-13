@@ -105,8 +105,8 @@ impl CopResponseSink for StatementCopStats {
             scan_detail: sample.scan_detail,
             time_detail: sample.time_detail,
             callee_address: sample.callee_address.clone(),
-            backoff_time: backoff_sleep.values().sum(),
-            backoff_times: backoff_sleep.keys().map(|kind| (kind.clone(), 1)).collect(),
+            backoff_time: sample.backoff_time,
+            backoff_times: sample.backoff_times.iter().map(|(kind, times)| (kind.clone(), *times as i64)).collect(),
             backoff_sleep,
         };
         self.exec_details

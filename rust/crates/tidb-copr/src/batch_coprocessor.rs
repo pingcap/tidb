@@ -86,6 +86,9 @@ struct BatchCopWorker<S: tikv_client::PdClient> {
     resp_chan: tokio::sync::mpsc::Sender<Result<QueryResultSubset, QueryResponseError>>,
     /// Go `appendWarning`.
     append_warning: Option<tidb_txnkv::AppendWarning>,
+    /// Go `enableCollectExecutionInfo`: distsql's
+    /// `ClientSendOption.EnableCollectExecutionInfo`, the instance config.
+    enable_collect_execution_info: bool,
 }
 
 use crate::batch_cop_tasks::Ranges;
@@ -188,6 +191,10 @@ pub fn send_batch<S: tikv_client::PdClient + 'static>(
         ctx,
         resp_chan,
         append_warning,
+        enable_collect_execution_info: tidb_config::config_tree::config::get_global_config()
+            .instance
+            .enable_collect_execution_info
+            .load(),
     });
     // Go `batchCopIterator.run`: a goroutine per task; the channel closes
     // when the last of them returns.
@@ -381,7 +388,7 @@ impl<S: tikv_client::PdClient> BatchCopWorker<S> {
             return Ok(());
         };
         loop {
-            self.handle_batch_cop_response(resp, task).await?;
+            self.handle_batch_cop_response(resp, task, bo).await?;
             let received = mpp_setup(
                 Some(self.ctx.as_ref()),
                 None,
@@ -415,6 +422,7 @@ impl<S: tikv_client::PdClient> BatchCopWorker<S> {
         &self,
         response: coprocessor::BatchResponse,
         task: &MppStoreTask,
+        bo: &RegionBackoffBudget,
     ) -> Result<(), QueryResponseError> {
         if !response.other_error.is_empty() {
             return Err(QueryResponseError::Source(format!(
@@ -428,13 +436,16 @@ impl<S: tikv_client::PdClient> BatchCopWorker<S> {
             invalidate_mpp_retry_regions(&self.store, &response.retry_regions[..stale]).await;
             return Ok(());
         }
-        // Go `handleCollectExecutionInfo`: the store that answered.
+        // Go `handleCollectExecutionInfo`: under execution-info collection,
+        // the backoffer's sleep and the store that answered.
+        let mut runtime = tidb_txnkv::ResponseRuntimeStats::default();
+        if self.enable_collect_execution_info {
+            runtime.callee_address.clone_from(&task.address);
+            bo.with_backoffer(|bo| runtime.collect_backoff(bo));
+        }
         let resp = QueryResultSubset {
             data: response.data,
-            runtime: Some(tidb_txnkv::ResponseRuntimeStats {
-                callee_address: task.address.clone(),
-                ..Default::default()
-            }),
+            runtime: Some(runtime),
         };
         // Go `sendToRespCh`: a closed iterator takes no more.
         self.resp_chan

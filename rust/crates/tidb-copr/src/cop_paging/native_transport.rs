@@ -674,6 +674,14 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
         collect_cop_runtime_stats.resp_time = cost_time;
         collect_cop_runtime_stats.request_rpc_stats_present = req_stats.rpc_type_count() > 0;
         collect_cop_runtime_stats.req_stats = Some(tidb_txnkv::RequestStatsSample(req_stats));
+        // Go `collectKVClientRuntimeStats`: the task's backoffs, when it made
+        // any.
+        {
+            let backoffer = backoffer.try_lock().expect("the task's backoffer is free between sends");
+            if !backoffer.times_by_type().is_empty() {
+                collect_cop_runtime_stats.collect_backoff(&backoffer);
+            }
+        }
         let accepted = self.runtime.accept_response_with_runtime(
             attempt_id,
             response,

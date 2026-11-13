@@ -71,8 +71,12 @@ pub struct ResponseRuntimeStats {
     /// Whether request stats reported a nonzero RPCStatsCount, which satisfies
     /// the source empty-callee gate.
     pub request_rpc_stats_present: bool,
-    /// Backoff sleep samples owned by this response subset.
+    /// Go `CopRuntimeStats.BackoffSleep`: the task's backoff sleep by kind.
     pub backoff_sleep_ns: Vec<(String, u64)>,
+    /// Go `CopRuntimeStats.BackoffTimes`: the task's backoffs by kind.
+    pub backoff_times: Vec<(String, u64)>,
+    /// Go `CopRuntimeStats.BackoffTime`: the task's backoffer's total sleep.
+    pub backoff_time: Duration,
     /// Go `CopRuntimeStats.ScanDetail`: the response's `ScanDetailV2` (or the
     /// legacy write-scan counts), `None` when TiKV sent no scan detail.
     pub scan_detail: Option<ScanDetail>,
@@ -86,6 +90,25 @@ pub struct ResponseRuntimeStats {
     pub req_stats: Option<RequestStatsSample>,
     /// Go `CopRuntimeStats.CoprCacheHit`.
     pub copr_cache_hit: bool,
+}
+
+impl ResponseRuntimeStats {
+    /// Go `collectKVClientRuntimeStats`' backoff half (and the batch
+    /// coprocessor's `handleCollectExecutionInfo`): the task's backoffer's
+    /// total sleep and its backoffs and sleep by kind.
+    pub fn collect_backoff(&mut self, bo: &tikv_client::retry::RetryBackoffer) {
+        self.backoff_time = Duration::from_millis(bo.total_sleep_ms());
+        self.backoff_times =
+            bo.times_by_type().iter().map(|(kind, times)| ((*kind).to_owned(), *times)).collect();
+        self.backoff_sleep_ns = bo
+            .times_by_type()
+            .keys()
+            .map(|kind| {
+                let sleep_ms = bo.sleep_by_type().get(kind).copied().unwrap_or(0);
+                ((*kind).to_owned(), sleep_ms.saturating_mul(1_000_000))
+            })
+            .collect();
+    }
 }
 
 /// A shared `*tikv.RegionRequestRuntimeStats`, compared by identity.
