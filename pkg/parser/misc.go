@@ -562,6 +562,7 @@ var tokenMap = map[string]int{
 	"NATIONAL":                 national,
 	"NATURAL":                  natural,
 	"NCHAR":                    ncharType,
+	"NDVRATE":                  ndvRate,
 	"NEVER":                    never,
 	"NEXT_ROW_ID":              next_row_id,
 	"NEXT":                     next,

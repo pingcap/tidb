@@ -71,6 +71,7 @@ func TestStatistics(t *testing.T) {
 	t.Run("SubTestSketch", SubTestSketch())
 	t.Run("SubTestSketchProtoConversion", SubTestSketchProtoConversion())
 	t.Run("SubTestFMSketchCoding", SubTestFMSketchCoding())
+	t.Run("SubTestSampledNDV", SubTestSampledNDV())
 
 	// statistics_test.go
 	t.Run("SubTestColumnRange", SubTestColumnRange())

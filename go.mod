@@ -48,7 +48,6 @@ require (
 	github.com/dgraph-io/ristretto v0.1.1
 	github.com/dgryski/go-farm v0.0.0-20240924180020-3414d57e47da
 	github.com/docker/go-units v0.5.0
-	github.com/dolthub/swiss v0.2.1
 	github.com/emirpasic/gods v1.18.1
 	github.com/fatih/color v1.19.0
 	github.com/fatih/structtag v1.2.0
@@ -221,7 +220,6 @@ require (
 	github.com/coreos/go-systemd/v22 v22.6.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.2.0 // indirect
 	github.com/dennwc/varint v1.0.0 // indirect
-	github.com/dolthub/maphash v0.1.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
@@ -360,7 +358,13 @@ replace (
 	// Downgrade grpc to v1.63.2, as well as other related modules.
 	github.com/apache/arrow-go/v18 => github.com/joechenrh/arrow-go/v18 v18.0.0-20250911101656-62c34c9a3b82
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
+	// TODO: Remove after pingcap/kvproto#1592 merges into release-8.5.
+	github.com/pingcap/kvproto v0.0.0-20261026071505-70b5775c3362 => github.com/0xPoe/kvproto v0.0.0-20261109130652-84d3e0d6afdd
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
+	// TODO: Remove after pingcap/tipb#438 merges into release-8.5.
+	github.com/pingcap/tipb v0.0.0-20260605083900-f9f651ef5fbc => github.com/0xPoe/tipb v0.0.0-20261109130917-3af26b370e33
+	// TODO: Remove after tikv/client-go#2173 merges into tidb-8.5.
+	github.com/tikv/client-go/v2 v2.0.8-0.20261027104816-348a939fb4b6 => github.com/0xPoe/client-go/v2 v2.0.0-20261113205045-001c9cea5db5
 	// etcd 3.5 uses the interceptors removed in otelgrpc v0.60.0.
 	// Remove this compatibility pin when etcd is upgraded to v3.6.1 or later.
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc => go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.59.0

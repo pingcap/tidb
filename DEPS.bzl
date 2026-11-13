@@ -1175,20 +1175,6 @@ def go_deps():
         version = "v0.0.0-20180111231733-ee0de3bc6815",
     )
     go_repository(
-        name = "com_github_dolthub_maphash",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/dolthub/maphash",
-        sum = "h1:bsQ7JsF4FkkWyrP3oCnFJgrCUAFbFf3kOl4L/QxPDyQ=",
-        version = "v0.1.0",
-    )
-    go_repository(
-        name = "com_github_dolthub_swiss",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/dolthub/swiss",
-        sum = "h1:gs2osYs5SJkAaH5/ggVJqXQxRXtWshF6uE0lgR/Y3Gw=",
-        version = "v0.2.1",
-    )
-    go_repository(
         name = "com_github_dustin_go_humanize",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/dustin/go-humanize",
@@ -3577,8 +3563,9 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:TOpiYURrbprEqPbXVuaFIAagQm3n4+hsKsKL5beY1GQ=",
-        version = "v0.0.0-20261026071505-70b5775c3362",
+        replace = "github.com/0xPoe/kvproto",
+        sum = "h1:6GfRDPC895aftX9vI28L+8X74Si30xWZWUAAHkwxgoI=",
+        version = "v0.0.0-20261109130652-84d3e0d6afdd",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -3598,8 +3585,9 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        sum = "h1:wxolKysltFSu8gxWJBdUdWuTBoSuY3MjNIIZI5S9JLY=",
-        version = "v0.0.0-20260605083900-f9f651ef5fbc",
+        replace = "github.com/0xPoe/tipb",
+        sum = "h1:H3+z7nUEvp2EzBphSNBkkOVhlq4JqBXcPr2LpCGDuLM=",
+        version = "v0.0.0-20261109130917-3af26b370e33",
     )
     go_repository(
         name = "com_github_pkg_browser",
@@ -4285,8 +4273,9 @@ def go_deps():
         build_tags = ["intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:a+Xo/CvtDLbCn4zfGstnKRH8dulwC+v/sKNPO3hBuFw=",
-        version = "v2.0.8-0.20261027104816-348a939fb4b6",
+        replace = "github.com/0xPoe/client-go/v2",
+        sum = "h1:iaxiul1av7G5ZWSRfa8snNJLSAsrrcORRBZUKqbWX4w=",
+        version = "v2.0.0-20261113205045-001c9cea5db5",
     )
     go_repository(
         name = "com_github_tikv_pd_client",

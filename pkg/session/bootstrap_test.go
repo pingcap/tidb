@@ -3083,6 +3083,60 @@ func TestUpgradeToVer233AddsRestoreRouteIdentity(t *testing.T) {
 	require.Equal(t, upgradedSchema, restoreRegistrySchema(t, seAgain))
 }
 
+func TestUpgradeToVer234AddsNDVRate(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	se := CreateSessionAndSetID(t, store)
+	threshold := func(se sessiontypes.Session) string {
+		res := MustExecToRecodeSet(t, se, fmt.Sprintf(
+			"select variable_value from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+			variable.TiDBAnalyzeSampledNDVThreshold,
+		))
+		defer func() { require.NoError(t, res.Close()) }()
+		chk := res.NewChunk(nil)
+		require.NoError(t, res.Next(ctx, chk))
+		require.Equal(t, 1, chk.NumRows())
+		return chk.GetRow(0).GetString(0)
+	}
+	// Initial bootstrap uses the new-cluster policy, and the upgrade keeps an
+	// existing value.
+	require.Equal(t, "100000000", threshold(se))
+	upgradeToVer234(se, version233)
+	require.Equal(t, "100000000", threshold(se))
+
+	// Simulate a cluster before version234. It has no ndv_rate column yet, and
+	// its saved options must not gain a rate.
+	MustExec(t, se, "alter table mysql.analyze_options drop column ndv_rate")
+	MustExec(t, se, "insert into mysql.analyze_options (table_id) values (1)")
+	MustExec(t, se, fmt.Sprintf(
+		"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+		variable.TiDBAnalyzeSampledNDVThreshold,
+	))
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(version233)))
+	revertVersionAndVariables(t, se, version233)
+	require.NoError(t, txn.Commit(ctx))
+	unsetStoreBootstrapped(store.UUID())
+	dom.Close()
+
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	require.Equal(t, "0", threshold(seCurVer))
+	res := MustExecToRecodeSet(t, seCurVer, "select ndv_rate from mysql.analyze_options where table_id = 1")
+	defer func() { require.NoError(t, res.Close()) }()
+	chk := res.NewChunk(nil)
+	require.NoError(t, res.Next(ctx, chk))
+	require.Equal(t, 1, chk.NumRows())
+	require.Equal(t, float64(-1), chk.GetRow(0).GetFloat64(0))
+}
+
 // restoreRegistrySchema renders the user-visible schema of
 // mysql.tidb_restore_registry, including the column order.
 func restoreRegistrySchema(t *testing.T, se sessiontypes.Session) string {

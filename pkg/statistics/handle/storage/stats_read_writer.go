@@ -257,6 +257,7 @@ func (s *statsReadWriter) SaveColOrIdxStatsToStorage(
 	hg *statistics.Histogram,
 	cms *statistics.CMSketch,
 	topN *statistics.TopN,
+	fms *statistics.FMSketch,
 	statsVersion int,
 	isAnalyzed int64,
 	updateAnalyzeTime bool,
@@ -266,10 +267,11 @@ func (s *statsReadWriter) SaveColOrIdxStatsToStorage(
 	start := time.Now()
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = SaveColOrIdxStatsToStorage(sctx, tableID,
-			count, modifyCount, isIndex, hg, cms, topN, statsVersion, isAnalyzed, updateAnalyzeTime)
+			count, modifyCount, isIndex, hg, cms, topN, fms, statsVersion, isAnalyzed, updateAnalyzeTime)
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
+		failpoint.InjectCall("afterSaveColOrIdxStatsToStorage", tableID, isIndex)
 		// Check if saving was slow and update stats version if needed
 		version, err2 := s.handleSlowStatsSaving(tableID, start)
 		if err2 != nil {
@@ -726,10 +728,9 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 
 	var outerErr error
 	tbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		// loadStatsFromJSON doesn't support partition table now.
 		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		if err := s.SaveColOrIdxStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.GetStatsVer()), statistics.AnalyzeFlag, false, util.StatsMetaHistorySourceLoadStats); err != nil {
+		if err := s.SaveColOrIdxStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, col.FMSketch, int(col.GetStatsVer()), statistics.AnalyzeFlag, false, util.StatsMetaHistorySourceLoadStats); err != nil {
 			outerErr = err
 			return true
 		}
@@ -739,10 +740,9 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 		return outerErr
 	}
 	tbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
-		// loadStatsFromJSON doesn't support partition table now.
 		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		if err := s.SaveColOrIdxStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.GetStatsVer()), statistics.AnalyzeFlag, false, util.StatsMetaHistorySourceLoadStats); err != nil {
+		if err := s.SaveColOrIdxStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, idx.FMSketch, int(idx.GetStatsVer()), statistics.AnalyzeFlag, false, util.StatsMetaHistorySourceLoadStats); err != nil {
 			outerErr = err
 			return true
 		}

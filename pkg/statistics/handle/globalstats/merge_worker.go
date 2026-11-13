@@ -27,6 +27,9 @@ import (
 type StatsWrapper struct {
 	AllHg   []*statistics.Histogram
 	AllTopN []*statistics.TopN
+	// missedNotNull is the non-NULL rows of the partitions whose TopN and
+	// histogram are empty. Only their sketches count these rows.
+	missedNotNull int64
 }
 
 // NewStatsWrapper returns wrapper

@@ -746,11 +746,13 @@ func TestAnalyzeClusteredIndexPrimary(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("analyze table t0")
 	tk.MustExec("analyze table t1")
-	tk.MustQuery("show stats_topn").Sort().Check(testkit.Rows(""+
-		"test t0  PRIMARY 1 1111 1",
-		"test t0  a 0 1111 1",
-		"test t1  PRIMARY 1 1111 1",
-		"test t1  a 0 1111 1"))
+	// unique single column topN is not collected (max count = 1) #66221
+	tk.MustQuery("show stats_topn").Sort().Check(testkit.Rows())
+	tk.MustQuery("show stats_buckets").Sort().Check(testkit.Rows(
+		"test t0  PRIMARY 1 0 1 1 1111 1111 0",
+		"test t0  a 0 0 1 1 1111 1111 0",
+		"test t1  PRIMARY 1 0 1 1 1111 1111 0",
+		"test t1  a 0 0 1 1 1111 1111 0"))
 }
 
 func TestAnalyzeSamplingWorkPanic(t *testing.T) {
@@ -1363,6 +1365,27 @@ func TestAnalyzeWithDefaultResetsSavedOptions(t *testing.T) {
 	require.True(t, hasAdaptiveSampleRateNote())
 	tk.MustQuery(optsQuery).Check(testkit.Rows("0 -1 0 -1 ALL"))
 
+	// NDVRATE persists like SAMPLERATE. A zero threshold makes a run read every
+	// row but keeps the saved rate; 1 pins full input and DEFAULT clears it. The
+	// saved SAMPLERATE keeps TopN and histograms of this tiny table from taking
+	// every row, which would raise the NDV rate to 1.
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1")
+	ndvQuery := fmt.Sprintf("select ndv_rate from mysql.analyze_options where table_id = %d", tableInfo.ID)
+	lastRunSampled := "select job_info like '%0.5 ndvrate%' from mysql.analyze_jobs where table_name = 't' order by id desc limit 1"
+	tk.MustExec("analyze table t with 0.5 NDVRATE, 0.5 SAMPLERATE")
+	tk.MustQuery(ndvQuery).Check(testkit.Rows("0.5"))
+	tk.MustExec("analyze table t")
+	tk.MustQuery(lastRunSampled).Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 0")
+	tk.MustExec("analyze table t")
+	tk.MustQuery(lastRunSampled).Check(testkit.Rows("0"))
+	tk.MustQuery(ndvQuery).Check(testkit.Rows("0.5"))
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1")
+	tk.MustExec("analyze table t with 1 NDVRATE")
+	tk.MustQuery(ndvQuery).Check(testkit.Rows("1"))
+	tk.MustExec("analyze table t with default NDVRATE, default SAMPLERATE")
+	tk.MustQuery(ndvQuery).Check(testkit.Rows("-1"))
+
 	// With persistence off there is no saved value to reset, so DEFAULT only
 	// means "use the system default for this run": it is accepted, the run
 	// ignores the saved 2 buckets, and the persisted row that an earlier analyze
@@ -1401,14 +1424,15 @@ func TestAnalyzeWithDefaultInVersion1(t *testing.T) {
 	tk.MustQuery(optsQuery).Check(testkit.Rows("2 1"))
 
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
-	tk.MustExec("analyze table t with default buckets, default topn, default samples, default samplerate")
+	tk.MustExec("analyze table t with default buckets, default topn, default samples, default samplerate, default ndvrate")
 	tk.MustQuery(optsQuery).Check(testkit.Rows("2 1"))
 	tk.MustExec("analyze table t index idx with default buckets")
 	tk.MustExec("analyze table t index with default topn")
 	tk.MustQuery(optsQuery).Check(testkit.Rows("2 1"))
 
-	// An explicit sample rate is still rejected.
+	// An explicit sample rate or NDV rate is still rejected.
 	tk.MustGetErrMsg("analyze table t with 0.1 samplerate", "Version 1's statistics doesn't support the SAMPLERATE option, please set tidb_analyze_version to 2")
+	tk.MustGetErrMsg("analyze table t with 0.1 ndvrate", "Version 1's statistics doesn't support the NDVRATE option, please set tidb_analyze_version to 2")
 }
 
 // TestAnalyzeWithDefaultResetsPartitionOptions tests the partition semantics of
@@ -1571,9 +1595,7 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 			tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(
 				// db, tbl, part, col, is_idx, value, count
 				testkit.Rows("test t  a 0 1 2",
-					"test t  a 0 2 2",
-					"test t  c 0 1 1",
-					"test t  c 0 2 1"))
+					"test t  a 0 2 2"))
 			tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
 				testkit.Rows("0 1 6 1 8 2 1",
 					"0 2 0 0 0 0 0", // column b is not analyzed
@@ -1583,8 +1605,8 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 				// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
 				testkit.Rows("test t  a 0 0 3 1 3 5 0",
 					"test t  a 0 1 4 1 6 6 0",
-					"test t  c 0 0 4 1 3 6 0",
-					"test t  c 0 1 7 1 7 9 0"))
+					"test t  c 0 0 5 1 1 5 0",
+					"test t  c 0 1 9 1 6 9 0"))
 		}(val)
 	}
 }
@@ -1716,9 +1738,7 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 				testkit.Rows("0 9"))
 			tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(
 				// db, tbl, part, col, is_idx, value, count
-				testkit.Rows("test t  PRIMARY 1 (1, 1) 1",
-					"test t  PRIMARY 1 (2, 2) 1",
-					"test t  b 0 1 1",
+				testkit.Rows("test t  b 0 1 1",
 					"test t  b 0 2 1",
 					"test t  c 0 6 4",
 					"test t  c 0 7 2",
@@ -1732,8 +1752,8 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 					"1 1 9 0 18 2 0"))
 			tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(
 				// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
-				testkit.Rows("test t  PRIMARY 1 0 4 1 (3, 3) (6, 6) 0",
-					"test t  PRIMARY 1 1 7 1 (7, 7) (9, 9) 0",
+				testkit.Rows("test t  PRIMARY 1 0 5 1 (1, 1) (5, 5) 0",
+					"test t  PRIMARY 1 1 9 1 (6, 6) (9, 9) 0",
 					"test t  b 0 0 4 1 3 6 0",
 					"test t  b 0 1 7 1 7 9 0",
 					"test t  c 0 0 2 1 8 9 0",
@@ -2264,6 +2284,29 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 			))
 		}(val)
 	}
+
+	// NDVRATE must be in (0, 1], and TiKV draws TopN and histogram rows from the
+	// rows selected for NDV, so it must cover SAMPLERATE.
+	for _, rate := range []string{"0", "1.01"} {
+		require.Error(t, tk.ExecToErr("analyze table t with "+rate+" NDVRATE"))
+	}
+	require.ErrorContains(t, tk.ExecToErr("analyze table t with 0.1 NDVRATE, 0.2 SAMPLERATE"), "0.1 NDVRATE must not be smaller than 0.2 SAMPLERATE")
+	// A zero tidb_analyze_sampled_ndv_threshold rejects NDVRATE. Otherwise
+	// NDVRATE replaces only the rate, so without a table above the threshold
+	// ANALYZE reads every row and says so.
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 0")
+	require.ErrorContains(t, tk.ExecToErr("analyze table t with 0.1 NDVRATE"), "tidb_analyze_sampled_ndv_threshold")
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 2")
+	tk.MustExec("analyze table t with 0.1 NDVRATE")
+	tk.MustQuery("show warnings").CheckContain("NDVRATE is not used because no table or partition has more rows than tidb_analyze_sampled_ndv_threshold(2)")
+	// Locked partitions are left out first, so the warning also shows when
+	// only a locked partition has more rows than the threshold.
+	tk.MustExec("create table ndv_locked (a int) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
+	tk.MustExec("insert into ndv_locked values (1),(2),(3),(11)")
+	tk.MustExec("analyze table ndv_locked")
+	tk.MustExec("lock stats ndv_locked partition p0")
+	tk.MustExec("analyze table ndv_locked with 0.1 NDVRATE")
+	tk.MustQuery("show warnings").CheckContain("NDVRATE is not used because no table or partition has more rows than tidb_analyze_sampled_ndv_threshold(2)")
 }
 
 func checkAnalyzeStatus(t *testing.T, tk *testkit.TestKit, jobInfo, status, failReason, comment string, timeLimit int64) {
@@ -2796,9 +2839,11 @@ PARTITION BY RANGE ( a ) (
 	require.NoError(t, err)
 	p1, err = h.TableStatsFromStorage(tableInfo, pi.Definitions[1].ID, true, 0)
 	require.NoError(t, err)
-	require.Equal(t, 0, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
-	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets), len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
-	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets), len(p1.GetCol(tableInfo.Columns[0].ID).Buckets))
+	// The default TopN of column c keeps all values, so c has no buckets. The
+	// primary key a has no TopN, so its buckets cannot show the options.
+	require.Equal(t, 0, len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
+	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets), len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
+	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets), len(p1.GetCol(tableInfo.Columns[2].ID).Buckets))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "3", rs.Rows()[0][0])
@@ -2970,7 +3015,7 @@ PARTITION BY RANGE ( a ) (
 	))
 
 	// analyze partition with existing table-level options and existing partition stats under dynamic
-	tk.MustExec("insert into mysql.analyze_options values (?,?,?,?,?,?,?)", tableInfo.ID, 0, 0, 2, 2, "DEFAULT", "")
+	tk.MustExec("insert into mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) values (?,?,?,?,?,?,?)", tableInfo.ID, 0, 0, 2, 2, "DEFAULT", "")
 	tk.MustExec("set global tidb_persist_analyze_options = true")
 	tk.MustExec("analyze table t partition p1 columns a,b,d with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
@@ -2980,7 +3025,7 @@ PARTITION BY RANGE ( a ) (
 	))
 
 	// analyze partition with existing table-level & partition-level options and existing partition stats under dynamic
-	tk.MustExec("insert into mysql.analyze_options values (?,?,?,?,?,?,?)", pi.Definitions[1].ID, 0, 0, 1, 1, "DEFAULT", "")
+	tk.MustExec("insert into mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) values (?,?,?,?,?,?,?)", pi.Definitions[1].ID, 0, 0, 1, 1, "DEFAULT", "")
 	tk.MustExec("analyze table t partition p1 columns a,b,d with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1, reason to use this rate is \"use min(1, 110000/5) as the sample-rate=1\"",
@@ -3757,4 +3802,68 @@ func TestIssue66918(t *testing.T) {
 
 	tblStats := dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.True(t, tblStats.GetIdx(tblInfo.Indices[0].ID).IsAnalyzed())
+}
+
+func TestAnalyzeNDVRate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ndv (a int primary key, b int, key idx(b)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
+	tk.MustExec("insert into ndv values (1,1),(2,2),(11,1),(12,2)")
+	lastRate := func(partition string) string {
+		return fmt.Sprintf("select job_info from mysql.analyze_jobs where table_name='ndv' and partition_name='%s' order by id desc limit 1", partition)
+	}
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1")
+	// The mock server is a legacy peer: a sampled request may get full-input
+	// results. The saved SAMPLERATE keeps TopN and histograms of these tiny
+	// partitions from taking every row, which would raise the NDV rate to 1.
+	tk.MustExec("analyze table ndv with 0.1 NDVRATE, 0.1 SAMPLERATE")
+	tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name='ndv' and job_info like '%0.1 ndvrate%'").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch where left(value,1)=x'00'").Check(testkit.Rows("0"))
+	// Clear the NDVRATE saved above, so the partitions below use the rule.
+	tk.MustExec("analyze table ndv with default NDVRATE")
+	// Partitions choose their rates independently, and a statement that names
+	// partitions ignores NDVRATE in dynamic mode, like the other options.
+	tk.MustExec("insert into ndv values (3,3),(4,4)")
+	tk.MustExec("analyze table ndv partition p0, p1 with 0.2 NDVRATE")
+	tk.MustQuery(lastRate("p0")).CheckContain("0.25 ndvrate")
+	tk.MustQuery(lastRate("p1")).CheckContain("0.5 ndvrate")
+	// The rate falls with the row count until it reaches 0.05 at 20 times the
+	// threshold. The injected count does not change the adjusted SAMPLERATE of
+	// this one-row table, so a saved SAMPLERATE keeps it from raising the rate.
+	tk.MustExec("create table ndv_large (a int)")
+	tk.MustExec("insert into ndv_large values (1)")
+	tk.MustExec("analyze table ndv_large with 0.01 samplerate")
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 500000000")
+	for _, tc := range []struct{ rows, rate string }{{"500000000", ""}, {"2000000000", "0.25 ndvrate"}, {"40000000000", "0.05 ndvrate"}} {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/injectBaseCount", "return("+tc.rows+")")
+		tk.MustExec("analyze table ndv_large")
+		job := tk.MustQuery("select job_info from mysql.analyze_jobs where table_name='ndv_large' order by id desc limit 1")
+		if tc.rate == "" {
+			job.CheckNotContain("ndvrate")
+		} else {
+			job.CheckContain(tc.rate)
+		}
+	}
+	// The NDV rate covers the rows that TopN and histograms sample: the saved
+	// SAMPLERATE, the adjusted SAMPLERATE of 1 of this one-row table, and 5000000
+	// samples of 4e10 rows. A rate raised to 1 still shows in the job.
+	lastJob := "select job_info from mysql.analyze_jobs where table_name='ndv_large' order by id desc limit 1"
+	tk.MustExec("analyze table ndv_large with 0.001 NDVRATE")
+	tk.MustQuery("show warnings").CheckContain("Analyze raised the NDV rate from 0.001 to 0.01 for table test.ndv_large")
+	tk.MustQuery(lastJob).CheckContain("0.01 samplerate, 0.01 ndvrate")
+	tk.MustExec("analyze table ndv_large with default SAMPLERATE")
+	warnings := tk.MustQuery("show warnings")
+	warnings.CheckContain("Analyze raised the NDV rate from 0.001 to 1 for table test.ndv_large")
+	warnings.CheckNotContain("NDVRATE is not used")
+	tk.MustQuery(lastJob).CheckContain(", 1 ndvrate")
+	tk.MustExec("analyze table ndv_large with 0.0001 NDVRATE, 5000000 SAMPLES")
+	tk.MustQuery("show warnings").CheckContain("Analyze raised the NDV rate from 0.0001 to 0.000125 for table test.ndv_large")
+	tk.MustQuery(lastJob).CheckContain("0.000125 ndvrate")
+	// A rate of 1 already covers 5000000 samples of 2e6 rows, so nothing is raised.
+	tk.MustExec("set global tidb_analyze_sampled_ndv_threshold = 1000000")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/injectBaseCount", "return(2000000)")
+	tk.MustExec("analyze table ndv_large with 1 NDVRATE, 5000000 SAMPLES")
+	tk.MustQuery("show warnings").CheckNotContain("raised the NDV rate")
+	tk.MustQuery(lastJob).CheckNotContain("ndvrate")
 }

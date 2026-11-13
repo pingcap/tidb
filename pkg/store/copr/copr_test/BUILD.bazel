@@ -16,6 +16,7 @@ go_test(
         "//pkg/store/copr",
         "//pkg/store/mockstore",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
         "@com_github_pingcap_failpoint//:failpoint",

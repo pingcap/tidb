@@ -1618,6 +1618,7 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 			On,
 			Off,
 		},
+		{TiDBAnalyzeSampledNDVThreshold, "0", "100000000"},
 		{
 			TiDBRowFormatVersion,
 			strconv.Itoa(DefTiDBRowFormatV1),
@@ -1987,4 +1988,21 @@ func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "DISABLE", vars.OptPartialOrderedIndexForTopN)
 	require.False(t, vars.IsPartialOrderedIndexForTopNEnabled())
+}
+
+func TestTiDBAnalyzeStoreBatchSize(t *testing.T) {
+	vars := NewSessionVars(nil)
+	require.Equal(t, DefTiDBAnalyzeStoreBatchSize, vars.AnalyzeStoreBatchSize)
+
+	sysVar := GetSysVar(TiDBAnalyzeStoreBatchSize)
+	require.NotNil(t, sysVar)
+	require.True(t, sysVar.HasGlobalScope())
+	require.True(t, sysVar.HasSessionScope())
+	require.Equal(t, strconv.Itoa(DefTiDBAnalyzeStoreBatchSize), sysVar.Value)
+
+	require.NoError(t, vars.SetSystemVar(TiDBAnalyzeStoreBatchSize, "0"))
+	require.Zero(t, vars.AnalyzeStoreBatchSize)
+
+	require.NoError(t, vars.SetSystemVar(TiDBAnalyzeStoreBatchSize, strconv.FormatUint(MaxTiDBAnalyzeStoreBatchSize+1, 10)))
+	require.Equal(t, int(MaxTiDBAnalyzeStoreBatchSize), vars.AnalyzeStoreBatchSize)
 }
