@@ -94,9 +94,27 @@ type Histogram struct {
 	// the column values. This ranges from -1 to +1, and it is only valid for Column histogram, not for
 	// Index histogram.
 	Correlation float64
+
+	// Flag mirrors mysql.stats_histograms.flag. See HistogramFlagTimestampBoundsInUTC.
+	Flag int64
 }
 
-// EmptyHistogramSize is the size of empty histogram, about 112 = 8*6 for int64 & float64, 24*2 for arrays, 8*2 for references.
+// HistogramFlagTimestampBoundsInUTC marks a column histogram whose TIMESTAMP bucket bounds were
+// collected in UTC. A bound is stored as a bare datetime string, so without this bit it holds the
+// wall clock of whichever session ran ANALYZE, and estimation compares it with the predicate as
+// written. See issue #52429.
+//
+// Bit 0 is not used: it was the analyze flag until 2019 and may still be set on rows that have not
+// been re-analyzed since.
+const HistogramFlagTimestampBoundsInUTC int64 = 1 << 1
+
+// TimestampBoundsInUTC reports whether the TIMESTAMP bucket bounds are in UTC rather than in the
+// time zone of the session that ran ANALYZE.
+func (hg *Histogram) TimestampBoundsInUTC() bool {
+	return hg.Flag&HistogramFlagTimestampBoundsInUTC != 0
+}
+
+// EmptyHistogramSize is the size of empty histogram, about 120 = 8*7 for int64 & float64, 24*2 for arrays, 8*2 for references.
 const EmptyHistogramSize = int64(unsafe.Sizeof(Histogram{}))
 
 // Bucket store the bucket count and repeat.
@@ -262,6 +280,7 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 func (hg *Histogram) ConvertTo(tctx types.Context, tp *types.FieldType) (*Histogram, error) {
 	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len(), hg.TotColSize)
 	hist.Correlation = hg.Correlation
+	hist.Flag = hg.Flag
 	iter := chunk.NewIterator4Chunk(hg.Bounds)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		d := row.GetDatum(0, hg.Tp)
@@ -1543,7 +1562,7 @@ type bucketGroupCursor struct {
 
 // newBucketGroupCursor seeds the merge heap with each partition's
 // first non-empty bucket.
-func newBucketGroupCursor(sc *stmtctx.StatementContext, hists []*Histogram, totalBuckets int, isIndex bool) (*bucketGroupCursor, error) {
+func newBucketGroupCursor(sc *stmtctx.StatementContext, tz *time.Location, hists []*Histogram, totalBuckets int, isIndex bool) (*bucketGroupCursor, error) {
 	c := &bucketGroupCursor{
 		heap: bucketMergeHeap{
 			entries: make([]bucketMergeEntry, 0, len(hists)),
@@ -1552,7 +1571,7 @@ func newBucketGroupCursor(sc *stmtctx.StatementContext, hists []*Histogram, tota
 		hists:      hists,
 		sortedRefs: make([]bucketRef, 0, totalBuckets),
 		sc:         sc,
-		tz:         sc.TimeZone(),
+		tz:         tz,
 		isIndex:    isIndex,
 	}
 	for hi, hist := range hists {
@@ -1952,7 +1971,15 @@ func MergePartTopNAndHistToGlobal(
 		return nil, nil, errors.Errorf("MergePartTopNAndHistToGlobal: no partition histograms provided")
 	}
 
+	// A bucket bound is compared with, and can be replaced by, a TopN value decoded in tz, so tz
+	// has to be the zone the bounds are in. Only UTC is known for certain; unless all partitions
+	// are marked, the merge uses the session's zone.
+	var flag int64
 	tz := sc.TimeZone()
+	if allTimestampBoundsInUTC(hists) {
+		flag = HistogramFlagTimestampBoundsInUTC
+		tz = time.UTC
+	}
 	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal start",
 		zap.Int64("histID", firstHist.ID),
 		zap.Stringer("tp", firstHist.Tp),
@@ -1982,7 +2009,7 @@ func MergePartTopNAndHistToGlobal(
 	// (a k-way merge over the per-partition bucket arrays, each already
 	// sorted by upper bound).
 	totHistCount, totNull, totColSize, totalBuckets := sumPartitionTotals(hists)
-	bucketCur, err := newBucketGroupCursor(sc, hists, totalBuckets, isIndex)
+	bucketCur, err := newBucketGroupCursor(sc, tz, hists, totalBuckets, isIndex)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1992,8 +2019,10 @@ func MergePartTopNAndHistToGlobal(
 		zap.Int("totalBuckets", totalBuckets))
 
 	if !topNCur.valid() && !bucketCur.valid() {
-		return nil, NewHistogram(firstHist.ID, 0, totNull, firstHist.LastUpdateVersion,
-			firstHist.Tp, 0, totColSize), nil
+		emptyHist := NewHistogram(firstHist.ID, 0, totNull, firstHist.LastUpdateVersion,
+			firstHist.Tp, 0, totColSize)
+		emptyHist.Flag = flag
+		return nil, emptyHist, nil
 	}
 
 	// 1c. Merge-walk both cursors. For each unique encoded key the walk
@@ -2093,7 +2122,7 @@ func MergePartTopNAndHistToGlobal(
 		zap.Int("globalTopN", globalTopNSize),
 		zap.Int64("totHistCount", totHistCount))
 
-	merged := newGlobalMergeRefs(sc, sortedRefs, hists, globalTopNMap, isIndex)
+	merged := newGlobalMergeRefs(sc, tz, sortedRefs, hists, globalTopNMap, isIndex)
 	if len(virtualHistTopN) > 0 {
 		if err := merged.mergeVirtualTopN(virtualHistTopN, firstHist); err != nil {
 			return nil, nil, err
@@ -2108,7 +2137,24 @@ func MergePartTopNAndHistToGlobal(
 	if err != nil {
 		return nil, nil, err
 	}
+	globalHist.Flag = flag
 	return globalTopN, globalHist, nil
+}
+
+// allTimestampBoundsInUTC reports whether every partition histogram holds its TIMESTAMP bounds in
+// UTC. Missing partitions are skipped, like everywhere else in the merge.
+func allTimestampBoundsInUTC(hists []*Histogram) bool {
+	found := false
+	for _, h := range hists {
+		if h == nil {
+			continue
+		}
+		if !h.TimestampBoundsInUTC() {
+			return false
+		}
+		found = true
+	}
+	return found
 }
 
 // globalMergeRefs is the ref stream Pass 2 walks plus everything
@@ -2138,6 +2184,7 @@ type globalMergeRefs struct {
 
 func newGlobalMergeRefs(
 	sc *stmtctx.StatementContext,
+	tz *time.Location,
 	refs []bucketRef,
 	hists []*Histogram,
 	globalTopNMap map[hack.MutableString]struct{},
@@ -2150,7 +2197,7 @@ func newGlobalMergeRefs(
 		remainingMass:       make(map[bucketRef]int64),
 		splitEffectiveUpper: make(map[bucketRef]types.Datum),
 		sc:                  sc,
-		tz:                  sc.TimeZone(),
+		tz:                  tz,
 		isIndex:             isIndex,
 	}
 }

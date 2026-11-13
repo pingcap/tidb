@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -382,6 +384,47 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 				require.Equal(t, sortAndDedupeAutoPreSplitKeys(expectedKeys), plan.splitKeys)
 			})
 		}
+	})
+
+	t.Run("TIMESTAMP Histogram bounds in UTC are read as UTC", func(t *testing.T) {
+		tsTblInfo, tsIdxInfo := buildAutoPreSplitTestTableInfoFromSQL(
+			t, "create table t(a bigint, b timestamp, index idx(b))", 100)
+		colInfo := tsTblInfo.Columns[1]
+		bounds := make([]types.Datum, 0, 4)
+		for _, s := range []string{"2024-04-08 02:00:01", "2024-04-08 02:00:02", "2024-04-08 02:00:03", "2024-04-08 02:00:04"} {
+			tm, err := types.ParseTime(types.DefaultStmtNoWarningContext, s, mysql.TypeTimestamp, 0)
+			require.NoError(t, err)
+			bounds = append(bounds, types.NewTimeDatum(tm))
+		}
+		splitKeys := func(loc *time.Location, flag int64) []string {
+			tsSctx := mock.NewContext()
+			tsSctx.GetSessionVars().TimeZone = loc
+			tsSctx.GetSessionVars().StmtCtx.SetTimeZone(loc)
+			statsTbl := buildAutoPreSplitTestStats(tsTblInfo.ID, 100, 0, colInfo, nil)
+			setAutoPreSplitTestHistogram(
+				t, statsTbl.GetCol(colInfo.ID), colInfo, 0, bounds, []int64{25, 25, 25, 25})
+			statsTbl.GetCol(colInfo.ID).Histogram.Flag = flag
+			plan, err := planAutoPreSplitWithCache(
+				context.Background(), tsSctx, &fakeAutoPreSplitStatsProvider{stats: statsTbl},
+				tsTblInfo, tsIdxInfo, cfg, make(map[int64]autoPreSplitBoundaryCacheEntry))
+			require.NoError(t, err)
+			require.Equal(t, autoPreSplitPlanPlanned, plan.state)
+			return splitKeyFirstValuesForIndex(t, plan.splitKeys, tsIdxInfo.ID)
+		}
+		// An index key holds a TIMESTAMP as the packed UTC time.
+		utcKeys := make([]string, 0, len(bounds))
+		for _, bound := range bounds {
+			packed, err := bound.GetMysqlTime().ToPackedUint()
+			require.NoError(t, err)
+			utcKeys = append(utcKeys, strconv.FormatUint(packed, 10))
+		}
+		plus8, minus5 := time.FixedZone("+08:00", 8*3600), time.FixedZone("-05:00", -5*3600)
+		for _, loc := range []*time.Location{time.UTC, plus8, minus5} {
+			require.Equal(t, utcKeys, splitKeys(loc, statistics.HistogramFlagTimestampBoundsInUTC), loc.String())
+		}
+		// Unmarked bounds are read in the session time zone.
+		require.Equal(t, utcKeys, splitKeys(time.UTC, 0))
+		require.NotEqual(t, utcKeys, splitKeys(plus8, 0))
 	})
 
 	t.Run("V1 statistics are skipped", func(t *testing.T) {
