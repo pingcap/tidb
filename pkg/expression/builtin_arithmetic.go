@@ -519,7 +519,8 @@ func (s *builtinArithmeticMinusIntSig) overflowCheck(isLHSUnsigned, isRHSUnsigne
 				return true
 			}
 		} else {
-			if a > 0 && b < 0 {
+			// 0 - math.MinInt64 exceeds MaxInt64, so zero belongs to the non-negative path.
+			if a >= 0 && b < 0 {
 				resUnsigned = true
 			} else if a < 0 && b > 0 && res >= 0 {
 				return true
