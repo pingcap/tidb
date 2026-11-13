@@ -781,3 +781,28 @@ fn explains_and_warnings_match(connection: u64, fixture: &str) -> usize {
     }
     explains
 }
+
+/// Go `PhysicalTableReader.AccessObject` over `TableScanAndPartitionInfos`:
+/// an MPP reader joining two partitioned tables names each table's pruned
+/// partitions (gorun: `partition:all of p1, partition:x0 of p2`).
+#[test]
+fn an_mpp_reader_names_every_partitioned_scans_partitions_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(432)).expect("session opens");
+    for sql in [
+        "CREATE TABLE test.p1 (a int, b int) PARTITION BY HASH(a) PARTITIONS 2",
+        "ALTER TABLE test.p1 SET HYPO TIFLASH REPLICA 1",
+        "CREATE TABLE test.p2 (a int, b int) PARTITION BY RANGE(a) (PARTITION x0 VALUES LESS THAN (10), PARTITION x1 VALUES LESS THAN (MAXVALUE))",
+        "ALTER TABLE test.p2 SET HYPO TIFLASH REPLICA 1",
+    ] {
+        session.node_conn().execute_write(sql).expect(sql);
+    }
+    rows(&mut session, "use test");
+    rows(&mut session, "set tidb_enforce_mpp=1");
+    let plan = displayed(rows(
+        &mut session,
+        "explain format='brief' select /*+ read_from_storage(tiflash[p1, p2]) */ p1.a, p2.b from p1 join p2 on p1.a = p2.a where p2.a < 5",
+    ));
+    assert_eq!(plan[0][0], "TableReader");
+    assert_eq!(plan[0][3], "partition:all of p1, partition:x0 of p2", "{plan:?}");
+}

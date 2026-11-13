@@ -550,7 +550,7 @@ fn need_report_execution_summary(plan: &PhysicalPlan, dest_table_plan_id: i64, f
         PhysicalPlan::CTE(cte) => {
             need_report_execution_summary(&cte.seed_plan, dest_table_plan_id, found_limit)
                 || cte
-                    .recursive_plan
+                    .recur_plan
                     .as_ref()
                     .is_some_and(|recur| need_report_execution_summary(recur, dest_table_plan_id, found_limit))
         }

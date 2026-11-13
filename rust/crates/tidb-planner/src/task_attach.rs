@@ -3906,7 +3906,7 @@ mod task_tests {
     #[test]
     fn index_lookup_pushdown_builds_and_flattens_the_go_plan_shape() {
         fn check(reader: &tidb_planner_core_operator_physicalop::PhysicalIndexLookUpReader, complex: bool) {
-            assert!(reader.index_lookup_push_down);
+            assert!(reader.index_look_up_push_down);
             assert!(reader.table_plans.iter().all(|plan| {
                 plan.stats_info()
                     .is_some_and(|stats| stats.row_count() == 0.0)
@@ -3942,7 +3942,7 @@ mod task_tests {
                     ]
                 );
                 assert_eq!(
-                    reader.index_plans_un_natural_orders,
+                    reader.index_plans_un_nature_orders,
                     std::collections::BTreeMap::from([(1, 3)])
                 );
             } else {
@@ -3956,7 +3956,7 @@ mod task_tests {
                     ["IndexScan", "TableScan", "LocalIndexLookUp"]
                 );
                 assert_eq!(
-                    reader.index_plans_un_natural_orders,
+                    reader.index_plans_un_nature_orders,
                     std::collections::BTreeMap::from([(0, 2)])
                 );
             }
@@ -4838,7 +4838,7 @@ mod task_tests {
         // (`physical_indexlookup.go:155`): a Dual table plan can never be
         // pushed down, so the reader keeps the ordinary two-phase lookup and
         // the flag stays off.
-        assert!(!reader.index_lookup_push_down);
+        assert!(!reader.index_look_up_push_down);
 
         let ordered = build(true);
         let Task::Root(root) = &ordered else {
@@ -4847,7 +4847,7 @@ mod task_tests {
         let Some(PhysicalPlan::IndexLookUpReader(reader)) = ordered.plan() else {
             panic!("an IndexLookUpReader");
         };
-        assert!(!reader.index_lookup_push_down);
+        assert!(!reader.index_look_up_push_down);
         assert_eq!(root.warnings.warning_count(), 1);
         assert_eq!(
             root.warnings.warnings[0].message,

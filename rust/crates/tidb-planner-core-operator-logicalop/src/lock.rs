@@ -112,11 +112,11 @@ pub struct LogicalLock {
     /// Go `Lock.WaitSec`, which `ForUpdateWaitN` carries.
     pub wait_sec: u64,
     /// Go `TblID2Handle`: each table's handles.
-    pub tbl_id_to_handle: BTreeMap<i64, Vec<tidb_planner_util::handle_cols::HandleCols>>,
+    pub tbl_id2_handle: BTreeMap<i64, Vec<tidb_planner_util::handle_cols::HandleCols>>,
     /// Go `TblID2PhysTblIDCol`: for a partitioned table, "the child executor
     /// need to return an extra column containing the Physical Table ID (i.e.
     /// from which partition the row came from)".
-    pub tbl_id_to_phys_tbl_id_col: BTreeMap<i64, Column>,
+    pub tbl_id2_phys_tbl_id_col: BTreeMap<i64, Column>,
 }
 
 impl LogicalLock {
@@ -131,8 +131,8 @@ impl LogicalLock {
             base,
             lock_type,
             wait_sec: 0,
-            tbl_id_to_handle: BTreeMap::new(),
-            tbl_id_to_phys_tbl_id_col: BTreeMap::new(),
+            tbl_id2_handle: BTreeMap::new(),
+            tbl_id2_phys_tbl_id_col: BTreeMap::new(),
         }
     }
 
@@ -149,11 +149,11 @@ impl LogicalLock {
         if !is_supported_select_lock_type(self.lock_type) {
             return used;
         }
-        for (table_id, handle_cols) in &self.tbl_id_to_handle {
+        for (table_id, handle_cols) in &self.tbl_id2_handle {
             for cols in handle_cols {
                 used.extend((0..cols.num_cols()).map(|i| cols.get_col(i).clone()));
             }
-            if let Some(phys_col) = self.tbl_id_to_phys_tbl_id_col.get(table_id) {
+            if let Some(phys_col) = self.tbl_id2_phys_tbl_id_col.get(table_id) {
                 used.push(phys_col.clone());
             }
         }
@@ -178,8 +178,8 @@ impl LogicalLock {
             base: self.base.shell(),
             lock_type: self.lock_type,
             wait_sec: self.wait_sec,
-            tbl_id_to_handle: self.tbl_id_to_handle.clone(),
-            tbl_id_to_phys_tbl_id_col: self.tbl_id_to_phys_tbl_id_col.clone(),
+            tbl_id2_handle: self.tbl_id2_handle.clone(),
+            tbl_id2_phys_tbl_id_col: self.tbl_id2_phys_tbl_id_col.clone(),
         }
     }
 }

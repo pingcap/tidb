@@ -2262,7 +2262,7 @@ fn mem_table_scans<'a>(
     }
     if let PhysicalPlan::CTE(cte) = plan {
         mem_table_scans(&cte.seed_plan, table, out);
-        if let Some(recursive) = &cte.recursive_plan {
+        if let Some(recursive) = &cte.recur_plan {
             mem_table_scans(recursive, table, out);
         }
     }
@@ -2316,7 +2316,7 @@ pub fn mem_table_scan_reads(plan: &PhysicalPlan) -> Vec<MemTableScanRead> {
         }
         if let PhysicalPlan::CTE(cte) = plan {
             visit(&cte.seed_plan, out);
-            if let Some(recursive) = &cte.recursive_plan {
+            if let Some(recursive) = &cte.recur_plan {
                 visit(recursive, out);
             }
         }

@@ -259,7 +259,7 @@ pub(super) fn go_node_memory_usage(node: &PhysicalPlan) -> i64 {
                 + SIZE_OF_BOOL * 3
                 + part_info_memory_usage(op.plan_part_info.as_ref())
                 + SIZE_OF_UINT64
-                + SIZE_OF_INT * op.index_plans_un_natural_orders.len() as i64
+                + SIZE_OF_INT * op.index_plans_un_nature_orders.len() as i64
                 + optional_subtree_usage(op.index_plan.as_deref())
                 + optional_subtree_usage(op.table_plan.as_deref())
                 + op.pushed_limit.map_or(0, |_| GO_PUSHED_DOWN_LIMIT_SIZE)
@@ -333,7 +333,7 @@ pub(super) fn go_node_memory_usage(node: &PhysicalPlan) -> i64 {
                 + SIZE_OF_POINTER
                 + SIZE_OF_MAP * 2
                 + GO_SELECT_LOCK_INFO_SIZE
-                + op.tbl_id_to_handle
+                + op.tbl_id2_handle
                     .values()
                     .map(|vals| {
                         tidb_size::SIZE_OF_INT64
@@ -342,7 +342,7 @@ pub(super) fn go_node_memory_usage(node: &PhysicalPlan) -> i64 {
                             + vals.iter().map(tidb_planner_util::handle_cols::HandleCols::memory_usage).sum::<i64>()
                     })
                     .sum::<i64>()
-                + op.tbl_id_to_phys_tbl_id_col
+                + op.tbl_id2_phys_tbl_id_col
                     .values()
                     .map(|col| {
                         tidb_size::SIZE_OF_INT64 + SIZE_OF_POINTER + col.memory_usage()
@@ -386,7 +386,7 @@ pub(super) fn go_node_memory_usage(node: &PhysicalPlan) -> i64 {
             // the same two plans.
             2 * (op.base.go_schema_producer_memory_usage() + ci_str_memory_usage(&op.cte_as_name))
                 + 2 * (subtree_usage(&op.seed_plan)
-                    + optional_subtree_usage(op.recursive_plan.as_deref()))
+                    + optional_subtree_usage(op.recur_plan.as_deref()))
         }
         PhysicalPlan::CTETable(op) => op.base.go_schema_producer_memory_usage() + SIZE_OF_INT,
         PhysicalPlan::Dml(root) => {

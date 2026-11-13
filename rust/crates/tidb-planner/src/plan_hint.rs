@@ -99,7 +99,7 @@ pub fn gen_hints_from_physical_plan(
     for cte in ctes {
         let mut cte_flat = Vec::new();
         let mut nested = Vec::new();
-        for part in [Some(&cte.seed_plan), cte.recursive_plan.as_ref()]
+        for part in [Some(&cte.seed_plan), cte.recur_plan.as_ref()]
             .into_iter()
             .flatten()
         {

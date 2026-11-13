@@ -1699,7 +1699,7 @@ pub struct PhysicalCTE {
     /// Go `SeedPlan`.
     pub seed_plan: Box<PhysicalPlan>,
     /// Go `RecurPlan`.
-    pub recursive_plan: Option<Box<PhysicalPlan>>,
+    pub recur_plan: Option<Box<PhysicalPlan>>,
     /// Go `CTE.IDForStorage`.
     pub id_for_storage: i32,
     /// Go `CTE.IsDistinct`.
@@ -1769,7 +1769,7 @@ pub fn find_best_task_4_logical_cte(
     let physical = PhysicalPlan::CTE(PhysicalCTE {
         base,
         seed_plan: Box::new(seed_plan.deep_clone()),
-        recursive_plan: class
+        recur_plan: class
             .recursive_part_physical_plan
             .as_deref()
             .and_then(|plan| plan.as_any().downcast_ref::<PhysicalPlan>())
@@ -1942,9 +1942,9 @@ pub struct PhysicalLock {
     /// Go `Lock.WaitSec`.
     pub wait_sec: u64,
     /// Go `TblID2Handle`: each table's handles.
-    pub tbl_id_to_handle: std::collections::BTreeMap<i64, Vec<tidb_planner_util::handle_cols::HandleCols>>,
+    pub tbl_id2_handle: std::collections::BTreeMap<i64, Vec<tidb_planner_util::handle_cols::HandleCols>>,
     /// Go `TblID2PhysTblIDCol`.
-    pub tbl_id_to_phys_tbl_id_col: std::collections::BTreeMap<i64, tidb_expr::column::Column>,
+    pub tbl_id2_phys_tbl_id_col: std::collections::BTreeMap<i64, tidb_expr::column::Column>,
 }
 
 impl PhysicalLock {
@@ -1986,8 +1986,8 @@ pub fn exhaust_physical_plans_4_logical_lock(
         base,
         lock_type: p.lock_type,
         wait_sec: p.wait_sec,
-        tbl_id_to_handle: p.tbl_id_to_handle.clone(),
-        tbl_id_to_phys_tbl_id_col: p.tbl_id_to_phys_tbl_id_col.clone(),
+        tbl_id2_handle: p.tbl_id2_handle.clone(),
+        tbl_id2_phys_tbl_id_col: p.tbl_id2_phys_tbl_id_col.clone(),
     })]
 }
 
@@ -2400,6 +2400,18 @@ pub struct PhysicalTableReader {
     pub read_req_type: ReadReqType,
     /// Go `PlanPartInfo`.
     pub plan_part_info: Option<std::sync::Arc<PhysPlanPartInfo>>,
+    /// Go `TableScanAndPartitionInfos`: an MPP reader's table scans with
+    /// their partition pruning metadata (`collectPartitionInfosFromMPPPlan`).
+    pub table_scan_and_partition_infos: Vec<TableScanAndPartitionInfo>,
+}
+
+/// Go `TableScanAndPartitionInfo`.
+#[derive(Clone, Debug)]
+pub struct TableScanAndPartitionInfo {
+    /// Go `TableScan`.
+    pub table_scan: PhysicalTableScan,
+    /// Go `PhysPlanPartInfo`.
+    pub phys_plan_part_info: Option<std::sync::Arc<PhysPlanPartInfo>>,
 }
 
 impl PhysicalTableReader {
@@ -2430,6 +2442,7 @@ impl PhysicalTableReader {
             is_common_handle,
             read_req_type: ReadReqType::Cop,
             plan_part_info,
+            table_scan_and_partition_infos: Vec::new(),
         })
     }
 
@@ -2746,7 +2759,7 @@ pub struct PhysicalIndexLookUpReader {
     pub index_plans: Vec<PhysicalPlan>,
     /// Go `IndexPlansUnNatureOrders`: child index to parent index when the
     /// parent is not immediately after that child in `IndexPlans`.
-    pub index_plans_un_natural_orders: std::collections::BTreeMap<usize, usize>,
+    pub index_plans_un_nature_orders: std::collections::BTreeMap<usize, usize>,
     /// Go `TablePlans`, the leaf-first flattening of `TablePlan`.
     pub table_plans: Vec<PhysicalPlan>,
     /// Go `ExtraHandleCol`: the table side's int handle a keep-order read
@@ -2755,12 +2768,12 @@ pub struct PhysicalIndexLookUpReader {
     /// Go `CommonHandleCols`.
     pub common_handle_cols: Vec<Column>,
     /// Go `IndexLookUpPushDown`, true after `tryPushDownLookUp` succeeds.
-    pub index_lookup_push_down: bool,
+    pub index_look_up_push_down: bool,
     /// Go `KeepOrder`.
     pub keep_order: bool,
     /// Go `ExpectedCnt`, from the cop task's `ExpectCnt` — the paging
     /// decision in the ver2 cost reads it.
-    pub expect_cnt: u64,
+    pub expected_cnt: u64,
     /// Go `Paging`, selected by the reader cost path when paging is enabled
     /// and `ExpectedCnt` is at most `paging.Threshold`.
     pub paging: bool,
@@ -4964,7 +4977,7 @@ impl PhysicalPlan {
             // plans hang off the node, not its children.
             Self::CTE(op) => {
                 result.extend(extract_correlated_cols_4_physical_plan(&op.seed_plan));
-                if let Some(recursive) = op.recursive_plan.as_deref() {
+                if let Some(recursive) = op.recur_plan.as_deref() {
                     result.extend(extract_correlated_cols_4_physical_plan(recursive));
                 }
             }
@@ -5242,8 +5255,8 @@ impl PhysicalPlan {
             Self::CTE(op) => Self::CTE(PhysicalCTE {
                 base: base_of(&op.base),
                 seed_plan: Box::new(op.seed_plan.deep_clone()),
-                recursive_plan: op
-                    .recursive_plan
+                recur_plan: op
+                    .recur_plan
                     .as_deref()
                     .map(PhysicalPlan::deep_clone)
                     .map(Box::new),
@@ -5272,8 +5285,8 @@ impl PhysicalPlan {
                 base: base_of(&op.base),
                 lock_type: op.lock_type,
                 wait_sec: op.wait_sec,
-                tbl_id_to_handle: op.tbl_id_to_handle.clone(),
-                tbl_id_to_phys_tbl_id_col: op.tbl_id_to_phys_tbl_id_col.clone(),
+                tbl_id2_handle: op.tbl_id2_handle.clone(),
+                tbl_id2_phys_tbl_id_col: op.tbl_id2_phys_tbl_id_col.clone(),
             }),
             Self::UnionAll(op) => Self::UnionAll(PhysicalUnionAll {
                 base: base_of(&op.base),
@@ -5314,6 +5327,7 @@ impl PhysicalPlan {
                 is_common_handle: op.is_common_handle,
                 read_req_type: op.read_req_type,
                 plan_part_info: op.plan_part_info.clone(),
+                table_scan_and_partition_infos: op.table_scan_and_partition_infos.clone(),
             }),
             Self::ExchangeSender(op) => Self::ExchangeSender(PhysicalExchangeSender {
                 base: base_of(&op.base),
@@ -5371,13 +5385,13 @@ impl PhysicalPlan {
                 index_plan: op.index_plan.clone(),
                 table_plan: op.table_plan.clone(),
                 index_plans: op.index_plans.clone(),
-                index_plans_un_natural_orders: op.index_plans_un_natural_orders.clone(),
+                index_plans_un_nature_orders: op.index_plans_un_nature_orders.clone(),
                 table_plans: op.table_plans.clone(),
                 extra_handle_col: op.extra_handle_col.clone(),
                 common_handle_cols: op.common_handle_cols.clone(),
-                index_lookup_push_down: op.index_lookup_push_down,
+                index_look_up_push_down: op.index_look_up_push_down,
                 keep_order: op.keep_order,
-                expect_cnt: op.expect_cnt,
+                expected_cnt: op.expected_cnt,
                 paging: op.paging,
                 pushed_limit: op.pushed_limit,
                 plan_part_info: op.plan_part_info.clone(),
@@ -5602,7 +5616,7 @@ fn extract_outer_apply_correlated_cols_helper(
         }
         PhysicalPlan::CTE(cte) => {
             children = std::iter::once(cte.seed_plan.as_ref())
-                .chain(cte.recursive_plan.as_deref())
+                .chain(cte.recur_plan.as_deref())
                 .collect();
         }
         _ => {}
@@ -5773,7 +5787,7 @@ fn visit_physical_correlated_columns_mut(
         }
         PhysicalPlan::CTE(op) => {
             visit_physical_correlated_columns_mut(&mut op.seed_plan, visitor);
-            if let Some(recursive) = op.recursive_plan.as_deref_mut() {
+            if let Some(recursive) = op.recur_plan.as_deref_mut() {
                 visit_physical_correlated_columns_mut(recursive, visitor);
             }
         }
@@ -5855,7 +5869,7 @@ pub fn safe_clone(plan: &PhysicalPlan) -> Result<(), String> {
             plan.children().iter().try_for_each(safe_clone)?;
             if let PhysicalPlan::CTE(cte) = plan {
                 safe_clone(&cte.seed_plan)?;
-                if let Some(recursive) = &cte.recursive_plan {
+                if let Some(recursive) = &cte.recur_plan {
                     safe_clone(recursive)?;
                 }
             }

@@ -985,7 +985,7 @@ pub fn rebuild_ranges_for_cached_plan(
     match plan {
         PhysicalPlan::CTE(cte) => {
             rebuild_ranges_for_cached_plan(cte.seed_plan.as_mut(), context)?;
-            if let Some(recursive) = cte.recursive_plan.as_deref_mut() {
+            if let Some(recursive) = cte.recur_plan.as_deref_mut() {
                 rebuild_ranges_for_cached_plan(recursive, context)?;
             }
         }

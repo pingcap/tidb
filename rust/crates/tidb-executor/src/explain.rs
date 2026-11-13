@@ -1029,6 +1029,16 @@ fn physical_access(
     match plan {
         // Go reader AccessObject reports dynamic pruning; scan AccessObject
         // reports a partition only when it scans a static physical table ID.
+        // Go `PhysicalTableReader.AccessObject`: an MPP reader's partitioned
+        // table scans each name their partitions.
+        PhysicalPlan::TableReader(reader) if reader.table_scan_and_partition_infos.len() > 1 => {
+            let objects = reader
+                .table_scan_and_partition_infos
+                .iter()
+                .filter_map(|info| info.table_scan.dynamic_partition_access.clone())
+                .collect::<Vec<_>>();
+            Some(AccessObject::DynamicPartitions(tidb_planner_core_access::DynamicPartitionAccessObjects(objects)))
+        }
         PhysicalPlan::TableReader(reader) => reader
             .table_plan
             .as_deref()
@@ -2273,7 +2283,7 @@ fn cte_definitions(
             1.0,
         )];
         collect_ctes(&cte.seed_plan, &mut ctes);
-        if let Some(recursive) = cte.recursive_plan.as_deref() {
+        if let Some(recursive) = cte.recur_plan.as_deref() {
             children.push(physical_explain_operator(
                 costs,
                 eval_ctx,
@@ -2292,7 +2302,7 @@ fn cte_definitions(
         }
         let mut definition = ExplainOperator::new("CTE", cte.id_for_storage)
             .with_fixed_id(format!("CTE_{}", cte.id_for_storage))
-            .with_operator_info(if cte.recursive_plan.is_some() {
+            .with_operator_info(if cte.recur_plan.is_some() {
                 "Recursive CTE"
             } else {
                 "Non-Recursive CTE"

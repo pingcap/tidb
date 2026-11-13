@@ -840,7 +840,7 @@ fn plan_storage_flags(plan: &tidb_planner_core_operator_physicalop::PhysicalPlan
             // they are owned fields here, not children.
             PhysicalPlan::CTE(cte) => {
                 stack.push(&cte.seed_plan);
-                stack.extend(cte.recursive_plan.as_deref());
+                stack.extend(cte.recur_plan.as_deref());
             }
             PhysicalPlan::Dml(dml) => stack.extend(dml.select_plan.as_deref()),
             _ => {}

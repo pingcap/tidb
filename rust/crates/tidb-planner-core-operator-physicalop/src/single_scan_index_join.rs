@@ -18,7 +18,7 @@ pub fn has_single_scan_index_join(plan: &PhysicalPlan) -> bool {
         PhysicalPlan::CTE(cte) => {
             has_single_scan_index_join(&cte.seed_plan)
                 || cte
-                    .recursive_plan
+                    .recur_plan
                     .as_deref()
                     .is_some_and(has_single_scan_index_join)
         }

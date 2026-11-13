@@ -429,12 +429,19 @@ impl MppTask {
             tasks: Vec::new(),
         });
 
-        // Go `collectPartitionInfosFromMPPPlan`: a reader over one table scan
-        // keeps that scan's partition pruning metadata.
+        // Go `collectPartitionInfosFromMPPPlan`, and "Preserve partition
+        // pruning metadata for single-table readers".
         let mut table_scans = Vec::new();
         collect_table_scans(&sender, &mut table_scans);
-        let plan_part_info = match table_scans[..] {
-            [scan] => scan.plan_part_info.clone(),
+        let table_scan_and_partition_infos: Vec<crate::TableScanAndPartitionInfo> = table_scans
+            .into_iter()
+            .map(|scan| crate::TableScanAndPartitionInfo {
+                table_scan: scan.clone(),
+                phys_plan_part_info: scan.plan_part_info.clone(),
+            })
+            .collect();
+        let plan_part_info = match &table_scan_and_partition_infos[..] {
+            [info] => info.phys_plan_part_info.clone(),
             _ => None,
         };
         let mut reader_base = crate::BasePhysicalPlan::new(
@@ -451,6 +458,7 @@ impl MppTask {
             is_common_handle: false,
             read_req_type: ReadReqType::Mpp,
             plan_part_info,
+            table_scan_and_partition_infos,
         });
 
         let mut root = RootTask::default();
@@ -743,7 +751,7 @@ impl CopTask {
         );
         base.base.set_stats(table_plan.stats_info().cloned());
         base.base.set_schema(table_plan.schema().cloned());
-        let mut index_lookup_push_down = if self.index_lookup_push_down_by
+        let mut index_look_up_push_down = if self.index_lookup_push_down_by
             == tidb_planner_util::path::IndexLookUpPushDownByType::None
         {
             false
@@ -757,7 +765,7 @@ impl CopTask {
         } else {
             true
         };
-        if index_lookup_push_down {
+        if index_look_up_push_down {
             fn reset_plan_ids(
                 plan: &mut PhysicalPlan,
                 allocator: &tidb_planner_core_base::PlanIdAllocator,
@@ -858,24 +866,24 @@ impl CopTask {
             } else {
                 // Go treats this as an internal assertion/log entry and keeps
                 // the ordinary two-phase lookup plan user-visible.
-                index_lookup_push_down = false;
+                index_look_up_push_down = false;
             }
         }
         let table_plans = crate::flatten_list_push_down_plan(&table_plan);
-        let (index_plans, index_plans_un_natural_orders) =
+        let (index_plans, index_plans_un_nature_orders) =
             crate::flatten_tree_push_down_plan(&index_plan);
         let reader = PhysicalPlan::IndexLookUpReader(crate::PhysicalIndexLookUpReader {
             base,
             index_plan: Some(index_plan),
             table_plan: Some(table_plan),
             index_plans,
-            index_plans_un_natural_orders,
+            index_plans_un_nature_orders,
             table_plans,
             extra_handle_col: self.extra_handle_col,
             common_handle_cols: self.common_handle_cols,
-            index_lookup_push_down,
+            index_look_up_push_down,
             keep_order: self.keep_order,
-            expect_cnt: self.expect_cnt,
+            expected_cnt: self.expect_cnt,
             paging: false,
             pushed_limit: None,
             plan_part_info: self.phys_plan_part_info.clone(),
@@ -1179,6 +1187,7 @@ impl CopTask {
             is_common_handle,
             read_req_type,
             plan_part_info: self.phys_plan_part_info.clone(),
+            table_scan_and_partition_infos: Vec::new(),
         });
         let reader = if self.need_extra_proj && !agg_pushed_down {
             let mut projection =

@@ -274,7 +274,7 @@ impl Ver2Coster {
                 }
                 PhysicalPlan::CTE(cte) => {
                     record(&mut cte.seed_plan, cache);
-                    if let Some(plan) = cte.recursive_plan.as_deref_mut() {
+                    if let Some(plan) = cte.recur_plan.as_deref_mut() {
                         record(plan, cache);
                     }
                 }
@@ -686,7 +686,7 @@ impl Ver2Coster {
                         double_read_concurrency,
                     ),
                 ]);
-                let expect = reader.expect_cnt as f64;
+                let expect = reader.expected_cnt as f64;
                 if self.session.enable_paging
                     && expect > 0.0
                     && expect <= tidb_paging::THRESHOLD as f64
@@ -1384,7 +1384,7 @@ mod tests {
                 base: BasePhysicalPlan::new(&allocator, "TableDual", 0),
                 row_count: 0,
             })),
-            recursive_plan: None,
+            recur_plan: None,
             id_for_storage: 1,
             is_distinct: false,
             has_limit: false,

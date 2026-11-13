@@ -25,7 +25,7 @@ pub fn storage_engine_usage(plan: &PhysicalPlan) -> (bool, bool) {
         PhysicalPlan::CTE(cte) => {
             let (seed_tikv, seed_tiflash) = storage_engine_usage(&cte.seed_plan);
             let (recur_tikv, recur_tiflash) = cte
-                .recursive_plan
+                .recur_plan
                 .as_deref()
                 .map_or((false, false), storage_engine_usage);
             return (seed_tikv || recur_tikv, seed_tiflash || recur_tiflash);

@@ -4598,7 +4598,7 @@ fn select_lock_executor(
     let mut locked_table_ids = Vec::new();
     // The statement's snapshot, reached through any non-temporary table.
     let mut lock_store = None;
-    for (table_id, handle_cols) in &lock.tbl_id_to_handle {
+    for (table_id, handle_cols) in &lock.tbl_id2_handle {
         let table = catalog.kv_table_by_id(*table_id).ok_or_else(|| {
             DriverError::unsupported("SelectLock table ID is absent from the catalog")
         })?;
@@ -4608,7 +4608,7 @@ fn select_lock_executor(
         locked_table_ids.push(*table_id);
         lock_store.get_or_insert_with(|| crate::statement_store(ctx));
         let partition_offset = lock
-            .tbl_id_to_phys_tbl_id_col
+            .tbl_id2_phys_tbl_id_col
             .get(table_id)
             .map(|column| {
                 usize::try_from(child.schema().column_index(column)).map_err(|_| {
@@ -4747,8 +4747,8 @@ fn with_select_lock(
         base: tidb_planner_core_operator_physicalop::BasePhysicalPlan::default(),
         lock_type,
         wait_sec,
-        tbl_id_to_handle: std::collections::BTreeMap::from([(table_id, vec![handle_cols])]),
-        tbl_id_to_phys_tbl_id_col: phys_column
+        tbl_id2_handle: std::collections::BTreeMap::from([(table_id, vec![handle_cols])]),
+        tbl_id2_phys_tbl_id_col: phys_column
             .into_iter()
             .map(|column| (table_id, column))
             .collect(),
@@ -5880,7 +5880,7 @@ fn prepare_execution_plan_node(
         }
         PhysicalPlan::CTE(cte) => {
             prepare_execution_plan_node(&mut cte.seed_plan, catalog, ctx, retrieve)?;
-            if let Some(plan) = cte.recursive_plan.as_deref_mut() {
+            if let Some(plan) = cte.recur_plan.as_deref_mut() {
                 prepare_execution_plan_node(plan, catalog, ctx, retrieve)?;
             }
         }
@@ -5918,7 +5918,7 @@ fn build_cte(
     {
         let mut ti = ctx.telemetry_info();
         ti.use_non_recursive = true;
-        if cte.recursive_plan.is_some() {
+        if cte.recur_plan.is_some() {
             ti.use_recursive = true;
         }
     }
@@ -5974,7 +5974,7 @@ fn build_cte(
         },
     );
 
-    let recursive = match cte.recursive_plan.as_deref() {
+    let recursive = match cte.recur_plan.as_deref() {
         Some(recursive) => match build_with_state(recursive, catalog, ctx, state) {
             Ok(executor) => Some(executor),
             Err(error) => {
@@ -5984,7 +5984,7 @@ fn build_cte(
         },
         None => None,
     };
-    if let Some(recursive) = cte.recursive_plan.as_deref() {
+    if let Some(recursive) = cte.recur_plan.as_deref() {
         cor_cols.extend(tidb_planner_core_operator_physicalop::extract_outer_apply_correlated_cols(recursive));
     }
     let slot = state
@@ -8793,7 +8793,7 @@ use super::*;
         PhysicalPlan::CTE(PhysicalCTE {
             base,
             seed_plan: Box::new(seed),
-            recursive_plan: recursive.map(Box::new),
+            recur_plan: recursive.map(Box::new),
             id_for_storage: storage_id,
             is_distinct: distinct,
             has_limit: limit.is_some(),
@@ -8947,6 +8947,7 @@ use super::*;
             is_common_handle: false,
             read_req_type: tidb_planner_core_operator_physicalop::physical_table_reader::ReadReqType::Cop,
             plan_part_info: None,
+            table_scan_and_partition_infos: Vec::new(),
         });
 
         let session = crate::SessionMemory::new(-1, crate::OomAction::Cancel, 7);

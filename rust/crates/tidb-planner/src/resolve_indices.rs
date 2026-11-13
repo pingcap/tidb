@@ -513,7 +513,7 @@ impl ResolveIndicesItself for PhysicalPlan {
                 // and a semi join drops that one; `SelectLockExec.Open` finds
                 // the ones its schema still carries by unique ID.
                 let input = child_schema(&op.base, 0)?;
-                for handle_cols in op.tbl_id_to_handle.values_mut() {
+                for handle_cols in op.tbl_id2_handle.values_mut() {
                     for cols in handle_cols {
                         *cols = cols.resolve_indices(input).map_err(PlanError::internal)?;
                     }
@@ -625,7 +625,7 @@ impl ResolveIndicesItself for PhysicalPlan {
             }
             Self::CTE(op) => {
                 op.seed_plan.resolve_indices()?;
-                if let Some(plan) = &mut op.recursive_plan {
+                if let Some(plan) = &mut op.recur_plan {
                     plan.resolve_indices()?;
                 }
             }

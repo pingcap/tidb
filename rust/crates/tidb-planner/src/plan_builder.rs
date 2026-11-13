@@ -5841,7 +5841,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                             } else {
                                 return None;
                             };
-                            let table_id = operator.tbl_id_to_handle.iter().find_map(
+                            let table_id = operator.tbl_id2_handle.iter().find_map(
                                 |(id, handles)| {
                                     handles
                                         .iter()
@@ -5886,7 +5886,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     }
                 }
                 operator
-                    .tbl_id_to_handle
+                    .tbl_id2_handle
                     .retain(|id, _| table_ids.contains(id));
             }
         }

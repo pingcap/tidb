@@ -247,7 +247,7 @@ fn index_lookup_pushdown_hint_reaches_the_shared_physical_reader() {
     let hinted =
         "SELECT /*+ INDEX_LOOKUP_PUSHDOWN(lookup_hint, ia) */ b FROM lookup_hint WHERE a > 0";
     let plan = physical(hinted, &ctx);
-    assert!(lookup(&plan).is_some_and(|reader| reader.index_lookup_push_down));
+    assert!(lookup(&plan).is_some_and(|reader| reader.index_look_up_push_down));
     assert_eq!(
         run_select_on(hinted, &catalog, &ctx).unwrap(),
         vec![vec![Datum::Int(10)], vec![Datum::Int(20)]]
@@ -256,7 +256,7 @@ fn index_lookup_pushdown_hint_reaches_the_shared_physical_reader() {
     let conflict_ctx = crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()));
     let conflict = "SELECT /*+ INDEX_LOOKUP_PUSHDOWN(lookup_hint, ia) NO_INDEX_LOOKUP_PUSHDOWN(lookup_hint) */ b FROM lookup_hint WHERE a > 0";
     let plan = physical(conflict, &conflict_ctx);
-    assert!(lookup(&plan).is_none_or(|reader| !reader.index_lookup_push_down));
+    assert!(lookup(&plan).is_none_or(|reader| !reader.index_look_up_push_down));
     assert!(conflict_ctx.take_warnings().iter().map(tidb_context::SqlWarn::parts).any(|(_, _, message)| {
         message
             == "hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified"

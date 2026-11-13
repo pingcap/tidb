@@ -3028,7 +3028,7 @@ fn lock_pruning_keeps_handles_only_for_a_supported_lock() {
         BaseLogicalPlan::with_id(1, LogicalLock::TYPE, 0),
         SelectLockType::ForUpdate,
     );
-    op.tbl_id_to_handle.insert(
+    op.tbl_id2_handle.insert(
         7,
         vec![tidb_planner_util::handle_cols::HandleCols::Common(tidb_planner_util::handle_cols::CommonHandleCols {
             tbl_info: tidb_model::GoShared::new(tidb_model::TableInfo::default()),
@@ -3036,9 +3036,9 @@ fn lock_pruning_keeps_handles_only_for_a_supported_lock() {
             columns: vec![column(70), column(71)],
         })],
     );
-    op.tbl_id_to_phys_tbl_id_col.insert(7, column(79));
+    op.tbl_id2_phys_tbl_id_col.insert(7, column(79));
     // A table with a handle but no partition column contributes only handles.
-    op.tbl_id_to_handle.insert(
+    op.tbl_id2_handle.insert(
         8,
         vec![tidb_planner_util::handle_cols::HandleCols::Int(tidb_planner_util::handle_cols::IntHandleCols { col: column(80) })],
     );

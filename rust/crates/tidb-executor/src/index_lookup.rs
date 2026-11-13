@@ -149,7 +149,7 @@ pub struct IndexLookUpExecutor {
     index_plans_un_nature_orders: std::collections::BTreeMap<usize, usize>,
     /// Go `indexLookUpPushDown`: the index request looks the rows up in
     /// TiKV itself, answering the handles it could not as index rows.
-    index_lookup_push_down: bool,
+    index_look_up_push_down: bool,
     /// Go `getPhysicalPlanIDs(e.idxPlans)` and `getIndexPlanRootID()`.
     index_plan_ids: Vec<isize>,
     index_root_plan_id: isize,
@@ -243,7 +243,7 @@ impl IndexLookUpExecutor {
         let index_plan = v.index_plan.as_deref().ok_or_else(|| internal("the lookup has no index plan"))?;
         // Go `IndexPlans, IndexPlansUnNatureOrders = FlattenTreePushDownPlan(IndexPlan)`
         // under a pushed-down lookup.
-        let (index_plans, index_plans_un_nature_orders) = if v.index_lookup_push_down {
+        let (index_plans, index_plans_un_nature_orders) = if v.index_look_up_push_down {
             let (plans, un_nature_orders) = crate::builder_utils::flatten_tree_push_down_plan(index_plan);
             (plans.into_iter().cloned().collect::<Vec<_>>(), un_nature_orders)
         } else {
@@ -422,7 +422,7 @@ impl IndexLookUpExecutor {
             meta,
             shared: Arc::new(shared),
             index_plans_un_nature_orders,
-            index_lookup_push_down: v.index_lookup_push_down,
+            index_look_up_push_down: v.index_look_up_push_down,
             index_plans: index_plans.clone(),
             index_plan_ids,
             index_id: index.id,
@@ -601,7 +601,7 @@ impl IndexLookUpExecutor {
         let mut index_types = self.index_types.clone();
         // Go `tblScanIdxForRewritePartitionID`.
         let mut tbl_scan_idx_for_rewrite_partition_id = None;
-        if self.index_lookup_push_down {
+        if self.index_look_up_push_down {
             // Go `buildIndexLookUpPushDownDAGReq`: the lookup's index rows
             // are its intermediate channel, the table plan's rows the final
             // output.
@@ -709,7 +709,7 @@ impl IndexLookUpExecutor {
             next_task_id: 0,
             partition_table_mode: self.partition_table_mode,
             index_paging: self.index_paging,
-            index_lookup_push_down: self.index_lookup_push_down,
+            index_look_up_push_down: self.index_look_up_push_down,
             tbl_scan_idx_for_rewrite_partition_id,
         };
         self.workers.push(std::thread::spawn(tidb_executor_internal_exec::ruv2::inherit_goroutine(move || {
@@ -792,7 +792,7 @@ struct IndexWorker {
     /// Go `indexPaging`.
     index_paging: bool,
     /// Go `indexLookUpPushDown`.
-    index_lookup_push_down: bool,
+    index_look_up_push_down: bool,
     /// Go `tblScanIdxForRewritePartitionID`: the pushed lookup's table scan,
     /// whose table id each partition's request rewrites.
     tbl_scan_idx_for_rewrite_partition_id: Option<usize>,
@@ -815,7 +815,7 @@ impl IndexWorker {
             let _ = done_tx.send(Err(error));
             let _ = result_tx.send(done_rx);
         };
-        if self.index_lookup_push_down {
+        if self.index_look_up_push_down {
             if let Err(error) = self.run_push_down(ranges, result_tx, work_tx) {
                 fail(error);
             }
@@ -923,15 +923,15 @@ impl IndexWorker {
                 keep_order: self.shared.keep_order,
                 desc: self.desc,
                 // Go `SetPaging(e.indexPaging)`; a pushed lookup does not page.
-                paging: self.index_paging && !self.index_lookup_push_down,
+                paging: self.index_paging && !self.index_look_up_push_down,
                 // Go `e.RetFieldTypes()` under a pushed lookup, whose index
                 // rows are the intermediate channel's.
-                field_types: if self.index_lookup_push_down {
+                field_types: if self.index_look_up_push_down {
                     self.meta.ret_field_types().to_vec()
                 } else {
                     self.index_types.clone()
                 },
-                intermediate_output_types: if self.index_lookup_push_down {
+                intermediate_output_types: if self.index_look_up_push_down {
                     vec![self.index_types.clone()]
                 } else {
                     Vec::new()

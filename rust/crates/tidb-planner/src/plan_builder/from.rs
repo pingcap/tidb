@@ -1866,7 +1866,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // Go `TblID2Handle: b.handleHelper.tailMap()`; a table without a
         // handle (a cluster table, whose `ds.HandleCols` is nil) has none to
         // lock.
-        let tbl_id_to_handle: BTreeMap<i64, Vec<HandleCols>> = tail
+        let tbl_id2_handle: BTreeMap<i64, Vec<HandleCols>> = tail
             .iter()
             .filter(|(_, handles)| !handles.is_empty())
             .map(|(table_id, handles)| (*table_id, handles.clone()))
@@ -1874,9 +1874,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut physical_columns = BTreeMap::new();
         self.set_extra_phys_tbl_id_cols(&mut src, &mut physical_columns);
         let mut lock = LogicalLock::new(self.base(LogicalLock::TYPE), lock_type);
-        lock.tbl_id_to_phys_tbl_id_col = physical_columns;
+        lock.tbl_id2_phys_tbl_id_col = physical_columns;
         lock.wait_sec = wait_sec;
-        lock.tbl_id_to_handle = tbl_id_to_handle;
+        lock.tbl_id2_handle = tbl_id2_handle;
         lock.base.set_children(vec![src]);
         Ok(LogicalPlan::Lock(lock))
     }
