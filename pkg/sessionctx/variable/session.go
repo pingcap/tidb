@@ -548,6 +548,8 @@ type WriteStmtBufs struct {
 	IndexValsBuf []types.Datum
 	// IndexKeyBuf is used by index.GenIndexKey
 	IndexKeyBuf []byte
+	// IndexValueBuf is used by index.GenIndexValue.
+	IndexValueBuf []byte
 }
 
 func (ib *WriteStmtBufs) clean() {
@@ -555,6 +557,7 @@ func (ib *WriteStmtBufs) clean() {
 	ib.AddRowValues = nil
 	ib.IndexValsBuf = nil
 	ib.IndexKeyBuf = nil
+	ib.IndexValueBuf = nil
 }
 
 // TableSnapshot represents a data snapshot of the table contained in `information_schema`.

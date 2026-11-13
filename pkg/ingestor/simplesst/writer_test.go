@@ -27,6 +27,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -219,6 +221,75 @@ func TestWriter(t *testing.T) {
 	}
 	require.Equal(t, uint64(kvCnt), keyCnt)
 	require.NoError(t, statReader.Close())
+}
+
+func TestWriterKeyHints(t *testing.T) {
+	require.Equal(t, unsafe.Sizeof(membuf.SliceLocation{}), unsafe.Sizeof(condenseLocation{}))
+	for _, tc := range []struct {
+		name   string
+		keys   []string
+		prefix string
+	}{
+		{name: "no-common-prefix", keys: []string{"z", "a", "m"}},
+		{name: "empty-key", keys: []string{"b", "", "a"}},
+		{
+			name:   "short-suffixes",
+			keys:   []string{"prefix/x\x00", "prefix/x", "prefix/x\x00\x00", "prefix/x\x00\x00\x00\x00a"},
+			prefix: "prefix/x",
+		},
+		{
+			name:   "hint-collisions",
+			keys:   []string{"prefix/abcdz", "prefix/abcda", "prefix/z", "prefix/abcdm"},
+			prefix: "prefix/",
+		},
+		{
+			name:   "duplicates",
+			keys:   []string{"prefix/b", "prefix/a", "prefix/a", "prefix/c"},
+			prefix: "prefix/",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := objstore.NewMemStorage()
+			var summary *WriterSummary
+			writer := NewWriterBuilder().
+				SetBlockSize(1024).
+				SetMemorySizeLimit(1024).
+				SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+				Build(store, "/key-hints", "0")
+			var expectedSize uint64
+			for range 2 {
+				for _, key := range tc.keys {
+					require.NoError(t, writer.WriteRow(ctx, []byte(key), []byte("value:"+key), nil))
+					expectedSize += uint64(len(key)*2 + len("value:"))
+				}
+				require.Equal(t, tc.prefix, string(writer.commonPrefix))
+				// A failed flush may be followed by another flush during cleanup.
+				writer.updateKeyHints()
+				writer.updateKeyHints()
+				require.NoError(t, writer.flushKVs(ctx, false))
+				require.Empty(t, writer.commonPrefix)
+			}
+			require.NoError(t, writer.Close(ctx))
+			require.Equal(t, expectedSize, summary.TotalSize)
+			require.EqualValues(t, expectedSize, writer.WrittenBytes())
+			expectedKeys := slices.Clone(tc.keys)
+			slices.Sort(expectedKeys)
+			for _, files := range summary.MultipleFilesStats[0].Filenames {
+				reader, err := NewKVReader(ctx, files[0], store, 0, 1024)
+				require.NoError(t, err)
+				for _, expected := range expectedKeys {
+					key, value, err := reader.NextKV()
+					require.NoError(t, err)
+					require.Equal(t, expected, string(key))
+					require.Equal(t, "value:"+expected, string(value))
+				}
+				_, _, err = reader.NextKV()
+				require.ErrorIs(t, err, io.EOF)
+				require.NoError(t, reader.Close())
+			}
+		})
+	}
 }
 
 func TestWriterFlushMultiFileNames(t *testing.T) {
