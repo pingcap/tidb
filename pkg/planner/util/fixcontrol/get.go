@@ -80,9 +80,9 @@ const (
 	// Fix56318 controls whether to do HeavyFunctionOptimize. The HeavyFunctionOptimize eliminate the usage of
 	// the function in TopN operators
 	Fix56318 uint64 = 56318
-	// Fix65294 controls whether to add the out-of-range estimate for an equality
-	// predicate on a composite index prefix after estimating the column itself.
-	// It is disabled by default to preserve the estimation behavior before #65888.
+	// Fix65294 controls whether to estimate out-of-range predicates whose scalar
+	// bounds are equal. When disabled, their out-of-range estimate is zero as
+	// before #65888; new clusters enable it at bootstrap.
 	Fix65294 uint64 = 65294
 )
 

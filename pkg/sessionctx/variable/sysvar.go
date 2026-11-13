@@ -4456,6 +4456,11 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 		}
 	case vardef.TiDBEnableMutationChecker:
 		varVal = vardef.On
+	case vardef.TiDBOptFixControl:
+		if varVal != "" {
+			varVal += ","
+		}
+		varVal += strconv.FormatUint(fixcontrol.Fix65294, 10) + ":ON"
 	case vardef.TiDBEnableAdaptiveLimitScan:
 		varVal = vardef.On
 	case vardef.TiDBAnalyzeSampledNDVThreshold:

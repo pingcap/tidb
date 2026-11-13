@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -213,8 +212,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 			return statistics.DefaultRowEst(0), err
 		}
 		fullLen := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == len(idx.Info.Columns)
-		isPoint := bytes.Equal(lb, rb)
-		if isPoint {
+		if bytes.Equal(lb, rb) {
 			// case 1: it's a point
 			if indexRange.LowExclude || indexRange.HighExclude {
 				continue
@@ -315,15 +313,6 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 				// Index histograms are converted to string. Column uses original type - which can be more accurate for out of range
 				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
 				if isSingleColRange && c != nil && c.Histogram.NDV > 0 && c.Histogram.Len() > 0 {
-					if !isSingleColIdx && isPoint && expBackoffSuccess && sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate {
-						sctx.GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix65294)
-						if !fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix65294, false) {
-							// The point estimate already accounts for this predicate. Before #65888,
-							// the zero-width range contributed no extra out-of-range estimate.
-							totalCount.Add(count)
-							continue
-						}
-					}
 					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
 					count.Add(c.Histogram.OutOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], realtimeRowCount, modifyCount, histNDV))
 				} else {
