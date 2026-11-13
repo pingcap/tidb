@@ -2076,7 +2076,7 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 
 	err = client.InitClients(
 		ctx, u, cfg.logCheckpointMetaManager, cfg.sstCheckpointMetaManager, uint(cfg.PitrConcurrency),
-		cfg.ConcurrencyPerStore.Value, cfg.RetainLatestMVCCVersion,
+		cfg.PitrConcurrencyFromStores, cfg.ConcurrencyPerStore.Value, cfg.RetainLatestMVCCVersion,
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
