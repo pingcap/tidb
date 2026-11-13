@@ -905,6 +905,38 @@ func TestHypoIndexHint(t *testing.T) {
 		testKit.MustHavePlan(`select 1 from t1, t2 where t1.a=1 and t1.b=t2.b`, "─HashJoin")
 		testKit.MustHavePlan(`select /*+ HYPO_INDEX(t1, idx_ab, a, b), HYPO_INDEX(t2, idx_b, b) */ 1 from t1, t2 where t1.a=1 and t1.b=t2.b`, "IndexHashJoin")
 
+		// Expression hypothetical indexes must keep their hidden columns for planning.
+		testKit.MustExec("insert into t1 values (41, 41, 44)")
+		testKit.MustExec("create index hypo_expr_a type hypo on t1 ((a + 1))")
+		checkRange := func(sql, index, indexRange string) {
+			plan := fmt.Sprint(testKit.MustQuery("explain format = 'brief' " + sql).Rows())
+			require.Contains(t, plan, "IndexRangeScan")
+			require.Contains(t, plan, "index:"+index+"(")
+			require.Contains(t, plan, "range:"+indexRange)
+		}
+		checkRange("select * from t1 where a + 1 = 42", "hypo_expr_a", "[42,42]")
+		testKit.MustExec("create index hypo_expr_bc type hypo on t1 ((b + 2), c)")
+		checkRange("select b + 2, c from t1 where b + 2 = 43 and c = 44", "hypo_expr_bc", "[43 44,43 44]")
+		showCreate := testKit.MustQuery("show create table t1").Rows()[0][1].(string)
+		require.Contains(t, showCreate, "KEY `hypo_expr_a` ((`a` + 1)) /* HYPO INDEX */")
+		require.Contains(t, showCreate, "KEY `hypo_expr_bc` ((`b` + 2),`c`) /* HYPO INDEX */")
+
+		// The hypothetical columns must not leak into execution or another session.
+		testKit.MustQuery("select * from t1").Check(testkit.Rows("41 41 44"))
+		other := testkit.NewTestKit(t, testKit.Session().GetStore())
+		require.NotContains(t, other.MustQuery("show create table test.t1").Rows()[0][1], "HYPO INDEX")
+		other.MustQuery("select * from test.t1").Check(testkit.Rows("41 41 44"))
+		tbl, err := domain.GetDomain(testKit.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+		require.NoError(t, err)
+		require.Len(t, tbl.Meta().Columns, 3)
+		require.Empty(t, tbl.Meta().Indices)
+
+		testKit.MustExec("drop hypo index hypo_expr_a on t1")
+		checkRange("select b + 2, c from t1 where b + 2 = 43 and c = 44", "hypo_expr_bc", "[43 44,43 44]")
+		testKit.MustExec("drop hypo index hypo_expr_bc on t1")
+		testKit.MustNotHavePlan("select * from t1 where a + 1 = 42", "IndexRangeScan")
+		require.NotContains(t, testKit.MustQuery("show create table t1").Rows()[0][1], "HYPO INDEX")
+
 		// invalid cases
 		testKit.MustHavePlan(`select /*+ HYPO_INDEX(t1, idx_a) */ a from t1 where a=1`, "TableFullScan")
 		testKit.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 Invalid HYPO_INDEX hint, valid usage: HYPO_INDEX(tableName, indexName, cols...)"))
