@@ -1380,9 +1380,7 @@ fn exhaust_physical_plans(
                             keep_outer_order,
                             inner_access_table_id: None,
                             inner_access_index_id: None,
-                            inner_range_bare: false,
                             from_decorrelated_apply: op.from_decorrelated_apply && outer_idx == 0,
-                            inner_access_conditions: Vec::new(),
                             left_join_keys: left_columns.clone(),
                             right_join_keys: right_columns.clone(),
                             outer_join_keys,
@@ -2560,7 +2558,9 @@ pub(super) struct IndexJoinPathResult {
     /// Go `chosenPath.FullIdxCols` and `FullIdxColLens`, `None` for a
     /// pruned column.
     full_idx_cols: Vec<Option<(tidb_expr::column::Column, i64)>>,
-    /// Go `indexJoinPathGetRangeInfoAndMaxOneRow`'s `maxOneRow`.
+    /// Go `indexJoinPathGetRangeInfoAndMaxOneRow`'s `rangeInfo` and
+    /// `maxOneRow`.
+    range_info: String,
     max_one_row: bool,
     /// Go `mutableIndexJoinRange`, set when the accesses hold parameters.
     rebuild: Option<tidb_planner_core_operator_physicalop::range_rebuild::IndexJoinPathRebuild>,
@@ -2653,6 +2653,12 @@ fn build_index_join_path_result(
     };
     // A clustered primary key is unique by definition.
     let unique = source_index.is_none_or(|index| index.read().unique);
+    let range_info = super::index_join_path::index_join_path_range_info(
+        tidb_planner_core_operator_physicalop::enforce::get_expr_ctx(ctx.mpp_warning_sink),
+        &runtime.outer_join_keys,
+        &idx_cols,
+        &core,
+    );
     let max_one_row =
         super::index_join_path::index_join_path_max_one_row(&core, unique, full_idx_cols.len());
     // Go `indexJoinPathConstructResult`: the NDV reads the table's own
@@ -2703,6 +2709,7 @@ fn build_index_join_path_result(
         eq_used_cols_ndv,
         idx_col_lens,
         full_idx_cols,
+        range_info,
         max_one_row,
         rebuild,
     }))
@@ -2878,13 +2885,12 @@ fn index_join_info_from_result(
         }
     }
     tidb_planner_core_operator_physicalop::task::IndexJoinInfo {
-        range_bare: false,
+        range_info: result.range_info.clone(),
         table_id: ds.physical_table_id,
         index_id,
         ranges: result.core.ranges.clone(),
         idx_col_lens: result.idx_col_lens.clone(),
         key_off2_idx_off,
-        access_conditions: result.core.chosen_access.clone(),
         range_rebuild: result
             .rebuild
             .clone()
@@ -2899,6 +2905,7 @@ fn index_join_info_from_result(
 fn index_join_int_pk_info(
     ds: &tidb_planner_core_operator_logicalop::DataSource,
     runtime: &tidb_planner_property::IndexJoinRuntimeProp,
+    ectx: &dyn tidb_exprctx::Columns,
 ) -> Option<tidb_planner_core_operator_physicalop::task::IndexJoinInfo> {
     let pk_col = ds.handle_cols.first()?;
     let key_off2_idx_off = runtime
@@ -2906,15 +2913,21 @@ fn index_join_int_pk_info(
         .iter()
         .map(|key| if key.unique_id == pk_col.unique_id { 0 } else { -1 })
         .collect::<Vec<i64>>();
+    // Go `getIndexJoinIntPKPathInfo`'s `newOuterJoinKeys`: the outer keys
+    // joined to the handle.
+    let new_outer_join_keys = key_off2_idx_off
+        .iter()
+        .zip(&runtime.outer_join_keys)
+        .filter(|(off, _)| **off == 0)
+        .map(|(_, key)| key.clone())
+        .collect::<Vec<_>>();
     key_off2_idx_off.contains(&0).then(|| tidb_planner_core_operator_physicalop::task::IndexJoinInfo {
-        // `indexJoinIntPKRangeInfo` renders the bare outer join keys.
-        range_bare: true,
+        range_info: super::index_join_path::index_join_int_pk_range_info(ectx, &new_outer_join_keys),
         table_id: ds.physical_table_id,
         index_id: None,
         ranges: Vec::new(),
         idx_col_lens: Vec::new(),
         key_off2_idx_off,
-        access_conditions: Vec::new(),
         range_rebuild: None,
         compare_filters: None,
     })
@@ -3643,7 +3656,7 @@ fn find_best_task_4_logical_data_source_paths(
                 && path.is_tiflash_path());
         if let Some(runtime) = &prop.index_join_prop {
             let admitted = if path.is_tikv_table_path() && runtime.table_range_scan && ds.handle_is_int {
-                index_join_int_pk_info(ds, runtime).is_some()
+                index_join_int_pk_info(ds, runtime, tidb_planner_core_operator_physicalop::enforce::get_expr_ctx(ctx.mpp_warning_sink)).is_some()
             } else {
                 index_join_result
                     .as_ref()
@@ -4050,7 +4063,20 @@ fn find_best_task_4_logical_data_source_paths(
                 } else {
                     tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::Full
                 };
+                // Go `constructDS2TableScanTask`'s `rangeInfo` and the
+                // `IndexJoinInfo` the inner task hands up.
+                let index_join_info = match &prop.index_join_prop {
+                    Some(runtime) => Some(match &index_join_result {
+                        Some(result) => index_join_info_from_result(ds, result, runtime, None),
+                        None => match index_join_int_pk_info(ds, runtime, tidb_planner_core_operator_physicalop::enforce::get_expr_ctx(ctx.mpp_warning_sink)) {
+                            Some(info) => info,
+                            None => continue 'paths,
+                        },
+                    }),
+                    None => None,
+                };
                 let scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
+                    range_info: index_join_info.as_ref().map(|info| info.range_info.clone()).unwrap_or_default(),
                     table: ds.table_info.clone(),
                     columns: ds.columns.clone(),
                     is_mpp_or_batch_cop: false,
@@ -4101,12 +4127,6 @@ fn find_best_task_4_logical_data_source_paths(
                     } else {
                         table_access_conds.clone()
                     },
-                    // Go `constructDS2TableScanTask` sets the probe's
-                    // `RangeInfo` ("decided by ..."), and
-                    // `getTableScanPenalty` charges no full-range penalty to
-                    // a scan that has one -- its full placeholder range is
-                    // rebuilt per outer row.
-                    //
                     // Go's `buildPhysPlanPartInfo` sets `PruningConds` to
                     // `ds.AllConds` for every table, partitioned or not, and
                     // `getTableScanPenalty` reads a non-empty list as "a
@@ -4114,7 +4134,6 @@ fn find_best_task_4_logical_data_source_paths(
                     // `max(MaxPenaltyRowCount, rows)` rather than the table's
                     // modify count.
                     table_scan_penalty: tidb_planner_core_operator_logicalop::data_source::TableScanPenaltyInput {
-                        has_range_info: prop.index_join_prop.is_some(),
                         has_partition_scan: !ds.all_conds.is_empty(),
                         ..ds.table_scan_penalty_input()
                     },
@@ -4179,16 +4198,7 @@ fn find_best_task_4_logical_data_source_paths(
                     expect_cnt: prop.expected_cnt as u64,
                     stats_context: ctx.task_stats_context(ds, &root_task_conds),
                     root_task_conds,
-                    index_join_info: match &prop.index_join_prop {
-                        Some(runtime) => Some(match &index_join_result {
-                            Some(result) => index_join_info_from_result(ds, result, runtime, None),
-                            None => match index_join_int_pk_info(ds, runtime) {
-                                Some(info) => info,
-                                None => continue 'paths,
-                            },
-                        }),
-                        None => None,
-                    },
+                    index_join_info,
                     ..tidb_planner_core_operator_physicalop::task::CopTask::default()
                 })
             }
@@ -4292,6 +4302,7 @@ fn find_best_task_4_logical_data_source_paths(
                     tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::Range
                 };
                 let mut scan = tidb_planner_core_operator_physicalop::PhysicalTableScan {
+                    range_info: String::new(),
                     table: ds.table_info.clone(),
                     columns: ds.columns.clone(),
                     is_mpp_or_batch_cop: false,
@@ -5037,6 +5048,8 @@ fn find_best_task_4_logical_data_source_paths(
                     .unwrap_or_default();
                 let scan = PhysicalPlan::IndexScan(tidb_planner_core_operator_physicalop::PhysicalIndexScan {
                     base,
+                    // Go `constructDS2IndexScanTask`'s `rangeInfo`.
+                    range_info: index_join_probe.map(|probe| probe.range_info.clone()).unwrap_or_default(),
                     table: ds.table_info.clone(),
                     index: Some(source_index.clone()),
                     columns: index_columns,
@@ -5165,6 +5178,7 @@ fn find_best_task_4_logical_data_source_paths(
                             }));
                         table_base.base.set_schema(ds.base.base.schema().cloned());
                         let table_scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
+                            range_info: String::new(),
                             table: ds.table_info.clone(),
                             columns: ds.columns.clone(),
                             is_mpp_or_batch_cop: false,

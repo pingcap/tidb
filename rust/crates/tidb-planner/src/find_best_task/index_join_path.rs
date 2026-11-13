@@ -114,6 +114,87 @@ pub(crate) struct IndexJoinPathCore {
     pub last_col_manager: Option<ColWithCmpFuncManager>,
 }
 
+fn range_info_column_text(ectx: &dyn tidb_exprctx::Columns, column: &Column) -> String {
+    tidb_expr::explain::physical_expression_text_with_columns(
+        ectx,
+        &Expression::Column(column.clone()),
+        &[],
+        tidb_expr::explain::ExpressionTextStyle::Explain,
+    )
+    .unwrap_or_default()
+}
+
+/// Go `indexJoinPathRangeInfo`: `eq(idxCol, outerKey)` for each index column
+/// a join key decides, then `chosenAccess`.
+pub(crate) fn index_join_path_range_info(
+    ectx: &dyn tidb_exprctx::Columns,
+    outer_join_keys: &[Column],
+    idx_cols: &[Column],
+    core: &IndexJoinPathCore,
+) -> String {
+    let mut parts = Vec::new();
+    for (idx_off, key_off) in core.idx_off2_key_off.iter().enumerate() {
+        let (Some(idx_col), Some(outer)) =
+            (idx_cols.get(idx_off), usize::try_from(*key_off).ok().and_then(|key| outer_join_keys.get(key)))
+        else {
+            continue;
+        };
+        parts.push(format!(
+            "eq({}, {})",
+            range_info_column_text(ectx, idx_col),
+            range_info_column_text(ectx, outer)
+        ));
+    }
+    // Go's `Constant.StringWithCtx` prints a parameter marker's value: the
+    // value the access condition's constant holds for this execution.
+    let mut params = Vec::new();
+    for access in &core.chosen_access {
+        collect_param_values(access, &mut params);
+    }
+    let params_ctx = tidb_exprctx::PlanCacheParams(&params);
+    let access_ctx: &dyn tidb_exprctx::Columns = if params.is_empty() { ectx } else { &params_ctx };
+    for access in &core.chosen_access {
+        parts.push(
+            tidb_expr::explain::physical_expression_text_with_columns(
+                access_ctx,
+                access,
+                &[],
+                tidb_expr::explain::ExpressionTextStyle::StringWithCtx,
+            )
+            .unwrap_or_default(),
+        );
+    }
+    format!("[{}]", parts.join(" "))
+}
+
+/// The values of `expression`'s parameter markers, by marker order.
+fn collect_param_values(expression: &Expression, params: &mut Vec<tidb_datatype::Datum>) {
+    match expression {
+        Expression::Constant(constant) => {
+            if let Some(order) = constant.param_marker.and_then(|marker| usize::try_from(marker.order).ok()) {
+                if params.len() <= order {
+                    params.resize(order + 1, tidb_datatype::Datum::Null);
+                }
+                params[order] = constant.value.clone();
+            }
+        }
+        Expression::ScalarFunction(function) => {
+            for arg in &function.args {
+                collect_param_values(arg, params);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Go `indexJoinIntPKRangeInfo`: the outer join keys on the integer handle.
+pub(crate) fn index_join_int_pk_range_info(ectx: &dyn tidb_exprctx::Columns, outer_join_keys: &[Column]) -> String {
+    format!(
+        "[{}]",
+        outer_join_keys.iter().map(|key| range_info_column_text(ectx, key)).collect::<Vec<_>>().join(" ")
+    )
+}
+
 /// What `indexJoinPathBuild` answers for one path.
 pub(crate) enum IndexJoinPathOutcome {
     /// Go `(nil, false, nil)`: the path cannot drive this index join.
@@ -1134,7 +1215,7 @@ mod tests {
             super::rebuild_index_join_path(&rebuild, &tidb_ranger::points::evaluate_static)
                 .expect("rebuilds");
         assert_eq!(skip_plan_cache, None);
-        let ranges = ranges.expect("a range");
+        let (ranges, _) = ranges.expect("a range");
         assert_eq!(
             render_ranges(&ranges),
             "[[NULL 1 NULL 2,NULL 1 NULL 2] [NULL 1 NULL 4,NULL 1 NULL 4] [NULL 3 NULL 2,NULL 3 NULL 2] [NULL 3 NULL 4,NULL 3 NULL 4]]"
@@ -1167,7 +1248,7 @@ pub(crate) fn index_join_path_rebuild(
 pub(crate) fn rebuild_index_join_path(
     path: &IndexJoinPathRebuild,
     evaluate: &ExpressionEvaluator<'_>,
-) -> Result<(Option<Ranges>, Option<String>), PlanError> {
+) -> Result<(Option<(Ranges, String)>, Option<String>), PlanError> {
     /// Go's `SetSkipPlanCache` during the rebuild, which ends the hit.
     #[derive(Default)]
     struct Recorded(std::cell::RefCell<Option<String>>);
@@ -1191,8 +1272,14 @@ pub(crate) fn rebuild_index_join_path(
         evaluate,
         plan_cache_marker: Some(&recorded),
     };
+    // Go `mutableIndexJoinRange.Rebuild`: the ranges and `rangeInfo` of the
+    // rebuilt result.
     let ranges = match index_join_path_build(info, &path.idx_cols, &path.idx_col_lens, env)? {
-        IndexJoinPathOutcome::Built(core) if !core.ranges.is_empty() => Some(core.ranges),
+        IndexJoinPathOutcome::Built(core) if !core.ranges.is_empty() => {
+            let range_info =
+                index_join_path_range_info(&tidb_exprctx::NoColumns, &path.outer_join_keys, &path.idx_cols, &core);
+            Some((core.ranges, range_info))
+        }
         _ => None,
     };
     Ok((ranges, recorded.0.into_inner()))

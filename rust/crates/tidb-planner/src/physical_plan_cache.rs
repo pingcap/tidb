@@ -433,30 +433,6 @@ fn bind_conditions(
 
 // Constant.StringWithCtx reads parameters but renders a deferred expression
 // without evaluating it. EXPLAIN snapshots must not add statement evaluations.
-fn bind_description(
-    expression: &mut Expression,
-    context: &CachedPlanRebuildContext<'_>,
-) -> Result<(), PlanCacheRebuildError> {
-    match expression {
-        Expression::Constant(constant) if constant.param_marker.is_some() => {
-            bind_expression(expression, context)?;
-        }
-        Expression::Constant(constant) => {
-            if let Some(deferred) = constant.deferred_expr.as_mut() {
-                bind_description(deferred, context)?;
-            }
-        }
-        Expression::ScalarFunction(function) => {
-            for argument in &mut function.args {
-                bind_description(argument, context)?;
-            }
-            function.invalidate_cached_arguments();
-        }
-        Expression::Column(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => {}
-    }
-    Ok(())
-}
-
 fn bind_aggregate_expressions(
     functions: &mut [tidb_expression_aggregation::AggFuncDesc],
     group_by: &mut [Expression],
@@ -524,9 +500,6 @@ fn bind_plan_expressions(
             bind_conditions(&mut join.left_conditions, context)?;
             bind_conditions(&mut join.right_conditions, context)?;
             bind_conditions(&mut join.other_conditions, context)?;
-            for condition in &mut join.inner_access_conditions {
-                bind_description(condition, context)?;
-            }
             if let Some(compare_filters) = &mut join.compare_filters {
                 bind_conditions(&mut compare_filters.args, context)?;
             }
@@ -791,6 +764,7 @@ fn rebuild_point_ranges(
     rebuild: &mut PointRangeRebuild,
     expected_count: Option<usize>,
     context: &CachedPlanRebuildContext<'_>,
+    rebuilt_range_info: &mut Option<String>,
 ) -> Result<(), PlanCacheRebuildError> {
     if let PointRangeRebuild::Constants(constants) = rebuild {
         // A batch may read fewer distinct keys than it planned; Go keeps the
@@ -870,7 +844,8 @@ fn rebuild_point_ranges(
                 )
                 .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
             note_skipped(context, &skip_plan_cache);
-            let rebuilt = rebuilt.ok_or(PlanCacheRebuildError::UnsafeRange { plan_id })?;
+            let (rebuilt, range_info) = rebuilt.ok_or(PlanCacheRebuildError::UnsafeRange { plan_id })?;
+            *rebuilt_range_info = Some(range_info);
             if rebuilt.len() != original.len()
                 || rebuilt.first().map(|range| range.width())
                     != original.first().map(|range| range.width())
@@ -926,14 +901,20 @@ fn rebuild_point_ranges(
     Ok(())
 }
 
-fn update_inner_scan_ranges(plan: &mut PhysicalPlan, ranges: &Ranges) -> bool {
+fn update_inner_scan_ranges(plan: &mut PhysicalPlan, ranges: &Ranges, range_info: Option<&str>) -> bool {
     match plan {
         PhysicalPlan::TableScan(scan) => {
             scan.ranges = ranges.clone();
+            if let Some(range_info) = range_info {
+                scan.range_info = range_info.to_owned();
+            }
             true
         }
         PhysicalPlan::IndexScan(scan) => {
             scan.ranges = ranges.clone();
+            if let Some(range_info) = range_info {
+                scan.range_info = range_info.to_owned();
+            }
             true
         }
         // Go's index-join inner scan may carry a pushed-down Selection (the
@@ -943,19 +924,19 @@ fn update_inner_scan_ranges(plan: &mut PhysicalPlan, ranges: &Ranges) -> bool {
             .base
             .children_mut()
             .first_mut()
-            .is_some_and(|plan| update_inner_scan_ranges(plan, ranges)),
+            .is_some_and(|plan| update_inner_scan_ranges(plan, ranges, range_info)),
         PhysicalPlan::TableReader(reader) => reader
             .table_plan
             .as_deref_mut()
-            .is_some_and(|plan| update_inner_scan_ranges(plan, ranges)),
+            .is_some_and(|plan| update_inner_scan_ranges(plan, ranges, range_info)),
         PhysicalPlan::IndexReader(reader) => reader
             .index_plan
             .as_deref_mut()
-            .is_some_and(|plan| update_inner_scan_ranges(plan, ranges)),
+            .is_some_and(|plan| update_inner_scan_ranges(plan, ranges, range_info)),
         PhysicalPlan::IndexLookUpReader(reader) => reader
             .index_plan
             .as_deref_mut()
-            .is_some_and(|plan| update_inner_scan_ranges(plan, ranges)),
+            .is_some_and(|plan| update_inner_scan_ranges(plan, ranges, range_info)),
         _ => false,
     }
 }
@@ -1021,14 +1002,17 @@ pub fn rebuild_ranges_for_cached_plan(
         PhysicalPlan::IndexJoin(join) => {
             let plan_id = join.base.base.id();
             if let Some(rebuild) = join.range_rebuild.as_mut() {
-                rebuild_point_ranges(plan_id, &mut join.ranges, rebuild, None, context)?;
+                // Go `rebuildRange`: `updateRange(innerPlan, x.Ranges.Range(),
+                // mutableRange.rangeInfo)`.
+                let mut range_info = None;
+                rebuild_point_ranges(plan_id, &mut join.ranges, rebuild, None, context, &mut range_info)?;
                 let Some(inner) = join.base.children_mut().get_mut(join.inner_child_idx) else {
                     return Err(PlanCacheRebuildError::InvalidMetadata {
                         plan_id,
                         detail: "index join inner child is missing",
                     });
                 };
-                if !update_inner_scan_ranges(inner, &join.ranges) {
+                if !update_inner_scan_ranges(inner, &join.ranges, range_info.as_deref()) {
                     return Err(PlanCacheRebuildError::InvalidMetadata {
                         plan_id,
                         detail: "index join inner child has no range-bearing scan",
@@ -1041,7 +1025,7 @@ pub fn rebuild_ranges_for_cached_plan(
             let Some(rebuild) = point.range_rebuild.as_mut() else {
                 return Ok(());
             };
-            rebuild_point_ranges(plan_id, &mut point.ranges, rebuild, Some(1), context)?;
+            rebuild_point_ranges(plan_id, &mut point.ranges, rebuild, Some(1), context, &mut None)?;
         }
         PhysicalPlan::BatchPointGet(batch) => {
             let plan_id = batch.base.base.id();
@@ -1055,6 +1039,7 @@ pub fn rebuild_ranges_for_cached_plan(
                 rebuild,
                 Some(expected_count),
                 context,
+                &mut None,
             )?;
         }
         PhysicalPlan::IndexMergeReader(reader) => {

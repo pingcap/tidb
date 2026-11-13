@@ -130,19 +130,13 @@ pub struct IndexJoinInfo {
     /// Go `IndexJoinInfo.KeyOff2IdxOff`; `-1` means the selected access cannot
     /// use that logical equality as a lookup key.
     pub key_off2_idx_off: Vec<i64>,
-    /// Chosen range predicates used by Go to construct the scan RangeInfo.
-    /// Retained as expressions for the executor renderer, not row evaluation.
-    pub access_conditions: Vec<tidb_expr::expression::Expression>,
     /// Static template inputs for Go mutableIndexJoinRange on cache reuse.
     pub range_rebuild: Option<crate::range_rebuild::PointRangeRebuild>,
     /// Go `IndexJoinInfo.CompareFilters`.
     pub compare_filters: Option<crate::ColWithCmpFuncManager>,
-    /// Go `AccessPath.RangeInfo`'s spelling: `indexJoinIntPKRangeInfo` renders
-    /// the bare outer join keys when the probe is the integer handle
-    /// (`constructDS2TableScanTask`'s int-PK branch); every other probe
-    /// (index path, common handle, rowid mutable ranges) renders
-    /// `indexJoinPathRangeInfo`'s `eq(inner, outer)` pairs.
-    pub range_bare: bool,
+    /// The `rangeInfo` Go's inner scan task carries (`indexJoinPathRangeInfo`,
+    /// or `indexJoinIntPKRangeInfo` for the integer handle).
+    pub range_info: String,
 }
 
 /// Go `contextutil.WarnLevel*`; this file writes `WarnLevelWarning` and

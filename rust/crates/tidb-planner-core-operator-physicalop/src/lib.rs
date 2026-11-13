@@ -867,9 +867,6 @@ pub struct PhysicalIndexJoin {
     /// The selected secondary index. `None` denotes a table/common-handle
     /// probe.
     pub inner_access_index_id: Option<i64>,
-    /// Go chosenAccess retained for scan RangeInfo rendering. These snapshots
-    /// are descriptive metadata, not additional execution predicates.
-    pub inner_access_conditions: Vec<tidb_expr::expression::Expression>,
     /// Go `BasePhysicalJoin.LeftJoinKeys`.
     pub left_join_keys: Vec<tidb_expr::column::Column>,
     /// Go `BasePhysicalJoin.RightJoinKeys`.
@@ -908,11 +905,6 @@ pub struct PhysicalIndexJoin {
     pub compare_filters: Option<ColWithCmpFuncManager>,
     /// Parameter-dependent range metadata retained for cache rebuilding.
     pub range_rebuild: Option<crate::range_rebuild::PointRangeRebuild>,
-    /// Which `RangeInfo` spelling master renders on the inner access scan:
-    /// bare outer keys for the integer-handle probe, `eq(inner, outer)`
-    /// pairs otherwise (`indexJoinIntPKRangeInfo` vs
-    /// `indexJoinPathRangeInfo`).
-    pub inner_range_bare: bool,
     /// Go `PhysicalIndexJoin.FromDecorrelatedApply`: this index join keeps
     /// the original outer side of a join an apply was decorrelated into.
     pub from_decorrelated_apply: bool,
@@ -928,7 +920,6 @@ impl Default for PhysicalIndexJoin {
             keep_outer_order: false,
             inner_access_table_id: None,
             inner_access_index_id: None,
-            inner_access_conditions: Vec::new(),
             left_join_keys: Vec::new(),
             right_join_keys: Vec::new(),
             outer_join_keys: Vec::new(),
@@ -946,7 +937,6 @@ impl Default for PhysicalIndexJoin {
             idx_col_lens: Vec::new(),
             compare_filters: None,
             range_rebuild: None,
-            inner_range_bare: false,
             from_decorrelated_apply: false,
         }
     }
@@ -1316,6 +1306,9 @@ pub struct PhysicalTableScan {
     /// re-detached on a plan-cache hit (`buildRangeForTableScan`) and over
     /// each outer row when correlated (`ResolveCorrelatedColumns`).
     pub access_condition: Vec<Expression>,
+    /// Go `RangeInfo`: an index join's probe scan's ranges, decided by the
+    /// outer row (`indexJoinPathRangeInfo` / `indexJoinIntPKRangeInfo`).
+    pub range_info: String,
     /// Go `getTableScanPenalty`'s table/session inputs.
     pub table_scan_penalty: tidb_planner_core_operator_logicalop::data_source::TableScanPenaltyInput,
     /// Schema-resolved fields consumed by the TiKV protobuf lowering path.
@@ -2600,6 +2593,9 @@ pub struct PhysicalIndexScan {
     /// re-detached on a plan-cache hit (`buildRangeForIndexScan`) and over
     /// each outer row when correlated (`rebuildIndexRanges`).
     pub access_condition: Vec<tidb_expr::expression::Expression>,
+    /// Go `RangeInfo`: an index join's probe scan's ranges, decided by the
+    /// outer row (`indexJoinPathRangeInfo`).
+    pub range_info: String,
     /// Go `IdxCols`: the index's usable leading columns.
     pub idx_cols: Vec<tidb_expr::column::Column>,
     /// Go `IdxColLens`: each of `idx_cols`' prefix length.
@@ -5158,10 +5154,8 @@ impl PhysicalPlan {
                 kind: op.kind,
                 keep_outer_order: op.keep_outer_order,
                 inner_access_table_id: op.inner_access_table_id,
-                inner_range_bare: op.inner_range_bare,
                 from_decorrelated_apply: op.from_decorrelated_apply,
                 inner_access_index_id: op.inner_access_index_id,
-                inner_access_conditions: op.inner_access_conditions.clone(),
                 left_join_keys: op.left_join_keys.clone(),
                 right_join_keys: op.right_join_keys.clone(),
                 outer_join_keys: op.outer_join_keys.clone(),
@@ -5212,6 +5206,7 @@ impl PhysicalPlan {
                 store_type: op.store_type,
                 ranges: op.ranges.clone(),
                 access_condition: op.access_condition.clone(),
+                range_info: op.range_info.clone(),
                 table_scan_penalty: op.table_scan_penalty,
                 tikv_pushdown: op.tikv_pushdown.clone(),
                 resolved_descriptor: op.resolved_descriptor,
@@ -5365,6 +5360,7 @@ impl PhysicalPlan {
                 desc: op.desc,
                 ranges: op.ranges.clone(),
                 access_condition: op.access_condition.clone(),
+                range_info: op.range_info.clone(),
                 idx_cols: op.idx_cols.clone(),
                 idx_col_lens: op.idx_col_lens.clone(),
                 covering_ranges: op.covering_ranges.clone(),

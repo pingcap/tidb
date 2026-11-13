@@ -255,7 +255,7 @@ fn join_type_text(join_type: tidb_planner_core_base::LogicalJoinType) -> &'stati
 /// ("Join"), so the child's PHYSICAL name has to come from
 /// [`physical_operator_name`].
 fn plan_explain_id(plan: &PhysicalPlan, ignore_suffix: bool) -> String {
-    let name = physical_operator_name(plan, None);
+    let name = physical_operator_name(plan);
     if ignore_suffix {
         name
     } else {
@@ -781,140 +781,11 @@ fn point_access(
     }
 }
 
-#[derive(Clone, Copy)]
-struct IndexJoinExplainContext<'a> {
-    table_id: i64,
-    /// The inner access object: `None` is the clustered table range, `Some`
-    /// is a secondary index. Go renders `range: decided by [...]` on whichever
-    /// scan the runtime join keys probe.
-    index_id: Option<i64>,
-    /// Go `indexJoinResult.chosenPath.IdxCols` at each matched key offset: the
-    /// INNER index columns the outer keys probe.
-    inner_keys: &'a [tidb_expr::column::Column],
-    /// Go `prop.IndexJoinProp.OuterJoinKeys`, paired with `inner_keys`.
-    outer_keys: &'a [tidb_expr::column::Column],
-    key_offsets: &'a [i64],
-    /// Go `indexJoinResult.chosenAccess`: the conditions that extend the
-    /// per-probe range past the equality keys.
-    access_conditions: &'a [tidb_expr::expression::Expression],
-    /// Master's `RangeInfo` spelling for this probe: the integer-handle
-    /// branch renders bare outer keys, every other probe renders
-    /// `eq(inner, outer)` pairs.
-    range_bare: bool,
-}
 
-fn is_index_join_table_range(
-    plan: &PhysicalPlan,
-    context: Option<IndexJoinExplainContext<'_>>,
-) -> bool {
-    let PhysicalPlan::TableScan(scan) = plan else {
-        return false;
-    };
-    context.is_some_and(|context| {
-        context.index_id.is_none()
-            && context.table_id == scan.physical_table_id
-            && !context.outer_keys.is_empty()
-    })
-}
 
-/// Go `PhysicalIndexScan.RangeInfo` for an index-join probe: the secondary
-/// index the runtime join keys decide.
-fn is_index_join_index_range(
-    plan: &PhysicalPlan,
-    context: Option<IndexJoinExplainContext<'_>>,
-) -> bool {
-    let PhysicalPlan::IndexScan(scan) = plan else {
-        return false;
-    };
-    context.is_some_and(|context| {
-        context.index_id == Some(scan.index_id)
-            && context.table_id == scan.physical_table_id
-            && !context.outer_keys.is_empty()
-    })
-}
 
-/// Go `indexJoinPathRangeInfo`: `eq(inner_idx_col, outer_key)` for every
-/// matched key, then `chosenAccess`.
-fn index_join_decided_by_text(
-    eval_ctx: &dyn tidb_exprctx::Columns,
-    context: IndexJoinExplainContext<'_>,
-) -> String {
-    let mut keys = context
-        .inner_keys
-        .iter()
-        .zip(context.outer_keys)
-        .enumerate()
-        .collect::<Vec<_>>();
-    keys.sort_by_key(|(key, _)| {
-        context
-            .key_offsets
-            .get(*key)
-            .copied()
-            .unwrap_or(*key as i64)
-    });
-    let mut decided = keys
-        .into_iter()
-        .map(|(_, (inner, outer))| {
-            format!(
-                "eq({}, {})",
-                expression_text(
-                    eval_ctx,
-                    &tidb_expr::expression::Expression::Column(inner.clone())
-                ),
-                expression_text(
-                    eval_ctx,
-                    &tidb_expr::expression::Expression::Column(outer.clone())
-                )
-            )
-        })
-        .collect::<Vec<_>>();
-    decided.extend(
-        context
-            .access_conditions
-            .iter()
-            .map(|expression| expression_string_text(eval_ctx, expression)),
-    );
-    format!("range: decided by [{}]", decided.join(" "))
-}
 
-/// Go `indexJoinIntPKRangeInfo` (`index_join_path.go:597`): the INT-PK probe
-/// scan's `decided by` text is the OUTER join keys rendered alone --
-/// `indexJoinIntPKRangeInfo` writes each outer key with no eq wrapping.
-fn index_join_int_pk_decided_by_text(
-    eval_ctx: &dyn tidb_exprctx::Columns,
-    context: &IndexJoinExplainContext<'_>,
-) -> String {
-    let decided = context
-        .outer_keys
-        .iter()
-        .map(|outer| {
-            expression_text(
-                eval_ctx,
-                &tidb_expr::expression::Expression::Column(outer.clone()),
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    format!("range: decided by [{}]", decided)
-}
 
-/// Integer table handles use Go's `indexJoinIntPKRangeInfo`; common handles
-/// use the equality pairs for the matched index columns.
-fn index_join_decided_by_text_for_scan(
-    eval_ctx: &dyn tidb_exprctx::Columns,
-    context: &IndexJoinExplainContext<'_>,
-) -> String {
-    // Master picks the integer-PK spelling when the join probes the table's
-    // integer handle (`constructDS2TableScanTask`'s int-PK branch records the
-    // bare `indexJoinIntPKRangeInfo`); every other probe (index path,
-    // common handle, rowid mutable ranges) records the `eq(inner, outer)`
-    // pairs of `indexJoinPathRangeInfo`. The join construction records which
-    // branch selected the inner access.
-    if context.range_bare {
-        return index_join_int_pk_decided_by_text(eval_ctx, context);
-    }
-    index_join_decided_by_text(eval_ctx, *context)
-}
 
 fn columns_text(
     eval_ctx: &dyn tidb_exprctx::Columns,
@@ -966,7 +837,6 @@ fn correlated_decided_by_text(
 
 fn physical_operator_name(
     plan: &PhysicalPlan,
-    index_join_context: Option<IndexJoinExplainContext<'_>>,
 ) -> String {
     match plan {
         // Go `PhysicalTableScan.TP`: a cluster table's scan is a memory
@@ -977,8 +847,7 @@ fn physical_operator_name(
             "MemTableScan".to_owned()
         }
         PhysicalPlan::TableScan(scan) => {
-            if is_index_join_table_range(plan, index_join_context)
-                || correlated_access_conditions(plan).is_some()
+            if !scan.range_info.is_empty() || correlated_access_conditions(plan).is_some()
             {
                 "TableRangeScan".to_owned()
             } else {
@@ -997,7 +866,7 @@ fn physical_operator_name(
             // keys at run time), so the probe must not fall back to
             // `IndexFullScan` just because its static range list is empty.
             if static_range
-                || is_index_join_index_range(plan, index_join_context)
+                || !scan.range_info.is_empty()
                 || correlated_access_conditions(plan).is_some()
             {
                 "IndexRangeScan".to_owned()
@@ -1320,7 +1189,6 @@ fn physical_operator_info(
     plan: &PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
     ignore_explain_id_suffix: bool,
-    index_join_context: Option<IndexJoinExplainContext<'_>>,
 ) -> String {
     let mut info = physical_operator_own_info(
         eval_ctx,
@@ -1328,7 +1196,6 @@ fn physical_operator_info(
         plan,
         catalog,
         ignore_explain_id_suffix,
-        index_join_context,
     );
     // Go's ExplainInfo of these operators ends with the fine-grained shuffle
     // stream count (`handleFineGrainedShuffle`) when one is set; the
@@ -1357,7 +1224,6 @@ fn physical_operator_own_info(
     plan: &PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
     ignore_explain_id_suffix: bool,
-    index_join_context: Option<IndexJoinExplainContext<'_>>,
 ) -> String {
     match plan {
         PhysicalPlan::Selection(selection) => {
@@ -1548,12 +1414,10 @@ fn physical_operator_own_info(
         }
         PhysicalPlan::TableScan(scan) => {
             let mut parts = Vec::new();
-            if is_index_join_table_range(plan, index_join_context) {
-                let ctx = index_join_context.expect("index join context");
-                // Table handle metadata selects Go's integer-PK or common
-                // handle range description.
-                let parts_text = index_join_decided_by_text_for_scan(eval_ctx, &ctx);
-                parts.push(parts_text);
+            // Go `PhysicalTableScan.ExplainInfo`: "range: decided by" its
+            // `RangeInfo`.
+            if !scan.range_info.is_empty() {
+                parts.push(format!("range: decided by {}", scan.range_info));
             } else if let Some(conditions) = correlated_access_conditions(plan) {
                 parts.push(correlated_decided_by_text(eval_ctx, conditions));
             } else if scan
@@ -1612,7 +1476,7 @@ fn physical_operator_own_info(
             Some(scan @ PhysicalPlan::TableScan(_))
                 if reader.read_req_type != tidb_planner_core_operator_physicalop::physical_table_reader::ReadReqType::Mpp =>
             {
-                let name = physical_operator_name(scan, index_join_context);
+                let name = physical_operator_name(scan);
                 if ignore_explain_id_suffix {
                     format!("data:{name}")
                 } else {
@@ -1623,11 +1487,10 @@ fn physical_operator_own_info(
         },
         PhysicalPlan::IndexScan(scan) => {
             let mut parts = Vec::new();
-            if is_index_join_index_range(plan, index_join_context) {
-                parts.push(index_join_decided_by_text(
-                    eval_ctx,
-                    index_join_context.expect("index join context"),
-                ));
+            // Go `PhysicalIndexScan.ExplainInfo`: "range: decided by" its
+            // `RangeInfo`.
+            if !scan.range_info.is_empty() {
+                parts.push(format!("range: decided by {}", scan.range_info));
             } else if let Some(conditions) = correlated_access_conditions(plan) {
                 parts.push(correlated_decided_by_text(eval_ctx, conditions));
             } else if !scan.ranges.is_empty()
@@ -1656,7 +1519,7 @@ fn physical_operator_own_info(
                 .as_deref()
                 .map_or_else(String::new, |plan| match plan {
                     PhysicalPlan::IndexScan(_) => {
-                        let name = physical_operator_name(plan, index_join_context);
+                        let name = physical_operator_name(plan);
                         if ignore_explain_id_suffix {
                             name
                         } else {
@@ -1860,7 +1723,6 @@ fn physical_explain_operator(
     label: &str,
     runtime: bool,
     ignore_explain_id_suffix: bool,
-    index_join_context: Option<IndexJoinExplainContext<'_>>,
     // Go `GetEstimatedProbeCntFromProbeParents`: the product of the outer
     // child's row count for every index-join (or apply) parent this operator
     // sits inside. `EXPLAIN` displays `StatsInfo.RowCount * probeCount`.
@@ -1895,7 +1757,6 @@ fn physical_explain_operator(
             "",
             runtime,
             ignore_explain_id_suffix,
-            index_join_context,
             probe_count,
         )],
         PhysicalPlan::TableReader(reader) => reader
@@ -1927,7 +1788,6 @@ fn physical_explain_operator(
                     "",
                     runtime,
                     ignore_explain_id_suffix,
-                    index_join_context,
                     probe_count,
                 )]
             })
@@ -1950,7 +1810,6 @@ fn physical_explain_operator(
                     "",
                     runtime,
                     ignore_explain_id_suffix,
-                    index_join_context,
                     probe_count,
                 )]
             })
@@ -1976,7 +1835,6 @@ fn physical_explain_operator(
                 label,
                 runtime,
                 ignore_explain_id_suffix,
-                index_join_context,
                 probe_count,
             )
         })
@@ -2001,7 +1859,6 @@ fn physical_explain_operator(
                     label,
                     runtime,
                     ignore_explain_id_suffix,
-                    index_join_context,
                     probe_count,
                 )
             })
@@ -2022,7 +1879,6 @@ fn physical_explain_operator(
                         "",
                         runtime,
                         ignore_explain_id_suffix,
-                        index_join_context,
                         probe_count,
                     )]
                 })
@@ -2063,7 +1919,6 @@ fn physical_explain_operator(
                             "",
                             runtime,
                             ignore_explain_id_suffix,
-                            index_join_context,
                             probe_count,
                         )
                     })
@@ -2096,21 +1951,6 @@ fn physical_explain_operator(
             .iter()
             .enumerate()
             .map(|(index, child)| {
-                let child_context = match plan {
-                    PhysicalPlan::IndexJoin(join) if index == join.inner_child_idx => join
-                        .inner_access_table_id
-                        .map(|table_id| IndexJoinExplainContext {
-                            table_id,
-                            index_id: join.inner_access_index_id,
-                            inner_keys: &join.inner_join_keys,
-                            outer_keys: &join.outer_join_keys,
-                            key_offsets: &join.key_off2_idx_off,
-                            access_conditions: &join.inner_access_conditions,
-                            range_bare: join.inner_range_bare,
-                        }),
-                    PhysicalPlan::IndexJoin(_) => None,
-                    _ => index_join_context,
-                };
                 // Go `propagateProbeParents`: the INNER child of an index
                 // join (or apply) carries that join as a probe parent, so its
                 // display row count is multiplied by the join's OUTER row
@@ -2142,7 +1982,6 @@ fn physical_explain_operator(
                     "",
                     runtime,
                     ignore_explain_id_suffix,
-                    child_context,
                     child_probe_count,
                 )
             })
@@ -2160,7 +1999,7 @@ fn physical_explain_operator(
         }
     }
 
-    let name = physical_operator_name(plan, index_join_context);
+    let name = physical_operator_name(plan);
     let info = if brief_binary && !has_brief_operator_info(&name) {
         String::new()
     } else {
@@ -2170,7 +2009,6 @@ fn physical_explain_operator(
             plan,
             catalog,
             ignore_explain_id_suffix,
-            index_join_context,
         )
     };
     let mut operator = ExplainOperator::new(name, plan.id())
@@ -2279,7 +2117,6 @@ fn cte_definitions(
             "(Seed Part)",
             runtime,
             ignore_explain_id_suffix,
-            None,
             1.0,
         )];
         collect_ctes(&cte.seed_plan, &mut ctes);
@@ -2295,7 +2132,6 @@ fn cte_definitions(
                 "(Recursive Part)",
                 runtime,
                 ignore_explain_id_suffix,
-                None,
                 1.0,
             ));
             collect_ctes(recursive, &mut ctes);
@@ -2326,7 +2162,6 @@ fn cte_definitions(
                 "",
                 runtime,
                 ignore_explain_id_suffix,
-                None,
                 1.0,
             );
             definition.actual_rows = scan.actual_rows;
@@ -2428,7 +2263,6 @@ fn physical_explain_roots(
         "",
         runtime,
         ignore_explain_id_suffix,
-        None,
         1.0,
     )];
     cte_definitions(
@@ -2501,7 +2335,6 @@ fn scalar_subquery_root(
             "",
             runtime,
             ignore_explain_id_suffix,
-            None,
             1.0,
         )])
 }
@@ -2918,22 +2751,6 @@ fn reader_store_code(store: tidb_kv::store_type::StoreType) -> u8 {
     }
 }
 
-/// The context Go's index join hands the probe side of its inner child (see
-/// `physical_explain_operator`'s `_` arm): the join's own keys and ranges.
-fn index_join_child_context(
-    join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
-) -> Option<IndexJoinExplainContext<'_>> {
-    join.inner_access_table_id
-        .map(|table_id| IndexJoinExplainContext {
-            table_id,
-            index_id: join.inner_access_index_id,
-            inner_keys: &join.inner_join_keys,
-            outer_keys: &join.outer_join_keys,
-            key_offsets: &join.key_off2_idx_off,
-            access_conditions: &join.inner_access_conditions,
-            range_bare: join.inner_range_bare,
-        })
-}
 
 /// Go `Expression.ExplainNormalizedInfo` over a column.
 fn normalized_column_text(column: &tidb_expr::column::Column) -> String {
@@ -3191,7 +3008,6 @@ fn physical_normalized_info(
     statement_context: &crate::StmtContext,
     plan: &PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
-    index_join_context: Option<IndexJoinExplainContext<'_>>,
 ) -> String {
     let access = |plan: &PhysicalPlan| {
         physical_access(plan, catalog, statement_context.hypo_indexes())
@@ -3245,14 +3061,11 @@ fn physical_normalized_info(
             reader
                 .index_plan
                 .as_deref()
-                .map_or_else(String::new, |plan| physical_operator_name(
-                    plan,
-                    index_join_context
-                ))
+                .map_or_else(String::new, physical_operator_name)
         ),
         PhysicalPlan::TableScan(scan) => {
             let ranges = scan_ranges(
-                is_index_join_table_range(plan, index_join_context),
+                !scan.range_info.is_empty(),
                 !scan.ranges.is_empty(),
             );
             let pushed_down_filter = if scan.store_type == tidb_kv::store_type::StoreType::TiFlash
@@ -3278,7 +3091,7 @@ fn physical_normalized_info(
         }
         PhysicalPlan::IndexScan(scan) => {
             let ranges = scan_ranges(
-                is_index_join_index_range(plan, index_join_context),
+                !scan.range_info.is_empty(),
                 !scan.ranges.is_empty(),
             );
             format!(
@@ -3350,7 +3163,6 @@ pub fn normalize_flat_plan(
             store: u8,
             depth: isize,
             in_probe: bool,
-            index_join_context: Option<IndexJoinExplainContext<'_>>,
         ) {
             // The recorded plan's `PhysicalShuffleReceiverStub` carries neither
             // a type nor an id (`flattenSingle` drops such operators), so its
@@ -3362,11 +3174,10 @@ pub fn normalize_flat_plan(
                     2,
                     depth,
                     in_probe,
-                    index_join_context,
                 );
                 return;
             }
-            let mut name = physical_operator_name(plan, index_join_context);
+            let mut name = physical_operator_name(plan);
             // Go `PhysicalTableScan.TP(isChildOfIndexLookUp)`.
             if in_probe && matches!(plan, PhysicalPlan::TableScan(_)) && name.starts_with("Table") {
                 name = "TableRowIDScan".to_owned();
@@ -3376,7 +3187,6 @@ pub fn normalize_flat_plan(
                 self.statement_context,
                 plan,
                 self.catalog,
-                index_join_context,
             );
             tidb_plancodec::normalize_plan_node(
                 depth,
@@ -3395,46 +3205,38 @@ pub fn normalize_flat_plan(
                             reader_store_code(reader.store_type),
                             next,
                             false,
-                            index_join_context,
                         );
                     }
                 }
                 PhysicalPlan::IndexReader(reader) => {
                     if let Some(child) = reader.index_plan.as_deref() {
-                        self.node(child, false, 0, next, false, index_join_context);
+                        self.node(child, false, 0, next, false);
                     }
                 }
                 PhysicalPlan::IndexLookUpReader(reader) => {
                     if let Some(child) = reader.index_plan.as_deref() {
-                        self.node(child, false, 0, next, in_probe, index_join_context);
+                        self.node(child, false, 0, next, in_probe);
                     }
                     if let Some(child) = reader.table_plan.as_deref() {
-                        self.node(child, false, 0, next, true, index_join_context);
+                        self.node(child, false, 0, next, true);
                     }
                 }
                 PhysicalPlan::IndexMergeReader(reader) => {
                     for child in &reader.partial_plans_raw {
-                        self.node(child, false, 0, next, in_probe, index_join_context);
+                        self.node(child, false, 0, next, in_probe);
                     }
                     if let Some(child) = reader.table_plan.as_deref() {
-                        self.node(child, false, 0, next, true, index_join_context);
+                        self.node(child, false, 0, next, true);
                     }
                 }
                 PhysicalPlan::CTE(_) => {}
                 _ => {
                     for (index, child) in plan.children().iter().enumerate() {
-                        let child_context = match plan {
-                            PhysicalPlan::IndexJoin(join) if index == join.inner_child_idx => {
-                                index_join_child_context(join)
-                            }
-                            PhysicalPlan::IndexJoin(_) => None,
-                            _ => index_join_context,
-                        };
                         // Go `PhysicalLocalIndexLookUp`: the cloned table scan
                         // is the index-lookup probe.
                         let probe = in_probe
                             || (matches!(plan, PhysicalPlan::LocalIndexLookUp(_)) && index == 1);
-                        self.node(child, is_root, store, next, probe, child_context);
+                        self.node(child, is_root, store, next, probe);
                     }
                 }
             }
@@ -3452,7 +3254,7 @@ pub fn normalize_flat_plan(
         catalog,
         output: String::new(),
     };
-    walk.node(select_plan, true, 2, 0, false, None);
+    walk.node(select_plan, true, 2, 0, false);
     if walk.output.is_empty() {
         return (String::new(), String::new());
     }
@@ -4667,11 +4469,11 @@ mod tests {
     #[test]
     fn physical_join_names_match_go_plancodec_types() {
         assert_eq!(
-            physical_operator_name(&PhysicalPlan::HashJoin(Default::default()), None),
+            physical_operator_name(&PhysicalPlan::HashJoin(Default::default())),
             "HashJoin"
         );
         assert_eq!(
-            physical_operator_name(&PhysicalPlan::MergeJoin(Default::default()), None),
+            physical_operator_name(&PhysicalPlan::MergeJoin(Default::default())),
             "MergeJoin"
         );
 
@@ -4692,7 +4494,7 @@ mod tests {
         ] {
             index.kind = kind;
             assert_eq!(
-                physical_operator_name(&PhysicalPlan::IndexJoin(index.clone()), None),
+                physical_operator_name(&PhysicalPlan::IndexJoin(index.clone())),
                 expected
             );
         }
@@ -4738,7 +4540,6 @@ mod tests {
             &index_join,
             &tidb_infoschema_perfschema::mock_catalog(),
             false,
-            None,
         );
         assert!(
             info.contains("inner:HashJoin_7"),
@@ -4767,43 +4568,8 @@ mod tests {
             &PhysicalPlan::IndexJoin(index),
             &tidb_infoschema_perfschema::mock_catalog(),
             false,
-            None,
         );
         assert!(info.contains("equal cond:eq(Column#2, Column#4), nulleq(Column#1, Column#3)"));
-    }
-
-    #[test]
-    fn index_join_range_info_uses_the_go_spelling_for_the_chosen_probe() {
-        use tidb_planner_core_operator_physicalop::PhysicalTableScan;
-
-        let column =
-            |id| tidb_expr::column::Column::new(id, FieldType::new(FieldTypeCode::LongLong));
-        let inner_keys = [column(1)];
-        let outer_keys = [column(2)];
-        let key_offsets = [0];
-        let access_conditions: [tidb_expr::expression::Expression; 0] = [];
-        let eval_ctx = crate::StmtContext::default();
-        let scan = PhysicalTableScan::default();
-        let catalog = tidb_infoschema_perfschema::mock_catalog();
-
-        for (range_bare, expected) in [
-            (true, "range: decided by [Column#2]"),
-            (false, "range: decided by [eq(Column#1, Column#2)]"),
-        ] {
-            let context = IndexJoinExplainContext {
-                table_id: 1,
-                index_id: None,
-                inner_keys: &inner_keys,
-                outer_keys: &outer_keys,
-                key_offsets: &key_offsets,
-                access_conditions: &access_conditions,
-                range_bare,
-            };
-            assert_eq!(
-                index_join_decided_by_text_for_scan(&eval_ctx, &context),
-                expected
-            );
-        }
     }
 
     #[test]
@@ -4835,7 +4601,6 @@ mod tests {
             &PhysicalPlan::MergeJoin(merge),
             &tidb_infoschema_perfschema::mock_catalog(),
             true,
-            None,
         );
         assert!(
             info.starts_with(
@@ -4862,7 +4627,6 @@ mod tests {
             &PhysicalPlan::HashJoin(outer),
             &tidb_infoschema_perfschema::mock_catalog(),
             true,
-            None,
         );
         assert!(
             info.starts_with(
@@ -4883,7 +4647,6 @@ mod tests {
             &PhysicalPlan::HashJoin(inner),
             &tidb_infoschema_perfschema::mock_catalog(),
             true,
-            None,
         );
         assert!(
             info.starts_with("inner join, equal:[eq(Column#1, Column#2)]"),
@@ -4902,7 +4665,6 @@ mod tests {
                 &PhysicalPlan::HashJoin(join),
                 &tidb_infoschema_perfschema::mock_catalog(),
                 true,
-                None
             ),
             "CARTESIAN inner join"
         );
@@ -4926,7 +4688,6 @@ mod tests {
             &PhysicalPlan::HashJoin(join),
             &tidb_infoschema_perfschema::mock_catalog(),
             true,
-            None,
         );
         assert!(
             info.starts_with("semi join, left side:HashJoin, equal:[nulleq(Column#1, Column#3) eq(Column#2, Column#4)]"),

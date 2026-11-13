@@ -1149,10 +1149,8 @@ fn complete_physical_index_join(
         }
     }
 
-    join.inner_range_bare = info.range_bare;
     join.inner_access_table_id = Some(info.table_id);
     join.inner_access_index_id = info.index_id;
-    join.inner_access_conditions = info.access_conditions;
     join.ranges = info.ranges;
     join.idx_col_lens = info.idx_col_lens;
     join.compare_filters = info.compare_filters;
@@ -3004,11 +3002,10 @@ mod attach_tests {
             IndexJoinInfo {
                 table_id: 7,
                 index_id: Some(8),
-                range_bare: false,
+                range_info: String::new(),
                 ranges: tidb_ranger::types::Ranges::new(),
                 idx_col_lens: vec![tidb_datatype::UNSPECIFIED_LENGTH],
                 key_off2_idx_off: vec![0, -1],
-                access_conditions: vec![],
                 range_rebuild: None,
                 compare_filters: None,
             },
@@ -3110,11 +3107,10 @@ mod attach_tests {
             IndexJoinInfo {
                 table_id: 7,
                 index_id: Some(8),
-                range_bare: false,
+                range_info: String::new(),
                 ranges: tidb_ranger::types::Ranges::new(),
                 idx_col_lens: vec![tidb_datatype::UNSPECIFIED_LENGTH],
                 key_off2_idx_off: vec![-1],
-                access_conditions: vec![],
                 range_rebuild: None,
                 compare_filters: None,
             },

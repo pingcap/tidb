@@ -472,7 +472,12 @@ impl Ver2Coster {
                                     &scan.ranges,
                                     scan.table_scan_penalty.unsigned_int_handle,
                                 ),
-                            penalty: scan.table_scan_penalty,
+                            // Go `getTableScanPenalty`: no penalty for a scan
+                            // whose `RangeInfo` an index join decides.
+                            penalty: tidb_planner_core_operator_logicalop::data_source::TableScanPenaltyInput {
+                                has_range_info: !scan.range_info.is_empty(),
+                                ..scan.table_scan_penalty
+                            },
                             allow_prefer_range_scan: self.allow_prefer_range_scan,
                             index_force: self.index_force,
                         },
