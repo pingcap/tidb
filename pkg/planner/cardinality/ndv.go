@@ -57,24 +57,31 @@ func getTotalRowCount(statsTbl *statistics.Table, colHist *statistics.Column) in
 	if colHist.IsFullLoad() {
 		return int64(colHist.TotalRowCount())
 	}
-	// If colHist is not fully loaded, we may still get its total row count from other index/column stats.
-	totCount := int64(0)
-	stop := false
-	statsTbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
-		if idx.IsFullLoad() && idx.LastUpdateVersion == colHist.LastUpdateVersion {
-			totCount = int64(idx.TotalRowCount())
-			stop = true
-			return true
+	// If colHist is not fully loaded, we may still get its total row count from other index/column stats
+	// collected by the same ANALYZE. Their row counts come from the row sample and can differ slightly,
+	// and the stats are stored in maps, so always pick the one with the smallest ID. Otherwise the same
+	// statistics could give a different estimate each time.
+	// MV indexes and partial indexes are skipped because their row count isn't the table's row count.
+	var (
+		totCount int64
+		minID    int64
+		found    bool
+	)
+	statsTbl.ForEachIndexImmutable(func(id int64, idx *statistics.Index) bool {
+		if idx.Info != nil && (idx.Info.MVIndex || idx.Info.HasCondition()) {
+			return false
+		}
+		if idx.IsFullLoad() && idx.LastUpdateVersion == colHist.LastUpdateVersion && (!found || id < minID) {
+			totCount, minID, found = int64(idx.TotalRowCount()), id, true
 		}
 		return false
 	})
-	if stop {
+	if found {
 		return totCount
 	}
-	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		if col.IsFullLoad() && col.LastUpdateVersion == colHist.LastUpdateVersion {
-			totCount = int64(col.TotalRowCount())
-			return true
+	statsTbl.ForEachColumnImmutable(func(id int64, col *statistics.Column) bool {
+		if col.IsFullLoad() && col.LastUpdateVersion == colHist.LastUpdateVersion && (!found || id < minID) {
+			totCount, minID, found = int64(col.TotalRowCount()), id, true
 		}
 		return false
 	})
