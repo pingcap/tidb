@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -148,7 +149,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	job := &backfillMeta.Job
 	logger.Info("on next subtasks batch")
 	store := sch.TaskRuntime.Store()
-	tbl, err := getUserTableFromTaskStore(ctx, store, job)
+	tbl, err := getBackfillTaskTable(ctx, store, &backfillMeta)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -194,6 +195,70 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	default:
 		return nil, nil
 	}
+}
+
+func getBackfillTaskTable(ctx context.Context, store kv.Storage, task *BackfillTaskMeta) (table.Table, error) {
+	tbl, err := getUserTableFromTaskStore(ctx, store, &task.Job)
+	if err != nil || len(task.PartitionIDs) == 0 {
+		return tbl, err
+	}
+	if task.Job.Type != model.ActionReorganizePartition {
+		return nil, errors.New("explicit partition inputs require REORGANIZE PARTITION")
+	}
+	return projectPartitionBackfillTable(tbl, task.PartitionIDs, task.EleIDs)
+}
+
+// projectPartitionBackfillTable constructs a private read view. It never changes
+// the SQL-visible metadata or grants permission to mutate the table.
+func projectPartitionBackfillTable(tbl table.Table, pids, indexIDs []int64) (table.Table, error) {
+	info := tbl.Meta().Clone()
+	pi := info.Partition
+	if pi == nil || pi.Type != ast.PartitionTypeRange || pi.DDLAction != model.ActionReorganizePartition || len(pi.AddingDefinitions) == 0 || pi.NewTableID != 0 {
+		return nil, errors.New("partition backfill requires an active RANGE reorganization")
+	}
+	dropping := make(map[int64]bool)
+	for _, def := range pi.DroppingDefinitions {
+		dropping[def.ID] = true
+	}
+	allowed := make(map[int64]model.PartitionDefinition)
+	for _, def := range pi.Definitions {
+		if !dropping[def.ID] {
+			allowed[def.ID] = def
+		}
+	}
+	for _, def := range pi.AddingDefinitions {
+		allowed[def.ID] = def
+	}
+	selected := make([]model.PartitionDefinition, 0, len(pids))
+	seen := make(map[int64]bool)
+	for _, pid := range pids {
+		def, ok := allowed[pid]
+		if !ok || seen[pid] {
+			return nil, errors.Errorf("invalid or duplicate backfill partition %d", pid)
+		}
+		seen[pid] = true
+		selected = append(selected, def)
+	}
+	if len(selected) == 0 || len(indexIDs) == 0 {
+		return nil, errors.New("partition backfill requires nonempty inputs and indexes")
+	}
+	idxs, err := findIndexInfosByIDs(info, indexIDs)
+	if err != nil {
+		return nil, err
+	}
+	seenIndexes := make(map[int64]bool)
+	for _, idx := range idxs {
+		if seenIndexes[idx.ID] {
+			return nil, errors.Errorf("duplicate backfill index %d", idx.ID)
+		}
+		seenIndexes[idx.ID] = true
+		if replacement, changed := pi.DDLChangedIndex[idx.ID]; idx.Global && (!changed || !replacement) {
+			return nil, errors.Errorf("old global index %d cannot be a backfill target", idx.ID)
+		}
+	}
+	info.Indices = idxs
+	info.Partition = &model.PartitionInfo{Type: pi.Type, Expr: pi.Expr, Columns: pi.Columns, Enable: true, Num: uint64(len(selected)), Definitions: selected}
+	return tables.TableFromMetaWithCollate(tbl.UseNewCollate(), autoid.NewAllocators(info.SepAutoInc()), info)
 }
 
 func getUserTableFromTaskStore(
