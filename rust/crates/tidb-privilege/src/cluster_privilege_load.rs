@@ -187,7 +187,7 @@ const DB_COLUMNS: &[&str] = &[
     "trigger_priv",
 ];
 
-pub use crate::loaded::{LoadedUser, LoadedDbGrant, LoadedTableGrant, LoadedColumnGrant, LoadedDynamicGrant, LoadedRoleEdge, LoadedDefaultRole, LoadedPasswordHistory, LoadedGlobalPriv, ClusterPrivileges};
+pub use crate::loaded::{LoadedUser, LoadedDbGrant, LoadedTableGrant, LoadedColumnGrant, LoadedDynamicGrant, LoadedRoleEdge, LoadedDefaultRole, LoadedGlobalPriv, ClusterPrivileges};
 
 /// Whether a cluster's `mysql.tidb` says Go's bootstrap already ran.
 ///
@@ -454,29 +454,6 @@ pub fn load_all(
                 host: row.text("host")?.unwrap_or_default(),
                 user: row.text("user")?.unwrap_or_default(),
                 priv_json: row.text("priv")?.unwrap_or_default(),
-            });
-        }
-    }
-
-    if let Some((view, rows)) = tables.rows(
-        "password_history",
-        &["host", "user", "password_timestamp", "password"],
-        Some(&timezone),
-    )? {
-        for values in rows {
-            let row = SystemRow::from_values(&view, values);
-            let Some(tidb_datatype::Datum::Time(timestamp)) = row.datum("password_timestamp")?
-            else {
-                return Err(SystemTableError::Decode {
-                    name: "mysql.password_history".into(),
-                    detail: "password_timestamp is not a TIMESTAMP".into(),
-                });
-            };
-            loaded.password_history.push(LoadedPasswordHistory {
-                host: row.text("host")?.unwrap_or_default(),
-                user: row.text("user")?.unwrap_or_default(),
-                timestamp: *timestamp,
-                password: row.text("password")?,
             });
         }
     }

@@ -132,19 +132,6 @@ pub struct LoadedDefaultRole {
     pub role_user: String,
 }
 
-/// One durable credential-history row, independent of current account existence.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LoadedPasswordHistory {
-    /// Account host.
-    pub host: String,
-    /// Account username.
-    pub user: String,
-    /// Stored UTC TIMESTAMP(6), part of the row identity.
-    pub timestamp: tidb_datatype::Time,
-    /// Stored authentication string.
-    pub password: Option<String>,
-}
-
 /// One durable connection-policy row; JSON text is retained for Go consumers.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LoadedGlobalPriv {
@@ -161,8 +148,6 @@ pub struct LoadedGlobalPriv {
 pub struct ClusterPrivileges {
     /// Durable connection policy, independent of user-row existence.
     pub global_priv: Vec<LoadedGlobalPriv>,
-    /// mysql.password_history, including orphan rows until explicitly removed.
-    pub password_history: Vec<LoadedPasswordHistory>,
     /// `mysql.user`, in stored key order.
     pub users: Vec<LoadedUser>,
     /// `mysql.db`, in stored key order.

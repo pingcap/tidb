@@ -380,6 +380,15 @@ fn a_sandboxed_session_may_only_fix_its_own_password() {
     sandbox.run("SELECT 1").unwrap();
 }
 
+/// The account's `mysql.password_history` rows, as Go's tests count them.
+fn history_count(session: &mut Session, user: &str, host: &str) -> usize {
+    row_text(session.run(&format!(
+        "SELECT count(*) FROM mysql.password_history WHERE User = '{user}' AND Host = '{host}'"
+    )))[0][0]
+        .parse()
+        .expect("a count")
+}
+
 #[test]
 fn password_history_checks_native_and_salted_credentials_before_publication() {
     for plugin in [
@@ -416,19 +425,15 @@ fn password_history_checks_native_and_salted_credentials_before_publication() {
             3
         };
         assert_eq!(
-            registry.account_password_history("history_user", "%").len(),
+            history_count(&mut session, "history_user", "%"),
             expected
         );
         session
             .run("RENAME USER history_user TO renamed_history")
             .unwrap();
-        assert!(registry
-            .account_password_history("history_user", "%")
-            .is_empty());
+        assert_eq!(history_count(&mut session, "history_user", "%"), 0);
         assert_eq!(
-            registry
-                .account_password_history("renamed_history", "%")
-                .len(),
+            history_count(&mut session, "renamed_history", "%"),
             expected
         );
         assert_eq!(
@@ -440,9 +445,7 @@ fn password_history_checks_native_and_salted_credentials_before_publication() {
             3638
         );
         session.run("DROP USER renamed_history").unwrap();
-        assert!(registry
-            .account_password_history("renamed_history", "%")
-            .is_empty());
+        assert_eq!(history_count(&mut session, "renamed_history", "%"), 0);
     }
 }
 
@@ -459,9 +462,7 @@ fn password_history_uses_live_defaults_last_options_and_plugin_changes() {
         (None, None)
     );
     assert_eq!(
-        registry
-            .account_password_history("history_default", "%")
-            .len(),
+        history_count(&mut session, "history_default", "%"),
         1
     );
     session
@@ -476,9 +477,7 @@ fn password_history_uses_live_defaults_last_options_and_plugin_changes() {
         3638
     );
     session.run("ALTER USER history_default IDENTIFIED BY 'first' PASSWORD HISTORY 0 PASSWORD REUSE INTERVAL 0 DAY").unwrap();
-    assert!(registry
-        .account_password_history("history_default", "%")
-        .is_empty());
+    assert_eq!(history_count(&mut session, "history_default", "%"), 0);
     session.run("ALTER USER history_default PASSWORD HISTORY 5 PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL 7 DAY PASSWORD REUSE INTERVAL DEFAULT").unwrap();
     assert_eq!(
         registry.password_reuse_policy("history_default", "%"),
@@ -488,9 +487,7 @@ fn password_history_uses_live_defaults_last_options_and_plugin_changes() {
     session
         .run("SET PASSWORD FOR history_default = 'first'")
         .unwrap();
-    assert!(registry
-        .account_password_history("history_default", "%")
-        .is_empty());
+    assert_eq!(history_count(&mut session, "history_default", "%"), 0);
     session
         .run("ALTER USER history_default PASSWORD HISTORY 65536 PASSWORD REUSE INTERVAL 65536 DAY")
         .unwrap();
@@ -504,26 +501,22 @@ fn password_history_uses_live_defaults_last_options_and_plugin_changes() {
         .run("ALTER USER history_default IDENTIFIED WITH caching_sha2_password BY 'first'")
         .unwrap();
     assert_eq!(
-        registry
-            .account_password_history("history_default", "%")
-            .len(),
+        history_count(&mut session, "history_default", "%"),
         1
     );
     session
         .run("ALTER USER history_default IDENTIFIED WITH authentication_ldap_simple")
         .unwrap();
-    assert!(registry
-        .account_password_history("history_default", "%")
-        .is_empty());
+    assert_eq!(history_count(&mut session, "history_default", "%"), 0);
     // Go CREATE stores nonempty LDAP credentials; ALTER's reuse owner exempts LDAP.
     session.run("CREATE USER history_ldap IDENTIFIED WITH authentication_ldap_simple AS 'directory-user' PASSWORD HISTORY 3").unwrap();
     assert_eq!(
-        registry.account_password_history("history_ldap", "%").len(),
+        history_count(&mut session, "history_ldap", "%"),
         1
     );
     session.run("ALTER USER history_ldap IDENTIFIED WITH authentication_ldap_simple AS 'other-directory-user'").unwrap();
     assert_eq!(
-        registry.account_password_history("history_ldap", "%").len(),
+        history_count(&mut session, "history_ldap", "%"),
         1
     );
 }

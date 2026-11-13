@@ -602,8 +602,6 @@ impl PrivilegeRegistry {
         // Publish connection policy before newly admitted user rows.
         *self.global_priv.lock().unwrap() = std::mem::take(&mut *fresh.global_priv.lock().unwrap());
         *self.lock() = std::mem::take(&mut *fresh.lock());
-        *self.password_history.lock().unwrap() =
-            std::mem::take(&mut *fresh.password_history.lock().unwrap());
         *self.lock_db() = std::mem::take(&mut *fresh.lock_db());
         *self.lock_table() = std::mem::take(&mut *fresh.lock_table());
         *self.lock_column() = std::mem::take(&mut *fresh.lock_column());
@@ -640,12 +638,6 @@ impl PrivilegeRegistry {
                 }
             }
             guard.insert(new_key, record);
-        }
-        for row in self.password_history.lock().unwrap().iter_mut() {
-            if row.user == old_user && row.host == old_host {
-                row.user = new_user.into();
-                row.host = new_host.into();
-            }
         }
         let mut db_guard = self.lock_db();
         *db_guard = db_guard
@@ -1021,7 +1013,6 @@ impl PrivilegeRegistry {
                 .retain(|row| row.user != user || row.host != host);
             removed
         };
-        self.clear_password_history(user, host);
         // Go deletes the account's `mysql.db`/`mysql.tables_priv` rows in the
         // same transaction (captured: after `DROP USER`, `mysql.db` has no
         // row left for the account), so a later account recreated under the
@@ -2319,7 +2310,6 @@ impl PrivilegeRegistry {
         default_roles.sort();
 
         RegistryExport {
-            password_history: self.password_history.lock().unwrap().clone(),
             users,
             db_grants,
             table_grants,

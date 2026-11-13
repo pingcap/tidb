@@ -185,7 +185,6 @@ pub fn registry_from_cluster(loaded: &ClusterPrivileges) -> LoadedRegistry {
         registry.set_default_roles(&owner, &roles);
     }
 
-    registry.restore_password_history(loaded.password_history.clone());
 
     LoadedRegistry {
         registry,
@@ -281,7 +280,6 @@ pub fn cluster_image_from_registry(registry: &PrivilegeRegistry) -> ClusterPrivi
     let exported = registry.export();
     ClusterPrivileges {
         global_priv: registry.global_priv_rows(),
-        password_history: exported.password_history,
         users: exported
             .users
             .into_iter()

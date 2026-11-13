@@ -181,7 +181,6 @@ struct ColumnPrivRecord {
 #[derive(Clone)]
 pub struct PrivilegeRegistry {
     users: Arc<Mutex<HashMap<(String, String), UserRecord>>>,
-    password_history: Arc<Mutex<Vec<crate::loaded::LoadedPasswordHistory>>>,
     global_priv: Arc<Mutex<Vec<crate::loaded::LoadedGlobalPriv>>>,
     /// Go `mysql.DB` rows: one bitmask per `(user, host, database)`, keyed
     /// by the database's exact written name (matching Go's case-sensitive
@@ -309,7 +308,6 @@ impl PrivilegeRegistry {
             .collect();
         Self {
             users: Arc::new(Mutex::new(users)),
-            password_history: Arc::new(Mutex::new(Vec::new())),
             global_priv: Arc::new(Mutex::new(Vec::new())),
             db_privs: Arc::new(Mutex::new(HashMap::new())),
             table_privs: Arc::new(Mutex::new(HashMap::new())),

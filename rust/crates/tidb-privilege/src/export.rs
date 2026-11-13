@@ -101,8 +101,6 @@ pub struct ExportedDynamicGrant {
 /// This registry's whole account table, as rows.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RegistryExport {
-    /// Complete credential history, including rows without current users.
-    pub password_history: Vec<crate::loaded::LoadedPasswordHistory>,
     /// `mysql.user`.
     pub users: Vec<ExportedUser>,
     /// `mysql.db`.
