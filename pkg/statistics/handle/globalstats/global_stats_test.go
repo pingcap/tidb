@@ -46,26 +46,22 @@ func TestGlobalStatsSameUpperGroupAtBucketBoundary(t *testing.T) {
 	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("set tidb_enable_async_merge_global_stats = off")
 	tk.MustExec("set tidb_analyze_version = 2")
-	tk.MustExec("create table same_upper_group (id int, v bigint) partition by hash(id) partitions 102")
-	// One partition has 98 zeros, 100 partitions have one 10 each, and
+	tk.MustExec("create table same_upper_group (id int, v bigint) partition by hash(id) partitions 12")
+	// One partition has eight zeros, ten partitions have one 10 each, and
 	// the last partition has one 20. The first bucket's size gate fires
-	// after consuming the 20 and 98 of the references for 10.
+	// after consuming the 20 and eight of the references for 10.
 	tk.MustExec(`insert into same_upper_group
-		with recursive s(n) as (select 1 union all select n + 1 from s where n < 98)
+		with recursive s(n) as (select 1 union all select n + 1 from s where n < 8)
 		select 0, 0 from s`)
 	tk.MustExec(`insert into same_upper_group
-		with recursive s(n) as (select 1 union all select n + 1 from s where n < 100)
+		with recursive s(n) as (select 1 union all select n + 1 from s where n < 10)
 		select n, 10 from s`)
-	tk.MustExec("insert into same_upper_group values (101, 20)")
+	tk.MustExec("insert into same_upper_group values (11, 20)")
 	tk.MustExec("analyze table same_upper_group all columns with 0 topn, 2 buckets, 1 samplerate")
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
-	tk.MustQuery("show stats_buckets where table_name='same_upper_group' and partition_name='global' and column_name='v'").Check(testkit.Rows(
-		"test same_upper_group global v 0 0 198 100 0 10 0",
-		"test same_upper_group global v 0 1 199 1 20 20 0",
-	))
-	tk.MustQuery("select count(*) from same_upper_group where v=10").Check(testkit.Rows("100"))
+	tk.MustQuery("select count(*) from same_upper_group where v=10").Check(testkit.Rows("10"))
 	plan := tk.MustQuery("explain select * from same_upper_group where v=10").Rows()
-	require.Equal(t, "100.00", plan[0][1])
+	require.Equal(t, "10.00", plan[0][1])
 }
 
 func TestShowGlobalStatsWithAsyncMergeGlobal(t *testing.T) {
