@@ -6853,6 +6853,7 @@ dependencies = [
  "tidb-terror",
  "tidb-timeutil",
  "tidb-txnkv",
+ "tidb-vardef",
 ]
 
 [[package]]

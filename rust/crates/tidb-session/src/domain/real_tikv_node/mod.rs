@@ -47,9 +47,11 @@ pub fn apply_account_policies(
     config: &NodeConfig,
     users: ConfiguredUserStore,
 ) -> ConfiguredUserStore {
-    users
-        .accounts()
-        .set_sandbox_mode_enabled(!config.disconnect_on_expired_password);
+    // Go `main.go` `setGlobalVars`.
+    tidb_vardef::IS_SAND_BOX_MODE_ENABLED.store(
+        !config.disconnect_on_expired_password,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     users.with_skip_grant_table(config.skip_grant_table)
 }
 

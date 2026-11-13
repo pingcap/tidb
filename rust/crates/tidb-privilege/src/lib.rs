@@ -66,7 +66,6 @@
 //! `column_privs` below.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 mod export;
@@ -216,14 +215,6 @@ pub struct PrivilegeRegistry {
     /// are measured against. Shared with every clone of this registry, so a
     /// test that advances it moves the whole server's notion of "now".
     clock: Clock,
-    /// Go's `vardef.IsSandBoxModeEnabled`, the server-wide inverse of the
-    /// `disconnect_on_expired_password` option: with it OFF (Go's default) an
-    /// expired password refuses the login with 1862, and with it ON the login
-    /// succeeds into a sandbox session that may run nothing but
-    /// `SET PASSWORD` / `ALTER USER` (both captured). Go reaches it through a
-    /// process-global atomic set from server config, not from SQL; this
-    /// registry is the equivalent server-wide home.
-    sandbox_mode_enabled: Arc<AtomicBool>,
     /// Go swaps one immutable `MySQLPrivilege` per reload, so a check reads
     /// one consistent image. Here a reload holds this gate's write side for
     /// its whole swap of the separate tables, and every reader that combines
@@ -316,7 +307,6 @@ impl PrivilegeRegistry {
             role_edges: Arc::new(Mutex::new(HashMap::new())),
             default_roles: Arc::new(Mutex::new(HashMap::new())),
             clock,
-            sandbox_mode_enabled: Arc::new(AtomicBool::new(false)),
             reload_gate: Arc::new(std::sync::RwLock::new(())),
         }
     }

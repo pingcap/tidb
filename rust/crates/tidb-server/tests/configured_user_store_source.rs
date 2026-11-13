@@ -475,9 +475,9 @@ fn an_expired_password_reports_1862_or_opens_a_sandbox_session() {
 
     accounts.set_password_expire("bob", "%", PasswordExpireSetting::Now);
     assert_eq!(login(), Err(AuthenticationFailure::PasswordExpired));
-    accounts.set_sandbox_mode_enabled(true);
+    tidb_vardef::IS_SAND_BOX_MODE_ENABLED.store(true, std::sync::atomic::Ordering::Relaxed);
     assert!(login().expect("sandboxed login").in_sandbox_mode());
-    accounts.set_sandbox_mode_enabled(false);
+    tidb_vardef::IS_SAND_BOX_MODE_ENABLED.store(false, std::sync::atomic::Ordering::Relaxed);
 
     // Storing a password unexpires the account.
     accounts.mark_password_changed("bob", "%");

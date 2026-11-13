@@ -87,6 +87,11 @@ pub static WORKLOAD_BASED_LEARNING_INTERVAL: AtomicI64 =
 pub static ENABLE_FAST_CREATE_TABLE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(defaults::DEF_TIDB_ENABLE_FAST_CREATE_TABLE);
 
+/// Go `vardef.IsSandBoxModeEnabled`: a login whose password expired enters
+/// sandbox mode instead of being refused. `main.go` stores
+/// `!security.disconnect-on-expired-password` at startup.
+pub static IS_SAND_BOX_MODE_ENABLED: AtomicBool = AtomicBool::new(false);
+
 /// Go `vardef.TableCacheLease`: the read lease of a cached table, in seconds.
 pub static TABLE_CACHE_LEASE: AtomicI64 = AtomicI64::new(defaults::DEF_TIDB_TABLE_CACHE_LEASE);
 

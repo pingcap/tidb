@@ -533,9 +533,8 @@ impl PrivilegeRegistry {
     /// catalog, applied per table because this registry has no single outer
     /// handle to swap.
     ///
-    /// `clock` and `sandbox_mode_enabled` are left alone: they are this
-    /// server's own runtime settings, not `mysql.*` state a cluster snapshot
-    /// carries.
+    /// `clock` is left alone: it is this server's own runtime setting, not
+    /// `mysql.*` state a cluster snapshot carries.
     ///
     /// A session's own `active_roles` list is untouched by this call and may
     /// still name a role this replaces away. That is intentional and matches
@@ -703,18 +702,6 @@ impl PrivilegeRegistry {
     #[must_use]
     pub fn clock(&self) -> Clock {
         self.clock.clone()
-    }
-
-    /// Whether the server admits an expired-password login into a sandbox
-    /// session instead of refusing it -- Go's `vardef.IsSandBoxModeEnabled`.
-    #[must_use]
-    pub fn sandbox_mode_enabled(&self) -> bool {
-        self.sandbox_mode_enabled.load(Ordering::Relaxed)
-    }
-
-    /// Sets [`Self::sandbox_mode_enabled`] for the whole server.
-    pub fn set_sandbox_mode_enabled(&self, enabled: bool) {
-        self.sandbox_mode_enabled.store(enabled, Ordering::Relaxed);
     }
 
     /// The account's `Password_locking` object, or `None` when it has none.
@@ -932,7 +919,7 @@ impl PrivilegeRegistry {
         let Some(expiry) = self.password_expiry(user, host) else {
             return Ok(false);
         };
-        let sandbox = self.sandbox_mode_enabled();
+        let sandbox = tidb_vardef::IS_SAND_BOX_MODE_ENABLED.load(Ordering::Relaxed);
         let aged_out = || {
             let lifetime = expiry.lifetime.unwrap_or(default_password_lifetime);
             lifetime > 0 && self.clock.now_unix() > expiry.last_changed + lifetime * SECONDS_PER_DAY
