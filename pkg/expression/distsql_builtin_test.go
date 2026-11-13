@@ -32,6 +32,19 @@ import (
 func TestPBToExpr(t *testing.T) {
 	ctx := mock.NewContext()
 	fieldTps := make([]*types.FieldType, 1)
+	for _, datum := range []types.Datum{types.NewFloat32Datum(0.9), types.NewFloat64Datum(0.9)} {
+		decoded, err := PBToExpr(ctx, datumExpr(t, datum), fieldTps)
+		require.NoError(t, err)
+		wantType := mysql.TypeDouble
+		if datum.Kind() == types.KindFloat32 {
+			wantType = mysql.TypeFloat
+		}
+		require.Equal(t, wantType, decoded.GetType(ctx.GetEvalCtx()).GetType())
+		str, isNull, err := WrapWithCastAsString(ctx, decoded).EvalString(ctx.GetEvalCtx(), chunk.Row{})
+		require.NoError(t, err)
+		require.False(t, isNull)
+		require.Equal(t, "0.9", str)
+	}
 	ds := []types.Datum{types.NewIntDatum(1), types.NewUintDatum(1), types.NewFloat64Datum(1),
 		types.NewDecimalDatum(newMyDecimal(t, "1")), types.NewDurationDatum(newDuration(time.Second))}
 
