@@ -56,6 +56,23 @@ func New() *IngestRecorder {
 	}
 }
 
+// AddGlobalIndexes records global indexes whose partition IDs need to be rebuilt
+// after restoring the table's records. Local indexes are imported unchanged.
+func (i *IngestRecorder) AddGlobalIndexes(table *model.TableInfo) {
+	if table == nil || table.Partition == nil {
+		return
+	}
+	for _, index := range table.Indices {
+		if !index.Global || index.State != model.StatePublic {
+			continue
+		}
+		if i.items[table.ID] == nil {
+			i.items[table.ID] = make(map[int64]*IngestIndexInfo)
+		}
+		i.items[table.ID][index.ID] = &IngestIndexInfo{IsPrimary: index.Primary}
+	}
+}
+
 func notIngestJob(job *model.Job) bool {
 	return job.ReorgMeta == nil ||
 		job.ReorgMeta.ReorgTp != model.ReorgTypeIngest
