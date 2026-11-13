@@ -17,6 +17,8 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -376,4 +378,157 @@ func TestWithTiDBSnapshot(t *testing.T) {
 	tk.MustQuery("select * from xx where id = 8").Check(testkit.Rows())
 
 	tk.MustQuery("select * from xx").Check(testkit.Rows("1", "7"))
+}
+
+func TestPointGetCoveringIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Create test table as described in issue #37765
+	tk.MustExec("create table t1(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
+	tk.MustExec("insert into t1 values (1, 10, 100), (2, 20, 200), (3, 30, 300)")
+
+	// Result-correctness checks.
+	tk.MustQuery("SELECT id2 FROM t1 WHERE id2 = 10").Check(testkit.Rows("10"))
+	tk.MustQuery("SELECT id2 FROM t1 WHERE id2 = 20").Check(testkit.Rows("20"))
+	tk.MustQuery("SELECT id2 FROM t1 WHERE id2 = 30").Check(testkit.Rows("30"))
+	tk.MustQuery("SELECT id3 FROM t1 WHERE id2 = 10").Check(testkit.Rows("100"))
+	tk.MustQuery("SELECT id3 FROM t1 WHERE id2 = 20").Check(testkit.Rows("200"))
+	tk.MustQuery("SELECT id1, id2, id3 FROM t1 WHERE id2 = 10").Check(testkit.Rows("1 10 100"))
+	tk.MustQuery("SELECT COUNT(*) FROM t1").Check(testkit.Rows("3"))
+
+	// Prove the covering-index fast path is actually taken: a point get that projects only
+	// indexed columns must issue strictly fewer Snapshot.Get RPCs than one that projects a
+	// non-indexed column on the same row (which still needs the row-key fetch).
+	coveringRPCs := sumNumRPC(t, tk, "explain analyze select id2 from t1 where id2 = 10")
+	nonCoveringRPCs := sumNumRPC(t, tk, "explain analyze select id3 from t1 where id2 = 10")
+	require.Greater(t, coveringRPCs, 0, "covering-index query should still issue the index-key Get")
+	require.Less(t, coveringRPCs, nonCoveringRPCs,
+		"covering-index query (%d RPCs) should issue fewer Snapshot.Get RPCs than non-covering query (%d RPCs); "+
+			"otherwise the buildResultFromIndex fast path is not being taken",
+		coveringRPCs, nonCoveringRPCs)
+}
+
+// sumNumRPC runs `explain analyze` and totals every `num_rpc:<N>` field across all operator
+// rows. It is intentionally coarse: we only need to compare relative counts between two
+// queries to prove whether the covering-index fast path skipped the row-key Get.
+func sumNumRPC(t *testing.T, tk *testkit.TestKit, explainSQL string) int {
+	t.Helper()
+	re := regexp.MustCompile(`num_rpc:(\d+)`)
+	total := 0
+	for _, row := range tk.MustQuery(explainSQL).Rows() {
+		for _, field := range row {
+			for _, m := range re.FindAllStringSubmatch(fmt.Sprint(field), -1) {
+				n, err := strconv.Atoi(m[1])
+				require.NoError(t, err, "parse num_rpc in %q", field)
+				total += n
+			}
+		}
+	}
+	return total
+}
+
+// TestPointGetCoveringIndexForUpdateLocks verifies that SELECT ... FOR UPDATE on a covering
+// unique index still locks the underlying row, so another session cannot acquire a conflicting
+// lock while the first transaction is open. The covering-index fast path must not be taken
+// when e.lock is true.
+func TestPointGetCoveringIndexForUpdateLocks(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+
+	tk1.MustExec("create table t_cover_lock(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
+	tk1.MustExec("insert into t_cover_lock values (1, 10, 100)")
+
+	tk1.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+	tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+
+	tk1.MustExec("begin pessimistic")
+	// Covering-index point get with FOR UPDATE — fast path must be disabled.
+	tk1.MustQuery("SELECT id2 FROM t_cover_lock WHERE id2 = 10 FOR UPDATE").Check(testkit.Rows("10"))
+
+	// Another session trying to update the same row must block; use a short lock-wait
+	// timeout so the test fails fast if the row was not locked.
+	tk2.MustExec("set @@innodb_lock_wait_timeout = 1")
+	tk2.MustExec("begin pessimistic")
+	_, err := tk2.Exec("update t_cover_lock set id3 = 999 where id1 = 1")
+	require.Error(t, err, "expected lock-wait timeout because tk1's FOR UPDATE must lock the row even on covering-index fast path")
+	tk2.MustExec("rollback")
+	tk1.MustExec("commit")
+}
+
+// TestPointGetCoveringIndexPadSpace verifies the covering-index fast path does not return
+// the search value instead of the stored value for PAD SPACE collations. utf8mb4_bin is
+// PAD SPACE but case-sensitive — the earlier IsCICollation-only check missed it. The fast
+// path must fall back to a row fetch so the trailing space from the stored value is
+// preserved.
+func TestPointGetCoveringIndexPadSpace(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_pad (c varchar(10) collate utf8mb4_bin, unique key uk_c (c))")
+	// Stored value has a trailing space; PAD SPACE semantics make 'foo' equal 'foo ' in
+	// comparisons, so the unique-index lookup for WHERE c = 'foo' matches this row.
+	tk.MustExec("insert into t_pad values ('foo ')")
+
+	// Row-fetch behaviour: the executor must return the stored value, trailing space
+	// included. If the fast path fired without the PAD SPACE guard, it would return
+	// 'foo' instead.
+	tk.MustQuery("select c, length(c) from t_pad where c = 'foo'").Check(testkit.Rows("foo  4"))
+	tk.MustQuery("select c, length(c) from t_pad where c = 'foo '").Check(testkit.Rows("foo  4"))
+}
+
+// TestPointGetCoveringIndexPartitioned verifies the covering-index fast path produces
+// correct results on a partitioned table, both for a local unique index (on the partition
+// key) and for a global unique index (on a non-partition-key column).
+func TestPointGetCoveringIndexPartitioned(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Local unique index: the unique key is on the partition-key column, so each partition
+	// owns its own index entries and the PointGet executor uses GetPhysID to resolve the
+	// partition at execution time.
+	tk.MustExec(`create table t_part_local (
+		id int,
+		val int,
+		UNIQUE KEY uk_id (id)
+	) partition by hash(id) partitions 4`)
+	tk.MustExec("insert into t_part_local values (1, 100), (2, 200), (3, 300), (11, 1100)")
+
+	tk.MustQuery("select id from t_part_local where id = 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select id from t_part_local where id = 11").Check(testkit.Rows("11"))
+	tk.MustQuery("select val from t_part_local where id = 1").Check(testkit.Rows("100"))
+
+	covering := sumNumRPC(t, tk, "explain analyze select id from t_part_local where id = 1")
+	nonCovering := sumNumRPC(t, tk, "explain analyze select val from t_part_local where id = 1")
+	require.Less(t, covering, nonCovering,
+		"partitioned local-unique covering case (%d RPCs) should issue fewer RPCs than non-covering (%d RPCs)",
+		covering, nonCovering)
+
+	// Global unique index on a non-partition-key column: the index value carries the
+	// partition ID. Results must still be correct when the fast path is taken.
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer tk.MustExec("set tidb_enable_global_index=default")
+	tk.MustExec(`create table t_part_global (
+		id int PRIMARY KEY,
+		gval int,
+		other int,
+		UNIQUE KEY udx_gval (gval) GLOBAL
+	) partition by hash(id) partitions 4`)
+	tk.MustExec("insert into t_part_global values (1, 10, 100), (2, 20, 200), (3, 30, 300), (11, 40, 400)")
+
+	tk.MustQuery("select gval from t_part_global where gval = 10").Check(testkit.Rows("10"))
+	tk.MustQuery("select gval from t_part_global where gval = 40").Check(testkit.Rows("40"))
+	tk.MustQuery("select other from t_part_global where gval = 10").Check(testkit.Rows("100"))
+
+	coveringG := sumNumRPC(t, tk, "explain analyze select gval from t_part_global where gval = 10")
+	nonCoveringG := sumNumRPC(t, tk, "explain analyze select other from t_part_global where gval = 10")
+	require.Less(t, coveringG, nonCoveringG,
+		"partitioned global-unique covering case (%d RPCs) should issue fewer RPCs than non-covering (%d RPCs)",
+		coveringG, nonCoveringG)
 }
