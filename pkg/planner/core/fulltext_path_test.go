@@ -16,6 +16,7 @@ package core_test
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -398,4 +399,267 @@ func TestLocalMatchAgainstAnalyzerFollowsBaseColumn(t *testing.T) {
 		tk.MustQuery(sql).Check(testkit.Rows("1"))
 	}
 	tk.MustQuery("select 1 from (select 'concat' as c) d where match(c) against('+cat' in boolean mode)").Check(testkit.Rows())
+}
+
+// TestFullTextIndexPostingsProbedWithoutStatistics covers a text column
+// without statistics, as a LONGTEXT column is after ANALYZE: the planner
+// counts the postings of each term in the index, so a common term is known to
+// be common and scans, a rare one is known to be rare and uses the index, and
+// the MATCH's row estimate is the count.
+func TestFullTextIndexPostingsProbedWithoutStatistics(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table lt (id int primary key, body longtext, fulltext index idx (body))")
+	rows := make([]string, 0, 1500)
+	for i := range 1500 {
+		body := "filler text"
+		if i%100 < 46 {
+			body = "alpha filler text"
+		}
+		if i == 7 {
+			body += " zebra"
+		}
+		rows = append(rows, fmt.Sprintf("(%d, '%s')", i, body))
+	}
+	tk.MustExec("insert into lt values " + strings.Join(rows, ","))
+	tk.MustExec("analyze table lt")
+
+	explain := func(sql string) string {
+		var sb strings.Builder
+		for _, row := range tk.MustQuery("explain format = 'brief' " + sql).Rows() {
+			sb.WriteString(fmt.Sprintln(row...))
+		}
+		return sb.String()
+	}
+	plan := explain("select id from lt where match(body) against('+alpha' in boolean mode)")
+	require.NotContains(t, plan, "FullTextIndexScan", plan)
+	// 690 of the 1500 rows hold the term.
+	require.Regexp(t, `Selection 690\.00 root\s+match_against`, plan)
+	plan = explain("select id from lt where match(body) against('+zebra' in boolean mode)")
+	require.Contains(t, plan, "FullTextIndexScan(Build) 1.00 root", plan)
+	tk.MustQuery("select id from lt where match(body) against('+zebra' in boolean mode)").Check(testkit.Rows("7"))
+	plan = explain("select id from lt where match(body) against('+alpha +zebra' in boolean mode)")
+	require.Contains(t, plan, "FullTextIndexScan(Build)", plan)
+}
+
+// TestFullTextIndexPostingsProbeScope covers what the planning-time count of
+// a term's postings reaches and what it must leave to the statistics.
+func TestFullTextIndexPostingsProbeScope(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Every 97th row holds the rare word; half the rows hold the common one.
+	fill := func(table string, rows int) {
+		values := make([]string, 0, rows)
+		for i := 1; i <= rows; i++ {
+			body := "filler text"
+			if i%2 == 0 {
+				body += " alpha"
+			}
+			if i%97 == 0 {
+				body += " rareword"
+			}
+			values = append(values, fmt.Sprintf("(%d, %d, '%s')", i, i%7, body))
+		}
+		tk.MustExec(fmt.Sprintf("insert into %s values %s", table, strings.Join(values, ",")))
+	}
+	// estimates returns the row estimate of every plan line holding op.
+	estimates := func(op, sql string) []float64 {
+		var out []float64
+		for _, row := range tk.MustQuery("explain format = 'brief' " + sql).Rows() {
+			if strings.Contains(fmt.Sprint(row[0]), op) {
+				var est float64
+				_, err := fmt.Sscanf(fmt.Sprint(row[1]), "%f", &est)
+				require.NoError(t, err)
+				out = append(out, est)
+			}
+		}
+		require.NotEmpty(t, out, sql)
+		return out
+	}
+	count := func(sql string) float64 {
+		var n float64
+		_, err := fmt.Sscanf(fmt.Sprint(tk.MustQuery(sql).Rows()[0][0]), "%f", &n)
+		require.NoError(t, err)
+		return n
+	}
+
+	// An index with key columns: the term is counted under the key point,
+	// and the count is the estimate of the rows the search yields there. The
+	// text column has no statistics; the key column has.
+	tk.MustExec("create table tn (id int primary key, tenant int, body longtext, fulltext index idx (tenant, body))")
+	fill("tn", 3000)
+	tk.MustExec("analyze table tn")
+	rare := count("select count(*) from tn where tenant = 3 and body like '%rareword%'")
+	require.Greater(t, rare, 1.0)
+	require.InDelta(t, rare, estimates("FullTextIndexScan", "select id from tn where tenant = 3 and match(body) against('+rareword' in boolean mode)")[0], 0.5)
+	common := count("select count(*) from tn where tenant = 3 and body like '%alpha%'")
+	require.InDelta(t, common, estimates("Projection", "select id + 1 from tn where tenant = 3 and match(body) against('+alpha' in boolean mode)")[0], 1)
+
+	// A table of more partitions than are probed: the count scaled from
+	// those probed is the estimate, not a floor under the statistics' one.
+	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("create table p8 (id int primary key, k int, body longtext, fulltext index idx (body)) partition by hash(id) partitions 8")
+	fill("p8", 3000)
+	rare = count("select count(*) from p8 where body like '%rareword%'")
+	est := estimates("FullTextIndexScan", "select id from p8 where match(body) against('+rareword' in boolean mode)")[0]
+	require.Greater(t, est, rare/3)
+	require.Less(t, est, rare*3)
+
+	// Partitions planned one by one share a term's probe: the first few
+	// count it and the others take their mean, so no partition is left with
+	// the statistics' estimate because the statement's probes ran out.
+	tk.MustExec("set tidb_partition_prune_mode = 'static'")
+	tk.MustExec("create table p40 (id int primary key, k int, body longtext, fulltext index idx (body)) partition by hash(id) partitions 40")
+	fill("p40", 3000)
+	perPartition := estimates("FullTextIndexScan", "select id from p40 where match(body) against('+rareword' in boolean mode)")
+	require.Len(t, perPartition, 40)
+	for _, est := range perPartition {
+		require.Less(t, est, 10.0)
+	}
+	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+
+	// Rows the transaction has written are not in TiKV to be counted, and
+	// those of a temporary table never are: the statistics' estimate stands,
+	// in place of a count of none.
+	tk.MustExec("create table u (id int primary key, k int, body longtext, fulltext index idx (body))")
+	tk.MustExec("begin")
+	fill("u", 3000)
+	require.Greater(t, estimates("Projection", "select id + 1 from u where match(body) against('+alpha' in boolean mode)")[0], 1.0)
+	tk.MustExec("rollback")
+	tk.MustExec("create global temporary table gt (id int primary key, k int, body longtext, fulltext index idx (body)) on commit delete rows")
+	tk.MustExec("begin")
+	fill("gt", 3000)
+	require.Greater(t, estimates("Projection", "select id + 1 from gt where match(body) against('+alpha' in boolean mode)")[0], 1.0)
+	tk.MustExec("rollback")
+}
+
+// TestFullTextIndexPostingsProbeReadTimestamp checks that a probe counts the
+// postings the statement itself reads: those of a historical read, of the
+// transaction's snapshot, or, under READ COMMITTED, of each statement.
+func TestFullTextIndexPostingsProbeReadTimestamp(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, body longtext, fulltext index idx (body))")
+	insert := func(from, to int, body string) {
+		values := make([]string, 0, to-from)
+		for i := from; i < to; i++ {
+			values = append(values, fmt.Sprintf("(%d, '%s')", i, body))
+		}
+		tk.MustExec("insert into t values " + strings.Join(values, ","))
+	}
+	const search = "select id from t where match(body) against('+rareword' in boolean mode)"
+	estimate := func(tk *testkit.TestKit) float64 {
+		for _, row := range tk.MustQuery("explain format = 'brief' " + search).Rows() {
+			if strings.Contains(fmt.Sprint(row[0]), "FullTextIndexScan") {
+				var est float64
+				_, err := fmt.Sscanf(fmt.Sprint(row[1]), "%f", &est)
+				require.NoError(t, err)
+				return est
+			}
+		}
+		require.Fail(t, "no FullTextIndexScan in the plan")
+		return 0
+	}
+
+	insert(0, 2000, "filler text")
+	insert(2000, 2007, "filler rareword")
+	require.Equal(t, 7.0, estimate(tk))
+
+	// A historical read counts the postings of its own timestamp.
+	tk.MustExec(`insert into mysql.tidb values ('tikv_gc_safe_point', '20060102-15:04:05 -0700', '')
+		on duplicate key update variable_value = '20060102-15:04:05 -0700'`)
+	tk.MustExec("begin")
+	past := fmt.Sprint(tk.MustQuery("select @@tidb_current_ts").Rows()[0][0])
+	tk.MustExec("rollback")
+	insert(2007, 2030, "filler rareword")
+	require.Equal(t, 30.0, estimate(tk))
+	tk.MustExec("set @@tidb_snapshot = " + past)
+	require.Equal(t, 7.0, estimate(tk))
+	tk.MustExec("set @@tidb_snapshot = ''")
+
+	// A transaction counts those of its snapshot, whatever commits after it
+	// started; under READ COMMITTED each statement counts those of its own.
+	other := testkit.NewTestKit(t, store)
+	other.MustExec("use test")
+	tk.MustExec("begin pessimistic")
+	require.Equal(t, 30.0, estimate(tk))
+	other.MustExec("insert into t values (3000, 'filler rareword'), (3001, 'filler rareword')")
+	require.Equal(t, 30.0, estimate(tk))
+	tk.MustExec("rollback")
+
+	tk.MustExec("set transaction_isolation = 'READ-COMMITTED'")
+	tk.MustExec("begin pessimistic")
+	require.Equal(t, 32.0, estimate(tk))
+	other.MustExec("insert into t values (3002, 'filler rareword')")
+	require.Equal(t, 33.0, estimate(tk))
+	tk.MustExec("rollback")
+}
+
+// TestFullTextIndexPostingsProbeEconomy covers what the planning-time probe
+// counts: a first count of every term, a deeper one of a single term when all
+// are common, the index with key columns in place of the one without, and
+// nothing when another path already reads only a few rows.
+func TestFullTextIndexPostingsProbeEconomy(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, tenant int, k int, body longtext, key ik(k), fulltext index ft (body), fulltext index ftk (tenant, body))")
+	tk.MustExec("set cte_max_recursion_depth = 10000")
+	// "mid" is in 600 rows, more than a first count reads; "rare" in 3.
+	tk.MustExec(`insert into t with recursive s(n) as (select 1 union all select n + 1 from s where n < 3000)
+		select n, n % 3, n, concat('filler', if(n % 5 = 0, ' mid', ''), if(n % 1000 = 0, ' rare', '')) from s`)
+	tk.MustExec("analyze table t")
+	plan := func(sql string) (string, float64) {
+		rows := tk.MustQuery("explain format = 'brief' " + sql).Rows()
+		var sb strings.Builder
+		for _, row := range rows {
+			sb.WriteString(fmt.Sprintln(row...))
+		}
+		var est float64
+		_, err := fmt.Sscanf(fmt.Sprint(rows[0][1]), "%f", &est)
+		require.NoError(t, err)
+		return sb.String(), est
+	}
+
+	// Every term is common: the term is counted further, and its count, not
+	// the default selectivity, is the estimate.
+	_, est := plan("select id from t where match(body) against('+mid' in boolean mode)")
+	require.InDelta(t, 600, est, 1)
+
+	// The index with key columns pinned by the conditions reads the postings
+	// of the point and is the one offered; a hint still reaches the other.
+	p, _ := plan("select id from t where tenant = 1 and match(body) against('+rare' in boolean mode)")
+	require.Contains(t, p, "FullTextIndexScan", p)
+	require.Contains(t, p, "index:ftk(", p)
+	p, _ = plan("select /*+ use_index(t, ft) */ id from t where tenant = 1 and match(body) against('+rare' in boolean mode)")
+	require.Contains(t, p, "index:ft(", p)
+
+	// Another path reads a single row: nothing is counted, so the MATCH
+	// above it keeps its estimate from the statistics, where the count would
+	// have made it the 600 rows' share of the 3000, 0.2.
+	const cheap = "select id from t where k = 7 and match(body) against('+mid' in boolean mode)"
+	p, _ = plan(cheap)
+	require.NotContains(t, p, "FullTextIndexScan", p)
+	for _, row := range tk.MustQuery("explain format = 'brief' " + cheap).Rows() {
+		if strings.Contains(fmt.Sprint(row[0]), "Selection") {
+			_, err := fmt.Sscanf(fmt.Sprint(row[1]), "%f", &est)
+			require.NoError(t, err)
+			require.Greater(t, math.Abs(est-0.2), 0.05, p)
+		}
+	}
 }

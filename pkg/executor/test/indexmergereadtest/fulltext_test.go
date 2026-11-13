@@ -95,7 +95,7 @@ func TestFullTextIndexMatchAgainst(t *testing.T) {
 	if !kerneltype.IsClassic() {
 		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
 	}
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key, k int, body text, fulltext index idx (body))")
@@ -224,6 +224,29 @@ func TestFullTextIndexMatchAgainst(t *testing.T) {
 	require.Contains(t, explain(sql), `fulltext:‹"+rareword"›, `)
 	tk.Session().GetSessionVars().EnableRedactLog = "OFF"
 	require.Contains(t, explain(sql), `fulltext:"+rareword", `)
+
+	// Planning counts a term's postings in TiKV, which a statement kept from
+	// TiKV, by the isolation read engines or a TiFlash hint, must not read:
+	// its estimate stays the statistics' one. The table has no statistics,
+	// so the two are told apart.
+	tk.MustExec("create table iso (id int primary key, k int, body text, fulltext index idx (body))")
+	fullTextCorpus(t, tk, "iso", 300, 1)
+	testkit.SetTiFlashReplica(t, dom, "test", "iso")
+	matchRows := func(hint string) string {
+		rows := tk.MustQuery("explain format = 'brief' select " + hint + " id from iso ignore index (idx) where match(body) against('+rareword' in boolean mode)").Rows()
+		for _, row := range rows {
+			if strings.Contains(fmt.Sprint(row[0]), "Selection") {
+				return fmt.Sprint(row[1])
+			}
+		}
+		require.Fail(t, "no Selection in the plan", "%v", rows)
+		return ""
+	}
+	require.Equal(t, "3.00", matchRows(""))
+	require.NotEqual(t, "3.00", matchRows("/*+ read_from_storage(tiflash[iso]) */"))
+	tk.MustExec("set tidb_isolation_read_engines = 'tiflash,tidb'")
+	require.NotEqual(t, "3.00", matchRows(""))
+	tk.MustExec("set tidb_isolation_read_engines = 'tikv,tiflash,tidb'")
 }
 
 // TestFullTextIndexMatchAgainstNgram covers the NGRAM analyzer on long
