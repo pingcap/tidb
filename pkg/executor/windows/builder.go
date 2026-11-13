@@ -55,14 +55,31 @@ func Build(sctx sessionctx.Context, v *physicalop.PhysicalWindow, childExec exec
 	windowFuncs := make([]aggfuncs.AggFunc, 0, len(v.WindowFuncDescs))
 	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
 	initialPartialResultMemUsage := int64(0)
-	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
+	numInputCols := v.Schema().Len() - len(v.WindowFuncDescs)
+	resultColIdx := numInputCols
 	exprCtx := sctx.GetExprCtx()
+	usePipelined := forcePipelined || sctx.GetSessionVars().EnablePipelinedWindowExec
+	// See wholePartitionAggState. It needs at least one non-window output
+	// column to carry the row count of buffered chunks.
+	useWholePartitionAgg := usePipelined && numInputCols > 0 && isWholePartitionFrame(v.Frame)
+	aggDescs := make([]*aggregation.AggFuncDesc, 0, len(v.WindowFuncDescs))
 	for _, desc := range v.WindowFuncDescs {
 		aggDesc, err := aggregation.NewAggFuncDescForWindowFunc(exprCtx, desc, false)
 		if err != nil {
 			return nil, err
 		}
-		agg := aggfuncs.BuildWindowFunctions(exprCtx, aggDesc, resultColIdx, orderByCols)
+		aggDescs = append(aggDescs, aggDesc)
+		useWholePartitionAgg = useWholePartitionAgg && isStreamableAggFunc(aggDesc)
+	}
+	for _, aggDesc := range aggDescs {
+		var agg aggfuncs.AggFunc
+		if useWholePartitionAgg {
+			// The frame never slides, so the plain aggregate functions are
+			// enough. Notably, max/min avoid the sliding window deque.
+			agg = aggfuncs.Build(exprCtx, aggDesc, resultColIdx)
+		} else {
+			agg = aggfuncs.BuildWindowFunctions(exprCtx, aggDesc, resultColIdx, orderByCols)
+		}
 		windowFuncs = append(windowFuncs, agg)
 		partialResult, memDelta := agg.AllocPartialResult()
 		partialResults = append(partialResults, partialResult)
@@ -74,7 +91,7 @@ func Build(sctx sessionctx.Context, v *physicalop.PhysicalWindow, childExec exec
 		len(windowFuncs),
 	)
 
-	if forcePipelined || sctx.GetSessionVars().EnablePipelinedWindowExec {
+	if usePipelined {
 		exec := &PipelinedWindowExec{
 			BaseExecutor:   base,
 			groupChecker:   vecgroupchecker.NewVecGroupChecker(sctx.GetExprCtx().GetEvalCtx(), sctx.GetSessionVars().EnableVectorizedExpression, groupByItems),
@@ -82,6 +99,17 @@ func Build(sctx sessionctx.Context, v *physicalop.PhysicalWindow, childExec exec
 			windowFuncs:    windowFuncs,
 			partialResults: partialResults,
 			memTracker:     memTracker,
+		}
+		if useWholePartitionAgg {
+			windowColIdxs := make([]int, 0, len(windowFuncs))
+			for i := numInputCols; i < v.Schema().Len(); i++ {
+				windowColIdxs = append(windowColIdxs, i)
+			}
+			exec.wholePartition = &wholePartitionAggState{
+				numInputCols:  numInputCols,
+				inputTypes:    exec.RetFieldTypes()[:numInputCols],
+				windowColIdxs: windowColIdxs,
+			}
 		}
 		exec.slidingWindowFuncs = make([]aggfuncs.SlidingWindowAggFunc, len(exec.windowFuncs))
 		for i, windowFunc := range exec.windowFuncs {
