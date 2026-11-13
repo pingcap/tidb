@@ -167,7 +167,32 @@ func GetReadRangeFromProps(
 	jobKeys [][]byte,
 	paths []string,
 	exStorage storeapi.Storage,
-) (_ [][]uint64, err error) {
+) ([][]uint64, error) {
+	ranges, err := GetReadRangeFromPropsWithEndOffsets(ctx, jobKeys, paths, exStorage)
+	if err != nil {
+		return nil, err
+	}
+	starts := make([][]uint64, len(ranges))
+	for i := range ranges {
+		starts[i] = ranges[i].Start
+	}
+	return starts, nil
+}
+
+// ReadRange contains per-file byte offsets enclosing one key's range property.
+type ReadRange struct {
+	Start []uint64
+	End   []uint64
+}
+
+// GetReadRangeFromPropsWithEndOffsets returns both the start and the encoded end
+// of the range property enclosing each requested key. End includes KV framing.
+func GetReadRangeFromPropsWithEndOffsets(
+	ctx context.Context,
+	jobKeys [][]byte,
+	paths []string,
+	exStorage storeapi.Storage,
+) (_ []ReadRange, err error) {
 	logger := logutil.Logger(ctx)
 	task := log.BeginTask(logger, "seek props offsets")
 	defer func() {
@@ -179,12 +204,13 @@ func GetReadRangeFromProps(
 		starts[i] = kv.Key(jobKeys[i])
 	}
 	if len(starts) == 0 {
-		return [][]uint64{}, nil
+		return []ReadRange{}, nil
 	}
 
-	readRangesPerKey := make([][]uint64, len(starts))
+	readRangesPerKey := make([]ReadRange, len(starts))
 	for i := range starts {
-		readRangesPerKey[i] = make([]uint64, len(paths))
+		readRangesPerKey[i].Start = make([]uint64, len(paths))
+		readRangesPerKey[i].End = make([]uint64, len(paths))
 	}
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
@@ -214,9 +240,10 @@ func GetReadRangeFromProps(
 				if err3 != nil {
 					if errors.Is(err3, io.EOF) {
 						// fill the rest of the offsets with the last offset
-						off := readRangesPerKey[keyIdx][i]
+						start, end := readRangesPerKey[keyIdx].Start[i], readRangesPerKey[keyIdx].End[i]
 						for keyIdx++; keyIdx < len(starts); keyIdx++ {
-							readRangesPerKey[keyIdx][i] = off
+							readRangesPerKey[keyIdx].Start[i] = start
+							readRangesPerKey[keyIdx].End[i] = end
 						}
 						return nil
 					}
@@ -227,10 +254,12 @@ func GetReadRangeFromProps(
 					if keyIdx >= len(starts) {
 						return nil
 					}
-					readRangesPerKey[keyIdx][i] = readRangesPerKey[keyIdx-1][i]
+					readRangesPerKey[keyIdx].Start[i] = readRangesPerKey[keyIdx-1].Start[i]
+					readRangesPerKey[keyIdx].End[i] = readRangesPerKey[keyIdx-1].End[i]
 					curKey = starts[keyIdx]
 				}
-				readRangesPerKey[keyIdx][i] = p.Offset
+				readRangesPerKey[keyIdx].Start[i] = p.Offset
+				readRangesPerKey[keyIdx].End[i] = p.Offset + p.Size + p.Keys*2*LengthBytes
 				p, err3 = r.NextProp()
 				if err3 == nil {
 					firstKey = kv.Key(p.FirstKey)
