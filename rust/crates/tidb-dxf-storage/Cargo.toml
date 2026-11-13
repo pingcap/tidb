@@ -12,13 +12,13 @@ workspace = true
 
 [features]
 # Test-only fault injection: Go's `failpoint.Inject`s.
-failpoints = ["dep:fail", "fail/failpoints"]
+failpoints = ["dep:tidb-failpoint", "tidb-failpoint/failpoints"]
 
 [dependencies]
 tidb-gocontext = { path = "../tidb-gocontext" }
 chrono.workspace = true
 crossbeam-channel = "0.5"
-fail = { version = "0.4", optional = true }
+tidb-failpoint = { path = "../tidb-failpoint", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 tidb-config = { path = "../tidb-config" }

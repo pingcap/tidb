@@ -11,13 +11,13 @@ description = "TiDB statistics handle cache."
 workspace = true
 
 [features]
-failpoints = ["dep:fail", "fail/failpoints"]
+failpoints = ["dep:tidb-failpoint", "tidb-failpoint/failpoints"]
 
 [dependencies]
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-table = { path = "../tidb-table" }
-fail = { version = "0.4", optional = true }
+tidb-failpoint = { path = "../tidb-failpoint", optional = true }
 tidb-config = { path = "../tidb-config" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-stats-handle-cache-internal = { path = "../tidb-stats-handle-cache-internal" }

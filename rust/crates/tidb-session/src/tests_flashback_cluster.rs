@@ -26,19 +26,6 @@ use tidb_model::{ActionType, Job, JobState, SchemaState};
 
 use super::Session;
 
-struct FailpointGuard(&'static str);
-
-impl Drop for FailpointGuard {
-    fn drop(&mut self) {
-        fail::remove(self.0);
-    }
-}
-
-fn enable(name: &'static str, action: &str) -> FailpointGuard {
-    fail::cfg(name, action).expect("enable failpoint");
-    FailpointGuard(name)
-}
-
 struct CallGuard(&'static str);
 
 impl Drop for CallGuard {
@@ -97,11 +84,11 @@ fn flashback_to(ts: u64) -> String {
 
 /// The test's setup: `mockFlashbackTest`, `injectSafeTS` ten seconds after
 /// `ts`, and Go `MockGC` with its safe point 48 hours back.
-fn mock_flashback(session: &mut Session, ts: u64) -> [FailpointGuard; 2] {
+fn mock_flashback(session: &mut Session, ts: u64) -> [tidb_failpoint::Guard; 2] {
     let inject_safe_ts = ((physical(ts) + 10_000) as u64) << 18;
     let guards = [
-        enable("mockFlashbackTest", "return(true)"),
-        enable("injectSafeTS", &format!("return({inject_safe_ts})")),
+        tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", "return(true)"),
+        tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/ddl/injectSafeTS", &format!("return({inject_safe_ts})")),
     ];
     let time_before_drop = (chrono::Local::now() - chrono::Duration::hours(48))
         .format("%Y%m%d-%H:%M:%S%.3f %z")

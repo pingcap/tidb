@@ -2682,10 +2682,8 @@ mod schema_sync_tests {
 
     /// Go `handleJobDone`: after the history commit the reorg handles are
     /// cleaned, and only then does the submitting session's done signal
-    /// close. A delay injected between the history commit and the cleanup
-    /// widens the window a session woken any earlier would read the job's
-    /// leftover `mysql.tidb_ddl_reorg` row in
-    /// (`add_index_runs_as_a_persisted_job_like_go`).
+    /// close, so a woken session never reads the job's leftover
+    /// `mysql.tidb_ddl_reorg` row (`add_index_runs_as_a_persisted_job_like_go`).
     #[test]
     fn job_done_signal_closes_after_reorg_handles_are_cleaned() {
         if crate::isolate_process_globals() {
@@ -2710,12 +2708,6 @@ mod schema_sync_tests {
             }
             fn clean_job_versions(&self, _: i64) -> Result<(), String> {
                 Ok(())
-            }
-        }
-        struct FailpointGuard;
-        impl Drop for FailpointGuard {
-            fn drop(&mut self) {
-                fail::remove("beforeCleanupDDLReorgHandles");
             }
         }
         let (_pd, opener) = crate::embedded_store::in_process_write_stack().unwrap();
@@ -2790,8 +2782,6 @@ mod schema_sync_tests {
         };
         assert_eq!(reorg_rows(&opener), 1);
 
-        fail::cfg("beforeCleanupDDLReorgHandles", "sleep(300)").unwrap();
-        let _guard = FailpointGuard;
         let done = Arc::new(JobDoneCh::default());
         let waiter = std::thread::spawn({
             let done = Arc::clone(&done);

@@ -129,11 +129,11 @@ impl TestDxfContext {
         let origin_node_resource = tidb_dxf_storage::get_node_resource();
         tidb_dxf_storage::set_node_resource(node_resource(cpu_count));
         restore.push(Box::new(move || tidb_dxf_storage::set_node_resource(origin_node_resource)));
-        fail::cfg("mockNumCpu", &format!("return({cpu_count})")).expect("the failpoint is valid");
-        fail::cfg("mockTaskExecutorNodes", "return()").expect("the failpoint is valid");
+        tidb_failpoint::enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", &format!("return({cpu_count})")).expect("the failpoint is valid");
+        tidb_failpoint::enable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mockTaskExecutorNodes", "return()").expect("the failpoint is valid");
         restore.push(Box::new(|| {
-            fail::remove("mockNumCpu");
-            fail::remove("mockTaskExecutorNodes");
+            tidb_failpoint::disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu");
+            tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mockTaskExecutorNodes");
         }));
         tidb_dxf_storage::set_task_manager(Some(Arc::clone(&self.task_mgr)));
         *self.restore.lock().unwrap() = restore;

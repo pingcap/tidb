@@ -533,7 +533,7 @@ fn test_handler_answer(path: &str, request: &str, routes: &StatusRoutes) -> Opti
     let ["", "test", module, op] = route.split('/').collect::<Vec<_>>()[..] else {
         return None;
     };
-    fail::eval("enableTestAPI", |_| ())?;
+    tidb_failpoint::eval("github.com/pingcap/tidb/pkg/server/enableTestAPI")?;
     let (module, op) = (module.to_lowercase(), op.to_lowercase());
     if module != "gc" {
         return Some(Err(format!("module({module}) not supported")));
@@ -589,7 +589,7 @@ fn delete_key_answer(_path: &str, _request: &str, _routes: &StatusRoutes) -> Opt
 #[cfg(feature = "failpoints")]
 fn failpoint_response(path: &str, request: &str) -> Option<axum::response::Response> {
     let route = path.split_once('?').map_or(path, |(route, _)| route);
-    if !route.starts_with("/fail/") || fail::eval("enableTestAPI", |_| ()).is_none() {
+    if !route.starts_with("/fail/") || tidb_failpoint::eval("github.com/pingcap/tidb/pkg/server/enableTestAPI").is_none() {
         return None;
     }
     let key = &route["/fail/".len()..];
@@ -600,7 +600,7 @@ fn failpoint_response(path: &str, request: &str) -> Option<axum::response::Respo
             .body(axum::body::Body::empty())
             .expect("status response headers")
     };
-    let enabled = || fail::list().into_iter().collect::<std::collections::BTreeMap<_, _>>();
+    let enabled = || tidb_failpoint::list().into_iter().collect::<std::collections::BTreeMap<_, _>>();
     let not_exist = |key: &str| format!("error on {key}: failpoint: failpoint does not exist");
     let text = |code: u16, body: String| {
         axum::http::Response::builder()
@@ -613,7 +613,7 @@ fn failpoint_response(path: &str, request: &str) -> Option<axum::response::Respo
     Some(match method {
         "PUT" => {
             let terms = request.split_once("\r\n\r\n").map_or("", |(_, body)| body);
-            match fail::cfg(key, terms) {
+            match tidb_failpoint::enable(key, terms) {
                 Ok(()) => no_content(),
                 Err(_) => http_error(400, &format!("failed to set failpoint {key}")),
             }
@@ -628,7 +628,7 @@ fn failpoint_response(path: &str, request: &str) -> Option<axum::response::Respo
             None => text(404, format!("failed to GET: {}\n\n", not_exist(key))),
         },
         "DELETE" if enabled().contains_key(key) => {
-            fail::remove(key);
+            tidb_failpoint::disable(key);
             no_content()
         }
         "DELETE" => http_error(400, &format!("failed to delete failpoint {}", not_exist(key))),
@@ -1302,7 +1302,7 @@ mod tests {
             })
         };
         assert!(call("GET", "/fail/", "").is_none(), "no test API without enableTestAPI");
-        fail::cfg("enableTestAPI", "return").unwrap();
+        tidb_failpoint::enable("github.com/pingcap/tidb/pkg/server/enableTestAPI", "return").unwrap();
         assert_eq!(call("PUT", "/fail/test-api-point", "return(5)"), Some((204, String::new())));
         assert_eq!(call("GET", "/fail/test-api-point", ""), Some((200, "return(5)\n".to_owned())));
         let listed = call("GET", "/fail/", "").unwrap();
@@ -1312,7 +1312,7 @@ mod tests {
         assert_eq!(call("GET", "/fail/test-api-point", "").unwrap().0, 404);
         assert_eq!(call("DELETE", "/fail/test-api-point", "").unwrap().0, 400);
         assert_eq!(call("POST", "/fail/test-api-point", "").unwrap().0, 405);
-        fail::remove("enableTestAPI");
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/server/enableTestAPI");
     }
 
     /// Go `pprof.Cmdline`: the arguments joined by NUL.
@@ -2828,7 +2828,7 @@ mod schema_route_tests {
         let text = |(code, _, body): (u16, String, Vec<u8>)| (code, String::from_utf8(body).unwrap());
 
         assert_eq!(text(routed("/test/gc/resolvelock?safepoint=5", &routes)).0, 404, "no test API without enableTestAPI");
-        fail::cfg("enableTestAPI", "return").unwrap();
+        tidb_failpoint::enable("github.com/pingcap/tidb/pkg/server/enableTestAPI", "return").unwrap();
         assert_eq!(text(routed("/test/gc/resolvelock?safepoint=5", &routes)), (200, String::new()));
         assert_eq!(text(routed("/test/GC/ResolveLock?safepoint=6", &routes)), (200, String::new()));
         assert_eq!(*resolved.lock().unwrap(), [5, 6]);
@@ -2843,7 +2843,7 @@ mod schema_route_tests {
         // The nested request ran while the first held the GC.
         assert_eq!(text(nested.lock().unwrap().take().unwrap()), (400, "GC is running".to_owned()));
         assert_eq!(*resolved.lock().unwrap(), [5, 6, 7]);
-        fail::remove("enableTestAPI");
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/server/enableTestAPI");
     }
 
     fn routed(path: &str, routes: &StatusRoutes) -> (u16, String, Vec<u8>) {

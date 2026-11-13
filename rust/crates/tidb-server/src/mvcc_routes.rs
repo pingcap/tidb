@@ -270,7 +270,7 @@ pub fn delete_key_response(
         ["", "test", "delete", "indexkey", db_name, table_name, index_name] => (*db_name, *table_name, *index_name),
         _ => return None,
     };
-    fail::eval("enableTestAPI", |_| ())?;
+    tidb_failpoint::eval("github.com/pingcap/tidb/pkg/server/enableTestAPI")?;
     if request.split(' ').next() != Some("POST") {
         return Some(Err("This api only support POST method".to_owned()));
     }

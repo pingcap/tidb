@@ -113,7 +113,7 @@ base64.workspace = true
 chrono.workspace = true
 crossbeam-channel = "0.5"
 backtrace = "0.3"
-fail = { version = "0.4", optional = true }
+tidb-failpoint = { path = "../tidb-failpoint", optional = true }
 prometheus = { version = "0.14", default-features = false }
 tikv-jemallocator = { version = "0.7", optional = true }
 tikv-jemalloc-sys = { version = "0.7", optional = true }
@@ -186,7 +186,7 @@ flate2 = "1"
 tidb-sem-v2 = { path = "../tidb-sem-v2" }
 tidb-ddl = { path = "../tidb-ddl", features = ["failpoints"] }
 tidb-build-tags = { path = "../tidb-build-tags", features = ["failpoints"] }
-fail = { version = "0.4", features = ["failpoints"] }
+tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
 prost.workspace = true
 # The TLS tests act as a real client against this node's own material.
 rcgen.workspace = true
@@ -223,8 +223,8 @@ nextgen = ["tidb-config/nextgen"]
 # for builds that must stay on the platform allocator.
 default = ["jemalloc"]
 failpoints = [
-    "dep:fail",
-    "fail/failpoints",
+    "dep:tidb-failpoint",
+    "tidb-failpoint/failpoints",
     "tidb-ddl/failpoints",
     "tidb-ddl-serverstate/failpoints",
     "tidb-resourcemanager/failpoints",

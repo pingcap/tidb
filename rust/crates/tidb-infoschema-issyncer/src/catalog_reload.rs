@@ -970,10 +970,7 @@ fn repair_fetch_create_table(
     tp: ActionType,
 ) -> bool {
     use tidb_domainutil::REPAIR_INFO;
-    let enabled = (|| {
-        fail::fail_point!("repairFetchCreateTable", |val| val.as_deref() == Some("true"));
-        false
-    })();
+    let enabled = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/infoschema/repairFetchCreateTable").is_some_and(|val| val.bool());
     enabled
         && REPAIR_INFO.in_repair_mode()
         && tp != ActionType::ACTION_REPAIR_TABLE

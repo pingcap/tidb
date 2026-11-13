@@ -635,9 +635,8 @@ fn get_now() -> DateTime<FixedOffset> {
     let now = chrono::Local::now().fixed_offset();
     #[cfg(feature = "failpoints")]
     {
-        let offset = fail::eval("mockNowOffset", |value| {
-            value.and_then(|value| value.parse::<u64>().ok()).unwrap_or(0)
-        });
+        let offset = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/sessionctx/sessionstates/mockNowOffset")
+            .map(|value| u64::try_from(value.int()).unwrap_or(0));
         if let Some(offset) = offset.filter(|offset| *offset != 0) {
             return add(now, Duration::from_nanos(offset));
         }

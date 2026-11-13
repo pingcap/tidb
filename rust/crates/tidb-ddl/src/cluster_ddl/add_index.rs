@@ -1440,10 +1440,7 @@ fn check_columnar_index_process_once(
     index_id: i64,
 ) -> Result<(bool, i64, i64), DdlPlanError> {
     #[cfg(feature = "failpoints")]
-    if let Some(val) =
-        fail::eval("MockCheckColumnarIndexProcess", |val| val.and_then(|val| val.parse::<i64>().ok()))
-            .flatten()
-    {
+    if let Some(val) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess").map(|val| val.int()) {
         return match val {
             val if val < 0 => Err(DdlPlanError::from(
                 tidb_dbterror::ERR_TI_FLASH_BACKFILL_INDEX.fast_gen_by_args(&["mock a check error".into()]),

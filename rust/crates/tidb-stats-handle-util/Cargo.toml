@@ -11,7 +11,7 @@ description = "TiDB statistics handle utility package."
 workspace = true
 
 [features]
-failpoints = ["dep:fail", "fail/failpoints", "tidb-build-tags/failpoints"]
+failpoints = ["dep:tidb-failpoint", "tidb-failpoint/failpoints", "tidb-build-tags/failpoints"]
 intest = ["tidb-build-tags/intest"]
 
 [dependencies]
@@ -19,7 +19,7 @@ tidb-build-tags = { path = "../tidb-build-tags" }
 tidb-intest = { path = "../tidb-intest" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-goruntime = { path = "../tidb-goruntime" }
-fail = { version = "0.4", optional = true }
+tidb-failpoint = { path = "../tidb-failpoint", optional = true }
 tidb-hack = { path = "../tidb-hack" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }

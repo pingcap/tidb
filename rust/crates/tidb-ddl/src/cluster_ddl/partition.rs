@@ -772,12 +772,9 @@ pub(super) fn on_add_table_partition(
         }
         SchemaState::REPLICA_ONLY => {
             #[cfg(feature = "failpoints")]
-            if let Some(sleep_second) =
-                fail::eval("sleepBeforeReplicaOnly", |val| val.and_then(|val| val.parse::<u64>().ok()))
-                    .flatten()
-            {
-                std::thread::sleep(std::time::Duration::from_secs(sleep_second));
-            }
+            tidb_failpoint::inject("github.com/pingcap/tidb/pkg/ddl/sleepBeforeReplicaOnly", |val| {
+                std::thread::sleep(std::time::Duration::from_secs(u64::try_from(val.int()).unwrap_or(0)));
+            });
             // Here need do some tiflash replica complement check.
             if let Some(replica) = info.tiflash_replica.clone() {
                 let (available, count) = {
@@ -1427,10 +1424,10 @@ pub(super) fn check_partition_replica(
 ) -> Result<bool, DdlPlanError> {
     #[cfg(feature = "failpoints")]
     {
-        if fail::eval("mockWaitTiFlashReplica", |val| val.as_deref() == Some("true")) == Some(true) {
+        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockWaitTiFlashReplica").is_some_and(|val| val.bool()) {
             return Ok(true);
         }
-        if fail::eval("mockWaitTiFlashReplicaOK", |val| val.as_deref() == Some("true")) == Some(true) {
+        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockWaitTiFlashReplicaOK").is_some_and(|val| val.bool()) {
             return Ok(false);
         }
     }
@@ -1468,12 +1465,9 @@ pub(super) fn check_partition_replica(
             let mut tiflash_peer_at_least_one =
                 check_tiflash_peer_store_at_least_one(&stores, &region.peers);
             #[cfg(feature = "failpoints")]
-            if let Some(forced) =
-                fail::eval("ForceTiflashNotAvailable", |val| val.as_deref().map(|val| val == "true"))
-                    .flatten()
-            {
-                tiflash_peer_at_least_one = forced;
-            }
+            tidb_failpoint::inject("github.com/pingcap/tidb/pkg/ddl/ForceTiflashNotAvailable", |val| {
+                tiflash_peer_at_least_one = val.bool();
+            });
             // It's unnecessary to wait all tiflash peer to be replicated.
             // Here only make sure that tiflash peer count > 0 (at least one).
             if tiflash_peer_at_least_one {

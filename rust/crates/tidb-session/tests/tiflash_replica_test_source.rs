@@ -55,7 +55,7 @@ fn truncate_table_empties_the_rows_and_the_table_stays_live() {
 #[test]
 fn create_table_like_copies_tiflash_replica_settings_clearing_availability() {
     // Test for table has tiflash  replica.
-    let _store_count = enable_failpoint("mockTiFlashStoreCount", "return(true)");
+    let _store_count = enable_failpoint("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", "return(true)");
     let mut tk = TestKit::new();
     tk.must_exec("drop table if exists t1,t2;");
     tk.must_exec("create table t1 (a int) partition by hash(a) partitions 2;");
@@ -102,7 +102,7 @@ fn create_table_like_copies_tiflash_replica_settings_clearing_availability() {
 /// to read from TiKV (`buildDataSource`).
 #[test]
 fn enforced_mpp_says_why_tiflash_is_not_read_like_go() {
-    let _store_count = enable_failpoint("mockTiFlashStoreCount", "return(true)");
+    let _store_count = enable_failpoint("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", "return(true)");
     let mut tk = TestKit::new();
     tk.must_exec("drop table if exists t");
     tk.must_exec("create table t(a int, b int as (a+1), c enum('xx', 'yy'), d bit(1))");
@@ -153,7 +153,7 @@ fn table_id(tk: &mut TestKit, table: &str) -> String {
 #[test]
 fn tiflash_replica_jobs_set_pd_rules_through_infosync() {
     use tidb_domain_infosync::tiflash_manager::{init_tiflash_replica_manager, MockTiFlashReplicaManagerCtx};
-    let _store_count = enable_failpoint("mockTiFlashStoreCount", "return(true)");
+    let _store_count = enable_failpoint("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", "return(true)");
     let mut tk = TestKit::new();
     let manager = std::sync::Arc::new(MockTiFlashReplicaManagerCtx::default());
     init_tiflash_replica_manager(Some(manager.clone()));

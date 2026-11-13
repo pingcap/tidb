@@ -3764,9 +3764,9 @@ dependencies = [
 name = "tidb-cgroup"
 version = "0.0.0"
 dependencies = [
- "fail",
  "rustix 1.1.4",
  "tempfile",
+ "tidb-failpoint",
 ]
 
 [[package]]
@@ -3970,11 +3970,11 @@ name = "tidb-cpu"
 version = "0.0.0"
 dependencies = [
  "crossbeam-channel",
- "fail",
  "fs4",
  "nix 0.31.3",
  "prometheus 0.14.0",
  "tidb-cgroup",
+ "tidb-failpoint",
  "tidb-intest",
  "tidb-mathutil",
  "tracing",
@@ -4049,7 +4049,6 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "crossbeam-channel",
- "fail",
  "hex",
  "reqwest 0.13.4",
  "serde_json",
@@ -4083,6 +4082,7 @@ dependencies = [
  "tidb-exeerrors",
  "tidb-expr",
  "tidb-exprctx",
+ "tidb-failpoint",
  "tidb-filter",
  "tidb-gcutil",
  "tidb-go-time-layout",
@@ -4293,11 +4293,11 @@ dependencies = [
 name = "tidb-ddl-serverstate"
 version = "0.0.0"
 dependencies = [
- "fail",
  "prometheus 0.14.0",
  "serde",
  "serde_json",
  "tidb-ddl-logutil",
+ "tidb-failpoint",
  "tidb-log",
  "tidb-metrics",
  "tidb-model",
@@ -4309,10 +4309,10 @@ dependencies = [
 name = "tidb-ddl-session"
 version = "0.0.0"
 dependencies = [
- "fail",
  "prometheus 0.14.0",
  "tidb-ast",
  "tidb-datatype",
+ "tidb-failpoint",
  "tidb-model",
  "tidb-resolve",
  "tidb-sqlescape",
@@ -4794,7 +4794,6 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "crossbeam-channel",
- "fail",
  "prometheus 0.14.0",
  "serde_json",
  "tidb-backoff",
@@ -4808,6 +4807,7 @@ dependencies = [
  "tidb-dxf-execute",
  "tidb-dxf-handle",
  "tidb-dxf-storage",
+ "tidb-failpoint",
  "tidb-gocontext",
  "tidb-ingestor-errdef",
  "tidb-intest",
@@ -4828,7 +4828,6 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "crossbeam-channel",
- "fail",
  "serde",
  "serde_json",
  "tidb-config",
@@ -4837,6 +4836,7 @@ dependencies = [
  "tidb-domain-sqlsvrapi",
  "tidb-dxf",
  "tidb-dxf-execute",
+ "tidb-failpoint",
  "tidb-gocontext",
  "tidb-keyspace",
  "tidb-sqlescape",
@@ -4856,7 +4856,6 @@ name = "tidb-dxf-taskexecutor"
 version = "0.0.0"
 dependencies = [
  "crossbeam-channel",
- "fail",
  "serde_json",
  "tidb-backoff",
  "tidb-config",
@@ -4869,6 +4868,7 @@ dependencies = [
  "tidb-dxf-metering",
  "tidb-dxf-scheduler",
  "tidb-dxf-storage",
+ "tidb-failpoint",
  "tidb-gocontext",
  "tidb-gomock",
  "tidb-intest",
@@ -4887,7 +4887,6 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "crossbeam-channel",
- "fail",
  "rand 0.10.2",
  "tidb-config-kerneltype",
  "tidb-cpu",
@@ -4900,6 +4899,7 @@ dependencies = [
  "tidb-dxf-scheduler",
  "tidb-dxf-storage",
  "tidb-dxf-taskexecutor",
+ "tidb-failpoint",
  "tidb-gocontext",
  "tidb-gomock",
  "tidb-logutil",
@@ -5761,12 +5761,12 @@ version = "0.0.0"
 name = "tidb-infoschema-issyncer"
 version = "0.0.0"
 dependencies = [
- "fail",
  "serde_json",
  "tidb-ast",
  "tidb-autoid",
  "tidb-datatype",
  "tidb-domainutil",
+ "tidb-failpoint",
  "tidb-infoschema",
  "tidb-infoschema-isvalidator",
  "tidb-kv",
@@ -6988,13 +6988,13 @@ name = "tidb-resourcemanager"
 version = "0.0.0"
 dependencies = [
  "crossbeam-channel",
- "fail",
  "getrandom 0.3.4",
  "prometheus 0.14.0",
  "rand 0.8.7",
  "tidb-build-tags",
  "tidb-cgroup",
  "tidb-cpu",
+ "tidb-failpoint",
  "tidb-intest",
  "tidb-resourcemanager-scheduler",
  "tidb-resourcemanager-util",
@@ -7023,9 +7023,9 @@ name = "tidb-resourcemanager-pool-workerpool"
 version = "0.0.0"
 dependencies = [
  "crossbeam-channel",
- "fail",
  "rand 0.8.7",
  "tidb-build-tags",
+ "tidb-failpoint",
  "tidb-resourcemanager-poolmanager",
  "tidb-resourcemanager-util",
  "tracing",
@@ -7168,7 +7168,6 @@ dependencies = [
  "crossbeam-channel",
  "ctrlc",
  "difftest-result-tests",
- "fail",
  "flate2",
  "futures",
  "hyper-util",
@@ -7229,6 +7228,7 @@ dependencies = [
  "tidb-expr",
  "tidb-exprctx",
  "tidb-expression-aggregation",
+ "tidb-failpoint",
  "tidb-format-textrow",
  "tidb-gcworker",
  "tidb-globalconn",
@@ -7364,8 +7364,8 @@ name = "tidb-servermemorylimit"
 version = "0.0.0"
 dependencies = [
  "chrono",
- "fail",
  "tidb-datatype",
+ "tidb-failpoint",
  "tidb-intest",
  "tidb-log",
  "tidb-logutil",
@@ -7384,7 +7384,6 @@ dependencies = [
  "chrono-tz",
  "crossbeam-channel",
  "ctrlc",
- "fail",
  "futures",
  "openssl",
  "prometheus 0.14.0",
@@ -7674,7 +7673,6 @@ version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
- "fail",
  "openssl",
  "serde",
  "serde_json",
@@ -7684,6 +7682,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-dbterror",
  "tidb-errno",
+ "tidb-failpoint",
  "tidb-log",
  "tidb-model",
  "tidb-mysql",
@@ -7728,8 +7727,8 @@ version = "0.0.0"
 name = "tidb-sli"
 version = "0.0.0"
 dependencies = [
- "fail",
  "prometheus 0.14.0",
+ "tidb-failpoint",
 ]
 
 [[package]]
@@ -7784,9 +7783,9 @@ name = "tidb-sqlkiller"
 version = "0.0.0"
 dependencies = [
  "crossbeam-channel",
- "fail",
  "tidb-dbterror",
  "tidb-exeerrors",
+ "tidb-failpoint",
  "tidb-fastrand",
  "tidb-intest",
  "tidb-mysql",
@@ -7928,9 +7927,9 @@ dependencies = [
 name = "tidb-stats-handle-cache"
 version = "0.0.0"
 dependencies = [
- "fail",
  "tidb-config",
  "tidb-datatype",
+ "tidb-failpoint",
  "tidb-infoschema",
  "tidb-stats",
  "tidb-stats-handle-cache-internal",
@@ -8232,10 +8231,10 @@ dependencies = [
 name = "tidb-stats-handle-util"
 version = "0.0.0"
 dependencies = [
- "fail",
  "tidb-ast",
  "tidb-build-tags",
  "tidb-datatype",
+ "tidb-failpoint",
  "tidb-goruntime",
  "tidb-hack",
  "tidb-intest",
@@ -8964,7 +8963,6 @@ dependencies = [
  "async-trait",
  "bytes",
  "chrono",
- "fail",
  "futures",
  "futures-timer",
  "hyper 1.10.1",
@@ -8975,6 +8973,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-dbterror",
  "tidb-errno",
+ "tidb-failpoint",
  "tidb-go-time-layout",
  "tidb-gocontext",
  "tidb-hack",

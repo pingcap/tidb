@@ -43,6 +43,11 @@ impl Value {
             .unwrap_or_else(|| panic!("failpoint value {:?} is not an int", self.0))
     }
 
+    /// Go `v, ok := val.(int)`.
+    pub fn as_int(&self) -> Option<i64> {
+        self.0.as_deref().and_then(|value| value.parse().ok())
+    }
+
     /// Go `val.(string)`.
     pub fn string(&self) -> String {
         self.0
@@ -81,6 +86,25 @@ pub fn enable(name: &str, terms: &str) -> Result<(), String> {
         "failpoint {name} is enabled in a build without tidb-failpoint/failpoints"
     );
     fail::cfg(name, terms)
+}
+
+/// Go `testfailpoint.EnableCall(t, name, fn)`: `fn` runs where the
+/// failpoint is evaluated (Go `failpoint.InjectCall`).
+///
+/// # Errors
+/// The failpoint cannot be configured.
+pub fn enable_call(name: &str, f: impl Fn() + Send + Sync + 'static) -> Result<(), String> {
+    assert!(
+        cfg!(feature = "failpoints"),
+        "failpoint {name} is enabled in a build without tidb-failpoint/failpoints"
+    );
+    fail::cfg_callback(name, f)
+}
+
+/// Go `failpoint.List()` with each failpoint's terms (Go `Status`).
+#[must_use]
+pub fn list() -> Vec<(String, String)> {
+    fail::list()
 }
 
 /// Go `failpoint.Disable(name)`.

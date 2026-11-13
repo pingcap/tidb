@@ -1402,7 +1402,7 @@ fn tiflash_replica_count_is_checked_against_tiflash_servers_like_go() {
     assert_eq!(error.message, count_error);
     tk.must_exec("alter database d2 set tiflash replica 0");
 
-    let _store_count = enable_failpoint("mockTiFlashStoreCount", "return(true)");
+    let _store_count = enable_failpoint("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", "return(true)");
     tk.must_exec("alter database d2 set tiflash replica 2");
     // `information_schema.tiflash_replica` is read on the DDL owner's status
     // port, which this kit does not serve (Go's test starts an RPC server);

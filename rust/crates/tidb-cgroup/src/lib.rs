@@ -479,9 +479,9 @@ fn memory_usage_at(root: &Path) -> io::Result<u64> {
 #[cfg(target_os = "linux")]
 pub fn get_cgroup_cpu() -> io::Result<CpuUsage> {
     #[cfg(feature = "failpoints")]
-    fail::fail_point!("GetCgroupCPUErr", |_| Err(io::Error::other(
-        "mockAddBatchDDLJobsErr"
-    )));
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/util/cgroup/GetCgroupCPUErr").is_some() {
+        return Err(io::Error::other("mockAddBatchDDLJobsErr"));
+    }
     let mut usage = cgroup_cpu_at(Path::new("/"), true)?;
     usage.num_cpu = logical_cpu_count()?;
     Ok(usage)
@@ -510,9 +510,9 @@ pub fn logical_cpu_count() -> io::Result<usize> {
 #[cfg(not(target_os = "linux"))]
 pub fn get_cgroup_cpu() -> io::Result<CpuUsage> {
     #[cfg(feature = "failpoints")]
-    fail::fail_point!("GetCgroupCPUErr", |_| Err(io::Error::other(
-        "mockAddBatchDDLJobsErr"
-    )));
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/util/cgroup/GetCgroupCPUErr").is_some() {
+        return Err(io::Error::other("mockAddBatchDDLJobsErr"));
+    }
     Ok(CpuUsage {
         num_cpu: logical_cpu_count()?,
         ..CpuUsage::default()

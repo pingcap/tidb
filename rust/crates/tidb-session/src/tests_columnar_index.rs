@@ -80,17 +80,8 @@ fn a_columnar_index_is_checked_against_its_table_like_go() {
     );
 }
 
-struct FailpointGuard(&'static str);
-
-impl Drop for FailpointGuard {
-    fn drop(&mut self) {
-        fail::remove(self.0);
-    }
-}
-
-fn enable(name: &'static str, action: &str) -> FailpointGuard {
-    fail::cfg(name, action).expect("enable failpoint");
-    FailpointGuard(name)
+fn enable(name: &str, action: &str) -> tidb_failpoint::Guard {
+    tidb_failpoint::enable_for_test(&format!("github.com/pingcap/tidb/pkg/ddl/{name}"), action)
 }
 
 fn mock_tiflash_session() -> Session {

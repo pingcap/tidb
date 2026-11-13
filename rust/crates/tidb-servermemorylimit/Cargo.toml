@@ -12,7 +12,7 @@ workspace = true
 
 [features]
 enableassert = ["tidb-logutil/enableassert", "tidb-memory/enableassert", "tidb-sqlkiller/enableassert"]
-failpoints = ["dep:fail", "fail/failpoints", "tidb-memory/failpoints", "tidb-sqlkiller/failpoints"]
+failpoints = ["dep:tidb-failpoint", "tidb-failpoint/failpoints", "tidb-memory/failpoints", "tidb-sqlkiller/failpoints"]
 intest = ["tidb-logutil/intest", "tidb-memory/intest", "tidb-sqlkiller/intest"]
 jemalloc = ["tidb-memory/jemalloc"]
 testexport = []
@@ -25,7 +25,7 @@ tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 tidb-log = { path = "../tidb-log" }
 chrono.workspace = true
 tidb-datatype = { path = "../tidb-datatype" }
-fail = { version = "0.4", optional = true }
+tidb-failpoint = { path = "../tidb-failpoint", optional = true }
 
 [dev-dependencies]
 tidb-intest = { path = "../tidb-intest", features = ["intest"] }

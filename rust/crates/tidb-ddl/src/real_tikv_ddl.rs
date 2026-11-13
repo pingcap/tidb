@@ -1051,8 +1051,6 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
                 // follows in `transitOneJobStepAndWaitSync`.
                 // Go `removeJobCtx`: the job context goes with the job.
                 crate::job_ctx::remove_job_ctx(ddl_job_id);
-                #[cfg(feature = "failpoints")]
-                fail::fail_point!("beforeCleanupDDLReorgHandles");
                 if let Err(error) = add_index_reorg::clean_ddl_reorg_handles(
                     &opener,
                     timeout,

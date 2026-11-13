@@ -124,8 +124,8 @@ pub struct SqlKiller {
 impl SqlKiller {
     #[cfg(feature = "failpoints")]
     fn inject_random_panic(&self) {
-        let _ = fail::eval("randomPanic", |value| {
-            let Some(probability) = value.and_then(|value| value.parse::<i64>().ok()) else {
+        tidb_failpoint::inject("github.com/pingcap/tidb/pkg/util/sqlkiller/randomPanic", |value| {
+            let Some(probability) = value.as_int() else {
                 return;
             };
             let random = ((u64::from(tidb_fastrand::uint32()) << 31)
@@ -240,7 +240,7 @@ impl SqlKiller {
         };
         if signal_sent {
             #[cfg(feature = "failpoints")]
-            let _ = fail::eval("beforeLogKillSignal", |_| ());
+            let _ = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/util/sqlkiller/beforeLogKillSignal");
             self.log_kill_signal(reason, &event_desc);
         }
     }
@@ -402,7 +402,7 @@ impl SqlKiller {
             let mut state = lock_unpoison(&self.kill_event.state);
             let status = self.signal.swap(0, SeqCst);
             #[cfg(feature = "failpoints")]
-            let _ = fail::eval("afterResetKillSignalSwap", |_| ());
+            let _ = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/util/sqlkiller/afterResetKillSignalSwap");
             Self::reset_kill_event_locked(&mut state);
             status
         };
@@ -567,13 +567,13 @@ mod tests {
     fn concurrent_reset_keeps_signal_and_event_state_consistent() {
         let killer = Arc::new(SqlKiller::default());
         let before_log_killer = Arc::clone(&killer);
-        fail::cfg_callback("beforeLogKillSignal", move || {
+        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/util/sqlkiller/beforeLogKillSignal", move || {
             before_log_killer.reset();
         })
         .unwrap();
 
         killer.send_kill_signal(KillSignal::QueryInterrupted);
-        fail::remove("beforeLogKillSignal");
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/util/sqlkiller/beforeLogKillSignal");
 
         assert_eq!(killer.get_kill_signal(), KillSignal::UnspecifiedKillSignal);
         assert!(killer.handle_signal().is_none());
@@ -592,7 +592,7 @@ mod tests {
         let after_reset_killer = Arc::clone(&killer);
         let (sent_tx, sent_rx) = mpsc::channel();
         let stale_receiver = killer.get_kill_event_chan();
-        fail::cfg_callback("afterResetKillSignalSwap", move || {
+        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/util/sqlkiller/afterResetKillSignalSwap", move || {
             assert!(after_reset_killer.kill_event.state.try_lock().is_err());
             let sender_killer = Arc::clone(&after_reset_killer);
             let sent_tx = sent_tx.clone();
@@ -610,7 +610,7 @@ mod tests {
             Err(crossbeam_channel::TryRecvError::Disconnected)
         ));
         sent_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-        fail::remove("afterResetKillSignalSwap");
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/util/sqlkiller/afterResetKillSignalSwap");
 
         assert_eq!(killer.get_kill_signal(), KillSignal::KilledByMemArbitrator);
         let error = killer.handle_signal().unwrap();

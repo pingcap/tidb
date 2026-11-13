@@ -330,9 +330,9 @@ pub fn exec_rows_with_ctx<C: StatsSessionContext + ?Sized>(
     arguments: &[SqlArg<'_>],
 ) -> Result<(Vec<Vec<Datum>>, Vec<ResultFieldRef>), SqlExecError> {
     #[cfg(feature = "failpoints")]
-    fail::fail_point!("ExecRowsTimeout", |_| {
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/statistics/handle/util/ExecRowsTimeout").is_some() {
         return Err(error("inject timeout error"));
-    });
+    }
     if tidb_intest::IN_TEST {
         if let Some(mock) = context.mock_restricted_sql_executor() {
             return mock.exec_restricted_sql(
@@ -976,13 +976,12 @@ mod tests {
     #[test]
     #[cfg(feature = "failpoints")]
     fn exec_rows_timeout_failpoint_returns_source_error() {
-        let _scenario = fail::FailScenario::setup();
-        fail::cfg("ExecRowsTimeout", "return").unwrap();
+        tidb_failpoint::enable("github.com/pingcap/tidb/pkg/statistics/handle/util/ExecRowsTimeout", "return").unwrap();
         let returned = exec_rows(&MockContext::new(), "select 1", &[]).unwrap_err();
         assert_eq!(returned.to_string(), "inject timeout error");
         let returned =
             exec_rows_with_ctx(&*STATS_CONTEXT, &MockContext::new(), "select 1", &[]).unwrap_err();
         assert_eq!(returned.to_string(), "inject timeout error");
-        fail::remove("ExecRowsTimeout");
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/statistics/handle/util/ExecRowsTimeout");
     }
 }

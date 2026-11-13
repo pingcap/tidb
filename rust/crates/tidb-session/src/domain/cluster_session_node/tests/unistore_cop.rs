@@ -24643,16 +24643,9 @@ fn table_locks_run_as_persisted_jobs_like_go() {
 /// that already holds queues nothing.
 #[test]
 fn tiflash_replica_status_runs_as_a_persisted_job_like_go() {
-    struct FailpointGuard;
-    impl Drop for FailpointGuard {
-        fn drop(&mut self) {
-            fail::remove("mockTiFlashStoreCount");
-        }
-    }
     // Go `TestSetTableFlashReplica` enables `mockTiFlashStoreCount` so the
     // replica count passes `checkTiFlashReplicaCount` without TiFlash stores.
-    fail::cfg("mockTiFlashStoreCount", "return(true)").expect("enable failpoint");
-    let _guard = FailpointGuard;
+    let _guard = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", "return(true)");
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(1949)).unwrap();
     rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");

@@ -11,8 +11,8 @@ description = "TiDB util/sli: Go pkg/util/sli (Rust rewrite)."
 workspace = true
 
 [features]
-failpoints = ["dep:fail", "fail/failpoints"]
+failpoints = ["dep:tidb-failpoint", "tidb-failpoint/failpoints"]
 
 [dependencies]
 prometheus = { version = "0.14", default-features = false }
-fail = { version = "0.4", optional = true }
+tidb-failpoint = { path = "../tidb-failpoint", optional = true }

@@ -327,10 +327,8 @@ pub static TEST_NOTIFY_BEGIN_TXN_CHANNEL: LazyLock<NotifyBeginTxnChannel> =
 
 #[cfg(feature = "failpoints")]
 fn notify_begin_txn_failpoint() {
-    fail::fail_point!("NotifyBeginTxnCh", |value| {
-        let value = value
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(0);
+    tidb_failpoint::inject("github.com/pingcap/tidb/pkg/ddl/session/NotifyBeginTxnCh", |value| {
+        let value = value.int();
         if value == 1 {
             MOCK_DDL_ONCE.store(1, Ordering::SeqCst);
             TEST_NOTIFY_BEGIN_TXN_CHANNEL.send();

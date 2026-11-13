@@ -25,7 +25,7 @@ use tidb_resourcemanager_util::{Component, MockGPool};
 
 #[test]
 fn test_failpoint_cpu_value() {
-    fail::cfg("GetCgroupCPUErr", "return").unwrap();
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/util/cgroup/GetCgroupCPUErr", "return").unwrap();
     let observer = tidb_cpu::Observer::new();
     let exit = Arc::new(AtomicBool::new(false));
     let mut workers = Vec::new();
@@ -47,7 +47,7 @@ fn test_failpoint_cpu_value() {
     let scheduler = CpuScheduler::new();
     let pool = MockGPool::new("test", 10);
     assert_eq!(Command::Hold, scheduler.tune(Component::Unknown, &pool));
-    fail::remove("GetCgroupCPUErr");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/util/cgroup/GetCgroupCPUErr");
     exit.store(true, Ordering::Relaxed);
     for worker in workers {
         worker.join().unwrap();

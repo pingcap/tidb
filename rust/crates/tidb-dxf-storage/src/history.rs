@@ -227,12 +227,8 @@ impl TaskManager {
     pub fn gc_subtasks(&self, ctx: &tidb_gocontext::Context) -> Result<()> {
         let subtask_history_keep_seconds = DEFAULT_SUBTASK_KEEP_DAYS * 24 * 60 * 60;
         #[cfg(feature = "failpoints")]
-        let subtask_history_keep_seconds = (|| {
-            fail::fail_point!("subtaskHistoryKeepSeconds", |interval| {
-                interval.and_then(|interval| interval.parse().ok()).unwrap_or(subtask_history_keep_seconds)
-            });
-            subtask_history_keep_seconds
-        })();
+        let subtask_history_keep_seconds = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/dxf/framework/storage/subtaskHistoryKeepSeconds")
+            .map_or(subtask_history_keep_seconds, |interval| interval.int());
         self.execute_sql_with_new_session(ctx, 
             &format!(
                 "DELETE FROM mysql.tidb_background_subtask_history WHERE state_update_time < UNIX_TIMESTAMP() - {subtask_history_keep_seconds} ;"

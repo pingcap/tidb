@@ -16,7 +16,7 @@ tidb-context = { path = "../tidb-context" }
 tidb-stringutil = { path = "../tidb-stringutil" }
 base64 = { workspace = true }
 chrono = { workspace = true }
-fail = { version = "0.4", optional = true }
+tidb-failpoint = { path = "../tidb-failpoint", optional = true }
 openssl = "0.10.81"
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["raw_value"] }
@@ -27,14 +27,14 @@ tidb-mysql = { path = "../tidb-mysql" }
 x509-parser = { version = "=0.18.1", default-features = false }
 
 [dev-dependencies]
-fail = { version = "0.4", features = ["failpoints"] }
+tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
 tempfile = { workspace = true }
 # The package's own failpoints, on in its test build.
 tidb-sessionstates = { path = ".", features = ["failpoints"] }
 
 [features]
 # Test-only fault injection (`fail::fail_point!`), as tidb-txnkv's.
-failpoints = ["dep:fail", "fail/failpoints"]
+failpoints = ["dep:tidb-failpoint", "tidb-failpoint/failpoints"]
 
 [lints]
 workspace = true

@@ -404,7 +404,7 @@ fn test_switch_task_step_in_batch() {
     check_after_switch_step(start_time, &task1, &subtasks1, STEP_ONE);
 
     // mock another scheduler inserted some subtasks
-    fail::cfg("waitBeforeInsertSubtasks", "1*return(true)").unwrap();
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/dxf/framework/storage/waitBeforeInsertSubtasks", "1*return(true)").unwrap();
     let (task2, subtasks2) = prepare("key2");
     let other = {
         let factory = Arc::clone(&stack.factory);
@@ -418,7 +418,7 @@ fn test_switch_task_step_in_batch() {
     };
     let error = tm.switch_task_step_in_batch(&tidb_gocontext::Context::background(), &task2, &TASK_STATE_RUNNING, STEP_ONE, &subtasks2).unwrap_err();
     other.join().unwrap();
-    fail::remove("waitBeforeInsertSubtasks");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/storage/waitBeforeInsertSubtasks");
     assert!(
         matches!(&error, tidb_dxf_storage::StorageError::Terror(t_err) if *t_err == *tidb_kv::kv_errors::ERR_KEY_EXISTS),
         "{error:?}"
@@ -923,7 +923,7 @@ fn test_subtask_history_table() {
     assert_eq!(sm.get_subtasks_with_history(&tidb_gocontext::Context::background(), TASK_ID, STEP_INIT).unwrap().len(), 3);
 
     // test GC history table.
-    fail::cfg("subtaskHistoryKeepSeconds", "return(1)").unwrap();
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/dxf/framework/storage/subtaskHistoryKeepSeconds", "return(1)").unwrap();
     std::thread::sleep(Duration::from_secs(2));
 
     let sub_task4 = testutil::create_sub_task(&sm, TASK_ID2, STEP_INIT, TIDB1, Some(META), &TASK_TYPE_EXAMPLE, 11);
@@ -931,7 +931,7 @@ fn test_subtask_history_table() {
     testutil::transfer_sub_tasks2_history(&tidb_gocontext::Context::background(), &sm, TASK_ID2).unwrap();
 
     sm.gc_subtasks(&tidb_gocontext::Context::background()).unwrap();
-    fail::remove("subtaskHistoryKeepSeconds");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/storage/subtaskHistoryKeepSeconds");
 
     assert_eq!(testutil::get_subtasks_from_history(&tidb_gocontext::Context::background(), &sm).unwrap(), 1);
 }
@@ -1837,7 +1837,7 @@ fn test_modify_task() {
     let counter = Arc::new(AtomicI32::new(0));
     {
         let (counter, rx) = (Arc::clone(&counter), rx.clone());
-        fail::cfg_callback("beforeMoveToModifying", move || {
+        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeMoveToModifying", move || {
             if counter.fetch_add(1, Ordering::SeqCst) + 1 == 1 {
                 rx.recv().unwrap();
                 rx.recv().unwrap();
@@ -1861,7 +1861,7 @@ fn test_modify_task() {
         });
         assert!(modify(id, TASK_STATE_PENDING).unwrap_err().is(&tidb_dxf_storage::StorageError::TaskChanged));
     });
-    fail::remove("beforeMoveToModifying");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeMoveToModifying");
 
     // move to 'modifying' success
     let task = gm.get_task_by_id(&tidb_gocontext::Context::background(), id).unwrap();
@@ -1908,7 +1908,7 @@ fn test_modify_task() {
     let called = Arc::new(AtomicBool::new(false));
     {
         let called = Arc::clone(&called);
-        fail::cfg_callback("beforeModifiedTask", move || {
+        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeModifiedTask", move || {
             if called.swap(true, Ordering::SeqCst) {
                 return;
             }
@@ -1936,7 +1936,7 @@ fn test_modify_task() {
         task.meta = b"modified2".to_vec();
         gm.modified_task(&tidb_gocontext::Context::background(), &task).unwrap();
     });
-    fail::remove("beforeModifiedTask");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeModifiedTask");
     check_task_after_modify(&gm, task.base.id, 5, 50, b"modified-other", &[4, 5, 5, 5]);
 }
 

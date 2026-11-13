@@ -204,8 +204,8 @@ fn kill_sess_if_needed(s: &mut SessionToBeKilled, bt: u64, sm: &dyn SessionManag
     #[allow(unused_mut)]
     let mut bt = bt;
     #[cfg(feature = "failpoints")]
-    let _ = fail::eval("issue42662_2", |value| {
-        if value.as_deref() == Some("true") {
+    tidb_failpoint::inject("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2", |value| {
+        if value.bool() {
             bt = 1;
         }
     });

@@ -94,12 +94,12 @@ chrono.workspace = true
 tonic.workspace = true
 tokio = { workspace = true }
 reqwest = { workspace = true, features = ["blocking"] }
-fail = { version = "0.4", optional = true }
+tidb-failpoint = { path = "../tidb-failpoint", optional = true }
 [dev-dependencies]
 tidb-session = { path = "../tidb-session", features = ["failpoints"] }
 tidb-planner = { path = "../tidb-planner" }
 chrono-tz.workspace = true
-fail = { version = "0.4", features = ["failpoints"] }
+tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
 # The tests build sessions and data checks over the executor, as the node does.
 tidb-executor = { path = "../tidb-executor" }
 tidb-build-tags = { path = "../tidb-build-tags", features = ["failpoints"] }
@@ -110,8 +110,8 @@ path = "tests/all.rs"
 
 [features]
 failpoints = [
-    "dep:fail",
-    "fail/failpoints",
+    "dep:tidb-failpoint",
+    "tidb-failpoint/failpoints",
     "tidb-ddl-serverstate/failpoints",
     "tidb-txnkv/failpoints",
     "tidb-build-tags/failpoints",

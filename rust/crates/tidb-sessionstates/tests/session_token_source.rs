@@ -102,7 +102,7 @@ fn setup_signing_cert_for_test(dir: &Path) {
 
 /// Go `failpoint.Enable(mockNowOffset, "return(...)")`.
 fn mock_now_offset(offset: Duration) {
-    fail::cfg("mockNowOffset", &format!("return({})", offset.as_nanos())).unwrap();
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/sessionctx/sessionstates/mockNowOffset", &format!("return({})", offset.as_nanos())).unwrap();
 }
 
 #[test]
@@ -176,7 +176,7 @@ fn verify_token() {
     // the token expires
     mock_now_offset(TOKEN_LIFETIME + MINUTE);
     let error = validate_session_token(&token_bytes, "test_user").unwrap_err();
-    fail::remove("mockNowOffset");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/sessionctx/sessionstates/mockNowOffset");
     assert!(error.contains("token expired"), "{error}");
     // the current user is different with the token
     let error = validate_session_token(&token_bytes, "another_user").unwrap_err();
@@ -236,7 +236,7 @@ fn cert_expire() {
     offset += OLD_CERT_VALID_TIME + MINUTE;
     mock_now_offset(offset);
     let error = validate_session_token(&token_bytes, "test_user").unwrap_err();
-    fail::remove("mockNowOffset");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/sessionctx/sessionstates/mockNowOffset");
     assert!(error.contains("verification error"), "{error}");
 }
 

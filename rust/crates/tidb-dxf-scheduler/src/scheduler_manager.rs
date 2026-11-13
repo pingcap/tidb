@@ -618,7 +618,9 @@ impl Manager {
         }
 
         #[cfg(any(test, feature = "failpoints"))]
-        fail::fail_point!("mockTransferErr", |_| Err(tidb_dxf_storage::StorageError::Other("transfer err".to_owned())));
+        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mockTransferErr").is_some() {
+            return Err(tidb_dxf_storage::StorageError::Other("transfer err".to_owned()));
+        }
 
         self.task_mgr.transfer_tasks2_history(&self.ctx, &cleaned_tasks)?;
         Ok(cleaned_tasks.len())

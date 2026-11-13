@@ -40,7 +40,7 @@ fn unknown(message: String) -> DdlPlanError {
 fn in_flashback_test() -> bool {
     #[cfg(feature = "failpoints")]
     {
-        fail::eval("mockFlashbackTest", |val| val.as_deref() == Some("true")).unwrap_or(false)
+        tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest").is_some_and(|val| val.bool())
     }
     #[cfg(not(feature = "failpoints"))]
     {
@@ -52,7 +52,7 @@ fn in_flashback_test() -> bool {
 fn inject_safe_ts() -> Option<u64> {
     #[cfg(feature = "failpoints")]
     {
-        fail::eval("injectSafeTS", |val| val.and_then(|val| val.parse::<u64>().ok())).flatten()
+        tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/injectSafeTS").map(|val| val.int() as u64)
     }
     #[cfg(not(feature = "failpoints"))]
     {
@@ -64,11 +64,8 @@ fn inject_safe_ts() -> Option<u64> {
 fn flashback_get_min_safe_time_timeout() -> Duration {
     #[cfg(feature = "failpoints")]
     {
-        fail::eval("changeFlashbackGetMinSafeTimeTimeout", |val| {
-            val.and_then(|val| val.parse::<u64>().ok())
-        })
-        .flatten()
-        .map_or(FLASHBACK_GET_MIN_SAFE_TIME_TIMEOUT, Duration::from_nanos)
+        tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/changeFlashbackGetMinSafeTimeTimeout")
+            .map_or(FLASHBACK_GET_MIN_SAFE_TIME_TIMEOUT, |val| Duration::from_nanos(u64::try_from(val.int()).unwrap_or(0)))
     }
     #[cfg(not(feature = "failpoints"))]
     {

@@ -31,7 +31,7 @@ impl RepairMode {
 
 impl Drop for RepairMode {
     fn drop(&mut self) {
-        fail::remove("repairFetchCreateTable");
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/infoschema/repairFetchCreateTable");
         REPAIR_INFO.set_repair_table_list(Vec::new());
         REPAIR_INFO.set_repair_mode(false);
     }
@@ -42,9 +42,9 @@ impl Drop for RepairMode {
 fn create_broken(session: &mut Session, list: &str, create: &str) {
     REPAIR_INFO.set_repair_mode(true);
     REPAIR_INFO.set_repair_table_list(vec![list.to_owned()]);
-    fail::cfg("repairFetchCreateTable", "return(true)").unwrap();
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/infoschema/repairFetchCreateTable", "return(true)").unwrap();
     rows(session, create);
-    fail::remove("repairFetchCreateTable");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/infoschema/repairFetchCreateTable");
 }
 
 fn refused(session: &mut Session, sql: &str) -> String {
@@ -301,7 +301,7 @@ fn admin_repair_table_keeps_partition_ids_like_go() {
     rows(&mut session, "drop table if exists origin");
     let _repair_mode = RepairMode::enter();
     REPAIR_INFO.set_repair_table_list(vec!["test.origin".to_owned()]);
-    fail::cfg("repairFetchCreateTable", "return(true)").unwrap();
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/infoschema/repairFetchCreateTable", "return(true)").unwrap();
     let range = |name: &str, partitions: &[&str]| {
         format!(
             "create table {name} (a int not null) partition by RANGE(a) ({})",

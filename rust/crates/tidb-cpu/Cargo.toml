@@ -12,7 +12,7 @@ workspace = true
 
 [features]
 enableassert = ["tidb-mathutil/enableassert"]
-failpoints = ["dep:fail", "fail/failpoints", "tidb-cgroup/failpoints"]
+failpoints = ["dep:tidb-failpoint", "tidb-failpoint/failpoints", "tidb-cgroup/failpoints"]
 intest = ["tidb-mathutil/intest"]
 
 [dependencies]
@@ -22,7 +22,7 @@ crossbeam-channel = "0.5"
 nix.workspace = true
 prometheus = { version = "0.14", default-features = false }
 tracing = "0.1"
-fail = { version = "0.4", optional = true }
+tidb-failpoint = { path = "../tidb-failpoint", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 fs4 = { version = "=1.1.0", default-features = false }

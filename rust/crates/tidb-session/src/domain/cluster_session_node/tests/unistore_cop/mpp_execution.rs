@@ -2519,13 +2519,13 @@ fn test_tiflash_ann_index() {
     tidb_domain_infosync::tiflash_manager::set_mock_tiflash(std::sync::Arc::new(
         tidb_domain_infosync::tiflash_manager::MockTiFlash::new(),
     ));
-    fail::cfg("MockCheckColumnarIndexProcess", "return(1)").unwrap();
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", "return(1)").unwrap();
     rows(&mut session, "drop table if exists t1");
     rows(&mut session, "create table t1 (vec vector(3), a int, b int, c vector(3), d vector)");
     rows(&mut session, "alter table t1 set tiflash replica 1;");
     replica_available(&stack, &mut session, "t1");
     rows(&mut session, "alter table t1 add vector index ((vec_cosine_distance(vec))) USING HNSW;");
-    fail::remove("MockCheckColumnarIndexProcess");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess");
     rows(
         &mut session,
         "insert into t1 values ('[1,1,1]', 1, 1, '[1,1,1]', '[1,1,1]'), ('[2,2,2]', 2, 2, '[2,2,2]', '[2,2,2]'), ('[3,3,3]', 3, 3, '[3,3,3]', '[3,3,3]')",

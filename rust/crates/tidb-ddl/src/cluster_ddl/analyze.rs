@@ -323,9 +323,8 @@ fn analyze_table_inner(
 fn mock_analyze_timeout() -> Option<Duration> {
     #[cfg(feature = "failpoints")]
     {
-        fail::eval("mockAnalyzeTimeout", |val| val.and_then(|val| val.parse::<u64>().ok()))
-            .flatten()
-            .map(Duration::from_millis)
+        tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockAnalyzeTimeout")
+            .map(|val| Duration::from_millis(u64::try_from(val.int()).unwrap_or(0)))
     }
     #[cfg(not(feature = "failpoints"))]
     {

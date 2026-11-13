@@ -644,7 +644,7 @@ fn go_zero_time() -> SystemTime {
 
 fn new_worker_pool_failpoint(workers: isize) {
     #[cfg(feature = "failpoints")]
-    fail::fail_point!("NewWorkerPool", |_| {
+    tidb_failpoint::inject("github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool/NewWorkerPool", |_| {
         let hook = new_worker_pool_failpoint_hook()
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

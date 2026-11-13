@@ -605,11 +605,11 @@ impl TaskManager {
             return Ok(());
         }
         #[cfg(feature = "failpoints")]
-        fail::fail_point!("waitBeforeInsertSubtasks", |_| {
+        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/dxf/framework/storage/waitBeforeInsertSubtasks").is_some() {
             let _ = TEST_CHANNEL.1.recv();
             let _ = TEST_CHANNEL.1.recv();
-            Self::insert_subtasks_unchecked(ctx, se, subtasks)
-        });
+            return Self::insert_subtasks_unchecked(ctx, se, subtasks);
+        }
         Self::insert_subtasks_unchecked(ctx, se, subtasks)
     }
 

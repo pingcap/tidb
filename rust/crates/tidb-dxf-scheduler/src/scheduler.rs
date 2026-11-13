@@ -65,7 +65,7 @@ impl ServerInfoSource for tidb_domain_serverinfo::serverinfo_syncer::Syncer {
 /// The server infos cannot be read, or there are none.
 pub fn get_live_exec_ids(server_info: &dyn ServerInfoSource) -> Result<Vec<String>, String> {
     #[cfg(any(test, feature = "failpoints"))]
-    if fail::eval("mockTaskExecutorNodes", |_| ()).is_some() {
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mockTaskExecutorNodes").is_some() {
         return Ok(MOCK_SERVER_INFO.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone());
     }
     let server_infos = generate_task_executor_nodes(server_info)?;
@@ -303,7 +303,9 @@ impl BaseScheduler {
             call_hook(&AFTER_REFRESH_TASK, |hook| hook(&self.get_task()));
             let task = self.get_task_clone();
             #[cfg(any(test, feature = "failpoints"))]
-            fail::fail_point!("exitScheduler", |_| ());
+            if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/exitScheduler").is_some() {
+                return;
+            }
 
             let state = &task.base.state;
             let result = if *state == TASK_STATE_CANCELLING {

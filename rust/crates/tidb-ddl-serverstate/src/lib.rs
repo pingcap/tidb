@@ -670,11 +670,7 @@ impl Syncer for MemSyncer {
 
     fn update_global_state(&self, _context: &SleepContext, state: &StateInfo) -> Result<(), Error> {
         #[cfg(feature = "failpoints")]
-        if fail::eval("mockUpgradingState", |value| {
-            value.as_deref() == Some("true")
-        })
-        .unwrap_or(false)
-        {
+        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/serverstate/mockUpgradingState").is_some_and(|value| value.bool()) {
             *memory_cluster_state()
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(state.clone());
@@ -906,11 +902,11 @@ mod tests {
         let context = SleepContext::background();
         let syncer = MemSyncer::new();
         syncer.init(&context).unwrap();
-        fail::cfg("mockUpgradingState", "return(true)").unwrap();
+        tidb_failpoint::enable("github.com/pingcap/tidb/pkg/ddl/serverstate/mockUpgradingState", "return(true)").unwrap();
         syncer
             .update_global_state(&context, &StateInfo::new(STATE_UPGRADING))
             .unwrap();
-        fail::remove("mockUpgradingState");
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/ddl/serverstate/mockUpgradingState");
         assert!(syncer.is_upgrading_state());
         assert_eq!(
             syncer.watch_chan().unwrap().try_recv(),

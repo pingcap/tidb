@@ -898,7 +898,7 @@ mod tests {
         run(factory, "insert into tidb.delete_row values (1, 2)");
 
         assert!(answer("POST", "/test/delete/rowkey/tidb/delete_row?handle=1").is_none(), "no test API without enableTestAPI");
-        fail::cfg("enableTestAPI", "return").unwrap();
+        tidb_failpoint::enable("github.com/pingcap/tidb/pkg/server/enableTestAPI", "return").unwrap();
         assert_eq!(
             answer("GET", "/test/delete/rowkey/tidb/delete_row?handle=1").unwrap().unwrap_err(),
             "This api only support POST method"
@@ -1004,7 +1004,7 @@ mod tests {
         .map(|byte| format!("{byte:02X}"))
         .collect();
         assert_eq!(deleted["key"], key);
-        fail::remove("enableTestAPI");
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/server/enableTestAPI");
     }
 
     /// Go `TestHandler`'s `gcworker.RunResolveLocks` over the embedded store

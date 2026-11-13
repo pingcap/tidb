@@ -269,7 +269,9 @@ impl<PdC: PdClient> TikvStore<PdC> {
     /// (`tikvrpc.GetStoreTypeByMeta`) is TiFlash.
     pub fn get_tiflash_store_count(&self) -> Result<u64, String> {
         #[cfg(feature = "failpoints")]
-        fail::fail_point!("mockTiFlashStoreCount", |_| Ok(10));
+        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount").is_some_and(|val| val.bool()) {
+            return Ok(10);
+        }
         let pd = self.store.pd_client();
         let stores = self
             .block_on(async move { pd.all_stores().await })

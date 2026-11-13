@@ -1253,7 +1253,7 @@ fn test_framework_with_query() {
 #[test]
 fn test_gc() {
     let (ch_tx, ch_rx) = crossbeam_channel::bounded::<()>(0);
-    fail::cfg("subtaskHistoryKeepSeconds", "return(1)").unwrap();
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/dxf/framework/storage/subtaskHistoryKeepSeconds", "return(1)").unwrap();
     *tidb_dxf_scheduler::HISTORY_SUBTASK_TABLE_GC_INTERVAL.write().unwrap() = Some(Arc::new(move |interval: &mut Duration| {
         *interval = Duration::from_secs(1);
         let _ = ch_rx.recv();
@@ -1277,7 +1277,7 @@ fn test_gc() {
         testutil::get_subtasks_from_history(&tidb_gocontext::Context::background(), &mgr).is_ok_and(|cnt| cnt == 0)
     });
     *tidb_dxf_scheduler::HISTORY_SUBTASK_TABLE_GC_INTERVAL.write().unwrap() = None;
-    fail::remove("subtaskHistoryKeepSeconds");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/storage/subtaskHistoryKeepSeconds");
 }
 
 /// Go `TestFrameworkCleaner`.
@@ -1301,14 +1301,14 @@ fn test_framework_cleaner() {
     assert!(testutil::get_subtasks_from_history(&tidb_gocontext::Context::background(), &mgr).unwrap() > 0);
 
     // transfer err
-    fail::cfg("mockTransferErr", "1*return").unwrap();
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mockTransferErr", "1*return").unwrap();
     submit_task_and_check_success_for_basic(&c.ctx, "key2", &c.test_context);
     ch.recv().unwrap();
     let mgr = tidb_dxf_storage::get_task_manager().unwrap();
     mgr.get_task_by_key_with_history(&tidb_gocontext::Context::background(), "key1").unwrap();
     assert!(testutil::get_subtasks_from_history(&tidb_gocontext::Context::background(), &mgr).unwrap() > 0);
 
-    fail::remove("mockTransferErr");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mockTransferErr");
     *tidb_dxf_scheduler::WAIT_CLEAN_UP_FINISHED.write().unwrap() = None;
     *tidb_dxf_scheduler::DEFAULT_CLEAN_UP_INTERVAL.write().unwrap() = bak;
 }

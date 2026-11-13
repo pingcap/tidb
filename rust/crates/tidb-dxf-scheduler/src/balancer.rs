@@ -117,9 +117,7 @@ impl Balancer {
         let mut adjusted_nodes =
             filter_nodes_with_enough_slots(&curr_used_slots, self.param.slot_mgr.get_capacity(), &eligible_nodes, task.base.required_slots);
         #[cfg(any(test, feature = "failpoints"))]
-        (|| {
-            fail::fail_point!("mockNoEnoughSlots", |_| adjusted_nodes = Vec::new());
-        })();
+        tidb_failpoint::inject("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mockNoEnoughSlots", |_| adjusted_nodes = Vec::new());
         let adjusted_nodes = filter_nodes_by_max_node_cnt(adjusted_nodes, &subtasks, task.base.max_node_count);
         if adjusted_nodes.is_empty() {
             // no node has enough slots to run the subtasks, skip balance and skip

@@ -416,7 +416,7 @@ fn test_parallel_pause() {
 #[test]
 fn test_manager_schedule_loop() {
     // Mock 16 cpu node.
-    fail::cfg("mockNumCpu", "return(16)").unwrap();
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)").unwrap();
     let ctrl = Controller::new();
 
     let stack = mock_store();
@@ -531,7 +531,7 @@ fn test_manager_schedule_loop() {
         }
         eventually(Duration::from_secs(10), Duration::from_millis(100), || get_running_task_keys().is_empty());
     }
-    fail::remove("mockNumCpu");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu");
     ctrl.finish();
 }
 

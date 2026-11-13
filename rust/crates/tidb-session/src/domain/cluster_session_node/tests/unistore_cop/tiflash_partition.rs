@@ -18,16 +18,6 @@
 
 use super::*;
 
-struct FailpointGuard(&'static [&'static str]);
-
-impl Drop for FailpointGuard {
-    fn drop(&mut self) {
-        for name in self.0 {
-            fail::remove(name);
-        }
-    }
-}
-
 /// A partitioned `ddltiflash` with an available TiFlash replica of
 /// `replica_count`; answers its table id.
 fn available_replica_table(
@@ -137,8 +127,7 @@ fn add_partition_keeps_an_available_tiflash_replica_available_like_go() {
 fn add_partition_rolls_back_when_tiflash_stores_are_too_few_like_go() {
     // Go `TestSetTableFlashReplica`'s failpoint lets the replica be set
     // without TiFlash stores.
-    fail::cfg("mockTiFlashStoreCount", "return(true)").expect("enable failpoint");
-    let _guard = FailpointGuard(&["mockTiFlashStoreCount"]);
+    let _guard = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", "return(true)");
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(2102)).unwrap();
     available_replica_table(&stack, &mut session, 1);
@@ -166,8 +155,7 @@ fn add_partition_rolls_back_when_tiflash_stores_are_too_few_like_go() {
 /// limit cancels it, and the adding partition is rolled back.
 #[test]
 fn add_partition_waits_for_the_tiflash_replica_until_the_error_limit_like_go() {
-    fail::cfg("mockWaitTiFlashReplica", "return(true)").expect("enable failpoint");
-    let _guard = FailpointGuard(&["mockWaitTiFlashReplica"]);
+    let _guard = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/ddl/mockWaitTiFlashReplica", "return(true)");
     let stack = tiflash_stack(1);
     let mut session = stack.factory.open_session(session_context(2103)).unwrap();
     available_replica_table(&stack, &mut session, 1);

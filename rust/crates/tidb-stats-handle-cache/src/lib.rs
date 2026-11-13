@@ -294,7 +294,9 @@ impl StatsCacheImpl {
     #[must_use]
     pub fn get(&self, table_id: i64) -> Option<Arc<Table>> {
         #[cfg(feature = "failpoints")]
-        fail::fail_point!("StatsCacheGetNil", |_| return None);
+        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/statistics/handle/cache/StatsCacheGetNil").is_some() {
+            return None;
+        }
         self.load().get(table_id)
     }
 
@@ -598,11 +600,9 @@ mod tests {
         cache.put(1, table(1, 7));
         assert!(cache.get(1).is_some());
 
-        let scenario = fail::FailScenario::setup();
-        fail::cfg("StatsCacheGetNil", "return").expect("enable StatsCacheGetNil");
+        tidb_failpoint::enable("github.com/pingcap/tidb/pkg/statistics/handle/cache/StatsCacheGetNil", "return").expect("enable StatsCacheGetNil");
         assert!(cache.get(1).is_none());
-        fail::remove("StatsCacheGetNil");
-        drop(scenario);
+        tidb_failpoint::disable("github.com/pingcap/tidb/pkg/statistics/handle/cache/StatsCacheGetNil");
         assert!(cache.get(1).is_some());
     }
 

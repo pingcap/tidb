@@ -12,11 +12,11 @@ workspace = true
 
 [features]
 default = []
-failpoints = ["dep:fail", "fail/failpoints"]
+failpoints = ["dep:tidb-failpoint", "tidb-failpoint/failpoints"]
 
 [dependencies]
 tidb-timeutil = { path = "../tidb-timeutil" }
-fail = { version = "0.4", optional = true }
+tidb-failpoint = { path = "../tidb-failpoint", optional = true }
 prometheus = { version = "0.14", default-features = false }
 tidb-metrics = { path = "../tidb-metrics" }
 serde.workspace = true

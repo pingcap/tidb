@@ -190,12 +190,12 @@ fn changing_session_lock_wait_reaches_an_open_transaction() {
 /// Go `pkg/executor/executor_failpoint_test.go::TestTxnWriteThroughputSLI`.
 #[test]
 fn txn_write_throughput_sli_matches_source() {
-    const FAILPOINT: &str = "CheckTxnWriteThroughput";
+    const FAILPOINT: &str = "github.com/pingcap/tidb/pkg/util/sli/CheckTxnWriteThroughput";
 
     struct FailpointGuard;
     impl Drop for FailpointGuard {
         fn drop(&mut self) {
-            fail::remove(FAILPOINT);
+            tidb_failpoint::disable(FAILPOINT);
         }
     }
 
@@ -234,7 +234,7 @@ fn txn_write_throughput_sli_matches_source() {
         session.txn_write_throughput_sli().to_string()
     }
 
-    fail::cfg(FAILPOINT, "return").expect("enable failpoint");
+    tidb_failpoint::enable(FAILPOINT, "return").expect("enable failpoint");
     let _guard = FailpointGuard;
     let (mut session, _) = open_session();
 
@@ -298,7 +298,7 @@ fn txn_write_throughput_sli_matches_source() {
     );
     reset(&mut session);
 
-    fail::remove(FAILPOINT);
+    tidb_failpoint::disable(FAILPOINT);
     control(&mut session, "BEGIN");
     write(&mut session, "INSERT INTO t (id, v) VALUES (1, 3), (2, 4)");
     assert!(session.node_conn().control_transaction("COMMIT").is_err());
@@ -308,7 +308,7 @@ fn txn_write_throughput_sli_matches_source() {
         "invalid: false, affectRow: 0, writeSize: 0, readKeys: 0, writeKeys: 0, writeTime: 0s"
     );
 
-    fail::cfg(FAILPOINT, "return").expect("enable failpoint");
+    tidb_failpoint::enable(FAILPOINT, "return").expect("enable failpoint");
     control(&mut session, "BEGIN");
     write(&mut session, "INSERT INTO t (id, v) VALUES (5, 6)");
     control(&mut session, "COMMIT");

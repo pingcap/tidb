@@ -49,7 +49,7 @@ impl TxnWriteThroughputSli {
             self.report_metric();
 
             #[cfg(feature = "failpoints")]
-            if fail::eval("CheckTxnWriteThroughput", |_| true).unwrap_or(false) {
+            if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/util/sli/CheckTxnWriteThroughput").is_some() {
                 return;
             }
 

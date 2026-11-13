@@ -47,7 +47,7 @@ tikv-client.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tonic.workspace = true
-fail = { version = "0.4", optional = true }
+tidb-failpoint = { path = "../tidb-failpoint", optional = true }
 
 [dev-dependencies]
 tidb-store-driver-error = { path = "../tidb-store-driver-error" }
@@ -56,7 +56,7 @@ tonic-prost.workspace = true
 
 [features]
 # Test-only fault injection (`fail::fail_point!`), as tidb-util's.
-failpoints = ["dep:fail", "fail/failpoints"]
+failpoints = ["dep:tidb-failpoint", "tidb-failpoint/failpoints"]
 
 [[test]]
 name = "all"

@@ -85,12 +85,9 @@ pub fn install_cpu_count(configured: usize, affinity_count: usize) {
 /// Returns the scheduler parallelism visible to the current process.
 pub fn get_cpu_count() -> usize {
     #[cfg(feature = "failpoints")]
-    fail::fail_point!("mockNumCpu", |value| {
-        return value
-            .expect("mockNumCpu requires an integer return value")
-            .parse()
-            .expect("mockNumCpu return value must be an integer");
-    });
+    if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu") {
+        return usize::try_from(value.int()).expect("mockNumCpu return value must be a non-negative int");
+    }
     let count = CPU_COUNT.load(Ordering::Relaxed);
     if count > 0 {
         count

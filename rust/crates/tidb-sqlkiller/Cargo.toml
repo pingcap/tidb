@@ -12,7 +12,7 @@ workspace = true
 
 [features]
 enableassert = ["tidb-intest/enableassert"]
-failpoints = ["dep:fail", "fail/failpoints"]
+failpoints = ["dep:tidb-failpoint", "tidb-failpoint/failpoints"]
 intest = ["tidb-intest/intest"]
 
 [dependencies]
@@ -24,7 +24,7 @@ tidb-fastrand = { path = "../tidb-fastrand" }
 tidb-intest = { path = "../tidb-intest" }
 crossbeam-channel = "0.5"
 tracing = "0.1"
-fail = { version = "0.4", optional = true }
+tidb-failpoint = { path = "../tidb-failpoint", optional = true }
 
 [dev-dependencies]
 tidb-intest = { path = "../tidb-intest", features = ["intest"] }

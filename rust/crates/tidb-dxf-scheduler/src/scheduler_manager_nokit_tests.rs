@@ -396,7 +396,7 @@ fn expect_task(task_mgr: &MockTaskManager, task: &TaskBase) {
 #[test]
 fn test_manager_scheduler_not_allocate_slots() {
     // the tests make sure allocatedSlots correct.
-    fail::cfg("exitScheduler", "return").unwrap();
+    tidb_failpoint::enable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/exitScheduler", "return").unwrap();
     let task_mgr = Arc::new(MockTaskManager::default());
     let mgr = new_manager(&Context::background(), Arc::clone(&task_mgr));
     expect_runtime_from_new_session(&task_mgr, new_runtime_with_store(""));
@@ -421,7 +421,7 @@ fn test_manager_scheduler_not_allocate_slots() {
         mgr.finish_ch.1.recv().unwrap();
     }
     wait_schedulers(&mgr);
-    fail::remove("exitScheduler");
+    tidb_failpoint::disable("github.com/pingcap/tidb/pkg/dxf/framework/scheduler/exitScheduler");
 }
 
 /// Go `crossKeyspaceStartCase`.

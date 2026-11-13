@@ -372,19 +372,9 @@ impl Drop for ConfigGuard {
 
 /// Go `testfailpoint.Enable(t, name, actions)`: the failpoint is removed
 /// when the guard drops (Go's `t.Cleanup`).
-pub struct FailpointGuard(&'static str);
-
-impl Drop for FailpointGuard {
-    fn drop(&mut self) {
-        fail::remove(self.0);
-    }
-}
-
-/// Go `testfailpoint.Enable(t, name, actions)`.
 #[must_use]
-pub fn enable_failpoint(name: &'static str, actions: &str) -> FailpointGuard {
-    fail::cfg(name, actions).expect("enable failpoint");
-    FailpointGuard(name)
+pub fn enable_failpoint(name: &str, actions: &str) -> tidb_failpoint::Guard {
+    tidb_failpoint::enable_for_test(name, actions)
 }
 
 /// Go `config.UpdateGlobal(update)` + `defer config.RestoreFunc()()`.

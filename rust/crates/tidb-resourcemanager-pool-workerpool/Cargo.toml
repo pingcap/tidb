@@ -11,10 +11,10 @@ description = "TiDB resourcemanager/pool/workerpool: Go pkg/resourcemanager/pool
 workspace = true
 
 [features]
-failpoints = ["dep:fail", "fail/failpoints", "tidb-build-tags/failpoints"]
+failpoints = ["dep:tidb-failpoint", "tidb-failpoint/failpoints", "tidb-build-tags/failpoints"]
 
 [dependencies]
-fail = { version = "0.4", optional = true }
+tidb-failpoint = { path = "../tidb-failpoint", optional = true }
 tidb-build-tags = { path = "../tidb-build-tags" }
 tidb-resourcemanager-poolmanager = { path = "../tidb-resourcemanager-poolmanager" }
 tidb-resourcemanager-util = { path = "../tidb-resourcemanager-util" }

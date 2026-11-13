@@ -533,7 +533,7 @@ impl BaseTaskExecutor {
                 }
                 Ok(None) => {
                     #[cfg(any(test, feature = "failpoints"))]
-                    if fail::eval("avoidTaskExecutorExitWhenNoSubtask", |_| ()).is_some() {
+                    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/avoidTaskExecutorExitWhenNoSubtask").is_some() {
                         no_subtask_check_cnt = 0;
                     }
                     if no_subtask_check_cnt >= MAX_CHECKS_WHEN_NO_SUBTASK {

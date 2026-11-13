@@ -12,7 +12,7 @@ workspace = true
 
 [features]
 default = []
-failpoints = ["dep:fail", "fail/failpoints", "tidb-build-tags/failpoints"]
+failpoints = ["dep:tidb-failpoint", "tidb-failpoint/failpoints", "tidb-build-tags/failpoints"]
 intest = ["tidb-build-tags/intest"]
 
 [dependencies]
@@ -21,7 +21,7 @@ tidb-resourcemanager-util = { path = "../tidb-resourcemanager-util" }
 tidb-cpu = { path = "../tidb-cpu" }
 tidb-intest = { path = "../tidb-intest" }
 crossbeam-channel = "0.5"
-fail = { version = "0.4", optional = true }
+tidb-failpoint = { path = "../tidb-failpoint", optional = true }
 getrandom.workspace = true
 prometheus = { version = "0.14", default-features = false }
 tracing = "0.1"
