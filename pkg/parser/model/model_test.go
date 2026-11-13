@@ -25,6 +25,7 @@ func TestT(t *testing.T) {
 	require.Equal(t, "aBC", abc.O)
 	require.Equal(t, "abc", abc.L)
 	require.Equal(t, "aBC", abc.String())
+	require.Equal(t, "FULLTEXT", IndexTypeFulltext.String())
 }
 
 func TestUnmarshalCIStr(t *testing.T) {

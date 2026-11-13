@@ -38,7 +38,11 @@ func TestNullRejectBuiltinRegistrySnapshot(t *testing.T) {
 	sum := sha256.Sum256([]byte(strings.Join(names, "\n")))
 
 	require.NotEmpty(t, names)
-	require.Equal(t, "12dd16fda61c67b3dd74d38e0408df30855afaa5781dbdc14348987c59d7167c", hex.EncodeToString(sum[:]))
+	// MATCH AGAINST is intentionally unclassified: a NULL text argument does not
+	// imply a NULL result when another matched column contains a matching token.
+	require.Equal(t, "77ae93733f5d5f31db84b39c023910ca29c67750541bf8642ffc6587ea29495a", hex.EncodeToString(sum[:]))
+
+	require.NotContains(t, nullRejectNullPreservingFunctions, ast.FTSMysqlMatchAgainst)
 
 	internalScalarNames := map[string]struct{}{
 		ast.Cast: {},

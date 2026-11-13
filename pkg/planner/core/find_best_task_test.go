@@ -299,7 +299,7 @@ func TestIndexJoinSkylinePruningWithoutStableNDV(t *testing.T) {
 			Ranges:           ranges,
 		}
 		result := indexJoinPathConstructResult(ctx, &indexJoinPathInfo{},
-			&indexJoinPathTmp{curIdxOff2KeyOff: []int{0}}, ranges, path, nil, nil, nil, 1)
+			&indexJoinPathTmp{curIdxOff2KeyOff: []int{0}}, ranges, path, nil, nil, nil, false, 1)
 		return result.candidate
 	}
 	// Without stable join-key NDV, full-table counts cannot prove which runtime

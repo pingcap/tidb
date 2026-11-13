@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
@@ -502,4 +503,31 @@ func TestRangeFallbackForAnalyzeLookUpFilters(t *testing.T) {
 	ijHelper := testAnalyzeLookUpFilters(t, ijCtx, ijCase)
 	checkRangeFallbackAndReset(t, ctx, false)
 	require.Greater(t, ijHelper.chosenRanges.Range().MemUsage(), ijCase.rangeMaxSize)
+}
+
+func TestIndexJoinProbeAccessRowsFloor(t *testing.T) {
+	ctx := mock.NewContext()
+	a := &expression.Column{ID: 1, UniqueID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	b := &expression.Column{ID: 2, UniqueID: 2, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	ds := logicalop.DataSource{}.Init(ctx, 0)
+	ds.SetSchema(expression.NewSchema(a, b))
+	ds.TableStats = &property.StatsInfo{RowCount: 2000, StatsVersion: 2, ColNDVs: map[int64]float64{1: 2, 2: 1000}}
+	ds.SetStats(&property.StatsInfo{RowCount: 20, StatsVersion: 2, ColNDVs: map[int64]float64{1: 1, 2: 20}})
+	result := &indexJoinPathResult{chosenPath: &util.AccessPath{IdxCols: []*expression.Column{a, b}}, usedColsLen: 1, idxOff2KeyOff: []int{0, -1}}
+	keys := []*expression.Column{a, b}
+	require.Equal(t, float64(1000), indexJoinProbeAccessRowsFloor(ds, keys, result))
+	result.lastColIsRange = true
+	require.Zero(t, indexJoinProbeAccessRowsFloor(ds, keys, result))
+	result.lastColIsRange = false
+	result.lastColManager = &ColWithCmpFuncManager{}
+	require.Zero(t, indexJoinProbeAccessRowsFloor(ds, keys, result))
+	result.lastColManager = nil
+	result.usedColsLen, result.idxOff2KeyOff[1] = 2, 1
+	require.Zero(t, indexJoinProbeAccessRowsFloor(ds, keys, result))
+	result.usedColsLen, result.idxOff2KeyOff[1] = 1, -1
+	ctx.GetSessionVars().OptimizerFixControl = map[uint64]string{44855: "OFF"}
+	require.Zero(t, indexJoinProbeAccessRowsFloor(ds, keys, result))
+	ctx.GetSessionVars().OptimizerFixControl = nil
+	ds.TableStats.StatsVersion = statistics.PseudoVersion
+	require.Zero(t, indexJoinProbeAccessRowsFloor(ds, keys, result))
 }

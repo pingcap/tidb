@@ -1352,6 +1352,8 @@ type PhysicalApply struct {
 
 	CanUseCache bool
 	Concurrency int
+	// KeepOrder preserves the outer child row order during parallel execution.
+	KeepOrder   bool
 	OuterSchema []*expression.CorrelatedColumn
 }
 
@@ -1372,6 +1374,7 @@ func (la *PhysicalApply) Clone(newCtx base.PlanContext) (base.PhysicalPlan, erro
 	cloned.PhysicalHashJoin = *hj
 	cloned.CanUseCache = la.CanUseCache
 	cloned.Concurrency = la.Concurrency
+	cloned.KeepOrder = la.KeepOrder
 	for _, col := range la.OuterSchema {
 		cloned.OuterSchema = append(cloned.OuterSchema, col.Clone().(*expression.CorrelatedColumn))
 	}

@@ -396,11 +396,14 @@ alter table t add unique index idx_ac(a, c);
 alter table t add unique index idx_b(b);
 drop table if exists t;
 
-# TestFulltextIndexIgnore
+# TestFulltextIndexMetadataOnly
+# FULLTEXT declarations persist metadata without building a physical index.
 drop table if exists t_ft;
-create table t_ft (a text, fulltext key (a));
+create table t_ft (a text, fulltext key ft_a (a));
 show warnings;
-alter table t_ft add fulltext key (a);
+show create table t_ft;
+alter table t_ft drop index ft_a;
+alter table t_ft add fulltext key ft_a (a);
 show warnings;
 show create table t_ft;
 drop table if exists t_ft;

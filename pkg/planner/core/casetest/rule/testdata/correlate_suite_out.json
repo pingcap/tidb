@@ -105,7 +105,7 @@
       {
         "SQL": "select * from t1 where exists (select /*+ NO_DECORRELATE() */ 1 from t2 where t2.a = t1.a)",
         "Plan": [
-          "Apply 10000.00 root  CARTESIAN semi join",
+          "Apply 8000.00 root  CARTESIAN semi join",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─Limit(Probe) 10000.00 root  offset:0, count:1",

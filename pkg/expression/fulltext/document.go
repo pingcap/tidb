@@ -1,0 +1,119 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package fulltext
+
+import (
+	"sort"
+
+	"github.com/pingcap/tidb/pkg/util/collate"
+)
+
+// ColumnInput is one MATCH column value for local fulltext evaluation.
+type ColumnInput struct {
+	Text   string
+	IsNull bool
+}
+
+// ColumnDocument is the analyzed token stream for one MATCH column.
+type ColumnDocument struct {
+	// SourceText is retained without copying, only for verifying phrases whose
+	// indexed tokens were removed by stopword or length filtering.
+	SourceText string
+	Tokens     []Token
+	Positions  map[string][]int
+}
+
+// Document is the analyzed row document used by local no-score fulltext
+// matching.
+type Document struct {
+	Columns  []ColumnDocument
+	TokenSet map[string]struct{}
+}
+
+// BuildDocument analyzes MATCH column values with the selected analyzer.
+// NULL columns and empty strings contribute no tokens.
+func BuildDocument(columns []ColumnInput, analyzer Analyzer) (*Document, error) {
+	doc := &Document{
+		Columns:  make([]ColumnDocument, 0, len(columns)),
+		TokenSet: make(map[string]struct{}),
+	}
+	for _, column := range columns {
+		colDoc := ColumnDocument{
+			Positions: make(map[string][]int),
+		}
+		if !column.IsNull && column.Text != "" {
+			colDoc.SourceText = column.Text
+			tokens, err := analyzer.Analyze(column.Text)
+			if err != nil {
+				return nil, err
+			}
+			colDoc.Tokens = tokens
+			for _, token := range tokens {
+				doc.TokenSet[token.Text] = struct{}{}
+				colDoc.Positions[token.Text] = append(colDoc.Positions[token.Text], token.Position)
+			}
+		}
+		doc.Columns = append(doc.Columns, colDoc)
+	}
+	return doc, nil
+}
+
+func (doc *Document) hasToken(token string, collator collate.Collator) bool {
+	if doc == nil {
+		return false
+	}
+	if collator == nil {
+		_, ok := doc.TokenSet[token]
+		return ok
+	}
+	for candidate := range doc.TokenSet {
+		if collator.Compare(candidate, token) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (doc *Document) hasTokenPrefix(prefix string, pattern collate.WildcardPattern) bool {
+	if doc == nil {
+		return false
+	}
+	for token := range doc.TokenSet {
+		if (pattern == nil && stringsHasPrefix(token, prefix)) || (pattern != nil && pattern.DoMatch(token)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (col ColumnDocument) positionsFor(token string, collator collate.Collator) []int {
+	if collator == nil {
+		return col.Positions[token]
+	}
+	var positions []int
+	for candidate, candidatePositions := range col.Positions {
+		if collator.Compare(candidate, token) == 0 {
+			positions = append(positions, candidatePositions...)
+		}
+	}
+	if len(positions) > 1 {
+		sort.Ints(positions)
+	}
+	return positions
+}
+
+func stringsHasPrefix(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}
