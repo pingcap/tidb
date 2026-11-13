@@ -103,6 +103,10 @@ macro_rules! impl_inner_shardable {
             self.inner.mark_retry_request();
         }
 
+        fn reset_replica_selector_state(&mut self) {
+            self.inner.reset_replica_selector_state();
+        }
+
         fn observe_grouping(&self, region_groups: usize, batches: usize, regroup: bool) {
             self.inner.observe_grouping(region_groups, batches, regroup);
         }
@@ -253,6 +257,11 @@ pub trait Shardable {
     /// Source `RegionRequestSender` marks every resend in the wire context.
     /// Plans without a TiKV request retain a no-op implementation.
     fn mark_retry_request(&mut self) {}
+
+    /// Source `doActionOnMutations` builds a new `RegionRequestSender`, and
+    /// with it a new replica selector, for every re-split batch. Plans that
+    /// carry selector attempt state clear it here; the default carries none.
+    fn reset_replica_selector_state(&mut self) {}
 
     /// client-go `doActionOnGroupMutations` grouped the request's keys into
     /// `region_groups` regions and `batches` batches: on the request's first
@@ -618,6 +627,10 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         self.replica_selector_state.clone()
     }
 
+    fn reset_replica_selector_state(&mut self) {
+        self.replica_selector_state = ReplicaSelectorState::default();
+    }
+
     fn region_request_runtime_stats(&self) -> Option<Arc<crate::RegionRequestRuntimeStats>> {
         self.region_request_runtime_stats.clone()
     }
@@ -835,6 +848,10 @@ impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
         self.inner.mark_retry_request();
     }
 
+    fn reset_replica_selector_state(&mut self) {
+        self.inner.reset_replica_selector_state();
+    }
+
     fn observe_grouping(&self, region_groups: usize, batches: usize, regroup: bool) {
         self.inner.observe_grouping(region_groups, batches, regroup);
     }
@@ -953,6 +970,10 @@ impl<P: Plan + Shardable, PdC: PdClient> Shardable for CleanupLocks<P, PdC> {
 
     fn mark_retry_request(&mut self) {
         self.inner.mark_retry_request();
+    }
+
+    fn reset_replica_selector_state(&mut self) {
+        self.inner.reset_replica_selector_state();
     }
 
     fn observe_grouping(&self, region_groups: usize, batches: usize, regroup: bool) {
@@ -1225,6 +1246,67 @@ mod test {
         assert_eq!(batches[0][0], items[0]);
         assert_eq!(batches[0][1], items[1]);
         assert_eq!(batches[0][2], items[2]);
+    }
+
+    #[test]
+    fn resplit_starts_with_a_fresh_replica_selector() {
+        let mut dispatch = Dispatch {
+            request: kvrpcpb::GetRequest::default(),
+            request_shard_decorator: None,
+            request_shard_identity: None,
+            decorated_shard_identity: None,
+            request_preparer: None,
+            kv_client: None,
+            request_timeout: None,
+            retry_request_timeout: None,
+            read_timestamp_validation: None,
+            target: String::new(),
+            forwarded_host: String::new(),
+            replica_read_config: ReplicaReadConfig {
+                read_type: ReplicaReadType::Mixed,
+                stale_read: true,
+                busy_threshold_ms: 50,
+                ..Default::default()
+            },
+            snapshot_replica_read_base_config: None,
+            snapshot_replica_read_adjuster: None,
+            region_with_leader: None,
+            replica_selector_state: ReplicaSelectorState::default(),
+            store_health: None,
+            record_client_side_slow_score: false,
+            physical_endpoint_type: crate::store::EndpointType::TiKv,
+            resource_control_replica_number: 1,
+            resource_control_access_location: AccessLocationType::Unknown,
+            predicted_read_bytes: 0,
+            ru_details: None,
+            store_token_count: Arc::new(std::sync::atomic::AtomicI64::new(0)),
+            store_token_store_id: 0,
+            region_request_runtime_stats: None,
+            logical_peer_id: None,
+            logical_store_id: None,
+            request_stale_read: false,
+            request_replica_read: false,
+            interceptor: None,
+            execution_details_trace_handler: None,
+            client_span_context: None,
+            trace_context: crate::trace::TraceContext::new(),
+            network_traffic_details: None,
+            exec_details: None,
+            network_stale_read: false,
+            resource_control: None,
+            response_codec: None,
+            v1_response_codec: None,
+        };
+        dispatch.record_replica_attempt(1);
+        dispatch.record_replica_attempt(2);
+        dispatch.mark_replica_deadline_exceeded(1);
+        assert_ne!(dispatch.replica_selector_state(), ReplicaSelectorState::default());
+
+        dispatch.reset_replica_selector_state();
+
+        assert_eq!(dispatch.replica_selector_state(), ReplicaSelectorState::default());
+        // Only attempt state is per-sender; the read configuration stays.
+        assert!(dispatch.replica_read_config().stale_read);
     }
 
     #[test]

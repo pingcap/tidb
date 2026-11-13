@@ -1679,6 +1679,12 @@ where
                 Err(backoff_error) => return (Err(backoff_error), backoff),
             }
         }
+        // Each re-split batch gets a fresh selector, as client-go builds a new
+        // RegionRequestSender per batch. Carrying the old attempts over keeps
+        // an exhausted selector exhausted, so every retry re-splits again
+        // (nesting another level of this recursive handler) instead of
+        // trying the refreshed Region's replicas.
+        plan.reset_replica_selector_state();
         Self::single_plan_handler(
             pd_client,
             plan,
@@ -1759,7 +1765,22 @@ where
                         }
                     }
                 }
-                return SendReqOutcome::Done(Err(err), backoff);
+                // Source `SendReqCtx` with `rpcCtx == nil` after the selector
+                // ran out of replicas: the request was not sent this round,
+                // so it is answered with `EpochNotMatch` and the owning caller
+                // backs off `BoRegionMiss` and re-splits against a refreshed
+                // cache, exactly like a region that left the cache. Returning
+                // it as a terminal error instead failed whole transactions
+                // (e.g. bulk prewrites) while Regions were splitting.
+                return SendReqOutcome::Resplit {
+                    plan,
+                    backoff,
+                    region_miss: Some((
+                        BO_REGION_MISS,
+                        format!("replica selector exhausted: {region_ver_id:?}"),
+                        err,
+                    )),
+                };
             }
             Err(err) => {
                 return Self::handle_other_error(
