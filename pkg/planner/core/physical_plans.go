@@ -1352,6 +1352,11 @@ type PhysicalApply struct {
 
 	CanUseCache bool
 	Concurrency int
+	// KeepOrder indicates that parallel apply must emit results in the same
+	// order as the outer child produces rows.  When true the executor uses a
+	// reorder buffer so that inner workers can run concurrently while the
+	// consumer still sees rows in outer-order.
+	KeepOrder   bool
 	OuterSchema []*expression.CorrelatedColumn
 }
 
@@ -1372,6 +1377,7 @@ func (la *PhysicalApply) Clone(newCtx base.PlanContext) (base.PhysicalPlan, erro
 	cloned.PhysicalHashJoin = *hj
 	cloned.CanUseCache = la.CanUseCache
 	cloned.Concurrency = la.Concurrency
+	cloned.KeepOrder = la.KeepOrder
 	for _, col := range la.OuterSchema {
 		cloned.OuterSchema = append(cloned.OuterSchema, col.Clone().(*expression.CorrelatedColumn))
 	}
