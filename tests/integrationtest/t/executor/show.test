@@ -504,6 +504,18 @@ grant references on test_show_index_db.t to test_show_index_user;
 connection test_show_index_user;
 show index from test_show_index_db.t;
 
+--echo // a sequence has no columns, so the table privilege is checked.
+connection default;
+create sequence test_show_index_db.s;
+show index from test_show_index_db.s;
+connection test_show_index_user;
+--error 1142
+show index from test_show_index_db.s;
+connection default;
+grant select on test_show_index_db.s to test_show_index_user;
+connection test_show_index_user;
+show index from test_show_index_db.s;
+
 disconnect test_show_index_user;
 connection default;
 drop database test_show_index_db;
