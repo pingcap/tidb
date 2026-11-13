@@ -897,6 +897,14 @@ func TestCastFuncSig(t *testing.T) {
 			mysql.TypeDatetime,
 			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(curTimeInt)}),
 		},
+		// cast year as Date.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeYear), Index: 0},
+			types.NewTime(types.FromDate(2024, 0, 0, 0, 0, 0, 0), mysql.TypeDate, types.DefaultFsp),
+			types.DefaultFsp,
+			mysql.TypeDate,
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(2024)}),
+		},
 		// cast string as Datetime(6).
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
@@ -933,13 +941,13 @@ func TestCastFuncSig(t *testing.T) {
 			sig = &builtinCastRealAsTimeSig{timeFunc}
 		case 1:
 			sig = &builtinCastDecimalAsTimeSig{timeFunc}
-		case 2:
+		case 2, 3:
 			sig = &builtinCastIntAsTimeSig{timeFunc}
-		case 3:
-			sig = &builtinCastStringAsTimeSig{timeFunc}
 		case 4:
-			sig = &builtinCastDurationAsTimeSig{timeFunc}
+			sig = &builtinCastStringAsTimeSig{timeFunc}
 		case 5:
+			sig = &builtinCastDurationAsTimeSig{timeFunc}
+		case 6:
 			sig = &builtinCastTimeAsTimeSig{timeFunc}
 		}
 		res, err := evalBuiltinFunc(sig, ctx, c.row.ToRow())
