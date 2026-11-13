@@ -196,6 +196,12 @@ func (w *worker) acquireMLogBaseMVRefreshLock(jobCtx *jobContext, job *model.Job
 	return nil
 }
 
+func isMLogAddColumnRefreshLockWait(job *model.Job, err error) bool {
+	return job.IsRunning() &&
+		(job.Type == model.ActionAddColumn || job.Type == model.ActionMultiSchemaChange) &&
+		exeerrors.ErrMVAdvisoryLockConflict.Equal(err)
+}
+
 func refreshMLogAddedColumnFromBase(
 	t *meta.Mutator,
 	job *model.Job,

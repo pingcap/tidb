@@ -825,6 +825,11 @@ func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
 // countForError records the error count for DDL job.
 func (w *worker) countForError(jobCtx *jobContext, job *model.Job, err error) error {
 	job.Error = toTError(err)
+	// Refresh lock contention is an expected wait for an already-started
+	// MLog ADD COLUMN, including its multi-schema parent.
+	if isMLogAddColumnRefreshLockWait(job, err) {
+		return err
+	}
 	job.ErrorCount++
 
 	logger := jobCtx.logger
