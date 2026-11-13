@@ -538,6 +538,12 @@ func (*singlePointAlloc) AllocSeqCache() (a int64, b int64, c int64, err error) 
 	return 0, 0, 0, errors.New("AllocSeqCache not implemented")
 }
 
+// RebaseKeepCache implements autoid.Allocator RebaseKeepCache interface.
+// The autoid service allocates from one place, so there is no per-server cache to keep.
+func (sp *singlePointAlloc) RebaseKeepCache(ctx context.Context, newBase int64) error {
+	return sp.Rebase(ctx, newBase, true)
+}
+
 // Rebase rebases the autoID base for table with tableID and the new base value.
 // If allocIDs is true, it will allocate some IDs and save to the cache.
 // If allocIDs is false, it will not allocate IDs.
