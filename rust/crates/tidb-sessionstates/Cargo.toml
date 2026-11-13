@@ -33,7 +33,7 @@ tempfile = { workspace = true }
 tidb-sessionstates = { path = ".", features = ["failpoints"] }
 
 [features]
-# Test-only fault injection (`fail::fail_point!`), as tidb-txnkv's.
+# Go's failpoints (tidb-failpoint), compiled in for tests.
 failpoints = ["dep:tidb-failpoint", "tidb-failpoint/failpoints"]
 
 [lints]

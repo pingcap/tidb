@@ -269,6 +269,6 @@ name = "serial"
 path = "tests/serial.rs"
 
 [features]
-# Test-only fault injection: the DDL worker's `fail::fail_point!`s, for
+# Go's failpoints (tidb-failpoint) in the DDL worker and schema syncer, for
 # the crates whose tests drive it.
 failpoints = ["tidb-ddl/failpoints", "tidb-infoschema-issyncer/failpoints"]
