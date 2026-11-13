@@ -8652,6 +8652,43 @@ fn an_expression_group_key_runs_in_the_coprocessor_as_go() {
     assert!(cop_agg[5].starts_with("tikv_task:{"), "{cop_agg:?}");
 }
 
+/// Go `buildInsert` plans an INSERT's target, source, VALUES lists and ON
+/// DUPLICATE assignments in one `PlanBuilder`: EXPLAIN lists the scalar
+/// subqueries each registered (source and values first, then the
+/// assignments'), their column ids continuing from one counter over the
+/// target's schema drawn once (`testdata/insert_explain_scalar_subqueries_go.txt`,
+/// a Go testkit capture).
+#[test]
+fn explain_insert_lists_the_scalar_subqueries_of_its_one_build_like_go() {
+    let capture = include_str!("../testdata/insert_explain_scalar_subqueries_go.txt");
+    let mut session = Session::new();
+    for sql in [
+        "use test",
+        "create table t (a int primary key, b int)",
+        "create table s (x int, y int)",
+        "insert into s values (1,10),(2,20)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let mut checked = 0;
+    let mut lines = capture.lines().filter(|line| !line.starts_with('#'));
+    while let Some(sql_line) = lines.next() {
+        let sql = sql_line.strip_prefix("SQL: ").expect("a statement line");
+        let expected: Vec<String> = lines
+            .by_ref()
+            .take_while(|line| *line != "----")
+            .map(str::to_owned)
+            .collect();
+        let actual: Vec<String> = row_text(session.run(sql))
+            .into_iter()
+            .map(|row| row.join("|"))
+            .collect();
+        assert_eq!(actual, expected, "{sql}");
+        checked += 1;
+    }
+    assert_eq!(checked, 4);
+}
+
 /// Go `buildInsert` plans the VALUES lists and the ON DUPLICATE assignments
 /// under a plain EXPLAIN too, so their errors surface without executing.
 /// Go (`gorun`, mockstore): 1054 `nosuch` in 'field list', 1054 `nosuch2` in

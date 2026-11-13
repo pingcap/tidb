@@ -4179,12 +4179,20 @@ pub fn explain_insert_stmt(
     let fk_spec = crate::driver::fk_spec_for_insert(insert, catalog, current_db, ctx)?;
     let _ = fk_spec;
     let mut source_visits = Vec::new();
-    let physical =
-        crate::driver::physical_insert_plan(insert, catalog, current_db, ctx, &mut source_visits)?;
+    let statement = crate::driver::StatementAllocators::default();
+    let (physical, mut scalar_subqueries) = crate::driver::physical_insert_plan_and_scalar_subqueries(
+        insert,
+        catalog,
+        current_db,
+        ctx,
+        &mut source_visits,
+        &statement,
+    )?;
     // Go `buildInsert` plans the VALUES lists and the ON DUPLICATE
     // assignments under EXPLAIN as well, and `planner.optimize`'s
     // `CheckPrivilege` reads that build's visit infos.
-    let planned = crate::driver::plan_insert_over(insert, Some(&physical), catalog, current_db, ctx)?;
+    let planned =
+        crate::driver::plan_insert_over(insert, Some(&physical), catalog, current_db, ctx, Some(&statement))?;
     crate::table_privilege::check_plan_privilege(ctx, catalog, &planned.statement_visits(source_visits))?;
     // The source's own width: Go appends ON DUPLICATE fields past it.
     let select_width = match &physical {
@@ -4197,7 +4205,10 @@ pub fn explain_insert_stmt(
         _ => None,
     };
     crate::driver::validate_insert_for_explain(insert, catalog, current_db, ctx, select_width)?;
-    render_built_plan(ctx, &physical, catalog, format, &[])
+    // Go `SessionVars.MapScalarSubQ` in registration order: the source's,
+    // then the values' and the ON DUPLICATE assignments'.
+    scalar_subqueries.extend(planned.scalar_subqueries.iter().cloned());
+    render_built_plan(ctx, &physical, catalog, format, &scalar_subqueries)
 }
 
 /// An `EXPLAIN ANALYZE` write whose analyze child ran (Go `handleNoDelay`
@@ -4259,7 +4270,14 @@ pub fn explain_analyze_insert_stmt(
     crate::driver::record_plan_builder_metric(ctx);
     let mut source_visits = Vec::new();
     let mut physical =
-        crate::driver::physical_insert_plan(insert, catalog, current_db, ctx, &mut source_visits)?;
+        crate::driver::physical_insert_plan(
+            insert,
+            catalog,
+            current_db,
+            ctx,
+            &mut source_visits,
+            &crate::driver::StatementAllocators::default(),
+        )?;
     // The writes add their affected rows to the statement (Go `AddAffectedRows`).
     run_insert_stmt_with_physical_and_visits(
         insert,

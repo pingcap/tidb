@@ -308,12 +308,24 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         Ok(values)
     }
 
-    /// Go `TableInfo2SchemaAndNames`, as `mockTablePlan` carries it.
+    /// Go `TableInfo2SchemaAndNames`, as `mockTablePlan` carries it: drawn
+    /// once per INSERT, every later use sharing it.
     pub(super) fn table_info_2_schema_and_names(&self, target: &InsertTarget) -> (Schema, Vec<FieldName>) {
+        self.insert_target_schema
+            .get_or_init(|| self.new_insert_target_schema(target))
+            .clone()
+    }
+
+    fn new_insert_target_schema(&self, target: &InsertTarget) -> (Schema, Vec<FieldName>) {
         let mut schema = Schema::default();
         let mut names = Vec::with_capacity(target.columns.len());
-        for (name, field_type) in &target.columns {
-            let mut column = Column::new(self.column_ids.alloc(), field_type.clone());
+        for (position, (name, field_type)) in target.columns.iter().enumerate() {
+            let id = self
+                .insert_target_column_ids
+                .as_ref()
+                .and_then(|ids| ids.get(position).copied())
+                .unwrap_or_else(|| self.column_ids.alloc());
+            let mut column = Column::new(id, field_type.clone());
             column.orig_name = format!("{}.{}.{name}", target.database, target.table);
             schema.columns.push(column);
             names.push(FieldName::new(FieldNameMetadata {

@@ -1,0 +1,60 @@
+# Go testkit capture (zzprobe/insexplain): after `create table t (a int primary key, b int)`,
+# `create table s (x int, y int)`, `insert into s values (1,10),(2,20)`, each statement's rows
+# joined by '|'.
+SQL: explain format='brief' insert into t select x, y from s on duplicate key update b = (select max(y) from s) + values(b)
+Insert|N/A|root||N/A
+└─TableReader|10000.00|root||data:TableFullScan
+  └─TableFullScan|10000.00|cop[tikv]|table:s|keep order:false, stats:pseudo
+ScalarSubQuery|N/A|root||Output: ScalarQueryCol#12
+└─MaxOneRow|1.00|root||
+  └─StreamAgg|1.00|root||funcs:max(test.s.y)->Column#11
+    └─TopN|1.00|root||test.s.y:desc, offset:0, count:1
+      └─TableReader|1.00|root||data:TopN
+        └─TopN|1.00|cop[tikv]||test.s.y:desc, offset:0, count:1
+          └─Selection|9990.00|cop[tikv]||not(isnull(test.s.y))
+            └─TableFullScan|10000.00|cop[tikv]|table:s|keep order:false, stats:pseudo
+----
+SQL: explain format='brief' insert into t values ((select max(x) from s), 1) on duplicate key update b = (select min(y) from s)
+Insert|N/A|root||N/A
+ScalarSubQuery|N/A|root||Output: ScalarQueryCol#8
+└─MaxOneRow|1.00|root||
+  └─StreamAgg|1.00|root||funcs:max(test.s.x)->Column#7
+    └─TopN|1.00|root||test.s.x:desc, offset:0, count:1
+      └─TableReader|1.00|root||data:TopN
+        └─TopN|1.00|cop[tikv]||test.s.x:desc, offset:0, count:1
+          └─Selection|9990.00|cop[tikv]||not(isnull(test.s.x))
+            └─TableFullScan|10000.00|cop[tikv]|table:s|keep order:false, stats:pseudo
+ScalarSubQuery|N/A|root||Output: ScalarQueryCol#14
+└─MaxOneRow|1.00|root||
+  └─StreamAgg|1.00|root||funcs:min(test.s.y)->Column#13
+    └─TopN|1.00|root||test.s.y, offset:0, count:1
+      └─TableReader|1.00|root||data:TopN
+        └─TopN|1.00|cop[tikv]||test.s.y, offset:0, count:1
+          └─Selection|9990.00|cop[tikv]||not(isnull(test.s.y))
+            └─TableFullScan|10000.00|cop[tikv]|table:s|keep order:false, stats:pseudo
+----
+SQL: explain format='brief' insert into t values ((select max(x) from s), 1)
+Insert|N/A|root||N/A
+ScalarSubQuery|N/A|root||Output: ScalarQueryCol#8
+└─MaxOneRow|1.00|root||
+  └─StreamAgg|1.00|root||funcs:max(test.s.x)->Column#7
+    └─TopN|1.00|root||test.s.x:desc, offset:0, count:1
+      └─TableReader|1.00|root||data:TopN
+        └─TopN|1.00|cop[tikv]||test.s.x:desc, offset:0, count:1
+          └─Selection|9990.00|cop[tikv]||not(isnull(test.s.x))
+            └─TableFullScan|10000.00|cop[tikv]|table:s|keep order:false, stats:pseudo
+----
+SQL: explain format='brief' insert into t select (select max(x) from s), 1 from s
+Insert|N/A|root||N/A
+└─Projection|10000.00|root||ScalarQueryCol#16(2)->Column#17, 1->Column#18
+  └─TableReader|10000.00|root||data:TableFullScan
+    └─TableFullScan|10000.00|cop[tikv]|table:s|keep order:false, stats:pseudo
+ScalarSubQuery|N/A|root||Output: ScalarQueryCol#16
+└─MaxOneRow|1.00|root||
+  └─StreamAgg|1.00|root||funcs:max(test.s.x)->Column#15
+    └─TopN|1.00|root||test.s.x:desc, offset:0, count:1
+      └─TableReader|1.00|root||data:TopN
+        └─TopN|1.00|cop[tikv]||test.s.x:desc, offset:0, count:1
+          └─Selection|9990.00|cop[tikv]||not(isnull(test.s.x))
+            └─TableFullScan|10000.00|cop[tikv]|table:s|keep order:false, stats:pseudo
+----

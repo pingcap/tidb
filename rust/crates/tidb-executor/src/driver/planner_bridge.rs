@@ -2845,6 +2845,9 @@ pub(crate) struct InsertExpressions {
     /// The visit infos the ON DUPLICATE assignments' build appended (a VALUES
     /// list's appends none: Go's `getInsertColExpr` drops them).
     pub visits: Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
+    /// Go `SessionVars.MapScalarSubQ`'s entries the VALUES lists and the ON
+    /// DUPLICATE assignments registered, in that order.
+    pub scalar_subqueries: Vec<std::sync::Arc<RegisteredScalarSubquery>>,
 }
 
 /// Go `buildInsert`'s expressions: the VALUES lists over the target's schema,
@@ -2860,6 +2863,7 @@ pub(crate) fn plan_insert_expressions(
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
+    statement: Option<&super::dml::StatementAllocators>,
 ) -> Result<InsertExpressions, tidb_planner_core_base::PlanError> {
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
@@ -2867,21 +2871,22 @@ pub(crate) fn plan_insert_expressions(
         .with_statement_dirty_tables(ctx)
         .with_statement_privilege_verifier(ctx);
     let session_zone = ctx.session_zone();
-    let plan_ids = PlanIdAllocator::new();
-    let column_ids = ColumnIdAllocator::new();
+    let own = super::dml::StatementAllocators::default();
+    let statement = statement.unwrap_or(&own);
+    let (plan_ids, column_ids) = (&statement.plan_ids, &statement.column_ids);
     let registry = ScalarSubqueryRegistry::default();
     let evaluator = subquery_evaluator(
         catalog,
         ctx,
-        &plan_ids,
-        &column_ids,
+        plan_ids,
+        column_ids,
         false,
         &session_zone,
         &registry,
     );
     let defaults = default_evaluator(catalog, ctx);
     let insert_defaults = default_evaluator_using(catalog, ctx, super::dml::DefaultUse::Insert);
-    let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone())
+    let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone())
         .with_subquery_evaluator(&evaluator)
         .with_default_evaluator(&defaults)
         .with_insert_default_evaluator(&insert_defaults);
@@ -2897,6 +2902,7 @@ pub(crate) fn plan_insert_expressions(
     // Go `PlanBuilder.Build`'s `b.optFlag |= FlagPruneColumns`, which every
     // statement's build starts from; `DoOptimize` of each subquery reads it.
     builder.add_opt_flag(tidb_planner_core_rule::flags::PRUNE_COLUMNS);
+    builder.insert_target_column_ids = statement.insert_target_column_ids.borrow().clone();
     let target = builder.resolve_insert_target(insert)?;
     builder.append_insert_target_visits(insert, &target.database, &target.table);
     let target_visits = std::mem::take(&mut builder.visit_info);
@@ -2912,12 +2918,16 @@ pub(crate) fn plan_insert_expressions(
     let on_duplicate = builder.resolve_on_duplicate(insert, &target, select)?;
     // Go `resolveGeneratedColumns`, after the assignments.
     let generated = builder.resolve_generated_columns(&target)?;
+    let visits = std::mem::take(&mut builder.visit_info);
+    drop(builder);
+    let scalar_subqueries = registry.borrow().clone();
     Ok(InsertExpressions {
         values,
         on_duplicate,
         generated,
         target_visits,
-        visits: std::mem::take(&mut builder.visit_info),
+        visits,
+        scalar_subqueries,
     })
 }
 
@@ -2954,8 +2964,15 @@ pub(crate) fn physical_query_plan_and_names_with_allocators(
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
     visits: BuildVisits<'_>,
-) -> Result<(PhysicalPlan, Vec<tidb_datatype::FieldName>), tidb_planner_core_base::PlanError> {
-    planner_physical_query_with_allocators(
+) -> Result<
+    (
+        PhysicalPlan,
+        Vec<tidb_datatype::FieldName>,
+        Vec<std::sync::Arc<RegisteredScalarSubquery>>,
+    ),
+    tidb_planner_core_base::PlanError,
+> {
+    planner_physical_query_with_registry(
         query,
         catalog,
         current_database,
@@ -2966,8 +2983,7 @@ pub(crate) fn physical_query_plan_and_names_with_allocators(
         visits,
         QueryBuild::DmlRead,
     )
-    .map(|(logical, physical)| (physical_names(&logical), physical))
-    .map(|(names, physical)| (physical, names))
+    .map(|(logical, physical, scalar_subqueries)| (physical, physical_names(&logical), scalar_subqueries))
 }
 
 fn physical_names(logical: &LogicalPlan) -> Vec<tidb_datatype::FieldName> {
