@@ -337,7 +337,8 @@ impl PrivilegeRegistry {
     /// Defaults the account's plugin to `mysql_native_password`, Go's
     /// default when `CREATE USER` writes no `IDENTIFIED WITH` clause. Use
     /// [`Self::create_user_with_plugin`] for an explicit one.
-    pub fn create_user(&self, user: &str, host: &str, auth_string: &str) -> bool {
+    #[cfg(test)]
+    pub(crate) fn create_user(&self, user: &str, host: &str, auth_string: &str) -> bool {
         self.create_account(
             user,
             host,
@@ -350,7 +351,7 @@ impl PrivilegeRegistry {
 
     /// [`Self::create_user`], recording an explicit authentication plugin --
     /// the `CREATE USER ... IDENTIFIED WITH <plugin>` path.
-    pub fn create_user_with_plugin(
+    pub(crate) fn create_user_with_plugin(
         &self,
         user: &str,
         host: &str,
@@ -365,7 +366,8 @@ impl PrivilegeRegistry {
     /// one namespace, so this collides with an existing account of either
     /// kind (captured: `CREATE USER r1` after `CREATE ROLE r1` reports
     /// `Operation CREATE USER failed for 'r1'@'%'`, and vice versa).
-    pub fn create_role(&self, role: &str, host: &str) -> bool {
+    #[cfg(test)]
+    pub(crate) fn create_role(&self, role: &str, host: &str) -> bool {
         self.create_account(
             role,
             host,
@@ -473,43 +475,6 @@ impl PrivilegeRegistry {
             .map(|record| record.plugin.clone())
     }
 
-    /// Replaces an existing account's `authentication_string`
-    /// (`ALTER USER ... IDENTIFIED BY`, `SET PASSWORD`). Returns whether the
-    /// account existed.
-    pub fn set_auth_string(&self, user: &str, host: &str, auth_string: &str) -> bool {
-        match self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
-            Some(record) => {
-                record.auth_string = auth_string.to_owned();
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// [`Self::set_auth_string`], also rewriting the account's `plugin` --
-    /// `ALTER USER ... IDENTIFIED WITH '<plugin>' [BY '<password>' | AS
-    /// '<hash>']`. Go always writes both columns together on any auth-clause
-    /// ALTER USER, backfilling `AuthPlugin` from the row's current plugin
-    /// when the statement wrote no explicit `WITH` (see
-    /// `resolve_auth_string_and_plugin`), so this is the one write path both
-    /// `IDENTIFIED BY` and `IDENTIFIED WITH` go through.
-    pub fn set_auth_string_and_plugin(
-        &self,
-        user: &str,
-        host: &str,
-        auth_string: &str,
-        plugin: &str,
-    ) -> bool {
-        match self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
-            Some(record) => {
-                record.auth_string = auth_string.to_owned();
-                record.plugin = plugin.to_owned();
-                true
-            }
-            None => false,
-        }
-    }
-
     /// Every account identity currently in the table, for the front end's
     /// host-pattern matching at login time (Go resolves a login against the
     /// live `mysql.user` rows, not a startup snapshot).
@@ -568,7 +533,8 @@ impl PrivilegeRegistry {
     /// keyed by it to a new identity, keeping the `authentication_string`
     /// (captured). Returns `false` without changing anything when the old
     /// account is missing or the new identity already exists.
-    pub fn rename_user(
+    #[cfg(test)]
+    pub(crate) fn rename_user(
         &self,
         old_user: &str,
         old_host: &str,
@@ -659,7 +625,7 @@ impl PrivilegeRegistry {
     }
 
     /// `WITH MAX_USER_CONNECTIONS n` (`mysql.user.max_user_connections`).
-    pub fn set_max_user_connections(&self, user: &str, host: &str, count: i64) {
+    pub(crate) fn set_max_user_connections(&self, user: &str, host: &str, count: i64) {
         if let Some(record) = self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
             record.max_user_connections = count;
         }
@@ -671,7 +637,7 @@ impl PrivilegeRegistry {
     /// simply an account row with `account_locked = 'Y'` and no password), so
     /// a locked plain user refuses login exactly like a role does. Returns
     /// whether the account existed.
-    pub fn set_locked(&self, user: &str, host: &str, locked: bool) -> bool {
+    pub(crate) fn set_locked(&self, user: &str, host: &str, locked: bool) -> bool {
         let now = self.clock.now_unix();
         match self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
             Some(record) => {
@@ -712,43 +678,6 @@ impl PrivilegeRegistry {
             .and_then(|record| record.password_locking)
     }
 
-    /// Applies a statement's `FAILED_LOGIN_ATTEMPTS` / `PASSWORD_LOCK_TIME`
-    /// clauses, each `None` when the statement wrote none.
-    ///
-    /// Go merges the written options over the account's CURRENT ones
-    /// (`readPasswordLockingInfo` reads the row, `alterUserFailedLoginJSON`
-    /// rewrites the whole object), so `ALTER USER u3 PASSWORD_LOCK_TIME 6`
-    /// keeps u3's existing `FAILED_LOGIN_ATTEMPTS 3` -- captured. A merge
-    /// leaving both at zero drops the object entirely, which is the same
-    /// captured `user_attributes IS NULL` an explicit
-    /// `PASSWORD_LOCK_TIME 0 FAILED_LOGIN_ATTEMPTS 0` produces.
-    ///
-    /// Returns whether the account existed.
-    pub fn set_password_locking_options(
-        &self,
-        user: &str,
-        host: &str,
-        failed_login_attempts: Option<i64>,
-        password_lock_time_days: Option<i64>,
-    ) -> bool {
-        match self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
-            Some(record) => {
-                let mut locking = record.password_locking.unwrap_or_default();
-                if let Some(attempts) = failed_login_attempts {
-                    locking.failed_login_attempts = attempts;
-                }
-                if let Some(days) = password_lock_time_days {
-                    locking.password_lock_time_days = days;
-                }
-                record.password_locking = (locking.failed_login_attempts != 0
-                    || locking.password_lock_time_days != 0)
-                    .then_some(locking);
-                true
-            }
-            None => false,
-        }
-    }
-
     /// The account's `Password_expired` / `Password_lifetime` /
     /// `Password_last_changed` columns, or `None` when no such account.
     #[must_use]
@@ -765,59 +694,9 @@ impl PrivilegeRegistry {
             })
     }
 
-    /// Applies one `PASSWORD EXPIRE ...` clause. Go's `loadOptions` scans the
-    /// option list BACKWARD and stops at the first expiry clause, so the LAST
-    /// one written wins and the caller passes only that one; each variant
-    /// writes exactly one of the two columns, leaving the other alone
-    /// (captured: `PASSWORD EXPIRE` sets `password_expired='Y'` and does not
-    /// touch `password_lifetime`, and `PASSWORD EXPIRE NEVER` sets
-    /// `password_lifetime=0` and does not touch `password_expired`).
-    ///
-    /// Returns whether the account existed.
-    pub fn set_password_expire(
-        &self,
-        user: &str,
-        host: &str,
-        setting: PasswordExpireSetting,
-    ) -> bool {
-        match self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
-            Some(record) => {
-                match setting {
-                    PasswordExpireSetting::Now => record.password_expired = true,
-                    PasswordExpireSetting::Default => record.password_lifetime = None,
-                    PasswordExpireSetting::Never => record.password_lifetime = Some(0),
-                    PasswordExpireSetting::Interval(days) => record.password_lifetime = Some(days),
-                }
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// Records that the account's password was just replaced: Go's
-    /// `ALTER USER ... IDENTIFIED BY` / `SET PASSWORD` writes
-    /// `password_expired='N'` and a fresh `Password_last_changed` alongside
-    /// the new hash, which is what lets a sandboxed session escape by
-    /// changing its own password (captured: `ALTER USER e5 IDENTIFIED BY`
-    /// flips `SHOW CREATE USER` from `PASSWORD EXPIRE` back to
-    /// `PASSWORD EXPIRE DEFAULT`).
-    ///
-    /// Returns whether the account existed.
-    pub fn mark_password_changed(&self, user: &str, host: &str) -> bool {
-        let now = self.clock.now_unix();
-        match self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
-            Some(record) => {
-                record.password_expired = false;
-                record.password_last_changed = Some(password_change_timestamp(now));
-                true
-            }
-            None => false,
-        }
-    }
-
     /// Publishes the stored expiry policy without treating a reload as a
     /// password change. NULL and zero TIMESTAMP remain distinct on export.
-    pub fn restore_password_expiry(
+    pub(crate) fn restore_password_expiry(
         &self,
         user: &str,
         host: &str,
@@ -936,7 +815,8 @@ impl PrivilegeRegistry {
     /// Go's `ErrCannotUser("DROP USER", ...)`: dropping a missing account
     /// fails unless the caller handles `IF EXISTS` itself. Returns whether
     /// the account existed (and was removed).
-    pub fn drop_user(&self, user: &str, host: &str) -> bool {
+    #[cfg(test)]
+    pub(crate) fn drop_user(&self, user: &str, host: &str) -> bool {
         let removed = {
             let mut accounts = self.lock();
             let removed = accounts
@@ -987,7 +867,7 @@ impl PrivilegeRegistry {
     /// rejects a self-grant or a cycle (captured: `GRANT r1 TO r1` reports
     /// OK), so neither is special-cased here -- the breadth-first walk in
     /// [`Self::find_all_user_effective_roles`] terminates on visited nodes regardless.
-    pub fn grant_role(&self, role: &Account, grantee: &Account) {
+    pub(crate) fn grant_role(&self, role: &Account, grantee: &Account) {
         self.lock_role_edges()
             .entry(grantee.clone())
             .or_default()
@@ -1067,7 +947,7 @@ impl PrivilegeRegistry {
     /// (Go deletes every row for the account and re-inserts, so this is a
     /// replace and never a merge). An empty set leaves no row at all, which
     /// is the `SET DEFAULT ROLE NONE` state.
-    pub fn set_default_roles(&self, account: &Account, roles: &[Account]) {
+    pub(crate) fn set_default_roles(&self, account: &Account, roles: &[Account]) {
         self.replace_default_roles(std::iter::once((account, roles)));
     }
 
@@ -1093,7 +973,7 @@ impl PrivilegeRegistry {
 
     /// Sets every bit in `mask`, on an account the caller has already
     /// confirmed exists (see [`Self::user_exists`]).
-    pub fn grant(&self, user: &str, host: &str, mask: u64) {
+    pub(crate) fn grant(&self, user: &str, host: &str, mask: u64) {
         if let Some(record) = self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
             record.privs |= mask;
         }
@@ -1101,7 +981,8 @@ impl PrivilegeRegistry {
 
     /// Clears every bit in `mask`. Go's `REVOKE` on a privilege the account
     /// never had is a silent no-op, not an error.
-    pub fn revoke(&self, user: &str, host: &str, mask: u64) {
+    #[cfg(test)]
+    pub(crate) fn revoke(&self, user: &str, host: &str, mask: u64) {
         if let Some(record) = self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
             record.privs &= !mask;
         }
@@ -1160,7 +1041,7 @@ impl PrivilegeRegistry {
     /// account already holds OVERWRITES its `with_grant_option` rather than
     /// ORing into it, and a plain re-grant therefore DOWNGRADES a previously
     /// grantable privilege.
-    pub fn grant_dynamic(&self, user: &str, host: &str, name: &str, with_grant: bool) {
+    pub(crate) fn grant_dynamic(&self, user: &str, host: &str, name: &str, with_grant: bool) {
         self.lock_dynamic()
             .entry((user.to_owned(), host.to_owned()))
             .or_default()
@@ -1279,7 +1160,7 @@ impl PrivilegeRegistry {
     /// the row if this is its first DB-scope grant (Go's `checkAndInitDBPriv`
     /// inserting a fresh `mysql.DB` row before `grantDBLevel` sets bits on
     /// it).
-    pub fn grant_db(&self, user: &str, host: &str, database: &str, mask: u64) {
+    pub(crate) fn grant_db(&self, user: &str, host: &str, database: &str, mask: u64) {
         let mut rows = self.lock_db();
         let key = Self::db_row_key(&rows, user, host, database);
         *rows.entry(key).or_insert(0) |= mask;
@@ -1301,7 +1182,8 @@ impl PrivilegeRegistry {
     /// grant option are `'N'`, so a later REVOKE finds no grant. `USAGE`
     /// (an empty mask) changes nothing: Go's `revokePriv` returns before
     /// `revokeDBPriv` for it, leaving even an empty row in place.
-    pub fn revoke_db(&self, user: &str, host: &str, database: &str, mask: u64) {
+    #[cfg(test)]
+    pub(crate) fn revoke_db(&self, user: &str, host: &str, database: &str, mask: u64) {
         if mask == 0 {
             return;
         }
@@ -1318,7 +1200,7 @@ impl PrivilegeRegistry {
     /// Sets every bit in `mask` on the account's `(database, table)` row,
     /// creating the row if this is its first TABLE-scope grant (Go's
     /// `checkAndInitTablePriv`).
-    pub fn grant_table(&self, user: &str, host: &str, database: &str, table: &str, mask: u64) {
+    pub(crate) fn grant_table(&self, user: &str, host: &str, database: &str, table: &str, mask: u64) {
         let mut rows = self.lock_table();
         let key = Self::table_row_key(&rows, user, host, database, table);
         *rows.entry(key).or_insert(0) |= mask;
@@ -1549,22 +1431,10 @@ impl PrivilegeRegistry {
             .map_or_else(|| "NONE".into(), |row| global_priv_require_str(&row.priv_json))
     }
 
-    /// REQUIRE replaces Priv as in Go; unrelated account updates retain it.
-    pub fn set_ssl_type(&self, user: &str, host: &str, ssl_type: SslType) {
-        let accounts = self.lock();
-        if !accounts.contains_key(&(user.to_owned(), host.to_owned())) {
-            return;
-        }
-        self.store_ssl_type(user, host, ssl_type);
-    }
-
     // The caller holds the user lock through publication/retirement.
-    fn store_ssl_type(&self, user: &str, host: &str, ssl_type: SslType) {
-        self.store_tls_policy(user, host, ssl_json(ssl_type));
-    }
-
     /// REQUIRE replaces the entire raw policy while holding the account owner.
-    pub fn set_tls_policy(&self, user: &str, host: &str, json: &str) {
+    #[cfg(test)]
+    pub(crate) fn set_tls_policy(&self, user: &str, host: &str, json: &str) {
         let accounts = self.lock();
         if accounts.contains_key(&(user.to_owned(), host.to_owned())) {
             self.store_tls_policy(user, host, json.to_owned());
@@ -2309,20 +2179,6 @@ impl<'de> serde::Deserialize<'de> for GlobalPrivJsonFields {
             }
         }
         deserializer.deserialize_any(Fields)
-    }
-}
-
-fn ssl_json(policy: SslType) -> String {
-    let value = match policy {
-        SslType::None => 0,
-        SslType::Any => 1,
-        SslType::X509 => 2,
-        SslType::Specified => 3,
-    };
-    if value == 0 {
-        "{}".into()
-    } else {
-        format!("{{\"ssl_type\":{value}}}")
     }
 }
 

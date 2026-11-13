@@ -356,15 +356,13 @@ fn open_session_as(node: &MockNode, user: &str) -> Session {
 #[test]
 fn analyze_without_privileges_on_the_table_is_refused_before_the_seam() {
     let node = MockNode::start();
-    node.accounts.live.create_user("low", "%", "");
+    node.accounts.create_user("low");
     // `USE app` is `ErrDBaccessDenied` (1044) for an account with no
     // evidence at all on the schema, measured in Go, so an account that
     // cannot see `app` could never reach the 1142 this test is about.
     // `CREATE TEMPORARY TABLES` is the one privilege that makes a schema
     // visible without carrying either privilege `ANALYZE` demands.
-    node.accounts
-        .live
-        .grant_db("low", "%", "app", tidb_mysql::CreateTMPTablePriv.mask());
+    node.accounts.grant_db("low", "app", &["CREATE TEMPORARY TABLES"]);
     let mut session = open_session_as(&node, "low");
     let refusal = session
         .node_conn()
@@ -386,10 +384,8 @@ fn analyze_without_privileges_on_the_table_is_refused_before_the_seam() {
 #[test]
 fn analyze_with_only_select_on_the_table_is_still_refused() {
     let node = MockNode::start();
-    node.accounts.live.create_user("ro", "%", "");
-    node.accounts
-        .live
-        .grant_table("ro", "%", "app", "t", tidb_mysql::SelectPriv.mask());
+    node.accounts.create_user("ro");
+    node.accounts.grant_table("ro", "app", "t", &["Select"]);
     let mut session = open_session_as(&node, "ro");
     let refusal = session
         .node_conn()
@@ -407,14 +403,8 @@ fn analyze_with_only_select_on_the_table_is_still_refused() {
 #[test]
 fn analyze_with_insert_and_select_on_the_table_reaches_the_seam() {
     let node = MockNode::start();
-    node.accounts.live.create_user("rw", "%", "");
-    node.accounts.live.grant_table(
-        "rw",
-        "%",
-        "app",
-        "t",
-        tidb_mysql::SelectPriv.mask() | tidb_mysql::InsertPriv.mask(),
-    );
+    node.accounts.create_user("rw");
+    node.accounts.grant_table("rw", "app", "t", &["Select", "Insert"]);
     let mut session = open_session_as(&node, "rw");
     let refusal = session
         .node_conn()

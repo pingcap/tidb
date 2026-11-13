@@ -78,7 +78,7 @@ impl UserRecord {
 
 impl PrivilegeRegistry {
     /// Restore durable policy without invoking ALTER's reset or the current clock.
-    pub fn restore_account_policy(
+    pub(crate) fn restore_account_policy(
         &self,
         user: &str,
         host: &str,
@@ -128,56 +128,5 @@ impl PrivilegeRegistry {
             .and_then(UserRecord::export_attributes)
     }
 
-    /// Merge account metadata/secondary-password changes without discarding locking state.
-    pub fn merge_user_attributes(
-        &self,
-        user: &str,
-        host: &str,
-        patch: serde_json::Value,
-        drop_secondary: bool,
-    ) {
-        if let Some(record) = self.lock().get_mut(&(user.into(), host.into())) {
-            let mut value = record
-                .export_attributes()
-                .as_deref()
-                .map(|text| serde_json::from_str::<serde_json::Value>(text).unwrap())
-                .unwrap_or_else(|| serde_json::json!({}));
-            merge_patch(&mut value, &patch);
-            if drop_secondary {
-                if let Some(object) = value.as_object_mut() {
-                    object.remove("additional_password");
-                }
-            }
-            record.user_attributes =
-                if drop_secondary && value.as_object().is_some_and(|object| object.is_empty()) {
-                    None
-                } else {
-                    Some(value.to_string())
-                };
-        }
-    }
-
 }
 
-fn merge_patch(target: &mut serde_json::Value, patch: &serde_json::Value) {
-    if let Some(patch) = patch.as_object() {
-        if !target.is_object() {
-            *target = serde_json::json!({});
-        }
-        let target = target.as_object_mut().unwrap();
-        for (name, value) in patch {
-            if value.is_null() {
-                target.remove(name);
-            } else {
-                merge_patch(
-                    target
-                        .entry(name.clone())
-                        .or_insert(serde_json::Value::Null),
-                    value,
-                );
-            }
-        }
-    } else {
-        *target = patch.clone();
-    }
-}

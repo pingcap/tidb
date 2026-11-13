@@ -214,7 +214,7 @@ impl Drop for RepairModeOn {
 #[test]
 fn repair_table_is_refused_by_the_preprocessor() {
     let node = MockNode::start();
-    assert!(node.accounts.live.create_user("low", "%", ""));
+    node.accounts.create_user("low");
     let store = ConfiguredUserStore::from_accounts(node.accounts.live.clone());
     let mut low = open_session_on_with_context(
         &node,

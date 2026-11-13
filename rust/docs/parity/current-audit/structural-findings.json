@@ -1,10 +1,10 @@
 {
-  "date": "2026-11-13",
+  "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 19,
+    "unresolved": 18,
     "open": 3,
-    "partial": 16
+    "partial": 15
   },
   "findings": [
     {
@@ -73,13 +73,6 @@
       "go_owner": "`pkg/util/chunk` (`alloc.go`: `NewAllocator`, `NewReuseHookAllocator`, `NewSyncAllocator`), `pkg/sessionctx/variable/session.go` (`SetAlloc`, `GetChunkAllocator`), `pkg/executor/internal/exec/executor.go` (`AllocPool`, `NewChunkWithCapacity`)"
     },
     {
-      "id": "A02",
-      "status": "partial",
-      "group": "Privilege and account policy owners",
-      "finding": "The account statements are Go's executors over the statement's system session: CREATE USER / ROLE (`executeCreateUser`), ALTER USER, SET PASSWORD, DROP / RENAME USER, GRANT / REVOKE of privileges and roles and SET DEFAULT ROLE write `mysql.*` through Go's SQL, check accounts through `userExists` / `isRole`, judge a new password by `checkPasswordReusePolicy`'s SQL over `mysql.password_history`, and read the live privilege cache, which COMMIT reloads from the tables (`NotifyUpdatePrivilege`); SHOW CREATE USER reads `mysql.user` and `mysql.global_priv`. The `--auth-file` accounts are provisioned at boot through Go's account statements on an internal session (`seed_auth_file_accounts`: DROP USER, ALTER / CREATE USER ... IDENTIFIED WITH ... AS, the bootstrap grant), as Go's bootstrap provisions `root@%` through SQL; the registry-image table writer (`cluster_account_write`) is deleted. A login's auto-lock or auto-unlock reloads the privileges as Go's `NotifyUpdatePrivilege` does, where it patched the registry (`publish_password_locking`, deleted). The registry no longer holds `mysql.password_history` (Go's `MySQLPrivilege` does not; `checkPasswordReusePolicy`'s SQL reads it). What remains: the mock-node test fixtures provision accounts by mutating the `PrivilegeRegistry`",
-      "go_owner": "`pkg/executor/simple.go` (the account executors, `checkPasswordReusePolicy`), `pkg/privilege/privileges/cache.go`"
-    },
-    {
       "id": "E05",
       "status": "open",
       "group": "DML and executor handoff",
@@ -145,7 +138,7 @@
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
-  "unresolved": 19,
+  "unresolved": 18,
   "open": 3,
   "partial": 15
 }

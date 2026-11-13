@@ -200,12 +200,12 @@ fn process_admin_batch_sem_target_defaults_and_caller_active_roles() {
     same_user.run(&kill_victim).unwrap();
     assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 2);
     // Granted but non-default target roles do not protect the target.
-    privileges.set_default_roles(&("protected".into(), "%".into()), &[]);
+    boot.run("SET DEFAULT ROLE NONE TO protected").unwrap();
     bob.run(&kill_victim).unwrap();
     assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 3);
     // Go matches global_grants independently of the selected user row.
-    privileges.create_user("protected", "::1", "");
-    privileges.grant_dynamic("protected", "%", "RESTRICTED_USER_ADMIN", false);
+    boot.run("CREATE USER 'protected'@'::1'").unwrap();
+    boot.run("GRANT RESTRICTED_USER_ADMIN ON *.* TO 'protected'@'%'").unwrap();
     crate::tests_support::assert_err(bob.run(&kill_victim), 1227, "Access denied; you need (at least one of) the RESTRICTED_CONNECTION_ADMIN privilege(s) for this operation");
     tidb_sem::disable();
     bob.run(&kill_victim).unwrap();

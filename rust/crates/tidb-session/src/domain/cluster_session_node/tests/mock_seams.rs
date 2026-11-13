@@ -654,34 +654,76 @@ fn mock_unlock_tables(
     }
 }
 
-/// The account seam without a cluster: the "stored" accounts are one
-/// registry, which an account statement validates against, and the live
-/// table reloads from it after a committed statement (Go
+/// The account seam without a cluster: the "stored" accounts are the
+/// cluster's `mysql.*` privilege rows, which an account statement validates
+/// against as the registry Go's `MySQLPrivilege.LoadAll` builds from them,
+/// and the live table reloads from them after a committed statement (Go
 /// `NotifyUpdatePrivilege`). Statements that write rows need a store with
 /// `mysql.*` tables; the unistore fixtures run those.
 pub(super) struct MockAccountWriter {
-    /// What the "cluster" stores.
-    pub(super) stored: PrivilegeRegistry,
+    /// What the "cluster" stores: its privilege tables' rows.
+    pub(super) stored: std::sync::Mutex<tidb_privilege::loaded::ClusterPrivileges>,
     /// The node's live table.
     pub(super) live: PrivilegeRegistry,
 }
 
 impl MockAccountWriter {
     pub(super) fn new() -> Self {
+        let live = PrivilegeRegistry::default();
         Self {
-            stored: PrivilegeRegistry::default(),
-            live: PrivilegeRegistry::default(),
+            stored: std::sync::Mutex::new(tidb_privilege::load::cluster_image_from_registry(&live)),
+            live,
         }
+    }
+
+    /// Writes rows into the cluster's privilege tables and reloads the live
+    /// table, as a committed account statement and Go's
+    /// `NotifyUpdatePrivilege` do.
+    pub(super) fn write_rows(&self, write: impl FnOnce(&mut tidb_privilege::loaded::ClusterPrivileges)) {
+        write(&mut self.stored.lock().unwrap());
+        self.notify_update_privilege().unwrap();
+    }
+
+    /// `CREATE USER user@'%'` with no password.
+    pub(super) fn create_user(&self, user: &str) {
+        self.write_rows(|rows| {
+            rows.users.push(tidb_privilege::loaded::LoadedUser::new(user, "%", "mysql_native_password", ""));
+        });
+    }
+
+    /// `GRANT privileges ON database.* TO user@'%'` (printed names).
+    pub(super) fn grant_db(&self, user: &str, database: &str, privileges: &[&'static str]) {
+        self.write_rows(|rows| {
+            rows.db_grants.push(tidb_privilege::loaded::LoadedDbGrant {
+                host: "%".to_owned(),
+                user: user.to_owned(),
+                database: database.to_owned(),
+                privileges: privileges.to_vec(),
+            });
+        });
+    }
+
+    /// `GRANT privileges ON database.table TO user@'%'` (`Table_priv` labels).
+    pub(super) fn grant_table(&self, user: &str, database: &str, table: &str, privileges: &[&str]) {
+        self.write_rows(|rows| {
+            rows.table_grants.push(tidb_privilege::loaded::LoadedTableGrant {
+                host: "%".to_owned(),
+                user: user.to_owned(),
+                database: database.to_owned(),
+                table: table.to_owned(),
+                privileges: privileges.iter().map(|privilege| (*privilege).to_owned()).collect(),
+            });
+        });
     }
 }
 
 impl ClusterAccountWriter for MockAccountWriter {
     fn load_accounts(&self) -> Result<PrivilegeRegistry, String> {
-        Ok(clone_registry(&self.stored))
+        Ok(tidb_privilege::load::registry_from_cluster(&self.stored.lock().unwrap()).registry)
     }
 
     fn notify_update_privilege(&self) -> Result<(), String> {
-        self.live.replace_from(&clone_registry(&self.stored));
+        self.live.replace_from(&self.load_accounts()?);
         Ok(())
     }
 }

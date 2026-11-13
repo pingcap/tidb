@@ -461,13 +461,14 @@ mod tests {
 
     #[test]
     fn expiry_lifetime_and_change_epoch_survive_account_publication() {
-        let registry = PrivilegeRegistry::bootstrapped_from(Vec::new());
-        registry.create_user("expiry", "%", "*ABC");
-        registry.set_password_expire(
-            "expiry",
-            "%",
-            tidb_privilege::PasswordExpireSetting::Interval(7),
-        );
+        // `CREATE USER expiry ... PASSWORD EXPIRE INTERVAL 7 DAY`.
+        let mut account = user("expiry", "%", "*ABC", false, vec![]);
+        account.password_lifetime = Some(7);
+        let registry = registry_from_cluster(&ClusterPrivileges {
+            users: vec![account],
+            ..Default::default()
+        })
+        .registry;
         let before = registry.password_expiry("expiry", "%");
         let rebuilt = registry_from_cluster(&cluster_image_from_registry(&registry)).registry;
         assert_eq!(rebuilt.password_expiry("expiry", "%"), before);
@@ -553,7 +554,11 @@ mod tests {
                 cluster_image_from_registry(&registry).users[0].password_last_changed,
                 before
             );
-            registry.mark_password_changed("expiry", "%");
+            // `ALTER USER expiry IDENTIFIED BY ...` stamps a fresh
+            // `Password_last_changed`, which the reload carries.
+            let mut changed = cluster_image_from_registry(&registry);
+            changed.users[0] = changed.users[0].clone().with_password_last_changed(registry.clock().now_unix());
+            registry.replace_from(&registry_from_cluster(&changed).registry);
             assert_ne!(
                 cluster_image_from_registry(&registry).users[0].password_last_changed,
                 before
@@ -819,9 +824,7 @@ mod tests {
 
     #[test]
     fn a_reload_picks_up_a_new_user_a_new_grant_a_revoke_and_a_drop() {
-        let registry = PrivilegeRegistry::bootstrapped_from(Vec::new());
-        registry.create_user("stale", "%", "");
-        registry.grant("stale", "%", tidb_mysql::SelectPriv.mask());
+        let registry = registry_from_cluster(&snapshot_with_users(vec![user("stale", "%", "", false, vec!["SELECT"])])).registry;
 
         let (sender, receiver) = mpsc::channel();
         let mut tick = 0u32;
@@ -891,8 +894,7 @@ mod tests {
 
     #[test]
     fn a_failed_load_is_counted_as_a_failure_and_keeps_the_previous_table() {
-        let registry = PrivilegeRegistry::bootstrapped_from(Vec::new());
-        registry.create_user("kept", "%", "");
+        let registry = registry_from_cluster(&snapshot_with_users(vec![user("kept", "%", "", false, vec![])])).registry;
 
         let mut reloader = PrivilegeReloader::spawn_with_read(
             registry.clone(),
@@ -943,13 +945,23 @@ mod tests {
         // `FindAllUserEffectiveRoles` never reaches into a live session to
         // deactivate a dropped role, it just stops finding it in the
         // reloaded role graph on the next check.
-        let registry = PrivilegeRegistry::bootstrapped_from(Vec::new());
-        registry.create_user("bridge", "%", "");
-        registry.create_role("r1", "%");
-        let bridge: Account = ("bridge".to_owned(), "%".to_owned());
+        // `CREATE USER bridge`, `CREATE ROLE r1` (a locked account),
+        // `GRANT SELECT ON *.* TO r1`, `GRANT r1 TO bridge`.
+        let registry = registry_from_cluster(&ClusterPrivileges {
+            users: vec![
+                user("bridge", "%", "", false, vec![]),
+                user("r1", "%", "", true, vec!["SELECT"]),
+            ],
+            role_edges: vec![LoadedRoleEdge {
+                role_host: "%".to_owned(),
+                role_user: "r1".to_owned(),
+                grantee_host: "%".to_owned(),
+                grantee_user: "bridge".to_owned(),
+            }],
+            ..ClusterPrivileges::default()
+        })
+        .registry;
         let role: Account = ("r1".to_owned(), "%".to_owned());
-        registry.grant_role(&role, &bridge);
-        registry.grant("r1", "%", tidb_mysql::SelectPriv.mask());
         let active_roles = vec![role];
         assert!(registry.has_global_priv_with_roles(
             "bridge",
@@ -1022,19 +1034,6 @@ mod account_tls_batch_tests {
         let exported = cluster_image_from_registry(&registry_from_cluster(&image).registry);
         assert_eq!(exported.global_priv, image.global_priv);
     }
-
-    #[test]
-    fn account_tls_batch_require_ssl_survives_export() {
-        let registry = PrivilegeRegistry::default();
-        registry.set_ssl_type("root", "%", SslType::Any);
-        let image = cluster_image_from_registry(&registry);
-        assert_eq!(image.global_priv.len(), 1);
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&image.global_priv[0].priv_json).unwrap()
-                ["ssl_type"],
-            1
-        );
-    }
 }
 
 #[cfg(test)]
@@ -1104,19 +1103,5 @@ mod account_tls_batch_policy_controls {
                 "{json}"
             );
         }
-    }
-
-    #[test]
-    fn account_tls_batch_rename_drop_and_reload_use_the_same_policy_rows() {
-        let registry = PrivilegeRegistry::default();
-        registry.set_ssl_type("root", "%", SslType::X509);
-        assert!(registry.rename_user("root", "%", "renamed", "%"));
-        assert_eq!(registry.ssl_type("renamed", "%"), SslType::X509);
-        assert!(registry.drop_user("renamed", "%"));
-        assert!(registry.global_priv_rows().is_empty());
-        let fresh = PrivilegeRegistry::default();
-        fresh.set_ssl_type("root", "%", SslType::Any);
-        registry.replace_from(&fresh);
-        assert_eq!(registry.ssl_type("root", "%"), SslType::Any);
     }
 }

@@ -631,7 +631,9 @@ fn cluster_metadata_sem_child() {
     bootstrap
         .run("GRANT 'metadata_admin'@'%' TO 'metadata_reader'@'%'")
         .unwrap();
-    registry.grant_dynamic("metadata_admin", "%", "RESTRICTED_TABLES_ADMIN", false);
+    bootstrap
+        .run("GRANT RESTRICTED_TABLES_ADMIN ON *.* TO 'metadata_admin'@'%'")
+        .unwrap();
     let info = mock_server_info("local-ddl-id", "2001:db8::7", 4000);
     let syncer = Arc::new(Syncer::new(info, None));
     let mut reader = authenticated_session(&registry, "metadata_reader", "%");

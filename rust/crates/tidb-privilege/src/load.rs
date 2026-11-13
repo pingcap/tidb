@@ -59,13 +59,6 @@ pub struct LoadedRegistry {
     pub skipped: Vec<SkippedGrant>,
 }
 
-/// Builds one live account table from a cluster's `mysql.*` rows.
-///
-/// Go's loader keeps a `mysql.user` row's privileges on the row itself; this
-/// registry stores an account's global mask, so the two are the same state
-/// reached differently. Empty usernames are retained like any other account:
-/// Go indexes them under the empty username and matches their host patterns.
-#[must_use]
 /// Go `MySQLPrivilege.LoadAll` over a `mysql.user` holding exactly `rows`
 /// (and no grants).
 #[must_use]
@@ -74,6 +67,13 @@ pub fn registry_from_user_rows(rows: impl IntoIterator<Item = LoadedUser>) -> Pr
         .registry
 }
 
+/// Builds one live account table from a cluster's `mysql.*` rows.
+///
+/// Go's loader keeps a `mysql.user` row's privileges on the row itself; this
+/// registry stores an account's global mask, so the two are the same state
+/// reached differently. Empty usernames are retained like any other account:
+/// Go indexes them under the empty username and matches their host patterns.
+#[must_use]
 pub fn registry_from_cluster(loaded: &ClusterPrivileges) -> LoadedRegistry {
     let registry = PrivilegeRegistry::bootstrapped_from(Vec::new());
     let mut skipped = Vec::new();

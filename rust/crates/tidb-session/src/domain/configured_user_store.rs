@@ -855,7 +855,12 @@ mod account_tls_batch_admission_controls {
     #[test]
     fn account_tls_batch_require_ssl_does_not_treat_unix_as_tls() {
         let registry = PrivilegeRegistry::default();
-        registry.set_ssl_type("root", "%", SslType::Any);
+        // `mysql.global_priv`'s `REQUIRE SSL` row (Go `SslTypeAny`, 1).
+        registry.load_global_priv(vec![tidb_privilege::loaded::LoadedGlobalPriv {
+            user: "root".into(),
+            host: "%".into(),
+            priv_json: r#"{"ssl_type":1}"#.to_owned(),
+        }]);
         let users = ConfiguredUserStore::from_accounts(registry);
         assert_eq!(
             users

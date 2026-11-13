@@ -259,9 +259,19 @@ fn live_commands_prefer_zlib_when_both_compression_bits_are_set() {
 
 #[test]
 fn com_refresh_privileges_keeps_go_two_ok_response_shape() {
-    // `FLUSH PRIVILEGES` needs RELOAD (Go `buildFlush`).
-    let store = users();
-    store.accounts().grant("alice", "%", tidb_mysql::ReloadPriv.0);
+    // `FLUSH PRIVILEGES` needs RELOAD (Go `buildFlush`): `alice`'s row
+    // holds it.
+    let store = ConfiguredUserStore::from_accounts(tidb_privilege::load::registry_from_user_rows([
+        tidb_privilege::loaded::LoadedUser {
+            privileges: vec!["RELOAD"],
+            ..tidb_privilege::loaded::LoadedUser::new(
+                "alice",
+                "%",
+                "mysql_native_password",
+                "*14E65567ABDB5135D0CFD9A70B3032C179A49EE7",
+            )
+        },
+    ]));
     let (address, worker) = start_server_with(store);
     let mut client = TcpStream::connect(address).unwrap();
     let mut reader = PacketReader::new(client.try_clone().unwrap());

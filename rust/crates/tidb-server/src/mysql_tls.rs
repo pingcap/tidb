@@ -1235,16 +1235,15 @@ mod account_tls_batch_handshake_tests {
             }
             let verified = stream.has_verified_client_certificate();
             let registry = PrivilegeRegistry::default();
-            registry.set_ssl_type("root", "%", SslType::X509);
-            if let Some(policy) = policy {
-                registry.load_global_priv(vec![
-                    tidb_privilege::cluster_privilege_load::LoadedGlobalPriv {
-                        user: "root".into(),
-                        host: "%".into(),
-                        priv_json: policy,
-                    },
-                ]);
-            }
+            // `mysql.global_priv`'s row for root: `REQUIRE X509` (Go
+            // `SslTypeX509`, 2) unless the case gives its own policy.
+            registry.load_global_priv(vec![
+                tidb_privilege::cluster_privilege_load::LoadedGlobalPriv {
+                    user: "root".into(),
+                    host: "%".into(),
+                    priv_json: policy.unwrap_or_else(|| r#"{"ssl_type":2}"#.to_owned()),
+                },
+            ]);
             let users = ConfiguredUserStore::from_accounts(registry);
             let admission = users
                 .admit_transport(TransportKind::DirectTls)

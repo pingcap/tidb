@@ -56,19 +56,22 @@ const CLIENT_CONNECT_ATTRS: u32 = 1 << 20;
 const CLIENT_DEPRECATE_EOF: u32 = 1 << 24;
 
 fn users() -> ConfiguredUserStore {
-    let store = ConfiguredUserStore::parse(
-        "alice\t%\tmysql_native_password\t*14E65567ABDB5135D0CFD9A70B3032C179A49EE7\n",
-    )
-    .unwrap();
     // The account and DDL statements below are privileged on a Go TiDB, and
-    // now here too. The strict TSV provisions identities only, so an account
-    // it names starts with USAGE and nothing else; give `alice` the authority
-    // an operator would give the account they administer this node with.
-    let all = tidb_mysql::ALL_GLOBAL_PRIVS
-        .iter()
-        .fold(tidb_mysql::GrantPriv.0, |mask, priv_| mask | priv_.0);
-    store.accounts().grant("alice", "%", all);
-    store
+    // now here too: `alice`'s `mysql.user` row holds every global privilege
+    // (`GRANT ALL ON *.* TO alice WITH GRANT OPTION`).
+    let alice = tidb_privilege::loaded::LoadedUser {
+        privileges: tidb_privilege::cluster_privilege_load::USER_PRIVILEGE_COLUMNS
+            .iter()
+            .map(|(_, name)| *name)
+            .collect(),
+        ..tidb_privilege::loaded::LoadedUser::new(
+            "alice",
+            "%",
+            "mysql_native_password",
+            "*14E65567ABDB5135D0CFD9A70B3032C179A49EE7",
+        )
+    };
+    ConfiguredUserStore::from_accounts(tidb_privilege::load::registry_from_user_rows([alice]))
 }
 
 fn write_packet(stream: &mut TcpStream, sequence: u8, payload: &[u8]) {

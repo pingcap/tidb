@@ -627,11 +627,9 @@ fn a_ddl_implicitly_commits_the_open_transaction() {
 #[test]
 fn ddl_privileges_are_checked_before_cluster_commit_and_skip_grant_bypasses_them() {
     let node = MockNode::start();
-    assert!(node.accounts.live.create_user("low", "%", ""));
+    node.accounts.create_user("low");
     // Make `app` visible without granting CREATE or DROP.
-    node.accounts
-        .live
-        .grant_db("low", "%", "app", tidb_mysql::CreateTMPTablePriv.mask());
+    node.accounts.grant_db("low", "app", &["CREATE TEMPORARY TABLES"]);
     let normal_store = ConfiguredUserStore::from_accounts(node.accounts.live.clone());
     let normal_identity = normal_store
         .authenticate_native("low", "127.0.0.1", &SALT, &[])
@@ -910,10 +908,8 @@ fn lock_tables_run_as_a_cluster_lock_job() {
 #[test]
 fn an_unsupported_alter_spec_checks_the_table_before_privileges() {
     let node = MockNode::start();
-    assert!(node.accounts.live.create_user("low", "%", ""));
-    node.accounts
-        .live
-        .grant_db("low", "%", "app", tidb_mysql::SelectPriv.mask());
+    node.accounts.create_user("low");
+    node.accounts.grant_db("low", "app", &["SELECT"]);
     // The mock node's `app` schema already holds a table `t`.
     let store = ConfiguredUserStore::from_accounts(node.accounts.live.clone());
     let identity = store
@@ -946,11 +942,9 @@ fn an_unsupported_alter_spec_checks_the_table_before_privileges() {
 #[test]
 fn a_missing_ddl_table_is_masked_only_for_an_account_holding_nothing() {
     let node = MockNode::start();
-    assert!(node.accounts.live.create_user("low", "%", ""));
-    node.accounts
-        .live
-        .grant_db("low", "%", "app", tidb_mysql::SelectPriv.mask());
-    assert!(node.accounts.live.create_user("none", "%", ""));
+    node.accounts.create_user("low");
+    node.accounts.grant_db("low", "app", &["SELECT"]);
+    node.accounts.create_user("none");
     let store = ConfiguredUserStore::from_accounts(node.accounts.live.clone());
     let mut low = open_session_on_with_context(
         &node,
