@@ -1,0 +1,37 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "mviewnested_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "nested_column_test.go",
+        "nested_create_test.go",
+        "nested_purge_test.go",
+        "nested_refresh_source_test.go",
+        "nested_refresh_test.go",
+    ],
+    flaky = True,
+    shard_count = 17,
+    deps = [
+        "//pkg/config",
+        "//pkg/ddl",
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/meta",
+        "//pkg/meta/autoid",
+        "//pkg/meta/model",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx",
+        "//pkg/sessiontxn",
+        "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

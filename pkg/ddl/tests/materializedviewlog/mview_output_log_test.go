@@ -234,34 +234,3 @@ func TestDropMaterializedViewRechecksOwnedLog(t *testing.T) {
 	tk.MustExec("drop materialized view log on mv_drop_mlog")
 	tk.MustExec("drop materialized view mv_drop_mlog")
 }
-
-func TestMaterializedViewOutputLogRejectsNestedCreate(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := newMViewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_nested_guard (a int)")
-	tk.MustExec("create materialized view log on t_nested_guard (a)")
-	tk.MustExec("create materialized view mv_nested_parent (a, cnt) as select a, count(1) from t_nested_guard group by a")
-	tk.MustExec("create materialized view log on mv_nested_parent (a, cnt)")
-	require.ErrorContains(t, tk.ExecToErr("create materialized view mv_nested_executor (a, cnt) as select a, count(1) from mv_nested_parent group by a"), "is not BASE TABLE")
-	parent, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv_nested_parent"))
-	require.NoError(t, err)
-	var checked atomic.Bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-		if job.Type != model.ActionCreateMaterializedView || job.TableName != "mv_nested_worker" || !checked.CompareAndSwap(false, true) {
-			return
-		}
-		args, err := model.GetCreateMaterializedViewArgs(job)
-		require.NoError(t, err)
-		// Bypass submission validation to exercise the worker's independent guard.
-		args.TableInfo.MaterializedView.BaseTableIDs = []int64{parent.Meta().ID}
-		args.MLogTableIDs = []int64{parent.Meta().MaterializedViewBase.MLogID}
-		job.FillArgs(args)
-		_, err = job.Encode(true) // V1 decoding reads the serialized arguments.
-		require.NoError(t, err)
-	})
-	require.ErrorContains(t, tk.ExecToErr("create materialized view mv_nested_worker (a, cnt) as select a, count(1) from t_nested_guard group by a"), "is not BASE TABLE")
-	require.True(t, checked.Load())
-	tk.MustQuery("show tables like 'mv_nested_executor'").Check(testkit.Rows())
-	tk.MustQuery("show tables like 'mv_nested_worker'").Check(testkit.Rows())
-}
