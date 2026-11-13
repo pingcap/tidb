@@ -98,6 +98,17 @@ impl LogicalAggregation {
         self.agg_funcs.iter().any(|func| func.has_distinct)
     }
 
+    /// Go `DistinctArgsMeetsProperty()`: every DISTINCT aggregate's
+    /// arguments are among the group-by items.
+    #[must_use]
+    pub fn distinct_args_meets_property(&self) -> bool {
+        self.agg_funcs
+            .iter()
+            .filter(|func| func.has_distinct)
+            .flat_map(|func| func.base.args.iter())
+            .all(|arg| tidb_expr::expr_util::contains(&self.group_by_items, arg))
+    }
+
     /// Go `HasOrderBy()` (`logical_aggregation.go:474`).
     #[must_use]
     pub fn has_order_by(&self) -> bool {

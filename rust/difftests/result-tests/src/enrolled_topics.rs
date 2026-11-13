@@ -173,6 +173,7 @@ pub const TOPICS: &[&str] = &[
     "executor/show",
     "infoschema/tables",
     "infoschema/infoschema",
+    "planner/cascades/integration",
 ];
 
 #[cfg(test)]

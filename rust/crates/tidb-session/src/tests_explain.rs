@@ -10380,3 +10380,77 @@ fn a_for_update_read_in_an_explicit_txn_keeps_its_tikv_paths_like_go() {
     );
     session.run("rollback").unwrap();
 }
+
+/// Go `SessionVars.AllowDistinctAggPushDown` (`tidb_opt_distinct_agg_push_down`):
+/// on, a DISTINCT aggregate prefers its cop candidate
+/// (`applyLogicalAggregationHint`) and a stream aggregate skips the orders
+/// its distinct arguments do not meet (`DistinctArgsMeetsProperty`); off, the
+/// root candidate is preferred. Expected plans are Go's (gorun).
+#[test]
+fn distinct_agg_push_down_follows_the_session_switch_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t(a INT, b INT, c INT, KEY c(c))").unwrap();
+    let plan = |session: &mut Session, sql: &str| -> Vec<String> {
+        row_text(session.run(&format!("EXPLAIN FORMAT='brief' {sql}")))
+            .into_iter()
+            .map(|row| row.join("|"))
+            .collect()
+    };
+    session.run("SET @@session.tidb_opt_distinct_agg_push_down = 1").unwrap();
+    assert_eq!(
+        plan(&mut session, "SELECT count(distinct c) FROM t"),
+        [
+            "HashAgg|1.00|root||funcs:count(distinct test.t.c)->Column#6",
+            "└─IndexReader|1.00|root||index:HashAgg",
+            "  └─HashAgg|1.00|cop[tikv]||group by:test.t.c, ",
+            "    └─IndexFullScan|10000.00|cop[tikv]|table:t, index:c(c)|keep order:false, stats:pseudo",
+        ]
+    );
+    assert_eq!(
+        plan(&mut session, "SELECT /*+ STREAM_AGG() */ count(distinct a) FROM t GROUP BY c"),
+        [
+            "StreamAgg|8000.00|root||group by:test.t.c, funcs:count(distinct test.t.a)->Column#6",
+            "└─Projection|10000.00|root||test.t.a, test.t.c",
+            "  └─IndexLookUp|10000.00|root||",
+            "    ├─IndexFullScan(Build)|10000.00|cop[tikv]|table:t, index:c(c)|keep order:true, stats:pseudo",
+            "    └─TableRowIDScan(Probe)|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+        ]
+    );
+    assert_eq!(
+        plan(&mut session, "SELECT count(distinct c) FROM t GROUP BY c"),
+        [
+            "StreamAgg|8000.00|root||group by:test.t.c, funcs:count(distinct test.t.c)->Column#6",
+            "└─IndexReader|8000.00|root||index:StreamAgg",
+            "  └─StreamAgg|8000.00|cop[tikv]||group by:test.t.c, ",
+            "    └─IndexFullScan|10000.00|cop[tikv]|table:t, index:c(c)|keep order:true, stats:pseudo",
+        ]
+    );
+    session.run("CREATE TABLE t2(a INT, b INT, c INT, KEY c(c), KEY ca(c, a))").unwrap();
+    assert_eq!(
+        plan(&mut session, "SELECT count(distinct a) FROM t2 GROUP BY c"),
+        [
+            "HashAgg|8000.00|root||group by:test.t2.c, funcs:count(distinct test.t2.a)->Column#6",
+            "└─IndexReader|8000.00|root||index:HashAgg",
+            "  └─HashAgg|8000.00|cop[tikv]||group by:test.t2.a, test.t2.c, ",
+            "    └─IndexFullScan|10000.00|cop[tikv]|table:t2, index:ca(c, a)|keep order:false, stats:pseudo",
+        ]
+    );
+    assert_eq!(
+        plan(&mut session, "SELECT count(distinct b) FROM t2 GROUP BY c"),
+        [
+            "HashAgg|8000.00|root||group by:test.t2.c, funcs:count(distinct test.t2.b)->Column#6",
+            "└─TableReader|8000.00|root||data:HashAgg",
+            "  └─HashAgg|8000.00|cop[tikv]||group by:test.t2.b, test.t2.c, ",
+            "    └─TableFullScan|10000.00|cop[tikv]|table:t2|keep order:false, stats:pseudo",
+        ]
+    );
+    session.run("SET @@session.tidb_opt_distinct_agg_push_down = 0").unwrap();
+    assert_eq!(
+        plan(&mut session, "SELECT count(distinct c) FROM t"),
+        [
+            "HashAgg|1.00|root||funcs:count(distinct test.t.c)->Column#6",
+            "└─IndexReader|10000.00|root||index:IndexFullScan",
+            "  └─IndexFullScan|10000.00|cop[tikv]|table:t, index:c(c)|keep order:false, stats:pseudo",
+        ]
+    );
+}

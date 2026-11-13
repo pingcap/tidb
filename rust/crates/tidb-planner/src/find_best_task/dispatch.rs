@@ -129,6 +129,10 @@ pub struct DispatchContext<'a> {
     /// Go `SessionVars.AllowProjectionPushDown`, used when Projection
     /// enumerates its TiKV coprocessor candidate.
     pub allow_projection_push_down: bool,
+    /// Go `SessionVars.AllowDistinctAggPushDown`: a DISTINCT aggregate
+    /// prefers its cop candidate (`applyLogicalAggregationHint`) and a
+    /// stream aggregate skips the orders its distinct args do not meet.
+    pub allow_distinct_agg_push_down: bool,
     /// Go fix-control 56318, which enables the heavy-function TopN rewrite.
     pub heavy_function_optimize: bool,
     /// Go `SessionVars.EnableINLJoinInnerMultiPattern`
@@ -270,6 +274,7 @@ impl<'a> DispatchContext<'a> {
             ordering_index_selectivity_threshold:
                 tidb_vardef::defaults::DEF_TIDB_OPT_ORDERING_IDX_SEL_THRESH,
             allow_projection_push_down: true,
+            allow_distinct_agg_push_down: false,
             heavy_function_optimize: true,
             // Go `vardef.DefTiDBEnableINLJoinMultiPattern` is true.
             enable_inl_join_inner_multi_pattern: true,
@@ -486,6 +491,13 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_projection_push_down(mut self, allow: bool) -> Self {
         self.allow_projection_push_down = allow;
+        self
+    }
+
+    /// The same context with the session's distinct-aggregate pushdown switch.
+    #[must_use]
+    pub const fn with_distinct_agg_push_down(mut self, allow: bool) -> Self {
+        self.allow_distinct_agg_push_down = allow;
         self
     }
 
@@ -974,6 +986,7 @@ fn exhaust_physical_plans(
                 ctx.allocator,
                 ctx.skew_ratio,
                 prefer_agg_type,
+                ctx.allow_distinct_agg_push_down,
             );
             if !stream_aggs.is_empty() && prefer_stream {
                 return Ok((vec![stream_aggs], true));
@@ -5641,7 +5654,14 @@ fn enumerate_physical_plans_4_task(
             // Promoting only root readers here would discard a hinted merge's
             // cop task before its parent can push LIMIT into the partials.
             let hint_applicable =
-                logical_hint_applies(plan, pp, child_is_cop, child_is_root, child_is_mpp);
+                logical_hint_applies(
+                    plan,
+                    pp,
+                    child_is_cop,
+                    child_is_root,
+                    child_is_mpp,
+                    ctx.allow_distinct_agg_push_down,
+                );
             let normally_preferred = normal_preference_applies(
                 plan,
                 pp,
@@ -5855,6 +5875,7 @@ fn logical_hint_applies(
     child_is_cop: bool,
     child_is_root: bool,
     child_is_mpp: bool,
+    allow_distinct_agg_push_down: bool,
 ) -> bool {
     if logical_join_hint_applies(plan, physical) {
         return true;
@@ -5862,12 +5883,16 @@ fn logical_hint_applies(
     match plan {
         LogicalPlan::TopN(topn) => topn.prefer_limit_to_cop && child_is_cop,
         LogicalPlan::Limit(limit) => limit.prefer_limit_to_cop && child_is_cop,
-        // Go `applyLogicalAggregationHint`: with `AllowDistinctAggPushDown`
-        // off (this port's only setting), a DISTINCT aggregate prefers the
-        // candidate over a root or MPP child task, "the same behavior as
-        // before like types := {RootTask} only".
+        // Go `applyLogicalAggregationHint`: "when AllowDistinctAggPushDown
+        // is true, we will not consider root task type as before"; off, a
+        // DISTINCT aggregate prefers the candidate over a root or MPP child
+        // task, "the same behavior as before like types := {RootTask} only".
         LogicalPlan::Aggregation(aggregation) if aggregation.has_distinct() => {
-            child_is_root || child_is_mpp
+            if allow_distinct_agg_push_down {
+                child_is_cop
+            } else {
+                child_is_root || child_is_mpp
+            }
         }
         LogicalPlan::Aggregation(aggregation) => aggregation.prefer_agg_to_cop && child_is_cop,
         _ => false,

@@ -3976,6 +3976,7 @@ pub fn get_stream_aggs(
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
     prefer_agg_type: u32,
+    allow_distinct_agg_push_down: bool,
 ) -> Vec<PhysicalPlan> {
     // TODO: support CopTiFlash task type in stream agg
     if prop.is_flash_prop() {
@@ -4056,15 +4057,17 @@ pub fn get_stream_aggs(
         if !prop.is_prefix(&child_prop_probe) {
             continue;
         }
-        // Go gates ONLY on NoCopPushDown (`physical_stream_agg.go`): a
-        // DISTINCT aggregate still enumerates the cop candidate here and
-        // `attach2Task4PhysicalHashAgg`/`attachAggOverCop` invalidates it
-        // later, so keep both task types for distinct too.
+        // aggregation has a special case that it can be pushed down to TiKV which is indicated by the prop.NoCopPushDown
         let task_types: &[TaskType] = if prop.no_cop_push_down {
             &[TaskType::Root]
         } else {
             &[TaskType::CopSingleRead, TaskType::Root]
         };
+        if agg.has_distinct() && allow_distinct_agg_push_down && !agg.distinct_args_meets_property() {
+            // if distinct agg push down is allowed, while the distinct args doesn't meet the required property, continue
+            // to next possible property check.
+            continue;
+        }
         for &tp in task_types {
             let child_prop = PhysicalProperty {
                 task_tp: tp,

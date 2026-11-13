@@ -142,6 +142,8 @@ pub trait OptimizeContext:
     fn opt_ordering_idx_sel_thresh(&self) -> f64;
     /// Go `SessionVars.AllowProjectionPushDown`.
     fn allow_projection_push_down(&self) -> bool;
+    /// Go `SessionVars.AllowDistinctAggPushDown`.
+    fn allow_distinct_agg_push_down(&self) -> bool;
     /// Go `SessionVars.EnableINLJoinInnerMultiPattern`.
     fn enable_inl_join_inner_multi_pattern(&self) -> bool;
     /// Go `SessionVars.LimitPushDownThreshold`.
@@ -537,6 +539,7 @@ pub fn physical_optimize<C: OptimizeContext>(
     .with_index_join_max_scan_rows_ratio(ctx.index_join_max_scan_rows_ratio())
     .with_ordering_index_selectivity_threshold(ctx.opt_ordering_idx_sel_thresh())
     .with_projection_push_down(ctx.allow_projection_push_down())
+    .with_distinct_agg_push_down(ctx.allow_distinct_agg_push_down())
     .with_heavy_function_optimize(
         ctx.optimizer_fix_control()
             .get_bool_with_default(tidb_fixcontrol::FIX_56318, true),

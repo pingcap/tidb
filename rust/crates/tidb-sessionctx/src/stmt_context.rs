@@ -1225,6 +1225,9 @@ pub struct StmtContextData {
     /// Go `SessionVars.AllowProjectionPushDown`
     /// (`@@tidb_opt_projection_push_down`, default `ON`).
     allow_projection_push_down: bool,
+    /// Go `SessionVars.AllowDistinctAggPushDown`
+    /// (`@@tidb_opt_distinct_agg_push_down`, default `OFF`).
+    allow_distinct_agg_push_down: bool,
     /// Go `SessionVars.EnableINLJoinInnerMultiPattern`
     /// (`@@tidb_enable_inl_join_inner_multi_pattern`, default `ON`).
     enable_inl_join_inner_multi_pattern: bool,
@@ -2117,6 +2120,13 @@ context_configuration! {
     #[must_use]
     pub fn with_projection_push_down(mut self, allow: bool) -> Self {
         self.allow_projection_push_down = allow;
+        self
+    }
+
+    /// Sets `@@tidb_opt_distinct_agg_push_down` for this statement.
+    #[must_use]
+    pub fn with_distinct_agg_push_down(mut self, allow: bool) -> Self {
+        self.allow_distinct_agg_push_down = allow;
         self
     }
 
@@ -3245,6 +3255,7 @@ impl StmtContext {
             ordering_index_selectivity_threshold:
                 tidb_vardef::defaults::DEF_TIDB_OPT_ORDERING_IDX_SEL_THRESH,
             allow_projection_push_down: true,
+            allow_distinct_agg_push_down: false,
             enable_inl_join_inner_multi_pattern: true,
             enable_hash_join: true,
             enable_null_aware_anti_join: true,
@@ -4771,6 +4782,12 @@ impl StmtContext {
     #[must_use]
     pub fn allow_projection_push_down(&self) -> bool {
         self.allow_projection_push_down
+    }
+
+    /// Go `SessionVars.AllowDistinctAggPushDown`.
+    #[must_use]
+    pub fn allow_distinct_agg_push_down(&self) -> bool {
+        self.allow_distinct_agg_push_down
     }
 
     /// Go `SessionVars.IsPartialOrderedIndexForTopNEnabled`.
