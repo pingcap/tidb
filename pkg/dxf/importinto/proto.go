@@ -230,6 +230,20 @@ type SharedVars struct {
 	globalSortStore         storeapi.Storage
 	dataKVFileCount         *atomic.Int64
 	indexKVFileCount        *atomic.Int64
+	// memGroups holds the sorted KVs per KV group when the small-import fast
+	// path is on, keyed the same way as the global sort KV groups.
+	memGroups map[string][]simplesst.KVPair
+}
+
+// collectMemKVs keeps the KVs a writer held back instead of flushing them.
+func (sv *SharedVars) collectMemKVs(kvGroup string, summary *simplesst.WriterSummary) {
+	if len(summary.MemKVs) == 0 {
+		return
+	}
+	if sv.memGroups == nil {
+		sv.memGroups = make(map[string][]simplesst.KVPair, 3)
+	}
+	sv.memGroups[kvGroup] = append(sv.memGroups[kvGroup], summary.MemKVs...)
 }
 
 func (sv *SharedVars) mergeDataSummary(summary *simplesst.WriterSummary) {
@@ -237,12 +251,14 @@ func (sv *SharedVars) mergeDataSummary(summary *simplesst.WriterSummary) {
 	defer sv.mu.Unlock()
 	sv.SortedDataMeta.MergeSummary(summary)
 	sv.RecordedConflictKVCount += summary.ConflictInfo.Count
+	sv.collectMemKVs(globalsort.DataKVGroup, summary)
 }
 
 func (sv *SharedVars) mergeIndexSummary(indexID int64, summary *simplesst.WriterSummary) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	sv.RecordedConflictKVCount += summary.ConflictInfo.Count
+	sv.collectMemKVs(globalsort.IndexID2KVGroup(indexID), summary)
 	meta, ok := sv.SortedIndexMetas[indexID]
 	if !ok {
 		meta = globalsort.NewSortedKVMeta(summary)

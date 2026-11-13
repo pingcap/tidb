@@ -48,7 +48,7 @@ const metricStateAll = "all"
 var (
 	// CheckTaskFinishedInterval is the interval for scheduler.
 	// exported for testing.
-	CheckTaskFinishedInterval = 500 * time.Millisecond
+	CheckTaskFinishedInterval = 100 * time.Millisecond
 	// RetrySQLTimes is the max retry times when executing SQL.
 	RetrySQLTimes = 30
 	// RetrySQLInterval is the initial interval between two SQL retries.
@@ -180,13 +180,21 @@ func (s *BaseScheduler) refreshTaskIfNeeded() error {
 func (s *BaseScheduler) scheduleTask() {
 	ticker := time.NewTicker(CheckTaskFinishedInterval)
 	defer ticker.Stop()
+	// A scheduler that was just created already has work to do: the prepare
+	// phase, or the first step switch. Waiting a full interval before looking
+	// delays every task by that much, so the first round takes this channel
+	// instead, and the rounds after it take the ticker.
+	immediate := make(chan time.Time, 1)
+	immediate <- time.Now()
+	var tickCh <-chan time.Time = immediate
 	for {
 		select {
 		case <-s.ctx.Done():
 			s.logger.Info("schedule task exits")
 			return
-		case <-ticker.C:
+		case <-tickCh:
 		}
+		tickCh = ticker.C
 
 		failpoint.InjectCall("beforeRefreshTask", s.GetTask())
 		err := s.refreshTaskIfNeeded()
@@ -551,6 +559,16 @@ func (s *BaseScheduler) onFinished() {
 }
 
 func (s *BaseScheduler) switch2NextStep() error {
+	for {
+		if done, err := s.switchOneStep(); done || err != nil {
+			return err
+		}
+	}
+}
+
+// switchOneStep advances one step and reports whether to wait for subtasks.
+// Empty steps can advance again immediately without waiting for another tick.
+func (s *BaseScheduler) switchOneStep() (bool, error) {
 	task := s.getTaskClone()
 	nextStep := s.GetNextStep(&task.TaskBase)
 	s.logger.Info("switch to next step",
@@ -562,23 +580,23 @@ func (s *BaseScheduler) switch2NextStep() error {
 
 	if nextStep == proto.StepDone {
 		if err := s.OnDone(s.ctx, s, task); err != nil {
-			return errors.Trace(err)
+			return true, errors.Trace(err)
 		}
 		if err := s.taskMgr.SucceedTask(s.ctx, task); err != nil {
-			return errors.Trace(err)
+			return true, errors.Trace(err)
 		}
 		task.Step = nextStep
 		task.State = proto.TaskStateSucceed
 		s.task.Store(task)
 		onTaskFinished(task.State, task.Error)
-		return nil
+		return true, nil
 	}
 
 	nodes := s.nodeMgr.getNodes()
 	nodeIDs := filterByScope(nodes, task.TargetScope)
 	eligibleNodes, err := getEligibleNodes(s.ctx, s, nodeIDs)
 	if err != nil {
-		return err
+		return true, err
 	}
 	if task.MaxNodeCount > 0 && len(eligibleNodes) > task.MaxNodeCount {
 		// OnNextSubtasksBatch may use len(eligibleNodes) as a hint to
@@ -589,23 +607,23 @@ func (s *BaseScheduler) switch2NextStep() error {
 
 	s.logger.Info("eligible instances", zap.Int("num", len(eligibleNodes)))
 	if len(eligibleNodes) == 0 {
-		return errors.New("no available TiDB node to dispatch subtasks")
+		return true, errors.New("no available TiDB node to dispatch subtasks")
 	}
 
 	metas, err := s.OnNextSubtasksBatch(s.ctx, s, task, eligibleNodes, nextStep)
 	if err != nil {
 		s.logger.Warn("generate part of subtasks failed", zap.Error(err))
-		return s.handlePrepareOrPlanErr(err)
+		return true, s.handlePrepareOrPlanErr(err)
 	}
 
 	if err = s.scheduleSubTask(task, nextStep, metas, eligibleNodes); err != nil {
-		return err
+		return true, err
 	}
 	task.Step = nextStep
 	task.State = proto.TaskStateRunning
 	// and OnNextSubtasksBatch might change meta of task.
 	s.task.Store(task)
-	return nil
+	return len(metas) > 0, nil
 }
 
 func (s *BaseScheduler) scheduleSubTask(

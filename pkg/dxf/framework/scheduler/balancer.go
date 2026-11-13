@@ -30,7 +30,7 @@ import (
 
 var (
 	// balanceCheckInterval is the interval to check whether we need to balance the subtasks.
-	balanceCheckInterval = 3 * CheckTaskFinishedInterval
+	balanceCheckInterval = 1500 * time.Millisecond
 )
 
 // balancer is used to balance subtasks on managed nodes

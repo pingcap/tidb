@@ -149,7 +149,9 @@ type importScheduler struct {
 
 	GlobalSort bool
 	sourceStep proto.Step
-	mu         sync.RWMutex
+	// FastPath means the file encode step also ingests the buffered KVs.
+	FastPath bool
+	mu       sync.RWMutex
 	// NOTE: there's no need to sync for below 2 fields actually, since we add a restriction that only one
 	// task can be running at a time. but we might support task queuing in the future, leave it for now.
 	// the last time we switch TiKV into IMPORT mode, this is a global operation, do it for one task makes
@@ -425,6 +427,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		zap.Int64("table-id", taskMeta.Plan.TableInfo.ID),
 	)
 	logger.Info("on next subtasks batch")
+	sch.FastPath = useMemoryFastPath(&taskMeta.Plan)
 	if err = sch.checkImportJobNotCancelled(ctx, logger, taskMeta); err != nil {
 		return nil, err
 	}
@@ -637,6 +640,9 @@ func (sch *importScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	case proto.StepInit, proto.StepPrepared:
 		return sch.sourceStep
 	case proto.ImportStepEncodeAndSort, proto.ImportStepQuery:
+		if task.Step == proto.ImportStepEncodeAndSort && sch.FastPath {
+			return proto.ImportStepPostProcess
+		}
 		return proto.ImportStepMergeSort
 	case proto.ImportStepMergeSort:
 		return proto.ImportStepWriteAndIngest
