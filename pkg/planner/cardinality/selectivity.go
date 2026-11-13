@@ -869,6 +869,12 @@ func getMaskAndRanges(ctx planctx.PlanContext, exprs []expression.Expression, ra
 		return mask, ranges, len(remainedConds) > 0, minAccessCondsForDNFCond, nil
 	}
 	for i := range exprs {
+		// Index statistics cannot estimate a predicate that references no column. Such a predicate may
+		// remain in AccessConds after constant propagation (for example, eq(param, param)). Counting it
+		// as covered can make an unselective index win the greedy selection over a selective index.
+		if len(expression.ExtractColumns(exprs[i])) == 0 {
+			continue
+		}
 		for j := range accessConds {
 			if exprs[i].Equal(ctx.GetExprCtx().GetEvalCtx(), accessConds[j]) {
 				mask |= 1 << uint64(i)

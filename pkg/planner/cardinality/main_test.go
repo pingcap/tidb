@@ -19,9 +19,17 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	planutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
@@ -63,4 +71,39 @@ func GetCardinalitySuiteData() testdata.TestData {
 // MockStatsNode is only used for test.
 func MockStatsNode(id int64, m int64, num int) *StatsNode {
 	return &StatsNode{ID: id, mask: m, numCols: num}
+}
+
+func TestConstantOnlyPredicateDoesNotAffectIndexCoverage(t *testing.T) {
+	sctx := mock.NewContext()
+	intType := types.NewFieldType(mysql.TypeLonglong)
+	boolType := types.NewFieldType(mysql.TypeTiny)
+	one := &expression.Constant{Value: types.NewIntDatum(1), RetType: intType}
+	newEQ := func(lhs, rhs expression.Expression) expression.Expression {
+		expr, err := expression.NewFunctionBase(sctx, ast.EQ, boolType, lhs, rhs)
+		require.NoError(t, err)
+		return expr
+	}
+
+	constantEQ := newEQ(one, one)
+	siteEQ := newEQ(&expression.Column{UniqueID: 1, RetType: intType}, one)
+	deleteEQ := newEQ(&expression.Column{UniqueID: 2, RetType: intType}, one)
+	userEQ := newEQ(&expression.Column{UniqueID: 3, RetType: intType}, one)
+	exprs := []expression.Expression{constantEQ, siteEQ, deleteEQ, userEQ}
+
+	shortPath := &planutil.AccessPath{AccessConds: []expression.Expression{constantEQ, siteEQ, deleteEQ}}
+	shortMask, _, _, _, err := getMaskAndRanges(sctx.GetPlanCtx(), exprs, ranger.IndexRangeType, nil, shortPath)
+	require.NoError(t, err)
+	longPath := &planutil.AccessPath{AccessConds: []expression.Expression{userEQ, siteEQ, deleteEQ}}
+	longMask, _, _, _, err := getMaskAndRanges(sctx.GetPlanCtx(), exprs, ranger.IndexRangeType, nil, longPath)
+	require.NoError(t, err)
+
+	require.Equal(t, int64(0b0110), shortMask)
+	require.Equal(t, int64(0b1110), longMask)
+	nodes := []*StatsNode{
+		{ID: 1, Tp: IndexType, mask: shortMask, numCols: 4, Selectivity: 1},
+		{ID: 2, Tp: IndexType, mask: longMask, numCols: 6, Selectivity: 0.001},
+	}
+	usedSets := GetUsableSetsByGreedy(nodes)
+	require.Len(t, usedSets, 1)
+	require.Equal(t, int64(2), usedSets[0].ID)
 }
