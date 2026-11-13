@@ -299,6 +299,48 @@ fn a_generated_column_in_an_index() {
 /// The interval bounds the HANDLE (half-open), and the rows come back in
 /// INDEX order, not handle order -- which is why the two outputs are not
 /// sorted the same way.
+/// Go `CheckIndexRangeExec` reads the index's own entries (an index scan
+/// over `ranger.FullRange()`), so an entry missing from the index is missing
+/// from the answer, and an unknown index is `buildCheckIndexSchema`'s error
+/// (Go-probed: `[[5 5] [10 1] [20 2]]`, then `[[5 5] [10 1]]` once row 2's
+/// entry is deleted; `index nosuch not found`).
+#[test]
+fn check_index_with_handle_ranges_reads_the_index_entries_like_go() {
+    let mut session = Session::new();
+    session.run("drop table if exists t").unwrap();
+    session.run("create table t (a int primary key, b int, index idx(b))").unwrap();
+    session.run("insert into t values (1,10),(2,20),(3,30),(5,5)").unwrap();
+    let (columns, rows) = query_text(&mut session, "admin check index t idx (1,3), (5,6)");
+    assert_eq!(columns, vec!["b", "extra_handle"]);
+    assert_eq!(rows, vec![vec!["5", "5"], vec!["10", "1"], vec!["20", "2"]]);
+    assert_eq!(
+        error_of(&mut session, "admin check index t nosuch (1,3)"),
+        (1105, "index nosuch not found".to_owned())
+    );
+
+    let mut store = session.transaction_store().expect("a node session has a store");
+    let entries = session
+        .with_committed_catalog_mut(|catalog| {
+            let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t") else {
+                panic!("t is not stored as bytes");
+            };
+            let table = std::sync::Arc::make_mut(table);
+            let index = table
+                .index_list_for_check()
+                .into_iter()
+                .find(|index| index.read().name.original().eq_ignore_ascii_case("idx"))
+                .expect("idx");
+            let id = index.read().id;
+            Ok(table.index_entries_for_check(&mut *store, id).expect("entries"))
+        })
+        .unwrap();
+    // The entries in index order: b = 5, 10, 20, 30; row 2's is the third.
+    assert_eq!(entries.len(), 4);
+    session.delete_store_key_for_test(&entries[2].0).unwrap();
+    let (_, rows) = query_text(&mut session, "admin check index t idx (1,3), (5,6)");
+    assert_eq!(rows, vec![vec!["5", "5"], vec!["10", "1"]]);
+}
+
 #[test]
 fn check_index_with_handle_ranges_returns_rows() {
     let mut session = Session::new();
@@ -765,4 +807,273 @@ fn admin_checksum_table_answers_unistores_stub_per_request() {
         error_of(&mut session, "admin checksum table nosuch").0,
         1146
     );
+}
+
+/// Go `admin_test.go` `TestAdminCheckGeneratedColumns`: the virtual column's
+/// `gen=10 -> handle 2` entry replaced by `gen=5 -> handle 2`; both checks
+/// refuse, each with its own shape (Go-probed: the fast check's 8223 over
+/// the whole record, the lookup check's 8134 naming the column).
+#[test]
+fn admin_check_detects_generated_column_index_corruption_like_go() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t(pk int PRIMARY KEY CLUSTERED, val int, \
+             gen int GENERATED ALWAYS AS (val * pk) VIRTUAL, KEY idx_gen(gen))",
+        )
+        .unwrap();
+    session.run("INSERT INTO t(pk, val) VALUES (2, 5)").unwrap();
+    session.run("admin check table t").unwrap();
+
+    let mut store = session.transaction_store().expect("a node session has a store");
+    let (old_key, wrong_key) = session
+        .with_committed_catalog_mut(|catalog| {
+            let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t") else {
+                panic!("t is not stored as bytes");
+            };
+            let table = std::sync::Arc::make_mut(table);
+            let index = table
+                .index_list_for_check()
+                .into_iter()
+                .find(|index| index.read().name.original().eq_ignore_ascii_case("idx_gen"))
+                .expect("idx_gen");
+            let entries = table.index_entries_for_check(&mut *store, index.read().id).expect("entries");
+            assert_eq!(entries.len(), 1);
+            let handle = tidb_table::tables::TableHandle::Int(2);
+            let table_id = table.table_id();
+            let wrong_row = [Datum::Int(2), Datum::Int(5), Datum::Int(5)];
+            let (wrong_key, _) = table
+                .index_keys_for_check(&index, &wrong_row, &handle, table_id, &tidb_datatype::SessionTimeZone::utc())
+                .expect("the wrong entry's key")
+                .remove(0);
+            Ok((entries[0].0.clone(), wrong_key))
+        })
+        .unwrap();
+    let value = session.get_store_key_for_test(&old_key).unwrap().expect("the stored entry");
+    session.delete_store_key_for_test(&old_key).unwrap();
+    session.put_store_key_for_test(&wrong_key, &value).unwrap();
+
+    set_fast_check(&mut session, true);
+    assert_eq!(
+        error_of(&mut session, "admin check table t"),
+        (
+            8223,
+            "data inconsistency in table: t, index: idx_gen, handle: 2, \
+             index-values:\"handle: 2, values: [KindInt64 5]\" != record-values:\"handle: 2, values: [KindInt64 10]\""
+                .to_owned()
+        )
+    );
+    set_fast_check(&mut session, false);
+    assert_eq!(
+        error_of(&mut session, "admin check table t"),
+        (
+            8134,
+            "data inconsistency in table: t, index: idx_gen, col: gen, handle: \"2\", \
+             index-values:\"KindInt64 5\" != record-values:\"KindInt64 10\", compare err:<nil>"
+                .to_owned()
+        )
+    );
+}
+
+/// Go `admin_test.go` `TestAdminCheckTableWithEnumAndPointGet`, data
+/// halves: unique indexes over an ENUM column, a VARCHAR column and an
+/// (int, ENUM) pair pass `ADMIN CHECK TABLE` and `ADMIN CHECK INDEX` under
+/// both check settings.
+#[test]
+fn admin_check_passes_over_enum_unique_index_tables_like_go() {
+    let mut session = Session::new();
+    for (create, insert, index) in [
+        (
+            "create table admin_test (id int primary key, \
+             status enum('active', 'inactive', 'pending'), unique key uk_status(status))",
+            "insert into admin_test values (1, 'active'), (2, 'inactive'), (3, 'pending')",
+            "uk_status",
+        ),
+        (
+            "create table admin_test (id int primary key, name varchar(50), unique key uk_name(name))",
+            "insert into admin_test values (1, 'alice'), (2, 'bob'), (3, 'charlie')",
+            "uk_name",
+        ),
+        (
+            "create table admin_test (id int, type enum('A', 'B', 'C'), value int, \
+             unique key uk_composite(id, type))",
+            "insert into admin_test values (1, 'A', 100), (2, 'B', 200), (3, 'C', 300)",
+            "uk_composite",
+        ),
+    ] {
+        session.run("drop table if exists admin_test").unwrap();
+        session.run(create).unwrap();
+        session.run(insert).unwrap();
+        for fast in [true, false] {
+            set_fast_check(&mut session, fast);
+            session.run("admin check table admin_test").unwrap();
+            session.run(&format!("admin check index admin_test {index}")).unwrap();
+        }
+    }
+}
+
+/// A partial index counts only the rows its condition holds for: the fast
+/// check passes over a table whose one indexed row of three is the only
+/// entry, and the lookup check refuses partial indexes (Go-probed: 8273
+/// for both statements).
+#[test]
+fn admin_check_over_a_partial_index_like_go() {
+    let mut session = Session::new();
+    session.run("create table t (a int, b int, key idx_b (b) where a > 0)").unwrap();
+    session.run("insert into t values (1, 10), (-1, 20), (null, 30)").unwrap();
+    set_fast_check(&mut session, true);
+    session.run("admin check table t").unwrap();
+    session.run("admin check index t idx_b").unwrap();
+    set_fast_check(&mut session, false);
+    for sql in ["admin check table t", "admin check index t idx_b"] {
+        assert_eq!(
+            error_of(&mut session, sql),
+            (8273, "Validation of partial indexes requires tidb_enable_fast_table_check=ON".to_owned())
+        );
+    }
+}
+
+/// Go `admin_test.go` `TestFastCheckTableConcurrent`: five sessions check a
+/// 100-row table at once, and every check passes.
+#[test]
+fn admin_check_table_runs_concurrently_like_go() {
+    let mut session = Session::new();
+    session
+        .run("create table t_concurrent (id int primary key, val int, key idx_val(val))")
+        .unwrap();
+    let values = (0..100).map(|i| format!("({i}, {})", i * 10)).collect::<Vec<_>>().join(", ");
+    session.run(&format!("insert into t_concurrent values {values}")).unwrap();
+    let workers: Vec<_> = (0..5)
+        .map(|_| {
+            let mut peer = Session::with_catalog(session.shared_catalog());
+            std::thread::spawn(move || peer.run("admin check table t_concurrent").map(|_| ()).map_err(|error| format!("{error:?}")))
+        })
+        .collect();
+    for worker in workers {
+        worker.join().expect("check thread joins").expect("check passes");
+    }
+}
+
+/// Go `executor_test.go` `TestCheckIndex`: `ADMIN CHECK INDEX` over a unique
+/// index whose entries and records are corrupted step by step, each step
+/// answering Go's message (the fast check, the default).
+#[test]
+fn admin_check_index_reports_each_corruption_like_go() {
+    let mut session = Session::new();
+    session
+        .run("create table t (pk int primary key, c int default 1, c1 int default 1, unique key c(c))")
+        .unwrap();
+    session.run("admin check index t c").unwrap();
+    session.run("admin check index t C").unwrap();
+    session.run("insert into t values (1, 10, 11), (2, 20, 21), (3, 30, 31), (4, 40, 41)").unwrap();
+    assert_eq!(
+        error_of(&mut session, "admin check index t idx_inexistent"),
+        (1105, "secondary index idx_inexistent does not exist".to_owned())
+    );
+
+    let mut store = session.transaction_store().expect("a node session has a store");
+    let (table_id, entries) = session
+        .with_committed_catalog_mut(|catalog| {
+            let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t") else {
+                panic!("t is not stored as bytes");
+            };
+            let table = std::sync::Arc::make_mut(table);
+            let index = table
+                .index_list_for_check()
+                .into_iter()
+                .find(|index| index.read().name.original().eq_ignore_ascii_case("c"))
+                .expect("index c");
+            let id = index.read().id;
+            Ok((table.table_id(), table.index_entries_for_check(&mut *store, id).expect("entries")))
+        })
+        .unwrap();
+    let entry = |handle: i64| {
+        entries
+            .iter()
+            .find(|(_, entry_handle)| *entry_handle == tidb_table::tables::TableHandle::Int(handle))
+            .map(|(key, _)| key.clone())
+            .expect("entry for handle")
+    };
+    let record = |handle: i64| {
+        tidb_tablecodec::table_key::encode_row_key_with_handle(
+            table_id,
+            &tidb_tablecodec::table_key::RecordHandle::Int(handle),
+        )
+    };
+    let entry_4 = entry(4);
+    let entry_4_value = session.get_store_key_for_test(&entry_4).unwrap().expect("entry 4");
+
+    // index (1, 10), (2, 20), (3, 30); table (1, 10), (2, 20), (4, 40).
+    session.delete_store_key_for_test(&record(3)).unwrap();
+    session.delete_store_key_for_test(&entry_4).unwrap();
+    assert_eq!(
+        error_of(&mut session, "admin check index t c"),
+        (
+            8223,
+            "data inconsistency in table: t, index: c, handle: 3, \
+             index-values:\"handle: 3, values: [KindInt64 30]\" != record-values:\"\""
+                .to_owned()
+        )
+    );
+
+    // index (1, 10), (2, 20), (3, 30), (4, 40); table (1, 10), (2, 20), (4, 40).
+    session.put_store_key_for_test(&entry_4, &entry_4_value).unwrap();
+    assert_eq!(
+        error_of(&mut session, "admin check index t c"),
+        (
+            8223,
+            "data inconsistency in table: t, index: c, handle: 3, \
+             index-values:\"handle: 3, values: [KindInt64 30]\" != record-values:\"\""
+                .to_owned()
+        )
+    );
+
+    // index (1, 10), (4, 40); table (1, 10), (2, 20), (4, 40).
+    session.delete_store_key_for_test(&entry(3)).unwrap();
+    session.delete_store_key_for_test(&entry(2)).unwrap();
+    assert_eq!(
+        error_of(&mut session, "admin check index t c"),
+        (
+            8223,
+            "data inconsistency in table: t, index: c, handle: 2, \
+             index-values:\"\" != record-values:\"handle: 2, values: [KindInt64 20]\""
+                .to_owned()
+        )
+    );
+}
+
+/// DELETE and UPDATE maintain a prefix index's cut entries, so both checks
+/// pass after each write (captured: every `admin check table` passes on
+/// TiDB), and a multi-byte charset cuts by characters.
+#[test]
+fn prefix_index_writes_stay_admin_check_clean() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a VARCHAR(20), b INT, KEY idx (a(3)))").unwrap();
+    session.run("INSERT INTO t VALUES ('abcdef', 1), ('abcxyz', 2), ('zzz', 3)").unwrap();
+    let check = |session: &mut Session| {
+        for fast in [true, false] {
+            set_fast_check(session, fast);
+            session.run("admin check table t").unwrap();
+        }
+    };
+    check(&mut session);
+    session.run("DELETE FROM t WHERE a = 'abcdef'").unwrap();
+    check(&mut session);
+    session.run("UPDATE t SET a = 'abcqqq' WHERE b = 2").unwrap();
+    check(&mut session);
+    assert_eq!(
+        query_text(&mut session, "SELECT a FROM t ORDER BY a").1,
+        vec![vec!["abcqqq"], vec!["zzz"]]
+    );
+
+    session.run("CREATE TABLE c (a VARCHAR(20), KEY idx (a(3)))").unwrap();
+    session.run("INSERT INTO c VALUES ('世界你好啊'), ('世界你不好')").unwrap();
+    assert_eq!(
+        query_text(&mut session, "select a from c where a = '世界你好啊'").1,
+        vec![vec!["世界你好啊"]]
+    );
+    for fast in [true, false] {
+        set_fast_check(&mut session, fast);
+        session.run("admin check table c").unwrap();
+    }
 }

@@ -426,21 +426,7 @@ fn construct_dag_req_assembled(
     if let Some(limit) = limit {
         executors.push(limit_to_pb(limit));
     }
-    let (encode_type, chunk_memory_layout) = match context.encode_type {
-        DistSqlEncodeType::Default => (EncodeType::TypeDefault, None),
-        DistSqlEncodeType::Chunk => {
-            let endian = match system_endian() {
-                SystemEndian::Little => Endian::LittleEndian,
-                SystemEndian::Big => Endian::BigEndian,
-            };
-            (
-                EncodeType::TypeChunk,
-                Some(ChunkMemoryLayout {
-                    endian: Some(endian as i32),
-                }),
-            )
-        }
-    };
+    let (encode_type, chunk_memory_layout) = encode_type_pb(context.encode_type);
 
     Ok(DagRequest {
         executors,
@@ -457,6 +443,26 @@ fn construct_dag_req_assembled(
         root_executor: None,
         ..Default::default()
     })
+}
+
+/// Go `distsql.SetEncodeType`'s fields: `TypeChunk` with the system's
+/// `ChunkMemoryLayout`, or `TypeDefault` without one.
+pub(crate) fn encode_type_pb(encode_type: DistSqlEncodeType) -> (EncodeType, Option<ChunkMemoryLayout>) {
+    match encode_type {
+        DistSqlEncodeType::Default => (EncodeType::TypeDefault, None),
+        DistSqlEncodeType::Chunk => {
+            let endian = match system_endian() {
+                SystemEndian::Little => Endian::LittleEndian,
+                SystemEndian::Big => Endian::BigEndian,
+            };
+            (
+                EncodeType::TypeChunk,
+                Some(ChunkMemoryLayout {
+                    endian: Some(endian as i32),
+                }),
+            )
+        }
+    }
 }
 
 fn validate_output_offsets(offsets: &[u32], width: usize) -> Result<(), DagRequestBuildError> {

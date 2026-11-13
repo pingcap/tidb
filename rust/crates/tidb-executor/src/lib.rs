@@ -200,6 +200,7 @@ pub mod index_reader;
 pub mod index_lookup;
 pub(crate) mod index_join_reader;
 mod table_sample;
+mod check_index_range;
 #[cfg(test)]
 mod tests_duplicate_entry_message_source;
 #[cfg(test)]
@@ -325,8 +326,6 @@ use tidb_datatype::SessionTimeZone;
 use tidb_mathutil::MysqlRng;
 pub use view::{resolve_view_definition, view_column_list};
 
-#[cfg(test)]
-mod tests_admin_check_admintest_source;
 #[cfg(test)]
 mod tests_analyze_suite_source;
 /// Explicit isolated spill authorities for executor tests.

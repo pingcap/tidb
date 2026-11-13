@@ -597,26 +597,100 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                     self.run_admin_check(&database, &name, Some(index), "admin check index")?;
                     return Ok(admin_check_passed());
                 }
-                let index = index.clone();
-                let ranges = handle_ranges.clone();
-                let ctx = self.statement_context(false);
-                let decode_context = crate::RowDecodeContext::for_query(&ctx);
-                let (columns, rows) = self.with_catalog_mut(|catalog| {
-                    let table =
-                        admin_check_table_mut(catalog, &database, &name, "admin check index")?;
-                    let mut store = crate::statement_store(&ctx);
-                    crate::admin_check::check_index_ranges(
-                        table,
-                        &mut *store,
-                        &index,
-                        &ranges,
-                        &decode_context,
-                    )
-                    .map_err(admin_check_error)
-                })?;
-                Ok(StmtOutput::Rows { columns, rows })
+                self.admin_check_index_range(&database, &name, index, handle_ranges)
             }
         }
+    }
+
+    /// Go `buildCheckIndexSchema` and `CheckIndexRangeExec`: the index's
+    /// own entries, read over the whole index in order, whose handle falls
+    /// in one of the ranges -- each index column under its column's type,
+    /// then `extra_handle`.
+    fn admin_check_index_range(
+        &mut self,
+        database: &str,
+        name: &str,
+        index_name: &str,
+        handle_ranges: &[tidb_ast::AdminCheckHandleRange],
+    ) -> Result<StmtOutput, DriverError> {
+        let table_info = self.with_catalog_mut(|catalog| {
+            let table = admin_check_table_mut(catalog, database, name, "admin check index")?;
+            Ok(table.meta().read().clone())
+        })?;
+        let lower = index_name.to_lowercase();
+        let cols = table_info.cols();
+        let mut columns = Vec::new();
+        let mut index_info = None;
+        for idx_info in table_info.indices.iter_deref() {
+            let idx_info = idx_info.read();
+            if idx_info.name.lowercase() != lower {
+                continue;
+            }
+            for idx_col in idx_info.columns.iter_deref() {
+                let idx_col = idx_col.read();
+                let col = usize::try_from(idx_col.offset)
+                    .ok()
+                    .and_then(|offset| cols.get(offset))
+                    .ok_or_else(|| DriverError::unsupported("an index column is not a public table column"))?;
+                columns.push((idx_col.name.original().to_owned(), col.read().field_type.clone()));
+            }
+            columns.push((
+                "extra_handle".to_owned(),
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            ));
+            index_info = Some(idx_info.clone());
+        }
+        let Some(index_info) = index_info else {
+            return Err(DriverError::Mysql(crate::MysqlError::unknown(format!("index {lower} not found"))));
+        };
+        let ctx = self.statement_context(false);
+        let store = ctx
+            .txn_store()
+            .ok_or_else(|| DriverError::unsupported("ADMIN CHECK INDEX reads through the statement's store"))?;
+        let client = store
+            .client()
+            .ok_or_else(|| DriverError::unsupported("the store has no coprocessor client"))?;
+        let start_ts = store.start_ts();
+        let schema = tidb_expr::schema::Schema::new(
+            columns
+                .iter()
+                .map(|(_, field_type)| {
+                    let mut column = tidb_expr::column::Column::default();
+                    column.ret_type = Some(field_type.clone());
+                    column
+                })
+                .collect(),
+        );
+        let (init_cap, max_chunk_size) = ctx.executor_chunk_sizes();
+        let meta = tidb_executor_internal_exec::ExecutorMeta::new(schema, 0, init_cap, max_chunk_size);
+        let field_types = meta.ret_field_types().to_vec();
+        let mut exec = crate::check_index_range::CheckIndexRangeExec::new(
+            meta,
+            ctx.clone(),
+            client,
+            table_info,
+            index_info,
+            handle_ranges.to_vec(),
+            start_ts,
+        );
+        crate::Executor::open(&mut exec)?;
+        let mut rows = Vec::new();
+        let mut chunk = crate::Executor::new_chunk(&exec);
+        let drained = loop {
+            if let Err(error) = crate::Executor::next(&mut exec, &mut chunk) {
+                break Err(error);
+            }
+            if chunk.num_rows() == 0 {
+                break Ok(());
+            }
+            for i in 0..chunk.num_rows() {
+                let row = chunk.get_row(i);
+                rows.push(field_types.iter().enumerate().map(|(col, tp)| row.get_datum(col, tp)).collect());
+            }
+        };
+        crate::Executor::close(&mut exec)?;
+        drained?;
+        Ok(StmtOutput::Rows { columns, rows })
     }
 
     /// Go `RecoverIndexExec`: `ADDED_COUNT` and `SCAN_COUNT` for the rows

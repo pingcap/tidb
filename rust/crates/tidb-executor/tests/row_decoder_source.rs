@@ -21,7 +21,6 @@ use tidb_datatype::{
     CoreTime, Datum, Decimal, FieldType, FieldTypeCode, FieldTypeFlags, MySqlDuration,
     SessionTimeZone, Time, TimeType,
 };
-use tidb_executor::admin_check::check_table;
 use tidb_executor::analyze::{kv::analyze_kv_table, AnalyzeOptions};
 use tidb_sessionctx::StmtContext;
 use tidb_table::tables::TableHandle;
@@ -788,14 +787,6 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
         )
         .unwrap();
     assert_eq!(handles, std::slice::from_ref(&handle));
-    assert_eq!(
-        {
-            let mut store = store.clone_box();
-            check_table(&mut table, &mut *store, None, &RowDecodeContext::for_query(&statement), true)
-                .unwrap()
-        },
-        1
-    );
 
     // ANALYZE reads the statement's store (Go `sctx.Txn()`).
     let analyze_statement = StmtContext::for_query()
