@@ -41,7 +41,9 @@ func FastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *physicalop
 	dst.TblInfo = src.TblInfo
 	dst.IndexInfo = src.IndexInfo
 	dst.PartitionIdx = nil // partition prune will be triggered during execution phase
-	dst.Handle = nil       // handle will be set during rebuild phase
+	// Handle is an immutable IntHandle, or nil for index lookups. Literal fast
+	// plans have no rebuild input; parameterized handles are replaced during rebuild.
+	dst.Handle = src.Handle
 	if src.HandleConstant == nil {
 		dst.HandleConstant = nil
 	} else {
@@ -53,12 +55,21 @@ func FastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *physicalop
 	}
 	dst.HandleFieldType = src.HandleFieldType
 	dst.HandleColOffset = src.HandleColOffset
-	if len(dst.IndexValues) < len(src.IndexValues) { // actually set during rebuild phase
+	if len(dst.IndexValues) < len(src.IndexValues) {
 		dst.IndexValues = make([]types.Datum, len(src.IndexValues))
 	} else {
 		dst.IndexValues = dst.IndexValues[:len(src.IndexValues)]
 	}
 	dst.IndexConstants = utilfuncp.CloneConstantsForPlanCache(src.IndexConstants, dst.IndexConstants)
+	// Plans from the point get fast path have no AccessConditions, so rebuild only refreshes
+	// the values that have a parameter in IndexConstants. Literal values have to be copied
+	// from the cached plan. Deep copy them so that the clone does not share memory with a
+	// plan that other sessions are reading.
+	for i := range src.IndexValues {
+		if i >= len(src.IndexConstants) || src.IndexConstants[i] == nil {
+			src.IndexValues[i].Copy(&dst.IndexValues[i])
+		}
+	}
 	dst.ColsFieldType = src.ColsFieldType
 	dst.IdxCols = utilfuncp.CloneColumnsForPlanCache(src.IdxCols, dst.IdxCols)
 	dst.IdxColLens = src.IdxColLens
