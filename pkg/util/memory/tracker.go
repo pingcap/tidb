@@ -472,6 +472,10 @@ func (t *Tracker) consume(bs int64, enforce bool) {
 			if consumed > maxNow && !tracker.maxConsumed.CompareAndSwap(maxNow, consumed) {
 				continue
 			}
+			if tracker.label == LabelForGlobalAnalyzeMemory {
+				// `LabelForGlobalAnalyzeMemory` represents in-use memory, which should never be negative.
+				intest.Assert(consumed >= 0, fmt.Sprintf("global analyze memory usage negative: %d", consumed))
+			}
 			if label, ok := MetricsTypes[tracker.label]; ok {
 				metrics.MemoryUsage.WithLabelValues(label[0], label[1]).Set(float64(consumed))
 			}
