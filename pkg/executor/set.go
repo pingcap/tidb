@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/temptable"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -101,7 +102,12 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			if value.IsNull() {
 				sessionVars.UnsetUserVar(name)
 			} else {
-				sessionVars.SetUserVarVal(name, value)
+				// Store a copy, as getVarValue does for system variables: a
+				// value from a subquery points into a chunk that the session
+				// reuses for later statements.
+				var stored types.Datum
+				value.Copy(&stored)
+				sessionVars.SetUserVarVal(name, stored)
 				sessionVars.SetUserVarType(name, v.Expr.GetType(sctx.GetExprCtx().GetEvalCtx()))
 			}
 			continue
