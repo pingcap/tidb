@@ -52,7 +52,6 @@
 //! count is exactly the row count a materializing path would have reported;
 //! with one it reports the truncation, as Go's does.
 
-use crate::KvTableReader;
 #[allow(unused_imports)]
 use crate::RowDecodeContextExt;
 use std::collections::BTreeSet;
@@ -69,8 +68,6 @@ use tidb_hack::GoCaseCompare;
 use tidb_table::tables::TableHandle;
 use tidb_table::tables::TableCommon;
 use tidb_ranger::types::Range;
-use tidb_distsql::remote_scan::PushdownStatementContext;
-use tidb_distsql::remote_scan::PushdownRowStream;
 
 /// A locking point read's lock (Go `PointGetExecutor.lock` with its
 /// `LockWaitTime`), taken inside `Next`.
@@ -598,9 +595,6 @@ pub struct HandleSourceExec {
     /// Encoded values fetched once by the first Next, then decoded only to
     /// fill the requested chunk, like Go's BatchPointGetExec.values.
     preloaded: Option<tidb_table::tables::PointReadValues>,
-    /// Set only for a table task; PointGet/BatchPointGet retain native gets.
-    table_statement: Option<PushdownStatementContext>,
-    remote_rows: Option<std::collections::VecDeque<(usize, TableHandle, Vec<Datum>)>>,
     decoder: Option<tidb_table::tables::PointRowDecoder>,
     initialized: bool,
     /// Go's `PointGetExecutor` performs one direct record-key `Get`; the
@@ -646,8 +640,6 @@ impl HandleSourceExec {
             handles,
             cursor: 0,
             preloaded: None,
-            table_statement: None,
-            remote_rows: None,
             decoder: None,
             initialized: false,
             produced: tidb_executor_internal_exec::RowCount::default(),
@@ -769,48 +761,6 @@ impl HandleSourceExec {
                 locked_before_read = true;
             }
         }
-        if let Some(statement) = &self.table_statement {
-            let keep = self.output_columns.as_ref().map_or_else(
-                || self.table.visible_offsets(),
-                |columns| {
-                    columns
-                        .iter()
-                        .filter_map(|column| match column {
-                            HandleOutputColumn::Stored(offset) => Some(*offset),
-                            _ => None,
-                        })
-                        .collect()
-                },
-            );
-            if let Some(staged) = self
-                .table
-                .build_table_reader_from_routed_handles(
-                    &mut *self.store,
-                    &self.handles,
-                    self.partition_ids.as_deref(),
-                    &keep,
-                    &[],
-                    &self.decode_context,
-                    statement,
-                    self.meta.max_chunk_size(),
-                )
-                .map_err(ExecError::from)?
-            {
-                if let Some((rows, _, _, indices)) =
-                    TableCommon::finish_routed_rows_by_handles(&self.handles, staged)
-                        .map_err(ExecError::from)?
-                {
-                    self.remote_rows = Some(
-                        indices
-                            .into_iter()
-                            .zip(rows)
-                            .map(|(index, (handle, row))| (index, handle, row))
-                            .collect(),
-                    );
-                    return Ok(());
-                }
-            }
-        }
         // Go's `BatchPointGetExec.initialize` reads every handle with ONE
         // `BatchGet` on the first `Next`. Prefetch all physical keys
         // together so the storage layer can schedule regions concurrently.
@@ -890,11 +840,9 @@ impl HandleSourceExec {
         handle: &TableHandle,
         row: &[Datum],
         stored_value: Option<&[u8]>,
-        remote: bool,
     ) -> Result<(), ExecError> {
         let visible = visible_of(&self.table, row);
         if let Some(columns) = &self.output_columns {
-            let mut remote_offset = 0;
             for (output, source) in columns.iter().copied().enumerate() {
                 match source {
                     HandleOutputColumn::Stored(source) => {
@@ -902,14 +850,7 @@ impl HandleSourceExec {
                         // generated column for an UPDATE/index key.
                         // Stored offsets address the full decoded row,
                         // not the wildcard's visible-column prefix.
-                        let offset = if remote {
-                            let position = remote_offset;
-                            remote_offset += 1;
-                            Some(position)
-                        } else {
-                            Some(source)
-                        };
-                        let value = offset.and_then(|offset| row.get(offset)).ok_or_else(|| {
+                        let value = row.get(source).ok_or_else(|| {
                             ExecError::unsupported("point-get output column is outside the row")
                         })?;
                         req.append_datum(output, value);
@@ -980,7 +921,6 @@ impl Executor for HandleSourceExec {
         self.cursor = 0;
         self.produced.set(0);
         self.preloaded = None;
-        self.remote_rows = None;
         self.decoder = None;
         self.initialized = false;
         Ok(())
@@ -992,15 +932,6 @@ impl Executor for HandleSourceExec {
             self.initialize()?;
         }
         while !req.is_full() {
-            if let Some(rows) = self.remote_rows.as_mut() {
-                let Some((index, handle, row)) = rows.pop_front() else {
-                    return Ok(());
-                };
-                self.append_handle_row(req, index, &handle, &row, None, true)?;
-                self.cursor += 1;
-                self.produced.set(self.produced.get() + 1);
-                continue;
-            }
             if self.cursor >= self.handles.len() {
                 return Ok(());
             };
@@ -1032,7 +963,6 @@ impl Executor for HandleSourceExec {
                     handle.expect("cursor indexes handles"),
                     &row,
                     Some(value),
-                    false,
                 )?;
                 self.produced.set(self.produced.get() + 1);
             }
@@ -1045,7 +975,6 @@ impl Executor for HandleSourceExec {
 
     fn close(&mut self) -> Result<(), ExecError> {
         self.preloaded = None;
-        self.remote_rows = None;
         self.decoder = None;
         self.initialized = true;
         self.cursor = self.handles.len();

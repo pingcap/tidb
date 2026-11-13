@@ -1283,7 +1283,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                             let mut render = |value: &Datum,
                                               num_columns: usize,
                                               types: &[tidb_datatype::FieldTypeCode]| {
-                                tidb_stats::histogram::value_to_string(
+                                tidb_stats::histogram::value_to_bytes(
                                     value,
                                     num_columns,
                                     Some(types),
@@ -1321,7 +1321,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                             let mut render = |value: &Datum,
                                               num_columns: usize,
                                               types: &[tidb_datatype::FieldTypeCode]| {
-                                tidb_stats::histogram::value_to_string(
+                                tidb_stats::histogram::value_to_bytes(
                                     value,
                                     num_columns,
                                     Some(types),
@@ -1413,7 +1413,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                             let mut render = |value: &Datum,
                                               num_columns: usize,
                                               types: &[tidb_datatype::FieldTypeCode]| {
-                                tidb_stats::histogram::value_to_string(
+                                tidb_stats::histogram::value_to_bytes(
                                     value,
                                     num_columns,
                                     Some(types),
@@ -1450,7 +1450,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                             let mut render = |value: &Datum,
                                               num_columns: usize,
                                               types: &[tidb_datatype::FieldTypeCode]| {
-                                tidb_stats::histogram::value_to_string(
+                                tidb_stats::histogram::value_to_bytes(
                                     value,
                                     num_columns,
                                     Some(types),

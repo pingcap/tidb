@@ -38,7 +38,7 @@ mod json_envelope;
 mod stringify;
 
 pub use stringify::{
-    datums_to_string, datums_to_str_no_err, datums_to_str_no_err_smart, is_printable,
+    datums_to_bytes, datums_to_string, datums_to_str_no_err, datums_to_str_no_err_smart, is_printable,
     unwrap_from_single_quotes, wrap_in_single_quotes,
 };
 

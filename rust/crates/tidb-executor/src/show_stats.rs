@@ -394,7 +394,7 @@ pub fn histogram_row<TZ: chrono::TimeZone>(
 /// boundary: Go `pkg/statistics/histogram.go` `ValueToString`, which needs the
 /// session's time zone and `tablecodec.DecodeValuesBytesToStrings`.
 pub type ValueRenderer<'a, E> =
-    &'a mut dyn FnMut(&Datum, usize, &[FieldTypeCode]) -> Result<String, E>;
+    &'a mut dyn FnMut(&Datum, usize, &[FieldTypeCode]) -> Result<Vec<u8>, E>;
 
 /// Go `bucketsToRows` (:437): the `SHOW STATS_BUCKETS` rows for one histogram.
 ///
@@ -433,8 +433,8 @@ pub fn buckets_to_rows<E>(
             Datum::Int(position as i64),
             Datum::Int(bucket.count),
             Datum::Int(bucket.repeat),
-            Datum::new_string_datum(lower.into_bytes()),
-            Datum::new_string_datum(upper.into_bytes()),
+            Datum::new_string_datum(lower),
+            Datum::new_string_datum(upper),
             Datum::Int(bucket.ndv),
         ]);
     }
@@ -480,7 +480,7 @@ pub fn topn_to_rows<E>(
             Datum::new_string_datum(partition.as_str().as_bytes().to_vec()),
             Datum::new_string_datum(column_name.as_bytes().to_vec()),
             Datum::Int(i64::from(is_index)),
-            Datum::new_string_datum(rendered.into_bytes()),
+            Datum::new_string_datum(rendered),
             Datum::Int(entry.count as i64),
         ]);
     }
@@ -824,7 +824,7 @@ mod tests {
             ..Histogram::default()
         };
         let mut render = |value: &Datum, _: usize, _: &[FieldTypeCode]| {
-            Ok::<_, std::convert::Infallible>(format!("{value:?}"))
+            Ok::<_, std::convert::Infallible>(format!("{value:?}").into_bytes())
         };
         let rows = buckets_to_rows(
             "d",
@@ -866,7 +866,7 @@ mod tests {
     #[test]
     fn topn_rows_are_absent_rather_than_empty_without_a_topn() {
         let mut render = |_: &Datum, _: usize, _: &[FieldTypeCode]| {
-            Ok::<_, std::convert::Infallible>("v".to_owned())
+            Ok::<_, std::convert::Infallible>(b"v".to_vec())
         };
         let rows = topn_to_rows(
             "d",

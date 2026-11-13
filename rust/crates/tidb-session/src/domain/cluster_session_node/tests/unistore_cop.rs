@@ -49,6 +49,7 @@ mod tiflash_partition;
 mod table_mode;
 mod repair_table;
 mod masking_policy;
+mod analyzetest;
 mod ddl_analyze;
 mod dxf_framework;
 mod dxf_integrationtests;

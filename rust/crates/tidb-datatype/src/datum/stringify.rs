@@ -205,62 +205,73 @@ impl Datum {
     }
 }
 
-/// Source `DatumsToString`.
-pub fn datums_to_string(
+/// Source `DatumsToString`, byte-authoritative: a Go string holds any
+/// bytes, so a string datum's bytes pass through unchanged.
+pub fn datums_to_bytes(
     datums: &[Datum],
     handle_special_values: bool,
     binary_as_hex: bool,
-) -> Result<String, DatumStringError> {
-    use fmt::Write;
-
-    let mut output = String::new();
+) -> Result<Vec<u8>, DatumStringError> {
+    const LOG_DATUM_LEN: usize = 2048;
+    let mut output = Vec::with_capacity(8 * datums.len());
     if datums.len() > 1 {
-        output.push('(');
+        output.push(b'(');
     }
     for (index, datum) in datums.iter().enumerate() {
         if index != 0 {
-            output.push_str(", ");
+            output.extend_from_slice(b", ");
         }
         if handle_special_values {
             match datum {
                 Datum::Null => {
-                    output.push_str("NULL");
+                    output.extend_from_slice(b"NULL");
                     continue;
                 }
                 Datum::MinNotNull => {
-                    output.push_str("-inf");
+                    output.extend_from_slice(b"-inf");
                     continue;
                 }
                 Datum::MaxValue => {
-                    output.push_str("+inf");
+                    output.extend_from_slice(b"+inf");
                     continue;
                 }
                 _ => {}
             }
         }
-        let mut text = datum.sql_string()?;
-        let original_length = (text.len() > 2048).then_some(text.len());
+        let mut text = datum.sql_bytes()?;
+        let original_length = (text.len() > LOG_DATUM_LEN).then_some(text.len());
         if original_length.is_some() {
-            text.truncate(2048);
+            text.truncate(LOG_DATUM_LEN);
         }
         if matches!(datum, Datum::String(_)) {
-            if binary_as_hex && !is_printable(text.as_bytes()) {
-                write!(output, "0x{}", encode_hex(text.as_bytes()))
-                    .expect("writing to String cannot fail");
+            if !binary_as_hex || is_printable(&text) {
+                output.push(b'"');
+                output.extend_from_slice(&text);
+                output.push(b'"');
             } else {
-                write!(output, "\"{text}\"").expect("writing to String cannot fail");
+                output.extend_from_slice(format!("0x{}", encode_hex(&text)).as_bytes());
             }
         } else {
-            output.push_str(&text);
+            output.extend_from_slice(&text);
         }
         if let Some(length) = original_length {
-            write!(output, " len({length})").expect("writing to String cannot fail");
+            output.extend_from_slice(format!(" len({length})").as_bytes());
         }
     }
     if datums.len() > 1 {
-        output.push(')');
+        output.push(b')');
     }
     Ok(output)
+}
+
+/// UTF-8 convenience projection of [`datums_to_bytes`]. Invalid source
+/// bytes return an error rather than being silently replaced.
+pub fn datums_to_string(
+    datums: &[Datum],
+    handle_special_values: bool,
+    binary_as_hex: bool,
+) -> Result<String, DatumStringError> {
+    decode_bytes(&datums_to_bytes(datums, handle_special_values, binary_as_hex)?)
 }
 
 /// Source `DatumsToStrNoErr`.

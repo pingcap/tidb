@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `ANALYZE TABLE` over the IN-PROCESS catalog: a [`TableCommon`]'s own rows in,
+//! Test fixture: `ANALYZE TABLE` over the IN-PROCESS catalog: a [`TableCommon`]'s own rows in,
 //! the [`Table`] the planner reads out.
 //!
 //! Everything that decides a NUMBER is [`super`]'s, shared with the cluster
@@ -181,71 +181,6 @@ fn analyzed_table(
     statistics
 }
 
-/// Runs Go's independent stats-v2 task for one special global index.
-///
-/// The encoded index columns are consumed directly and in key order. This is
-/// essential for prefix and virtual-generated indexes: reconstructing their
-/// keys from a table-row sample is not the same operation.
-pub fn analyze_kv_table_independent_index(
-    table: &mut TableCommon,
-    index_id: i64,
-    options: &AnalyzeOptions,
-    ctx: &crate::StmtContext,
-) -> Result<Table, AnalyzeError> {
-    let index = table
-        .indexes()
-        .iter()
-        .find(|index| index.read().id == index_id)
-        .cloned()
-        .ok_or_else(|| AnalyzeError::Unsupported(format!("no such index id {index_id}")))?;
-    if !is_special_global_index(table, &index) {
-        return Err(AnalyzeError::Unsupported(format!(
-            "index `{}` is not a special global index",
-            index.read().name
-        )));
-    }
-    let bucket_count = usize::try_from(options.num_buckets)
-        .map_err(|_| AnalyzeError::Unsupported("invalid ANALYZE bucket count".to_owned()))?;
-    let topn_count = usize::try_from(options.num_topn)
-        .map_err(|_| AnalyzeError::Unsupported("invalid ANALYZE TopN count".to_owned()))?;
-    let mut processor = tidb_stats::IndependentIndexAnalyze::new(
-        index.read().id,
-        index.column_offsets.len(),
-        bucket_count,
-        topn_count,
-    );
-    for entry in table
-        .index_entry_records_for_check(&mut *crate::statement_store(ctx), index.read().id)
-        .map_err(AnalyzeError::from)?
-    {
-        let (encoded_columns, _) =
-            tidb_tablecodec::cut_index_key(&entry.key, index.column_offsets.len())
-                .map_err(|error| AnalyzeError::Unsupported(error.to_string()))?;
-        processor
-            .push(&encoded_columns)
-            .map_err(|error| AnalyzeError::Unsupported(error.to_string()))?;
-    }
-    let built = processor
-        .finish()
-        .map_err(|error| AnalyzeError::Unsupported(error.to_string()))?;
-    let info = table.meta().read().find_index_by_id(index.read().id);
-    let mut indexes = BTreeMap::new();
-    indexes.insert(
-        index.read().id,
-        tidb_stats::index::Index {
-            histogram: built.histogram,
-            top_n: Some(built.topn),
-            cmsketch: None,
-            fm_sketch: Some(built.fm_sketch),
-            stats_version: 2,
-            info,
-            physical_id: table.table_id(),
-            ..Default::default()
-        },
-    );
-    Ok(analyzed_table(table, 0, BTreeMap::new(), indexes))
-}
-
 /// The current wall clock as a Go TSO: milliseconds since the epoch shifted
 /// into the physical half (Go `oracle.GetTimeFromTS` reads those same bits
 /// back), with the 18-bit logical counter left zero.
@@ -403,12 +338,6 @@ fn kv_analyze_plan(
 #[must_use]
 pub fn unique_by_schema(table: &TableCommon, is_index: bool, id: i64) -> bool {
     schema_unique_item(table, is_index, id, false)
-}
-
-/// Applies Go globalstats `isLocalUnique` to the same catalog representation.
-#[must_use]
-pub fn is_local_unique(table: &TableCommon, is_index: bool, id: i64) -> bool {
-    schema_unique_item(table, is_index, id, true)
 }
 
 fn schema_unique_item(table: &TableCommon, is_index: bool, id: i64, local_only: bool) -> bool {

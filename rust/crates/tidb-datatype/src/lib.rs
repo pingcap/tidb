@@ -136,7 +136,7 @@ pub use core_time::{
     CoreTime, DateAddError, TimeConversionError, TimeDifference, TimestampInterval, Weekday,
 };
 pub use datum::{
-    clone_row, datums_contain_null, datums_to_string, datums_to_str_no_err,
+    clone_row, datums_contain_null, datums_to_bytes, datums_to_string, datums_to_str_no_err,
     datums_to_str_no_err_smart, estimated_mem_usage, is_printable, sort_datums,
     unwrap_from_single_quotes, wrap_in_single_quotes, Datum, DatumKind, DatumStringError,
     DatumValueError, StringDatum, EMPTY_DATUM_SIZE,

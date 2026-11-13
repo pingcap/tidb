@@ -26,7 +26,7 @@
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_charset::Collation;
 use tidb_stats::histogram::{
-    deep_slice, merge_histograms, merge_partition_histograms, value_to_string, Bucket, Histogram,
+    deep_slice, merge_histograms, merge_partition_histograms, value_to_bytes, Bucket, Histogram,
     HistogramMergeError, OutOfRangeContext, PartitionMergeOptions, TopNMergeEntry,
 };
 use tidb_stats::row_estimate::default_row_est;
@@ -48,9 +48,9 @@ fn value_to_string_preserves_an_invalid_key_suffix() {
         .expect("valid key prefix");
     encoded.push(tidb_codec::VECTOR_FLOAT32_FLAG);
 
-    let actual = value_to_string(&Datum::new_bytes_datum(encoded), 3, None, None)
+    let actual = value_to_bytes(&Datum::new_bytes_datum(encoded), 3, None, None)
         .expect("invalid codec suffix is rendered as bytes");
-    assert_eq!(actual, "(1, 0.5, \x14)");
+    assert_eq!(actual, b"(1, 0.5, \x14)");
 }
 
 fn assert_close(actual: f64, expected: f64, label: &str) {

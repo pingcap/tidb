@@ -327,8 +327,6 @@ use tidb_datatype::SessionTimeZone;
 use tidb_mathutil::MysqlRng;
 pub use view::{resolve_view_definition, view_column_list};
 
-#[cfg(test)]
-mod tests_analyze_suite_source;
 /// Explicit isolated spill authorities for executor tests.
 #[cfg(test)]
 mod tests_executor_internal_source;

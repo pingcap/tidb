@@ -17,20 +17,11 @@
 //! one ends up with.
 //!
 //! Everything here is independent of where the rows came from and of where
-//! the result is stored. That separation is the point: this engine has two
-//! tiers that both run `ANALYZE`, and a table analyzed by one must estimate
-//! identically to the same table analyzed by the other.
-//!
-//! * The cluster tier (`crate::cluster_analyze`) scans a table's record
-//!   range through a transaction's snapshot and writes `mysql.stats_*` rows a
-//!   Go TiDB reads back.
-//! * The in-process tier ([`kv::analyze_kv_table`]), which only tests still
-//!   drive, scans a [`crate::kv_table::TableCommon`]'s own rows and returns
-//!   the result to its caller.
-//!
-//! Both drive the SAME [`AnalyzePlan`] and the SAME [`AnalyzeRun`], so
-//! neither can drift into estimating differently from the other. The Go
-//! source of truth is `pkg/executor/analyze_col_sampling.go` (the sampling) and
+//! the result is stored: the cluster analyzer (`crate::cluster_analyze`)
+//! scans a table's record range through a transaction's snapshot, drives the
+//! [`AnalyzePlan`] and [`AnalyzeRun`] here, and writes the `mysql.stats_*`
+//! rows a Go TiDB reads back. The Go source of truth is
+//! `pkg/executor/analyze_col_sampling.go` (the sampling) and
 //! `pkg/statistics/builder.go` (the histogram), reached through
 //! [`tidb_stats::row_sample_collector`] and [`tidb_stats::builder`].
 //!
@@ -50,7 +41,11 @@
 //! that are visibly labelled `stats:pseudo`.
 
 pub mod exec;
-pub mod kv;
+/// The in-process analyzer: a test fixture that builds statistics from a
+/// table's own rows for the driver tests over an in-process catalog. Every
+/// statement's ANALYZE is the cluster analyzer's.
+#[cfg(test)]
+pub(crate) mod kv;
 pub mod panic_recovery;
 
 use tidb_datatype::CollationCollator;

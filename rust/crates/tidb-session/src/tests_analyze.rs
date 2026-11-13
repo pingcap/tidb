@@ -11,7 +11,6 @@
 //! `stats:pseudo` disappearing.
 
 use tidb_stats_handle::catalog_statistics::CatalogStatistics;
-use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::tests_support::*;
 use crate::*;
 use tidb_infoschema::TableEntry;
@@ -1283,10 +1282,13 @@ fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
                 .run("INSERT INTO nation VALUES (1,'JAPAN'),(2,'INDIA')")
                 .unwrap();
 
-            let ctx = session.statement_context(false);
-            // The sampled distributions are read from the committed rows
-            // (`with_catalog_mut` binds a snapshot), scaled, and installed
-            // in the node's statistics cache as Go's tests install theirs.
+            // Every row is sampled and no TopN is kept, so each distribution
+            // is all buckets; they are scaled and installed in the node's
+            // statistics cache as Go's tests install theirs.
+            session
+                .run("ANALYZE TABLE customer, orders, supplier, lineitem, nation WITH 0 TOPN, 1 SAMPLERATE")
+                .unwrap();
+            let stats_handle = session.stats_handle();
             let mut published = Vec::new();
             session
                 .with_committed_catalog_mut(|catalog| {
@@ -1350,18 +1352,10 @@ fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
                             (index.read().id, columns)
                         })
                         .collect::<Vec<_>>();
-                    let mut options = tidb_executor::analyze::AnalyzeOptions::default();
-                    options.num_topn = 0;
-                    // This fixture scales every sampled bucket into a fixed
-                    // distribution; do not randomly omit its seed rows.
-                    options.sample_rate = Some(1.0);
-                    let statistics = tidb_executor::analyze::kv::analyze_kv_table(
-                        std::sync::Arc::make_mut(table),
-                        &options,
-                        None,
-                        &ctx,
-                    )
-                    .unwrap();
+                    let statistics = catalog
+                        .table_statistics_in(&stats_handle, table_id)
+                        .expect("ANALYZE published the table's statistics")
+                        .copy_as(tidb_stats::table::CopyIntent::AllDataWritable);
                     (table_id, column_ndvs, indexes, statistics)
                 };
 

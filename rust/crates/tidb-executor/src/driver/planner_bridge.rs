@@ -1976,7 +1976,13 @@ fn dynamic_prune_fallback<'a>(
             tidb_fixcontrol::FIX_44262,
             ctx.skip_missing_partition_stats(),
         );
-        if global_stats_ready || allow_dynamic_without_stats {
+        let mut use_partition_processor = !global_stats_ready && !allow_dynamic_without_stats;
+        tidb_failpoint::inject("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", |val| {
+            if val.bool() {
+                use_partition_processor = false;
+            }
+        });
+        if !use_partition_processor {
             return false;
         }
         ctx.disable_dynamic_prune();

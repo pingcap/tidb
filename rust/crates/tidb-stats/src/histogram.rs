@@ -25,7 +25,7 @@
 use std::{borrow::Cow, cmp::Ordering, fmt};
 
 use tidb_chunk::column::VAR_ELEM_LEN;
-use tidb_datatype::{datums_to_string, Datum, DatumStringError, DatumValueError, FieldType, FieldTypeCode, SessionTimeZone};
+use tidb_datatype::{datums_to_bytes, Datum, DatumStringError, DatumValueError, FieldType, FieldTypeCode, SessionTimeZone};
 use tidb_charset::Collation;
 
 pub use crate::histogram_allocation::HistogramAllocation;
@@ -149,19 +149,20 @@ pub fn common_prefix_length(a: &[u8], b: &[u8]) -> usize {
     common_prefix_length_all(&[a, b])
 }
 
-/// Converts a possible encoded index value to Go's diagnostic string.
+/// Go `ValueToString`: a possible encoded index value as Go's diagnostic
+/// string, whose bytes (a collation sort key, say) are kept as they are.
 ///
 /// When decoding stops at malformed input, Go deliberately ignores that
 /// error, preserves the decoded prefix, and renders the undecoded suffix as
 /// one byte datum. `idx_cols == 0` is the ordinary `Datum.ToString` path.
-pub fn value_to_string(
+pub fn value_to_bytes(
     value: &Datum,
     idx_cols: usize,
     idx_column_types: Option<&[FieldTypeCode]>,
     timezone: Option<&SessionTimeZone>,
-) -> Result<String, DatumStringError> {
+) -> Result<Vec<u8>, DatumStringError> {
     if idx_cols == 0 {
-        return value.sql_string();
+        return value.sql_bytes();
     }
     let (mut decoded_values, remainder) =
         match tidb_codec::decode_range(value.go_bytes(), idx_cols, idx_column_types, timezone) {
@@ -171,7 +172,7 @@ pub fn value_to_string(
     if !remainder.is_empty() {
         decoded_values.push(Datum::new_bytes_datum(remainder));
     }
-    datums_to_string(&decoded_values, true, false)
+    datums_to_bytes(&decoded_values, true, false)
 }
 
 fn datum_bytes(value: &Datum) -> &[u8] {
