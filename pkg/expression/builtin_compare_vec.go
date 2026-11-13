@@ -435,7 +435,7 @@ func (b *builtinIntervalIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 			i64s[i] = -1
 			continue
 		}
-		if b.hasNullable {
+		if b.useLinearSearch {
 			idx, err = b.linearSearch(ctx, v, mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()), b.args[1:], input.GetRow(i))
 		} else {
 			idx, err = b.binSearch(ctx, v, mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()), b.args[1:], input.GetRow(i))
@@ -472,7 +472,7 @@ func (b *builtinIntervalRealSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 			res[i] = -1
 			continue
 		}
-		if b.hasNullable {
+		if b.useLinearSearch {
 			idx, err = b.linearSearch(ctx, f64s[i], b.args[1:], input.GetRow(i))
 		} else {
 			idx, err = b.binSearch(ctx, f64s[i], b.args[1:], input.GetRow(i))
