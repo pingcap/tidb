@@ -2340,3 +2340,25 @@ select
   collation(group_concat(' ', first_name, ' ', last_name, ' ', marker)) as group_concat_collation
 from t_gc;
 drop table if exists t_gc;
+
+# TestIssue11128
+drop table if exists t11128;
+create table t11128 (a int unsigned, b int unsigned, key(b));
+insert into t11128 values (0, 0), (1, 1), (100, 100), (null, null);
+explain format='brief' select * from t11128 where a > -100.1;
+explain format='brief' select * from t11128 where a >= -1e30;
+explain format='brief' select * from t11128 where -100.1 < a;
+explain format='brief' select * from t11128 where a > '-100.1';
+explain format='brief' select * from t11128 use index(b) where b > -100.1;
+explain format='brief' select * from t11128 where b < -100.1;
+select a from t11128 where a > -100.1 order by a;
+select a from t11128 where a >= -1e30 order by a;
+select a from t11128 where -100.1 < a order by a;
+select a from t11128 where a < -100.1 order by a;
+select a from t11128 where a = -100.0 order by a;
+select a from t11128 where a != -100.1 order by a;
+select a from t11128 where not (a > -100.1) order by a;
+select a from t11128 where a <=> -100.1 order by a;
+select b from t11128 use index(b) where b > -100.1 order by b;
+select a, a > -100.1, a < -100.1, a = -100.0, a != -100.1, a <=> -100.1 from t11128 order by a;
+drop table t11128;
