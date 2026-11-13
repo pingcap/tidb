@@ -187,12 +187,19 @@ type ReadRange struct {
 
 // GetReadRangeFromPropsWithEndOffsets returns both the start and the encoded end
 // of the range property enclosing each requested key. End includes KV framing.
-func GetReadRangeFromPropsWithEndOffsets(
+func GetReadRangeFromPropsWithEndOffsets(ctx context.Context, keys [][]byte, paths []string, store storeapi.Storage) ([]ReadRange, error) {
+	ranges, _, err := GetReadRangeFromPropsWithFileFormats(ctx, keys, paths, store)
+	return ranges, err
+}
+
+// GetReadRangeFromPropsWithFileFormats also reports each companion data file's
+// format. Compressed ranges use physical segment offsets rather than raw sizes.
+func GetReadRangeFromPropsWithFileFormats(
 	ctx context.Context,
 	jobKeys [][]byte,
 	paths []string,
 	exStorage storeapi.Storage,
-) (_ []ReadRange, err error) {
+) (_ []ReadRange, _ []uint8, err error) {
 	logger := logutil.Logger(ctx)
 	task := log.BeginTask(logger, "seek props offsets")
 	defer func() {
@@ -204,7 +211,7 @@ func GetReadRangeFromPropsWithEndOffsets(
 		starts[i] = kv.Key(jobKeys[i])
 	}
 	if len(starts) == 0 {
-		return []ReadRange{}, nil
+		return []ReadRange{}, nil, nil
 	}
 
 	readRangesPerKey := make([]ReadRange, len(starts))
@@ -213,6 +220,7 @@ func GetReadRangeFromPropsWithEndOffsets(
 		readRangesPerKey[i].End = make([]uint64, len(paths))
 	}
 
+	fileVersions := make([]uint8, len(paths))
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	eg.SetLimit(getReadRangeFromPropsConcurrency)
 	for i := range paths {
@@ -228,6 +236,7 @@ func GetReadRangeFromPropsWithEndOffsets(
 				_ = r.Close()
 			}()
 
+			fileVersions[i] = r.version()
 			keyIdx := 0
 			curKey := starts[keyIdx]
 
@@ -258,8 +267,18 @@ func GetReadRangeFromPropsWithEndOffsets(
 					readRangesPerKey[keyIdx].End[i] = readRangesPerKey[keyIdx-1].End[i]
 					curKey = starts[keyIdx]
 				}
+				endOffset := p.Offset + p.totalSize()
+				if fileVersions[i] == FileFormatV1 {
+					if p.CompressedSize == 0 {
+						return errors2.Errorf("v1 stat file %s has prop with zero compressedSize at offset %d", paths[i], p.Offset)
+					}
+					endOffset = p.Offset + p.CompressedSize
+					if p.Offset < FileHeaderLen || endOffset < p.Offset || endOffset > uint64(^uint64(0)>>1) {
+						return errors2.Errorf("v1 stat file %s has invalid physical segment range", paths[i])
+					}
+				}
 				readRangesPerKey[keyIdx].Start[i] = p.Offset
-				readRangesPerKey[keyIdx].End[i] = p.Offset + p.Size + p.Keys*2*LengthBytes
+				readRangesPerKey[keyIdx].End[i] = endOffset
 				p, err3 = r.NextProp()
 				if err3 == nil {
 					firstKey = kv.Key(p.FirstKey)
@@ -269,9 +288,9 @@ func GetReadRangeFromPropsWithEndOffsets(
 	}
 
 	if err = eg.Wait(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return readRangesPerKey, nil
+	return readRangesPerKey, fileVersions, nil
 }
 
 // GetAllFileNames returns files with the same non-partitioned dirs.

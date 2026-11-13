@@ -709,7 +709,7 @@ func TestReadAllDataLargeFiles(t *testing.T) {
 	output := &memKVsAndBuffers{}
 	now := time.Now()
 
-	readRanges, err := simplesst.GetReadRangeFromPropsWithEndOffsets(ctx, [][]byte{startKey, endKey}, statFiles, store)
+	readRanges, _, err := simplesst.GetReadRangeFromPropsWithFileFormats(ctx, [][]byte{startKey, endKey}, statFiles, store)
 	require.NoError(t, err)
 	err = readAllData(
 		ctx, store, dataFiles,
@@ -866,7 +866,7 @@ finishCreateFiles:
 	output := &memKVsAndBuffers{}
 	p.beforeTest()
 	now := time.Now()
-	readRanges, err := simplesst.GetReadRangeFromPropsWithEndOffsets(ctx, [][]byte{readRangeStart, readRangeEnd}, statFiles, store)
+	readRanges, _, err := simplesst.GetReadRangeFromPropsWithFileFormats(ctx, [][]byte{readRangeStart, readRangeEnd}, statFiles, store)
 	require.NoError(t, err)
 	err = readAllData(
 		ctx, store, dataFiles,

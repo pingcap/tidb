@@ -507,3 +507,35 @@ func TestGetReadRangeFromPropsWithEndOffsets(t *testing.T) {
 	require.Equal(t, []uint64{30, 20, 0}, got[0].Start)
 	require.Equal(t, []uint64{56, 46, 0}, got[0].End)
 }
+
+func TestGetReadRangeFromProps_V1ZeroCompressedSizeRejected(t *testing.T) {
+	ctx := context.Background()
+	store := objstore.NewMemStorage()
+
+	// Hand-craft a v1 stat file: file header magic + a single v1 prop
+	// whose compressedSize field is zero. A correctly-written v1 prop
+	// would always have compressedSize > 0 because the writer never
+	// emits a zero-byte zstd frame.
+	writer, err := store.Create(ctx, "/test-v1-corrupt", nil)
+	require.NoError(t, err)
+	_, err = writer.Write(ctx, fileHeaderV1Zstd)
+	require.NoError(t, err)
+	corruptProp := &RangeProperty{
+		FirstKey:       []byte("key1"),
+		LastKey:        []byte("key1"),
+		Offset:         uint64(FileHeaderLen),
+		Size:           10,
+		Keys:           1,
+		CompressedSize: 0, // corruption: v1 must have compressedSize > 0
+	}
+	_, err = writer.Write(ctx, encodeMultiPropsV1(nil, []*RangeProperty{corruptProp}))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close(ctx))
+
+	// Search key must land on or after the prop's firstKey for the
+	// validation branch to fire; a search key strictly before the prop
+	// would short-circuit via the keyIdx advance path.
+	_, _, err = GetReadRangeFromPropsWithFileFormats(ctx, [][]byte{[]byte("key1")}, []string{"/test-v1-corrupt"}, store)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "zero compressedSize")
+}

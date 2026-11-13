@@ -130,12 +130,16 @@ func MergeOverlappingFilesV2(
 		now := time.Now()
 
 		var readRanges []simplesst.ReadRange
-		readRanges, err = simplesst.GetReadRangeFromPropsWithEndOffsets(
+		var fileVersions []uint8
+		readRanges, fileVersions, err = simplesst.GetReadRangeFromPropsWithFileFormats(
 			ctx, [][]byte{curStart, curEnd}, statFilesOfGroup, store)
 		if err != nil {
 			return err
 		}
 		cachedReaders := make([]cachedReader, len(dataFilesOfGroup))
+		for i := range cachedReaders {
+			cachedReaders[i].setFormat(fileVersions[i])
+		}
 
 		err1 = readAllData(
 			ctx,

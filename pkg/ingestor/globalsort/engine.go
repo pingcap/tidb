@@ -583,11 +583,14 @@ func (e *Engine) LoadIngestData(
 	currBatchSize := int(e.workerConcurrency.Load())
 	logutil.Logger(ctx).Info("load ingest data", zap.Int("current batchSize", currBatchSize))
 
-	readRangesPerKey, err := simplesst.GetReadRangeFromPropsWithEndOffsets(ctx, e.jobKeys, e.statsFiles, e.storage)
+	readRangesPerKey, fileVersions, err := simplesst.GetReadRangeFromPropsWithFileFormats(ctx, e.jobKeys, e.statsFiles, e.storage)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	cachedReaders := make([]cachedReader, len(e.dataFiles))
+	for i := range cachedReaders {
+		cachedReaders[i].setFormat(fileVersions[i])
+	}
 	defer func() {
 		if closeErr := closeCachedReaders(cachedReaders); err == nil && closeErr != nil {
 			err = closeErr
@@ -642,7 +645,10 @@ func (e *Engine) closeDupWriterAsNeeded(ctx context.Context) error {
 	}
 	kvStore, writer := e.dupKVStore, e.dupWriter
 	e.dupKVStore, e.dupWriter = nil, nil
-	kvStore.Finish()
+	if err := kvStore.Finish(); err != nil {
+		logutil.Logger(ctx).Error("finish dup kv store failed", zap.Error(err))
+		return err
+	}
 	if err := writer.Close(ctx); err != nil {
 		logutil.Logger(ctx).Error("close dup writer failed", zap.Error(err))
 		return err
