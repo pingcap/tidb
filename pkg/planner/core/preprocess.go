@@ -173,6 +173,7 @@ const (
 	// foreign key, alter table in prepare stmt, and BR restore.
 	// TODO need a better name to clarify it's meaning
 	inCreateOrDropTable
+	inCreateView
 	// parentIsJoin is set when visiting node's parent is join.
 	parentIsJoin
 	// inRepairTable is set when visiting a repair table statement.
@@ -275,6 +276,9 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		p.stmtTp = TypeDelete
 	case *ast.SelectStmt:
 		p.stmtTp = TypeSelect
+		if p.flag&inCreateView != 0 && node.LockInfo != nil {
+			node.LockInfo.LockType = ast.SelectLockNone
+		}
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
@@ -303,7 +307,7 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		p.checkCreateTableGrammar(node)
 	case *ast.CreateViewStmt:
 		p.stmtTp = TypeCreate
-		p.flag |= inCreateOrDropTable
+		p.flag |= inCreateOrDropTable | inCreateView
 		p.checkCreateViewGrammar(node)
 		p.checkCreateViewWithSelectGrammar(node)
 	case *ast.CreateMaterializedViewStmt:
@@ -685,7 +689,7 @@ func (p *preprocessor) Leave(in ast.Node) bool {
 		p.checkAutoIncrement(x)
 		p.checkContainDotColumn(x)
 	case *ast.CreateViewStmt:
-		p.flag &= ^inCreateOrDropTable
+		p.flag &= ^(inCreateOrDropTable | inCreateView)
 	case *ast.CreateMaterializedViewStmt:
 		p.flag &= ^inCreateOrDropTable
 	case *ast.AlterMaterializedViewStmt, *ast.DropMaterializedViewStmt, *ast.RefreshMaterializedViewStmt, *ast.CompareMaterializedViewStmt, *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
