@@ -465,6 +465,7 @@ pub fn physical_optimize<C: OptimizeContext>(
     column_ids: &ColumnIdAllocator,
     ctx: &C,
     col_ref_from_update_plan: &BTreeSet<i64>,
+    used_stats_recorder: &dyn UsedStatsRecorder,
 ) -> Result<(PhysicalPlan, f64), PlanError> {
     let begin_physical_opt = ctx.take_begin_physical_opt().unwrap_or_else(Instant::now);
     let optimizer_cost_env = ctx.optimizer_cost_env();
@@ -478,6 +479,7 @@ pub fn physical_optimize<C: OptimizeContext>(
         optimizer_cost_env.session.scale_ndv_skew_ratio,
     )
     .with_mpp_store_count(&get_mpp_store_count)
+    .with_used_stats_recorder(used_stats_recorder)
     .with_estimator_options(optimizer_cost_env.session.estimator_options.clone())
     .with_group_ndv_skew_ratio(optimizer_cost_env.session.group_ndv_skew_ratio)
     .with_correlation_options(optimizer_cost_env.session.correlation_options)

@@ -113,6 +113,10 @@ pub struct DispatchContext<'a> {
     pub range_fallback_handler: Option<&'a tidb_context::RangeFallbackHandler>,
     /// Statement parameter values, warnings and coercion settings used by ranger.
     pub expression_evaluator: &'a tidb_ranger::points::ExpressionEvaluator<'a>,
+    /// Go `recordUsedItemStatsStatus`'s statement: the physical phase's
+    /// cardinality estimates record every statistics item they read, as Go's
+    /// `cardinality` calls do.
+    pub used_stats_recorder: Option<&'a dyn tidb_planner_core_operator_logicalop::plan_context::UsedStatsRecorder>,
     /// Go `SessionVars.OptOrderingIdxSelRatio`, used by the ordered LIMIT
     /// row-count adjustment for table and index scans.
     pub ordering_index_selectivity_ratio: f64,
@@ -260,6 +264,7 @@ impl<'a> DispatchContext<'a> {
             selectivity_factor: tidb_planner_core_cost::SELECTION_FACTOR,
             range_fallback_handler: None,
             expression_evaluator: &tidb_ranger::points::evaluate_static,
+            used_stats_recorder: None,
             ordering_index_selectivity_ratio: 0.01,
             index_join_max_scan_rows_ratio: 0.0,
             ordering_index_selectivity_threshold:
@@ -334,15 +339,18 @@ impl<'a> DispatchContext<'a> {
         input: Option<&tidb_planner_property::stats_info::StatsInfo>,
         filters: &[tidb_expr::expression::Expression],
     ) -> Option<tidb_planner_property::stats_info::StatsInfo> {
+        let record_used_item =
+            |item_id, is_index| source.record_used_item(self.used_stats_recorder, item_id, is_index);
         let selectivity = source
             .table_stats
             .as_ref()
             .and_then(|stats| {
-                crate::stats::analyzed_filter_selectivity_with_evaluator(
+                crate::stats::analyzed_filter_selectivity_in(
                     stats,
                     filters,
-                    &self.estimator_options,
-                    self.expression_evaluator,
+                    &self.access_path_derivation_context(),
+                    None,
+                    Some(&record_used_item),
                 )
             })
             .unwrap_or(self.selectivity_factor);
@@ -408,9 +416,19 @@ impl<'a> DispatchContext<'a> {
             range_fallback_handler: self.range_fallback_handler,
             expression_evaluator: self.expression_evaluator,
             plan_cache_marker: self.plan_cache_marker.filter(|_| self.use_plan_cache),
-            used_stats_recorder: None,
+            used_stats_recorder: self.used_stats_recorder,
             push_down_warning_sink: self.mpp_warning_sink.map(|sink| sink as _),
         }
+    }
+
+    /// Records the statistics items the physical phase's estimates read.
+    #[must_use]
+    pub fn with_used_stats_recorder(
+        mut self,
+        recorder: &'a dyn tidb_planner_core_operator_logicalop::plan_context::UsedStatsRecorder,
+    ) -> Self {
+        self.used_stats_recorder = Some(recorder);
+        self
     }
 
     /// Attach `tidb_opt_selectivity_factor`, the pseudo estimator's start.
@@ -4962,13 +4980,15 @@ fn find_best_task_4_logical_data_source_paths(
                         let count = upper_bound.map_or(count, |bound| count.min(bound));
                         if max_one_row { count.min(1.0) } else { count }
                     };
+                    let record_used_item =
+                        |item_id, is_index| ds.record_used_item(ctx.used_stats_recorder, item_id, is_index);
                     let selectivity = |filters: &[tidb_expr::expression::Expression]| {
                         if filters.is_empty() {
                             return 1.0;
                         }
                         table_stats.as_ref().and_then(|stats| {
                             crate::stats::analyzed_filter_selectivity_in(
-                                stats, filters, &ctx.access_path_derivation_context(), None, None,
+                                stats, filters, &ctx.access_path_derivation_context(), None, Some(&record_used_item),
                             )
                         }).filter(|ratio| *ratio > 0.0)
                             .unwrap_or(tidb_planner_core_cost::SELECTION_FACTOR)

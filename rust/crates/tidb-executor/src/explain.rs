@@ -104,30 +104,7 @@ fn used_stats_suffix_for_scan(
     physical_table_id: i64,
     base: &tidb_planner_core_operator_physicalop::BasePhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
-    selected_index_id: Option<i64>,
 ) -> Option<String> {
-    // A correlated IndexJoin can select its inner index after datasource
-    // candidate estimation. Go records that index when its row-count
-    // estimator runs; if this planning path did not estimate the selected
-    // lookup index, retain its status here so the physical scan still reports
-    // the statistic it actually uses.
-    if let (Some(index_id), Some(table)) = (
-        selected_index_id,
-        catalog.physical_kv_table_by_id(physical_table_id),
-    ) {
-        // Go's estimator reads the table `GetStatsTable` planned from, so a
-        // pseudo or determinate copy reports what the planner saw.
-        let statistics = crate::access_cost::get_stats_table(context, catalog, physical_table_id);
-        crate::driver::planner_bridge::record_used_item_stats_status(
-            context,
-            &table.name(),
-            physical_table_id,
-            statistics.as_deref(),
-            table.indexes().iter().any(|index| index.read().id == index_id),
-            index_id,
-            true,
-        );
-    }
     if let Some(used_stats) = context.used_stats_info(physical_table_id) {
         let (column_names, index_names) = catalog
             .physical_kv_table_by_id(physical_table_id)
@@ -1592,7 +1569,6 @@ fn physical_operator_own_info(
                 scan.physical_table_id,
                 &scan.base,
                 catalog,
-                None,
             ) {
                 parts.push(stats);
             }
@@ -1655,7 +1631,6 @@ fn physical_operator_own_info(
                 scan.physical_table_id,
                 &scan.base,
                 catalog,
-                Some(scan.index_id),
             ) {
                 parts.push(stats);
             }

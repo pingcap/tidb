@@ -1437,16 +1437,48 @@ fn planner_physical_query_with_registry(
     Ok((logical, physical, registered))
 }
 
+/// Go `recordUsedItemStatsStatus` over the statement: the statistics item
+/// an estimate of `physical_table_id` read, recorded against the table the
+/// planner reads statistics from (`GetStatsTable`).
+struct StatementUsedStats<'a> {
+    catalog: &'a SessionExtendedInfoSchema,
+    context: &'a crate::StmtContext,
+}
+
+impl tidb_planner_core_operator_logicalop::plan_context::UsedStatsRecorder for StatementUsedStats<'_> {
+    fn record_used_item(
+        &self,
+        physical_table_id: i64,
+        table_name: &str,
+        in_pseudo_table: bool,
+        item_id: i64,
+        is_index: bool,
+    ) {
+        let statistics = crate::access_cost::get_stats_table(self.context, self.catalog, physical_table_id);
+        record_used_item_stats_status(
+            self.context,
+            table_name,
+            physical_table_id,
+            statistics.as_deref(),
+            in_pseudo_table,
+            item_id,
+            is_index,
+        );
+    }
+}
+
 pub(crate) fn physical_plan_for_logical(
     logical: &LogicalPlan,
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<PhysicalPlan, tidb_planner_core_base::PlanError> {
     physical_plan_for_logical_with_update_refs(
         logical,
         plan_ids,
         column_ids,
+        catalog,
         ctx,
         &std::collections::BTreeSet::new(),
     )
@@ -1459,6 +1491,7 @@ pub(crate) fn physical_plan_for_logical_with_update_refs(
     logical: &LogicalPlan,
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     col_ref_from_update_plan: &std::collections::BTreeSet<i64>,
 ) -> Result<PhysicalPlan, tidb_planner_core_base::PlanError> {
@@ -1468,6 +1501,7 @@ pub(crate) fn physical_plan_for_logical_with_update_refs(
         column_ids,
         ctx,
         col_ref_from_update_plan,
+        &StatementUsedStats { catalog, context: ctx },
     )
     .map(|(physical, _)| physical)
 }
@@ -1623,7 +1657,7 @@ impl DriverCteOptimizer<'_> {
         ctx.phase_durations()
             .finish_stats_derive(begin_physical_opt);
         let logical = tidb_planner::optimize::prepare_possible_properties_for(ctx, optimized);
-        let physical = physical_plan_for_logical(&logical, self.plan_ids, self.column_ids, ctx)?;
+        let physical = physical_plan_for_logical(&logical, self.plan_ids, self.column_ids, self.catalog, ctx)?;
         Ok((logical, physical))
     }
 }
@@ -1950,7 +1984,7 @@ fn subquery_evaluator<'a>(
             column_ids,
             session_zone,
         )?;
-        let mut physical = physical_plan_for_logical(&logical, plan_ids, column_ids, ctx)?;
+        let mut physical = physical_plan_for_logical(&logical, plan_ids, column_ids, catalog, ctx)?;
         // Go allocates `outputColIDs` from `np.Schema()` before it runs the
         // child, so the ids precede any execution-time allocation.
         let width = subquery_output_width(
@@ -2403,6 +2437,7 @@ fn build_logical_plan_and_do_optimize(
         column_ids,
         ctx,
         &std::collections::BTreeSet::new(),
+        &StatementUsedStats { catalog, context: ctx },
     )?;
     Ok((logical, physical, cost))
 }
@@ -2452,7 +2487,7 @@ pub(crate) fn physical_show_plan(
         &column_ids,
         &ctx.session_zone(),
     )?;
-    physical_plan_for_logical(&logical, &plan_ids, &column_ids, ctx)
+    physical_plan_for_logical(&logical, &plan_ids, &column_ids, catalog, ctx)
         .map(|physical| (tidb_planner::common_plans::Plan::Physical(physical), visits))
 }
 
@@ -2560,7 +2595,7 @@ pub(crate) fn physical_admin_show_ddl_jobs_plan(
         &column_ids,
         &ctx.session_zone(),
     )?;
-    physical_plan_for_logical(&logical, &plan_ids, &column_ids, ctx)
+    physical_plan_for_logical(&logical, &plan_ids, &column_ids, catalog, ctx)
 }
 
 /// Go `PlanBuilder.Build` for a query: the logical plan before any
@@ -3253,6 +3288,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
         &logical,
         plan_ids,
         column_ids,
+        catalog,
         ctx,
         &col_ref_from_update_plan,
     )?;
@@ -3404,13 +3440,10 @@ fn optimize_built_logical(
             if !self.records_used_items.get() {
                 return;
             }
-            let statistics =
-                crate::access_cost::get_stats_table(self.context, self.catalog, physical_table_id);
-            record_used_item_stats_status(
-                self.context,
-                table_name,
+            tidb_planner_core_operator_logicalop::plan_context::UsedStatsRecorder::record_used_item(
+                &StatementUsedStats { catalog: self.catalog, context: self.context },
                 physical_table_id,
-                statistics.as_deref(),
+                table_name,
                 in_pseudo_table,
                 item_id,
                 is_index,
