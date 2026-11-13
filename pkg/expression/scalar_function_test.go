@@ -258,3 +258,20 @@ func TestForbidUnixTimestampPushdown(t *testing.T) {
 	}
 	require.False(t, scalarExprSupportedByTiKV(ctx, sf))
 }
+
+func TestForbidRealToDatePushdown(t *testing.T) {
+	ctx := mock.NewContext()
+	realColumn := &Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}
+
+	dateExpr, err := NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeDate), realColumn)
+	require.NoError(t, err)
+	dateCast := dateExpr.(*ScalarFunction)
+	require.Equal(t, tipb.ScalarFuncSig_CastRealAsTime, dateCast.Function.PbCode())
+	require.False(t, scalarExprSupportedByTiKV(ctx, dateCast))
+
+	datetimeExpr, err := NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeDatetime), realColumn)
+	require.NoError(t, err)
+	datetimeCast := datetimeExpr.(*ScalarFunction)
+	require.Equal(t, tipb.ScalarFuncSig_CastRealAsTime, datetimeCast.Function.PbCode())
+	require.True(t, scalarExprSupportedByTiKV(ctx, datetimeCast))
+}
