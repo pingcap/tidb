@@ -475,6 +475,8 @@ var planBuilderPool = sync.Pool{
 }
 
 type logicalPlanBuildCtx struct {
+	planID                   int32
+	planColumnID             int64
 	stmtCtxState             stmtctx.LogicalPlanBuildState
 	plannerSelectBlockAsName *[]ast.HintTable
 	mapScalarSubQ            []any
@@ -484,6 +486,8 @@ type logicalPlanBuildCtx struct {
 
 func saveLogicalPlanBuildCtx(sessVars *variable.SessionVars) logicalPlanBuildCtx {
 	return logicalPlanBuildCtx{
+		planID:                   sessVars.PlanID.Load(),
+		planColumnID:             sessVars.PlanColumnID.Load(),
 		stmtCtxState:             sessVars.StmtCtx.SaveLogicalPlanBuildState(),
 		plannerSelectBlockAsName: sessVars.PlannerSelectBlockAsName.Load(),
 		mapScalarSubQ:            sessVars.MapScalarSubQ,
@@ -493,6 +497,8 @@ func saveLogicalPlanBuildCtx(sessVars *variable.SessionVars) logicalPlanBuildCtx
 }
 
 func restoreLogicalPlanBuildCtx(sessVars *variable.SessionVars, logicalPlanCtx logicalPlanBuildCtx) {
+	sessVars.PlanID.Store(logicalPlanCtx.planID)
+	sessVars.PlanColumnID.Store(logicalPlanCtx.planColumnID)
 	sessVars.StmtCtx.RestoreLogicalPlanBuildState(logicalPlanCtx.stmtCtxState)
 	sessVars.PlannerSelectBlockAsName.Store(logicalPlanCtx.plannerSelectBlockAsName)
 	sessVars.MapScalarSubQ = logicalPlanCtx.mapScalarSubQ
@@ -515,6 +521,7 @@ func buildAndOptimizeLogicalPlanRound(
 	bestCost *float64,
 	bestLogicalPlanCtx *logicalPlanBuildCtx,
 	optFlagAdjust func(uint64) uint64,
+	lateMaterialization *lateMaterializationRoundState,
 ) (base.Plan, types.NameSlice, bool, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
@@ -572,7 +579,16 @@ func buildAndOptimizeLogicalPlanRound(
 	if optFlagAdjust != nil {
 		optFlag = optFlagAdjust(optFlag)
 	}
-	finalPlan, cost, err := core.DoOptimize(ctx, sctx, optFlag, logic)
+	optimizeCtx := ctx
+	var proposal *core.LateMaterializationAlternative
+	if lateMaterialization != nil {
+		proposal = lateMaterialization.candidate
+		if proposal == nil {
+			proposal = &core.LateMaterializationAlternative{}
+		}
+		optimizeCtx = core.WithLateMaterializationAlternative(ctx, proposal)
+	}
+	finalPlan, cost, err := core.DoOptimize(optimizeCtx, sctx, optFlag, logic)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -601,6 +617,10 @@ func buildAndOptimizeLogicalPlanRound(
 		*bestCost = cost
 		*bestPlan = finalPlan
 		*bestNames = names
+		if lateMaterialization != nil && lateMaterialization.candidate == nil {
+			lateMaterialization.best = proposal
+			lateMaterialization.bestRound = lateMaterialization.currentRound
+		}
 		if needRestoreLogicalPlanCtx {
 			*bestLogicalPlanCtx = saveLogicalPlanBuildCtx(sctx.GetSessionVars())
 		}
@@ -654,6 +674,15 @@ func shouldTryTiFlashOnlyRound(sessVars *variable.SessionVars) bool {
 	return shouldTryEngineRestrictedRounds(sessVars) &&
 		!sessVars.StmtCtx.AlternativeLogicalPlanMissingTiFlashPath &&
 		sessVars.IsMPPAllowed()
+}
+
+// lateMaterializationRoundState remembers the proposal belonging to the current
+// cost winner. Proposals from losing ordinary rounds never trigger extra work.
+type lateMaterializationRoundState struct {
+	candidate    *core.LateMaterializationAlternative
+	best         *core.LateMaterializationAlternative
+	currentRound alternativeRound
+	bestRound    alternativeRound
 }
 
 // alternativeRound describes one alternative logical-plan round.
@@ -771,6 +800,10 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		topsql.MockHighCPULoad(sctx.GetSessionVars().StmtCtx.OriginalSQL, sqlPrefixes, 10)
 	})
 	sessVars := sctx.GetSessionVars()
+	var lateMaterialization *lateMaterializationRoundState
+	if sessVars.EnableAlternativeLogicalPlans {
+		lateMaterialization = &lateMaterializationRoundState{}
+	}
 	var (
 		beginOpt        time.Time
 		optimizeStarted bool
@@ -828,6 +861,7 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		&bestCost,
 		&bestLogicalPlanCtx,
 		nil,
+		lateMaterialization,
 	)
 	if err != nil {
 		return nil, nil, 0, err
@@ -870,7 +904,43 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		}
 	}
 	var lastAltRoundErr error
-	for _, round := range enabledRounds {
+	lateMaterializationScheduled := false
+	for roundIndex := 0; ; roundIndex++ {
+		// Collect proposals without extra physical optimization in ordinary rounds.
+		// Only after their winner is known do we spend one additional round, using
+		// that winner's logical flags/session setup and its own baseline constraints.
+		if roundIndex == len(enabledRounds) {
+			if lateMaterializationScheduled || bestPlan == nil || lateMaterialization == nil ||
+				lateMaterialization.best == nil || !lateMaterialization.best.HasProposal() {
+				break
+			}
+			lateMaterializationScheduled = true
+			proposal, baselineRound := lateMaterialization.best, lateMaterialization.bestRound
+			enabledRounds = append(enabledRounds, alternativeRound{
+				name:       "late-materialization",
+				adjustFlag: baselineRound.adjustFlag,
+				setup: func(sv *variable.SessionVars) func() {
+					var cleanup func()
+					if baselineRound.setup != nil {
+						cleanup = baselineRound.setup(sv)
+					}
+					proposal.Enabled = true
+					lateMaterialization.candidate = proposal
+					return func() {
+						proposal.Enabled = false
+						lateMaterialization.candidate = nil
+						if cleanup != nil {
+							cleanup()
+						}
+					}
+				},
+			})
+		}
+		round := enabledRounds[roundIndex]
+		if lateMaterialization != nil {
+			lateMaterialization.currentRound = round
+		}
+
 		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
 		failpoint.Inject("failIfAlternativeLogicalPlanRoundTriggered", func(val failpoint.Value) {
 			if testRoundAndSQL, ok := val.(string); ok &&
@@ -902,6 +972,7 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 				&bestCost,
 				&bestLogicalPlanCtx,
 				round.adjustFlag,
+				lateMaterialization,
 			)
 		}()
 		if err != nil {
