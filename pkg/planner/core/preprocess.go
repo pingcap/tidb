@@ -2108,7 +2108,25 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		if curTxn.Valid() {
 			curTxn.SetOption(kv.TableToColumnMaps, nil)
 		}
-		return tbl, nil
+	}
+	if mvBase := tbl.Meta().MaterializedViewBase; !skipLock && !sctx.GetSessionVars().StmtCtx.IsReadOnly &&
+		tbl.Meta().State == model.StatePublic && mvBase != nil && mvBase.MLogID != 0 {
+		// Writes also depend on the implicit MLog schema. Pin it in the same
+		// transaction InfoSchema so execution and cached plans use the schema
+		// protected by MDL until the transaction ends.
+		mlogTable, ok := is.TableByID(ctx, mvBase.MLogID)
+		if !ok {
+			// The base table may have been upgraded to include a MLog that was
+			// created after this transaction's original InfoSchema.
+			mlogTable, ok = domain.GetDomain(sctx).InfoSchema().TableByID(ctx, mvBase.MLogID)
+		}
+		if !ok {
+			return nil, errors.Errorf("cannot get materialized view log table id=%d (base=%s id=%d)",
+				mvBase.MLogID, tbl.Meta().Name.O, tbl.Meta().ID)
+		}
+		if _, err = tryLockMDLAndUpdateSchemaIfNecessary(ctx, sctx, dbName, mlogTable, is); err != nil {
+			return nil, err
+		}
 	}
 	return tbl, nil
 }
