@@ -54,11 +54,9 @@
 
 #[allow(unused_imports)]
 use crate::RowDecodeContextExt;
-use std::collections::BTreeSet;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
-use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
@@ -1313,32 +1311,6 @@ pub(crate) fn calculate_lookup_batch_size_with_cap(
         }
     }
     batch_size
-}
-
-pub(crate) fn expression_column_offsets(expressions: &[Expression]) -> Vec<usize> {
-    fn collect(expression: &Expression, offsets: &mut BTreeSet<usize>) {
-        match expression {
-            Expression::Column(column) => {
-                if let Ok(offset) = usize::try_from(column.index) {
-                    offsets.insert(offset);
-                }
-            }
-            Expression::ScalarFunction(function) => {
-                for argument in &function.args {
-                    collect(argument, offsets);
-                }
-            }
-            Expression::Constant(_)
-            | Expression::CorrelatedColumn(_)
-            | Expression::ScalarSubQuery(_) => {}
-        }
-    }
-
-    let mut offsets = BTreeSet::new();
-    for expression in expressions {
-        collect(expression, &mut offsets);
-    }
-    offsets.into_iter().collect()
 }
 
 /// One object-key component of an index-join probe.

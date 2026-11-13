@@ -30,8 +30,6 @@ use tidb_executor_join::index_lookup::LookupProbeBound;
 use crate::apply::NestedLoopApplyExec;
 use tidb_executor_internal_exec::index_usage_reporter::{CopIndexUsageExec, PointCommand, PointIndexUsageExec};
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
-use tidb_executor_aggfuncs::aggfuncs::AggFunc;
-use tidb_executor_aggfuncs::aggfuncs::AggKind;
 use tidb_executor_join::executor::{HashJoinV2Executor, HashJoinV2Plan};
 use crate::index_merge_reader::{
     IndexMergeReaderExecutor, MergeByItem, PartialHandleSource,
@@ -47,9 +45,6 @@ use crate::physical_cte::{
     CteExec, CteProducer, CteTableReaderExec, SharedCteProducer, SharedCteStorage,
 };
 use crate::projection::ProjectionExec;
-use tidb_distsql::remote_scan::PushdownPartialAggregate;
-use tidb_distsql::remote_scan::PushdownAggregateKind;
-use tidb_distsql::remote_scan::PushdownAggregateFunction;
 use tidb_distsql::remote_scan::CopPlanId;
 use crate::select_lock::{SelectLockExec, SelectedRecordKey};
 use crate::selection::SelectionExec;
@@ -1449,180 +1444,6 @@ const MEMTABLE_RETRIEVER_TABLES: &[&str] = &[
 const MEMTABLE_RETRIEVER_UNCHARGED_TABLES: &[&str] =
     &["ANALYZE_STATUS", "USER_PRIVILEGES", "KEYSPACE_META"];
 
-fn aggregate_function(
-    descriptor: &AggFuncDesc,
-    child_schema: &Schema,
-    _ctx: &crate::StmtContext,
-) -> Result<AggFunc, DriverError> {
-    let upper = descriptor.base.name.to_ascii_uppercase();
-    // The planner represents COUNT(*) as a synthetic, id-less Column when
-    // the aggregate is pushed below an index reader. That slot is not a
-    // stored child column; COUNT(*) must therefore resolve with no argument,
-    // just like COUNT(1), instead of trying to bind column id 0 to the scan.
-    let count_star_synthetic = upper == "COUNT"
-        && descriptor.base.args.len() == 1
-        && child_schema.is_empty()
-        && matches!(
-            &descriptor.base.args[0],
-            Expression::Column(column) if column.id == 0 && column.orig_name.is_empty()
-        );
-    let mut args = if count_star_synthetic {
-        Vec::new()
-    } else {
-        resolve_expressions(&descriptor.base.args, child_schema)?
-    };
-    let separator = if upper == "GROUP_CONCAT" {
-        Some(super::agg_build::separator_text(args.last().ok_or_else(
-            || DriverError::unsupported("GROUP_CONCAT has no separator argument"),
-        )?)?)
-    } else {
-        None
-    };
-    if separator.is_some() {
-        args.pop();
-    }
-    let mut kind = super::agg_build::aggregate_kind(&upper, &args, separator)?;
-    // Go merges partial counts in both merging modes: a Partial2 count (a
-    // root aggregate under a pushed-down union) sums its children's counts
-    // exactly as the Final one above it does.
-    if matches!(
-        descriptor.mode,
-        AggFunctionMode::Final | AggFunctionMode::Partial2
-    ) && matches!(kind, AggKind::Count)
-    {
-        kind = AggKind::FinalCount;
-    }
-    // Go `buildApproxCountDistinct` picks the signature by mode and result
-    // type; a pushed-down Partial1 outputs its serialized sketch.
-    if let AggKind::ApproxCountDistinct(sig) = &mut kind {
-        let string_result =
-            descriptor.ret_type().eval_type() == tidb_datatype::EvalType::String;
-        *sig = tidb_executor_aggfuncs::aggfuncs::ApproxCountDistinctSig::of(descriptor.mode, string_result)
-            .ok_or_else(|| {
-                DriverError::unsupported(format!(
-                    "APPROX_COUNT_DISTINCT in {} mode",
-                    descriptor.mode.as_str()
-                ))
-            })?;
-    }
-    if upper == "APPROX_PERCENTILE" {
-        args.truncate(1);
-    }
-    let arg_orig_name = if upper == "GROUP_CONCAT" {
-        args.first()
-            .and_then(|expression| match expression {
-                Expression::Column(column) if !column.orig_name.is_empty() => {
-                    Some(column.orig_name.clone())
-                }
-                _ => None,
-            })
-            .unwrap_or_default()
-    } else {
-        String::new()
-    };
-    let arg = (!args.is_empty()).then(|| args.remove(0));
-    // Go's percentile builder ranks every input row even with DISTINCT.
-    let distinct = descriptor.has_distinct && !matches!(&kind, AggKind::ApproxPercentile(_));
-    Ok(AggFunc {
-        kind,
-        arg,
-        extra_args: args,
-        order_by: descriptor
-            .order_by_items
-            .iter()
-            .map(|item| {
-                resolve_expression(item.expr.clone(), child_schema)
-                    .map(|expression| (expression, item.desc))
-            })
-            .collect::<Result<Vec<_>, _>>()?,
-        distinct,
-        arg_orig_name,
-    })
-}
-
-/// A cop-side partial aggregation its source cannot take, run in this tier
-/// with the coprocessor's own aggregation (Go's unistore `aggExec`): the
-/// child's rows in, the partial rows a coprocessor would answer out.
-struct LocalPartialAggregationExec {
-    meta: ExecutorMeta,
-    child: Box<dyn Executor>,
-    aggregate: PushdownPartialAggregate,
-    ctx: crate::StmtContext,
-    rows: Option<std::vec::IntoIter<Vec<tidb_datatype::Datum>>>,
-}
-
-impl Executor for LocalPartialAggregationExec {
-    fn open(&mut self) -> Result<(), tidb_driver_error::ExecError> {
-        self.rows = None;
-        self.child.open()
-    }
-
-    fn next(&mut self, req: &mut Chunk) -> Result<(), tidb_driver_error::ExecError> {
-        req.reset();
-        if self.rows.is_none() {
-            let input_types = self.child.ret_field_types().to_vec();
-            let mut chunk = self.child.new_chunk();
-            let mut pending: std::collections::VecDeque<Vec<tidb_datatype::Datum>> =
-                std::collections::VecDeque::new();
-            let child = &mut self.child;
-            let rows = crate::local_partial::local_partial_rows(
-                &self.aggregate,
-                &input_types,
-                &self.ctx,
-                || {
-                    while pending.is_empty() {
-                        child.next(&mut chunk)?;
-                        if chunk.num_rows() == 0 {
-                            return Ok(None);
-                        }
-                        pending.extend(
-                            (0..chunk.num_rows())
-                                .map(|row| chunk.get_row(row).get_datum_row(&input_types)),
-                        );
-                    }
-                    Ok(pending.pop_front())
-                },
-            )?;
-            self.rows = Some(rows.into_iter());
-        }
-        let rows = self.rows.as_mut().expect("partial rows computed");
-        while req.num_rows() < self.meta.max_chunk_size() {
-            let Some(row) = rows.next() else {
-                break;
-            };
-            for (column, value) in row.iter().enumerate() {
-                req.append_datum(column, value);
-            }
-        }
-        Ok(())
-    }
-
-    fn close(&mut self) -> Result<(), tidb_driver_error::ExecError> {
-        self.rows = None;
-        self.child.close()
-    }
-
-    fn schema(&self) -> &Schema {
-        self.meta.schema()
-    }
-
-    fn ret_field_types(&self) -> &[FieldType] {
-        self.meta.ret_field_types()
-    }
-
-    fn init_cap(&self) -> usize {
-        self.meta.init_cap()
-    }
-
-    fn max_chunk_size(&self) -> usize {
-        self.meta.max_chunk_size()
-    }
-
-    fn new_chunk(&self) -> Chunk {
-        self.meta.new_chunk()
-    }
-}
-
 fn build_aggregation(
     plan: &PhysicalPlan,
     descriptors: &[AggFuncDesc],
@@ -1670,7 +1491,7 @@ fn build_agg_from_child_exec(
 ) -> Result<Box<dyn Executor>, DriverError> {
     match agg_from_child_exec(plan, descriptors, group_by, stream, &child, ctx, register)? {
         Some(executor) => Ok(executor(child)),
-        None => build_aggregation_over_child(plan, descriptors, group_by, stream, child, ctx, register),
+        None => Err(DriverError::unsupported("an aggregate function has no Go aggfuncs implementation")),
     }
 }
 
@@ -1906,53 +1727,6 @@ fn build_stream_agg_from_child_exec(
     })))
 }
 
-fn build_aggregation_over_child(
-    plan: &PhysicalPlan,
-    descriptors: &[AggFuncDesc],
-    group_by_items: &[Expression],
-    stream: bool,
-    mut child: Box<dyn Executor>,
-    ctx: &crate::StmtContext,
-    register_runtime_stats: bool,
-) -> Result<Box<dyn Executor>, DriverError> {
-    let child_schema = child.schema().clone();
-    let group_by = resolve_expressions(group_by_items, &child_schema)?;
-    let functions = descriptors
-        .iter()
-        .map(|descriptor| aggregate_function(descriptor, &child_schema, ctx))
-        .collect::<Result<Vec<_>, _>>()?;
-    let output_schema = plan_schema(plan)?;
-    if descriptors
-        .iter()
-        .all(|descriptor| descriptor.mode == AggFunctionMode::Partial1)
-    {
-        if let Some(partial) = pushed_partial_aggregation(
-            descriptors,
-            &functions,
-            ctx,
-            &group_by,
-            stream,
-            &child_schema,
-            &output_schema,
-        )? {
-            return Ok(Box::new(LocalPartialAggregationExec {
-                meta: meta(ctx, plan, output_schema),
-                child,
-                aggregate: partial,
-                ctx: ctx.clone(),
-                rows: None,
-            }));
-        }
-    }
-    // A cop-side aggregate with no pushed form, or one the coprocessor of
-    // this tier stands in for (a TiFlash fragment's), runs as Go's
-    // TiDB-tier executor does.
-    let executor = agg_from_child_exec(plan, descriptors, group_by_items, stream, &child, ctx, register_runtime_stats)?;
-    executor.map(|executor| executor(child)).ok_or_else(|| {
-        DriverError::unsupported("an aggregate function has no Go aggfuncs implementation")
-    })
-}
-
 /// Go `executorBuilder.buildWindow`: `windows.Build(sctx, v, childExec,
 /// false)` over the window plan, its expressions resolved against the
 /// child's schema (Go `PhysicalWindow.ResolveIndices`).
@@ -2010,120 +1784,6 @@ fn build_window(
         ctx.enable_pipelined_window_exec(),
     )
     .map_err(DriverError::from)
-}
-
-fn pushed_partial_aggregation(
-    descriptors: &[AggFuncDesc],
-    functions: &[AggFunc],
-    ctx: &crate::StmtContext,
-    group_by: &[Expression],
-    streamed: bool,
-    child_schema: &Schema,
-    output_schema: &Schema,
-) -> Result<Option<PushdownPartialAggregate>, DriverError> {
-    let mut pushed_functions = Vec::new();
-    let mut output = 0;
-    for (descriptor, function) in descriptors.iter().zip(functions) {
-        if function.distinct || !function.extra_args.is_empty() || !function.order_by.is_empty() {
-            return Ok(None);
-        }
-        let mut input = function.arg.clone();
-        if matches!(function.kind, AggKind::Count)
-            && input.as_ref().is_none_or(|argument| {
-                matches!(argument, Expression::Constant(constant)
-                    if matches!(constant.value, tidb_datatype::Datum::Int(1)
-                        | tidb_datatype::Datum::UInt(1)))
-            })
-        {
-            input = None;
-        }
-        if input.as_ref().is_some_and(|argument| {
-            !tidb_executor_internal_exec::predicate_pushdown::pb_condition_exists(argument, ctx)
-        }) {
-            return Ok(None);
-        }
-        let kinds: &[PushdownAggregateKind] = match function.kind {
-            AggKind::Count => &[PushdownAggregateKind::Count],
-            AggKind::Sum => &[PushdownAggregateKind::Sum],
-            AggKind::Min => &[PushdownAggregateKind::Min],
-            AggKind::Max => &[PushdownAggregateKind::Max],
-            AggKind::MinCount => &[PushdownAggregateKind::MinCount],
-            AggKind::MaxCount => &[PushdownAggregateKind::MaxCount],
-            AggKind::FirstRow => &[PushdownAggregateKind::FirstRow],
-            AggKind::Bit(tidb_executor_aggfuncs::aggfuncs::BitOp::And) => &[PushdownAggregateKind::BitAnd],
-            AggKind::Bit(tidb_executor_aggfuncs::aggfuncs::BitOp::Or) => &[PushdownAggregateKind::BitOr],
-            AggKind::Bit(tidb_executor_aggfuncs::aggfuncs::BitOp::Xor) => &[PushdownAggregateKind::BitXor],
-            AggKind::Avg => &[PushdownAggregateKind::Count, PushdownAggregateKind::Sum],
-            _ => return Ok(None),
-        };
-        // Go `BuildFinalModeAggregation`'s partial functions: each a clone
-        // of the descriptor, an AVG split into a COUNT typed by `TypeInfer`
-        // and a SUM by `TypeInfer4AvgSum(aggFunc.RetTp)`.
-        let ret_types = if matches!(function.kind, AggKind::Avg) {
-            let mut count = descriptor.base.clone();
-            count.name = "count".to_owned();
-            count.type_infer(ctx).map_err(|error| DriverError::unsupported(format!("{error:?}")))?;
-            let mut sum = descriptor.base.clone();
-            sum.name = "sum".to_owned();
-            sum.type_infer_4_avg_sum(&descriptor.base.ret_type)
-                .map_err(|error| DriverError::unsupported(format!("{error:?}")))?;
-            vec![count.ret_type, sum.ret_type]
-        } else {
-            vec![descriptor.base.ret_type.clone()]
-        };
-        for (kind, ret_type) in kinds.iter().zip(ret_types) {
-            let Some(column) = output_schema.columns.get(output) else {
-                return Err(DriverError::unsupported(
-                    "a physical partial aggregate output schema is incomplete",
-                ));
-            };
-            pushed_functions.push(PushdownAggregateFunction {
-                kind: *kind,
-                input: input.clone(),
-                output_type: column
-                    .ret_type
-                    .clone()
-                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong)),
-                ret_type,
-            });
-            output += 1;
-        }
-    }
-    // Go `Aggregation.GroupBy`: any key the coprocessor can evaluate over
-    // the scan row, a column or an expression.
-    let mut group_keys = Vec::with_capacity(group_by.len());
-    let mut group_types = Vec::with_capacity(group_by.len());
-    for expression in group_by {
-        if !tidb_executor_internal_exec::predicate_pushdown::pb_condition_exists(expression, ctx)
-            || crate::access_path::expression_column_offsets(std::slice::from_ref(expression))
-                .iter()
-                .any(|offset| *offset >= child_schema.len())
-        {
-            return Ok(None);
-        }
-        let Some(field_type) = expression.static_type().cloned() else {
-            return Ok(None);
-        };
-        group_keys.push(expression.clone());
-        group_types.push(field_type);
-    }
-    if output + group_keys.len() != output_schema.len() {
-        return Ok(None);
-    }
-    let partial = if group_keys.is_empty() {
-        PushdownPartialAggregate::Global {
-            functions: pushed_functions,
-            streamed,
-        }
-    } else {
-        PushdownPartialAggregate::Grouped {
-            group_by: group_keys,
-            group_types,
-            functions: pushed_functions,
-            streamed,
-        }
-    };
-    Ok(Some(partial))
 }
 
 fn embedded_index_scan(plan: &PhysicalPlan) -> Option<&PhysicalIndexScan> {

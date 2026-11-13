@@ -44,7 +44,6 @@ use tidb_planner::plan_builder::field_name::default_field_display_name;
 
 pub mod access;
 use tidb_planner::point_get_plan;
-mod agg_build;
 mod catalog_ctx;
 #[cfg(test)]
 mod catalog_planner_view_tests;
