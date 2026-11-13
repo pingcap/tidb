@@ -2467,8 +2467,9 @@ fn has_v0_new_collation_string_handle(ds: &tidb_planner_core_operator_logicalop:
 /// (`physical_index_scan.go:443`): a global index holds every partition's
 /// entries, so its scan keeps only the partitions the statement reads --
 /// `in(_tidb_tid, ids)` over the partition id each entry records, or the
-/// impossible id -1 when none survive. A full partition set adds nothing
-/// (no partition here is hidden by an in-flight DDL).
+/// impossible id -1 when none survive. A full partition set keeps out the
+/// partitions an in-flight TRUNCATE / DROP / ADD PARTITION hides
+/// (`not(in(_tidb_tid, IDsInDDLToIgnore))`), and adds nothing when none is.
 ///
 /// Go reaches the surviving set through `partitionpruning.PartitionPruning`,
 /// whose HASH and plain RANGE pruners `PlanID.Add(1)` before parsing the
@@ -2503,8 +2504,36 @@ pub(super) fn add_selection_condition_for_global_index(
         allocator.alloc();
     }
     let access = ds.dynamic_partition_access.as_ref()?;
+    // Go `pInfo.IDsInDDLToIgnore()`.
+    let ignored: Vec<i64> = ds
+        .table_info
+        .as_ref()
+        .and_then(|info| info.read().get_partition_info())
+        .map(|partition| partition.read().ids_in_ddl_to_ignore().snapshot())
+        .unwrap_or_default();
+    let long_long = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+    let constant = |id: i64| {
+        Expression::Constant(tidb_expr::constant::Constant::new(
+            tidb_datatype::Datum::Int(id),
+            long_long.clone(),
+        ))
+    };
     if access.all_partitions {
-        return None;
+        // Go: "Filter away partitions that may exists in Global Index, but
+        // should not be seen."
+        if ignored.is_empty() {
+            return None;
+        }
+        let mut args = vec![Expression::Column(column)];
+        args.extend(ignored.into_iter().map(constant));
+        let condition =
+            tidb_expr::new_function_internal(&tidb_exprctx::NoColumns, "in", long_long.clone(), args)?;
+        return tidb_expr::new_function_internal(
+            &tidb_exprctx::NoColumns,
+            "not",
+            long_long,
+            vec![condition],
+        );
     }
     let ids = access
         .partitions
@@ -2515,14 +2544,9 @@ pub(super) fn add_selection_condition_for_global_index(
                 .position(|candidate| tidb_mysql::lowercase_equal(candidate, name))
                 .and_then(|position| ds.partition_definition_ids().get(position).copied())
         })
+        // Go's `ignoreMap`: a partition the DDL hides is never read.
+        .filter(|id| !ignored.contains(id))
         .collect::<Vec<_>>();
-    let long_long = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-    let constant = |id: i64| {
-        Expression::Constant(tidb_expr::constant::Constant::new(
-            tidb_datatype::Datum::Int(id),
-            long_long.clone(),
-        ))
-    };
     let mut args = vec![Expression::Column(column)];
     if ids.is_empty() {
         args.push(constant(-1));
