@@ -132,6 +132,12 @@ fn query_masking_policies_from_sys_table(
     condition: &str,
     args: &[SqlArg<'_>],
 ) -> Result<Vec<MaskingPolicyInfo>, MysqlError> {
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockMissingMaskingPolicySysTable").is_some() {
+        return Err(MysqlError::from_terror(
+            &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                .gen_with_stack_by_args(&["mysql".into(), "tidb_masking_policy".into()]),
+        ));
+    }
     let rows = execute(txn, &format!("{SELECT_MASKING_POLICY_SQL}{condition}"), args)?;
     rows.iter()
         .map(|row| masking_policy_from_sys_table_row(row).map_err(MysqlError::unknown))
@@ -903,4 +909,93 @@ pub(super) fn on_drop_masking_policy(
     delete_masking_policy_from_sys_table(txn, policy.id)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::from_mysql_error(error)))?;
     finish_masking_policy_job(txn, active, SchemaState::NONE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct EmptySnapshot;
+
+    impl tidb_infoschema::cluster_catalog::MetaSnapshot for EmptySnapshot {
+        fn get(&mut self, _key: &[u8]) -> Result<Option<Vec<u8>>, tidb_infoschema::cluster_catalog::ClusterCatalogError> {
+            Ok(None)
+        }
+
+        fn scan_prefix(
+            &mut self,
+            _prefix: &[u8],
+        ) -> Result<tidb_infoschema::cluster_catalog::MetaPairs, tidb_infoschema::cluster_catalog::ClusterCatalogError> {
+            Ok(Vec::new())
+        }
+    }
+
+    /// A session pool the failpoint answers before any statement reaches.
+    struct UnusedPool;
+
+    impl tidb_ddl_build::session_pool::DdlSessionPool for UnusedPool {
+        fn system_session(&self) -> Box<dyn tidb_ddl_build::session_context::DdlSessionContext> {
+            unreachable!("the failpoint answers before a session is needed")
+        }
+
+        fn restricted_sql_executor(&self) -> std::sync::Arc<dyn tidb_sqlexec::RestrictedSqlExecutor> {
+            unreachable!("the failpoint answers before a statement runs")
+        }
+    }
+
+    /// Go `TestMaskingPolicyMissingSysTableRequiresBootstrapOrUpgrade`: a
+    /// table or column job's masking-policy hook tolerates a missing
+    /// `mysql.tidb_masking_policy` only during a bootstrap or an upgrade.
+    #[test]
+    fn masking_policy_missing_sys_table_requires_bootstrap_or_upgrade() {
+        let _missing = tidb_failpoint::enable_for_test(
+            "github.com/pingcap/tidb/pkg/ddl/mockMissingMaskingPolicySysTable",
+            "return(true)",
+        );
+        let helpers: [(&str, fn(&JobTxn<'_>) -> Result<(), DdlPlanError>); 5] = [
+            ("modify_column", |txn| {
+                sync_masking_policy_for_modified_column(
+                    txn,
+                    &TableInfo { id: 1, ..TableInfo::default() },
+                    &ColumnInfo::default(),
+                    &ColumnInfo::default(),
+                )
+                .map(drop)
+            }),
+            ("drop_table", |txn| drop_masking_policies_on_table(txn, 1).map(drop)),
+            ("truncate_table", |txn| update_masking_policy_table_id_after_truncate(txn, 1, 2).map(drop)),
+            ("rename_table", |txn| {
+                update_masking_policy_names_after_rename(
+                    txn,
+                    1,
+                    &CiString::new("new_db"),
+                    &CiString::new("new_table"),
+                )
+                .map(drop)
+            }),
+            ("drop_column", |txn| drop_masking_policies_on_column(txn, 1, 1).map(drop)),
+        ];
+        for (name, helper) in helpers {
+            for (mode, want_err) in [
+                (crate::StartMode::Normal, true),
+                (crate::StartMode::Bootstrap, false),
+                (crate::StartMode::Upgrade, false),
+            ] {
+                let mut snapshot = EmptySnapshot;
+                let txn = JobTxn::new(&mut snapshot, 1).with_session(Some(crate::job_txn::StepSession {
+                    pool: std::sync::Arc::new(UnusedPool),
+                    buffer: Default::default(),
+                    sql: Default::default(),
+                    start_mode: mode,
+                }));
+                let result = helper(&txn);
+                if want_err {
+                    let error = result.expect_err(name).to_string();
+                    assert!(error.contains("Table 'mysql.tidb_masking_policy' doesn't exist"), "{name} {mode:?}: {error}");
+                } else {
+                    assert!(result.is_ok(), "{name} {mode:?}: {result:?}");
+                }
+            }
+        }
+    }
 }
