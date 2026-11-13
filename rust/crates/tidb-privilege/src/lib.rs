@@ -79,6 +79,7 @@ mod password_history;
 mod password_lock;
 mod privs;
 mod registry_ops;
+pub use registry_ops::global_priv_require_str;
 mod tls_policy;
 pub mod verification;
 pub mod cluster_privilege_load;

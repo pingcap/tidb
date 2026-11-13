@@ -593,41 +593,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
             let (caller, caller_host) = self.own_account()?;
             return Err(DriverError::from(tidb_plannererrors::ERR_TABLEACCESS_DENIED.gen_with_stack_by_args(&["SELECT".into(), caller.into(), caller_host.into(), (tidb_mysql::consts::UserTable.to_owned()).into()])));
         }
-        let Some(registry) = self.privilege_registry().cloned() else {
-            return Err(DriverError::unsupported(
-                "SHOW CREATE USER requires a server front end with a privilege registry",
-            ));
-        };
-        let row = if self.user_table_present() {
-            self.show_create_user_row(&user, &host)?
-        } else {
-            // A bare catalog has no `mysql.user`; the registry holds the
-            // same account columns.
-            registry.user_exists(&user, &host).then(|| {
-                let expiry = registry.password_expiry(&user, &host).unwrap_or_default();
-                let locking = registry.password_locking(&user, &host);
-                let (history, reuse_days) = registry.password_reuse_policy(&user, &host);
-                ShowCreateUserRow {
-                    plugin: registry.plugin(&user, &host).unwrap_or_default(),
-                    account_locked: registry.is_role(&user, &host),
-                    metadata: String::new(),
-                    token_issuer: String::new(),
-                    password_reuse_history: history.map(|n| n.to_string()),
-                    password_reuse_time: reuse_days.map(|n| n.to_string()),
-                    password_expired: expiry.expired,
-                    password_lifetime: expiry.lifetime.map_or(-1, i64::from),
-                    failed_login_attempts: locking
-                        .as_ref()
-                        .map(|locking| locking.failed_login_attempts.to_string())
-                        .unwrap_or_default(),
-                    password_lock_time_days: locking
-                        .map(|locking| locking.password_lock_time_days.to_string())
-                        .unwrap_or_default(),
-                    auth_data: registry.auth_string(&user, &host).unwrap_or_default(),
-                    max_user_connections: 0,
-                }
-            })
-        };
+        let row = self.show_create_user_row(&user, &host)?;
         let Some(row) = row else {
             return Err(DriverError::from(tidb_exeerrors::ERR_CANNOT_USER.gen_with_stack_by_args(&["SHOW CREATE USER".into(), (format!("'{user}'@'{host}'")).into()])));
         };
@@ -692,7 +658,18 @@ pub trait AccountPasswordExec: super::account::AccountExec {
         // Go's `fetchShowCreateUser` reads the `mysql.global_priv` PRIV
         // JSON's `ssl_type` for this clause (captured: `REQUIRE SSL` for an
         // account created with it, `REQUIRE NONE` for one without).
-        let require_clause = registry.tls_require_clause(&user, &host);
+        let require_rows = self.exec_restricted_sql(
+            tidb_txnkv::INTERNAL_TXN_PRIVILEGE,
+            &format!(
+                "SELECT Priv FROM mysql.global_priv WHERE User={} AND Host={}",
+                super::account_tables::sql_str(&user),
+                super::account_tables::sql_str(&host)
+            ),
+        )?;
+        let require_clause = match require_rows.as_slice() {
+            [row] => tidb_privilege::global_priv_require_str(&super::account_tables::datum_text(&row[0])),
+            _ => "NONE".to_owned(),
+        };
         let show_str = format!(
             "CREATE USER '{user}'@'{host}' IDENTIFIED WITH '{plugin}'{auth_clause} REQUIRE {require_clause}{token_issuer}{max_user_connections} {expire_clause} ACCOUNT {account_clause} PASSWORD HISTORY {history} PASSWORD REUSE INTERVAL {reuse_interval}{failed_login_attempts}{password_lock_time}{attribute_clause}"
         );

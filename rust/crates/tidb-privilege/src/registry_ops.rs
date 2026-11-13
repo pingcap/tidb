@@ -1662,37 +1662,9 @@ impl PrivilegeRegistry {
     /// SHOW CREATE USER reads every property from the shared global_priv image.
     pub fn tls_require_clause(&self, user: &str, host: &str) -> String {
         let rows = self.global_priv.lock().unwrap();
-        let Some(row) = rows.iter().find(|row| row.user == user && row.host == host) else {
-            return "NONE".into();
-        };
-        let policy = global_ssl_type(&row.priv_json).unwrap_or(SslType::None);
-        if policy != SslType::Specified {
-            return policy.show_create_user_clause().into();
-        }
-        let Ok(fields) = serde_json::from_str::<GlobalPrivJsonFields>(&row.priv_json) else {
-            return "NONE".into();
-        };
-        let mut clauses = Vec::new();
-        for (key, clause) in [
-            ("ssl_cipher", "CIPHER"),
-            ("x509_issuer", "ISSUER"),
-            ("x509_subject", "SUBJECT"),
-            ("san", "SAN"),
-        ] {
-            if let Some(value) = fields
-                .0
-                .get(key)
-                .and_then(serde_json::Value::as_str)
-                .filter(|value| !value.is_empty())
-            {
-                clauses.push(format!("{clause} '{value}'"));
-            }
-        }
-        if clauses.is_empty() {
-            "NONE".into()
-        } else {
-            clauses.join(" ")
-        }
+        rows.iter()
+            .find(|row| row.user == user && row.host == host)
+            .map_or_else(|| "NONE".into(), |row| global_priv_require_str(&row.priv_json))
     }
 
     /// REQUIRE replaces Priv as in Go; unrelated account updates retain it.
@@ -2537,5 +2509,41 @@ pub(crate) struct PrivilegeReadView<'a> {
 impl Drop for PrivilegeReadView<'_> {
     fn drop(&mut self) {
         READ_VIEW_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+/// Go `GlobalPrivValue.RequireStr` over a `mysql.global_priv.Priv` JSON
+/// document.
+#[must_use]
+pub fn global_priv_require_str(priv_json: &str) -> String {
+    match global_ssl_type(priv_json).unwrap_or(SslType::None) {
+        SslType::Specified => {
+            let Ok(fields) = serde_json::from_str::<GlobalPrivJsonFields>(priv_json) else {
+                return "NONE".into();
+            };
+            let mut s = Vec::new();
+            for (key, clause) in [
+                ("ssl_cipher", "CIPHER"),
+                ("x509_issuer", "ISSUER"),
+                ("x509_subject", "SUBJECT"),
+                ("san", "SAN"),
+            ] {
+                if let Some(value) = fields
+                    .0
+                    .get(key)
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|value| !value.is_empty())
+                {
+                    s.push(clause.to_owned());
+                    s.push(format!("'{value}'"));
+                }
+            }
+            if s.is_empty() {
+                "NONE".into()
+            } else {
+                s.join(" ")
+            }
+        }
+        policy => policy.show_create_user_clause().into(),
     }
 }
