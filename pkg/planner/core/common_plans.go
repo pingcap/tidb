@@ -621,12 +621,21 @@ type UnlockStats struct {
 
 // PlanReplayer represents a plan replayer plan.
 type PlanReplayer struct {
+<<<<<<< HEAD
 	baseSchemaProducer
 	ExecStmt          ast.StmtNode
 	Analyze           bool
 	Load              bool
 	File              string
 	HistoricalStatsTS uint64
+=======
+	physicalop.SimpleSchemaProducer
+	ExecStmt ast.StmtNode
+	StmtList []string // For PLAN REPLAYER DUMP EXPLAIN ( "sql1", "sql2", ... )
+	Analyze  bool
+	Load     bool
+	File     string
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 
 	Capture    bool
 	Remove     bool

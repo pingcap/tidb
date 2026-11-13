@@ -3320,6 +3320,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 		}
 	}
 
+<<<<<<< HEAD
 	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
 	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
 	ses, err := createSessionsImpl(store, 10)
@@ -3327,6 +3328,59 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 		return nil, err
 	}
 	ses[0].GetSessionVars().InRestrictedSQL = true
+=======
+	// Initialize persisted collation and time zone before starter SQL starts a full domain.
+	if deploymode.IsStarter() {
+		if err = upgradeStarterBootstrap(store); err != nil {
+			return nil, err
+		}
+	}
+
+	// initiate disttask framework components which need a store
+	scheduler.RegisterSchedulerFactory(
+		proto.ImportInto,
+		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
+			return importinto.NewImportScheduler(ctx, task, param)
+		},
+	)
+	taskexecutor.RegisterTaskType(
+		proto.ImportInto,
+		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
+			return importinto.NewImportExecutor(ctx, task, param)
+		},
+	)
+
+	concurrency := config.GetGlobalConfig().Performance.StatsLoadConcurrency
+	if concurrency == 0 {
+		// if concurrency is 0, we will set the concurrency of sync load by CPU.
+		concurrency = syncload.GetSyncLoadConcurrencyByCPU()
+	}
+	if concurrency < 0 { // it is only for test, in the production, negative value is illegal.
+		concurrency = 0
+	}
+
+	if extWorkloadMgr != nil {
+		if _, err := domap.getWithEtcdClient(store, nil, nil, domainCreateOptions{extWorkloadMgr: extWorkloadMgr}); err != nil {
+			return nil, err
+		}
+	}
+	ses, err := createSessionsImpl(store, 9)
+	if err != nil {
+		return nil, err
+	}
+	// Mark all bootstrap sessions as restricted since they are used for internal operations
+	// ses[0]: main bootstrap session
+	// ses[1-2]: reserved
+	// ses[3]: privilege loading
+	// ses[4]: sysvar cache
+	// ses[5]: telemetry, expression pushdown
+	// ses[6]: plan replayer collector
+	// ses[7]: dump file GC
+	// ses[8]: bootstrap SQL file
+	for i := range ses {
+		ses[i].GetSessionVars().InRestrictedSQL = true
+	}
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 
 	// get system tz from mysql.tidb
 	tz, err := ses[0].getTableValue(ctx, mysql.TiDBTable, tidbSystemTZ)
@@ -3423,16 +3477,18 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	// setup dumpFileGcChecker
 	dom.SetupDumpFileGCChecker(ses[7])
 	dom.DumpFileGcCheckerLoop()
-	// setup historical stats worker
-	dom.SetupHistoricalStatsWorker(ses[8])
-	dom.StartHistoricalStatsWorker()
 	failToLoadOrParseSQLFile := false // only used for unit test
 	if runBootstrapSQLFile {
 		pm := &privileges.UserPrivileges{
 			Handle: dom.PrivilegeHandle(),
 		}
+<<<<<<< HEAD
 		privilege.BindPrivilegeManager(ses[9], pm)
 		if err := doBootstrapSQLFile(ses[9]); err != nil && intest.InTest {
+=======
+		privilege.BindPrivilegeManager(ses[8], pm)
+		if err := doBootstrapSQLFile(ses[8]); err != nil && intest.EnableInternalCheck {
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 			failToLoadOrParseSQLFile = true
 		}
 	}

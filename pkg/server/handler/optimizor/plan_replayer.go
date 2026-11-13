@@ -15,9 +15,12 @@
 package optimizor
 
 import (
+<<<<<<< HEAD
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	"fmt"
 	"io"
 	"net"
@@ -27,16 +30,18 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/BurntSushi/toml"
 	"github.com/gorilla/mux"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	util2 "github.com/pingcap/tidb/pkg/statistics/handle/util"
+=======
+	"github.com/pingcap/tidb/pkg/planner/extstore"
+	"github.com/pingcap/tidb/pkg/server/handler"
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/replayer"
@@ -45,21 +50,17 @@ import (
 
 // PlanReplayerHandler is the handler for dumping plan replayer file.
 type PlanReplayerHandler struct {
-	is          infoschema.InfoSchema
-	statsHandle *handle.Handle
-	infoGetter  *infosync.InfoSyncer
-	address     string
-	statusPort  uint
+	infoGetter *infosync.InfoSyncer
+	address    string
+	statusPort uint
 }
 
 // NewPlanReplayerHandler creates a new PlanReplayerHandler.
-func NewPlanReplayerHandler(is infoschema.InfoSchema, statsHandle *handle.Handle, infoGetter *infosync.InfoSyncer, address string, statusPort uint) *PlanReplayerHandler {
+func NewPlanReplayerHandler(infoGetter *infosync.InfoSyncer, address string, statusPort uint) *PlanReplayerHandler {
 	return &PlanReplayerHandler{
-		is:          is,
-		statsHandle: statsHandle,
-		infoGetter:  infoGetter,
-		address:     address,
-		statusPort:  statusPort,
+		infoGetter: infoGetter,
+		address:    address,
+		statusPort: statusPort,
 	}
 }
 
@@ -67,17 +68,20 @@ func NewPlanReplayerHandler(is infoschema.InfoSchema, statsHandle *handle.Handle
 func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
 	name := params[handler.FileName]
+	if strings.HasPrefix(name, "capture_replayer_") {
+		// Older TiDB versions used this prefix both for bundles with embedded
+		// statistics and for bundles that expected statistics to be injected at
+		// download time. The filename alone cannot distinguish the two cases.
+		logutil.BgLogger().Warn("legacy plan replayer capture file may have no statistics", zap.String("filename", name))
+	}
 	handler := downloadFileHandler{
 		filePath:           filepath.Join(replayer.GetPlanReplayerDirName(), name),
-		fileName:           name,
 		infoGetter:         prh.infoGetter,
 		address:            prh.address,
 		statusPort:         prh.statusPort,
 		urlPath:            fmt.Sprintf("plan_replayer/dump/%s", name),
 		downloadedFilename: "plan_replayer",
 		scheme:             util.InternalHTTPSchema(),
-		statsHandle:        prh.statsHandle,
-		is:                 prh.is,
 	}
 	handleDownloadFile(handler, w, req)
 }
@@ -100,6 +104,7 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 			handler.WriteError(w, err)
 			return
 		}
+<<<<<<< HEAD
 		content, err := io.ReadAll(file)
 		if err != nil {
 			handler.WriteError(w, err)
@@ -116,6 +121,18 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 				handler.WriteError(w, err)
 				return
 			}
+=======
+		defer fileReader.Close()
+
+		// Set headers BEFORE writing body
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", dfHandler.downloadedFilename))
+		// Use streaming io.Copy instead of io.ReadAll to avoid memory bloat.
+		_, err = io.Copy(w, fileReader)
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 		}
 		_, err = w.Write(content)
 		if err != nil {
@@ -193,12 +210,12 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 type downloadFileHandler struct {
 	scheme             string
 	filePath           string
-	fileName           string
 	infoGetter         *infosync.InfoSyncer
 	address            string
 	statusPort         uint
 	urlPath            string
 	downloadedFilename string
+<<<<<<< HEAD
 
 	statsHandle *handle.Handle
 	is          infoschema.InfoSchema
@@ -372,4 +389,6 @@ type tblInfo struct {
 	jsonStats *util2.JSONTable
 	dbName    string
 	tblName   string
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 }

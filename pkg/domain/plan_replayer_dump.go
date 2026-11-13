@@ -25,7 +25,6 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
@@ -74,10 +73,6 @@ const (
 	PlanReplayerTaskMetaSQLDigest = "sqlDigest"
 	// PlanReplayerTaskMetaPlanDigest indicates the plan digest of this task
 	PlanReplayerTaskMetaPlanDigest = "planDigest"
-	// PlanReplayerTaskEnableHistoricalStats indicates whether the task is using historical stats
-	PlanReplayerTaskEnableHistoricalStats = "enableHistoricalStats"
-	// PlanReplayerHistoricalStatsTS indicates the expected TS of the historical stats if it's specified by the user.
-	PlanReplayerHistoricalStatsTS = "historicalStatsTS"
 )
 
 type tableNamePair struct {
@@ -323,6 +318,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 
+<<<<<<< HEAD
 	// For continuous capture task, we dump stats in storage only if EnableHistoricalStatsForCapture is disabled.
 	// For manual plan replayer dump command or capture, we directly dump stats in storage
 	if task.IsCapture && task.IsContinuesCapture {
@@ -351,6 +347,11 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		if len(fallbackMsg) > 0 {
 			errMsgs = append(errMsgs, fallbackMsg)
 		}
+=======
+	// Dump stats
+	if err = dumpStats(zw, pairs, do); err != nil {
+		return err
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	}
 
 	if err = dumpStatsMemStatus(zw, pairs, do); err != nil {
@@ -435,10 +436,13 @@ func dumpSQLMeta(zw *zip.Writer, task *PlanReplayerDumpTask) error {
 	varMap[PlanReplayerTaskMetaIsContinues] = strconv.FormatBool(task.IsContinuesCapture)
 	varMap[PlanReplayerTaskMetaSQLDigest] = task.SQLDigest
 	varMap[PlanReplayerTaskMetaPlanDigest] = task.PlanDigest
+<<<<<<< HEAD
 	varMap[PlanReplayerTaskEnableHistoricalStats] = strconv.FormatBool(variable.EnableHistoricalStatsForCapture.Load())
 	if task.HistoricalStatsTS > 0 {
 		varMap[PlanReplayerHistoricalStatsTS] = strconv.FormatUint(task.HistoricalStatsTS, 10)
 	}
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	if err := toml.NewEncoder(cf).Encode(varMap); err != nil {
 		return errors.AddStack(err)
 	}
@@ -552,35 +556,29 @@ func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Do
 	return nil
 }
 
-func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Domain, historyStatsTS uint64) (string, error) {
-	allFallBackTbls := make([]string, 0)
+func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Domain) error {
 	for pair := range pairs {
 		if pair.IsView {
 			continue
 		}
-		jsonTbl, fallBackTbls, err := getStatsForTable(do, pair, historyStatsTS)
+		jsonTbl, err := getStatsForTable(do, pair)
 		if err != nil {
-			return "", err
+			return err
 		}
 		statsFw, err := zw.Create(fmt.Sprintf("stats/%v.%v.json", pair.DBName, pair.TableName))
 		if err != nil {
-			return "", errors.AddStack(err)
+			return errors.AddStack(err)
 		}
 		data, err := json.Marshal(jsonTbl)
 		if err != nil {
-			return "", errors.AddStack(err)
+			return errors.AddStack(err)
 		}
 		_, err = statsFw.Write(data)
 		if err != nil {
-			return "", errors.AddStack(err)
+			return errors.AddStack(err)
 		}
-		allFallBackTbls = append(allFallBackTbls, fallBackTbls...)
 	}
-	var msg string
-	if len(allFallBackTbls) > 0 {
-		msg = "Historical stats for " + strings.Join(allFallBackTbls, ", ") + " are unavailable, fallback to latest stats"
-	}
-	return msg, nil
+	return nil
 }
 
 func dumpSQLs(execStmts []ast.StmtNode, zw *zip.Writer) error {
@@ -803,18 +801,15 @@ func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 	return tableExtractor.getTablesAndViews()
 }
 
-func getStatsForTable(do *Domain, pair tableNamePair, historyStatsTS uint64) (*util.JSONTable, []string, error) {
+func getStatsForTable(do *Domain, pair tableNamePair) (*util.JSONTable, error) {
 	is := do.InfoSchema()
 	h := do.StatsHandle()
 	tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
 	if err != nil {
-		return nil, nil, err
-	}
-	if historyStatsTS > 0 {
-		return h.DumpHistoricalStatsBySnapshot(pair.DBName, tbl.Meta(), historyStatsTS)
+		return nil, err
 	}
 	jt, err := h.DumpStatsToJSON(pair.DBName, tbl.Meta(), nil, true)
-	return jt, nil, err
+	return jt, err
 }
 
 func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Context) error {

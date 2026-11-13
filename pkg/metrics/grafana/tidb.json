@@ -15848,6 +15848,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
+<<<<<<< HEAD
           "description": "",
           "fieldConfig": {
             "defaults": {},
@@ -15958,6 +15959,8 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
           "description": "The duration of background job of loading the newly changed statistics into memory",
           "fieldConfig": {
             "defaults": {},

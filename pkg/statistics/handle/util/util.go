@@ -37,6 +37,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+<<<<<<< HEAD
 const (
 	// StatsMetaHistorySourceAnalyze indicates stats history meta source from analyze
 	StatsMetaHistorySourceAnalyze = "analyze"
@@ -53,6 +54,8 @@ const (
 	TiDBGlobalStats = "global"
 )
 
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 var (
 	// UseCurrentSessionOpt to make sure the sql is executed in current session.
 	UseCurrentSessionOpt = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
@@ -104,6 +107,7 @@ func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags
 		return errors.Trace(err)
 	}
 
+<<<<<<< HEAD
 	wrapTxn := false
 	for _, flag := range flags {
 		if flag == FlagWrapTxn {
@@ -120,6 +124,80 @@ func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags
 
 // UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
 func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
+=======
+			wrapTxn := false
+			for _, flag := range flags {
+				if flag == FlagWrapTxn {
+					wrapTxn = true
+				}
+			}
+			if wrapTxn {
+				return WrapTxn(sctx, f)
+			}
+			return f(sctx)
+		})
+	})
+}
+
+type statsSessionVarsSnapshot struct {
+	analyzeSkipColumnTypes      map[string]struct{}
+	stmtTimeZone                *time.Location
+	timeZone                    *time.Location
+	partitionPruneMode          string
+	timeZoneValue               string
+	analyzeStoreBatchSizeValue  string
+	lockWaitTimeout             int64
+	analyzeVersion              int
+	analyzeStoreBatchSize       int
+	analyzePartitionConcurrency int
+	skipMissingPartitionStats   bool
+	enableAnalyzeSnapshot       bool
+	enableAsyncMergeGlobalStats bool
+}
+
+// UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
+// It restores the original settings on failure and returns a function to restore them after use on success.
+func UpdateSCtxVarsForStats(sctx sessionctx.Context) (func(), error) {
+	vars := sctx.GetSessionVars()
+	snapshot := statsSessionVarsSnapshot{
+		analyzeSkipColumnTypes:      vars.AnalyzeSkipColumnTypes,
+		partitionPruneMode:          vars.PartitionPruneMode.Load(),
+		enableAsyncMergeGlobalStats: vars.EnableAsyncMergeGlobalStats,
+		enableAnalyzeSnapshot:       vars.EnableAnalyzeSnapshot,
+		skipMissingPartitionStats:   vars.SkipMissingPartitionStats,
+		analyzePartitionConcurrency: vars.AnalyzePartitionConcurrency,
+		analyzeVersion:              vars.AnalyzeVersion,
+		analyzeStoreBatchSize:       vars.AnalyzeStoreBatchSize,
+		lockWaitTimeout:             vars.LockWaitTimeout,
+		timeZone:                    vars.TimeZone,
+		stmtTimeZone:                vars.StmtCtx.TimeZone(),
+	}
+	// These setters update both cached system variables and typed fields. Unloaded
+	// session variables must retain the session's original values, not current globals.
+	var loaded bool
+	snapshot.analyzeStoreBatchSizeValue, loaded = vars.GetSystemVar(vardef.TiDBAnalyzeStoreBatchSize)
+	if !loaded {
+		snapshot.analyzeStoreBatchSizeValue = strconv.Itoa(vars.AnalyzeStoreBatchSize)
+	}
+	snapshot.timeZoneValue, loaded = vars.GetSystemVar(vardef.TimeZone)
+	if !loaded {
+		snapshot.timeZoneValue = "SYSTEM"
+		if vars.TimeZone != nil {
+			snapshot.timeZoneValue = vars.TimeZone.String()
+			if snapshot.timeZoneValue == "" {
+				snapshot.timeZoneValue = time.Now().In(vars.TimeZone).Format("-07:00")
+			}
+		}
+	}
+	restore := func() {
+		snapshot.restore(vars)
+	}
+	restoreOnErr := func(err error) (func(), error) {
+		restore()
+		return nil, err
+	}
+
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	// async merge global stats
 	enableAsyncMergeGlobalStats, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAsyncMergeGlobalStats)
 	if err != nil {
@@ -149,6 +227,7 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	}
 	sctx.GetSessionVars().AnalyzeVersion = int(ver)
 
+<<<<<<< HEAD
 	// enable historical stats
 	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
 	if err != nil {
@@ -156,6 +235,8 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	}
 	sctx.GetSessionVars().EnableHistoricalStats = variable.TiDBOptOn(val)
 
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	// partition mode
 	pruneMode, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
 	if err != nil {
@@ -171,7 +252,11 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	sctx.GetSessionVars().EnableAnalyzeSnapshot = variable.TiDBOptOn(analyzeSnapshot)
 
 	// enable skip column types
+<<<<<<< HEAD
 	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
+=======
+	val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeSkipColumnTypes)
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	if err != nil {
 		return err
 	}
@@ -191,8 +276,53 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
+<<<<<<< HEAD
 	sctx.GetSessionVars().AnalyzePartitionMergeConcurrency = int(ver)
 	return nil
+=======
+	vars.LockWaitTimeout = lockWaitSec * 1000
+
+	// timezone setting
+	// timezone used to datetime/timestamp conversion when collecting stats.
+	globalTZ, err := vars.GlobalVarsAccessor.GetGlobalSysVar(vardef.TimeZone)
+	if err != nil {
+		return restoreOnErr(err)
+	}
+	if err := vars.SetSystemVar(vardef.TimeZone, globalTZ); err != nil {
+		return restoreOnErr(err)
+	}
+	vars.StmtCtx.SetTimeZone(vars.Location())
+	return restore, nil
+}
+
+func (s statsSessionVarsSnapshot) restore(vars *variable.SessionVars) {
+	if err := vars.SetSystemVar(vardef.TiDBAnalyzeStoreBatchSize, s.analyzeStoreBatchSizeValue); err != nil {
+		logutil.BgLogger().Warn("restore analyze store batch size failed", zap.Error(err))
+	}
+	if err := vars.SetSystemVar(vardef.TimeZone, s.timeZoneValue); err != nil {
+		logutil.BgLogger().Warn("restore statistics session time zone failed", zap.Error(err))
+	}
+	vars.AnalyzeSkipColumnTypes = s.analyzeSkipColumnTypes
+	vars.PartitionPruneMode.Store(s.partitionPruneMode)
+	vars.EnableAsyncMergeGlobalStats = s.enableAsyncMergeGlobalStats
+	vars.EnableAnalyzeSnapshot = s.enableAnalyzeSnapshot
+	vars.SkipMissingPartitionStats = s.skipMissingPartitionStats
+	vars.AnalyzePartitionConcurrency = s.analyzePartitionConcurrency
+	vars.AnalyzeVersion = s.analyzeVersion
+	vars.AnalyzeStoreBatchSize = s.analyzeStoreBatchSize
+	vars.LockWaitTimeout = s.lockWaitTimeout
+	vars.TimeZone = s.timeZone
+	vars.StmtCtx.SetTimeZone(s.stmtTimeZone)
+}
+
+// GetCurrentPruneMode returns the current latest partitioning table prune mode.
+func GetCurrentPruneMode(pool syssession.Pool) (mode string, err error) {
+	err = CallWithSCtx(pool, func(sctx sessionctx.Context) error {
+		mode = sctx.GetSessionVars().PartitionPruneMode.Load()
+		return nil
+	})
+	return
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 }
 
 // WrapTxn uses a transaction here can let different SQLs in this operation have the same data visibility.

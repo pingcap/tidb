@@ -61,6 +61,7 @@ type PlanReplayerCaptureInfo struct {
 
 // PlanReplayerDumpInfo indicates dump info
 type PlanReplayerDumpInfo struct {
+<<<<<<< HEAD
 	ExecStmts         []ast.StmtNode
 	Analyze           bool
 	HistoricalStatsTS uint64
@@ -69,6 +70,15 @@ type PlanReplayerDumpInfo struct {
 	File              *os.File
 	FileName          string
 	ctx               sessionctx.Context
+=======
+	ExecStmts []ast.StmtNode
+	Analyze   bool
+	StartTS   uint64
+	Path      string
+	File      io.WriteCloser
+	FileName  string
+	ctx       sessionctx.Context
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 }
 
 // Next implements the Executor Next interface.
@@ -163,9 +173,18 @@ func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
 	return nil
 }
 
+<<<<<<< HEAD
 func (e *PlanReplayerExec) createFile() error {
 	var err error
 	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile(false, false, false)
+=======
+func (e *PlanReplayerExec) createFile(ctx context.Context) error {
+	storage, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		return err
+	}
+	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile(ctx, storage, false, false)
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	if err != nil {
 		return err
 	}
@@ -176,14 +195,13 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	fileName := e.FileName
 	zf := e.File
 	task := &domain.PlanReplayerDumpTask{
-		StartTS:           e.StartTS,
-		FileName:          fileName,
-		Zf:                zf,
-		SessionVars:       e.ctx.GetSessionVars(),
-		TblStats:          nil,
-		ExecStmts:         e.ExecStmts,
-		Analyze:           e.Analyze,
-		HistoricalStatsTS: e.HistoricalStatsTS,
+		StartTS:     e.StartTS,
+		FileName:    fileName,
+		Zf:          zf,
+		SessionVars: e.ctx.GetSessionVars(),
+		TblStats:    nil,
+		ExecStmts:   e.ExecStmts,
+		Analyze:     e.Analyze,
 	}
 	err = domain.DumpPlanReplayerInfo(ctx, e.ctx, task)
 	if err != nil {

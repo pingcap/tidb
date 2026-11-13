@@ -18,33 +18,36 @@ import (
 	"archive/zip"
 	"bytes"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/BurntSushi/toml"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/parser/model"
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
+<<<<<<< HEAD
 	util2 "github.com/pingcap/tidb/pkg/statistics/handle/util"
+=======
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/oracle"
 )
 
 var expectedFilesInReplayer = []string{
@@ -81,6 +84,27 @@ var expectedFilesInReplayerForCapture = []string{
 	"variables.toml",
 }
 
+<<<<<<< HEAD
+=======
+func requirePlanReplayerFileTokenFromRows(t *testing.T, rows *sql.Rows) string {
+	require.True(t, rows.Next(), "unexpected data")
+	var item, filename string
+	require.NoError(t, rows.Scan(&item, &filename))
+	require.Equal(t, "File token", item)
+	require.NotEmpty(t, filename)
+	require.NoError(t, rows.Close())
+	return filename
+}
+
+func requireSingleStringFromRows(t *testing.T, rows *sql.Rows) string {
+	require.True(t, rows.Next(), "unexpected data")
+	var value string
+	require.NoError(t, rows.Scan(&value))
+	require.NoError(t, rows.Close())
+	return value
+}
+
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 func prepareServerAndClientForTest(t *testing.T, store kv.Storage, dom *domain.Domain) (srv *server.Server, client *testserverclient.TestServerClient) {
 	driver := server.NewTiDBDriver(store)
 	client = testserverclient.NewTestServerClient()
@@ -522,6 +546,7 @@ func forEachFileInZipBytes(t *testing.T, b []byte, fn func(file *zip.File)) {
 		fn(f)
 	}
 }
+<<<<<<< HEAD
 
 func fetchZipFromPlanReplayerAPI(t *testing.T, client *testserverclient.TestServerClient, filename string) *zip.Reader {
 	resp0, err := client.FetchStatus(filepath.Join("/plan_replayer/dump/", filename))
@@ -720,3 +745,5 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	gcHandler := dom.GetDumpFileGCChecker()
 	gcHandler.GCDumpFiles(0, 0)
 }
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))

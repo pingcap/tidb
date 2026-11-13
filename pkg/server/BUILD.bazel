@@ -67,7 +67,12 @@ go_library(
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
+<<<<<<< HEAD
         "//pkg/statistics/handle",
+=======
+        "//pkg/statistics/handle/initstats",
+        "//pkg/statistics/handle/util",
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
         "//pkg/store",
         "//pkg/store/driver/error",
         "//pkg/store/helper",

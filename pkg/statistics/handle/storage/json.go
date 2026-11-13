@@ -15,6 +15,7 @@
 package storage
 
 import (
+<<<<<<< HEAD
 	"bytes"
 	"encoding/json"
 	"io"
@@ -22,18 +23,22 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/gzip"
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+=======
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	"github.com/pingcap/tidb/pkg/types"
-	compressutil "github.com/pingcap/tidb/pkg/util/compress"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"go.uber.org/zap"
 )
 
 func dumpJSONExtendedStats(statsColl *statistics.ExtendedStatsColl) []*util.JSONExtendedStats {
@@ -222,6 +227,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *u
 	return tbl, nil
 }
 
+<<<<<<< HEAD
 // JSONTableToBlocks convert JSONTable to json, then compresses it to blocks by gzip.
 func JSONTableToBlocks(jsTable *util.JSONTable, blockSize int) ([][]byte, error) {
 	data, err := json.Marshal(jsTable)
@@ -334,4 +340,11 @@ func TableHistoricalStatsToJSON(sctx sessionctx.Context, physicalID int64, snaps
 	jsonTbl.ModifyCount = modifyCount
 	jsonTbl.IsHistoricalStats = true
 	return jsonTbl, true, nil
+=======
+func decodeJSONFMSketch(column *statsutil.JSONColumn) (*statistics.FMSketch, error) {
+	if column.SampledFMSketch != nil {
+		return statistics.DecodeFMSketch(column.SampledFMSketch)
+	}
+	return statistics.FMSketchFromProto(column.FMSketch), nil
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 }

@@ -67,8 +67,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/tikv/client-go/v2/oracle"
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	"go.uber.org/zap"
 )
 
@@ -5623,6 +5626,7 @@ func convert2OutputSchemasAndNames(names []string, ftypes []byte) (schema *expre
 	return
 }
 
+<<<<<<< HEAD
 func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
 	p := &PlanReplayer{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
 		Capture: pc.Capture, Remove: pc.Remove, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
@@ -5633,11 +5637,33 @@ func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
 
 	schema := newColumnsWithNames(1)
 	schema.Append(buildColumnWithName("", "File_token", mysql.TypeVarchar, 128))
+=======
+func (*PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) (base.Plan, error) {
+	if pc.HistoricalStatsInfo != nil {
+		return nil, errors.New("WITH STATS AS OF TIMESTAMP is no longer supported because the historical statistics feature has been removed; remove the clause to dump the current statistics")
+	}
+
+	if pc.Capture || pc.Remove {
+		if !validPlanReplayerDigest(pc.SQLDigest) {
+			return nil, errors.New("invalid SQL digest: expected a non-empty hexadecimal string of at most 128 characters")
+		}
+		if pc.PlanDigest != "*" && !validPlanReplayerDigest(pc.PlanDigest) {
+			return nil, errors.New("invalid plan digest: expected a non-empty hexadecimal string of at most 128 characters or '*'")
+		}
+	}
+	p := &PlanReplayer{ExecStmt: pc.Stmt, StmtList: pc.StmtList, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
+		Capture: pc.Capture, Remove: pc.Remove, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
+
+	schema := newColumnsWithNames(2)
+	schema.Append(buildColumnWithName("", "Item", mysql.TypeVarchar, 32))
+	schema.Append(buildColumnWithName("", "Value", mysql.TypeVarchar, mysql.MaxBlobWidth))
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	p.SetSchema(schema.col2Schema())
 	p.names = schema.names
 	return p
 }
 
+<<<<<<< HEAD
 func calcTSForPlanReplayer(sctx sessionctx.Context, tsExpr ast.ExprNode) uint64 {
 	tsVal, err := expression.EvalAstExpr(sctx, tsExpr)
 	if err != nil {
@@ -5677,6 +5703,18 @@ func calcTSForPlanReplayer(sctx sessionctx.Context, tsExpr ast.ExprNode) uint64 
 		return 0
 	}
 	return oracle.GoTimeToTS(goTime)
+=======
+func validPlanReplayerDigest(digest string) bool {
+	if len(digest) == 0 || len(digest) > 128 {
+		return false
+	}
+	for _, c := range digest {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 }
 
 func buildChecksumTableSchema() (*expression.Schema, []*types.FieldName) {

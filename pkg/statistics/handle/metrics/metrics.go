@@ -22,9 +22,12 @@ import (
 // statistics metrics vars
 var (
 	StatsHealthyGauges []prometheus.Gauge
+<<<<<<< HEAD
 
 	DumpHistoricalStatsSuccessCounter prometheus.Counter
 	DumpHistoricalStatsFailedCounter  prometheus.Counter
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 )
 
 func init() {
@@ -44,7 +47,4 @@ func InitMetricsVars() {
 		metrics.StatsHealthyGauge.WithLabelValues("[0,100]"),          // 7
 		metrics.StatsHealthyGauge.WithLabelValues("unneeded analyze"), // 8
 	}
-
-	DumpHistoricalStatsSuccessCounter = metrics.HistoricalStatsCounter.WithLabelValues("dump", "success")
-	DumpHistoricalStatsFailedCounter = metrics.HistoricalStatsCounter.WithLabelValues("dump", "fail")
 }

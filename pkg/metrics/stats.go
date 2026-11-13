@@ -34,7 +34,6 @@ var (
 	StatsDeltaLoadHistogram   prometheus.Histogram
 	StatsDeltaUpdateHistogram prometheus.Histogram
 
-	HistoricalStatsCounter        *prometheus.CounterVec
 	PlanReplayerTaskCounter       *prometheus.CounterVec
 	PlanReplayerRegisterTaskGauge prometheus.Gauge
 )
@@ -116,6 +115,7 @@ func InitStatsMetrics() {
 		Help:      "Gauge of stats healthy",
 	}, []string{LblType})
 
+<<<<<<< HEAD
 	HistoricalStatsCounter = NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tidb",
 		Subsystem: "statistics",
@@ -124,6 +124,9 @@ func InitStatsMetrics() {
 	}, []string{LblType, LblResult})
 
 	PlanReplayerTaskCounter = NewCounterVec(prometheus.CounterOpts{
+=======
+	PlanReplayerTaskCounter = metricscommon.NewCounterVec(prometheus.CounterOpts{
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 		Namespace: "tidb",
 		Subsystem: "plan_replayer",
 		Name:      "task",

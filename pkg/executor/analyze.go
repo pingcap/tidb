@@ -362,6 +362,7 @@ func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 	return nil
 }
 
+<<<<<<< HEAD
 func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
 	statsHandle := domain.GetDomain(sctx).StatsHandle()
 	historicalStatsEnabled, err := statsHandle.CheckHistoricalStatsEnable()
@@ -374,6 +375,50 @@ func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
 	historicalStatsWorker := domain.GetDomain(sctx).GetHistoricalStatsWorker()
 	historicalStatsWorker.SendTblToDumpHistoricalStats(tableID)
 	return nil
+=======
+// resetAnalyzeOptionsForPartitions clears only the options explicitly reset by
+// a whole-table ANALYZE in dynamic prune mode. Dynamic mode normally saves only
+// the table row, but old partition rows must not retain overrides that would
+// become effective again after switching back to static pruning.
+func resetAnalyzeOptionsForPartitions(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, resetOpts map[ast.AnalyzeOptionType]struct{}, partitionIDs []int64) error {
+	columns := []struct {
+		optType ast.AnalyzeOptionType
+		name    string
+	}{
+		{ast.AnalyzeOptNumSamples, "sample_num"},
+		{ast.AnalyzeOptSampleRate, "sample_rate"},
+		{ast.AnalyzeOptNumBuckets, "buckets"},
+		{ast.AnalyzeOptNumTopN, "topn"},
+		{ast.AnalyzeOptNDVRate, "ndv_rate"},
+	}
+	sql := new(strings.Builder)
+	sql.WriteString("UPDATE mysql.analyze_options SET ")
+	updated := 0
+	for _, column := range columns {
+		if _, ok := resetOpts[column.optType]; !ok {
+			continue
+		}
+		if updated > 0 {
+			sql.WriteString(",")
+		}
+		sql.WriteString(column.name)
+		sql.WriteString("=DEFAULT")
+		updated++
+	}
+	if updated == 0 {
+		return nil
+	}
+	sql.WriteString(" WHERE table_id IN (")
+	for i, partitionID := range partitionIDs {
+		if i > 0 {
+			sql.WriteString(",")
+		}
+		sqlescape.MustFormatSQL(sql, "%?", partitionID)
+	}
+	sql.WriteString(")")
+	_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
+	return err
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 }
 
 // handleResultsError will handle the error fetch from resultsCh and record it in log
@@ -477,7 +522,6 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 			worker.run(ctx1, enableAnalyzeSnapshot)
 		})
 	}
-	tableIDs := map[int64]struct{}{}
 	panicCnt := 0
 	var err error
 	for panicCnt < statsConcurrency {
@@ -500,7 +544,11 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 			continue
 		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
+<<<<<<< HEAD
 		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
+=======
+		failpoint.InjectCall("analyzeBeforeSendToSaveResults")
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 		saveResultsCh <- results
 	}
 	close(saveResultsCh)
@@ -513,12 +561,15 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 		}
 		err = errors.New(strings.Join(errMsg, ","))
 	}
+<<<<<<< HEAD
 	for tableID := range tableIDs {
 		// Dump stats to historical storage.
 		if err := recordHistoricalStats(e.Ctx(), tableID); err != nil {
 			logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 		}
 	}
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	return err
 }
 

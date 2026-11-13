@@ -16,7 +16,6 @@ package handletest
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1438,6 +1437,7 @@ func TestIncrementalModifyCountUpdate(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 func TestRecordHistoricalStatsToStorage(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1461,6 +1461,29 @@ func TestRecordHistoricalStatsToStorage(t *testing.T) {
 	rows := tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where version = '%d'", version)).Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
 	require.GreaterOrEqual(t, num, 1)
+=======
+func TestFlushPendingStatsDeltaBeforeAnalyze(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableID := tbl.Meta().ID
+
+	tk.MustExec("insert into t values(1),(2),(3),(4),(5)")
+
+	tk.MustExec("analyze table t")
+	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableID)).Check(testkit.Rows(
+		"5 0",
+	))
+
+	tk.MustExec("flush stats_delta test.t")
+	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableID)).Check(testkit.Rows(
+		"5 0",
+	))
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 }
 
 func TestEvictedColumnLoadedStatus(t *testing.T) {

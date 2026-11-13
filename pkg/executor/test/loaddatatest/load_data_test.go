@@ -474,7 +474,56 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 	}
 	deleteSQL := "delete from range_t"
 	selectSQL := "select * from range_t order by a;"
+<<<<<<< HEAD
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+=======
+	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
+}
+
+func TestLoadDataFromServerFile(t *testing.T) {
+	require.NotNil(t, loadDataStore)
+	tk := testkit.NewTestKit(t, loadDataStore)
+	tk.MustExec("use test; drop table if exists load_data_test")
+	tk.MustExec("create table load_data_test (a int)")
+	err := tk.ExecToErr("load data infile 'remote.csv' into table load_data_test")
+	require.ErrorContains(t, err, "[executor:8154]Don't support load data from tidb-server's disk.")
+}
+
+var loadDataStore kv.Storage
+var loadDataLowPriorityClient checkKVPrioClient
+
+func prepareLoadDataStore() func() {
+	gctuner.GlobalMemoryLimitTuner.Stop()
+	store, err := mockstore.NewMockStore(mockstore.WithClientHijacker(func(c tikv.Client) tikv.Client {
+		loadDataLowPriorityClient.Client = c
+		return &loadDataLowPriorityClient
+	}))
+	if err != nil {
+		panic(err)
+	}
+
+	vardef.SetSchemaLease(500 * time.Millisecond)
+	session.DisableStats4Test()
+	domain.DisablePlanReplayerBackgroundJob4Test()
+	dom, err := session.BootstrapSession(store)
+	if err != nil {
+		_ = store.Close()
+		panic(err)
+	}
+	dom.SetStatsUpdating(true)
+	sm := testkit.MockSessionManager{}
+	dom.InfoSyncer().SetSessionManager(&sm)
+	loadDataStore = store
+
+	return func() {
+		loadDataStore = nil
+		dom.Close()
+		if err := store.Close(); err != nil {
+			panic(err)
+		}
+		resourcemanager.InstanceResourceManager.Reset()
+	}
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 }
 
 func TestFix56408(t *testing.T) {

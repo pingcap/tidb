@@ -1247,8 +1247,19 @@ type SessionVars struct {
 	// DisableHashJoin indicates whether to disable hash join.
 	DisableHashJoin bool
 
+<<<<<<< HEAD
 	// EnableHistoricalStats indicates whether to enable historical statistics.
 	EnableHistoricalStats bool
+=======
+	// UseHashJoinV2 indicates whether to use hash join v2.
+	UseHashJoinV2 bool
+
+	// EnableFullOuterJoin indicates whether to enable full outer join.
+	EnableFullOuterJoin bool
+
+	// EnableMView indicates whether to enable materialized view DDL.
+	EnableMView bool
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 
 	// EnableIndexMergeJoin indicates whether to enable index merge join.
 	EnableIndexMergeJoin bool

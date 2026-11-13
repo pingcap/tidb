@@ -15,13 +15,17 @@
 package optimizor
 
 import (
+<<<<<<< HEAD
 	"fmt"
+=======
+	"context"
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/pkg/domain"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/handler"
@@ -32,6 +36,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
+=======
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/server/handler"
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 )
 
 // StatsHandler is the handler for dumping statistics.
@@ -80,6 +88,7 @@ func (sh StatsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
+<<<<<<< HEAD
 // StatsHistoryHandler is the handler for dumping statistics.
 type StatsHistoryHandler struct {
 	do *domain.Domain
@@ -148,4 +157,27 @@ func getSnapshotTableInfo(dom *domain.Domain, snapshot uint64, dbName, tblName s
 		return nil, err
 	}
 	return is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+=======
+// StatsPriorityQueueHandler is the handler for dumping the stats priority queue snapshot.
+type StatsPriorityQueueHandler struct {
+	do *domain.Domain
+}
+
+// NewStatsPriorityQueueHandler creates a new StatsPriorityQueueHandler.
+func NewStatsPriorityQueueHandler(do *domain.Domain) *StatsPriorityQueueHandler {
+	return &StatsPriorityQueueHandler{do: do}
+}
+
+// ServeHTTP dumps the stats priority queue snapshot to json.
+func (sh StatsPriorityQueueHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	h := sh.do.StatsHandle()
+	tables, err := h.GetPriorityQueueSnapshot()
+	if err != nil {
+		handler.WriteError(w, err)
+	} else {
+		handler.WriteData(w, tables)
+	}
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 }

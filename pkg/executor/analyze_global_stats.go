@@ -52,10 +52,12 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 		globalStatsTableIDs[globalStatsID.tableID] = struct{}{}
 	}
 
+<<<<<<< HEAD
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	tableIDs := make(map[int64]struct{}, len(globalStatsTableIDs))
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	for tableID := range globalStatsTableIDs {
-		tableIDs[tableID] = struct{}{}
 		for globalStatsID, info := range globalStatsMap {
 			if globalStatsID.tableID != tableID {
 				continue
@@ -120,13 +122,6 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 				return err
 			}()
 			FinishAnalyzeMergeJob(e.Ctx(), job, mergeStatsErr)
-		}
-	}
-
-	for tableID := range tableIDs {
-		// Dump stats to historical storage.
-		if err := recordHistoricalStats(e.Ctx(), tableID); err != nil {
-			logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 		}
 	}
 

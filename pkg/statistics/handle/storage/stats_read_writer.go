@@ -30,7 +30,14 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+<<<<<<< HEAD
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
+=======
+	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/statistics/handle/usage/predicatecolumn"
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -161,6 +168,7 @@ func (s *statsReadWriter) ChangeGlobalStatsID(from, to int64) (err error) {
 	}, util.FlagWrapTxn)
 }
 
+<<<<<<< HEAD
 // ResetTableStats2KVForDrop resets the count to 0.
 func (s *statsReadWriter) ResetTableStats2KVForDrop(physicalID int64) (err error) {
 	statsVer := uint64(0)
@@ -197,6 +205,82 @@ func (s *statsReadWriter) UpdateStatsVersion() error {
 
 // SaveTableStatsToStorage saves the stats of a table to storage.
 func (s *statsReadWriter) SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error) {
+=======
+// UpdateStatsMetaVersionForGC update the version of mysql.stats_meta. See more
+// details in the interface definition.
+func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err error) {
+	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		_, err := UpdateStatsMetaVerAndLastHistUpdateVer(util.StatsCtx, sctx, physicalID)
+		return errors.Trace(err)
+	}, util.FlagWrapTxn)
+}
+
+// IsStatsMetaWriteTooSlow reports whether a stats_meta write that took dur can be missed by the
+// stats cache Update of other TiDB nodes, which looks back only LeaseOffset * lease from its newest version.
+func IsStatsMetaWriteTooSlow(lease, dur time.Duration) bool {
+	// Note: In unit tests, the lease is set to a value less than 0, which means the lease is disabled.
+	// This is why we need to explicitly check the lease here. Without this check,
+	// the duration validation would always evaluate to true, which is not the intended behavior.
+	return lease > 0 && dur >= cache.LeaseOffset*lease
+}
+
+// handleSlowStatsSaving is used to handle the slow stats saving process.
+// Once the saving process is too slow, we need to log a warning.
+// Also, we need to update the stats meta with a more recent version to avoid other nodes missing the delta update.
+// Combined with the stats meta version update, we can ensure the stats cache on other TiDB nodes is consistent.
+// See more at stats cache's Update function.
+func (s *statsReadWriter) handleSlowStatsSaving(tableID int64, start time.Time) error {
+	dur := time.Since(start)
+	isLoadIntervalExceeded := IsStatsMetaWriteTooSlow(s.statsHandler.Lease(), dur)
+	// Use failpoint to simulate slow saving.
+	failpoint.Inject("slowStatsSaving", func(val failpoint.Value) {
+		if val.(bool) {
+			isLoadIntervalExceeded = true
+		}
+	})
+
+	if !isLoadIntervalExceeded {
+		return nil
+	}
+
+	statslogutil.StatsLogger().Warn("Update stats cache is too slow",
+		zap.Duration("duration", dur),
+		zap.Int64("physicalID", tableID),
+	)
+
+	// Update stats meta to avoid other nodes missing the delta update.
+	statsVer := uint64(0)
+	err := util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		startTS, err := UpdateStatsMetaVerAndLastHistUpdateVer(util.StatsCtx, sctx, tableID)
+		failpoint.Inject("failToSaveStats", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.New("mock update stats meta version failed")
+			}
+		})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		statsVer = startTS
+		return nil
+	}, util.FlagWrapTxn)
+	if err != nil {
+		statslogutil.StatsLogger().Error("Failed to update stats meta version for slow saving, the stats cache on other TiDB nodes may be inconsistent",
+			zap.Int64("physicalID", tableID),
+			zap.Error(err),
+		)
+		return errors.Annotate(err, "failed to update stats meta version while saving statistics; the system may be too busy; please retry the operation later")
+	}
+
+	statslogutil.StatsLogger().Info("Successfully updated stats meta version for slow saving",
+		zap.Uint64("statsVer", statsVer),
+		zap.Int64("physicalID", tableID),
+	)
+	return nil
+}
+
+// SaveAnalyzeResultToStorage saves the stats of a table to storage.
+func (s *statsReadWriter) SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool) (err error) {
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	var statsVer uint64
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = SaveTableStatsToStorage(sctx, results, analyzeSnapshot)
@@ -204,7 +288,23 @@ func (s *statsReadWriter) SaveTableStatsToStorage(results *statistics.AnalyzeRes
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
 		tableID := results.TableID.GetStatisticsID()
+<<<<<<< HEAD
 		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, source, true)
+=======
+		// Check if saving was slow and update stats version if needed
+		err2 := s.handleSlowStatsSaving(tableID, start)
+		if err2 != nil {
+			statslogutil.StatsLogger().Error("Failed to update stats meta version for slow saving during analyze job execution",
+				zap.Int64("physicalID", tableID),
+				zap.String("database", results.Job.DBName),
+				zap.String("table", results.Job.TableName),
+				zap.String("partition", results.Job.PartitionName),
+				zap.String("jobInfo", results.Job.JobInfo),
+				zap.Error(err2),
+			)
+			return err2
+		}
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	}
 	return err
 }
@@ -236,8 +336,22 @@ func (s *statsReadWriter) TableStatsFromStorage(tableInfo *model.TableInfo, phys
 // If count is negative, both count and modify count would not be used and not be written to the table. Unless, corresponding
 // fields in the stats_meta table will be updated.
 // TODO: refactor to reduce the number of parameters
+<<<<<<< HEAD
 func (s *statsReadWriter) SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
 	cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool, source string) (err error) {
+=======
+func (s *statsReadWriter) SaveColOrIdxStatsToStorage(
+	tableID int64,
+	count, modifyCount int64,
+	isIndex int,
+	hg *statistics.Histogram,
+	cms *statistics.CMSketch,
+	topN *statistics.TopN,
+	fms *statistics.FMSketch,
+	statsVersion int,
+	updateAnalyzeTime bool,
+) (err error) {
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	var statsVer uint64
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = SaveStatsToStorage(sctx, tableID,
@@ -245,11 +359,21 @@ func (s *statsReadWriter) SaveStatsToStorage(tableID int64, count, modifyCount i
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
+<<<<<<< HEAD
 		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, source, false)
+=======
+		failpoint.InjectCall("afterSaveColOrIdxStatsToStorage", tableID, isIndex)
+		// Check if saving was slow and update stats version if needed
+		err2 := s.handleSlowStatsSaving(tableID, start)
+		if err2 != nil {
+			return err2
+		}
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	}
 	return
 }
 
+<<<<<<< HEAD
 // saveMetaToStorage saves stats meta to the storage.
 func (s *statsReadWriter) saveMetaToStorage(tableID, count, modifyCount int64, source string) (err error) {
 	var statsVer uint64
@@ -299,6 +423,18 @@ func (s *statsReadWriter) SaveExtendedStatsToStorage(tableID int64, extStats *st
 	if err == nil && statsVer != 0 {
 		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, "extended stats", false)
 	}
+=======
+// SaveMetaToStorage saves stats meta to the storage.
+// Use the param `refreshLastHistVer` to indicate whether we need to update the last_histograms_versions in stats_meta table.
+func (s *statsReadWriter) SaveMetaToStorage(
+	refreshLastHistVer bool,
+	metaUpdates ...statstypes.MetaUpdate,
+) (err error) {
+	intest.Assert(len(metaUpdates) > 0, "meta updates is empty")
+	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		return SaveMetaToStorage(sctx, refreshLastHistVer, metaUpdates)
+	}, util.FlagWrapTxn)
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	return
 }
 
@@ -355,6 +491,7 @@ func (s *statsReadWriter) DumpStatsToJSON(dbName string, tableInfo *model.TableI
 	return s.DumpStatsToJSONBySnapshot(dbName, tableInfo, snapshot, dumpPartitionStats)
 }
 
+<<<<<<< HEAD
 // DumpHistoricalStatsBySnapshot dumped json tables from mysql.stats_meta_history and mysql.stats_history.
 // As implemented in getTableHistoricalStatsToJSONWithFallback, if historical stats are nonexistent, it will fall back
 // to the latest stats, and these table names (and partition names) will be returned in fallbackTbls.
@@ -417,6 +554,51 @@ func (s *statsReadWriter) DumpHistoricalStatsBySnapshot(
 		jsonTbl.Partitions[util.TiDBGlobalStats] = tbl
 	}
 	return jsonTbl, fallbackTbls, nil
+=======
+// PersistStatsBySnapshot dumps statistic to json and call the function for each partition statistic to persist.
+// Notice:
+//  1. It might call the function `persist` with nil jsontable.
+//  2. It is only used by BR, so partitions' statistic are always dumped.
+//
+// TODO: once we support column-level statistic dump, it should replace the `PersistStatsBySnapshot` and `DumpStatsToJSON`.
+func (s *statsReadWriter) PersistStatsBySnapshot(
+	ctx context.Context,
+	dbName string,
+	tableInfo *model.TableInfo,
+	snapshot uint64,
+	persist statstypes.PersistFunc,
+) error {
+	pi := tableInfo.GetPartitionInfo()
+	if pi == nil {
+		jsonTable, err := s.TableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return persist(ctx, jsonTable, tableInfo.ID)
+	}
+
+	for _, def := range pi.Definitions {
+		tbl, err := s.TableStatsToJSON(dbName, tableInfo, def.ID, snapshot)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if tbl == nil {
+			continue
+		}
+		if err := persist(ctx, tbl, def.ID); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	// dump its global-stats if existed
+	tbl, err := s.TableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbl != nil {
+		return persist(ctx, tbl, tableInfo.ID)
+	}
+	return nil
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 }
 
 // DumpStatsToJSONBySnapshot dumps statistic to json.
@@ -459,6 +641,7 @@ func (s *statsReadWriter) DumpStatsToJSONBySnapshot(dbName string, tableInfo *mo
 	return jsonTbl, nil
 }
 
+<<<<<<< HEAD
 // getTableHistoricalStatsToJSONWithFallback try to get table historical stats, if not exist, directly fallback to the
 // latest stats, and the second return value would be true.
 func (s *statsReadWriter) getTableHistoricalStatsToJSONWithFallback(
@@ -494,6 +677,8 @@ func (s *statsReadWriter) tableHistoricalStatsToJSON(physicalID int64, snapshot 
 	return
 }
 
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 // TableStatsToJSON dumps statistic to json.
 func (s *statsReadWriter) TableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*util.JSONTable, error) {
 	tbl, err := s.TableStatsFromStorage(tableInfo, physicalID, true, snapshot)
@@ -617,23 +802,81 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 		// loadStatsFromJSON doesn't support partition table now.
 		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
+<<<<<<< HEAD
 		err = s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.GetStatsVer()), 1, false, util.StatsMetaHistorySourceLoadStats)
 		if err != nil {
 			return errors.Trace(err)
+=======
+		if err := s.SaveColOrIdxStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, col.FMSketch, int(col.GetStatsVer()), false); err != nil {
+			outerErr = err
+			return true
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 		}
 	}
 	for _, idx := range tbl.Indices {
 		// loadStatsFromJSON doesn't support partition table now.
 		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
+<<<<<<< HEAD
 		err = s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.GetStatsVer()), 1, false, util.StatsMetaHistorySourceLoadStats)
 		if err != nil {
 			return errors.Trace(err)
+=======
+		if err := s.SaveColOrIdxStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, idx.FMSketch, int(idx.GetStatsVer()), false); err != nil {
+			outerErr = err
+			return true
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 		}
 	}
 	err = s.SaveExtendedStatsToStorage(tbl.PhysicalID, tbl.ExtendedStats, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
 	return s.saveMetaToStorage(tbl.PhysicalID, tbl.RealtimeCount, tbl.ModifyCount, util.StatsMetaHistorySourceLoadStats)
+=======
+	return s.SaveMetaToStorage(true, statstypes.MetaUpdate{
+		PhysicalID:  tbl.PhysicalID,
+		Count:       tbl.RealtimeCount,
+		ModifyCount: tbl.ModifyCount,
+	})
+}
+
+// SaveColumnStatsUsageToStorage saves column statistics usage information for a table into mysql.column_stats_usage.
+func (s *statsReadWriter) SaveColumnStatsUsageToStorage(physicalID int64, predicateColumns []*statsutil.JSONPredicateColumn) error {
+	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		colStatsUsage := make(map[model.TableItemID]statstypes.ColStatsTimeInfo, len(predicateColumns))
+		for _, col := range predicateColumns {
+			if col == nil {
+				continue
+			}
+			itemID := model.TableItemID{TableID: physicalID, ID: col.ID}
+			lastUsedAt, err := parseTimeOrNil(col.LastUsedAt)
+			if err != nil {
+				return err
+			}
+			lastAnalyzedAt, err := parseTimeOrNil(col.LastAnalyzedAt)
+			if err != nil {
+				return err
+			}
+			colStatsUsage[itemID] = statstypes.ColStatsTimeInfo{
+				LastUsedAt:     lastUsedAt,
+				LastAnalyzedAt: lastAnalyzedAt,
+			}
+		}
+		return predicatecolumn.SaveColumnStatsUsageForTable(sctx, colStatsUsage)
+	}, util.FlagWrapTxn)
+}
+
+func parseTimeOrNil(timeStr *string) (*types.Time, error) {
+	if timeStr == nil {
+		return nil, nil
+	}
+	// DefaultStmtNoWarningContext use UTC timezone.
+	parsedTime, err := types.ParseTime(types.DefaultStmtNoWarningContext, *timeStr, mysql.TypeTimestamp, types.MaxFsp)
+	if err != nil {
+		return nil, err
+	}
+	return &parsedTime, nil
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 }

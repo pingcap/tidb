@@ -881,8 +881,19 @@ var defaultSysVars = []*SysVar{
 			}
 			return origin, nil
 		}},
+<<<<<<< HEAD
 	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: Off, Type: TypeBool, Depended: true},
+=======
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableTelemetry, Value: BoolToOnOff(vardef.DefTiDBEnableTelemetry), Type: vardef.TypeBool},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableHistoricalStats, Value: vardef.Off, Type: vardef.TypeBool,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			if TiDBOptOn(normalizedValue) {
+				vars.StmtCtx.AppendWarning(errors.NewNoStackError("the historical statistics feature has been removed, so this will have no effect"))
+			}
+			return normalizedValue, nil
+		}},
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	/* tikv gc metrics */
 	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: On, Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return getTiDBTableValue(s, "tikv_gc_enable", On)
@@ -1348,6 +1359,7 @@ var defaultSysVars = []*SysVar{
 		PasswordReuseInterval.Store(TidbOptInt64(val, DefPasswordReuseTime))
 		return nil
 	}},
+<<<<<<< HEAD
 	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStatsForCapture, Value: BoolToOnOff(DefTiDBEnableHistoricalStatsForCapture), Type: TypeBool,
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 			EnableHistoricalStatsForCapture.Store(TiDBOptOn(s))
@@ -1367,11 +1379,25 @@ var defaultSysVars = []*SysVar{
 			}
 			HistoricalStatsDuration.Store(d)
 			return nil
+=======
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableHistoricalStatsForCapture, Value: vardef.Off, Type: vardef.TypeBool,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			if TiDBOptOn(normalizedValue) {
+				vars.StmtCtx.AppendWarning(errors.NewNoStackError("the historical statistics feature has been removed, so this will have no effect"))
+			}
+			return normalizedValue, nil
+		}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBHistoricalStatsDuration, Value: vardef.DefTiDBHistoricalStatsDuration.String(), Type: vardef.TypeDuration, MinValue: int64(time.Second), MaxValue: uint64(time.Hour * 24 * 365),
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			vars.StmtCtx.AppendWarning(errors.NewNoStackError("the historical statistics feature has been removed, so this will have no effect"))
+			return normalizedValue, nil
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 		}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerContinuousCapture, Value: BoolToOnOff(false), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
+<<<<<<< HEAD
 			historicalStatsEnabled, err := s.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableHistoricalStats)
 			if err != nil {
 				return err
@@ -1379,12 +1405,15 @@ var defaultSysVars = []*SysVar{
 			if !TiDBOptOn(historicalStatsEnabled) && TiDBOptOn(val) {
 				return errors.Errorf("%v should be enabled before enabling %v", TiDBEnableHistoricalStats, TiDBEnablePlanReplayerContinuousCapture)
 			}
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 			s.EnablePlanReplayedContinuesCapture = TiDBOptOn(val)
 			return nil
 		},
 		GetSession: func(vars *SessionVars) (string, error) {
 			return BoolToOnOff(vars.EnablePlanReplayedContinuesCapture), nil
 		},
+<<<<<<< HEAD
 		Validation: func(vars *SessionVars, s string, s2 string, flag ScopeFlag) (string, error) {
 			historicalStatsEnabled, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableHistoricalStats)
 			if err != nil {
@@ -1395,6 +1424,8 @@ var defaultSysVars = []*SysVar{
 			}
 			return s, nil
 		},
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(DefTiDBEnablePlanReplayerCapture), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {

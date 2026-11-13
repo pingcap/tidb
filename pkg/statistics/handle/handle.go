@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
-	"github.com/pingcap/tidb/pkg/statistics/handle/history"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
@@ -63,9 +62,12 @@ type Handle struct {
 	// StatsUsage is used to track the usage of column / index statistics.
 	util.StatsUsage
 
+<<<<<<< HEAD
 	// StatsHistory is used to manage historical stats.
 	util.StatsHistory
 
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	// StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
 	util.StatsAnalyze
 
@@ -131,7 +133,6 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool uti
 		return nil, err
 	}
 	handle.StatsCache = statsCache
-	handle.StatsHistory = history.NewStatsHistory(handle)
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
 	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle)
 	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)

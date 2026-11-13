@@ -482,6 +482,7 @@ func TestIssue44369(t *testing.T) {
 	tk.MustExec("select * from t where a = 10 and bb > 20;")
 }
 
+<<<<<<< HEAD
 func TestGlobalIndexWithAnalyzeVersion1AndHistoricalStats(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -511,4 +512,172 @@ func TestGlobalIndexWithAnalyzeVersion1AndHistoricalStats(t *testing.T) {
 	}
 	// Each analyze will only generate one record
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id=%d", tblID)).Equal(testkit.Rows("10"))
+=======
+func TestTableLastAnalyzeVersion(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	h := dom.StatsHandle()
+	tk := testkit.NewTestKit(t, store)
+
+	// Only create table should not set the last_analyze_version
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int);")
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(context.Background(), is))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl, found := h.Get(tbl.Meta().ID)
+	require.True(t, found)
+	require.Equal(t, uint64(0), statsTbl.LastAnalyzeVersion)
+
+	// Only alter table should not set the last_analyze_version
+	tk.MustExec("alter table t add column b int default 0")
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	require.NoError(t, h.Update(context.Background(), is))
+	statsTbl, found = h.Get(tbl.Meta().ID)
+	require.True(t, found)
+	require.Equal(t, uint64(0), statsTbl.LastAnalyzeVersion)
+	tk.MustExec("alter table t add index idx(a)")
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	e := <-h.DDLEventCh()
+	require.Equal(t, metamodel.ActionAddIndex, e.GetType())
+	require.Equal(t, 0, len(h.DDLEventCh()))
+	require.NoError(t, err)
+	require.NoError(t, h.Update(context.Background(), is))
+	statsTbl, found = h.Get(tbl.Meta().ID)
+	require.True(t, found)
+	require.Equal(t, uint64(0), statsTbl.LastAnalyzeVersion)
+	// INSERT and updating the modify_count should not set the last_analyze_version
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("flush stats_delta *.*")
+	require.NoError(t, h.Update(context.Background(), is))
+	statsTbl, found = h.Get(tbl.Meta().ID)
+	require.True(t, found)
+	require.Equal(t, uint64(0), statsTbl.LastAnalyzeVersion)
+
+	// After analyze, last_analyze_version is set.
+	tk.MustExec("analyze table t")
+	require.NoError(t, h.Update(context.Background(), is))
+	statsTbl, found = h.Get(tbl.Meta().ID)
+	require.True(t, found)
+	require.NotEqual(t, uint64(0), statsTbl.LastAnalyzeVersion)
+}
+
+func TestLastAnalyzeVersionNotChangedWithAsyncStatsLoad(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 0;")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int);")
+	err := statstestutil.HandleNextDDLEventWithTxn(dom.StatsHandle())
+	require.NoError(t, err)
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("flush stats_delta *.*")
+	tk.MustExec("alter table t add column c int default 1;")
+	err = statstestutil.HandleNextDDLEventWithTxn(dom.StatsHandle())
+	require.NoError(t, err)
+	tk.MustExec("select * from t where a = 1 or b = 1 or c = 1;")
+	require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
+	result := tk.MustQuery("show stats_meta where table_name = 't'")
+	require.Len(t, result.Rows(), 1)
+	// The last analyze time.
+	require.Equal(t, "<nil>", result.Rows()[0][6])
+}
+
+func TestSaveMetaToStorage(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tableCount := 10
+	metaUpdates := make([]types.MetaUpdate, 0, tableCount)
+	tableIDs := make([]string, 0, tableCount)
+	for i := range tableCount {
+		tableName := fmt.Sprintf("save_metas_%d", i)
+		tk.MustExec(fmt.Sprintf("drop table if exists test.%s", tableName))
+		tk.MustExec(fmt.Sprintf("create table test.%s (id int)", tableName))
+		tableInfo, err := dom.InfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr(tableName))
+		require.NoError(t, err)
+		metaUpdates = append(metaUpdates, types.MetaUpdate{
+			PhysicalID: tableInfo.ID,
+			Count:      tableInfo.ID,
+		})
+		tableIDs = append(tableIDs, fmt.Sprintf("%d", tableInfo.ID))
+	}
+	statsHandler := dom.StatsHandle()
+	err := statsHandler.SaveMetaToStorage(false, metaUpdates...)
+	require.NoError(t, err)
+	rows := tk.MustQuery(
+		fmt.Sprintf(
+			"select version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta where table_id in (%s)",
+			strings.Join(tableIDs, ","),
+		),
+	).Rows()
+	require.Len(t, rows, tableCount)
+	baseVersion := ""
+	for _, cols := range rows {
+		require.Len(t, cols, 6)
+		version := cols[0].(string)
+		tableID := cols[1].(string)
+		modifyCount := cols[2].(string)
+		count := cols[3].(string)
+		snapshot := cols[4].(string)
+		lastStatsHistogramsVersion := cols[5].(string)
+		if len(baseVersion) > 0 {
+			require.Equal(t, baseVersion, version)
+		} else {
+			baseVersion = version
+		}
+		require.NotEqual(t, "0", tableID)
+		require.Equal(t, tableID, count)
+		require.Equal(t, "0", snapshot)
+		require.Equal(t, "0", modifyCount)
+		require.Equal(t, "<nil>", lastStatsHistogramsVersion)
+	}
+
+	for i := range tableCount {
+		metaUpdates[i].ModifyCount = metaUpdates[i].Count
+		metaUpdates[i].Count += metaUpdates[i].ModifyCount
+	}
+	err = statsHandler.SaveMetaToStorage(true, metaUpdates...)
+	require.NoError(t, err)
+	rows = tk.MustQuery(
+		fmt.Sprintf(
+			"select version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta where table_id in (%s)",
+			strings.Join(tableIDs, ","),
+		),
+	).Rows()
+	require.Len(t, rows, tableCount)
+	nextVersion := ""
+	for _, cols := range rows {
+		require.Len(t, cols, 6)
+		version := cols[0].(string)
+		tableID := cols[1].(string)
+		var tableIDI64 int64
+		_, err := fmt.Sscanf(tableID, "%d", &tableIDI64)
+		require.NoError(t, err)
+		expectCount := fmt.Sprintf("%d", tableIDI64*2)
+		modifyCount := cols[2].(string)
+		count := cols[3].(string)
+		snapshot := cols[4].(string)
+		lastStatsHistogramsVersion := cols[5].(string)
+		if len(nextVersion) > 0 {
+			require.Equal(t, nextVersion, version)
+		} else {
+			nextVersion = version
+			require.NotEqual(t, baseVersion, nextVersion)
+		}
+		require.NotEqual(t, "0", tableID)
+		require.Equal(t, expectCount, count)
+		require.Equal(t, "0", snapshot)
+		require.Equal(t, tableID, modifyCount)
+		require.Equal(t, version, lastStatsHistogramsVersion)
+	}
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 }

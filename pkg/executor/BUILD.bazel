@@ -313,8 +313,11 @@ go_test(
         "explain_unit_test.go",
         "explainfor_test.go",
         "grant_test.go",
+<<<<<<< HEAD
         "hash_table_test.go",
         "historical_stats_test.go",
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
         "hot_regions_history_table_test.go",
         "import_into_test.go",
         "index_advise_test.go",
@@ -415,8 +418,11 @@ go_test(
         "//pkg/sessiontxn",
         "//pkg/sessiontxn/staleread",
         "//pkg/statistics",
+<<<<<<< HEAD
         "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/util",
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
         "//pkg/store/copr",
         "//pkg/store/driver/error",
         "//pkg/store/helper",

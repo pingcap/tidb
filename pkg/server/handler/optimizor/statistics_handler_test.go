@@ -25,7 +25,10 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/parser/model"
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/handler/optimizor"
 	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
@@ -67,10 +70,13 @@ func TestDumpStatsAPI(t *testing.T) {
 	statsHandler := optimizor.NewStatsHandler(dom)
 
 	prepareData(t, client, statsHandler)
+<<<<<<< HEAD
 	tableInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
 	require.NoError(t, err)
 	err = dom.GetHistoricalStatsWorker().DumpHistoricalStats(tableInfo.Meta().ID, dom.StatsHandle())
 	require.NoError(t, err)
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 
 	router := mux.NewRouter()
 	router.Handle("/stats/dump/{db}/{table}", statsHandler)
@@ -97,13 +103,9 @@ func TestDumpStatsAPI(t *testing.T) {
 	checkData(t, path, client)
 	checkCorrelation(t, client)
 
-	// sleep for 1 seconds to ensure the existence of tidb.test
-	time.Sleep(time.Second)
-	timeBeforeDropStats := time.Now()
-	snapshot := timeBeforeDropStats.Format("20060102150405")
-	prepare4DumpHistoryStats(t, client)
+	prepareTableWithoutStats(t, client)
 
-	// test dump history stats
+	// test dump stats for a table without stats
 	resp1, err := client.FetchStatus("/stats/dump/tidb/test")
 	require.NoError(t, err)
 	defer func() {
@@ -113,6 +115,7 @@ func TestDumpStatsAPI(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "null", string(js))
 
+<<<<<<< HEAD
 	path1 := "/tmp/stats_history.json"
 	fp1, err := os.Create(path1)
 	require.NoError(t, err)
@@ -133,6 +136,8 @@ func TestDumpStatsAPI(t *testing.T) {
 	require.NoError(t, err)
 	checkData(t, path1, client)
 
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	testDumpPartitionTableStats(t, client, statsHandler)
 }
 
@@ -155,7 +160,6 @@ func prepareData(t *testing.T, client *testserverclient.TestServerClient, statHa
 	tk.MustExec("insert test values (1, 's')")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table test")
-	tk.MustExec("set global tidb_enable_historical_stats = 1")
 	tk.MustExec("insert into test(a,b) values (1, 'v'),(3, 'vvv'),(5, 'vv')")
 	is := statHandle.Domain().InfoSchema()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
@@ -204,7 +208,7 @@ func preparePartitionData(t *testing.T, client *testserverclient.TestServerClien
 	require.NoError(t, h.Update(is))
 }
 
-func prepare4DumpHistoryStats(t *testing.T, client *testserverclient.TestServerClient) {
+func prepareTableWithoutStats(t *testing.T, client *testserverclient.TestServerClient) {
 	db, err := sql.Open("mysql", client.GetDSN())
 	require.NoError(t, err, "Error connecting")
 	defer func() {
@@ -213,15 +217,6 @@ func prepare4DumpHistoryStats(t *testing.T, client *testserverclient.TestServerC
 	}()
 
 	tk := testkit.NewDBTestKit(t, db)
-
-	safePointName := "tikv_gc_safe_point"
-	safePointValue := "20060102-15:04:05 -0700"
-	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
-	ON DUPLICATE KEY
-	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
-	tk.MustExec(updateSafePoint)
-
 	tk.MustExec("drop table tidb.test")
 	tk.MustExec("create table tidb.test (a int, b varchar(20))")
 }

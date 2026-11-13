@@ -516,6 +516,7 @@ func TestLoadStatsForNewCollation(t *testing.T) {
 	requireTableEqual(t, statsCacheTbl, loadTbl)
 }
 
+<<<<<<< HEAD
 func TestJSONTableToBlocks(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -551,6 +552,8 @@ func TestJSONTableToBlocks(t *testing.T) {
 	require.JSONEq(t, string(jsOrigin), string(jsonStr))
 }
 
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 func TestLoadStatsFromOldVersion(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

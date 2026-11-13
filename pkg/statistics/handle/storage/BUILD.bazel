@@ -20,23 +20,29 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
+<<<<<<< HEAD
         "//pkg/sessionctx/stmtctx",
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/statistics/handle/cache",
         "//pkg/statistics/handle/lockstats",
         "//pkg/statistics/handle/logutil",
+<<<<<<< HEAD
         "//pkg/statistics/handle/metrics",
+=======
+        "//pkg/statistics/handle/types",
+        "//pkg/statistics/handle/usage/predicatecolumn",
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
         "//pkg/statistics/handle/util",
         "//pkg/types",
         "//pkg/util/chunk",
-        "//pkg/util/compress",
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/sqlexec",
-        "@com_github_klauspost_compress//gzip",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tikv_client_go_v2//oracle",
@@ -54,7 +60,11 @@ go_test(
         "stats_read_writer_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 23,
+=======
+    shard_count = 30,
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
     deps = [
         ":storage",
         "//pkg/domain",

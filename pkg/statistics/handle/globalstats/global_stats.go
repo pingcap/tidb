@@ -24,7 +24,12 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+=======
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tiancaiamao/gp"
@@ -461,3 +466,70 @@ func blockingMergePartitionStats2GlobalStats(
 	}
 	return
 }
+<<<<<<< HEAD
+=======
+
+// uniqueGlobalNDV returns the global NDV of a column or index that
+// statistics.UniqueByLocalIndex accepts. Its values never repeat across
+// partitions, so the partition NDVs add up exactly, while the merged
+// FMSketch estimates the sum.
+// A partition that is not analyzed again keeps its NDV after deletes, so the
+// current row count bounds the sum, as it bounds the FMSketch estimate.
+func uniqueGlobalNDV(partitionHists []*statistics.Histogram, count int64) int64 {
+	var ndv int64
+	for _, hg := range partitionHists {
+		// An empty partition has no histogram.
+		if hg != nil {
+			ndv += hg.NDV
+		}
+	}
+	return min(ndv, count)
+}
+
+// WriteGlobalStatsToStorage is to write global stats to storage
+func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *GlobalStats, info *statstypes.GlobalStatsInfo, gid int64) (err error) {
+	// Dump global-level stats to kv.
+	for i := range globalStats.Num {
+		hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
+		if hg == nil {
+			// All partitions have no stats so global stats are not created.
+			continue
+		}
+		// fms for global stats doesn't need to dump to kv.
+		err = statsHandle.SaveColOrIdxStatsToStorage(gid,
+			globalStats.Count,
+			globalStats.ModifyCount,
+			info.IsIndex,
+			hg,
+			cms,
+			topN,
+			nil,
+			info.StatsVersion,
+			true,
+		)
+		if err != nil {
+			statslogutil.StatsLogger().Warn("save global-level stats to storage failed",
+				zap.Int64("histID", hg.ID), zap.Error(err), zap.Int64("tableID", gid))
+		}
+	}
+	return err
+}
+
+// sampledGlobalNDV limits a sampled NDV, which GEE can scale too high, to the
+// current row count and to the non-NULL rows that ANALYZE saw. Those are the
+// rows of the merged TopN and histogram, plus missedNotNull for the partitions
+// where both are empty.
+func sampledGlobalNDV(ndv int64, hist *statistics.Histogram, topN *statistics.TopN, missedNotNull, count int64) int64 {
+	notNull := topNHistNotNull(hist, topN) + missedNotNull
+	return min(ndv, notNull, count)
+}
+
+// topNHistNotNull returns the non-NULL rows that a TopN and histogram hold.
+func topNHistNotNull(hist *statistics.Histogram, topN *statistics.TopN) int64 {
+	notNull := int64(topN.TotalCount())
+	if hist != nil {
+		notNull += int64(hist.NotNullCount())
+	}
+	return notNull
+}
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))

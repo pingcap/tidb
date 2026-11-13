@@ -92,6 +92,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 		s.SessionTableDelta().Merge(deltaMap)
 	}()
 
+<<<<<<< HEAD
 	return utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		currentTime := time.Now()
@@ -105,6 +106,69 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 			}
 			if updated {
 				UpdateTableDeltaMap(deltaMap, id, -item.Delta, -item.Count, nil)
+=======
+	// Sort table IDs to ensure a consistent dump order to reduce the chance of deadlock.
+	tableIDs = collectPendingStatsDeltaTableIDs(deltaMap, tableIDs)
+
+	// Dump stats delta in batches.
+	for i := 0; i < len(tableIDs); i += dumpDeltaBatchSize {
+		end := min(i+dumpDeltaBatchSize, len(tableIDs))
+
+		batchTableIDs := tableIDs[i:end]
+		var batchUpdates []*storage.DeltaUpdate
+		batchStart := time.Now()
+		err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+			is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
+			snapshotTableInfoGetter := utilstats.NewSnapshotTableInfoGetter(is)
+			batchUpdates = make([]*storage.DeltaUpdate, 0, len(batchTableIDs))
+			// Collect all updates in the batch.
+			for _, id := range batchTableIDs {
+				// NOTE: Ensure InitTime is initialized before evaluating dump conditions.
+				item := deltaMap[id]
+				if item.InitTime.IsZero() {
+					item.InitTime = batchStart
+					deltaMap[id] = item
+				}
+				needDump := s.needDumpStatsDelta(snapshotTableInfoGetter, forceDump, id, item, batchStart)
+				if !needDump {
+					continue
+				}
+				batchUpdates = append(batchUpdates, storage.NewDeltaUpdate(id, item, false))
+			}
+			if time.Since(batchStart) > tooSlowThreshold {
+				statslogutil.StatsSampleLogger().Warn("Collecting batch updates is too slow",
+					zap.Int("tableCount", len(batchUpdates)),
+					zap.Duration("duration", time.Since(batchStart)))
+			}
+
+			if len(batchUpdates) == 0 {
+				return nil
+			}
+
+			// Process all updates in the batch with a single transaction.
+			// Note: batchUpdates may be modified in dumpStatsDeltaToKV. (e.g. sorting, updating IsLocked)
+			failpoint.InjectCall("beforeDumpStatsDeltaToKV")
+			updated, err := s.dumpStatsDeltaToKV(snapshotTableInfoGetter, sctx, batchUpdates)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// Note: Ensure we use the updated slice after dumpStatsDeltaToKV,
+			// because dumpStatsDeltaToKV may modify the underlying array of batchUpdates.
+			// For example, dumpStatsDeltaToKV may sort the array.
+			batchUpdates = updated
+			intest.AssertFunc(
+				func() bool {
+					return slices.IsSortedFunc(batchUpdates, func(i, j *storage.DeltaUpdate) int {
+						return cmp.Compare(i.TableID, j.TableID)
+					})
+				},
+				"batchUpdates should be sorted by table ID",
+			)
+
+			// Update deltaMap after the batch is successfully dumped.
+			for _, update := range batchUpdates {
+				delete(deltaMap, update.TableID)
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 			}
 			if err = storage.DumpTableStatColSizeToKV(sctx, id, item); err != nil {
 				delete(deltaMap, id)
@@ -145,6 +209,38 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 		if err != nil {
 			return errors.Trace(err)
 		}
+<<<<<<< HEAD
+=======
+		unlockedTableIDs := make([]int64, 0, len(batchUpdates))
+		for _, update := range batchUpdates {
+			if !update.IsLocked {
+				unlockedTableIDs = append(unlockedTableIDs, update.TableID)
+			}
+		}
+		// The batch wrote its start_ts as the version. If it committed too late, the stats cache on other
+		// TiDB nodes may have moved past that version, so write a newer one, as handleSlowStatsSaving does.
+		if batchDur := time.Since(batchStart); len(unlockedTableIDs) > 0 &&
+			storage.IsStatsMetaWriteTooSlow(s.statsHandle.Lease(), batchDur) {
+			updateStart := time.Now()
+			newVersion, err := s.updateStatsMetaVerForSlowDump(unlockedTableIDs)
+			updateDur := time.Since(updateStart)
+			if err != nil {
+				statslogutil.StatsLogger().Warn("Failed to update stats meta version for slow stats delta dump, "+
+					"the stats cache on other TiDB nodes may miss the delta",
+					zap.Int("tableCount", len(unlockedTableIDs)),
+					zap.Duration("dumpDuration", batchDur),
+					zap.Duration("updateVersionDuration", updateDur),
+					zap.Error(err))
+			} else {
+				statslogutil.StatsSampleLogger().Info("Updated stats meta version for slow stats delta dump",
+					zap.Int("tableCount", len(unlockedTableIDs)),
+					zap.Duration("dumpDuration", batchDur),
+					zap.Duration("updateVersionDuration", updateDur),
+					zap.Uint64("statsVersion", newVersion))
+			}
+		}
+	}
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 
 		tbl, _, _ := is.FindTableByPartitionID(physicalTableID)
 		// Check if the table and its partitions are locked.
@@ -152,10 +248,82 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 		if tbl != nil {
 			tidAndPid = append(tidAndPid, tbl.Meta().ID)
 		}
+<<<<<<< HEAD
 		tidAndPid = append(tidAndPid, physicalTableID)
 		lockedTables, err := s.statsHandle.GetLockedTables(tidAndPid...)
 		if err != nil {
 			return err
+=======
+		slices.Sort(tableIDs)
+		return tableIDs
+	}
+
+	tableIDs := make([]int64, 0, len(targetTableIDs))
+	seen := make(map[int64]struct{}, len(targetTableIDs))
+	for _, id := range targetTableIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		if _, ok := deltaMap[id]; !ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		tableIDs = append(tableIDs, id)
+	}
+	slices.Sort(tableIDs)
+	return tableIDs
+}
+
+// dumpStatsDeltaToKV processes and writes multiple table stats count deltas to KV storage in batches.
+// Note: The `batchUpdates` parameter may be modified during the execution of this function.
+//
+// 1. Handles partitioned tables:
+//   - For partitioned tables, the function ensures that the global statistics are updated appropriately
+//     in addition to the individual partition statistics.
+//
+// 2. Stashes lock information:
+//   - Records lock information for each table or partition.
+func (s *statsUsageImpl) dumpStatsDeltaToKV(
+	snapshotTableInfoGetter *utilstats.SnapshotTableInfoGetter,
+	sctx sessionctx.Context,
+	updates []*storage.DeltaUpdate,
+) (updated []*storage.DeltaUpdate, err error) {
+	if len(updates) == 0 {
+		return nil, nil
+	}
+	beforeLen := len(updates)
+	statsVersion, err := utilstats.GetStartTS(sctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// Collect all table IDs that need lock checking.
+	allTableIDs := make([]int64, 0, len(updates))
+	for _, update := range updates {
+		// No need to update if the delta is zero.
+		if update.Delta.Count == 0 {
+			continue
+		}
+		// Add psychical table ID.
+		allTableIDs = append(allTableIDs, update.TableID)
+		// Add parent table ID if it's a partition table.
+		if tblID, ok := snapshotTableInfoGetter.ParentTableID(update.TableID); ok {
+			allTableIDs = append(allTableIDs, tblID)
+		}
+	}
+
+	// Batch get lock status for all tables.
+	lockedTables, err := s.statsHandle.GetLockedTables(allTableIDs...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// Prepare batch updates
+	for _, update := range updates {
+		// No need to update if the delta is zero.
+		if update.Delta.Count == 0 {
+			continue
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 		}
 
 		var affectedRows uint64
@@ -212,10 +380,21 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 			affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
 		}
 
+<<<<<<< HEAD
 		updated = affectedRows > 0
 		return nil
 	}, utilstats.FlagWrapTxn)
 	return
+=======
+	// Batch update stats meta.
+	if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, updates...); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// Because we may sort the updates, we need to return the updated slice.
+	// Otherwise the caller may use the original slice and get wrong results.
+	return updates, nil
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 }
 
 // DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.

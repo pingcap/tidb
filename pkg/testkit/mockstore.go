@@ -70,6 +70,67 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 	return store
 }
 
+<<<<<<< HEAD
+=======
+// tryMakeImage tries to create a bootstraped storage, the store is used as image for testing later.
+func tryMakeImage(t testing.TB, opts ...mockstore.MockTiKVStoreOption) {
+	if mockstore.ImageAvailable() {
+		return
+	}
+	retry, err := false, error(nil)
+	for err == nil {
+		retry, err = tryMakeImageOnce(t)
+		if !retry {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func tryMakeImageOnce(t testing.TB) (retry bool, err error) {
+	const lockFile = "/tmp/tidb-unistore-bootstraped-image-lock-file"
+	lock, err := os.Create(lockFile)
+	if err != nil {
+		return true, nil
+	}
+	defer func() { err = os.Remove(lockFile) }()
+	defer lock.Close()
+
+	// Prevent other process from creating the image concurrently
+	err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if err != nil {
+		return true, nil
+	}
+	defer func() { err = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) }()
+
+	// Now this is the only instance to do the operation.
+	store, err := mockstore.NewMockStore(
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+		mockstore.WithPath(mockstore.ImageFilePath))
+	if err != nil {
+		return false, err
+	}
+	if kerneltype.IsNextGen() {
+		testenv.UpdateConfigForNextgen(t)
+		kvstore.SetSystemStorage(store)
+	}
+
+	vardef.SetSchemaLease(500 * time.Millisecond)
+	session.DisableStats4Test()
+	domain.DisablePlanReplayerBackgroundJob4Test()
+	dom, err := session.BootstrapSession(store)
+	if err != nil {
+		return false, err
+	}
+	dom.SetStatsUpdating(true)
+
+	dom.Close()
+	err = store.Close()
+
+	return false, err
+}
+
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 // DistExecutionContext is the context
 // that used in Distributed execution test for Dist task framework and DDL.
 type DistExecutionContext struct {
@@ -217,8 +278,23 @@ func bootstrap4DistExecution(t testing.TB, store kv.Storage, lease time.Duration
 	session.SetSchemaLease(lease)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
+<<<<<<< HEAD
 	domain.DisableDumpHistoricalStats4Test()
 	dom, err := session.BootstrapSession4DistExecution(store)
+=======
+
+	// Multi-domain tests intentionally keep multiple live domains for one mock
+	// store. Skip the temporary global-init domain so it cannot reuse and close
+	// an active test domain.
+	const skipInitGlobalVarFromSystemDB = "github.com/pingcap/tidb/pkg/session/skipInitGlobalVarFromSystemDB"
+	dom, err := func() (*domain.Domain, error) {
+		require.NoError(t, failpoint.Enable(skipInitGlobalVarFromSystemDB, `return(true)`))
+		defer func() {
+			require.NoError(t, failpoint.Disable(skipInitGlobalVarFromSystemDB))
+		}()
+		return session.BootstrapSession4DistExecution(store)
+	}()
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	require.NoError(t, err)
 
 	dom.SetStatsUpdating(true)
@@ -229,7 +305,6 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 	session.SetSchemaLease(lease)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
-	domain.DisableDumpHistoricalStats4Test()
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 

@@ -22,8 +22,12 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+=======
+	"github.com/pingcap/tidb/pkg/statistics/handle"
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -61,8 +65,23 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot b
 			worker.errCh <- errors.Trace(exeerrors.ErrQueryInterrupted)
 			return
 		}
+<<<<<<< HEAD
 		statsHandle := domain.GetDomain(worker.sctx).StatsHandle()
 		err := statsHandle.SaveTableStatsToStorage(results, analyzeSnapshot, util.StatsMetaHistorySourceAnalyze)
+=======
+		failpoint.InjectCall("analyzeSaveWorkerBeforeHandleSignal")
+		if err := worker.killer.HandleSignal(); err != nil {
+			drainErr = err
+			finishJobWithLog(statsHandle, results.Job, drainErr)
+			results.DestroyAndPutToPool()
+			if !errReported {
+				worker.errCh <- drainErr
+				errReported = true
+			}
+			continue
+		}
+		err := statsHandle.SaveAnalyzeResultToStorage(results, analyzeSnapshot)
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 		if err != nil {
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
 			finishJobWithLog(worker.sctx, results.Job, err)

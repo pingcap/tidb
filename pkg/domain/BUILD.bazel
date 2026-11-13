@@ -7,7 +7,11 @@ go_library(
         "domain_sysvars.go",
         "domainctx.go",
         "extract.go",
+<<<<<<< HEAD
         "historical_stats.go",
+=======
+        "inference.go",
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
         "optimize_trace.go",
         "plan_replayer.go",
         "plan_replayer_dump.go",

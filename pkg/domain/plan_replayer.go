@@ -468,7 +468,19 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 		return true
 	}
 
+<<<<<<< HEAD
 	file, fileName, err := replayer.GeneratePlanReplayerFile(task.IsCapture, task.IsContinuesCapture, variable.EnableHistoricalStatsForCapture.Load())
+=======
+	storage, err := extstore.GetGlobalExtStorage(w.ctx)
+	if err != nil {
+		logutil.BgLogger().Warn("get global ext storage failed", zap.String("category", "plan-replayer-capture"),
+			zap.String("sqlDigest", taskKey.SQLDigest),
+			zap.String("planDigest", taskKey.PlanDigest),
+			zap.Error(err))
+		return false
+	}
+	file, fileName, err := replayer.GeneratePlanReplayerFile(w.ctx, storage, task.IsCapture, task.IsContinuesCapture)
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	if err != nil {
 		logutil.BgLogger().Warn("generate task file failed", zap.String("category", "plan-replayer-capture"),
 			zap.String("sqlDigest", taskKey.SQLDigest),
@@ -574,6 +586,7 @@ type PlanReplayerDumpTask struct {
 	TblStats map[int64]interface{}
 
 	// variables used to dump the plan
+<<<<<<< HEAD
 	StartTS           uint64
 	SessionBindings   []*bindinfo.BindRecord
 	EncodedPlan       string
@@ -582,6 +595,15 @@ type PlanReplayerDumpTask struct {
 	Analyze           bool
 	HistoricalStatsTS uint64
 	DebugTrace        []interface{}
+=======
+	StartTS         uint64
+	SessionBindings [][]*bindinfo.Binding
+	EncodedPlan     string
+	SessionVars     *variable.SessionVars
+	ExecStmts       []ast.StmtNode
+	Analyze         bool
+	DebugTrace      []any
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 
 	FileName string
 	Zf       *os.File

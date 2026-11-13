@@ -15,24 +15,27 @@
 package storage
 
 import (
+<<<<<<< HEAD
 	"context"
 	"encoding/json"
 	"fmt"
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -56,12 +59,6 @@ func (gc *statsGCImpl) GCStats(is infoschema.InfoSchema, ddlLease time.Duration)
 	return util.CallWithSCtx(gc.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return GCStats(sctx, gc.statsHandle, is, ddlLease)
 	})
-}
-
-// ClearOutdatedHistoryStats clear outdated historical stats.
-// Only for test.
-func (gc *statsGCImpl) ClearOutdatedHistoryStats() error {
-	return util.CallWithSCtx(gc.statsHandle.SPool(), ClearOutdatedHistoryStats)
 }
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
@@ -108,6 +105,7 @@ func GCStats(sctx sessionctx.Context,
 		if err := gcTableStats(sctx, statsHandle, is, row.GetInt64(0)); err != nil {
 			return errors.Trace(err)
 		}
+<<<<<<< HEAD
 		_, existed := is.TableByID(row.GetInt64(0))
 		if !existed {
 			if err := gcHistoryStatsFromKV(sctx, row.GetInt64(0)); err != nil {
@@ -120,6 +118,8 @@ func GCStats(sctx sessionctx.Context,
 		logutil.BgLogger().Warn("failed to gc outdated historical stats",
 			zap.Duration("duration", variable.HistoricalStatsDuration.Load()),
 			zap.Error(err))
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	}
 
 	return removeDeletedExtendedStats(sctx, gcVer)
@@ -165,6 +165,7 @@ func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64) (err erro
 	return nil
 }
 
+<<<<<<< HEAD
 func forCount(total int64, batch int64) int64 {
 	result := total / batch
 	if total%batch > 0 {
@@ -219,6 +220,8 @@ func gcHistoryStatsFromKV(sctx sessionctx.Context, physicalID int64) (err error)
 	return err
 }
 
+=======
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 // deleteHistStatsFromKV deletes all records about a column or an index and updates version.
 func deleteHistStatsFromKV(sctx sessionctx.Context, physicalID int64, histID int64, isIndex int) (err error) {
 	startTS, err := util.GetStartTS(sctx)

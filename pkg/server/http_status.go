@@ -216,8 +216,13 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for dump statistics.
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).
 		Name("StatsDump")
+<<<<<<< HEAD
 	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).
 		Name("StatsHistoryDump")
+=======
+	router.Handle("/stats/priority-queue", s.newStatsPriorityQueueHandler()).
+		Name("StatsPriorityQueue")
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 
 	router.Handle("/plan_replayer/dump/{filename}", s.newPlanReplayerHandler()).Name("PlanReplayerDump")
 	router.Handle("/extract_task/dump", s.newExtractServeHandler()).Name("ExtractTaskDump")
@@ -610,7 +615,11 @@ func (s *Server) newStatsHandler() *optimizor.StatsHandler {
 	return optimizor.NewStatsHandler(do)
 }
 
+<<<<<<< HEAD
 func (s *Server) newStatsHistoryHandler() *optimizor.StatsHistoryHandler {
+=======
+func (s *Server) newStatsPriorityQueueHandler() *optimizor.StatsPriorityQueueHandler {
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	store, ok := s.driver.(*TiDBDriver)
 	if !ok {
 		panic("Illegal driver")
@@ -620,5 +629,72 @@ func (s *Server) newStatsHistoryHandler() *optimizor.StatsHistoryHandler {
 	if err != nil {
 		panic("Failed to get domain")
 	}
+<<<<<<< HEAD
 	return optimizor.NewStatsHistoryHandler(do)
+=======
+
+	return optimizor.NewStatsPriorityQueueHandler(do)
+}
+
+var traceeventCounter = make(chan struct{}, 1)
+
+func traceeventHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
+		return
+	}
+
+	select {
+	case traceeventCounter <- struct{}{}:
+	default:
+		http.Error(w, "http api /debug/traceevent only allow one request at a time", http.StatusTooManyRequests)
+		return
+	}
+	defer func() {
+		<-traceeventCounter
+	}()
+
+	var cfg traceevent.FlightRecorderConfig
+	cfg.Initialize()
+	body, _ := io.ReadAll(r.Body)
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &cfg); err != nil {
+			http.Error(w, fmt.Sprintf("decode json failed: %s", err.Error()), http.StatusBadRequest)
+			return
+		}
+	}
+
+	logutil.BgLogger().Info("http api /debug/traceevent called", zap.Any("config", cfg))
+	ch := make(chan []traceevent.Event, 256)
+	recorder, err := traceevent.StartHTTPFlightRecorder(ch, &cfg)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("validate config failed: %s", err.Error()), http.StatusBadRequest)
+		return
+	}
+	defer recorder.Close()
+
+	for {
+		select {
+		case events := <-ch:
+			res := traceevent.ConvertEventsForRendering(events)
+			fmt.Fprintf(w, "data: ")
+			enc := json.NewEncoder(w)
+			err := enc.Encode(res)
+			if err != nil {
+				logutil.BgLogger().Info("http api /debug/traceevent encode fail", zap.Error(err))
+			}
+			fmt.Fprintf(w, "\n\n")
+			flusher.Flush()
+
+		case <-r.Context().Done():
+			logutil.BgLogger().Info("http api /debug/traceevent client disconnected")
+			return
+		}
+	}
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 }

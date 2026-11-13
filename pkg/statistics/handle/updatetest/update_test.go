@@ -756,14 +756,17 @@ func TestStatsVariables(t *testing.T) {
 	err = util.UpdateSCtxVarsForStats(sctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, sctx.GetSessionVars().AnalyzeVersion)
+<<<<<<< HEAD
 	require.Equal(t, false, sctx.GetSessionVars().EnableHistoricalStats)
+=======
+	require.Equal(t, 4, sctx.GetSessionVars().AnalyzeStoreBatchSize)
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	require.Equal(t, string(variable.Dynamic), sctx.GetSessionVars().PartitionPruneMode.Load())
 	require.Equal(t, false, sctx.GetSessionVars().EnableAnalyzeSnapshot)
 	require.Equal(t, true, sctx.GetSessionVars().SkipMissingPartitionStats)
 
 	tk.MustExec(`set global tidb_analyze_version=1`)
 	tk.MustExec(`set global tidb_partition_prune_mode='static'`)
-	tk.MustExec(`set global tidb_enable_historical_stats=1`)
 	tk.MustExec(`set global tidb_enable_analyze_snapshot=1`)
 	tk.MustExec(`set global tidb_skip_missing_partition_stats=0`)
 
@@ -772,8 +775,13 @@ func TestStatsVariables(t *testing.T) {
 	require.Equal(t, string(variable.Static), pruneMode)
 	err = util.UpdateSCtxVarsForStats(sctx)
 	require.NoError(t, err)
+<<<<<<< HEAD
 	require.Equal(t, 1, sctx.GetSessionVars().AnalyzeVersion)
 	require.Equal(t, true, sctx.GetSessionVars().EnableHistoricalStats)
+=======
+	require.Equal(t, 2, sctx.GetSessionVars().AnalyzeVersion)
+	require.Equal(t, 7, sctx.GetSessionVars().AnalyzeStoreBatchSize)
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 	require.Equal(t, string(variable.Static), sctx.GetSessionVars().PartitionPruneMode.Load())
 	require.Equal(t, true, sctx.GetSessionVars().EnableAnalyzeSnapshot)
 	require.Equal(t, false, sctx.GetSessionVars().SkipMissingPartitionStats)

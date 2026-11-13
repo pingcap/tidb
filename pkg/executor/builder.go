@@ -1136,10 +1136,16 @@ func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) exec.Ex
 	e := &PlanReplayerExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		DumpInfo: &PlanReplayerDumpInfo{
+<<<<<<< HEAD
 			Analyze:           v.Analyze,
 			Path:              v.File,
 			ctx:               b.ctx,
 			HistoricalStatsTS: v.HistoricalStatsTS,
+=======
+			Analyze: v.Analyze,
+			Path:    v.File,
+			ctx:     b.sctx,
+>>>>>>> fb0565aa38b (statistics: remove historical stats feature (#69889))
 		},
 	}
 	if v.ExecStmt != nil {
