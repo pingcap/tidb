@@ -1853,6 +1853,12 @@ func (b *builtinDateFormatSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 			result.AppendString("0")
 			continue
 		}
+		// MySQL compatibility, #59424
+		// If format mask is empty then return NULL
+		if formatMask == "" {
+			result.AppendNull()
+			continue
+		}
 
 		if t.InvalidZero() {
 			// MySQL compatibility, #11203
