@@ -17,4 +17,6 @@ package linter
 import (
 	// it is necessary to make skywalking-eye into gomod.
 	_ "github.com/apache/skywalking-eyes/pkg/config"
+	// gRPC requires this module. v4.1.6 fixes CVE-2026-116587 and still builds with Go 1.25.
+	_ "github.com/go-jose/go-jose/v4"
 )

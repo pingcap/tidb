@@ -5,5 +5,8 @@ go_library(
     srcs = ["linter.go"],
     importpath = "github.com/pingcap/tidb/build/linter",
     visibility = ["//visibility:public"],
-    deps = ["@com_github_apache_skywalking_eyes//pkg/config"],
+    deps = [
+        "@com_github_apache_skywalking_eyes//pkg/config",
+        "@com_github_go_jose_go_jose_v4//:go-jose",
+    ],
 )
