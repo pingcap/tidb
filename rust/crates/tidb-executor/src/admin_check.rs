@@ -21,8 +21,6 @@
 //! (`index_lookup.rs`'s `compareData`), which calls `CheckRecordAndIndex` when
 //! the table holds more rows than an index.
 
-use crate::KvTablePartitionMaintenance;
-use std::collections::BTreeMap;
 
 use tidb_datatype::Datum;
 
@@ -84,6 +82,14 @@ pub enum AdminCheckError {
     /// Go `errCheckPartialIndexWithoutFastCheck` (8273): the non-fast
     /// `CheckTableExec` cannot validate a partial index.
     PartialIndexWithoutFastCheck,
+    /// Go `CheckRecordAndIndex`'s `errors.Errorf("Column %v define as not
+    /// null, but can't find the value where handle is %v")`.
+    NotNullWithoutValue {
+        /// The column's name.
+        column: String,
+        /// The row handle, as Go prints it.
+        handle: String,
+    },
 }
 
 impl AdminCheckError {
@@ -233,99 +239,91 @@ pub(crate) fn render_handle(handle: &TableHandle) -> String {
     }
 }
 
-/// One index's stored entries: entry key -> the handle the entry names.
-///
-/// Read straight out of the index's key range rather than through a range
-/// cursor, because the check is over the WHOLE index and a range cursor needs
-/// datum bounds it would have to invent.
-fn index_entries(
-    table: &mut TableCommon,
-    store: &mut dyn tidb_kv::storage::TableStorage,
-    index_id: i64,
-) -> Result<Vec<tidb_table::tables::IndexEntryForCheck>, AdminCheckError> {
-    table
-        .index_entry_records_for_check(store, index_id)
-        .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))
-}
-
-/// The subset of table rows that a partial-index predicate admits. Go's
-/// `CheckIndicesCount` compares an index against this set, not against every
-/// record in the table; a NULL/false predicate is deliberately absent.
-fn partial_index_rows<'a>(
-    table: &TableCommon,
-    index: &Index,
-    rows: &'a [(i64, TableHandle, Vec<Datum>)],
-    context: &RowDecodeContext,
-) -> Result<Vec<(i64, &'a TableHandle, &'a Vec<Datum>)>, AdminCheckError> {
-    let mut matching = Vec::new();
-    for (physical_id, handle, row) in rows {
-        let holds = table
-            .index_condition_holds(index, row, context.zone())
-            .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
-        if holds {
-            matching.push((*physical_id, handle, row));
-        }
-    }
-    Ok(matching)
-}
-
-/// Go `admin.CheckRecordAndIndex` over every physical table of `table`: each
-/// row (that the index's condition admits) must file its entry in `index`,
-/// naming that row.
+/// Go `CheckTableExec.checkTableRecord`: `admin.CheckRecordAndIndex` over the
+/// table, or over each partition of a partitioned one.
 pub(crate) fn check_record_and_index(
     table: &mut TableCommon,
     store: &mut dyn tidb_kv::storage::TableStorage,
     index: &Index,
     context: &RowDecodeContext,
 ) -> Result<(), AdminCheckError> {
-    let rows = table
-        .scan_physical_rows_with_handles(store, context)
-        .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
-    let stored = index_entries(table, store, index.read().id)?;
-    let matching_rows = partial_index_rows(table, index, &rows, context)?;
-    let table_name = table.name();
-        let mut expected: BTreeMap<Vec<u8>, (i64, TableHandle, &Vec<Datum>)> = BTreeMap::new();
-        for (physical_id, handle, row) in matching_rows {
-            for (key, _) in table
-                .index_keys_for_check(index, row, handle, physical_id, context.zone())
-                .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?
-            {
-                expected.insert(key, (physical_id, handle.clone(), row));
-            }
-        }
-        let stored_keys: BTreeMap<Vec<u8>, (i64, TableHandle)> = stored
-            .iter()
-            .map(|entry| (entry.key.clone(), (entry.physical_id, entry.handle.clone())))
-            .collect();
-        for (key, (physical_id, handle, row)) in &expected {
-            let indexed = table.index_values_for_check(index, row);
-            match stored_keys.get(key) {
-                Some((stored_id, stored_handle))
-                    if stored_id == physical_id && stored_handle == handle => {}
-                Some((_, stored_handle)) => {
-                    return Err(AdminCheckError::Inconsistent {
-                        table: table_name.clone(),
-                        index: index.read().name.original().to_owned(),
-                        handle: render_handle(handle),
-                        index_values: render_record(stored_handle, &indexed),
-                        record_values: render_record(handle, &indexed),
-                    });
-                }
-                None => {
-                    return Err(AdminCheckError::Inconsistent {
-                        table: table_name.clone(),
-                        index: index.read().name.original().to_owned(),
-                        handle: render_handle(handle),
-                        index_values: String::new(),
-                        record_values: render_record(handle, &indexed),
-                    });
-                }
-            }
-        }
+    for physical_id in table.record_physical_ids() {
+        check_record_and_index_in(table, store, index, physical_id, context)?;
+    }
     Ok(())
 }
 
-
+/// Go `admin.CheckRecordAndIndex` over one physical table: `iterRecords`
+/// walks the transaction's record keys (its `Retriever.Iter`), decodes each
+/// row with the full row decoder, reads a NULL indexed value as the column's
+/// origin default (a NOT NULL column without one is an error), and asks
+/// `index.Exist` whether the row's entry is there and names the row.
+fn check_record_and_index_in(
+    table: &mut TableCommon,
+    store: &mut dyn tidb_kv::storage::TableStorage,
+    index: &Index,
+    physical_id: i64,
+    context: &RowDecodeContext,
+) -> Result<(), AdminCheckError> {
+    let decode = |error: tidb_table::tables::KvTableError| AdminCheckError::Decode(format!("{error:?}"));
+    let table_name = table.name();
+    let index_name = index.read().name.original().to_owned();
+    let decoder = crate::KvTableReader::row_decoder_recomputed(table, context).map_err(decode)?;
+    let prefix = tidb_tablecodec::table_key::gen_table_record_prefix(physical_id);
+    let upper = tidb_txnkv::Key::from_bytes(prefix.clone()).prefix_next();
+    let mut iterator = store
+        .iter(Some(&tidb_txnkv::Key::from_bytes(prefix)), Some(&upper))
+        .map_err(|error| AdminCheckError::Decode(error.to_string()))?;
+    let result = (|| {
+        while iterator.valid() {
+            let (handle, mut row) = decoder
+                .decode_record(iterator.key().as_bytes(), iterator.value())
+                .map_err(decode)?;
+            for &offset in &index.column_offsets {
+                if !matches!(row.get(offset), Some(Datum::Null)) {
+                    continue;
+                }
+                let column = &table.columns()[offset];
+                if column.read().field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
+                    && column.origin_default.is_none()
+                {
+                    return Err(AdminCheckError::NotNullWithoutValue {
+                        column: column.read().name.original().to_owned(),
+                        handle: render_handle(&handle),
+                    });
+                }
+                // NULL value is regarded as its default value.
+                row[offset] = column
+                    .origin_default_value(context.type_flags(), context.zone())
+                    .map_err(|error| AdminCheckError::Decode(error.to_string()))?;
+            }
+            match table
+                .index_exist_for_check(store, index, &row, &handle, physical_id, context.zone())
+                .map_err(decode)?
+            {
+                tidb_table::tables::IndexExistence::Exists => {}
+                tidb_table::tables::IndexExistence::Missing => {
+                    let values = table.index_values_for_check(index, &row);
+                    return Err(inconsistent(&table_name, &index_name, &handle, None, Some((&handle, &values))));
+                }
+                tidb_table::tables::IndexExistence::OtherHandle(other) => {
+                    let values = table.index_values_for_check(index, &row);
+                    return Err(inconsistent(
+                        &table_name,
+                        &index_name,
+                        &handle,
+                        Some((&other, &values)),
+                        Some((&handle, &values)),
+                    ));
+                }
+            }
+            iterator.next().map_err(|error| AdminCheckError::Decode(error.to_string()))?;
+        }
+        Ok(())
+    })();
+    iterator.close();
+    result
+}
 
 #[cfg(test)]
 mod source_tests {

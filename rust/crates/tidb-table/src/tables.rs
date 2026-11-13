@@ -84,6 +84,7 @@ use tidb_expr::expression::Expression;
 use index_entries::duplicate_value_text;
 pub use index_entries::index_entry_handle;
 pub use index_entries::IndexEntryForCheck;
+pub use index_entries::IndexExistence;
 use tidb_hack::GoToLower;
 use tidb_tablecodec::encode_table_row;
 use tidb_txnkv::{CommonHandle, Key};

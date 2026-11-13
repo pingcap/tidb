@@ -248,6 +248,35 @@ impl TableCommon {
             .map_err(|error| KvTableError::Decode(format!("{error:?}")))
     }
 
+    /// Go `index.Exist(ec, loc, txn, indexedValues, h)`: every entry key the
+    /// row encodes to must be stored, and a distinct (unique) entry must name
+    /// `handle` (Go returns `kv.ErrKeyExists` with the handle it names).
+    pub fn index_exist_for_check(
+        &mut self,
+        store: &mut dyn TableStorage,
+        index: &Index,
+        row: &[Datum],
+        handle: &TableHandle,
+        physical_id: i64,
+        zone: &SessionTimeZone,
+    ) -> Result<IndexExistence, KvTableError> {
+        let common = !self.common_handle_offsets().is_empty();
+        for (key, distinct) in self.index_keys_for_check(index, row, handle, physical_id, zone)? {
+            let value = match store.get(&Key::from_bytes(key.clone())) {
+                Ok(value) => value,
+                Err(tidb_kv::storage::StorageError::NotFound) => return Ok(IndexExistence::Missing),
+                Err(error) => return Err(KvTableError::from(error)),
+            };
+            if distinct {
+                let stored = index_entry_handle(index, &key, &value, common)?;
+                if &stored != handle {
+                    return Ok(IndexExistence::OtherHandle(stored));
+                }
+            }
+        }
+        Ok(IndexExistence::Exists)
+    }
+
     pub fn index_values_for_check(&self, index: &Index, row: &[Datum]) -> Vec<Datum> {
         self.index_values(index, row)
     }
@@ -1475,4 +1504,15 @@ pub fn index_key_bounds(table_id: i64, index_id: i64) -> (Vec<u8>, Vec<u8>) {
         .as_bytes()
         .to_vec();
     (low, high)
+}
+
+/// Go `index.Exist`'s answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IndexExistence {
+    /// Every entry is stored and names the row.
+    Exists,
+    /// An entry is missing.
+    Missing,
+    /// A distinct entry names another row (Go `kv.ErrKeyExists`).
+    OtherHandle(TableHandle),
 }

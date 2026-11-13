@@ -1629,6 +1629,9 @@ pub(crate) fn admin_check_error(error: crate::admin_check::AdminCheckError) -> D
         AdminCheckError::NotStored(detail) | AdminCheckError::Decode(detail) => {
             DriverError::unsupported(detail)
         }
+        AdminCheckError::NotNullWithoutValue { column, handle } => DriverError::from(crate::ExecError::internal(
+            format!("Column {column} define as not null, but can't find the value where handle is {handle}"),
+        )),
         AdminCheckError::PartialIndexWithoutFastCheck => DriverError::from(
             crate::executor_errors::ERR_CHECK_PARTIAL_INDEX_WITHOUT_FAST_CHECK
                 .gen_with_stack_by_args(&[]),
