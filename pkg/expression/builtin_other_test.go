@@ -38,6 +38,19 @@ func TestBitCount(t *testing.T) {
 	}()
 	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 	fc := funcs[ast.BitCount]
+	for _, flags := range []uint{
+		mysql.UnsignedFlag, mysql.UnsignedFlag | mysql.UnderScoreCharsetFlag, 0,
+	} {
+		args := datumsToConstants(types.MakeDatums(types.BinaryLiteral("64")))
+		args[0].GetType(ctx).SetFlag(flags)
+		f, err := fc.getFunction(ctx, args)
+		require.NoError(t, err)
+		if flags == mysql.UnsignedFlag {
+			require.IsType(t, &builtinBitCountSig{}, f)
+		} else {
+			require.IsType(t, &builtinBitCountBinarySig{}, f)
+		}
+	}
 	var bitCountCases = []struct {
 		origin any
 		count  any
@@ -53,6 +66,10 @@ func TestBitCount(t *testing.T) {
 		{float64(-1.1), int64(64)},
 		{float64(-3.1), int64(63)},
 		{uint64(math.MaxUint64), int64(64)},
+		{[]byte("64"), int64(7)},
+		{[]byte{}, int64(0)},
+		{[]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+			int64(72)},
 		{"xxx", int64(0)},
 		{nil, nil},
 	}
