@@ -122,7 +122,7 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 
 	sessVars := p.sctx.GetSessionVars()
 	txn.SetVars(sessVars.KVVars)
-	txn.SetOption(kv.IsStalenessReadOnly, true)
+	txn.SetOption(kv.IsStalenessReadOnly, !sessVars.StmtCtx.StaleReadAsNonStale)
 	txn.SetOption(kv.TxnScope, txnScope)
 	internal.SetTxnAssertionLevel(txn, sessVars.AssertionLevel)
 	is, err := GetSessionSnapshotInfoSchema(p.sctx, p.ts)
@@ -269,7 +269,8 @@ func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, 
 	if replicaReadType.IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
 	}
-	snapshot.SetOption(kv.IsStalenessReadOnly, true)
+	// Above the min safe ts no follower can serve the stale read, send ordinary reads at the same ts instead.
+	snapshot.SetOption(kv.IsStalenessReadOnly, !sessVars.StmtCtx.StaleReadAsNonStale)
 
 	return snapshot, nil
 }
