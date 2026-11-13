@@ -194,6 +194,17 @@ impl OwnedRewrite for Prepare {
             LogicalPlan::Sequence(operator) => operator.prepare_possible_properties(
                 &children.iter().cloned().map(Some).collect::<Vec<_>>(),
             ),
+            // Go `LogicalCTE.PreparePossibleProperties`: its children's
+            // TiFlash capability, else its seed plan's (`GetHasTiFlash`).
+            LogicalPlan::CTE(operator) => {
+                let seed_has_tiflash = operator.cte.as_ref().is_some_and(|class| {
+                    crate::cte::get_has_tiflash(class.borrow().seed_part_logical_plan.as_deref())
+                });
+                operator.prepare_possible_properties(
+                    &children.iter().cloned().map(Some).collect::<Vec<_>>(),
+                    seed_has_tiflash,
+                )
+            }
             _ => {
                 let schema = node.schema().cloned().unwrap_or_default();
                 node.prepare_possible_properties(

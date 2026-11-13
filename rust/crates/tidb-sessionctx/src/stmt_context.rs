@@ -1470,6 +1470,9 @@ pub struct StmtContextData {
     enable_unsafe_substitute: bool,
     /// Go `SessionVars.EnableForceInlineCTE` (`tidb_opt_force_inline_cte`).
     enable_force_inline_cte: bool,
+    /// Go `SessionVars.EnableMPPSharedCTEExecution`
+    /// (`tidb_opt_enable_mpp_shared_cte_execution`).
+    enable_mpp_shared_cte_execution: bool,
     /// The statement skipped Go's preprocessor, so no CTE counted a consumer
     /// (the Index Advisor optimizes parsed statements directly).
     skip_cte_consumer_counts: bool,
@@ -1841,6 +1844,13 @@ context_configuration! {
     #[must_use]
     pub fn with_enable_force_inline_cte(mut self, enable: bool) -> Self {
         self.enable_force_inline_cte = enable;
+        self
+    }
+
+    /// Sets `@@tidb_opt_enable_mpp_shared_cte_execution` for this statement.
+    #[must_use]
+    pub fn with_enable_mpp_shared_cte_execution(mut self, enable: bool) -> Self {
+        self.enable_mpp_shared_cte_execution = enable;
         self
     }
 
@@ -3349,6 +3359,7 @@ impl StmtContext {
             always_keep_join_key: tidb_vardef::defaults::DEF_OPT_ALWAYS_KEEP_JOIN_KEY,
             enable_unsafe_substitute: false,
             enable_force_inline_cte: false,
+            enable_mpp_shared_cte_execution: false,
             skip_cte_consumer_counts: false,
             enable_semi_join_rewrite: tidb_vardef::defaults::DEF_OPT_ENABLE_SEMI_JOIN_REWRITE,
             enable_alternative_logical_plans:
@@ -4106,6 +4117,11 @@ impl StmtContext {
     /// Returns `@@tidb_opt_force_inline_cte`.
     pub fn enable_force_inline_cte(&self) -> bool {
         self.enable_force_inline_cte
+    }
+
+    /// Returns `@@tidb_opt_enable_mpp_shared_cte_execution`.
+    pub fn enable_mpp_shared_cte_execution(&self) -> bool {
+        self.enable_mpp_shared_cte_execution
     }
 
     /// Whether the statement is planned without the preprocessor's CTE

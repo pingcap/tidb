@@ -582,63 +582,7 @@ fn test_mpp_multi_distinct_3_stage() {
     // peer" on the new regions, as this store does).
     rows(&mut session, "insert into t values(1000, 1000, 1000, 1),(1000, 1000, 1000, 1),(2000, 2000, 2000, 1),(2000, 2000, 2000, 1),(3000, 3000, 3000, 1),(3000, 3000, 3000, 1),(4000, 4000, 4000, 1),(4000, 4000, 4000, 1),(5000, 5000, 5000, 1),(5000, 5000, 5000, 1)");
 
-    let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../../../../../pkg/planner/core/casetest/enforcempp/testdata/enforce_mpp_suite_out.json"
-    ))
-    .unwrap();
-    let cases = fixture
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|section| section["Name"] == "TestMPPMultiDistinct3Stage")
-        .unwrap()["Cases"]
-        .as_array()
-        .unwrap();
-    // Go `normalizeEnforceMPPPlanRows`: every `_<digits>` becomes `_N`.
-    let normalize = |row: &str| {
-        let mut out = String::with_capacity(row.len());
-        let mut chars = row.chars().peekable();
-        while let Some(c) = chars.next() {
-            out.push(c);
-            if c == '_' && chars.peek().is_some_and(char::is_ascii_digit) {
-                out.push('N');
-                while chars.peek().is_some_and(char::is_ascii_digit) {
-                    chars.next();
-                }
-            }
-        }
-        out
-    };
-    let mut mismatches = Vec::new();
-    for case in cases {
-        let sql = case["SQL"].as_str().unwrap();
-        let is_explain = sql.to_lowercase().trim().starts_with("explain");
-        // Go `ConvertRowsToStrings`: a row's cells joined by a space, NULL
-        // printed as `<nil>`.
-        let got: Vec<String> = displayed(rows(&mut session, sql))
-            .into_iter()
-            .map(|row| row.into_iter().map(|cell| if cell == "NULL" { "<nil>".to_owned() } else { cell }).collect::<Vec<_>>().join(" "))
-            .map(|row| if is_explain { normalize(&row) } else { row })
-            .collect();
-        let want: Vec<String> = case["Plan"]
-            .as_array()
-            .map(|plan| plan.iter().map(|row| row.as_str().unwrap().to_owned()).collect::<Vec<String>>())
-            .unwrap_or_default()
-            .into_iter()
-            .map(|row: String| if is_explain { normalize(&row) } else { row })
-            .collect();
-        // Go `ConvertSQLWarnToStrings` of the statement's warnings.
-        let got_warn: Vec<String> =
-            displayed(rows(&mut session, "show warnings")).into_iter().map(|row| row[2].clone()).collect();
-        let want_warn: Vec<String> = case["Warn"]
-            .as_array()
-            .map(|warn| warn.iter().map(|w| w.as_str().unwrap().to_owned()).collect())
-            .unwrap_or_default();
-        if got != want || got_warn != want_warn {
-            mismatches.push(format!("{sql}\ngot:  {got:#?}\nwant: {want:#?}\ngot warnings:  {got_warn:?}\nwant warnings: {want_warn:?}"));
-        }
-    }
-    assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
+    check_enforce_mpp_suite(&mut session, "TestMPPMultiDistinct3Stage");
 }
 
 /// Go `TestTiFlashVirtualColumn`: `MPPGather` computes a virtual column the
@@ -2473,4 +2417,89 @@ fn test_tiflash_compute_dispatch_policy() {
             }
         }
     }
+}
+
+/// Go `checkEnforceMPPPlanRows` over one section of
+/// `enforce_mpp_suite_out.json`: each case's rows (an EXPLAIN's plan ids
+/// normalized) and warnings against Go's recorded output.
+fn check_enforce_mpp_suite(session: &mut Session, name: &str) {
+    let session = &mut *session;
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../../../../../pkg/planner/core/casetest/enforcempp/testdata/enforce_mpp_suite_out.json"
+    ))
+    .unwrap();
+    let cases = fixture
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|section| section["Name"] == name)
+        .unwrap()["Cases"]
+        .as_array()
+        .unwrap();
+    // Go `normalizeEnforceMPPPlanRows`: every `_<digits>` becomes `_N`.
+    let normalize = |row: &str| {
+        let mut out = String::with_capacity(row.len());
+        let mut chars = row.chars().peekable();
+        while let Some(c) = chars.next() {
+            out.push(c);
+            if c == '_' && chars.peek().is_some_and(char::is_ascii_digit) {
+                out.push('N');
+                while chars.peek().is_some_and(char::is_ascii_digit) {
+                    chars.next();
+                }
+            }
+        }
+        out
+    };
+    let mut mismatches = Vec::new();
+    for case in cases {
+        let sql = case["SQL"].as_str().unwrap();
+        let is_explain = sql.to_lowercase().trim().starts_with("explain");
+        // Go `ConvertRowsToStrings`: a row's cells joined by a space, NULL
+        // printed as `<nil>`.
+        let got: Vec<String> = displayed(rows(session, sql))
+            .into_iter()
+            .map(|row| row.into_iter().map(|cell| if cell == "NULL" { "<nil>".to_owned() } else { cell }).collect::<Vec<_>>().join(" "))
+            .map(|row| if is_explain { normalize(&row) } else { row })
+            .collect();
+        let want: Vec<String> = case["Plan"]
+            .as_array()
+            .map(|plan| plan.iter().map(|row| row.as_str().unwrap().to_owned()).collect::<Vec<String>>())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|row: String| if is_explain { normalize(&row) } else { row })
+            .collect();
+        // Go `ConvertSQLWarnToStrings` of the statement's warnings.
+        let got_warn: Vec<String> =
+            displayed(rows(session, "show warnings")).into_iter().map(|row| row[2].clone()).collect();
+        let want_warn: Vec<String> = case["Warn"]
+            .as_array()
+            .map(|warn| warn.iter().map(|w| w.as_str().unwrap().to_owned()).collect())
+            .unwrap_or_default();
+        if got != want || got_warn != want_warn {
+            mismatches.push(format!("{sql}\ngot:  {got:#?}\nwant: {want:#?}\ngot warnings:  {got_warn:?}\nwant warnings: {want_warn:?}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
+}
+
+/// Go `TestMPPSharedCTEScan` (`planner/core/casetest/enforcempp`): under
+/// `tidb_opt_enable_mpp_shared_cte_execution`, a CTE read twice in one MPP
+/// query is stored once (`Sequence` over the CTE storage and its readers).
+#[test]
+fn test_mpp_shared_cte_scan() {
+    let (stack, mut session) = tiflash_session(2, 2170);
+    rows(&mut session, "drop table if exists t");
+    rows(&mut session, "drop table if exists s");
+    rows(&mut session, "create table t(a int, b int, c int)");
+    rows(&mut session, "create table s(a int, b int, c int)");
+    rows(&mut session, "CREATE TABLE part (P_PARTKEY bigint NOT NULL, P_NAME varchar(55) NOT NULL, P_MFGR char(25) NOT NULL, P_BRAND char(10) NOT NULL, P_TYPE varchar(25) NOT NULL, P_SIZE bigint NOT NULL, P_CONTAINER char(10) NOT NULL, P_RETAILPRICE decimal(15,2) NOT NULL, P_COMMENT varchar(23) NOT NULL, PRIMARY KEY (P_PARTKEY) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin");
+    rows(&mut session, "CREATE TABLE orders (O_ORDERKEY bigint NOT NULL, O_CUSTKEY bigint NOT NULL, O_ORDERSTATUS char(1) NOT NULL, O_TOTALPRICE decimal(15,2) NOT NULL, O_ORDERDATE date NOT NULL, O_ORDERPRIORITY char(15) NOT NULL, O_CLERK char(15) NOT NULL, O_SHIPPRIORITY bigint NOT NULL, O_COMMENT varchar(79) NOT NULL, PRIMARY KEY (O_ORDERKEY) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin");
+    for table in ["t", "s", "part", "orders"] {
+        rows(&mut session, &format!("alter table {table} set tiflash replica 1"));
+        replica_available(&stack, &mut session, table);
+    }
+    rows(&mut session, "set @@tidb_enforce_mpp='on'");
+    rows(&mut session, "set @@tidb_opt_enable_mpp_shared_cte_execution='on'");
+    check_enforce_mpp_suite(&mut session, "TestMPPSharedCTEScan");
 }

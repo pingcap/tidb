@@ -255,6 +255,10 @@ fn join_type_text(join_type: tidb_planner_core_base::LogicalJoinType) -> &'stati
 /// ("Join"), so the child's PHYSICAL name has to come from
 /// [`physical_operator_name`].
 fn plan_explain_id(plan: &PhysicalPlan, ignore_suffix: bool) -> String {
+    // Go `PhysicalCTEStorage.ExplainID` overrides the generic id.
+    if let PhysicalPlan::CTEStorage(storage) = plan {
+        return storage.explain_id();
+    }
     let name = physical_operator_name(plan);
     if ignore_suffix {
         name
@@ -1458,7 +1462,12 @@ fn physical_operator_own_info(
             e.explain_info(scan.table.read().name.original(), &MemTableExplainSession { eval_ctx })
         }),
         PhysicalPlan::CTE(cte) => cte.operator_info(),
+        PhysicalPlan::CTEStorage(_) => {
+            tidb_planner_core_operator_physicalop::PhysicalCTEStorage::explain_info().to_owned()
+        }
         PhysicalPlan::CTETable(table) => table.explain_info(),
+        // Go's CTE sink and source inherit the base `ExplainInfo`: empty.
+        PhysicalPlan::CTESink(_) | PhysicalPlan::CTESource(_) => String::new(),
         PhysicalPlan::Lock(lock) => lock.explain_info(),
         PhysicalPlan::Sequence(_) => {
             tidb_planner_core_operator_physicalop::PhysicalSequence::explain_info().to_owned()
@@ -2009,6 +2018,10 @@ fn physical_explain_operator(
         .with_task(task)
         .with_operator_info(info)
         .with_children(children);
+    // Go `PhysicalCTEStorage.ExplainID`: `CTE_<IDForStorage>`, suffix or not.
+    if let PhysicalPlan::CTEStorage(storage) = plan {
+        operator = operator.with_fixed_id(storage.explain_id());
+    }
     if let Some(access_object) = physical_access(plan, catalog, statement_context.hypo_indexes()) {
         operator = operator.with_access_object(access_object);
     }
@@ -2167,11 +2180,18 @@ fn cte_definitions(
     }
 }
 
-/// The CTE readers of `plan`, in the order Go's row-format explain renders
-/// them: a join's build side before its probe side, a reader's index plan
-/// before its table plan. A CTE's own parts are not entered.
+/// The CTE readers of `plan` that run in TiDB, in the order Go's row-format
+/// explain renders them: a join's build side before its probe side, a
+/// reader's index plan before its table plan. A CTE's own parts are not
+/// entered, and a reader inside a coprocessor or MPP plan has its storage in
+/// that plan (Go `flattenRecursively` records a `PhysicalCTE` only when
+/// `info.isRoot`).
 fn collect_ctes<'a>(plan: &'a PhysicalPlan, out: &mut Vec<&'a PhysicalPlan>) {
-    if matches!(plan, PhysicalPlan::CTE(_)) {
+    collect_ctes_in(plan, true, out);
+}
+
+fn collect_ctes_in<'a>(plan: &'a PhysicalPlan, is_root: bool, out: &mut Vec<&'a PhysicalPlan>) {
+    if is_root && matches!(plan, PhysicalPlan::CTE(_)) {
         out.push(plan);
     }
     let mut children: Vec<&PhysicalPlan> = plan.children().iter().collect();
@@ -2179,31 +2199,31 @@ fn collect_ctes<'a>(plan: &'a PhysicalPlan, out: &mut Vec<&'a PhysicalPlan>) {
         children.swap(0, 1);
     }
     for child in children {
-        collect_ctes(child, out);
+        collect_ctes_in(child, is_root, out);
     }
     match plan {
-        PhysicalPlan::ShuffleReceiver(receiver) => collect_ctes(&receiver.data_source, out),
+        PhysicalPlan::ShuffleReceiver(receiver) => collect_ctes_in(&receiver.data_source, is_root, out),
         PhysicalPlan::TableReader(reader) => {
             if let Some(child) = reader.table_plan.as_deref() {
-                collect_ctes(child, out);
+                collect_ctes_in(child, false, out);
             }
         }
         PhysicalPlan::IndexReader(reader) => {
             if let Some(child) = reader.index_plan.as_deref() {
-                collect_ctes(child, out);
+                collect_ctes_in(child, false, out);
             }
         }
         PhysicalPlan::IndexLookUpReader(reader) => {
             if let Some(child) = reader.index_plan.as_deref() {
-                collect_ctes(child, out);
+                collect_ctes_in(child, false, out);
             }
             if let Some(child) = reader.table_plan.as_deref() {
-                collect_ctes(child, out);
+                collect_ctes_in(child, false, out);
             }
         }
         PhysicalPlan::Dml(root) => {
             if let Some(child) = root.select_plan.as_deref() {
-                collect_ctes(child, out);
+                collect_ctes_in(child, true, out);
             }
         }
         _ => {}

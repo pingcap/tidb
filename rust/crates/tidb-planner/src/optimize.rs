@@ -200,9 +200,10 @@ pub struct OptimizeServices<'a> {
 }
 
 /// Go `adjustOptimizationFlags` (`VolcanoOptimize`, run for the statement
-/// and for each CTE part): stable result mode adds `ResultReorder`, and an
+/// and for each CTE part): stable result mode adds `ResultReorder`, an
 /// `FTS_MATCH_WORD()` under the starter deployment adds the four full-text
-/// index resolvers.
+/// index resolvers, the statistics points are on, and `FlagPruneColumnsAgain`
+/// follows.
 #[must_use]
 pub fn adjust_optimization_flags<C: OptimizeContext>(mut flags: u64, ctx: &C) -> u64 {
     if ctx.stable_result_mode() {
@@ -214,7 +215,12 @@ pub fn adjust_optimization_flags<C: OptimizeContext>(mut flags: u64, ctx: &C) ->
             | flags::FULL_TEXT_INDEX_RESOLVE_PROJECTION
             | flags::FULL_TEXT_INDEX_RESOLVE_REJECT;
     }
-    flags
+    // Go enables both statistics rules for every ordinary (non-restricted)
+    // statement; the builder never owns these flags because they are
+    // session/execution policy, not AST shape.
+    flags |= flags::COLLECT_PREDICATE_COLUMNS_POINT | flags::SYNC_WAIT_STATS_LOAD_POINT;
+    // A second column-prune pass whenever a rule after column pruning runs.
+    crate::rule::add_second_column_prune(flags)
 }
 
 /// Go `DoOptimize`'s logical half over a built plan.
@@ -232,16 +238,11 @@ pub fn optimize_logical<C: OptimizeContext>(
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
 ) -> Result<LogicalPlan, PlanError> {
-    // Go `adjustOptimizationFlags` enables both statistics rules for every
-    // ordinary (non-restricted) statement; the builder never owns these
-    // flags because they are session/execution policy, not AST shape.
-    let flags = flags | flags::COLLECT_PREDICATE_COLUMNS_POINT | flags::SYNC_WAIT_STATS_LOAD_POINT;
     let flags = if ctx.static_partition_prune() {
         flags
     } else {
         flags & !flags::PARTITION_PROCESSOR
     };
-    let flags = crate::rule::add_second_column_prune(flags);
     let flags = adjust_optimization_flags(flags, ctx);
     let function_builder = tidb_expr::expr_util::RealFunctionBuilder::new(ctx);
     let optimizer_cost_env = ctx.optimizer_cost_env();

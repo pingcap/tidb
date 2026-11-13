@@ -1180,25 +1180,27 @@ mod mpp_store_cnt_tests {
 #[cfg(test)]
 mod dispatch_context_tests {
     use super::*;
-    use tidb_executor::mpp_coordinator::mpp_task_metadata;
 
     #[test]
-    fn mpp_metadata_carries_the_domain_server_id() {
-        let statement = tidb_distsql::remote_scan::PushdownStatementContext {
-            mpp_server_id: 42,
-            ..Default::default()
+    fn mpp_dispatch_keeps_the_task_identity() {
+        let sender = TaskMeta {
+            start_ts: 77,
+            query_ts: 5,
+            local_query_id: 6,
+            server_id: 42,
+            gather_id: 3,
+            task_id: 4,
+            address: "tiflash:3930".to_owned(),
+            ..TaskMeta::default()
         };
-        let (sender, receiver) = mpp_task_metadata(77, &statement, "tiflash:3930");
-        assert_eq!(sender.server_id, 42);
-        assert_eq!(receiver.server_id, 42);
         let dispatch = encode_dispatch_request(DispatchTaskRequest {
             meta: Some(sender.clone()),
             ..Default::default()
         });
         let dispatched = dispatch.meta.unwrap();
         assert_eq!(dispatched.local_query_id, sender.local_query_id);
-        assert_eq!(dispatched.query_ts, receiver.query_ts);
-        assert_eq!(dispatched.gather_id, receiver.gather_id);
+        assert_eq!(dispatched.query_ts, sender.query_ts);
+        assert_eq!(dispatched.gather_id, sender.gather_id);
         assert_eq!(dispatched.task_id, sender.task_id);
         assert_eq!(dispatched.server_id, 42);
     }

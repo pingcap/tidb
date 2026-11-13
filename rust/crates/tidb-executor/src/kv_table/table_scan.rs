@@ -250,8 +250,6 @@ pub trait KvTableReader {
         retain_identity: bool,
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
-        read_engine: tidb_distsql::remote_scan::PushdownReadEngine,
-        schema_version: u64,
     ) -> Result<Option<RemoteRowCursor>, KvTableError>;
 
     /// [`Self::pushdown_row_cursor_with_context`] for a scan whose schema
@@ -275,8 +273,6 @@ pub trait KvTableReader {
         physical_id: bool,
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
-        read_engine: tidb_distsql::remote_scan::PushdownReadEngine,
-        schema_version: u64,
     ) -> Result<Option<RemoteRowCursor>, KvTableError>;
 
     fn pushdown_row_cursor_with_context_and_key_ranges(
@@ -295,8 +291,6 @@ pub trait KvTableReader {
         physical_id: bool,
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
-        read_engine: tidb_distsql::remote_scan::PushdownReadEngine,
-        schema_version: u64,
         precomputed_ranges: Option<&[(Key, Key)]>,
     ) -> Result<Option<RemoteRowCursor>, KvTableError>;
 
@@ -843,8 +837,6 @@ impl KvTableReader for TableCommon {
         retain_identity: bool,
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
-        read_engine: tidb_distsql::remote_scan::PushdownReadEngine,
-        schema_version: u64,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
         self.pushdown_row_cursor_with_physical_id(store, 
             keep,
@@ -860,8 +852,6 @@ impl KvTableReader for TableCommon {
             false,
             context,
             statement,
-            read_engine,
-            schema_version,
         )
     }
 
@@ -882,8 +872,6 @@ impl KvTableReader for TableCommon {
         physical_id: bool,
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
-        read_engine: tidb_distsql::remote_scan::PushdownReadEngine,
-        schema_version: u64,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
         self.pushdown_row_cursor_with_context_and_key_ranges(store, 
             keep,
@@ -899,8 +887,6 @@ impl KvTableReader for TableCommon {
             physical_id,
             context,
             statement,
-            read_engine,
-            schema_version,
             None,
         )
     }
@@ -921,8 +907,6 @@ impl KvTableReader for TableCommon {
         physical_id: bool,
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
-        read_engine: tidb_distsql::remote_scan::PushdownReadEngine,
-        schema_version: u64,
         precomputed_ranges: Option<&[(Key, Key)]>,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
         let common_handle = !self.common_handle_offsets().is_empty();
@@ -1160,8 +1144,6 @@ impl KvTableReader for TableCommon {
             // The storage that owns the snapshot fills this in; the table has
             // no timestamp of its own.
             snapshot_ts: 0,
-            read_engine,
-            schema_version,
             ranges,
             range_hints: request_range_hints.map_or_else(Vec::new, <[usize]>::to_vec),
             statement: statement.clone(),
@@ -1569,8 +1551,6 @@ impl KvTableReader for TableCommon {
             handle_partitions.is_some(),
             context,
             &statement,
-            tidb_distsql::remote_scan::PushdownReadEngine::TiKv,
-            0,
             Some(&key_ranges),
         )?
         else {
@@ -1812,8 +1792,6 @@ impl KvTableReader for TableCommon {
             true,
             context,
             &crate::remote_scan::pushdown_statement_context(tidb_sessionctx::stmt_context_of(context.expression())),
-            tidb_distsql::remote_scan::PushdownReadEngine::TiKv,
-            0,
         )? {
             let decoder = self.row_decoder_projected(None, context)?;
             let mut rows = Vec::new();

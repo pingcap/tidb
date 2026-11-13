@@ -867,16 +867,13 @@ impl LocalMppCoordinator {
         } else {
             EncodeType::TypeChBlock
         } as i32);
-        let PhysicalPlan::ExchangeSender(sender) = sink else {
-            return Err("the fragment's sink is not an exchange sender".to_owned());
-        };
         let mut zone_helper = TaskZoneInfoHelper::init(all_tiflash_store_info);
         let rg_name = if tidb_vardef::ENABLE_RESOURCE_CONTROL.load(Ordering::SeqCst) {
             statement.resource_group_name.clone()
         } else {
             String::new()
         };
-        for mpp_task in &sender.tasks {
+        for mpp_task in sink.mpp_sink_self_tasks() {
             if !mpp_task.partition_table_ids.is_empty() {
                 update_executor_table_id(dag_req.root_executor.as_mut(), true, &mpp_task.partition_table_ids)?;
             } else if !mpp_task.tiflash_static_prune {

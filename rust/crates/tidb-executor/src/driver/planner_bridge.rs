@@ -2643,6 +2643,7 @@ impl QueryBuilderParts<'_> {
         builder.only_full_group_by = ctx.only_full_group_by();
         builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
         builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
+        builder.enable_mpp_shared_cte_execution = ctx.enable_mpp_shared_cte_execution();
         builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
         builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
         builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
@@ -2809,6 +2810,7 @@ fn query_visit_info_inner(
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
     builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
+    builder.enable_mpp_shared_cte_execution = ctx.enable_mpp_shared_cte_execution();
     builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.in_explain_stmt = ctx.in_explain_stmt();
@@ -2876,6 +2878,7 @@ pub(crate) fn plan_insert_expressions(
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
     builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
+    builder.enable_mpp_shared_cte_execution = ctx.enable_mpp_shared_cte_execution();
     builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
@@ -3087,6 +3090,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
     builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
+    builder.enable_mpp_shared_cte_execution = ctx.enable_mpp_shared_cte_execution();
     builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
@@ -3829,6 +3833,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
     builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
+    builder.enable_mpp_shared_cte_execution = ctx.enable_mpp_shared_cte_execution();
     builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();

@@ -211,22 +211,10 @@ pub fn open_remote_scan(
     if !staged.is_empty() {
         request.limit = None;
     }
-    // Go's `TableReaderExecutor` picks the MPP client when the plan reads the
-    // columnar replica; a store without it refuses rather than silently
-    // answering from row storage.
-    let opened = match request.read_engine {
-        PushdownReadEngine::TiKv if request.statement.deferred_open => {
-            crate::cop_reader::build_resp_deferred(Arc::clone(&client), &request)
-        }
-        PushdownReadEngine::TiKv => crate::cop_reader::build_resp(client.as_ref(), &request),
-        PushdownReadEngine::TiFlash => match store.mpp_client() {
-            Some(mpp) => crate::mpp_coordinator::open_mpp_scan(&mpp, &request),
-            None => Err(PushdownScannerError::Backend(tidb_kv::storage::StorageError::Backend(
-                "tiflash mpp: this node has no TiFlash dispatch seam; \
-                 the read cannot be served from the columnar replica"
-                    .to_owned(),
-            ))),
-        },
+    let opened = if request.statement.deferred_open {
+        crate::cop_reader::build_resp_deferred(Arc::clone(&client), &request)
+    } else {
+        crate::cop_reader::build_resp(client.as_ref(), &request)
     };
     match opened {
         Ok(stream) => Some(Ok(PushdownScan { stream, staged })),

@@ -94,6 +94,7 @@ pub struct StatementVarSnapshot {
     partial_ordered_index_for_topn: bool,
     enable_unsafe_substitute: bool,
     enable_force_inline_cte: bool,
+    enable_mpp_shared_cte_execution: bool,
     advanced_join_hint: bool,
     enable_semi_join_rewrite: bool,
     enable_alternative_logical_plans: bool,
@@ -1147,6 +1148,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .is_ok_and(|value| value.eq_ignore_ascii_case("COST")),
             enable_unsafe_substitute: on(tidb_vardef::tidb_vars::TIDB_ENABLE_UNSAFE_SUBSTITUTE),
             enable_force_inline_cte: on(tidb_vardef::tidb_vars::TIDB_OPT_FORCE_INLINE_CTE),
+            enable_mpp_shared_cte_execution: on(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_MPP_SHARED_CTE_EXECUTION),
             advanced_join_hint: on(tidb_vardef::tidb_vars::TIDB_OPT_ADVANCED_JOIN_HINT),
             enable_semi_join_rewrite: on(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_SEMI_JOIN_REWRITE),
             enable_alternative_logical_plans: on(
@@ -1484,6 +1486,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         let partial_ordered_index_for_topn = snapshot.partial_ordered_index_for_topn;
         let enable_unsafe_substitute = snapshot.enable_unsafe_substitute;
         let enable_force_inline_cte = snapshot.enable_force_inline_cte;
+        let enable_mpp_shared_cte_execution = snapshot.enable_mpp_shared_cte_execution;
         let advanced_join_hint = snapshot.advanced_join_hint;
         let enable_semi_join_rewrite = snapshot.enable_semi_join_rewrite;
         let enable_alternative_logical_plans = snapshot.enable_alternative_logical_plans;
@@ -1828,6 +1831,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_always_keep_join_key(always_keep_join_key)
                     .with_enable_unsafe_substitute(enable_unsafe_substitute)
                     .with_enable_force_inline_cte(enable_force_inline_cte)
+                    .with_enable_mpp_shared_cte_execution(enable_mpp_shared_cte_execution)
                     .with_advanced_join_hint(advanced_join_hint)
                     .with_enable_semi_join_rewrite(enable_semi_join_rewrite)
                     .with_enable_alternative_logical_plans(enable_alternative_logical_plans)

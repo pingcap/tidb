@@ -812,6 +812,14 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
             LogicalPlan::CTE(op) => {
                 use super::cte::CtePredicatePushDown;
 
+                // A storage-only CTE is a `LogicalSequence` producer, and Go's
+                // `LogicalSequence.PredicatePushDown` pushes into the last
+                // child only: Go never runs this body for it, so it records
+                // nothing on the shared class (the consumers' predicates
+                // alone shape the seed's Selection).
+                if op.only_used_as_storage {
+                    return Descend::Stop(predicates);
+                }
                 let decision = op.predicate_push_down(&predicates);
                 let mut seed_predicates: Option<Vec<Expression>> = None;
                 if let Some(class) = &op.cte {
@@ -2488,7 +2496,17 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                             ));
                         }
                     };
+                    // Go `if p.OnlyUsedAsStorage { p.SetChildren(p.Cte.SeedPartLogicalPlan) }`:
+                    // a shared CTE's producer plans its seed as its child.
+                    let storage_child = if op.only_used_as_storage {
+                        class.seed_part_logical_plan.as_deref().cloned()
+                    } else {
+                        None
+                    };
                     drop(class);
+                    if let Some(child) = storage_child {
+                        op.base.set_children(vec![child]);
+                    }
                     Ok(op.derive_stats(
                         &seed_stats,
                         &seed_schema,

@@ -1695,6 +1695,115 @@ pub fn exhaust_physical_plans_4_logical_max_one_row(
     vec![PhysicalPlan::MaxOneRow(PhysicalMaxOneRow { base })]
 }
 
+/// Go `physicalop.PhysicalCTEStorage` (`type PhysicalCTEStorage
+/// PhysicalCTE`): the CTE producer of an MPP shared CTE, a `Sequence`'s
+/// earlier child, whose seed is its child rather than a field.
+#[derive(Clone, Debug)]
+pub struct PhysicalCTEStorage {
+    /// The shared physical base; its one child is the seed's physical plan.
+    pub base: BasePhysicalPlan,
+    /// Go `CTE.IDForStorage`.
+    pub id_for_storage: i32,
+    /// Go `CteAsName`.
+    pub cte_as_name: String,
+    /// Go `CteName`.
+    pub cte_name: String,
+}
+
+impl PhysicalCTEStorage {
+    /// Go `PhysicalCTEStorage.ExplainInfo`.
+    #[must_use]
+    pub fn explain_info() -> &'static str {
+        "Non-Recursive CTE Storage"
+    }
+
+    /// Go `PhysicalCTEStorage.ExplainID`: `CTE_<IDForStorage>`.
+    #[must_use]
+    pub fn explain_id(&self) -> String {
+        format!("CTE_{}", self.id_for_storage)
+    }
+}
+
+/// Go `physicalop.PhysicalCTESink`: the root of an MPP shared CTE's producer
+/// fragment, writing the producer's rows into TiFlash's CTE storage
+/// (`tipb.CTESink`). Unlike an exchange sender it opens no tunnel; its
+/// target tasks exist for the `MPPSink` contract only.
+#[derive(Clone, Debug)]
+pub struct PhysicalCTESink {
+    /// The shared physical base; its one child is the producer's plan.
+    pub base: BasePhysicalPlan,
+    /// Go `IDForStorage`: the CTE storage id.
+    pub id_for_storage: i32,
+    /// Go `TargetTasks`.
+    pub target_tasks: Vec<MppTask>,
+    /// Go `Tasks`: the tasks of this sink's own fragment.
+    pub tasks: Vec<MppTask>,
+    /// Go `CompressionMode`.
+    pub compression_mode: tidb_vardef::modes::ExchangeCompressionMode,
+    /// Go `CteSinkNum`, filled by `fillLocalCTECounts`.
+    pub cte_sink_num: u32,
+    /// Go `CteSourceNum`, filled by `fillLocalCTECounts`.
+    pub cte_source_num: u32,
+}
+
+impl PhysicalCTESink {
+    /// Go `PhysicalCTESink{IDForStorage}.Init(ctx, stats)`: the sink over
+    /// `child` (a `PhysicalCTEStorage`'s producer plan), whose schema is the
+    /// child's (Go's `BasePhysicalPlan.Schema()`).
+    #[must_use]
+    pub fn new(
+        allocator: &PlanIdAllocator,
+        id_for_storage: i32,
+        stats: Option<StatsInfo>,
+        child: PhysicalPlan,
+    ) -> Self {
+        let mut base = BasePhysicalPlan::new(allocator, tidb_plancodec::TYPE_PHYSICAL_CTE_SINK, 0);
+        base.base.set_stats(stats);
+        base.base.set_schema(child.schema().cloned());
+        base.set_children(vec![child]);
+        Self {
+            base,
+            id_for_storage,
+            target_tasks: Vec::new(),
+            tasks: Vec::new(),
+            compression_mode: tidb_vardef::modes::ExchangeCompressionMode::NONE,
+            cte_sink_num: 0,
+            cte_source_num: 0,
+        }
+    }
+}
+
+/// Go `physicalop.PhysicalCTESource`: a CTE reader's leaf in an MPP
+/// fragment, reading TiFlash's CTE storage (`tipb.CTESource`); its schema is
+/// the producer's output.
+#[derive(Clone, Debug)]
+pub struct PhysicalCTESource {
+    /// The shared physical base (Go's `PhysicalSchemaProducer`).
+    pub base: BasePhysicalPlan,
+    /// Go `IDForStorage`: the CTE storage id.
+    pub id_for_storage: i32,
+    /// Go `CteSinkNum`, filled by `fillLocalCTECounts`.
+    pub cte_sink_num: u32,
+    /// Go `CteSourceNum`, filled by `fillLocalCTECounts`.
+    pub cte_source_num: u32,
+}
+
+impl PhysicalCTESource {
+    /// Go `PhysicalCTESource{IDForStorage}.Init(ctx, stats, schema)`.
+    #[must_use]
+    pub fn new(
+        allocator: &PlanIdAllocator,
+        id_for_storage: i32,
+        stats: Option<StatsInfo>,
+        schema: tidb_expr::schema::Schema,
+    ) -> Self {
+        let mut base = BasePhysicalPlan::new(allocator, tidb_plancodec::TYPE_PHYSICAL_CTE_SOURCE, 0);
+        base.base.set_stats(stats);
+        base.base.set_schema(Some(schema));
+        Self { base, id_for_storage, cte_sink_num: 0, cte_source_num: 0 }
+    }
+}
+
 /// Go `physicalop.PhysicalCTE`: a CTE reader plus the shared producer plans
 /// used to populate its statement-local storage. Seed and recursive plans are
 /// owned fields rather than ordinary children, matching Go's tree shape and
@@ -1743,9 +1852,17 @@ pub fn find_best_task_4_logical_cte(
     p: &tidb_planner_core_operator_logicalop::LogicalCTE,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
+    evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
+    mpp_warning_sink: Option<&dyn crate::enforce::MppWarningSink>,
     attacher: &dyn crate::task::TaskAttacher,
+    self_satisfies_task_type: bool,
 ) -> Result<Task, PlanError> {
-    if prop.index_join_prop.is_some() || prop.task_tp != tidb_planner_property::task_type::TaskType::Root {
+    if prop.index_join_prop.is_some() {
+        // even enforce hint can not work with this.
+        return Ok(Task::invalid_task());
+    }
+    // Go `checkOpSelfSatisfyPropTaskTypeRequirement`.
+    if !self_satisfies_task_type {
         return Ok(Task::invalid_task());
     }
     if !prop.is_sort_item_empty() && !prop.can_add_enforcer {
@@ -1792,11 +1909,29 @@ pub fn find_best_task_4_logical_cte(
     });
     drop(class);
 
-    let mut root = RootTask::default();
-    root.set_plan(physical);
-    let task = Task::Root(root);
+    let task = if prop.is_flash_prop()
+        && prop.cte_producer_status == tidb_planner_property::CteProducerStatus::AllCteCanMpp
+    {
+        let mut partition_tp = prop.mpp_partition_tp;
+        let mut partition_cols = prop.mpp_partition_cols.clone();
+        if prop.mpp_partition_tp != tidb_planner_property::MppPartitionType::Any {
+            if !prop.can_add_enforcer {
+                return Ok(Task::invalid_task());
+            }
+            // The shared CTE storage/source itself is not tied to one
+            // consumer's distribution requirement: the reader is AnyType and
+            // the consumer-side enforcer adds the required exchange above it.
+            partition_tp = tidb_planner_property::MppPartitionType::Any;
+            partition_cols = Vec::new();
+        }
+        Task::Mpp(crate::task::MppTask::new_with_hash_cols(physical, partition_tp, partition_cols, Vec::new()))
+    } else {
+        let mut root = RootTask::default();
+        root.set_plan(physical);
+        Task::Root(root)
+    };
     if prop.can_add_enforcer {
-        crate::enforce::enforce_property(prop, task, allocator, attacher)
+        crate::enforce::enforce_property_in(prop, task, allocator, evaluate, mpp_warning_sink, attacher)
     } else {
         Ok(task)
     }
@@ -2156,37 +2291,92 @@ pub fn exhaust_physical_plans_4_logical_sequence(
     p: &tidb_planner_core_operator_logicalop::LogicalSequence,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
+    mpp_allowed: bool,
 ) -> Vec<PhysicalPlan> {
-    use tidb_planner_property::CteProducerStatus;
-    if prop.task_tp == TaskType::Mpp {
-        return Vec::new();
-    }
-    let producer_prop = PhysicalProperty {
-        cte_producer_status: CteProducerStatus::SomeCteFailedMpp,
+    use tidb_planner_property::{CteProducerStatus, MppPartitionType};
+    let mut possible_children_props: Vec<(PhysicalProperty, PhysicalProperty)> = Vec::with_capacity(2);
+    let mut any_type = PhysicalProperty {
+        task_tp: TaskType::Mpp,
+        expected_cnt: f64::MAX,
+        mpp_partition_tp: MppPartitionType::Any,
+        can_add_enforcer: true,
+        cte_producer_status: prop.cte_producer_status,
+        no_cop_push_down: prop.no_cop_push_down,
         ..PhysicalProperty::default()
     };
-    let mut main_prop = prop.clone_essential_fields();
-    main_prop.cte_producer_status = CteProducerStatus::SomeCteFailedMpp;
-    let child_len = p.base.child_len();
-    let mut ch_req_props: Vec<Option<PhysicalProperty>> = (0..child_len.saturating_sub(1))
-        .map(|_| Some(producer_prop.clone_essential_fields()))
-        .collect();
-    ch_req_props.push(Some(main_prop));
+    if prop.task_tp == TaskType::Mpp {
+        if prop.cte_producer_status == CteProducerStatus::SomeCteFailedMpp {
+            return Vec::new();
+        }
+        any_type.cte_producer_status = CteProducerStatus::AllCteCanMpp;
+        possible_children_props.push((any_type.clone(), prop.clone_essential_fields()));
+    } else {
+        let mut copied = prop.clone_essential_fields();
+        copied.cte_producer_status = CteProducerStatus::SomeCteFailedMpp;
+        possible_children_props.push((
+            PhysicalProperty {
+                task_tp: TaskType::Root,
+                expected_cnt: f64::MAX,
+                cte_producer_status: CteProducerStatus::SomeCteFailedMpp,
+                ..PhysicalProperty::default()
+            },
+            copied,
+        ));
+    }
+    if prop.task_tp != TaskType::Mpp
+        && prop.cte_producer_status != CteProducerStatus::SomeCteFailedMpp
+        && mpp_allowed
+        && prop.is_sort_item_empty()
+    {
+        possible_children_props.push((any_type.clone(), any_type.clone_essential_fields()));
+    }
     let seq_schema = p
         .base
         .children()
         .last()
         .and_then(tidb_planner_core_operator_logicalop::LogicalPlan::schema)
         .cloned();
-    let mut base = BasePhysicalPlan::new(
-        allocator,
-        tidb_planner_core_operator_logicalop::LogicalSequence::TYPE,
-        p.base.base.query_block_offset(),
-    );
+    let child_len = p.base.child_len();
+    possible_children_props
+        .into_iter()
+        .map(|(producer, main)| {
+            let mut child_reqs: Vec<Option<PhysicalProperty>> = (0..child_len.saturating_sub(1))
+                .map(|_| Some(producer.clone_essential_fields()))
+                .collect();
+            child_reqs.push(Some(main));
+            let mut base = BasePhysicalPlan::new(
+                allocator,
+                tidb_planner_core_operator_logicalop::LogicalSequence::TYPE,
+                p.base.base.query_block_offset(),
+            );
+            base.base.set_stats(p.base.base.stats_info().cloned());
+            base.base.set_schema(seq_schema.clone());
+            base.set_children_req_props(child_reqs);
+            PhysicalPlan::Sequence(PhysicalSequence { base })
+        })
+        .collect()
+}
+
+/// Go `ExhaustPhysicalPlans4LogicalCTE`: a storage-only CTE (an MPP shared
+/// CTE's producer, whose seed is its child) becomes a [`PhysicalCTEStorage`]
+/// asking its child for the parent's essential property.
+#[must_use]
+pub fn exhaust_physical_plans_4_logical_cte(
+    p: &tidb_planner_core_operator_logicalop::LogicalCTE,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+) -> Vec<PhysicalPlan> {
+    let mut base = BasePhysicalPlan::new(allocator, "CTE", p.base.base.query_block_offset());
     base.base.set_stats(p.base.base.stats_info().cloned());
-    base.base.set_schema(seq_schema);
-    base.set_children_req_props(ch_req_props);
-    vec![PhysicalPlan::Sequence(PhysicalSequence { base })]
+    base.base.set_schema(p.base.base.schema().cloned());
+    base.set_children_req_props(vec![Some(prop.clone_essential_fields())]);
+    let id_for_storage = p.cte.as_ref().map_or(0, |cte| cte.borrow().id_for_storage);
+    vec![PhysicalPlan::CTEStorage(PhysicalCTEStorage {
+        base,
+        id_for_storage,
+        cte_as_name: p.cte_as_name.clone(),
+        cte_name: p.cte_name.clone(),
+    })]
 }
 
 /// Go `physicalop.PhysicalApply` (`physical_apply.go`, whole file): the
@@ -4684,6 +4874,12 @@ pub enum PhysicalPlan {
     NominalSort(NominalSort),
     /// Go `physicalop.PhysicalCTE`.
     CTE(PhysicalCTE),
+    /// Go `physicalop.PhysicalCTEStorage`.
+    CTEStorage(PhysicalCTEStorage),
+    /// Go `physicalop.PhysicalCTESink`.
+    CTESink(PhysicalCTESink),
+    /// Go `physicalop.PhysicalCTESource`.
+    CTESource(PhysicalCTESource),
     /// Go `physicalop.PhysicalCTETable`.
     CTETable(PhysicalCTETable),
     /// Go `physicalop.PhysicalShow`.
@@ -4765,6 +4961,9 @@ impl PhysicalPlan {
             Self::MaxOneRow(op) => &op.base,
             Self::NominalSort(op) => &op.base,
             Self::CTE(op) => &op.base,
+            Self::CTEStorage(op) => &op.base,
+            Self::CTESink(op) => &op.base,
+            Self::CTESource(op) => &op.base,
             Self::CTETable(op) => &op.base,
             Self::Show(op) => &op.base,
             Self::ShowDDLJobs(op) => &op.base,
@@ -4812,6 +5011,9 @@ impl PhysicalPlan {
             Self::MaxOneRow(op) => &mut op.base,
             Self::NominalSort(op) => &mut op.base,
             Self::CTE(op) => &mut op.base,
+            Self::CTEStorage(op) => &mut op.base,
+            Self::CTESink(op) => &mut op.base,
+            Self::CTESource(op) => &mut op.base,
             Self::CTETable(op) => &mut op.base,
             Self::Show(op) => &mut op.base,
             Self::ShowDDLJobs(op) => &mut op.base,
@@ -5505,6 +5707,28 @@ impl PhysicalPlan {
                 limit_end: op.limit_end,
                 cte_as_name: op.cte_as_name.clone(),
                 cte_name: op.cte_name.clone(),
+            }),
+            Self::CTEStorage(op) => Self::CTEStorage(PhysicalCTEStorage {
+                base: base_of(&op.base),
+                id_for_storage: op.id_for_storage,
+                cte_as_name: op.cte_as_name.clone(),
+                cte_name: op.cte_name.clone(),
+            }),
+            Self::CTESink(op) => Self::CTESink(PhysicalCTESink {
+                base: base_of(&op.base),
+                id_for_storage: op.id_for_storage,
+                // Go's `Clone` leaves the tasks to fragment generation.
+                target_tasks: Vec::new(),
+                tasks: Vec::new(),
+                compression_mode: op.compression_mode,
+                cte_sink_num: op.cte_sink_num,
+                cte_source_num: op.cte_source_num,
+            }),
+            Self::CTESource(op) => Self::CTESource(PhysicalCTESource {
+                base: base_of(&op.base),
+                id_for_storage: op.id_for_storage,
+                cte_sink_num: op.cte_sink_num,
+                cte_source_num: op.cte_source_num,
             }),
             Self::CTETable(op) => Self::CTETable(PhysicalCTETable {
                 base: base_of(&op.base),

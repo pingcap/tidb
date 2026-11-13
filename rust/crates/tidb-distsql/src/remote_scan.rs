@@ -68,16 +68,6 @@ use tidb_expr::expression::Expression;
 use tidb_expr::expr_to_pb::PbConverterContext;
 use tidb_txnkv::Key;
 
-/// Go `kv.StoreType` narrowed to the engines a pushdown scan names.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum PushdownReadEngine {
-    /// Go `kv.TiKV`: the row storage (the only engine the TiKV lowering
-    /// serves).
-    #[default]
-    TiKv,
-    /// Go `kv.TiFlash`: the columnar replica, served through MPP dispatch.
-    TiFlash,
-}
 use tidb_kv::storage::StorageError;
 
 /// One column a remote scan must return, in the order the caller wants it.
@@ -371,16 +361,6 @@ pub struct PushdownScanRequest {
     /// The timestamp the remote scan must read at: the statement's own
     /// snapshot, filled in by the storage that owns it.
     pub snapshot_ts: u64,
-    /// Go `PhysicalTableScan.StoreType`: which engine serves this scan.
-    /// TiFlash requests are lowered by the MPP dispatch source when the node
-    /// has one; the TiKV lowering must refuse them by name instead of
-    /// silently serving the table from row storage.
-    pub read_engine: PushdownReadEngine,
-    /// Go `MPPDispatchRequest.SchemaVar` (`is.SchemaMetaVersion()`): the
-    /// schema generation the request's table was resolved against. TiFlash
-    /// refuses a dispatch whose version cannot resolve the table, so this
-    /// must be nonzero for a TiFlash read; zero names no schema.
-    pub schema_version: u64,
     /// The scanned record ranges, as half-open `[start, end)` pairs in
     /// ascending key order.
     ///

@@ -1595,6 +1595,10 @@ pub(crate) fn attach2_task_in(
         PhysicalPlan::ExchangeSender(_) => Err(PlanError::internal(
             "attach2_task: an ExchangeSender is never an attach parent",
         )),
+        // A CTE sink and source are born at MPP fragment generation only.
+        PhysicalPlan::CTESink(_) | PhysicalPlan::CTESource(_) => Err(PlanError::internal(
+            "attach2_task: a CTE sink or source is never an attach parent",
+        )),
         PhysicalPlan::ExchangeReceiver(_) => Ok(attach_plan_2_task(plan, first)),
         // `PhysicalLock` has no override: the default convert-then-attach
         // body, exactly as `PhysicalMaxOneRow`'s arm above.
@@ -2198,6 +2202,16 @@ pub(crate) fn attach2_task_in(
         PhysicalPlan::Dml(_) => Err(PlanError::internal(
             "a physical DML root owns its select plan and is never attached as a relational child",
         )),
+        // `attach2Task4PhysicalCTEStorage` (`task.go:2240`): over an MPP
+        // task the storage takes the child's partition type, hash columns,
+        // histograms and warnings; otherwise the child converts to root.
+        PhysicalPlan::CTEStorage(_) => match first {
+            Task::Mpp(_) => Ok(attach_plan_2_task(plan, first)),
+            other => {
+                let converted = other.into_root_task_in(allocator, evaluate)?;
+                Ok(attach_plan_2_task(plan, converted))
+            }
+        },
         PhysicalPlan::CTE(_) => Err(PlanError::internal(
             "a PhysicalCTE is born inside its own root task by \
              findBestTask4LogicalCTE (physical_cte.go), never attached",

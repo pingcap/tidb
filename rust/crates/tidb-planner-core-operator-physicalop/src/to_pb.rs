@@ -218,6 +218,8 @@ impl PhysicalPlan {
             Self::Window(p) => p.to_pb(self, ctx, store_type),
             Self::Expand(p) => p.to_pb(self, ctx, store_type),
             Self::LocalIndexLookUp(p) => p.to_pb(store_type),
+            Self::CTESink(p) => p.to_pb(self, ctx, store_type),
+            Self::CTESource(p) => p.to_pb(self, store_type),
             // Go's base body is exactly this error.
             _ => Err(PlanError::internal(format!("plan {} fails converts to PB", self.explain_id(false)))),
         }
@@ -596,6 +598,60 @@ impl PhysicalExchangeSender {
             executor_id: Some(executor_id(plan)),
             fine_grained_shuffle_stream_count: Some(self.base.tiflash_fine_grained_shuffle_stream_count),
             fine_grained_shuffle_batch_size: Some(ctx.tiflash_fine_grained_shuffle_batch_size),
+            ..go_executor()
+        })
+    }
+}
+
+/// The `tipb.FieldType`s of `plan`'s schema (Go's `fieldTypes` loop over
+/// `p.Schema().Columns` with `ToPBFieldTypeWithCheck`).
+fn schema_field_types(plan: &PhysicalPlan, store_type: StoreType) -> Result<Vec<tipb::FieldType>, PlanError> {
+    let schema = plan
+        .schema()
+        .ok_or_else(|| PlanError::internal(format!("plan {} has no schema", plan.explain_id(false))))?;
+    schema
+        .columns
+        .iter()
+        .map(|column| {
+            let ret_type = column.ret_type.as_ref().ok_or_else(|| PlanError::internal("a column has no type"))?;
+            to_pb_field_type_with_check(ret_type, store_type)
+        })
+        .collect()
+}
+
+impl crate::PhysicalCTESink {
+    /// Go `PhysicalCTESink.ToPB`.
+    fn to_pb(&self, plan: &PhysicalPlan, ctx: &BuildPbContext<'_>, store_type: StoreType) -> Result<tipb::Executor, PlanError> {
+        let child = child_to_pb(plan, ctx, store_type)?;
+        let field_types = schema_field_types(plan, store_type)?;
+        Ok(tipb::Executor {
+            tp: Some(tipb::ExecType::TypeCteSink as i32),
+            cte_sink: Some(Box::new(tipb::CteSink {
+                cte_id: self.id_for_storage as u32,
+                cte_source_num: self.cte_source_num,
+                cte_sink_num: self.cte_sink_num,
+                child: Some(child),
+                field_types,
+            })),
+            executor_id: Some(executor_id(plan)),
+            ..go_executor()
+        })
+    }
+}
+
+impl crate::PhysicalCTESource {
+    /// Go `PhysicalCTESource.ToPB`.
+    fn to_pb(&self, plan: &PhysicalPlan, store_type: StoreType) -> Result<tipb::Executor, PlanError> {
+        let field_types = schema_field_types(plan, store_type)?;
+        Ok(tipb::Executor {
+            tp: Some(tipb::ExecType::TypeCteSource as i32),
+            cte_source: Some(tipb::CteSource {
+                cte_id: self.id_for_storage as u32,
+                cte_source_num: self.cte_source_num,
+                cte_sink_num: self.cte_sink_num,
+                field_types,
+            }),
+            executor_id: Some(executor_id(plan)),
             ..go_executor()
         })
     }

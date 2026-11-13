@@ -1971,7 +1971,9 @@ fn a_sequence_plans_producers_at_root_and_stamps_some_cte_failed_mpp() {
     let sequence = LogicalSequence::new(base);
 
     let prop = PhysicalProperty::new(TaskType::Root, &tidb_planner_property::columns_with_unique_ids(&[9]), false, 100.0, false);
-    let plans = exhaust_physical_plans_4_logical_sequence(&sequence, &prop, &allocator);
+    // MPP is allowed, but the required order keeps the all-MPP choice out
+    // (`prop.IsSortItemEmpty()`).
+    let plans = exhaust_physical_plans_4_logical_sequence(&sequence, &prop, &allocator, true);
     assert_eq!(plans.len(), 1);
     let PhysicalPlan::Sequence(built) = &plans[0] else {
         panic!("a Sequence, got {:?}", plans[0]);
@@ -2367,7 +2369,7 @@ fn a_cte_scan_explains_as_cte_full_scan_like_go_master() {
         BaseLogicalPlan::new(&allocator, LogicalCTE::TYPE, 0),
         Rc::new(RefCell::new(class)),
     );
-    let task = find_best_task_4_logical_cte(&lp, &PhysicalProperty::default(), &allocator, &crate::task_attach::CoreTaskAttacher)
+    let task = find_best_task_4_logical_cte(&lp, &PhysicalProperty::default(), &allocator, &tidb_ranger::points::evaluate_static, None, &crate::task_attach::CoreTaskAttacher, true)
         .expect("a root CTE build");
     let Some(PhysicalPlan::CTE(built)) = task.plan() else {
         panic!("a PhysicalCTE, got {:?}", task.plan());

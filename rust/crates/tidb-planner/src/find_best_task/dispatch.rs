@@ -885,6 +885,12 @@ fn exhaust_physical_plans(
             op,
             prop,
             ctx.allocator,
+            ctx.mpp_allowed,
+        ))),
+        LogicalPlan::CTE(op) => Ok(one(tidb_planner_core_operator_physicalop::exhaust_physical_plans_4_logical_cte(
+            op,
+            prop,
+            ctx.allocator,
         ))),
         LogicalPlan::TopN(op) => {
             // `ExhaustPhysicalPlans4LogicalTopN` (`physical_topn.go:55`):
@@ -1874,11 +1880,20 @@ fn find_best_task_uncached(
             ));
         }
         LogicalPlan::CTE(op) if op.base.children().is_empty() => {
+            // Go `checkOpSelfSatisfyPropTaskTypeRequirement`.
+            let self_satisfies_task_type = match prop.task_tp {
+                TaskType::Mpp => can_self_be_pushed_to_cop(plan, true, ctx),
+                TaskType::CopSingleRead | TaskType::CopMultiRead => can_self_be_pushed_to_cop(plan, false, ctx),
+                _ => true,
+            };
             return tidb_planner_core_operator_physicalop::find_best_task_4_logical_cte(
                 op,
                 prop,
                 ctx.allocator,
+                ctx.expression_evaluator,
+                ctx.mpp_warning_sink,
                 &crate::task_attach::CoreTaskAttacher,
+                self_satisfies_task_type,
             );
         }
         LogicalPlan::Show(op) => {
@@ -5654,6 +5669,83 @@ struct EnumerateState {
     limit_cop_exists: bool,
 }
 
+/// One child's best task: its operator child, or a memo expression's input
+/// group (`impl.ImplementGroupAndCost`); `None` when the group answers none.
+fn find_child_task(
+    plan: &LogicalPlan,
+    index: usize,
+    child_prop: &PhysicalProperty,
+    ctx: &mut DispatchContext<'_>,
+    ge: Option<GroupExpressionRef<'_>>,
+) -> Result<Option<Task>, PlanError> {
+    match ge {
+        None => find_best_task(&plan.children()[index], child_prop, ctx).map(Some),
+        Some(ge) => {
+            let child_group = ge.memo.ge(ge.ge).inputs[index];
+            crate::cascades::impl_and_cost::implement_group_and_cost(ge.memo, child_group, child_prop, f64::MAX, ctx)
+        }
+    }
+}
+
+/// Go `iterateChildPlan4LogicalSequence`: the producers one by one, each
+/// a valid task of the required type (an MPP sequence stops at the first
+/// non-MPP producer), then the main query under the last property with
+/// `AllCTECanMpp` when it is a flash property, which must then be MPP.
+/// `None` skips this physical candidate.
+fn iterate_child_plan_4_logical_sequence(
+    plan: &LogicalPlan,
+    pp: &PhysicalPlan,
+    prop: &PhysicalProperty,
+    child_len: usize,
+    ctx: &mut DispatchContext<'_>,
+    ge: Option<GroupExpressionRef<'_>>,
+) -> Result<Option<Vec<Task>>, PlanError> {
+    let last_idx = child_len.saturating_sub(1);
+    let mut child_tasks = Vec::with_capacity(child_len);
+    for j in 0..last_idx {
+        let Some(child_prop) = pp.base().child_req_prop(j).cloned() else {
+            return Ok(None);
+        };
+        let Some(child_task) = find_child_task(plan, j, &child_prop, ctx, ge)? else {
+            return Ok(None);
+        };
+        if !task_type_satisfied(&child_prop, &child_task) {
+            // If the task type is not satisfied, we should skip this plan.
+            return Ok(None);
+        }
+        if child_task.invalid() {
+            return Ok(None);
+        }
+        if !matches!(child_task, Task::Mpp(_)) && prop.is_flash_prop() {
+            break;
+        }
+        child_tasks.push(child_task);
+    }
+    // This check makes sure that there is no invalid child task.
+    if child_tasks.len() != last_idx {
+        return Ok(None);
+    }
+    let Some(mut last_child_prop) = pp.base().child_req_prop(last_idx).map(PhysicalProperty::clone_essential_fields) else {
+        return Ok(None);
+    };
+    if last_child_prop.is_flash_prop() {
+        last_child_prop.cte_producer_status = tidb_planner_property::CteProducerStatus::AllCteCanMpp;
+    }
+    let Some(last_child_task) = find_child_task(plan, last_idx, &last_child_prop, ctx, ge)? else {
+        return Ok(None);
+    };
+    if last_child_task.invalid() {
+        return Ok(None);
+    }
+    if !matches!(last_child_task, Task::Mpp(_))
+        && last_child_prop.cte_producer_status == tidb_planner_property::CteProducerStatus::AllCteCanMpp
+    {
+        return Ok(None);
+    }
+    child_tasks.push(last_child_task);
+    Ok(Some(child_tasks))
+}
+
 /// Go `enumeratePhysicalPlans4Task` + helper (`find_best_task.go:112,156`):
 /// preserve preference slices, hint priority, and the normal cop preference
 /// for pushed TopN/Limit candidates while comparing peers by cost.
@@ -5676,41 +5768,51 @@ fn enumerate_physical_plans_4_task(
         let mut hint_task = Task::invalid_task();
         let mut state = EnumerateState::default();
         for pp in ops {
-            // Go `iteratePhysicalPlan4BaseLogical` over the operator's
-            // children, or `iteratePhysicalPlan4GroupExpression` over a
-            // memo expression's input groups.
             let child_len = ge.map_or(plan.children().len(), |ge| ge.memo.ge(ge.ge).inputs_len());
-            let mut child_tasks = Vec::with_capacity(child_len);
-            for i in 0..child_len {
-                let Some(child_prop) = pp.base().child_req_prop(i) else {
-                    break;
-                };
-                let child_prop = child_prop.clone();
-                let child_task = match ge {
-                    None => find_best_task(&plan.children()[i], &child_prop, ctx)?,
-                    Some(ge) => {
-                        let child_group = ge.memo.ge(ge.ge).inputs[i];
-                        match crate::cascades::impl_and_cost::implement_group_and_cost(
-                            ge.memo,
-                            child_group,
-                            &child_prop,
-                            f64::MAX,
-                            ctx,
-                        )? {
-                            Some(task) => task,
-                            None => break,
-                        }
-                    }
-                };
-                if child_task.invalid() || !task_type_satisfied(&child_prop, &child_task) {
-                    break;
+            let child_tasks = if matches!(plan, LogicalPlan::Sequence(_)) {
+                // Go `iterateChildPlan4LogicalSequence` /
+                // `iterateChildPlan4LogicalSequenceGE`.
+                match iterate_child_plan_4_logical_sequence(plan, pp, prop, child_len, ctx, ge)? {
+                    Some(child_tasks) => child_tasks,
+                    None => continue,
                 }
-                child_tasks.push(child_task);
-            }
-            // "This check makes sure that there is no invalid child task."
-            if child_tasks.len() != child_len {
-                continue;
-            }
+            } else {
+                // Go `iteratePhysicalPlan4BaseLogical` over the operator's
+                // children, or `iteratePhysicalPlan4GroupExpression` over a
+                // memo expression's input groups.
+                let mut child_tasks = Vec::with_capacity(child_len);
+                for i in 0..child_len {
+                    let Some(child_prop) = pp.base().child_req_prop(i) else {
+                        break;
+                    };
+                    let child_prop = child_prop.clone();
+                    let child_task = match ge {
+                        None => find_best_task(&plan.children()[i], &child_prop, ctx)?,
+                        Some(ge) => {
+                            let child_group = ge.memo.ge(ge.ge).inputs[i];
+                            match crate::cascades::impl_and_cost::implement_group_and_cost(
+                                ge.memo,
+                                child_group,
+                                &child_prop,
+                                f64::MAX,
+                                ctx,
+                            )? {
+                                Some(task) => task,
+                                None => break,
+                            }
+                        }
+                    };
+                    if child_task.invalid() || !task_type_satisfied(&child_prop, &child_task) {
+                        break;
+                    }
+                    child_tasks.push(child_task);
+                }
+                // "This check makes sure that there is no invalid child task."
+                if child_tasks.len() != child_len {
+                    continue;
+                }
+                child_tasks
+            };
             let child_is_cop = matches!(child_tasks.first(), Some(Task::Cop(_)));
             let child_is_root = matches!(child_tasks.first(), Some(Task::Root(_)));
             let child_is_mpp = matches!(child_tasks.first(), Some(Task::Mpp(_)));
