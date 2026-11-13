@@ -206,6 +206,9 @@ func (fkc *FKCheckExec) addRowNeedToCheck(sc *stmtctx.StatementContext, row []ty
 	if err != nil || len(vals) == 0 {
 		return err
 	}
+	if fkc.Tbl == nil {
+		return fkc.FailedErr
+	}
 	key, isPrefix, err := fkc.buildCheckKeyFromFKValue(sc, vals)
 	if err != nil {
 		return err
@@ -576,6 +579,11 @@ func (fkc *FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementCont
 			return err
 		}
 		if fkc.hasNullValue(vals) {
+			continue
+		}
+		if fkc.Tbl == nil {
+			rows[i].ignored = true
+			sc.AppendWarning(fkc.FailedErr)
 			continue
 		}
 		key, isPrefix, err := fkc.buildCheckKeyFromFKValue(sc, vals)
