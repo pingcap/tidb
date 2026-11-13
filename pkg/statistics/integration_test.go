@@ -71,6 +71,55 @@ func TestExpBackoffEstimation(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/cardinality/cleanEstResults"))
 }
 
+// TestDateTimeHistogramRangeEstimate checks estimates across the former overflow
+// boundary, session time zones, and reloads of stored DATE/DATETIME statistics.
+func TestDateTimeHistogramRangeEstimate(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	h := dom.StatsHandle()
+	for i, tp := range []string{"date", "datetime(6)"} {
+		t.Run(tp, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=0")
+			tk.MustExec("set @@cte_max_recursion_depth=10000")
+			tk.MustExec("set @@tidb_analyze_version=2")
+			table := fmt.Sprintf("date_scalar_%d", i)
+			tk.MustExec(fmt.Sprintf("create table %s (d %s, key kd(d))", table, tp))
+			require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
+			tk.MustExec(fmt.Sprintf("insert into %s with recursive s(d) as (select date'2020-01-01' union all select d + interval 1 day from s where d < '2026-12-31') select d from s", table))
+			tk.MustExec("analyze table " + table + " all columns")
+			tk.MustExec(fmt.Sprintf("insert into %s with recursive s(d) as (select date'2027-01-01' union all select d + interval 1 day from s where d < '2030-12-31') select d from s", table))
+			tk.MustExec("flush stats_delta *.*")
+			require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+			var referenceEstimates []string
+			check := func() {
+				for _, zone := range []string{"UTC", "+00:00", "Asia/Shanghai", "America/New_York"} {
+					tk.MustExec("set @@time_zone='" + zone + "'")
+					estimates := make([]string, 0, 3)
+					for _, upper := range []string{"2046-12-09", "2046-12-10", "9999-12-31"} {
+						query := fmt.Sprintf("select * from %s where d between '2027-06-01' and '%s'", table, upper)
+						rows := tk.MustQuery("explain format='brief' " + query).Rows()
+						estimates = append(estimates, rows[0][1].(string))
+					}
+					if referenceEstimates == nil {
+						referenceEstimates = estimates
+					}
+					require.Equal(t, referenceEstimates, estimates, "%s", zone)
+					require.NotEqual(t, "1.00", estimates[0], "%s", zone)
+					require.Equal(t, estimates[0], estimates[1], "%s", zone)
+					require.Equal(t, estimates[0], estimates[2], "%s", zone)
+					tk.MustQuery(fmt.Sprintf("select count(*) from %s where d between '2027-06-01' and '9999-12-31'", table)).Check(testkit.Rows("1310"))
+				}
+			}
+			check()
+			// Existing encoded histograms must work without re-ANALYZE.
+			h.Clear()
+			require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+			check()
+		})
+	}
+}
+
 func TestNULLOnFullSampling(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
