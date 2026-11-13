@@ -298,19 +298,25 @@ func TestParseStandardBooleanMode(t *testing.T) {
 			input:       `foo)`,
 			errContains: "unexpected ')'",
 		},
+		// '<', '>' and '~' only change relevance: the clause stays optional.
 		{
-			name:        "error: '<' is rejected",
-			input:       `<foo`,
-			errContains: "unexpected token",
+			name:   "ranking: '<' keeps the term optional",
+			input:  `<foo`,
+			output: `M[] S[<foo] N[]`,
 		},
 		{
-			name:        "error: '>' is rejected",
-			input:       `>foo`,
-			errContains: "unexpected token",
+			name:   "ranking: '>' keeps the term optional",
+			input:  `>foo`,
+			output: `M[] S[>foo] N[]`,
 		},
 		{
-			name:        "error: '~' is rejected",
-			input:       `~foo`,
+			name:   "ranking: '~' keeps the term optional",
+			input:  `+bar ~foo ~"a b"`,
+			output: `M[bar] S[~foo, ~"a b"] N[]`,
+		},
+		{
+			name:        "error: a ranking operator needs a term",
+			input:       `foo ~`,
 			errContains: "unexpected token",
 		},
 		{

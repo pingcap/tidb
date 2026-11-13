@@ -389,3 +389,52 @@ func TestCompileBooleanQueryMultiTokenTerm(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, query.MatchesNothing(), "a required term that analyzes away can match nothing")
 }
+
+// TestCompileBooleanQueryRequiredTermAnalyzedAway covers a required term the
+// analyzer removes, a stopword or a word outside the token-size bounds. As in
+// MySQL, the term is dropped and the rest of the search applies; a search
+// left with no term at all matches nothing.
+func TestCompileBooleanQueryRequiredTermAnalyzedAway(t *testing.T) {
+	config := standardConfigForTest()
+	config.InnodbFtMinTokenSize = 3
+	config.InnodbFtEnableStopword = true
+	config.Stopwords = []string{"the"}
+	doc := []ColumnInput{{Text: "the go database"}}
+	other := []ColumnInput{{Text: "the go compiler"}}
+
+	for _, search := range []string{"+the +database", "+go +database", "+database +the", `+"the" +database`} {
+		query, err := CompileBooleanQuery(search, config)
+		require.NoError(t, err)
+		require.False(t, query.MatchesNothing(), search)
+		require.True(t, matchQueryForTest(t, config, search, doc), search)
+		require.False(t, matchQueryForTest(t, config, search, other), search)
+	}
+	// What remains keeps its own meaning: an optional term alone, and an
+	// excluded one.
+	require.True(t, matchQueryForTest(t, config, "+the database", doc))
+	require.False(t, matchQueryForTest(t, config, "+the database", other))
+	require.False(t, matchQueryForTest(t, config, "+go +database -the -go -database", doc))
+
+	for _, search := range []string{"+the", "+go", "+the +go", "the go", "+the -database"} {
+		query, err := CompileBooleanQuery(search, config)
+		require.NoError(t, err)
+		require.True(t, query.MatchesNothing(), search)
+		require.False(t, matchQueryForTest(t, config, search, doc), search)
+	}
+}
+
+// TestCompileBooleanQueryRankingOperators covers '~', '<' and '>', which in
+// MySQL only change a word's contribution to the relevance. MATCH is evaluated
+// here as a filter without a score, so they leave the word optional.
+func TestCompileBooleanQueryRankingOperators(t *testing.T) {
+	for _, config := range []AnalyzerConfig{standardConfigForTest(), ngramConfigForTest()} {
+		for _, op := range []string{"~", "<", ">"} {
+			require.True(t, matchQueryForTest(t, config, op+"apple", []ColumnInput{{Text: "apple pie"}}), op)
+			require.False(t, matchQueryForTest(t, config, op+"apple", []ColumnInput{{Text: "cherry pie"}}), op)
+			search := "+pie " + op + "apple"
+			require.True(t, matchQueryForTest(t, config, search, []ColumnInput{{Text: "apple pie"}}), search)
+			require.True(t, matchQueryForTest(t, config, search, []ColumnInput{{Text: "cherry pie"}}), search)
+			require.False(t, matchQueryForTest(t, config, search, []ColumnInput{{Text: "apple tart"}}), search)
+		}
+	}
+}
