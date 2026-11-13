@@ -13,12 +13,7 @@ require (
 	github.com/stretchr/testify v1.8.4
 	go.uber.org/goleak v1.3.0
 	go.uber.org/zap v1.27.0
-<<<<<<< HEAD
-	golang.org/x/text v0.37.0
-=======
 	golang.org/x/text v0.43.0
-	modernc.org/mathutil v1.6.0
->>>>>>> 34d5b479e29 (*: upgrade golang.org/x/net, golang.org/x/crypto, and golang.org/x/text (#72983))
 	modernc.org/parser v1.1.0
 	modernc.org/y v1.1.0
 )
@@ -37,6 +32,6 @@ require (
 	modernc.org/strutil v1.2.0 // indirect
 )
 
-replace golang.org/x/crypto => golang.org/x/crypto v0.52.0
+replace golang.org/x/crypto => golang.org/x/crypto v0.58.1-0.20261009181718-2f1f834330b2
 
-replace golang.org/x/net => golang.org/x/net v0.55.0
+replace golang.org/x/net => golang.org/x/net v0.62.0
