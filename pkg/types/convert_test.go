@@ -1214,10 +1214,28 @@ func TestStrToDuration(t *testing.T) {
 		{"00:00:00", 0, true},
 	}
 	for _, tt := range tests {
-		_, _, isDuration, err := StrToDuration(DefaultStmtNoWarningContext, tt.str, tt.fsp)
+		_, _, isDuration, isNull, err := StrToDuration(DefaultStmtNoWarningContext, tt.str, tt.fsp)
 		require.NoError(t, err)
 		require.Equal(t, tt.isDuration, isDuration)
+		require.False(t, isNull)
 	}
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithTruncateAsWarning(true))
+	for _, tt := range []struct {
+		str    string
+		want   string
+		isNull bool
+	}{
+		{"str25", "00:00:00", true},
+		{"839:00:00", "838:59:59", false},
+		{"12:34:56foo", "12:34:56", false},
+	} {
+		d, _, isDuration, isNull, err := StrToDuration(ctx, tt.str, 0)
+		require.NoError(t, err)
+		require.True(t, isDuration)
+		require.Equal(t, tt.isNull, isNull, tt.str)
+		require.Equal(t, tt.want, d.String(), tt.str)
+	}
+
 }
 
 func TestConvertScientificNotation(t *testing.T) {
