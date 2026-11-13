@@ -1,0 +1,13 @@
+use test;
+drop table if exists shrink_multibyte;
+create table shrink_multibyte (s varchar(3000) character set utf8mb4);
+insert into shrink_multibyte values (repeat('中',1007));
+alter table shrink_multibyte modify column s varchar(2000) character set utf8mb4;
+select char_length(s),length(s) from shrink_multibyte;
+drop table shrink_multibyte;
+create table shrink_multibyte (s varchar(10) character set utf8mb4);
+insert into shrink_multibyte values ('中文甲乙');
+--error 1265
+alter table shrink_multibyte modify column s varchar(3) character set utf8mb4;
+select s,char_length(s) from shrink_multibyte;
+drop table shrink_multibyte;
