@@ -12,10 +12,14 @@
 use crate::PhysicalPlan;
 use tidb_planner_core_base::PlanError;
 
-/// Go ExpandVirtualColumn at the cop-to-root boundary. Pass-through nodes
-/// retain their child's expanded schema; projections and aggregates retain
-/// their own output contract.
-pub(super) fn expand(plan: &mut PhysicalPlan) -> Result<(), PlanError> {
+/// Go ExpandVirtualColumn over a plan's table scan (at the cop-to-root
+/// boundary, and on `buildPhysicalIndexLookUpReader`'s table scan before
+/// its handle). Pass-through nodes retain their child's expanded schema;
+/// projections and aggregates retain their own output contract.
+///
+/// # Errors
+/// A dependency without its pushed-down column metadata.
+pub fn expand(plan: &mut PhysicalPlan) -> Result<(), PlanError> {
     for child in plan.base_mut().children_mut() {
         expand(child)?;
     }

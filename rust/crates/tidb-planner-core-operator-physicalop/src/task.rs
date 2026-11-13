@@ -49,6 +49,7 @@ use tidb_expr::expression::Expression;
 use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 
 mod virtual_columns;
+pub use virtual_columns::expand as expand_virtual_column;
 
 /// Go `utilfuncp.Attach2Task4X`: core's `attach2Task` bodies (`core/task.go`),
 /// which the operators reach through these variables -- here, the physical

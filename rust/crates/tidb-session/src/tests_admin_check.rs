@@ -520,15 +520,16 @@ fn a_unique_index_entry_naming_the_wrong_row_reports_both_records() {
         )
     );
     set_fast_check(&mut session, false);
-    let (code, message) = error_of(&mut session, "admin check table t");
-    assert_eq!(code, 8134, "{message}");
-    assert!(
-        message.contains("col: b, handle: \"2\", index-values:\"KindInt64 10\""),
-        "{message}"
-    );
-    assert!(
-        message.contains("record-values:\"KindInt64 20\", compare err:<nil>"),
-        "{message}"
+    // Go `CheckTableExec` (probed): the table worker reads the rows in
+    // handle order, so row 1 meets the entry that now holds 20.
+    assert_eq!(
+        error_of(&mut session, "admin check table t"),
+        (
+            8134,
+            "data inconsistency in table: t, index: idx_b, col: b, handle: \"1\", \
+             index-values:\"KindInt64 20\" != record-values:\"KindInt64 10\", compare err:<nil>"
+                .to_owned()
+        )
     );
 }
 

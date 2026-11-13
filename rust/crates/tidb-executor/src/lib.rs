@@ -97,6 +97,7 @@ pub mod split_region;
 pub mod access_cost;
 pub mod access_path;
 pub mod admin_check;
+pub(crate) mod check_table_index;
 pub mod fast_check_table;
 pub mod checksum;
 

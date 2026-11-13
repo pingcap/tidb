@@ -133,6 +133,12 @@ pub fn ddl_jobs_not_found(job_ids: &[i64]) -> Vec<Option<String>> {
 }
 
 pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
+    /// Go `admin.getCount`: `ExecRestrictedSQL(ctx,
+    /// []OptionFuncAlias{ExecOptionWithSnapshot(snapshot)}, sql)` under
+    /// `kv.InternalTxnAdmin`, run while `CheckIndicesCount` holds the
+    /// session's `OptimizerUseInvisibleIndexes` on ("Here we need check all
+    /// indexes, includes invisible index").
+    fn admin_check_count(&mut self, sql: &str, snapshot: u64) -> Result<i64, DriverError>;
     /// Go `SQLBindExec.reloadBindings`: `BindingHandle().
     /// LoadFromStorageToCache(true, false)`.
     fn reload_bindings(&mut self) -> Result<(), DriverError>;
@@ -717,19 +723,54 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
             )?;
             return Ok(index_infos.len());
         }
-        self.with_catalog_mut(|catalog| {
-            let table = admin_check_table_mut(catalog, &database, &name, statement)?;
-            let mut store = crate::statement_store(&ctx);
-            // Go `CheckTableExec`, which refuses a partial index.
-            crate::admin_check::check_table(
-                table,
-                &mut *store,
+        // Go `buildAdminCheckTable` and `buildCheckTable`'s `CheckTableExec`.
+        let current_db = self.require_current_database().map(str::to_owned).unwrap_or_default();
+        let (plan, srcs) = self.with_catalog_mut(|catalog| {
+            admin_check_table_mut(catalog, &database, &name, statement)?;
+            let plan = crate::driver::planner_bridge::admin_check_table_plan(
+                catalog,
+                &current_db,
+                &ctx,
+                &database,
+                &name,
                 only_index.as_deref(),
-                &decode_context,
-                false,
-            )
-            .map_err(admin_check_error)
-        })
+            )?;
+            let srcs = crate::driver::physical_builder::build_check_table_lookups(
+                &plan.index_look_up_readers,
+                catalog,
+                &ctx,
+            )?;
+            Ok((plan, srcs))
+        })?;
+        let checked = plan.index_infos.len();
+        let table_name = plan.table_info.read().name.original().to_owned();
+        let mut exec = crate::check_table_index::CheckTableExec::new(
+            database.clone(),
+            table_name,
+            plan.index_infos,
+            srcs,
+            plan.check_index,
+        );
+        exec.open()?;
+        // Go `CheckIndicesCount`'s snapshot: the transaction's start, or
+        // `tidb_snapshot`.
+        let snapshot = match self.session_vars().snapshot_ts() {
+            0 => ctx.txn_store().map_or(0, |store| store.start_ts()),
+            snapshot => snapshot,
+        };
+        let result = exec.next(&mut AdminCheckTableSession {
+            exec: self,
+            database: &database,
+            name: &name,
+            statement,
+            ctx: &ctx,
+            decode_context: &decode_context,
+            snapshot,
+        });
+        let closed = exec.close();
+        result?;
+        closed?;
+        Ok(checked)
     }
 
     /// Go `ExplainExec` over the planned statement.
@@ -1493,38 +1534,8 @@ pub(crate) fn admin_check_error(error: crate::admin_check::AdminCheckError) -> D
                 "table count {table_count} != index({index}) count {index_count}"
             )),
         ),
-        AdminCheckError::Inconsistent {
-            table,
-            index,
-            handle,
-            index_values,
-            record_values,
-        } => DriverError::from(
-            crate::consistency_errors::ERR_ADMIN_CHECK_INCONSISTENT.gen_with_stack(
-                format!(
-                    "data inconsistency in table: {table}, index: {index}, handle: {handle}, \
-             index-values:{index_values:?} != record-values:{record_values:?}"
-                ),
-            ),
-        ),
-        AdminCheckError::ValueMismatch(mismatch) => {
-            let crate::admin_check::AdminValueMismatch {
-                table,
-                index,
-                column,
-                handle,
-                index_value,
-                record_value,
-                compare_error,
-            } = *mismatch;
-            DriverError::from(
-                crate::consistency_errors::ERR_ADMIN_CHECK_INCONSISTENT_WITH_COL_INFO
-                    .gen_with_stack(format!(
-                "data inconsistency in table: {table}, index: {index}, col: {column}, handle: \
-                 {handle:?}, index-values:{index_value:?} != record-values:{record_value:?}, \
-                 compare err:{compare_error}"
-            )),
-            )
+        error @ (AdminCheckError::Inconsistent { .. } | AdminCheckError::ValueMismatch(_)) => {
+            DriverError::from(error.terror())
         }
         AdminCheckError::UnknownIndex { index, .. } => DriverError::from(
             crate::ExecError::internal(format!("secondary index {index} does not exist")),
@@ -1539,3 +1550,35 @@ pub(crate) fn admin_check_error(error: crate::admin_check::AdminCheckError) -> D
     }
 }
 
+
+/// The session `CheckTableExec` runs against.
+struct AdminCheckTableSession<'a, E: AdminExec + ?Sized> {
+    exec: &'a mut E,
+    database: &'a str,
+    name: &'a str,
+    statement: &'static str,
+    ctx: &'a crate::StmtContext,
+    decode_context: &'a crate::RowDecodeContext,
+    snapshot: u64,
+}
+
+impl<E: AdminExec + ?Sized> crate::check_table_index::CheckTableSession for AdminCheckTableSession<'_, E> {
+    fn count(&mut self, sql: &str) -> Result<i64, DriverError> {
+        self.exec.admin_check_count(sql, self.snapshot)
+    }
+
+    fn check_table_record(&mut self, index: &tidb_model::IndexInfo) -> Result<(), DriverError> {
+        let (database, name, statement, ctx, decode_context) =
+            (self.database, self.name, self.statement, self.ctx, self.decode_context);
+        let index_id = index.id;
+        self.exec.with_catalog_mut(|catalog| {
+            let table = admin_check_table_mut(catalog, database, name, statement)?;
+            let Some(index) = table.index_list_for_check().into_iter().find(|index| index.read().id == index_id) else {
+                return Ok(());
+            };
+            let mut store = crate::statement_store(ctx);
+            crate::admin_check::check_record_and_index(table, &mut *store, &index, decode_context)
+                .map_err(admin_check_error)
+        })
+    }
+}

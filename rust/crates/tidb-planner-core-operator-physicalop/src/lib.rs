@@ -1269,6 +1269,10 @@ pub struct PhysicalTableScan {
     pub table: Option<tidb_model::GoShared<tidb_model::TableInfo>>,
     /// Go `Columns`: the scanned columns' `*model.ColumnInfo`s.
     pub columns: Vec<tidb_model::GoShared<tidb_model::ColumnInfo>>,
+    /// Go `HandleIdx`: the handle columns' offsets in `Columns`, which only
+    /// an `ADMIN CHECK` lookup's table scan sets
+    /// (`buildPhysicalIndexLookUpReader`).
+    pub handle_idx: Vec<usize>,
     /// Go `IsMPPOrBatchCop`: the scan's reader reads through MPP or a batch
     /// request (used for TiFlash `PartitionTableScan`).
     pub is_mpp_or_batch_cop: bool,
@@ -2631,6 +2635,129 @@ pub struct PhysicalIndexScan {
 }
 
 impl PhysicalIndexScan {
+    /// Go `PhysicalIndexScan.InitSchema(idxExprCols, isDoubleRead)`'s
+    /// columns: the scan's `IdxCols`, then each remaining index column from
+    /// `idx_expr_cols` or, absent there, a fresh column of the table's; a
+    /// common handle's columns; else the handle column of `columns` found in
+    /// `data_source_schema`; a double read's or global index's
+    /// `_tidb_rowid` when no handle was set; a global index's partition id;
+    /// and the data source's partition id.
+    ///
+    /// # Errors
+    /// An index column absent from the table, or the allocator's failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn init_schema_columns(
+        idx_cols: &[Column],
+        index: &tidb_model::IndexInfo,
+        table: &tidb_model::TableInfo,
+        columns: &[tidb_model::GoShared<tidb_model::ColumnInfo>],
+        data_source_schema: Option<&Schema>,
+        idx_expr_cols: &[Option<Column>],
+        is_double_read: bool,
+        alloc_plan_column_id: &dyn Fn() -> Result<i64, PlanError>,
+    ) -> Result<Vec<Column>, PlanError> {
+        let mut index_cols: Vec<Column> = Vec::with_capacity(index.columns.len() + 1);
+        index_cols.extend(idx_cols.iter().cloned());
+        for i in idx_cols.len()..index.columns.len() {
+            if let Some(Some(column)) = idx_expr_cols.get(i) {
+                index_cols.push(column.clone());
+            } else {
+                // TODO: try to reuse the col generated when building the DataSource.
+                let table_column = index
+                    .columns
+                    .get(i)
+                    .and_then(|column| usize::try_from(column.read().offset).ok())
+                    .and_then(|offset| table.columns.get(offset))
+                    .ok_or_else(|| PlanError::internal("index column is absent from immutable table metadata"))?;
+                let table_column = table_column.read();
+                let mut column = Column::new(alloc_plan_column_id()?, table_column.field_type.clone());
+                column.id = table_column.id;
+                index_cols.push(column);
+            }
+        }
+        if table.is_common_handle {
+            index_cols.extend(idx_expr_cols.iter().skip(index.columns.len()).flatten().cloned());
+        }
+        let mut set_handle = index_cols.len() > index.columns.len();
+        if !set_handle {
+            for col in columns {
+                let col = col.read();
+                if (col.field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY) && table.pk_is_handle)
+                    || col.id == tidb_model::column::EXTRA_HANDLE_ID
+                {
+                    let Some(handle_col) =
+                        data_source_schema.and_then(|schema| tidb_expr::column::column_by_id(&schema.columns, col.id))
+                    else {
+                        continue;
+                    };
+                    index_cols.push(handle_col.clone());
+                    set_handle = true;
+                    break;
+                }
+            }
+        }
+        // If `dataSouceSchema` contains `model.ExtraPhysTblID`, we should add it into `indexScan.schema`
+        let extra_phys_tbl_col = data_source_schema.and_then(|schema| {
+            schema
+                .columns
+                .iter()
+                .find(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID)
+                .cloned()
+        });
+        let extra_column = |id: i64, name: &str| -> Result<Column, PlanError> {
+            let mut column = Column::new(
+                alloc_plan_column_id()?,
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            );
+            column.id = id;
+            column.orig_name = name.to_owned();
+            Ok(column)
+        };
+        if is_double_read || index.global {
+            // If it's double read case, the first index must return handle. So we should add extra handle column
+            // if there isn't a handle column.
+            if !set_handle && !table.is_common_handle {
+                index_cols.push(extra_column(tidb_model::column::EXTRA_HANDLE_ID, tidb_model::column::EXTRA_HANDLE_NAME)?);
+            }
+            // If it's global index, handle and PhysTblID columns has to be added, so that needed pids can be filtered.
+            if index.global && extra_phys_tbl_col.is_none() {
+                index_cols.push(extra_column(tidb_model::column::EXTRA_PHYS_TBL_ID, tidb_model::column::EXTRA_PHYS_TBL_ID_NAME)?);
+            }
+        }
+        if let Some(column) = extra_phys_tbl_col {
+            index_cols.push(column);
+        }
+        Ok(index_cols)
+    }
+
+    /// Go `PhysicalIndexScan.InitSchema(idxExprCols, isDoubleRead)`.
+    ///
+    /// # Errors
+    /// A scan without its table or index, or [`Self::init_schema_columns`]'s.
+    pub fn init_schema(
+        &mut self,
+        idx_expr_cols: &[Option<Column>],
+        is_double_read: bool,
+        alloc_plan_column_id: &dyn Fn() -> Result<i64, PlanError>,
+    ) -> Result<(), PlanError> {
+        let table = self.table.as_ref().ok_or_else(|| PlanError::internal("an index scan has no table"))?.read();
+        let index = self.index.as_ref().ok_or_else(|| PlanError::internal("an index scan has no index"))?.read();
+        self.need_common_handle = table.is_common_handle;
+        let columns = Self::init_schema_columns(
+            &self.idx_cols,
+            &index,
+            &table,
+            &self.columns,
+            self.data_source_schema.as_deref(),
+            idx_expr_cols,
+            is_double_read,
+            alloc_plan_column_id,
+        )?;
+        drop((table, index));
+        self.base.base.set_schema(Some(Schema::new(columns)));
+        Ok(())
+    }
+
     /// Go `PhysicalIndexScan.ExplainID`: the operator identity follows the
     /// resolved range shape instead of the generic construction-time type.
     #[must_use]
@@ -5300,6 +5427,7 @@ impl PhysicalPlan {
             Self::TableScan(op) => Self::TableScan(PhysicalTableScan {
                 table: op.table.clone(),
                 columns: op.columns.clone(),
+                handle_idx: op.handle_idx.clone(),
                 is_mpp_or_batch_cop: op.is_mpp_or_batch_cop,
                 group_by_col_idxs: op.group_by_col_idxs.clone(),
                 grouped_ranges: op.grouped_ranges.clone(),

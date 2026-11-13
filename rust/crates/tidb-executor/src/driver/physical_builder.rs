@@ -799,6 +799,33 @@ impl Executor for MaxOneRowExec {
     }
 }
 
+/// Go `buildCheckTable`'s lookups: each reader built by
+/// `buildNoRangeIndexLookUpReader` and armed by `buildIndexLookUpChecker`.
+///
+/// # Errors
+/// A reader that does not build.
+pub(crate) fn build_check_table_lookups(
+    readers: &[PhysicalPlan],
+    catalog: &SessionExtendedInfoSchema,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<crate::index_lookup::IndexLookUpExecutor>, DriverError> {
+    let mut reader_execs = Vec::with_capacity(readers.len());
+    for plan in readers {
+        let PhysicalPlan::IndexLookUpReader(reader) = plan else {
+            return Err(DriverError::unsupported("an admin check reader is not an index lookup"));
+        };
+        let Some(mut reader_exec) =
+            crate::index_lookup::IndexLookUpExecutor::build_no_range(meta(ctx, plan, plan_schema(plan)?), ctx, catalog, reader)
+                .map_err(DriverError::from)?
+        else {
+            continue;
+        };
+        reader_exec.build_index_look_up_checker(reader).map_err(DriverError::from)?;
+        reader_execs.push(reader_exec);
+    }
+    Ok(reader_execs)
+}
+
 fn plan_schema(plan: &PhysicalPlan) -> Result<Schema, DriverError> {
     plan.schema()
         .cloned()

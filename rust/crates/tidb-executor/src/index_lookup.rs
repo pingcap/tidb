@@ -109,6 +109,19 @@ struct Shared {
     table_reader_ruv2: Option<tidb_executor_internal_exec::ruv2::Ruv2NextCache>,
     /// Go `e.stats` (`initRuntimeStats`), when the statement collects them.
     stats: Option<crate::index_lookup_stats::IndexLookUpStatsHandle>,
+    /// Go `index`.
+    index: tidb_model::IndexInfo,
+    /// Go `checkIndexValue`: an `ADMIN CHECK` lookup compares each index row
+    /// with its table row instead of returning rows.
+    check_index_value: Option<CheckIndexValue>,
+}
+
+/// Go `checkIndexValue` (`distsql.go`).
+pub(crate) struct CheckIndexValue {
+    /// Go `idxColTps`: the index request's row types.
+    pub(crate) idx_col_tps: Vec<FieldType>,
+    /// Go `idxTblCols`: the table columns of the index's columns.
+    pub(crate) idx_tbl_cols: Vec<tidb_model::GoShared<tidb_model::ColumnInfo>>,
 }
 
 /// Go `lookupTableTask` as the table worker answers it: the rows of the
@@ -133,6 +146,8 @@ struct LookupTask {
     /// The partition the task's handles belong to, when the index worker
     /// reads one partition a key-range group.
     partition: Option<i64>,
+    /// Go `idxRows`: under `checkIndexValue`, the index rows of `handles`.
+    idx_rows: Option<Chunk>,
     done: SyncSender<Result<TaskRows, ExecError>>,
 }
 
@@ -358,6 +373,8 @@ impl IndexLookUpExecutor {
             table_plans: table_plans.iter().copied().cloned().collect(),
             table_plan_ids,
             index_name: index.name.original().to_owned(),
+            index: index.clone(),
+            check_index_value: None,
             codec_table_info: table.codec_table_info(),
             table_info,
             primary_key_index,
@@ -439,6 +456,77 @@ impl IndexLookUpExecutor {
             worker_started: false,
             dummy,
         }))
+    }
+
+    /// Go `e.index`.
+    pub(crate) fn index(&self) -> &tidb_model::IndexInfo {
+        &self.shared.index
+    }
+
+    /// Go `buildIndexLookUpChecker`: the lookup an `ADMIN CHECK` runs --
+    /// its index request answers every index column and the handle over the
+    /// full range, and its table worker compares each table row with its
+    /// index row (`checkIndexValue`).
+    ///
+    /// # Errors
+    /// Go `ErrUnknownColumn` when an index column is not the table's.
+    pub(crate) fn build_index_look_up_checker(&mut self, v: &PhysicalIndexLookUpReader) -> Result<(), ExecError> {
+        let (index_plans, _) = v.index_plans();
+        let Some(PhysicalPlan::IndexScan(is)) = index_plans.first().copied() else {
+            return Err(ExecError::Internal("the lookup's index plans start with no index scan".into()));
+        };
+        let Some(PhysicalPlan::TableScan(ts)) = v.table_plans().first().copied() else {
+            return Err(ExecError::Internal("the lookup's table plans start with no table scan".into()));
+        };
+        let shared = Arc::get_mut(&mut self.shared).expect("the checker is built before the lookup runs");
+        let is_common_handle = !(shared.handle_cols.len() == 1
+            && shared.handle_cols[0].id == tidb_model::column::EXTRA_HANDLE_ID)
+            && shared.table_info.is_common_handle;
+        let mut full_col_len = shared.index.columns.len() + v.common_handle_cols.len();
+        if !is_common_handle {
+            full_col_len += 1;
+        }
+        if shared.index.global {
+            full_col_len += 1;
+        }
+        self.index_output_offsets = (0..full_col_len).map(|i| i as u32).collect();
+        shared.handle_idx.clone_from(&ts.handle_idx);
+        self.ranges = tidb_ranger::points::full_range();
+        // Go: "tps is used to decode the index, we should use the element
+        // type of the array if any."
+        let mut tps: Vec<FieldType> = is.columns.iter().map(|col| col.read().field_type.array_type()).collect();
+        if !is_common_handle {
+            tps.push(FieldType::new(tidb_datatype::FieldTypeCode::LongLong));
+        }
+        if shared.index.global {
+            tps.push(FieldType::new(tidb_datatype::FieldTypeCode::LongLong));
+        }
+        // Go `getRetTpsForIndexReader` answers `idxColTps`.
+        self.index_types.clone_from(&tps);
+        // Go `needPartitionHandle(getHandleFromTable)`: "execute `admin check
+        // [table|index]` with global index".
+        shared.partition_handle_from_table |= shared.index.global;
+        // Go `table.FindColumns(e.table.Cols(), colNames, true)`.
+        let mut idx_tbl_cols = Vec::with_capacity(is.idx_cols.len());
+        for col in is.columns.iter().take(is.idx_cols.len()) {
+            let name = col.read().name.lowercase().to_owned();
+            let found = shared
+                .table_info
+                .columns
+                .iter_deref()
+                .find(|table_col| table_col.read().name.lowercase() == name);
+            match found {
+                Some(table_col) => idx_tbl_cols.push(table_col),
+                None => {
+                    return Err(ExecError::from(tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack(format!(
+                        "Unknown column {}",
+                        col.read().name.original()
+                    ))));
+                }
+            }
+        }
+        shared.check_index_value = Some(CheckIndexValue { idx_col_tps: tps, idx_tbl_cols });
+        Ok(())
     }
 
     /// Go `IndexLookUpExecutor.open`: `memTracker` reset and attached again,
@@ -951,7 +1039,7 @@ impl IndexWorker {
                 }
             }
             let start = std::time::Instant::now();
-            let (handles, handles_cap) = self.extract_task_handles(source, chk, handle_offsets)?;
+            let (handles, handles_cap, idx_rows) = self.extract_task_handles(source, chk, handle_offsets)?;
             let finish_fetch = std::time::Instant::now();
             if handles.is_empty() {
                 return Ok(true);
@@ -961,7 +1049,7 @@ impl IndexWorker {
             }
             let finish_build = std::time::Instant::now();
             let (done_tx, done_rx) = sync_channel(1);
-            let task = LookupTask { id: self.next_task_id, handles, handles_cap, partition, done: done_tx };
+            let task = LookupTask { id: self.next_task_id, handles, handles_cap, partition, idx_rows, done: done_tx };
             self.next_task_id += 1;
             if work_tx.send(task).is_err() || result_tx.send(done_rx).is_err() {
                 return Ok(false);
@@ -1034,7 +1122,7 @@ impl IndexWorker {
                 if !handles.is_empty() {
                     let (done_tx, done_rx) = sync_channel(1);
                     let handles_cap = handles.capacity();
-                    let task = LookupTask { id: self.next_task_id, handles, handles_cap, partition, done: done_tx };
+                    let task = LookupTask { id: self.next_task_id, handles, handles_cap, partition, idx_rows: None, done: done_tx };
                     self.next_task_id += 1;
                     if work_tx.send(task).is_err() || result_tx.send(done_rx).is_err() {
                         break 'results;
@@ -1135,8 +1223,10 @@ impl IndexWorker {
         source: &mut dyn Executor,
         chk: &mut Chunk,
         handle_offsets: &[usize],
-    ) -> Result<(Vec<Handle>, usize), ExecError> {
+    ) -> Result<(Vec<Handle>, usize, Option<Chunk>), ExecError> {
         let mut handles = Vec::new();
+        // Go `retChk`: under `checkIndexValue`, every index row read.
+        let mut ret_chk: Option<Chunk> = None;
         // Go `cap(handles)`: made at the first chunk's row count, then
         // grown by `append`.
         let mut handles_cap = 0;
@@ -1145,7 +1235,7 @@ impl IndexWorker {
             let mut required_rows = self.batch_size - handles.len();
             if let Some(limit) = self.pushed_limit {
                 if limit.offset + limit.count <= self.scanned_keys {
-                    return Ok((handles, handles_cap));
+                    return Ok((handles, handles_cap, ret_chk));
                 }
                 let left = limit.offset + limit.count - self.scanned_keys;
                 required_rows = required_rows.min(usize::try_from(left).unwrap_or(usize::MAX));
@@ -1158,7 +1248,7 @@ impl IndexWorker {
                 basic.record_next(started.elapsed(), chk.num_rows() as i64);
             }
             if chk.num_rows() == 0 {
-                return Ok((handles, handles_cap));
+                return Ok((handles, handles_cap, ret_chk));
             }
             if handles_cap == 0 {
                 handles_cap = chk.num_rows();
@@ -1170,15 +1260,20 @@ impl IndexWorker {
                         continue;
                     }
                     if self.scanned_keys > limit.offset + limit.count {
-                        return Ok((handles, handles_cap));
+                        return Ok((handles, handles_cap, ret_chk));
                     }
                 }
                 handles_cap = go_append_cap(handles.len() + 1, handles_cap, SIZEOF_INTERFACE);
                 handles.push(get_handle(&self.shared, chk.get_row(i), handle_offsets, GetHandleType::FromIndex)?);
             }
+            if let Some(check) = self.shared.check_index_value.as_ref() {
+                let ret = ret_chk.get_or_insert_with(|| Chunk::new(&check.idx_col_tps, self.batch_size, self.batch_size));
+                let rows: Vec<_> = (0..chk.num_rows()).map(|i| chk.get_row(i)).collect();
+                ret.append_rows(&rows);
+            }
         }
         self.batch_size = (self.batch_size * 2).min(self.max_batch_size);
-        Ok((handles, handles_cap))
+        Ok((handles, handles_cap, ret_chk))
     }
 }
 
@@ -1244,7 +1339,22 @@ fn execute_table_task(
     table_request: &tidb_proto::tipb::DagRequest,
     task: LookupTask,
 ) -> Result<TaskRows, ExecError> {
-    let LookupTask { id, mut handles, handles_cap, partition, done: _ } = task;
+    let LookupTask { id, mut handles, handles_cap, partition, idx_rows, done: _ } = task;
+    // Go `buildTableTask` under `checkIndexValue`: each handle's first index
+    // position, and the later positions of a repeated one, taken in the
+    // index's order before the table reader sorts the handles.
+    let check_index_order = shared.check_index_value.as_ref().map(|_| {
+        let mut index_order = tidb_txnkv::HandleMap::new();
+        let mut duplicated_index_order = tidb_txnkv::HandleMap::new();
+        for (i, handle) in handles.iter().enumerate() {
+            if index_order.get(handle).is_some() {
+                duplicated_index_order.set(handle.clone(), i);
+            } else {
+                index_order.set(handle.clone(), i);
+            }
+        }
+        (index_order, duplicated_index_order)
+    });
     // Go `execTableTask`: the task's tracker under `memTracker`.
     let mem_tracker = tidb_memory::Tracker::new(id, -1);
     mem_tracker.attach_to(&shared.mem_tracker);
@@ -1274,6 +1384,21 @@ fn execute_table_task(
         },
         &mut handles,
     )?;
+    if let (Some(check), Some((index_order, duplicated_index_order))) =
+        (shared.check_index_value.as_ref(), check_index_order)
+    {
+        let compared = compare_data(
+            shared,
+            check,
+            &mut reader,
+            index_order,
+            &duplicated_index_order,
+            idx_rows.as_ref(),
+        );
+        let _ = reader.close();
+        compared?;
+        return Ok(TaskRows { chunks: Vec::new(), order: Vec::new(), mem_usage: 0, mem_tracker });
+    }
     // Go `executeTask`'s first charge: `cap(task.handles)`, the table
     // reader's `memUsage()`, each handle, `indexOrder` and `idxRows`.
     let mut mem_usage = (handles_cap * SIZEOF_INTERFACE) as i64
@@ -1346,6 +1471,122 @@ fn execute_table_task(
         order = keyed.into_iter().map(|(_, at)| at).collect();
     }
     Ok(TaskRows { chunks, order, mem_usage, mem_tracker })
+}
+
+/// Go `tableWorker.compareData`: each table row of the task against the
+/// index row that named it -- a handle no row answers, or an indexed column
+/// whose stored value differs from the row's, is an inconsistency.
+fn compare_data(
+    shared: &Shared,
+    check: &CheckIndexValue,
+    reader: &mut crate::table_reader::TableReaderExecutor,
+    mut index_order: tidb_txnkv::HandleMap<usize>,
+    duplicated_index_order: &tidb_txnkv::HandleMap<usize>,
+    idx_rows: Option<&Chunk>,
+) -> Result<(), ExecError> {
+    let table_name = shared.table_info.name.original().to_owned();
+    let index_name = shared.index.name.original().to_owned();
+    let idx_row_values = |offset: usize| -> Vec<Datum> {
+        idx_rows.map_or_else(Vec::new, |rows| {
+            let row = rows.get_row(offset);
+            check.idx_col_tps.iter().enumerate().map(|(i, tp)| row.get_datum(i, tp)).collect()
+        })
+    };
+    loop {
+        let mut chk = shared.table_reader_meta.new_chunk();
+        reader.next(&mut chk)?;
+        if chk.num_rows() == 0 {
+            // Go `task.indexOrder.Range`: the first handle no row answered.
+            let mut first = None;
+            index_order.range(|handle, offset| {
+                first = Some((handle.clone(), *offset));
+                false
+            });
+            if let Some((handle, offset)) = first {
+                let handle = crate::admin_check::table_handle_of(&handle);
+                return Err(ExecError::from(
+                    crate::admin_check::inconsistent(
+                        &table_name,
+                        &index_name,
+                        &handle,
+                        Some((&handle, &idx_row_values(offset))),
+                        None,
+                    )
+                    .terror(),
+                ));
+            }
+            return Ok(());
+        }
+        for i in 0..chk.num_rows() {
+            let row = chk.get_row(i);
+            let handle = get_handle(shared, row, &shared.handle_idx, GetHandleType::FromTable)?;
+            let offset = index_order
+                .get(&handle)
+                .or_else(|| duplicated_index_order.get(&handle))
+                .copied()
+                .unwrap_or(0);
+            index_order.delete(&handle);
+            let mut vals: Vec<Datum> = check
+                .idx_tbl_cols
+                .iter()
+                .enumerate()
+                .map(|(i, col)| row.get_datum(i, &col.read().field_type))
+                .collect();
+            // Go `tablecodec.TruncateIndexValues(tblInfo, w.idxLookup.index,
+            // vals)`: each value cut to its index column's prefix length.
+            for (i, val) in vals.iter_mut().enumerate() {
+                tidb_tablecodec::cut_datum_by_prefix_len(
+                    val,
+                    shared.index.columns.get(i).map_or(tidb_datatype::UNSPECIFIED_LENGTH, |c| c.read().length),
+                    &check.idx_tbl_cols[i].read().field_type,
+                );
+            }
+            let idx_row = idx_rows.map(|rows| rows.get_row(offset));
+            for (i, val) in vals.iter().enumerate() {
+                let col = check.idx_tbl_cols[i].read();
+                let mut idx_val = idx_row.map_or(Datum::Null, |row| row.get_datum(i, &check.idx_col_tps[i]));
+                tidb_tablecodec::cut_datum_by_prefix_len(
+                    &mut idx_val,
+                    shared.index.columns.get(i).map_or(tidb_datatype::UNSPECIFIED_LENGTH, |c| c.read().length),
+                    &col.field_type,
+                );
+                let cmp_mv_index = col.field_type.is_array() && matches!(val, Datum::Json(_));
+                let compared = tidb_table::tables::mutation_checker::compare_index_and_val(
+                    val,
+                    &idx_val,
+                    check.idx_col_tps[i].collation(),
+                    cmp_mv_index,
+                );
+                let mismatch = |compare_error: String, reported: &Datum| {
+                    let handle = crate::admin_check::table_handle_of(&handle);
+                    ExecError::from(
+                        crate::admin_check::AdminCheckError::ValueMismatch(Box::new(
+                            crate::admin_check::AdminValueMismatch {
+                                table: table_name.clone(),
+                                index: index_name.clone(),
+                                column: col.name.original().to_owned(),
+                                handle: crate::admin_check::render_handle(&handle),
+                                index_value: crate::admin_check::render_go_datum(reported),
+                                record_value: crate::admin_check::render_go_datum(val),
+                                compare_error,
+                            },
+                        ))
+                        .terror(),
+                    )
+                };
+                match compared {
+                    // Go prints the comparison's error (`%v`).
+                    Err(tidb_table::tables::KvTableError::Decode(message)) => return Err(mismatch(message, &idx_val)),
+                    Err(error) => return Err(mismatch(format!("{error:?}"), &idx_val)),
+                    Ok(std::cmp::Ordering::Equal) => {}
+                    Ok(_) => {
+                        let reported = idx_row.map_or(Datum::Null, |row| row.get_datum(i, &check.idx_col_tps[i]));
+                        return Err(mismatch("<nil>".to_owned(), &reported));
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// One index select result as an executor, which the merge reads. Closing

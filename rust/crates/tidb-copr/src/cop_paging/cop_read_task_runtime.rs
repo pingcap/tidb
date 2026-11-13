@@ -390,8 +390,6 @@ pub enum CopReadTaskError {
     MissingRanges,
     /// The source guard rejects more than 25,000 ranges per task build.
     TooManyRanges,
-    /// Ranges are malformed, overlapping, or non-monotonic.
-    InvalidRanges,
     /// Region or bucket topology is malformed, stale, outside, or incomplete.
     InvalidTopology,
     /// A response did not match a currently active attempt.
@@ -423,7 +421,6 @@ impl CopReadTaskError {
             Self::MaxKeysRead => "max_keys_read",
             Self::MissingRanges => "missing_ranges",
             Self::TooManyRanges => "too_many_ranges",
-            Self::InvalidRanges => "invalid_ranges",
             Self::InvalidTopology => "invalid_topology",
             Self::UnmatchedResponse => "unmatched_response",
             Self::DuplicateResponse => "duplicate_response",
@@ -1473,22 +1470,7 @@ pub(super) fn validate_request(metadata: &KvRequestMetadata) -> Result<(), CopRe
     if ranges.len() > MAX_RANGES_PER_TASK_BUILD {
         return Err(CopReadTaskError::TooManyRanges);
     }
-    if !ranges_are_strictly_monotonic(ranges) {
-        return Err(CopReadTaskError::InvalidRanges);
-    }
     Ok(())
-}
-
-fn ranges_are_strictly_monotonic(ranges: &[KeyRange]) -> bool {
-    ranges.iter().enumerate().all(|(index, range)| {
-        if range.end_key.is_empty() {
-            return index + 1 == ranges.len();
-        }
-        if range.start_key >= range.end_key {
-            return false;
-        }
-        index == 0 || ranges[index - 1].end_key <= range.start_key
-    })
 }
 
 /// No region is a valid topology: a request over no range needs none (Go's

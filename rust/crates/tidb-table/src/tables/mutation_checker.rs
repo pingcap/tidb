@@ -328,7 +328,7 @@ fn get_collator_with_collate(use_new_collate: bool, datum: &Datum) -> Collation 
 
 /// Go `CompareIndexAndVal`: for a multi-valued index, whether the row's JSON
 /// array holds the indexed value.
-fn compare_index_and_val(
+pub fn compare_index_and_val(
     row_val: &Datum,
     idx_val: &Datum,
     collator: Collation,

@@ -4133,6 +4133,7 @@ fn find_best_task_4_logical_data_source_paths(
                     None => None,
                 };
                 let scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
+                    handle_idx: Vec::new(),
                     range_info: index_join_info.as_ref().map(|info| info.range_info.clone()).unwrap_or_default(),
                     table: ds.table_info.clone(),
                     columns: ds.columns.clone(),
@@ -4359,6 +4360,7 @@ fn find_best_task_4_logical_data_source_paths(
                     tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::Range
                 };
                 let mut scan = tidb_planner_core_operator_physicalop::PhysicalTableScan {
+                    handle_idx: Vec::new(),
                     range_info: String::new(),
                     table: ds.table_info.clone(),
                     columns: ds.columns.clone(),
@@ -5235,6 +5237,7 @@ fn find_best_task_4_logical_data_source_paths(
                             }));
                         table_base.base.set_schema(ds.base.base.schema().cloned());
                         let table_scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
+                            handle_idx: Vec::new(),
                             range_info: String::new(),
                             table: ds.table_info.clone(),
                             columns: ds.columns.clone(),

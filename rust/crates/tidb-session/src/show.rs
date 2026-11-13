@@ -380,6 +380,28 @@ impl tidb_executor::admin::AdminExec for Session {
         Session::get_sys_session(self)
     }
 
+    fn admin_check_count(&mut self, sql: &str, snapshot: u64) -> Result<i64, DriverError> {
+        use tidb_vardef::tidb_vars::TIDB_OPT_USE_INVISIBLE_INDEXES;
+        let origin = self.vars.get_system(TIDB_OPT_USE_INVISIBLE_INDEXES).unwrap_or_default();
+        self.set_session_sys_var(TIDB_OPT_USE_INVISIBLE_INDEXES, "1".to_owned())?;
+        let options = [tidb_sqlexec::exec_option_with_snapshot(snapshot)];
+        let rows = tidb_executor::memtable_reader::exec_restricted_sql_with_options(
+            self.restricted_sql_executor().as_deref(),
+            tidb_txnkv::INTERNAL_TXN_ADMIN,
+            &options,
+            sql,
+        );
+        self.append_restricted_sql_warnings();
+        self.set_session_sys_var(TIDB_OPT_USE_INVISIBLE_INDEXES, origin)?;
+        let rows = rows?;
+        // Go `rows[0].GetInt64(0)`.
+        Ok(match rows.first().and_then(|row| row.first()) {
+            Some(tidb_datatype::Datum::Int(count)) => *count,
+            Some(tidb_datatype::Datum::UInt(count)) => *count as i64,
+            _ => 0,
+        })
+    }
+
     fn flush_privileges(&mut self) -> Result<(), DriverError> {
         Session::flush_privileges(self)
     }

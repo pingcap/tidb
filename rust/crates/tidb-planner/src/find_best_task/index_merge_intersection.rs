@@ -131,6 +131,7 @@ pub(super) fn build_prepared_index_merge_task(
         .set_stats(Some(merge_scan_stats(ds, output_rows, ctx)));
     table_scan_base.base.set_schema(Some(schema.clone()));
     let table_scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
+        handle_idx: Vec::new(),
         range_info: String::new(),
         table: ds.table_info.clone(),
         columns: ds.columns.clone(),

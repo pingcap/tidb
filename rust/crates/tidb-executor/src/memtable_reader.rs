@@ -601,6 +601,29 @@ pub fn exec_restricted_sql_over(
         .map_err(sql_exec_driver_error)
 }
 
+/// Go `ExecRestrictedSQL(ctx, options, sql)` under `source`.
+///
+/// # Errors
+/// No executor, or the statement's failure.
+pub fn exec_restricted_sql_with_options(
+    executor: Option<&dyn tidb_sqlexec::RestrictedSqlExecutor>,
+    source: &str,
+    options: &[tidb_sqlexec::OptionFuncAlias],
+    sql: &str,
+) -> Result<Vec<Vec<Datum>>, DriverError> {
+    let executor = executor.ok_or_else(|| {
+        DriverError::unsupported("restricted SQL runs on the session's node".to_owned())
+    })?;
+    let context = tikv_client::util::with_internal_source_type(
+        &tikv_client::trace::TraceContext::new(),
+        source,
+    );
+    executor
+        .exec_restricted_sql(&context, options, sql, &[])
+        .map(|(rows, _)| rows)
+        .map_err(sql_exec_driver_error)
+}
+
 /// A SQL executor's failure as the statement error it carries, or Go's
 /// unknown error naming any other.
 pub fn sql_exec_driver_error(error: tidb_sqlexec::SqlExecError) -> DriverError {

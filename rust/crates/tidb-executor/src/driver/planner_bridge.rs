@@ -883,6 +883,28 @@ pub(super) fn update_target_columns(
         .collect())
 }
 
+/// Go `PlanBuilder.buildAdminCheckTable` over the statement's catalog.
+pub(crate) fn admin_check_table_plan(
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    db_name: &str,
+    table_name: &str,
+    index: Option<&str>,
+) -> Result<tidb_planner::plan_builder::admin_check::CheckTable, super::DriverError> {
+    let source = catalog
+        .planner_catalog(current_db, ctx.latest_index_schema())
+        .with_statement_hypo_state(ctx)
+        .with_statement_dirty_tables(ctx)
+        .with_statement_privilege_verifier(ctx)
+        .with_statement_related_tables_for_mdl(ctx);
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone())
+        .build_admin_check_table(db_name, table_name, index)
+        .map_err(super::planner_error_to_driver)
+}
+
 /// Detaches parameter/deferred markers from an executor-owned expression
 /// after its current value has been materialized. The cache-owned physical
 /// tree keeps its markers and is rebuilt before this executor copy is made.

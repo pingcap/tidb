@@ -30,6 +30,8 @@ pub struct PlannerCatalog {
     current_database: String,
     view: Arc<PlannerSchemaView>,
     latest_index_schema: Option<Arc<crate::table_source::LatestIndexSchema>>,
+    /// Go `InfoSchema.SchemaMetaVersion()` of the statement's schema.
+    schema_meta_version: u64,
     /// Go `SessionVars.HypoIndexes`, present only for an `EXPLAIN`.
     hypo_indexes: Option<Arc<tidb_variable::hypo_index::HypoIndexes>>,
     /// Go `SessionVars.HypoTiFlashReplicas`, present only for an `EXPLAIN`.
@@ -230,6 +232,10 @@ impl crate::table_source::TableSource for PlannerCatalog {
         self.latest_index_schema.as_deref()
     }
 
+    fn schema_meta_version(&self) -> u64 {
+        self.schema_meta_version
+    }
+
     fn hypo_indexes(
         &self,
         db_name: &str,
@@ -325,6 +331,7 @@ impl SessionExtendedInfoSchema {
             current_database: current_database.to_owned(),
             view: self.planner_schema_view(),
             latest_index_schema,
+            schema_meta_version: self.metadata_version(),
             hypo_indexes: None,
             hypo_tiflash_replicas: None,
             dirty_tables: Vec::new(),

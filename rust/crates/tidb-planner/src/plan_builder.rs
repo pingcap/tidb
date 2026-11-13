@@ -183,6 +183,7 @@ pub mod generated_assignments;
 pub mod expand;
 pub mod field_name;
 pub mod from;
+pub mod admin_check;
 pub mod handle_col_helper;
 pub mod marker;
 pub mod only_full_group_by;

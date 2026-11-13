@@ -488,6 +488,7 @@ pub(super) fn build_converged_union_index_merge_task(
                 .set_schema(Some(tidb_expr::schema::Schema::new(schema_columns)));
             partial_plans_raw.push(PhysicalPlan::TableScan(
                 tidb_planner_core_operator_physicalop::PhysicalTableScan {
+                    handle_idx: Vec::new(),
                     range_info: String::new(),
                     table: ds.table_info.clone(),
                     columns,
@@ -643,6 +644,7 @@ pub(super) fn build_converged_union_index_merge_task(
         )));
         Box::new(PhysicalPlan::TableScan(
             tidb_planner_core_operator_physicalop::PhysicalTableScan {
+                handle_idx: Vec::new(),
                 range_info: String::new(),
                 table: ds.table_info.clone(),
                 columns: ds.columns.clone(),
@@ -1055,7 +1057,6 @@ pub(super) fn index_scan_schema(
     ctx: &DispatchContext<'_>,
     is_double_read: bool,
 ) -> Result<Vec<tidb_expr::column::Column>, PlanError> {
-    let index = index.read();
     let table = ds
         .table_info
         .as_ref()
@@ -1068,104 +1069,21 @@ pub(super) fn index_scan_schema(
         .map(|column| column.as_ref().map(|(column, _)| column.clone()))
         .chain(ds.common_handle_cols.iter().cloned().map(Some))
         .collect();
-    let mut index_cols: Vec<tidb_expr::column::Column> =
-        Vec::with_capacity(index.columns.len() + 1);
-    index_cols.extend(path.idx_cols.iter().map(|(column, _)| column.clone()));
-    for i in path.idx_cols.len()..index.columns.len() {
-        if let Some(Some(column)) = idx_expr_cols.get(i) {
-            index_cols.push(column.clone());
-        } else {
-            // TODO: try to reuse the col generated when building the DataSource.
-            let offset = index.columns.get(i).map(|column| column.read().offset);
-            let table_column = offset
-                .and_then(|offset| usize::try_from(offset).ok())
-                .and_then(|offset| table.columns.get(offset))
-                .ok_or_else(|| PlanError::internal("index column is absent from immutable table metadata"))?;
-            let table_column = table_column.read();
-            let mut column = tidb_expr::column::Column::new(
-                ctx.column_ids
-                    .ok_or_else(|| PlanError::internal("index scan schema requires the statement column allocator"))?
-                    .alloc(),
-                table_column.field_type.clone(),
-            );
-            column.id = table_column.id;
-            index_cols.push(column);
-        }
-    }
-    let need_common_handle = table.is_common_handle;
-    if need_common_handle {
-        index_cols.extend(idx_expr_cols.iter().skip(index.columns.len()).flatten().cloned());
-    }
-    let data_source_schema = ds.base.base.schema();
-    let mut set_handle = index_cols.len() > index.columns.len();
-    if !set_handle {
-        for col in &ds.columns {
-            let col = col.read();
-            if (col.field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY) && table.pk_is_handle)
-                || col.id == tidb_model::column::EXTRA_HANDLE_ID
-            {
-                let Some(handle_col) = data_source_schema
-                    .and_then(|schema| tidb_expr::column::column_by_id(&schema.columns, col.id))
-                else {
-                    continue;
-                };
-                index_cols.push(handle_col.clone());
-                set_handle = true;
-                break;
-            }
-        }
-    }
-
-    // If `dataSouceSchema` contains `model.ExtraPhysTblID`, we should add it into `indexScan.schema`
-    let extra_phys_tbl_col = data_source_schema.and_then(|schema| {
-        schema
-            .columns
-            .iter()
-            .find(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID)
-            .cloned()
-    });
-
-    if is_double_read || index.global {
-        // If it's double read case, the first index must return handle. So we should add extra handle column
-        // if there isn't a handle column.
-        if !set_handle && !table.is_common_handle {
-            index_cols.push(extra_column(
-                ctx,
-                tidb_model::column::EXTRA_HANDLE_ID,
-                tidb_model::column::EXTRA_HANDLE_NAME,
-            )?);
-        }
-        // If it's global index, handle and PhysTblID columns has to be added, so that needed pids can be filtered.
-        if index.global && extra_phys_tbl_col.is_none() {
-            index_cols.push(extra_column(
-                ctx,
-                tidb_model::column::EXTRA_PHYS_TBL_ID,
-                tidb_model::column::EXTRA_PHYS_TBL_ID_NAME,
-            )?);
-        }
-    }
-
-    if let Some(column) = extra_phys_tbl_col {
-        index_cols.push(column);
-    }
-    Ok(index_cols)
-}
-
-fn extra_column(
-    ctx: &DispatchContext<'_>,
-    id: i64,
-    name: &str,
-) -> Result<tidb_expr::column::Column, PlanError> {
-    let ids = ctx.column_ids.ok_or_else(|| {
-        PlanError::internal("index scan schema requires the statement column allocator")
-    })?;
-    let mut column = tidb_expr::column::Column::new(
-        ids.alloc(),
-        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-    );
-    column.id = id;
-    column.orig_name = name.to_owned();
-    Ok(column)
+    let idx_cols: Vec<tidb_expr::column::Column> = path.idx_cols.iter().map(|(column, _)| column.clone()).collect();
+    tidb_planner_core_operator_physicalop::PhysicalIndexScan::init_schema_columns(
+        &idx_cols,
+        &index.read(),
+        &table,
+        &ds.columns,
+        ds.base.base.schema(),
+        &idx_expr_cols,
+        is_double_read,
+        &|| {
+            ctx.column_ids
+                .map(|ids| ids.alloc())
+                .ok_or_else(|| PlanError::internal("index scan schema requires the statement column allocator"))
+        },
+    )
 }
 
 /// Go `PhysicalIndexScan.InitSchema` and `overwritePartialTableScanSchema`:
@@ -1198,6 +1116,23 @@ fn partial_handle_columns(
         tidb_model::column::EXTRA_HANDLE_ID,
         tidb_model::column::EXTRA_HANDLE_NAME,
     )?])
+}
+
+fn extra_column(
+    ctx: &DispatchContext<'_>,
+    id: i64,
+    name: &str,
+) -> Result<tidb_expr::column::Column, PlanError> {
+    let ids = ctx.column_ids.ok_or_else(|| {
+        PlanError::internal("index scan schema requires the statement column allocator")
+    })?;
+    let mut column = tidb_expr::column::Column::new(
+        ids.alloc(),
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+    );
+    column.id = id;
+    column.orig_name = name.to_owned();
+    Ok(column)
 }
 
 #[cfg(test)]

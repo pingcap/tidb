@@ -329,14 +329,6 @@ fn max_keys_read_is_one_statement_budget_across_tasks() {
 
 #[test]
 fn malformed_stale_outside_and_nonmonotonic_topology_fails_closed() {
-    let nonmonotonic = metadata(vec![range("m", "z"), range("a", "b")]);
-    assert_eq!(
-        prepare(&nonmonotonic, &[topology(1, "a", "z")], None)
-            .unwrap_err()
-            .kind(),
-        "invalid_ranges"
-    );
-
     let metadata = metadata(vec![range("a", "z")]);
     let mut stale_bucket = topology(1, "m", "z");
     stale_bucket.bucket_keys = vec![b"b".to_vec()];

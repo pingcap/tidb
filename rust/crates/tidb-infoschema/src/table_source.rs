@@ -536,6 +536,12 @@ pub trait TableSource {
         None
     }
 
+    /// Go `b.is.SchemaMetaVersion()`: the version of the schema the
+    /// statement plans against.
+    fn schema_meta_version(&self) -> u64 {
+        0
+    }
+
     /// Go `tableInfo.IsView()` plus `tableInfo.View`
     /// (`logical_plan_builder.go:5047`): the stored definition
     /// `BuildDataSourceFromView` expands.

@@ -111,6 +111,57 @@ pub enum AdminCheckError {
     PartialIndexWithoutFastCheck,
 }
 
+impl AdminCheckError {
+    /// The Go error a consistency report carries:
+    /// `consistency.ErrAdminCheckInconsistent` (8223) or
+    /// `ErrAdminCheckInconsistentWithColInfo` (8134).
+    ///
+    /// # Panics
+    ///
+    /// On any other kind, which is not a consistency report.
+    #[must_use]
+    pub(crate) fn terror(self) -> tidb_terror::TerrorError {
+        match self {
+            AdminCheckError::Inconsistent {
+                table,
+                index,
+                handle,
+                index_values,
+                record_values,
+            } => crate::consistency_errors::ERR_ADMIN_CHECK_INCONSISTENT.gen_with_stack(format!(
+                "data inconsistency in table: {table}, index: {index}, handle: {handle}, \
+             index-values:{index_values:?} != record-values:{record_values:?}"
+            )),
+            AdminCheckError::ValueMismatch(mismatch) => {
+                let AdminValueMismatch {
+                    table,
+                    index,
+                    column,
+                    handle,
+                    index_value,
+                    record_value,
+                    compare_error,
+                } = *mismatch;
+                crate::consistency_errors::ERR_ADMIN_CHECK_INCONSISTENT_WITH_COL_INFO.gen_with_stack(format!(
+                    "data inconsistency in table: {table}, index: {index}, col: {column}, handle: \
+                 {handle:?}, index-values:{index_value:?} != record-values:{record_value:?}, \
+                 compare err:{compare_error}"
+                ))
+            }
+            other => panic!("{other:?} is not a consistency report"),
+        }
+    }
+}
+
+/// Go `kv.Handle` as an inconsistency report names it.
+pub(crate) fn table_handle_of(handle: &tidb_txnkv::Handle) -> TableHandle {
+    match handle {
+        tidb_txnkv::Handle::Int(handle) => TableHandle::Int(handle.value()),
+        tidb_txnkv::Handle::Common(handle) => TableHandle::Common(handle.encoded().to_vec()),
+        tidb_txnkv::Handle::Partition(handle) => table_handle_of(handle.inner()),
+    }
+}
+
 /// The detail carried by [`AdminCheckError::ValueMismatch`].
 #[derive(Debug, Clone)]
 pub struct AdminValueMismatch {
@@ -140,7 +191,7 @@ fn render_values(values: &[Datum]) -> String {
     format!("[{}]", rendered.join(" "))
 }
 
-fn render_go_datum(value: &Datum) -> String {
+pub(crate) fn render_go_datum(value: &Datum) -> String {
     fn quoted_content(bytes: &[u8]) -> String {
         let quoted = format!("{:?}", String::from_utf8_lossy(bytes));
         quoted[1..quoted.len() - 1].to_owned()
@@ -200,7 +251,7 @@ pub(crate) fn inconsistent(
 
 /// How Go prints a row handle in the inconsistency message: an integer handle
 /// is its number, a clustered handle its encoded bytes.
-fn render_handle(handle: &TableHandle) -> String {
+pub(crate) fn render_handle(handle: &TableHandle) -> String {
     match handle {
         TableHandle::Int(value) => value.to_string(),
         TableHandle::Common(bytes) => format!("{bytes:?}"),
@@ -458,6 +509,62 @@ pub fn check_table(
         checked += 1;
     }
     Ok(checked)
+}
+
+/// Go `admin.CheckRecordAndIndex` over every physical table of `table`: each
+/// row (that the index's condition admits) must file its entry in `index`,
+/// naming that row.
+pub(crate) fn check_record_and_index(
+    table: &mut TableCommon,
+    store: &mut dyn tidb_kv::storage::TableStorage,
+    index: &Index,
+    context: &RowDecodeContext,
+) -> Result<(), AdminCheckError> {
+    let rows = table
+        .scan_physical_rows_with_handles(store, context)
+        .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
+    let stored = index_entries(table, store, index.read().id)?;
+    let matching_rows = partial_index_rows(table, index, &rows, context)?;
+    let table_name = table.name();
+        let mut expected: BTreeMap<Vec<u8>, (i64, TableHandle, &Vec<Datum>)> = BTreeMap::new();
+        for (physical_id, handle, row) in matching_rows {
+            for (key, _) in table
+                .index_keys_for_check(index, row, handle, physical_id, context.zone())
+                .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?
+            {
+                expected.insert(key, (physical_id, handle.clone(), row));
+            }
+        }
+        let stored_keys: BTreeMap<Vec<u8>, (i64, TableHandle)> = stored
+            .iter()
+            .map(|entry| (entry.key.clone(), (entry.physical_id, entry.handle.clone())))
+            .collect();
+        for (key, (physical_id, handle, row)) in &expected {
+            let indexed = table.index_values_for_check(index, row);
+            match stored_keys.get(key) {
+                Some((stored_id, stored_handle))
+                    if stored_id == physical_id && stored_handle == handle => {}
+                Some((_, stored_handle)) => {
+                    return Err(AdminCheckError::Inconsistent {
+                        table: table_name.clone(),
+                        index: index.read().name.original().to_owned(),
+                        handle: render_handle(handle),
+                        index_values: render_record(stored_handle, &indexed),
+                        record_values: render_record(handle, &indexed),
+                    });
+                }
+                None => {
+                    return Err(AdminCheckError::Inconsistent {
+                        table: table_name.clone(),
+                        index: index.read().name.original().to_owned(),
+                        handle: render_handle(handle),
+                        index_values: String::new(),
+                        record_values: render_record(handle, &indexed),
+                    });
+                }
+            }
+        }
+    Ok(())
 }
 
 /// Go `CheckTableExec` over a multi-valued index: `checkIndexHandle` (every
