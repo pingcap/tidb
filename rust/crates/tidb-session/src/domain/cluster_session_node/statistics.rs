@@ -519,19 +519,20 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
         Ok(report)
     }
 
-    fn update_stats_cache(&self, physical_ids: &[i64]) -> Result<(), tidb_driver_error::DriverError> {
+    fn update_stats_cache(
+        &self,
+        physical_ids: &[i64],
+        local_temporary_tables: &[tidb_model::GoShared<tidb_model::TableInfo>],
+    ) -> Result<(), tidb_driver_error::DriverError> {
         self.analyze
             .update_stats_cache(
                 physical_ids.to_vec(),
+                local_temporary_tables,
                 &tidb_domain_core::sys_session::StatsPool {
                     session_pool: self.session_pool.as_ref(),
                 },
             )
             .map_err(into_driver_error)
-    }
-
-    fn publish_temporary_table_stats(&self, table_id: i64, statistics: Arc<tidb_stats::Table>) {
-        self.stats.publish_analyzed_table(table_id, statistics);
     }
 
     fn dump_historical_stats(&self, table_id: i64) {

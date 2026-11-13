@@ -253,6 +253,7 @@ impl super::NodeConn {
             .analyze()
             .update_stats_cache(
                 Vec::new(),
+                &[],
                 &tidb_domain_core::sys_session::StatsPool {
                     session_pool: Some(&pool),
                 },

@@ -185,19 +185,15 @@ mod analyze {
             )))
         }
 
-        fn update_stats_cache(&self, physical_ids: &[i64]) -> Result<(), DriverError> {
+        fn update_stats_cache(
+            &self,
+            physical_ids: &[i64],
+            _local_temporary_tables: &[tidb_model::GoShared<tidb_model::TableInfo>],
+        ) -> Result<(), DriverError> {
             self.0
                 .borrow_mut()
                 .push(format!("update {}", physical_ids.len()));
             Ok(())
-        }
-
-        fn publish_temporary_table_stats(
-            &self,
-            _table_id: i64,
-            _statistics: Arc<tidb_stats::Table>,
-        ) {
-            self.0.borrow_mut().push("publish temporary".to_owned());
         }
 
         fn dump_historical_stats(&self, table_id: i64) {
@@ -226,10 +222,10 @@ mod analyze {
         assert_eq!(*service.0.borrow(), ["flush 2", "execute an1"]);
     }
 
-    /// A temporary table's rows live in the session's overlay, so the
-    /// session analyzes it and the service only publishes the result.
+    /// A temporary table is analyzed by the service as any other table (Go's
+    /// requests reach TiKV), its LOCAL `TableInfo` resolved by the session.
     #[test]
-    fn a_temporary_table_is_analyzed_by_the_session() {
+    fn a_temporary_table_is_analyzed_by_the_service() {
         let mut session = Session::new();
         session
             .run("CREATE TEMPORARY TABLE test.an_tmp (a INT)")
@@ -238,11 +234,12 @@ mod analyze {
             .run("INSERT INTO test.an_tmp VALUES (1), (2)")
             .unwrap();
         let service = Recording::default();
-        session
+        let error = session
             .run_analyze_statements(&statements("ANALYZE TABLE an_tmp"), &service)
-            .unwrap();
+            .expect_err("the service's failure reaches the client");
+        assert_eq!(error.to_mysql_error().message, "sampling failed");
         // Nothing to flush: an empty target list would mean every table.
-        assert_eq!(*service.0.borrow(), ["publish temporary"]);
+        assert_eq!(*service.0.borrow(), ["execute an_tmp"]);
     }
 
     /// Go `collectStatsDeltaFlushObjectsForAnalyze` flushes the whole table

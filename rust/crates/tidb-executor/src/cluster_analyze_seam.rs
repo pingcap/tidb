@@ -94,6 +94,7 @@ pub trait ClusterAnalyze: Send + Sync {
     fn update_stats_cache(
         &self,
         _physical_ids: Vec<i64>,
+        _local_temporary_tables: &[tidb_model::GoShared<tidb_model::TableInfo>],
         _stats_pool: &dyn StatsSessionPool,
     ) -> Result<(), SqlQueryError> {
         Ok(())
@@ -164,9 +165,15 @@ where
     fn refresh_stats(
         &self,
         physical_ids: Vec<i64>,
+        local_temporary_tables: &[tidb_model::GoShared<tidb_model::TableInfo>],
         stats_pool: &dyn StatsSessionPool,
     ) -> Result<(), String> {
-        let targets = self.stats_targets()?;
+        let mut targets = self.stats_targets()?;
+        targets.extend(
+            local_temporary_tables
+                .iter()
+                .flat_map(|table| StatsTarget::for_table(&table.read())),
+        );
         match update_stats_cache(
             stats_pool,
             &targets,
@@ -269,9 +276,10 @@ where
     fn update_stats_cache(
         &self,
         physical_ids: Vec<i64>,
+        local_temporary_tables: &[tidb_model::GoShared<tidb_model::TableInfo>],
         stats_pool: &dyn StatsSessionPool,
     ) -> Result<(), SqlQueryError> {
-        self.refresh_stats(physical_ids, stats_pool)
+        self.refresh_stats(physical_ids, local_temporary_tables, stats_pool)
             .map_err(SqlQueryError::unknown)
     }
 
@@ -311,7 +319,7 @@ where
         // As after ANALYZE, pinned Go returns `StatsHandle.Update` failure
         // from `LoadStatsFromJSON`; durable writes do not turn this into a
         // warning.
-        self.refresh_stats(report.physical_ids().to_vec(), stats_pool)
+        self.refresh_stats(report.physical_ids().to_vec(), &[], stats_pool)
             .map_err(SqlQueryError::unknown)?;
         Ok(report)
     }
@@ -328,7 +336,7 @@ where
         )?;
         // Go `executeDropStats` ends in `StatsHandle.Update`, and returns its
         // failure: the rows are durable either way.
-        self.refresh_stats(physical_ids.to_vec(), stats_pool)
+        self.refresh_stats(physical_ids.to_vec(), &[], stats_pool)
             .map_err(SqlQueryError::unknown)
     }
 }

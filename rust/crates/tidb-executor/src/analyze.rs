@@ -24,9 +24,9 @@
 //! * The cluster tier (`crate::cluster_analyze`) scans a table's record
 //!   range through a transaction's snapshot and writes `mysql.stats_*` rows a
 //!   Go TiDB reads back.
-//! * The in-process tier ([`kv::analyze_kv_table`]) scans a
-//!   [`crate::kv_table::TableCommon`]'s own rows and publishes the result straight
-//!   into the catalog's statistics map, which is what `EXPLAIN` reads.
+//! * The in-process tier ([`kv::analyze_kv_table`]), which only tests still
+//!   drive, scans a [`crate::kv_table::TableCommon`]'s own rows and returns
+//!   the result to its caller.
 //!
 //! Both drive the SAME [`AnalyzePlan`] and the SAME [`AnalyzeRun`], so
 //! neither can drift into estimating differently from the other. The Go
@@ -296,6 +296,11 @@ pub struct AnalyzeStatement {
     pub eval_context: AnalyzeEvalContext,
     /// The effective knobs.
     pub options: AnalyzeOptions,
+    /// The session's LOCAL temporary table the name resolves to, which the
+    /// TiKV catalog never holds: Go's session `InfoSchema`
+    /// (`TemporaryTableAttachedInfoSchema`) resolves a local temporary table
+    /// before the stored one, and the analyze plan carries its `TableInfo`.
+    pub local_temporary_table: Option<tidb_model::GoShared<tidb_model::TableInfo>>,
 }
 
 /// Pinned Go analyze column choice before persisted/default resolution.
@@ -620,6 +625,7 @@ pub fn lower_analyze_admin(
             store_batch_size: tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE,
             eval_context: crate::StmtContext::for_query().into(),
             options,
+            local_temporary_table: None,
         });
     }
     Ok(Some(tables))

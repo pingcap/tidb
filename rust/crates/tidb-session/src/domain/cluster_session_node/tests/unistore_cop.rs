@@ -2838,10 +2838,13 @@ fn stats_notifier_uses_a_real_internal_transaction_like_go() {
 /// Pinned Go `TestStatsCacheShouldNotCacheTemporaryTable`: GLOBAL temporary
 /// metadata is published by an ordinary DDL job, its rows remain
 /// connection-local and are deleted at commit, and only explicit `ANALYZE`
-/// replaces pseudo statistics for that session.
+/// caches statistics for it: zero rows, its column loaded, not pseudo, under
+/// the testkit's zero stats lease (Go probe); the plan keeps Go's pseudo
+/// policy for an empty table.
 #[test]
 fn global_temporary_analyze_uses_session_rows_and_statistics() {
-    let (stack, _users) = cop_backed_stack();
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(139))
@@ -2893,6 +2896,7 @@ fn global_temporary_analyze_uses_session_rows_and_statistics() {
         .expect("explicit ANALYZE publishes a real GLOBAL temporary cache object");
     assert_eq!(analyzed.hist_coll.column_count(), 1);
     assert!(!analyzed.hist_coll.pseudo);
+    assert_eq!(analyzed.hist_coll.realtime_count, 0);
 
     let after = displayed(rows(&mut session, "EXPLAIN SELECT * FROM global_stats"));
     assert!(
@@ -3029,9 +3033,10 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnaly
     fn update_stats_cache(
         &self,
         physical_ids: Vec<i64>,
+        local_temporary_tables: &[tidb_model::GoShared<tidb_model::TableInfo>],
         stats_pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
     ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError> {
-        self.inner.update_stats_cache(physical_ids, stats_pool)
+        self.inner.update_stats_cache(physical_ids, local_temporary_tables, stats_pool)
     }
 }
 
@@ -3085,9 +3090,10 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyz
     fn update_stats_cache(
         &self,
         physical_ids: Vec<i64>,
+        local_temporary_tables: &[tidb_model::GoShared<tidb_model::TableInfo>],
         stats_pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
     ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError> {
-        self.inner.update_stats_cache(physical_ids, stats_pool)
+        self.inner.update_stats_cache(physical_ids, local_temporary_tables, stats_pool)
     }
 }
 
@@ -5318,6 +5324,79 @@ fn analyze_sample_rate_reads_the_statistics_cache() {
         displayed(rows(&mut session, "SHOW WARNINGS")),
         [note("3")],
         "the cache holds what the first ANALYZE saved"
+    );
+}
+
+/// Go analyzes a temporary table as any other: the plan carries its
+/// `TableInfo` (a LOCAL one from the session's `InfoSchema`), and the
+/// requests go to TiKV, which holds none of its rows. The sample rate is
+/// the pseudo table's, a zero-row `mysql.stats_meta` row is saved, and the
+/// plan stays pseudo (Go probe, `zzprobe/tempanalyze`).
+#[test]
+fn analyze_of_a_temporary_table_reads_tikv_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(80))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    let note = |table: &str| {
+        [
+            "Note".to_owned(),
+            "1105".to_owned(),
+            format!(
+                "Analyze use auto adjusted sample rate 1.000000 for table test.{table}, \
+                 reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\""
+            ),
+        ]
+    };
+    let scan_row = |session: &mut Session, table: &str| -> Vec<String> {
+        let plan = displayed(rows(session, &format!("EXPLAIN SELECT * FROM {table}")));
+        let scan = plan.last().expect("a plan").clone();
+        vec![scan[1].clone(), scan[3].clone(), scan[4].clone()]
+    };
+    let pseudo =
+        |table: &str| vec!["10000.00".to_owned(), format!("table:{table}"), "keep order:false, stats:pseudo".to_owned()];
+
+    rows(&mut session, "CREATE TEMPORARY TABLE lt (a INT)");
+    rows(&mut session, "INSERT INTO lt VALUES (1), (2), (3)");
+    assert_eq!(scan_row(&mut session, "lt"), pseudo("lt"));
+    rows(&mut session, "ANALYZE TABLE lt");
+    assert_eq!(displayed(rows(&mut session, "SHOW WARNINGS")), [note("lt")]);
+    assert_eq!(scan_row(&mut session, "lt"), pseudo("lt"));
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT COUNT(*), SUM(count), SUM(modify_count) FROM mysql.stats_meta")),
+        [["1", "0", "0"]]
+    );
+
+    rows(&mut session, "CREATE GLOBAL TEMPORARY TABLE gt (a INT) ON COMMIT DELETE ROWS");
+    rows(&mut session, "BEGIN");
+    rows(&mut session, "INSERT INTO gt VALUES (1), (2), (3)");
+    rows(&mut session, "ANALYZE TABLE gt");
+    assert_eq!(displayed(rows(&mut session, "SHOW WARNINGS")), [note("gt")]);
+    assert_eq!(scan_row(&mut session, "gt"), pseudo("gt"));
+    rows(&mut session, "COMMIT");
+    let meta = displayed(rows(&mut session, "SHOW STATS_META WHERE table_name = 'gt'"));
+    assert_eq!(meta.len(), 1);
+    assert_eq!((meta[0][0].as_str(), meta[0][1].as_str(), meta[0][4].as_str(), meta[0][5].as_str()), ("test", "gt", "0", "0"));
+    assert_eq!(scan_row(&mut session, "gt"), pseudo("gt"));
+    // Each zero-row ANALYZE stores its column's empty histogram.
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, flag, correlation, \
+             last_analyze_pos IS NULL FROM mysql.stats_histograms ORDER BY table_id"
+        )),
+        [["0", "1", "0", "0", "0", "2", "0", "0", "1"], ["0", "1", "0", "0", "0", "2", "0", "0", "1"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT (SELECT COUNT(*) FROM mysql.stats_buckets), (SELECT COUNT(*) FROM mysql.stats_top_n), \
+             (SELECT COUNT(*) FROM mysql.stats_fm_sketch)"
+        )),
+        [["0", "0", "0"]]
     );
 }
 
@@ -18793,6 +18872,7 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for FailingStatsCacheUp
     fn update_stats_cache(
         &self,
         physical_ids: Vec<i64>,
+        _local_temporary_tables: &[tidb_model::GoShared<tidb_model::TableInfo>],
         _stats_pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
     ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError> {
         self.updated.lock().unwrap().extend(physical_ids);

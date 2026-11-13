@@ -101,10 +101,9 @@ fn a_local_temporary_table_prints_no_on_commit_clause() {
 }
 
 /// Pinned Go `TestStatsCacheShouldNotCacheTemporaryTable`: ordinary access
-/// leaves both temporary-table kinds pseudo, while an explicit `ANALYZE`
-/// publishes real statistics. LOCAL rows survive statement transaction
-/// boundaries and are counted; GLOBAL rows are deleted at those boundaries
-/// but still receive an analyzed (zero-row) statistics entry.
+/// caches nothing for either temporary-table kind, while an explicit
+/// `ANALYZE` caches an entry for each. Its requests go to TiKV, which holds
+/// none of their rows, so both entries count zero rows (Go probe).
 #[test]
 fn only_explicit_analyze_publishes_temporary_table_statistics() {
     let mut session = temporary_session();
@@ -139,7 +138,7 @@ fn only_explicit_analyze_publishes_temporary_table_statistics() {
                     .expect("explicit ANALYZE publishes local statistics")
                     .hist_coll
                     .realtime_count,
-                3
+                0
             );
             Ok(())
         })

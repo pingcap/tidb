@@ -902,6 +902,9 @@ fn find_statement_table<'catalog>(
     catalog: &'catalog tidb_infoschema::SessionExtendedInfoSchema,
     statement: &AnalyzeStatement,
 ) -> Result<tidb_model::GoShared<tidb_model::table_info::TableInfo>, ClusterAnalyzeError> {
+    if let Some(table) = &statement.local_temporary_table {
+        return Ok(table.clone());
+    }
     catalog
         .stored_schemas()
         .iter()
@@ -2562,6 +2565,7 @@ fn selected_columns_for_choice(
         store_batch_size: tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE,
         eval_context: crate::StmtContext::for_query().into(),
         options: Default::default(),
+        local_temporary_table: None,
     };
     selected_columns(stats_pool, table, &statement)
 }
@@ -3047,6 +3051,7 @@ mod tests {
             store_batch_size: tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE,
             eval_context: crate::StmtContext::for_query().into(),
             options: Default::default(),
+            local_temporary_table: None,
         }
     }
 
