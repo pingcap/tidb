@@ -344,7 +344,9 @@ pub fn update_all(pool: &dyn StatsSessionPool) -> Result<ClusterPrivileges, Stri
     let mut loaded = ClusterPrivileges::default();
     pool.call_with_sctx(
         &mut |sctx| {
-            loaded = load_all(&mut SysSessionPrivilegeTables { sctx })?;
+            loaded = load_all(&mut SqlPrivilegeTables {
+                exec: |sql: &str| tidb_stats_handle_util::exec_rows(sctx, sql, &[]),
+            })?;
             Ok(())
         },
         &[],
@@ -353,14 +355,23 @@ pub fn update_all(pool: &dyn StatsSessionPool) -> Result<ClusterPrivileges, Stri
     Ok(loaded)
 }
 
-/// `mysql.*` read through a system session, Go `loadTable`: one
-/// `SELECT HIGH_PRIORITY` per table, a missing table skipped (Go
-/// `noSuchTable`).
-struct SysSessionPrivilegeTables<'a> {
-    sctx: &'a dyn tidb_stats_handle_util::StatsSessionContext,
+/// `mysql.*` read through internal SQL, Go `loadTable`: one
+/// `SELECT HIGH_PRIORITY` per table run by `exec` (a system session's
+/// `ExecRestrictedSQL`), a missing table skipped (Go `noSuchTable`).
+pub struct SqlPrivilegeTables<F> {
+    /// Runs one statement, answering its rows and result fields.
+    pub exec: F,
 }
 
-impl PrivilegeTables for SysSessionPrivilegeTables<'_> {
+impl<F> PrivilegeTables for SqlPrivilegeTables<F>
+where
+    F: FnMut(
+        &str,
+    ) -> Result<
+        (Vec<Vec<tidb_datatype::Datum>>, Vec<tidb_resolve::ResultFieldRef>),
+        tidb_sqlexec::SqlExecError,
+    >,
+{
     fn rows(
         &mut self,
         table: &str,
@@ -369,7 +380,7 @@ impl PrivilegeTables for SysSessionPrivilegeTables<'_> {
     ) -> Result<Option<PrivilegeTableRows>, SystemTableError> {
         let name = format!("mysql.{table}");
         let sql = format!("SELECT HIGH_PRIORITY {} FROM {name}", columns.join(","));
-        let (rows, fields) = match tidb_stats_handle_util::exec_rows(self.sctx, &sql, &[]) {
+        let (rows, fields) = match (self.exec)(&sql) {
             Ok(result) => result,
             Err(error)
                 if error

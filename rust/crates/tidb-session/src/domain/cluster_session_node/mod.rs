@@ -2596,6 +2596,10 @@ impl<'s> ClusterServerSession<'s> {
         if !matches!(route, StatementRoute::Ordinary) {
             return Ok(CompiledStatement::StoredState(route));
         }
+        // The session's FLUSH commits it the same way (`SimpleExec.autoNewTxn`).
+        if executor == CompiledExecutor::Simple && Session::simple_exec_new_txn_in_stmt(stmt) {
+            return Ok(CompiledStatement::AccountSimple);
+        }
         if matches!(stmt, Stmt::Session(node) if matches!(node.as_ref(), tidb_ast::SessionStmt::Set(_) | tidb_ast::SessionStmt::SetPassword(_)))
         {
             return Ok(CompiledStatement::Set);

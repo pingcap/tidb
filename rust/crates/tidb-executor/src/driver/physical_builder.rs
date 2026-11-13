@@ -56,7 +56,7 @@ use crate::selection::SelectionExec;
 use tidb_executor_sortexec::{SortByItem, SortExec};
 use tidb_executor_internal_exec::table_access::TableAccess;
 use crate::table_dual::TableDualExec;
-use crate::table_sample::{SampleOutputColumn, TableSampleExecutor};
+use crate::table_sample::{EmptySampler, SampleOutputColumn, TableRegionSampler, TableSampleExecutor};
 use tidb_executor_sortexec::topn::TopNExec;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{FieldType, FieldTypeCode};
@@ -1053,6 +1053,24 @@ fn build_table_sample(
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
+    // Go `buildTableSample`: `v.TableInfo.Meta().TempTableType` refuses a
+    // local temporary table and samples nothing of a global one
+    // (`emptySampler`).
+    let temp_table_type = sample
+        .table_info
+        .as_ref()
+        .map_or(tidb_model::TempTableType::NONE, |table| table.read().temp_table_type);
+    if temp_table_type != tidb_model::TempTableType::NONE {
+        if temp_table_type != tidb_model::TempTableType::GLOBAL {
+            return Err(DriverError::unsupported(
+                "TABLESAMPLE clause can not be applied to local temporary tables",
+            ));
+        }
+        return Ok(Box::new(TableSampleExecutor::new(
+            meta(ctx, plan, plan_schema(plan)?),
+            Box::new(EmptySampler),
+        )));
+    }
     let physical_ids = if sample.table_sample_info.partition_ids.is_empty() {
         vec![sample.physical_table_id]
     } else {
@@ -1060,7 +1078,7 @@ fn build_table_sample(
     };
     // Go samples `GetSnapshot(TxnCtx.StartTS)`, never the membuffer: the
     // table's storage reads its snapshot (`TableStorage::snapshot_first`).
-    let mut tables = physical_ids
+    let tables = physical_ids
         .iter()
         .map(|physical_id| {
             catalog
@@ -1070,27 +1088,6 @@ fn build_table_sample(
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    match tables.first().map(|table| table.temp_table_type()) {
-        Some(kind) if kind == tidb_model::TempTableType::LOCAL => {
-            return Err(DriverError::unsupported(
-                "TABLESAMPLE clause can not be applied to local temporary tables",
-            ));
-        }
-        Some(kind) if kind == tidb_model::TempTableType::GLOBAL => {
-            tables.clear();
-        }
-        _ => {}
-    }
-    if tables.is_empty() {
-        return Ok(Box::new(TableSampleExecutor::new(
-            meta(ctx, plan, plan_schema(plan)?),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            RowDecodeContext::for_query(ctx),
-        )));
-    }
     let table = tables
         .first()
         .ok_or_else(|| DriverError::unsupported("a physical table sample has no table"))?;
@@ -1118,30 +1115,6 @@ fn build_table_sample(
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    // Go `splitTableRanges` + `splitIntoMultiRanges`: every physical
-    // table's record range `[t{id}_r, PrefixNext)`, cut at the store's
-    // region boundaries, then `sortRanges` by start key.
-    let mut ranges = Vec::new();
-    for (position, physical_id) in physical_ids.iter().enumerate() {
-        let start = tidb_tablecodec::table_key::gen_table_record_prefix(*physical_id);
-        let end = tidb_txnkv::Key::from_bytes(start.clone()).prefix_next();
-        ranges.extend(
-            ctx.region_store()
-                .load_regions_in_key_range(&start, end.as_bytes())
-                .map(|regions| tidb_kv::region_map::clip_regions(&regions, &start, end.as_bytes()))
-                .map_err(|error| DriverError::Mysql(crate::MysqlError::unknown(error)))?
-                .into_iter()
-                .map(|(start, end)| crate::table_sample::SampleRange {
-                    table: position,
-                    start,
-                    end,
-                }),
-        );
-    }
-    ranges.sort_by(|left, right| left.start.cmp(&right.start));
-    if sample.desc {
-        ranges.reverse();
-    }
     let stores = tables
         .iter()
         .map(|_| crate::statement_store(ctx))
@@ -1152,11 +1125,15 @@ fn build_table_sample(
         .collect();
     Ok(Box::new(TableSampleExecutor::new(
         meta(ctx, plan, schema),
-        tables,
-        stores,
-        ranges,
-        output_columns,
-        RowDecodeContext::for_query(ctx),
+        Box::new(TableRegionSampler::new(
+            ctx.region_store().clone(),
+            physical_ids,
+            tables,
+            stores,
+            output_columns,
+            RowDecodeContext::for_query(ctx),
+            sample.desc,
+        )),
     )))
 }
 

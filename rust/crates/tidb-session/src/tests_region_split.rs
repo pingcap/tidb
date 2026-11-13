@@ -389,6 +389,44 @@ fn tablesample_reads_the_first_row_of_each_region() {
     );
 }
 
+/// Go `TableSampleExecutor`: `Open` leaves the sampler as it is and `Next`
+/// answers nothing once it `finished`, so an Apply's inner sample, opened
+/// again for every outer row, reads its regions only for the first row:
+/// over three regions whose first records are 1, 2 and 3, Go answers
+/// `1|1; 2|0; 3|0`, and `1|1; 2|NULL; 3|NULL` for the scalar subquery,
+/// where a sampler read again would match every row.
+#[test]
+fn tablesample_reads_its_regions_once_like_go() {
+    let mut session = Session::new();
+    session.run("create table t1 (a int)").unwrap();
+    session.run("create table t2 (a int primary key)").unwrap();
+    assert_eq!(split(&mut session, "split table t2 by (2), (3)"), vec!["2", "1"]);
+    session.run("insert into t1 values (1), (2), (3)").unwrap();
+    session.run("insert into t2 values (1), (2), (3)").unwrap();
+    assert_eq!(column(&mut session, "select a from t2 tablesample regions()"), vec!["1", "2", "3"]);
+    assert_eq!(
+        rows(
+            &mut session,
+            "select a, (select count(*) from t2 tablesample regions() where t2.a = t1.a) from t1 order by a"
+        ),
+        vec![vec!["1", "1"], vec!["2", "0"], vec!["3", "0"]]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "select a, (select t2.a from t2 tablesample regions() where t2.a = t1.a) from t1 order by a"
+        ),
+        vec![vec!["1", "1"], vec!["2", "NULL"], vec!["3", "NULL"]]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "select a, exists (select 1 from t2 tablesample regions() where t2.a = t1.a) from t1 order by a"
+        ),
+        vec![vec!["1", "1"], vec!["2", "0"], vec!["3", "0"]]
+    );
+}
+
 /// Go samples `GetSnapshot(TxnCtx.StartTS)`: neither the transaction's own
 /// pending writes nor a peer's later commit are visible, and a transaction
 /// that wrote nothing still commits.

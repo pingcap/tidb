@@ -1337,7 +1337,6 @@ use tidb_context::SqlWarn;
 use tidb_context::WarningLevel;
 #[cfg(test)]
 mod tests_expensivequery;
-mod privilege_tables;
 #[cfg(test)]
 mod tests_privilege_tls;
 mod process_arm;

@@ -49,16 +49,28 @@ impl Session {
         if !self.user_table_present() || self.account_sql.is_some() {
             return Ok(());
         }
-        let ctx = self
-            .statement_context(false)
-            .with_time_zone(tidb_datatype::SessionTimeZone::utc());
-        let decode = tidb_table::tables::RowDecodeContext::for_query(&ctx);
-        let loaded = self.with_persistent_catalog_mut(|catalog| {
-            tidb_privilege::cluster_privilege_load::load_all(
-                &mut crate::privilege_tables::SessionPrivilegeTables { catalog, ctx: &ctx, decode },
-            )
-            .map_err(|error| DriverError::unsupported(format!("FLUSH PRIVILEGES: {error}")))
-        })?;
+        // Go `Handle.UpdateAll`: `MySQLPrivilege.LoadAll` over internal SQL
+        // (`loadTable`'s `ExecRestrictedSQL`), reading the committed tables.
+        let executor = self.restricted_sql_executor();
+        let context = tikv_client::util::with_internal_source_type(
+            &tikv_client::trace::TraceContext::new(),
+            tidb_txnkv::INTERNAL_TXN_PRIVILEGE,
+        );
+        let loaded = tidb_privilege::cluster_privilege_load::load_all(
+            &mut tidb_domain_core::cluster_privileges::SqlPrivilegeTables {
+                exec: |sql: &str| {
+                    executor
+                        .as_deref()
+                        .ok_or_else(|| -> tidb_sqlexec::SqlExecError {
+                            "restricted SQL runs on the session's node".into()
+                        })?
+                        .exec_restricted_sql(&context, &[], sql, &[])
+                },
+            },
+        );
+        self.append_restricted_sql_warnings();
+        let loaded =
+            loaded.map_err(|error| DriverError::unsupported(format!("FLUSH PRIVILEGES: {error}")))?;
         registry.replace_from(&tidb_privilege::load::registry_from_cluster(&loaded).registry);
         Ok(())
     }

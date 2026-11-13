@@ -27,6 +27,7 @@ pub const TOPICS: &[&str] = &[
     "globalindex/insert",
     "session/txn",
     "executor/rowid",
+    "executor/sample",
     "ddl/ddl_tiflash",
     "executor/admin",
     "executor/merge_join",

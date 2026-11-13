@@ -3614,6 +3614,7 @@ fn find_best_task_4_logical_data_source_paths(
             tidb_planner_core_operator_physicalop::PhysicalTableSample {
                 base,
                 table_sample_info: sample_info.clone(),
+                table_info: ds.table_info.clone(),
                 physical_table_id: ds.physical_table_id,
                 desc: false,
             },

@@ -563,6 +563,27 @@ fn create_role_and_drop_role_are_privileges_of_their_own() {
         .contains("the CREATE USER privilege(s)"));
 }
 
+/// Go `FLUSH PRIVILEGES` inside a transaction commits it first, so
+/// `UpdateAll`'s internal SQL reads the committed row and a later ROLLBACK
+/// has nothing to undo (probed: `InTxn()` is false after the flush and the
+/// row survives the rollback).
+#[test]
+fn flush_privileges_in_a_transaction_loads_the_committed_rows_like_go() {
+    let mut session = session_with_privileges();
+    session.run("CREATE ROLE r_1, u_1").unwrap();
+    session.run("begin").unwrap();
+    session
+        .run("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_1','%','u_1')")
+        .unwrap();
+    session.run("flush privileges").unwrap();
+    session.run("rollback").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT count(*) FROM mysql.role_edges WHERE TO_USER='u_1'")),
+        [["1"]]
+    );
+    session.run("SET DEFAULT ROLE r_1 TO u_1").unwrap();
+}
+
 /// Go `FLUSH PRIVILEGES` rebuilds the privilege cache from `mysql.*`
 /// (`MySQLPrivilege.LoadAll`): role edges written into `mysql.role_edges`
 /// directly take effect, so `SET DEFAULT ROLE` admits them (captured,

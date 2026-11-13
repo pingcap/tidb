@@ -1380,6 +1380,8 @@ pub struct PhysicalTableSample {
     pub base: BasePhysicalPlan,
     /// Go `TableSampleInfo`.
     pub table_sample_info: tidb_planner_tablesampler::TableSampleInfo,
+    /// Go `TableInfo` (`ds.Table`): the sampled table's metadata.
+    pub table_info: Option<tidb_model::GoShared<tidb_model::TableInfo>>,
     /// Go `PhysicalTableID`.
     pub physical_table_id: i64,
     /// Go `Desc`.
@@ -1387,14 +1389,16 @@ pub struct PhysicalTableSample {
 }
 
 impl PhysicalTableSample {
-    /// Go `PhysicalTableSample.MemoryUsage` over Rust-owned metadata.
+    /// Go `PhysicalTableSample.MemoryUsage`: the schema producer, the
+    /// `TableInfo` interface and `Desc` (Go counts no `PhysicalTableID`),
+    /// plus the sample info.
     #[must_use]
     pub fn memory_usage(&self) -> i64 {
         self.base
             .go_schema_producer_memory_usage()
+            .saturating_add(tidb_size::SIZE_OF_INTERFACE)
+            .saturating_add(tidb_size::SIZE_OF_BOOL)
             .saturating_add(self.table_sample_info.memory_usage())
-            .saturating_add(std::mem::size_of::<i64>() as i64)
-            .saturating_add(std::mem::size_of::<bool>() as i64)
     }
 }
 
@@ -5462,6 +5466,7 @@ impl PhysicalPlan {
             Self::TableSample(op) => Self::TableSample(PhysicalTableSample {
                 base: base_of(&op.base),
                 table_sample_info: op.table_sample_info.clone(),
+                table_info: op.table_info.clone(),
                 physical_table_id: op.physical_table_id,
                 desc: op.desc,
             }),
