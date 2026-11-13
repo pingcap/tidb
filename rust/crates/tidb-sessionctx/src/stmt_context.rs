@@ -782,7 +782,7 @@ pub struct StmtContextData {
     /// An atomic so parallel agg workers sharing the context stay `Sync`.
     cop_eval_depth: Arc<AtomicU32>,
     /// Go `StatementContext.UsedStatsInfo`, keyed by physical table ID.
-    used_stats_info: Arc<Mutex<BTreeMap<i64, tidb_stmtctx::used_stats::UsedStatsInfoForTable>>>,
+    used_stats_info: Arc<Mutex<BTreeMap<i64, tidb_stmtctx::used_stats::SharedUsedStatsInfo>>>,
     /// Shared by every rebuilt executor of one statement attempt. Go emits
     /// `beforeExecutorFirstRun` only for the initial executor; pessimistic
     /// lock retries use their separate after-retry breakpoint.
@@ -4264,13 +4264,13 @@ impl StmtContext {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(
                 physical_table_id,
-                tidb_stmtctx::used_stats::UsedStatsInfoForTable {
+                Arc::new(Mutex::new(tidb_stmtctx::used_stats::UsedStatsInfoForTable {
                     name,
                     version,
                     realtime_count,
                     modify_count,
                     ..tidb_stmtctx::used_stats::UsedStatsInfoForTable::default()
-                },
+                })),
             );
     }
 
@@ -4295,14 +4295,15 @@ impl StmtContext {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let entry = used_stats.entry(physical_table_id).or_insert_with(|| {
-            tidb_stmtctx::used_stats::UsedStatsInfoForTable {
+            Arc::new(Mutex::new(tidb_stmtctx::used_stats::UsedStatsInfoForTable {
                 name: table_name.to_owned(),
                 version,
                 realtime_count,
                 modify_count,
                 ..tidb_stmtctx::used_stats::UsedStatsInfoForTable::default()
-            }
+            }))
         });
+        let mut entry = entry.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let statuses = if is_index {
             &mut entry.index_stats_load_status
         } else {
@@ -4317,6 +4318,17 @@ impl StmtContext {
         &self,
         physical_table_id: i64,
     ) -> Option<tidb_stmtctx::used_stats::UsedStatsInfoForTable> {
+        self.used_stats_info_shared(physical_table_id)
+            .map(|entry| entry.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone())
+    }
+
+    /// Go `GetUsedStatsInfo(false).GetUsedInfo(physicalTableID)`: the
+    /// entry itself, which a scan keeps (`UsedStatsInfo`).
+    #[must_use]
+    pub fn used_stats_info_shared(
+        &self,
+        physical_table_id: i64,
+    ) -> Option<tidb_stmtctx::used_stats::SharedUsedStatsInfo> {
         self.used_stats_info
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -5270,7 +5282,9 @@ impl StmtContext {
             .used_stats_info
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
+            .iter()
+            .map(|(id, entry)| (*id, entry.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()))
+            .collect();
         plan.is_sync_stats_failed = self.sync_stats_failed();
         plan.is_tiflash = self.is_tiflash.load(Ordering::Relaxed);
         plan.runaway_rule_kill_action = self.runaway_rule_kill_action();

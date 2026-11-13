@@ -48,7 +48,7 @@
       "id": "P01",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "The physical operators carry Go's fields (audit: `rust/scripts/physicalop-field-audit.py`; Go's flattened plan lists, which alias the reader's own tree, are borrowing views such as `PhysicalIndexLookUpReader::index_plans()`). Missing still: `PhysicalCTE.CTE` is the copied `CTEClass` fields, the session's `CTEClass` being `Rc<RefCell<_>>` logical state a cached physical plan cannot share; `PhysicalShuffleReceiverStub.Receiver`, the executor builder's pointer to its receiver, is the builder's (`shuffle::install_receivers`); a scan's `UsedStatsInfo` is read by EXPLAIN from the statement's used-stats map by physical table id, where Go keeps the entry's pointer.",
+      "finding": "The physical operators carry Go's fields (audit: `rust/scripts/physicalop-field-audit.py`; Go's flattened plan lists, which alias the reader's own tree, are borrowing views such as `PhysicalIndexLookUpReader::index_plans()`). Missing still: `PhysicalCTE.CTE` is the copied `CTEClass` fields, the session's `CTEClass` being `Rc<RefCell<_>>` logical state a cached physical plan cannot share; `PhysicalShuffleReceiverStub.Receiver`, the executor builder's pointer to its receiver, is the builder's (`shuffle::install_receivers`). A scan keeps its statement's used-statistics entry by pointer as Go's `UsedStatsInfo` does (`SharedUsedStatsInfo`, set where Go sets it, shared by a cached plan's copy), and EXPLAIN prints that entry.",
       "go_owner": "`pkg/planner/core/operator/physicalop` (the operator structs)"
     },
     {

@@ -302,6 +302,13 @@ pub trait UsedStatsRecorder {
         item_id: i64,
         is_index: bool,
     );
+
+    /// Go `StmtCtx.GetUsedStatsInfo(false).GetUsedInfo(physicalTableID)`:
+    /// the statement's entry itself, which a scan keeps as its
+    /// `UsedStatsInfo`.
+    fn used_info(&self, _physical_table_id: i64) -> Option<tidb_stmtctx::used_stats::SharedUsedStatsInfo> {
+        None
+    }
 }
 
 /// Go `base.LogicalOptRule` (`base/rule_base.go`).

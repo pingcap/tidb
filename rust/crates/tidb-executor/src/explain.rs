@@ -96,16 +96,18 @@ fn scan_uses_pseudo_statistics(base: &tidb_planner_core_operator_physicalop::Bas
         .is_none_or(|stats| stats.stats_version() == tidb_stats::PSEUDO_VERSION)
 }
 
-/// Go scan `ExplainInfoInternal`: use the statement's estimator observations,
-/// falling back to the plan's pseudo version only when no used-stat record
-/// exists for this physical table.
+/// Go scan `ExplainInfoInternal`: the scan's own `UsedStatsInfo` (the
+/// statement entry it was planned with), falling back to the plan's pseudo
+/// version only when it holds none.
 fn used_stats_suffix_for_scan(
-    context: &crate::StmtContext,
+    used_stats: Option<&tidb_stmtctx::used_stats::SharedUsedStatsInfo>,
     physical_table_id: i64,
     base: &tidb_planner_core_operator_physicalop::BasePhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
 ) -> Option<String> {
-    if let Some(used_stats) = context.used_stats_info(physical_table_id) {
+    if let Some(used_stats) =
+        used_stats.map(|entry| entry.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone())
+    {
         let (column_names, index_names) = catalog
             .physical_kv_table_by_id(physical_table_id)
             .map(|table| {
@@ -1494,7 +1496,7 @@ fn physical_operator_own_info(
             }
             parts.push(scan_keep_order_text(scan.keep_order, scan.desc));
             if let Some(stats) = used_stats_suffix_for_scan(
-                statement_context,
+                scan.used_stats_info.as_ref(),
                 scan.physical_table_id,
                 &scan.base,
                 catalog,
@@ -1560,7 +1562,7 @@ fn physical_operator_own_info(
             }
             parts.push(scan_keep_order_text(scan.keep_order, scan.desc));
             if let Some(stats) = used_stats_suffix_for_scan(
-                statement_context,
+                scan.used_stats_info.as_ref(),
                 scan.physical_table_id,
                 &scan.base,
                 catalog,
@@ -4469,6 +4471,32 @@ fn text(value: &str) -> Datum {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go `PhysicalTableScan.ExplainInfo`: the scan prints its own
+    /// `UsedStatsInfo` -- the statement entry it was planned with, which a
+    /// cached plan keeps by pointer -- and only without one falls back to
+    /// its `StatsVersion`.
+    #[test]
+    fn a_scan_prints_the_used_statistics_it_was_planned_with() {
+        let catalog = tidb_infoschema_perfschema::mock_catalog();
+        let entry: tidb_stmtctx::used_stats::SharedUsedStatsInfo =
+            std::sync::Arc::new(std::sync::Mutex::new(tidb_stmtctx::used_stats::UsedStatsInfoForTable {
+                name: "t".to_owned(),
+                version: 1,
+                ..Default::default()
+            }));
+        let base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::default();
+        // Fully loaded statistics print nothing.
+        assert_eq!(used_stats_suffix_for_scan(Some(&entry), 9, &base, &catalog), None);
+        // A status recorded after the scan was planned is the scan's too.
+        entry.lock().unwrap().column_stats_load_status.insert(2, "allEvicted".to_owned());
+        assert_eq!(
+            used_stats_suffix_for_scan(Some(&entry), 9, &base, &catalog).as_deref(),
+            Some("stats:partial[ID 2:allEvicted]")
+        );
+        // Without an entry, the scan's statistics version decides.
+        assert_eq!(used_stats_suffix_for_scan(None, 9, &base, &catalog).as_deref(), Some("stats:pseudo"));
+    }
 
     #[test]
     fn dynamic_partitions_belong_to_readers_not_scans() {

@@ -1390,6 +1390,9 @@ pub struct PhysicalTableScan {
     pub late_materialization_selectivity: f64,
     /// Go `UsedColumnarIndexes`: the columnar indexes the scan uses.
     pub used_columnar_indexes: Vec<ColumnarIndexExtra>,
+    /// Go `UsedStatsInfo`: the statement's used-statistics entry for this
+    /// physical table, kept by pointer (a cached plan's copy shares it).
+    pub used_stats_info: Option<tidb_stmtctx::used_stats::SharedUsedStatsInfo>,
     /// Go `DBName`.
     pub db_name: String,
     /// Go `Table.Name.O`: the scan's own table spelling, which a cluster
@@ -2806,6 +2809,9 @@ impl PhysicalTableReader {
 /// conversion decide on, like [`PhysicalTableScan`]'s slice.
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalIndexScan {
+    /// Go `UsedStatsInfo`: the statement's used-statistics entry for this
+    /// physical table, kept by pointer (a cached plan's copy shares it).
+    pub used_stats_info: Option<tidb_stmtctx::used_stats::SharedUsedStatsInfo>,
     /// Output schema before index columns and the handle are added.
     pub data_source_schema: Option<Box<Schema>>,
     /// Go `Table`: the scanned table's metadata.
@@ -5748,6 +5754,8 @@ impl PhysicalPlan {
                 late_materialization_filter_condition: op.late_materialization_filter_condition.clone(),
                 late_materialization_selectivity: op.late_materialization_selectivity,
                 used_columnar_indexes: op.used_columnar_indexes.clone(),
+                // Go `plan-cache-clone:"shallow"`.
+                used_stats_info: op.used_stats_info.clone(),
                 db_name: op.db_name.clone(),
                 table_name: op.table_name.clone(),
                 handle_cols: op.handle_cols.clone(),
@@ -5894,6 +5902,8 @@ impl PhysicalPlan {
                 tasks: Vec::new(),
             }),
             Self::IndexScan(op) => Self::IndexScan(PhysicalIndexScan {
+                // Go `plan-cache-clone:"shallow"`.
+                used_stats_info: op.used_stats_info.clone(),
                 columns: op.columns.clone(),
                 need_common_handle: op.need_common_handle,
                 table: op.table.clone(),

@@ -1368,6 +1368,10 @@ impl tidb_planner_core_operator_logicalop::plan_context::UsedStatsRecorder for S
             is_index,
         );
     }
+
+    fn used_info(&self, physical_table_id: i64) -> Option<tidb_stmtctx::used_stats::SharedUsedStatsInfo> {
+        self.context.used_stats_info_shared(physical_table_id)
+    }
 }
 
 pub(crate) fn physical_plan_for_logical(

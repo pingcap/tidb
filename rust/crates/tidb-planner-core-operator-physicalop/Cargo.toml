@@ -42,6 +42,7 @@ tidb-model = { path = "../tidb-model" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-vardef = { path = "../tidb-vardef" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
+tidb-stmtctx = { path = "../tidb-stmtctx" }
 tidb-table = { path = "../tidb-table" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-codec = { path = "../tidb-codec" }

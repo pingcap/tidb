@@ -488,6 +488,8 @@ pub(super) fn build_converged_union_index_merge_task(
                 .set_schema(Some(tidb_expr::schema::Schema::new(schema_columns)));
             partial_plans_raw.push(PhysicalPlan::TableScan(
                 tidb_planner_core_operator_physicalop::PhysicalTableScan {
+                    // Go `UsedStatsInfo = GetUsedStatsInfo(false).GetUsedInfo(id)`.
+                    used_stats_info: ctx.used_stats_recorder.and_then(|recorder| recorder.used_info(ds.physical_table_id)),
                     handle_idx: Vec::new(),
                     range_info: String::new(),
                     table: ds.table_info.clone(),
@@ -644,6 +646,8 @@ pub(super) fn build_converged_union_index_merge_task(
         )));
         Box::new(PhysicalPlan::TableScan(
             tidb_planner_core_operator_physicalop::PhysicalTableScan {
+                // Go `BuildIndexMergeTableScan`: `UsedStatsInfo = GetUsedStatsInfo(false).GetUsedInfo(id)`.
+                used_stats_info: ctx.used_stats_recorder.and_then(|recorder| recorder.used_info(ds.physical_table_id)),
                 handle_idx: Vec::new(),
                 range_info: String::new(),
                 table: ds.table_info.clone(),
@@ -946,6 +950,8 @@ fn push_index_partial(
     base.base
         .set_schema(Some(tidb_expr::schema::Schema::new(schema_columns)));
     partial_plans_raw.push(PhysicalPlan::IndexScan(tidb_planner_core_operator_physicalop::PhysicalIndexScan {
+        // Go `UsedStatsInfo = GetUsedStatsInfo(false).GetUsedInfo(id)`.
+        used_stats_info: ctx.used_stats_recorder.and_then(|recorder| recorder.used_info(ds.physical_table_id)),
         range_info: String::new(),
         table: ds.table_info.clone(),
         index: Some(source_index.clone()),

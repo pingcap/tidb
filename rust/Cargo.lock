@@ -6569,6 +6569,7 @@ dependencies = [
  "tidb-ranger",
  "tidb-sessionctx",
  "tidb-stats",
+ "tidb-stmtctx",
  "tidb-vardef",
 ]
 
@@ -6603,6 +6604,7 @@ dependencies = [
  "tidb-ranger",
  "tidb-sessionctx",
  "tidb-size",
+ "tidb-stmtctx",
  "tidb-table",
  "tidb-txnkv",
  "tidb-util",

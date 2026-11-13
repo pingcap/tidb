@@ -56,6 +56,8 @@ pub(super) fn build_prepared_index_merge_task(
             base.base.set_noncacheable_reason(reason);
         }
         let mut partial_plan = PhysicalPlan::IndexScan(tidb_planner_core_operator_physicalop::PhysicalIndexScan {
+        // Go `UsedStatsInfo = GetUsedStatsInfo(false).GetUsedInfo(id)`.
+        used_stats_info: ctx.used_stats_recorder.and_then(|recorder| recorder.used_info(ds.physical_table_id)),
         range_info: String::new(),
         table: ds.table_info.clone(),
         index: Some(source_index.clone()),
@@ -131,6 +133,8 @@ pub(super) fn build_prepared_index_merge_task(
         .set_stats(Some(merge_scan_stats(ds, output_rows, ctx)));
     table_scan_base.base.set_schema(Some(schema.clone()));
     let table_scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
+        // Go `BuildIndexMergeTableScan`: `UsedStatsInfo = GetUsedStatsInfo(false).GetUsedInfo(id)`.
+        used_stats_info: ctx.used_stats_recorder.and_then(|recorder| recorder.used_info(ds.physical_table_id)),
         handle_idx: Vec::new(),
         range_info: String::new(),
         table: ds.table_info.clone(),

@@ -23,6 +23,11 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
+/// Go `*UsedStatsInfoForTable`: the statement's entry for one physical
+/// table, shared by the statement's map and every scan planned over it
+/// (`PhysicalTableScan.UsedStatsInfo`), whose later status records all see.
+pub type SharedUsedStatsInfo = std::sync::Arc<std::sync::Mutex<UsedStatsInfoForTable>>;
+
 /// Statistics metadata used by the source slow-log formatter.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UsedStatsInfoForTable {
