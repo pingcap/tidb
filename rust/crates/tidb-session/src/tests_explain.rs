@@ -8673,7 +8673,12 @@ fn explain_insert_lists_the_scalar_subqueries_of_its_one_build_like_go() {
     let mut checked = 0;
     let mut lines = capture.lines().filter(|line| !line.starts_with('#'));
     while let Some(sql_line) = lines.next() {
-        let sql = sql_line.strip_prefix("SQL: ").expect("a statement line");
+        // EXPLAIN ANALYZE's rows are compared by id, actRows and operator
+        // info: its times are the run's own.
+        let (sql, analyze) = match sql_line.strip_prefix("ANALYZE: ") {
+            Some(sql) => (sql, true),
+            None => (sql_line.strip_prefix("SQL: ").expect("a statement line"), false),
+        };
         let expected: Vec<String> = lines
             .by_ref()
             .take_while(|line| *line != "----")
@@ -8681,12 +8686,18 @@ fn explain_insert_lists_the_scalar_subqueries_of_its_one_build_like_go() {
             .collect();
         let actual: Vec<String> = row_text(session.run(sql))
             .into_iter()
-            .map(|row| row.join("|"))
+            .map(|row| {
+                if analyze {
+                    format!("{}|{}|{}", row[0], row[2], row[6])
+                } else {
+                    row.join("|")
+                }
+            })
             .collect();
         assert_eq!(actual, expected, "{sql}");
         checked += 1;
     }
-    assert_eq!(checked, 4);
+    assert_eq!(checked, 5);
 }
 
 /// Go `buildInsert` plans the VALUES lists and the ON DUPLICATE assignments

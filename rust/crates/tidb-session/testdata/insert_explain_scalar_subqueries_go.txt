@@ -58,3 +58,23 @@ ScalarSubQuery|N/A|root||Output: ScalarQueryCol#16
           └─Selection|9990.00|cop[tikv]||not(isnull(test.s.x))
             └─TableFullScan|10000.00|cop[tikv]|table:s|keep order:false, stats:pseudo
 ----
+ANALYZE: explain analyze format='brief' insert into t values ((select max(x) from s), 1) on duplicate key update b = (select min(y) from s)
+# id|actRows|operator info
+Insert|0|N/A
+ScalarSubQuery|0|Output: ScalarQueryCol#8
+└─MaxOneRow|1|
+  └─StreamAgg|1|funcs:max(test.s.x)->Column#7
+    └─TopN|1|test.s.x:desc, offset:0, count:1
+      └─TableReader|1|data:TopN
+        └─TopN|2|test.s.x:desc, offset:0, count:1
+          └─Selection|2|not(isnull(test.s.x))
+            └─TableFullScan|2|keep order:false, stats:pseudo
+ScalarSubQuery|0|Output: ScalarQueryCol#14
+└─MaxOneRow|1|
+  └─StreamAgg|1|funcs:min(test.s.y)->Column#13
+    └─TopN|1|test.s.y, offset:0, count:1
+      └─TableReader|1|data:TopN
+        └─TopN|2|test.s.y, offset:0, count:1
+          └─Selection|2|not(isnull(test.s.y))
+            └─TableFullScan|2|keep order:false, stats:pseudo
+----

@@ -119,7 +119,7 @@ pub fn run_insert_stmt_with_physical(
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
 ) -> Result<(u64, Option<u64>), DriverError> {
-    run_insert_stmt_with_physical_and_visits(insert, catalog, current_db, ctx, physical_plan, None)
+    run_insert_stmt_with_physical_and_visits(insert, catalog, current_db, ctx, physical_plan, None, None)
 }
 
 /// [`run_insert_stmt_with_physical`] with the executors' runtime stats.
@@ -133,6 +133,10 @@ pub(crate) fn run_insert_stmt_with_physical_and_visits(
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
     source_visits: Option<Vec<tidb_planner::plan_builder::visit_info::VisitInfo>>,
+    built: Option<(
+        &StatementAllocators,
+        &mut Vec<std::sync::Arc<super::planner_bridge::RegisteredScalarSubquery>>,
+    )>,
 ) -> Result<(u64, Option<u64>), DriverError> {
     // go resolves the INSERT's target table before planning the source
     // query: `INSERT INTO h1 (a, b) SELECT a, b FROM no_such` over a missing
@@ -149,12 +153,21 @@ pub(crate) fn run_insert_stmt_with_physical_and_visits(
         fresh = Some(physical_insert_plan(insert, catalog, current_db, ctx, &mut visits, &statement)?);
         source_visits = Some(visits);
     }
-    let shared = fresh.is_some().then_some(&statement);
+    let (built_with, scalar_subqueries) = match built {
+        Some((statement, scalar_subqueries)) => (Some(statement), Some(scalar_subqueries)),
+        None => (None, None),
+    };
+    // The values plan with the counters of the build of the source: this
+    // statement's own, or the caller's.
+    let shared = fresh.is_some().then_some(&statement).or(built_with);
     let mut physical_plan = physical_plan.or(fresh.as_mut());
     // Go `buildInsert` evaluates the values' uncorrelated subqueries while
     // it plans: the VALUES lists, then (after an INSERT ... SELECT's source
     // was optimized) the ON DUPLICATE assignments.
     let planned = plan_insert_over(insert, physical_plan.as_deref(), catalog, current_db, ctx, shared)?;
+    if let Some(scalar_subqueries) = scalar_subqueries {
+        scalar_subqueries.extend(planned.scalar_subqueries.iter().cloned());
+    }
     // Go `planner.optimize`'s `CheckPrivilege` / `CheckTableLock` once
     // `buildInsert` returned.
     if let Some(source_visits) = source_visits {

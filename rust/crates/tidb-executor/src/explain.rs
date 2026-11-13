@@ -4269,15 +4269,15 @@ pub fn explain_analyze_insert_stmt(
     // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
     crate::driver::record_plan_builder_metric(ctx);
     let mut source_visits = Vec::new();
-    let mut physical =
-        crate::driver::physical_insert_plan(
-            insert,
-            catalog,
-            current_db,
-            ctx,
-            &mut source_visits,
-            &crate::driver::StatementAllocators::default(),
-        )?;
+    let statement = crate::driver::StatementAllocators::default();
+    let (mut physical, mut scalar_subqueries) = crate::driver::physical_insert_plan_and_scalar_subqueries(
+        insert,
+        catalog,
+        current_db,
+        ctx,
+        &mut source_visits,
+        &statement,
+    )?;
     // The writes add their affected rows to the statement (Go `AddAffectedRows`).
     run_insert_stmt_with_physical_and_visits(
         insert,
@@ -4286,6 +4286,7 @@ pub fn explain_analyze_insert_stmt(
         ctx,
         Some(&mut physical),
         Some(source_visits),
+        Some((&statement, &mut scalar_subqueries)),
     )?;
     // The write ran and closed (Go `handleNoDelayExecutor`).
     Ok(AnalyzedWrite {
@@ -4293,7 +4294,7 @@ pub fn explain_analyze_insert_stmt(
         physical,
         catalog: catalog.clone(),
         format,
-        scalar_subqueries: Vec::new(),
+        scalar_subqueries,
     })
 }
 
