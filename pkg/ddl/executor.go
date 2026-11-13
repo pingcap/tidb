@@ -5125,11 +5125,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			IndexOption:             indexOption,
 			HiddenCols:              hiddenCols,
 			Global:                  global,
-<<<<<<< HEAD
-=======
 			AutoPreSplit:            autoPreSplit,
-			SplitOpt:                splitOpt,
->>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
 			ConditionString:         conditionString,
 			SplitOpt:                splitOpt,
 		}},
@@ -5145,7 +5141,6 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	return errors.Trace(err)
 }
 
-<<<<<<< HEAD
 // GetDXFDefaultMaxNodeCntAuto calcuates a default max node count for distributed task execution.
 func GetDXFDefaultMaxNodeCntAuto(store kv.Storage) int {
 	tikvStore, ok := store.(tikv.Storage)
@@ -5267,10 +5262,7 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 	return nil
 }
 
-func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, error) {
-=======
 func buildIndexPreSplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, bool, error) {
->>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
 	if indexOpt == nil {
 		return nil, false, nil
 	}

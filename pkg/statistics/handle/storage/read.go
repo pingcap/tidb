@@ -87,10 +87,7 @@ func statsMetaCountAndModifyCount(
 }
 
 // HistMetaFromStorageWithHighPriority reads the meta info of the histogram from the storage.
-<<<<<<< HEAD
 func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.TableItemID, possibleColInfo *model.ColumnInfo) (*statistics.Histogram, *types.Datum, int64, int64, error) {
-=======
-func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.TableItemID, possibleColInfo *model.ColumnInfo) (*statistics.Histogram, int64, error) {
 	return histMetaFromStorage(util.StatsCtx, sctx, item, possibleColInfo, 0, kv.PriorityHigh)
 }
 
@@ -101,8 +98,7 @@ func histMetaFromStorage(
 	possibleColInfo *model.ColumnInfo,
 	snapshot uint64,
 	priority int,
-) (*statistics.Histogram, int64, error) {
->>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
+) (*statistics.Histogram, *types.Datum, int64, int64, error) {
 	isIndex := 0
 	var tp *types.FieldType
 	if item.IsIndex {
@@ -111,18 +107,9 @@ func histMetaFromStorage(
 	} else {
 		tp = &possibleColInfo.FieldType
 	}
-<<<<<<< HEAD
-	rows, _, err := util.ExecRows(sctx,
-		"select high_priority distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?",
-		item.TableID,
-		item.ID,
-		isIndex,
-	)
-=======
-	sql := statsSelectPrefix(priority) + "distinct_count, version, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?"
+	sql := statsSelectPrefix(priority) + "distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?"
 	rows, _, err := execRowsAtSnapshot(
 		ctx, sctx, snapshot, sql, item.TableID, item.ID, isIndex)
->>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
 	if err != nil {
 		return nil, nil, 0, 0, err
 	}
@@ -153,7 +140,7 @@ func ReadColumnDistributionStats(
 	}
 
 	item := &model.TableItemID{TableID: physicalTableID, ID: colInfo.ID}
-	histMeta, statsVer, err := histMetaFromStorage(
+	histMeta, lastPos, statsVer, flag, err := histMetaFromStorage(
 		ctx, sctx, item, colInfo, snapshot, kv.PriorityNormal)
 	if err != nil {
 		return nil, err
@@ -166,7 +153,11 @@ func ReadColumnDistributionStats(
 		Info:              colInfo,
 		Histogram:         *histMeta,
 		StatsVer:          statsVer,
+		Flag:              flag,
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+	}
+	if lastPos != nil {
+		lastPos.Copy(&column.LastAnalyzePos)
 	}
 	if histMeta.NullCount < 0 {
 		return nil, errors.Errorf(
@@ -265,8 +256,12 @@ func histogramFromStorageWithParams(
 		"beforeHistogramFromStorageWithParams",
 		params.tableID, params.isIndex, params.histID)
 	sql := statsSelectPrefix(params.priority) + "count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id"
+	isIndex := 0
+	if params.isIndex {
+		isIndex = 1
+	}
 	rows, fields, err := execRowsAtSnapshot(
-		ctx, sctx, params.snapshot, sql, params.tableID, params.isIndex, params.histID)
+		ctx, sctx, params.snapshot, sql, params.tableID, isIndex, params.histID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -369,8 +364,12 @@ func topNFromStorageWithParams(
 		"beforeTopNFromStorageWithParams",
 		params.tableID, params.isIndex, params.histID, params.priority)
 	query := statsSelectPrefix(params.priority) + "value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?"
+	isIndex := 0
+	if params.isIndex {
+		isIndex = 1
+	}
 	rows, _, err := execRowsAtSnapshot(
-		ctx, sctx, params.snapshot, query, params.tableID, params.isIndex, params.histID)
+		ctx, sctx, params.snapshot, query, params.tableID, isIndex, params.histID)
 	if err != nil || len(rows) == 0 {
 		return nil, err
 	}

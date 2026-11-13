@@ -61,11 +61,7 @@ go_test(
         "stats_read_writer_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 30,
-=======
-    shard_count = 29,
->>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
+    shard_count = 32,
     deps = [
         ":storage",
         "//pkg/domain",

@@ -160,15 +160,7 @@ func TestTiDBEncodeKeyTempIndexKey(t *testing.T) {
 	require.Equal(t, 2, strings.Count(rs, "writes"), rs)
 }
 
-<<<<<<< HEAD
-func TestAddIndexPresplitIndexRegions(t *testing.T) {
-=======
 func TestAddIndexPreSplitIndexRegions(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("DXF and fast reorg are always enabled on nextgen")
-	}
-	testutil.ReduceCheckInterval(t)
->>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -269,14 +261,8 @@ func TestAddIndexPreSplitIndexRegions(t *testing.T) {
 	checkSplitKeys(tablecodec.TempIndexPrefix|nextIdxID(), 2, true)
 }
 
-<<<<<<< HEAD
-func TestAddIndexPresplitFunctional(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-=======
 func TestAddIndexPreSplitFunctional(t *testing.T) {
-	testutil.ReduceCheckInterval(t)
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
->>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int);")
@@ -295,11 +281,6 @@ func TestAddIndexPreSplitFunctional(t *testing.T) {
 	tk.MustExec("drop table t;")
 
 	// This scenario validates auto presplit on the txn-reorg normal-index keyspace.
-	// NextGen always uses fast reorg/DXF, so it cannot exercise this scenario.
-	if kerneltype.IsNextGen() {
-		return
-	}
-
 	originalFastReorg := tk.MustQuery("select @@global.tidb_ddl_enable_fast_reorg").Rows()[0][0]
 	originalDistTask := tk.MustQuery("select @@global.tidb_enable_dist_task").Rows()[0][0]
 	t.Cleanup(func() {

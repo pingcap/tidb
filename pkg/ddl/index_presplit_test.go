@@ -47,7 +47,7 @@ func TestIndexPresplitOptions(t *testing.T) {
 		{maxRegions + 1, "Split index region num exceeded the limit"},
 	} {
 		t.Run(fmt.Sprintf("regions=%d", tc.regions), func(t *testing.T) {
-			opt, err := buildIndexPresplitOpt(&ast.IndexOption{SplitOpt: &ast.SplitOption{Num: tc.regions}})
+			opt, _, err := buildIndexPreSplitOpt(&ast.IndexOption{SplitOpt: &ast.SplitOption{Num: tc.regions}})
 			if tc.errMsg != "" {
 				require.ErrorContains(t, err, tc.errMsg)
 				return
@@ -83,7 +83,7 @@ func TestIndexPresplitCountOnly(t *testing.T) {
 	maxRegions := int64(config.GetGlobalConfig().SplitRegionMaxNum)
 	for _, regions := range []int64{1, 4, maxRegions} {
 		t.Run(fmt.Sprintf("regions=%d", regions), func(t *testing.T) {
-			opt, err := buildIndexPresplitOpt(&ast.IndexOption{SplitOpt: &ast.SplitOption{Num: regions}})
+			opt, _, err := buildIndexPreSplitOpt(&ast.IndexOption{SplitOpt: &ast.SplitOption{Num: regions}})
 			require.NoError(t, err)
 			args, err := evalSplitDatumFromArgs(nil, tbl, idx, &model.IndexArg{SplitOpt: opt})
 			require.NoError(t, err)
@@ -197,8 +197,8 @@ func TestIndexPresplitTimeZone(t *testing.T) {
 					})
 					// Capture real producer keys before the optional storage RPC. The
 					// same job must encode them independently of the worker's zone.
-					err = preSplitIndexRegions(context.Background(), worker, nil, tbl, []*model.IndexInfo{idx}, reorgMeta,
-						&model.ModifyIndexArgs{IndexArgs: []*model.IndexArg{indexArg}})
+					err = preSplitIndexRegions(context.Background(), worker, &fakeAutoPreSplitStore{}, tbl, []*model.IndexInfo{idx}, reorgMeta,
+						&model.ModifyIndexArgs{IndexArgs: []*model.IndexArg{indexArg}}, nil)
 					require.NoError(t, err)
 					require.Equal(t, 1, calls)
 					require.Equal(t, expected, actual)

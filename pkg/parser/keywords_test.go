@@ -42,11 +42,7 @@ func TestKeywords(t *testing.T) {
 }
 
 func TestKeywordsLength(t *testing.T) {
-<<<<<<< HEAD
-	require.Equal(t, 662, len(parser.Keywords))
-=======
-	require.Equal(t, 690, len(parser.Keywords))
->>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
+	require.Equal(t, 663, len(parser.Keywords))
 
 	reservedNr := 0
 	for _, kw := range parser.Keywords {

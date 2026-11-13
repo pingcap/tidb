@@ -58,10 +58,7 @@ func preSplitIndexRegions(
 	if err != nil {
 		return errors.Trace(err)
 	}
-<<<<<<< HEAD
 	reorgLoc := exprCtx.GetEvalCtx().Location()
-	splitOnTempIdx := reorgMeta.ReorgTp.NeedMergeProcess()
-=======
 	autoPreSplitCfg := getAutoPreSplitConfig()
 	// Start one shared AUTO budget before the first index. Manual pre-splitting
 	// keeps its original context, but its wall time still reduces this budget.
@@ -72,10 +69,8 @@ func preSplitIndexRegions(
 	// splits normal index keys, while ingest and txn-merge split temporary index
 	// keys used by concurrent DML. Fast reorg does not additionally split the
 	// normal index keyspace here.
-	splitOnTempIdx := reorgMeta.ReorgTp == model.ReorgTypeIngest ||
-		reorgMeta.ReorgTp == model.ReorgTypeTxnMerge
+	splitOnTempIdx := reorgMeta.ReorgTp.NeedMergeProcess()
 	autoPreSplitBoundaryCache := make(map[int64]autoPreSplitBoundaryCacheEntry)
->>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
 	for i, idxInfo := range allIndexInfos {
 		idxArg := args.IndexArgs[i]
 		logger := logutil.DDLLogger().With(
@@ -86,7 +81,7 @@ func preSplitIndexRegions(
 		var skipReason string
 		if idxArg.AutoPreSplit {
 			splitResult, skipReason, err = autoPreSplitIndexRegion(
-				autoPreSplitCtx, sctx, store, tblInfo, idxInfo, statsProvider,
+				autoPreSplitCtx, sctx, reorgLoc, store, tblInfo, idxInfo, statsProvider,
 				autoPreSplitBoundaryCache, splitOnTempIdx)
 		} else {
 			splitArgs, evalErr := evalSplitDatumFromArgs(exprCtx, tblInfo, idxInfo, idxArg)
@@ -96,7 +91,7 @@ func preSplitIndexRegions(
 			if splitArgs == nil {
 				continue
 			}
-			splitKeys, buildErr := getSplitIdxKeys(sctx, tblInfo, idxInfo, splitArgs)
+			splitKeys, buildErr := getSplitIdxKeys(sctx, tblInfo, idxInfo, splitArgs, reorgLoc)
 			if buildErr != nil {
 				return errors.Trace(buildErr)
 			}
@@ -109,15 +104,6 @@ func preSplitIndexRegions(
 		if ctxErr := context.Cause(ctx); ctxErr != nil {
 			return ctxErr
 		}
-<<<<<<< HEAD
-		splitKeys, err := getSplitIdxKeys(sctx, tblInfo, idxInfo, splitArgs, reorgLoc)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if splitOnTempIdx {
-			for i := range splitKeys {
-				tablecodec.IndexKey2TempIndexKey(splitKeys[i])
-=======
 		if idxArg.AutoPreSplit {
 			if err != nil {
 				// AUTO is an optional optimization, so ordinary planning or Region
@@ -137,7 +123,6 @@ func preSplitIndexRegions(
 			}
 			if splitResult.unsupported {
 				continue
->>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
 			}
 		}
 		logger.Info("split table index region finished",
@@ -150,6 +135,7 @@ func preSplitIndexRegions(
 func autoPreSplitIndexRegion(
 	ctx context.Context,
 	sctx sessionctx.Context,
+	loc *time.Location,
 	store kv.Storage,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
@@ -158,7 +144,7 @@ func autoPreSplitIndexRegion(
 	splitOnTempIdx bool,
 ) (splitResult splitIndexRegionResult, skipReason string, err error) {
 	plan, err := planAutoPreSplitWithCache(
-		ctx, sctx, statsProvider, tblInfo, idxInfo, getAutoPreSplitConfig(), boundaryCache)
+		ctx, sctx, loc, statsProvider, tblInfo, idxInfo, getAutoPreSplitConfig(), boundaryCache)
 	if err != nil {
 		return splitIndexRegionResult{}, "", err
 	}
@@ -394,15 +380,7 @@ func splitIndexRegionAndWait(
 	regionIDs, err := s.SplitRegions(ctxWithTimeout, splitIdxKeys, true, &tblInfo.ID)
 	result := splitIndexRegionResult{splitRegions: len(regionIDs)}
 	if err != nil {
-<<<<<<< HEAD
-		logutil.DDLLogger().Error("split table index region failed",
-			zap.String("table", tblInfo.Name.L),
-			zap.String("index", idxInfo.Name.L),
-			zap.Error(err))
-		return err
-=======
 		return result, err
->>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
 	}
 	failpoint.Inject("mockSplitIndexRegionAndWaitErr", func(_ failpoint.Value) {
 		failpoint.Return(result, context.DeadlineExceeded)

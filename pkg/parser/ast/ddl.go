@@ -730,7 +730,6 @@ type IndexOption struct {
 	node
 
 	KeyBlockSize uint64
-<<<<<<< HEAD
 	Tp           model.IndexType
 	Comment      string
 	ParserName   model.CIStr
@@ -739,22 +738,10 @@ type IndexOption struct {
 	Global       bool
 	Condition    ExprNode     `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
 	SplitOpt     *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
-=======
-	Tp           IndexType
-	Comment      string
-	ParserName   CIStr
-	Visibility   IndexVisibility
-	PrimaryKeyTp PrimaryKeyType
-	Global       bool
-	SplitOpt     *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
 	// AutoPreSplit enables leading-column-only, best-effort automatic pre-splitting
 	// for add-index DDL. Parsed ASTs keep it mutually exclusive with SplitOpt; if a
 	// caller constructs both fields manually, SplitOpt takes precedence.
-	AutoPreSplit               bool `json:"-"`
-	SecondaryEngineAttr        string
-	AddColumnarReplicaOnDemand int
-	Condition                  ExprNode `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
->>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
+	AutoPreSplit bool `json:"-"`
 }
 
 // IsEmpty is true if only default options are given
@@ -767,15 +754,9 @@ func (n *IndexOption) IsEmpty() bool {
 		n.Comment != "" ||
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
-<<<<<<< HEAD
 		n.Condition != nil ||
-		n.SplitOpt != nil {
-=======
 		n.SplitOpt != nil ||
-		n.AutoPreSplit ||
-		len(n.SecondaryEngineAttr) > 0 ||
-		n.Condition != nil {
->>>>>>> c6054025ed4 (ddl: add auto split hot region for add index (#69425))
+		n.AutoPreSplit {
 		return false
 	}
 	return true
