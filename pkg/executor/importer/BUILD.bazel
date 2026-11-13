@@ -113,6 +113,7 @@ go_test(
     name = "importer_test",
     timeout = "short",
     srcs = [
+        "chunk_process_bench_test.go",
         "chunk_process_testkit_test.go",
         "import_test.go",
         "importer_testkit_test.go",
