@@ -231,7 +231,11 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx expression.EvalContext) er
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Sum(ctx expression.EvalContext) {
 	switch a.Args[0].GetType(ctx).GetType() {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+	// BIT is an unsigned integer type in MySQL, so SUM over a BIT column
+	// must return an exact DECIMAL instead of a DOUBLE, which would lose
+	// precision for values above 2^53. The flen of a BIT(M) column is M,
+	// so the same flen + 21 rule as other integer types applies.
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeBit:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
 		a.RetTp.SetFlenUnderLimit(a.Args[0].GetType(ctx).GetFlen() + 21)
 		a.RetTp.SetDecimal(0)
@@ -315,6 +319,19 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx expression.EvalContext) {
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.SetFlen(mysql.MaxRealWidth)
 		a.RetTp.SetDecimal(a.Args[0].GetType(ctx).GetDecimal())
+	case mysql.TypeBit:
+		// BIT is an unsigned integer type in MySQL, so AVG over a BIT column
+		// must return an exact DECIMAL instead of a DOUBLE. Unlike the other
+		// integer types, the default field length of BIT is 1, which is far
+		// too small for a BIT(M) value, so use the argument's own flen (M for
+		// a BIT(M) column) instead of the default length.
+		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
+		a.RetTp.SetDecimalUnderLimit(divPrecIncre)
+		if flen := a.Args[0].GetType(ctx).GetFlen(); flen < 0 {
+			a.RetTp.SetFlen(mysql.MaxDecimalWidth)
+		} else {
+			a.RetTp.SetFlenUnderLimit(flen + divPrecIncre)
+		}
 	case mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.SetFlen(mysql.MaxRealWidth)

@@ -23,6 +23,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCalculateSumForBit(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.ResetSessionAndStmtTimeZone(time.Local)
+	// BIT columns evaluate to a KindMysqlBit datum, and SUM/AVG over BIT
+	// returns DECIMAL, so the partial sum must be an exact decimal datum.
+	// See https://github.com/pingcap/tidb/issues/72740.
+	v1 := types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(9007199254740993, 8))
+	v2 := types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(1, 8))
+	var sum types.Datum
+	var err error
+	typeCtx := ctx.GetSessionVars().StmtCtx.TypeCtx()
+	sum, err = calculateSum(typeCtx, sum, v1)
+	require.NoError(t, err)
+	require.Equal(t, types.KindMysqlDecimal, sum.Kind())
+	sum, err = calculateSum(typeCtx, sum, v2)
+	require.NoError(t, err)
+	require.Equal(t, types.KindMysqlDecimal, sum.Kind())
+	require.Equal(t, "9007199254740994", sum.GetMysqlDecimal().String())
+}
+
 func TestDistinct(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.ResetSessionAndStmtTimeZone(time.Local)
