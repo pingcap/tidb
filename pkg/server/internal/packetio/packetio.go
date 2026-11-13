@@ -504,6 +504,11 @@ func (cr *compressedReader) Read(data []byte) (int, error) {
 		if err != nil {
 			return 0, err
 		}
+		if len(packet) == 0 {
+			// Returning (0, nil) would make io.ReadFull read the next packet, with no limit on
+			// how many empty ones the peer may send.
+			return 0, errors.New("empty compressed packet")
+		}
 		cr.data = packet
 	}
 	n := copy(data, cr.data[cr.pos:])
