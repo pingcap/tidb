@@ -23,7 +23,6 @@ use tidb_hint::{generate_qb_name, remove_duplicated_hints, NodeType};
 use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_operator_physicalop::PhysicalPlan;
 use tidb_kv::store_type::StoreType;
-use tidb_planner_core_operator_physicalop::IndexJoinKind;
 
 /// Table identity the physical plan does not carry itself.
 pub trait HintCatalog {
@@ -180,6 +179,7 @@ fn is_join(plan: &PhysicalPlan) -> bool {
         PhysicalPlan::HashJoin(_)
             | PhysicalPlan::MergeJoin(_)
             | PhysicalPlan::IndexJoin(_)
+            | PhysicalPlan::IndexHashJoin(_)
             | PhysicalPlan::Apply(_)
     )
 }
@@ -190,6 +190,7 @@ fn join_type(plan: &PhysicalPlan) -> Option<LogicalJoinType> {
         PhysicalPlan::HashJoin(join) => Some(join.join_type),
         PhysicalPlan::MergeJoin(join) => Some(join.join_type),
         PhysicalPlan::IndexJoin(join) => Some(join.join_type),
+        PhysicalPlan::IndexHashJoin(join) => Some(join.physical_index_join.join_type),
         PhysicalPlan::Apply(apply) => Some(apply.hash_join.join_type),
         _ => None,
     }
@@ -449,11 +450,12 @@ impl HintContext<'_> {
                     res.push(join_hint);
                 }
             }
-            PhysicalPlan::IndexJoin(join) => {
-                let name = match join.kind {
-                    IndexJoinKind::IndexJoin => "INL_JOIN",
-                    IndexJoinKind::IndexHashJoin => "INL_HASH_JOIN",
-                    IndexJoinKind::IndexMergeJoin => "INL_MERGE_JOIN",
+            PhysicalPlan::IndexJoin(_) | PhysicalPlan::IndexHashJoin(_) => {
+                let join = plan.as_index_join().expect("an index-join operator");
+                let name = if matches!(plan, PhysicalPlan::IndexHashJoin(_)) {
+                    "INL_HASH_JOIN"
+                } else {
+                    "INL_JOIN"
                 };
                 let children = plan.children();
                 if let Some(join_hint) = self.gen_join_method_hint(

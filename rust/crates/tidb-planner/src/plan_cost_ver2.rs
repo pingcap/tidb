@@ -1465,7 +1465,6 @@ pub fn index_join_cost(
             cpu_factor,
             mem_factor,
         ),
-        IndexJoinKind::IndexMergeJoin => new_zero_cost_ver2(trace_cost(option)),
         IndexJoinKind::IndexJoin => hash_build_cost(
             option,
             probe_rows_tot,

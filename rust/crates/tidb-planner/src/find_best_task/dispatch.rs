@@ -1136,9 +1136,6 @@ fn exhaust_physical_plans(
                         tidb_planner_core_operator_physicalop::IndexJoinKind::IndexHashJoin => {
                             op.prefer_any(&[join_hint_flags::NO_INDEX_HASH_JOIN])
                         }
-                        tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin => {
-                            op.prefer_any(&[join_hint_flags::NO_INDEX_MERGE_JOIN])
-                        }
                     },
                 };
                 if filtered {
@@ -1379,21 +1376,18 @@ fn exhaust_physical_plans(
                         } else {
                             (right_columns.clone(), left_columns.clone())
                         };
-                        PhysicalPlan::IndexJoin(tidb_planner_core_operator_physicalop::PhysicalIndexJoin {
+                        let physical_index_join = tidb_planner_core_operator_physicalop::PhysicalIndexJoin {
                             base: {
                                 let mut base = base;
                                 // Go's `Init` stores the physical join's own TP.
                                 base.base.set_tp(match kind {
                                     tidb_planner_core_operator_physicalop::IndexJoinKind::IndexJoin => "IndexJoin",
                                     tidb_planner_core_operator_physicalop::IndexJoinKind::IndexHashJoin => "IndexHashJoin",
-                                    tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin => "IndexMergeJoin",
                                 });
                                 base
                             },
                             join_type: op.join_type,
                             inner_child_idx: 1 - outer_idx,
-                            kind,
-                            keep_outer_order,
                             inner_access_table_id: None,
                             inner_access_index_id: None,
                             from_decorrelated_apply: op.from_decorrelated_apply && outer_idx == 0,
@@ -1414,7 +1408,19 @@ fn exhaust_physical_plans(
                             idx_col_lens: Vec::new(),
                             compare_filters: None,
                             range_rebuild: None,
-                        })
+                        };
+                        // Go `constructIndexJoin` / `constructIndexHashJoin`.
+                        match kind {
+                            tidb_planner_core_operator_physicalop::IndexJoinKind::IndexJoin => {
+                                PhysicalPlan::IndexJoin(physical_index_join)
+                            }
+                            tidb_planner_core_operator_physicalop::IndexJoinKind::IndexHashJoin => {
+                                PhysicalPlan::IndexHashJoin(tidb_planner_core_operator_physicalop::PhysicalIndexHashJoin {
+                                    physical_index_join,
+                                    keep_outer_order,
+                                })
+                            }
+                        }
                     }
                 };
                 joins.push(physical);
@@ -1966,7 +1972,7 @@ fn find_best_task_uncached(
             slices
                 .iter()
                 .flatten()
-                .any(|p| matches!(p, PhysicalPlan::IndexJoin(_)))
+                .any(|p| p.as_index_join().is_some())
         };
         if !contains_index_join(&plans_fits_prop) && !contains_index_join(&enforced) {
             if hint_can_work && !hint_works_with_prop {
@@ -5738,9 +5744,7 @@ fn enumerate_physical_plans_4_task(
                 Ok(task) => {
                     // Go `indexJoinAttach2Task`.
                     if let PhysicalPlan::IndexJoin(join) = pp {
-                        if join.from_decorrelated_apply
-                            && join.kind == tidb_planner_core_operator_physicalop::IndexJoinKind::IndexJoin
-                        {
+                        if join.from_decorrelated_apply {
                             if let Some(signals) = ctx
                                 .mpp_warning_sink
                                 .and_then(|sink| sink.get_expr_ctx().alternative_logical_plan_signals())
@@ -5994,8 +5998,6 @@ fn normal_preference_applies(
 /// valid hinted tasks still compare by cost.
 fn logical_join_hint_applies(plan: &LogicalPlan, physical: &PhysicalPlan) -> bool {
     use tidb_hint::join_hint_flags as hint;
-    use tidb_planner_core_operator_physicalop::IndexJoinKind;
-
     let LogicalPlan::Join(join) = plan else {
         return false;
     };
@@ -6003,20 +6005,13 @@ fn logical_join_hint_applies(plan: &LogicalPlan, physical: &PhysicalPlan) -> boo
         PhysicalPlan::MergeJoin(_) => join.prefer_any(&[hint::MERGE_JOIN]),
         PhysicalPlan::IndexJoin(index) => {
             let inner_is_left = index.inner_child_idx == 0;
-            match index.kind {
-                IndexJoinKind::IndexJoin => {
-                    (inner_is_left && join.prefer_any(&[hint::LEFT_AS_INLJ_INNER]))
-                        || (!inner_is_left && join.prefer_any(&[hint::RIGHT_AS_INLJ_INNER]))
-                }
-                IndexJoinKind::IndexHashJoin => {
-                    (inner_is_left && join.prefer_any(&[hint::LEFT_AS_INLHJ_INNER]))
-                        || (!inner_is_left && join.prefer_any(&[hint::RIGHT_AS_INLHJ_INNER]))
-                }
-                IndexJoinKind::IndexMergeJoin => {
-                    (inner_is_left && join.prefer_any(&[hint::LEFT_AS_INLMJ_INNER]))
-                        || (!inner_is_left && join.prefer_any(&[hint::RIGHT_AS_INLMJ_INNER]))
-                }
-            }
+            (inner_is_left && join.prefer_any(&[hint::LEFT_AS_INLJ_INNER]))
+                || (!inner_is_left && join.prefer_any(&[hint::RIGHT_AS_INLJ_INNER]))
+        }
+        PhysicalPlan::IndexHashJoin(index) => {
+            let inner_is_left = index.physical_index_join.inner_child_idx == 0;
+            (inner_is_left && join.prefer_any(&[hint::LEFT_AS_INLHJ_INNER]))
+                || (!inner_is_left && join.prefer_any(&[hint::RIGHT_AS_INLHJ_INNER]))
         }
         PhysicalPlan::HashJoin(hash) => {
             let mut force_left_to_build =

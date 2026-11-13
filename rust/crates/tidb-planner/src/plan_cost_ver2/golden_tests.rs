@@ -1439,8 +1439,6 @@ fn test_source_index_join_kinds_differ_only_in_the_hash_table() {
         .value()
     };
     let shared = 10.0 * 3.0 * 49.90 + 10.0 * 10.0 * 49.90;
-    // IndexMergeJoin builds no hash table at all.
-    assert_eq!(cost(IndexJoinKind::IndexMergeJoin), shared);
     // IndexHashJoin hashes the BUILD side on the right-hand keys.
     let build_table = 10.0 * 2.0 * 49.90 + 10.0 * 32.0 * 0.2 + 10.0 * 49.90;
     assert_eq!(
@@ -1469,7 +1467,7 @@ fn test_source_semi_index_join_pays_for_the_rows_it_cannot_stop_reading() {
         num_left_join_keys: 0,
         num_ranges: 1.0,
         is_semi_join,
-        kind: IndexJoinKind::IndexMergeJoin,
+        kind: IndexJoinKind::IndexHashJoin,
     };
     let cost = |probe_rows_one, is_semi_join| {
         index_join_cost(
@@ -1483,12 +1481,10 @@ fn test_source_semi_index_join_pays_for_the_rows_it_cannot_stop_reading() {
         )
         .value()
     };
-    let shared = 10.0 * 3.0 * 49.90 + 10.0 * 10.0 * 49.90;
     let probe = 60.0 * 10.0 / INDEX_JOIN_BATCH_RATIO;
-    assert_eq!(cost(4.0, false), shared + probe / 5.0);
     // A semi join re-reads the whole key group, so its probe is scaled by the
-    // per-key row count...
-    assert_eq!(cost(4.0, true), shared + probe * 4.0 / 5.0);
+    // per-key row count (the build side's hash table is the same for both)...
+    assert!((cost(4.0, true) - cost(4.0, false) - probe * 3.0 / 5.0).abs() < 1e-9);
     // ...but only when there IS more than one row per key.
     assert_eq!(cost(1.0, true), cost(1.0, false));
 }

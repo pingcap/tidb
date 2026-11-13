@@ -485,6 +485,7 @@ impl ResolveIndicesItself for PhysicalPlan {
             Self::HashJoin(op) => op.resolve_indices_itself()?,
             Self::MergeJoin(op) => op.resolve_indices_itself()?,
             Self::IndexJoin(op) => op.resolve_indices_itself()?,
+            Self::IndexHashJoin(op) => op.physical_index_join.resolve_indices_itself()?,
             Self::Apply(op) => {
                 op.hash_join.resolve_indices_itself()?;
                 let left = child_schema(&op.hash_join.base, 0)?;

@@ -21,11 +21,8 @@ use tidb_executor::{build_prepared_select_plan, run_create_table_on, run_insert_
 use tidb_infoschema::{SessionExtendedInfoSchema, DEFAULT_DATABASE};
 
 fn has_index_join_compare_filters(plan: &tidb_planner_core_operator_physicalop::PhysicalPlan) -> bool {
-    matches!(
-        plan,
-        tidb_planner_core_operator_physicalop::PhysicalPlan::IndexJoin(join)
-            if join.compare_filters.is_some()
-    ) || plan.children().iter().any(has_index_join_compare_filters)
+    plan.as_index_join().is_some_and(|join| join.compare_filters.is_some())
+        || plan.children().iter().any(has_index_join_compare_filters)
 }
 
 #[test]

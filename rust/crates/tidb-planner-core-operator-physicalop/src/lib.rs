@@ -623,16 +623,11 @@ impl PhysicalMergeJoin {
 }
 
 impl PhysicalIndexJoin {
-    /// Go `PhysicalIndexJoin.MemoryUsage` (`physical_index_join.go:111-125`)
-    /// plus the `PhysicalIndexHashJoin` (`:86-92`) / `PhysicalIndexMergeJoin`
-    /// (`physical_index_merge_join.go:54-62`) terms the `kind` selects. Go's
-    /// `InnerPlan` is a child here, charged by the subtree walk.
+    /// Go `PhysicalIndexJoin.MemoryUsage` (`physical_index_join.go:111-125`).
+    /// Go's `InnerPlan` is a child here, charged by the subtree walk.
     #[must_use]
     pub fn memory_usage(&self) -> i64 {
-        use tidb_size::{
-            SIZE_OF_BOOL, SIZE_OF_FUNC, SIZE_OF_INT, SIZE_OF_INTERFACE, SIZE_OF_POINTER,
-            SIZE_OF_SLICE,
-        };
+        use tidb_size::{SIZE_OF_INT, SIZE_OF_INTERFACE, SIZE_OF_POINTER, SIZE_OF_SLICE};
         let mut sum = base_physical_join_memory_usage(
             &self.base,
             &[
@@ -655,16 +650,16 @@ impl PhysicalIndexJoin {
         if let Some(filters) = &self.compare_filters {
             sum += filters.memory_usage();
         }
-        sum += match self.kind {
-            IndexJoinKind::IndexJoin => 0,
-            IndexJoinKind::IndexHashJoin => SIZE_OF_BOOL,
-            IndexJoinKind::IndexMergeJoin => {
-                SIZE_OF_SLICE * 3
-                    + self.left_join_keys.len() as i64 * 2 * SIZE_OF_FUNC
-                    + SIZE_OF_BOOL * 2
-            }
-        };
         sum
+    }
+}
+
+impl PhysicalIndexHashJoin {
+    /// Go `PhysicalIndexHashJoin.MemoryUsage`: the index join and
+    /// `KeepOuterOrder`.
+    #[must_use]
+    pub fn memory_usage(&self) -> i64 {
+        self.physical_index_join.memory_usage() + tidb_size::SIZE_OF_BOOL
     }
 }
 
@@ -872,11 +867,6 @@ pub struct PhysicalIndexJoin {
     pub join_type: LogicalJoinType,
     /// Go `BasePhysicalJoin.InnerChildIdx`.
     pub inner_child_idx: usize,
-    /// Which of Go's index-join executor variants this candidate uses.
-    pub kind: IndexJoinKind,
-    /// Go `PhysicalIndexHashJoin.KeepOuterOrder` (the plain index join also
-    /// preserves its outer order by construction).
-    pub keep_outer_order: bool,
     /// The table selected by the inner data source while answering the
     /// index-join runtime property. Go transports the complete choice through
     /// `IndexJoinInfo`; this identity lets the executor lower the chosen
@@ -934,8 +924,6 @@ impl Default for PhysicalIndexJoin {
             base: BasePhysicalPlan::default(),
             join_type: LogicalJoinType::Inner,
             inner_child_idx: 1,
-            kind: IndexJoinKind::IndexJoin,
-            keep_outer_order: false,
             inner_access_table_id: None,
             inner_access_index_id: None,
             left_join_keys: Vec::new(),
@@ -4491,17 +4479,26 @@ pub fn exhaust_physical_plans_4_logical_window(
     windows
 }
 
-/// Which index-join executor a `PhysicalIndexJoin` is (Go's
-/// `PhysicalIndexJoin` / `PhysicalIndexHashJoin` / `PhysicalIndexMergeJoin`),
-/// the `indexJoinType` the cost model reads.
+/// Which index-join operator an enumeration candidate builds (Go's
+/// `constructIndexJoin` / `constructIndexHashJoin`), the `indexJoinType` the
+/// cost model reads. Go's planner never builds a `PhysicalIndexMergeJoin`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IndexJoinKind {
     /// `IndexJoin`: the hash table is built over ALL probe rows.
     IndexJoin,
     /// `IndexHashJoin`: the hash table is built over the build side.
     IndexHashJoin,
-    /// `IndexMergeJoin`: no hash table.
-    IndexMergeJoin,
+}
+
+/// Go `PhysicalIndexHashJoin` (`physical_index_hash_join.go`): an index join
+/// whose executor hashes each inner batch, optionally keeping the outer
+/// order.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalIndexHashJoin {
+    /// Go's embedded `PhysicalIndexJoin`.
+    pub physical_index_join: PhysicalIndexJoin,
+    /// Go `KeepOuterOrder`.
+    pub keep_outer_order: bool,
 }
 
 /// What the planner knows of an `INSERT ... SELECT`'s source once it is
@@ -4536,6 +4533,8 @@ pub enum PhysicalPlan {
     /// Go's three index-join execution variants, which share cache-rebuild
     /// behavior.
     IndexJoin(PhysicalIndexJoin),
+    /// Go `physicalop.PhysicalIndexHashJoin`.
+    IndexHashJoin(PhysicalIndexHashJoin),
     /// Go `physicalop.PhysicalSort`.
     Sort(PhysicalSort),
     /// Go `physicalop.PhysicalLimit`.
@@ -4625,6 +4624,7 @@ impl PhysicalPlan {
             Self::HashJoin(op) => &op.base,
             Self::MergeJoin(op) => &op.base,
             Self::IndexJoin(op) => &op.base,
+            Self::IndexHashJoin(op) => &op.physical_index_join.base,
             Self::Sort(op) => &op.base,
             Self::Limit(op) => &op.base,
             Self::TableScan(op) => &op.base,
@@ -4671,6 +4671,7 @@ impl PhysicalPlan {
             Self::HashJoin(op) => &mut op.base,
             Self::MergeJoin(op) => &mut op.base,
             Self::IndexJoin(op) => &mut op.base,
+            Self::IndexHashJoin(op) => &mut op.physical_index_join.base,
             Self::Sort(op) => &mut op.base,
             Self::Limit(op) => &mut op.base,
             Self::TableScan(op) => &mut op.base,
@@ -5004,7 +5005,7 @@ impl PhysicalPlan {
                 expressions(&mut result, &op.right_conditions);
                 expressions(&mut result, &op.other_conditions);
             }
-            Self::IndexJoin(op) => {
+            Self::IndexJoin(op) | Self::IndexHashJoin(PhysicalIndexHashJoin { physical_index_join: op, .. }) => {
                 expressions(&mut result, &op.left_conditions);
                 expressions(&mut result, &op.right_conditions);
             }
@@ -5153,6 +5154,27 @@ impl PhysicalPlan {
             Self::HashJoin(join) => Some(join.join_type),
             Self::MergeJoin(join) => Some(join.join_type),
             Self::IndexJoin(join) => Some(join.join_type),
+            Self::IndexHashJoin(join) => Some(join.physical_index_join.join_type),
+            _ => None,
+        }
+    }
+
+    /// The index join an index-join operator is or embeds: Go's
+    /// `*PhysicalIndexJoin`, alone or inside a `*PhysicalIndexHashJoin`.
+    #[must_use]
+    pub const fn as_index_join(&self) -> Option<&PhysicalIndexJoin> {
+        match self {
+            Self::IndexJoin(join) => Some(join),
+            Self::IndexHashJoin(join) => Some(&join.physical_index_join),
+            _ => None,
+        }
+    }
+
+    /// [`Self::as_index_join`], mutably.
+    pub fn as_index_join_mut(&mut self) -> Option<&mut PhysicalIndexJoin> {
+        match self {
+            Self::IndexJoin(join) => Some(join),
+            Self::IndexHashJoin(join) => Some(&mut join.physical_index_join),
             _ => None,
         }
     }
@@ -5163,6 +5185,7 @@ impl PhysicalPlan {
         match self {
             Self::HashJoin(join) => Some(join.inner_child_idx),
             Self::IndexJoin(join) => Some(join.inner_child_idx),
+            Self::IndexHashJoin(join) => Some(join.physical_index_join.inner_child_idx),
             _ => None,
         }
     }
@@ -5173,6 +5196,33 @@ impl PhysicalPlan {
     /// [`tidb_planner_core_operator_logicalop::LogicalPlan::clone_shallow`].
     #[must_use]
     pub fn clone_shallow(&self) -> Self {
+        fn index_join_of(op: &PhysicalIndexJoin) -> PhysicalIndexJoin {
+            PhysicalIndexJoin {
+                base: base_of(&op.base),
+                join_type: op.join_type,
+                inner_child_idx: op.inner_child_idx,
+                inner_access_table_id: op.inner_access_table_id,
+                from_decorrelated_apply: op.from_decorrelated_apply,
+                inner_access_index_id: op.inner_access_index_id,
+                left_join_keys: op.left_join_keys.clone(),
+                right_join_keys: op.right_join_keys.clone(),
+                outer_join_keys: op.outer_join_keys.clone(),
+                inner_join_keys: op.inner_join_keys.clone(),
+                is_null_eq: op.is_null_eq.clone(),
+                left_conditions: op.left_conditions.clone(),
+                right_conditions: op.right_conditions.clone(),
+                other_conditions: op.other_conditions.clone(),
+                default_values: op.default_values.clone(),
+                outer_hash_keys: op.outer_hash_keys.clone(),
+                inner_hash_keys: op.inner_hash_keys.clone(),
+                equal_conditions: op.equal_conditions.clone(),
+                ranges: op.ranges.clone(),
+                key_off2_idx_off: op.key_off2_idx_off.clone(),
+                idx_col_lens: op.idx_col_lens.clone(),
+                compare_filters: op.compare_filters.clone(),
+                range_rebuild: op.range_rebuild.clone(),
+                        }
+        }
         fn base_of(base: &BasePhysicalPlan) -> BasePhysicalPlan {
             BasePhysicalPlan {
                 base: base.base.clone(),
@@ -5229,32 +5279,10 @@ impl PhysicalPlan {
                 desc: op.desc,
                 compare_funcs: op.compare_funcs.clone(),
             }),
-            Self::IndexJoin(op) => Self::IndexJoin(PhysicalIndexJoin {
-                base: base_of(&op.base),
-                join_type: op.join_type,
-                inner_child_idx: op.inner_child_idx,
-                kind: op.kind,
+            Self::IndexJoin(op) => Self::IndexJoin(index_join_of(op)),
+            Self::IndexHashJoin(op) => Self::IndexHashJoin(PhysicalIndexHashJoin {
+                physical_index_join: index_join_of(&op.physical_index_join),
                 keep_outer_order: op.keep_outer_order,
-                inner_access_table_id: op.inner_access_table_id,
-                from_decorrelated_apply: op.from_decorrelated_apply,
-                inner_access_index_id: op.inner_access_index_id,
-                left_join_keys: op.left_join_keys.clone(),
-                right_join_keys: op.right_join_keys.clone(),
-                outer_join_keys: op.outer_join_keys.clone(),
-                inner_join_keys: op.inner_join_keys.clone(),
-                is_null_eq: op.is_null_eq.clone(),
-                left_conditions: op.left_conditions.clone(),
-                right_conditions: op.right_conditions.clone(),
-                other_conditions: op.other_conditions.clone(),
-                default_values: op.default_values.clone(),
-                outer_hash_keys: op.outer_hash_keys.clone(),
-                inner_hash_keys: op.inner_hash_keys.clone(),
-                equal_conditions: op.equal_conditions.clone(),
-                ranges: op.ranges.clone(),
-                key_off2_idx_off: op.key_off2_idx_off.clone(),
-                idx_col_lens: op.idx_col_lens.clone(),
-                compare_filters: op.compare_filters.clone(),
-                range_rebuild: op.range_rebuild.clone(),
             }),
             Self::Sort(op) => Self::Sort(PhysicalSort {
                 base: base_of(&op.base),
@@ -5794,7 +5822,8 @@ fn visit_physical_correlated_columns_mut(
             expressions(&mut op.right_conditions, visitor);
             expressions(&mut op.other_conditions, visitor);
         }
-        PhysicalPlan::IndexJoin(op) => {
+        PhysicalPlan::IndexJoin(op)
+        | PhysicalPlan::IndexHashJoin(PhysicalIndexHashJoin { physical_index_join: op, .. }) => {
             expressions(&mut op.left_conditions, visitor);
             expressions(&mut op.right_conditions, visitor);
         }

@@ -143,7 +143,7 @@ fn inherit_index_join_stats(
     has_feedback: bool,
     child: Option<&PhysicalPlan>,
 ) {
-    if has_feedback && !matches!(plan, PhysicalPlan::IndexJoin(_)) {
+    if has_feedback && plan.as_index_join().is_none() {
         plan.base_mut().base.set_stats(
             child
                 .and_then(PhysicalPlan::stats_info)
@@ -1107,16 +1107,11 @@ fn complete_physical_index_join(
     let mut outer_hash_keys = new_outer_keys.clone();
     let mut inner_hash_keys = new_inner_keys.clone();
     // Go's `completePhysicalIndexJoin` runs this extraction with
-    // `extractOtherEQ` hardcoded `true` at BOTH of its call sites that reach
-    // it -- `indexJoinAttach2Task` and `indexHashJoinAttach2Task`
-    // (`task.go:158,178`) -- so a plain `IndexJoin` batches its outer rows
-    // into a hash map for lookup dedup exactly as `IndexHashJoin` does, and
-    // reads `OuterHashKeys`/`InnerHashKeys` too. `attach2Task4PhysicalIndexMergeJoin`
-    // (`task.go:141`) is the one index-join attach path that never calls
-    // `completePhysicalIndexJoin` at all -- its inner plan is already fixed
-    // before `Attach2Task` runs, and the merge executor has no hash table to
-    // key -- so `IndexMergeJoin` alone keeps skipping this extraction.
-    if join.kind != tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin {
+    // `extractOtherEQ` hardcoded `true` at both of its call sites
+    // (`indexJoinAttach2Task`, `indexHashJoinAttach2Task`), so a plain
+    // `IndexJoin` batches its outer rows into a hash map for lookup dedup
+    // exactly as `IndexHashJoin` does.
+    {
         let outer_schema = outer_plan.schema().ok_or_else(|| {
             PlanError::internal("completePhysicalIndexJoin outer child has no schema")
         })?;
@@ -2127,14 +2122,14 @@ pub(crate) fn attach2_task_in(
             root.warnings.copy_from([&right.warnings, &left.warnings]);
             Ok(Task::Root(root))
         }
-        PhysicalPlan::IndexJoin(_) => {
+        // Go `indexJoinAttach2Task` / `indexHashJoinAttach2Task`.
+        PhysicalPlan::IndexJoin(_) | PhysicalPlan::IndexHashJoin(_) => {
             let second = tasks
                 .into_iter()
                 .next()
                 .ok_or_else(|| PlanError::internal("IndexJoin requires two tasks"))?;
-            let PhysicalPlan::IndexJoin(mut join) = plan else {
-                unreachable!()
-            };
+            let mut plan = plan;
+            let join = plan.as_index_join_mut().expect("an index-join operator");
             let (outer, inner) = match join.inner_child_idx {
                 0 => (second, first),
                 1 => (first, second),
@@ -2150,7 +2145,7 @@ pub(crate) fn attach2_task_in(
             let info = inner.index_join_info.take().ok_or_else(|| {
                 PlanError::internal("IndexJoin inner task has no access-path feedback")
             })?;
-            complete_physical_index_join(&mut join, info, inner.get_plan(), outer.get_plan())?;
+            complete_physical_index_join(join, info, inner.get_plan(), outer.get_plan())?;
             let outer_plan = outer.take_plan().expect("read above");
             let inner_plan = inner.take_plan().expect("read above");
             join.base.set_children(if join.inner_child_idx == 1 {
@@ -2159,7 +2154,7 @@ pub(crate) fn attach2_task_in(
                 vec![inner_plan, outer_plan]
             });
             let mut root = RootTask::default();
-            root.set_plan(PhysicalPlan::IndexJoin(join));
+            root.set_plan(plan);
             root.warnings.copy_from([&outer.warnings, &inner.warnings]);
             Ok(Task::Root(root))
         }
@@ -2990,12 +2985,10 @@ mod attach_tests {
                 equality(&outer_keys[0], &inner_keys[0]),
                 equality(&outer_keys[1], &inner_keys[1]),
             ],
-            // `PhysicalIndexJoin::default()`'s `kind` is the PLAIN
-            // `IndexJoin` variant, not `IndexHashJoin` -- proving Go's
-            // `extractOtherEQ=true` (`task.go:158,178`) applies to both.
+            // A plain `PhysicalIndexJoin`, not an `IndexHashJoin` -- proving
+            // Go's `extractOtherEQ=true` (`task.go:158,178`) applies to both.
             ..tidb_planner_core_operator_physicalop::PhysicalIndexJoin::default()
         };
-        assert_eq!(join.kind, tidb_planner_core_operator_physicalop::IndexJoinKind::IndexJoin);
 
         complete_physical_index_join(
             &mut join,

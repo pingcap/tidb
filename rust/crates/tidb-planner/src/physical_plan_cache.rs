@@ -496,7 +496,7 @@ fn bind_plan_expressions(
                 bind_conditions(level, context)?;
             }
         }
-        PhysicalPlan::IndexJoin(join) => {
+        PhysicalPlan::IndexJoin(join) | PhysicalPlan::IndexHashJoin(tidb_planner_core_operator_physicalop::PhysicalIndexHashJoin { physical_index_join: join, .. }) => {
             bind_conditions(&mut join.left_conditions, context)?;
             bind_conditions(&mut join.right_conditions, context)?;
             bind_conditions(&mut join.other_conditions, context)?;
@@ -993,7 +993,7 @@ pub fn rebuild_ranges_for_cached_plan(
                 bind_subtree_expressions(table_plan, context)?;
             }
         }
-        PhysicalPlan::IndexJoin(join) => {
+        PhysicalPlan::IndexJoin(join) | PhysicalPlan::IndexHashJoin(tidb_planner_core_operator_physicalop::PhysicalIndexHashJoin { physical_index_join: join, .. }) => {
             let plan_id = join.base.base.id();
             if let Some(rebuild) = join.range_rebuild.as_mut() {
                 // Go `rebuildRange`: `updateRange(innerPlan, x.Ranges.Range(),

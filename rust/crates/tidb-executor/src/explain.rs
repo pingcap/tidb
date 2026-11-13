@@ -880,12 +880,8 @@ fn physical_operator_name(
         // Go's plancodec names each executor family distinctly.
         PhysicalPlan::HashJoin(_) => "HashJoin".to_owned(),
         PhysicalPlan::MergeJoin(_) => "MergeJoin".to_owned(),
-        PhysicalPlan::IndexJoin(join) => match join.kind {
-            tidb_planner_core_operator_physicalop::IndexJoinKind::IndexJoin => "IndexJoin",
-            tidb_planner_core_operator_physicalop::IndexJoinKind::IndexHashJoin => "IndexHashJoin",
-            tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin => "IndexMergeJoin",
-        }
-        .to_owned(),
+        PhysicalPlan::IndexJoin(_) => "IndexJoin".to_owned(),
+        PhysicalPlan::IndexHashJoin(_) => "IndexHashJoin".to_owned(),
         _ => plan.tp().to_owned(),
     }
 }
@@ -1282,7 +1278,7 @@ fn physical_operator_own_info(
             &join.right_conditions,
             &join.other_conditions,
         ),
-        PhysicalPlan::IndexJoin(join) => {
+        PhysicalPlan::IndexJoin(join) | PhysicalPlan::IndexHashJoin(tidb_planner_core_operator_physicalop::PhysicalIndexHashJoin { physical_index_join: join, .. }) => {
             let mut parts = vec![join_type_text(join.join_type).to_owned()];
             // Go `PhysicalIndexJoin.ExplainInfoInternal`
             // (`physical_index_join.go:159-165`): the `inner:` field comes
@@ -1323,9 +1319,7 @@ fn physical_operator_own_info(
                     columns_text(eval_ctx, &join.inner_join_keys)
                 ));
             }
-            if !join.outer_hash_keys.is_empty()
-                && join.kind != tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin
-            {
+            if !join.outer_hash_keys.is_empty() {
                 let mut equal = join
                     .outer_hash_keys
                     .iter()
@@ -1956,7 +1950,7 @@ fn physical_explain_operator(
                 // display row count is multiplied by the join's OUTER row
                 // count. The outer child does not.
                 let inner_child_idx = match plan {
-                    PhysicalPlan::IndexJoin(join) => Some(join.inner_child_idx),
+                    PhysicalPlan::IndexJoin(_) | PhysicalPlan::IndexHashJoin(_) => plan.inner_child_idx(),
                     PhysicalPlan::Apply(apply) => Some(apply.hash_join.inner_child_idx),
                     _ => None,
                 };
@@ -2226,7 +2220,7 @@ fn build_child_index(plan: &PhysicalPlan) -> Option<usize> {
             join.inner_child_idx
         }),
         PhysicalPlan::Apply(apply) => Some(1usize.saturating_sub(apply.hash_join.inner_child_idx)),
-        PhysicalPlan::IndexJoin(join) => Some(1usize.saturating_sub(join.inner_child_idx)),
+        PhysicalPlan::IndexJoin(join) | PhysicalPlan::IndexHashJoin(tidb_planner_core_operator_physicalop::PhysicalIndexHashJoin { physical_index_join: join, .. }) => Some(1usize.saturating_sub(join.inner_child_idx)),
         PhysicalPlan::MergeJoin(join) => Some(
             if join.join_type == tidb_planner_core_base::LogicalJoinType::RightOuter {
                 0
@@ -2896,9 +2890,7 @@ fn index_join_normalized_info(
             columns_text(eval_ctx, &join.inner_join_keys)
         ));
     }
-    if !join.outer_hash_keys.is_empty()
-        && join.kind != tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin
-    {
+    if !join.outer_hash_keys.is_empty() {
         let mut equal = join
             .outer_hash_keys
             .iter()
@@ -3055,7 +3047,7 @@ fn physical_normalized_info(
             hash_join_normalized_info(statement_context, &apply.hash_join)
         }
         PhysicalPlan::MergeJoin(join) => merge_join_normalized_info(eval_ctx, join),
-        PhysicalPlan::IndexJoin(join) => index_join_normalized_info(eval_ctx, join),
+        PhysicalPlan::IndexJoin(join) | PhysicalPlan::IndexHashJoin(tidb_planner_core_operator_physicalop::PhysicalIndexHashJoin { physical_index_join: join, .. }) => index_join_normalized_info(eval_ctx, join),
         PhysicalPlan::IndexReader(reader) => format!(
             "index:{}",
             reader
@@ -4477,27 +4469,8 @@ mod tests {
             "MergeJoin"
         );
 
-        let mut index = tidb_planner_core_operator_physicalop::PhysicalIndexJoin::default();
-        for (kind, expected) in [
-            (
-                tidb_planner_core_operator_physicalop::IndexJoinKind::IndexJoin,
-                "IndexJoin",
-            ),
-            (
-                tidb_planner_core_operator_physicalop::IndexJoinKind::IndexHashJoin,
-                "IndexHashJoin",
-            ),
-            (
-                tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin,
-                "IndexMergeJoin",
-            ),
-        ] {
-            index.kind = kind;
-            assert_eq!(
-                physical_operator_name(&PhysicalPlan::IndexJoin(index.clone())),
-                expected
-            );
-        }
+        assert_eq!(physical_operator_name(&PhysicalPlan::IndexJoin(Default::default())), "IndexJoin");
+        assert_eq!(physical_operator_name(&PhysicalPlan::IndexHashJoin(Default::default())), "IndexHashJoin");
     }
 
     /// Task 65's secondary note: an `IndexJoin`'s `inner:` field named its

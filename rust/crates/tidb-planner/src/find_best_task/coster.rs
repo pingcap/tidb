@@ -1118,7 +1118,14 @@ impl Ver2Coster {
                 plan.schema().map_or(0, |schema| schema.columns.len()),
                 self.factors.task_cpu(task_type),
             ),
-            PhysicalPlan::IndexJoin(join) => {
+            PhysicalPlan::IndexJoin(_) | PhysicalPlan::IndexHashJoin(_) => {
+                let join = plan.as_index_join().expect("an index-join operator");
+                // Go's cost reads which operator it prices (`indexJoinType`).
+                let kind = if matches!(plan, PhysicalPlan::IndexHashJoin(_)) {
+                    tidb_planner_core_operator_physicalop::IndexJoinKind::IndexHashJoin
+                } else {
+                    tidb_planner_core_operator_physicalop::IndexJoinKind::IndexJoin
+                };
                 let [left, right] = plan.children() else {
                     return self.children_cost(plan, task_type, is_child_of_inl);
                 };
@@ -1168,7 +1175,7 @@ impl Ver2Coster {
                                 | tidb_planner_core_base::LogicalJoinType::LeftOuterSemi
                                 | tidb_planner_core_base::LogicalJoinType::AntiLeftOuterSemi
                         ),
-                        kind: join.kind,
+                        kind,
                     },
                     (&build_filters, &probe_filters),
                     (&self.factors, &self.session_factors),

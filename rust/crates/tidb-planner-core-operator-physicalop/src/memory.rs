@@ -424,6 +424,7 @@ pub(super) fn go_node_memory_usage(node: &PhysicalPlan) -> i64 {
         PhysicalPlan::HashJoin(join) => join.memory_usage(),
         PhysicalPlan::MergeJoin(join) => join.memory_usage(),
         PhysicalPlan::IndexJoin(join) => join.memory_usage(),
+        PhysicalPlan::IndexHashJoin(join) => join.memory_usage(),
         PhysicalPlan::Apply(apply) => apply.memory_usage(),
         other => other.base().go_schema_producer_memory_usage(),
     }

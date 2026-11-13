@@ -530,13 +530,9 @@ fn go_executor_next_region(plan: &PhysicalPlan) -> Option<&'static str> {
 /// The Go executor type of a node [`go_executor_next_region`] leaves out,
 /// for its RU v2 recording.
 fn go_executor_ruv2_type(plan: &PhysicalPlan) -> Option<&'static str> {
-    use tidb_planner_core_operator_physicalop::IndexJoinKind;
     Some(match plan {
-        PhysicalPlan::IndexJoin(join) => match join.kind {
-            IndexJoinKind::IndexJoin => "*join.IndexLookUpJoin",
-            IndexJoinKind::IndexHashJoin => "*join.IndexNestedLoopHashJoin",
-            IndexJoinKind::IndexMergeJoin => "*join.IndexLookUpMergeJoin",
-        },
+        PhysicalPlan::IndexJoin(_) => "*join.IndexLookUpJoin",
+        PhysicalPlan::IndexHashJoin(_) => "*join.IndexNestedLoopHashJoin",
         PhysicalPlan::Window(_) => "*windows.WindowExec",
         _ => return None,
     })
@@ -3239,9 +3235,13 @@ impl IndexJoinInnerStats {
     }
 }
 
+/// Go `buildIndexLookUpJoin`, or, for a `PhysicalIndexHashJoin`
+/// (`keep_outer_order` set), `buildIndexNestedLoopHashJoin`, which wraps the
+/// same lookup join with one joiner per inner worker.
 fn build_index_join(
     plan: &PhysicalPlan,
     join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
+    keep_outer_order: Option<bool>,
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
@@ -3367,11 +3367,6 @@ fn build_index_join(
     let (left_types, right_types) = (schema_types(&left_schema), schema_types(&right_schema));
     let output_offsets =
         physical_join_output_offsets(plan, join.join_type, &left_schema, &right_schema)?;
-    // Go's `IndexLookUpMergeJoin` (and `PhysicalIndexMergeJoin`'s merge
-    // fields) is not ported; neither planner builds one on this branch.
-    if join.kind == tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin {
-        return Err(DriverError::unsupported("IndexLookUpMergeJoin is not supported"));
-    }
     // Go's joiner appends the left child's columns before the right's; a
     // physical index join's schema is never interleaved.
     let Some(children_used) =
@@ -3391,6 +3386,7 @@ fn build_index_join(
         left_types,
         right_types,
         children_used,
+        keep_outer_order,
         ctx,
         state,
     )
@@ -3433,6 +3429,7 @@ fn build_index_look_up_join(
     left_types: Vec<FieldType>,
     right_types: Vec<FieldType>,
     children_used: (Vec<usize>, Vec<usize>),
+    keep_outer_order: Option<bool>,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -3490,9 +3487,9 @@ fn build_index_look_up_join(
     };
     // Go `buildIndexNestedLoopHashJoin` wraps the same executor with one
     // joiner per inner worker.
-    if join.kind == tidb_planner_core_operator_physicalop::IndexJoinKind::IndexHashJoin {
+    if let Some(keep_outer_order) = keep_outer_order {
         return Ok(Box::new(
-            tidb_executor_join::join::IndexNestedLoopHashJoin::new(build, join.keep_outer_order)
+            tidb_executor_join::join::IndexNestedLoopHashJoin::new(build, keep_outer_order)
                 .map_err(DriverError::Exec)?,
         ));
     }
@@ -6829,7 +6826,11 @@ fn build_with_state(
             // Go `buildIndexLookUpJoin` -> `newDataReaderBuilder`'s
             // `getSnapshotTS`, for the inner reader it builds per task.
             get_snapshot_ts(ctx);
-            build_index_join(plan, join, catalog, ctx, state)
+            build_index_join(plan, join, None, catalog, ctx, state)
+        }
+        PhysicalPlan::IndexHashJoin(join) => {
+            get_snapshot_ts(ctx);
+            build_index_join(plan, &join.physical_index_join, Some(join.keep_outer_order), catalog, ctx, state)
         }
         PhysicalPlan::Apply(apply) => build_apply(plan, apply, catalog, ctx, state),
         PhysicalPlan::TableDual(dual) => Ok(Box::new(TableDualExec::new(

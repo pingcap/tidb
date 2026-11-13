@@ -11,9 +11,9 @@ use crate::PhysicalPlan;
 #[must_use]
 pub fn has_single_scan_index_join(plan: &PhysicalPlan) -> bool {
     let inner_is_single_scan = match plan {
-        PhysicalPlan::IndexJoin(join) => plan
+        PhysicalPlan::IndexJoin(_) | PhysicalPlan::IndexHashJoin(_) => plan
             .children()
-            .get(join.inner_child_idx)
+            .get(plan.inner_child_idx().expect("an index join has an inner child"))
             .is_some_and(is_single_scan_read),
         PhysicalPlan::CTE(cte) => {
             has_single_scan_index_join(&cte.seed_plan)
