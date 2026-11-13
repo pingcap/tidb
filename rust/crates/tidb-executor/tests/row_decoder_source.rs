@@ -14,7 +14,6 @@
 
 //! Material contracts from `pkg/util/rowDecoder`.
 
-use tidb_executor::KvTableDdl;
 use tidb_kv::storage::TableStorage as _;
 use tidb_executor::KvTableReader;
 use tidb_datatype::{
@@ -749,43 +748,6 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
         .unwrap()
         .unwrap();
     assert_eq!(read, [Datum::Int(2), Datum::Int(3)]);
-
-    // DDL backfill and ADMIN use the full map and therefore recompute the
-    // stored generated column from the current expression.
-    let index = Index {
-        info: tidb_model::GoShared::new(tidb_model::IndexInfo {
-            id: 7,
-            name: tidb_ast::CiString::new("b"),
-            columns: (vec![1])
-                .iter()
-                .enumerate()
-                .map(|(position, _)| tidb_model::IndexColumn {
-                    length: (vec![-1]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
-                    ..tidb_model::IndexColumn::default()
-                })
-                .collect::<Vec<_>>()
-                .into(),
-            state: tidb_model::SchemaState::PUBLIC,
-            ..tidb_model::IndexInfo::default()
-        }),
-        column_offsets: vec![1],
-        clustered_primary: false,
-    };
-    table.create_index_with_context(&mut store, index, &statement).unwrap();
-    let handles = table
-        .scan_index_range(&mut *store.clone_box(), 
-            7,
-            &tidb_ranger::types::Range {
-                low_val: vec![Datum::Int(4)],
-                high_val: vec![Datum::Int(4)],
-                collators: vec![tidb_charset::Collation::Binary],
-                low_exclude: false,
-                high_exclude: false,
-            },
-            &zone,
-        )
-        .unwrap();
-    assert_eq!(handles, std::slice::from_ref(&handle));
 }
 
 #[test]

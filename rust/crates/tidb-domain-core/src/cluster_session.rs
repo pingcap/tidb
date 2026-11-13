@@ -317,7 +317,6 @@ fn cluster_view(table: &TableInfo) -> Result<ViewDef, String> {
 
 #[cfg(test)]
 mod tests {
-    use tidb_executor::KvTableDdl;
 use super::*;
 use std::sync::Mutex;
 use tidb_store_driver_txn::cluster_storage::ClusterTableStorage;
@@ -739,55 +738,6 @@ use tidb_table::table_from_meta::kv_index;
     /// not an allocator that quietly worked. Should `create_index` ever grow a
     /// path that allocates, this test fails loudly instead of that path reading
     /// a counter with no home.
-    #[test]
-    fn the_index_backfill_never_asks_the_counter_it_was_not_given() {
-        let mut v = column(2, 1, "v", false);
-        v.field_type
-            .add_flags(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT | 1);
-        let table = TableInfo {
-            id: 402,
-            name: CiString::new("ai"),
-            columns: vec![column(1, 0, "id", true), v].into(),
-            pk_is_handle: true,
-            state: SchemaState::PUBLIC,
-            ..TableInfo::default()
-        };
-        let (storage, buffer, _snapshot) = cluster_storage();
-
-        // The rows the backfill will walk, staged with their values given,
-        // so staging them asks no counter either.
-        let mut writer = cluster_table(&table, &AutoIdSource::Unavailable)
-            .expect("the writer builds this table");
-        for id in 1..=3 {
-            writer
-                .insert_row(&mut storage.clone(), &[Datum::Int(id), Datum::Int(id)], &tidb_exprctx::NoColumns)
-                .expect("the row is staged");
-        }
-        assert_eq!(buffer.len(), 3, "three rows are staged for the walk");
-
-        // Now the backfill's own view of the same table: no counter at all.
-        let mut walked = cluster_table(&table, &AutoIdSource::Unavailable)
-            .expect("the backfill builds this table");
-        let index =
-            kv_index(&tidb_model::GoShared::new(index(1, "vi", "v", 1, -1)), &walked.columns())
-                .expect("a full-value index");
-
-        walked
-            .create_index_with_context(&mut storage.clone(), index, &tidb_sessionctx::StmtContext::default())
-            .expect("a backfill that allocates nothing needs no allocator");
-        assert!(
-            walked
-                .drop_index(&mut storage.clone(), "vi")
-                .expect("the removal walk also allocates nothing"),
-            "the index it just created is the one it removes"
-        );
-
-        // Not vacuous: the counter these two walks held really does refuse.
-        assert!(
-            walked.rebase_auto_increment(9).is_err(),
-            "a counter with no home must report that, not hand out an id"
-        );
-    }
 
     /// A HASH-partitioned table a Go cluster wrote LOADS, with the routing
     /// spec rebuilt from its stored metadata.

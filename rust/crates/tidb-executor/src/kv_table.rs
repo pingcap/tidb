@@ -43,13 +43,9 @@ use tidb_tablecodec::encode_table_row;
 #[allow(unused_imports)]
 use tidb_txnkv::{CommonHandle, Key};
 
-mod ddl_ops;
-mod partition_maintenance;
 mod table_scan;
 pub use table_scan::RowDecodeContextExt;
 pub(crate) use table_scan::insert_extra_handle;
-pub use ddl_ops::KvTableDdl;
-pub use partition_maintenance::KvTablePartitionMaintenance;
 pub use table_scan::KvTableReader;
 pub use table_scan::{capture_decoded_column_ids, RowCursor};
 

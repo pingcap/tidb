@@ -341,11 +341,6 @@ pub trait KvTableReader {
         context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError>;
 
-    fn scan_rows_with_handles_recomputed(
-        &mut self,
-        store: &mut dyn TableStorage,
-        context: &RowDecodeContext,
-    ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError>;
 
     /// Go `sampleFetcher.run` over one sampled range: the first record of
     /// the read snapshot in `[start, end)`, scanned forward whatever the
@@ -1397,20 +1392,6 @@ impl KvTableReader for TableCommon {
         Ok(rows)
     }
 
-    fn scan_rows_with_handles_recomputed(
-        &mut self,
-        store: &mut dyn TableStorage,
-        context: &RowDecodeContext,
-    ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
-        let decoder = self.row_decoder_recomputed(context)?;
-        let mut cursor =
-            self.row_cursor_with_decoder(store, decoder, None, false, false, context.zone())?;
-        let mut rows = Vec::new();
-        while let Some(entry) = cursor.next_row()? {
-            rows.push(entry);
-        }
-        Ok(rows)
-    }
 
     fn first_snapshot_row_in_range(
         &mut self,

@@ -35,7 +35,6 @@
 use tidb_meta::BdrRoleStore;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
-use crate::KvTableDdl;
 use crate::DriverError;
 use crate::StmtOutput;
 

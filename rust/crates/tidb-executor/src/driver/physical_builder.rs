@@ -8180,7 +8180,6 @@ pub(crate) fn build_dml_source(
 
 #[cfg(test)]
 mod tests {
-    use crate::KvTableDdl;
 use super::*;
     use tidb_datatype::Datum;
     use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, BatchPointGetPlan, PhysicalCTE, PhysicalCTETable, PhysicalIndexMergeReader, PhysicalMaxOneRow, PointGetPlan, PhysicalSelection, PhysicalTableDual, PhysicalTableReader, PhysicalUnionAll};
@@ -9056,7 +9055,7 @@ use super::*;
         let mut store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
         table.set_common_handle_offsets(vec![0, 1]);
         table
-            .create_index_with_context(&mut store, tidb_table::tables::Index {
+            .add_index(tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 8,
                         name: tidb_ast::CiString::new("value_uidx"),
@@ -9076,9 +9075,8 @@ use super::*;
                     column_offsets: vec![1],
                     clustered_primary: false,
                 },
-                &crate::StmtContext::for_query(),
-            )
-            .expect("create unique index");
+                false,
+            );
         for value in 1..=3 {
             table
                 .insert_row(&mut store, &[Datum::Int(value), Datum::Int(value * 10)],
@@ -9181,7 +9179,7 @@ use super::*;
         let mut store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
         table.set_pk_handle_offset(0);
         table
-            .create_index_with_context(&mut store, tidb_table::tables::Index {
+            .add_index(tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 8,
                         name: tidb_ast::CiString::new("value_uidx"),
@@ -9201,9 +9199,8 @@ use super::*;
                     column_offsets: vec![1],
                     clustered_primary: false,
                 },
-                &crate::StmtContext::for_query(),
-            )
-            .expect("create unique index");
+                false,
+            );
         for value in 1..=3 {
             table
                 .insert_row(&mut store, &[Datum::Int(value), Datum::Int(value * 10)],

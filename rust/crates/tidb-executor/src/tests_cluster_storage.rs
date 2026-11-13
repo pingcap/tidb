@@ -15,7 +15,6 @@
 //! The cluster storage seam (`tidb_store_driver_txn::cluster_storage`) under the tables
 //! the executor builds over it.
 
-    use crate::KvTableDdl;
 use crate::KvTableReader;
 use tidb_kv::cluster_storage::*;
 use tidb_store_driver_txn::cluster_storage::*;
@@ -580,7 +579,6 @@ use tidb_txnkv::Key;
             "insert",
             "update",
             "partial_update",
-            "backfill",
             "conflicts",
         ] {
             for error in [
@@ -632,9 +630,7 @@ use tidb_txnkv::Key;
                     clustered_primary: false,
                 };
                 let ctx = crate::StmtContext::default().with_txn_store(Box::new(store.clone()));
-                if operation != "backfill" {
-                    table.add_index(index.clone(), false);
-                }
+                table.add_index(index.clone(), false);
                 if operation == "partial_update" {
                     let condition = tidb_model::generated_expr::parse_expression("v > 0").unwrap();
                     table
@@ -666,7 +662,7 @@ use tidb_txnkv::Key;
                 let checkpoint = buffer.checkpoint();
                 snapshot.lock().unwrap().index_gets = 0;
                 snapshot.lock().unwrap().fail_index_get =
-                    Some((if operation == "backfill" { 2 } else { 1 }, error.clone()));
+                    Some((1, error.clone()));
                 let candidate = [Datum::Int(3), Datum::Int(3)];
                 let result = match operation {
                     "insert" => table.insert_row(&mut store, &candidate, &ctx).map(|_| ()),
@@ -675,7 +671,6 @@ use tidb_txnkv::Key;
                         &[Datum::Int(1), Datum::Int(3)],
                         &ctx,
                     ),
-                    "backfill" => table.create_index_with_context(&mut store, index, &ctx),
                     "conflicts" => table.row_conflicts(&mut store, &candidate, &ctx).map(|_| ()),
                     _ => unreachable!(),
                 };
