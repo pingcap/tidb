@@ -81,7 +81,10 @@ func (r *Rule) ApplyAttributesSpec(spec *ast.AttributesSpec) error {
 		return err
 	}
 	r.Labels, err = NewLabels(attributes)
-	return err
+	if err != nil {
+		return err
+	}
+	return ValidateRegionPolicy(r.Labels)
 }
 
 // String implements fmt.Stringer.
