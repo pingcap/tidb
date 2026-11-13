@@ -182,7 +182,7 @@ func (w *worker) acquireMLogBaseMVRefreshLock(jobCtx *jobContext, job *model.Job
 	lockName := mviewutil.RefreshAdvisoryLockName(job.SchemaID, baseTblInfo.ID)
 	if err := w.sess.GetAdvisoryLock(lockName, 1); err != nil {
 		if storeerr.ErrLockWaitTimeout.Equal(err) {
-			if job.SchemaState == model.StateNone {
+			if isUnstartedMLogAddColumnJob(job, tblInfo) {
 				// A new job must not retain its DDL scheduling claim while an OOP
 				// refresh holds the lock and waits for its cutover DDL. A resumed
 				// job with existing schema changes must finish or roll them back.
@@ -194,6 +194,20 @@ func (w *worker) acquireMLogBaseMVRefreshLock(jobCtx *jobContext, job *model.Job
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func isUnstartedMLogAddColumnJob(job *model.Job, tblInfo *model.TableInfo) bool {
+	if job.SchemaState != model.StateNone {
+		return false
+	}
+	// A StateNone proxy may follow an already-started column sub-job. Its
+	// non-public columns persist across pauses and owner changes.
+	for _, col := range tblInfo.Columns {
+		if col.State != model.StatePublic {
+			return false
+		}
+	}
+	return true
 }
 
 func isMLogAddColumnRefreshLockWait(job *model.Job, err error) bool {

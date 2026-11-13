@@ -1535,17 +1535,20 @@ func TestAlterMaterializedViewLogAddColumnRefreshLockLifetime(t *testing.T) {
 
 func TestAlterMaterializedViewLogAddColumnPausedRejectsOutOfPlaceRefresh(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		columns     string
-		state       metamodel.SchemaState
-		stale       bool
-		refreshMode string
+		name           string
+		columns        string
+		state          metamodel.SchemaState
+		stale          bool
+		refreshMode    string
+		betweenSubJobs bool
 	}{
-		{"delete_only", "s", metamodel.StateDeleteOnly, false, "fast"},
-		{"write_only", "s", metamodel.StateWriteOnly, false, "complete delta apply"},
-		{"write_reorganization", "s", metamodel.StateWriteReorganization, false, "fast"},
-		{"multiple_columns", "s, cnt", metamodel.StateWriteReorganization, false, "fast"},
-		{"stale_schema", "s, cnt", metamodel.StateWriteReorganization, true, "complete delta apply"},
+		{"delete_only", "s", metamodel.StateDeleteOnly, false, "fast", false},
+		{"write_only", "s", metamodel.StateWriteOnly, false, "complete delta apply", false},
+		{"write_reorganization", "s", metamodel.StateWriteReorganization, false, "fast", false},
+		{"multiple_columns", "s, cnt", metamodel.StateWriteReorganization, false, "fast", false},
+		{"stale_schema", "s, cnt", metamodel.StateWriteReorganization, true, "complete delta apply", false},
+		{"between_sub_jobs_fast", "s, cnt", metamodel.StateWriteReorganization, false, "fast", true},
+		{"between_sub_jobs_delta_apply", "s, cnt", metamodel.StateWriteReorganization, false, "complete delta apply", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -1581,8 +1584,12 @@ func TestAlterMaterializedViewLogAddColumnPausedRejectsOutOfPlaceRefresh(t *test
 					}
 				}
 				if job.MultiSchemaInfo != nil {
-					for _, sub := range job.MultiSchemaInfo.SubJobs {
-						if sub.SchemaState != tc.state {
+					for i, sub := range job.MultiSchemaInfo.SubJobs {
+						state := tc.state
+						if tc.betweenSubJobs && i > 0 {
+							state = metamodel.StateNone
+						}
+						if sub.SchemaState != state {
 							return
 						}
 					}
@@ -1600,7 +1607,7 @@ func TestAlterMaterializedViewLogAddColumnPausedRejectsOutOfPlaceRefresh(t *test
 				pauseResult <- err
 			})
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *metamodel.JobW) {
-				if job.ID == jobID.Load() && job.IsPaused() && pauseSignalled.CompareAndSwap(false, true) {
+				if job != nil && job.ID == jobID.Load() && job.IsPaused() && pauseSignalled.CompareAndSwap(false, true) {
 					close(paused)
 				}
 			})
