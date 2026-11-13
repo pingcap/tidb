@@ -190,6 +190,12 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 // GenIndexValue generates the index value.
 func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, untouched bool, indexedValues []types.Datum,
 	h kv.Handle, restoredData []types.Datum, buf []byte) ([]byte, error) {
+	return c.genIndexValue(ec, loc, distinct, untouched, indexedValues, h, restoredData, buf, nil)
+}
+
+func (c *index) genIndexValue(ec errctx.Context, loc *time.Location, distinct, untouched bool,
+	indexedValues []types.Datum, h kv.Handle, restoredData []types.Datum, buf []byte,
+	rowEncoder *rowcodec.Encoder) ([]byte, error) {
 	c.initNeedRestoreData.Do(func() {
 		c.needRestoredData = NeedRestoredData(c.encoder.UseNewCollate(), c.idxInfo.Columns, c.tblInfo.Columns)
 	})
@@ -198,8 +204,8 @@ func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, u
 		return nil, errors.Trace(err)
 	}
 
-	idx, err := tablecodec.GenIndexValuePortal(c.encoder.UseNewCollate(), loc, c.tblInfo,
-		c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, h, c.phyTblID, restoredData, buf)
+	idx, err := tablecodec.GenIndexValuePortalWithEncoder(c.encoder.UseNewCollate(), loc, c.tblInfo,
+		c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, h, c.phyTblID, restoredData, buf, rowEncoder)
 	err = ec.HandleError(err)
 	return idx, err
 }
@@ -381,7 +387,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 
 		// save the key buffer to reuse.
 		writeBufs.IndexKeyBuf = key
-		idxVal, err := c.GenIndexValue(
+		idxVal, err := c.genIndexValue(
 			ec,
 			loc,
 			distinct,
@@ -390,6 +396,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			h,
 			handleRestoreData,
 			writeBufs.IndexValueBuf,
+			sctx.GetRowEncodingConfig().RowEncoder,
 		)
 		if err != nil {
 			return nil, err
