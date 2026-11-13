@@ -1146,7 +1146,7 @@ fn flatten_list_push_down_plan_reverses_a_unary_chain() {
 
     let flattened = flatten_list_push_down_plan(&limit);
     assert_eq!(
-        flattened.iter().map(PhysicalPlan::tp).collect::<Vec<_>>(),
+        flattened.iter().map(|plan| plan.tp()).collect::<Vec<_>>(),
         ["TableReader", "Projection", "Selection", "Limit"]
     );
 }
@@ -1197,7 +1197,7 @@ fn flatten_tree_push_down_plan_records_non_adjacent_parents() {
 
     let (flattened, parents) = flatten_tree_push_down_plan(&limit_1);
     assert_eq!(
-        flattened.iter().map(PhysicalPlan::tp).collect::<Vec<_>>(),
+        flattened.iter().map(|plan| plan.tp()).collect::<Vec<_>>(),
         [
             "IndexScan",
             "Projection",

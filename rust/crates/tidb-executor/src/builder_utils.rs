@@ -50,52 +50,6 @@ fn unsupported(message: impl Into<String>) -> DriverError {
     DriverError::unsupported(message.into())
 }
 
-/// Go `flattenPushDownPlan`'s list for a linear cop plan: the scan first,
-/// then each executor above it.
-fn flatten_push_down_plan(root: &PhysicalPlan) -> Vec<&PhysicalPlan> {
-    let mut plans = Vec::new();
-    let mut node = Some(root);
-    while let Some(plan) = node {
-        plans.push(plan);
-        node = plan.children().first();
-    }
-    plans.reverse();
-    plans
-}
-
-/// Go `FlattenTreePushDownPlan`: the pushed tree in post order, and the
-/// parent of each child of a multi-child node whose parent is not the next
-/// executor (`unNatureOrders`).
-pub(crate) fn flatten_tree_push_down_plan(
-    root: &PhysicalPlan,
-) -> (Vec<&PhysicalPlan>, std::collections::BTreeMap<usize, usize>) {
-    fn flatten<'p>(
-        plan: &'p PhysicalPlan,
-        plans: &mut Vec<&'p PhysicalPlan>,
-        un_nature_orders: &mut std::collections::BTreeMap<usize, usize>,
-    ) {
-        let multiple_children = plan.children().len() > 1;
-        let mut child_indices = Vec::with_capacity(plan.children().len());
-        for child in plan.children() {
-            flatten(child, plans, un_nature_orders);
-            if multiple_children {
-                child_indices.push(plans.len() - 1);
-            }
-        }
-        plans.push(plan);
-        let parent_index = plans.len() - 1;
-        for child_index in child_indices {
-            if parent_index != child_index + 1 {
-                un_nature_orders.insert(child_index, parent_index);
-            }
-        }
-    }
-    let mut plans = Vec::new();
-    let mut un_nature_orders = std::collections::BTreeMap::new();
-    flatten(root, &mut plans, &mut un_nature_orders);
-    (plans, un_nature_orders)
-}
-
 /// Go `expression.ExpressionsToPBList` over the input row `schema`.
 fn expressions_to_pb_list(
     expressions: &[Expression],
@@ -436,7 +390,7 @@ pub fn construct_tidb_dag_req(
 ) -> Result<tipb::DagRequest, DriverError> {
     let zone = ctx.session_zone();
     let (time_zone_name, time_zone_offset) = zone.dag_zone();
-    let plans = flatten_push_down_plan(table_plan);
+    let plans = tidb_planner_core_operator_physicalop::flatten_list_push_down_plan(table_plan);
     let executors = construct_list_based_dist_exec(ctx, is_common_handle, &plans, &zone)?;
     let div_precision_increment = ctx.div_precision_increment();
     // Go `distsql.SetEncodeType`: chunk RPC when the store supports it.
@@ -551,11 +505,6 @@ pub(crate) fn construct_dag_req(
     Ok(dag_req)
 }
 
-/// Go `flattenPushDownPlan` of a reader's table plan.
-pub(crate) fn flatten_table_plan(root: &PhysicalPlan) -> Vec<&PhysicalPlan> {
-    flatten_push_down_plan(root)
-}
-
 /// Go `RequestBuilder.SetHandleRanges(dctx, tableID, isCommonHandle,
 /// ranges)` for a TiDB-store scan: int-handle ranges through
 /// `TableHandleRangesToKVRanges`, common-handle ones through
@@ -616,7 +565,7 @@ pub fn build_tidb_cop_request(
                 .collect()
         })
         .unwrap_or_default();
-    let cop_plan_ids = flatten_push_down_plan(table_plan)
+    let cop_plan_ids = tidb_planner_core_operator_physicalop::flatten_list_push_down_plan(table_plan)
         .iter()
         .map(|plan| isize::try_from(plan.id()).unwrap_or(0))
         .collect();

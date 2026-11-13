@@ -152,7 +152,7 @@ impl IndexReaderExecutor {
             .index_plan
             .as_deref()
             .ok_or_else(|| ExecError::Internal("the index reader has no plan".into()))?;
-        let plans = crate::builder_utils::flatten_table_plan(index_plan);
+        let plans = tidb_planner_core_operator_physicalop::flatten_list_push_down_plan(index_plan);
         let PhysicalPlan::IndexScan(scan) = plans[0] else {
             return Err(ExecError::Internal("the index reader's plans start with no index scan".into()));
         };
@@ -407,7 +407,7 @@ impl Executor for IndexReaderExecutor {
         let mut kv_ranges = self.build_kv_ranges()?;
         // Go `ConstructDAGReq(b.sctx, v.IndexPlans, kv.TiKV)`, rebuilt here,
         // so a correlated filter reads the outer row as `corColInFilter` does.
-        let plans = crate::builder_utils::flatten_table_plan(&self.index_plan);
+        let plans = tidb_planner_core_operator_physicalop::flatten_list_push_down_plan(&self.index_plan);
         let mut dag = crate::builder_utils::construct_dag_req(
             &self.ctx,
             &statement,

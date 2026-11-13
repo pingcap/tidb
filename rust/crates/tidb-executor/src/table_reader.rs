@@ -562,7 +562,7 @@ impl TableReaderExecutor {
         if store_type == tidb_kv::store_type::StoreType::TiFlash {
             crate::mpp_gather::collect_plan_ids(table_plan, &mut plan_ids);
         } else {
-            plan_ids = crate::builder_utils::flatten_table_plan(table_plan)
+            plan_ids = tidb_planner_core_operator_physicalop::flatten_list_push_down_plan(table_plan)
                 .into_iter()
                 .map(|plan| plan.id() as isize)
                 .collect();
@@ -643,7 +643,7 @@ impl TableReaderExecutor {
     ) -> Result<(), ExecError> {
         let statement = crate::remote_scan::pushdown_statement_context(&self.ctx)
             .with_estimated_net_bytes(self.net_data_size);
-        let plans = crate::builder_utils::flatten_table_plan(&self.table_plan);
+        let plans = tidb_planner_core_operator_physicalop::flatten_list_push_down_plan(&self.table_plan);
         let mut dag = crate::builder_utils::construct_dag_req(&self.ctx, &statement, &plans, self.store_type)
             .map_err(|error| ExecError::Internal(error.to_string().into()))?;
         dag.output_offsets = (0..self.meta.schema().columns.len() as u32).collect();
@@ -932,7 +932,7 @@ impl Executor for TableReaderExecutor {
         let plans = if self.store_type == tidb_kv::store_type::StoreType::TiFlash {
             vec![&self.table_plan]
         } else {
-            crate::builder_utils::flatten_table_plan(&self.table_plan)
+            tidb_planner_core_operator_physicalop::flatten_list_push_down_plan(&self.table_plan)
         };
         let mut dag = crate::builder_utils::construct_dag_req(&self.ctx, &statement, &plans, self.store_type)
             .map_err(|error| ExecError::Internal(error.to_string().into()))?;

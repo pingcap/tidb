@@ -287,15 +287,20 @@ fn prepare_possible_properties_needs_every_child_to_agree() {
     tree.dismantle();
 }
 
+/// Go `HashCode()` encodes the plan id; the generated `DataSource.Equals`
+/// compares the schema producer and the source's fields, never the id.
 #[test]
-fn hash_code_is_the_plan_id_and_equals_compares_it() {
+fn hash_code_is_the_plan_id_and_equals_compares_the_fields() {
     let a = source(1, &[1]);
     let b = source(1, &[2]);
-    let c = source(2, &[1]);
+    // The same source under another plan id.
+    let mut c = source(1, &[1]);
+    c.base_mut().base.set_id(2);
     assert_eq!(a.hash_code(), b.hash_code());
     assert_ne!(a.hash_code(), c.hash_code());
-    assert!(a.equals(&b));
-    assert!(!a.equals(&c));
+    assert!(!a.equals(&b));
+    assert!(a.equals(&c));
+    assert!(!a.equals(&source(2, &[1])));
 }
 
 #[test]

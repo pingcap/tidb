@@ -983,9 +983,6 @@ pub fn rebuild_ranges_for_cached_plan(
             }
         }
         PhysicalPlan::IndexLookUpReader(reader) => {
-            if let Some(index_plan) = reader.index_plans.first_mut() {
-                rebuild_ranges_for_cached_plan(index_plan, context)?;
-            }
             if let Some(index_plan) = reader.index_plan.as_deref_mut() {
                 rebuild_ranges_for_cached_plan(index_plan, context)?;
             }
@@ -994,9 +991,6 @@ pub fn rebuild_ranges_for_cached_plan(
             // needs the new value as much as the index side's ranges do.
             if let Some(table_plan) = reader.table_plan.as_deref_mut() {
                 bind_subtree_expressions(table_plan, context)?;
-            }
-            for table_plan in &mut reader.table_plans {
-                bind_plan_expressions(table_plan, context)?;
             }
         }
         PhysicalPlan::IndexJoin(join) => {

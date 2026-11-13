@@ -1300,7 +1300,7 @@ fn build_mem_table(
             tidb_vardef::tidb_vars::TIDB_METRIC_SCHEMA_RANGE_DURATION,
             tidb_vardef::defaults::DEF_TIDB_METRIC_SCHEMA_RANGE_DURATION,
         );
-        let table = scan.table_name.to_lowercase();
+        let table = scan.table.read().name.original().to_lowercase();
         let columns: Vec<String> = scan.columns.iter().map(|column| column.name.to_lowercase()).collect();
         let meta = meta(ctx, plan, plan_schema(plan)?);
         return Ok(Box::new(MemTableSourceExec::lazy(
@@ -1336,7 +1336,7 @@ fn build_mem_table(
             }),
         )));
     }
-    let table = memory_table_rows(plan, &scan.db_name, &scan.table_name, catalog, ctx)?;
+    let table = memory_table_rows(plan, &scan.db_name, scan.table.read().name.original(), catalog, ctx)?;
 
     let offsets = scan
         .columns
@@ -1387,12 +1387,12 @@ fn build_mem_table(
     let memory = (scan.db_name.go_lower_eq("information_schema")
         && MEMTABLE_RETRIEVER_TABLES
             .iter()
-            .any(|name| scan.table_name.go_lower_eq(name)))
+            .any(|name| scan.table.read().name.original().go_lower_eq(name)))
     .then(|| ctx.statement_memory().operator_tracker(i64::from(plan.base().base.id())))
     .filter(|_| {
         !MEMTABLE_RETRIEVER_UNCHARGED_TABLES
             .iter()
-            .any(|name| scan.table_name.go_lower_eq(name))
+            .any(|name| scan.table.read().name.original().go_lower_eq(name))
     });
     let record_memory_consume = move |rows: &[Vec<tidb_datatype::Datum>]| {
         if let Some(tracker) = &memory {
@@ -5218,7 +5218,7 @@ fn build_partial_index_worker(
     Ok(crate::index_merge_reader::PartialIndexWorker {
         ctx: ctx.clone(),
         client,
-        plans: crate::builder_utils::flatten_table_plan(partial).into_iter().cloned().collect(),
+        plans: tidb_planner_core_operator_physicalop::flatten_list_push_down_plan(partial).into_iter().cloned().collect(),
         output_offsets,
         ret_types,
         by_items,
@@ -5516,7 +5516,7 @@ fn build_index_merge_reader(
             ),
             ctx: ctx.clone(),
             client,
-            table_plans: crate::builder_utils::flatten_table_plan(table_plan).into_iter().cloned().collect(),
+            table_plans: tidb_planner_core_operator_physicalop::flatten_list_push_down_plan(table_plan).into_iter().cloned().collect(),
             columns: ts.columns.clone(),
             start_ts: crate::statement_store(ctx).start_ts(),
             avg_row_size: table_plan.cop_avg_row_size(
@@ -5651,7 +5651,7 @@ fn mem_table_read_of(
         match plan {
             PhysicalPlan::MemTable(scan) => (
                 &scan.db_name,
-                &scan.table_name,
+                scan.table.read().name.original().to_owned(),
                 scan.columns
                     .iter()
                     .map(|column| column.name.clone())
@@ -5670,7 +5670,7 @@ fn mem_table_read_of(
             {
                 (
                     &scan.db_name,
-                    &scan.table_name,
+                    scan.table_name.clone(),
                     Vec::new(),
                     plan.schema()
                         .map(|schema| schema.columns.iter().map(|column| column.id).collect())
@@ -6225,7 +6225,7 @@ fn build_reader_node(
         }
         PhysicalPlan::IndexLookUpReader(reader) => {
             // Go `buildIndexLookUpReader`.
-            let scan = reader.index_plans.first().and_then(|plan| match plan {
+            let scan = reader.index_plans().0.into_iter().next().and_then(|plan| match plan {
                 PhysicalPlan::IndexScan(scan) => Some(scan),
                 _ => None,
             });

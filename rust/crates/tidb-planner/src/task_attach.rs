@@ -3903,30 +3903,30 @@ mod task_tests {
     fn index_lookup_pushdown_builds_and_flattens_the_go_plan_shape() {
         fn check(reader: &tidb_planner_core_operator_physicalop::PhysicalIndexLookUpReader, complex: bool) {
             assert!(reader.index_look_up_push_down);
-            assert!(reader.table_plans.iter().all(|plan| {
+            let table_plans = reader.table_plans();
+            let (index_plans, index_plans_un_nature_orders) = reader.index_plans();
+            assert!(table_plans.iter().all(|plan| {
                 plan.stats_info()
                     .is_some_and(|stats| stats.row_count() == 0.0)
             }));
 
             let mut ids = std::collections::BTreeSet::new();
-            for plan in reader.table_plans.iter().chain(&reader.index_plans) {
+            for plan in table_plans.iter().chain(&index_plans) {
                 assert!(ids.insert(plan.id()), "duplicated plan id {}", plan.id());
             }
 
             if complex {
                 assert_eq!(
-                    reader
-                        .table_plans
+                    table_plans
                         .iter()
-                        .map(PhysicalPlan::tp)
+                        .map(|plan| plan.tp())
                         .collect::<Vec<_>>(),
                     ["TableScan", "Selection", "Projection"]
                 );
                 assert_eq!(
-                    reader
-                        .index_plans
+                    index_plans
                         .iter()
-                        .map(PhysicalPlan::tp)
+                        .map(|plan| plan.tp())
                         .collect::<Vec<_>>(),
                     [
                         "IndexScan",
@@ -3938,27 +3938,25 @@ mod task_tests {
                     ]
                 );
                 assert_eq!(
-                    reader.index_plans_un_nature_orders,
+                    index_plans_un_nature_orders,
                     std::collections::BTreeMap::from([(1, 3)])
                 );
             } else {
-                assert_eq!(reader.table_plans[0].tp(), "TableScan");
+                assert_eq!(table_plans[0].tp(), "TableScan");
                 assert_eq!(
-                    reader
-                        .index_plans
+                    index_plans
                         .iter()
-                        .map(PhysicalPlan::tp)
+                        .map(|plan| plan.tp())
                         .collect::<Vec<_>>(),
                     ["IndexScan", "TableScan", "LocalIndexLookUp"]
                 );
                 assert_eq!(
-                    reader.index_plans_un_nature_orders,
+                    index_plans_un_nature_orders,
                     std::collections::BTreeMap::from([(0, 2)])
                 );
             }
 
-            let local = reader
-                .index_plans
+            let local = index_plans
                 .iter()
                 .find_map(|plan| match plan {
                     PhysicalPlan::LocalIndexLookUp(local) => Some(local),
@@ -4029,7 +4027,7 @@ mod task_tests {
         let Some(PhysicalPlan::IndexLookUpReader(common_handle)) = common_handle.plan() else {
             panic!("an index lookup reader");
         };
-        let PhysicalPlan::LocalIndexLookUp(local) = &common_handle.index_plans[2] else {
+        let PhysicalPlan::LocalIndexLookUp(local) = common_handle.index_plans().0[2] else {
             panic!("the local lookup");
         };
         assert!(local.index_handle_offsets.is_empty());

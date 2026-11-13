@@ -259,7 +259,7 @@ pub(super) fn go_node_memory_usage(node: &PhysicalPlan) -> i64 {
                 + SIZE_OF_BOOL * 3
                 + part_info_memory_usage(op.plan_part_info.as_ref())
                 + SIZE_OF_UINT64
-                + SIZE_OF_INT * op.index_plans_un_nature_orders.len() as i64
+                + SIZE_OF_INT * op.index_plans().1.len() as i64
                 + optional_subtree_usage(op.index_plan.as_deref())
                 + optional_subtree_usage(op.table_plan.as_deref())
                 + op.pushed_limit.map_or(0, |_| GO_PUSHED_DOWN_LIMIT_SIZE)

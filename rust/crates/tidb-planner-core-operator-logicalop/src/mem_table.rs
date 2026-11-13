@@ -139,11 +139,8 @@ pub struct LogicalMemTable {
     pub base: BaseLogicalPlan,
     /// Go `DBName`.
     pub db_name: String,
-    /// Go `TableInfo.Name.O`.
-    pub table_name: String,
-    /// Go `TableInfo.Columns`: the TABLE's columns, which
-    /// [`Self::is_slow_log_topn_by_time`] searches by name and id.
-    pub table_columns: Vec<MemTableColumn>,
+    /// Go `TableInfo`.
+    pub table_info: tidb_model::GoShared<tidb_model::TableInfo>,
     /// Go `Columns`: the columns this scan produces, in schema order.
     pub columns: Vec<MemTableColumn>,
     /// Go `QueryTimeRange`.
@@ -161,12 +158,12 @@ impl LogicalMemTable {
     pub fn new(
         base: BaseLogicalPlan,
         db_name: impl Into<String>,
-        table_name: impl Into<String>,
+        table_info: tidb_model::GoShared<tidb_model::TableInfo>,
     ) -> Self {
         Self {
             base,
             db_name: db_name.into(),
-            table_name: table_name.into(),
+            table_info,
             ..Self::default()
         }
     }
@@ -204,9 +201,7 @@ impl LogicalMemTable {
     /// (`logical_mem_table.go:80`); see [`PRUNABLE_MEM_TABLES`].
     #[must_use]
     pub fn is_prunable(&self) -> bool {
-        PRUNABLE_MEM_TABLES
-            .iter()
-            .any(|name| self.table_name.eq_ignore_ascii_case(name))
+        PRUNABLE_MEM_TABLES.contains(&self.table_info.read().name.original())
     }
 
     /// The rest of `LogicalMemTable.PruneColumns` (`logical_mem_table.go:98`):
@@ -294,12 +289,15 @@ impl LogicalMemTable {
         let Expression::Column(col) = &item.expr else {
             return false;
         };
-        if self.table_name != TABLE_SLOW_QUERY && self.table_name != CLUSTER_TABLE_SLOW_LOG {
+        let table_info = self.table_info.read();
+        let name = table_info.name.original();
+        if name != TABLE_SLOW_QUERY && name != CLUSTER_TABLE_SLOW_LOG {
             return false;
         }
-        self.table_columns
-            .iter()
-            .any(|column| column.name == SLOW_LOG_TIME_STR && column.id == col.id)
+        table_info.columns.iter_deref().any(|column| {
+            let column = column.read();
+            column.name.original() == SLOW_LOG_TIME_STR && column.id == col.id
+        })
     }
 
     /// Go `LogicalMemTable.DeriveStats(_, selfSchema, _, reloads)`
@@ -338,8 +336,7 @@ impl LogicalMemTable {
         Self {
             base: self.base.shell(),
             db_name: self.db_name.clone(),
-            table_name: self.table_name.clone(),
-            table_columns: self.table_columns.clone(),
+            table_info: self.table_info.clone(),
             columns: self.columns.clone(),
             query_time_range: self.query_time_range.clone(),
             extractor: self.extractor.clone(),

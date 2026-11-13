@@ -237,27 +237,14 @@ impl IndexLookUpExecutor {
         v: &PhysicalIndexLookUpReader,
     ) -> Result<Option<Self>, ExecError> {
         let internal = |message: &'static str| ExecError::Internal(message.into());
-        // Go `IndexPlans` / `TablePlans`, flattened from the plans
-        // themselves: the reader's flattened copies predate the rewrites
-        // that bind them.
-        let index_plan = v.index_plan.as_deref().ok_or_else(|| internal("the lookup has no index plan"))?;
-        // Go `IndexPlans, IndexPlansUnNatureOrders = FlattenTreePushDownPlan(IndexPlan)`
-        // under a pushed-down lookup.
-        let (index_plans, index_plans_un_nature_orders) = if v.index_look_up_push_down {
-            let (plans, un_nature_orders) = crate::builder_utils::flatten_tree_push_down_plan(index_plan);
-            (plans.into_iter().cloned().collect::<Vec<_>>(), un_nature_orders)
-        } else {
-            (
-                crate::builder_utils::flatten_table_plan(index_plan).into_iter().cloned().collect(),
-                std::collections::BTreeMap::new(),
-            )
-        };
-        let table_plans =
-            crate::builder_utils::flatten_table_plan(v.table_plan.as_deref().ok_or_else(|| internal("the lookup has no table plan"))?);
-        let PhysicalPlan::IndexScan(scan) = &index_plans[0] else {
+        // Go `v.IndexPlans`, `v.IndexPlansUnNatureOrders` and `v.TablePlans`.
+        let (index_plans, index_plans_un_nature_orders) = v.index_plans();
+        let index_plans: Vec<PhysicalPlan> = index_plans.into_iter().cloned().collect();
+        let table_plans = v.table_plans();
+        let Some(PhysicalPlan::IndexScan(scan)) = index_plans.first() else {
             return Err(internal("the lookup's index plans start with no index scan"));
         };
-        let PhysicalPlan::TableScan(ts) = table_plans[0] else {
+        let Some(PhysicalPlan::TableScan(ts)) = table_plans.first().copied() else {
             return Err(internal("the lookup's table plans start with no table scan"));
         };
         let store = ctx.txn_store().ok_or_else(|| internal("the index lookup has no store"))?;

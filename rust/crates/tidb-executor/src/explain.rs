@@ -952,7 +952,7 @@ fn physical_access(
         ))),
         PhysicalPlan::MemTable(scan) => Some(AccessObject::Scan(ScanAccessObject {
             database: scan.db_name.clone(),
-            table: scan.table_name.clone(),
+            table: scan.table.read().name.original().to_owned(),
             ..ScanAccessObject::default()
         })),
         PhysicalPlan::IndexScan(scan) => Some(AccessObject::Scan(index_access(
@@ -1461,7 +1461,7 @@ fn physical_operator_own_info(
         PhysicalPlan::TableDual(dual) => dual.explain_info(),
         PhysicalPlan::TableSample(_) => String::new(),
         PhysicalPlan::MemTable(scan) => tidb_planner::memtable_predicate_extractor::extractor_of(scan).map_or_else(String::new, |e| {
-            e.explain_info(&scan.table_name, &MemTableExplainSession { eval_ctx })
+            e.explain_info(scan.table.read().name.original(), &MemTableExplainSession { eval_ctx })
         }),
         PhysicalPlan::CTE(cte) => cte.operator_info(),
         PhysicalPlan::CTETable(table) => table.explain_info(),

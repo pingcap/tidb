@@ -572,7 +572,7 @@ impl ResolveIndicesItself for PhysicalPlan {
                     })?;
                     bind_column(column, schema)?;
                 }
-                let scan_schema = op.table_plans.first().and_then(PhysicalPlan::schema).cloned();
+                let scan_schema = op.table_plans().first().and_then(|plan| plan.schema()).cloned();
                 for column in &mut op.common_handle_cols {
                     let schema = scan_schema.as_ref().ok_or_else(|| {
                         PlanError::internal("IndexLookUpReader table scan has no schema")

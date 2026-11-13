@@ -185,9 +185,9 @@ impl LogicalPlan {
                 h.hash_string(plancodec::TYPE_MEM_TABLE_SCAN);
                 hash_schema(h, self);
                 h.hash_string(&op.db_name.to_lowercase());
-                // Go hashes `TableInfo.ID`; this operator names its table.
+                // Go `TableInfo.Hash64`: the table id.
                 h.hash_byte(NOT_NIL_FLAG);
-                h.hash_string(&op.table_name.to_lowercase());
+                h.hash_int64(op.table_info.read().id);
             }
             Self::UnionAll(_) => {
                 h.hash_string(plancodec::TYPE_UNION);
@@ -345,7 +345,7 @@ impl LogicalPlan {
             (Self::MemTable(left), Self::MemTable(right)) => {
                 schemas_equal(self, other)
                     && left.db_name.to_lowercase() == right.db_name.to_lowercase()
-                    && left.table_name.to_lowercase() == right.table_name.to_lowercase()
+                    && left.table_info.read().id == right.table_info.read().id
             }
             (Self::UnionAll(_), Self::UnionAll(_))
             | (Self::PartitionUnionAll(_), Self::PartitionUnionAll(_))

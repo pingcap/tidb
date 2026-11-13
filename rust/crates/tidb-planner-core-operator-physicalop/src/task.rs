@@ -863,16 +863,10 @@ impl CopTask {
                 index_look_up_push_down = false;
             }
         }
-        let table_plans = crate::flatten_list_push_down_plan(&table_plan);
-        let (index_plans, index_plans_un_nature_orders) =
-            crate::flatten_tree_push_down_plan(&index_plan);
         let reader = PhysicalPlan::IndexLookUpReader(crate::PhysicalIndexLookUpReader {
             base,
             index_plan: Some(index_plan),
             table_plan: Some(table_plan),
-            index_plans,
-            index_plans_un_nature_orders,
-            table_plans,
             extra_handle_col: self.extra_handle_col,
             common_handle_cols: self.common_handle_cols,
             index_look_up_push_down,

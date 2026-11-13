@@ -99,6 +99,13 @@ impl Default for GoTime {
 /// fixed source-field order.
 pub struct GoShared<T>(Arc<RwLock<T>>);
 
+impl<T: Default> Default for GoShared<T> {
+    /// A new pointer to the zero value (Go `new(T)`).
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
+
 impl<T> GoShared<T> {
     /// Allocates a new Go pointer.
     #[must_use]

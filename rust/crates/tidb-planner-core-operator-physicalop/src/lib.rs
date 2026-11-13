@@ -1413,8 +1413,8 @@ pub struct PhysicalMemTable {
     pub base: BasePhysicalPlan,
     /// Go `DBName.O`.
     pub db_name: String,
-    /// Go `Table.Name.O`.
-    pub table_name: String,
+    /// Go `Table`.
+    pub table: tidb_model::GoShared<tidb_model::TableInfo>,
     /// Go `Columns`, after logical memory-table column pruning.
     pub columns: Vec<tidb_planner_core_operator_logicalop::mem_table::MemTableColumn>,
     /// Go `QueryTimeRange`.
@@ -2423,6 +2423,17 @@ pub struct TableScanAndPartitionInfo {
 }
 
 impl PhysicalTableReader {
+    /// Go `TablePlans` (`FlattenListPushDownPlan(p.TablePlan)` in `Init`): the
+    /// pushed operators, leaf first -- Go's list holds the tree's own
+    /// operators, as this view does.
+    #[must_use]
+    pub fn table_plans(&self) -> Vec<&PhysicalPlan> {
+        self.table_plan
+            .as_deref()
+            .map(flatten_list_push_down_plan)
+            .unwrap_or_default()
+    }
+
     /// Converts one table-side Cop task into Go's root TableReader shape.
     pub fn from_table_scan(
         table_scan: PhysicalTableScan,
@@ -2753,6 +2764,19 @@ pub struct PhysicalIndexReader {
     pub plan_part_info: Option<std::sync::Arc<PhysPlanPartInfo>>,
 }
 
+impl PhysicalIndexReader {
+    /// Go `IndexPlans` (`FlattenListPushDownPlan(p.indexPlan)` in
+    /// `SetChildren`): the pushed operators, leaf first -- Go's list holds
+    /// the tree's own operators, as this view does.
+    #[must_use]
+    pub fn index_plans(&self) -> Vec<&PhysicalPlan> {
+        self.index_plan
+            .as_deref()
+            .map(flatten_list_push_down_plan)
+            .unwrap_or_default()
+    }
+}
+
 /// Go `physicalop.PhysicalIndexLookUpReader`
 /// (`physical_indexlookup_reader.go:33`): the double read — the index side
 /// finds row ids, the table side reads the rows back — born by
@@ -2765,14 +2789,6 @@ pub struct PhysicalIndexLookUpReader {
     pub index_plan: Option<Box<PhysicalPlan>>,
     /// Go `TablePlan`.
     pub table_plan: Option<Box<PhysicalPlan>>,
-    /// Go `IndexPlans`, the post-order flattening of `IndexPlan` used to
-    /// construct the pushed-down executor tree.
-    pub index_plans: Vec<PhysicalPlan>,
-    /// Go `IndexPlansUnNatureOrders`: child index to parent index when the
-    /// parent is not immediately after that child in `IndexPlans`.
-    pub index_plans_un_nature_orders: std::collections::BTreeMap<usize, usize>,
-    /// Go `TablePlans`, the leaf-first flattening of `TablePlan`.
-    pub table_plans: Vec<PhysicalPlan>,
     /// Go `ExtraHandleCol`: the table side's int handle a keep-order read
     /// sorts its rows back into index order by.
     pub extra_handle_col: Option<Column>,
@@ -2793,6 +2809,31 @@ pub struct PhysicalIndexLookUpReader {
     pub pushed_limit: Option<PushedDownLimit>,
     /// Go `PlanPartInfo`.
     pub plan_part_info: Option<std::sync::Arc<PhysPlanPartInfo>>,
+}
+
+impl PhysicalIndexLookUpReader {
+    /// Go `IndexPlans` and `IndexPlansUnNatureOrders`
+    /// (`FlattenTreePushDownPlan(p.IndexPlan)` in `Init`): the index side's
+    /// operators in post order -- Go's list holds the tree's own operators,
+    /// as this view does -- and the parent of each child whose parent is
+    /// not the next entry.
+    #[must_use]
+    pub fn index_plans(&self) -> (Vec<&PhysicalPlan>, std::collections::BTreeMap<usize, usize>) {
+        self.index_plan
+            .as_deref()
+            .map(flatten_tree_push_down_plan)
+            .unwrap_or_default()
+    }
+
+    /// Go `TablePlans` (`FlattenListPushDownPlan(p.TablePlan)` in `Init`):
+    /// the table side's operators, leaf first.
+    #[must_use]
+    pub fn table_plans(&self) -> Vec<&PhysicalPlan> {
+        self.table_plan
+            .as_deref()
+            .map(flatten_list_push_down_plan)
+            .unwrap_or_default()
+    }
 }
 
 /// Go `physicalop.PhysicalLocalIndexLookUp`: the TiKV-side junction between
@@ -2820,12 +2861,13 @@ pub fn set_mpp_or_batch_cop_for_table_scan(cur_plan: &mut PhysicalPlan) {
 }
 
 /// Go `FlattenListPushDownPlan`: flatten a unary pushed-down plan leaf first.
+/// Go's list holds the tree's own operators, as this one borrows them.
 #[must_use]
-pub fn flatten_list_push_down_plan(plan: &PhysicalPlan) -> Vec<PhysicalPlan> {
+pub fn flatten_list_push_down_plan(plan: &PhysicalPlan) -> Vec<&PhysicalPlan> {
     let mut plans = Vec::new();
     let mut stack = vec![plan];
     while let Some(current) = stack.pop() {
-        plans.push(current.clone_shallow());
+        plans.push(current);
         for child in current.children().iter().rev() {
             stack.push(child);
         }
@@ -2836,13 +2878,14 @@ pub fn flatten_list_push_down_plan(plan: &PhysicalPlan) -> Vec<PhysicalPlan> {
 
 /// Go `FlattenTreePushDownPlan`: post-order DFS plus the child-to-parent map
 /// required when a multi-child parent's position is not the child's index + 1.
+/// Go's list holds the tree's own operators, as this one borrows them.
 #[must_use]
 pub fn flatten_tree_push_down_plan(
     plan: &PhysicalPlan,
-) -> (Vec<PhysicalPlan>, std::collections::BTreeMap<usize, usize>) {
-    fn flatten(
-        plan: &PhysicalPlan,
-        plans: &mut Vec<PhysicalPlan>,
+) -> (Vec<&PhysicalPlan>, std::collections::BTreeMap<usize, usize>) {
+    fn flatten<'p>(
+        plan: &'p PhysicalPlan,
+        plans: &mut Vec<&'p PhysicalPlan>,
         un_natural_orders: &mut std::collections::BTreeMap<usize, usize>,
     ) {
         let multiple_children = plan.children().len() > 1;
@@ -2853,7 +2896,7 @@ pub fn flatten_tree_push_down_plan(
                 child_indices.push(plans.len() - 1);
             }
         }
-        plans.push(plan.clone_shallow());
+        plans.push(plan);
         let parent_index = plans.len() - 1;
         for child_index in child_indices {
             if parent_index != child_index + 1 {
@@ -3024,6 +3067,26 @@ impl PhysicalIndexScan {
 }
 
 impl PhysicalIndexMergeReader {
+    /// Go `PartialPlans` (`FlattenListPushDownPlan` of each
+    /// `PartialPlansRaw` in `Init`): each partial side's operators, leaf
+    /// first -- Go's lists hold the trees' own operators, as these views do.
+    #[must_use]
+    pub fn partial_plans(&self) -> Vec<Vec<&PhysicalPlan>> {
+        self.partial_plans_raw
+            .iter()
+            .map(flatten_list_push_down_plan)
+            .collect()
+    }
+
+    /// Go `TablePlans` (`FlattenListPushDownPlan(p.TablePlan)` in `Init`).
+    #[must_use]
+    pub fn table_plans(&self) -> Vec<&PhysicalPlan> {
+        self.table_plan
+            .as_deref()
+            .map(flatten_list_push_down_plan)
+            .unwrap_or_default()
+    }
+
     /// Go `Init`'s `p.TablePlans[0].(*PhysicalTableScan).HandleCols`: the
     /// handle columns of the table plan's scan.
     #[must_use]
@@ -5249,7 +5312,7 @@ impl PhysicalPlan {
             Self::MemTable(op) => Self::MemTable(PhysicalMemTable {
                 base: base_of(&op.base),
                 db_name: op.db_name.clone(),
-                table_name: op.table_name.clone(),
+                table: op.table.clone(),
                 columns: op.columns.clone(),
                 query_time_range: op.query_time_range.clone(),
                 extractor: op.extractor.clone(),
@@ -5398,9 +5461,6 @@ impl PhysicalPlan {
                 base: base_of(&op.base),
                 index_plan: op.index_plan.clone(),
                 table_plan: op.table_plan.clone(),
-                index_plans: op.index_plans.clone(),
-                index_plans_un_nature_orders: op.index_plans_un_nature_orders.clone(),
-                table_plans: op.table_plans.clone(),
                 extra_handle_col: op.extra_handle_col.clone(),
                 common_handle_cols: op.common_handle_cols.clone(),
                 index_look_up_push_down: op.index_look_up_push_down,

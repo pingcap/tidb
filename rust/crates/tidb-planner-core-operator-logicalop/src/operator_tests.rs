@@ -3731,8 +3731,24 @@ fn mem_table(table_name: &str) -> LogicalMemTable {
     LogicalMemTable::new(
         BaseLogicalPlan::with_id(1, LogicalMemTable::TYPE, 0),
         "information_schema",
-        table_name,
+        tidb_model::GoShared::new(tidb_model::TableInfo {
+            name: tidb_ast::CiString::new(table_name.to_owned()),
+            ..tidb_model::TableInfo::default()
+        }),
     )
+}
+
+/// Sets the table's `TableInfo.Columns`.
+fn set_table_columns(table: &LogicalMemTable, columns: &[(i64, &str)]) {
+    table.table_info.write().columns = columns
+        .iter()
+        .map(|(id, name)| tidb_model::ColumnInfo {
+            id: *id,
+            name: tidb_ast::CiString::new((*name).to_owned()),
+            ..tidb_model::ColumnInfo::default()
+        })
+        .collect::<Vec<_>>()
+        .into();
 }
 
 /// Go `LogicalMemTable.PruneColumns` (`logical_mem_table.go:80`): the table
@@ -3741,7 +3757,9 @@ fn mem_table(table_name: &str) -> LogicalMemTable {
 fn mem_table_prunes_only_the_listed_tables_and_keeps_one_column() {
     let mut other = mem_table("COLUMNS");
     assert!(!other.is_prunable());
-    assert!(mem_table("tables").is_prunable());
+    assert!(mem_table("TABLES").is_prunable());
+    // Go switches on `TableInfo.Name.O`, the infoschema's upper-case name.
+    assert!(!mem_table("tables").is_prunable());
     // This branch's Go switch names neither PARTITIONS nor TIFLASH_REPLICA.
     assert!(!mem_table("partitions").is_prunable());
     assert!(!mem_table("TIFLASH_REPLICA").is_prunable());
@@ -3793,10 +3811,7 @@ fn mem_table_prunes_only_the_listed_tables_and_keeps_one_column() {
 fn mem_table_pushes_hints_only_for_a_limit_or_a_slow_log_time_order() {
     let mut slow = mem_table(TABLE_SLOW_QUERY);
     // The table's own `Time` column, matched BY ID.
-    slow.table_columns = vec![MemTableColumn {
-        id: 42,
-        name: SLOW_LOG_TIME_STR.to_owned(),
-    }];
+    set_table_columns(&slow, &[(42, SLOW_LOG_TIME_STR)]);
 
     let mut limit = LogicalTopN::new(
         BaseLogicalPlan::with_id(2, LogicalTopN::TYPE, 0),
@@ -3847,11 +3862,11 @@ fn mem_table_pushes_hints_only_for_a_limit_or_a_slow_log_time_order() {
     assert_eq!(slow.push_down_topn(&by_other), MemTableTopNHints::default());
     // Nor is the same order on a non-slow-log table.
     let mut summary = mem_table("STATEMENTS_SUMMARY");
-    summary.table_columns = slow.table_columns.clone();
+    set_table_columns(&summary, &[(42, SLOW_LOG_TIME_STR)]);
     assert!(!summary.is_slow_log_topn_by_time(&by_time));
     // The cluster-wide slow log is the OTHER table this applies to.
     let mut cluster = mem_table(CLUSTER_TABLE_SLOW_LOG);
-    cluster.table_columns = slow.table_columns.clone();
+    set_table_columns(&cluster, &[(42, SLOW_LOG_TIME_STR)]);
     assert!(cluster.is_slow_log_topn_by_time(&by_time));
 }
 

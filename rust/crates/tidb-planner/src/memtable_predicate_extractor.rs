@@ -2256,7 +2256,7 @@ fn mem_table_scans<'a>(
     out: &mut Vec<&'a tidb_planner_core_operator_physicalop::PhysicalMemTable>,
 ) {
     if let PhysicalPlan::MemTable(scan) = plan {
-        if scan.table_name.eq_ignore_ascii_case(table) {
+        if scan.table.read().name.original().eq_ignore_ascii_case(table) {
             out.push(scan);
         }
     }
@@ -2309,7 +2309,7 @@ pub fn mem_table_scan_reads(plan: &PhysicalPlan) -> Vec<MemTableScanRead> {
     fn visit(plan: &PhysicalPlan, out: &mut Vec<MemTableScanRead>) {
         if let PhysicalPlan::MemTable(scan) = plan {
             out.push(MemTableScanRead {
-                table: scan.table_name.to_ascii_uppercase(),
+                table: scan.table.read().name.original().to_ascii_uppercase(),
                 extractor: extractor_of(scan).cloned(),
                 query_time_range: scan.query_time_range.clone(),
             });

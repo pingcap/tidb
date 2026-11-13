@@ -2048,7 +2048,7 @@ fn find_best_task_4_logical_mem_table(
     let physical = PhysicalPlan::MemTable(tidb_planner_core_operator_physicalop::PhysicalMemTable {
         base,
         db_name: mem_table.db_name.clone(),
-        table_name: mem_table.table_name.clone(),
+        table: mem_table.table_info.clone(),
         columns: mem_table.columns.clone(),
         query_time_range: mem_table.query_time_range.clone(),
         extractor: mem_table.extractor.clone(),
@@ -6234,7 +6234,14 @@ mod tests {
             Column::new(2, FieldType::new(FieldTypeCode::LongLong)),
         ])));
         base.base.set_output_names(names.clone());
-        let mut mem = LogicalMemTable::new(base, "information_schema", "SCHEMA_PRIVILEGES");
+        let mut mem = LogicalMemTable::new(
+            base,
+            "information_schema",
+            tidb_model::GoShared::new(tidb_model::TableInfo {
+                name: tidb_ast::CiString::new("SCHEMA_PRIVILEGES".to_owned()),
+                ..tidb_model::TableInfo::default()
+            }),
+        );
         mem.columns = vec![
             MemTableColumn {
                 id: 1,

@@ -1418,9 +1418,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut mem_table = LogicalMemTable::new(
             self.base(LogicalMemTable::TYPE),
             db_name,
-            table.table_name(),
+            table
+                .table_info
+                .clone()
+                .expect("a memory table carries its TableInfo"),
         );
-        mem_table.table_columns.clone_from(&columns);
         mem_table.columns = columns;
         // Some memory tables can receive some predicates.
         mem_table.extractor =
