@@ -1699,7 +1699,8 @@ func flattenSortedTopN(
 			allTopN = append(allTopN, topNEntry{encoded: val.Encoded, count: val.Count})
 		}
 	}
-	if err := sortTopNEntries(sc, allTopN, ft, isIndex); err != nil {
+	allTopN, err := sortTopNEntries(sc, allTopN, ft, isIndex)
+	if err != nil {
 		return nil, err
 	}
 	// Compact runs of equal values (the same value can be TopN in
@@ -1720,19 +1721,20 @@ func flattenSortedTopN(
 // sortTopNEntries orders the flattened stream the way Pass 1 walks it
 // against the bucket stream. That is the encoded byte order, except for
 // ENUM and SET, which encode as their numeric value but compare by
-// element name, and BIT, which encodes numerically but compares as a
-// binary literal with leading zeros trimmed. Those three have to be
-// ordered by their decoded values, with the encoded key as a tie-break
-// so entries for the same value stay adjacent for the compaction that
-// follows. An index bound is the encoded key itself, so the index path
-// never needs this. TestTopNOrderingMatchesDatumOrder pins the type
-// list against what the encodings actually do.
+// element name, BIT, which encodes numerically but compares as a
+// binary literal with leading zeros trimmed, and JSON, which encodes
+// its binary form (numbers little-endian) but compares by JSON value.
+// Those four have to be ordered by their decoded values, with the
+// encoded key as a tie-break. An index bound is the encoded key
+// itself, so the index path never needs this.
+// TestTopNOrderingMatchesDatumOrder pins the type list against what
+// the encodings actually do.
 func sortTopNEntries(
 	sc *stmtctx.StatementContext, allTopN []topNEntry, ft *types.FieldType, isIndex bool,
-) error {
+) ([]topNEntry, error) {
 	byteOrdered := isIndex
 	switch ft.GetType() {
-	case mysql.TypeEnum, mysql.TypeSet, mysql.TypeBit:
+	case mysql.TypeEnum, mysql.TypeSet, mysql.TypeBit, mysql.TypeJSON:
 	default:
 		byteOrdered = true
 	}
@@ -1740,28 +1742,37 @@ func sortTopNEntries(
 		slices.SortFunc(allTopN, func(a, b topNEntry) int {
 			return bytes.Compare(a.encoded, b.encoded)
 		})
-		return nil
+		return allTopN, nil
 	}
 
-	// Keyed by value, not by entry: the same value is typically in many
-	// partitions' TopN, and these types have few distinct values, so
-	// this decodes once per value rather than once per entry.
+	// Merge entries of the same value before sorting, not after: JSON
+	// comparison is not transitive (an integer and a float within 1e-8
+	// compare equal, two floats compare exactly), so the sort can leave
+	// them apart. This also decodes each value once. In place: the
+	// write index trails the read index.
+	type firstSeen struct {
+		d   types.Datum
+		idx int
+	}
 	tz := sc.TimeZone()
-	datums := make(map[string]types.Datum, len(allTopN))
+	seen := make(map[string]firstSeen, len(allTopN))
+	unique := allTopN[:0]
 	for _, e := range allTopN {
-		if _, ok := datums[string(e.encoded)]; ok {
+		if f, ok := seen[string(e.encoded)]; ok {
+			unique[f.idx].count += e.count
 			continue
 		}
 		d, err := topNMetaToDatum(TopNMeta{Encoded: e.encoded}, ft, false, tz)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		datums[string(e.encoded)] = d
+		seen[string(e.encoded)] = firstSeen{d: d, idx: len(unique)}
+		unique = append(unique, e)
 	}
 	var cmpErr error
 	tc := sc.TypeCtx()
-	slices.SortFunc(allTopN, func(a, b topNEntry) int {
-		da, db := datums[string(a.encoded)], datums[string(b.encoded)]
+	slices.SortFunc(unique, func(a, b topNEntry) int {
+		da, db := seen[string(a.encoded)].d, seen[string(b.encoded)].d
 		c, err := da.Compare(tc, &db, collate.GetBinaryCollator())
 		if err != nil {
 			cmpErr = err
@@ -1772,7 +1783,7 @@ func sortTopNEntries(
 		}
 		return bytes.Compare(a.encoded, b.encoded)
 	})
-	return cmpErr
+	return unique, cmpErr
 }
 
 // sumPartitionTotals collects the global totals from the partition

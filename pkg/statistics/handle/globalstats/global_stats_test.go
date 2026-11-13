@@ -1394,3 +1394,63 @@ func TestGlobalStatsSampledNDV(t *testing.T) {
 		checkNDV(t, 9)
 	})
 }
+
+// TestGlobalStatsMergeJSON covers JSON columns, whose stats are opt-in.
+// A JSON TopN key carries the binary form, numbers little-endian, so
+// 256 encodes before 1 while the histogram orders 1 first. Both values
+// are in p0's TopN and bucket uppers in p1, so the merge only adds up
+// their counts if it walks the TopN entries in the histogram's order.
+func TestGlobalStatsMergeJSON(t *testing.T) {
+	for _, async := range []string{"OFF", "ON"} {
+		t.Run("async="+async, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@tidb_analyze_version = 2")
+			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+			tk.MustExec("set @@tidb_analyze_skip_column_types = ''")
+			tk.MustExec("set @@tidb_enable_async_merge_global_stats = " + async)
+			tk.MustExec("create table t (id int, j json) partition by range (id) (partition p0 values less than (1000), partition p1 values less than (2000))")
+			var vals []string
+			add := func(base, n int, v string) {
+				for range n {
+					vals = append(vals, fmt.Sprintf("(%d, '%s')", base+len(vals), v))
+				}
+			}
+			add(0, 50, "1")
+			add(0, 50, "256")
+			for i := range 30 {
+				add(0, 1, strconv.Itoa(1000+i*37))
+			}
+			tk.MustExec("insert into t values " + strings.Join(vals, ","))
+			vals = vals[:0]
+			add(1000, 40, "2")
+			add(1000, 40, "3")
+			add(1000, 30, "1")
+			add(1000, 30, "256")
+			for i := range 30 {
+				add(1000, 1, strconv.Itoa(1010+i*41))
+			}
+			tk.MustExec("insert into t values " + strings.Join(vals, ","))
+			tk.MustExec("analyze table t with 2 topn, 4 buckets")
+
+			tk.MustQuery("show stats_topn where table_name = 't' and partition_name != 'global' and column_name = 'j'").Sort().Check(testkit.Rows(
+				"test t p0 j 0 1 50",
+				"test t p0 j 0 256 50",
+				"test t p1 j 0 2 40",
+				"test t p1 j 0 3 40"))
+			tk.MustQuery("show stats_buckets where table_name = 't' and partition_name = 'p1' and column_name = 'j' and repeats > 1").Check(testkit.Rows(
+				"test t p1 j 0 0 30 30 1 1 0",
+				"test t p1 j 0 1 60 30 256 256 0"))
+			tk.MustQuery("show stats_topn where table_name = 't' and partition_name = 'global' and column_name = 'j'").Sort().Check(testkit.Rows(
+				"test t global j 0 1 80",
+				"test t global j 0 256 80"))
+			// The global TopN and histogram together hold every row
+			// (mysql.stats_buckets stores each bucket's own count).
+			tk.MustQuery(`select
+				(select sum(count) from mysql.stats_top_n where table_id = g.id and is_index = 0 and hist_id = 2) +
+				(select sum(count) from mysql.stats_buckets where table_id = g.id and is_index = 0 and hist_id = 2)
+				from (select tidb_table_id as id from information_schema.tables where table_schema = 'test' and table_name = 't') g`).Check(testkit.Rows("300"))
+		})
+	}
+}
