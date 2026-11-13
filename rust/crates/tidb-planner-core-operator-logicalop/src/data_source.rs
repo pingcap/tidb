@@ -204,6 +204,9 @@ pub struct DataSource {
     pub index_merge_hints: Vec<DataSourceIndexMergeHint>,
     /// Go `TableStats`: the table-level profile before any filtering.
     pub table_stats: Option<StatsInfo>,
+    /// Go `TblColHists` (`StatisticTable.ID2UniqueID(TblCols)`): every
+    /// table column's statistics, which the scans price their rows by.
+    pub tbl_col_hists: Option<std::sync::Arc<tidb_stats::HistColl>>,
     /// Go `PossibleAccessPaths` after statistics derivation: the paths
     /// `derivePathStatsAndTryHeuristics` kept plus the index-merge paths
     /// `generateIndexMergePath` adds, which
@@ -1418,6 +1421,7 @@ impl DataSource {
             force_no_index_lookup_push_down: self.force_no_index_lookup_push_down,
             index_merge_hints: self.index_merge_hints.clone(),
             table_stats: self.table_stats.clone(),
+            tbl_col_hists: self.tbl_col_hists.clone(),
             possible_access_paths: self.possible_access_paths.clone(),
             statistic_table: self.statistic_table.clone(),
             used_hypo_tiflash_replica: self.used_hypo_tiflash_replica,

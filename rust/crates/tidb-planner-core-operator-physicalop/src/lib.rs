@@ -1287,6 +1287,9 @@ pub struct PhysicalTableScan {
     pub dynamic_partition_access: Option<tidb_planner_core_access::DynamicPartitionAccessObject>,
     /// Go `TblCols`: all original table columns used by scan costing.
     pub tbl_cols: Vec<Column>,
+    /// Go `TblColHists`: the data source's statistics of every table
+    /// column, which `GetScanRowSize` prices the scan's rows by.
+    pub tbl_col_hists: Option<std::sync::Arc<tidb_planner_property::stats_info::HistColl>>,
     /// Go `StoreType`: which engine serves this scan. `CopTask.GetStoreType`
     /// reads it at the leaf.
     pub store_type: tidb_kv::store_type::StoreType,
@@ -2546,6 +2549,9 @@ pub struct PhysicalIndexScan {
     pub columns: Vec<tidb_model::GoShared<tidb_model::ColumnInfo>>,
     /// Go `NeedCommonHandle`: `InitSchema`'s `p.Table.IsCommonHandle`.
     pub need_common_handle: bool,
+    /// Go `TblColHists`: the data source's statistics of every table
+    /// column, which `GetScanRowSize` prices the scan's rows by.
+    pub tbl_col_hists: Option<std::sync::Arc<tidb_planner_property::stats_info::HistColl>>,
     /// The shared physical base.
     pub base: BasePhysicalPlan,
     /// Go `PhysicalTableID`: the partition read, or the table.
@@ -4677,14 +4683,7 @@ impl PhysicalPlan {
     #[must_use]
     pub fn cop_avg_row_size(&self, encoded_key: bool, enable_chunk_rpc: bool) -> f64 {
         use tidb_planner_cardinality::row_size::{get_avg_row_size, RowSizeColumn};
-        let mut scan = self;
-        while !matches!(scan, Self::TableScan(_) | Self::IndexScan(_)) {
-            let Some(child) = scan.children().first() else {
-                break;
-            };
-            scan = child;
-        }
-        let hist = scan.stats_info().and_then(StatsInfo::hist_coll);
+        let hist = self.get_tbl_stats();
         let columns: Vec<_> = self
             .schema()
             .into_iter()
@@ -4702,6 +4701,17 @@ impl PhysicalPlan {
             false,
             enable_chunk_rpc,
         )
+    }
+
+    /// Go `GetTblStats`: the `TblColHists` of the scan at the bottom of a
+    /// cop task's plan, which holds every column before pruning.
+    #[must_use]
+    pub fn get_tbl_stats(&self) -> Option<&tidb_planner_property::stats_info::HistColl> {
+        match self {
+            Self::TableScan(x) => x.tbl_col_hists.as_deref(),
+            Self::IndexScan(x) => x.tbl_col_hists.as_deref(),
+            _ => self.children().first()?.get_tbl_stats(),
+        }
     }
 
     /// Go PointGetPlan/BatchPointGetPlan.GetAvgRowSize; fast plans have no accessCols.
@@ -5182,6 +5192,7 @@ impl PhysicalPlan {
                 desc: op.desc,
                 physical_table_id: op.physical_table_id,
                 is_partition: op.is_partition,
+                tbl_col_hists: op.tbl_col_hists.clone(),
                 table_as_name: op.table_as_name.clone(),
                 dynamic_partition_access: op.dynamic_partition_access.clone(),
                 tbl_cols: op.tbl_cols.clone(),
@@ -5330,6 +5341,7 @@ impl PhysicalPlan {
                 base: base_of(&op.base),
                 physical_table_id: op.physical_table_id,
                 is_partition: op.is_partition,
+                tbl_col_hists: op.tbl_col_hists.clone(),
                 table_as_name: op.table_as_name.clone(),
                 dynamic_partition_access: op.dynamic_partition_access.clone(),
                 cost_columns: op.cost_columns.clone(),

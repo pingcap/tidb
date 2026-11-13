@@ -2539,18 +2539,21 @@ fn cop_read_size_uses_output_columns_scan_histograms_and_output_cardinality() {
         ..tidb_stats::column::Column::default()
     };
     let mut table = scan(1, &[1, 2]);
-    table.set_stats(Some(StatsInfo::new(100.0, []).with_hist_coll(
-        tidb_planner_property::stats_info::loaded_hist_coll_for_test(
-            false,
-            100,
-            0,
-            [
-                (1, column(FieldTypeCode::LongLong, 800, true)),
-                (2, column(FieldTypeCode::VarString, 1600, false)),
-            ],
-            [],
-        ),
-    )));
+    // Go `GetTblStats`: the scan's `TblColHists`.
+    let PhysicalPlan::TableScan(ts) = &mut table else {
+        unreachable!();
+    };
+    ts.tbl_col_hists = Some(tidb_planner_property::stats_info::loaded_hist_coll_for_test(
+        false,
+        100,
+        0,
+        [
+            (1, column(FieldTypeCode::LongLong, 800, true)),
+            (2, column(FieldTypeCode::VarString, 1600, false)),
+        ],
+        [],
+    ));
+    table.set_stats(Some(StatsInfo::new(100.0, [])));
     let mut filtered = selection(2, table);
     filtered
         .base_mut()

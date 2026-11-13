@@ -146,6 +146,7 @@ pub fn init_stats(
             );
         }
     }
+    source.tbl_col_hists = Some(std::sync::Arc::new(table.hist_coll.id_2_unique_id(&source.table_columns)));
     source.table_stats = Some(
         StatsInfo::new(row_count, ndvs)
             .with_hist_coll(std::sync::Arc::new(hist_coll))
