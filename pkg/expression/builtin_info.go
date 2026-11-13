@@ -147,7 +147,8 @@ func (c *foundRowsFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.AddFlag(mysql.UnsignedFlag)
+	// Unlike CONNECTION_ID() and LAST_INSERT_ID(), MySQL returns FOUND_ROWS()
+	// as a signed BIGINT, so the result type has no UnsignedFlag.
 	sig := &builtinFoundRowsSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
