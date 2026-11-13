@@ -1,0 +1,42 @@
+select @i := 1;
+@i := 1
+1
+select @i := @i + 1;
+@i := @i + 1
+2
+select @i;
+@i
+2
+set @k := 1;
+select @k := @i + 1;
+@k := @i + 1
+3
+select @k;
+@k
+3
+select @l := @l + 1;
+@l := @l + 1
+NULL
+select @l;
+@l
+NULL
+set global tidb_super_read_only=1;
+select @i := @i + 1;
+@i := @i + 1
+3
+select @i;
+@i
+3
+select @i := 2;
+@i := 2
+2
+select @i;
+@i
+2
+select @m := @m + 1;
+@m := @m + 1
+NULL
+select @m;
+@m
+NULL
+set global tidb_super_read_only=0;
