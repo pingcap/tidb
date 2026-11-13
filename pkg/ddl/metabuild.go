@@ -40,7 +40,11 @@ func NewMetaBuildContextWithSctx(sctx sessionctx.Context, otherOpts ...metabuild
 	// are unreadable, and such a session should not build an index from
 	// settings it did not ask for, so the failure is reported rather than
 	// replaced by defaults.
-	if analyzer, err := fulltext.TiKVFullTextAnalyzerFromSessionVars(sessVars); err == nil {
+	if rebuild := sessVars.TiKVFullTextAnalyzerForRebuild; rebuild != nil {
+		// The index is rebuilt as it was recorded, whatever the variables
+		// say now.
+		opts = append(opts, metabuild.WithTiKVFullTextAnalyzer(*rebuild))
+	} else if analyzer, err := fulltext.TiKVFullTextAnalyzerFromSessionVars(sessVars); err == nil {
 		opts = append(opts, metabuild.WithTiKVFullTextAnalyzer(analyzer))
 	} else {
 		opts = append(opts, metabuild.WithTiKVFullTextAnalyzerError(err))

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -595,4 +596,83 @@ func TestFullTextIndexAdminCheckAddedColumn(t *testing.T) {
 	tk.MustExec("admin check index t idx_tenant")
 	tk.MustQuery("select id from t where match(body) against('+hello' in boolean mode) order by id").Check(testkit.Rows("1", "2", "3"))
 	tk.MustQuery("select id from t where tenant = 7 and match(body) against('+world' in boolean mode) order by id").Check(testkit.Rows("1", "2"))
+}
+
+func TestFullTextIndexNotUsedByForeignKey(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@foreign_key_checks = 1")
+	tk.MustExec("create table parent (id int primary key)")
+	// The FULLTEXT index leads with the foreign key's column, but its entries
+	// are one per term, so the foreign key gets an index of its own.
+	tk.MustExec(`create table child (
+		id int primary key, tenant_id int, doc text,
+		fulltext index ft (tenant_id, doc),
+		constraint fk foreign key (tenant_id) references parent (id) on delete cascade)`)
+	tk.MustQuery("select count(distinct key_name) from information_schema.tidb_indexes " +
+		"where table_schema = 'test' and table_name = 'child' and key_name not in ('PRIMARY', 'ft')").Check(testkit.Rows("1"))
+	tk.MustExec("insert into parent values (1), (2)")
+	// A row without a term has no entry in the FULLTEXT index.
+	tk.MustExec("insert into child values (1, 1, 'hello world'), (2, 1, ''), (3, 2, null)")
+	tk.MustExec("delete from parent where id = 1")
+	tk.MustQuery("select id from child order by id").Check(testkit.Rows("3"))
+	tk.MustExec("delete from parent where id = 2")
+	tk.MustQuery("select count(*) from child").Check(testkit.Rows("0"))
+	tk.MustExec("admin check table child")
+
+	// Added to a table whose only index over the column is FULLTEXT.
+	tk.MustExec("create table child2 (id int primary key, tenant_id int, doc text, fulltext index ft (tenant_id, doc))")
+	tk.MustExec("alter table child2 add constraint fk2 foreign key (tenant_id) references parent (id)")
+	tk.MustExec("insert into parent values (3)")
+	tk.MustExec("insert into child2 values (1, 3, '')")
+	tk.MustContainErrMsg("delete from parent where id = 3", "foreign key constraint fails")
+}
+
+func TestFullTextIndexExchangePartition(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table pt (id int primary key, doc text, fulltext index ft (doc))
+		partition by range (id) (partition p0 values less than (100), partition p1 values less than (200))`)
+	tk.MustExec("insert into pt values (1, 'hello world'), (101, 'relational storage')")
+
+	// The same text analyzes to different terms under another parser.
+	tk.MustExec("create table nt_ngram (id int primary key, doc text, fulltext index ft (doc) with parser ngram)")
+	tk.MustExec("insert into nt_ngram values (2, 'hello again')")
+	tk.MustGetDBError("alter table pt exchange partition p0 with table nt_ngram", dbterror.ErrTablesDifferentMetadata)
+	// An ordinary index of the same name and columns is not the same index.
+	tk.MustExec("create table nt_plain (id int primary key, doc varchar(64), index ft (doc))")
+	tk.MustExec("create table pt_plain (id int primary key, doc varchar(64), fulltext index ft (doc)) partition by hash (id) partitions 2")
+	tk.MustGetDBError("alter table pt_plain exchange partition p0 with table nt_plain", dbterror.ErrTablesDifferentMetadata)
+
+	tk.MustExec("create table nt (id int primary key, doc text, fulltext index ft (doc))")
+	tk.MustExec("insert into nt values (2, 'hello again')")
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustQuery("select id from pt order by id").Check(testkit.Rows("2", "101"))
+	tk.MustQuery("select id from nt").Check(testkit.Rows("1"))
+	tk.MustExec("admin check table pt")
+	tk.MustExec("admin check table nt")
+}
+
+func TestFullTextIndexAdminCheckWithPartialIndex(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// A partial index is only validated by the fast check, which a FULLTEXT
+	// index on the same table must not turn off.
+	tk.MustExec("create table t (id int primary key, a int, doc text, index ia (a) where a is not null, fulltext index ft (doc))")
+	tk.MustExec("insert into t values (1, 1, 'hello world'), (2, null, 'relational storage'), (3, 3, '')")
+	tk.MustExec("admin check table t")
+	tk.MustExec("admin check index t ft")
+	tk.MustExec("admin check index t ia")
 }

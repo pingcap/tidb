@@ -2107,6 +2107,9 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			IndexName:  info.IndexInfo.Name.O,
 			AddSQL:     addSQL.String(),
 			AddArgs:    addArgs,
+			// The settings the index recorded, not the ones in force in
+			// this cluster now, are what its rows have been analyzed with.
+			TiKVFullText: info.IndexInfo.TiKVFullText.Clone(),
 		})
 
 		return nil
@@ -2318,6 +2321,14 @@ func (rc *LogClient) RepairIngestIndex(
 				}
 			})
 			// create the repaired index when first execution or not found it
+			if sql.TiKVFullText != nil {
+				// A FULLTEXT index is rebuilt with the analyzer it recorded.
+				sessVars := indexSession.GetSessionCtx().GetSessionVars()
+				sessVars.TiKVFullTextAnalyzerForRebuild = sql.TiKVFullText
+				defer func() {
+					sessVars.TiKVFullTextAnalyzerForRebuild = nil
+				}()
+			}
 			if err := indexSession.ExecuteInternal(ectx, sql.AddSQL, sql.AddArgs...); err != nil {
 				return errors.Trace(err)
 			}

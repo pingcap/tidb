@@ -636,6 +636,12 @@ func FindIndexByColumnsForForeignKey(tbInfo *TableInfo, indices []*IndexInfo, co
 // IsIndexPrefixCoveredForForeignKey checks whether the index covers the foreign key columns
 // and whether the partial index predicate, if any, is safe for foreign key checks.
 func IsIndexPrefixCoveredForForeignKey(tbInfo *TableInfo, index *IndexInfo, cols ...ast.CIStr) bool {
+	// A FULLTEXT index built in TiKV holds one entry per term of a row, and
+	// none for a row whose text has no term, so its key columns cannot answer
+	// whether a row with a given value exists.
+	if index.IsTiKVFullTextIndex() {
+		return false
+	}
 	if !IsIndexPrefixCovered(tbInfo, index, cols...) {
 		return false
 	}

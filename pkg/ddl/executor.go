@@ -3585,6 +3585,13 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 				return errors.Trace(dbterror.ErrTablesDifferentMetadata)
 			}
 		}
+		// FULLTEXT indexes built with different analyzers store different
+		// terms for the same text, so the entries of one would be read as
+		// the entries of the other.
+		if sourceIdx.IsTiKVFullTextIndex() != compatIdx.IsTiKVFullTextIndex() ||
+			(sourceIdx.IsTiKVFullTextIndex() && !sourceIdx.TiKVFullText.SameAnalyzer(compatIdx.TiKVFullText)) {
+			return errors.Trace(dbterror.ErrTablesDifferentMetadata)
+		}
 		if sourceIdx.ID != compatIdx.ID {
 			return dbterror.ErrPartitionExchangeDifferentOption.GenWithStackByArgs(fmt.Sprintf("index: %s", sourceIdx.Name))
 		}
