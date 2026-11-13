@@ -284,6 +284,27 @@ func TestMergeCreateTableJobsOfSameSchema(t *testing.T) {
 }
 
 func TestMergeCreateTableJobs(t *testing.T) {
+	t.Run("replica writer bypass is not shared across jobs", func(t *testing.T) {
+		jobs := make([]*JobWrapper, 0, 3)
+		for i, check := range []bool{false, true, true} {
+			jobs = append(jobs, NewJobWrapperWithArgs(&model.Job{
+				Version:             model.GetJobVerInUse(),
+				SchemaName:          "db",
+				Type:                model.ActionCreateTable,
+				CheckSchemaReadOnly: check,
+			}, &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: ast.NewCIStr(fmt.Sprintf("t%d", i))}}, false))
+		}
+		merged, err := mergeCreateTableJobs(jobs)
+		require.NoError(t, err)
+		require.Len(t, merged, 2)
+		for _, job := range merged {
+			if job.CheckSchemaReadOnly {
+				require.Equal(t, model.ActionCreateTables, job.Type)
+			} else {
+				require.Equal(t, model.ActionCreateTable, job.Type)
+			}
+		}
+	})
 	t.Run("0 or 1 job", func(t *testing.T) {
 		newWs, err := mergeCreateTableJobs([]*JobWrapper{})
 		require.NoError(t, err)

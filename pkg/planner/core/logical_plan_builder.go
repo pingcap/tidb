@@ -5582,7 +5582,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName ast.CIStr, tableIn
 			p.Extractor = NewInfoSchemaPartitionsExtractor()
 		case infoschema.TableStatistics:
 			p.Extractor = NewInfoSchemaStatisticsExtractor()
-		case infoschema.TableSchemata:
+		case infoschema.TableSchemata, infoschema.TableSchemataExtensions:
 			p.Extractor = NewInfoSchemaSchemataExtractor()
 		case infoschema.TableSequences:
 			p.Extractor = NewInfoSchemaSequenceExtractor()
@@ -6711,23 +6711,15 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	if ds.Tables != nil {
 		// Delete a, b from a, b, c, d... add a and b.
 		updatableList := make(map[string]bool)
-		tbInfoList := make(map[string]*ast.TableName)
-		collectTableName(ds.TableRefs.TableRefs, &updatableList, &tbInfoList)
+		tableNameByKey := make(map[string]*ast.TableName)
+		collectTableName(ds.TableRefs.TableRefs, &updatableList, &tableNameByKey)
 		for _, tn := range ds.Tables.Tables {
-			var canUpdate, foundMatch = false, false
-			name := tn.Name.L
-			if tn.Schema.L == "" {
-				canUpdate, foundMatch = updatableList[name]
-			}
-
-			if !foundMatch {
-				if tn.Schema.L == "" {
-					name = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB).L + "." + tn.Name.L
-				} else {
-					name = tn.Schema.L + "." + tn.Name.L
-				}
-				canUpdate, foundMatch = updatableList[name]
-			}
+			tb, canUpdate, foundMatch := resolveMultiDeleteTarget(
+				tn,
+				b.ctx.GetSessionVars().CurrentDB,
+				updatableList,
+				tableNameByKey,
+			)
 			// check sql like: `delete b from (select * from t) as a, t`
 			if !foundMatch {
 				return nil, plannererrors.ErrUnknownTable.GenWithStackByArgs(tn.Name.O, "MULTI DELETE")
@@ -6736,7 +6728,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			if !canUpdate {
 				return nil, plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tn.Name.O, "DELETE")
 			}
-			tb := tbInfoList[name]
 			tnW := b.resolveCtx.GetTableName(tb)
 			localResolveCtx.AddTableName(&resolve.TableNameW{
 				TableName: tn,
@@ -7786,11 +7777,37 @@ func (*tableListExtractor) Leave(ast.Node) bool {
 	return true
 }
 
-func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, info *map[string]*ast.TableName) {
+// resolveMultiDeleteTarget matches an unqualified alias before currentDB.table,
+// which is the resolution order used by TiDB/MySQL multi-table DELETE.
+func resolveMultiDeleteTarget(
+	target *ast.TableName,
+	currentDB string,
+	updatableList map[string]bool,
+	tableNameByKey map[string]*ast.TableName,
+) (table *ast.TableName, canUpdate, foundMatch bool) {
+	key := target.Name.L
+	if target.Schema.L == "" {
+		canUpdate, foundMatch = updatableList[key]
+	}
+	if !foundMatch {
+		if target.Schema.L == "" {
+			key = ast.NewCIStr(currentDB).L + "." + target.Name.L
+		} else {
+			key = target.Schema.L + "." + target.Name.L
+		}
+		canUpdate, foundMatch = updatableList[key]
+	}
+	if !foundMatch {
+		return nil, false, false
+	}
+	return tableNameByKey[key], canUpdate, true
+}
+
+func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, tableNameByKey *map[string]*ast.TableName) {
 	switch x := node.(type) {
 	case *ast.Join:
-		collectTableName(x.Left, updatableName, info)
-		collectTableName(x.Right, updatableName, info)
+		collectTableName(x.Left, updatableName, tableNameByKey)
+		collectTableName(x.Right, updatableName, tableNameByKey)
 	case *ast.TableSource:
 		name := x.AsName.L
 		var canUpdate bool
@@ -7803,7 +7820,7 @@ func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, in
 					name = s.Name.L
 				}
 			}
-			(*info)[name] = s
+			(*tableNameByKey)[name] = s
 		}
 		(*updatableName)[name] = canUpdate && s.Schema.L != ""
 	}

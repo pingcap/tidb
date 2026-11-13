@@ -866,6 +866,7 @@ const (
 	ErrPKIndexCantBeInvisible                                = 3522
 	ErrGrantRole                                             = 3523
 	ErrRoleNotGranted                                        = 3530
+	ErrAccessSysDBRejected                                   = 3552
 	ErrLockAcquireFailAndNoWaitSet                           = 3572
 	ErrCTERecursiveRequiresUnion                             = 3573
 	ErrCTERecursiveRequiresNonRecursiveFirst                 = 3574
@@ -944,6 +945,7 @@ const (
 	ErrDependentByCheckConstraint                            = 3959
 	ErrEngineAttributeNotSupported                           = 3981
 	ErrJSONInBooleanContext                                  = 3986
+	ErrSchemaInReadOnlyMode                                  = 3989
 	ErrTableWithoutPrimaryKey                                = 3750
 	// Dual-password (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD) — match MySQL 8.0
 	// error numbers from mysql/mysql-server share/messages_to_clients.txt.

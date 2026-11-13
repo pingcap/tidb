@@ -668,6 +668,8 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = rollingBackDropConstraint(jobCtx, job)
 	case model.ActionAlterCheckConstraint:
 		ver, err = rollingBackAlterConstraint(jobCtx, job)
+	case model.ActionModifySchemaReadOnly:
+		ver, err = rollbackModifySchemaReadOnly(jobCtx, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrCancelledDDLJob
@@ -774,4 +776,32 @@ func rollingBackAlterConstraint(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 	return ver, errors.Trace(err)
+}
+
+func rollbackModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	// The execution path records progress before writing database metadata.
+	// A cancelled queued job must not undo a preceding job's successful change.
+	if job.SchemaState == model.StateNone {
+		job.State = model.JobStateRollbackDone
+		return ver, nil
+	}
+	dbInfo, err := jobCtx.metaMut.GetDatabase(job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	args, err := model.GetModifySchemaArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	dbInfo.ReadOnly = !args.ReadOnly
+	if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+	if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.State = model.JobStateRollbackDone
+	job.SchemaState = model.StateNone
+	return ver, nil
 }

@@ -2850,7 +2850,8 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 			strings.ToLower(infoschema.TableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),
-			strings.ToLower(infoschema.TableKeyspaceMeta):
+			strings.ToLower(infoschema.TableKeyspaceMeta),
+			strings.ToLower(infoschema.TableSchemataExtensions):
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.sctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{

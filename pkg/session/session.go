@@ -522,7 +522,9 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 
 	processInfo := s.ShowProcess()
 	if processInfo == nil {
-		return &txnInfo
+		// Internal sessions can write user tables without a process-list entry.
+		// Their access set is still needed by database read-only draining.
+		processInfo = &sessmgr.ProcessInfo{}
 	}
 	txnInfo.ProcessInfo = &txninfo.ProcessInfo{
 		ConnectionID:    processInfo.ID,
@@ -531,6 +533,10 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 		RelatedTableIDs: make(map[int64]struct{}),
 	}
 	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, _ any) bool {
+		txnInfo.ProcessInfo.RelatedTableIDs[key.(int64)] = struct{}{}
+		return true
+	})
+	s.GetSessionVars().GetRelatedTableForReadOnly().Range(func(key, _ any) bool {
 		txnInfo.ProcessInfo.RelatedTableIDs[key.(int64)] = struct{}{}
 		return true
 	})
@@ -558,7 +564,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		// to prevent the case that a long running auto-commit statement is now trying to commit.
 		pm := privilege.GetPrivilegeManager(s)
 		roles := s.sessionVars.ActiveRoles
-		if pm != nil && !pm.HasExplicitlyGrantedDynamicPrivilege(roles, "RESTRICTED_REPLICA_WRITER_ADMIN", false) {
+		if pm != nil && !pm.HasExplicitlyGrantedDynamicPrivilege(roles, privilege.ReplicaWriterAdminPriv, false) {
 			s.RollbackTxn(ctx)
 			return plannererrors.ErrSQLInReadOnlyMode
 		}

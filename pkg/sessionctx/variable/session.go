@@ -245,6 +245,9 @@ type TxnCtxNoNeedToRestore struct {
 	EnableMDL bool
 	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
 	relatedTableForMDL *sync.Map
+	// relatedTableForReadOnly maps table IDs to database names when MDL is disabled.
+	// It participates in database read-only draining, without acquiring MDL locks.
+	relatedTableForReadOnly *sync.Map
 
 	// FairLockingUsed marking whether at least one of the statements in the transaction was executed in
 	// fair locking mode.
@@ -421,6 +424,7 @@ func (tc *TransactionContext) Cleanup() {
 	tc.tdmLock.Lock()
 	tc.TableDeltaMap = nil
 	tc.relatedTableForMDL = nil
+	tc.relatedTableForReadOnly = nil
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
 	tc.CurrentStmtPessimisticLockCache = nil
@@ -3764,6 +3768,17 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 		s.TxnCtx.relatedTableForMDL = new(sync.Map)
 	}
 	return s.TxnCtx.relatedTableForMDL
+}
+
+// GetRelatedTableForReadOnly gets the MDL-independent table-access set used to
+// drain transactions before a database read-only transition finishes.
+func (s *SessionVars) GetRelatedTableForReadOnly() *sync.Map {
+	s.TxnCtx.tdmLock.Lock()
+	defer s.TxnCtx.tdmLock.Unlock()
+	if s.TxnCtx.relatedTableForReadOnly == nil {
+		s.TxnCtx.relatedTableForReadOnly = new(sync.Map)
+	}
+	return s.TxnCtx.relatedTableForReadOnly
 }
 
 // ClearRelatedTableForMDL clears the related table for MDL.
