@@ -71,6 +71,9 @@ type DataSource struct {
 	TableAsName *ast.CIStr `hash64-equals:"true"`
 	// IndexMergeHints are the hint for indexmerge.
 	IndexMergeHints []h.HintedIndex
+	// PkFilterHints are the pk_filter hints matching this table. They make the
+	// executor bound a table scan's handle range with secondary index probes.
+	PkFilterHints []h.HintedIndex
 	// PushedDownConds are the conditions that will be pushed down to coprocessor.
 	PushedDownConds []expression.Expression `hash64-equals:"true"`
 	// TiFlashLMFilterColumnIDs are columns forced as TiFlash late-materialization filter columns by hints.
