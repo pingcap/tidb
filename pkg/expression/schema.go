@@ -19,6 +19,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
@@ -321,13 +322,30 @@ func MergeSchema(lSchema, rSchema *Schema) *Schema {
 	return ret
 }
 
+// usedListSetThreshold is the number of used columns from which GetUsedList
+// builds a set of UniqueIDs instead of scanning usedCols for every schema
+// column. Below it, the linear scan avoids building and probing a set.
+const usedListSetThreshold = 32
+
 // GetUsedList shows whether each column in schema is contained in usedCols.
 func GetUsedList(ctx EvalContext, usedCols []*Column, schema *Schema) []bool {
-	tmpSchema := NewSchema(usedCols...)
 	used := make([]bool, schema.Len())
+	// Membership is decided by UniqueID only, so a set of UniqueIDs gives the same
+	// answer as Schema.Contains, without scanning usedCols for every schema column.
+	var usedIDs intset.FastIntSet
+	useSet := len(usedCols) >= usedListSetThreshold
+	if useSet {
+		for _, col := range usedCols {
+			usedIDs.Insert(int(col.UniqueID))
+		}
+	}
 	for i, col := range schema.Columns {
 		if !used[i] {
-			used[i] = tmpSchema.Contains(col)
+			if useSet {
+				used[i] = usedIDs.Has(int(col.UniqueID))
+			} else {
+				used[i] = containsUniqueID(usedCols, col.UniqueID)
+			}
 
 			// When cols are a generated expression col, compare them in terms of virtual expr.
 			if expr, ok := col.VirtualExpr.(*ScalarFunction); ok && used[i] {
@@ -340,6 +358,15 @@ func GetUsedList(ctx EvalContext, usedCols []*Column, schema *Schema) []bool {
 		}
 	}
 	return used
+}
+
+func containsUniqueID(cols []*Column, uniqueID int64) bool {
+	for _, c := range cols {
+		if c.UniqueID == uniqueID {
+			return true
+		}
+	}
+	return false
 }
 
 // NewSchema returns a schema made by its parameter.
