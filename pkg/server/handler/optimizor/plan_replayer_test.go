@@ -861,6 +861,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	filename1 := tk.MustQuery(
 		fmt.Sprintf(template, strconv.FormatUint(ts1, 10), query),
 	).Rows()[0][0].(string)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 PLAN REPLAYER DUMP WITH STATS AS OF TIMESTAMP is deprecated and will be removed in a future release."))
 	zip1 := fetchZipFromPlanReplayerAPI(t, client, filename1)
 	jsonTbls1, metas1, errMsg1 := getInfoFromPlanReplayerZip(t, zip1)
 
