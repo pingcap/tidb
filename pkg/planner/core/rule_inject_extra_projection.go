@@ -46,6 +46,96 @@ func InjectExtraProjection(plan base.PhysicalPlan) base.PhysicalPlan {
 	return NewProjInjector().inject(plan)
 }
 
+// canProjectionBeEliminatedStrict checks whether a projection can be
+// eliminated, returns true if the projection just copies its child's output.
+func canProjectionBeEliminatedStrict(p *physicalop.PhysicalProjection) bool {
+	// This is due to the incompatibility between TiFlash and TiDB:
+	// For TiDB, the output schema of final agg is all the aggregated functions and for
+	// TiFlash, the output schema of agg(TiFlash not aware of the aggregation mode) is
+	// aggregated functions + group by columns, so to make the things work, for final
+	// mode aggregation that needs to be running in TiFlash, always add an extra Project
+	// to align the output schema. In the future, we can solve this incompatibility by
+	// passing down the aggregation mode to TiFlash.
+	if physicalAgg, ok := p.Children()[0].(*physicalop.PhysicalHashAgg); ok {
+		if physicalAgg.MppRunMode == physicalop.Mpp1Phase || physicalAgg.MppRunMode == physicalop.Mpp2Phase || physicalAgg.MppRunMode == physicalop.MppScalar {
+			if physicalAgg.IsFinalAgg() {
+				return false
+			}
+		}
+	}
+	if physicalAgg, ok := p.Children()[0].(*physicalop.PhysicalStreamAgg); ok {
+		if physicalAgg.MppRunMode == physicalop.Mpp1Phase || physicalAgg.MppRunMode == physicalop.Mpp2Phase || physicalAgg.MppRunMode == physicalop.MppScalar {
+			if physicalAgg.IsFinalAgg() {
+				return false
+			}
+		}
+	}
+	// If this projection is specially added for `DO`, we keep it.
+	if p.CalculateNoDelay {
+		return false
+	}
+	if p.Schema().Len() == 0 {
+		return true
+	}
+	child := p.Children()[0]
+	if p.Schema().Len() != child.Schema().Len() {
+		return false
+	}
+	for i, expr := range p.Exprs {
+		col, ok := expr.(*expression.Column)
+		if !ok || !col.EqualColumn(child.Schema().Columns[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func doPhysicalProjectionElimination(p base.PhysicalPlan) base.PhysicalPlan {
+	for i, child := range p.Children() {
+		p.Children()[i] = doPhysicalProjectionElimination(child)
+	}
+
+	// eliminate projection in a coprocessor task
+	tableReader, isTableReader := p.(*physicalop.PhysicalTableReader)
+	if isTableReader && tableReader.StoreType == kv.TiFlash {
+		tableReader.TablePlan = eliminatePhysicalProjection(tableReader.TablePlan)
+		tableReader.TablePlans = physicalop.FlattenListPushDownPlan(tableReader.TablePlan)
+		return p
+	}
+
+	proj, isProj := p.(*physicalop.PhysicalProjection)
+	if !isProj || !canProjectionBeEliminatedStrict(proj) {
+		return p
+	}
+	child := p.Children()[0]
+	if childProj, ok := child.(*physicalop.PhysicalProjection); ok {
+		// When current projection is an empty projection(schema pruned by column pruner),
+		// no need to reset child's schema.
+		// TODO: avoid producing empty projection in column pruner.
+		if p.Schema().Len() != 0 {
+			childProj.SetSchema(p.Schema())
+		}
+	}
+	for i, col := range p.Schema().Columns {
+		if p.SCtx().GetSessionVars().StmtCtx.ColRefFromUpdatePlan.Has(int(col.UniqueID)) && !child.Schema().Columns[i].Equal(nil, col) {
+			return p
+		}
+	}
+	return child
+}
+
+// eliminatePhysicalProjection should be called after physical optimization to
+// eliminate the redundant projection left after logical projection elimination.
+func eliminatePhysicalProjection(p base.PhysicalPlan) base.PhysicalPlan {
+	failpoint.Inject("DisableProjectionPostOptimization", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(p)
+		}
+	})
+
+	return doPhysicalProjectionElimination(p)
+}
+
 type projInjector struct {
 }
 
