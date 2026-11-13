@@ -11779,7 +11779,12 @@ use super::*;
                 vec![long_column("id", 1), long_column("value", 2)],
             ),
         );
-        let scan = table_scan(1, table_id, 1, 1);
+        let mut scan = table_scan(1, table_id, 1, 1);
+        // Go `ts.Table`, which the reader reads its table through.
+        let PhysicalPlan::TableScan(ts) = &mut scan else {
+            unreachable!();
+        };
+        ts.table = Some(catalog.kv_table_by_id(table_id).expect("registered").meta().clone());
         let mut base = BasePhysicalPlan::with_id(2, "TableReader", 0);
         base.base.set_schema(scan.schema().cloned());
         let plan = PhysicalPlan::TableReader(PhysicalTableReader {

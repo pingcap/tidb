@@ -115,6 +115,9 @@ pub fn storage(
 #[derive(Clone, Debug, Default)]
 pub struct SharedMemStorage {
     inner: Arc<Mutex<tidb_kv::storage::MemTableStorage>>,
+    /// The coprocessor answering this store's requests, as Go's mock store's
+    /// unistore answers them; `None` leaves the store without one.
+    client: Option<Arc<dyn tidb_txnkv::Client>>,
 }
 
 impl SharedMemStorage {
@@ -187,15 +190,42 @@ impl tidb_kv::storage::TableStorage for SharedMemStorage {
     fn clone_box(&self) -> Box<dyn tidb_kv::storage::TableStorage> {
         Box::new(self.clone())
     }
+
+    fn client(&self) -> Option<Arc<dyn tidb_txnkv::Client>> {
+        self.client.clone()
+    }
 }
 
 impl SharedMemStorage {
+    /// This store answering coprocessor requests through `client`.
+    #[must_use]
+    pub fn with_client(mut self, client: Arc<dyn tidb_txnkv::Client>) -> Self {
+        self.client = Some(client);
+        self
+    }
+
+    /// Every committed pair the store holds, in key order: what a
+    /// coprocessor over it reads.
+    #[must_use]
+    pub fn pairs(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
+        let mut store = self.lock();
+        let mut iter = tidb_kv::storage::TableStorage::iter(&mut *store, None, None)
+            .expect("an in-memory store iterates");
+        let mut pairs = Vec::new();
+        while iter.valid() {
+            pairs.push((iter.key().as_bytes().to_vec(), iter.value().to_vec()));
+            iter.next().expect("an in-memory iterator advances");
+        }
+        pairs
+    }
+
     /// A copy of the rows that no longer shares them, for a test that
     /// corrupts one copy and keeps the original.
     #[must_use]
     pub fn fork(&self) -> Self {
         Self {
             inner: Arc::new(Mutex::new(self.lock().clone())),
+            client: self.client.clone(),
         }
     }
 }

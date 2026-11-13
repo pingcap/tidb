@@ -306,6 +306,7 @@ mod reserved_word_show_create_source;
 mod right_join_source;
 mod row_count_fn_source;
 mod schema_lifecycle_errors_source;
+mod global_temp_table_source;
 mod merge_join_order_source;
 mod select_lock_source;
 mod self_check_source;

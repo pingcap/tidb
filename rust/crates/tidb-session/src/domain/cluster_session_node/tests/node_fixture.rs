@@ -468,6 +468,7 @@ fn open_session_on_with_context_and_seams_and_usage(
         Arc::clone(&node.auto_ids) as _,
         crate::domain::cluster_session_node::open_pool_session,
     )
+    .with_kv_client(Arc::new(super::mock_cluster::MockCoprocessor(Arc::clone(&node.cluster))))
     .shared();
     crate::domain::cluster_session_node::NodeServices::new(analyze).bind(&factory);
     node.keep(&factory);

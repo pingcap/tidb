@@ -206,8 +206,6 @@ mod tests_duplicate_entry_message_source;
 #[cfg(test)]
 mod tests_executor_part19_source;
 #[cfg(test)]
-mod tests_global_temp_table_source;
-#[cfg(test)]
 mod tests_index_join;
 #[cfg(test)]
 mod tests_jointest_join_source;

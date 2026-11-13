@@ -17,7 +17,17 @@
 use tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage;
 
 thread_local! {
-    static STORE: SharedMemStorage = SharedMemStorage::default();
+    static STORE: SharedMemStorage = fresh_store();
+}
+
+/// A new store of its own: Go's mock store answers a reader's DAG with
+/// unistore's coprocessor over its own rows, and this store does the same
+/// over its rows.
+pub(crate) fn fresh_store() -> SharedMemStorage {
+    let rows = SharedMemStorage::default();
+    let reader = rows.clone();
+    let client = crate::test_region::TestRegion::over(move || reader.pairs());
+    rows.with_client(std::sync::Arc::new(client))
 }
 
 /// This test's store; every clone shares its rows.

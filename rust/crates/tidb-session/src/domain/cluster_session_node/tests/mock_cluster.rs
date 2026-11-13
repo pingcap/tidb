@@ -31,6 +31,10 @@ use tidb_txnkv::Key;
 pub(super) struct MockCluster {
     pub(super) advisory_locks: tidb_sessionctx::advisory_lock_state::LocalAdvisoryLockService,
     pub(super) committed: Mutex<BTreeMap<Vec<u8>, Vec<u8>>>,
+    /// The committed rows as each publication left them, by commit
+    /// timestamp, after the rows before the first one at timestamp 0: what
+    /// [`MockCoprocessor`] reads a request's snapshot from.
+    pub(super) history: Mutex<Vec<(u64, BTreeMap<Vec<u8>, Vec<u8>>)>>,
     /// Resource groups observed at snapshot/transaction request boundaries.
     pub(super) resource_groups: Mutex<Vec<String>>,
     pub(super) read_options: Mutex<Vec<tidb_txnkv::SnapshotReadOptions>>,
@@ -158,6 +162,17 @@ impl MockCluster {
         self.committed.lock().expect("committed").clone()
     }
 
+    /// The rows a read at `start_ts` sees: the last publication at or before
+    /// it, or the current rows (and whatever a test wrote into them directly)
+    /// at or after the last one.
+    pub(super) fn rows_at(&self, start_ts: u64) -> BTreeMap<Vec<u8>, Vec<u8>> {
+        let history = self.history.lock().expect("history");
+        match history.iter().rposition(|(commit_ts, _)| *commit_ts <= start_ts) {
+            Some(at) if at + 1 < history.len() => history[at].1.clone(),
+            _ => self.snapshot(),
+        }
+    }
+
     /// Publishes `staged` at `commit_ts`, refusing any key another
     /// transaction committed after `start_ts`.
     ///
@@ -221,6 +236,10 @@ impl MockCluster {
         }
         let commit_ts = self.timestamp();
         let mut committed = self.committed.lock().expect("committed");
+        let mut history = self.history.lock().expect("history");
+        if history.is_empty() {
+            history.push((0, committed.clone()));
+        }
         for (key, value) in staged {
             versions.insert(key.as_bytes().to_vec(), commit_ts);
             match value {
@@ -228,6 +247,8 @@ impl MockCluster {
                 None => committed.remove(key.as_bytes()),
             };
         }
+        history.push((commit_ts, committed.clone()));
+        drop(history);
         drop(committed);
         drop(versions);
         self.publications.fetch_add(1, Ordering::AcqRel);
@@ -726,5 +747,110 @@ impl OpenClusterTransaction for MockSessionTransaction {
             for_update_ts: self.start_ts,
             newly_locked: keys,
         })
+    }
+}
+
+/// Go's mock store answers a reader's DAG with unistore's coprocessor over
+/// its MVCC rows; this cluster's coprocessor runs unistore's handler over the
+/// rows committed as of the request's start timestamp.
+#[derive(Debug)]
+pub(super) struct MockCoprocessor(pub(super) Arc<MockCluster>);
+
+/// One coprocessor response, the whole answer in one subset.
+struct MockCopResponse(Option<tidb_txnkv::QueryResultSubset>);
+
+impl tidb_txnkv::Response for MockCopResponse {
+    fn next(&mut self) -> Result<Option<tidb_txnkv::QueryResultSubset>, tidb_txnkv::QueryResponseError> {
+        Ok(self.0.take())
+    }
+
+    fn close(&mut self) -> Result<(), tidb_txnkv::QueryResponseError> {
+        self.0 = None;
+        Ok(())
+    }
+}
+
+impl tidb_txnkv::Client for MockCoprocessor {
+    fn send(&self, request: &tidb_txnkv::TransportRequest) -> Box<dyn tidb_txnkv::Response + Send> {
+        let metadata = request.metadata();
+        let ranges = metadata
+            .key_ranges
+            .as_ref()
+            .map(|ranges| {
+                ranges
+                    .partitions()
+                    .iter()
+                    .flatten()
+                    .map(|range| tidb_proto::coprocessor::KeyRange {
+                        start: range.start_key.as_bytes().to_vec(),
+                        end: range.end_key.as_bytes().to_vec(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        // The snapshot's rows, committed in one transaction (versions 1, 2)
+        // that the request reads after.
+        let mut store = tidb_unistore_tikv::mvcc_store::MvccStore::new();
+        let mutations: Vec<tidb_proto::KvrpcMutation> = self
+            .0
+            .rows_at(metadata.start_ts)
+            .into_iter()
+            .map(|(key, value)| tidb_proto::KvrpcMutation {
+                op: tidb_proto::KvrpcOp::Put as i32,
+                key,
+                value,
+                ..tidb_proto::KvrpcMutation::default()
+            })
+            .collect();
+        if let Some(primary) = mutations.first().map(|mutation| mutation.key.clone()) {
+            let keys: Vec<Vec<u8>> = mutations.iter().map(|mutation| mutation.key.clone()).collect();
+            store
+                .prewrite(&tidb_unistore_tikv::mvcc_store::PrewriteReq {
+                    mutations,
+                    primary_lock: primary,
+                    start_version: 1,
+                    ..tidb_unistore_tikv::mvcc_store::PrewriteReq::default()
+                })
+                .expect("the snapshot's rows prewrite");
+            store.commit(&keys, 1, 2).expect("the snapshot's rows commit");
+        }
+        let response = tidb_unistore_cophandler::handle_cop_request(
+            &mut store,
+            &tidb_proto::coprocessor::Request {
+                tp: tidb_unistore_cophandler::REQ_TYPE_DAG,
+                data: metadata.data.clone().unwrap_or_default(),
+                ranges,
+                start_ts: 3,
+                ..tidb_proto::coprocessor::Request::default()
+            },
+        );
+        if !response.other_error.is_empty() {
+            return tidb_txnkv::CopErrorResponse::boxed(tidb_txnkv::QueryResponseError::Source(format!(
+                "coprocessor other error: {}",
+                response.other_error
+            )));
+        }
+        // The region layer's part (Go `copIteratorWorker.collectCopRuntimeStats`
+        // and the statement-wide keys-read counter it charges).
+        let mut scan = tikv_client::util::ScanDetail::default();
+        if let Some(details) = &response.exec_details_v2 {
+            scan.merge_from_pb(details.scan_detail_v2.as_ref());
+        }
+        if let (Some(counter), Ok(keys)) =
+            (&metadata.max_keys_read_counter, u64::try_from(scan.processed_keys))
+        {
+            counter.fetch_add(keys, std::sync::atomic::Ordering::Relaxed);
+        }
+        Box::new(MockCopResponse(Some(tidb_txnkv::QueryResultSubset {
+            data: response.data.into(),
+            runtime: Some(tidb_txnkv::ResponseRuntimeStats {
+                scan_detail: Some(scan),
+                ..tidb_txnkv::ResponseRuntimeStats::default()
+            }),
+        })))
+    }
+
+    fn is_request_type_supported(&self, _request_type: i64, _sub_type: i64) -> bool {
+        true
     }
 }

@@ -47,7 +47,9 @@ fn fix52592_disables_unique_index_point_conversion() {
             });
             assert_eq!(rows, expected, "{sql}, fix={enabled}");
             if enabled {
-                assert!(ops.scans > 0 || ops.cop_scans > 0, "{sql}: {ops:?}");
+                // The fix leaves the read to the index reader, whose
+                // coprocessor request no point get precedes.
+                assert_eq!(ops.gets, 0, "{sql}: {ops:?}");
             } else {
                 assert!(ops.gets > 0, "{sql}: {ops:?}");
                 assert_eq!((ops.scans, ops.cop_scans), (0, 0), "{sql}");

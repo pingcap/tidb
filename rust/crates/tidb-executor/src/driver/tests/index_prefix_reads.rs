@@ -31,7 +31,7 @@ fn prefix_table() -> (
     SessionExtendedInfoSchema,
     tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage,
 ) {
-    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
+    let store = crate::test_store::fresh_store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE t (a VARCHAR(20), b INT, KEY idx (a(3)))",
@@ -133,7 +133,7 @@ fn inequalities_over_a_cut_endpoint_still_read_every_qualifying_row() {
 /// (`TruncateIndexValues` then `genIndexKeyStrs` in `pkg/table/tables`).
 #[test]
 fn a_unique_prefix_index_rejects_a_row_that_only_shares_the_prefix() {
-    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
+    let store = crate::test_store::fresh_store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE u (a VARCHAR(20), UNIQUE KEY uidx (a(3)))",
@@ -166,7 +166,7 @@ fn a_unique_prefix_index_rejects_a_row_that_only_shares_the_prefix() {
 /// point get would answer `'abcdef'` for a query about `'abcxyz'`.
 #[test]
 fn a_unique_prefix_index_does_not_answer_a_point_get() {
-    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
+    let store = crate::test_store::fresh_store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE u (a VARCHAR(20), b INT, UNIQUE KEY uidx (a(3)))",
@@ -201,7 +201,7 @@ fn a_unique_prefix_index_does_not_answer_a_point_get() {
 /// answers whichever rows those were.
 #[test]
 fn an_order_by_is_not_satisfied_by_a_prefix_key_part() {
-    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
+    let store = crate::test_store::fresh_store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE o (a VARCHAR(20), KEY idx (a(3)))",
@@ -242,7 +242,7 @@ fn an_order_by_is_not_satisfied_by_a_prefix_key_part() {
 /// rejecting the property at the first key part with a length.
 #[test]
 fn a_leading_whole_key_part_still_orders_by_itself() {
-    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
+    let store = crate::test_store::fresh_store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE c (a INT, b VARCHAR(20), KEY idx (a, b(3)))",
@@ -333,7 +333,7 @@ fn writes_through_a_prefix_index_stay_admin_check_clean() {
 /// the whole value and `admin check table c` passes.
 #[test]
 fn a_multi_byte_column_is_cut_by_characters() {
-    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
+    let store = crate::test_store::fresh_store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE c (a VARCHAR(20), KEY idx (a(3)))",
@@ -367,7 +367,7 @@ fn a_multi_byte_column_is_cut_by_characters() {
 
 #[test]
 fn partial_order_topn_keeps_competing_rows_with_the_same_prefix() {
-    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
+    let store = crate::test_store::fresh_store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -442,7 +442,7 @@ fn partial_order_topn_keeps_competing_rows_with_the_same_prefix() {
 
 #[test]
 fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters() {
-    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
+    let store = crate::test_store::fresh_store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_partial_ordered_index_for_topn(true);
     for (table, ddl, insert, sql, expected, gets) in [
@@ -556,7 +556,7 @@ fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters(
 
 #[test]
 fn prefix_null_conditions_use_a_covering_reader_without_exposing_prefix_values() {
-    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
+    let store = crate::test_store::fresh_store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -627,7 +627,7 @@ fn prefix_null_conditions_use_a_covering_reader_without_exposing_prefix_values()
 
 #[test]
 fn index_join_covering_rows_match_master_with_prefix_filters_and_outer_nulls() {
-    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
+    let store = crate::test_store::fresh_store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();

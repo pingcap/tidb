@@ -351,7 +351,7 @@ mod tests {
     #[test]
     fn splitting_a_where_does_not_change_its_result() {
         let mut table = TableCommon::new(92, vec![column("a", 1), column("b", 2)]);
-        let mut store = tidb_kv::storage::MemTableStorage::new();
+        let mut store = crate::test_store::fresh_store();
         for (a, b) in [(1, 10), (5, 50), (7, 70), (9, 90)] {
             table
                 .insert_row(&mut store, &[Datum::Int(a), Datum::Int(b)], &tidb_exprctx::NoColumns)
@@ -405,7 +405,7 @@ mod tests {
     #[test]
     fn the_composed_predicates_keep_mysqls_three_valued_answers() {
         let mut table = TableCommon::new(93, vec![column("a", 1), column("b", 2)]);
-        let mut store = tidb_kv::storage::MemTableStorage::new();
+        let mut store = crate::test_store::fresh_store();
         for (a, b) in [
             (Datum::Int(1), Datum::Int(10)),
             (Datum::Int(2), Datum::Null),
@@ -470,7 +470,7 @@ mod tests {
     #[test]
     fn a_pushed_math_builtin_answers_what_the_same_selection_answered() {
         let mut table = TableCommon::new(94, vec![column("a", 1), column("b", 2)]);
-        let mut store = tidb_kv::storage::MemTableStorage::new();
+        let mut store = crate::test_store::fresh_store();
         for (a, b) in [
             (Datum::Int(0), Datum::Int(3)),
             (Datum::Int(1), Datum::Int(0)),
@@ -538,7 +538,7 @@ mod tests {
     #[test]
     fn a_call_outside_the_catalog_stays_above_the_scan() {
         let mut table = TableCommon::new(95, vec![column("a", 1), column("b", 2)]);
-        let mut store = tidb_kv::storage::MemTableStorage::new();
+        let mut store = crate::test_store::fresh_store();
         for a in [1_i64, 2, 3] {
             table
                 .insert_row(&mut store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
