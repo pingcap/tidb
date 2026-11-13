@@ -38,6 +38,31 @@ func (c *CMSketch) insert(val *types.Datum) error {
 	return nil
 }
 
+func TestDecodeColumnTopNValueDuration(t *testing.T) {
+	ft := types.NewFieldType(mysql.TypeDuration)
+	ft.SetDecimal(0)
+	want := types.Duration{Duration: 10*time.Hour + 30*time.Minute, Fsp: 0}
+	encoded, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(int64(want.Duration)))
+	require.NoError(t, err)
+
+	got, err := DecodeColumnTopNValue(encoded, ft, time.UTC)
+	require.NoError(t, err)
+	require.Equal(t, types.KindMysqlDuration, got.Kind())
+	require.Equal(t, want, got.GetMysqlDuration())
+}
+
+func TestDecodeColumnTopNValuePreservesStringComparisonBytes(t *testing.T) {
+	ft := types.NewFieldType(mysql.TypeVarchar)
+	want := []byte{0x00, 0xff, 0x42}
+	encoded, err := codec.EncodeKey(time.UTC, nil, types.NewBytesDatum(want))
+	require.NoError(t, err)
+
+	got, err := DecodeColumnTopNValue(encoded, ft, time.UTC)
+	require.NoError(t, err)
+	require.Equal(t, types.KindBytes, got.Kind())
+	require.Equal(t, want, got.GetBytes())
+}
+
 func prepareCMSAndTopN(d, w int32, vals []*types.Datum, n uint32, total uint64) (*CMSketch, *TopN, error) {
 	data := make([][]byte, 0, len(vals))
 	for _, v := range vals {

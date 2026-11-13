@@ -326,6 +326,7 @@ import (
 	ascii                 "ASCII"
 	attribute             "ATTRIBUTE"
 	attributes            "ATTRIBUTES"
+	auto                  "AUTO"
 	autoIdCache           "AUTO_ID_CACHE"
 	autoIncrement         "AUTO_INCREMENT"
 	autoRandom            "AUTO_RANDOM"
@@ -6662,6 +6663,13 @@ IndexOptionList:
 				opt1.Condition = opt2.Condition
 			} else if opt2.SplitOpt != nil {
 				opt1.SplitOpt = opt2.SplitOpt
+				opt1.AutoPreSplit = false
+			} else if opt2.AutoPreSplit {
+				// Explicit manual boundaries always take precedence over AUTO,
+				// regardless of the order of repeated options.
+				if opt1.SplitOpt == nil {
+					opt1.AutoPreSplit = true
+				}
 			}
 			$$ = opt1
 		}
@@ -6730,6 +6738,12 @@ IndexOption:
 			SplitOpt: &ast.SplitOption{
 				Num: $3.(int64),
 			},
+		}
+	}
+|	"PRE_SPLIT_REGIONS" EqOpt "AUTO"
+	{
+		$$ = &ast.IndexOption{
+			AutoPreSplit: true,
 		}
 	}
 |	"WHERE" Expression
@@ -6839,6 +6853,7 @@ UnReservedKeyword:
 |	"STATS_SAMPLE_RATE"
 |	"STATS_COL_CHOICE"
 |	"STATS_COL_LIST"
+|	"AUTO"
 |	"AUTO_ID_CACHE"
 |	"AUTO_INCREMENT"
 |	"AFFINITY"
