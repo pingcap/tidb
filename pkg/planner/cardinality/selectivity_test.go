@@ -3271,6 +3271,26 @@ func TestEqualEstimateOnZeroRepeatBucketUpper(t *testing.T) {
 	est, err = getColumnRowCount(sctx, col, getRange(100, 100), 200, 0, false)
 	require.NoError(t, err)
 	require.Equal(t, 5.0, est.Est, "an observed Repeat must still be used as is")
+
+	// As a range bound, the upper keeps the recorded zero: the bucket's
+	// count already includes the upper's rows, so on an integer column
+	// x <= 50 must equal x < 51, and x > 50 must equal x >= 51.
+	rangeCount := func(low, high types.Datum, lowExclude, highExclude bool) float64 {
+		est, err := getColumnRowCount(sctx, col, []*ranger.Range{{
+			LowVal: []types.Datum{low}, HighVal: []types.Datum{high},
+			LowExclude: lowExclude, HighExclude: highExclude,
+			Collators: collate.GetBinaryCollatorSlice(1),
+		}}, 200, 0, false)
+		require.NoError(t, err)
+		return est.Est
+	}
+	minNotNull, maxValue := types.MinNotNullDatum(), types.MaxValueDatum()
+	le50 := rangeCount(minNotNull, types.NewIntDatum(50), false, false)
+	lt51 := rangeCount(minNotNull, types.NewIntDatum(51), false, true)
+	gt50 := rangeCount(types.NewIntDatum(50), maxValue, true, false)
+	ge51 := rangeCount(types.NewIntDatum(51), maxValue, false, false)
+	require.Equal(t, lt51, le50, "x <= 50 vs x < 51")
+	require.Equal(t, ge51, gt50, "x > 50 vs x >= 51")
 }
 
 // TestOutOfRangeNullOnlyRange covers the [NULL, MinNotNull) range that cross
