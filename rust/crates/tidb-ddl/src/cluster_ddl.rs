@@ -4986,6 +4986,9 @@ pub enum DdlPlan {
 /// One worker transaction decoded from a persisted active DDL job.
 #[derive(Clone, Debug)]
 pub struct PersistedDdlJobStep {
+    /// The job as the step left it, which Go's `afterWaitSchemaSynced`
+    /// call receives once the step's schema version is synchronized.
+    pub job: Box<tidb_model::Job>,
     /// SessionExtendedInfoSchema and active-job mutations committed atomically by the worker.
     pub write: DdlWrite,
     /// Whether this transaction removes the job from the active table.
@@ -5280,6 +5283,9 @@ pub enum PersistedDdlJobPlan {
         mdl_info: Option<MdlInfoUpdate>,
         /// Non-MDL recovery republishes the latest version before waiting.
         publish_version: bool,
+        /// The job as its last step left it, which Go's
+        /// `afterWaitSchemaSynced` call receives.
+        job: Box<tidb_model::Job>,
     },
     /// One action or history transaction, planned from the current active row.
     Step(PersistedDdlJobStep),
@@ -5759,6 +5765,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
                     version,
                     mdl_info: Some(info),
                     publish_version: false,
+                    job: Box::new(active.job.clone()),
                 });
             }
             Ok(_) => {}
@@ -5779,6 +5786,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
                     version,
                     mdl_info: None,
                     publish_version: false,
+                    job: Box::new(active.job.clone()),
                 });
             }
             if schema_state.synced_version.is_none() && active.job.last_schema_version > 0 {
@@ -5802,6 +5810,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
                         version,
                         mdl_info: None,
                         publish_version: true,
+                        job: Box::new(active.job.clone()),
                     });
                 }
             }
@@ -5874,6 +5883,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
             &mut mutations,
         )?;
         return Ok(PersistedDdlJobPlan::Step(PersistedDdlJobStep {
+            job: Box::new(active.job.clone()),
             write: job_only_write(ddl_job_id, mutations),
             terminal: false,
             run_error: None,
@@ -5975,6 +5985,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         step.write.mdl_info_update = mdl_info;
     }
     Ok(PersistedDdlJobPlan::Step(PersistedDdlJobStep {
+        job: Box::new(active.job.clone()),
         write: step.write,
         terminal: false,
         run_error: step.run_error,
@@ -6086,6 +6097,7 @@ fn finish_persisted_ddl_job<S: MetaSnapshot>(
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     }
     Ok(PersistedDdlJobStep {
+        job: Box::new(active.job.clone()),
         write: job_only_write(active.job.id, mutations),
         terminal: true,
         run_error: None,
@@ -7663,6 +7675,7 @@ pub fn plan_persisted_ddl_job_failure<S: MetaSnapshot>(
     let mut mutations = Vec::new();
     update_ddl_job_2_table(session, start_ts, &job_table, &mut active, false, &mut mutations)?;
     Ok(PersistedDdlJobStep {
+        job: Box::new(active.job.clone()),
         write: job_only_write(ddl_job_id, mutations),
         terminal: false,
         run_error,

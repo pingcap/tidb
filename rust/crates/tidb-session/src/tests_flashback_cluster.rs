@@ -213,14 +213,13 @@ fn global_variables_on_flashback_like_go() {
     assert_eq!(*during.lock().unwrap(), [["OFF", "OFF", "ON", "OFF"]; 2]);
 }
 
-/// Go `newCancelJobHook` on the step's other end: `afterWaitSchemaSynced`
-/// follows the step that reached the state, `beforeRunOneJobStep` precedes
-/// the next one.
+/// Go `newCancelJobHook` over `afterWaitSchemaSynced`: the step that
+/// reached the state has been synchronized when the hook cancels the job.
 fn cancel_job_hook(session: &Session, state: SchemaState) -> (tidb_failpoint::Guard, Arc<Mutex<Vec<String>>>) {
     let domain = crate::domain::mock_store::domain_of(session).expect("a mock store session");
     let cancelled = Arc::new(Mutex::new(Vec::new()));
     let seen = cancelled.clone();
-    let guard = enable_call("beforeRunOneJobStep", move |job| {
+    let guard = enable_call("afterWaitSchemaSynced", move |job| {
         if job.schema_state == state && seen.lock().unwrap().is_empty() {
             let mut tk = domain.new_session().expect("a second session");
             let result = rows(&mut tk, &format!("admin cancel ddl jobs {}", job.id));

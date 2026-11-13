@@ -808,6 +808,8 @@ struct CommittedDdlPhase {
     report: ClusterDdlReport,
     persisted_job_terminal: bool,
     run_error: Option<(DdlPlanError, i64)>,
+    /// The job as the step left it.
+    job: Box<tidb_model::Job>,
 }
 
 // Go isRetryableJobError tests the next error against the CURRENT process
@@ -881,6 +883,7 @@ enum DdlPhaseOutcome {
         version: i64,
         mdl_info: Option<MdlInfoUpdate>,
         publish_version: bool,
+        job: Box<tidb_model::Job>,
     },
     Committed(CommittedDdlPhase),
     /// The job's next step needs a reorganization run first.
@@ -995,6 +998,7 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
                 version,
                 mdl_info,
                 publish_version,
+                mut job,
             } => {
                 check_owner().map_err(ClusterDdlError::SchemaSync)?;
                 if publish_version {
@@ -1043,6 +1047,8 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
                         );
                     }
                 }
+                // Go `transitOneJobStepAndWaitSync`'s last step.
+                tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", &mut *job);
             }
             DdlPhaseOutcome::Committed(committed) if committed.persisted_job_terminal => {
                 // Go `handleJobDone`: after the history commit, the reorg
@@ -1078,6 +1084,8 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
                         );
                     }
                 }
+                let mut job = committed.job;
+                tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", &mut *job);
                 return Ok(PersistedDdlJobOutcome::Finished);
             }
             DdlPhaseOutcome::Committed(committed) => {
@@ -1087,6 +1095,14 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
                     if *schema_version > 0 {
                         schema_state.pending_version = Some(*schema_version);
                     }
+                }
+                // Go `transitOneJobStepAndWaitSync` waits for the step's
+                // version (the next pass's schema sync, which then calls
+                // `afterWaitSchemaSynced`) or, with no version to wait for,
+                // calls it now.
+                if schema_state.pending_version.is_none() {
+                    let mut job = committed.job;
+                    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", &mut *job);
                 }
                 if let Some((error, error_count)) = committed.run_error {
                     if is_retryable_job_error(
@@ -2097,6 +2113,7 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
                 version,
                 mdl_info,
                 publish_version,
+                job,
             }) => {
                 transaction
                     .rollback()
@@ -2105,6 +2122,7 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
                     version,
                     mdl_info,
                     publish_version,
+                    job,
                 });
             }
             Ok(PersistedDdlJobPlan::Reorg(reorg)) => {
@@ -2126,6 +2144,7 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
     };
     let mut persisted_job_terminal = step.terminal;
     let mut run_error = step.run_error.map(|error| (error, step.error_count));
+    let mut job = step.job;
     let mut write = step.write;
     if write.check_constraint_validation.is_some() {
         let stage_action = || {
@@ -2193,6 +2212,7 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
                 }
             };
             write = checkpoint.write;
+            job = checkpoint.job;
             persisted_job_terminal = checkpoint.terminal;
             run_error = checkpoint
                 .run_error
@@ -2312,6 +2332,7 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
                 },
                 persisted_job_terminal,
                 run_error,
+                job,
             }))
         }
         Err(error) => {
