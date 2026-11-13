@@ -1363,6 +1363,130 @@ func TestMDLCreateMaterializedViewLogNewTxnWriteMLog(t *testing.T) {
 	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2"))
 	tk.MustQuery("select a, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by a").
 		Check(testkit.Rows("2 I 1"))
+
+	tkDDL.MustExec("use test")
+	for _, tc := range []struct {
+		name     string
+		write    string
+		finish   string
+		prepared bool
+	}{
+		{"add_column_insert", "insert into %s values (2, 20)", "commit", false},
+		{"add_column_update", "update %s set b = 20 where id = 1", "commit", false},
+		{"add_column_delete", "delete from %s where id = 1", "commit", false},
+		{"add_column_rollback", "update %s set b = 20 where id = 1", "rollback", false},
+		{"add_column_plan_cache", "", "commit", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+			tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
+			tableName := "t_mlog_" + tc.name
+			mlogName := "$mlog$" + tableName
+			mvName := "mv_mlog_" + tc.name
+			tk.MustExec(fmt.Sprintf("create table %s(id int primary key, b int not null)", tableName))
+			tk.MustExec(fmt.Sprintf("insert into %s values (1, 10)", tableName))
+			tk.MustExec(fmt.Sprintf("create materialized view log on %s (id)", tableName))
+			if tc.prepared {
+				tk.MustExec("set tidb_enable_prepared_plan_cache = 1")
+				tk.MustExec(fmt.Sprintf("prepare mlog_update_stmt from 'update %s set b = ? where id = 1'", tableName))
+				tk.MustExec("begin pessimistic")
+				tk.MustExec("set @b = 10")
+				tk.MustExec("execute mlog_update_stmt using @b")
+				tk.MustExec("execute mlog_update_stmt using @b")
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+				tk.MustExec("commit")
+			}
+
+			tk.MustExec("begin pessimistic")
+			defer tk.MustExec("rollback")
+			if tc.prepared {
+				tk.MustExec("set @b = 20")
+				tk.MustExec("execute mlog_update_stmt using @b")
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+			} else {
+				tk.MustExec(fmt.Sprintf(tc.write, tableName))
+			}
+
+			ddlStarted := make(chan struct{})
+			var once sync.Once
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaChanged", func(job *model.Job, _ int64) {
+				if job.Type == model.ActionAddColumn && job.TableName == mlogName && job.SchemaState == model.StateDeleteOnly {
+					once.Do(func() { close(ddlStarted) })
+				}
+			})
+			ddlDone := make(chan error, 1)
+			go func() {
+				ddlDone <- tkDDL.ExecToErr(fmt.Sprintf("alter materialized view log on %s add column (b)", tableName))
+			}()
+			select {
+			case <-ddlStarted:
+			case <-time.After(10 * time.Second):
+				require.FailNow(t, "MLog ADD COLUMN did not start")
+			}
+			select {
+			case err := <-ddlDone:
+				require.FailNowf(t, "MLog ADD COLUMN must wait for the base-table writer", "DDL finished before %s, err=%v", tc.finish, err)
+			case <-time.After(200 * time.Millisecond):
+			}
+			tk.MustExec(tc.finish)
+			select {
+			case err := <-ddlDone:
+				require.NoError(t, err)
+			case <-time.After(10 * time.Second):
+				require.FailNow(t, "MLog ADD COLUMN did not finish after the writer ended")
+			}
+
+			// A new MV must include every old writer before it starts consuming
+			// changes to the newly tracked column from the MLog.
+			baseQuery := fmt.Sprintf("select id, sum(b), count(1) from %s group by id order by id", tableName)
+			mvQuery := fmt.Sprintf("select id, s, cnt from %s order by id", mvName)
+			tkDDL.MustExec(fmt.Sprintf("create materialized view %s (id, s, cnt) refresh fast as select id, sum(b), count(1) from %s group by id", mvName, tableName))
+			require.Equal(t, tkDDL.MustQuery(baseQuery).Rows(), tkDDL.MustQuery(mvQuery).Rows())
+			if tc.prepared {
+				tk.MustExec("set @b = 30")
+				tk.MustExec("execute mlog_update_stmt using @b")
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+			} else {
+				tk.MustExec(fmt.Sprintf("update %s set b = b + 1", tableName))
+			}
+			tk.MustExec(fmt.Sprintf("insert into %s values (3, 30)", tableName))
+			tkDDL.MustQuery(fmt.Sprintf("select b from `%s` where id = 3", mlogName)).Check(testkit.Rows("30"))
+			tkDDL.MustExec(fmt.Sprintf("refresh materialized view %s fast", mvName))
+			require.Equal(t, tkDDL.MustQuery(baseQuery).Rows(), tkDDL.MustQuery(mvQuery).Rows())
+		})
+	}
+
+	t.Run("transaction_before_add_column", func(t *testing.T) {
+		tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+		tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
+		tk.MustExec("create table t_mlog_old_schema(id int primary key, b int not null)")
+		tk.MustExec("insert into t_mlog_old_schema values (1, 10)")
+		tk.MustExec("create materialized view log on t_mlog_old_schema (id)")
+		tk.MustExec("begin pessimistic")
+		defer tk.MustExec("rollback")
+		// Reading the base table must not lock its MLog. The subsequent write
+		// must still acquire the MLog dependency when the base MDL is held.
+		tk.MustQuery("select b from t_mlog_old_schema").Check(testkit.Rows("10"))
+		tkDDL.MustExec("alter materialized view log on t_mlog_old_schema add column (b)")
+		tk.MustExec("update t_mlog_old_schema set b = 20 where id = 1")
+		tk.MustExec("commit")
+		tkDDL.MustQuery("select b, `_MLOG$_OLD_NEW` from `$mlog$t_mlog_old_schema` order by `_MLOG$_OLD_NEW`").
+			Check(testkit.Rows("10 -1", "20 1"))
+	})
+
+	t.Run("transaction_before_create_mlog", func(t *testing.T) {
+		tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+		tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
+		tk.MustExec("create table t_mlog_new_schema(id int primary key, b int not null)")
+		tk.MustExec("insert into t_mlog_new_schema values (1, 10)")
+		tk.MustExec("begin pessimistic")
+		defer tk.MustExec("rollback")
+		tkDDL.MustExec("create materialized view log on t_mlog_new_schema (id, b)")
+		tk.MustExec("update t_mlog_new_schema set b = 20 where id = 1")
+		tk.MustExec("commit")
+		tkDDL.MustQuery("select b, `_MLOG$_OLD_NEW` from `$mlog$t_mlog_new_schema` order by `_MLOG$_OLD_NEW`").
+			Check(testkit.Rows("10 -1", "20 1"))
+	})
 }
 
 func TestMDLSavePoint(t *testing.T) {
