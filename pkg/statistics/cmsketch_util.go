@@ -40,11 +40,13 @@ func topNMetaToDatum(val TopNMeta,
 }
 
 // DecodeColumnTopNValue decodes an encoded column TopN value for consumers that
-// need to preserve string comparison bytes.
-func DecodeColumnTopNValue(encoded []byte, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
+// need to preserve string comparison bytes. It decodes in UTC: a column TopN entry is written by
+// codec.EncodeKey, which normalizes a TIMESTAMP to UTC, so there is no time zone for a decode to
+// choose. Histogram bounds do not share that property yet, see issue #52429.
+func DecodeColumnTopNValue(encoded []byte, ft *types.FieldType) (types.Datum, error) {
 	_, dat, err := codec.DecodeOne(encoded)
 	if err != nil || types.IsString(ft.GetType()) {
 		return dat, err
 	}
-	return tablecodec.Unflatten(dat, ft, loc)
+	return tablecodec.Unflatten(dat, ft, time.UTC)
 }
