@@ -121,7 +121,7 @@ pub fn update_executor_table_id(
 }
 
 /// Go `placement.DCLabelKey`.
-const DC_LABEL_KEY: &str = "zone";
+pub(crate) const DC_LABEL_KEY: &str = "zone";
 
 /// Go `tiFlashStoreInfo`.
 #[derive(Clone, Debug, Default)]

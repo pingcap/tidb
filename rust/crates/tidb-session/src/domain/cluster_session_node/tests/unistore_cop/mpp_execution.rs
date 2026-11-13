@@ -2674,3 +2674,32 @@ fn test_inverted_index() {
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
 }
+
+/// Go `buildTableReader`: an MPP read under a `tiflash_replica_read` other
+/// than `all_replicas` warns that the policy is ignored when this TiDB has no
+/// zone label (a Go testkit probe over mock TiFlash, whose advertise address
+/// is empty).
+#[test]
+fn tiflash_replica_read_without_a_zone_label_warns_like_go() {
+    let (stack, mut session) = tiflash_session(2, 2176);
+    rows(&mut session, "create table t(a int primary key, b int)");
+    rows(&mut session, "alter table t set tiflash replica 1");
+    replica_available(&stack, &mut session, "t");
+    rows(&mut session, "insert into t values(1,1),(2,10)");
+    rows(&mut session, "set @@session.tidb_isolation_read_engines=\"tiflash\"");
+    rows(&mut session, "set @@tidb_allow_mpp = ON");
+    for (policy, warned) in [("all_replicas", false), ("closest_adaptive", true), ("closest_replicas", true)] {
+        rows(&mut session, &format!("set @@tiflash_replica_read = '{policy}'"));
+        rows(&mut session, "select count(*) from t");
+        let want: Vec<Vec<String>> = if warned {
+            vec![vec![
+                "Warning".to_owned(),
+                "1105".to_owned(),
+                format!("the variable tiflash_replica_read is ignored, because the entry TiDB[] does not set the zone attribute and tiflash_replica_read is '{policy}'"),
+            ]]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(displayed(rows(&mut session, "show warnings")), want, "{policy}");
+    }
+}

@@ -6134,9 +6134,31 @@ fn build_reader_node(
                     }));
                 }
             }
+            // Go `buildTableReader`: a TiFlash read under a replica-read
+            // policy other than all replicas warns when this TiDB has no zone
+            // label to choose replicas by.
+            let use_mpp = crate::mpp_gather::use_mpp_execution(ctx, reader);
+            let use_tiflash_batch_cop = reader.read_req_type
+                == tidb_planner_core_operator_physicalop::physical_table_reader::ReadReqType::BatchCop;
+            if use_mpp || use_tiflash_batch_cop {
+                let config = tidb_config::config_tree::config::get_global_config();
+                let replica_read = ctx.tiflash_replica_read();
+                if !replica_read.is_all_replicas()
+                    && !config.labels.contains_key(crate::local_mpp_coordinator::DC_LABEL_KEY)
+                {
+                    ctx.append_warning_parts(
+                        1105,
+                        &format!(
+                            "the variable tiflash_replica_read is ignored, because the entry TiDB[{}] does not set the zone attribute and tiflash_replica_read is '{}'",
+                            config.advertise_address,
+                            tidb_tiflash::get_tiflash_replica_read(replica_read),
+                        ),
+                    );
+                }
+            }
             // Go `buildTableReader`: `if useMPPExecution(b.ctx, v) { return
             // b.buildMPPGather(v) }`.
-            if crate::mpp_gather::use_mpp_execution(ctx, reader) {
+            if use_mpp {
                 let gather = crate::mpp_gather::MppGather::build(meta(ctx, plan, plan_schema(plan)?), ctx, catalog, reader)
                     .map_err(DriverError::from)?;
                 ctx.mark_physical_table_reader();
