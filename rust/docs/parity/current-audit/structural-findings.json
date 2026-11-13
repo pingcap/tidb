@@ -2,9 +2,9 @@
   "date": "2026-11-14",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 16,
+    "unresolved": 15,
     "open": 3,
-    "partial": 13
+    "partial": 12
   },
   "findings": [
     {
@@ -36,13 +36,6 @@
       "group": "DML and executor handoff",
       "finding": "Root HashAgg is Go's `HashAggExec` (`tidb-executor-aggregate/src/agg_hash_executor.rs`: fetcher, partial workers shuffling one mapper per final worker, final workers, `parallelHashAggSpillHelper` spill), and its serial and parallel memory are Go's to the byte for global and pushed-down aggregates (`sum(a)` 12.6 KB, `b, count(a) ... group by b` 13.5 KB, `count(distinct b)` 12.4 KB) (a grouped scan-fed `a, group_concat(b) ... group by a` 14.0 KB and an index-fed `count(distinct a)` 12.3 KB, as a Go statement loop that installs the connection's allocator charges them); its disk tracker exists only where Go's `initForUnparallelExec` / `initForParallelExec` create one (a distinct aggregate's EXPLAIN ANALYZE disk is `N/A`); its fetcher's capacity-0 input chunks fill through the select result's Go `Decoder` (`Decode` appends each buffer once and rounds its rows up to eight; `ReuseIntermChk` swaps a large remainder in), so a four-row VARCHAR-keyed response grows its input chunk by Go's 96 bytes (offsets 5/6) and `b, count(a) ... group by b`'s HashAgg peaks at Go's 13801 bytes; after earlier statements on one connection the workers' chunks receive the same recycled columns Go's do, so the charge follows the connection's history as Go's does (over a server connection the group_concat run after a `count(distinct a)` charges Go's 18.0 KB, the `b, count(a)` after it Go's 16.9 KB; an in-process session matches Go's allocator with an unpooled result chunk, 14.8 KB and 14.2 KB); a cop-side aggregation with no pushed form (`pushed_partial_aggregation` refuses its function kind, or an argument the pushdown catalog cannot lower: X01) runs in this tier on Go's TiDB-tier `HashAggExec` / `StreamAggExec`, where Go always runs it in the coprocessor; in the suites and the corpus only a TiFlash fragment's aggregates (M01) reach it",
       "go_owner": "`pkg/executor/aggregate` (`agg_hash_executor.go`, `agg_hash_partial_worker.go`, `agg_hash_final_worker.go`)"
-    },
-    {
-      "id": "E11",
-      "status": "partial",
-      "group": "DML and executor handoff",
-      "finding": "`IndexLookUpExecutor`'s memory and RU v2 are Go's, on every run: the double read (`IndexRangeSourceExec`, `access_path.rs` `IndexLookUpMemory`) owns a tracker labelled with its plan that each open attaches to the statement's, charged with its index ranges' KV ranges (`buildTableKeyRanges`), the index worker's responses (`LabelForIndexWorker`) and each table task's `executeTask` bytes (`cap(handles)` and the handles, the task's `TableReaderExecutor` at 768 plus its KV ranges and `dagPB.Size()`, the chunks it fills, `task.rows`, a keep-order `indexOrder` and `rowIdx`), the next task releasing the last; each task's reader records `TableReaderExecutor` into the parent's accumulator. EXPLAIN ANALYZE and `tidb_mem_quota_query` match Go for integer, keep-order `_tidb_rowid` and clustered handles (`tests_explain.rs` `an_index_lookup_charges_its_tasks_like_go`). The index worker's fetch chunk (`prepareHandleFetch`, typed by `getRetTpsForIndexReader`), each task reader's chunks (`TryNewCacheChunk`) and a serial projection's child chunk come from the session's allocator, so a task's charge follows the columns earlier statements returned to it, as Go's does (`an_index_lookup_takes_its_chunks_from_the_session_allocator_like_go`: `SELECT b, c FROM t USE INDEX(b) WHERE b > 1` charges 6.83 KB on a connection's first run and 14.1 KB after). A query's EXPLAIN ANALYZE result is written through a chunk taken from the allocator after the analyzed tree opens and before it runs (Go `ExplainExec`), and a pushed partial aggregate's tasks and a root `LimitExec` draw from it too, so a connection's statements reuse each other's columns as Go's do (`pipeline_mysql_client_source.rs` `a_connections_statements_reuse_each_others_chunks_like_go`). Under a pushed index-side Limit the index stream closes once the Limit is exhausted, before the task's reader charges it, as Go's index worker closes its result (`... LIMIT 64` 4.70 KB, `LIMIT 20` 2.47 KB: `an_index_lookup_under_a_pushed_limit_releases_its_index_response_like_go`). The executor is Go's `IndexLookUpExecutor` (`tidb-executor/src/index_lookup.rs`: the index worker, table workers and `resultCh`, `getRetTpsForIndexReader` with a keep-order merge's `byItems`), and an index join's inner reader builds the same executor per task (`BuildExecutorForIndexJoin`); a global index's read hides the partitions an in-flight TRUNCATE / DROP / ADD PARTITION removes (`AddSelectionConditionForGlobalIndex` over `IDsInDDLToIgnore`; `tests_global_index_ddl.rs`, a Go testkit capture at each schema state). Remaining: at the default lookup size a plain `SELECT * FROM t USE INDEX(ub) WHERE b > 1` peaked at 19,440 bytes where Go's peaks at 18,960, and its `ORDER BY b` at 50,686 where Go's peaks at 57,614, measured before the executor became Go's and not yet traced tracker by tracker",
-      "go_owner": "`pkg/executor/distsql.go` (`IndexLookUpExecutor`, `indexWorker`, `tableWorker`)"
     },
     {
       "id": "P01",
@@ -124,7 +117,7 @@
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
-  "unresolved": 16,
+  "unresolved": 15,
   "open": 3,
-  "partial": 13
+  "partial": 12
 }

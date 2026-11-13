@@ -682,3 +682,31 @@ fn an_index_lookups_partial_aggregate_request_peaks_like_go() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// A global index lookup's statement peak, Go's to the byte (a Go testkit
+/// probe of `StmtCtx.MemTracker.MaxConsumed()`): `SELECT * FROM t USE
+/// INDEX(ub) WHERE b > 1` 18960 on every run; with `ORDER BY b`, 50206 or
+/// 57614, the two values Go's racing index and table workers give.
+#[test]
+fn a_global_index_lookup_peaks_like_go() {
+    let dir = log_dir("global-index-lookup-mem-max");
+    let (slow, _) = install_loggers(&dir);
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT, b INT, c INT, PRIMARY KEY (a) NONCLUSTERED, UNIQUE KEY ub (b) GLOBAL) PARTITION BY HASH(a) PARTITIONS 2")
+        .unwrap();
+    let values = (1..=100).map(|x| format!("({x}, {x}, {})", x % 5)).collect::<Vec<_>>().join(", ");
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    session.run("SET GLOBAL tidb_slow_log_threshold = 0").unwrap();
+    for (query, go_peaks) in [
+        ("SELECT * FROM t USE INDEX(ub) WHERE b > 1", &["18960"][..]),
+        ("SELECT * FROM t USE INDEX(ub) WHERE b > 1 ORDER BY b", &["50206", "57614"][..]),
+    ] {
+        assert_eq!(row_text(session.run(query)).len(), 99, "{query}");
+        let log = read(&slow);
+        let entry = entry_for(&log, query);
+        let peak: String = field(&entry, "Mem_max").map(|peak| peak.to_string()).unwrap_or_default();
+        assert!(go_peaks.iter().any(|go| *go == peak), "{query}: {peak}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
