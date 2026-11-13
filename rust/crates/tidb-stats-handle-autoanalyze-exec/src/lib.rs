@@ -44,9 +44,13 @@ static AUTO_ANALYZE_HISTOGRAM: LazyLock<Histogram> = LazyLock::new(|| {
         .buckets(exponential_buckets(0.01, 2.0, 24).expect("valid auto-analyze buckets")),
     )
     .expect("valid auto-analyze histogram");
-    prometheus::default_registry()
-        .register(Box::new(histogram.clone()))
-        .expect("register auto-analyze histogram");
+    // `tidb-stats-handle-metrics` registers a histogram of the same name
+    // when it initialises first; this one then stays unexported instead of
+    // panicking the auto-analyze worker.
+    match prometheus::default_registry().register(Box::new(histogram.clone())) {
+        Ok(()) | Err(prometheus::Error::AlreadyReg) => {}
+        Err(error) => panic!("register auto-analyze histogram: {error}"),
+    }
     histogram
 });
 
