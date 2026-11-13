@@ -50,6 +50,23 @@ pub trait KvStorage: Send + Sync + fmt::Debug {
         &self,
         f: &mut dyn FnMut(u64, &mut dyn TableStorage) -> Result<(), StorageError>,
     ) -> Result<(), StorageError>;
+
+    /// Go `kv.RunInNewTxn(ctx, store, true, f)` of a write: each attempt is
+    /// a new optimistic transaction, `f` reading its snapshot at its start
+    /// ts and buffering its writes, which commit when `f` returns; a
+    /// retryable failure starts another attempt (Go's backoff loop), under
+    /// `source_type` (`kv.WithInternalSourceType`).
+    ///
+    /// # Errors
+    ///
+    /// `f`'s error, or the commit's.
+    fn run_in_new_write_txn(
+        &self,
+        _source_type: &str,
+        _f: &mut dyn FnMut(u64, &mut dyn TableStorage) -> Result<(), StorageError>,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::Backend("this storage runs no new write transaction".to_owned()))
+    }
 }
 
 /// A failure reported by a storage backend.
@@ -357,6 +374,14 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
         _wait: tidb_txnkv::transaction::LockWaitTime,
         _only_if_exists: bool,
     ) -> Result<(), StorageError> {
+        Ok(())
+    }
+
+    /// Go `kv.Transaction.LockKeys` in an optimistic transaction
+    /// (`RecoverIndexExec`'s record key): no lock request, the keys commit
+    /// as `Op_Lock` mutations that conflict with a concurrent write. A
+    /// backend with no transaction buffer answers `Ok(())`.
+    fn lock_keys_optimistically(&mut self, _keys: &[Key]) -> Result<(), StorageError> {
         Ok(())
     }
 

@@ -1077,3 +1077,55 @@ fn prefix_index_writes_stay_admin_check_clean() {
         session.run("admin check table c").unwrap();
     }
 }
+
+/// Go `RecoverIndexExec` and `CleanupIndexExec` repair the index in
+/// transactions of their own (`kv.RunInNewTxn`), reading the committed
+/// table: inside an open transaction RECOVER does not see the
+/// transaction's own row, the transaction stays open, and a ROLLBACK keeps
+/// the repair (Go-probed: `[[1 3]]`, then the check passes; CLEANUP's
+/// `[[1]]` survives its ROLLBACK too).
+#[test]
+fn admin_recover_and_cleanup_index_commit_on_their_own_like_go() {
+    let mut session = Session::new();
+    session.run("create table t (a int primary key, b int, index idx(b))").unwrap();
+    session.run("insert into t values (1,10),(2,20),(3,30)").unwrap();
+    let mut store = session.transaction_store().expect("a node session has a store");
+    let entries = session
+        .with_committed_catalog_mut(|catalog| {
+            let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t") else {
+                panic!("t is not stored as bytes");
+            };
+            let table = std::sync::Arc::make_mut(table);
+            let index = table
+                .index_list_for_check()
+                .into_iter()
+                .find(|index| index.read().name.original().eq_ignore_ascii_case("idx"))
+                .expect("idx");
+            let id = index.read().id;
+            Ok(table.index_entries_for_check(&mut *store, id).expect("entries"))
+        })
+        .unwrap();
+    let (entry_2, _) = entries
+        .iter()
+        .find(|(_, handle)| *handle == tidb_table::tables::TableHandle::Int(2))
+        .expect("entry 2");
+    let entry_2 = entry_2.clone();
+    let value = session.get_store_key_for_test(&entry_2).unwrap().expect("entry 2 value");
+    session.delete_store_key_for_test(&entry_2).unwrap();
+
+    session.run("begin").unwrap();
+    session.run("insert into t values (4, 40)").unwrap();
+    assert_eq!(query_text(&mut session, "admin recover index t idx").1, vec![vec!["1", "3"]]);
+    session.run("rollback").unwrap();
+    session.run("admin check index t idx").unwrap();
+    assert_eq!(query_text(&mut session, "admin recover index t idx").1, vec![vec!["0", "3"]]);
+
+    // A dangling entry: the entry of row 2 filed under handle 9.
+    let mut dangling = entry_2[..entry_2.len() - 8].to_vec();
+    dangling.extend_from_slice(&tidb_codec::encode_int_to_cmp_uint(9).to_be_bytes());
+    session.put_store_key_for_test(&dangling, &value).unwrap();
+    session.run("begin").unwrap();
+    assert_eq!(query_text(&mut session, "admin cleanup index t idx").1, vec![vec!["1"]]);
+    session.run("rollback").unwrap();
+    session.run("admin check index t idx").unwrap();
+}

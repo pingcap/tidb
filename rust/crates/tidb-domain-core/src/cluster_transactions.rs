@@ -1942,6 +1942,129 @@ impl tidb_kv::storage::KvStorage for ClusterKvStorage {
             tidb_store_driver_txn::cluster_storage::ClusterTableStorage::new(MutationBuffer::new(), snapshot);
         f(start_ts, &mut storage)
     }
+
+    fn run_in_new_write_txn(
+        &self,
+        source_type: &str,
+        f: &mut dyn FnMut(u64, &mut dyn tidb_kv::storage::TableStorage) -> Result<(), StorageError>,
+    ) -> Result<(), StorageError> {
+        let context = tidb_txnkv::RunInNewTxnContext {
+            request_source: Some(tidb_txnkv::RequestSource {
+                internal: true,
+                source_type: source_type.to_owned(),
+                ..tidb_txnkv::RequestSource::default()
+            }),
+        };
+        tidb_txnkv::run_in_new_txn(&context, &mut ClusterWriteTxnStorage(Arc::clone(&self.0)), true, |txn| {
+            f(txn.start_ts, &mut txn.storage).map_err(ClusterWriteTxnError)
+        })
+        .map_err(|error| error.0)
+    }
+}
+
+/// One [`tidb_kv::storage::KvStorage::run_in_new_write_txn`] attempt: the
+/// snapshot read through a [`ClusterTableStorage`] whose buffer commits at
+/// the snapshot's start ts.
+struct ClusterWriteTxn {
+    transactions: Arc<dyn ClusterTransactions>,
+    start_ts: u64,
+    storage: tidb_store_driver_txn::cluster_storage::ClusterTableStorage,
+    request_source: tidb_txnkv::RequestSource,
+}
+
+/// A [`ClusterWriteTxn`] attempt's failure.
+#[derive(Debug)]
+struct ClusterWriteTxnError(StorageError);
+
+impl fmt::Display for ClusterWriteTxnError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for ClusterWriteTxnError {}
+
+impl tidb_txnkv::NewTxnError for ClusterWriteTxnError {
+    /// Go `kv.IsTxnRetryableError`.
+    fn is_retryable(&self) -> bool {
+        use tidb_errno::errcode::{ErrTxnRetryable, ErrWriteConflict, ErrWriteConflictInTiDB};
+        match &self.0 {
+            StorageError::Sql(error) => {
+                matches!(error.code, ErrTxnRetryable | ErrWriteConflict | ErrWriteConflictInTiDB)
+            }
+            StorageError::Retryable(_) => true,
+            _ => false,
+        }
+    }
+}
+
+impl tidb_txnkv::TxnResourceGroup for ClusterWriteTxn {
+    fn set_resource_group_name(&mut self, _name: &str) {}
+}
+
+impl tidb_txnkv::NewTxnTransaction for ClusterWriteTxn {
+    type Error = ClusterWriteTxnError;
+
+    fn start_ts(&self) -> u64 {
+        self.start_ts
+    }
+
+    fn set_option(&mut self, option: tidb_txnkv::OptionKey, value: tidb_txnkv::TxnOptionValue) {
+        use tidb_txnkv::{OptionKey, TxnOptionValue};
+        match (option, value) {
+            (OptionKey::RequestSourceInternal, TxnOptionValue::Bool(internal)) => {
+                self.request_source.internal = internal;
+            }
+            (OptionKey::RequestSourceType, TxnOptionValue::String(source_type)) => {
+                self.request_source.source_type = source_type;
+            }
+            (OptionKey::ExplicitRequestSourceType, TxnOptionValue::String(source_type)) => {
+                self.request_source.explicit_source_type = source_type;
+            }
+            (option, value) => unreachable!("RunInNewTxn sets no option {option:?} = {value:?}"),
+        }
+    }
+
+    fn rollback(&mut self) -> Result<(), ClusterWriteTxnError> {
+        Ok(())
+    }
+
+    fn commit(&mut self) -> Result<(), ClusterWriteTxnError> {
+        let options = SessionTransactionOptions::from(
+            tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
+        )
+        .with_request_source(self.request_source.clone());
+        self.transactions
+            .commit(&self.storage.buffer(), Some(self.start_ts), "default", options)
+            .map(|_| ())
+            .map_err(|error| ClusterWriteTxnError(StorageError::Sql(error.into())))
+    }
+}
+
+/// The attempts of [`tidb_kv::storage::KvStorage::run_in_new_write_txn`].
+struct ClusterWriteTxnStorage(Arc<dyn ClusterTransactions>);
+
+impl tidb_txnkv::NewTxnStorage for ClusterWriteTxnStorage {
+    type Transaction = ClusterWriteTxn;
+    type Error = ClusterWriteTxnError;
+
+    fn begin(&mut self) -> Result<ClusterWriteTxn, ClusterWriteTxnError> {
+        // Go's internal transactions run in the default resource group.
+        let snapshot = self
+            .0
+            .open_snapshot("default")
+            .map_err(|error| ClusterWriteTxnError(StorageError::Backend(error)))?;
+        let start_ts = snapshot.start_ts();
+        let mut slot = tidb_store_driver_txn::cluster_storage::SwappableSnapshot::new();
+        slot.bind(snapshot);
+        let snapshot: Arc<Mutex<dyn ClusterSnapshot>> = Arc::new(Mutex::new(slot));
+        Ok(ClusterWriteTxn {
+            transactions: Arc::clone(&self.0),
+            start_ts,
+            storage: tidb_store_driver_txn::cluster_storage::ClusterTableStorage::new(MutationBuffer::new(), snapshot),
+            request_source: tidb_txnkv::RequestSource::default(),
+        })
+    }
 }
 
 /// Go `kv.Storage` as `kv.RunInNewTxn` writes through it: each attempt is a

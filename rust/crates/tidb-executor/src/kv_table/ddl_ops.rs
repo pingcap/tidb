@@ -47,23 +47,6 @@ pub trait KvTableDdl {
         decode_context: &RowDecodeContext,
     ) -> Result<usize, KvTableError>;
 
-    /// Go `RecoverIndexExec`: files every row's missing entries under the
-    /// index named `index_name`, partition by partition, and answers
-    /// `(ADDED_COUNT, SCAN_COUNT)` -- the rows whose entries were written and
-    /// the rows scanned (a row a partial index's condition excludes is
-    /// scanned and skipped). A row whose every entry is already stored is
-    /// left alone, a unique entry naming another row included (Go logs that
-    /// broken constraint and skips it). Recovering a clustered PRIMARY KEY,
-    /// whose key is the record itself, answers `(0, 0)`.
-    ///
-    /// `Ok(None)` is no writable index of that name.
-    fn recover_index(
-        &mut self,
-        store: &mut dyn TableStorage,
-        index_name: &str,
-        ctx: &dyn tidb_exprctx::Columns,
-        decode_context: &RowDecodeContext,
-    ) -> Result<Option<(i64, i64)>, KvTableError>;
 
 }
 
@@ -155,66 +138,5 @@ impl KvTableDdl for TableCommon {
         Ok(added)
     }
 
-    fn recover_index(
-        &mut self,
-        store: &mut dyn TableStorage,
-        index_name: &str,
-        ctx: &dyn tidb_exprctx::Columns,
-        decode_context: &RowDecodeContext,
-    ) -> Result<Option<(i64, i64)>, KvTableError> {
-        let Some(index) = self
-            .indexes()
-            .iter()
-            .find(|index| index.read().name.original().go_lower_eq(index_name))
-            .cloned()
-        else {
-            return Ok(None);
-        };
-        if index.clustered_primary {
-            return Ok(Some((0, 0)));
-        }
-        let zone = ctx.time_zone();
-        let rows = self.scan_physical_rows_with_handles(store, decode_context)?;
-        let (mut added, mut scanned) = (0_i64, 0_i64);
-        for (physical_id, handle, row) in &rows {
-            let physical_id = *physical_id;
-            scanned += 1;
-            if !self.index_condition_holds(&index, row, &zone)? {
-                continue;
-            }
-            let entries = self.index_entry_keys(&index, row, handle, physical_id, &zone)?;
-            // Go `batchMarkDup`: a row is skipped only when every key it
-            // files is found.
-            let mut all_found = true;
-            for entry in &entries {
-                match store.get(&Key::from_bytes(entry.key.clone())) {
-                    Ok(value) if !value.is_empty() => {}
-                    Ok(_) | Err(StorageError::NotFound) => all_found = false,
-                    Err(error) => return Err(error.into()),
-                }
-            }
-            if all_found {
-                continue;
-            }
-            // `index.Create(..., table.WithIgnoreAssertion,
-            // table.DupKeyCheckSkip)`: every entry of the row, unchecked.
-            for entry in entries {
-                let value = self.gen_index_value(
-                    &index,
-                    &entry.values,
-                    row,
-                    handle,
-                    entry.distinct,
-                    physical_id,
-                    &zone,
-                )?;
-                store
-                    .set(Key::from_bytes(entry.key), value)
-                    .map_err(KvTableError::from)?;
-            }
-            added += 1;
-        }
-        Ok(Some((added, scanned)))
-    }
 
 }

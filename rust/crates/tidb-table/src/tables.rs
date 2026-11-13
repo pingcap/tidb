@@ -2659,39 +2659,6 @@ impl TableCommon {
         }
     }
 
-    /// Go `CleanupIndexExec`: deletes every entry of the public index named
-    /// `index_name` whose row is no longer stored under its physical table,
-    /// and answers how many it removed. Cleaning a clustered PRIMARY KEY
-    /// removes nothing.
-    ///
-    /// `Ok(None)` is no public index of that name.
-    pub fn cleanup_index(&mut self, store: &mut dyn TableStorage, index_name: &str) -> Result<Option<u64>, KvTableError> {
-        let Some(index) = self
-            .indexes
-            .iter()
-            .find(|index| index.read().name.original().go_lower_eq(index_name))
-            .cloned()
-        else {
-            return Ok(None);
-        };
-        if index.clustered_primary {
-            return Ok(Some(0));
-        }
-        let mut removed = 0_u64;
-        for entry in self.index_entry_records_for_check(store, index.read().id)? {
-            if read_stored_record_one(&mut *store, entry.physical_id, &entry.handle)?
-                .is_some()
-            {
-                continue;
-            }
-            store
-                .delete(Key::from_bytes(entry.key))
-                .map_err(KvTableError::from)?;
-            removed += 1;
-        }
-        Ok(Some(removed))
-    }
-
     /// Removes the index's physical key ranges without evaluating rows. Go's
     /// delete-range worker has the same key ownership; this existing direct
     /// DDL path stages deletion in its transaction, pending durable GC jobs.

@@ -693,6 +693,21 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
         Ok(StmtOutput::Rows { columns, rows })
     }
 
+    /// What Go's admin index executors reach through `sctx`: the
+    /// statement, its store's coprocessor client and `GetStore()`.
+    fn admin_index_context(&mut self) -> Result<crate::admin_index_exec::AdminIndexContext, DriverError> {
+        let ctx = self.statement_context(true);
+        let store = crate::statement_store(&ctx);
+        let client = store
+            .client()
+            .ok_or_else(|| DriverError::unsupported("the store has no coprocessor client"))?;
+        let kv_storage = store
+            .kv_storage()
+            .ok_or_else(|| DriverError::unsupported("the store begins no new transaction"))?;
+        let (init_cap, max_chunk_size) = ctx.executor_chunk_sizes();
+        Ok(crate::admin_index_exec::AdminIndexContext { ctx, client, kv_storage, init_cap, max_chunk_size })
+    }
+
     /// Go `RecoverIndexExec`: `ADDED_COUNT` and `SCAN_COUNT` for the rows
     /// whose missing entries of the named index were written back.
     fn admin_recover_index_stmt(
@@ -701,17 +716,12 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
     ) -> Result<StmtOutput, DriverError> {
         let (database, name) = self.split_table_path(&recover.table)?;
         let index = recover.index.clone();
-        let ctx = self.statement_context(true);
-        let decode_context = crate::RowDecodeContext::for_query(&ctx);
-        let (added, scanned) = self.with_catalog_mut(|catalog| {
-            let table = admin_index_table_mut(catalog, &database, &name)?;
-            let table_name = table.name().to_owned();
-            crate::with_statement_store(&ctx, table, |table, store| {
-                table.recover_index(store, &index, &ctx, &decode_context)
-            })
-                .map_err(crate::ddl::index_backfill_error)?
-                .ok_or_else(|| secondary_index_not_found(&index, &table_name))
-        })?;
+        let table = self.with_catalog_mut(|catalog| Ok(admin_index_table_mut(catalog, &database, &name)?.clone()))?;
+        let table_name = table.name().to_owned();
+        let admin = self.admin_index_context()?;
+        let mut exec = crate::admin_index_exec::RecoverIndexExec::build(admin, table, &index)
+            .ok_or_else(|| secondary_index_not_found(&index, &table_name))?;
+        let (added, scanned) = exec.next().map_err(DriverError::from)?;
         let count = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
         Ok(StmtOutput::Rows {
             columns: vec![
@@ -730,7 +740,6 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
     ) -> Result<StmtOutput, DriverError> {
         let (database, name) = self.split_table_path(&cleanup.table)?;
         let index = cleanup.index.clone();
-        let ctx = self.statement_context(true);
         let removed = self.with_catalog_mut(|catalog| {
             let table = admin_index_table_mut(catalog, &database, &name)?;
             let table_name = table.name().to_owned();
@@ -746,10 +755,13 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                     "columnar index `{index}` is not supported for cleanup index"
                 ))));
             }
-            crate::with_statement_store(&ctx, table, |table, store| table.cleanup_index(store, &index))
-                .map_err(crate::ddl::index_backfill_error)?
-                .ok_or_else(|| secondary_index_not_found(&index, &table_name))
+            Ok((table.clone(), table_name))
         })?;
+        let (table, table_name) = removed;
+        let admin = self.admin_index_context()?;
+        let mut exec = crate::admin_index_exec::CleanupIndexExec::build(admin, table, &index)
+            .ok_or_else(|| secondary_index_not_found(&index, &table_name))?;
+        let removed = exec.next().map_err(DriverError::from)?;
         Ok(StmtOutput::Rows {
             columns: vec![(
                 "REMOVED_COUNT".to_owned(),

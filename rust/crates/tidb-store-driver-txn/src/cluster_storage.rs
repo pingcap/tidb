@@ -1338,6 +1338,12 @@ impl ClusterTableStorage {
 }
 
 impl TableStorage for ClusterTableStorage {
+    fn lock_keys_optimistically(&mut self, keys: &[Key]) -> Result<(), StorageError> {
+        let keys: Vec<Vec<u8>> = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
+        self.buffer().lock_keys_optimistically(&keys);
+        Ok(())
+    }
+
     /// Go `txn.Size()`: the transaction buffer's key/value bytes, which
     /// `handleTempTableSize` diffs around each temporary-table write.
     fn size_bytes(&self) -> u64 {

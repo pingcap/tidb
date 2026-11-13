@@ -201,6 +201,7 @@ pub mod index_lookup;
 pub(crate) mod index_join_reader;
 mod table_sample;
 mod check_index_range;
+mod admin_index_exec;
 #[cfg(test)]
 mod tests_duplicate_entry_message_source;
 #[cfg(test)]
