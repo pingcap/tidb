@@ -117,19 +117,27 @@ func (dr *delRange) addDelRangeJob(ctx context.Context, job *model.Job) error {
 func AddDelRangeJobInternal(ctx context.Context, wrapper DelRangeExecWrapper, job *model.Job) error {
 	var err error
 	var ea elementIDAlloc
+	var logicalIndexIDs []int64
 	if job.MultiSchemaInfo != nil {
-		err = insertJobIntoDeleteRangeTableMultiSchema(ctx, wrapper, job, &ea)
+		err = insertJobIntoDeleteRangeTableMultiSchema(ctx, wrapper, job, &ea, &logicalIndexIDs)
 	} else {
-		err = insertJobIntoDeleteRangeTable(ctx, wrapper, job, &ea)
+		err = insertJobIntoDeleteRangeTable(ctx, wrapper, job, &ea, &logicalIndexIDs)
 	}
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Append new ranges after all legacy ranges to preserve element IDs across versions.
+	if len(logicalIndexIDs) > 0 {
+		return doBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, logicalIndexIDs, &ea, "column: table ID")
+	}
+	return nil
 }
 
-func insertJobIntoDeleteRangeTableMultiSchema(ctx context.Context, wrapper DelRangeExecWrapper, job *model.Job, ea *elementIDAlloc) error {
+func insertJobIntoDeleteRangeTableMultiSchema(ctx context.Context, wrapper DelRangeExecWrapper, job *model.Job, ea *elementIDAlloc, logicalIndexIDs *[]int64) error {
 	for i, sub := range job.MultiSchemaInfo.SubJobs {
 		proxyJob := sub.ToProxyJob(job, i)
 		if JobNeedGC(&proxyJob) {
-			err := insertJobIntoDeleteRangeTable(ctx, wrapper, &proxyJob, ea)
+			err := insertJobIntoDeleteRangeTable(ctx, wrapper, &proxyJob, ea, logicalIndexIDs)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -274,7 +282,7 @@ func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask) error {
 // insertJobIntoDeleteRangeTable parses the job into delete-range arguments,
 // and inserts a new record into gc_delete_range table. The primary key is
 // (job ID, element ID), so we ignore key conflict error.
-func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrapper, job *model.Job, ea *elementIDAlloc) error {
+func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrapper, job *model.Job, ea *elementIDAlloc, logicalIndexIDs *[]int64) error {
 	if err := wrapper.UpdateTSOForJob(); err != nil {
 		return errors.Trace(err)
 	}
@@ -422,14 +430,16 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		}
 
 		if len(args.IndexIDs) > 0 {
-			if len(args.PartitionIDs) == 0 {
-				return errors.Trace(doBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, args.IndexIDs, ea, "drop column: table ID"))
-			}
 			for _, pid := range args.PartitionIDs {
 				if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, args.IndexIDs, ea, "drop column: partition table ID"); err != nil {
 					return errors.Trace(err)
 				}
 			}
+			if len(args.PartitionIDs) > 0 {
+				*logicalIndexIDs = append(*logicalIndexIDs, args.IndexIDs...)
+				return nil
+			}
+			return errors.Trace(doBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, args.IndexIDs, ea, "drop column: table ID"))
 		}
 	case model.ActionModifyColumn:
 		args, err := model.GetFinishedModifyColumnArgs(job)
@@ -440,14 +450,16 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		if len(indexIDs) == 0 {
 			return nil
 		}
-		if len(partitionIDs) == 0 {
-			return doBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, indexIDs, ea, "modify column: table ID")
-		}
 		for _, pid := range partitionIDs {
 			if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, indexIDs, ea, "modify column: partition table ID"); err != nil {
 				return errors.Trace(err)
 			}
 		}
+		if len(partitionIDs) > 0 {
+			*logicalIndexIDs = append(*logicalIndexIDs, indexIDs...)
+			return nil
+		}
+		return errors.Trace(doBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, indexIDs, ea, "modify column: table ID"))
 	}
 	return nil
 }

@@ -157,14 +157,14 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 			return 0, errors.Trace(err)
 		}
 
-		physicalCnt := max(len(args.PartitionIDs), 1)
+		physicalCnt := len(args.PartitionIDs) + 1
 		return physicalCnt * len(args.IndexIDs), nil
 	case model.ActionModifyColumn:
 		args, err := model.GetFinishedModifyColumnArgs(job)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		physicalCnt := max(len(args.PartitionIDs), 1)
+		physicalCnt := len(args.PartitionIDs) + 1
 		return physicalCnt * ctx.deduplicateIdxCnt(args.IndexIDs), nil
 	case model.ActionMultiSchemaChange:
 		totalExpectedCnt := 0
