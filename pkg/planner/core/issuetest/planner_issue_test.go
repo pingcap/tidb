@@ -980,6 +980,26 @@ ORDER BY t1.a, t2.a, t3.a, var`
 		tk.MustQuery("SELECT /* issue:66706 */ ref0 FROM (SELECT v0.c0 AS ref0, SIGN(v0.c0) AS ref1 FROM v0) AS s WHERE ref1").Check(testkit.Rows("0.99"))
 		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
 	})
+
+	// issue-72475-collate-on-correlated-column-keeps-outer-column-collation
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("create table t_outer (id varchar(32) not null, a int, owner varchar(32), primary key (id) clustered, key idx_a (a)) charset utf8mb4 collate utf8mb4_0900_ai_ci")
+		tk.MustExec("create table t_inner (ref_id varchar(32)) charset utf8mb4 collate utf8mb4_general_ci")
+		tk.MustExec("insert into t_outer values ('row-a', 2, 'user-a')")
+		tk.MustExec("insert into t_inner values ('row-a')")
+
+		// The COLLATE clause applies to the correlated reference only. The outer id column, which is
+		// also the clustered handle read back by the index lookup, keeps utf8mb4_0900_ai_ci.
+		tk.MustQuery("select /* issue:72475 */ count(*) from t_outer use index (idx_a) where a = 2 and (owner = 'nobody' or exists (select 1 from t_inner where t_inner.ref_id = t_outer.id collate utf8mb4_general_ci))").Check(testkit.Rows("1"))
+		tk.MustQuery("select /* issue:72475 */ id from t_outer where exists (select 1 from t_inner where t_inner.ref_id = t_outer.id collate utf8mb4_bin) and id = 'ROW-A'").Check(testkit.Rows("row-a"))
+		tk.MustQuery("select /* issue:72475 */ id from t_outer where id = 'ROW-A' and exists (select 1 from t_inner where t_inner.ref_id = t_outer.id collate utf8mb4_bin)").Check(testkit.Rows("row-a"))
+
+		// ENUM and SET can't be cast, so the correlated reference works on a copy of the column type.
+		tk.MustExec("create table t_enum (id int primary key, e enum('a', 'B')) charset utf8mb4 collate utf8mb4_general_ci")
+		tk.MustExec("insert into t_enum values (1, 'B')")
+		tk.MustQuery("select /* issue:72475 */ id from t_enum where exists (select 1 from t_inner where t_inner.ref_id = t_enum.e collate utf8mb4_bin) or e = 'b'").Check(testkit.Rows("1"))
+	})
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
