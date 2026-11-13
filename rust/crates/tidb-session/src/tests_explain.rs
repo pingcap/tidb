@@ -9220,6 +9220,40 @@ fn a_covering_reader_returns_only_its_output_columns_over_its_pushed_selection_l
     assert_eq!(row_text(session.run(sql)).len(), 113);
 }
 
+/// Go `NestedLoopApplyExec` charges its apply cache and its `InnerList`
+/// only (`Open` attaches those two trackers): with the cache, each
+/// correlated value's key bytes and the cached list's lazily charged chunks;
+/// without it, the list's last chunk at each `Reset`. Its outer and inner
+/// chunks are not charged. A Go testkit capture under the session
+/// allocator (`zzprobe` `TestZZ`).
+#[test]
+fn an_apply_charges_its_inner_list_and_cache_like_go() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t (a int, b int)",
+        "create table s (x int, y int)",
+        "insert into t values (1,1),(2,2),(3,3)",
+        "insert into s values (1,10),(2,20),(3,30)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let apply_memory = |session: &mut Session, sql: &str| {
+        let rows = row_text(session.run(&format!("explain analyze {sql}")));
+        rows.iter()
+            .find(|row| row[0].contains("Apply_12"))
+            .unwrap_or_else(|| panic!("{sql}: {rows:?}"))[7]
+            .clone()
+    };
+    let scalar = "select a, (select y from s where s.x = t.a) from t";
+    assert_eq!(apply_memory(&mut session, scalar), "27 Bytes");
+    session.run("set tidb_mem_quota_apply_cache = 0").unwrap();
+    assert_eq!(apply_memory(&mut session, scalar), "760 Bytes");
+    assert_eq!(
+        apply_memory(&mut session, "select a, (select count(*) from s where s.x <= t.a) from t"),
+        "380 Bytes"
+    );
+}
+
 /// Go's index worker decodes into one chunk from the session's allocator
 /// (`prepareHandleFetch`: `AllocPool.Alloc(indexTypes, MaxChunkSize,
 /// MaxChunkSize)`) and each table task's reader fills chunks from it

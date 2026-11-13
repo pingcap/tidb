@@ -90,6 +90,10 @@ pub const LABEL_FOR_CTE_STORAGE: i64 = -19;
 pub const LABEL_FOR_GLOBAL_ANALYZE_MEMORY: i64 = -25;
 /// `LabelForChunkList`: an in-memory `chunk.List`.
 pub const LABEL_FOR_CHUNK_LIST: i64 = -7;
+/// Go `LabelForInnerList`.
+pub const LABEL_FOR_INNER_LIST: i64 = -3;
+/// Go `LabelForApplyCache`.
+pub const LABEL_FOR_APPLY_CACHE: i64 = -17;
 /// `LabelForGlobalSimpleLRUCache`.
 pub const LABEL_FOR_GLOBAL_SIMPLE_LRU_CACHE: i64 = -8;
 /// `LabelForChunkDataInDiskByRows`: the row-addressed spill file.

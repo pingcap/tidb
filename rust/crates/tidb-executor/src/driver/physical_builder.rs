@@ -6529,7 +6529,8 @@ fn build_with_state(
                 i64::from(plan.base().base.id()),
                 dual.row_count,
                 ctx.executor_chunk_sizes().1,
-            ),
+            )
+            .with_alloc_pool(ctx.chunk_allocator()),
             dual.row_count,
         )) as Box<dyn Executor>),
         PhysicalPlan::UnionAll(_) => {
@@ -6547,8 +6548,10 @@ fn build_with_state(
         }
         PhysicalPlan::MaxOneRow(_) => {
             let child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
-            let executor_meta =
-                ExecutorMeta::new(plan_schema(plan)?, i64::from(plan.base().base.id()), 2, 2);
+            // Go `buildMaxOneRow`: `SetInitCap(2)`, `SetMaxChunkSize(2)` over
+            // `newBaseExecutor`, whose `AllocPool` is the session's.
+            let executor_meta = ExecutorMeta::new(plan_schema(plan)?, i64::from(plan.base().base.id()), 2, 2)
+                .with_alloc_pool(ctx.chunk_allocator());
             Ok(Box::new(MaxOneRowExec::new(executor_meta, child)) as Box<dyn Executor>)
         }
         PhysicalPlan::NominalSort(_) => build_with_state(only_child(plan)?, catalog, ctx, state),
