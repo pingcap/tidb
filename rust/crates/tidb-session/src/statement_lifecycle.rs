@@ -821,6 +821,9 @@ impl StatementLifecycle<'_> {
         keys: Vec<Vec<u8>>,
         wait: tidb_txnkv::transaction::LockWaitTime,
     ) -> Result<PessimisticStep, SqlQueryError> {
+        // Go `tryLockKeys`' `filterTemporaryTableKeys`: a temporary table's
+        // rows are never locked in the store.
+        let keys = tidb_tblctx::temporary_table::filter_temporary_table_keys(&self.session.txn_temporary_tables, keys);
         let transaction = self.txn.explicit.as_ref().expect("pessimistic transaction");
         // Table-selected native flags decide which keys need locking. A
         // live session switch cannot override an earlier key's selected policy.

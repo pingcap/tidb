@@ -45,3 +45,30 @@ fn global_temp_table_parallel() {
     });
     tk.must_exec("drop table if exists temp_test");
 }
+
+/// Go `doLockKeys` / `handlePessimisticDML` skip the temporary table keys
+/// (`filterTemporaryTableKeys`): a global temporary table's rows are the
+/// transaction's own, so two pessimistic transactions writing and locking
+/// the same key never wait on each other (Go probe: the second session's
+/// statements take well under a millisecond).
+#[test]
+fn global_temp_table_keys_take_no_pessimistic_lock() {
+    let mut tk1 = TestKit::new();
+    tk1.must_exec("drop table if exists tmp");
+    tk1.must_exec("create global temporary table tmp (id int primary key, v int) on commit delete rows");
+    let mut tk2 = tk1.new_tk();
+    tk2.must_exec("use test");
+    tk2.must_exec("set innodb_lock_wait_timeout = 1");
+    tk1.must_exec("begin pessimistic");
+    tk1.must_exec("insert into tmp values (1, 10)");
+    tk1.must_query("select * from tmp where id = 1 for update").check(["1 10"]);
+    tk2.must_exec("begin pessimistic");
+    tk2.must_exec("insert into tmp values (1, 20)");
+    tk2.must_query("select * from tmp where id = 1 for update").check(["1 20"]);
+    tk2.must_query("select * from tmp for update").check(["1 20"]);
+    tk2.must_exec("update tmp set v = 21 where id = 1");
+    tk1.must_query("select * from tmp").check(["1 10"]);
+    tk1.must_exec("commit");
+    tk2.must_exec("commit");
+    tk1.must_exec("drop table if exists tmp");
+}

@@ -1599,6 +1599,12 @@ pub struct StmtContextData {
 // Define owned and borrowed configuration setters together. Session setup
 // borrows the configuration once; standalone with_* calls retain copy-on-write.
 impl StmtContextData {
+    /// Go `TxnCtx.TemporaryTables`.
+    #[must_use]
+    pub fn txn_temporary_tables(&self) -> &tidb_tblctx::temporary_table::TemporaryTables {
+        &self.txn_temporary_tables
+    }
+
     /// The planner's cost-model-v2 snapshot, when one is attached.
     #[must_use]
     pub fn optimizer_cost_env_any(&self) -> Option<&Arc<dyn std::any::Any + Send + Sync>> {

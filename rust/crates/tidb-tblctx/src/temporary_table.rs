@@ -132,6 +132,20 @@ impl TemporaryTableHandler {
 /// Go `tblsession.MutateContext.AddTemporaryTableToTxn`: the transaction's
 /// entry for temporary table `table_id` (created at its first write), marked
 /// modified, with the session data its committed size is read from.
+/// Go `executor.filterTemporaryTableKeys`: `keys` without those of the
+/// temporary tables this transaction uses, which are never locked in the
+/// store.
+#[must_use]
+pub fn filter_temporary_table_keys<K: AsRef<[u8]>>(tables: &TemporaryTables, keys: Vec<K>) -> Vec<K> {
+    let tables = tables.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if tables.is_empty() {
+        return keys;
+    }
+    keys.into_iter()
+        .filter(|key| !tables.contains_key(&tidb_tablecodec::table_key::decode_table_id(key.as_ref())))
+        .collect()
+}
+
 /// Go `SessionVars.GetTemporaryTable`: the transaction's entry for a
 /// temporary table, created from its `TableInfo` on first use.
 #[must_use]

@@ -4800,6 +4800,7 @@ fn point_lock(
         wait: select_wait.unwrap_or(selected.default_wait()),
         read_committed: selected.read_committed(),
         lock_state: selected.lock_state(),
+        temporary_tables: std::sync::Arc::clone(ctx.txn_temporary_tables()),
     })
 }
 

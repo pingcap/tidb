@@ -66,11 +66,16 @@ impl StatementLocker {
         for table_id in &self.table_ids {
             self.ctx.update_delta_for_table(*table_id, 0, 0);
         }
+        // Go `doLockKeys`: "Skip the temporary table keys."
+        let keys = tidb_tblctx::temporary_table::filter_temporary_table_keys(
+            self.ctx.txn_temporary_tables(),
+            keys.iter().collect::<Vec<_>>(),
+        );
         if keys.is_empty() {
             return Ok(());
         }
         let keys: Vec<tidb_txnkv::Key> = keys
-            .iter()
+            .into_iter()
             .map(|key| tidb_txnkv::Key::from_bytes(key.clone()))
             .collect();
         if let Some(state) = &self.lock_state {

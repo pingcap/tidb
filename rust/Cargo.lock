@@ -8586,6 +8586,7 @@ dependencies = [
  "tidb-kv",
  "tidb-model",
  "tidb-mysql",
+ "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-util",
  "tidb-variable",

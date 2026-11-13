@@ -592,7 +592,12 @@ impl FKCheckExec {
             .selected_lock_keys()
             .map(|selected| selected.default_wait())
             .unwrap_or_default();
-        let locked = store.do_lock_keys(&self.to_be_locked_keys, wait);
+        // Go `doLockKeys`: "Skip the temporary table keys."
+        let keys = tidb_tblctx::temporary_table::filter_temporary_table_keys(
+            ctx.txn_temporary_tables(),
+            self.to_be_locked_keys.clone(),
+        );
+        let locked = store.do_lock_keys(&keys, wait);
         if let Some(stats) = &mut self.stats {
             stats.lock = start.elapsed().saturating_sub(stats.check);
         }

@@ -84,6 +84,8 @@ pub(crate) struct PointLock {
     pub(crate) read_committed: bool,
     /// The transaction-state publisher, when the session has one.
     pub(crate) lock_state: Option<tidb_sessionctx::select_lock::LockStateObserver>,
+    /// Go `TxnCtx.TemporaryTables`, whose keys `doLockKeys` skips.
+    pub(crate) temporary_tables: tidb_tblctx::temporary_table::TemporaryTables,
 }
 
 impl PointLock {
@@ -94,6 +96,9 @@ impl PointLock {
         keys: &[tidb_txnkv::Key],
         only_if_exists: bool,
     ) -> Result<(), ExecError> {
+        // Go `doLockKeys`: "Skip the temporary table keys."
+        let keys = tidb_tblctx::temporary_table::filter_temporary_table_keys(&self.temporary_tables, keys.to_vec());
+        let keys = keys.as_slice();
         if keys.is_empty() {
             return Ok(());
         }
