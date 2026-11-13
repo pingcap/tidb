@@ -224,24 +224,14 @@ func (d *decodedLogRestoreTableIDsBlocklistFile) filterOutForRepeatPITR(startTs,
 
 func fastWalkLogRestoreTableIDsBlocklistFile(
 	ctx context.Context,
-<<<<<<< HEAD
 	s storage.ExternalStorage,
-	filterOutFn func(restoreCommitTs, restoreStartTs uint64) bool,
-	executionFn func(ctx context.Context, filename string, restoreCommitTs, restoreStartTs, rewriteTs uint64, tableIds, dbIds []int64) error,
-) error {
-	filenames := make([]string, 0)
-	if err := s.WalkDir(ctx, &storage.WalkOption{SubDir: logRestoreTableIDBlocklistFilePrefix}, func(path string, _ int64) error {
-		restoreCommitTs, restoreStartTs, parsed := parseLogRestoreTableIDsBlocklistFileName(path)
-=======
-	s storeapi.Storage,
 	filenameFilterOutFn func(restoreCommitTs, rangeTs uint64) bool,
 	decodedFilterOutFn func(*decodedLogRestoreTableIDsBlocklistFile) bool,
 	executionFn func(context.Context, string, *decodedLogRestoreTableIDsBlocklistFile) error,
 ) error {
 	filenames := make([]string, 0)
-	if err := s.WalkDir(ctx, &storeapi.WalkOption{SubDir: logRestoreTableIDBlocklistFilePrefix}, func(path string, _ int64) error {
+	if err := s.WalkDir(ctx, &storage.WalkOption{SubDir: logRestoreTableIDBlocklistFilePrefix}, func(path string, _ int64) error {
 		restoreCommitTs, rangeTs, parsed := parseLogRestoreTableIDsBlocklistFileName(path)
->>>>>>> ed2899ed42f (br: support legacy log restore blocklist files (#70265))
 		if parsed {
 			if filenameFilterOutFn(restoreCommitTs, rangeTs) {
 				return nil

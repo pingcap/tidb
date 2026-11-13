@@ -383,17 +383,17 @@ func writeBlocklistFile(
 	require.NoError(t, err)
 }
 
-func writeRawBlocklistFile(ctx context.Context, t *testing.T, s storeapi.Storage, filename string, data []byte) {
+func writeRawBlocklistFile(ctx context.Context, t *testing.T, s storage.ExternalStorage, filename string, data []byte) {
 	t.Helper()
 	require.NoError(t, s.WriteFile(ctx, filename, data))
 }
 
-func blocklistFileNames(ctx context.Context, t *testing.T, s storeapi.Storage) []string {
+func blocklistFileNames(ctx context.Context, t *testing.T, s storage.ExternalStorage) []string {
 	t.Helper()
 	filenames := make([]string, 0)
 	err := s.WalkDir(
 		ctx,
-		&storeapi.WalkOption{SubDir: restore.LogRestoreTableIDBlocklistFilePrefix},
+		&storage.WalkOption{SubDir: restore.LogRestoreTableIDBlocklistFilePrefix},
 		func(path string, _ int64) error {
 			filenames = append(filenames, path)
 			return nil
@@ -462,16 +462,9 @@ func TestCheckTableTrackerContainsTableIDsFromBlocklistFiles(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "table_100")
 
-<<<<<<< HEAD
-func filesCount(ctx context.Context, s storage.ExternalStorage) int {
-	count := 0
-	s.WalkDir(ctx, &storage.WalkOption{SubDir: restore.LogRestoreTableIDBlocklistFilePrefix}, func(path string, size int64) error {
-		count += 1
-		return nil
-=======
 	t.Run("mixed legacy and current files use their own boundary", func(t *testing.T) {
 		base := t.TempDir()
-		stg, err := objstore.NewLocalStorage(base)
+		stg, err := storage.NewLocalStorage(base)
 		require.NoError(t, err)
 		legacyFixtureName, legacyFixtureData := legacyBlocklistFixture(t)
 		writeRawBlocklistFile(
@@ -502,25 +495,15 @@ func filesCount(ctx context.Context, s storage.ExternalStorage) int {
 		)
 		require.ErrorContains(t, err, "table_4")
 		require.NotContains(t, err.Error(), "table_1")
->>>>>>> ed2899ed42f (br: support legacy log restore blocklist files (#70265))
 	})
 }
 
 func TestTruncateLogRestoreTableIDsBlocklistFiles(t *testing.T) {
 	ctx := context.Background()
-<<<<<<< HEAD
-	base := t.TempDir()
-	stg, err := storage.NewLocalStorage(base)
-	require.NoError(t, err)
-	writeBlocklistFile(ctx, t, stg, 100, 10, 50, []int64{100, 101, 102}, []int64{103})
-	writeBlocklistFile(ctx, t, stg, 200, 20, 60, []int64{200, 201, 202}, []int64{203})
-	writeBlocklistFile(ctx, t, stg, 300, 30, 70, []int64{300, 301, 302}, []int64{303})
-=======
->>>>>>> ed2899ed42f (br: support legacy log restore blocklist files (#70265))
 
 	t.Run("mixed legacy and current files", func(t *testing.T) {
 		base := t.TempDir()
-		stg, err := objstore.NewLocalStorage(base)
+		stg, err := storage.NewLocalStorage(base)
 		require.NoError(t, err)
 		legacyFixtureName, legacyFixtureData := legacyBlocklistFixture(t)
 		writeRawBlocklistFile(
@@ -562,7 +545,7 @@ func TestTruncateLogRestoreTableIDsBlocklistFiles(t *testing.T) {
 
 	t.Run("corrupted legacy file remains a hard error", func(t *testing.T) {
 		base := t.TempDir()
-		stg, err := objstore.NewLocalStorage(base)
+		stg, err := storage.NewLocalStorage(base)
 		require.NoError(t, err)
 		legacyFixtureName, legacyFixtureData := legacyBlocklistFixture(t)
 		blocklist := &restore.LogRestoreTableIDsBlocklistFile{}
@@ -868,7 +851,7 @@ func TestFilteringBoundaryConditions(t *testing.T) {
 
 	t.Run("legacy boundaries", func(t *testing.T) {
 		base := t.TempDir()
-		stg, err := objstore.NewLocalStorage(base)
+		stg, err := storage.NewLocalStorage(base)
 		require.NoError(t, err)
 		legacyFixtureName, legacyFixtureData := legacyBlocklistFixture(t)
 		writeRawBlocklistFile(
@@ -905,7 +888,7 @@ func TestFilteringBoundaryConditions(t *testing.T) {
 
 	t.Run("zero restore start ts remains current", func(t *testing.T) {
 		base := t.TempDir()
-		stg, err := objstore.NewLocalStorage(base)
+		stg, err := storage.NewLocalStorage(base)
 		require.NoError(t, err)
 		writeBlocklistFile(ctx, t, stg, 100, 0, 30, []int64{1}, nil)
 
