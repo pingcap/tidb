@@ -1310,14 +1310,14 @@ fn exhaust_physical_plans(
                     } => {
                         let Some(left_join_keys) = left_keys
                             .into_iter()
-                            .map(|id| column(&left_columns, id))
+                            .map(|key| column(&left_columns, key.unique_id))
                             .collect::<Option<Vec<_>>>()
                         else {
                             continue;
                         };
                         let Some(right_join_keys) = right_keys
                             .into_iter()
-                            .map(|id| column(&right_columns, id))
+                            .map(|key| column(&right_columns, key.unique_id))
                             .collect::<Option<Vec<_>>>()
                         else {
                             continue;
@@ -6070,7 +6070,7 @@ mod tests {
         ))]);
         let logical = LogicalPlan::MaxOneRow(LogicalMaxOneRow::new(base));
 
-        let ordered = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
+        let ordered = PhysicalProperty::new(TaskType::Root, &tidb_planner_property::columns_with_unique_ids(&[1]), false, f64::MAX, false);
         assert!(
             find_best_task(&logical, &ordered, &mut ctx)
                 .expect("ordered refusal is a valid search result")
@@ -6501,7 +6501,7 @@ mod tests {
         };
 
         // ORDER BY pk DESC: admitted, KeepOrder + Desc.
-        let prop = PhysicalProperty::new(TaskType::Root, &[9], true, f64::MAX, false);
+        let prop = PhysicalProperty::new(TaskType::Root, &tidb_planner_property::columns_with_unique_ids(&[9]), true, f64::MAX, false);
         let task = find_best_task(&source(&allocator), &prop, &mut ctx).expect("plans");
         let Some(PhysicalPlan::TableReader(reader)) = task.plan() else {
             panic!("a TableReader, got {:?}", task.plan());
@@ -6512,7 +6512,7 @@ mod tests {
         assert!(scan.keep_order && scan.desc);
 
         // ORDER BY a non-handle column: refused.
-        let prop = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
+        let prop = PhysicalProperty::new(TaskType::Root, &tidb_planner_property::columns_with_unique_ids(&[1]), false, f64::MAX, false);
         let task = find_best_task(&source(&allocator), &prop, &mut ctx).expect("answers");
         assert!(task.invalid());
     }
@@ -7172,7 +7172,7 @@ mod tests {
                 ..DataSource::default()
             })
         };
-        let order_by_b = PhysicalProperty::new(TaskType::Root, &[12], false, f64::MAX, false);
+        let order_by_b = PhysicalProperty::new(TaskType::Root, &tidb_planner_property::columns_with_unique_ids(&[12]), false, f64::MAX, false);
 
         // Index on (b) alone: column `a` is uncovered — the double read
         // plans, its index side keeping the order and its table side reading
@@ -7550,7 +7550,7 @@ mod tests {
             ).unwrap()],
             ..DataSource::default()
         };
-        let order_by_b = PhysicalProperty::new(TaskType::Root, &[12], false, f64::MAX, false);
+        let order_by_b = PhysicalProperty::new(TaskType::Root, &tidb_planner_property::columns_with_unique_ids(&[12]), false, f64::MAX, false);
 
         assert!(index_path_matches_order(&source, &source.table_indices()[0], &order_by_b, None).matched());
     }
@@ -7589,7 +7589,7 @@ mod tests {
             ..DataSource::default()
         };
         let order_by_district =
-            PhysicalProperty::new(TaskType::Root, &[12], false, f64::MAX, false);
+            PhysicalProperty::new(TaskType::Root, &tidb_planner_property::columns_with_unique_ids(&[12]), false, f64::MAX, false);
 
         assert!(table_path_matches_order(&source, &order_by_district, None).matched());
     }

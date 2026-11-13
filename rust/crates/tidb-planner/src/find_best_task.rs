@@ -51,6 +51,7 @@
 //!   is unreachable without a hint, so reproducing Go's CHOICE and minimising
 //!   Go's COST are different objectives -- fidelity is the objective here.
 //!
+use tidb_expr::column::Column;
 use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_property::{PhysicalProperty, SortItem, TaskType};
 use tidb_planner_core_base::{LogicalJoinType, PlanError};
@@ -83,16 +84,16 @@ pub struct HashJoinShape {
 }
 
 /// The physical alternatives one enumerated candidate stands for.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum JoinStrategy {
     /// `getHashJoin(ge, p, prop, inner_idx, use_outer_to_build)`.
     Hash(HashJoinShape),
     /// One `PhysicalMergeJoin` from one `LeftProperties` entry.
     Merge {
         /// The left keys this candidate joins on, in the child's order.
-        left_keys: Vec<i64>,
+        left_keys: Vec<Column>,
         /// The right keys, in the matching order.
-        right_keys: Vec<i64>,
+        right_keys: Vec<Column>,
         /// `PhysicalMergeJoin.Desc`, which is `prop.AllSameOrder()`'s answer.
         desc: bool,
     },
@@ -112,7 +113,7 @@ pub enum JoinStrategy {
 
 /// One enumerated physical candidate together with the properties it demands
 /// of its children -- Go's `pp` plus `pp.GetChildReqProps(j)`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct EnumeratedJoin {
     /// What the candidate is.
     pub strategy: JoinStrategy,
@@ -128,22 +129,22 @@ pub struct EnumeratedJoin {
 }
 
 /// A `LogicalJoin` reduced to what the enumeration reads about it.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct LogicalJoin {
     /// `p.JoinType`.
     pub join_type: LogicalJoinType,
-    /// `p.GetJoinKeys()`'s left half, by `UniqueID`.
-    pub left_keys: Vec<i64>,
+    /// `p.GetJoinKeys()`'s left half.
+    pub left_keys: Vec<Column>,
     /// `p.GetJoinKeys()`'s right half, positionally paired with `left_keys`.
-    pub right_keys: Vec<i64>,
+    pub right_keys: Vec<Column>,
     /// The left child's output columns, by `UniqueID`.
     pub left_schema: Vec<i64>,
     /// The right child's output columns, by `UniqueID`.
     pub right_schema: Vec<i64>,
     /// `p.LeftProperties`: every column order the LEFT child can provide.
-    pub left_properties: Vec<Vec<i64>>,
+    pub left_properties: Vec<Vec<Column>>,
     /// `p.RightProperties`.
-    pub right_properties: Vec<Vec<i64>>,
+    pub right_properties: Vec<Vec<Column>>,
     /// `p.PreferJoinType&PreferMergeJoin > 0`.
     ///
     /// A forced merge join differs from an ordinary merge candidate in one
@@ -202,10 +203,10 @@ pub enum LeafRole {
 /// `util.GetMaxSortPrefix(sort_cols, all_cols)`: each sort column's offset in
 /// `all_cols`, stopping at the first one that is not there.
 #[must_use]
-pub fn max_sort_prefix(sort_cols: &[i64], all_cols: &[i64]) -> Vec<usize> {
+pub fn max_sort_prefix(sort_cols: &[Column], all_cols: &[Column]) -> Vec<usize> {
     let mut offsets = Vec::with_capacity(sort_cols.len());
     for col in sort_cols {
-        let Some(offset) = all_cols.iter().position(|candidate| candidate == col) else {
+        let Some(offset) = all_cols.iter().position(|candidate| candidate.unique_id == col.unique_id) else {
             return offsets;
         };
         offsets.push(offset);
@@ -216,13 +217,13 @@ pub fn max_sort_prefix(sort_cols: &[i64], all_cols: &[i64]) -> Vec<usize> {
 /// `findMaxPrefixLen(candidates, keys)`: the longest prefix of `keys` any
 /// candidate order starts with.
 #[must_use]
-pub fn max_prefix_len(candidates: &[Vec<i64>], keys: &[i64]) -> usize {
+pub fn max_prefix_len(candidates: &[Vec<Column>], keys: &[Column]) -> usize {
     candidates
         .iter()
         .map(|candidate| {
             keys.iter()
                 .zip(candidate)
-                .take_while(|(key, col)| key == col)
+                .take_while(|(key, col)| key.unique_id == col.unique_id)
                 .count()
         })
         .max()
@@ -235,7 +236,7 @@ pub fn max_prefix_len(candidates: &[Vec<i64>], keys: &[i64]) -> usize {
 /// this tier does not derive; leaving it empty makes the check STRICTER than
 /// Go's, so a property Go would accept may be refused here. NAMED RESIDUE.
 #[must_use]
-pub fn sort_prop_compatible_with_join_keys(sort_items: &[SortItem], join_keys: &[i64]) -> bool {
+pub fn sort_prop_compatible_with_join_keys(sort_items: &[SortItem], join_keys: &[Column]) -> bool {
     // With no constant column to skip over, Go's walk advances one key per
     // sort item and fails on the first mismatch -- which is exactly "the sort
     // items are a prefix of the join keys".
@@ -243,15 +244,15 @@ pub fn sort_prop_compatible_with_join_keys(sort_items: &[SortItem], join_keys: &
         && sort_items
             .iter()
             .zip(join_keys)
-            .all(|(item, key)| item.col.unique_id == *key)
+            .all(|(item, key)| item.col.unique_id == key.unique_id)
 }
 
 /// The child properties `PhysicalMergeJoin.tryToGetChildReqProp` builds, or
 /// `None` when the merge join cannot satisfy `prop` at all.
 fn merge_join_child_props(
     join_type: LogicalJoinType,
-    left_keys: &[i64],
-    right_keys: &[i64],
+    left_keys: &[Column],
+    right_keys: &[Column],
     prop: &PhysicalProperty,
 ) -> Option<[PhysicalProperty; 2]> {
     let (all, desc) = prop.all_same_order();
@@ -552,11 +553,11 @@ fn enforced_merge_join_candidates(
         let left_at = join
             .left_keys
             .iter()
-            .position(|key| *key == item.col.unique_id);
+            .position(|key| key.unique_id == item.col.unique_id);
         let right_at = join
             .right_keys
             .iter()
-            .position(|key| *key == item.col.unique_id);
+            .position(|key| key.unique_id == item.col.unique_id);
         let Some(at) = left_at.or(right_at) else {
             return Vec::new();
         };
@@ -575,8 +576,8 @@ fn enforced_merge_join_candidates(
             offsets.push(at);
         }
     }
-    let mut left_keys: Vec<i64> = offsets.iter().map(|at| join.left_keys[*at]).collect();
-    let mut right_keys: Vec<i64> = offsets.iter().map(|at| join.right_keys[*at]).collect();
+    let mut left_keys: Vec<Column> = offsets.iter().map(|at| join.left_keys[*at].clone()).collect();
+    let mut right_keys: Vec<Column> = offsets.iter().map(|at| join.right_keys[*at].clone()).collect();
     // Go `checkJoinKeyCollation` (`physical_merge_join.go:200`): conflicting
     // collations leave the join with no keys; its equal conditions become
     // other conditions when the plan is materialized.
@@ -589,8 +590,8 @@ fn enforced_merge_join_candidates(
         left_keys.clear();
         right_keys.clear();
     }
-    let child_prop = |keys: &[i64]| PhysicalProperty {
-        sort_items: keys.iter().map(|col| SortItem::from_unique_id(*col, desc)).collect(),
+    let child_prop = |keys: &[Column]| PhysicalProperty {
+        sort_items: keys.iter().map(|col| SortItem::new(col.clone(), desc)).collect(),
         task_tp: TaskType::Root,
         expected_cnt: f64::MAX,
         can_add_enforcer: true,
@@ -630,8 +631,8 @@ fn merge_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
         if offsets.len() < join.left_keys.len() || join.left_keys.is_empty() {
             continue;
         }
-        let left_keys: Vec<i64> = lhs_property[..offsets.len()].to_vec();
-        let right_keys: Vec<i64> = offsets.iter().map(|at| join.right_keys[*at]).collect();
+        let left_keys: Vec<Column> = lhs_property[..offsets.len()].to_vec();
+        let right_keys: Vec<Column> = offsets.iter().map(|at| join.right_keys[*at].clone()).collect();
         let prefix_len = max_prefix_len(&join.right_properties, &right_keys);
         if prefix_len < offsets.len() || prefix_len == 0 {
             continue;
@@ -870,12 +871,12 @@ pub(crate) fn project_one_join(
     };
     Ok(LogicalJoin {
         join_type: join.join_type,
-        left_keys: ids(&left_key_cols),
-        right_keys: ids(&right_key_cols),
+        left_keys: left_key_cols.clone(),
+        right_keys: right_key_cols.clone(),
         left_schema: children.first().map(|c| schema_ids(c)).unwrap_or_default(),
         right_schema: children.get(1).map(|c| schema_ids(c)).unwrap_or_default(),
-        left_properties: join.left_properties.iter().map(|p| ids(p)).collect(),
-        right_properties: join.right_properties.iter().map(|p| ids(p)).collect(),
+        left_properties: join.left_properties.clone(),
+        right_properties: join.right_properties.clone(),
         force_merge: join.prefer_join_type & tidb_hint::join_hint_flags::MERGE_JOIN != 0,
         no_merge: join.prefer_join_type & tidb_hint::join_hint_flags::NO_MERGE_JOIN
             != 0,
@@ -904,12 +905,12 @@ mod tests {
     fn natural_merge_join_does_not_require_parent_order() {
         let mut join = LogicalJoin {
             join_type: LogicalJoinType::Inner,
-            left_keys: vec![1],
-            right_keys: vec![2],
+            left_keys: tidb_planner_property::columns_with_unique_ids(&[1]),
+            right_keys: tidb_planner_property::columns_with_unique_ids(&[2]),
             left_schema: vec![1],
             right_schema: vec![2],
-            left_properties: vec![vec![1]],
-            right_properties: vec![vec![2]],
+            left_properties: vec![tidb_planner_property::columns_with_unique_ids(&[1])],
+            right_properties: vec![tidb_planner_property::columns_with_unique_ids(&[2])],
             force_merge: false,
             no_merge: false,
             has_null_eq: false,
@@ -935,8 +936,8 @@ mod tests {
     fn every_join_candidate_preserves_cte_and_no_cop_requirements() {
         let join = LogicalJoin {
             join_type: LogicalJoinType::Inner,
-            left_keys: vec![1],
-            right_keys: vec![2],
+            left_keys: tidb_planner_property::columns_with_unique_ids(&[1]),
+            right_keys: tidb_planner_property::columns_with_unique_ids(&[2]),
             left_schema: vec![1],
             right_schema: vec![2],
             left_properties: Vec::new(),

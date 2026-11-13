@@ -1768,7 +1768,7 @@ fn a_projection_maps_the_order_or_refuses_and_drops_constant_items() {
     let projection = LogicalProjection::new(base, exprs);
 
     // Column item 101 maps to child column 1; constant item 102 is DROPPED.
-    let prop = PhysicalProperty::new(TaskType::Root, &[101, 102], false, f64::MAX, false);
+    let prop = PhysicalProperty::new(TaskType::Root, &tidb_planner_property::columns_with_unique_ids(&[101, 102]), false, f64::MAX, false);
     let child = projection
         .try_to_get_child_prop(&prop)
         .expect("column+constant order crosses");
@@ -1776,7 +1776,7 @@ fn a_projection_maps_the_order_or_refuses_and_drops_constant_items() {
     assert_eq!(child.sort_items[0].col.unique_id, 1);
 
     // A scalar-function item refuses the enumeration entirely.
-    let prop = PhysicalProperty::new(TaskType::Root, &[103], false, f64::MAX, false);
+    let prop = PhysicalProperty::new(TaskType::Root, &tidb_planner_property::columns_with_unique_ids(&[103]), false, f64::MAX, false);
     assert!(
         exhaust_physical_plans_4_logical_projection(&projection, &prop, &allocator, 1.0, true)
             .is_empty()
@@ -1871,7 +1871,7 @@ fn a_limit_enumerates_the_three_task_types_in_order() {
     let base = BaseLogicalPlan::new(&allocator, LogicalLimit::TYPE, 0);
     let limit = LogicalLimit::new(base, 5, 20);
 
-    let sorted = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
+    let sorted = PhysicalProperty::new(TaskType::Root, &tidb_planner_property::columns_with_unique_ids(&[1]), false, f64::MAX, false);
     assert!(exhaust_physical_plans_4_logical_limit(&limit, &sorted, &allocator, true, true).is_empty());
 
     let required = PhysicalProperty {
@@ -1958,7 +1958,7 @@ fn a_union_all_fans_one_child_property_per_child() {
     base.set_children(vec![child(0), child(0)]);
     let union = LogicalUnionAll::new(base);
 
-    let sorted = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
+    let sorted = PhysicalProperty::new(TaskType::Root, &tidb_planner_property::columns_with_unique_ids(&[1]), false, f64::MAX, false);
     assert!(
         exhaust_physical_plans_4_logical_union_all(&union, &sorted, &allocator, 1.0, false).is_empty()
     );
@@ -2013,7 +2013,7 @@ fn a_sequence_plans_producers_at_root_and_stamps_some_cte_failed_mpp() {
     base.set_children(vec![child(), child(), child()]);
     let sequence = LogicalSequence::new(base);
 
-    let prop = PhysicalProperty::new(TaskType::Root, &[9], false, 100.0, false);
+    let prop = PhysicalProperty::new(TaskType::Root, &tidb_planner_property::columns_with_unique_ids(&[9]), false, 100.0, false);
     let plans = exhaust_physical_plans_4_logical_sequence(&sequence, &prop, &allocator);
     assert_eq!(plans.len(), 1);
     let PhysicalPlan::Sequence(built) = &plans[0] else {

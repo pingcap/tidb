@@ -606,18 +606,32 @@ impl Default for PhysicalProperty {
     }
 }
 
+/// Columns carrying only `unique_ids`, for a test that names a property's
+/// columns by their unique ids.
+#[must_use]
+pub fn columns_with_unique_ids(unique_ids: &[i64]) -> Vec<tidb_expr::column::Column> {
+    unique_ids
+        .iter()
+        .map(|&unique_id| {
+            let mut column = tidb_expr::column::Column::default();
+            column.unique_id = unique_id;
+            column
+        })
+        .collect()
+}
+
 impl PhysicalProperty {
     /// `property.NewPhysicalProperty`: a required order over `cols`, all in
     /// the same direction.
     pub fn new(
         task_tp: TaskType,
-        cols: &[i64],
+        cols: &[tidb_expr::column::Column],
         desc: bool,
         expected_cnt: f64,
         enforced: bool,
     ) -> Self {
         Self {
-            sort_items: cols.iter().map(|&col| SortItem::from_unique_id(col, desc)).collect(),
+            sort_items: cols.iter().map(|col| SortItem::new(col.clone(), desc)).collect(),
             task_tp,
             expected_cnt,
             can_add_enforcer: enforced,
@@ -1094,7 +1108,7 @@ mod required_property_tests {
             ..PhysicalProperty::default()
         };
         assert_eq!(prop.all_same_order(), (false, false));
-        let desc = PhysicalProperty::new(TaskType::Root, &[1, 2], true, f64::MAX, false);
+        let desc = PhysicalProperty::new(TaskType::Root, &super::columns_with_unique_ids(&[1, 2]), true, f64::MAX, false);
         assert_eq!(desc.all_same_order(), (true, true));
         assert!(desc.sort_desc_for_keep_order());
     }
@@ -1103,11 +1117,11 @@ mod required_property_tests {
     /// property is never a prefix of a shorter one.
     #[test]
     fn is_prefix_compares_column_and_direction() {
-        let short = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
-        let long = PhysicalProperty::new(TaskType::Root, &[1, 2], false, f64::MAX, false);
+        let short = PhysicalProperty::new(TaskType::Root, &super::columns_with_unique_ids(&[1]), false, f64::MAX, false);
+        let long = PhysicalProperty::new(TaskType::Root, &super::columns_with_unique_ids(&[1, 2]), false, f64::MAX, false);
         assert!(short.is_prefix(&long));
         assert!(!long.is_prefix(&short));
-        let flipped = PhysicalProperty::new(TaskType::Root, &[1, 2], true, f64::MAX, false);
+        let flipped = PhysicalProperty::new(TaskType::Root, &super::columns_with_unique_ids(&[1, 2]), true, f64::MAX, false);
         assert!(!short.is_prefix(&flipped));
     }
 
@@ -1115,7 +1129,7 @@ mod required_property_tests {
     /// both sides.
     #[test]
     fn printed_form_is_gos() {
-        let prop = PhysicalProperty::new(TaskType::CopSingleRead, &[7], true, 10.0, false);
+        let prop = PhysicalProperty::new(TaskType::CopSingleRead, &super::columns_with_unique_ids(&[7]), true, 10.0, false);
         assert_eq!(
             prop.to_string(),
             "Prop{cols: [{Column#7 desc}], TaskTp: copSingleReadTask, expectedCount: 10}"
