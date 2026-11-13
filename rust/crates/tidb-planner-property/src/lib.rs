@@ -388,6 +388,59 @@ impl PartialEq for VSInfo {
     }
 }
 
+/// Go `expression.InterpretVectorSearchExpr`: a vector distance function
+/// (`vec_l1_distance`, `vec_l2_distance`, `vec_cosine_distance`,
+/// `vec_negative_inner_product`) over exactly one vector column and one
+/// vector constant, as the vector search it asks for.
+#[must_use]
+pub fn interpret_vector_search_expr(expr: &tidb_expr::expression::Expression) -> Option<VSInfo> {
+    use tidb_expr::expression::Expression;
+    let Expression::ScalarFunction(function) = expr else {
+        return None;
+    };
+    let name = function.func_name.lowercase();
+    if !["vec_l1_distance", "vec_l2_distance", "vec_cosine_distance", "vec_negative_inner_product"].contains(&name) {
+        return None;
+    }
+    let is_vector = |ret_type: Option<&tidb_datatype::FieldType>| {
+        ret_type.is_some_and(|tp| tp.code() == tidb_datatype::FieldTypeCode::VectorFloat32)
+    };
+    // One arg must be a vector column ref, and one arg must be a vector constant.
+    let (mut column, mut constant) = (None, None);
+    let (mut columns, mut constants) = (0, 0);
+    for arg in function.get_args() {
+        match arg {
+            Expression::Column(value) => {
+                if !is_vector(value.ret_type.as_ref()) {
+                    return None;
+                }
+                column = Some(value);
+                columns += 1;
+            }
+            Expression::Constant(value) => {
+                if !is_vector(value.ret_type.as_ref()) {
+                    return None;
+                }
+                constant = Some(value);
+                constants += 1;
+            }
+            _ => {}
+        }
+    }
+    if columns != 1 || constants != 1 {
+        return None;
+    }
+    let tidb_datatype::Datum::VectorFloat32(vector) = &constant?.value else {
+        return None;
+    };
+    Some(VSInfo {
+        distance_fn_name: function.func_name.original().to_owned(),
+        fn_pb_code: function.pb_code() as i32,
+        vector: vector.clone(),
+        column: column?.clone(),
+    })
+}
+
 /// Go's anonymous `PhysicalProperty.VectorProp` field.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VectorProperty {

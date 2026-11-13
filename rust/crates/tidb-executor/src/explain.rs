@@ -1180,7 +1180,64 @@ fn explain_columnar_indexes(
             buffer
         })
         .collect::<Vec<_>>();
-    (!fts_indexes.is_empty()).then(|| format!("ftsIndex:{}", fts_indexes.join(", ")))
+    // Go `explainANNIndex`.
+    let ann_indexes = scan
+        .used_columnar_indexes
+        .iter()
+        .filter_map(|idx| match &idx.query_info.index {
+            Some(tipb::columnar_index_info::Index::AnnQueryInfo(ann)) => Some(ann),
+            _ => None,
+        })
+        .map(|ann| {
+            let mut buffer = String::with_capacity(256);
+            buffer.push_str(ann.distance_metric().as_str_name());
+            buffer.push('(');
+            buffer.push_str(ann.column_name());
+            buffer.push_str("..");
+            if normalized {
+                buffer.push_str("[?]");
+            } else {
+                match tidb_datatype::deserialize_vector_float32(ann.ref_vec_f32()) {
+                    Ok((vector, _)) => buffer.push_str(&vector.truncated_string()),
+                    Err(_) => buffer.push_str("[?]"),
+                }
+            }
+            buffer.push_str(", limit:");
+            if normalized {
+                buffer.push('?');
+            } else {
+                buffer.push_str(&ann.top_k().to_string());
+            }
+            buffer.push(')');
+            if ann.enable_distance_proj() {
+                if let Some(column) = scan.base.base.schema().and_then(|schema| schema.columns.last()) {
+                    buffer.push_str("->");
+                    buffer.push_str(&expression_text(
+                        eval_ctx,
+                        &tidb_expr::expression::Expression::Column(column.clone()),
+                    ));
+                }
+            }
+            buffer
+        })
+        .collect::<Vec<_>>();
+    let inverted_indexes = scan
+        .used_columnar_indexes
+        .iter()
+        .filter(|idx| idx.query_info.index_type() == tipb::ColumnarIndexType::TypeInverted)
+        .map(|idx| idx.index_info.read().name.lowercase().to_owned())
+        .collect::<Vec<_>>();
+    let mut parts = Vec::new();
+    if !ann_indexes.is_empty() {
+        parts.push(format!("annIndex:{}", ann_indexes.join(", ")));
+    }
+    if !inverted_indexes.is_empty() {
+        parts.push(format!("invertedindex:{}", inverted_indexes.join(", ")));
+    }
+    if !fts_indexes.is_empty() {
+        parts.push(format!("ftsIndex:{}", fts_indexes.join(", ")));
+    }
+    (!parts.is_empty()).then(|| parts.join(", "))
 }
 
 fn physical_operator_info(

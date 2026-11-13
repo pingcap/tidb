@@ -408,17 +408,12 @@ pub(crate) fn clean_access_path_for_fts(
 ///   `OptimizerUseInvisibleIndexes` (`:1378`);
 /// * a common-handle table's PRIMARY index is skipped as an index path
 ///   (`:1382`) — it already rode in on the table path;
-/// * a columnar index is skipped because this access-path representation does
-///   not yet carry Go's TiFlash index-path identity (`:1399-1404`).
+/// * an inverted index is skipped (`:1396-1398`), and a columnar index is a
+///   TiFlash path carrying it while the TiFlash replica is available
+///   (`:1399-1408`).
 ///
 /// Named boundaries, absent rather than approximated:
-/// * TiFlash columnar-index paths (`:1399-1404`) — only TiFlash table paths
-///   are represented today;
 /// * `kv.TiDB` for cluster tables (`:1324-1326`) — no cluster-table flag;
-/// * inverted indexes (`:1396-1398`) — no inverted flag on
-///   [`tidb_model::GoShared<tidb_model::IndexInfo>`], so an inverted index
-///   would enumerate here where Go skips it; the catalog does not model one
-///   today;
 /// * an EXPLAIN's hypothetical TiFlash replica (`:1331-1346`) adds the
 ///   TiFlash path, and its hypothetical indexes (`:1419-1441`) are public
 ///   paths after the real ones, appended as they are; neither joins the
@@ -455,7 +450,7 @@ pub fn get_possible_access_paths(
         paths.push(AccessPath::table_path(
             tidb_kv::store_type::StoreType::TiFlash,
             is_common_handle,
-            primary_index,
+            primary_index.clone(),
         ));
     }
     let mut check_latest_schema =
@@ -487,7 +482,22 @@ pub fn get_possible_access_paths(
         if is_common_handle && index.read().primary {
             continue;
         }
+        if index.read().inverted_info.is_some() {
+            continue;
+        }
         if index.read().is_columnar_index() {
+            // Go: the columnar indexes are used only while the TiFlash
+            // replica is available; each is a TiFlash path carrying it.
+            if !table.has_tiflash_replica() {
+                continue;
+            }
+            let mut path = AccessPath::table_path(
+                tidb_kv::store_type::StoreType::TiFlash,
+                is_common_handle,
+                primary_index.clone(),
+            );
+            path.index = Some(index.clone());
+            paths.push(path);
             continue;
         }
         paths.push(tidb_planner_util::path::AccessPath::index_path(index.clone()));
@@ -951,9 +961,9 @@ mod enumeration_tests {
     }
 
     #[test]
-    fn a_columnar_index_is_skipped_without_a_tiflash_index_path_identity() {
-        // Go admits a columnar index only as a TiFlash index path
-        // (`planbuilder.go:1399-1404`); this path type is not represented yet.
+    fn a_columnar_index_needs_an_available_tiflash_replica() {
+        // Go admits a columnar index only as a TiFlash path, and only while
+        // the TiFlash replica is available (`planbuilder.go:1399-1408`).
         let columnar = index("v");
         columnar.write().vector_info =
             Some(tidb_model::GoShared::new(tidb_model::VectorIndexInfo::default()));

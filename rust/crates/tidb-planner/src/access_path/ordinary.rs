@@ -306,7 +306,9 @@ pub(crate) fn detach_table_path(
     correlated_access: bool,
 ) -> Result<(), PlanError> {
     let (handle_column, handle_type) = table_path_handle(source);
-    let primary_index = path.index.clone();
+    // Go `detachCondAndBuildRangeForPath` builds index ranges only for a
+    // common-handle path (`path.IsCommonHandlePath`), over its `Index`.
+    let primary_index = path.index.clone().filter(|_| path.is_common_handle_path);
     let primary_index = primary_index.as_ref();
     let common_index = primary_index;
     let common_columns =
@@ -454,7 +456,8 @@ pub(crate) fn fill_table_path(
     context: &AccessPathDerivationContext<'_>,
 ) -> Result<(), PlanError> {
     detach_table_path(source, path, &source.pushed_down_conds, context, true)?;
-    let common_index = path.index.clone();
+    // Go `deriveTablePathStats` branches on `path.IsCommonHandlePath`.
+    let common_index = path.index.clone().filter(|_| path.is_common_handle_path);
     let common_index = common_index.as_ref();
     // Go `deriveTablePathStats` answers one row for a correlated integer
     // handle and returns before `adjustCountAfterAccess`.

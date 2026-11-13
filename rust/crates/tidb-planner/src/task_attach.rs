@@ -1219,14 +1219,19 @@ fn contains_heavy_topn_function(expression: &Expression) -> bool {
 /// heavy function: a bottom projection materializes each heavy expression,
 /// a pushed TopN orders by those fresh columns, and a global TopN reuses the
 /// same columns after the task returns to TiDB.
+///
+/// When the only heavy by-item is the first one and Go's
+/// `tryReturnDistanceFromIndex` reads the distance from the vector index,
+/// the projection is `None`: the pushed TopN sits directly on the rewritten
+/// table scan.
 fn heavy_topn_split(
     topn: &tidb_planner_core_operator_physicalop::PhysicalTopN,
-    child_plan: &PhysicalPlan,
+    child_plan: &mut PhysicalPlan,
     store_type: StoreType,
     column_ids: Option<&tidb_planner_core_base::ColumnIdAllocator>,
     allocator: &tidb_planner_core_base::PlanIdAllocator,
 ) -> Option<(
-    tidb_planner_core_operator_physicalop::PhysicalProjection,
+    Option<tidb_planner_core_operator_physicalop::PhysicalProjection>,
     tidb_planner_core_operator_physicalop::PhysicalTopN,
     tidb_planner_core_operator_physicalop::PhysicalTopN,
 )> {
@@ -1274,6 +1279,8 @@ fn heavy_topn_split(
         topn.base.base.query_block_offset(),
     );
     projection_base.base.set_stats(pushed_stats.clone());
+    // Go `PhysicalProjection{...}.Init(..., p.GetChildReqProps(0))`.
+    projection_base.set_children_req_props(vec![topn.base.child_req_prop(0).cloned()]);
     projection_base
         .base
         .set_schema(Some(projection_schema.clone()));
@@ -1298,7 +1305,101 @@ fn heavy_topn_split(
     for (index, distance) in distance_columns {
         global.by_items[index].expr = Expression::Column(distance);
     }
-    Some((projection, pushed, global))
+    // Go only tries to skip scanning the vector column when the first
+    // order-by item is the vector distance (the vector index can be chosen).
+    if heavy_indexes == [0]
+        && try_return_distance_from_index(&mut pushed, &mut global, child_plan, &projection, column_ids)
+    {
+        return Some((None, pushed, global));
+    }
+    Some((Some(projection), pushed, global))
+}
+
+/// Go `tryReturnDistanceFromIndex` (`core/task.go:988-1079`): when the
+/// child is a table scan reading a vector index and the vector column is
+/// used only by the distance, the scan drops the vector column and returns
+/// the distance as a virtual column, which both TopNs order by.
+fn try_return_distance_from_index(
+    local: &mut tidb_planner_core_operator_physicalop::PhysicalTopN,
+    global: &mut tidb_planner_core_operator_physicalop::PhysicalTopN,
+    child_plan: &mut PhysicalPlan,
+    proj: &tidb_planner_core_operator_physicalop::PhysicalProjection,
+    column_ids: &tidb_planner_core_base::ColumnIdAllocator,
+) -> bool {
+    use tidb_proto::tipb;
+    let PhysicalPlan::TableScan(table_scan) = child_plan else {
+        return false;
+    };
+    let Expression::Column(order_by_col) = &local.by_items[0].expr else {
+        return false;
+    };
+    let Some(ann_index) = table_scan.used_columnar_indexes.iter().position(|idx| {
+        matches!(idx.query_info.index, Some(tipb::columnar_index_info::Index::AnnQueryInfo(_)))
+    }) else {
+        return false;
+    };
+    let Some(tipb::columnar_index_info::Index::AnnQueryInfo(ann_query_info)) =
+        &table_scan.used_columnar_indexes[ann_index].query_info.index
+    else {
+        unreachable!("the position matched an ANN query");
+    };
+    let vector_column_id = ann_query_info.column.as_ref().map_or(0, |column| column.column_id());
+
+    // If the vector column is only used in the VectorSearch and no where
+    // else, then it can be eliminated in TableScan.
+    let Ok(order_by_index) = usize::try_from(order_by_col.index) else {
+        return false;
+    };
+    if order_by_index >= proj.exprs.len() {
+        return false;
+    }
+    let vec_column_in_use = proj.exprs.iter().enumerate().any(|(idx, expr)| {
+        idx != order_by_index
+            && tidb_expr::expr_util::predicates::has_column_with_condition(expr, &|col| {
+                col.id == vector_column_id
+            })
+    });
+    if vec_column_in_use {
+        return false;
+    }
+
+    // Remove the vector column in order to read the distance directly by
+    // the virtual distance column.
+    let Some(vector_idx) = table_scan.columns.iter().position(|col| col.read().id == vector_column_id) else {
+        return false;
+    };
+    let virtual_distance_col_info = tidb_model::ColumnInfo {
+        id: tidb_model::column::VIRTUAL_COL_VEC_SEARCH_DISTANCE_ID,
+        field_type: tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Float),
+        offset: table_scan.columns.len() as i64 - 1,
+        ..Default::default()
+    };
+    let mut virtual_distance_col = tidb_expr::column::Column::new(
+        column_ids.alloc(),
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Float),
+    );
+
+    // Set EnableDistanceProj to modify TiFlash's read process.
+    if let Some(tipb::columnar_index_info::Index::AnnQueryInfo(ann_query_info)) =
+        &mut table_scan.used_columnar_indexes[ann_index].query_info.index
+    {
+        ann_query_info.enable_distance_proj = Some(true);
+    }
+
+    // Append the distance column to the last position in columns and schema.
+    table_scan.columns.remove(vector_idx);
+    table_scan.columns.push(tidb_model::GoShared::new(virtual_distance_col_info));
+    let mut schema = table_scan.base.base.schema().cloned().unwrap_or_default();
+    schema.columns.remove(vector_idx);
+    virtual_distance_col.index = schema.columns.len() as i64;
+    schema.columns.push(virtual_distance_col.clone());
+    table_scan.base.base.set_schema(Some(schema.clone()));
+
+    // The pushed TopN's child is now the table scan, not the projection.
+    local.base.base.set_schema(Some(schema));
+    local.by_items[0].expr = Expression::Column(virtual_distance_col.clone());
+    global.by_items[0].expr = Expression::Column(virtual_distance_col);
+    true
 }
 
 /// Attaches a physical plan with Go's default group-NDV skew ratio.
@@ -1883,20 +1984,27 @@ pub(crate) fn attach2_task_in(
                             }
                             return Ok(attach_plan_2_task(plan, converted));
                         }
+                        let store_type = cop.get_store_type();
                         if let Some((projection, pushed, global)) = heavy_topn_split(
                             topn,
-                            cop.plan().expect("cop plan was checked above"),
-                            cop.get_store_type(),
+                            if cop.index_plan_finished {
+                                cop.table_plan.as_deref_mut()
+                            } else {
+                                cop.index_plan.as_deref_mut()
+                            }
+                            .expect("cop plan was checked above"),
+                            store_type,
                             column_ids,
                             allocator,
                         ) {
-                            let pushed_task = attach_plan_2_task(
-                                PhysicalPlan::TopN(pushed),
-                                attach_plan_2_task(
+                            let child = match projection {
+                                Some(projection) => attach_plan_2_task(
                                     PhysicalPlan::Projection(projection),
                                     Task::Cop(cop),
                                 ),
-                            );
+                                None => Task::Cop(cop),
+                            };
+                            let pushed_task = attach_plan_2_task(PhysicalPlan::TopN(pushed), child);
                             if !topn.partition_by.is_empty() {
                                 return Ok(pushed_task);
                             }
@@ -1917,6 +2025,8 @@ pub(crate) fn attach2_task_in(
                             plan.query_block_offset(),
                         );
                         base.base.set_stats(stats);
+                        // Go `PhysicalTopN{...}.Init(..., p.GetChildReqProps(0))`.
+                        base.set_children_req_props(vec![topn.base.child_req_prop(0).cloned()]);
                         base.base
                             .set_schema(cop.plan().and_then(PhysicalPlan::schema).cloned());
                         let pushed = PhysicalPlan::TopN(tidb_planner_core_operator_physicalop::PhysicalTopN {
@@ -1938,7 +2048,7 @@ pub(crate) fn attach2_task_in(
                     }
                     Task::Cop(cop).into_root_task_in(allocator, evaluate)?
                 }
-                Task::Mpp(mpp) => {
+                Task::Mpp(mut mpp) => {
                     let by_exprs: Vec<tidb_expr::expression::Expression> =
                         topn.by_items.iter().map(|item| item.expr.clone()).collect();
                     let columns =
@@ -1955,20 +2065,21 @@ pub(crate) fn attach2_task_in(
                     if pushable {
                         if let Some((projection, pushed, global)) = heavy_topn_split(
                             topn,
-                            mpp.plan.as_deref().ok_or_else(|| {
+                            mpp.plan.as_deref_mut().ok_or_else(|| {
                                 PlanError::internal("MPP TopN attachment received an empty task")
                             })?,
                             StoreType::TiFlash,
                             column_ids,
                             allocator,
                         ) {
-                            let pushed_task = attach_plan_2_task(
-                                PhysicalPlan::TopN(pushed),
-                                attach_plan_2_task(
+                            let child = match projection {
+                                Some(projection) => attach_plan_2_task(
                                     PhysicalPlan::Projection(projection),
                                     Task::Mpp(mpp),
                                 ),
-                            );
+                                None => Task::Mpp(mpp),
+                            };
+                            let pushed_task = attach_plan_2_task(PhysicalPlan::TopN(pushed), child);
                             if !topn.partition_by.is_empty() {
                                 return Ok(pushed_task);
                             }
@@ -1990,6 +2101,8 @@ pub(crate) fn attach2_task_in(
                             plan.query_block_offset(),
                         );
                         base.base.set_stats(stats);
+                        // Go `PhysicalTopN{...}.Init(..., p.GetChildReqProps(0))`.
+                        base.set_children_req_props(vec![topn.base.child_req_prop(0).cloned()]);
                         base.base.set_schema(
                             mpp.plan.as_deref().and_then(PhysicalPlan::schema).cloned(),
                         );

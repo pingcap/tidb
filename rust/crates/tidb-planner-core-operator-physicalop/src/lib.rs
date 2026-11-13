@@ -1260,6 +1260,38 @@ pub fn build_full_text_index_extra(
     }
 }
 
+/// Go `buildVectorIndexExtra` (`columnar_index_utils.go`): the ANN query a
+/// TiFlash scan runs over a vector index for a TopN's vector property.
+#[must_use]
+pub fn build_vector_index_extra(
+    index_info: &tidb_model::GoShared<tidb_model::IndexInfo>,
+    vector_prop: &tidb_planner_property::VectorProperty,
+    column_name: &str,
+) -> Option<ColumnarIndexExtra> {
+    use tidb_proto::tipb;
+    let vs = vector_prop.search_info.as_ref()?;
+    let metric = tidb_model::indexable_fn_name_to_distance_metric(&vs.distance_fn_name.to_lowercase())?;
+    let distance_metric = tipb::VectorDistanceMetric::from_str_name(metric)? as i32;
+    let mut ref_vec = Vec::new();
+    vs.vector.serialize_to(&mut ref_vec);
+    Some(ColumnarIndexExtra {
+        index_info: index_info.clone(),
+        query_info: tipb::ColumnarIndexInfo {
+            index_type: Some(tipb::ColumnarIndexType::TypeVector as i32),
+            index: Some(tipb::columnar_index_info::Index::AnnQueryInfo(tipb::AnnQueryInfo {
+                query_type: Some(tipb::AnnQueryType::OrderBy as i32),
+                distance_metric: Some(distance_metric),
+                top_k: Some(vector_prop.top_k),
+                column_name: Some(column_name.to_owned()),
+                index_id: Some(index_info.read().id),
+                ref_vec_f32: Some(ref_vec),
+                column: Some(tidb_util::misc::column_to_proto(&vs.column.to_info(), false, true)),
+                ..tipb::AnnQueryInfo::default()
+            })),
+        },
+    })
+}
+
 /// Go `physicalop.PhysicalTableScan`.
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalTableScan {
@@ -3862,6 +3894,45 @@ pub fn get_phys_top_n(
                 base.base.set_stats(topn.base.base.stats_info().cloned());
                 base.base.set_schema(topn.base.schema_or_child_schema().cloned());
                 base.set_children_req_props(vec![Some(advisory_prop)]);
+                ret.push(PhysicalPlan::TopN(PhysicalTopN {
+                    base,
+                    by_items: topn.by_items.clone(),
+                    partition_by: topn.partition_by.clone(),
+                    offset: topn.offset,
+                    count: topn.count,
+                    prefix_col: None,
+                    prefix_len: 0,
+                    allow_projection_push_down,
+                    heavy_function_optimize,
+                }));
+            }
+        }
+    }
+    // If we can generate MPP task and there's vector distance function in the
+    // order by column, we try to generate a property for possible vector
+    // indexes: one ascending distance over a DataSource with no filters.
+    if mpp_allowed && topn.by_items.len() == 1 && !topn.by_items[0].desc {
+        if let (Some(vs), Some(tidb_planner_core_operator_logicalop::LogicalPlan::DataSource(ds))) = (
+            tidb_planner_property::interpret_vector_search_expr(&topn.by_items[0].expr),
+            topn.base.children().first(),
+        ) {
+            if ds.pushed_down_conds.is_empty() {
+                let mut result_prop = PhysicalProperty {
+                    task_tp: TaskType::Mpp,
+                    expected_cnt: f64::MAX,
+                    cte_producer_status: prop.cte_producer_status,
+                    ..PhysicalProperty::default()
+                };
+                result_prop.vector_prop.search_info = Some(vs);
+                result_prop.vector_prop.top_k = (topn.count + topn.offset) as u32;
+                let mut base = BasePhysicalPlan::new(
+                    allocator,
+                    tidb_planner_core_operator_logicalop::LogicalTopN::TYPE,
+                    topn.base.base.query_block_offset(),
+                );
+                base.base.set_stats(topn.base.base.stats_info().cloned());
+                base.base.set_schema(topn.base.schema_or_child_schema().cloned());
+                base.set_children_req_props(vec![Some(result_prop)]);
                 ret.push(PhysicalPlan::TopN(PhysicalTopN {
                     base,
                     by_items: topn.by_items.clone(),

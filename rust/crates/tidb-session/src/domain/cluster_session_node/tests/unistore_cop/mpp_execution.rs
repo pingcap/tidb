@@ -2423,11 +2423,17 @@ fn test_tiflash_compute_dispatch_policy() {
 /// `enforce_mpp_suite_out.json`: each case's rows (an EXPLAIN's plan ids
 /// normalized) and warnings against Go's recorded output.
 fn check_enforce_mpp_suite(session: &mut Session, name: &str) {
+    check_casetest_suite(
+        session,
+        include_str!("../../../../../../../../pkg/planner/core/casetest/enforcempp/testdata/enforce_mpp_suite_out.json"),
+        name,
+    );
+}
+
+/// One section of a Go casetest `*_out.json`: each case's rows and warnings.
+fn check_casetest_suite(session: &mut Session, fixture: &str, name: &str) {
     let session = &mut *session;
-    let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../../../../../pkg/planner/core/casetest/enforcempp/testdata/enforce_mpp_suite_out.json"
-    ))
-    .unwrap();
+    let fixture: serde_json::Value = serde_json::from_str(fixture).unwrap();
     let cases = fixture
         .as_array()
         .unwrap()
@@ -2502,4 +2508,109 @@ fn test_mpp_shared_cte_scan() {
     rows(&mut session, "set @@tidb_enforce_mpp='on'");
     rows(&mut session, "set @@tidb_opt_enable_mpp_shared_cte_execution='on'");
     check_enforce_mpp_suite(&mut session, "TestMPPSharedCTEScan");
+}
+
+/// Go `TestTiFlashANNIndex` (`casetest/vectorsearch`): a TopN over one
+/// vector distance reads the TiFlash vector index whose column and metric it
+/// names.
+#[test]
+fn test_tiflash_ann_index() {
+    let (stack, mut session) = tiflash_session(2, 2171);
+    tidb_domain_infosync::tiflash_manager::set_mock_tiflash(std::sync::Arc::new(
+        tidb_domain_infosync::tiflash_manager::MockTiFlash::new(),
+    ));
+    fail::cfg("MockCheckColumnarIndexProcess", "return(1)").unwrap();
+    rows(&mut session, "drop table if exists t1");
+    rows(&mut session, "create table t1 (vec vector(3), a int, b int, c vector(3), d vector)");
+    rows(&mut session, "alter table t1 set tiflash replica 1;");
+    replica_available(&stack, &mut session, "t1");
+    rows(&mut session, "alter table t1 add vector index ((vec_cosine_distance(vec))) USING HNSW;");
+    fail::remove("MockCheckColumnarIndexProcess");
+    rows(
+        &mut session,
+        "insert into t1 values ('[1,1,1]', 1, 1, '[1,1,1]', '[1,1,1]'), ('[2,2,2]', 2, 2, '[2,2,2]', '[2,2,2]'), ('[3,3,3]', 3, 3, '[3,3,3]', '[3,3,3]')",
+    );
+    for _ in 0..4 {
+        rows(&mut session, "insert into t1(vec, a, b, c, d) select vec, a, b, c, d from t1");
+    }
+    rows(&mut session, "analyze table t1");
+    rows(&mut session, "set @@tidb_isolation_read_engines = 'tiflash'");
+    check_casetest_suite(
+        &mut session,
+        include_str!("../../../../../../../../pkg/planner/core/casetest/vectorsearch/testdata/ann_index_suite_out.json"),
+        "TestTiFlashANNIndex",
+    );
+}
+
+/// The setup Go's `TestVectorSearchWithPKAuto`, `TestVectorSearchWithPKForceTiKV`
+/// and `TestVectorSearchHeavyFunction` share: `t1` with an integer primary
+/// key and a cosine vector index, 6000 rows (the 2000 three-row inserts are
+/// grouped into fewer statements; the rows are the same), analyzed, a `doc`
+/// table for joins, and `t1`'s TiFlash replica available.
+fn vector_search_with_pk_session(connection_id: u64) -> (UnistoreClusterStack, Session) {
+    let (stack, mut session) = tiflash_session(2, connection_id);
+    tidb_domain_infosync::tiflash_manager::set_mock_tiflash(std::sync::Arc::new(
+        tidb_domain_infosync::tiflash_manager::MockTiFlash::new(),
+    ));
+    rows(&mut session, "drop table if exists t1");
+    rows(&mut session, "drop table if exists doc");
+    rows(
+        &mut session,
+        "create table t1 (id int primary key, vec vector(3), a int, b int, c vector(3), d vector, VECTOR INDEX idx_embedding ((VEC_COSINE_DISTANCE(vec))))",
+    );
+    for chunk in (0..2000).collect::<Vec<i32>>().chunks(200) {
+        let values = chunk
+            .iter()
+            .map(|i| {
+                format!(
+                    "({}, '[1,1,1]', 1, 1, '[1,1,1]', '[1,1,1]'), ({}, '[2,2,2]', 2, 2, '[2,2,2]', '[2,2,2]'), ({}, '[3,3,3]', 3, 3, '[3,3,3]', '[3,3,3]')",
+                    i,
+                    2000 + i,
+                    2000 * 2 + i
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        rows(&mut session, &format!("insert into t1 values {values}"));
+    }
+    rows(&mut session, "analyze table t1");
+    rows(&mut session, "create table doc(id INT, doc LONGTEXT)");
+    rows(&mut session, "alter table t1 set tiflash replica 1");
+    replica_available(&stack, &mut session, "t1");
+    (stack, session)
+}
+
+/// Go `TestVectorSearchWithPKAuto` (`casetest/vectorsearch`).
+#[test]
+fn test_vector_search_with_pk_auto() {
+    let (_stack, mut session) = vector_search_with_pk_session(2172);
+    check_casetest_suite(
+        &mut session,
+        include_str!("../../../../../../../../pkg/planner/core/casetest/vectorsearch/testdata/ann_index_suite_out.json"),
+        "TestVectorSearchWithPKAuto",
+    );
+}
+
+/// Go `TestVectorSearchWithPKForceTiKV` (`casetest/vectorsearch`).
+#[test]
+fn test_vector_search_with_pk_force_tikv() {
+    let (_stack, mut session) = vector_search_with_pk_session(2173);
+    rows(&mut session, "set @@tidb_isolation_read_engines = 'tikv'");
+    check_casetest_suite(
+        &mut session,
+        include_str!("../../../../../../../../pkg/planner/core/casetest/vectorsearch/testdata/ann_index_suite_out.json"),
+        "TestVectorSearchWithPKForceTiKV",
+    );
+}
+
+/// Go `TestVectorSearchHeavyFunction` (`casetest/vectorsearch`): the
+/// distance read from the vector index (`tryReturnDistanceFromIndex`).
+#[test]
+fn test_vector_search_heavy_function() {
+    let (_stack, mut session) = vector_search_with_pk_session(2174);
+    check_casetest_suite(
+        &mut session,
+        include_str!("../../../../../../../../pkg/planner/core/casetest/vectorsearch/testdata/ann_index_suite_out.json"),
+        "TestVectorSearchHeavyFunction",
+    );
 }

@@ -1357,6 +1357,9 @@ struct Constraint {
     parser_name: String,
     /// A partial index's `WHERE`.
     condition: Option<Expr>,
+    /// Go `Keys` as written, which a columnar index's `BuildIndexInfo`
+    /// reads (Go builds no hidden column for it).
+    keys: Vec<IndexPart>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1427,17 +1430,32 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
     if is_columnar {
         index_type = Some(tp);
     }
-    let kind = match index.kind {
-        IndexConstraintKind::PrimaryKey => ConstraintKind::PrimaryKey,
-        IndexConstraintKind::Unique
-        | IndexConstraintKind::UniqueKey
-        | IndexConstraintKind::UniqueIndex => ConstraintKind::Unique,
-        IndexConstraintKind::Key | IndexConstraintKind::Index => ConstraintKind::Key,
-        IndexConstraintKind::Fulltext => ConstraintKind::Columnar(ColumnarIndexType::FULLTEXT),
-        other => {
-            return Err(DdlAdmissionError::plain(format!(
-                "CREATE TABLE {other:?} indexes are not supported by this node"
-            )))
+    // Go `BuildTableInfo`: a columnar constraint's type is read off
+    // `constr.Option.Tp`, which `checkIndexGrammar` rewrote.
+    let kind = if is_columnar {
+        ConstraintKind::Columnar(match tp {
+            IndexType::VECTOR => ColumnarIndexType::VECTOR,
+            IndexType::INVERTED => ColumnarIndexType::INVERTED,
+            IndexType::FULLTEXT => ColumnarIndexType::FULLTEXT,
+            _ => {
+                return Err(DdlAdmissionError::from_terror(
+                    &tidb_dbterror::ERR_UNSUPPORTED_INDEX_TYPE
+                        .gen_with_stack_by_args(&[tp.sql().into()]),
+                ))
+            }
+        })
+    } else {
+        match index.kind {
+            IndexConstraintKind::PrimaryKey => ConstraintKind::PrimaryKey,
+            IndexConstraintKind::Unique
+            | IndexConstraintKind::UniqueKey
+            | IndexConstraintKind::UniqueIndex => ConstraintKind::Unique,
+            IndexConstraintKind::Key | IndexConstraintKind::Index => ConstraintKind::Key,
+            IndexConstraintKind::Fulltext
+            | IndexConstraintKind::Vector
+            | IndexConstraintKind::Columnar => {
+                unreachable!("checkIndexGrammar makes every such key columnar")
+            }
         }
     };
     // Go `BuildTableInfo`: `CLUSTERED` / `NONCLUSTERED` written on anything
@@ -1488,6 +1506,7 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
         index_type,
         parser_name: index.options.parser_name.clone().unwrap_or_default(),
         condition: index.options.condition.clone(),
+        keys: index.parts.clone(),
     })
 }
 
@@ -2091,8 +2110,9 @@ fn synthesize_expression_index_columns(
     // `checkConstraintNames` has named every index, an expression index
     // included (`expression_index`, `expression_index_2`, ...).
     for (constraint, exprs) in constraints.iter_mut().zip(constraint_exprs) {
-        if exprs.is_empty() {
-            // Inline constraints carry no key parts.
+        // Inline constraints carry no key parts, and Go builds no hidden
+        // column for a columnar index (`constr.Tp != ast.ConstraintColumnar`).
+        if exprs.is_empty() || matches!(constraint.kind, ConstraintKind::Columnar(_)) {
             continue;
         }
         if constraint.kind == ConstraintKind::PrimaryKey && exprs.iter().any(|expr| expr.is_some())
@@ -3033,6 +3053,7 @@ fn build_column(
                             index_type: None,
                             parser_name: String::new(),
                             condition: None,
+                            keys: Vec::new(),
                         },
                     ));
                     field_type.add_flags(FieldTypeFlags::PRI_KEY | FieldTypeFlags::NOT_NULL);
@@ -3057,6 +3078,7 @@ fn build_column(
                             index_type: None,
                             parser_name: String::new(),
                             condition: None,
+                            keys: Vec::new(),
                         },
                     ));
                     field_type.add_flags(FieldTypeFlags::UNIQUE_KEY);
@@ -3643,30 +3665,44 @@ fn build_table(
         crate::check_too_long_identifier(&name).map_err(default_admission_error)?;
         // Go `BuildIndexInfo` -> `buildIndexColumns` over `tbInfo.Columns`,
         // whose expression parts already name their hidden columns.
-        let parts: Vec<crate::index::IndexPartSpecification<'_>> = constraint
-            .parts
-            .iter()
-            .map(|part| crate::index::IndexPartSpecification {
-                column: &part.name,
-                length: part.prefix_len,
-            })
-            .collect();
-        // Go `BuildIndexInfo`: the columnar index's own info first.
-        let columnar_index_type = match constraint.kind {
-            ConstraintKind::Columnar(columnar_index_type) => columnar_index_type,
-            ConstraintKind::PrimaryKey | ConstraintKind::Unique | ConstraintKind::Key => {
-                ColumnarIndexType::NA
-            }
+        // Go `BuildIndexInfo`: the columnar index's own info first, whose
+        // builder names the one column a vector or inverted index's
+        // expression part reads.
+        let columnar = match constraint.kind {
+            ConstraintKind::Columnar(columnar_index_type) => Some((
+                columnar_index_type,
+                build_columnar_info_with_check(
+                    columnar_index_type,
+                    &constraint.keys,
+                    &constraint.parser_name,
+                    &table,
+                )?,
+            )),
+            ConstraintKind::PrimaryKey | ConstraintKind::Unique | ConstraintKind::Key => None,
         };
-        let full_text_info = if columnar_index_type == ColumnarIndexType::FULLTEXT {
-            Some(GoShared::new(build_full_text_info_with_check(
-                &constraint.parts,
-                &constraint.parser_name,
-                &table,
-            )?))
-        } else {
-            None
+        let parts: Vec<crate::index::IndexPartSpecification<'_>> = match &columnar {
+            Some((_, info)) => vec![crate::index::IndexPartSpecification {
+                column: info.column.original(),
+                length: info.length,
+            }],
+            None => constraint
+                .parts
+                .iter()
+                .map(|part| crate::index::IndexPartSpecification {
+                    column: &part.name,
+                    length: part.prefix_len,
+                })
+                .collect(),
         };
+        let columnar_index_type =
+            columnar.as_ref().map_or(ColumnarIndexType::NA, |(columnar_index_type, _)| *columnar_index_type);
+        let (vector_info, inverted_info, full_text_info) = columnar.as_ref().map_or((None, None, None), |(_, info)| {
+            (
+                info.vector_info.clone().map(GoShared::new),
+                info.inverted_info.clone().map(GoShared::new),
+                info.full_text_info.clone().map(GoShared::new),
+            )
+        });
         let (index_columns, mv_index) = crate::index::build_index_columns(
             Some(context),
             &all_table_columns,
@@ -3688,6 +3724,8 @@ fn build_table(
             invisible: constraint.invisible,
             global: constraint.global,
             mv_index,
+            vector_info,
+            inverted_info,
             full_text_info,
             ..IndexInfo::default()
         };

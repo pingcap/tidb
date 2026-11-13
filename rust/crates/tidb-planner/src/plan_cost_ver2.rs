@@ -825,18 +825,19 @@ pub fn table_scan_cost(
     mul_cost_ver2(&cost, cost_factor)
 }
 
-/// `getPlanCostVer24PhysicalTableScan` for TiFlash without a columnar
-/// index: under late materialization (`late_materialization`, the filter
-/// columns' row size and the conditions' selectivity) the
-/// [`tiflash_late_materialization_scan_cost`], otherwise the scan plus a fixed
-/// startup penalty of [`TIFLASH_STARTUP_ROW_PENALTY`] rows, which keeps small
-/// scans on TiKV.
+/// `getPlanCostVer24PhysicalTableScan` for TiFlash: under late
+/// materialization (`late_materialization`, the filter columns' row size and
+/// the conditions' selectivity) the [`tiflash_late_materialization_scan_cost`],
+/// otherwise the scan plus a fixed startup penalty of
+/// [`TIFLASH_STARTUP_ROW_PENALTY`] rows, which keeps small scans on TiKV; then
+/// the penalty of each columnar index the scan reads.
 #[must_use]
 pub fn tiflash_table_scan_cost(
     option: Option<&PlanCostOption>,
     rows: f64,
     row_size: f64,
     late_materialization: Option<(f64, f64)>,
+    columnar_indexes: &[tidb_planner_core_operator_physicalop::ColumnarIndexExtra],
     factors: &Ver2Factors,
     table_tiflash_scan_cost_factor: f64,
 ) -> CostVer2 {
@@ -857,6 +858,39 @@ pub fn tiflash_table_scan_cost(
             scan_cost(option, TIFLASH_STARTUP_ROW_PENALTY, row_size, scan_factor),
         ]),
     };
+    // Go: "Add penalty for search index". Go's `QueryInfo == nil` arm
+    // (`ann-index-no-topk`) is unreachable: `buildVectorIndexExtra` always
+    // sets the query, which is not optional here.
+    let cost = columnar_indexes.iter().fold(cost, |cost, idx| {
+        if idx.index_info.read().vector_info.is_some() {
+            let top_k = match &idx.query_info.index {
+                Some(tidb_proto::tipb::columnar_index_info::Index::AnnQueryInfo(ann)) => ann.top_k(),
+                _ => 0,
+            };
+            let start = &factors.ann_index_start;
+            let scan_row = &factors.ann_index_scan_row;
+            sum_cost_ver2(&[
+                cost,
+                new_cost_ver2(option, start, rows * start.value(), || {
+                    format!("ann-index-start({rows}*{start})")
+                }),
+                new_cost_ver2(option, scan_row, f64::from(top_k) * scan_row.value(), || {
+                    format!("ann-index-topk({top_k}*{scan_row})")
+                }),
+            ])
+        } else if idx.index_info.read().inverted_info.is_some() {
+            // penalty = rows * inverted-index-scan-factor + inverted-index-search-factor * rows
+            let search = &factors.inverted_index_search;
+            sum_cost_ver2(&[
+                mul_cost_ver2(&cost, factors.inverted_index_scan.value()),
+                new_cost_ver2(option, search, rows * search.value(), || {
+                    format!("inverted-index-search({rows}*{search})")
+                }),
+            ])
+        } else {
+            cost
+        }
+    });
     mul_cost_ver2(&cost, table_tiflash_scan_cost_factor)
 }
 

@@ -455,6 +455,7 @@ impl Ver2Coster {
                         rows,
                         Self::row_size(plan),
                         late_materialization,
+                        &scan.used_columnar_indexes,
                         &self.factors,
                         self.session_factors.table_tiflash_scan,
                     )

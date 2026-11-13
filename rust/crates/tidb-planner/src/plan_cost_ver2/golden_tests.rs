@@ -1279,7 +1279,7 @@ fn test_source_tiflash_and_mpp_branches() {
     let factors = Ver2Factors::default();
     let vars = CostFactorVars::default();
     // A TiFlash scan always pays for 10000 startup rows on top of its own.
-    let scan = tiflash_table_scan_cost(None, 1.0, 4.0, None, &factors, 1.0);
+    let scan = tiflash_table_scan_cost(None, 1.0, 4.0, None, &[], &factors, 1.0);
     assert_eq!(
         printed(&scan),
         format!("{:.2}", (1.0 + TIFLASH_STARTUP_ROW_PENALTY) * 2.0 * 11.60)

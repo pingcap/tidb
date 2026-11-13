@@ -4293,7 +4293,25 @@ fn find_best_task_4_logical_data_source_paths(
                     continue 'paths;
                 }
                 let keep_order = ordered;
-                let matched = table_path_matches_order(ds, prop, None).matched();
+                // Go `matchProperty`'s vector arm: a vector-index path matches
+                // a vector property on the same column and distance metric.
+                let vector_index = path
+                    .index
+                    .as_ref()
+                    .filter(|index| index.read().vector_info.is_some());
+                let matched = match (&prop.vector_prop.search_info, vector_index) {
+                    (Some(vs), Some(index)) => {
+                        let index = index.read();
+                        let column_id = index.columns.get(0).and_then(|column| {
+                            let offset = usize::try_from(column.read().offset).ok()?;
+                            ds.table_info.as_ref()?.read().columns.get(offset).map(|column| column.read().id)
+                        });
+                        column_id == Some(vs.column.id)
+                            && tidb_model::indexable_fn_name_to_distance_metric(&vs.distance_fn_name.to_lowercase())
+                                == index.vector_info.as_ref().map(|info| info.read().distance_metric.clone()).as_deref()
+                    }
+                    _ => table_path_matches_order(ds, prop, None).matched(),
+                };
                 if keep_order && !matched {
                     continue 'paths;
                 }
@@ -4343,6 +4361,11 @@ fn find_best_task_4_logical_data_source_paths(
                 let use_mpp = prop.task_tp == TaskType::Mpp || can_mpp_convert_to_root;
                 if use_mpp {
                     if keep_order || prop.mpp_partition_tp != tidb_planner_property::MppPartitionType::Any {
+                        continue 'paths;
+                    }
+                    // If it has vector property, we need to check the
+                    // candidate's match.
+                    if vector_index.is_some() && !matched {
                         continue 'paths;
                     }
                     if let Some(column) = ds
@@ -4419,6 +4442,28 @@ fn find_best_task_4_logical_data_source_paths(
                         tidb_planner_core_operator_logicalop::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
                     )),
                 };
+                // Go `convertToTableScan`'s MPP arm: the vector index the
+                // property matched answers the TopN's ANN query, so the scan
+                // reads at most TopK rows.
+                if use_mpp {
+                    if let Some(index) = vector_index {
+                        let column_name = index.read().columns.get(0).and_then(|column| {
+                            let offset = usize::try_from(column.read().offset).ok()?;
+                            ds.table_info.as_ref()?.read().columns.get(offset).map(|column| column.read().name.lowercase().to_owned())
+                        });
+                        if let Some(extra) = column_name.and_then(|name| {
+                            tidb_planner_core_operator_physicalop::build_vector_index_extra(index, &prop.vector_prop, &name)
+                        }) {
+                            scan.used_columnar_indexes.push(extra);
+                            if let Some(stats) = scan.base.base.stats_info().cloned() {
+                                scan.base.base.set_stats(Some(tidb_planner_property::stats_info::derive_limit_stats(
+                                    &stats,
+                                    f64::from(prop.vector_prop.top_k),
+                                )));
+                            }
+                        }
+                    }
+                }
                 let (table_filters, root_task_conds) = tidb_planner_core_operator_physicalop::pushdown::split_scan_filters(
                     path.table_filters.clone(), tidb_kv::store_type::StoreType::TiFlash,
                     &ctx.expr_pushdown_blacklist,

@@ -165,7 +165,7 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                         .enumerate()
                         .filter(|(_, path)| path.is_single_scan.is_none())
                         .filter_map(|(position, path)| {
-                            let index = path.index.as_ref()?;
+                            let index = path.index_info()?;
                             Some((
                                 position,
                                 tidb_planner_core_operator_logicalop::data_source::index_path_is_single_scan(
@@ -254,7 +254,7 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                     // this before the final column-pruning pass.
                     for position in 0..op.all_possible_access_paths.len() {
                         let path = &op.all_possible_access_paths[position];
-                        let is_single_scan = path.index.as_ref().map(|index| {
+                        let is_single_scan = path.index_info().map(|index| {
                             tidb_planner_core_operator_logicalop::data_source::index_path_is_single_scan(
                                 op,
                                 index,
