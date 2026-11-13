@@ -1243,6 +1243,24 @@ pub struct ColumnarIndexExtra {
     pub query_info: tidb_proto::tipb::ColumnarIndexInfo,
 }
 
+/// Go `buildInvertedIndexExtra`.
+#[must_use]
+pub fn build_inverted_index_extra(index_info: &tidb_model::GoShared<tidb_model::IndexInfo>) -> ColumnarIndexExtra {
+    let (index_id, column_id) = {
+        let index = index_info.read();
+        (index.id, index.inverted_info.as_ref().map_or(0, |info| info.read().column_id))
+    };
+    ColumnarIndexExtra {
+        index_info: index_info.clone(),
+        query_info: tidb_proto::tipb::ColumnarIndexInfo {
+            index_type: Some(tidb_proto::tipb::ColumnarIndexType::TypeInverted as i32),
+            index: Some(tidb_proto::tipb::columnar_index_info::Index::InvertedQueryInfo(
+                tidb_proto::tipb::InvertedQueryInfo { index_id: Some(index_id), column_id: Some(column_id) },
+            )),
+        },
+    }
+}
+
 /// Go `buildFullTextIndexExtra`.
 #[must_use]
 pub fn build_full_text_index_extra(

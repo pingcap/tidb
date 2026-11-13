@@ -4480,6 +4480,7 @@ fn find_best_task_4_logical_data_source_paths(
                     tidb_planner_core_operator_physicalop::tiflash_predicate_push_down::handle_tiflash_predicate_push_down(
                         &mut scan,
                         tbl_col_hists.map_or(0, |hist_coll| hist_coll.realtime_count()),
+                        &ds.ast_index_hints,
                         ctx.enable_late_materialization,
                         &|conds| {
                             table_stats.as_ref().and_then(|stats| {

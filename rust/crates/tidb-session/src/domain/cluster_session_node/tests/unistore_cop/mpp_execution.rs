@@ -2614,3 +2614,63 @@ fn test_vector_search_heavy_function() {
         "TestVectorSearchHeavyFunction",
     );
 }
+
+/// Go `TestInvertedIndex` (`casetest/tiflash_predicate_push_down_test.go`):
+/// a TiFlash scan reads the inverted indexes of the columns its simple
+/// comparison filters name (`handleTiFlashPredicatePushDown`). Each case's
+/// statement runs and its plan is compared as Go's `NormalizePlan` and
+/// `DecodeNormalizedPlan` render it (the plan of the explained SELECT, which
+/// this runs directly).
+#[test]
+fn test_inverted_index() {
+    let (stack, mut session) = tiflash_session(2, 2175);
+    tidb_domain_infosync::tiflash_manager::set_mock_tiflash(std::sync::Arc::new(
+        tidb_domain_infosync::tiflash_manager::MockTiFlash::new(),
+    ));
+    rows(&mut session, "drop table if exists t1;");
+    rows(
+        &mut session,
+        "create table t1 (a int, b int, c int, t time, columnar index idx_a (a) using inverted, columnar index idx_b (b) using inverted)",
+    );
+    rows(&mut session, "insert into t1 values(1,1,1,'08:00:00'), (2,2,2,'09:00:00'), (3,3,3,'10:00:00'), (4,4,4,'11:00:00')");
+    for _ in 0..13 {
+        rows(&mut session, "insert into t1(a,b,c,t) select a,b,c,t from t1;");
+    }
+    replica_available(&stack, &mut session, "t1");
+    rows(&mut session, "analyze table t1 all columns;");
+    rows(&mut session, "set @@tidb_isolation_read_engines = 'tiflash'");
+
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../../../../../pkg/planner/core/casetest/testdata/plan_normalized_suite_out.json"
+    ))
+    .unwrap();
+    let cases = fixture
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|section| section["Name"] == "TestInvertedIndex")
+        .unwrap()["Cases"]
+        .as_array()
+        .unwrap();
+    let mut mismatches = Vec::new();
+    for case in cases {
+        let sql = case["SQL"].as_str().unwrap();
+        let select = sql.strip_prefix("explain format = 'plan_tree' ").unwrap();
+        rows(&mut session, select);
+        let normalized = session
+            .process_plan_info
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .normalized_plan
+            .clone();
+        let decoded = String::from_utf8(tidb_plancodec::decode_normalized_plan(normalized).unwrap()).unwrap();
+        // Go `getPlanRows`.
+        let got: Vec<String> = decoded.replace('\t', " ").split('\n').map(str::to_owned).collect();
+        let want: Vec<String> =
+            case["Plan"].as_array().unwrap().iter().map(|row| row.as_str().unwrap().to_owned()).collect();
+        if got != want {
+            mismatches.push(format!("{sql}\ngot:  {got:#?}\nwant: {want:#?}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
+}

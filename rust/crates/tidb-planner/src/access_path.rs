@@ -483,6 +483,8 @@ pub fn get_possible_access_paths(
             continue;
         }
         if index.read().inverted_info.is_some() {
+            // Go records the name in `invertedIndexes` (see
+            // `apply_table_index_hints`).
             continue;
         }
         if index.read().is_columnar_index() {
@@ -616,6 +618,19 @@ pub fn apply_table_index_hints(
     let mut has_use_or_force = false;
     let mut available: Vec<usize> = Vec::new();
     let mut ignored = std::collections::BTreeSet::new();
+    // Go `invertedIndexes`: "Inverted Index can not be used as access path
+    // index", so a hint naming one is skipped. Go collects the public ones
+    // its path loop meets; a columnar index is never invisible (Go refuses
+    // INVISIBLE on one), so the loop's visibility filter drops none. Go's
+    // loop also drops an index whose latest-schema state is not public
+    // (its read-committed / for-update check), which this list does not
+    // consult.
+    let inverted_indexes: std::collections::HashSet<String> = table
+        .table_indices()
+        .iter()
+        .filter(|index| index.read().is_public() && index.read().inverted_info.is_some())
+        .map(|index| index.read().name.lowercase().to_owned())
+        .collect();
 
     let unsupported_reason = |metadata: &tidb_model::GoShared<tidb_model::IndexInfo>| {
         if table.is_common_handle() && table.common_handle_version() < 1 {
@@ -699,6 +714,9 @@ pub fn apply_table_index_hints(
             }
         }
         for name in indexes {
+            if inverted_indexes.contains(&tidb_hack::go_to_lower(name)) {
+                continue;
+            }
             // Go `getPathByIndexName`.
             let path = path_by_index_name(&public_paths, name, table.pk_is_handle() || table.is_common_handle());
             let Some(position) = path else {

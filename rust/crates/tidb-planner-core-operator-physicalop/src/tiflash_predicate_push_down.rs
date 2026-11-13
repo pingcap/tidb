@@ -215,16 +215,29 @@ fn predicate_push_down_to_table_scan(
     ts.late_materialization_selectivity = selected_selectivity;
 }
 
-/// Go `handleTiFlashPredicatePushDown`: whether to push down the filter
-/// conditions to the table scan, and the scan's row count after them.
-/// `realtime_count` is Go's `ts.TblColHists.RealtimeCount`.
-///
-/// The scan carries no columnar index (Go `UsedColumnarIndexes`), so the
-/// inverted-index arm, which picks conditions for a table's inverted indexes,
-/// selects none.
+/// Go `isPredicateSimpleCompare`: a comparison predicate built only of
+/// `>`, `>=`, `=`, `<=`, `<`, `in`, `and`, `or` and `not` (Go's comment also
+/// names `!=`, which its switch does not admit).
+fn is_predicate_simple_compare(cond: &Expression) -> bool {
+    let Expression::ScalarFunction(sf) = cond else {
+        return false;
+    };
+    match sf.func_name.lowercase() {
+        "eq" | "ge" | "le" | "lt" | "gt" | "in" => true,
+        "and" | "or" => is_predicate_simple_compare(&sf.args[0]) && is_predicate_simple_compare(&sf.args[1]),
+        "not" => is_predicate_simple_compare(&sf.args[0]),
+        _ => false,
+    }
+}
+
+/// Go `handleTiFlashPredicatePushDown`: whether to use the table's inverted
+/// indexes, whether to push down the filter conditions to the table scan,
+/// and the scan's row count after them. `realtime_count` is Go's
+/// `ts.TblColHists.RealtimeCount`, `index_hints` the data source's.
 pub fn handle_tiflash_predicate_push_down(
     ts: &mut PhysicalTableScan,
     realtime_count: i64,
+    index_hints: &[tidb_ast::IndexHint],
     enable_late_materialization: bool,
     selectivity: &dyn Fn(&[Expression]) -> Option<f64>,
     skew_ratio: f64,
@@ -234,18 +247,129 @@ pub fn handle_tiflash_predicate_push_down(
         return;
     }
 
+    // Currently, TiFlash does not support vector index with predicates.
+    assert!(
+        !ts.used_columnar_indexes.iter().any(|index| index.index_info.read().vector_info.is_some()),
+        "TiFlash does not support vector index with pedicates"
+    );
+
+    // Consider use index hints.
+    let mut index_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for hint in index_hints {
+        if hint.scope != tidb_ast::IndexHintScope::All {
+            continue;
+        }
+        match hint.kind {
+            tidb_ast::IndexHintKind::Use => {
+                for name in &hint.indexes {
+                    let count = index_map.entry(tidb_hack::go_to_lower(name)).or_insert(0);
+                    if *count != i64::MAX {
+                        *count += 1;
+                    }
+                }
+            }
+            tidb_ast::IndexHintKind::Ignore => {
+                for name in &hint.indexes {
+                    let count = index_map.entry(tidb_hack::go_to_lower(name)).or_insert(0);
+                    if *count != i64::MAX {
+                        *count -= 1;
+                    }
+                }
+            }
+            tidb_ast::IndexHintKind::Force => {
+                for name in &hint.indexes {
+                    index_map.insert(tidb_hack::go_to_lower(name), i64::MAX);
+                }
+            }
+        }
+    }
+    let hinted = |name: &str| index_map.get(name).copied().unwrap_or(0);
+
+    // Go's map from the indexed column's name to its inverted index: a later
+    // index on the same column replaces an earlier one.
+    let mut indexed_column_name_to_index_info: Vec<(String, tidb_model::GoShared<tidb_model::IndexInfo>)> = Vec::new();
+    if let Some(table) = &ts.table {
+        for index in table.read().indices.iter_deref() {
+            let info = index.read();
+            if info.is_public() && info.inverted_info.is_some() {
+                if !index_hints.is_empty() && hinted(info.name.lowercase()) <= 0 {
+                    continue;
+                }
+                // inverted index only support one column
+                let column = info.columns.iter_deref().next().map(|column| column.read().name.lowercase().to_owned()).expect("an inverted index has one column");
+                match indexed_column_name_to_index_info.iter_mut().find(|(name, _)| *name == column) {
+                    Some(entry) => entry.1 = index.clone(),
+                    None => indexed_column_name_to_index_info.push((column, index.clone())),
+                }
+            }
+        }
+    }
+
+    let mut selected_columns: Vec<String> = Vec::new();
+    let mut selected_conditions: Vec<Expression> = Vec::new();
+    // Go reuses this slice and resets it only after a selected condition, so
+    // a skipped condition's names carry into the next one's check.
+    let mut column_names: Vec<String> = Vec::new();
+    for cond in &ts.filter_condition {
+        // 1. The predicate only contains >, >=, =, !=, <=, <, in.
+        if !is_predicate_simple_compare(cond) {
+            continue;
+        }
+        // 2. The columns of predicate all have inverted index.
+        for col in tidb_expr::simple_expr::extract_columns(cond) {
+            let name = col.orig_name.rsplit('.').next().unwrap_or_default();
+            column_names.push(tidb_hack::go_to_lower(name));
+        }
+        let all_have_inverted_index = column_names
+            .iter()
+            .all(|name| indexed_column_name_to_index_info.iter().any(|(column, _)| column == name));
+        if !all_have_inverted_index {
+            continue;
+        }
+        // 3. The selectivity of the predicate is less than 60%.
+        let Some(cond_selectivity) = selectivity(std::slice::from_ref(cond)) else {
+            continue;
+        };
+        if cond_selectivity > SELECTIVITY_THRESHOLD {
+            continue;
+        }
+        // all passed, add the columns to selected
+        for name in column_names.drain(..) {
+            if !selected_columns.contains(&name) {
+                selected_columns.push(name);
+            }
+        }
+        selected_conditions.push(cond.clone());
+    }
+
+    for (column, index) in &indexed_column_name_to_index_info {
+        if selected_columns.contains(column) {
+            ts.used_columnar_indexes.push(crate::build_inverted_index_extra(index));
+        } else if hinted(index.read().name.lowercase()) == i64::MAX {
+            // if the index is not used, but the index hint is force use, add it to the used indexes
+            ts.used_columnar_indexes.push(crate::build_inverted_index_extra(index));
+        }
+    }
+
     // if EnableLateMaterialization is set, try to push down some predicates to table scan
-    if enable_late_materialization {
-        let remaining = ts.filter_condition.clone();
+    if ts.filter_condition.len() > selected_conditions.len() && enable_late_materialization {
+        let remaining: Vec<Expression> = ts
+            .filter_condition
+            .iter()
+            .filter(|cond| !tidb_expr::expr_util::predicates::contains(&selected_conditions, cond))
+            .cloned()
+            .collect();
         predicate_push_down_to_table_scan(&remaining, ts, selectivity);
     }
 
     // Update the row count of table scan.
-    if !ts.late_materialization_filter_condition.is_empty() {
-        let selectivity =
-            selectivity(&ts.late_materialization_filter_condition).unwrap_or(SELECTIVITY_THRESHOLD);
+    if !selected_conditions.is_empty() || !ts.late_materialization_filter_condition.is_empty() {
+        selected_conditions.extend(ts.late_materialization_filter_condition.iter().cloned());
+        let selectivity = selectivity(&selected_conditions).unwrap_or(SELECTIVITY_THRESHOLD);
         let stats = ts.base.base.stats_info().map(|stats| stats.scale(selectivity, skew_ratio));
         ts.base.base.set_stats(stats);
+        // just to make explain result stable
+        ts.used_columnar_indexes.sort_by_key(|index| index.index_info.read().id);
     }
 }
 
