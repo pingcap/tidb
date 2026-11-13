@@ -82,7 +82,11 @@ var (
 
 // CallWithSCtx allocates a sctx from the pool and call the f().
 func CallWithSCtx(pool util.DestroyableSessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
-	defer util.Recover(metrics.LabelStats, "CallWithSCtx", nil, false)
+	// Return a panic as an error, because callers use the results of f when the error is nil.
+	// For example, TableStatsFromStorage would return the cached table as newly loaded stats.
+	defer util.Recover(metrics.LabelStats, "CallWithSCtx", func() {
+		err = errors.New("panic in CallWithSCtx")
+	}, false)
 	se, err := pool.Get()
 	if err != nil {
 		return errors.Trace(err)
@@ -228,10 +232,17 @@ func WrapTxn(sctx sessionctx.Context, f func(sctx sessionctx.Context) error) (er
 	if _, _, err := ExecRows(sctx, "BEGIN PESSIMISTIC"); err != nil {
 		return err
 	}
+	fReturned := false
 	defer func() {
+		// If f panics, this call runs while err is still nil.
+		// Roll back then, so that the panic does not commit the partial writes of f.
+		if !fReturned {
+			err = errors.New("panic in WrapTxn")
+		}
 		err = finishTransaction(sctx, err)
 	}()
 	err = f(sctx)
+	fReturned = true
 	return
 }
 
