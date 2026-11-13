@@ -280,6 +280,55 @@ func TestNilCheckerSafety(t *testing.T) {
 
 	assert.NoError(t, c.CheckThresholds(nil, 0, nil))
 	c.ResetTotalProcessedKeys() // should not panic
+	c.AfterExecutor()           // should not panic
+}
+
+func TestAfterExecutor(t *testing.T) {
+	newCheckerWithDeadline := func(action rmpb.RunawayAction, deadline time.Time) (*Checker, *Manager) {
+		m := &Manager{runawayQueriesChan: make(chan *Record, 10)}
+		c := &Checker{
+			manager:           m,
+			resourceGroupName: "rg_after_executor",
+			deadline:          deadline,
+			settings: &rmpb.RunawaySettings{
+				Action: action,
+				Rule:   &rmpb.RunawayRule{ExecElapsedTimeMs: 1},
+			},
+		}
+		return c, m
+	}
+
+	t.Run("NilSettings", func(t *testing.T) {
+		c := &Checker{deadline: time.Now().Add(-time.Second)}
+		c.AfterExecutor()
+		assert.False(t, c.markedByIdentifyInRunawaySettings.Load())
+	})
+
+	// The query overran the deadline but was never caught by an in-flight path
+	// (BeforeCopRequest / CheckThresholds) or the expensive-query poll. AfterExecutor
+	// must record it at completion. This is the core gap the method closes.
+	t.Run("DeadlineExceededMarksRunaway", func(t *testing.T) {
+		c, m := newCheckerWithDeadline(rmpb.RunawayAction_DryRun, time.Now().Add(-time.Second))
+		c.AfterExecutor()
+		assert.True(t, c.markedByIdentifyInRunawaySettings.Load())
+		assert.Equal(t, 1, len(m.runawayQueriesChan))
+	})
+
+	t.Run("DeadlineNotExceeded", func(t *testing.T) {
+		c, m := newCheckerWithDeadline(rmpb.RunawayAction_DryRun, time.Now().Add(time.Hour))
+		c.AfterExecutor()
+		assert.False(t, c.markedByIdentifyInRunawaySettings.Load())
+		assert.Equal(t, 0, len(m.runawayQueriesChan))
+	})
+
+	// When an earlier path already marked the query, the CAS makes AfterExecutor a
+	// no-op so no duplicate record is enqueued.
+	t.Run("AlreadyMarkedIsNoop", func(t *testing.T) {
+		c, m := newCheckerWithDeadline(rmpb.RunawayAction_DryRun, time.Now().Add(-time.Second))
+		c.markedByIdentifyInRunawaySettings.Store(true)
+		c.AfterExecutor()
+		assert.Equal(t, 0, len(m.runawayQueriesChan))
+	})
 }
 
 func TestCheckThresholds(t *testing.T) {

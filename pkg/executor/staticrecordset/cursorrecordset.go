@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -30,6 +31,11 @@ var _ sqlexec.RecordSet = &cursorRecordSet{}
 type cursorRecordSet struct {
 	cursor    cursor.Handle
 	recordSet sqlexec.RecordSet
+	// runawayChecker performs the final runaway deadline check when the cursor is
+	// closed. The detached server-side cursor path finishes without going through
+	// `ExecStmt.FinishExecuteStmt`, so this is where its post-execution check runs.
+	// It may be nil when resource control is disabled.
+	runawayChecker resourcegroup.RunawayChecker
 }
 
 func (c *cursorRecordSet) Fields() []*resolve.ResultField {
@@ -45,6 +51,11 @@ func (c *cursorRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 }
 
 func (c *cursorRecordSet) Close() error {
+	// Final runaway deadline check for the detached cursor. It is a no-op if an
+	// in-flight path already marked the query during fetches.
+	if c.runawayChecker != nil {
+		c.runawayChecker.AfterExecutor()
+	}
 	c.cursor.Close()
 	return c.recordSet.Close()
 }
@@ -55,7 +66,9 @@ func (c *cursorRecordSet) GetExecutor4Test() any {
 }
 
 // WrapRecordSetWithCursor wraps a record set with a cursor handle. The cursor handle will be closed
-// automatically when the record set is closed
-func WrapRecordSetWithCursor(cursor cursor.Handle, recordSet sqlexec.RecordSet) sqlexec.RecordSet {
-	return &cursorRecordSet{cursor: cursor, recordSet: recordSet}
+// automatically when the record set is closed. The runawayChecker (which may be nil) runs the final
+// runaway deadline check on close, since the detached cursor path does not reach
+// `ExecStmt.FinishExecuteStmt`.
+func WrapRecordSetWithCursor(cursor cursor.Handle, recordSet sqlexec.RecordSet, runawayChecker resourcegroup.RunawayChecker) sqlexec.RecordSet {
+	return &cursorRecordSet{cursor: cursor, recordSet: recordSet, runawayChecker: runawayChecker}
 }
