@@ -1415,3 +1415,35 @@ func (bj BinaryJSON) Walk(walkFn BinaryJSONWalkFunc, pathExprList ...JSONPathExp
 	}
 	return nil
 }
+
+// KeepObjectKeys returns bj with the object at pathExpr reduced to the keys in keep. If pathExpr doesn't exist or
+// doesn't hold an object, bj is returned unchanged, so it is safe to apply to rows that lack the object. pathExpr
+// must select a single value.
+func (bj BinaryJSON) KeepObjectKeys(pathExpr JSONPathExpression, keep map[string]struct{}) (BinaryJSON, error) {
+	obj, found := bj.Extract([]JSONPathExpression{pathExpr})
+	if !found || obj.TypeCode != JSONTypeCodeObject {
+		return bj, nil
+	}
+	count := obj.GetElemCount()
+	keys := make([][]byte, 0, count)
+	vals := make([]BinaryJSON, 0, count)
+	for i := range count {
+		key := obj.objectGetKey(i)
+		if _, ok := keep[string(key)]; ok {
+			keys = append(keys, key)
+			vals = append(vals, obj.objectGetVal(i))
+		}
+	}
+	if len(keys) == count {
+		return bj, nil
+	}
+	// Keys stay in their stored order, which buildBinaryJSONObject requires.
+	filtered, err := buildBinaryJSONObject(keys, vals)
+	if err != nil {
+		return bj, err
+	}
+	if len(pathExpr.legs) == 0 {
+		return filtered, nil
+	}
+	return bj.Modify([]JSONPathExpression{pathExpr}, []BinaryJSON{filtered}, JSONModifyReplace)
+}
