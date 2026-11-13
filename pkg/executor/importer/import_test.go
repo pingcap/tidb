@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1040,4 +1041,48 @@ func TestPlanMetadataCompatibility(t *testing.T) {
 		require.JSONEq(t, string(value), string(actual[key]), key)
 	}
 	require.NotContains(t, actual, "LineFieldsInfo")
+}
+
+func TestImportPlanGlobalSortCompression(t *testing.T) {
+	ctx := context.Background()
+	tblInfo := &model.TableInfo{ID: 42, Name: ast.NewCIStr("t"), State: model.StatePublic}
+	format := DataFormatCSV
+	for _, compression := range []string{"", "global-zstd", "zstd", "none"} {
+		t.Run(compression, func(t *testing.T) {
+			sctx := mock.NewContext()
+			defer sctx.Close()
+			sctx.Store = keyspaceOnlyStore{}
+
+			if compression == "global-zstd" {
+				accessor := variable.NewMockGlobalAccessor4Tests()
+				accessor.SessionVars = sctx.GetSessionVars()
+				require.NoError(t, accessor.SetGlobalSysVar(ctx, vardef.TiDBGlobalSortCompression, "zstd"))
+				sctx.GetSessionVars().GlobalVarsAccessor = accessor
+			} else if compression != "" {
+				require.NoError(t, sctx.GetSessionVars().SetSystemVar(vardef.TiDBGlobalSortCompression, compression))
+			}
+			plan, err := NewImportPlanFromInput(ctx, sctx, &Input{
+				DBName: "test", DBID: 7, TableInfo: tblInfo,
+				Path: filepath.Join(t.TempDir(), "data.csv"), Format: &format, DataSourceType: DataSourceTypeFile,
+			})
+			require.NoError(t, err)
+			expected := compression
+			if expected == "" {
+				expected = "none"
+			} else if expected == "global-zstd" {
+				expected = "zstd"
+			}
+			require.Equal(t, expected, plan.GlobalSortCompression)
+			// Execution must use the persisted choice even if the submitting session changes.
+			require.NoError(t, sctx.GetSessionVars().SetSystemVar(vardef.TiDBGlobalSortCompression, "none"))
+			data, err := json.Marshal(plan)
+			require.NoError(t, err)
+			var restored Plan
+			require.NoError(t, json.Unmarshal(data, &restored))
+			require.Equal(t, expected, restored.GlobalSortCompression)
+		})
+	}
+	var legacy Plan
+	require.NoError(t, json.Unmarshal([]byte(`{"ThreadCnt":2}`), &legacy))
+	require.Empty(t, legacy.GlobalSortCompression)
 }
