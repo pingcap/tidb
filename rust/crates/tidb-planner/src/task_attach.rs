@@ -2483,8 +2483,10 @@ mod attach_tests {
             )),
             false,
         );
+        let mut topn_base = op_with_stats("TopN", 5.0);
+        topn_base.set_children_req_props(vec![Some(tidb_planner_property::PhysicalProperty::default())]);
         let topn = PhysicalPlan::TopN(tidb_planner_core_operator_physicalop::PhysicalTopN {
-            base: op_with_stats("TopN", 5.0),
+            base: topn_base,
             by_items: vec![by_item],
             offset: 4,
             count: 6,
@@ -2549,6 +2551,7 @@ mod attach_tests {
         let topn_schema = Schema::new(vec![id.clone(), score.clone()]);
         let mut topn_base = op_with_stats("TopN", 10.0);
         topn_base.base.set_schema(Some(topn_schema));
+        topn_base.set_children_req_props(vec![Some(tidb_planner_property::PhysicalProperty::default())]);
         let topn = PhysicalPlan::TopN(tidb_planner_core_operator_physicalop::PhysicalTopN {
             base: topn_base,
             by_items: vec![
@@ -4279,7 +4282,8 @@ mod task_tests {
                 index_plan_finished: true,
                 ..CopTask::default()
             });
-            let base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::with_id(9, "Limit", 0);
+            let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::with_id(9, "Limit", 0);
+            base.set_children_req_props(vec![Some(tidb_planner_property::PhysicalProperty::default())]);
             let plan = if is_topn {
                 PhysicalPlan::TopN(tidb_planner_core_operator_physicalop::PhysicalTopN {
                     by_items: vec![tidb_expression_aggregation::ByItems::new(
