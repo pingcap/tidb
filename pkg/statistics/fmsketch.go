@@ -72,7 +72,9 @@ type FMSketch struct {
 // NewFMSketch returns a new FM sketch.
 func NewFMSketch(maxSize int) *FMSketch {
 	return &FMSketch{
-		hashset: make(map[uint64]bool, maxSize),
+		// maxSize only caps the hashset, and most sketches hold far fewer hashes.
+		// A capacity hint of maxSize would allocate about 300 KB per sketch up front.
+		hashset: make(map[uint64]bool),
 		maxSize: maxSize,
 	}
 }

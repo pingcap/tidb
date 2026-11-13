@@ -79,7 +79,7 @@ func SubTestSketch() func(*testing.T) {
 		sketch.insertHashValue(4)
 		require.LessOrEqual(t, maxSize, len(sketch.hashset))
 
-		// A new sketch allocates its whole hashset up front, whatever it holds later.
+		// A new sketch grows its hashset on demand instead of allocating it up front.
 		sketches := make([]*FMSketch, 16)
 		var before, after runtime.MemStats
 		runtime.ReadMemStats(&before)
@@ -88,7 +88,7 @@ func SubTestSketch() func(*testing.T) {
 		}
 		runtime.ReadMemStats(&after)
 		runtime.KeepAlive(sketches)
-		require.Greater(t, (after.TotalAlloc-before.TotalAlloc)/uint64(len(sketches)), uint64(256<<10))
+		require.Less(t, (after.TotalAlloc-before.TotalAlloc)/uint64(len(sketches)), uint64(4<<10))
 	}
 }
 
