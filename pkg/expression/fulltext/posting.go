@@ -150,7 +150,7 @@ func (emptyStream) Close() error                          { return nil }
 
 func openPostingStream(node queryNode, src PostingSource) (postingStream, error) {
 	switch n := node.(type) {
-	case nil, neverNode:
+	case nil:
 		return emptyStream{}, nil
 	case termNode:
 		open := src.Term

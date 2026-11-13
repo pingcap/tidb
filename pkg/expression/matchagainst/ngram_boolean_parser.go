@@ -49,7 +49,9 @@ type ngramPhraseBuilder struct {
 //   - Quoted phrase is normalized into a space-joined string.
 //   - Empty quoted phrases are ignored.
 //   - Only '+' and '-' are accepted as unary operators.
-//   - Operators '(', ')', '<', '>', '~' and '@' are currently unsupported.
+//   - '<', '>' and '~' only change relevance, so they act as delimiters and
+//     the word after them stays optional.
+//   - Operators '(', ')' and '@' are currently unsupported.
 func ParseNgramBooleanMode(input string) (*BooleanGroup, error) {
 	s := newNgramScanState(input)
 

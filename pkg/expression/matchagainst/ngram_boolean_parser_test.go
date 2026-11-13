@@ -163,20 +163,21 @@ func TestParseNgramBooleanMode(t *testing.T) {
 			input: "+*foo",
 			want:  "M[] S[foo] N[]",
 		},
+		// '>', '<' and '~' only change relevance: they are delimiters here.
 		{
-			name:            "reject unsupported operator '>'",
-			input:           ">foo",
-			wantErrContains: "unsupported operator '>'",
+			name:  "ranking operator '>' leaves the word optional",
+			input: ">foo",
+			want:  "M[] S[foo] N[]",
 		},
 		{
-			name:            "reject unsupported operator '<'",
-			input:           "<bar",
-			wantErrContains: "unsupported operator '<'",
+			name:  "ranking operator '<' leaves the word optional",
+			input: "<bar",
+			want:  "M[] S[bar] N[]",
 		},
 		{
-			name:            "reject unsupported operator '~'",
-			input:           "~baz",
-			wantErrContains: "unsupported operator '~'",
+			name:  "ranking operator '~' leaves the word optional",
+			input: "+qux ~baz",
+			want:  "M[+qux] S[baz] N[]",
 		},
 		{
 			name:            "reject unsupported operator '('",
@@ -274,9 +275,9 @@ func TestParseNgramBooleanMode(t *testing.T) {
 			wantErrContains: "unsupported operator '@'",
 		},
 		{
-			name:            "unsupported operators mixed with supported prefix",
-			input:           "+>~foo",
-			wantErrContains: "unsupported operator '>'",
+			name:  "a ranking operator after '+' ends the prefix",
+			input: "+>~foo",
+			want:  "M[] S[foo] N[]",
 		},
 	}
 

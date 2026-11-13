@@ -73,7 +73,7 @@ func isNgramWordChar(ch rune) bool {
 
 func isNgramUnsupportedOp(ch rune) bool {
 	switch ch {
-	case '(', ')', '<', '>', '~', '@':
+	case '(', ')', '@':
 		return true
 	default:
 		return false

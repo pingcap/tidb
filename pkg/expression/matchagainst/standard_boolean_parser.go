@@ -92,10 +92,11 @@ func (p *standardBooleanParser) parseGroup(stopAtRightParen bool) (*BooleanGroup
 }
 
 // parseClause parses one boolean "clause". A clause can be:
-//   - a term token (TERM/NUM) (optionally prefixed by '+' or '-', optionally with trailing '*')
-//   - a phrase token ("...") (optionally prefixed by '+' or '-')
+//   - a term token (TERM/NUM) (optionally prefixed by '+', '-', '~', '>' or '<', optionally with trailing '*')
+//   - a phrase token ("...") (optionally prefixed by one of the same operators)
 //
-// Operators (), <, >, ~ and @ are currently rejected in the STANDARD boolean-mode path.
+// '~', '>' and '<' only affect relevance, so their clauses stay optional.
+// Operators () and @ are currently rejected in the STANDARD boolean-mode path.
 func (p *standardBooleanParser) parseClause() (*BooleanClause, error) {
 	mod := BooleanModifierNone
 	if p.peekIsPrefixOp() {
@@ -224,7 +225,7 @@ func (p *standardBooleanParser) peekIsPrefixOp() bool {
 		return false
 	}
 	switch t.op {
-	case '+', '-':
+	case '+', '-', '~', '>', '<':
 		return true
 	default:
 		return false
@@ -238,6 +239,12 @@ func (p *standardBooleanParser) consumePrefixOp() BooleanModifier {
 		return BooleanModifierMust
 	case '-':
 		return BooleanModifierMustNot
+	case '~':
+		return BooleanModifierNegate
+	case '>':
+		return BooleanModifierBoost
+	case '<':
+		return BooleanModifierDeBoost
 	default:
 		return BooleanModifierNone
 	}

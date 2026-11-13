@@ -215,12 +215,6 @@ type queryNode interface {
 	match(doc *Document) bool
 }
 
-type neverNode struct{}
-
-func (neverNode) match(*Document) bool {
-	return false
-}
-
 type termNode struct {
 	token string
 }
@@ -382,8 +376,6 @@ func estimateQueryNodeWork(node queryNode) queryWorkEstimate {
 	switch n := node.(type) {
 	case nil:
 		return queryWorkEstimate{}
-	case neverNode:
-		return queryWorkEstimate{fixed: 0.1}
 	case termNode:
 		return queryWorkEstimate{fixed: 1}
 	case prefixNode:
@@ -418,7 +410,7 @@ func estimateQueryNodeWork(node queryNode) queryWorkEstimate {
 
 func queryNodeMatchesNothing(node queryNode) bool {
 	switch n := node.(type) {
-	case nil, neverNode:
+	case nil:
 		return true
 	case termNode, prefixNode, phraseNode:
 		return false
@@ -499,10 +491,13 @@ func normalizeBooleanGroup(group *matchagainst.BooleanGroup, config AnalyzerConf
 		if err != nil {
 			return nil, err
 		}
-		if child == nil {
-			child = neverNode{}
+		// A required term the analyzer removes, a stopword or a word outside
+		// the token-size bounds, is dropped as MySQL drops it: the rest of the
+		// search applies, and a search left with no positive term matches
+		// nothing.
+		if child != nil {
+			node.must = append(node.must, child)
 		}
-		node.must = append(node.must, child)
 	}
 	for _, clause := range group.MustNot {
 		child, err := normalizeBooleanClause(clause, config, analyzer)
@@ -526,15 +521,21 @@ func normalizeBooleanGroup(group *matchagainst.BooleanGroup, config AnalyzerConf
 }
 
 func normalizeBooleanClause(clause matchagainst.BooleanClause, config AnalyzerConfig, analyzer Analyzer) (queryNode, error) {
-	switch clause.Modifier {
+	modifier := clause.Modifier
+	switch modifier {
 	case matchagainst.BooleanModifierNone, matchagainst.BooleanModifierMust, matchagainst.BooleanModifierMustNot:
+	case matchagainst.BooleanModifierNegate, matchagainst.BooleanModifierBoost, matchagainst.BooleanModifierDeBoost:
+		// '~', '>' and '<' only change a word's contribution to the
+		// relevance. MATCH is evaluated as a filter without a score, so the
+		// word is simply optional.
+		modifier = matchagainst.BooleanModifierNone
 	default:
-		return nil, fmt.Errorf("unsupported BOOLEAN MODE score modifier")
+		return nil, fmt.Errorf("unsupported BOOLEAN MODE modifier")
 	}
 
 	switch x := clause.Expr.(type) {
 	case *matchagainst.BooleanTerm:
-		return normalizeBooleanTerm(x, clause.Modifier, config, analyzer)
+		return normalizeBooleanTerm(x, modifier, config, analyzer)
 	case *matchagainst.BooleanPhrase:
 		return normalizeBooleanPhrase(x, config, analyzer)
 	case *matchagainst.BooleanGroup:
