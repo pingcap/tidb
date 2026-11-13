@@ -390,6 +390,8 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 		cc.ctx.SetCompressionAlgorithm(mysql.CompressionZstd)
 	}
 
+	// Initialization statements have finished before the connection becomes visible as idle.
+	cc.ctx.SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
 	return err
 }
 
