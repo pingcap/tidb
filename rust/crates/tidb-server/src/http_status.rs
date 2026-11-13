@@ -474,7 +474,7 @@ fn traceevent_response(body: &str) -> axum::response::Response {
 /// write-reorganization state wait half a second before it runs
 /// (`beforeRunOneJobStep`), and `default_hook` removes that.
 pub(crate) fn ddl_hook_answer(path: &str, request: &str) -> Option<Result<String, String>> {
-    const BEFORE_RUN_ONE_JOB_STEP: &str = "beforeRunOneJobStep";
+    const BEFORE_RUN_ONE_JOB_STEP: &str = "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep";
     let (route, query) = path.split_once('?').unwrap_or((path, ""));
     if route != "/test/ddl/hook" {
         return None;
@@ -484,9 +484,8 @@ pub(crate) fn ddl_hook_answer(path: &str, request: &str) -> Option<Result<String
     }
     let hook = request_form(query, request).unwrap_or_default().remove("ddl_hook").unwrap_or_default();
     match hook.as_str() {
-        "ctc_hook" => tidb_ddl::failpoint_call::enable_call(
-            BEFORE_RUN_ONE_JOB_STEP,
-            Arc::new(|job: &mut dyn std::any::Any| {
+        "ctc_hook" => {
+            let _ = tidb_failpoint::enable_call(BEFORE_RUN_ONE_JOB_STEP, |job: &mut dyn std::any::Any| {
                 let Some(job) = job.downcast_ref::<tidb_model::Job>() else {
                     return;
                 };
@@ -510,9 +509,9 @@ pub(crate) fn ddl_hook_answer(path: &str, request: &str) -> Option<Result<String
                     );
                     std::thread::sleep(std::time::Duration::from_millis(500));
                 }
-            }),
-        ),
-        "default_hook" => tidb_ddl::failpoint_call::disable(BEFORE_RUN_ONE_JOB_STEP),
+            });
+        }
+        "default_hook" => tidb_failpoint::disable(BEFORE_RUN_ONE_JOB_STEP),
         _ => {}
     }
     tidb_logutil::bg_logger().info(

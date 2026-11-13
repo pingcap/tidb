@@ -38,7 +38,6 @@
 //! [`RealClusterDdl`].
 
 mod cluster_bdr;
-pub mod failpoint_call;
 pub mod stat;
 pub mod ddl_history;
 pub mod cluster_ddl;

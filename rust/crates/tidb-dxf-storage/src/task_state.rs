@@ -290,7 +290,7 @@ impl TaskManager {
                 return Err(StorageError::TaskChanged);
             }
             #[cfg(feature = "failpoints")]
-            let _ = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeMoveToModifying");
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeMoveToModifying", &mut ());
             let args = [state(&TASK_STATE_MODIFYING), Arg::Json(bytes.clone()), Arg::Int(task_id), state(&param.prev_state)];
             exec_sql(ctx, se, "
 			update mysql.tidb_global_task
@@ -315,7 +315,7 @@ impl TaskManager {
         let prev_state = &task.modify_param.prev_state;
         self.with_new_txn(ctx, &mut |se| {
             #[cfg(feature = "failpoints")]
-            let _ = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeModifiedTask");
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeModifiedTask", &mut ());
             let args = [
                 state(prev_state),
                 Arg::Int(task.base.required_slots as i64),

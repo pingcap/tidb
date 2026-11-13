@@ -26,21 +26,12 @@ use tidb_model::{ActionType, Job, JobState, SchemaState};
 
 use super::Session;
 
-struct CallGuard(&'static str);
-
-impl Drop for CallGuard {
-    fn drop(&mut self) {
-        tidb_ddl::failpoint_call::disable(self.0);
-    }
-}
-
-/// Go `testfailpoint.EnableCall` with a `func(job *model.Job)`.
-fn enable_call(name: &'static str, callback: impl Fn(&mut Job) + Send + Sync + 'static) -> CallGuard {
-    tidb_ddl::failpoint_call::enable_call(
-        name,
-        Arc::new(move |job: &mut dyn Any| callback(job.downcast_mut::<Job>().expect("the step's job"))),
-    );
-    CallGuard(name)
+/// Go `testfailpoint.EnableCall` with a `func(job *model.Job)` on the DDL
+/// package's failpoint `name`.
+fn enable_call(name: &str, callback: impl Fn(&mut Job) + Send + Sync + 'static) -> tidb_failpoint::Guard {
+    tidb_failpoint::enable_call_for_test(&format!("github.com/pingcap/tidb/pkg/ddl/{name}"), move |job: &mut dyn Any| {
+        callback(job.downcast_mut::<Job>().expect("the step's job"))
+    })
 }
 
 fn exec(session: &mut Session, sql: &str) {
@@ -225,7 +216,7 @@ fn global_variables_on_flashback_like_go() {
 /// Go `newCancelJobHook` on the step's other end: `afterWaitSchemaSynced`
 /// follows the step that reached the state, `beforeRunOneJobStep` precedes
 /// the next one.
-fn cancel_job_hook(session: &Session, state: SchemaState) -> (CallGuard, Arc<Mutex<Vec<String>>>) {
+fn cancel_job_hook(session: &Session, state: SchemaState) -> (tidb_failpoint::Guard, Arc<Mutex<Vec<String>>>) {
     let domain = crate::domain::mock_store::domain_of(session).expect("a mock store session");
     let cancelled = Arc::new(Mutex::new(Vec::new()));
     let seen = cancelled.clone();

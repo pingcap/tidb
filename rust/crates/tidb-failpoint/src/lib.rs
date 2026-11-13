@@ -88,17 +88,55 @@ pub fn enable(name: &str, terms: &str) -> Result<(), String> {
     fail::cfg(name, terms)
 }
 
-/// Go `testfailpoint.EnableCall(t, name, fn)`: `fn` runs where the
-/// failpoint is evaluated (Go `failpoint.InjectCall`).
+/// The functions `enable_call` registers, by failpoint name.
+type CallFn = std::sync::Arc<dyn Fn(&mut dyn std::any::Any) + Send + Sync>;
+
+static CALLS: std::sync::LazyLock<std::sync::RwLock<std::collections::HashMap<String, CallFn>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Go `failpoint.InjectCall(name, args...)`: while the failpoint is enabled,
+/// the function `enable_call` registered runs with the site's arguments,
+/// which Go passes by pointer (a site without arguments passes `&mut ()`).
+pub fn inject_call(name: &str, args: &mut dyn std::any::Any) {
+    if eval(name).is_some() {
+        let call = CALLS
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(name)
+            .cloned();
+        if let Some(call) = call {
+            call(args);
+        }
+    }
+}
+
+/// Go `failpoint.EnableCall(name, fn)`: `fn` runs at the failpoint's
+/// `InjectCall`. Like Go's, it registers in a build without failpoints, where
+/// no site calls it.
 ///
 /// # Errors
 /// The failpoint cannot be configured.
-pub fn enable_call(name: &str, f: impl Fn() + Send + Sync + 'static) -> Result<(), String> {
+pub fn enable_call(
+    name: &str,
+    f: impl Fn(&mut dyn std::any::Any) + Send + Sync + 'static,
+) -> Result<(), String> {
+    CALLS
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(name.to_owned(), std::sync::Arc::new(f));
+    fail::cfg(name, "return")
+}
+
+/// Go `testfailpoint.EnableCall(t, name, fn)`: the failpoint is disabled
+/// when the guard drops.
+#[must_use]
+pub fn enable_call_for_test(name: &str, f: impl Fn(&mut dyn std::any::Any) + Send + Sync + 'static) -> Guard {
     assert!(
         cfg!(feature = "failpoints"),
         "failpoint {name} is enabled in a build without tidb-failpoint/failpoints"
     );
-    fail::cfg_callback(name, f)
+    enable_call(name, f).unwrap_or_else(|error| panic!("enable failpoint {name}: {error}"));
+    Guard(name.to_owned())
 }
 
 /// Go `failpoint.List()` with each failpoint's terms (Go `Status`).
@@ -109,6 +147,7 @@ pub fn list() -> Vec<(String, String)> {
 
 /// Go `failpoint.Disable(name)`.
 pub fn disable(name: &str) {
+    CALLS.write().unwrap_or_else(std::sync::PoisonError::into_inner).remove(name);
     fail::remove(name);
 }
 

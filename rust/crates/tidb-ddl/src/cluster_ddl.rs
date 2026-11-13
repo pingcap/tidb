@@ -5850,7 +5850,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         .map(PersistedDdlJobPlan::Step);
     }
     // Go `transitOneJobStep`, before `runOneJobStep`.
-    crate::failpoint_call::inject_call("beforeRunOneJobStep", &mut active.job);
+    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", &mut active.job);
 
     // Go processJobPausingRequest runs before action dispatch. The pause
     // signal is control flow, not an action error: keep the prior error and
@@ -5932,7 +5932,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         }
     }
     // Go `transitOneJobStep`, after `runOneJobStep`.
-    crate::failpoint_call::inject_call("afterRunOneJobStep", &mut active.job);
+    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", &mut active.job);
     // Go resets the action's transaction before handleJobDone on cancellation.
     // This also covers rollback handlers that cancel without a fresh error.
     if active.job.state == JobState::CANCELLED {

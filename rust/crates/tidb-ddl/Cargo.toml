@@ -94,7 +94,7 @@ chrono.workspace = true
 tonic.workspace = true
 tokio = { workspace = true }
 reqwest = { workspace = true, features = ["blocking"] }
-tidb-failpoint = { path = "../tidb-failpoint", optional = true }
+tidb-failpoint = { path = "../tidb-failpoint" }
 [dev-dependencies]
 tidb-session = { path = "../tidb-session", features = ["failpoints"] }
 tidb-planner = { path = "../tidb-planner" }
@@ -110,7 +110,6 @@ path = "tests/all.rs"
 
 [features]
 failpoints = [
-    "dep:tidb-failpoint",
     "tidb-failpoint/failpoints",
     "tidb-ddl-serverstate/failpoints",
     "tidb-txnkv/failpoints",

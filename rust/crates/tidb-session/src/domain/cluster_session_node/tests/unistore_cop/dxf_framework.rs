@@ -1837,7 +1837,7 @@ fn test_modify_task() {
     let counter = Arc::new(AtomicI32::new(0));
     {
         let (counter, rx) = (Arc::clone(&counter), rx.clone());
-        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeMoveToModifying", move || {
+        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeMoveToModifying", move |_| {
             if counter.fetch_add(1, Ordering::SeqCst) + 1 == 1 {
                 rx.recv().unwrap();
                 rx.recv().unwrap();
@@ -1908,7 +1908,7 @@ fn test_modify_task() {
     let called = Arc::new(AtomicBool::new(false));
     {
         let called = Arc::clone(&called);
-        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeModifiedTask", move || {
+        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeModifiedTask", move |_| {
             if called.swap(true, Ordering::SeqCst) {
                 return;
             }

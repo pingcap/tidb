@@ -240,7 +240,7 @@ impl SqlKiller {
         };
         if signal_sent {
             #[cfg(feature = "failpoints")]
-            let _ = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/util/sqlkiller/beforeLogKillSignal");
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/util/sqlkiller/beforeLogKillSignal", &mut ());
             self.log_kill_signal(reason, &event_desc);
         }
     }
@@ -402,7 +402,7 @@ impl SqlKiller {
             let mut state = lock_unpoison(&self.kill_event.state);
             let status = self.signal.swap(0, SeqCst);
             #[cfg(feature = "failpoints")]
-            let _ = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/util/sqlkiller/afterResetKillSignalSwap");
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/util/sqlkiller/afterResetKillSignalSwap", &mut ());
             Self::reset_kill_event_locked(&mut state);
             status
         };
@@ -567,7 +567,7 @@ mod tests {
     fn concurrent_reset_keeps_signal_and_event_state_consistent() {
         let killer = Arc::new(SqlKiller::default());
         let before_log_killer = Arc::clone(&killer);
-        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/util/sqlkiller/beforeLogKillSignal", move || {
+        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/util/sqlkiller/beforeLogKillSignal", move |_| {
             before_log_killer.reset();
         })
         .unwrap();
@@ -592,7 +592,7 @@ mod tests {
         let after_reset_killer = Arc::clone(&killer);
         let (sent_tx, sent_rx) = mpsc::channel();
         let stale_receiver = killer.get_kill_event_chan();
-        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/util/sqlkiller/afterResetKillSignalSwap", move || {
+        tidb_failpoint::enable_call("github.com/pingcap/tidb/pkg/util/sqlkiller/afterResetKillSignalSwap", move |_| {
             assert!(after_reset_killer.kill_event.state.try_lock().is_err());
             let sender_killer = Arc::clone(&after_reset_killer);
             let sent_tx = sent_tx.clone();

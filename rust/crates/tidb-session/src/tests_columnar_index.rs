@@ -483,9 +483,9 @@ fn add_vector_index_rollback_like_go() {
         let times = AtomicUsize::new(1);
         let cancelled = Arc::new(Mutex::new(Vec::new()));
         let seen = cancelled.clone();
-        tidb_ddl::failpoint_call::enable_call(
-            "beforeRunOneJobStep",
-            Arc::new(move |job: &mut dyn std::any::Any| {
+        let hook = tidb_failpoint::enable_call_for_test(
+            "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep",
+            move |job: &mut dyn std::any::Any| {
                 let job = job.downcast_ref::<tidb_model::Job>().expect("the step's job");
                 if job.schema_state != tidb_model::SchemaState::WRITE_REORGANIZATION {
                     return;
@@ -495,10 +495,10 @@ fn add_vector_index_rollback_like_go() {
                     let result = rows(&mut tk1, &format!("admin cancel ddl jobs {}", job.id));
                     seen.lock().unwrap().push(result[0][1].clone());
                 }
-            }),
+            },
         );
         let error = error_of(session, add);
-        tidb_ddl::failpoint_call::disable("beforeRunOneJobStep");
+        drop(hook);
         assert_eq!(error, (8214, "Cancelled DDL job".to_owned()));
         assert_eq!(*cancelled.lock().unwrap(), ["successful"]);
         assert_eq!(rows(session, "select count(1) from t1;"), [["4"]]);

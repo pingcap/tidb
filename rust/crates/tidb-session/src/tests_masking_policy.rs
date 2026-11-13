@@ -24,14 +24,6 @@ use tidb_model::{ActionType, Job};
 
 use super::Session;
 
-struct CallGuard(&'static str);
-
-impl Drop for CallGuard {
-    fn drop(&mut self) {
-        tidb_ddl::failpoint_call::disable(self.0);
-    }
-}
-
 fn exec(session: &mut Session, sql: &str) {
     if let Err(error) = session.run(sql) {
         panic!("{sql}: {:?}", error.to_mysql_error());
@@ -109,17 +101,13 @@ fn a_policy_created_while_the_job_waited_is_if_not_exists_note_like_go() {
         );
         let done = AtomicBool::new(false);
         let racer = other.clone();
-        tidb_ddl::failpoint_call::enable_call(
-            "beforeRunOneJobStep",
-            Arc::new(move |job: &mut dyn Any| {
-                let job = job.downcast_mut::<Job>().expect("the step's job");
-                if job.type_ != ActionType::ACTION_CREATE_MASKING_POLICY || done.swap(true, Ordering::SeqCst) {
-                    return;
-                }
-                exec(&mut racer.lock().unwrap(), &insert);
-            }),
-        );
-        let _hook = CallGuard("beforeRunOneJobStep");
+        let _hook = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", move |job: &mut dyn Any| {
+            let job = job.downcast_mut::<Job>().expect("the step's job");
+            if job.type_ != ActionType::ACTION_CREATE_MASKING_POLICY || done.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            exec(&mut racer.lock().unwrap(), &insert);
+        });
         let got = session.run(sql).err().map(|error| error.to_mysql_error());
         assert_eq!(
             got.as_ref().map(|error| (error.code, error.message.as_str())),

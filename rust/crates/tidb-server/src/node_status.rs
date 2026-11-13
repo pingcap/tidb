@@ -1073,12 +1073,12 @@ mod tests {
         run(factory, "insert into test.hooked values (1)");
         assert_eq!(hook("GET", "ddl_hook=ctc_hook").unwrap_err(), "This api only support POST method");
         assert_eq!(hook("POST", "ddl_hook=ctc_hook").unwrap(), "\"success!\"");
-        assert!(tidb_ddl::failpoint_call::is_enabled("beforeRunOneJobStep"));
+        assert!(tidb_failpoint::list().iter().any(|(name, _)| name == "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep"));
         let start = std::time::Instant::now();
         run(factory, "alter table test.hooked modify column a varchar(10)");
         assert!(start.elapsed() >= std::time::Duration::from_millis(1500), "{:?}", start.elapsed());
         assert_eq!(hook("POST", "ddl_hook=default_hook").unwrap(), "\"success!\"");
-        assert!(!tidb_ddl::failpoint_call::is_enabled("beforeRunOneJobStep"));
+        assert!(!tidb_failpoint::list().iter().any(|(name, _)| name == "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep"));
     }
 
     /// Go `TestGetIndexMVCC` and `TestGetTableMVCC`'s query-string forms:
