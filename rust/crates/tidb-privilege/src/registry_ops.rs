@@ -360,44 +360,6 @@ impl PrivilegeRegistry {
         self.create_account(user, host, auth_string, plugin, false, None)
     }
 
-    /// Publishes REQUIRE policy before the new SQL account becomes visible.
-    pub fn create_user_with_plugin_and_tls(
-        &self,
-        user: &str,
-        host: &str,
-        auth_string: &str,
-        plugin: &str,
-        ssl_type: SslType,
-    ) -> bool {
-        self.create_account(
-            user,
-            host,
-            auth_string,
-            plugin,
-            false,
-            Some(ssl_json(ssl_type)),
-        )
-    }
-
-    /// Publishes the complete validated REQUIRE image before exposing the account.
-    pub fn create_user_with_plugin_and_tls_policy(
-        &self,
-        user: &str,
-        host: &str,
-        auth_string: &str,
-        plugin: &str,
-        json: &str,
-    ) -> bool {
-        self.create_account(
-            user,
-            host,
-            auth_string,
-            plugin,
-            false,
-            Some(json.to_owned()),
-        )
-    }
-
     /// `CREATE ROLE`, which is `CREATE USER` writing the same `mysql.user`
     /// row with `account_locked = 'Y'` and no password. Roles and users share
     /// one namespace, so this collides with an existing account of either
@@ -412,13 +374,6 @@ impl PrivilegeRegistry {
             true,
             Some("{}".to_owned()),
         )
-    }
-
-    /// [`Self::create_role`] recording the account's plugin, which Go
-    /// resolves from `default_authentication_plugin` for a role too.
-    pub fn create_role_with_plugin(&self, role: &str, host: &str, plugin: &str) -> bool {
-        // Go writes the role's `{}` policy row into `mysql.global_priv` too.
-        self.create_account(role, host, "", plugin, true, Some("{}".to_owned()))
     }
 
     fn create_account(
@@ -1059,28 +1014,6 @@ impl PrivilegeRegistry {
             .insert(role.clone());
     }
 
-    /// `REVOKE <role> FROM <account>`: deletes the edge, and with it any
-    /// `default_roles` row that named the now-ungranted role (captured:
-    /// after `REVOKE r1 FROM 'u1'@'%'`, u1's default roles keep only r3).
-    /// Revoking an edge that was never there is a silent no-op, as in Go.
-    pub fn revoke_role(&self, role: &Account, grantee: &Account) {
-        let mut edges = self.lock_role_edges();
-        if let Some(roles) = edges.get_mut(grantee) {
-            roles.remove(role);
-            if roles.is_empty() {
-                edges.remove(grantee);
-            }
-        }
-        drop(edges);
-        let mut defaults = self.lock_default_roles();
-        if let Some(roles) = defaults.get_mut(grantee) {
-            roles.remove(role);
-            if roles.is_empty() {
-                defaults.remove(grantee);
-            }
-        }
-    }
-
     /// The roles granted DIRECTLY to this account, sorted. This is the set
     /// `SET ROLE ALL` activates and the one `SHOW GRANTS`'s role line prints
     /// -- Go never expands the graph for either (captured: `SET ROLE ALL` for
@@ -1252,28 +1185,6 @@ impl PrivilegeRegistry {
             .entry((user.to_owned(), host.to_owned()))
             .or_default()
             .insert(go_to_upper(name), with_grant);
-    }
-
-    /// Go's `revokeDynamicPriv`: a `DELETE FROM mysql.global_grants` for the
-    /// one privilege. Revoking one the account never held is a silent no-op
-    /// (the 3929 warning for an UNREGISTERED name is raised by the caller,
-    /// which still reaches this delete).
-    pub fn revoke_dynamic_priv(&self, user: &str, host: &str, name: &str) {
-        if let Some(privs) = self
-            .lock_dynamic()
-            .get_mut(&(user.to_owned(), host.to_owned()))
-        {
-            privs.remove(&go_to_upper(name));
-        }
-    }
-
-    /// Go's `REVOKE ALL ON *.*`, which additionally does an unqualified
-    /// `DELETE FROM mysql.global_grants WHERE user = ? AND host = ?` --
-    /// `ALL PRIVILEGES` revokes every DYNAMIC privilege even though
-    /// `GRANT ALL` never grants one.
-    pub fn revoke_all_dynamic(&self, user: &str, host: &str) {
-        self.lock_dynamic()
-            .remove(&(user.to_owned(), host.to_owned()));
     }
 
     /// Go `MySQLPrivilege.HasExplicitlyGrantedDynamicPrivilege`: whether the
@@ -1810,23 +1721,6 @@ impl PrivilegeRegistry {
             })
     }
 
-    /// Clears every bit in `mask` on the account's `(database, table)` row.
-    /// See [`Self::revoke_db`] for the never-granted-bit no-op rule, which
-    /// applies identically here.
-    pub fn revoke_table(&self, user: &str, host: &str, database: &str, table: &str, mask: u64) {
-        let mut rows = self.lock_table();
-        let key = Self::table_row_key(&rows, user, host, database, table);
-        if let Some(privs) = rows.get_mut(&key) {
-            *privs &= !mask;
-            // Go `revokeTablePriv` -- which a TABLE-level privilege reaches,
-            // never a column list -- deletes the row once `Table_priv` is
-            // empty.
-            if mask != 0 && *privs == 0 {
-                rows.remove(&key);
-            }
-        }
-    }
-
     /// Sets every bit in `mask` on the account's `(database, table, column)`
     /// row, appending the row if this is that column's first grant (Go's
     /// `checkAndInitColumnPriv` followed by `grantColumnLevel`).
@@ -1868,39 +1762,6 @@ impl PrivilegeRegistry {
             table: table.to_owned(),
             column: column.to_owned(),
             privs: mask,
-        });
-    }
-
-    /// Clears every bit in `mask` on the account's `(database, table, column)`
-    /// row, DELETING the row once no privilege is left -- Go's
-    /// `revokeColumnPriv` issues a `DELETE` when the recomputed `Column_priv`
-    /// set is empty rather than leaving a blank row behind. Revoking from a
-    /// column that was never granted is a silent no-op; the "no such grant"
-    /// error belongs to the TABLE row and is raised by the caller before this
-    /// runs (captured: `REVOKE SELECT (a)` from an account with no grant on
-    /// the table reports the table-level `ErrNonexistingGrant`, and does so
-    /// even when the named column does not exist).
-    pub fn revoke_column(
-        &self,
-        user: &str,
-        host: &str,
-        database: &str,
-        table: &str,
-        column: &str,
-        mask: u64,
-    ) {
-        let mut rows = self.lock_column();
-        rows.retain_mut(|row| {
-            let matches = row.user == user
-                && row.host == host
-                && row.database.go_equal_fold(database)
-                && row.table.go_equal_fold(table)
-                && row.column.go_equal_fold(column);
-            if !matches {
-                return true;
-            }
-            row.privs &= !mask;
-            row.privs != 0
         });
     }
 
