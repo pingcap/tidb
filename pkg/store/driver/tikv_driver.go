@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/metrics"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -305,7 +306,41 @@ func newSafePointKV(
 }
 
 func (d *TiKVDriver) pdClientOptions() []opt.ClientOption {
-	opts := []opt.ClientOption{
+	interval := time.Duration(float64(time.Millisecond) * vardef.DefTiDBTSOClientBatchMaxWaitTime)
+	maxWaitErr := opt.NewOption().SetMaxTSOBatchWaitInterval(interval)
+	concurrency, ok := vardef.TSOClientRPCModeToConcurrency(vardef.DefTiDBTSOClientRPCMode)
+	if !ok {
+		logutil.BgLogger().Warn("invalid TiDB default for PD client TSO RPC mode; using PD client default",
+			zap.String("variable", vardef.TiDBTSOClientRPCMode),
+			zap.String("value", vardef.DefTiDBTSOClientRPCMode))
+	}
+	if maxWaitErr != nil {
+		logutil.BgLogger().Warn("invalid TiDB default for PD client TSO batch wait interval; using PD client default",
+			zap.String("variable", vardef.TiDBTSOClientBatchMaxWaitTime),
+			zap.Float64("value_ms", vardef.DefTiDBTSOClientBatchMaxWaitTime),
+			zap.Error(maxWaitErr))
+	}
+	opts := make([]opt.ClientOption, 0, 9)
+	if maxWaitErr == nil {
+		opts = append(opts, opt.ClientOption(func(o *opt.Option) {
+			if err := o.SetMaxTSOBatchWaitInterval(interval); err != nil {
+				logutil.BgLogger().Warn("failed to set PD client TSO batch wait interval; using PD client default", zap.Error(err))
+			}
+		}))
+	}
+	opts = append(opts,
+		opt.ClientOption(func(o *opt.Option) {
+			o.SetEnableTSOFollowerProxy(vardef.DefTiDBEnableTSOFollowerProxy)
+		}),
+		opt.WithEnableFollowerHandle(vardef.DefPDEnableFollowerHandleRegion),
+	)
+	if ok {
+		opts = append(opts, opt.ClientOption(func(o *opt.Option) {
+			o.SetTSOClientRPCConcurrency(concurrency)
+		}))
+	}
+	opts = append(opts,
+		opt.WithEnableRouterClient(vardef.DefTiDBEnableBatchQueryRegion),
 		opt.WithGRPCDialOptions(
 			// keep the same with etcd, see
 			// https://github.com/etcd-io/etcd/blob/5704c6148d798ea444db26a966394406d8c10526/server/etcdserver/api/v3rpc/grpc.go#L34
@@ -315,9 +350,9 @@ func (d *TiKVDriver) pdClientOptions() []opt.ClientOption {
 				Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
 			}),
 		),
-		opt.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout) * time.Second),
+		opt.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
 		opt.WithForwardingOption(config.GetGlobalConfig().EnableForwarding),
-	}
+	)
 	if labels := metricscommon.GetConstLabels(); len(labels) > 0 {
 		opts = append(opts, opt.WithMetricsLabels(labels))
 	}

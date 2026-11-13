@@ -16,14 +16,28 @@ package driver
 
 import (
 	"testing"
+	"time"
 
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/pd/client/opt"
 )
 
 func TestSetDefaultAndOptions(t *testing.T) {
+	for mode, expected := range map[string]int{
+		vardef.TSOClientRPCModeDefault:      1,
+		vardef.TSOClientRPCModeParallel:     2,
+		vardef.TSOClientRPCModeParallelFast: 4,
+	} {
+		concurrency, ok := vardef.TSOClientRPCModeToConcurrency(mode)
+		require.True(t, ok)
+		require.Equal(t, expected, concurrency)
+	}
+	_, ok := vardef.TSOClientRPCModeToConcurrency("invalid")
+	require.False(t, ok)
+
 	globalConfig := config.GetGlobalConfig()
 	origSecurity := globalConfig.Security
 
@@ -46,4 +60,11 @@ func TestSetDefaultAndOptions(t *testing.T) {
 		apply(pdOpt)
 	}
 	require.Equal(t, metricscommon.GetConstLabels(), pdOpt.MetricsLabels)
+	require.Equal(t, time.Duration(float64(time.Millisecond)*vardef.DefTiDBTSOClientBatchMaxWaitTime), pdOpt.GetMaxTSOBatchWaitInterval())
+	require.Equal(t, vardef.DefTiDBEnableTSOFollowerProxy, pdOpt.GetEnableTSOFollowerProxy())
+	require.Equal(t, vardef.DefPDEnableFollowerHandleRegion, pdOpt.GetEnableFollowerHandle())
+	expectedConcurrency, ok := vardef.TSOClientRPCModeToConcurrency(vardef.DefTiDBTSOClientRPCMode)
+	require.True(t, ok)
+	require.Equal(t, expectedConcurrency, pdOpt.GetTSOClientRPCConcurrency())
+	require.Equal(t, vardef.DefTiDBEnableBatchQueryRegion, pdOpt.GetEnableRouterClient())
 }
