@@ -323,8 +323,8 @@ def go_deps():
         name = "com_github_andybalholm_brotli",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/andybalholm/brotli",
-        sum = "h1:HzTuoo2ErYQqf5qvcJInB8uvqSVxRttzkFexPWtnceM=",
-        version = "v1.2.2",
+        sum = "h1:UgafRPGMam5ySHfRkhthMqOFA6IFoeF3D7mWIDLjG5A=",
+        version = "v1.2.7",
     )
     go_repository(
         name = "com_github_antihax_optional",
@@ -1660,8 +1660,8 @@ def go_deps():
         name = "com_github_go_jose_go_jose_v4",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/go-jose/go-jose/v4",
-        sum = "h1:moDMcTHmvE6Groj34emNPLs/qtYXRVcd6S7NHbHz3kA=",
-        version = "v4.1.4",
+        sum = "h1:sNRkftxFJxwsILiQukqp5z83QBSmntVwmgRY7AqBDO4=",
+        version = "v4.1.6",
     )
     go_repository(
         name = "com_github_go_kit_kit",
@@ -2937,8 +2937,8 @@ def go_deps():
         name = "com_github_klauspost_compress",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/klauspost/compress",
-        sum = "h1:sXLILfc9jV2QYWkzFOPWStmcUVH2RHEB1JCdY2oVvCQ=",
-        version = "v1.19.0",
+        sum = "h1:v5tiZvm1KGLyg5d5oXdXe3lsSPrbEUiKoXGia//I7Qo=",
+        version = "v1.20.2",
     )
     go_repository(
         name = "com_github_klauspost_cpuid",
@@ -5924,36 +5924,36 @@ def go_deps():
         name = "io_etcd_go_bbolt",
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/bbolt",
-        sum = "h1:+BqfJTcCzTItrop8mq/lbzL8wSGtj94UO/3U31shqG0=",
-        version = "v1.3.10",
+        sum = "h1:UAxZAIuJqzFwByP19gZC3zd5robK3FOangrGS+Fdczg=",
+        version = "v1.3.12",
     )
     go_repository(
         name = "io_etcd_go_etcd_api_v3",
         build_file_proto_mode = "disable",
         importpath = "go.etcd.io/etcd/api/v3",
-        sum = "h1:3KpLJir1ZEBrYuV2v+Twaa/e2MdDCEZ/70H+lzEiwsk=",
-        version = "v3.5.15",
+        sum = "h1:mUYXLPBlddsrnoJClluMOvUiamVfkHZrpjcGn0P/E7A=",
+        version = "v3.5.33",
     )
     go_repository(
         name = "io_etcd_go_etcd_client_pkg_v3",
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/etcd/client/pkg/v3",
-        sum = "h1:fo0HpWz/KlHGMCC+YejpiCmyWDEuIpnTDzpJLB5fWlA=",
-        version = "v3.5.15",
+        sum = "h1:x9J84BdbVtb+47fQFsXniTA2sZEdy9S5+dQ9q5urpqM=",
+        version = "v3.5.33",
     )
     go_repository(
         name = "io_etcd_go_etcd_client_v2",
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/etcd/client/v2",
-        sum = "h1:VG2xbf8Vz1KJh65Ar2V5eDmfkp1bpzkSEHlhJM3usp8=",
-        version = "v2.305.15",
+        sum = "h1:cgnmUT79NRRF6IsjEqwZhGik/uv/+Ixqgk9uHtW/2gw=",
+        version = "v2.305.33",
     )
     go_repository(
         name = "io_etcd_go_etcd_client_v3",
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/etcd/client/v3",
-        sum = "h1:23M0eY4Fd/inNv1ZfU3AxrbbOdW79r9V9Rl62Nm6ip4=",
-        version = "v3.5.15",
+        sum = "h1:Et6+4ObesJXc/MRMopKJn9/gM+gQiDl+tQvjC+vjoNE=",
+        version = "v3.5.33",
     )
     go_repository(
         name = "io_etcd_go_etcd_etcdutl_v3",
@@ -5966,36 +5966,36 @@ def go_deps():
         name = "io_etcd_go_etcd_pkg_v3",
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/etcd/pkg/v3",
-        sum = "h1:/Iu6Sr3iYaAjy++8sIDoZW9/EfhcwLZwd4FOZX2mMOU=",
-        version = "v3.5.15",
+        sum = "h1:06Ru+uKLw2faMRb7UmVblEO10WrHa4xnrQCkbRsqhHU=",
+        version = "v3.5.33",
     )
     go_repository(
         name = "io_etcd_go_etcd_raft_v3",
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/etcd/raft/v3",
-        sum = "h1:jOA2HJF7zb3wy8H/pL13e8geWqkEa/kUs0waUggZC0I=",
-        version = "v3.5.15",
+        sum = "h1:A8kQe4LDeN2ptt3hbZYcYb8xrcjbHdKlRtb9ZBel9N4=",
+        version = "v3.5.33",
     )
     go_repository(
         name = "io_etcd_go_etcd_server_v3",
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/etcd/server/v3",
-        sum = "h1:x35jrWnZgsRwMsFsUJIUdT1bvzIz1B+29HjMfRYVN/E=",
-        version = "v3.5.15",
+        sum = "h1:8zTUdTDKckuzOfvfsqkyV2ccjLPWirwuY7+d7xXLnD4=",
+        version = "v3.5.33",
     )
     go_repository(
         name = "io_etcd_go_etcd_tests_v3",
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/etcd/tests/v3",
-        sum = "h1:k1fG7+F87Z7zKp57EcjXu9XgOsW0sfp5USqfzmMTIwM=",
-        version = "v3.5.12",
+        sum = "h1:jDALgy5rpwrckZi4Ud7XtJUm90aE2iN3MNKMdfmvvAs=",
+        version = "v3.5.33",
     )
     go_repository(
         name = "io_etcd_go_gofail",
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/gofail",
-        sum = "h1:XItAMIhOojXFQMgrxjnd2EIIHun/d5qL0Pf7FzVTkFg=",
-        version = "v0.1.0",
+        sum = "h1:p19drv16FKK345a09a1iubchlw/vmRuksmRzgBIGjcA=",
+        version = "v0.2.0",
     )
     go_repository(
         name = "io_filippo_edwards25519",
