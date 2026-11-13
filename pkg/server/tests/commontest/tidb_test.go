@@ -15,6 +15,7 @@
 package commontest
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/binary"
@@ -1148,6 +1149,161 @@ func TestGracefulShutdown(t *testing.T) {
 	_, err = cli.FetchStatus("/status") // Status is gone
 	require.Error(t, err)
 	require.Regexp(t, "connect: connection refused$", err.Error())
+}
+
+// startDrainTestServer starts a server for the `DrainClients` tests, and returns it with a function that
+// opens a new client connection and returns it with its connection ID.
+func startDrainTestServer(t *testing.T) (*server2.Server, func() (*sql.Conn, uint64)) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	cli := testserverclient.NewTestServerClient()
+	cfg := util2.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	server2.RunInGoTestChan = make(chan struct{})
+	server, err := server2.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-server2.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+
+	db, err := sql.Open("mysql", cli.GetDSN())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
+	newConn := func() (*sql.Conn, uint64) {
+		ctx := context.Background()
+		conn, err := db.Conn(ctx)
+		require.NoError(t, err)
+		var id uint64
+		require.NoError(t, conn.QueryRowContext(ctx, "select connection_id()").Scan(&id))
+		return conn, id
+	}
+	return server, newConn
+}
+
+func TestDrainClientsClosesIdleConnections(t *testing.T) {
+	server, newConn := startDrainTestServer(t)
+	ctx := context.Background()
+	idleConn, idleID := newConn()
+	defer idleConn.Close()
+	busyConn, busyID := newConn()
+	defer busyConn.Close()
+
+	busyResult := make(chan error, 1)
+	go func() {
+		var v int
+		busyResult <- busyConn.QueryRowContext(ctx, "select sleep(3)").Scan(&v)
+	}()
+	require.Eventually(t, func() bool {
+		pi, ok := server.ShowProcessList()[busyID]
+		return ok && strings.Contains(pi.Info, "sleep")
+	}, 5*time.Second, 10*time.Millisecond)
+
+	drainWait := 10 * time.Second
+	drained := make(chan time.Duration, 1)
+	go func() {
+		begin := time.Now()
+		server.Close()
+		server.DrainClients(drainWait, time.Second)
+		drained <- time.Since(begin)
+	}()
+
+	// The idle connection is closed at the start of the drain, while the busy one is still running.
+	require.Eventually(t, func() bool {
+		_, ok := server.ShowProcessList()[idleID]
+		return !ok
+	}, time.Second, 10*time.Millisecond)
+	_, ok := server.ShowProcessList()[busyID]
+	require.True(t, ok)
+
+	// The running statement finishes and the drain ends without waiting for the timeout.
+	require.NoError(t, <-busyResult)
+	select {
+	case elapsed := <-drained:
+		require.Less(t, elapsed, drainWait)
+	case <-time.After(drainWait):
+		require.Fail(t, "drain clients did not finish")
+	}
+}
+
+// TestDrainClientsClosesConnectionAboutToRead covers a connection that has just finished a command and
+// is about to read the next one when the drain starts: it is already in `connStatusReading`, but hasn't
+// set its own read deadline yet. The drain must still close it right away.
+func TestDrainClientsClosesConnectionAboutToRead(t *testing.T) {
+	server, newConn := startDrainTestServer(t)
+	ctx := context.Background()
+	idleConn, idleID := newConn()
+	defer idleConn.Close()
+	busyConn, busyID := newConn()
+	defer busyConn.Close()
+
+	// Pause the idle connection after it runs the marker query, between its CAS to `connStatusReading`
+	// and `readPacket`, until the drain has closed the idle connections.
+	const marker = "drain-race-marker"
+	var parkedOnce atomic.Bool
+	parked := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseFn := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseFn)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/server/beforeReadPacket", func(connID uint64, lastPacket []byte) {
+		if connID == idleID && bytes.Contains(lastPacket, []byte(marker)) && parkedOnce.CompareAndSwap(false, true) {
+			close(parked)
+			<-release
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/server/afterDrainClientsCloseIdleConns", releaseFn)
+
+	var s string
+	require.NoError(t, idleConn.QueryRowContext(ctx, "select '"+marker+"'").Scan(&s))
+	select {
+	case <-parked:
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "idle connection did not reach readPacket")
+	}
+
+	// Keep the drain running with a busy connection, so it doesn't close the idle connection when it ends.
+	busyResult := make(chan error, 1)
+	go func() {
+		var v int
+		busyResult <- busyConn.QueryRowContext(ctx, "select sleep(5)").Scan(&v)
+	}()
+	require.Eventually(t, func() bool {
+		pi, ok := server.ShowProcessList()[busyID]
+		return ok && strings.Contains(pi.Info, "sleep")
+	}, 5*time.Second, 10*time.Millisecond)
+
+	drainWait := 10 * time.Second
+	drained := make(chan time.Duration, 1)
+	go func() {
+		begin := time.Now()
+		server.Close()
+		server.DrainClients(drainWait, time.Second)
+		drained <- time.Since(begin)
+	}()
+
+	// The idle connection is closed right away, even though it sets its read deadline after the drain
+	// started, while the busy one is still running.
+	require.Eventually(t, func() bool {
+		_, ok := server.ShowProcessList()[idleID]
+		return !ok
+	}, 2*time.Second, 10*time.Millisecond)
+	_, ok := server.ShowProcessList()[busyID]
+	require.True(t, ok)
+
+	require.NoError(t, <-busyResult)
+	select {
+	case elapsed := <-drained:
+		require.Less(t, elapsed, drainWait)
+	case <-time.After(drainWait):
+		require.Fail(t, "drain clients did not finish")
+	}
 }
 
 func TestPessimisticInsertSelectForUpdate(t *testing.T) {
