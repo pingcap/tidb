@@ -5,8 +5,5 @@ go_library(
     srcs = ["linter.go"],
     importpath = "github.com/pingcap/tidb/build/linter",
     visibility = ["//visibility:public"],
-    deps = [
-        "@com_github_apache_skywalking_eyes//pkg/config",
-        "@org_golang_x_crypto_openpgp//:openpgp",
-    ],
+    deps = ["@com_github_apache_skywalking_eyes//pkg/config"],
 )

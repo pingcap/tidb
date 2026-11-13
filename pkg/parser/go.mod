@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb/pkg/parser
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/coreos/go-semver v0.3.1
@@ -11,11 +11,7 @@ require (
 	github.com/stretchr/testify v1.8.4
 	go.uber.org/goleak v1.3.0
 	go.uber.org/zap v1.27.0
-<<<<<<< HEAD
-	golang.org/x/text v0.19.0
-=======
-	golang.org/x/text v0.43.0
->>>>>>> 34d5b479e29 (*: upgrade golang.org/x/net, golang.org/x/crypto, and golang.org/x/text (#72983))
+	golang.org/x/text v0.41.0
 	modernc.org/mathutil v1.6.0
 	modernc.org/parser v1.1.0
 	modernc.org/sortutil v1.2.0
