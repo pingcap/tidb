@@ -876,6 +876,24 @@ func (cfg *RestoreConfig) newTableCheckpointMetaManagerSnapshot(g glue.Glue, dom
 	return nil
 }
 
+func (cfg *RestoreConfig) newSnapshotCheckpointMetaManagerOfTask(
+	ctx context.Context,
+	g glue.Glue,
+	mgr *conn.Mgr,
+) (checkpoint.SnapshotMetaManagerT, error) {
+	if len(cfg.CheckpointStorage) > 0 {
+		_, checkpointStorage, err := GetStorage(ctx, cfg.CheckpointStorage, &cfg.Config)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return checkpoint.NewSnapshotStorageMetaManager(
+			checkpointStorage, &cfg.CipherInfo, mgr.GetPDClient().GetClusterID(ctx), "snapshot", cfg.RestoreID), nil
+	}
+	m, err := checkpoint.NewSnapshotTableMetaManager(
+		g, mgr.GetDomain(), checkpoint.SnapshotRestoreCheckpointDatabaseName, cfg.RestoreID)
+	return m, errors.Trace(err)
+}
+
 func (cfg *RestoreConfig) CloseCheckpointMetaManager() {
 	if cfg.logCheckpointMetaManager != nil {
 		cfg.logCheckpointMetaManager.Close()
@@ -1252,7 +1270,13 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			return errors.Trace(restoreErr)
 		}
 		// if checkpoint is not persisted, let's just unregister the task since we don't need it
-		checkpointPersisted, err := hasCheckpointPersisted(c, cfg)
+		var newSnapshotManager func(context.Context) (checkpoint.SnapshotMetaManagerT, error)
+		if cfg.UseCheckpoint {
+			newSnapshotManager = func(ctx context.Context) (checkpoint.SnapshotMetaManagerT, error) {
+				return cfg.newSnapshotCheckpointMetaManagerOfTask(ctx, g, mgr)
+			}
+		}
+		checkpointPersisted, err := hasCheckpointPersisted(c, cfg, newSnapshotManager)
 		if err != nil {
 			log.Error("failed to check if checkpoint is persisted", zap.Error(err))
 			// on error, assume checkpoint is not persisted and unregister the task
@@ -1335,36 +1359,51 @@ func cleanUpCheckpoints(ctx context.Context, cfg *RestoreConfig) {
 	}
 }
 
-// hasCheckpointPersisted checks if there are any checkpoint data persisted in storage or tables
-func hasCheckpointPersisted(ctx context.Context, cfg *RestoreConfig) (bool, error) {
-	if cfg.snapshotCheckpointMetaManager != nil {
-		exists, err := cfg.snapshotCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
+// hasCheckpointPersisted checks if there are any checkpoint data persisted in storage or tables.
+// A run without a full backup storage has no snapshot checkpoint meta manager but can resume a
+// task whose snapshot checkpoint is persisted, so newSnapshotManager is used to check it then.
+func hasCheckpointPersisted(
+	ctx context.Context,
+	cfg *RestoreConfig,
+	newSnapshotManager func(context.Context) (checkpoint.SnapshotMetaManagerT, error),
+) (bool, error) {
+	var firstErr error
+	keepFirst := func(err error) {
+		if firstErr == nil {
+			firstErr = errors.Trace(err)
+		}
+	}
+	snapshotManager := cfg.snapshotCheckpointMetaManager
+	if snapshotManager == nil && newSnapshotManager != nil {
+		m, err := newSnapshotManager(ctx)
 		if err != nil {
-			return false, errors.Trace(err)
+			keepFirst(err)
+		} else {
+			defer m.Close()
+			snapshotManager = m
 		}
-		if exists {
-			return true, nil
-		}
+	}
+	checks := make([]func(context.Context) (bool, error), 0, 3)
+	if snapshotManager != nil {
+		checks = append(checks, snapshotManager.ExistsCheckpointMetadata)
 	}
 	if cfg.logCheckpointMetaManager != nil {
-		exists, err := cfg.logCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if exists {
-			return true, nil
-		}
+		checks = append(checks, cfg.logCheckpointMetaManager.ExistsCheckpointMetadata)
 	}
 	if cfg.sstCheckpointMetaManager != nil {
-		exists, err := cfg.sstCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
+		checks = append(checks, cfg.sstCheckpointMetaManager.ExistsCheckpointMetadata)
+	}
+	for _, exists := range checks {
+		found, err := exists(ctx)
 		if err != nil {
-			return false, errors.Trace(err)
+			keepFirst(err)
+			continue
 		}
-		if exists {
+		if found {
 			return true, nil
 		}
 	}
-	return false, nil
+	return false, firstErr
 }
 
 type SnapshotRestoreConfig struct {
