@@ -2611,12 +2611,9 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 	}
 	// If one column's type is in the skipTypes list and it doesn't exist in mustAnalyzedCols, we will skip it.
 	for _, colInfo := range origin {
-		// Vector type is skip by hardcoded. Just because that collecting it is meanless for current TiDB.
-		if colInfo.FieldType.GetType() == mysql.TypeTiDBVectorFloat32 {
-			skipCol = append(skipCol, colInfo)
-			continue
-		}
 		_, skip := skipTypes[types.TypeToStr(colInfo.FieldType.GetType(), colInfo.FieldType.GetCharset())]
+		// Vector columns are skipped whatever skipTypes says, since their statistics are useless for current TiDB.
+		skip = skip || colInfo.FieldType.GetType() == mysql.TypeTiDBVectorFloat32
 		// Currently, if the column exists in some index(except MV Index), we need to bring the column's sample values
 		// into TiDB to build the index statistics.
 		_, keep := mustAnalyze[colInfo.ID]
@@ -2631,7 +2628,9 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 		skipColNameMap[colInfo.Name.L] = struct{}{}
 	}
 
-	// Filter out generated columns that depend on skipped columns
+	// Filter out generated columns that depend on skipped columns.
+	// A generated column can only depend on generated columns defined before it, so adding each
+	// skipped one to skipColNameMap also skips the generated columns that depend on it.
 	filteredResult := make([]*model.ColumnInfo, 0, len(result))
 	for _, colInfo := range result {
 		shouldSkip := false
@@ -2645,6 +2644,7 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 			for depName := range colInfo.Dependences {
 				if _, exists := skipColNameMap[depName]; exists && !decodableFromStorage {
 					skipCol = append(skipCol, colInfo)
+					skipColNameMap[colInfo.Name.L] = struct{}{}
 					shouldSkip = true
 					break
 				}
