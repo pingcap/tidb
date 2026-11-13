@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -107,7 +108,28 @@ func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 	// Why a plan that scans the index cannot be cached, when it cannot.
 	skipPlanCacheReason := ""
 	forced := false
-	for _, idx := range ds.TableInfo.Indices {
+	// No path is offered when another one already reads only a few rows,
+	// which no posting scan can beat; building it would count postings for
+	// nothing. A hint naming the index still has its path built.
+	cheapRegularPath := cheapRegularPathExists(ds)
+	// An index with key columns is tried before one without: when the
+	// conditions pin its key columns, it reads the postings of the point,
+	// a part of those the index without key columns reads for the same
+	// MATCH, so the latter is not offered for that MATCH.
+	type servedMatch struct {
+		column int
+		cond   expression.Expression
+	}
+	servedByKeyed := make(map[servedMatch]struct{})
+	indices := make([]*model.IndexInfo, 0, len(ds.TableInfo.Indices))
+	for _, keyed := range []bool{true, false} {
+		for _, idx := range ds.TableInfo.Indices {
+			if (len(idx.Columns) > 1) == keyed {
+				indices = append(indices, idx)
+			}
+		}
+	}
+	for _, idx := range indices {
 		textCol := idx.QueryableTiKVFullTextColumn()
 		if textCol == nil {
 			continue
@@ -118,9 +140,11 @@ func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 		if !fullTextIndexAllowedByHints(ds, idx) {
 			continue
 		}
-		if noIndexMerge || (!indexMergeEnabled && !fullTextIndexNamedByHints(ds, idx)) {
+		named := fullTextIndexNamedByHints(ds, idx)
+		if noIndexMerge || (!indexMergeEnabled && !named) || (cheapRegularPath && !named) {
 			continue
 		}
+		keyed := len(idx.Columns) > 1
 		colInfo := ds.TableInfo.Columns[textCol.Offset]
 		config := fulltext.AnalyzerConfigFromTiKVFullTextIndex(idx.TiKVFullText)
 		for _, cond := range ds.AllConds {
@@ -128,9 +152,16 @@ func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 			if !ok {
 				continue
 			}
+			served := servedMatch{column: textCol.Offset, cond: cond}
+			if _, ok := servedByKeyed[served]; ok && !keyed && !named {
+				continue
+			}
 			path, err := buildFullTextIndexPath(ds, idx, match, search, query)
 			if err != nil {
 				return err
+			}
+			if path != nil && keyed {
+				servedByKeyed[served] = struct{}{}
 			}
 			if path != nil {
 				if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), match.GetArgs()[0]) {
@@ -338,14 +369,9 @@ func buildFullTextIndexPath(ds *logicalop.DataSource, idx *model.IndexInfo, matc
 		if len(partial.IdxCols) < keyColumnCount {
 			return nil, nil
 		}
-		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.SCtx().GetRangerCtx(), tableFilters,
-			partial.IdxCols[:keyColumnCount], partial.IdxColLens[:keyColumnCount], 0)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		tc := ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()
-		if len(res.Ranges) != 1 || len(res.Ranges[0].LowVal) != keyColumnCount || !res.Ranges[0].IsPointNullable(tc) {
-			return nil, nil
+		res, err := fullTextKeyPoint(ds, partial.IdxCols[:keyColumnCount], partial.IdxColLens[:keyColumnCount], tableFilters)
+		if err != nil || res == nil {
+			return nil, err
 		}
 		partial.Ranges = res.Ranges
 		partial.AccessConds = res.AccessConds
@@ -394,7 +420,11 @@ func buildFullTextIndexPath(ds *logicalop.DataSource, idx *model.IndexInfo, matc
 	count := ds.TableStats.RowCount * selectivity
 	partial.CountAfterAccess = count
 	partial.CountAfterIndex = count
-	postingCost, err := estimateFullTextPostingCost(ds, match, query, keyConds, handleConds, handleRanges)
+	var keyValues []types.Datum
+	if keyColumnCount > 0 {
+		keyValues = partial.Ranges[0].LowVal[:keyColumnCount]
+	}
+	postingCost, err := estimateFullTextPostingCost(ds, idx, match, query, keyValues, keyConds, handleConds, handleRanges)
 	if err != nil {
 		return nil, err
 	}
@@ -405,6 +435,22 @@ func buildFullTextIndexPath(ds *logicalop.DataSource, idx *model.IndexInfo, matc
 		CountAfterAccess:  count,
 		StoreType:         kv.TiKV,
 	}, nil
+}
+
+// fullTextKeyPoint detaches from conds the equalities that pin every key
+// column of a FULLTEXT index, the columns ahead of its term, to one point. It
+// returns nil when conds do not: the postings of a term are then not one
+// range of the index.
+func fullTextKeyPoint(ds *logicalop.DataSource, keyCols []*expression.Column, keyColLens []int, conds []expression.Expression) (*ranger.DetachRangeResult, error) {
+	res, err := ranger.DetachCondAndBuildRangeForIndex(ds.SCtx().GetRangerCtx(), conds, keyCols, keyColLens, 0)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tc := ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()
+	if len(res.Ranges) != 1 || len(res.Ranges[0].LowVal) != len(keyCols) || !res.Ranges[0].IsPointNullable(tc) {
+		return nil, nil
+	}
+	return res, nil
 }
 
 // fullTextHandleRanges appends each range of the handle columns to the point
@@ -442,10 +488,15 @@ func fullTextHandleRanges(keyRanges, handleRanges ranger.Ranges) ranger.Ranges {
 // string match, or is the default string-match selectivity when the
 // statistics cannot evaluate it. How much of each list is read follows the
 // streams the search runs as: see fulltext.Query.EstimatePostingCost.
-func estimateFullTextPostingCost(ds *logicalop.DataSource, match *expression.ScalarFunction, query *fulltext.Query,
-	keyConds, handleConds []expression.Expression, handleRanges int) (fulltext.PostingCost, error) {
+func estimateFullTextPostingCost(ds *logicalop.DataSource, idx *model.IndexInfo, match *expression.ScalarFunction, query *fulltext.Query,
+	keyValues []types.Datum, keyConds, handleConds []expression.Expression, handleRanges int) (fulltext.PostingCost, error) {
 	if len(query.PostingReads()) == 0 {
 		return fulltext.PostingCost{}, nil
+	}
+	sc := ds.SCtx().GetSessionVars().StmtCtx
+	keyPrefix, err := codec.EncodeKey(sc.TimeZone(), nil, keyValues...)
+	if err != nil {
+		return fulltext.PostingCost{}, errors.Trace(err)
 	}
 	selectivity := func(conds []expression.Expression) (float64, error) {
 		if len(conds) == 0 {
@@ -463,38 +514,23 @@ func estimateFullTextPostingCost(ds *logicalop.DataSource, match *expression.Sca
 		return fulltext.PostingCost{}, err
 	}
 	column := match.GetArgs()[1]
+	probeFullTextQuery(ds, idx, keyPrefix, query)
 	postings := func(read fulltext.PostingRead) float64 {
-		// The handle ranges confine an exact term's postings to their share
-		// of the key-column point's; a prefix's span every term under it.
+		// A term's postings within the key-column point are probed; the
+		// handle ranges confine an exact term's to their share of them.
 		scale := 1.0
 		if !read.Prefix {
 			scale = handleSel
 		}
-		return ds.TableStats.RowCount * keySel * scale * fullTextTermSelectivity(ds, column, read.Term)
+		return fullTextTermPostings(ds, idx, keyPrefix, read, scale, func() float64 {
+			return ds.TableStats.RowCount * keySel * scale * fullTextTermSelectivity(ds, column, read.Term)
+		})
 	}
 	return query.EstimatePostingCost(fulltext.PostingCostModel{
 		Postings:  postings,
 		Rows:      ds.TableStats.RowCount * keySel * handleSel,
 		TermScans: float64(max(1, handleRanges)),
 	}), nil
-}
-
-// fullTextTermSelectivity estimates the share of rows containing a term from
-// the column's statistics, by the term's ILIKE form; without statistics, the
-// string-match default.
-func fullTextTermSelectivity(ds *logicalop.DataSource, column expression.Expression, term string) float64 {
-	sel := ds.SCtx().GetSessionVars().GetStrMatchDefaultSelectivity()
-	if ds.TableStats.HistColl.Pseudo {
-		return sel
-	}
-	like, err := expression.BuildFTSTermILikePredicate(ds.SCtx().GetExprCtx(), column, term)
-	if err != nil {
-		return sel
-	}
-	if s, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, []expression.Expression{like}, nil); err == nil {
-		return s
-	}
-	return sel
 }
 
 // pointPathSelectedByHeuristics reports whether derivePathStatsAndTryHeuristics

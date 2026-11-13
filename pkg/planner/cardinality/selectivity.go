@@ -20,6 +20,7 @@ import (
 	"math"
 	"math/bits"
 	"slices"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -61,6 +63,40 @@ func Selectivity(
 	if coll.RealtimeCount == 0 || len(exprs) == 0 {
 		return 1, nil
 	}
+	// A MATCH the planner estimated from the postings of its terms takes that
+	// estimate; the others are estimated from the statistics, independently.
+	if known := fullTextMatchSelectivitiesOf(ctx, false); known != nil {
+		fixed, rest := 1.0, exprs
+		for i, expr := range exprs {
+			if sel, ok := known.get(expr); ok {
+				if len(rest) == len(exprs) {
+					rest = slices.Clone(exprs[:i])
+				}
+				fixed *= sel
+			} else if len(rest) != len(exprs) {
+				rest = append(rest, expr)
+			}
+		}
+		if len(rest) != len(exprs) {
+			if len(rest) == 0 {
+				return fixed, nil
+			}
+			sel, err := selectivity(ctx, coll, rest, filledPaths)
+			return fixed * sel, err
+		}
+	}
+	return selectivity(ctx, coll, exprs, filledPaths)
+}
+
+func selectivity(
+	ctx planctx.PlanContext,
+	coll *statistics.HistColl,
+	exprs []expression.Expression,
+	filledPaths []*planutil.AccessPath,
+) (
+	result float64,
+	err error,
+) {
 	ret := 1.0
 	sc := ctx.GetSessionVars().StmtCtx
 	tableID := coll.PhysicalID
@@ -910,6 +946,95 @@ func getMaskAndSelectivityForMVIndex(
 	return totalSelectivity, mask, true
 }
 
+// selectivityByFilterKey identifies one evaluation of GetSelectivityByFilter: the
+// filter, by its hash code (function, column, constants), and the statistics it is
+// evaluated against. The result is a pure function of the two, since filters with
+// mutable effects are never evaluated.
+type selectivityByFilterKey struct {
+	filter  string
+	hist    *statistics.Histogram
+	topn    *statistics.TopN
+	nullCnt int64
+}
+
+// selectivityByFilterCache keeps one statement's results of GetSelectivityByFilter.
+// Planning a statement estimates the same string-match filter for every access path
+// and every task it builds, and each estimate evaluates the filter against every
+// TopN value and histogram bound of the column; a LIKE '%...%' or a MATCH against
+// a long text column makes that the bulk of the planning time.
+type selectivityByFilterCache struct {
+	mu sync.Mutex
+	m  map[selectivityByFilterKey]float64
+}
+
+func selectivityByFilterCacheOf(sctx planctx.PlanContext) *selectivityByFilterCache {
+	return sctx.GetSessionVars().StmtCtx.GetOrStoreStmtCache(stmtctx.StmtSelectivityByFilterCacheKey,
+		&selectivityByFilterCache{m: make(map[selectivityByFilterKey]float64)}).(*selectivityByFilterCache)
+}
+
+func (c *selectivityByFilterCache) get(key selectivityByFilterKey) (float64, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	sel, ok := c.m[key]
+	return sel, ok
+}
+
+func (c *selectivityByFilterCache) put(key selectivityByFilterKey, sel float64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.m[key] = sel
+}
+
+// fullTextMatchSelectivities holds the selectivities of one statement's MATCH
+// predicates that the planner estimated from the postings of their terms in
+// a FULLTEXT index, keyed by the predicate's hash code.
+type fullTextMatchSelectivities struct {
+	mu sync.Mutex
+	m  map[string]float64
+}
+
+func fullTextMatchSelectivitiesOf(sctx planctx.PlanContext, create bool) *fullTextMatchSelectivities {
+	sc := sctx.GetSessionVars().StmtCtx
+	if !create {
+		cached, _ := sc.GetStmtCache(stmtctx.StmtFullTextMatchSelectivityCacheKey).(*fullTextMatchSelectivities)
+		return cached
+	}
+	return sc.GetOrStoreStmtCache(stmtctx.StmtFullTextMatchSelectivityCacheKey,
+		&fullTextMatchSelectivities{m: make(map[string]float64)}).(*fullTextMatchSelectivities)
+}
+
+func (s *fullTextMatchSelectivities) get(expr expression.Expression) (float64, bool) {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok || sf.FuncName.L != ast.FTSMysqlMatchAgainst {
+		return 0, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sel, ok := s.m[string(sf.HashCode())]
+	return sel, ok
+}
+
+// HasFullTextMatchSelectivity reports whether SetFullTextMatchSelectivity has
+// recorded a selectivity for the MATCH predicate in this statement.
+func HasFullTextMatchSelectivity(sctx planctx.PlanContext, match *expression.ScalarFunction) bool {
+	s := fullTextMatchSelectivitiesOf(sctx, false)
+	if s == nil {
+		return false
+	}
+	_, ok := s.get(match)
+	return ok
+}
+
+// SetFullTextMatchSelectivity records the selectivity of a MATCH predicate
+// estimated from the postings of its terms; Selectivity uses it in place of
+// the statistics of the column for the rest of the statement.
+func SetFullTextMatchSelectivity(sctx planctx.PlanContext, match *expression.ScalarFunction, sel float64) {
+	s := fullTextMatchSelectivitiesOf(sctx, true)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.m[string(match.HashCode())] = sel
+}
+
 // GetSelectivityByFilter try to estimate selectivity of expressions by evaluate the expressions using TopN, Histogram buckets boundaries and NULL.
 // Currently, this method can only handle expressions involving a single column.
 func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl, filters expression.Expression) (ok bool, selectivity float64, err error) {
@@ -964,6 +1089,17 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 	if statsVer != statistics.Version2 {
 		return false, 0, nil
 	}
+	cache, key := selectivityByFilterCacheOf(sctx), selectivityByFilterKey{
+		filter: string(filters.HashCode()), hist: hist, topn: topn, nullCnt: nullCnt,
+	}
+	if sel, ok := cache.get(key); ok {
+		return true, sel, nil
+	}
+	defer func() {
+		if ok && err == nil {
+			cache.put(key, selectivity)
+		}
+	}()
 	topnTotalCnt = topn.TotalCount()
 	histTotalCnt = hist.NotNullCount()
 	totalCnt = float64(topnTotalCnt) + histTotalCnt + float64(nullCnt)
