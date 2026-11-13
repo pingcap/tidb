@@ -389,3 +389,20 @@ func TestCompileBooleanQueryMultiTokenTerm(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, query.MatchesNothing(), "a required term that analyzes away can match nothing")
 }
+
+// TestValidateTiKVFullTextIndex covers the analyzer snapshots an index must
+// not be built with, whatever let them through: bounds that admit no token.
+func TestValidateTiKVFullTextIndex(t *testing.T) {
+	require.NoError(t, ValidateTiKVFullTextIndex(&model.TiKVFullTextIndexInfo{
+		ParserType: model.FullTextParserTypeStandardV1, MinTokenSize: 10, MaxTokenSize: 10,
+	}))
+	require.ErrorContains(t, ValidateTiKVFullTextIndex(&model.TiKVFullTextIndexInfo{
+		ParserType: model.FullTextParserTypeStandardV1, MinTokenSize: 16, MaxTokenSize: 10,
+	}), "minimum token size 16 above maximum 10, which admits no token")
+	require.NoError(t, ValidateTiKVFullTextIndex(&model.TiKVFullTextIndexInfo{
+		ParserType: model.FullTextParserTypeNgramV1, NgramTokenSize: 2,
+	}))
+	require.ErrorContains(t, ValidateTiKVFullTextIndex(&model.TiKVFullTextIndexInfo{
+		ParserType: model.FullTextParserTypeNgramV1,
+	}), "ngram token size 0 admits no token")
+}

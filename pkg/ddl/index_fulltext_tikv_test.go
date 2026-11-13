@@ -257,14 +257,11 @@ func TestFullTextIndexBuiltInTiKVRefusals(t *testing.T) {
 	model.SetTiKVFullTextSupported(true)
 	tk.MustExec("create table mixed (body text, fulltext index idx (body))")
 
-	// Crossed token bounds would build an index that admits no token.
+	// Crossed token bounds would build an index that admits no token; the
+	// variables refuse them, and ValidateTiKVFullTextIndex guards the index.
 	tk.MustExec("set global innodb_ft_min_token_size = 16")
-	tk.MustExec("set global innodb_ft_max_token_size = 10")
-	defer func() {
-		tk.MustExec("set global innodb_ft_min_token_size = 3")
-		tk.MustExec("set global innodb_ft_max_token_size = 84")
-	}()
-	tk.MustContainErrMsg("create fulltext index idx_bounds on t (title)", "minimum token size 16 above maximum 10, which admits no token")
+	defer tk.MustExec("set global innodb_ft_min_token_size = 3")
+	tk.MustContainErrMsg("set global innodb_ft_max_token_size = 10", "innodb_ft_max_token_size (10) cannot be less than innodb_ft_min_token_size (16)")
 }
 
 // fullTextEntries reads every entry of a FULLTEXT index built in TiKV as
