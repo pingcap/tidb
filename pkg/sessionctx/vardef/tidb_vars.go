@@ -1326,6 +1326,9 @@ const (
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
 	// TiDBCloudStorageURI used to set a cloud storage uri for ddl add index and import into.
 	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
+	// TiDBGlobalSortCompression selects the intermediate format for IMPORT INTO.
+	// zstd requires all readers of the task files to support the compressed format.
+	TiDBGlobalSortCompression = "tidb_global_sort_compression"
 	// The "exp" prefix in the following embedding system variables means experimental.
 	// TiDBExpEmbedJinaAIAPIKey is the API key to use when calling Jina embedding API.
 	TiDBExpEmbedJinaAIAPIKey = "tidb_exp_embed_jina_ai_api_key"

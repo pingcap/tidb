@@ -360,3 +360,92 @@ func TestOneFileWriterOnDupRemove(t *testing.T) {
 		require.Empty(t, summary.ConflictInfo.Files)
 	})
 }
+
+func TestOneFileWriter_CompressedRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	store := objstore.NewMemStorage()
+
+	// Tight memSizeLimit + small block size make 200 ~30-byte rows exhaust
+	// kvBuffer multiple times, exercising the mid-stream stat-flush path in
+	// doWriteRow on top of the trailing flush in closeImpl. Multiple
+	// mid-stream flushes prove the long-lived OneFileWriter compressor and
+	// boundary closure survive across stat-buffer rotations.
+	w := NewWriterBuilder().
+		SetMemorySizeLimit(512).
+		SetBlockSize(256).
+		SetPropSizeDistance(64).
+		SetCompression(CompressionZstd).
+		BuildOneFile(store, "onefile-compressed", "writer-1")
+	w.InitPartSizeAndLogger(ctx, 5*1024*1024)
+
+	const kvCnt = 200
+	wantPairs := make([][2][]byte, 0, kvCnt)
+	for i := range kvCnt {
+		k := fmt.Appendf(nil, "k-%05d", i)
+		v := fmt.Appendf(nil, "v-%05d-payload", i)
+		require.NoError(t, w.WriteRow(ctx, k, v))
+		wantPairs = append(wantPairs, [2][]byte{
+			append([]byte(nil), k...),
+			append([]byte(nil), v...),
+		})
+	}
+	require.NoError(t, w.Close(ctx))
+
+	// OneFileWriter writes exactly one data file and one stat file.
+	dataFiles, statFiles, err := getKVAndStatFilesByScan(ctx, store, "onefile-compressed")
+	require.NoError(t, err)
+	require.Len(t, dataFiles, 1)
+	require.Len(t, statFiles, 1)
+
+	// The data file's first bytes must be the v1 zstd magic header.
+	dataBlob, err := store.ReadFile(ctx, dataFiles[0])
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(dataBlob), FileHeaderLen)
+	version, algo, ok := parseFileHeader(dataBlob[:FileHeaderLen])
+	require.True(t, ok, "data file missing v1 header")
+	require.Equal(t, uint8(FileFormatV1), version)
+	require.Equal(t, uint8(compressionAlgoZstd), algo)
+
+	// Read the stat file via StatsReader, confirming it's v1 and that every
+	// prop carries a non-zero compressedSize (which would be the v0 sentinel).
+	sr, err := NewStatsReader(ctx, store, statFiles[0], 1024)
+	require.NoError(t, err)
+	require.EqualValues(t, FileFormatV1, sr.version())
+	var props []*RangeProperty
+	for {
+		p, perr := sr.NextProp()
+		if perr != nil {
+			require.ErrorIs(t, perr, io.EOF)
+			break
+		}
+		props = append(props, p)
+	}
+	require.NoError(t, sr.Close())
+	require.NotEmpty(t, props)
+	for i, p := range props {
+		require.NotZero(t, p.CompressedSize, "prop %d has zero compressedSize", i)
+	}
+
+	// Round-trip the data file via the v1 read path and assert exact match.
+	r := newSegmentKVReader(ctx, store, dataFiles[0], props)
+	defer func() { require.NoError(t, r.Close()) }()
+	gotPairs := make([][2][]byte, 0, kvCnt)
+	for {
+		k, v, kerr := r.NextKV()
+		if kerr != nil {
+			require.ErrorIs(t, kerr, io.EOF)
+			break
+		}
+		// NextKV returns slices that alias into the reader's segment buffer,
+		// so we must copy before the next call.
+		gotPairs = append(gotPairs, [2][]byte{
+			append([]byte(nil), k...),
+			append([]byte(nil), v...),
+		})
+	}
+	require.Equal(t, len(wantPairs), len(gotPairs))
+	for i := range wantPairs {
+		require.Equal(t, wantPairs[i][0], gotPairs[i][0], "key %d", i)
+		require.Equal(t, wantPairs[i][1], gotPairs[i][1], "value %d", i)
+	}
+}

@@ -167,7 +167,39 @@ func GetReadRangeFromProps(
 	jobKeys [][]byte,
 	paths []string,
 	exStorage storeapi.Storage,
-) (_ [][]uint64, err error) {
+) ([][]uint64, error) {
+	ranges, err := GetReadRangeFromPropsWithEndOffsets(ctx, jobKeys, paths, exStorage)
+	if err != nil {
+		return nil, err
+	}
+	starts := make([][]uint64, len(ranges))
+	for i := range ranges {
+		starts[i] = ranges[i].Start
+	}
+	return starts, nil
+}
+
+// ReadRange contains per-file byte offsets enclosing one key's range property.
+type ReadRange struct {
+	Start []uint64
+	End   []uint64
+}
+
+// GetReadRangeFromPropsWithEndOffsets returns both the start and the encoded end
+// of the range property enclosing each requested key. End includes KV framing.
+func GetReadRangeFromPropsWithEndOffsets(ctx context.Context, keys [][]byte, paths []string, store storeapi.Storage) ([]ReadRange, error) {
+	ranges, _, err := GetReadRangeFromPropsWithFileFormats(ctx, keys, paths, store)
+	return ranges, err
+}
+
+// GetReadRangeFromPropsWithFileFormats also reports each companion data file's
+// format. Compressed ranges use physical segment offsets rather than raw sizes.
+func GetReadRangeFromPropsWithFileFormats(
+	ctx context.Context,
+	jobKeys [][]byte,
+	paths []string,
+	exStorage storeapi.Storage,
+) (_ []ReadRange, _ []uint8, err error) {
 	logger := logutil.Logger(ctx)
 	task := log.BeginTask(logger, "seek props offsets")
 	defer func() {
@@ -179,14 +211,16 @@ func GetReadRangeFromProps(
 		starts[i] = kv.Key(jobKeys[i])
 	}
 	if len(starts) == 0 {
-		return [][]uint64{}, nil
+		return []ReadRange{}, nil, nil
 	}
 
-	readRangesPerKey := make([][]uint64, len(starts))
+	readRangesPerKey := make([]ReadRange, len(starts))
 	for i := range starts {
-		readRangesPerKey[i] = make([]uint64, len(paths))
+		readRangesPerKey[i].Start = make([]uint64, len(paths))
+		readRangesPerKey[i].End = make([]uint64, len(paths))
 	}
 
+	fileVersions := make([]uint8, len(paths))
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	eg.SetLimit(getReadRangeFromPropsConcurrency)
 	for i := range paths {
@@ -202,6 +236,7 @@ func GetReadRangeFromProps(
 				_ = r.Close()
 			}()
 
+			fileVersions[i] = r.version()
 			keyIdx := 0
 			curKey := starts[keyIdx]
 
@@ -214,9 +249,10 @@ func GetReadRangeFromProps(
 				if err3 != nil {
 					if errors.Is(err3, io.EOF) {
 						// fill the rest of the offsets with the last offset
-						off := readRangesPerKey[keyIdx][i]
+						start, end := readRangesPerKey[keyIdx].Start[i], readRangesPerKey[keyIdx].End[i]
 						for keyIdx++; keyIdx < len(starts); keyIdx++ {
-							readRangesPerKey[keyIdx][i] = off
+							readRangesPerKey[keyIdx].Start[i] = start
+							readRangesPerKey[keyIdx].End[i] = end
 						}
 						return nil
 					}
@@ -227,10 +263,22 @@ func GetReadRangeFromProps(
 					if keyIdx >= len(starts) {
 						return nil
 					}
-					readRangesPerKey[keyIdx][i] = readRangesPerKey[keyIdx-1][i]
+					readRangesPerKey[keyIdx].Start[i] = readRangesPerKey[keyIdx-1].Start[i]
+					readRangesPerKey[keyIdx].End[i] = readRangesPerKey[keyIdx-1].End[i]
 					curKey = starts[keyIdx]
 				}
-				readRangesPerKey[keyIdx][i] = p.Offset
+				endOffset := p.Offset + p.totalSize()
+				if fileVersions[i] == FileFormatV1 {
+					if p.CompressedSize == 0 {
+						return errors2.Errorf("v1 stat file %s has prop with zero compressedSize at offset %d", paths[i], p.Offset)
+					}
+					endOffset = p.Offset + p.CompressedSize
+					if p.Offset < FileHeaderLen || endOffset < p.Offset || endOffset > uint64(^uint64(0)>>1) {
+						return errors2.Errorf("v1 stat file %s has invalid physical segment range", paths[i])
+					}
+				}
+				readRangesPerKey[keyIdx].Start[i] = p.Offset
+				readRangesPerKey[keyIdx].End[i] = endOffset
 				p, err3 = r.NextProp()
 				if err3 == nil {
 					firstKey = kv.Key(p.FirstKey)
@@ -240,9 +288,9 @@ func GetReadRangeFromProps(
 	}
 
 	if err = eg.Wait(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return readRangesPerKey, nil
+	return readRangesPerKey, fileVersions, nil
 }
 
 // GetAllFileNames returns files with the same non-partitioned dirs.

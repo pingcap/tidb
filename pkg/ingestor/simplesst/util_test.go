@@ -396,3 +396,146 @@ func TestGetReadRangeFromPropsLimitsParallelRead(t *testing.T) {
 	close(store.releaseCh)
 	require.NoError(t, <-errCh)
 }
+
+func TestGetReadRangeFromPropsWithEndOffsets(t *testing.T) {
+	ctx := context.Background()
+	store := objstore.NewMemStorage()
+
+	// file1 has props at offsets 10, 30, 50 with Keys "key1", "key3", "key5"
+	rc1 := &RangePropertiesCollector{
+		props: []*RangeProperty{
+			{FirstKey: []byte("key1"), Offset: 10, Size: 10, Keys: 1},
+			{FirstKey: []byte("key3"), Offset: 30, Size: 10, Keys: 1},
+			{FirstKey: []byte("key5"), Offset: 50, Size: 10, Keys: 1},
+		},
+	}
+	file1 := "/test1"
+	w1, err := store.Create(ctx, file1, nil)
+	require.NoError(t, err)
+	_, err = w1.Write(ctx, rc1.Encode())
+	require.NoError(t, err)
+	err = w1.Close(ctx)
+	require.NoError(t, err)
+
+	// file2 has props at offsets 20, 40 with Keys "key2", "key4"
+	rc2 := &RangePropertiesCollector{
+		props: []*RangeProperty{
+			{FirstKey: []byte("key2"), Offset: 20, Size: 10, Keys: 1},
+			{FirstKey: []byte("key4"), Offset: 40, Size: 10, Keys: 1},
+		},
+	}
+	file2 := "/test2"
+	w2, err := store.Create(ctx, file2, nil)
+	require.NoError(t, err)
+	_, err = w2.Write(ctx, rc2.Encode())
+	require.NoError(t, err)
+	err = w2.Close(ctx)
+	require.NoError(t, err)
+
+	paths := []string{file1, file2}
+
+	// single key between props
+	got, err := GetReadRangeFromPropsWithEndOffsets(ctx, [][]byte{[]byte("key2.5")}, paths, store)
+	require.NoError(t, err)
+	require.Equal(t, []uint64{10, 20}, got[0].Start)
+	require.Equal(t, []uint64{36, 46}, got[0].End)
+
+	// two Keys between props
+	got, err = GetReadRangeFromPropsWithEndOffsets(ctx, [][]byte{[]byte("key2.5"), []byte("key2.6")}, paths, store)
+	require.NoError(t, err)
+	require.Equal(t, []uint64{10, 20}, got[0].Start)
+	require.Equal(t, []uint64{36, 46}, got[0].End)
+	require.Equal(t, []uint64{10, 20}, got[1].Start)
+	require.Equal(t, []uint64{36, 46}, got[1].End)
+
+	// key exactly on a prop boundary
+	got, err = GetReadRangeFromPropsWithEndOffsets(ctx, [][]byte{[]byte("key3")}, paths, store)
+	require.NoError(t, err)
+	require.Equal(t, []uint64{30, 20}, got[0].Start)
+	require.Equal(t, []uint64{56, 46}, got[0].End)
+
+	// two Keys, second exactly on a prop boundary
+	got, err = GetReadRangeFromPropsWithEndOffsets(ctx, [][]byte{[]byte("key2.5"), []byte("key3")}, paths, store)
+	require.NoError(t, err)
+	require.Equal(t, []uint64{10, 20}, got[0].Start)
+	require.Equal(t, []uint64{36, 46}, got[0].End)
+	require.Equal(t, []uint64{30, 20}, got[1].Start)
+	require.Equal(t, []uint64{56, 46}, got[1].End)
+
+	// key below all props
+	got, err = GetReadRangeFromPropsWithEndOffsets(ctx, [][]byte{[]byte("key0")}, paths, store)
+	require.NoError(t, err)
+	require.Equal(t, []uint64{0, 0}, got[0].Start)
+	require.Equal(t, []uint64{0, 0}, got[0].End)
+
+	// key exactly on first prop
+	got, err = GetReadRangeFromPropsWithEndOffsets(ctx, [][]byte{[]byte("key1")}, paths, store)
+	require.NoError(t, err)
+	require.Equal(t, []uint64{10, 0}, got[0].Start)
+	require.Equal(t, []uint64{36, 0}, got[0].End)
+
+	// two Keys: one below all, one on first prop
+	got, err = GetReadRangeFromPropsWithEndOffsets(ctx, [][]byte{[]byte("key0"), []byte("key1")}, paths, store)
+	require.NoError(t, err)
+	require.Equal(t, []uint64{0, 0}, got[0].Start)
+	require.Equal(t, []uint64{0, 0}, got[0].End)
+	require.Equal(t, []uint64{10, 0}, got[1].Start)
+	require.Equal(t, []uint64{36, 0}, got[1].End)
+
+	// key above all props
+	got, err = GetReadRangeFromPropsWithEndOffsets(ctx, [][]byte{[]byte("key999")}, paths, store)
+	require.NoError(t, err)
+	require.Equal(t, []uint64{50, 40}, got[0].Start)
+	require.Equal(t, []uint64{76, 66}, got[0].End)
+
+	// two identical Keys above all props
+	got, err = GetReadRangeFromPropsWithEndOffsets(ctx, [][]byte{[]byte("key999"), []byte("key999")}, paths, store)
+	require.NoError(t, err)
+	require.Equal(t, []uint64{50, 40}, got[0].Start)
+	require.Equal(t, []uint64{76, 66}, got[0].End)
+	require.Equal(t, []uint64{50, 40}, got[1].Start)
+	require.Equal(t, []uint64{76, 66}, got[1].End)
+
+	// empty stat file should return zero offsets
+	file3 := "/test3"
+	w3, err := store.Create(ctx, file3, nil)
+	require.NoError(t, err)
+	err = w3.Close(ctx)
+	require.NoError(t, err)
+	got, err = GetReadRangeFromPropsWithEndOffsets(ctx, [][]byte{[]byte("key3")}, []string{file1, file2, file3}, store)
+	require.NoError(t, err)
+	require.Equal(t, []uint64{30, 20, 0}, got[0].Start)
+	require.Equal(t, []uint64{56, 46, 0}, got[0].End)
+}
+
+func TestGetReadRangeFromProps_V1ZeroCompressedSizeRejected(t *testing.T) {
+	ctx := context.Background()
+	store := objstore.NewMemStorage()
+
+	// Hand-craft a v1 stat file: file header magic + a single v1 prop
+	// whose compressedSize field is zero. A correctly-written v1 prop
+	// would always have compressedSize > 0 because the writer never
+	// emits a zero-byte zstd frame.
+	writer, err := store.Create(ctx, "/test-v1-corrupt", nil)
+	require.NoError(t, err)
+	_, err = writer.Write(ctx, fileHeaderV1Zstd)
+	require.NoError(t, err)
+	corruptProp := &RangeProperty{
+		FirstKey:       []byte("key1"),
+		LastKey:        []byte("key1"),
+		Offset:         uint64(FileHeaderLen),
+		Size:           10,
+		Keys:           1,
+		CompressedSize: 0, // corruption: v1 must have compressedSize > 0
+	}
+	_, err = writer.Write(ctx, encodeMultiPropsV1(nil, []*RangeProperty{corruptProp}))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close(ctx))
+
+	// Search key must land on or after the prop's firstKey for the
+	// validation branch to fire; a search key strictly before the prop
+	// would short-circuit via the keyIdx advance path.
+	_, _, err = GetReadRangeFromPropsWithFileFormats(ctx, [][]byte{[]byte("key1")}, []string{"/test-v1-corrupt"}, store)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "zero compressedSize")
+}

@@ -177,6 +177,7 @@ go_test(
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
+        "//pkg/sessionctx/variable",
         "//pkg/store/mockstore",
         "//pkg/table",
         "//pkg/table/tables",

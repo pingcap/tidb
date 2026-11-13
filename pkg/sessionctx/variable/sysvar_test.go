@@ -2688,3 +2688,19 @@ func TestRemovedHistoricalStatsVarsWarn(t *testing.T) {
 	require.Len(t, warns, 1)
 	require.Contains(t, warns[0].Err.Error(), "the historical statistics feature has been removed")
 }
+
+func TestGlobalSortCompression(t *testing.T) {
+	sv := GetSysVar(vardef.TiDBGlobalSortCompression)
+	require.NotNil(t, sv)
+	require.Equal(t, "none", sv.Value)
+	vars := NewSessionVars(nil)
+	for _, scope := range []vardef.ScopeFlag{vardef.ScopeGlobal, vardef.ScopeSession} {
+		for _, value := range []string{"none", "zstd"} {
+			actual, err := sv.Validate(vars, value, scope)
+			require.NoError(t, err)
+			require.Equal(t, value, actual)
+		}
+		_, err := sv.Validate(vars, "gzip", scope)
+		require.Error(t, err)
+	}
+}
