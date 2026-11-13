@@ -43,13 +43,16 @@ import (
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"go.uber.org/zap"
 )
 
@@ -81,6 +84,9 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 	}
 	if err = refreshMLogAddedColumnFromBase(jobCtx.metaMut, job, tblInfo, columnInfo, colFromArgs); err != nil {
 		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	if err = w.acquireMLogBaseMVRefreshLock(jobCtx, job, tblInfo); err != nil {
 		return ver, errors.Trace(err)
 	}
 	if columnInfo == nil {
@@ -155,6 +161,59 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func (w *worker) acquireMLogBaseMVRefreshLock(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo) error {
+	if tblInfo.MaterializedViewLog == nil {
+		return nil
+	}
+	baseTblInfo, err := getTableInfo(jobCtx.metaMut, tblInfo.MaterializedViewLog.BaseTableID, job.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if baseTblInfo.MaterializedView == nil {
+		return nil
+	}
+
+	// Internal refresh sessions do not participate in MDL. Exclude refreshes
+	// that could still write with the old MLog columns or skip logging updates
+	// to newly tracked columns. The scheduler releases the lock after the whole
+	// job, including multi-schema sub-jobs, rollback and schema synchronization.
+	lockName := mviewutil.RefreshAdvisoryLockName(job.SchemaID, baseTblInfo.ID)
+	if err := w.sess.GetAdvisoryLock(lockName, 1); err != nil {
+		if storeerr.ErrLockWaitTimeout.Equal(err) {
+			if isUnstartedMLogAddColumnJob(job, tblInfo) {
+				// A new job must not retain its DDL scheduling claim while an OOP
+				// refresh holds the lock and waits for its cutover DDL. A resumed
+				// job with existing schema changes must finish or roll them back.
+				job.State = model.JobStateCancelled
+			}
+			return exeerrors.ErrMVAdvisoryLockConflict.FastGenByArgs(fmt.Sprintf(
+				"cannot alter materialized view log on %s.%s: materialized view refresh is running, please retry later", job.SchemaName, baseTblInfo.Name.O))
+		}
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func isUnstartedMLogAddColumnJob(job *model.Job, tblInfo *model.TableInfo) bool {
+	if job.SchemaState != model.StateNone {
+		return false
+	}
+	// A StateNone proxy may follow an already-started column sub-job. Its
+	// non-public columns persist across pauses and owner changes.
+	for _, col := range tblInfo.Columns {
+		if col.State != model.StatePublic {
+			return false
+		}
+	}
+	return true
+}
+
+func isMLogAddColumnRefreshLockWait(job *model.Job, err error) bool {
+	return job.IsRunning() &&
+		(job.Type == model.ActionAddColumn || job.Type == model.ActionMultiSchemaChange) &&
+		exeerrors.ErrMVAdvisoryLockConflict.Equal(err)
 }
 
 func refreshMLogAddedColumnFromBase(
