@@ -175,6 +175,21 @@ impl NativeMemBuffer {
     fn stages(&self) -> Vec<tikv_client::transaction::arena::MemdbCheckpoint> {
         self.read(|b| b.stages())
     }
+    /// Drops the binding to a native transaction that has already finished
+    /// and reports whether it did. A statement whose lock or write request
+    /// fails terminally can end its transaction before the statement's own
+    /// rollback runs; the transaction's MemDB, and every write staged in it,
+    /// went away with it, so there is nothing left to roll back.
+    fn detach_finished(&mut self) -> bool {
+        let finished = self
+            .bound
+            .as_ref()
+            .is_some_and(|(_, access)| !access(&mut |_| {}));
+        if finished {
+            self.bound = None;
+        }
+        finished
+    }
     fn len(&self) -> usize {
         self.read(|b| b.len())
     }
@@ -629,6 +644,10 @@ impl MutationBuffer {
     /// savepoints remain active; completed transaction scopes are already gone.
     pub fn release(&self, checkpoint: BufferCheckpoint) {
         let mut state = self.state();
+        if state.memdb.detach_finished() {
+            state.changes.clear();
+            return;
+        }
         while checkpoint.native != 0 && state.memdb.stages().len() >= checkpoint.native {
             let handle = state.memdb.stages().len();
             state.memdb.release(handle);
@@ -739,6 +758,11 @@ impl MutationBuffer {
     /// Rolls back through native staging while retaining the checkpoint for another retry.
     pub fn restore(&self, checkpoint: BufferCheckpoint) {
         let mut state = self.state();
+        if state.memdb.detach_finished() {
+            state.changes.clear();
+            state.hints.clear();
+            return;
+        }
         if checkpoint.native == 0 {
             state.memdb.reset();
         } else {
@@ -1991,6 +2015,50 @@ mod tests {
         assert!(flags.has_locked());
         assert!(flags.has_assert_unknown());
         assert_eq!(native.get_readonly(b"locked").unwrap(), b"value");
+    }
+
+    #[test]
+    fn rollback_after_the_native_transaction_finished_detaches_the_buffer() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let buffer = MutationBuffer::new();
+        let native = Arc::new(Mutex::new(
+            tikv_client::transaction::unionstore::MemDb::default(),
+        ));
+        let finished = Arc::new(AtomicBool::new(false));
+        buffer.bind_native(42, {
+            let native = native.clone();
+            let finished = finished.clone();
+            Arc::new(move |visit| {
+                if finished.load(Ordering::SeqCst) {
+                    return false;
+                }
+                visit(&mut native.lock().unwrap());
+                true
+            })
+        });
+        let checkpoint = buffer.checkpoint();
+        buffer.set(key(b"k"), b"v".to_vec()).unwrap();
+
+        // A terminal lock failure ends the transaction before the statement
+        // rolls its writes back.
+        finished.store(true, Ordering::SeqCst);
+        buffer.restore(checkpoint);
+        buffer.release(checkpoint);
+
+        // The buffer is free for the next transaction.
+        let next = Arc::new(Mutex::new(
+            tikv_client::transaction::unionstore::MemDb::default(),
+        ));
+        buffer.bind_native(43, {
+            let next = next.clone();
+            Arc::new(move |visit| {
+                visit(&mut next.lock().unwrap());
+                true
+            })
+        });
+        buffer.set(key(b"k2"), b"v2".to_vec()).unwrap();
+        assert_eq!(next.lock().unwrap().get_readonly(b"k2").unwrap(), b"v2");
     }
 
     #[test]
