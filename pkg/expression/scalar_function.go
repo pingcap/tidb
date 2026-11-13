@@ -345,10 +345,17 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 
 // Clone implements Expression interface.
 func (sf *ScalarFunction) Clone() Expression {
+	function := sf.Function.Clone()
+	// Keep RetType as is rather than normalizing it via getRetTp: it must stay
+	// identical to the original's, only no longer shared with it.
+	retType := function.rawRetTp()
+	if sf.RetType != sf.Function.rawRetTp() {
+		retType = sf.RetType.Clone()
+	}
 	c := &ScalarFunction{
 		FuncName: sf.FuncName,
-		RetType:  sf.RetType,
-		Function: sf.Function.Clone(),
+		RetType:  retType,
+		Function: function,
 	}
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
 	if sf.hashcode != nil {
