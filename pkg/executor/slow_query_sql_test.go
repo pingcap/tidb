@@ -532,6 +532,14 @@ SELECT original_sql, bind_sql, default_db, status, create_time, update_time, cha
 	tk.MustQuery("select count(plan_digest) from `information_schema`.`slow_query` where time > '2020-10-13 12:08:13' and time < '2020-10-13 13:08:13'").Check(testkit.Rows("1"))
 	tk.MustExec("set @@time_zone='+10:00'")
 	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2022-04-21 16:44:54' and time < '2022-04-21 16:44:55'").Check(testkit.Rows("1"))
+
+	// A bound on the Unix epoch must not be mistaken for "no bound", see issue #72669.
+	tk.MustExec("set @@time_zone='+00:00'")
+	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time = '1970-01-01 00:00:00'").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time <= '1970-01-01 00:00:00'").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time < '1970-01-01 00:00:00.001'").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time between '1970-01-01 00:00:00' and '1970-01-01 00:00:00'").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time >= '1970-01-01 00:00:00'").Check(testkit.Rows("4"))
 }
 
 func TestIssue37066(t *testing.T) {

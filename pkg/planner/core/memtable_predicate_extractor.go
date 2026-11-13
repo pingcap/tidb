@@ -685,6 +685,21 @@ func (helper extractHelper) extractTimeRange(
 				}
 			}
 			timestamp := localTime.UnixNano()
+			bound := timestamp
+			switch fnName {
+			case ast.GT:
+				// FixMe: add 1ms is not absolutely correct here, just because the log search precision is millisecond.
+				bound = timestamp + int64(time.Millisecond)
+			case ast.LT:
+				bound = timestamp - int64(time.Millisecond)
+			}
+			// startTime and endTime use 0 to mean "no bound", so a bound on the
+			// Unix epoch itself cannot be represented. Keep such a predicate for
+			// the SQL layer instead of consuming it without applying it.
+			if bound == 0 {
+				remained = append(remained, expr)
+				continue
+			}
 
 			switch fnName {
 			case ast.EQ:
@@ -695,15 +710,14 @@ func (helper extractHelper) extractTimeRange(
 					endTime = min(endTime, timestamp)
 				}
 			case ast.GT:
-				// FixMe: add 1ms is not absolutely correct here, just because the log search precision is millisecond.
-				startTime = max(startTime, timestamp+int64(time.Millisecond))
+				startTime = max(startTime, bound)
 			case ast.GE:
 				startTime = max(startTime, timestamp)
 			case ast.LT:
 				if endTime == 0 {
-					endTime = timestamp - int64(time.Millisecond)
+					endTime = bound
 				} else {
-					endTime = min(endTime, timestamp-int64(time.Millisecond))
+					endTime = min(endTime, bound)
 				}
 			case ast.LE:
 				if endTime == 0 {
