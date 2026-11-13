@@ -7582,6 +7582,7 @@ dependencies = [
  "tidb-variable",
  "tidb-versioninfo",
  "tidb-vitess",
+ "tidb-worker-stack",
  "tidb-workloadlearning",
  "tikv-client",
  "tokio",

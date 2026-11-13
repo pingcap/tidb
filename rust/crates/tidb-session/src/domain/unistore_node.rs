@@ -590,18 +590,6 @@ pub fn unistore_cluster_session_stack_from(
         tidb_ddl::pre_split::split_bootstrap_tables(region_store.as_ref(), &bootstrap_splits);
     }
 
-    // Go's bootstrap INSERTs `root@%` into `mysql.user`; this node provisions
-    // its startup identity from `--auth-file` instead, so it has to become a
-    // real row before any account statement rewrites the set -- see
-    // `cluster_account_seam::seed_cluster_accounts` for what happened when it
-    // did not.
-    // Go's root INSERT in `doDMLWorks` logs nothing.
-    tidb_domain_core::cluster_account_seam::seed_cluster_accounts(
-        &opener,
-        &users.accounts(),
-        IN_PROCESS_TIMEOUT,
-    )
-    .map_err(engine)?;
 
     let (startup, startup_lease_grant_ts) =
         tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)
@@ -809,6 +797,10 @@ pub fn unistore_cluster_session_stack_from(
     // The pool's sessions are the node's, so it is bound once the node's
     // session services are: the job scheduler takes one as soon as it can.
     ddl_session_pool.bind(&factory);
+    // Go's bootstrap provisions `root@%` through SQL; this node provisions its
+    // `--auth-file` accounts the same way, before any client connects.
+    crate::domain::cluster_session_node::seed_auth_file_accounts(&factory, &users.accounts())
+        .map_err(|error| engine(SqlQueryError::unknown(error)))?;
     // Go `LoadSysVarCacheLoop`, started once the domain's sessions exist.
     let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(
         users.global_vars(),

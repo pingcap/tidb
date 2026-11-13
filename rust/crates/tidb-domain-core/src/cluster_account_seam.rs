@@ -46,72 +46,14 @@ use std::sync::Arc;
 use std::time::Duration;
 use tidb_store_driver_txn::transaction::StoreClient;
 
-use tidb_privilege::cluster_account_write::{plan_account_write, AccountWriteError};
-use tidb_autoid::cluster_auto_id::ClusterAutoIdStore;
 use tidb_infoschema::cluster_catalog::load_info_schema;
 use tidb_privilege::cluster_privilege_load::{load_cluster_privileges, read_bootstrap_state};
-use tidb_datatype::current_time::utc_now_timestamp;
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
-use tidb_autoid::AutoIdStore;
 use tidb_pd_client::EtcdClient;
 use tidb_privilege::PrivilegeRegistry;
-use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 
-use tidb_privilege::load::cluster_image_from_registry;
 use tidb_privilege::load::registry_from_cluster;
-use tidb_store_driver_error::pessimistic_lock_error::cluster_commit_error;
-use tidb_store_driver_error::sql_query_error::SqlQueryError;
-
-/// Reserves `count` `_tidb_rowid`s of a `mysql.*` table in their own
-/// transaction (Go's autoid allocator, `RunInNewTxn`), never below
-/// `minimum`, answering the first. Shared by every system-table writer.
-pub fn reserve_system_row_ids<S>(
-    opener: &RealOptimisticTransactionOpener<S>,
-    timeout: Duration,
-    db: i64,
-    table: &tidb_model::TableInfo,
-    minimum: i64,
-    count: usize,
-) -> Result<i64, String>
-where
-    S: StoreClient,
-{
-    reserve_account_ids(opener, timeout, db, table, minimum, count)
-        .map_err(|error| error.to_string())
-}
-
-fn reserve_account_ids<S>(
-    opener: &RealOptimisticTransactionOpener<S>,
-    timeout: Duration,
-    db: i64,
-    table: &tidb_model::TableInfo,
-    minimum: i64,
-    count: usize,
-) -> Result<i64, AccountWriteError>
-where
-    S: StoreClient,
-{
-    // Go `kv.RunInNewTxn` over `store.Begin()`: a two-phase commit.
-    let opener = opener
-        .clone()
-        .with_commit_protocol(tidb_store_driver_txn::transaction::CommitProtocol::two_phase_only());
-    let store = ClusterAutoIdStore::new(std::sync::Arc::new(opener), db, table, timeout);
-    let failure = |error: tidb_autoid::AutoIdStoreError| {
-        AccountWriteError::Unsupported(format!("account row-ID reservation: {error}"))
-    };
-    // Preserve bootstrap rows that predate a persisted allocator watermark.
-    store
-        .rebase(minimum.max(0) as u64, false, None)
-        .map_err(failure)?;
-    let (base, end) = store.reserve(count as u64, false).map_err(failure)?;
-    if end - base != count as u64 || end > i64::MAX as u64 {
-        return Err(AccountWriteError::Unsupported(
-            "account row-ID range exhausted".to_owned(),
-        ));
-    }
-    Ok((base + 1) as i64)
-}
 
 /// This node's one route to the cluster's stored accounts.
 ///
@@ -232,104 +174,3 @@ pub fn notify_privilege_update(notifier: Option<&EtcdClient>, _changed: &[String
     }
 }
 
-/// Reconciles `live`'s accounts into the cluster's `mysql.user` at boot.
-///
-/// Go's bootstrap INSERTs `root@%` into `mysql.user` with an EMPTY
-/// `authentication_string` (`bootstrap.go:493`), and the cluster is then the
-/// single source of accounts: every later statement reads that set, edits it,
-/// and writes it back. This port also provisions a startup identity from
-/// `--auth-file`, WITH a password, into the node's live table only — so the
-/// two disagreed about root's credential. The first `CREATE USER` opened its
-/// scratch from the cluster, added one row, committed, and the live table was
-/// then REPLACED with what the cluster held. Root's password reverted to the bootstrap's empty one and the
-/// administrator could no longer authenticate: one `CREATE USER` locked the
-/// server's owner out of it.
-///
-/// Writing the auth-file's accounts into `mysql.user` at boot restores Go's
-/// invariant -- the credential a session authenticates against IS the
-/// cluster's row -- so rewriting the set preserves it. `plan_account_write`
-/// diffs, so a cluster that already agrees costs no commit.
-///
-/// This treats `live` as the WHOLE intended account set, which is true only
-/// where the node's own `--auth-file` defines it over a store that starts
-/// empty each boot (`--store unistore`). A node joining a populated cluster
-/// must not call this: it would delete accounts it never knew about.
-pub fn seed_cluster_accounts<S>(
-    opener: &RealOptimisticTransactionOpener<S>,
-    live: &PrivilegeRegistry,
-    timeout: Duration,
-) -> Result<Vec<String>, SqlQueryError>
-where
-    S: StoreClient,
-{
-    let mut transaction = opener
-        .begin()
-        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-    // `cluster_image_from_registry` reads through `export`, so the live table
-    // is not disturbed by being written out.
-    let desired = cluster_image_from_registry(live);
-    let plan = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let catalog = load_info_schema(&mut snapshot)
-            .map_err(|e| SqlQueryError::unknown(e.to_string()))?;
-        Some(
-            plan_account_write(
-                &mut snapshot,
-                &catalog,
-                &desired,
-                utc_now_timestamp(),
-                &mut |db, table, minimum, count| {
-                    reserve_account_ids(opener, timeout, db, table, minimum, count)
-                },
-            )
-            .map_err(|e| SqlQueryError::unknown(e.to_string()))?,
-        )
-    };
-    let Some(plan) = plan.filter(|plan| !plan.is_empty()) else {
-        transaction
-            .finish_without_writes()
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        return Ok(Vec::new());
-    };
-    let changed = plan.changed_users;
-    let call = UnaryCallContext::with_timeout(timeout);
-    let outcome = transaction
-        .commit(plan.mutations, &call)
-        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-    if let Some(error) = cluster_commit_error(&outcome, "account seeding") {
-        return Err(error);
-    }
-    Ok(changed)
-}
-
-#[cfg(test)]
-mod seed_tests {
-    use tidb_privilege::PrivilegeRegistry;
-
-    /// The startup identity's CREDENTIAL, not merely its name, is what an
-    /// account statement used to discard: the cluster's bootstrap row carries
-    /// Go's empty `authentication_string`, so replacing the live table with
-    /// the cluster's view reverted root's password and locked the owner out.
-    ///
-    /// `cluster_image_from_registry` is the exact projection
-    /// [`seed_cluster_accounts`] writes, so asserting the password survives it
-    /// pins the half that broke, without needing a cluster to write into.
-    #[test]
-    fn the_seeded_image_carries_the_startup_password() {
-        let registry = PrivilegeRegistry::bootstrapped_from([(
-            "root".to_owned(),
-            "%".to_owned(),
-            "*61CAB5BD10C9AE60B985E8821DCBCBA0125FE290".to_owned(),
-        )]);
-        let image = tidb_privilege::load::cluster_image_from_registry(&registry);
-        let root = image
-            .users
-            .iter()
-            .find(|user| user.user == "root" && user.host == "%")
-            .expect("the startup identity is in the image");
-        assert_eq!(
-            root.authentication_string, "*61CAB5BD10C9AE60B985E8821DCBCBA0125FE290",
-            "the password must reach mysql.user, or the next account statement reverts it"
-        );
-    }
-}

@@ -5271,6 +5271,37 @@ fn analyze_samples_the_go_handle_ranges() {
     stack.rpc.set_send_hook(None);
 }
 
+/// The node's `--auth-file` accounts are provisioned through Go's account
+/// statements at boot: the bootstrap's `root@%` takes the file's credential
+/// and keeps its full grant, and the credential is the table row every later
+/// account statement reads, so creating another account leaves it as it is.
+#[test]
+fn auth_file_accounts_are_provisioned_through_account_statements() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(81))
+        .expect("session opens");
+    let root = |session: &mut Session| {
+        displayed(rows(
+            session,
+            "SELECT user, host, authentication_string, plugin, Super_priv, Grant_priv FROM mysql.user ORDER BY user, host",
+        ))
+    };
+    let want = vec![vec![
+        "root".to_owned(),
+        "%".to_owned(),
+        ABC_HASH.to_owned(),
+        "mysql_native_password".to_owned(),
+        "Y".to_owned(),
+        "Y".to_owned(),
+    ]];
+    assert_eq!(root(&mut session), want);
+    rows(&mut session, "CREATE USER 'seed_other'@'%'");
+    rows(&mut session, "DROP USER 'seed_other'@'%'");
+    assert_eq!(root(&mut session), want);
+}
+
 /// Go `getAdjustedSampleRate` takes `RealtimeCount` from
 /// `GetPhysicalTableStats` -- the statistics cache, or `PseudoTable` on a
 /// miss -- not from the `mysql.stats_meta` row itself. With `stats-lease = 0`
