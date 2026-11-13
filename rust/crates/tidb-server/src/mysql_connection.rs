@@ -3785,7 +3785,7 @@ mod connection_alive_tests {
 mod check_auth_plugin_tests {
     use tidb_session::domain::peer_address::PeerAddress;
     use tidb_privilege::{
-        encode_password_for_plugin, PluginCredential, PrivilegeRegistry,
+        encode_password_for_plugin, PluginCredential,
     };
 
     use super::{check_auth_plugin, AuthPluginDecision, AuthPluginRefusal};
@@ -3798,19 +3798,16 @@ mod check_auth_plugin_tests {
 
     fn store() -> ConfiguredUserStore {
         // The bootstrapped table holds the passwordless `root`@`%`.
-        let accounts = PrivilegeRegistry::default();
+        use tidb_privilege::loaded::LoadedUser;
         let sha2 = encode_password_for_plugin("caching_sha2_password", &PluginCredential::By("p"))
             .expect("hash");
-        assert!(accounts.create_user_with_plugin("sha2", "%", &sha2, "caching_sha2_password"));
-        assert!(accounts.create_user_with_plugin(
-            "ldap",
-            "%",
-            "uid=ldap,dc=example,dc=com",
-            "authentication_ldap_simple"
-        ));
-        assert!(accounts.create_user_with_plugin("tok", "%", "", "tidb_auth_token"));
-        assert!(accounts.create_user_with_plugin("sock", "%", "", "auth_socket"));
-        ConfiguredUserStore::from_accounts(accounts)
+        ConfiguredUserStore::from_accounts(tidb_privilege::load::registry_from_user_rows([
+            LoadedUser::new("root", "%", "mysql_native_password", ""),
+            LoadedUser::new("sha2", "%", "caching_sha2_password", &sha2),
+            LoadedUser::new("ldap", "%", "authentication_ldap_simple", "uid=ldap,dc=example,dc=com"),
+            LoadedUser::new("tok", "%", "tidb_auth_token", ""),
+            LoadedUser::new("sock", "%", "auth_socket", ""),
+        ]))
     }
 
     /// Runs Go's `checkAuthPlugin` and returns the decision with the

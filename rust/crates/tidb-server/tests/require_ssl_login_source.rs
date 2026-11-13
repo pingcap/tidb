@@ -41,7 +41,8 @@ use tidb_server::command::COM_QUIT;
 use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_server::{serve_mysql_connection_with_tls, ConfiguredUserStore, ConnectionCancellation, ConnectionExit, ConnectionTracker, MysqlServerTls, QueryResult, QuerySession, QuerySessionFactory, SessionContext};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
-use tidb_privilege::{encode_password, PrivilegeRegistry, SslType};
+use tidb_privilege::encode_password;
+use tidb_privilege::loaded::LoadedUser;
 use tidb_domain::global_sysvars::GlobalSysvars;
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
@@ -83,11 +84,22 @@ impl QuerySessionFactory for Factory {
 /// Two accounts on one registry: one that requires TLS and one that does
 /// not, so every assertion below has its own control on the same server.
 fn store(global_vars: GlobalSysvars) -> ConfiguredUserStore {
-    let accounts = PrivilegeRegistry::default();
-    accounts.create_user("secure", "%", &encode_password("pw"));
-    accounts.set_ssl_type("secure", "%", SslType::Any);
-    accounts.create_user("open", "%", &encode_password("pw"));
-    ConfiguredUserStore::from_accounts(accounts).with_global_vars(global_vars)
+    // `CREATE USER secure ... REQUIRE SSL` writes `mysql.global_priv`'s
+    // `{"ssl_type":1}` (Go `SslTypeAny`).
+    let rows = tidb_privilege::loaded::ClusterPrivileges {
+        users: vec![
+            LoadedUser::new("secure", "%", "mysql_native_password", &encode_password("pw")),
+            LoadedUser::new("open", "%", "mysql_native_password", &encode_password("pw")),
+        ],
+        global_priv: vec![tidb_privilege::loaded::LoadedGlobalPriv {
+            host: "%".to_owned(),
+            user: "secure".to_owned(),
+            priv_json: r#"{"ssl_type":1}"#.to_owned(),
+        }],
+        ..Default::default()
+    };
+    ConfiguredUserStore::from_accounts(tidb_privilege::load::registry_from_cluster(&rows).registry)
+        .with_global_vars(global_vars)
 }
 
 fn native_response(password: &[u8], salt: &[u8]) -> [u8; 20] {

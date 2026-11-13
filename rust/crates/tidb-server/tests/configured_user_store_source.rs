@@ -21,6 +21,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha1::{Digest, Sha1};
 use tidb_server::TransportKind;
+use tidb_privilege::load::registry_from_user_rows;
+use tidb_privilege::loaded::LoadedUser;
 use tidb_server::{AuthenticationFailure, ConfiguredUserStore, ConfiguredUserStoreError};
 
 const ABC_HASH: &str = "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E";
@@ -295,14 +297,34 @@ impl Drop for AuthFile {
     }
 }
 
+/// The `mysql.user` row of `bob`@`%` with the password `abc`.
+fn bob_row() -> LoadedUser {
+    LoadedUser::new("bob", "%", "mysql_native_password", ABC_HASH)
+}
+
+/// Go `MySQLPrivilege.LoadAll` after the `mysql.user` rows changed: the
+/// store's accounts are reloaded from `rows`.
+fn reload(store: &ConfiguredUserStore, rows: impl IntoIterator<Item = LoadedUser>) {
+    store.accounts().replace_from(&registry_from_user_rows(rows));
+}
+
+/// A store over `rows`, loaded as Go loads `mysql.user`.
+fn store_of(rows: impl IntoIterator<Item = LoadedUser>) -> ConfiguredUserStore {
+    ConfiguredUserStore::from_accounts(registry_from_user_rows(rows))
+}
+
 /// One `FAILED_LOGIN_ATTEMPTS n PASSWORD_LOCK_TIME d` account, plus the
 /// scrambles for a right and a wrong password.
 fn lockout_store(attempts: i64, lock_days: i64) -> (ConfiguredUserStore, [u8; 20], [u8; 20]) {
-    let file = AuthFile::new(&format!("bob\t%\tmysql_native_password\t{ABC_HASH}\n"));
-    let store = ConfiguredUserStore::load(file.path()).expect("strict auth file");
-    store
-        .accounts()
-        .set_password_locking_options("bob", "%", Some(attempts), Some(lock_days));
+    // Go `createUserFailedLoginJSON`: recorded only when either is nonzero.
+    let row = if attempts != 0 || lock_days != 0 {
+        bob_row().with_user_attributes(&format!(
+            r#"{{"Password_locking": {{"failed_login_attempts": {attempts}, "password_lock_time_days": {lock_days}}}}}"#
+        ))
+    } else {
+        bob_row()
+    };
+    let store = store_of([row]);
     (
         store,
         scramble(b"abc", &SOURCE_SALT),
@@ -347,7 +369,13 @@ fn consecutive_wrong_passwords_auto_lock_the_account_and_unlock_clears_it() {
     assert_eq!(locking.failed_login_count, 2);
     assert!(locking.auto_account_locked);
 
-    accounts.set_locked("bob", "%", false);
+    // `ALTER USER bob ACCOUNT UNLOCK`: the row's lock and counter cleared.
+    reload(
+        &store,
+        [bob_row().with_user_attributes(
+            r#"{"Password_locking": {"failed_login_attempts": 2, "password_lock_time_days": 3, "failed_login_count": 0, "auto_account_locked": "N"}}"#,
+        )],
+    );
     let locking = accounts.password_locking("bob", "%").expect("counter");
     assert_eq!(locking.failed_login_count, 0);
     assert!(!locking.auto_account_locked);
@@ -463,28 +491,27 @@ fn a_successful_login_clears_the_failure_counter() {
 /// elapsed changes nothing.
 #[test]
 fn an_expired_password_reports_1862_or_opens_a_sandbox_session() {
-    use tidb_privilege::PasswordExpireSetting;
-
-    let file = AuthFile::new(&format!("bob\t%\tmysql_native_password\t{ABC_HASH}\n"));
-    let store = ConfiguredUserStore::load(file.path()).expect("strict auth file");
+    let store = store_of([bob_row()]);
     let accounts = store.accounts();
     let response = scramble(b"abc", &SOURCE_SALT);
     let login = || store.authenticate_native("bob", "127.0.0.1", &SOURCE_SALT, &response);
 
     assert!(!login().expect("unexpired login").in_sandbox_mode());
 
-    accounts.set_password_expire("bob", "%", PasswordExpireSetting::Now);
+    // `ALTER USER bob PASSWORD EXPIRE`.
+    reload(&store, [LoadedUser { password_expired: true, ..bob_row() }]);
     assert_eq!(login(), Err(AuthenticationFailure::PasswordExpired));
     tidb_vardef::IS_SAND_BOX_MODE_ENABLED.store(true, std::sync::atomic::Ordering::Relaxed);
     assert!(login().expect("sandboxed login").in_sandbox_mode());
     tidb_vardef::IS_SAND_BOX_MODE_ENABLED.store(false, std::sync::atomic::Ordering::Relaxed);
 
-    // Storing a password unexpires the account.
-    accounts.mark_password_changed("bob", "%");
+    // Storing a password unexpires the account and stamps its change.
+    let changed = bob_row().with_password_last_changed(accounts.clock().now_unix());
+    reload(&store, [changed.clone()]);
     assert!(!login().expect("unexpired login").in_sandbox_mode());
 
     // An INTERVAL only bites once it has elapsed.
-    accounts.set_password_expire("bob", "%", PasswordExpireSetting::Interval(2));
+    reload(&store, [LoadedUser { password_lifetime: Some(2), ..changed.clone() }]);
     assert!(login().is_ok());
     accounts.clock().advance(3 * 24 * 60 * 60);
     assert_eq!(login(), Err(AuthenticationFailure::PasswordExpired));
@@ -492,9 +519,9 @@ fn an_expired_password_reports_1862_or_opens_a_sandbox_session() {
     // `PASSWORD EXPIRE NEVER` opts the account out for good, and so does the
     // NULL lifetime this tier always resolves against an unset
     // `default_password_lifetime`.
-    accounts.set_password_expire("bob", "%", PasswordExpireSetting::Never);
+    reload(&store, [LoadedUser { password_lifetime: Some(0), ..changed.clone() }]);
     assert!(login().is_ok());
-    accounts.set_password_expire("bob", "%", PasswordExpireSetting::Default);
+    reload(&store, [LoadedUser { password_lifetime: None, ..changed }]);
     assert!(login().is_ok());
 }
 
@@ -510,15 +537,14 @@ fn an_expired_password_reports_1862_or_opens_a_sandbox_session() {
 /// executor would do to this store's next login.
 #[test]
 fn default_password_lifetime_ages_out_a_password_expire_default_account() {
-    use tidb_privilege::PasswordExpireSetting;
-
-    let file = AuthFile::new(&format!("bob\t%\tmysql_native_password\t{ABC_HASH}\n"));
-    let store = ConfiguredUserStore::load(file.path()).expect("strict auth file");
+    let store = store_of([]);
     let accounts = store.accounts();
+    // `CREATE USER bob ... PASSWORD EXPIRE DEFAULT`: a NULL lifetime, the
+    // password changed now.
+    reload(&store, [bob_row().with_password_last_changed(accounts.clock().now_unix())]);
     let response = scramble(b"abc", &SOURCE_SALT);
     let login = || store.authenticate_native("bob", "127.0.0.1", &SOURCE_SALT, &response);
 
-    accounts.set_password_expire("bob", "%", PasswordExpireSetting::Default);
     // Nobody has run `SET GLOBAL default_password_lifetime` yet: the account
     // never ages out, matching a cluster fresh out of the box.
     assert!(login().is_ok());
@@ -576,9 +602,19 @@ fn default_password_lifetime_ages_out_a_password_expire_default_account() {
 /// account's user or its authentication string.
 #[test]
 fn a_non_native_plugin_is_refused_rather_than_treated_as_passwordless() {
-    let file = AuthFile::new(&format!("bob\t%\tmysql_native_password\t{ABC_HASH}\n"));
-    let store = ConfiguredUserStore::load(file.path()).expect("strict auth file");
-    let accounts = store.accounts();
+    // The rows the capture above shows a real TiDB stores.
+    let sha2 = "$A$005$THISISACOMBINATIONOFINVALIDSALTANDPASSWORDTHATMUSTNEVERBRBEUSED";
+    let mut rows = vec![
+        bob_row(),
+        LoadedUser::new("nopw", "%", "mysql_native_password", ""),
+        LoadedUser::new("sock", "%", "auth_socket", ""),
+        LoadedUser::new("mapped", "%", "auth_socket", "osuser"),
+        LoadedUser::new("sha2", "%", "caching_sha2_password", sha2),
+    ];
+    for plugin in ["tidb_auth_token", "authentication_ldap_simple", "authentication_ldap_sasl"] {
+        rows.push(LoadedUser::new(plugin, "%", plugin, ""));
+    }
+    let store = store_of(rows.clone());
 
     // POSITIVE CONTROL: the native account this file provisions still logs
     // in with its password, and a genuinely passwordless native account
@@ -591,7 +627,6 @@ fn a_non_native_plugin_is_refused_rather_than_treated_as_passwordless() {
             .username(),
         "bob"
     );
-    assert!(accounts.create_user("nopw", "%", ""));
     assert!(store
         .authenticate_native("nopw", "127.0.0.1", &SOURCE_SALT, &[])
         .is_ok());
@@ -603,7 +638,6 @@ fn a_non_native_plugin_is_refused_rather_than_treated_as_passwordless() {
         "authentication_ldap_simple",
         "authentication_ldap_sasl",
     ] {
-        assert!(accounts.create_user_with_plugin(plugin, "%", "", plugin));
         for response in [&[][..], &right[..], plugin.as_bytes()] {
             assert_eq!(
                 store.authenticate_native(plugin, "127.0.0.1", &SOURCE_SALT, response),
@@ -616,8 +650,6 @@ fn a_non_native_plugin_is_refused_rather_than_treated_as_passwordless() {
     // `auth_socket`: only the peer's OS user named as the account's user, or
     // as its authentication string, passes -- which for an empty string Go
     // compares as is (the wire never answers with an empty OS user).
-    assert!(accounts.create_user_with_plugin("sock", "%", "", "auth_socket"));
-    assert!(accounts.create_user_with_plugin("mapped", "%", "osuser", "auth_socket"));
     for (user, response) in [
         ("sock", &right[..]),
         ("mapped", b"other"),
@@ -647,13 +679,16 @@ fn a_non_native_plugin_is_refused_rather_than_treated_as_passwordless() {
     // stored string with an empty response is Go's
     // passwordless success (its password arms are guarded by
     // `len(pwd) > 0 || len(authentication) > 0`).
-    let sha2 = "$A$005$THISISACOMBINATIONOFINVALIDSALTANDPASSWORDTHATMUSTNEVERBRBEUSED";
-    assert!(accounts.create_user_with_plugin("sha2", "%", sha2, "caching_sha2_password"));
     assert_eq!(
         store.authenticate_native("sha2", "127.0.0.1", &SOURCE_SALT, &right),
         Err(AuthenticationFailure::AccessDenied)
     );
-    assert!(accounts.set_auth_string_and_plugin("sha2", "%", "", "caching_sha2_password"));
+    for row in &mut rows {
+        if row.user == "sha2" {
+            row.authentication_string.clear();
+        }
+    }
+    reload(&store, rows);
     assert!(store
         .authenticate_native("sha2", "127.0.0.1", &SOURCE_SALT, &[])
         .is_ok());
@@ -661,19 +696,13 @@ fn a_non_native_plugin_is_refused_rather_than_treated_as_passwordless() {
 
 #[test]
 fn admission_policy_batch_secondary_native_password_is_verified() {
-    let registry = tidb_privilege::PrivilegeRegistry::default();
-    registry.create_user(
+    let users = store_of([LoadedUser::new(
         "rotation",
         "%",
+        "mysql_native_password",
         &tidb_privilege::encode_password("new"),
-    );
-    registry.merge_user_attributes(
-        "rotation",
-        "%",
-        serde_json::json!({"additional_password": ABC_HASH}),
-        false,
-    );
-    let users = ConfiguredUserStore::from_accounts(registry);
+    )
+    .with_user_attributes(&serde_json::json!({"additional_password": ABC_HASH}).to_string())]);
     assert!(users
         .authenticate_native(
             "rotation",
@@ -686,7 +715,6 @@ fn admission_policy_batch_secondary_native_password_is_verified() {
 
 #[test]
 fn admission_policy_batch_secondary_caching_sha2_password_is_verified() {
-    let registry = tidb_privilege::PrivilegeRegistry::default();
     let primary = tidb_privilege::encode_password_for_plugin(
         "caching_sha2_password",
         &tidb_privilege::PluginCredential::By("new"),
@@ -697,14 +725,8 @@ fn admission_policy_batch_secondary_caching_sha2_password_is_verified() {
         &tidb_privilege::PluginCredential::By("old"),
     )
     .unwrap();
-    registry.create_user_with_plugin("rotation", "%", &primary, "caching_sha2_password");
-    registry.merge_user_attributes(
-        "rotation",
-        "%",
-        serde_json::json!({"additional_password": secondary}),
-        false,
-    );
-    let users = ConfiguredUserStore::from_accounts(registry);
+    let users = store_of([LoadedUser::new("rotation", "%", "caching_sha2_password", &primary)
+        .with_user_attributes(&serde_json::json!({"additional_password": secondary}).to_string())]);
     assert!(users
         .authenticate(
             "rotation",
@@ -718,20 +740,18 @@ fn admission_policy_batch_secondary_caching_sha2_password_is_verified() {
 
 #[test]
 fn admission_policy_batch_rotation_guards_and_single_lockout_update() {
-    let registry = tidb_privilege::PrivilegeRegistry::default();
-    registry.create_user(
-        "rotation",
-        "%",
-        &tidb_privilege::encode_password("new"),
-    );
-    registry.merge_user_attributes(
-        "rotation",
-        "%",
-        serde_json::json!({"additional_password":ABC_HASH}),
-        false,
-    );
-    registry.set_password_locking_options("rotation", "%", Some(3), Some(1));
-    let users = ConfiguredUserStore::from_accounts(registry.clone());
+    let locking = r#""Password_locking": {"failed_login_attempts": 3, "password_lock_time_days": 1}"#;
+    let row = |authentication_string: &str, secondary: bool| {
+        let attributes = if secondary {
+            format!(r#"{{"additional_password": "{ABC_HASH}", {locking}}}"#)
+        } else {
+            format!("{{{locking}}}")
+        };
+        LoadedUser::new("rotation", "%", "mysql_native_password", authentication_string)
+            .with_user_attributes(&attributes)
+    };
+    let users = store_of([row(&tidb_privilege::encode_password("new"), true)]);
+    let registry = users.accounts();
     let login = |password: &[u8]| {
         users.authenticate_native(
             "rotation",
@@ -757,7 +777,7 @@ fn admission_policy_batch_rotation_guards_and_single_lockout_update() {
         0
     );
     assert!(login(b"new").is_ok());
-    registry.set_auth_string("rotation", "%", "*invalid");
+    reload(&users, [row("*invalid", true)]);
     assert!(login(b"abc").is_err());
     assert_eq!(
         registry
@@ -766,33 +786,42 @@ fn admission_policy_batch_rotation_guards_and_single_lockout_update() {
             .failed_login_count,
         0
     );
-    registry.set_auth_string("rotation", "%", &format!("*{}", "Z".repeat(40)));
+    reload(&users, [row(&format!("*{}", "Z".repeat(40)), true)]);
     assert!(login(b"abc").is_err());
-    registry.set_auth_string("rotation", "%", "");
+    reload(&users, [row("", true)]);
     assert!(users
         .authenticate_native("rotation", "127.0.0.1", &SOURCE_SALT, &[])
         .is_ok());
     assert!(login(b"abc").is_ok());
-    registry.merge_user_attributes("rotation", "%", serde_json::json!({}), true);
+    // `ALTER USER ... DISCARD OLD PASSWORD`.
+    reload(&users, [row("", false)]);
     assert!(login(b"abc").is_err());
 }
 
 #[test]
 fn admission_policy_batch_secondary_sm3_and_non_password_plugins() {
     use tidb_privilege::{encode_password_for_plugin, PluginCredential};
-    let registry = tidb_privilege::PrivilegeRegistry::default();
     let primary =
         encode_password_for_plugin("tidb_sm3_password", &PluginCredential::By("new")).unwrap();
     let secondary =
         encode_password_for_plugin("tidb_sm3_password", &PluginCredential::By("old")).unwrap();
-    registry.create_user_with_plugin("sm3", "%", &primary, "tidb_sm3_password");
-    registry.merge_user_attributes(
-        "sm3",
-        "%",
-        serde_json::json!({"additional_password":secondary}),
-        false,
-    );
-    let users = ConfiguredUserStore::from_accounts(registry.clone());
+    let sm3 = |authentication_string: &str| {
+        LoadedUser::new("sm3", "%", "tidb_sm3_password", authentication_string)
+            .with_user_attributes(&serde_json::json!({"additional_password": secondary}).to_string())
+    };
+    let plugins = [
+        "auth_socket",
+        "tidb_auth_token",
+        "authentication_ldap_simple",
+        "authentication_ldap_sasl",
+    ];
+    let with_plugins = |row: LoadedUser| {
+        std::iter::once(row).chain(plugins.iter().map(|plugin| {
+            LoadedUser::new(plugin, "%", plugin, "")
+                .with_user_attributes(&serde_json::json!({"additional_password": ABC_HASH}).to_string())
+        }))
+    };
+    let users = store_of(with_plugins(sm3(&primary)));
     assert!(users
         .authenticate(
             "sm3",
@@ -802,7 +831,7 @@ fn admission_policy_batch_secondary_sm3_and_non_password_plugins() {
             TransportKind::DirectTls
         )
         .is_ok());
-    registry.set_auth_string("sm3", "%", &"Z".repeat(70));
+    reload(&users, with_plugins(sm3(&"Z".repeat(70))));
     assert!(users
         .authenticate(
             "sm3",
@@ -812,7 +841,7 @@ fn admission_policy_batch_secondary_sm3_and_non_password_plugins() {
             TransportKind::DirectTls
         )
         .is_ok());
-    registry.set_auth_string("sm3", "%", "malformed-length");
+    reload(&users, with_plugins(sm3("malformed-length")));
     assert!(users
         .authenticate(
             "sm3",
@@ -822,19 +851,7 @@ fn admission_policy_batch_secondary_sm3_and_non_password_plugins() {
             TransportKind::DirectTls
         )
         .is_err());
-    for plugin in [
-        "auth_socket",
-        "tidb_auth_token",
-        "authentication_ldap_simple",
-        "authentication_ldap_sasl",
-    ] {
-        registry.create_user_with_plugin(plugin, "%", "", plugin);
-        registry.merge_user_attributes(
-            plugin,
-            "%",
-            serde_json::json!({"additional_password":ABC_HASH}),
-            false,
-        );
+    for plugin in plugins {
         assert!(users
             .authenticate_native(
                 plugin,
@@ -852,10 +869,11 @@ fn admission_policy_batch_secondary_sm3_and_non_password_plugins() {
 /// counts toward `FAILED_LOGIN_ATTEMPTS`.
 #[test]
 fn a_locked_account_compares_the_password_first() {
-    let store =
-        ConfiguredUserStore::parse(&format!("alice\t%\tmysql_native_password\t{ABC_HASH}\n"))
-            .expect("catalog");
-    assert!(store.accounts().set_locked("alice", "%", true));
+    // `CREATE USER alice ... ACCOUNT LOCK`.
+    let store = store_of([LoadedUser {
+        account_locked: true,
+        ..LoadedUser::new("alice", "%", "mysql_native_password", ABC_HASH)
+    }]);
     let right = scramble(b"abc", &SOURCE_SALT);
     let wrong = scramble(b"abd", &SOURCE_SALT);
     assert_eq!(

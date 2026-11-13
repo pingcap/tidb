@@ -31,7 +31,8 @@ use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_server::{serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit, ConnectionReport, ConnectionTracker, QueryResult, QuerySession, QuerySessionFactory, SessionContext};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_session::domain::peer_address::PeerAddress;
-use tidb_privilege::PrivilegeRegistry;
+use tidb_privilege::load::registry_from_user_rows;
+use tidb_privilege::loaded::LoadedUser;
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;
@@ -130,8 +131,7 @@ fn login(users: ConfiguredUserStore, user: &str) -> (Vec<u8>, ConnectionReport, 
 
 #[test]
 fn the_peer_os_user_logs_in_as_its_own_account() {
-    let accounts = PrivilegeRegistry::default();
-    assert!(accounts.create_user_with_plugin(&os_user(), "%", "", "auth_socket"));
+    let accounts = registry_from_user_rows([LoadedUser::new(&os_user(), "%", "auth_socket", "")]);
     let (reply, report, sessions) = login(ConfiguredUserStore::from_accounts(accounts), &os_user());
     assert_eq!(reply[0], 0, "no auth switch, straight to OK: {reply:?}");
     assert_eq!(report.exit, ConnectionExit::Quit);
@@ -140,9 +140,10 @@ fn the_peer_os_user_logs_in_as_its_own_account() {
 
 #[test]
 fn the_authentication_string_maps_an_account_to_an_os_user() {
-    let accounts = PrivilegeRegistry::default();
-    assert!(accounts.create_user_with_plugin("mapped", "%", &os_user(), "auth_socket"));
-    assert!(accounts.create_user_with_plugin("other", "%", "nobody-here", "auth_socket"));
+    let accounts = registry_from_user_rows([
+        LoadedUser::new("mapped", "%", "auth_socket", &os_user()),
+        LoadedUser::new("other", "%", "auth_socket", "nobody-here"),
+    ]);
     let (reply, report, _) = login(
         ConfiguredUserStore::from_accounts(accounts.clone()),
         "mapped",

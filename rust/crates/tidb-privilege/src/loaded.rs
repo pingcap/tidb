@@ -16,7 +16,7 @@
 //! records.
 
 /// One `mysql.user` row, in the terms this node's account table needs.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct LoadedUser {
     /// `Host`, the account's host pattern.
     pub host: String,
@@ -46,6 +46,41 @@ pub struct LoadedUser {
     pub user_attributes: Option<String>,
     /// Printed names of the global privileges whose column reads `Y`.
     pub privileges: Vec<&'static str>,
+}
+
+impl LoadedUser {
+    /// The row `CREATE USER user@host IDENTIFIED WITH plugin AS
+    /// authentication_string` writes, every other column at its default.
+    #[must_use]
+    pub fn new(user: &str, host: &str, plugin: &str, authentication_string: &str) -> Self {
+        Self {
+            user: user.to_owned(),
+            host: host.to_owned(),
+            plugin: plugin.to_owned(),
+            authentication_string: authentication_string.to_owned(),
+            ..Self::default()
+        }
+    }
+
+    /// The row with `User_attributes` set, its `Password_locking` decoded as
+    /// the loader decodes it.
+    ///
+    /// # Panics
+    /// The attributes are not JSON.
+    #[must_use]
+    pub fn with_user_attributes(mut self, attributes: &str) -> Self {
+        self.password_locking = crate::account_policy::PasswordLocking::from_attributes(Some(attributes))
+            .expect("User_attributes is JSON");
+        self.user_attributes = Some(attributes.to_owned());
+        self
+    }
+
+    /// The row with `Password_last_changed` at `unix_seconds`.
+    #[must_use]
+    pub fn with_password_last_changed(mut self, unix_seconds: i64) -> Self {
+        self.password_last_changed = Some(crate::password_lock::password_change_timestamp(unix_seconds));
+        self
+    }
 }
 
 /// One `mysql.db` row: a database-scoped grant.

@@ -259,7 +259,7 @@ pub(super) fn lockout(
 }
 
 /// UTC storage representation of the account owner's password-change clock.
-pub(super) fn password_change_timestamp(epoch: i64) -> tidb_datatype::Time {
+pub(crate) fn password_change_timestamp(epoch: i64) -> tidb_datatype::Time {
     use chrono::TimeZone;
     let instant = chrono::Utc
         .timestamp_opt(epoch, 0)

@@ -26,7 +26,8 @@ use std::sync::Arc;
 use tidb_protocol::{PacketReader, PacketWriter, DEFAULT_MAX_ALLOWED_PACKET};
 use tidb_server::{serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit, ConnectionTracker, QueryResult, QuerySession, QuerySessionFactory, SessionContext};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
-use tidb_privilege::{PasswordExpireSetting, PrivilegeRegistry};
+use tidb_privilege::load::registry_from_user_rows;
+use tidb_privilege::loaded::LoadedUser;
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;
@@ -164,10 +165,12 @@ fn a_migrated_session_logs_in_with_its_session_token_like_go() {
     tidb_sessionstates::set_key_path(key_path.to_str().unwrap());
     tidb_sessionstates::reload_signing_cert();
 
-    let accounts = PrivilegeRegistry::default();
-    accounts.create_user_with_plugin("auth_session_token", "%", "", NATIVE);
-    accounts.create_user_with_plugin("another_user", "%", "", NATIVE);
-    let users = ConfiguredUserStore::from_accounts(accounts);
+    let token_user = LoadedUser::new("auth_session_token", "%", NATIVE, "");
+    let another_user = LoadedUser::new("another_user", "%", NATIVE, "");
+    let users = ConfiguredUserStore::from_accounts(registry_from_user_rows([
+        token_user.clone(),
+        another_user.clone(),
+    ]));
     let token = tidb_stringutil::go_json_marshal(
         &tidb_sessionstates::create_session_token("auth_session_token").unwrap(),
     )
@@ -178,9 +181,11 @@ fn a_migrated_session_logs_in_with_its_session_token_like_go() {
     assert_eq!(reply[0], 0, "the token logs in: {reply:?}");
 
     // login succeeds even if the password expires now
-    assert!(users
-        .accounts()
-        .set_password_expire("auth_session_token", "%", PasswordExpireSetting::Now));
+    // `ALTER USER auth_session_token PASSWORD EXPIRE`, reloaded.
+    users.accounts().replace_from(&registry_from_user_rows([
+        LoadedUser { password_expired: true, ..token_user },
+        another_user,
+    ]));
     let (reply, exit) = login(&users, "auth_session_token", NATIVE, &[]);
     assert_eq!(error_code(&reply), 1862, "Your password has expired");
     assert_eq!(exit, ConnectionExit::AuthenticationRejected);

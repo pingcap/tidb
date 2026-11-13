@@ -66,6 +66,14 @@ pub struct LoadedRegistry {
 /// reached differently. Empty usernames are retained like any other account:
 /// Go indexes them under the empty username and matches their host patterns.
 #[must_use]
+/// Go `MySQLPrivilege.LoadAll` over a `mysql.user` holding exactly `rows`
+/// (and no grants).
+#[must_use]
+pub fn registry_from_user_rows(rows: impl IntoIterator<Item = LoadedUser>) -> PrivilegeRegistry {
+    registry_from_cluster(&ClusterPrivileges { users: rows.into_iter().collect(), ..ClusterPrivileges::default() })
+        .registry
+}
+
 pub fn registry_from_cluster(loaded: &ClusterPrivileges) -> LoadedRegistry {
     let registry = PrivilegeRegistry::bootstrapped_from(Vec::new());
     let mut skipped = Vec::new();

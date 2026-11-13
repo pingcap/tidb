@@ -37,7 +37,9 @@ use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_parser::auth::hash_password_with_salt_bytes;
 use tidb_server::{serve_mysql_connection, AuthSwitchRequest, ConfiguredUserStore, ConnectionCancellation, ConnectionExit, ConnectionTracker, QueryResult, QuerySession, QuerySessionFactory, SessionContext};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
-use tidb_privilege::{encode_password_for_plugin, PluginCredential, PrivilegeRegistry};
+use tidb_privilege::load::registry_from_user_rows;
+use tidb_privilege::loaded::LoadedUser;
+use tidb_privilege::{encode_password_for_plugin, PluginCredential};
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;
@@ -108,19 +110,15 @@ fn handshake_response(user: &str, plugin: &str, auth: &[u8]) -> Vec<u8> {
 /// One account on `plugin`, whose stored `authentication_string` is the one
 /// `CREATE USER ... IDENTIFIED WITH <plugin> BY '<password>'` writes.
 fn store_with(user: &str, plugin: &str, password: Option<&str>) -> ConfiguredUserStore {
-    let accounts = PrivilegeRegistry::default();
     let credential = password.map_or(PluginCredential::None, PluginCredential::By);
     let stored = encode_password_for_plugin(plugin, &credential).expect("a valid credential");
-    accounts.create_user_with_plugin(user, "%", &stored, plugin);
-    ConfiguredUserStore::from_accounts(accounts)
+    ConfiguredUserStore::from_accounts(registry_from_user_rows([LoadedUser::new(user, "%", plugin, &stored)]))
 }
 
 fn store_with_password_bytes(user: &str, plugin: &str, password: &[u8]) -> ConfiguredUserStore {
-    let accounts = PrivilegeRegistry::default();
     let stored = hash_password_with_salt_bytes(password, b"source-compatible-20", plugin);
     let stored = String::from_utf8(stored).expect("authentication strings are ASCII");
-    accounts.create_user_with_plugin(user, "%", &stored, plugin);
-    ConfiguredUserStore::from_accounts(accounts)
+    ConfiguredUserStore::from_accounts(registry_from_user_rows([LoadedUser::new(user, "%", plugin, &stored)]))
 }
 
 struct Wire {
