@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 19,
-    "open": 4,
-    "partial": 15
+    "open": 3,
+    "partial": 16
   },
   "findings": [
     {
@@ -74,9 +74,9 @@
     },
     {
       "id": "A02",
-      "status": "open",
+      "status": "partial",
       "group": "Privilege and account policy owners",
-      "finding": "The account statements (CREATE / ALTER / DROP / RENAME USER and ROLE, GRANT / REVOKE ROLE, SET PASSWORD, SET DEFAULT ROLE, the password reuse, expiry and locking options) change the in-memory `PrivilegeRegistry` first and then mirror it into `mysql.*` (`simple/account_tables.rs`'s `mirror_*` writers over the statement's system session), and a new password is judged against the registry's copy of the account's history, refreshed by scanning `mysql.password_history` (`simple/account.rs` `reload_password_history`, `PrivilegeRegistry::record_password_history`). Go's executors write the tables through the statement's SQL executor (`executeCreateUser`'s INSERT, `checkPasswordReusePolicy`'s `getUserPasswordLimit` / `passwordVerification` / `deleteHistoricalData` / `addHistoricalData` SQL), and the privilege cache is only ever loaded from them (`NotifyUpdatePrivilege` -> `MySQLPrivilege.LoadAll`), which holds no password history at all",
+      "finding": "The account statements are Go's executors over the statement's system session: CREATE USER / ROLE (`executeCreateUser`), ALTER USER, SET PASSWORD, DROP / RENAME USER, GRANT / REVOKE of privileges and roles and SET DEFAULT ROLE write `mysql.*` through Go's SQL, check accounts through `userExists` / `isRole`, judge a new password by `checkPasswordReusePolicy`'s SQL over `mysql.password_history`, and read the live privilege cache, which COMMIT reloads from the tables (`NotifyUpdatePrivilege`); SHOW CREATE USER reads `mysql.user` and `mysql.global_priv`. What remains: the test fixtures and the `--auth-file` boot seeding (`cluster_account_seam::seed_cluster_accounts`) provision accounts by mutating the `PrivilegeRegistry` and writing its image into the tables (`cluster_account_write::plan_account_write`), where Go provisions through SQL, and the registry still loads `mysql.password_history`, which Go's `MySQLPrivilege` does not hold",
       "go_owner": "`pkg/executor/simple.go` (the account executors, `checkPasswordReusePolicy`), `pkg/privilege/privileges/cache.go`"
     },
     {

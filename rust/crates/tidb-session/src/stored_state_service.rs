@@ -63,10 +63,8 @@ impl Session {
     /// `GrantExec`, `RevokeExec`) over the domain's privilege tables: the
     /// executor takes a system session, runs its SQL in one pessimistic
     /// transaction against the stored accounts, commits, then
-    /// `NotifyUpdatePrivilege`. `Compile` has checked the statement's
-    /// privileges against the live cache before this swaps the stored
-    /// accounts in, and the executor's own checks read the live cache
-    /// (`account_statement_privilege_cache`). Without domain services (an
+    /// `NotifyUpdatePrivilege`. The executor's checks and reads go to the live privilege cache,
+    /// as Go's `privilege.GetPrivilegeManager` does. Without domain services (an
     /// in-process session) the executor runs on the session's own registry.
     pub(crate) fn with_account_service<T>(
         &mut self,
@@ -79,23 +77,14 @@ impl Session {
         else {
             return run(self);
         };
-        let scratch = service.load_accounts()?;
         let mut system = service.system_session()?;
         system.execute("BEGIN PESSIMISTIC")?;
-        let live = self.swap_privileges(scratch);
-        self.account_statement_privilege_cache = live.clone();
         self.account_sql = Some(system);
         let applied = run(self);
         let mut system = self
             .account_sql
             .take()
             .expect("the system session stays installed for the statement");
-        self.account_statement_privilege_cache = None;
-        // Restoring the live table is unconditional: a statement that failed
-        // must not leave the connection reading the scratch copy.
-        if let Some(live) = live {
-            self.swap_privileges(live);
-        }
         let output = match applied {
             Ok(output) => output,
             Err(error) => {

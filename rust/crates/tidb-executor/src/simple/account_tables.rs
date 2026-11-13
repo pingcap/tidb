@@ -39,9 +39,6 @@ pub trait AccountSession: crate::stmt_ctx_build::ResetContextOfStmt {
     /// The privilege cache the statement reads (Go `MySQLPrivilege`), when
     /// the session has one.
     fn privilege_registry(&self) -> Option<&tidb_privilege::PrivilegeRegistry>;
-    /// The live cache while an account statement runs against stored
-    /// accounts: Go's `FindEdge` reads the cache, not the tables.
-    fn account_statement_privilege_cache(&self) -> Option<&tidb_privilege::PrivilegeRegistry>;
     /// Whether the statement runs on the system session Go's executor takes
     /// (`GetSysSession`), inside its own transaction.
     fn in_account_statement(&self) -> bool;

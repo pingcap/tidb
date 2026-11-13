@@ -400,10 +400,6 @@ pub struct Session {
     /// The system session an account statement's executor runs its
     /// `mysql.*` SQL on while the statement runs (Go `GetSysSession`).
     account_sql: Option<Box<dyn crate::user_table::AccountSqlSession>>,
-    /// The live privilege cache while an account statement runs against a
-    /// scratch registry read from `mysql.*`: Go's privilege manager, which
-    /// `FindEdge` consults, is the cache, not the tables.
-    account_statement_privilege_cache: Option<tidb_privilege::PrivilegeRegistry>,
     /// The statement its node compiled ahead of the executor that runs it
     /// ([`Session::compile_statement`]), which that executor's own compile
     /// takes instead of building and checking the plan again.
@@ -966,7 +962,6 @@ impl Session {
             mem_db_footprint: Arc::default(),
             catalog,
             account_sql: None,
-            account_statement_privilege_cache: None,
             precompiled: None,
             domain_services: None,
             privilege_change_notifier: None,
@@ -3964,9 +3959,7 @@ impl tidb_executor::sessionctx::PrivilegeManager for Session {
     /// Go `checker.FindEdge` reads the privilege cache: a role edge written
     /// into `mysql.role_edges` directly counts only after FLUSH PRIVILEGES.
     fn find_edge(&self, role: &(String, String), user: &(String, String)) -> bool {
-        self.account_statement_privilege_cache
-            .as_ref()
-            .or(self.privileges.as_ref())
+        self.privileges.as_ref()
             .is_some_and(|cache| cache.find_role(user, role))
     }
 }

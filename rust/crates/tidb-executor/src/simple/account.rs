@@ -1012,8 +1012,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 // Go `checker.FindEdge` reads the privilege cache: a role edge
                 // written into `mysql.role_edges` directly counts only after
                 // FLUSH PRIVILEGES (asked of the Go server: 3530 before it).
-                let cache = self.account_statement_privilege_cache()
-                    .unwrap_or(registry);
+                let cache = registry;
                 if cache.find_role(account, &role) {
                     Ok(role)
                 } else {

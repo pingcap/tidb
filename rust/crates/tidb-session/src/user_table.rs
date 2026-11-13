@@ -149,9 +149,6 @@ impl tidb_executor::simple::account_tables::AccountSession for Session {
         self.privileges.as_ref()
     }
 
-    fn account_statement_privilege_cache(&self) -> Option<&tidb_privilege::PrivilegeRegistry> {
-        self.account_statement_privilege_cache.as_ref()
-    }
 
     fn in_account_statement(&self) -> bool {
         self.account_sql.is_some()
