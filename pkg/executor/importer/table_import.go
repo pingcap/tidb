@@ -427,6 +427,9 @@ func (e *LoadDataController) getKVEncoder(logger *zap.Logger, chunk *Chunk, encT
 		Path:   chunk.Path,
 		Table:  encTable,
 		Logger: log.Logger{Logger: logger.With(zap.String("path", chunk.Path))},
+		// Global-sort writers persist key/value only. Local-sort duplicate
+		// detection still requires the auxiliary source RowID.
+		SkipEncodeRowID: e.Plan != nil && e.Plan.IsGlobalSort(),
 	}
 	return NewTableKVEncoder(cfg, e)
 }

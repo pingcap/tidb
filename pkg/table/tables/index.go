@@ -209,9 +209,14 @@ func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, u
 // 2. (i1, [m1,m2], i2, ...) ==> [(i1, m1, i2, ...), (i1, m2, i2, ...)]
 // 3. (i1, null, i2, ...) ==> [(i1, null, i2, ...)]
 // 4. (i1, [], i2, ...) ==> nothing.
-func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
+func (c *index) getIndexedValue(
+	indexedValues []types.Datum,
+	singleIndexedValue *[1][]types.Datum,
+) [][]types.Datum {
 	if !c.idxInfo.MVIndex {
-		return [][]types.Datum{indexedValues}
+		intest.Assert(singleIndexedValue != nil)
+		singleIndexedValue[0] = indexedValues
+		return singleIndexedValue[:]
 	}
 
 	vals := make([][]types.Datum, 0, 16)
@@ -300,7 +305,8 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 	if c.Meta().Unique {
 		txn.CacheTableInfo(c.phyTblID, c.tblInfo)
 	}
-	indexedValues := c.getIndexedValue(indexedValue)
+	var singleIndexedValue [1][]types.Datum
+	indexedValues := c.getIndexedValue(indexedValue, &singleIndexedValue)
 	ctx := opt.Ctx()
 	if ctx != nil {
 		var r tracing.Region
@@ -375,10 +381,23 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 
 		// save the key buffer to reuse.
 		writeBufs.IndexKeyBuf = key
-		idxVal, err := c.GenIndexValue(ec, loc, distinct, untouched, value, h, handleRestoreData, nil)
+		idxVal, err := c.GenIndexValue(
+			ec,
+			loc,
+			distinct,
+			untouched,
+			value,
+			h,
+			handleRestoreData,
+			writeBufs.IndexValueBuf,
+		)
 		if err != nil {
 			return nil, err
 		}
+		// The Lightning MemBuf and TiDB transaction buffers copy index values
+		// when Set is called, so this scratch buffer can be reused by the next
+		// index entry after the current iteration finishes.
+		writeBufs.IndexValueBuf = idxVal
 
 		ignoreAssertion := opt.IgnoreAssertion() || c.idxInfo.State != model.StatePublic
 
@@ -568,7 +587,8 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 
 // Delete removes the entry for handle h and indexedValues from KV index.
 func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) error {
-	indexedValues := c.getIndexedValue(indexedValue)
+	var singleIndexedValue [1][]types.Datum
+	indexedValues := c.getIndexedValue(indexedValue, &singleIndexedValue)
 	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	for _, value := range indexedValues {
@@ -681,7 +701,7 @@ func (c *index) GenIndexKVIter(ec errctx.Context, loc *time.Location, indexedVal
 	h kv.Handle, handleRestoreData []types.Datum) table.IndexKVGenerator {
 	var mvIndexValues [][]types.Datum
 	if c.Meta().MVIndex {
-		mvIndexValues = c.getIndexedValue(indexedValue)
+		mvIndexValues = c.getIndexedValue(indexedValue, nil)
 		return table.NewMultiValueIndexKVGenerator(c, ec, loc, h, handleRestoreData, mvIndexValues)
 	}
 	return table.NewPlainIndexKVGenerator(c, ec, loc, h, handleRestoreData, indexedValue)
@@ -713,7 +733,8 @@ func GenTempIdxKeyByState(indexInfo *model.IndexInfo, indexKey kv.Key) (key, tem
 }
 
 func (c *index) Exist(ec errctx.Context, loc *time.Location, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) (bool, kv.Handle, error) {
-	indexedValues := c.getIndexedValue(indexedValue)
+	var singleIndexedValue [1][]types.Datum
+	indexedValues := c.getIndexedValue(indexedValue, &singleIndexedValue)
 	for _, val := range indexedValues {
 		key, distinct, err := c.GenIndexKey(ec, loc, val, h, nil)
 		if err != nil {
