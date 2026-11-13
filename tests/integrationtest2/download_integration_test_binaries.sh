@@ -39,10 +39,10 @@ tiflash_sha1=$(curl "$tiflash_sha1_url")
 ticdc_sha1=$(curl "$ticdc_sha1_url")
 
 # download pd / tikv / tiflash binary build from tibuid multibranch pipeline
-pd_download_url="${file_server_url}/download/builds/pingcap/pd/${pd_sha1}/centos7/pd-server.tar.gz"
-tikv_download_url="${file_server_url}/download/builds/pingcap/tikv/${tikv_sha1}/centos7/tikv-server.tar.gz"
-tiflash_download_url="${file_server_url}/download/builds/pingcap/tiflash/${branch}/${tiflash_sha1}/centos7/tiflash.tar.gz"
-ticdc_download_url="${file_server_url}/download/builds/pingcap/ticdc/${ticdc_sha1}/centos7/ticdc-linux-amd64.tar.gz"
+pd_download_url="${file_server_url}/download/builds/pingcap/pd/${branch}/${pd_sha1}/linux-amd64/pd-server.tar.gz"
+tikv_download_url="${file_server_url}/download/builds/pingcap/tikv/${branch}/${tikv_sha1}/linux-amd64/tikv-server.tar.gz"
+tiflash_download_url="${file_server_url}/download/builds/pingcap/tiflash/${branch}/${tiflash_sha1}/linux-amd64/tiflash.tar.gz"
+ticdc_download_url="${file_server_url}/download/builds/pingcap/cdc/${branch}/${ticdc_sha1}/linux-amd64/cdc.tar.gz"
 
 set -o nounset
 
@@ -71,15 +71,11 @@ function main() {
 
     #PD server
     download "$pd_download_url" "pd-server.tar.gz" "tmp/pd-server.tar.gz"
-    # tar -xzf tmp/pd-server.tar.gz -C third_bin --wildcards 'bin/*'
-    tar -xzf tmp/pd-server.tar.gz -C third_bin
-    mv third_bin/bin/* third_bin/
+    tar -xzf tmp/pd-server.tar.gz -C third_bin --wildcards 'pd-server'
 
     #TiKV server
     download "$tikv_download_url" "tikv-server.tar.gz" "tmp/tikv-server.tar.gz"
-    # tar -xzf tmp/tikv-server.tar.gz -C third_bin --wildcards 'bin/*'
-    tar -xzf tmp/tikv-server.tar.gz -C third_bin
-    mv third_bin/bin/* third_bin/
+    tar -xzf tmp/tikv-server.tar.gz -C third_bin --wildcards 'tikv-server'
 
     #TiFlash
     download "$tiflash_download_url" "tiflash.tar.gz" "tmp/tiflash.tar.gz"
@@ -89,9 +85,8 @@ function main() {
 
     #TiCDC
     download "$ticdc_download_url" "ticdc-linux-amd64.tar.gz" "tmp/ticdc-linux-amd64.tar.gz"
-    # tar -xzf tmp/ticdc-linux-amd64.tar.gz -C third_bin --wildcards '*/bin/*'
-    tar -xzf tmp/ticdc-linux-amd64.tar.gz -C third_bin
-    mv third_bin/ticdc-linux-amd64/bin/* third_bin/
+    tar -xzf tmp/ticdc-linux-amd64.tar.gz -C third_bin --wildcards 'cdc'
+
 
     chmod +x third_bin/*
     rm -rf tmp
