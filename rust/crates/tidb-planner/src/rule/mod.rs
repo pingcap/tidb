@@ -507,11 +507,12 @@ pub fn logical_optimize(
     flag: u64,
     plan: LogicalPlan,
 ) -> Result<OptimizeOutcome, (LogicalPlan, PlanError)> {
-    run_rule_list(ctx, flag, plan, &OPT_RULE_LIST, &OPT_RULE_FLAGS)
+    run_rule_list(ctx, flag, plan, &OPT_RULE_LIST, &OPT_RULE_FLAGS, true)
 }
 
-/// Go `normalizeOptimize(ctx, flag, logic)` (`optimizer.go:1076`'s sibling),
-/// which walks `normalizeRuleList` instead.
+/// Go `normalizeOptimize(ctx, flag, logic)` (`optimizer.go:1058`), which
+/// walks `normalizeRuleList` once, without `logicalOptimize`'s interaction
+/// reruns.
 ///
 /// # Errors
 ///
@@ -522,7 +523,7 @@ pub fn normalize_optimize(
     flag: u64,
     plan: LogicalPlan,
 ) -> Result<OptimizeOutcome, (LogicalPlan, PlanError)> {
-    run_rule_list(ctx, flag, plan, &NORMALIZE_RULE_LIST, &NORMALIZE_RULE_FLAGS)
+    run_rule_list(ctx, flag, plan, &NORMALIZE_RULE_LIST, &NORMALIZE_RULE_FLAGS, false)
 }
 
 #[allow(clippy::result_large_err)]
@@ -532,6 +533,7 @@ fn run_rule_list(
     mut plan: LogicalPlan,
     rules: &[RuleId; 35],
     rule_flags: &[u64; 35],
+    interactions: bool,
 ) -> Result<OptimizeOutcome, (LogicalPlan, PlanError)> {
     let mut applied = Vec::new();
     let mut skipped = Vec::new();
@@ -551,7 +553,7 @@ fn run_rule_list(
         plan = next;
         applied.push(rule);
         // Go: compute interaction rules that should be optimized again.
-        if let Some(interaction) = opt_interaction_rule_list(rule) {
+        if let Some(interaction) = opt_interaction_rule_list(rule).filter(|_| interactions) {
             if plan_changed && is_logical_rule_disabled(&ctx.disabled_rules, interaction) {
                 again.push(interaction);
             }

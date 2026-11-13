@@ -299,6 +299,9 @@ impl crate::optimize::OptimizeContext for StmtContext {
     fn allow_distinct_agg_push_down(&self) -> bool {
         StmtContext::allow_distinct_agg_push_down(self)
     }
+    fn enable_cascades_planner(&self) -> bool {
+        StmtContext::enable_cascades_planner(self)
+    }
     fn enable_inl_join_inner_multi_pattern(&self) -> bool {
         StmtContext::enable_inl_join_inner_multi_pattern(self)
     }

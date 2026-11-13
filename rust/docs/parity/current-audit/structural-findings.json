@@ -1,9 +1,9 @@
 {
-  "date": "2026-11-09",
+  "date": "2026-11-13",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 19,
-    "open": 5,
+    "unresolved": 18,
+    "open": 4,
     "partial": 14
   },
   "findings": [
@@ -55,7 +55,7 @@
       "id": "P01",
       "status": "open",
       "group": "DML and executor handoff",
-      "finding": "The physical operators do not carry Go's fields, so a Go method that reads them has nothing to port onto (`PhysicalIndexScan` had no `Table` or `Index` until E15 M2, so its `ToPB` was never ported, nor `PhysicalIndexLookUpReader` its `ExtraHandleCol` until M3; audit: `rust/scripts/physicalop-field-audit.py`). Missing still: `PhysicalIndexScan`'s `RangeInfo` (Go never sets its `GenExprs` and never reads `DoubleRead` or `ConstColsByCond`, so they need no port); `PhysicalTableScan`'s `HandleIdx`, `RangeInfo` (Go never sets its `SampleInfo`; TABLESAMPLE is `PhysicalTableSample`); `PhysicalIndexMergeReader`'s `PartialPlans`; `PhysicalLock`'s `Lock` (held as its lock type and wait seconds); `PhysicalTableReader`'s `TableScanAndPartitionInfos`; `PhysicalMergeJoin`'s `CompareFuncs`; `PhysicalCTE`'s `CTE` and `RecurPlan`; `PhysicalMemTable`'s and `PhysicalTableSample`'s table; and the operators `PhysicalCTESink`, `PhysicalCTESource`, `PhysicalIndexHashJoin` and `PhysicalIndexMergeJoin` have no struct. A scan's `UsedStatsInfo` is Go's pointer into the statement's used-stats map, which EXPLAIN reads by the scan's physical table id. Rust-only specs stand in for several (`tikv_pushdown` and `covering_ranges`, which E15's scan-request lowering reads, and the point plans' and index join's `range_rebuild`)",
+      "finding": "The physical operators do not carry Go's fields, so a Go method that reads them has nothing to port onto (`PhysicalIndexScan` had no `Table` or `Index` until E15 M2, so its `ToPB` was never ported, nor `PhysicalIndexLookUpReader` its `ExtraHandleCol` until M3; audit: `rust/scripts/physicalop-field-audit.py`). Missing still: `PhysicalTableScan`'s `HandleIdx`; `PhysicalIndexMergeReader`'s `PartialPlans` (the flattened partial trees are copies, where Go's share the operators); `PhysicalCTE`'s `CTE`; `PhysicalMemTable`'s and `PhysicalTableSample`'s table; and the operators `PhysicalCTESink`, `PhysicalCTESource`, `PhysicalIndexHashJoin` and `PhysicalIndexMergeJoin` have no struct (Go never sets `PhysicalIndexScan.GenExprs` or `PhysicalTableScan.SampleInfo` and never reads `DoubleRead` or `ConstColsByCond`, so they need no port). A scan's `UsedStatsInfo` is Go's pointer into the statement's used-stats map, which EXPLAIN reads by the scan's physical table id. Rust-only specs stand in for several (`tikv_pushdown` and `covering_ranges`, which E15's scan-request lowering reads, and the point plans' `range_rebuild`)",
       "go_owner": "`pkg/planner/core/operator/physicalop` (the operator structs)"
     },
     {
@@ -102,13 +102,6 @@
       "go_owner": "`pkg/planner/core` (MPP fragments), `pkg/executor/mpp_gather.go`, `pkg/store/copr/mpp.go`, `pkg/store/copr/batch_coprocessor.go`"
     },
     {
-      "id": "Q01",
-      "status": "open",
-      "group": "Expanded subsystem ownership review",
-      "finding": "Go's `doOptimize` takes `CascadesOptimize` (memo exploration and implementation, `pkg/planner/cascades`) when `tidb_enable_cascades_planner` is ON (default OFF, experimental); this port has only `VolcanoOptimize`, so the variable is accepted and changes nothing",
-      "go_owner": "`pkg/planner/cascades`"
-    },
-    {
       "id": "X01",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
@@ -145,7 +138,7 @@
       "go_owner": "`pkg/util/sqlexec`, `pkg/session` (`withRestrictedSQLExecutor`)"
     }
   ],
-  "unresolved": 19,
-  "open": 5,
+  "unresolved": 18,
+  "open": 4,
   "partial": 14
 }

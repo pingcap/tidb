@@ -1610,7 +1610,44 @@ pub fn find_best_task(
             return Ok(cached.copy());
         }
     }
-    let mut best = find_best_task_uncached(plan, prop, ctx)?;
+    let best = find_best_task_uncached(plan, prop, ctx, None)?;
+    let best = finish_best_task(best, prop, ctx);
+    if memoized {
+        ctx.task_map.insert(key, best.copy());
+    }
+    Ok(best)
+}
+
+/// A group expression of the cascades memo whose operator is being
+/// implemented: Go's `GroupExpression` as `findBestTask`'s `super`, whose
+/// children are its input groups.
+#[derive(Clone, Copy)]
+pub(crate) struct GroupExpressionRef<'m> {
+    memo: &'m crate::cascades::memo::Memo<'m>,
+    ge: crate::cascades::memo::GeId,
+}
+
+/// Go `physicalop.FindBestTask(ge, prop)` for a memo group expression: the
+/// operator's search with each child task taken from its input group
+/// (`impl.ImplementGroupAndCost`), and no operator task map -- the group
+/// memoizes its best task instead ("only get the physical cache from
+/// logicalOp under volcano mode").
+///
+/// # Errors
+///
+/// The physical search's failure.
+pub(crate) fn find_best_task_4_group_expression(
+    memo: &crate::cascades::memo::Memo<'_>,
+    ge: crate::cascades::memo::GeId,
+    prop: &PhysicalProperty,
+    ctx: &mut DispatchContext<'_>,
+) -> Result<Task, PlanError> {
+    let plan = memo.ge(ge).get_wrapped_logical_plan();
+    let best = find_best_task_uncached(plan, prop, ctx, Some(GroupExpressionRef { memo, ge }))?;
+    Ok(finish_best_task(best, prop, ctx))
+}
+
+fn finish_best_task(mut best: Task, prop: &PhysicalProperty, ctx: &DispatchContext<'_>) -> Task {
     // `IndexJoinProp` is not merely a costing hint: Go's selected inner task
     // must return `IndexJoinInfo` from the access path that accepted the
     // runtime probe. A structurally valid task that lost this bottom-up
@@ -1623,10 +1660,7 @@ pub fn find_best_task(
     if let Some(plan) = best.plan_mut() {
         apply_reader_cost_side_effects(plan, ctx.enable_paging);
     }
-    if memoized {
-        ctx.task_map.insert(key, best.copy());
-    }
-    Ok(best)
+    best
 }
 
 /// Go `physicalop.FindBestTask` routes these operators to their own
@@ -1816,6 +1850,7 @@ fn find_best_task_uncached(
     plan: &LogicalPlan,
     prop: &PhysicalProperty,
     ctx: &mut DispatchContext<'_>,
+    ge: Option<GroupExpressionRef<'_>>,
 ) -> Result<Task, PlanError> {
     match plan {
         LogicalPlan::TableDual(op) => {
@@ -1947,12 +1982,12 @@ fn find_best_task_uncached(
     };
 
     let (best_task, preferred) =
-        enumerate_physical_plans_4_task(plan, &plans_fits_prop, prop, false, ctx)?;
+        enumerate_physical_plans_4_task(plan, &plans_fits_prop, prop, false, ctx, ge)?;
     if preferred && !best_task.invalid() {
         return Ok(best_task);
     }
     let (cur_task, preferred) =
-        enumerate_physical_plans_4_task(plan, &plans_need_enforce, prop, true, ctx)?;
+        enumerate_physical_plans_4_task(plan, &plans_need_enforce, prop, true, ctx, ge)?;
     if (preferred && !cur_task.invalid()) || compare_task_cost(ctx.coster, &cur_task, &best_task)? {
         return Ok(cur_task);
     }
@@ -5618,6 +5653,7 @@ fn enumerate_physical_plans_4_task(
     prop: &PhysicalProperty,
     add_enforcer: bool,
     ctx: &mut DispatchContext<'_>,
+    ge: Option<GroupExpressionRef<'_>>,
 ) -> Result<(Task, bool), PlanError> {
     if physical_plans_slice.is_empty() {
         return Ok((Task::invalid_task(), false));
@@ -5630,14 +5666,32 @@ fn enumerate_physical_plans_4_task(
         let mut hint_task = Task::invalid_task();
         let mut state = EnumerateState::default();
         for pp in ops {
-            let child_len = plan.children().len();
+            // Go `iteratePhysicalPlan4BaseLogical` over the operator's
+            // children, or `iteratePhysicalPlan4GroupExpression` over a
+            // memo expression's input groups.
+            let child_len = ge.map_or(plan.children().len(), |ge| ge.memo.ge(ge.ge).inputs_len());
             let mut child_tasks = Vec::with_capacity(child_len);
-            for (i, child) in plan.children().iter().enumerate() {
+            for i in 0..child_len {
                 let Some(child_prop) = pp.base().child_req_prop(i) else {
                     break;
                 };
                 let child_prop = child_prop.clone();
-                let child_task = find_best_task(child, &child_prop, ctx)?;
+                let child_task = match ge {
+                    None => find_best_task(&plan.children()[i], &child_prop, ctx)?,
+                    Some(ge) => {
+                        let child_group = ge.memo.ge(ge.ge).inputs[i];
+                        match crate::cascades::impl_and_cost::implement_group_and_cost(
+                            ge.memo,
+                            child_group,
+                            &child_prop,
+                            f64::MAX,
+                            ctx,
+                        )? {
+                            Some(task) => task,
+                            None => break,
+                        }
+                    }
+                };
                 if child_task.invalid() || !task_type_satisfied(&child_prop, &child_task) {
                     break;
                 }

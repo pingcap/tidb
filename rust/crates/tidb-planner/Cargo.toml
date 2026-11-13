@@ -17,6 +17,8 @@ tidb-planner-core-rule = { path = "../tidb-planner-core-rule" }
 tidb-planner-core-joinorder = { path = "../tidb-planner-core-joinorder" }
 tidb-planner-core-operator-physicalop = { path = "../tidb-planner-core-operator-physicalop" }
 tidb-planner-core-operator-logicalop = { path = "../tidb-planner-core-operator-logicalop" }
+tidb-planner-cascades-base = { path = "../tidb-planner-cascades-base" }
+tidb-plancodec = { path = "../tidb-plancodec" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-planner-core-partidx = { path = "../tidb-planner-core-partidx" }
 tidb-planner-core-rule-util = { path = "../tidb-planner-core-rule-util" }

@@ -33,7 +33,7 @@ use crate::find_best_task::coster::{CostEnv, Ver2Coster};
 use tidb_planner_core_operator_physicalop::enforce::MppWarningSink;
 use crate::find_best_task::dispatch::{find_best_task, DispatchContext};
 use tidb_fixcontrol::OptimizerFixControl;
-use crate::rule::logical_optimize;
+use crate::rule::{logical_optimize, normalize_optimize};
 use tidb_planner_core_rule::flags;
 use tidb_planner_core_operator_logicalop::plan_context::{CteOptimizer, DeriveStatsSink, DisabledLogicalRules, HintWarningSink, RuleContext, UsedStatsRecorder};
 use tidb_planner_core_operator_logicalop::plan_context::StatisticsLoadRequester;
@@ -144,6 +144,9 @@ pub trait OptimizeContext:
     fn allow_projection_push_down(&self) -> bool;
     /// Go `SessionVars.AllowDistinctAggPushDown`.
     fn allow_distinct_agg_push_down(&self) -> bool;
+    /// Go `SessionVars.EnableCascadesPlanner`: `doOptimize` takes
+    /// `CascadesOptimize` instead of `VolcanoOptimize`.
+    fn enable_cascades_planner(&self) -> bool;
     /// Go `SessionVars.EnableINLJoinInnerMultiPattern`.
     fn enable_inl_join_inner_multi_pattern(&self) -> bool;
     /// Go `SessionVars.LimitPushDownThreshold`.
@@ -323,11 +326,21 @@ pub fn optimize_logical<C: OptimizeContext>(
     // No CTE class is optimized here: Go's `LogicalCTE.DeriveStats` runs
     // `DoOptimize` the first time a reference's statistics are derived, which
     // `rule_context.cte_optimizer` does from inside the stats walk.
-    let begin_logical_opt = Instant::now();
-    let logical_result = logical_optimize(&rule_context, flags, plan);
-    // Go `logicalOptimize`'s deferred `DurationOptimizer.LogicalOpt`.
-    ctx.set_logical_opt(begin_logical_opt.elapsed());
-    let mut optimized = logical_result.map_err(|(_, error)| error)?.plan;
+    // Go `doOptimize`: `CascadesOptimize` normalizes with
+    // `normalizeOptimize` (which keeps no optimizer clock) where
+    // `VolcanoOptimize` runs `logicalOptimize`.
+    let cascades = ctx.enable_cascades_planner();
+    let mut optimized = if cascades {
+        normalize_optimize(&rule_context, flags, plan)
+            .map_err(|(_, error)| error)?
+            .plan
+    } else {
+        let begin_logical_opt = Instant::now();
+        let logical_result = logical_optimize(&rule_context, flags, plan);
+        // Go `logicalOptimize`'s deferred `DurationOptimizer.LogicalOpt`.
+        ctx.set_logical_opt(begin_logical_opt.elapsed());
+        logical_result.map_err(|(_, error)| error)?.plan
+    };
     // SyncWaitStatsLoadPoint has initialized ordinary and statically pruned
     // sources from the loaded snapshot before join reorder.
     optimized = check_partial_index_paths(optimized, ctx, use_plan_cache);
@@ -340,6 +353,14 @@ pub fn optimize_logical<C: OptimizeContext>(
             .is_some_and(|schema| schema.columns.len() == built_names.len())
     {
         optimized.set_output_names(built_names);
+    }
+    if cascades {
+        // Go `cascades.NewOptimizer` -> `Memo.CopyIn`: each new group
+        // expression derives its group's logical property
+        // (`DeriveLogicalProp`: the operator's `DeriveStats` with nil
+        // reloads, then `PreparePossibleProperties`), bottom-up.
+        optimized.memo_derive_stats_with_context(&rule_context)?;
+        return Ok(prepare_possible_properties_for(ctx, optimized));
     }
     // Go `physicalOptimize` starts its clock before `RecursiveDeriveStats`
     // and records `StatsDerive` after it; the physical search that follows
@@ -562,10 +583,24 @@ pub fn physical_optimize<C: OptimizeContext>(
     .with_column_ids(column_ids);
     dispatch.expr_pushdown_blacklist = ctx.expr_pushdown_blacklist().clone();
     dispatch.shuffle_options = optimizer_cost_env.session.shuffle_options;
-    // Go `physicalOptimize` records `DurationOptimizer.PhysicalOpt` on every
-    // return, an error one included.
-    let task = find_best_task(logical, &PhysicalProperty::default(), &mut dispatch)
-        .inspect_err(|_| ctx.set_physical_opt(begin_physical_opt.elapsed()))?;
+    let cascades = ctx.enable_cascades_planner();
+    let task = if cascades {
+        // Go `CascadesOptimize`: `cascades.NewOptimizer(logic)`, `Execute()`,
+        // then `impl.ImplementMemoAndCost(rootGroup)`, which keeps no
+        // optimizer clock.
+        let mut cas = crate::cascades::Optimizer::new(logical, plan_ids)?;
+        cas.execute()?;
+        let root_group = cas
+            .get_memo()
+            .get_root_group()
+            .expect("an initialized memo has a root group");
+        crate::cascades::impl_and_cost::implement_memo_and_cost(cas.get_memo(), root_group, &mut dispatch)?
+    } else {
+        // Go `physicalOptimize` records `DurationOptimizer.PhysicalOpt` on
+        // every return, an error one included.
+        find_best_task(logical, &PhysicalProperty::default(), &mut dispatch)
+            .inspect_err(|_| ctx.set_physical_opt(begin_physical_opt.elapsed()))?
+    };
     let mut physical = task.plan().cloned().ok_or_else(|| {
         PlanError::from(
             tidb_plannererrors::ERR_INTERNAL.gen_with_stack_by_args(&[
@@ -592,7 +627,9 @@ pub fn physical_optimize<C: OptimizeContext>(
     }
     // Go physicalOptimize binds positions before postOptimize removes aliases.
     let resolved = physical.resolve_indices();
-    ctx.set_physical_opt(begin_physical_opt.elapsed());
+    if !cascades {
+        ctx.set_physical_opt(begin_physical_opt.elapsed());
+    }
     resolved?;
     let physical = crate::post_optimize::eliminate_physical_projection_for_update(
         physical,

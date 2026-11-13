@@ -1521,22 +1521,36 @@ impl DriverCteOptimizer<'_> {
             return Err(error);
         }
         let opt_flag = tidb_planner::optimize::adjust_optimization_flags(opt_flag, ctx);
-        // Go's CTE `DoOptimize` runs `logicalOptimize` and `physicalOptimize`,
-        // which set the session's optimizer clocks like any other pass.
-        let begin_logical_opt = std::time::Instant::now();
-        let logical_result = logical_optimize(rule_context, opt_flag, plan);
-        ctx.phase_durations()
-            .set_logical_opt(begin_logical_opt.elapsed());
-        let optimized = logical_result.map_err(|(_, error)| error)?.plan;
+        // Go's CTE `DoOptimize` is `doOptimize`: `CascadesOptimize`
+        // (`normalizeOptimize`, then the memo's derivation, no optimizer
+        // clock) under `tidb_enable_cascades_planner`, else
+        // `logicalOptimize` and `physicalOptimize`, which set the session's
+        // optimizer clocks like any other pass.
+        let cascades = tidb_planner::optimize::OptimizeContext::enable_cascades_planner(ctx);
+        let optimized = if cascades {
+            tidb_planner::rule::normalize_optimize(rule_context, opt_flag, plan)
+                .map_err(|(_, error)| error)?
+                .plan
+        } else {
+            let begin_logical_opt = std::time::Instant::now();
+            let logical_result = logical_optimize(rule_context, opt_flag, plan);
+            ctx.phase_durations()
+                .set_logical_opt(begin_logical_opt.elapsed());
+            logical_result.map_err(|(_, error)| error)?.plan
+        };
         let mut optimized = tidb_planner::optimize::check_partial_index_paths(
             optimized,
             ctx,
             rule_context.use_plan_cache,
         );
-        let begin_physical_opt = std::time::Instant::now();
-        optimized.recursive_derive_stats_with_context(&[], rule_context)?;
-        ctx.phase_durations()
-            .finish_stats_derive(begin_physical_opt);
+        if cascades {
+            optimized.memo_derive_stats_with_context(rule_context)?;
+        } else {
+            let begin_physical_opt = std::time::Instant::now();
+            optimized.recursive_derive_stats_with_context(&[], rule_context)?;
+            ctx.phase_durations()
+                .finish_stats_derive(begin_physical_opt);
+        }
         let logical = tidb_planner::optimize::prepare_possible_properties_for(ctx, optimized);
         let physical = physical_plan_for_logical(&logical, self.plan_ids, self.column_ids, self.catalog, ctx)?;
         Ok((logical, physical))

@@ -359,6 +359,7 @@ pub mod data_source;
 pub mod expand;
 pub mod fold;
 pub mod functional_dependencies;
+pub mod hash64_equals;
 pub mod index_scan;
 pub mod join;
 pub mod limit;
@@ -719,12 +720,6 @@ impl LogicalPlan {
         self.base().hash_code()
     }
 
-    /// Go `Equals(other)` from `base.HashEquals`: plan-id equality.
-    #[must_use]
-    pub fn equals(&self, other: &Self) -> bool {
-        self.id() == other.id()
-    }
-
     /// Go `PredicatePushDown(predicates)` (`<1st>`).
     ///
     /// Go: `([]expression.Expression, LogicalPlan, error)` — the predicates
@@ -1003,6 +998,18 @@ impl LogicalPlan {
         let plan = std::mem::replace(self, Self::TableDual(LogicalTableDual::default()));
         let (plan, result) =
             rewrite::recursive_derive_stats_with_context(plan, col_groups.to_vec(), context);
+        *self = plan;
+        result
+    }
+
+    /// The cascades memo's derivation over this tree; see
+    /// [`rewrite::memo_derive_stats_with_context`].
+    pub fn memo_derive_stats_with_context(
+        &mut self,
+        context: &crate::plan_context::RuleContext<'_>,
+    ) -> Result<(StatsInfo, bool), PlanError> {
+        let plan = std::mem::replace(self, Self::TableDual(LogicalTableDual::default()));
+        let (plan, result) = rewrite::memo_derive_stats_with_context(plan, context);
         *self = plan;
         result
     }

@@ -10454,3 +10454,82 @@ fn distinct_agg_push_down_follows_the_session_switch_like_go() {
         ]
     );
 }
+
+/// Go `doOptimize` takes `CascadesOptimize` under
+/// `tidb_enable_cascades_planner`: the memo interns the two `SELECT 1`
+/// derived tables' equal `TableDual`s as one group, whose best task both
+/// parents take (`ImplementGroupAndCost`), so both print one plan id, and
+/// the search draws fewer ids than `VolcanoOptimize`'s per-operator search.
+/// Expected plans are Go's (gorun, both settings).
+#[test]
+fn cascades_planner_implements_the_memo_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t(a INT, b INT, c INT, KEY a(a), KEY b(b))").unwrap();
+    let plan = |session: &mut Session| -> Vec<String> {
+        row_text(session.run("EXPLAIN SELECT * FROM t, (SELECT 1 x) d1, (SELECT 1 y) d2"))
+            .into_iter()
+            .map(|row| row.join("|"))
+            .collect()
+    };
+    let expected = |dual: &str, reader: &str, scan: &str| {
+        vec![
+            "Projection_18|10000.00|root||test.t.a, test.t.b, test.t.c, Column#6, Column#7".to_owned(),
+            "└─HashJoin_20|10000.00|root||CARTESIAN inner join".to_owned(),
+            "  ├─HashJoin_33(Build)|1.00|root||CARTESIAN inner join".to_owned(),
+            "  │ ├─Projection_53(Build)|1.00|root||1->Column#7".to_owned(),
+            format!("  │ │ └─TableDual_{dual}|1.00|root||rows:1"),
+            "  │ └─Projection_47(Probe)|1.00|root||1->Column#6".to_owned(),
+            "  │   └─TableDual_48|1.00|root||rows:1".to_owned(),
+            format!("  └─TableReader_{reader}(Probe)|10000.00|root||data:TableFullScan_{scan}"),
+            format!("    └─TableFullScan_{scan}|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo"),
+        ]
+    };
+    assert_eq!(plan(&mut session), expected("54", "64", "63"));
+    session.run("SET @@tidb_enable_cascades_planner = 1").unwrap();
+    assert_eq!(plan(&mut session), expected("48", "63", "62"));
+}
+
+/// Go `cascades_test.go`'s `TestCascadesDrive` and
+/// `TestXFormedOperatorShouldDeriveTheirStatsOwn`: the cascades planner
+/// answers a dual query, and the semi-join an `EXISTS` decorrelates to
+/// plans the same under both optimizers, hinted or not, with analyzed
+/// statistics.
+#[test]
+fn cascades_planner_plans_like_volcano_as_go_tests() {
+    let mut session = Session::new();
+    session.run("SET @@tidb_enable_cascades_planner = 1").unwrap();
+    session.run("CREATE TABLE t0(a INT NOT NULL, b INT NOT NULL, KEY(a, b))").unwrap();
+    session.run("INSERT INTO t0 VALUES (1,1),(1,2),(2,1),(2,2),(1,1)").unwrap();
+    assert_eq!(row_text(session.run("SELECT 1")), vec![vec!["1".to_owned()]]);
+    let brief = |session: &mut Session, sql: &str| -> Vec<String> {
+        row_text(session.run(&format!("EXPLAIN FORMAT='brief' {sql}")))
+            .into_iter()
+            .map(|row| row.join("|"))
+            .collect()
+    };
+    assert_eq!(
+        brief(&mut session, "SELECT 1"),
+        ["Projection|1.00|root||1->Column#1", "└─TableDual|1.00|root||rows:1"]
+    );
+
+    session.run("CREATE TABLE t1 (a1 INT DEFAULT NULL, b1 INT DEFAULT NULL, c1 INT DEFAULT NULL)").unwrap();
+    session.run("CREATE TABLE t2 (a2 INT DEFAULT NULL, b2 INT DEFAULT NULL, KEY idx (a2))").unwrap();
+    session
+        .run("INSERT INTO t1 (a1, b1, c1) VALUES (1, 2, 3), (4, NULL, 5), (NULL, 6, 7), (8, 9, NULL), (10, 11, 12)")
+        .unwrap();
+    session.run("INSERT INTO t2 VALUES (1,1),(2,2),(3,3)").unwrap();
+    for _ in 0..10 {
+        session.run("INSERT INTO t2 SELECT * FROM t2").unwrap();
+    }
+    session.run("ANALYZE TABLE t1, t2").unwrap();
+    for hint in ["", "/*+ inl_join(tab, t2@sel_2) */", "/*+ inl_hash_join(tab, t2@sel_2) */", "/*+ hash_join(tab, t2@sel_2) */"] {
+        if hint.contains("hash_join(") && !hint.contains("inl_") {
+            session.run("SET tidb_hash_join_version = optimized").unwrap();
+        }
+        let sql = format!("SELECT {hint} 1 FROM t1 AS tab WHERE (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1))");
+        session.run("SET @@tidb_enable_cascades_planner = 0").unwrap();
+        let volcano = brief(&mut session, &sql);
+        session.run("SET @@tidb_enable_cascades_planner = 1").unwrap();
+        assert_eq!(brief(&mut session, &sql), volcano, "{sql}");
+    }
+}

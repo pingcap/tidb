@@ -2060,6 +2060,11 @@ struct DeriveStatsFold<'a> {
     /// The first failure, per the module header's first-failure discipline.
     failure: RewriteFailure,
     data_source_stats: &'a dyn DataSourceStatsDeriver,
+    /// The cascades memo's derivation (`GroupExpression.DeriveLogicalProp`):
+    /// each operator's `DeriveStats` sees nil reloads and no column groups,
+    /// where `RecursiveDeriveStats` hands down `ExtractColGroups` and
+    /// passes each child's reload flag up.
+    memo: bool,
 }
 
 /// What one `ascend` arm decided.
@@ -2138,7 +2143,7 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
         }
         // Go: `cumColGroups := p.self.ExtractColGroups(colGroups)`, handed to
         // EVERY child.
-        let cum = node.extract_col_groups(&down);
+        let cum = if self.memo { Vec::new() } else { node.extract_col_groups(&down) };
         Descend::Children(vec![cum; node.children().len()])
     }
 
@@ -2161,7 +2166,11 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
             .iter()
             .map(|(stats, _, _)| stats.clone())
             .collect();
-        let reloads: Vec<bool> = child_ups.iter().map(|(_, reload, _)| *reload).collect();
+        let reloads: Vec<bool> = if self.memo {
+            Vec::new()
+        } else {
+            child_ups.iter().map(|(_, reload, _)| *reload).collect()
+        };
         let child_schemas: Vec<Schema> = child_ups
             .iter()
             .map(|(_, _, schema)| schema.clone())
@@ -2554,6 +2563,7 @@ pub fn recursive_derive_stats(
         tidb_planner_cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
         &Default::default(),
         None,
+        false,
     )
 }
 
@@ -2562,6 +2572,26 @@ pub fn recursive_derive_stats_with_context(
     plan: LogicalPlan,
     col_groups: Vec<Vec<tidb_expr::column::Column>>,
     context: &RuleContext<'_>,
+) -> (LogicalPlan, Result<(StatsInfo, bool), PlanError>) {
+    derive_stats_with_context(plan, col_groups, context, false)
+}
+
+/// The cascades memo's per-group-expression derivation
+/// (`GroupExpression.DeriveLogicalProp`, `memo/group_expr.go`) over the
+/// whole tree, bottom-up as `Memo.CopyIn` reaches each operator: every
+/// operator's `DeriveStats` runs with nil reloads and no column groups.
+pub fn memo_derive_stats_with_context(
+    plan: LogicalPlan,
+    context: &RuleContext<'_>,
+) -> (LogicalPlan, Result<(StatsInfo, bool), PlanError>) {
+    derive_stats_with_context(plan, Vec::new(), context, true)
+}
+
+fn derive_stats_with_context(
+    plan: LogicalPlan,
+    col_groups: Vec<Vec<tidb_expr::column::Column>>,
+    context: &RuleContext<'_>,
+    memo: bool,
 ) -> (LogicalPlan, Result<(StatsInfo, bool), PlanError>) {
     recursive_derive_stats_with_range_quota(
         plan,
@@ -2581,6 +2611,7 @@ pub fn recursive_derive_stats_with_context(
         context.scale_ndv_skew_ratio,
         &context.expr_pushdown_blacklist,
         Some(context),
+        memo,
     )
 }
 
@@ -2602,6 +2633,7 @@ fn recursive_derive_stats_with_range_quota(
     scale_ndv_skew_ratio: f64,
     expr_pushdown_blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
     rule_context: Option<&RuleContext<'_>>,
+    memo: bool,
 ) -> (LogicalPlan, Result<(StatsInfo, bool), PlanError>) {
     let mut fold = DeriveStatsFold {
         env: DeriveStatsEnv {
@@ -2622,6 +2654,7 @@ fn recursive_derive_stats_with_range_quota(
             },
         failure: RewriteFailure::default(),
         data_source_stats,
+        memo,
     };
     let (plan, (stats, reload, _schema)) = fold_owned(&mut fold, plan, col_groups);
     match fold.failure.take() {

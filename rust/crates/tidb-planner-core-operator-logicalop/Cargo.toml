@@ -11,6 +11,7 @@ description = "TiDB pkg/planner/core/operator/logicalop (Rust)."
 workspace = true
 
 [dependencies]
+tidb-plancodec = { path = "../tidb-plancodec" }
 tidb-execdetails = { path = "../tidb-execdetails" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-planner-core-partidx = { path = "../tidb-planner-core-partidx" }
