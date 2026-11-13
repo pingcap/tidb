@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 18,
-    "open": 4,
-    "partial": 14
+    "open": 3,
+    "partial": 15
   },
   "findings": [
     {
@@ -53,9 +53,9 @@
     },
     {
       "id": "P01",
-      "status": "open",
+      "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "The physical operators do not carry Go's fields, so a Go method that reads them has nothing to port onto (`PhysicalIndexScan` had no `Table` or `Index` until E15 M2, so its `ToPB` was never ported, nor `PhysicalIndexLookUpReader` its `ExtraHandleCol` until M3; audit: `rust/scripts/physicalop-field-audit.py`). Missing still: `PhysicalTableScan`'s `HandleIdx`; `PhysicalIndexMergeReader`'s `PartialPlans` (the flattened partial trees are copies, where Go's share the operators); `PhysicalCTE`'s `CTE`; `PhysicalMemTable`'s and `PhysicalTableSample`'s table; and the operators `PhysicalCTESink`, `PhysicalCTESource`, `PhysicalIndexHashJoin` and `PhysicalIndexMergeJoin` have no struct (Go never sets `PhysicalIndexScan.GenExprs` or `PhysicalTableScan.SampleInfo` and never reads `DoubleRead` or `ConstColsByCond`, so they need no port). A scan's `UsedStatsInfo` is Go's pointer into the statement's used-stats map, which EXPLAIN reads by the scan's physical table id. Rust-only specs stand in for several (`tikv_pushdown` and `covering_ranges`, which E15's scan-request lowering reads, and the point plans' `range_rebuild`)",
+      "finding": "The physical operators carry Go's fields (audit: `rust/scripts/physicalop-field-audit.py`; Go's flattened plan lists, which alias the reader's own tree, are borrowing views such as `PhysicalIndexLookUpReader::index_plans()`). Missing still: `PhysicalTableScan.HandleIdx`, set only by Go's non-fast `ADMIN CHECK` (`buildPhysicalIndexLookUpReader`, then `CheckTableExec` over `IndexLookUpExecutor`'s `checkIndexValue` / `compareData` and `admin.CheckIndicesCount` / `CheckRecordAndIndex`), which this port answers with its own checker over the stored rows and entries (`tidb-executor/src/admin_check.rs`); `PhysicalIndexHashJoin` is an `IndexJoinKind` of `PhysicalIndexJoin`, not its own operator type; `PhysicalCTE.CTE` is the copied `CTEClass` fields, the session's `CTEClass` being `Rc<RefCell<_>>` logical state a cached physical plan cannot share; `PhysicalShuffleReceiverStub.Receiver`, the executor builder's pointer to its receiver, is the builder's (`shuffle::install_receivers`); a scan's `UsedStatsInfo` is read by EXPLAIN from the statement's used-stats map by physical table id, where Go keeps the entry's pointer. `PhysicalTableSample.TableInfo` comes with E15's TABLESAMPLE port (Go `tableRegionSampler`), `PhysicalCTESink` / `PhysicalCTESource` with M01's MPP CTE",
       "go_owner": "`pkg/planner/core/operator/physicalop` (the operator structs)"
     },
     {
@@ -139,6 +139,6 @@
     }
   ],
   "unresolved": 18,
-  "open": 4,
-  "partial": 14
+  "open": 3,
+  "partial": 15
 }

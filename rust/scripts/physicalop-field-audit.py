@@ -23,12 +23,27 @@ for f in glob.glob(root+'/**/*.rs',recursive=True):
     src=open(f).read()
     for m in re.finditer(r'pub struct (Physical\w+)\s*\{(.*?)\n\}', src, re.S):
         rs.setdefault(m.group(1),set()).update(re.findall(r'pub (\w+):',m.group(2)))
+    # A Go field that aliases the operator's own tree (the flattened plan
+    # lists) is a borrowing view method here.
+    for m in re.finditer(r'\nimpl (Physical\w+) \{(.*?)\n\}', src, re.S):
+        rs.setdefault(m.group(1),set()).update(re.findall(r'pub fn (\w+)\(&self\)',m.group(2)))
+# Go fields Go never sets outside cloning, or never reads, and Go structs Go
+# never constructs: nothing to port.
+NOT_PORTED={
+    ('PhysicalIndexJoin','InnerPlan'): 'assigned only by CloneForPlanCache; read only by the never-built PhysicalIndexMergeJoin',
+    ('PhysicalIndexScan','GenExprs'): 'never set',
+    ('PhysicalIndexScan','DoubleRead'): 'never read',
+    ('PhysicalIndexScan','ConstColsByCond'): 'never read',
+    ('PhysicalTableScan','SampleInfo'): 'never set (TABLESAMPLE is PhysicalTableSample)',
+    ('PhysicalIndexLookUpReader','IndexPlansUnNatureOrders'): 'returned with the index_plans() view',
+}
+NOT_BUILT={'PhysicalIndexMergeJoin': 'no Go planner path constructs it', 'PhysicalSchemaProducer': "the base struct; its schema lives on BasePhysicalPlan"}
 total=0
 for name in sorted(go):
     if name not in rs: continue
-    missing=[g for g in go[name] if snake(g) not in rs[name] and snake(g).rstrip('s') not in rs[name]]
+    missing=[g for g in go[name] if snake(g) not in rs[name] and snake(g).rstrip('s') not in rs[name] and (name,g) not in NOT_PORTED]
     if missing:
         total+=len(missing)
         print(f"{name}: {', '.join(missing)}")
 print('missing',total,'| go structs',len(go),'| rust',len([n for n in go if n in rs]))
-print('go structs absent in rust:', ', '.join(n for n in sorted(go) if n not in rs))
+print('go structs absent in rust:', ', '.join(n for n in sorted(go) if n not in rs and n not in NOT_BUILT))
