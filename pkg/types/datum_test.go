@@ -33,13 +33,14 @@ import (
 )
 
 func TestDatum(t *testing.T) {
+	// Go types not recognized by SetValueWithDefaultCollation used to be
+	// stored via the KindInterfaceDeprecated escape hatch; they now panic.
 	values := []any{
 		int64(1),
 		uint64(1),
 		1.1,
 		"abc",
 		[]byte("abc"),
-		[]int{1},
 	}
 	for _, val := range values {
 		var d Datum
@@ -50,6 +51,11 @@ func TestDatum(t *testing.T) {
 		require.Equal(t, int(d.length), d.Length())
 		require.Equal(t, d.String(), fmt.Sprint(d))
 	}
+
+	require.Panics(t, func() {
+		var d Datum
+		d.SetValueWithDefaultCollation([]int{1})
+	})
 }
 
 func testDatumToBool(t *testing.T, in any, res int) {
@@ -105,10 +111,7 @@ func TestToBool(t *testing.T) {
 	v, err := Convert(0.1415926, ft)
 	require.NoError(t, err)
 	testDatumToBool(t, v, 1)
-	d := NewDatum(&invalidMockType{})
-	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
-	_, err = d.ToBool(ctx)
-	require.Error(t, err)
+	require.Panics(t, func() { _ = NewDatum(&invalidMockType{}) })
 }
 
 func testDatumToInt64(t *testing.T, val any, expect int64) {
@@ -193,7 +196,7 @@ func TestConvertToFloat(t *testing.T) {
 		{NewDatum([]byte("12345.678")), mysql.TypeDouble, "", 12345.678, 12345.678},
 		{NewDatum(int64(12345)), mysql.TypeDouble, "", 12345, 12345},
 		{NewDatum(uint64(123456)), mysql.TypeDouble, "", 123456, 123456},
-		{NewDatum(byte(123)), mysql.TypeDouble, "cannot convert ", 0, 0},
+		// NewDatum(byte(123)) now panics; see KindInterfaceDeprecated removal.
 		{NewDatum(math.NaN()), mysql.TypeDouble, "constant .* overflows double", 0, 0},
 		{NewDatum(math.Inf(-1)), mysql.TypeDouble, "constant .* overflows double", math.Inf(-1), float32(math.Inf(-1))},
 		{NewDatum(math.Inf(1)), mysql.TypeDouble, "constant .* overflows double", math.Inf(1), float32(math.Inf(1))},
