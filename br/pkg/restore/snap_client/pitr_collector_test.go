@@ -38,16 +38,10 @@ type capturedLockWrite struct {
 }
 
 type lockCaptureStorage struct {
-<<<<<<< HEAD
 	storage.ExternalStorage
-	mu     sync.Mutex
-	writes []capturedLockWrite
-=======
-	storeapi.Storage
 	failWritePath string
 	mu            sync.Mutex
 	writes        []capturedLockWrite
->>>>>>> 3d6bcab71fb (br: persist PiTR metadata before publishing migration references (#71326))
 }
 
 func (s *lockCaptureStorage) WriteFile(ctx context.Context, name string, data []byte) error {
@@ -91,15 +85,21 @@ type pitrCollectorT struct {
 }
 
 func (p pitrCollectorT) RestoreAFile(fs restore.BatchBackupFileSet) func() error {
+	complete, err := p.StartRestoreBatch(fs)
+	require.NoError(p.t, err)
+	return complete
+}
+
+func (p pitrCollectorT) StartRestoreBatch(fs restore.BatchBackupFileSet) (func() error, error) {
 	for _, b := range fs {
 		for _, file := range b.SSTFiles {
-			require.NoError(p.t, p.coll.restoreStorage.WriteFile(p.cx, file.Name, []byte("something")))
+			if err := p.coll.restoreStorage.WriteFile(p.cx, file.Name, []byte("something")); err != nil {
+				return nil, err
+			}
 		}
 	}
 
-	res, err := p.coll.onBatch(p.cx, fs)
-	require.NoError(p.t, err)
-	return res
+	return p.coll.onBatch(p.cx, fs)
 }
 
 func (p pitrCollectorT) Done() {
@@ -205,7 +205,7 @@ func TestPiTRCollectorPrepareMigWritesOperationMetadata(t *testing.T) {
 		coll := newPiTRCollForTest(t)
 		defer coll.coll.writerRoutine.close()
 		coll.coll.taskStorage = &lockCaptureStorage{
-			Storage: coll.coll.taskStorage, failWritePath: coll.coll.metaPath(),
+			ExternalStorage: coll.coll.taskStorage, failWritePath: coll.coll.metaPath(),
 		}
 		err := coll.coll.prepareMig(coll.cx)
 		require.ErrorContains(t, err, "injected metadata write failure")
@@ -224,7 +224,7 @@ func TestPiTRCollectorPrepareMigWritesOperationMetadata(t *testing.T) {
 		coll := newPiTRCollForTest(t)
 		defer coll.Done()
 		storage := &lockCaptureStorage{
-			Storage: coll.coll.taskStorage, failWritePath: coll.coll.metaPath(),
+			ExternalStorage: coll.coll.taskStorage, failWritePath: coll.coll.metaPath(),
 		}
 		coll.coll.taskStorage = storage
 		batch := restore.BatchBackupFileSet{backupFileSet(withRewriteRule(remap(1, 10)))}
@@ -234,13 +234,13 @@ func TestPiTRCollectorPrepareMigWritesOperationMetadata(t *testing.T) {
 		require.Empty(t, coll.ExtFullBkups())
 
 		storage.failWritePath = ""
-		complete = coll.MustStartRestoreBatch(batch)
+		complete = coll.RestoreAFile(batch)
 		require.NoError(t, complete())
 		ext := coll.ExtFullBkups()
 		require.Len(t, ext, 1)
 		coll.RequireRewrite(ext[0], remap(1, 10))
 
-		complete = coll.MustStartRestoreBatch(restore.BatchBackupFileSet{
+		complete = coll.RestoreAFile(restore.BatchBackupFileSet{
 			backupFileSet(withRewriteRule(remap(2, 20))),
 		})
 		require.NoError(t, complete())
