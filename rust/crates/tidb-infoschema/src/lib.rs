@@ -792,7 +792,9 @@ impl SessionExtendedInfoSchema {
 
     /// The `TableInfo` named `table` in `schema`, from the schema's `DBInfo`
     /// (so a table in an intermediate DDL state is found too, as Go's
-    /// `TableInfoByName` finds it).
+    /// `TableInfoByName` finds it). Go's per-schema name map keeps the table
+    /// inserted last under a name, so of two tables one lowercased name
+    /// covers (a repair checks no name) the one listed last answers.
     #[must_use]
     pub fn table_info_by_name(
         &self,
@@ -808,7 +810,8 @@ impl SessionExtendedInfoSchema {
             .deprecated_tables
             .iter_handles()
             .flatten()
-            .find(|candidate| candidate.read().name.original().go_lower_eq(table));
+            .filter(|candidate| candidate.read().name.original().go_lower_eq(table))
+            .last();
         found.map(|table| (info, table))
     }
 

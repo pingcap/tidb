@@ -177,14 +177,14 @@ fn admin_repair_table_runs_like_go() {
     let repaired = REPAIR_INFO.get_repaired_table_info_by_table_name("test", "other_table2");
     assert!(repaired.0.is_none());
     // The repaired table takes the new name as written. It now shares its
-    // lowercased name with `other_table` (Go's repair checks no name), so it
-    // is found among the schema's tables: Go's name map answers the table
-    // applied last, this catalog the first listed.
-    let (schema, _) = stack
+    // lowercased name with `other_table` (Go's repair checks no name), and
+    // the name answers the table applied last, as Go's name map does.
+    let (schema, repaired_table) = stack
         .factory
         .catalog_snapshot()
-        .table_info_by_name("test", "other_table")
+        .table_info_by_name("test", "otHeR_tAbLe")
         .unwrap();
+    assert_eq!(repaired_table.read().name.original(), "otHeR_tAbLe");
     let names: Vec<String> = schema
         .read()
         .deprecated_tables
