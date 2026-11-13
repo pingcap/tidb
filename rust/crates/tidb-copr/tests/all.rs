@@ -13,7 +13,5 @@
 // limitations under the License.
 
 mod key_ranges_source;
-mod cop_scan_narrowed_output_source;
-mod cop_scan_partial_predicate_limit_source;
 mod cop_scan_string_selection_source;
 mod dag_zone_contract;
