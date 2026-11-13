@@ -1431,3 +1431,41 @@ fn resource_group_diffs_follow_the_stored_group() {
     assert_eq!(rg1(&dropped), None);
     assert_eq!(dropped.resource_groups().count(), 1);
 }
+
+/// Go `fetchSchemasWithTables` under REPAIR MODE: a table on the repair list
+/// is handed to `RepairInfo` (`CheckAndFetchRepairedTable`) and kept out of
+/// the loaded schema while it is not public (its repair is not done); a
+/// public one on the list is loaded, its repair being finished.
+#[test]
+fn a_full_load_keeps_a_repairing_table_out_of_the_schema() {
+    struct RepairModeOff;
+    impl Drop for RepairModeOff {
+        fn drop(&mut self) {
+            tidb_domainutil::REPAIR_INFO.set_repair_mode(false);
+            tidb_domainutil::REPAIR_INFO.set_repair_table_list(Vec::new());
+        }
+    }
+    let mut snapshot = RecordedSnapshot::default();
+    snapshot.put(key::database_kv_key(3), GO_DBINFO);
+    snapshot.put(key::table_kv_key(3, 77), go_table(77, "Rows", "rows"));
+    // `bad` is mid-repair: its table state is not public.
+    snapshot.put(
+        key::table_kv_key(3, 78),
+        go_table(78, "Bad", "bad").replace(r#""state":5,"pk_is_handle""#, r#""state":1,"pk_is_handle""#),
+    );
+    snapshot.put(key::table_kv_key(3, 79), go_table(79, "Kept", "kept"));
+    snapshot.commit_diff(100, &diff_json(100, ActionType::ACTION_CREATE_TABLE, 3, 79));
+    let _off = RepairModeOff;
+    tidb_domainutil::REPAIR_INFO.set_repair_mode(true);
+    tidb_domainutil::REPAIR_INFO.set_repair_table_list(vec!["campaign.rows".to_owned(), "campaign.bad".to_owned()]);
+
+    // The domain's loader (`issyncer`), not the meta-only catalog read.
+    let catalog = tidb_infoschema_issyncer::catalog_reload::load_info_schema(&mut snapshot).expect("full load");
+    assert!(catalog.table_info_by_name("campaign", "rows").is_some(), "a public table on the list loads");
+    assert!(catalog.table_info_by_name("campaign", "bad").is_none(), "a repairing table stays out");
+    assert!(catalog.table_info_by_name("campaign", "kept").is_some(), "a table off the list loads");
+    assert!(
+        tidb_domainutil::REPAIR_INFO.get_repaired_table_info_by_table_name("campaign", "bad").0.is_some(),
+        "RepairInfo holds the repairing table"
+    );
+}
