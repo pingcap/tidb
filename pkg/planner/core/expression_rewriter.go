@@ -964,6 +964,14 @@ func (er *expressionRewriter) handleOtherComparableSubq(planCtx *exprRewriterPla
 		RetType:  funcMaxOrMin.RetTp,
 	}
 	colMaxOrMin.SetCoercibility(rexpr.Coercibility())
+	// Only string results refine the column's type-derived repertoire.
+	// The aggregation result is one of the input values, so it shares the
+	// input expression's repertoire. Without this, a cross-charset literal
+	// (ASCII repertoire) compared against a latin1 column fails collation
+	// derivation and NewFunctionInternal returns nil below.
+	if colMaxOrMin.RetType.EvalType() == types.ETString {
+		colMaxOrMin.SetRepertoire(rexpr.Repertoire())
+	}
 	schema := expression.NewSchema(colMaxOrMin)
 
 	plan4Agg.SetOutputNames(append(plan4Agg.OutputNames(), types.EmptyName))
