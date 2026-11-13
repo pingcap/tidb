@@ -100,6 +100,16 @@ type OneFileWriter struct {
 	partSize         int64
 	writtenBytes     int64
 	lastLogWriteSize uint64
+
+	// compressionAlgo selects the on-disk format. CompressionNone (default)
+	// keeps the historical v0 path byte-identical; CompressionZstd emits a v1
+	// data file whose stat segments are written as independent zstd frames.
+	compressionAlgo CompressionAlgo
+	// compressor is the per-writer zstd encoder used in v1 mode. It is
+	// allocated in lazyInitWriter (alongside the file header writes) and
+	// released exactly once in closeImpl. Unlike Writer, OneFileWriter is
+	// single-flush, so the same compressor lives for the entire data file.
+	compressor *segmentCompressor
 }
 
 // lazyInitWriter inits the underlying dataFile/statFile path, dataWriter/statWriter
@@ -130,9 +140,39 @@ func (w *OneFileWriter) lazyInitWriter(ctx context.Context) (err error) {
 	w.logger.Info("one file writer", zap.String("data-file", dataFile),
 		zap.String("stat-file", statFile), zap.Stringer("on-dup", w.onDup))
 
+	// In v1 mode, both the data file and the stat file start with the 6-byte
+	// magic header. Write it before assigning the writers to struct fields so
+	// that a header-write failure does not leave the OneFileWriter in a
+	// half-initialized state where closeImpl would try to flush a writer
+	// whose first bytes are missing.
+	if w.compressionAlgo == CompressionZstd {
+		if _, err = dataWriter.Write(ctx, fileHeaderV1Zstd); err != nil {
+			_ = dataWriter.Close(ctx)
+			_ = statWriter.Close(ctx)
+			return err
+		}
+		if _, err = statWriter.Write(ctx, fileHeaderV1Zstd); err != nil {
+			_ = dataWriter.Close(ctx)
+			_ = statWriter.Close(ctx)
+			return err
+		}
+		w.compressor = newSegmentCompressor()
+		w.compressor.physOffset = uint64(FileHeaderLen)
+	}
+
 	w.dataFile, w.dataWriter = dataFile, dataWriter
 	w.statFile, w.statWriter = statFile, statWriter
 	w.kvStore = NewKeyValueStore(ctx, w.dataWriter, w.rc)
+	if w.compressor != nil {
+		w.kvStore.WithCompressor(w.compressor)
+		// OneFileWriter is single-flush: the data writer and the compressor
+		// are created here once and live until closeImpl. Capturing
+		// w.compressor and w.dataWriter is safe for the writer's lifetime
+		// because they are not reassigned across mid-stream stat flushes.
+		w.rc.onBoundary = func(p *RangeProperty) error {
+			return w.compressor.flushSegment(ctx, w.dataWriter, p, p.totalSize())
+		}
+	}
 	return nil
 }
 
@@ -261,12 +301,23 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 			return errors.Errorf("failed to allocate kv buffer: %d", length)
 		}
 		// 2. write statistics if one kvBuffer is used.
-		w.kvStore.Finish()
-		encodedStat := w.rc.Encode()
-		_, err := w.statWriter.Write(ctx, encodedStat)
-		if err != nil {
+		if err := w.kvStore.Finish(); err != nil {
 			return err
 		}
+		var encodedStat []byte
+		if w.compressionAlgo == CompressionZstd {
+			encodedStat = encodeMultiPropsV1(nil, w.rc.props)
+		} else {
+			encodedStat = w.rc.Encode()
+		}
+		if _, err := w.statWriter.Write(ctx, encodedStat); err != nil {
+			return err
+		}
+		// reset() clears rc.props and rc.currProp but intentionally leaves
+		// rc.onBoundary intact: the next segment in the same data file must
+		// continue to flow through the same compressor (whose rawBuf has
+		// just been drained by finish()), so the boundary closure captured
+		// in lazyInitWriter remains valid for the rest of the writer's life.
 		w.rc.Reset()
 		// the new prop should have the same offset with kvStore.
 		w.rc.currProp.Offset = w.kvStore.offset
@@ -336,13 +387,38 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 }
 
 func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
+	// Always release the compressor (and drop the boundary closure that
+	// references it) once we are done touching the writers, regardless of
+	// the success/error path. The compressor borrows an encoder from the
+	// shared pool, so leaking it would silently grow the pool over time.
+	// Register this defer BEFORE handlePivotOnClose: that path can
+	// transitively reach lazyInitWriter -> doWriteRow and create a
+	// compressor, so an error from handlePivotOnClose must still release
+	// whatever was allocated.
+	defer func() {
+		if w.compressor != nil {
+			w.compressor.release()
+			w.compressor = nil
+			w.rc.onBoundary = nil
+		}
+	}()
 	if err = w.handlePivotOnClose(ctx); err != nil {
 		return
 	}
 	if w.dataWriter != nil {
-		// 1. write remaining statistic.
-		w.kvStore.Finish()
-		encodedStat := w.rc.Encode()
+		// 1. flush trailing segment + write remaining statistic.
+		// kvStore.Finish() must run while the compressor is still alive: in
+		// v1 mode it flushes the trailing partial segment via the boundary
+		// callback before we encode the props.
+		if err = w.kvStore.Finish(); err != nil {
+			return err
+		}
+		var encodedStat []byte
+		if w.compressionAlgo == CompressionZstd {
+			encodedStat = encodeMultiPropsV1(nil, w.rc.props)
+		} else {
+			encodedStat = w.rc.Encode()
+		}
 		_, err = w.statWriter.Write(ctx, encodedStat)
 		if err != nil {
 			return err
@@ -364,7 +440,9 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 		}
 	}
 	if w.dupWriter != nil {
-		w.dupKVStore.Finish()
+		if err = w.dupKVStore.Finish(); err != nil {
+			return err
+		}
 		if err3 := w.dupWriter.Close(ctx); err3 != nil {
 			err = err3
 			w.logger.Error("Close dup writer failed", zap.Error(err))

@@ -51,3 +51,23 @@ func TestPropertyLengthExceptKeys(t *testing.T) {
 	bs := encodeProp(nil, zero)
 	require.EqualValues(t, propertyLengthExceptKeys, len(bs))
 }
+
+func TestRangePropertyCodecV1(t *testing.T) {
+	prop := &RangeProperty{
+		FirstKey:       []byte("key"),
+		LastKey:        []byte("key2"),
+		Offset:         42, // physical compressed Offset in v1
+		Size:           2,
+		Keys:           3,
+		CompressedSize: 17,
+	}
+	buf := encodePropV1(nil, prop)
+	prop2 := decodePropV1(buf)
+	require.EqualValues(t, prop, prop2)
+}
+
+func TestPropertyLengthExceptKeysV1(t *testing.T) {
+	zero := &RangeProperty{}
+	bs := encodePropV1(nil, zero)
+	require.EqualValues(t, propertyLengthExceptKeysV1, len(bs))
+}

@@ -24,12 +24,16 @@ import (
 // - Size: the size of the range.
 // - Keys: the number of keys in the range.
 type RangeProperty struct {
-	FirstKey []byte
-	LastKey  []byte
-	Offset   uint64
-	Size     uint64
-	Keys     uint64
+	FirstKey       []byte
+	LastKey        []byte
+	Offset         uint64
+	Size           uint64
+	Keys           uint64
+	CompressedSize uint64 // v1: bytes occupied by this segment's zstd frame in the data file. 0 for v0 props.
 }
+
+// totalSize is the encoded raw size, including KV length headers.
+func (r *RangeProperty) totalSize() uint64 { return r.Size + r.Keys*2*LengthBytes }
 
 // decodeMultiProps is only used for test.
 func decodeMultiProps(data []byte) []*RangeProperty {
@@ -91,5 +95,42 @@ func encodeProp(buf []byte, r *RangeProperty) []byte {
 	buf = append(buf, b[:]...)
 	binary.BigEndian.PutUint64(b[:], r.Offset)
 	buf = append(buf, b[:]...)
+	return buf
+}
+
+// V1 stat property layout adds a trailing CompressedSize uint64:
+//
+//	[firstKeyLen u32][FirstKey][lastKeyLen u32][LastKey]
+//	[Size u64][Keys u64][Offset u64][CompressedSize u64]
+//
+// In v1 stat files, prop.Offset means PHYSICAL byte Offset of the segment's
+// zstd frame in the data file (including the 6-byte file header).
+const propertyLengthExceptKeysV1 = propertyLengthExceptKeys + 8
+
+func encodePropV1(buf []byte, r *RangeProperty) []byte {
+	buf = encodeProp(buf, r)
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], r.CompressedSize)
+	buf = append(buf, b[:]...)
+	return buf
+}
+
+func decodePropV1(data []byte) *RangeProperty {
+	rp := decodeProp(data[:len(data)-8])
+	rp.CompressedSize = binary.BigEndian.Uint64(data[len(data)-8:])
+	return rp
+}
+
+// encodeMultiPropsV1 is the v1 counterpart to encodeMultiProps. It writes a
+// length-prefixed sequence of v1 props (which carry the trailing
+// CompressedSize field). Used by v1 writers when finalizing a stat file.
+func encodeMultiPropsV1(buf []byte, props []*RangeProperty) []byte {
+	var propLen [4]byte
+	for _, p := range props {
+		body := encodePropV1(nil, p)
+		binary.BigEndian.PutUint32(propLen[:], uint32(len(body)))
+		buf = append(buf, propLen[:4]...)
+		buf = append(buf, body...)
+	}
 	return buf
 }
