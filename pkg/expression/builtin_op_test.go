@@ -618,6 +618,26 @@ func TestIsTrueOrFalse(t *testing.T) {
 			isTrue:  0,
 			isFalse: 1,
 		},
+		{
+			args:    []any{types.CreateBinaryJSON(int64(0))},
+			isTrue:  0,
+			isFalse: 1,
+		},
+		{
+			args:    []any{types.CreateBinaryJSON(int64(1))},
+			isTrue:  1,
+			isFalse: 0,
+		},
+		{
+			args:    []any{types.CreateBinaryJSON([]any{int64(1), int64(2)})},
+			isTrue:  1,
+			isFalse: 0,
+		},
+		{
+			args:    []any{types.CreateBinaryJSON(map[string]any{"key": int64(0)})},
+			isTrue:  1,
+			isFalse: 0,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -639,6 +659,17 @@ func TestIsTrueOrFalse(t *testing.T) {
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tc.isFalse), isFalse)
 	}
+
+	jsonNull := &Constant{Value: types.NewDatum(nil), RetType: types.NewFieldType(mysql.TypeJSON)}
+	isTrueWithNullSig, err := funcs[ast.IsTruthWithNull].getFunction(ctx, []Expression{jsonNull})
+	require.NoError(t, err)
+	require.True(t, isTrueWithNullSig.SafeToShareAcrossSession())
+	clonedJSONSig, ok := isTrueWithNullSig.Clone().(*builtinJSONIsTrueSig)
+	require.True(t, ok)
+	require.True(t, clonedJSONSig.keepNull)
+	isTrueWithNull, err := evalBuiltinFunc(isTrueWithNullSig, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, types.KindNull, isTrueWithNull.Kind())
 }
 
 func TestLogicXor(t *testing.T) {
