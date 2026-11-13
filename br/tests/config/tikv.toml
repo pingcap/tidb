@@ -35,4 +35,4 @@ type = "file"
 path = "/tmp/backup_restore_test/master-key-file"
 
 [log-backup]
-max-flush-interval = "50s"
+max-flush-interval = "20s"
