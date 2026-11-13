@@ -235,25 +235,32 @@ func TestParseStandardBooleanMode(t *testing.T) {
 			input:       `foo-`,
 			errContains: "unexpected token",
 		},
+		// A quote left open runs to the end of the search string, as in the
+		// NGRAM parser: text typed by a user must not fail the statement.
 		{
-			name:        `error: missing closing quote is rejected (1)`,
-			input:       `"abc`,
-			errContains: "unterminated quote",
+			name:   `phrase: missing closing quote closes at the end`,
+			input:  `"abc`,
+			output: `M[] S["abc"] N[]`,
 		},
 		{
-			name:        `error: missing closing quote is rejected (newline terminator)`,
-			input:       "\"abc\n\"",
-			errContains: "unterminated quote",
+			name:   `phrase: missing closing quote keeps the words after it`,
+			input:  `say "hello world`,
+			output: `M[] S[say, "hello world"] N[]`,
 		},
 		{
-			name:        `error: missing closing quote is rejected in the middle`,
-			input:       `foo"bar`,
-			errContains: "unterminated quote",
+			name:   `phrase: a newline inside a quote does not end it`,
+			input:  "\"abc\ndef\"",
+			output: "M[] S[\"abc\ndef\"] N[]",
 		},
 		{
-			name:        `error: lone '"' is rejected`,
-			input:       `"`,
-			errContains: "unterminated quote",
+			name:   `phrase: quote opened in the middle of a word`,
+			input:  `foo"bar`,
+			output: `M[] S[foo, "bar"] N[]`,
+		},
+		{
+			name:   `phrase: lone '"' is an empty phrase and is ignored`,
+			input:  `"`,
+			output: "",
 		},
 
 		{

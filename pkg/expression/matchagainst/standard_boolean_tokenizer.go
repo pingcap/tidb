@@ -87,19 +87,21 @@ func tokenizeStandardBooleanMode(input string) ([]standardBooleanToken, error) {
 
 		if ch == '"' {
 			j := i + 1
-			for j < len(in) && in[j] != '"' && in[j] != '\n' {
+			for j < len(in) && in[j] != '"' {
 				j++
 			}
-			if j >= len(in) || in[j] != '"' {
-				return nil, errors.Errorf("unterminated quote at pos %d", i)
-			}
+			// A quote left open runs to the end of the input, as in the
+			// NGRAM parser: a search string typed by a user must not fail
+			// the statement over a stray quote. The token always carries
+			// both quotes.
+			raw := string(in[i:j]) + `"`
 			tokens = append(tokens, standardBooleanToken{
 				kind: standardBooleanTokenText,
 				pos:  i,
-				raw:  string(in[i : j+1]),
+				raw:  raw,
 			})
 			prevWasAt = false
-			i = j + 1
+			i = min(j+1, len(in))
 			continue
 		}
 

@@ -394,19 +394,25 @@ func stopwordSet(words ...string) map[string]struct{} {
 	return set
 }
 
+// ngramFilter splits each word into its grams. Positions are assigned from a
+// running counter, not from the words' ordinals: a word takes one position
+// per gram start, and a word too short to yield a gram takes one position, so
+// that a phrase spanning it keeps the gap. The distance between two grams
+// then depends only on the text between them, which is what lets a phrase
+// analyzed by itself line up with the same phrase inside a longer document.
 func ngramFilter(tokens []Token, minGram, maxGram int) []Token {
 	if minGram <= 0 || maxGram < minGram {
 		return nil
 	}
 
 	out := make([]Token, 0)
-	nextPositionBase := 0
+	nextPosition := 0
 	for _, token := range tokens {
-		basePosition := max(token.Position, nextPositionBase)
+		basePosition := nextPosition
 		spans := utf8CharSpans(token.Text)
 		charCount := len(spans)
 		if charCount < minGram {
-			nextPositionBase = max(nextPositionBase, token.Position+1)
+			nextPosition++
 			continue
 		}
 
@@ -426,7 +432,7 @@ func ngramFilter(tokens []Token, minGram, maxGram int) []Token {
 				})
 			}
 		}
-		nextPositionBase = basePosition + charCount - minGram + 1
+		nextPosition = basePosition + charCount - minGram + 1
 	}
 	return out
 }

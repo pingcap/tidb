@@ -262,6 +262,19 @@ func TestCompileBooleanQueryNgram(t *testing.T) {
 	require.False(t, matchQueryForTest(t, config, "abc*", []ColumnInput{{Text: "abx"}}))
 }
 
+// TestCompileBooleanQueryNgramPhraseAcrossShortWord covers a phrase holding a
+// word too short to yield a gram: it matches the documents that hold the
+// phrase whatever text precedes it, and a phrase without the short word does
+// not match them.
+func TestCompileBooleanQueryNgramPhraseAcrossShortWord(t *testing.T) {
+	config := ngramConfigForTest()
+	for _, text := range []string{"gh x ij", "abcdef gh x ij", "x abcdef gh x ij"} {
+		require.True(t, matchQueryForTest(t, config, `"gh x ij"`, []ColumnInput{{Text: text}}), text)
+		require.False(t, matchQueryForTest(t, config, `"gh ij"`, []ColumnInput{{Text: text}}), text)
+	}
+	require.True(t, matchQueryForTest(t, config, `"gh ij"`, []ColumnInput{{Text: "abcdef gh ij"}}))
+}
+
 func TestCompileBooleanQueryNgramUnicodeNumber(t *testing.T) {
 	config := ngramConfigForTest()
 	config.NgramTokenSize = 1

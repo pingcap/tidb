@@ -130,9 +130,10 @@ func TestAnalyzeNgramV1ShortTokenAdvancesPositionBase(t *testing.T) {
 	require.Equal(t, []Token{
 		{Text: "ab", Position: 0},
 		{Text: "bc", Position: 1},
-		{Text: "a_", Position: 4},
-		{Text: "_b", Position: 5},
-		{Text: "中z", Position: 6},
+		// The three words too short for a gram each leave one position.
+		{Text: "a_", Position: 5},
+		{Text: "_b", Position: 6},
+		{Text: "中z", Position: 7},
 	}, tokens)
 }
 
@@ -181,4 +182,31 @@ func setGlobalSysVar(t *testing.T, sctx *mock.Context, name, value string) {
 	globalAccessor, ok := sctx.GetSessionVars().GlobalVarsAccessor.(*variable.MockGlobalAccessor)
 	require.True(t, ok)
 	require.NoError(t, globalAccessor.SetGlobalSysVarOnly(context.Background(), name, value, false))
+}
+
+// TestAnalyzeNgramV1ShortTokenGapAfterLongWord covers a word too short to
+// yield a gram that follows a word with more grams than words seen so far:
+// the short word still leaves its one-position gap, so the distance between
+// the grams around it does not depend on the text before them.
+func TestAnalyzeNgramV1ShortTokenGapAfterLongWord(t *testing.T) {
+	sctx := newFulltextTestContext(t)
+
+	tokens, err := AnalyzeNgramV1(sctx, "abcdef gh x ij")
+	require.NoError(t, err)
+	require.Equal(t, []Token{
+		{Text: "ab", Position: 0},
+		{Text: "bc", Position: 1},
+		{Text: "cd", Position: 2},
+		{Text: "de", Position: 3},
+		{Text: "ef", Position: 4},
+		{Text: "gh", Position: 5},
+		{Text: "ij", Position: 7},
+	}, tokens)
+
+	tokens, err = AnalyzeNgramV1(sctx, "gh x ij")
+	require.NoError(t, err)
+	require.Equal(t, []Token{
+		{Text: "gh", Position: 0},
+		{Text: "ij", Position: 2},
+	}, tokens)
 }
