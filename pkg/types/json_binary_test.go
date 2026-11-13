@@ -17,10 +17,12 @@ package types
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -415,6 +417,30 @@ func BenchmarkBinaryMarshal(b *testing.B) {
 	}
 }
 
+func BenchmarkParseBinaryJSON(b *testing.B) {
+	for _, test := range []struct {
+		name  string
+		input string
+	}{
+		{"small", jsonBenchStr},
+		{"objects", "[" + strings.TrimSuffix(strings.Repeat(jsonBenchStr+",", 64), ",") + "]"},
+		{"long_string", `{"text":"` + strings.Repeat("TiDB用户", 400) + `"}`},
+		{"large_string", `{"text":"` + strings.Repeat("x", 65536) + `"}`},
+		{"null_array", "[" + strings.TrimSuffix(strings.Repeat("null,", 100000), ",") + "]"},
+		{"overwritten_arrays", "{" + strings.Repeat("\"a\":["+strings.TrimSuffix(strings.Repeat("null,", 10000), ",")+"],", 100) + "\"a\":0}"},
+	} {
+		b.Run(test.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(test.input)))
+			for b.Loop() {
+				if _, err := ParseBinaryJSONFromString(test.input); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func TestBinaryJSONContains(t *testing.T) {
 	var tests = []struct {
 		input    string
@@ -510,6 +536,203 @@ func TestParseBinaryFromString(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, "", obj.String())
 	require.Contains(t, err.Error(), "The document root must not be followed by other values.")
+
+	for _, test := range []struct {
+		input    string
+		expected string
+	}{
+		{`9007199254740993`, `9007199254740993`},
+		{`9223372036854775808`, `9223372036854775808`},
+		{`18446744073709551615`, `18446744073709551615`},
+		{`-9223372036854775808`, `-9223372036854775808`},
+		{`1.0`, `1.0`},
+		{`{"a":{"x":1},"a":{"y":2}}`, `{"a": {"y": 2}}`},
+		{`{"\u0061":1,"a":2}`, `{"a": 2}`},
+		{`"\ud800"`, `"�"`},
+		{string([]byte{'"', 0xff, '"'}), `"�"`},
+		{` {"a":[null,true,false]} `, `{"a": [null, true, false]}`},
+	} {
+		obj, err = ParseBinaryJSONFromString(test.input)
+		require.NoError(t, err, test.input)
+		require.Equal(t, test.expected, obj.String(), test.input)
+	}
+
+	for _, input := range []string{" ", "null true", "[1,]", `{"a":}`, "1e309"} {
+		_, err = ParseBinaryJSONFromString(input)
+		require.True(t, ErrInvalidJSONText.Equal(err), "%q: %v", input, err)
+	}
+	_, err = ParseBinaryJSONFromString(strings.Repeat("[", maxJSONDepth+1) + "0" + strings.Repeat("]", maxJSONDepth+1))
+	require.True(t, ErrJSONDocumentTooDeep.Equal(err), "%v", err)
+	_, err = ParseBinaryJSONFromString(`{"` + strings.Repeat("k", 65536) + `":0}`)
+	require.True(t, ErrJSONObjectKeyTooLong.Equal(err), "%v", err)
+}
+
+func TestBinaryJSONTextParserContainers(t *testing.T) {
+	// Replacing a non-tail value leaves garbage before a live value. Reclaiming it
+	// must update the live value's offsets, including inside a parent container.
+	interleaved := `{"a":"` + strings.Repeat("x", 128) + `","b":{"k":[1,"kept"]},"c":[null,3],"a":false,"b":{"k":"replacement"}}`
+	compacted := `{"a":false,"b":{"k":"replacement"},"c":[null,3]}`
+	for _, tt := range []struct {
+		name, input, want string
+	}{
+		{"inline_literals_and_payload_offsets", `[null,true,false,1,"x",[2],{"k":3}]`, `[null,true,false,1,"x",[2],{"k":3}]`},
+		{"sort_keys_after_unescaping_and_deduplication", `{"z":0,"\u0061":1,"m":2,"a":3}`, `{"a":3,"m":2,"z":0}`},
+		{"overwrite_tail_with_inline_literal", `{"a":{"discard":[1,2,3]},"a":null,"b":[true,{"k":"v"}]}`, `{"a":null,"b":[true,{"k":"v"}]}`},
+		{"overwrite_tail_with_larger_payload", `{"a":0,"a":{"x":[1,2,3]},"b":"keep"}`, `{"a":{"x":[1,2,3]},"b":"keep"}`},
+		{"compact_interleaved_payloads", interleaved, compacted},
+		{"nested_compaction_preserves_parent_offsets", `{"before":[true],"nested":` + interleaved + `,"after":{"v":[false,2]}}`, `{"before":[true],"nested":` + compacted + `,"after":{"v":[false,2]}}`},
+		// Semantic errors belong to the surviving value, so an overwritten
+		// out-of-range number must not prevent parsing the replacement.
+		{"discard_overwritten_numeric_error", `{"a":1e400,"a":0}`, `{"a":0}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseBinaryJSONFromString(tt.input)
+			require.NoError(t, err)
+			var want BinaryJSON
+			require.NoError(t, want.UnmarshalJSON([]byte(tt.want)))
+			// Compare the type and binary layout, not only printed JSON values.
+			require.Equal(t, want, got)
+		})
+	}
+}
+
+func TestBinaryJSONTextParserErrorPrecedence(t *testing.T) {
+	deep := strings.Repeat("[", maxJSONDepth+1) + "0" + strings.Repeat("]", maxJSONDepth+1)
+	longKey := strings.Repeat("k", math.MaxUint16+1)
+	for _, tt := range []struct {
+		name, input string
+		wantError   func(error) bool
+	}{
+		// Syntax errors are never deferred, even in an overwritten value.
+		{"overwritten_syntax_error_is_not_discarded", `{"a":[1,],"a":0}`, ErrInvalidJSONText.Equal},
+		{"trailing_root_before_key_error", `{"` + longKey + `":0} true`, ErrInvalidJSONText.Equal},
+		// The legacy encoder checks an object's keys before any of its values.
+		{"key_length_before_numeric_value", `{"a":1e400,"` + longKey + `":0}`, ErrJSONObjectKeyTooLong.Equal},
+		// Surviving values are checked in sorted-key order, not text order.
+		{"sorted_value_order", `{"z":{"` + longKey + `":0},"a":1e400}`, ErrInvalidJSONText.Equal},
+		// Depth is checked after other semantic errors in the complete value.
+		{"numeric_value_before_depth", `[` + deep + `,1e400]`, ErrInvalidJSONText.Equal},
+		{"surviving_depth_error", deep, ErrJSONDocumentTooDeep.Equal},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseBinaryJSONFromString(tt.input)
+			require.True(t, tt.wantError(err), "%v", err)
+		})
+	}
+}
+
+func TestDirectBinaryJSON(t *testing.T) {
+	nulls := "[" + strings.TrimSuffix(strings.Repeat("null,", 100000), ",") + "]"
+	overwritten := "{" + strings.Repeat("\"a\":"+nulls+",\"b\":1,", 20) + "\"a\":0}"
+	deep := strings.Repeat("[", maxJSONDepth+1) + "0" + strings.Repeat("]", maxJSONDepth+1)
+	longKey := "{\"" + strings.Repeat("k", math.MaxUint16+1) + "\":0}"
+	var wide strings.Builder
+	wide.WriteByte('{')
+	for i := range 2000 {
+		if i > 0 {
+			wide.WriteByte(',')
+		}
+		fmt.Fprintf(&wide, "\"k%04d\":{\"n\":[null,%d,\"text\"]}", i, i)
+	}
+	wide.WriteByte('}')
+	deepObject := strings.Repeat("{\"a\":", maxJSONDepth-1) + "{\"text\":\"" + strings.Repeat("x", 4096) + "\"}" + strings.Repeat("}", maxJSONDepth-1)
+	for _, tt := range []struct{ name, input string }{
+		{"dense_inline_literals", nulls},
+		{"repeated_interleaved_overwrites", overwritten},
+		{"array_of_overwritten_objects", "[" + overwritten + "," + overwritten + "]"},
+		{"wide_object", wide.String()},
+		{"deep_object", deepObject},
+		{"discard_overwritten_depth_error", "{\"a\":" + deep + ",\"a\":0}"},
+		{"discard_overwritten_key_error", "{\"a\":" + longKey + ",\"a\":0}"},
+		{"number_error_after_deep_array", "[" + deep + ",1e400]"},
+		{"key_error_after_deep_value", "{\"a\":" + deep + ",\"z\":" + longKey + "}"},
+		{"multiple_semantic_errors", "{\"a\":1e400,\"z\":" + longKey + "}"},
+		{"decoder_depth_limit", strings.Repeat("[", 10000) + "0" + strings.Repeat("]", 10000)},
+		{"beyond_decoder_depth_limit", strings.Repeat("[", 1<<17) + strings.Repeat("]", 1<<17)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			input := tt.input
+			var expected BinaryJSON
+			expectedErr := expected.UnmarshalJSON([]byte(input))
+			if !json.Valid([]byte(input)) {
+				expectedErr = ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
+			} else if expectedErr != nil && !ErrJSONObjectKeyTooLong.Equal(expectedErr) && !ErrJSONDocumentTooDeep.Equal(expectedErr) {
+				expectedErr = ErrInvalidJSONText.GenWithStackByArgs(expectedErr)
+			}
+			got, err := ParseBinaryJSONFromString(input)
+			if expectedErr != nil {
+				require.EqualError(t, err, expectedErr.Error())
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, expected, got)
+			}
+		})
+	}
+
+	// A tiny surviving object must not retain its overwritten large array buffer.
+	kept := mustParseBinaryFromString(t, overwritten)
+	require.LessOrEqual(t, cap(kept.Value), 2*len(kept.Value))
+}
+
+func TestBinaryJSONTextParserOwnership(t *testing.T) {
+	nulls := "[" + strings.TrimSuffix(strings.Repeat("null,", 100000), ",") + "]"
+	overwritten := "{" + strings.Repeat("\"a\":"+nulls+",\"b\":1,", 20) + "\"a\":0}"
+	for _, tt := range []struct{ name, input string }{
+		{"pooled_small_document", jsonBenchStr},
+		{"pooled_large_string", `"` + strings.Repeat("x", 64*1024) + `"`},
+		{"dense_array", nulls},
+		{"repeated_overwrites", overwritten},
+		{"transferred_large_buffer", `"` + strings.Repeat("x", 300*1024) + `"`},
+		{"small_result_after_large_overwrite", `{"a":"` + strings.Repeat("x", 300*1024) + `","a":0}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			first := mustParseBinaryFromString(t, tt.input)
+			saved := first.Copy()
+			// Keep tests serial while concurrent callers exercise the shared pool.
+			var wg sync.WaitGroup
+			for range 4 {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for range 100 {
+						if _, err := ParseBinaryJSONFromString(`{"x":[null,1,2,3],"x":"replacement"}`); err != nil {
+							t.Error(err)
+							return
+						}
+					}
+				}()
+			}
+			wg.Wait()
+			require.Equal(t, saved, first)
+		})
+	}
+}
+
+func FuzzParseBinaryJSON(f *testing.F) {
+	for _, input := range []string{jsonBenchStr, `{"a":[1,2,3],"b":4,"a":[5,6],"b":7,"a":0}`, `{"a":1e400,"a":0}`, `null`, `true`, `[]`, `{}`, `9007199254740993`, `18446744073709551615`, `1e309`, `{"a":1,"a":2}`, `"\ud800"`} {
+		f.Add(input)
+	}
+	f.Fuzz(func(t *testing.T, input string) {
+		got, err := ParseBinaryJSONFromString(input)
+		if !json.Valid([]byte(input)) {
+			require.True(t, ErrInvalidJSONText.Equal(err), "%q: %v", input, err)
+			return
+		}
+
+		// UnmarshalJSON retains the previous Decoder.UseNumber implementation.
+		var expected BinaryJSON
+		expectedErr := expected.UnmarshalJSON([]byte(input))
+		if expectedErr != nil {
+			if !ErrJSONObjectKeyTooLong.Equal(expectedErr) && !ErrJSONDocumentTooDeep.Equal(expectedErr) {
+				expectedErr = ErrInvalidJSONText.GenWithStackByArgs(expectedErr)
+			}
+			require.Error(t, err)
+			require.Equal(t, expectedErr.Error(), err.Error())
+			return
+		}
+		require.NoError(t, err)
+		require.Equal(t, expected, got)
+	})
 }
 
 func TestCreateBinary(t *testing.T) {
