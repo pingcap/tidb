@@ -45,6 +45,12 @@ func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, bool, error) 
 		return nil, false, errors.Trace(err)
 	}
 
+	err = se.Execute(context.Background(), "set @@tidb_scatter_region = 'global'")
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
+	log.Debug("set tidb_scatter_region to global success")
+
 	supportPolicy := false
 	if len(policyMode) != 0 {
 		// Set placement mode for handle placement policy.
