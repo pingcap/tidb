@@ -127,8 +127,8 @@ def go_deps():
         name = "com_github_andybalholm_brotli",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/andybalholm/brotli",
-        sum = "h1:PR2pgnyFznKEugtsUo0xLdDop5SKXd5Qf5ysW+7XdTA=",
-        version = "v1.1.1",
+        sum = "h1:UgafRPGMam5ySHfRkhthMqOFA6IFoeF3D7mWIDLjG5A=",
+        version = "v1.2.7",
     )
     go_repository(
         name = "com_github_antihax_optional",
@@ -2723,8 +2723,8 @@ def go_deps():
         name = "com_github_klauspost_compress",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/klauspost/compress",
-        sum = "h1:aUyZsS4kH3QTKurYhAOwAHxllVPnOthb3vPfnF1Ehjw=",
-        version = "v1.18.7",
+        sum = "h1:v5tiZvm1KGLyg5d5oXdXe3lsSPrbEUiKoXGia//I7Qo=",
+        version = "v1.20.2",
     )
     go_repository(
         name = "com_github_klauspost_cpuid",
@@ -5598,8 +5598,8 @@ def go_deps():
         name = "io_etcd_go_etcd_client_pkg_v3",
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/etcd/client/pkg/v3",
-        sum = "h1:fo0HpWz/KlHGMCC+YejpiCmyWDEuIpnTDzpJLB5fWlA=",
-        version = "v3.5.15",
+        sum = "h1:x9J84BdbVtb+47fQFsXniTA2sZEdy9S5+dQ9q5urpqM=",
+        version = "v3.5.33",
     )
     go_repository(
         name = "io_etcd_go_etcd_client_v2",
