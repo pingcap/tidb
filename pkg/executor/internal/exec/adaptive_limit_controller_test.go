@@ -232,6 +232,51 @@ func TestAdaptiveLimitControllerPairsOutputWithCompletedOuterRows(t *testing.T) 
 }
 
 func TestAdaptiveLimitControllerGrowsWhenConsumedInputHasNoOutput(t *testing.T) {
+	t.Run("double read recovers after productive input", func(t *testing.T) {
+		controller := newAdaptiveLimitControllerForTest(128, 16, 128, 16, 64)
+		readBatch := func(want int) {
+			t.Helper()
+			rows, ok := reserveOuterForTest(t, controller, want)
+			require.True(t, ok)
+			require.Equal(t, want, rows)
+			for remaining := rows; remaining > 0; {
+				handles, ok := reserveLookupForTest(t, controller, remaining)
+				require.True(t, ok)
+				require.Positive(t, handles)
+				controller.CompleteLookup(handles, handles, handles)
+				remaining -= handles
+			}
+			controller.CommitOuter(rows, rows)
+		}
+		readBatch(16)
+		controller.ObserveJoinProgress(16, 1)
+		require.Equal(t, uint64(32), controller.Snapshot().OuterWindow)
+
+		readBatch(16)
+		readBatch(16)
+		controller.ObserveJoinProgress(16, 0)
+		readBatch(16)
+		controller.ObserveJoinProgress(16, 0)
+		require.Equal(t, uint64(64), controller.Snapshot().OuterWindow)
+		require.Equal(t, 16, controller.SuggestedBatchSize(64))
+
+		readBatch(16)
+		readBatch(16)
+		for range 4 {
+			controller.ObserveJoinProgress(16, 0)
+			readBatch(16)
+		}
+		require.Equal(t, uint64(128), controller.Snapshot().OuterWindow)
+		require.Equal(t, 32, controller.SuggestedBatchSize(64))
+
+		controller.ObserveJoinProgress(16, 120)
+		require.Less(t, controller.Snapshot().OuterWindow, uint64(128))
+		require.Equal(t, 16, controller.SuggestedBatchSize(64))
+		controller.Reset()
+		require.Equal(t, uint64(16), controller.Snapshot().OuterWindow)
+		require.Equal(t, 16, controller.SuggestedBatchSize(64))
+	})
+
 	controller := newAdaptiveLimitControllerForTest(1000, 32, 100000, 32, 100000)
 
 	for _, expected := range []int{32, 64, 128} {

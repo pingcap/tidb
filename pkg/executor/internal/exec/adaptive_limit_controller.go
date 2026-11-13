@@ -229,6 +229,9 @@ type AdaptiveLimitController struct {
 	// lookupBatchSize is the current execution-task size in index handles,
 	// independent of the logical lookup window.
 	lookupBatchSize uint64
+	// joinLookupBatchSize is a temporary batch increase during sustained Join
+	// misses while the outer lookup continues to produce rows.
+	joinLookupBatchSize uint64
 	// lookupGrowthProgress records lookupHandles at the latest growth decision,
 	// preventing repeated growth without newly completed lookup work.
 	lookupGrowthProgress uint64
@@ -238,9 +241,9 @@ type AdaptiveLimitController struct {
 	outputRows uint64
 	// mu protects lifecycle state, counters, feedback windows, and wait statistics.
 	mu sync.Mutex
-	// outerPreferFullBatch coalesces admissions during sustained zero output
-	// for a single-read IndexJoin.
-	outerPreferFullBatch bool
+	// outerInNoOutputGrowth records that a zero-output window has triggered
+	// growth in this phase. Single reads also use it to coalesce small grants.
+	outerInNoOutputGrowth bool
 	// lookupInNoOutputPhase suppresses productive lookup-yield adjustment until
 	// a subsequent lookup task returns rows.
 	lookupInNoOutputPhase bool
@@ -336,7 +339,7 @@ func (c *AdaptiveLimitController) Reset() {
 	c.pendingOuterOutput = 0
 	c.recentOuterYield = adaptiveYieldWindow{}
 	c.outerNoOutputRows = 0
-	c.outerPreferFullBatch = false
+	c.outerInNoOutputGrowth = false
 	c.outerWindow = c.initialOuterWindow
 	c.outerGrowthBarrier = 0
 	c.lookupReserved = 0
@@ -347,6 +350,7 @@ func (c *AdaptiveLimitController) Reset() {
 	c.lookupInNoOutputPhase = false
 	c.lookupWindow = c.initialLookupWindow
 	c.lookupBatchSize = c.initialLookupBatchSize
+	c.joinLookupBatchSize = 0
 	c.lookupGrowthProgress = 0
 	c.lookupOutstandingAtStop = 0
 	c.lookupAdmissionBlocked = admissionBlockStats{}
@@ -417,7 +421,7 @@ func (c *AdaptiveLimitController) reserve(
 			changed = c.outerChanged
 			// An in-flight task can free enough room for a full batch. With no
 			// task to consume, admit a partial batch to guarantee progress.
-			if c.outerPreferFullBatch && outstanding != 0 {
+			if c.mode == adaptiveLimitIndexJoinOuterOnly && c.outerInNoOutputGrowth && outstanding != 0 {
 				minUnits = uint64(maxUnits)
 			}
 		}
@@ -429,7 +433,7 @@ func (c *AdaptiveLimitController) reserve(
 			if stage == adaptiveOuterRowsAdmission {
 				c.outerReserved += units
 			} else {
-				units = min(units, c.lookupBatchSize)
+				units = min(units, c.lookupExecutionBatchSizeLocked())
 				c.lookupReserved += units
 			}
 			c.mu.Unlock()
@@ -551,7 +555,8 @@ func (c *AdaptiveLimitController) ObserveJoinProgress(consumedRows, outputRows i
 	if pairedOutput > 0 {
 		c.recentOuterYield.add(consumed, pairedOutput)
 		c.outerNoOutputRows = 0
-		c.outerPreferFullBatch = false
+		c.outerInNoOutputGrowth = false
+		c.joinLookupBatchSize = 0
 		c.recomputeOuterWindowLocked()
 		c.recomputeLookupWindowLocked()
 	} else {
@@ -598,6 +603,7 @@ func (c *AdaptiveLimitController) CompleteLookup(reserved, handles, rows int) {
 			c.recentLookupYield = adaptiveYieldWindow{}
 		}
 		c.lookupInNoOutputPhase = true
+		c.joinLookupBatchSize = 0
 		c.lookupNoOutputRows = saturatingAdd(c.lookupNoOutputRows, uint64(max(handles, 1)))
 		c.growLookupWindowIfDrainedLocked()
 	}
@@ -624,7 +630,7 @@ func (c *AdaptiveLimitController) SuggestedBatchSize(ceiling int) int {
 		return 1
 	}
 	c.mu.Lock()
-	batchSize := c.lookupBatchSize
+	batchSize := c.lookupExecutionBatchSizeLocked()
 	c.mu.Unlock()
 	return min(max(int(min(batchSize, uint64(ceiling))), 1), ceiling)
 }
@@ -652,7 +658,7 @@ func (c *AdaptiveLimitController) Snapshot() AdaptiveLimitSnapshot {
 		LookupHandles:           c.lookupHandles,
 		LookupRows:              c.lookupRows,
 		LookupWindow:            c.lookupWindow,
-		LookupBatchSize:         c.lookupBatchSize,
+		LookupBatchSize:         c.lookupExecutionBatchSizeLocked(),
 		LookupPhysicalWindow:    c.lookupPhysicalWindowLocked(),
 		LookupOutstandingAtStop: c.lookupOutstandingAtStop,
 		OuterAdmissionBlocked:   c.admissionBlockedTimeLocked(adaptiveOuterRowsAdmission),
@@ -763,11 +769,19 @@ func (c *AdaptiveLimitController) growOuterWindowOnNoOutputLocked() {
 			c.outerNoOutputRows = 0
 			return
 		}
-		c.outerPreferFullBatch = true
-	} else if outstanding != 0 {
-		// With a lookup stage, keep the existing coordinated growth rule.
-		return
+	} else {
+		// If lookup is delivering input, consumed rows already prove that the
+		// join is making progress through a low-yield interval. Refilling the
+		// window must not prevent growth.
+		lookupProducing := c.lookupRows > 0 && !c.lookupInNoOutputPhase
+		if outstanding != 0 && !lookupProducing {
+			return
+		}
+		if lookupProducing && c.outerInNoOutputGrowth {
+			c.joinLookupBatchSize = growAdaptiveWindow(c.lookupExecutionBatchSizeLocked(), c.maxLookupBatchSize)
+		}
 	}
+	c.outerInNoOutputGrowth = true
 	nextWindow := growAdaptiveWindow(c.outerWindow, c.maxOuterWindow)
 	if nextWindow > c.outerWindow {
 		c.outerGrowthBarrier = c.outerFetched
@@ -798,11 +812,16 @@ func (c *AdaptiveLimitController) growLookupWindowIfDrainedLocked() {
 func (c *AdaptiveLimitController) lookupPhysicalWindowLocked() uint64 {
 	// Round the logical handle budget up to whole execution batches. Unless the
 	// configured maximum truncates it, physical slack is less than one batch.
-	if c.lookupWindow == 0 || c.lookupBatchSize == 0 {
+	batchSize := c.lookupExecutionBatchSizeLocked()
+	if c.lookupWindow == 0 || batchSize == 0 {
 		return 0
 	}
-	batchCount := divideAndRoundUp(c.lookupWindow, c.lookupBatchSize)
-	return min(saturatingMultiply(batchCount, c.lookupBatchSize), c.maxLookupWindow)
+	batchCount := divideAndRoundUp(c.lookupWindow, batchSize)
+	return min(saturatingMultiply(batchCount, batchSize), c.maxLookupWindow)
+}
+
+func (c *AdaptiveLimitController) lookupExecutionBatchSizeLocked() uint64 {
+	return max(c.lookupBatchSize, c.joinLookupBatchSize)
 }
 
 func (c *AdaptiveLimitController) stopLocked() {
@@ -822,6 +841,7 @@ func (c *AdaptiveLimitController) stopLocked() {
 	c.outerWindow = 0
 	c.lookupWindow = 0
 	c.lookupBatchSize = 0
+	c.joinLookupBatchSize = 0
 	close(c.stopCh)
 	c.stopCh = nil
 }

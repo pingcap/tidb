@@ -281,7 +281,9 @@ The cumulative and recent lookup estimates are computed independently, and the l
 
 The logical lookup window does not shrink below its statement-derived initial value. The execution batch is tracked independently, so shrinking the logical window does not create row-at-a-time table RPCs. Rounding the logical window to the execution batch intentionally permits less than one batch of physical over-admission.
 
-If a stage produces no output, a ratio cannot estimate the next target. For a double read, the controller grows the window when the stage drains and the consumed input without output reaches the current logical window. For the lookup stage, it then doubles both the logical window and execution batch up to their separate configured maxima.
+If a stage produces no output, a ratio cannot estimate the next target. When the lookup stage itself produces no rows, it waits until the stage drains and the consumed handles without output reach the current lookup window. It then doubles the logical window and execution batch up to their separate configured maxima.
+
+If the outer lookup continues to produce rows but the join goes a full outer window without output, consumed outer rows can trigger growth with tasks still in flight. Further windows of misses also raise the execution batch for the outer lookup. This follows the join's progress anywhere in the input. Productive join feedback or a lookup task that returns no rows clears the temporary batch increase.
 
 For an IndexLookUpJoin with a single-read outer input, the controller retries the initial window at the same size if it drains without a match. With sustained misses, the controller grows the window as the join consumes each window's worth of input, even with tasks still in flight. During this phase, an in-flight task can free space for a full batch. If no task is in flight, a partial batch can still be admitted. Productive join feedback restores ordinary admission.
 
