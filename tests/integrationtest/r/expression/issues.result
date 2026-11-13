@@ -326,7 +326,6 @@ a
 8
 9223372036854775810
 18446744073709551614
-18446744073709551615
 SELECT a FROM t WHERE a NOT IN (-1, -2, 4, 9223372036854775810);
 a
 0
@@ -343,7 +342,6 @@ a
 7
 8
 9223372036854775810
-18446744073709551614
 18446744073709551615
 drop table if exists t1;
 create table t1 (some_id smallint(5) unsigned,key (some_id) );
@@ -3308,6 +3306,26 @@ select * from t_date where dt in ('2023-01-01', '2023-01-01', '2023-01-02');
 dt
 2023-01-01
 2023-01-02
+drop table if exists t1;
+create table t1 (c0 bigint);
+insert into t1 values (-1), (-2), (-3), (-9223372036854775808);
+select * from t1 where c0 in (18446744073709551615, -1);
+c0
+-1
+select * from t1 where c0 in (-1, 18446744073709551615);
+c0
+-1
+select * from t1 where c0 in (18446744073709551614, -2);
+c0
+-2
+select * from t1 where c0 in (9223372036854775808, -9223372036854775808);
+c0
+-9223372036854775808
+select c0 from t1 where c0 in (-1, -2, -3, 18446744073709551615, 18446744073709551614, 18446744073709551613) order by c0;
+c0
+-3
+-2
+-1
 SELECT sec_to_time(b'1111');
 sec_to_time(b'1111')
 00:00:15
