@@ -900,7 +900,7 @@ func TestFullTextIndexMirrorsExecutor(t *testing.T) {
 				columns = "`body`"
 			}
 			result := bytes.NewBuffer(make([]byte, 0, 512))
-			require.NoError(t, executor.ConstructResultOfShowCreateTable(sctx, info, autoid.Allocators{}, result))
+			require.NoError(t, executor.ConstructResultOfShowCreateTable(sctx, ast.CIStr{}, info, autoid.Allocators{}, result))
 			require.Contains(t, result.String(), "FULLTEXT INDEX `idx`("+columns+") WITH PARSER NGRAM")
 		})
 	}
